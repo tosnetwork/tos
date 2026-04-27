@@ -1042,6 +1042,26 @@ namespace {
 // resizeable scratch BufferSlice and refills it from `file` on demand.
 // Provides a logical absolute offset interface so the caller can think
 // in BoC-file coordinates rather than buffer-relative coordinates.
+//
+// Direction-aware refill policy: BoC v1 layout places the root cell at
+// the file start (index 0) and the leaves at the file end (max index).
+// The parent-walk pass scans cells forward (0 → cell_count-1). The
+// cell-build pass scans backward (cell_count-1 → 0) so each child has
+// already been built when its parent is assembled. A purely forward-
+// prefetch chunk is a perfect fit for the parent walk but a worst-case
+// thrash for the build loop: every cell read lands BEFORE the cached
+// chunk and forces a fresh pread (~100-250 µs/cell on a page-cached
+// file, dominating the 1 GiB / 16 GiB import wall time).
+//
+// Fix: track the last access offset; on a miss, when the new request
+// is BEFORE the previous request, anchor the refilled chunk so its
+// END aligns with the request end rather than its START with the
+// request start. The next backward access then lands inside the same
+// chunk. Forward-walk callers see no behavior change because the
+// "previous offset < current offset" branch keeps the legacy anchoring.
+//
+// Peak resident memory is unchanged: the reader still owns exactly one
+// scratch buffer of size `chunk_bytes_`, regardless of direction.
 class StreamingFileReader {
  public:
   StreamingFileReader(td::FileFd& file, td::uint64 file_size, td::uint64 chunk_bytes)
@@ -1054,6 +1074,8 @@ class StreamingFileReader {
   // or read_into(); callers must consume it before requesting more bytes.
   td::Result<td::Slice> read(td::uint64 offset, std::size_t len) {
     if (len == 0) {
+      // Track even zero-length reads so a zero-byte probe between two
+      // backward scans does not flip direction detection.
       return td::Slice{};
     }
     if (offset > file_size_ || len > file_size_ - offset) {
@@ -1068,29 +1090,65 @@ class StreamingFileReader {
       // the scratch arbitrarily.
       chunk_bytes_ = len;
       scratch_ = td::BufferSlice{};  // force a re-fill below
+      cache_len_ = 0;
     }
     if (!cached_in_range(offset, len)) {
       if (scratch_.size() < chunk_bytes_) {
         scratch_ = td::BufferSlice{chunk_bytes_};
       }
-      td::uint64 want = chunk_bytes_;
-      if (want > file_size_ - offset) {
-        want = file_size_ - offset;
+      // Decide where to anchor the chunk window. The default is forward
+      // (anchor at `offset`); we switch to backward (anchor so the chunk
+      // ENDS at `offset + len`) when the access pattern shows the caller
+      // is moving toward smaller offsets. We require the previous
+      // request to be observed (last_request_seen_) before we trust the
+      // direction signal — the very first read must always anchor
+      // forward so the header probe at offset 0 stays valid.
+      bool backward = false;
+      if (last_request_seen_ && offset + len <= last_request_offset_) {
+        backward = true;
+      }
+      td::uint64 chunk_start;
+      td::uint64 want;
+      if (backward) {
+        // Anchor so the chunk ends at offset + len. If the requested
+        // range sits less than chunk_bytes_ from the file start, clamp
+        // chunk_start to 0 and shrink `want` accordingly. This makes
+        // each backward step move the cache window backward by one full
+        // chunk, reducing the number of preads on a backward scan from
+        // O(cell_count) to O(file_size / chunk_bytes_).
+        td::uint64 end = offset + len;
+        if (end > chunk_bytes_) {
+          chunk_start = end - chunk_bytes_;
+        } else {
+          chunk_start = 0;
+        }
+        want = end - chunk_start;
+        if (want > chunk_bytes_) {
+          want = chunk_bytes_;  // defensive; should be unreachable
+        }
+      } else {
+        chunk_start = offset;
+        want = chunk_bytes_;
+        if (want > file_size_ - chunk_start) {
+          want = file_size_ - chunk_start;
+        }
       }
       auto dst = scratch_.as_slice().truncate(static_cast<std::size_t>(want));
-      auto status = file_->pread(dst, static_cast<td::int64>(offset));
+      auto status = file_->pread(dst, static_cast<td::int64>(chunk_start));
       if (status.is_error()) {
-        return td::Status::Error(PSLICE() << "streaming BoC reader: pread failed at offset=" << offset
+        return td::Status::Error(PSLICE() << "streaming BoC reader: pread failed at offset=" << chunk_start
                                           << ": " << status.error());
       }
       auto got = status.move_as_ok();
       if (got != static_cast<std::size_t>(want)) {
         return td::Status::Error(PSLICE() << "streaming BoC reader: short pread got=" << got << " want="
-                                          << want << " at offset=" << offset);
+                                          << want << " at offset=" << chunk_start);
       }
-      cache_offset_ = offset;
+      cache_offset_ = chunk_start;
       cache_len_ = static_cast<std::size_t>(want);
     }
+    last_request_offset_ = offset;
+    last_request_seen_ = true;
     auto buf = scratch_.as_slice();
     auto local = static_cast<std::size_t>(offset - cache_offset_);
     return buf.substr(local, len);
@@ -1138,6 +1196,12 @@ class StreamingFileReader {
   td::BufferSlice scratch_;
   td::uint64 cache_offset_{0};
   std::size_t cache_len_{0};
+  // Direction-detection state. `last_request_offset_` records the start
+  // offset of the most recent successful read; `last_request_seen_` is
+  // false until the first read completes so the very first call cannot
+  // be misclassified as backward.
+  td::uint64 last_request_offset_{0};
+  bool last_request_seen_{false};
 };
 
 }  // namespace

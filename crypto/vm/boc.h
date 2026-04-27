@@ -429,11 +429,18 @@ td::Result<td::BufferSlice> std_boc_serialize(Ref<Cell> root, int mode = 0);
 //     `size` argument is independently checked against the file's
 //     actual length so a truncated tempfile cannot smuggle past the
 //     declared header.
-//   * The file is read in 4 MiB chunks via pread starting at offset 0;
-//     no mmap of the full file is performed. CRC32C trailer (when the
-//     BoC carries one) is validated incrementally against the same
-//     chunked reader so a corrupted trailer fails closed at the same
-//     stage a one-shot deserialize would.
+//   * The file is read in 4 MiB chunks via pread; no mmap of the full
+//     file is performed. The chunk reader is direction-aware: a forward
+//     scan (parent-walk pass) anchors the chunk at the request offset,
+//     while a backward scan (cell-build pass — BoC v1 places the root
+//     at file start and leaves at file end, so the cell-build loop
+//     iterates from cell_count-1 down to 0) anchors the chunk so its
+//     END aligns with the request end. Both walks therefore see one
+//     pread per chunk_bytes / cell_size cells rather than one pread
+//     per cell. CRC32C trailer (when the BoC carries one) is validated
+//     incrementally against the same chunked reader so a corrupted
+//     trailer fails closed at the same stage a one-shot deserialize
+//     would.
 //   * The function is NOT thread-safe with respect to `file`: the
 //     caller MUST own the FileFd for the duration of the call.
 struct StreamingBocImportOptions {

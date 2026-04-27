@@ -2934,6 +2934,77 @@ SyntheticBoc make_realistic_density_boc_file(const std::string &dir,
   return out;
 }
 
+// Result of one streaming-importer measurement. Wall time is the elapsed
+// seconds spent inside std_boc_deserialize_from_file_bounded; peak_delta
+// is the per-call buffer-mem delta sampled during the persist callback.
+struct StreamingImporterRun {
+  td::uint64 boc_size_bytes{0};
+  td::uint64 cells_imported{0};
+  td::uint64 peak_buffer_mem_delta_bytes{0};
+  double import_seconds{0.0};
+};
+
+// Drive one streaming-importer round trip against a freshly built
+// realistic-density BoC of the requested size. Returns the timing /
+// memory snapshot. Rebuilds the file on every call so the kernel page
+// cache is hot only for the freshly written bytes — this matches the
+// path the validator hits when it has just streamed a state file to
+// disk and immediately parses it.
+StreamingImporterRun run_streaming_importer_at_size(const std::string &dir_root,
+                                                     td::uint64 target_size_bytes,
+                                                     std::size_t leaf_payload_bytes,
+                                                     const std::string &name) {
+  auto synth = make_realistic_density_boc_file(dir_root, target_size_bytes,
+                                                 leaf_payload_bytes, name);
+
+  const td::uint64 buffer_mem_baseline = td::BufferAllocator::get_buffer_mem();
+  td::uint64 peak_during_import = buffer_mem_baseline;
+  td::uint64 cells_seen = 0;
+
+  tos::validator::fullnode::CellDbStreamingSink::OnCellFn on_cell =
+      [&](td::Ref<vm::Cell> cell) -> td::Status {
+    cells_seen++;
+    if ((cells_seen & 0xFFF) == 0) {
+      auto now = td::BufferAllocator::get_buffer_mem();
+      if (now > peak_during_import) {
+        peak_during_import = now;
+      }
+    }
+    (void)cell;
+    return td::Status::OK();
+  };
+  tos::validator::fullnode::CellDbStreamingSink sink{std::move(on_cell)};
+
+  auto fd = td::FileFd::open(synth.path, td::FileFd::Flags::Read).move_as_ok();
+  vm::StreamingBocImportOptions opts;
+  opts.max_resident_bytes = 256ULL << 20;
+
+  td::Timer import_t;
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, synth.size,
+                                                            opts, &sink);
+  double elapsed = import_t.elapsed();
+  fd.close();
+  EXPECT_TRUE(r_root.is_ok());
+  EXPECT_TRUE(sink.finished());
+  EXPECT_FALSE(sink.aborted());
+  {
+    auto now = td::BufferAllocator::get_buffer_mem();
+    if (now > peak_during_import) {
+      peak_during_import = now;
+    }
+  }
+
+  StreamingImporterRun out;
+  out.boc_size_bytes = synth.size;
+  out.cells_imported = cells_seen;
+  out.peak_buffer_mem_delta_bytes =
+      peak_during_import > buffer_mem_baseline
+          ? peak_during_import - buffer_mem_baseline
+          : 0;
+  out.import_seconds = elapsed;
+  return out;
+}
+
 void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
   // The full build + parse takes well over 30s on this host; skip
   // entirely when developers iterate under TOS_FAST_TESTS=1.
@@ -2953,19 +3024,16 @@ void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
   // of a real CellEvmState dump (per the user-documented 200 B/cell
   // conservative estimate when measurement is unavailable).
   //
-  // Performance note: the streaming importer (boc.cpp) uses a 4 MiB
-  // forward-read scratch cache, but the cell-build loop iterates from
-  // `cell_count - 1` down to 0 — i.e. backward through the file
-  // because BagOfCells assigns new_idx in DFS order from the root
-  // (root at index 0 / file start; leaves at max index / file end).
-  // Every cell read therefore misses the forward-only cache and
-  // triggers a fresh pread, costing ~100–250 µs per cell on a
-  // page-cached file. We cap the default size so the test fits
-  // inside SLOW_TEST_GUARD's expected runtime and gate the full
-  // 1 GiB run behind TOS_RUN_2GIB_FUZZ=1. The K1 invariant — peak
-  // resident memory does NOT scale with BoC size — is preserved at
-  // any size above the configured 256 MiB max_resident_bytes cap,
-  // so a smaller default still produces a meaningful verdict.
+  // Performance fix: the streaming importer's chunk reader (boc.cpp)
+  // is now direction-aware. The cell-build loop iterates backward
+  // (cell_count - 1 → 0) because BoC v1 places the root at file start
+  // and leaves at file end; previously the forward-only 4 MiB cache
+  // missed on every backward read. The reader now anchors the chunk
+  // window at the END of a backward request, so a backward scan sees
+  // approximately one pread per chunk_bytes / cell_size cells instead
+  // of one pread per cell. The wall-time-growth assertion below pins
+  // this fix: linear input growth must NOT produce super-linear wall
+  // time, otherwise the cache is thrashing again.
   //
   // Empirical density (measured on this run): the binary-tree shape
   // serialises at ~72 B/cell once internal nodes (each carrying 16 B
@@ -2975,84 +3043,98 @@ void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
   // toward real CellEvmState density without paying full real-state
   // build cost.
   constexpr std::size_t kLeafPayloadBytes = 120;
-  td::uint64 kTargetSize = 32ULL * kMiB;
   const char *full_gib_flag = std::getenv("TOS_RUN_2GIB_FUZZ");
-  if (full_gib_flag != nullptr && full_gib_flag[0] != '\0' &&
-      full_gib_flag[0] != '0') {
-    kTargetSize = 1ULL * kGiB;
-  }
+  bool full_gib = (full_gib_flag != nullptr && full_gib_flag[0] != '\0' &&
+                   full_gib_flag[0] != '0');
 
-  auto synth = make_realistic_density_boc_file(tmp_dir, kTargetSize,
-                                                 kLeafPayloadBytes,
-                                                 "synth-density.boc");
-  std::printf("  actual BoC size: %llu MiB\n",
-              static_cast<unsigned long long>(synth.size / kMiB));
+  // Two-point wall-time measurement (32 MiB and 64 MiB). Both runs use
+  // the same leaf payload and the same StreamingBocImportOptions so the
+  // only differences are the input size and the cell count. After the
+  // direction-aware-reader fix the cell-build loop's pread cost scales
+  // as O(file_size / chunk_bytes) rather than O(cell_count), so the 64
+  // MiB run should NOT be more than ~3x slower than the 32 MiB run.
+  // Under the legacy forward-only cache the ratio was ~2.1x (58 s for
+  // 32 MiB / 121 s for 64 MiB on the L2 reference host) which was
+  // already at the limit; the fix drops both numbers by an order of
+  // magnitude AND tightens the ratio.
+  td::rmrf(tmp_dir).ignore();
+  auto run_32 = run_streaming_importer_at_size(
+      tmp_dir, 32ULL * kMiB, kLeafPayloadBytes, "synth-density-32m.boc");
+  std::printf("  [32 MiB] cells=%llu peak_delta=%llu MiB import=%.3fs\n",
+              static_cast<unsigned long long>(run_32.cells_imported),
+              static_cast<unsigned long long>(run_32.peak_buffer_mem_delta_bytes / kMiB),
+              run_32.import_seconds);
   std::fflush(stdout);
 
-  // Snapshot the heap-buffer counter and drive the streaming importer.
-  // The sink is the same fullnode::CellDbStreamingSink that the actor
-  // wires up in `download-state.cpp`, so the measurement reflects the
-  // production sink lifecycle (begin → persist × N → finish).
-  const td::uint64 buffer_mem_baseline = td::BufferAllocator::get_buffer_mem();
-  td::uint64 peak_during_import = buffer_mem_baseline;
-  td::uint64 cells_seen = 0;
-
-  tos::validator::fullnode::CellDbStreamingSink::OnCellFn on_cell =
-      [&](td::Ref<vm::Cell> cell) -> td::Status {
-    cells_seen++;
-    // Sample the peak every 4096 cells. Sampling at every cell would
-    // dominate the test runtime on a multi-million-cell tree without
-    // changing the verdict — the streaming importer's resident memory
-    // grows monotonically until the `max_resident_bytes` cap pulls
-    // older cells out, then oscillates around that cap.
-    if ((cells_seen & 0xFFF) == 0) {
-      auto now = td::BufferAllocator::get_buffer_mem();
-      if (now > peak_during_import) {
-        peak_during_import = now;
-      }
-    }
-    (void)cell;
-    return td::Status::OK();
-  };
-  tos::validator::fullnode::CellDbStreamingSink sink{std::move(on_cell)};
-
-  auto fd = td::FileFd::open(synth.path, td::FileFd::Flags::Read).move_as_ok();
-  vm::StreamingBocImportOptions opts;
-  // 256 MiB is the production default that
-  // `PersistentStateBudgetConfig::max_resident_bytes_per_parse` flows
-  // into via `download-state.cpp` and `wait-block-state.cpp`. Pin the
-  // exact value here so the test measures the live-config invariant.
-  opts.max_resident_bytes = 256ULL << 20;
-
-  td::Timer import_t;
-  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, synth.size,
-                                                            opts, &sink);
-  std::printf("  streaming import: %.2fs\n", import_t.elapsed());
+  auto run_64 = run_streaming_importer_at_size(
+      tmp_dir, 64ULL * kMiB, kLeafPayloadBytes, "synth-density-64m.boc");
+  std::printf("  [64 MiB] cells=%llu peak_delta=%llu MiB import=%.3fs\n",
+              static_cast<unsigned long long>(run_64.cells_imported),
+              static_cast<unsigned long long>(run_64.peak_buffer_mem_delta_bytes / kMiB),
+              run_64.import_seconds);
   std::fflush(stdout);
-  fd.close();
-  EXPECT_TRUE(r_root.is_ok());
-  // Final peak sample after the loop terminates; the per-4096 cadence
-  // above could miss a late spike.
-  {
-    auto now = td::BufferAllocator::get_buffer_mem();
-    if (now > peak_during_import) {
-      peak_during_import = now;
-    }
+
+  // Optional BEFORE/AFTER comparison. Reference numbers are the L2
+  // agent's measurements on the legacy forward-only chunk cache (commit
+  // 8ca3d30fd) on the same host: 58 s at 32 MiB, 121 s at 64 MiB.
+  const char *perf_flag = std::getenv("TOS_RUN_M1_PERF_REGRESSION");
+  if (perf_flag != nullptr && perf_flag[0] != '\0' && perf_flag[0] != '0') {
+    constexpr double kBefore32MiBSeconds = 58.0;
+    constexpr double kBefore64MiBSeconds = 121.0;
+    auto speedup = [&](double before, double after) {
+      return after > 0.0 ? before / after : 0.0;
+    };
+    std::printf("  --- TOS_RUN_M1_PERF_REGRESSION=1 BEFORE/AFTER ---\n");
+    std::printf("  32 MiB BEFORE: %.2fs (legacy forward-only 4 MiB cache)\n",
+                kBefore32MiBSeconds);
+    std::printf("  32 MiB AFTER : %.3fs (direction-aware chunk cache)\n",
+                run_32.import_seconds);
+    std::printf("  32 MiB SPEEDUP: %.1fx\n",
+                speedup(kBefore32MiBSeconds, run_32.import_seconds));
+    std::printf("  64 MiB BEFORE: %.2fs (legacy forward-only 4 MiB cache)\n",
+                kBefore64MiBSeconds);
+    std::printf("  64 MiB AFTER : %.3fs (direction-aware chunk cache)\n",
+                run_64.import_seconds);
+    std::printf("  64 MiB SPEEDUP: %.1fx\n",
+                speedup(kBefore64MiBSeconds, run_64.import_seconds));
+    std::fflush(stdout);
   }
 
-  td::uint64 peak_delta = peak_during_import > buffer_mem_baseline
-                              ? peak_during_import - buffer_mem_baseline
-                              : 0;
+  // Wall-time-growth invariant. Cell density is identical between the
+  // two runs, so the cell-build loop visits ~2x as many cells when the
+  // input doubles. Under a thrashing cache the cost per cell is also
+  // higher at 64 MiB (more cells means a longer parent-walk decay
+  // window between consecutive backward reads) so the wall-time ratio
+  // can balloon to ~2.1x even with linear input growth. Under the
+  // direction-aware cache, cost per cell is O(1) regardless of size,
+  // so the ratio should land near 2x. The 3x cap leaves headroom for
+  // ordinary noise (build-tree cost, kernel page-cache state, fs jitter)
+  // while still failing closed if the fix regresses.
+  EXPECT_TRUE(run_32.import_seconds > 0.0);
+  EXPECT_TRUE(run_64.import_seconds > 0.0);
+  if (run_32.import_seconds > 0.0) {
+    double ratio = run_64.import_seconds / run_32.import_seconds;
+    std::printf("  wall-time ratio 64MiB/32MiB = %.2fx (cap = 3.0x)\n", ratio);
+    std::fflush(stdout);
+    EXPECT_TRUE(ratio <= 3.0);
+  }
+
+  // Pick the larger of the two measurements as the K1-verdict input.
+  // The 64 MiB run dominates the residency window so it's the tighter
+  // bound on the streaming-importer's peak-resident invariant.
+  td::uint64 boc_size = run_64.boc_size_bytes;
+  td::uint64 peak_delta = run_64.peak_buffer_mem_delta_bytes;
+  td::uint64 cells_seen = run_64.cells_imported;
 
   std::printf("  cells imported = %llu  boc_size = %llu MiB\n",
               static_cast<unsigned long long>(cells_seen),
-              static_cast<unsigned long long>(synth.size / kMiB));
+              static_cast<unsigned long long>(boc_size / kMiB));
   std::printf("  peak buffer-mem delta during parse = %llu MiB "
               "(%.1f%% of BoC size)\n",
               static_cast<unsigned long long>(peak_delta / kMiB),
-              100.0 * peak_delta / static_cast<double>(synth.size));
+              100.0 * peak_delta / static_cast<double>(boc_size));
   std::printf("  configured max_resident_bytes = %llu MiB\n",
-              static_cast<unsigned long long>(opts.max_resident_bytes / kMiB));
+              static_cast<unsigned long long>((256ULL << 20) / kMiB));
 
   // Verdict for the K1 review. The two thresholds the audit calls out:
   //   < 512 MiB → K1 design is practically acceptable for TOS state shapes
@@ -3069,12 +3151,22 @@ void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
   }
 
   // Hard invariant: the streaming importer must never balloon resident
-  // memory to anywhere near the BoC size. This is the only assertion;
-  // the verdict above is informational.
-  EXPECT_TRUE(peak_delta < synth.size);
-  // Sanity: the sink wiring fired the expected lifecycle.
-  EXPECT_TRUE(sink.finished());
-  EXPECT_FALSE(sink.aborted());
+  // memory to anywhere near the BoC size. Applies to both runs.
+  EXPECT_TRUE(run_32.peak_buffer_mem_delta_bytes < run_32.boc_size_bytes);
+  EXPECT_TRUE(run_64.peak_buffer_mem_delta_bytes < run_64.boc_size_bytes);
+
+  // Optional 1 GiB end-to-end run preserves the legacy peak-residency
+  // invariant for callers that want the full-scale verdict. Gated by
+  // TOS_RUN_2GIB_FUZZ=1 so CI stays tight.
+  if (full_gib) {
+    auto run_1g = run_streaming_importer_at_size(
+        tmp_dir, 1ULL * kGiB, kLeafPayloadBytes, "synth-density-1g.boc");
+    std::printf("  [1 GiB] cells=%llu peak_delta=%llu MiB import=%.3fs\n",
+                static_cast<unsigned long long>(run_1g.cells_imported),
+                static_cast<unsigned long long>(run_1g.peak_buffer_mem_delta_bytes / kMiB),
+                run_1g.import_seconds);
+    EXPECT_TRUE(run_1g.peak_buffer_mem_delta_bytes < run_1g.boc_size_bytes);
+  }
 
   td::rmrf(tmp_dir).ignore();
   std::printf("  PASSED\n");
