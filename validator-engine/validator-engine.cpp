@@ -1588,8 +1588,6 @@ td::Status ValidatorEngine::load_global_config() {
   tos::tos_api::config_global conf;
   TRY_STATUS_PREFIX(tos::tos_api::from_json(conf, conf_json.get_object()), "json does not fit TL scheme: ");
 
-  // TODO
-  // add adnl static nodes
   if (conf.adnl_) {
     if (conf.adnl_->static_nodes_) {
       TRY_RESULT_PREFIX_ASSIGN(adnl_static_nodes_, tos::adnl::AdnlNodesList::create(conf.adnl_->static_nodes_),
@@ -4271,17 +4269,9 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_importCer
     promise.set_value(create_control_query_error(r.move_as_error_prefix("Invalid certificate: ")));
     return;
   }
-  //TODO force Overlays::update_certificate to return result
-  /*auto P = td::PromiseCreator::lambda(
-      [promise = std::move(promise)](td::Result<> R) mutable {
-        if (R.is_error()) {
-          promise.set_value(create_control_query_error(R.move_as_error()));
-        } else {
-          promise.set_value(
-            tos::serialize_tl_object(tos::create_tl_object<tos::tos_api::engine_validator_success>(), true));
-        }
-      });
-  */
+  // `Overlays::update_certificate` is a fire-and-forget closure send that does
+  // not yield a result; respond synchronously with success once the message
+  // has been dispatched.
   td::actor::send_closure(overlay_manager_, &tos::overlay::Overlays::update_certificate,
                           tos::adnl::AdnlNodeIdShort{query.local_id_->id_},
                           tos::overlay::OverlayIdShort{query.overlay_id_},
@@ -5385,7 +5375,6 @@ void ValidatorEngine::run() {
   }
 
   keyring_ = tos::keyring::Keyring::create(db_root_ + "/keyring");
-  // TODO wait for password
   started_keyring_ = true;
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {

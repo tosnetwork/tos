@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <new>
 #include <optional>
 #include <vector>
 
@@ -936,6 +937,34 @@ int set_witness_verify_depth_for_testing(int new_depth) noexcept {
 int get_witness_verify_depth_for_testing() noexcept {
     return t_witness_verify_depth;
 }
+
+// Thread-local countdown that arms a deliberate `std::bad_alloc` at the
+// dedup-set insert site of the dynamic witness verifier. The sentinel
+// `kWitnessBadAllocInjectionDisabled` (INT_MIN) means "off"; the verifier
+// hot path performs a single signed compare against it and skips the
+// decrement-and-throw block entirely, so production binaries without
+// `TOS_EVM_TEST_INSTRUMENTATION` pay zero cost (the symbol is not even
+// linked).
+//
+// When armed with `n >= 0`, the next `n` insert calls (account or
+// storage, whichever fires first) succeed normally and decrement the
+// counter; when the counter reaches `0` the next insert throws
+// `std::bad_alloc{}`. The verifier's existing try/catch catches it and
+// records "witness consistency tracker exhausted (allocation failure)"
+// into the per-tx context's `first_error`, which the executor drains and
+// converts into a fail-closed `WitnessMismatch` disposition.
+thread_local int t_witness_consistency_inject_bad_alloc_after_n_inserts =
+    kWitnessBadAllocInjectionDisabled;
+
+int enable_bad_alloc_injection_for_test(int n) noexcept {
+    int prev = t_witness_consistency_inject_bad_alloc_after_n_inserts;
+    t_witness_consistency_inject_bad_alloc_after_n_inserts = n;
+    return prev;
+}
+
+int get_bad_alloc_injection_for_test() noexcept {
+    return t_witness_consistency_inject_bad_alloc_after_n_inserts;
+}
 #endif
 
 void CellEvmState::begin_witness_consistency_check(
@@ -987,13 +1016,26 @@ void CellEvmState::verify_account_before_return(
     // future refactor accidentally breaks the dedup invariant, we cap the
     // stack at two levels and surface a sticky error instead of crashing.
     try {
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+        // Test-only OOM injection. The sentinel comparison is a single
+        // signed compare against INT_MIN; production builds without
+        // TOS_EVM_TEST_INSTRUMENTATION omit this entire block.
+        if (t_witness_consistency_inject_bad_alloc_after_n_inserts !=
+            kWitnessBadAllocInjectionDisabled) {
+            if (t_witness_consistency_inject_bad_alloc_after_n_inserts <= 0) {
+                throw std::bad_alloc{};
+            }
+            --t_witness_consistency_inject_bad_alloc_after_n_inserts;
+        }
+#endif
         auto [_, inserted] = witness_ctx_->checked_accounts.insert(address);
         if (!inserted) {
             return;
         }
     } catch (const std::bad_alloc&) {
         witness_ctx_->first_error =
-            td::Status::Error("witness consistency tracker exhausted");
+            td::Status::Error(
+                "witness consistency tracker exhausted (allocation failure)");
         witness_ctx_->offending_what =
             std::string("account-tracker insert: account ") +
             format_evm_address_hex(address);
@@ -1068,13 +1110,26 @@ void CellEvmState::verify_storage_before_return(
     key.address = address;
     key.slot = slot;
     try {
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+        // Test-only OOM injection. The sentinel comparison is a single
+        // signed compare against INT_MIN; production builds without
+        // TOS_EVM_TEST_INSTRUMENTATION omit this entire block.
+        if (t_witness_consistency_inject_bad_alloc_after_n_inserts !=
+            kWitnessBadAllocInjectionDisabled) {
+            if (t_witness_consistency_inject_bad_alloc_after_n_inserts <= 0) {
+                throw std::bad_alloc{};
+            }
+            --t_witness_consistency_inject_bad_alloc_after_n_inserts;
+        }
+#endif
         auto [_, inserted] = witness_ctx_->checked_storage.insert(key);
         if (!inserted) {
             return;
         }
     } catch (const std::bad_alloc&) {
         witness_ctx_->first_error =
-            td::Status::Error("witness consistency tracker exhausted");
+            td::Status::Error(
+                "witness consistency tracker exhausted (allocation failure)");
         witness_ctx_->offending_what =
             std::string("storage-tracker insert: account ") +
             format_evm_address_hex(address) + " slot " +

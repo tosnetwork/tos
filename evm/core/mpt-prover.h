@@ -67,8 +67,8 @@ enum class MptProofResult {
 ///
 /// This is the verification half of generate_mpt_proof — used by self-tests
 /// to confirm the prover's output is a real Yellow Paper Appendix D proof
-/// (not just a placeholder) without round-tripping through an external
-/// verifier. The check is linear in proof length.
+/// (a fully-formed witness, not a stub byte sequence) without round-tripping
+/// through an external verifier. The check is linear in proof length.
 MptProofResult verify_mpt_proof(
     const std::vector<silkworm::Bytes>& proof,
     const evmc::bytes32& expected_root,

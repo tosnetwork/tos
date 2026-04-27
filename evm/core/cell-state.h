@@ -33,6 +33,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <set>
 #include <string_view>
@@ -130,6 +131,30 @@ int set_witness_verify_depth_for_testing(int new_depth) noexcept;
 /// counter. Mirrors the setter above and is exposed only so a test can
 /// verify the counter restored cleanly after a guarded call.
 int get_witness_verify_depth_for_testing() noexcept;
+
+/// Sentinel returned by `get_bad_alloc_injection_for_test` and accepted by
+/// `enable_bad_alloc_injection_for_test` to mean "injection disabled". It
+/// is INT_MIN so the production hot path can perform a single signed
+/// integer comparison and bail before any decrement work is attempted.
+constexpr int kWitnessBadAllocInjectionDisabled =
+    std::numeric_limits<int>::min();
+/// Test-only setter that arms a thread-local countdown for the dynamic
+/// witness consistency dedup-set insert. After the next `n` insert
+/// attempts (account or storage) succeed, the (n+1)-th attempt throws
+/// `std::bad_alloc` from inside the verifier's try/catch, exercising the
+/// sticky `first_error` ("witness consistency tracker exhausted
+/// (allocation failure)") path. Pass `kWitnessBadAllocInjectionDisabled`
+/// to disarm. Returns the previous value so tests can save / restore.
+///
+/// Production paths see no overhead: the verifier compares against the
+/// sentinel and skips the decrement-and-throw block entirely when it is
+/// not armed. The setter is wrapped in `TOS_EVM_TEST_INSTRUMENTATION` so
+/// release builds do not link the symbol at all.
+int enable_bad_alloc_injection_for_test(int n) noexcept;
+
+/// Test-only getter for the bad-alloc injection countdown. Returns
+/// `kWitnessBadAllocInjectionDisabled` when no injection is armed.
+int get_bad_alloc_injection_for_test() noexcept;
 #endif
 
 /// Selects how aggressively `CellEvmState::load_from_cell` validates the

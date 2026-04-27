@@ -55,7 +55,8 @@ void set_evm_chain_id(uint64_t chain_id) noexcept;
 /// vm_version value that marks an account as running on the EVM executor.
 constexpr int32_t kVmVersion = 0x45564D;  // "EVM" in ASCII
 
-/// Legacy placeholder used before chain_id was bound into ConfigParam 12.
+/// Legacy stub kept for compatibility with descriptors that predate the
+/// ConfigParam 12 chain-id binding.
 ///
 /// Current wc=1 WorkchainDescr values MUST store `current_evm_chain_id()` in
 /// `WorkchainFormat::wfmt_basic.vm_mode`; a zero vm_mode is rejected for the

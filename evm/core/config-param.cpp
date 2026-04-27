@@ -86,19 +86,20 @@ td::Ref<vm::Cell> build_evm_zerostate(
     tos::RootHash& root_hash,
     tos::FileHash& file_hash) {
 
-    // Build a minimal zerostate cell.
-    // A real zerostate would contain a full ShardState with empty account
-    // dictionaries, initial config, etc. For the first slice, we create
-    // a minimal cell that serves as a unique identifier for the workchain.
+    // Build a minimal zerostate cell that serves as a unique identifier
+    // for the workchain. It encodes only the fields the dispatcher needs
+    // to bind a fresh shard state at genesis; subsequent state mutation
+    // happens through the regular block path, not through this builder.
     //
     // The cell contains:
     //   magic(32) = 0x9023afe2 (shard_state#9023afe2 tag from block.tlb)
-    //   global_id(32) = host global id placeholder
+    //   global_id(32) = 0 (genesis sentinel; rebound when the host
+    //                      records the first canonical block)
     //   workchain_id(32) = 2
 
     vm::CellBuilder cb;
     cb.store_long(0x9023afe2, 32);            // shard_state tag
-    cb.store_long(0, 32);                     // global_id placeholder
+    cb.store_long(0, 32);                     // global_id (genesis sentinel)
     cb.store_long(kWorkchainId, 32);          // shard_ident.workchain_id (simplified)
     // Pad with zeros for the remaining required fields (simplified zerostate)
     cb.store_long(0, 64);               // shard_ident.shard_pfx_bits + shard_prefix

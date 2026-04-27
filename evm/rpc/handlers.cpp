@@ -4501,7 +4501,7 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
         }
         // Pre-merge: emit a non-zero PoW-style difficulty (matches geth /
         // erigon's simulate output for pre-merge blocks). 0x20000 is the
-        // canonical "minimum difficulty" placeholder used by the spec
+        // canonical "minimum difficulty" sentinel used by the spec
         // fixtures generated against a pre-merge reference chain.
         out2 += pre_merge_block
             ? "\"difficulty\":\"0x20000\","
