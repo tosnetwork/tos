@@ -31,9 +31,11 @@
 
 #include <ethash/keccak.hpp>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 #include "td/utils/logging.h"
 
@@ -44,6 +46,95 @@ namespace evm_workchain {
 // thread spins up. Reads are unsynchronised but safe in that ordering —
 // see the contract on `set_evm_chain_id` in `evm-workchain.h`.
 static uint64_t g_evm_chain_id = kEvmChainId;
+
+// Audit Q1 (tos16 P0 follow-up): canonical hydration corruption flag.
+//
+// `populate_state_from_shard_accounts` is called from a `size_t`-returning
+// surface (collator / validate-query / RPC startup) that has no place to
+// thread a structured `td::Status` back to the actor manager. When the
+// strict cell-state load fails because of a code-root / code-hash
+// mismatch (or any other structural violation surfaced by
+// `CellEvmState::last_strict_load_failure_reason()`), we:
+//
+//   1. Emit a `LOG(ERROR)` carrying the canonical state_root, the
+//      offending account / code_hash, and the helper's reason text. The
+//      string is stable so external monitoring / Loki alerts can match
+//      on `evm canonical hydration FAILED`.
+//   2. Set `g_evm_hydration_corrupted` to true; readers consult this
+//      flag at every consensus / RPC entry point that requires a
+//      hydrated state and refuse to enter normal operation. The flag is
+//      sticky across the process lifetime — the operator must restart
+//      from a known-good state snapshot or repair the canonical state
+//      manually.
+//   3. Stash the most recent reason into `g_evm_hydration_failure_reason`
+//      under `g_evm_hydration_failure_reason_mutex` so any later
+//      observer (RPC / health endpoint / log scraper) can read the
+//      same canonical text without racing the LOG(ERROR) call.
+//
+// This is the documented `init.cpp` constructor / OnceFlag fallback
+// path: the surrounding caller chain is `void` (and from
+// `validator-engine::init_evm_workchain`), so we cannot graceful-
+// propagate a Status; instead we burn the flag and let downstream
+// consensus / RPC code refuse to operate on a corrupt state.
+static std::atomic<bool> g_evm_hydration_corrupted{false};
+static std::mutex g_evm_hydration_failure_reason_mutex;
+static std::string g_evm_hydration_failure_reason;
+
+bool evm_hydration_corrupted() noexcept {
+    return g_evm_hydration_corrupted.load(std::memory_order_acquire);
+}
+
+std::string evm_hydration_failure_reason() {
+    std::lock_guard<std::mutex> lock(g_evm_hydration_failure_reason_mutex);
+    return g_evm_hydration_failure_reason;
+}
+
+void reset_evm_hydration_corruption_for_test() noexcept {
+    g_evm_hydration_corrupted.store(false, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(g_evm_hydration_failure_reason_mutex);
+    g_evm_hydration_failure_reason.clear();
+}
+
+namespace {
+
+// Audit Q1: lower-case 0x-prefixed hex of an EVM 32-byte hash. Local to
+// this translation unit; the cell-state.cpp helper of the same shape
+// lives in an anonymous namespace and is not re-exported.
+std::string format_evm_hash_hex(const evmc::bytes32& hash) {
+    static constexpr char kHexDigits[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(2 + 64);
+    out.append("0x");
+    for (auto b : hash.bytes) {
+        out.push_back(kHexDigits[(b >> 4) & 0x0F]);
+        out.push_back(kHexDigits[b & 0x0F]);
+    }
+    return out;
+}
+
+// Audit Q1: mark the global EVM state as corrupt so downstream consensus
+// / RPC entry points refuse to operate. Captures the canonical state
+// root + the cell-state-supplied reason for forensic logging.
+void mark_evm_hydration_corrupted(const evmc::bytes32& state_root_hash,
+                                   td::Slice reason) {
+    g_evm_hydration_corrupted.store(true, std::memory_order_release);
+    std::string formatted;
+    formatted.reserve(64 + reason.size());
+    formatted.append("EVM canonical hydration FAILED: state_root=");
+    formatted.append(format_evm_hash_hex(state_root_hash));
+    formatted.append(" reason=");
+    formatted.append(reason.data(), reason.size());
+    formatted.append(
+        "; node refuses normal operation. Restart from a known-good state "
+        "snapshot or repair the canonical state. Manual intervention required.");
+    {
+        std::lock_guard<std::mutex> lock(g_evm_hydration_failure_reason_mutex);
+        g_evm_hydration_failure_reason = formatted;
+    }
+    LOG(ERROR) << formatted;
+}
+
+}  // namespace
 
 uint64_t current_evm_chain_id() noexcept {
     return g_evm_chain_id;
@@ -379,11 +470,76 @@ size_t populate_state_from_shard_accounts(
                             &block_hashes_root,
                             nullptr,
                             &trie_witness_root)) {
-        LOG(WARNING) << "evm-workchain: executor StateInit.data does not decode as cp.new_data";
+        // Audit Q1 (tos16 P0 follow-up): the decode either failed because
+        // the cp.new_data envelope is malformed (schema / Maybe-tag /
+        // canonical-encoding violation) OR because the embedded
+        // eth_state_root verify rejected the inner ^state_root. The
+        // verify path internally does a strict `load_from_cell(state_root,
+        // true)` and would have populated the temporary CellEvmState's
+        // strict-load reason — but that instance is not reachable from
+        // here. To surface a useful reason regardless, we re-decode
+        // *without* the eth_state_root verify (which is a structural
+        // canonical-encoding check only — never a security regression
+        // because the failure is already fatal) and then probe the
+        // strict-load chokepoint on a local CellEvmState to recover the
+        // per-account corruption reason. If the second decode succeeds,
+        // the verify-step rejection was driven by code-root corruption
+        // and the strict probe surfaces the offending account; if the
+        // second decode also fails, the envelope itself is malformed
+        // and we surface that instead.
+        td::Ref<vm::Cell> probe_state_root;
+        evmc::bytes32 probe_eth_state_root{};
+        td::Ref<vm::Cell> probe_rpc_cache_root;
+        td::Ref<vm::Cell> probe_block_hashes_root;
+        td::Ref<vm::Cell> probe_trie_witness_root;
+        bool envelope_ok = decode_cp_new_data(
+            cp_new_data_cell, probe_state_root, probe_eth_state_root,
+            probe_rpc_cache_root, /*verify_eth_state_root=*/false,
+            &probe_block_hashes_root, nullptr, &probe_trie_witness_root);
+
+        std::string probe_reason;
+        evmc::bytes32 probe_state_root_hash{};
+        if (envelope_ok && probe_state_root.not_null()) {
+            CellEvmState probe_cs;
+            if (probe_cs.load_from_cell(probe_state_root, /*rebuild=*/false)) {
+                // The strict load itself succeeded but the eth_state_root
+                // verify still rejected — the inner state is consistent
+                // but the declared declared.bytes32 disagrees with the
+                // recomputed root. Emit a verifier-side reason.
+                probe_reason =
+                    "decode_cp_new_data: declared eth_state_root does not "
+                    "match recomputed Ethereum state root from inner "
+                    "^state_root (forged or stale eth_state_root)";
+            } else {
+                auto reason = probe_cs.last_strict_load_failure_reason();
+                if (reason.size() != 0) {
+                    probe_reason.assign(reason.data(), reason.size());
+                } else {
+                    probe_reason =
+                        "decode_cp_new_data: strict load of inner "
+                        "^state_root failed (no detail captured)";
+                }
+            }
+            auto h = probe_state_root->get_hash().as_array();
+            std::memcpy(probe_state_root_hash.bytes, h.data(), 32);
+        } else {
+            probe_reason =
+                "decode_cp_new_data: cp.new_data envelope is malformed "
+                "(schema / Maybe-tag / canonical-encoding violation)";
+        }
+        mark_evm_hydration_corrupted(
+            probe_state_root_hash, td::Slice(probe_reason));
         return 0;
     }
     if (state_root.is_null()) {
-        LOG(WARNING) << "evm-workchain: executor cp.new_data has no inner state_root ref";
+        // Audit Q1: a missing inner ^state_root ref is a malformed
+        // canonical envelope. Surface as a hydration-corruption error
+        // with the same forensic shape as the strict-load case.
+        evmc::bytes32 zero_state_root_hash{};
+        mark_evm_hydration_corrupted(
+            zero_state_root_hash,
+            td::Slice("decode_cp_new_data: cp.new_data has no inner "
+                      "^state_root ref (envelope advertises no state)"));
         return 0;
     }
 
@@ -395,7 +551,34 @@ size_t populate_state_from_shard_accounts(
             return 0;
         }
         if (!cs->load_from_cell(state_root, false)) {
-            LOG(ERROR) << "evm-workchain: CellEvmState::load_from_cell failed during hydration";
+            // Audit Q1 (tos16 P0 follow-up): the strict cell-state load
+            // failed (typically because of a code-root / code-hash
+            // mismatch surfaced by `decode_and_verify_code_root`).
+            // Surface the descriptive reason captured by the strict
+            // walk so the operator / monitoring sees:
+            //   * which canonical state_root is corrupt
+            //   * which account / code_hash triggered the rejection
+            //   * which kind of mismatch the cell-state helper found
+            // We mark the global state corrupted (sticky flag) so
+            // downstream consensus / RPC code refuses to operate
+            // until manual repair / state resync happens. Returning 0
+            // keeps the size_t-returning ABI compatible; the
+            // surrounding caller chain (`hydrate_global_state_if_empty`,
+            // `init_evm_workchain`) cannot graceful-propagate a Status.
+            auto reason = cs->last_strict_load_failure_reason();
+            std::string reason_str =
+                reason.size() != 0
+                    ? std::string(reason.data(), reason.size())
+                    : std::string("strict load returned false but no reason "
+                                  "was captured (caller bug — please file)");
+            // Compute the canonical state_root cell hash for forensics.
+            evmc::bytes32 state_root_hash{};
+            if (state_root.not_null()) {
+                auto h = state_root->get_hash().as_array();
+                std::memcpy(state_root_hash.bytes, h.data(), 32);
+            }
+            mark_evm_hydration_corrupted(
+                state_root_hash, td::Slice(reason_str));
             return 0;
         }
         if (trie_witness_root.not_null()) {

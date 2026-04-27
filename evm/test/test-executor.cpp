@@ -13082,6 +13082,322 @@ void test_h01_eth_call_corrupt_strict_load_returns_32000() {
 }
 
 // =============================================================================
+// Q1 — canonical hydration emits a structured error on code-root mismatch
+// =============================================================================
+//
+// Audit Q1 (tos16 P0 follow-up, line 818): the strict cell-state load is
+// already fail-closed (P0.2 chokepoint funnels strict-mode `load_from_cell`
+// through `decode_and_verify_code_root`), but the canonical hydration call
+// site `evm/core/init.cpp::populate_state_from_shard_accounts` only ever
+// returned `0` on `false` from `load_from_cell`. The node would then die
+// with a bare boolean error — no state_root, no offending account, no
+// reason — making it impossible for an operator / monitoring stack to
+// distinguish "code-root corruption" from "missing executor cell" or
+// "ShardAccounts dict format drift".
+//
+// The Q1 contract added on top of P0.2 is:
+//
+//   1. `CellEvmState::last_strict_load_failure_reason()` exposes the
+//      descriptive reason captured by the strict-walk lambda (kind of
+//      mismatch + offending account + relevant code_hash).
+//   2. `populate_state_from_shard_accounts` LOG(ERROR)s the canonical
+//      state_root, the strict-load reason, and a "manual intervention
+//      required" sentence; it then sets the sticky global flag
+//      `evm_hydration_corrupted()` so consensus / RPC entry points refuse
+//      to operate. The size_t return stays `0` for ABI compatibility
+//      (the call site has no Status surface to thread back).
+//   3. The clean-state positive control proves the code path doesn't
+//      flip the flag spuriously and a successful hydration leaves
+//      `last_strict_load_failure_reason()` empty.
+//
+// Two tests pin both halves:
+//   * `test_q1_hydration_emits_structured_error_on_code_root_mismatch`
+//   * `test_q1_hydration_succeeds_on_clean_state`
+
+namespace {
+
+// Result type for the corrupt-state fixture below.
+struct Q1CorruptShardAccountsFixture {
+    td::Ref<vm::Cell> shard_accounts;  // outer Maybe-^Dict envelope
+    td::Ref<vm::Cell> state_root;      // inner account dict (the corrupt one)
+};
+
+// Build a wc=1 ShardAccounts cell whose sole executor leaf wraps a
+// cp.new_data v5 cell whose ^state_root references a hand-built account
+// dict containing `target_addr → EvmAccountData{acct, code_root=encode(B)}`.
+// Mirrors the production layout produced by
+// `build_evm_zerostate_accounts_cell` but bypasses CellEvmState writers
+// (which would refuse to encode a code_hash != keccak(code) because of
+// the H-01 / K-02 chokepoint), so the serialized state is deliberately
+// inconsistent. The strict-load path is supposed to reject this state
+// at hydration time.
+Q1CorruptShardAccountsFixture q1_make_corrupt_executor_shard_accounts(
+    const evmc::address& target_addr,
+    const silkworm::Account& acct,
+    const Bytes& code_for_chain) {
+    // 1. Hand-built account dict with the corrupt entry.
+    auto code_chain = encode_evm_bytecode(td::Slice{
+        reinterpret_cast<const char*>(code_for_chain.data()),
+        code_for_chain.size()});
+    auto data_cell = encode_evm_account_data(acct, /*storage_root=*/{}, code_chain);
+    vm::CellBuilder dict_value_cb;
+    dict_value_cb.store_ref(data_cell);
+    vm::Dictionary account_dict(256);
+    unsigned char key[32];
+    address_to_key(target_addr, key);
+    CHECK(account_dict.set_builder(td::ConstBitPtr{key}, 256, dict_value_cb));
+    auto state_root = account_dict.get_root_cell();
+    CHECK(state_root.not_null());
+
+    // 2. cp.new_data v5 wrapper. eth_state_root and trie witness can be
+    //    zero / absent — this fixture does not exercise the witness load
+    //    path; the strict cell-state walk fail-closes before that point.
+    vm::CellBuilder data_cb;
+    // `decode_cp_new_data` requires has_trie_witness=1 whenever
+    // has_state_root=1; we provide an empty stub cell. The cell
+    // content is irrelevant on the verify=false probe path that the
+    // Q1 surface uses to recover the strict-load reason — the cell is
+    // just stored as a Ref<vm::Cell> and never walked.
+    vm::CellBuilder witness_placeholder_cb;
+    auto trie_witness_placeholder = witness_placeholder_cb.finalize();
+
+    data_cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
+    data_cb.store_long(kCpNewDataSchemaVersion, 8);
+    data_cb.store_long(1, 1);              // has_state_root
+    data_cb.store_ref(state_root);
+    evmc::bytes32 zero_eth_state_root{};
+    data_cb.store_bytes(reinterpret_cast<const char*>(zero_eth_state_root.bytes), 32);
+    data_cb.store_long(0, 1);              // rpc_cache_root absent
+    data_cb.store_long(0, 1);              // block_hashes_root absent
+    data_cb.store_long(0, 1);              // reserved accumulator absent
+    data_cb.store_long(1, 1);              // has_trie_witness
+    data_cb.store_ref(trie_witness_placeholder);
+    auto cp_new_data_cell = data_cb.finalize();
+
+    // 3. Wrap as executor ShardAccount.
+    td::Bits256 exec_addr_bits;
+    exec_addr_bits.bits().copy_from(td::ConstBitPtr{kEvmExecutorAddressBytes}, 256);
+    auto account_cell = build_evm_shard_account_cell(exec_addr_bits, cp_new_data_cell);
+
+    vm::AugmentedDictionary accounts_dict(256, block::tlb::aug_ShardAccounts);
+    vm::CellBuilder vcb;
+    vcb.store_ref_bool(account_cell);
+    vcb.store_zeroes_bool(256 + 64);  // last_trans_hash + last_trans_lt
+    accounts_dict.set_builder(exec_addr_bits.bits(), 256, vcb);
+
+    vm::CellBuilder cb;
+    accounts_dict.append_dict_to_bool(cb);
+    Q1CorruptShardAccountsFixture out;
+    out.shard_accounts = cb.finalize();
+    out.state_root = state_root;
+    return out;
+}
+
+// Convert the Maybe-^Dict envelope produced by
+// `q1_make_corrupt_executor_shard_accounts` /
+// `build_evm_zerostate_accounts_cell` into an AugmentedDictionary that
+// `populate_state_from_shard_accounts` accepts.
+vm::AugmentedDictionary q1_open_shard_accounts(
+    const td::Ref<vm::Cell>& accounts_cell) {
+    auto outer_slice = vm::load_cell_slice(accounts_cell);
+    bool has_inner = outer_slice.fetch_ulong(1) == 1;
+    td::Ref<vm::Cell> dict_root = (has_inner && outer_slice.size_refs() >= 1)
+                                       ? outer_slice.fetch_ref()
+                                       : td::Ref<vm::Cell>{};
+    return vm::AugmentedDictionary(dict_root, 256, block::tlb::aug_ShardAccounts);
+}
+
+}  // namespace
+
+void test_q1_hydration_emits_structured_error_on_code_root_mismatch() {
+    printf("=== test_q1_hydration_emits_structured_error_on_code_root_mismatch ===\n");
+
+    reset_evm_hydration_corruption_for_test();
+
+    // Build a corrupt canonical state: the account leaf advertises
+    // code_hash = keccak(A) but the embedded code chain encodes B.
+    evmc::address target_addr = hex_to_addr(
+        "0x000000000000000000000000000000000000a301");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.nonce = 1;
+    corrupt_acct.balance = intx::uint256{0};
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+
+    auto corrupt_fixture = q1_make_corrupt_executor_shard_accounts(
+        target_addr, corrupt_acct, code_B);
+    CHECK(corrupt_fixture.shard_accounts.not_null());
+    CHECK(corrupt_fixture.state_root.not_null());
+    auto state_root_inner = corrupt_fixture.state_root;
+
+    auto shard_accounts = q1_open_shard_accounts(corrupt_fixture.shard_accounts);
+
+    // Drive the canonical hydration entry point. We expect:
+    //   * count == 0 (ABI-compatible failure signal)
+    //   * evm_hydration_corrupted() == true (sticky flag now set)
+    //   * evm_hydration_failure_reason() includes:
+    //       - state_root=0x...
+    //       - the strict-load reason text mentioning code_root / code_hash
+    //       - the offending account address as 0x-prefixed lowercase hex
+    //       - a clear "manual intervention required" sentence.
+    EvmState target(std::make_unique<CellEvmState>());
+    auto count = populate_state_from_shard_accounts(target, shard_accounts);
+    bool count_is_zero = (count == 0);
+    bool flag_set = evm_hydration_corrupted();
+    auto reason = evm_hydration_failure_reason();
+
+    bool reason_has_state_root = reason.find("state_root=0x") != std::string::npos;
+    bool reason_has_code_root_or_hash =
+        reason.find("code_root") != std::string::npos ||
+        reason.find("code_hash") != std::string::npos;
+    bool reason_has_strict_load_marker =
+        reason.find("strict load") != std::string::npos;
+
+    // Format the offending address as canonical lowercase 0x-hex and
+    // verify it appears in the reason string.
+    std::string addr_hex = "0x";
+    static constexpr char kHexDigits[] = "0123456789abcdef";
+    for (auto b : target_addr.bytes) {
+        addr_hex.push_back(kHexDigits[(b >> 4) & 0x0F]);
+        addr_hex.push_back(kHexDigits[b & 0x0F]);
+    }
+    bool reason_has_address = reason.find(addr_hex) != std::string::npos;
+    bool reason_has_repair_sentence =
+        reason.find("Manual intervention required") != std::string::npos;
+
+    // Cross-check the cell-state-side accessor on a direct strict load
+    // of the same corrupt account dict. `populate_state_from_shard_accounts`
+    // runs its strict-load probe on its own internal CellEvmState (not
+    // the `target` we passed in, because the cp.new_data envelope decode
+    // fails first and we never reach `target.state().load_from_cell`),
+    // so the in-test probe re-exercises the same accessor on a local
+    // instance to pin the contract.
+    CellEvmState direct_cs;
+    bool direct_load_rejected =
+        !direct_cs.load_from_cell(state_root_inner, /*rebuild=*/false);
+    auto direct_reason = direct_cs.last_strict_load_failure_reason();
+    bool cs_reason_non_empty = direct_load_rejected && direct_reason.size() != 0;
+    std::string direct_reason_str(direct_reason.data(), direct_reason.size());
+    bool cs_reason_has_address =
+        direct_reason_str.find(addr_hex) != std::string::npos;
+
+    printf("  populate returned 0:                       %s\n",
+           count_is_zero ? "OK" : "FAILED");
+    printf("  evm_hydration_corrupted() flag set:        %s\n",
+           flag_set ? "OK" : "FAILED");
+    printf("  reason carries state_root=0x...:           %s\n",
+           reason_has_state_root ? "OK" : "FAILED");
+    printf("  reason mentions code_root / code_hash:     %s\n",
+           reason_has_code_root_or_hash ? "OK" : "FAILED");
+    printf("  reason carries 'strict load':              %s\n",
+           reason_has_strict_load_marker ? "OK" : "FAILED");
+    printf("  reason carries offending address (%s): %s\n",
+           addr_hex.c_str(),
+           reason_has_address ? "OK" : "FAILED");
+    printf("  reason carries 'Manual intervention required': %s\n",
+           reason_has_repair_sentence ? "OK" : "FAILED");
+    printf("  CellEvmState::last_strict_load_failure_reason non-empty: %s\n",
+           cs_reason_non_empty ? "OK" : "FAILED");
+    printf("  CellEvmState reason carries offending address: %s\n",
+           cs_reason_has_address ? "OK" : "FAILED");
+    // Print the reason via fputs/stderr-style write so the literal
+    // word "FAILED" inside the structured error string ("EVM canonical
+    // hydration FAILED: state_root=...") does not trip the
+    // tracked_printf-based g_test_failures counter, which scans every
+    // printf for the substring "FAILED".
+    std::fputs("  reason: ", stdout);
+    std::fputs(reason.c_str(), stdout);
+    std::fputs("\n", stdout);
+
+    bool ok = count_is_zero && flag_set && reason_has_state_root &&
+              reason_has_code_root_or_hash && reason_has_strict_load_marker &&
+              reason_has_address && reason_has_repair_sentence &&
+              cs_reason_non_empty && cs_reason_has_address;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+
+    // Restore the global flag so subsequent tests see a clean baseline.
+    reset_evm_hydration_corruption_for_test();
+}
+
+void test_q1_hydration_succeeds_on_clean_state() {
+    printf("=== test_q1_hydration_succeeds_on_clean_state ===\n");
+
+    reset_evm_hydration_corruption_for_test();
+
+    // Positive control: a well-formed canonical state with one EOA and
+    // one contract whose code_hash agrees with the encoded bytecode.
+    // This goes through the same `populate_state_from_shard_accounts`
+    // path as the corrupt case; on success the global flag must STAY
+    // false and the cell-state's strict-load reason must remain empty.
+    std::vector<GenesisAccount> allocs;
+
+    GenesisAccount alice{};
+    alice.addr.bytes[19] = 0xA1;
+    alice.balance = intx::uint256{1'000'000};
+    alice.nonce = 1;
+    allocs.push_back(alice);
+
+    GenesisAccount carol{};
+    carol.addr.bytes[19] = 0xC4;
+    carol.balance = intx::uint256{0};
+    carol.nonce = 1;
+    Bytes carol_code = h01_sload_slot0_runtime();
+    carol.code.assign(carol_code.begin(), carol_code.end());
+    allocs.push_back(carol);
+
+    auto accounts_cell = build_evm_zerostate_accounts_cell(allocs);
+    CHECK(accounts_cell.not_null());
+
+    auto shard_accounts = q1_open_shard_accounts(accounts_cell);
+
+    EvmState target(std::make_unique<CellEvmState>());
+    auto count = populate_state_from_shard_accounts(target, shard_accounts);
+    bool count_is_one = (count == 1);
+    bool flag_clear = !evm_hydration_corrupted();
+    auto reason = evm_hydration_failure_reason();
+    bool reason_empty = reason.empty();
+
+    auto* cs = dynamic_cast<CellEvmState*>(&target.state());
+    bool cs_reason_empty = false;
+    if (cs != nullptr) {
+        auto cs_reason = cs->last_strict_load_failure_reason();
+        cs_reason_empty = cs_reason.size() == 0;
+    }
+
+    // Sanity: the alice EOA and carol contract must round-trip.
+    auto a_alice = target.read_account(alice.addr);
+    bool alice_ok = a_alice.has_value() &&
+                    a_alice->balance == alice.balance &&
+                    a_alice->nonce == alice.nonce;
+    auto a_carol = target.read_account(carol.addr);
+    bool carol_acct_ok = a_carol.has_value() &&
+                          a_carol->code_hash != silkworm::kEmptyHash;
+
+    printf("  populate returned 1:                       %s\n",
+           count_is_one ? "OK" : "FAILED");
+    printf("  evm_hydration_corrupted() flag still false: %s\n",
+           flag_clear ? "OK" : "FAILED");
+    printf("  failure_reason empty:                      %s\n",
+           reason_empty ? "OK" : "FAILED");
+    printf("  CellEvmState last_strict_load_failure_reason empty: %s\n",
+           cs_reason_empty ? "OK" : "FAILED");
+    printf("  alice (EOA) round-trip:                    %s\n",
+           alice_ok ? "OK" : "FAILED");
+    printf("  carol (contract) round-trip:               %s\n",
+           carol_acct_ok ? "OK" : "FAILED");
+
+    bool ok = count_is_one && flag_clear && reason_empty &&
+              cs_reason_empty && alice_ok && carol_acct_ok;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+
+    reset_evm_hydration_corruption_for_test();
+}
+
+// =============================================================================
 // L2 stress — 10k contracts + EXTCODEHASH loop (audit verification checklist)
 // =============================================================================
 //
@@ -14208,6 +14524,18 @@ int main() {
     test_h01_strict_load_rejects_code_root_mismatch();
     test_h01_cache_hit_rejects_poisoned_entry();
     test_h01_eth_call_corrupt_strict_load_returns_32000();
+
+    // Audit Q1 (tos16 P0 follow-up, line 818) — canonical hydration
+    // emits a structured error on code-root / code-hash mismatch.
+    // The strict cell-state load is already fail-closed (P0.2); the
+    // Q1 follow-up surfaces the descriptive reason (offending account,
+    // code_hash, kind of mismatch, canonical state_root) via a sticky
+    // `g_evm_hydration_corrupted` flag + LOG(ERROR), so the operator /
+    // monitoring stack can drive a peer-state resync or manual repair
+    // instead of dying on a bare boolean. Includes a clean-state
+    // positive control.
+    test_q1_hydration_emits_structured_error_on_code_root_mismatch();
+    test_q1_hydration_succeeds_on_clean_state();
 
     // Audit verification-checklist (lines 1118-1123) — 10k-contract
     // EXTCODEHASH stress: scaled-up version of the H-01 / K-02 fixtures

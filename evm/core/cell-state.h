@@ -484,6 +484,19 @@ class CellEvmState : public silkworm::State {
                                  : CellStateLoadMode::StrictValidateNoWitness);
     }
 
+    /// Audit Q1 (tos16 P0 follow-up): describes the most recent strict-mode
+    /// `load_from_cell` failure. Empty when the last strict load succeeded
+    /// or no strict load has run on this instance. Populated atomically
+    /// just before a strict load returns `false`, so the caller can read a
+    /// human-readable reason (e.g. `"strict load: EVM code_root bytecode
+    /// hash mismatch (account=0x..., code_hash=0x...)"`) and surface it as
+    /// a structured hydration error / forensic log instead of dying with a
+    /// bare `false`. Reset on every entry into `load_from_cell` so a
+    /// successful subsequent strict load clears the previous reason.
+    td::Slice last_strict_load_failure_reason() const noexcept {
+        return td::Slice(last_strict_load_failure_reason_);
+    }
+
     /// Serialize / load the canonical EVM block-hash history used by
     /// BLOCKHASH and the EIP-2935 history-storage system call. The serialized
     /// form keeps the latest 256 canonical hashes, which is exactly the EVM
@@ -600,6 +613,19 @@ class CellEvmState : public silkworm::State {
     std::set<evmc::address> dirty_storage_trie_roots_;
 
     bool trie_witness_ready_{true};
+
+    /// Audit Q1 (tos16 P0 follow-up): most recent strict-mode
+    /// `load_from_cell` failure reason. Populated by the strict-walk
+    /// lambda just before it returns `false` (e.g. on
+    /// `decode_and_verify_code_root` mismatch); cleared on every fresh
+    /// entry into `load_from_cell`. Read by callers via
+    /// `last_strict_load_failure_reason()` so a hydration / repair /
+    /// resync driver can surface a structured error instead of dying on
+    /// a bare boolean.
+    ///
+    /// `mutable` because `load_from_cell` itself mutates the field even
+    /// on the success path (it always resets to empty at entry).
+    std::string last_strict_load_failure_reason_;
 
     CellEvmStateDeltaStats delta_stats_;
 

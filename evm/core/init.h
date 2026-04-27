@@ -85,6 +85,34 @@ size_t populate_state_from_shard_accounts(
 /// validator library's include surface).
 size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts);
 
+/// Audit Q1 (tos16 P0 follow-up): canonical hydration corruption flag.
+///
+/// `populate_state_from_shard_accounts` is called from a `size_t`-
+/// returning surface that has no place to thread a structured
+/// `td::Status` back to the actor manager. When the strict cell-state
+/// load fails (typically a code-root / code-hash mismatch surfaced by
+/// `CellEvmState::decode_and_verify_code_root`), we LOG(ERROR) the
+/// canonical state_root + offending account / code_hash + reason, and
+/// flip this flag to true.
+///
+/// Downstream consensus / RPC entry points that need a hydrated EVM
+/// state MUST consult this flag and refuse to operate when it is true.
+/// The flag is sticky for the process lifetime: an operator must
+/// restart from a known-good state snapshot or repair the canonical
+/// state manually. There is no graceful in-process recovery path.
+bool evm_hydration_corrupted() noexcept;
+
+/// Audit Q1: returns the canonical text for the most recent hydration
+/// corruption (the same string emitted by the LOG(ERROR) call). Empty
+/// when no corruption has been observed.
+std::string evm_hydration_failure_reason();
+
+/// Audit Q1 (test-only): clears the sticky corruption flag and the
+/// stashed reason string. Production code never calls this — the only
+/// canonical recovery is process restart from a verified state. Tests
+/// use it to isolate one corruption scenario from the next.
+void reset_evm_hydration_corruption_for_test() noexcept;
+
 /// Cancun pre-fork prep — see Category E in
 /// `doc/evm-workchain-known-divergences.md`. The two helpers below are
 /// invoked from `init_evm_workchain` on every node startup. They are

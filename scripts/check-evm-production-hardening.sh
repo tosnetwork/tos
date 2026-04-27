@@ -435,6 +435,68 @@ if ! awk '
     exit 1
 fi
 
+# Q1 (audit, 2026-04-27, tos16 P0 follow-up — line 818): the canonical
+# hydration call site `populate_state_from_shard_accounts` MUST surface
+# a structured forensic error on strict-load failure (e.g. a code-root
+# / code-hash mismatch surfaced by `decode_and_verify_code_root`):
+#
+#   (a) Read the descriptive reason via
+#       `cs->last_strict_load_failure_reason()` so the offending account
+#       address + kind of mismatch reach the operator / monitoring
+#       stack. A regression that drops this accessor or stops calling
+#       it would revert the surface to a bare boolean failure.
+#   (b) Emit a `LOG(ERROR)` carrying the canonical state_root, the
+#       reason, and a clear "manual intervention required" sentence so
+#       monitoring / Loki rules can match on the line.
+#   (c) Flip the sticky `mark_evm_hydration_corrupted(...)` flag so
+#       downstream consensus / RPC code refuses to operate. There is no
+#       graceful in-process recovery path — operator must restart from
+#       a known-good state snapshot or repair canonical state manually.
+#
+# The check is scoped to the `populate_state_from_shard_accounts` body
+# bounded by the `LOG(WARNING) << "evm-workchain: hydrated world state"`
+# success line.
+if ! awk '
+    /size_t populate_state_from_shard_accounts\(/ { in_s = 1 }
+    in_s {
+        if (/cs->load_from_cell\(state_root, false\)/) saw_load = 1
+        if (saw_load && /last_strict_load_failure_reason\(/) reason = 1
+        if (saw_load && /mark_evm_hydration_corrupted\(/) marked = 1
+        if (saw_load && /state_root_hash/) state_root_logged = 1
+    }
+    in_s && /hydrated world state from executor cell/ { in_s = 0 }
+    END { exit (reason && marked && state_root_logged ? 0 : 1) }
+' "$root/evm/core/init.cpp"; then
+    echo "evm production hardening check failed: populate_state_from_shard_accounts must call last_strict_load_failure_reason() and mark_evm_hydration_corrupted(state_root, reason) when load_from_cell fails (Q1 tos16 P0 hydration surface)" >&2
+    exit 1
+fi
+
+# Q1: the structured-error helper itself must build the canonical
+# "EVM canonical hydration FAILED: state_root=... reason=..." text so
+# operators / monitoring rules can match on a stable string. A
+# regression that strips state_root / reason / "manual intervention
+# required" from the LOG(ERROR) breaks the contract.
+if ! rg -q 'EVM canonical hydration FAILED: state_root=' "$root/evm/core/init.cpp"; then
+    echo "evm production hardening check failed: init.cpp must emit canonical 'EVM canonical hydration FAILED: state_root=' LOG(ERROR) on hydration corruption (Q1 forensic surface)" >&2
+    exit 1
+fi
+if ! rg -q 'Manual intervention required' "$root/evm/core/init.cpp"; then
+    echo "evm production hardening check failed: init.cpp must instruct 'Manual intervention required' in the hydration corruption LOG(ERROR) (Q1 forensic surface)" >&2
+    exit 1
+fi
+if ! rg -q 'std::atomic<bool> g_evm_hydration_corrupted' "$root/evm/core/init.cpp"; then
+    echo "evm production hardening check failed: init.cpp must declare g_evm_hydration_corrupted atomic flag (Q1 sticky corruption flag)" >&2
+    exit 1
+fi
+if ! rg -q 'bool evm_hydration_corrupted\(\) noexcept' "$root/evm/core/init.h"; then
+    echo "evm production hardening check failed: init.h must export evm_hydration_corrupted() so consensus / RPC entry points can refuse to operate (Q1 sticky corruption flag)" >&2
+    exit 1
+fi
+if ! rg -q 'last_strict_load_failure_reason' "$root/evm/core/cell-state.h"; then
+    echo "evm production hardening check failed: cell-state.h must export last_strict_load_failure_reason() (Q1 strict-load failure accessor)" >&2
+    exit 1
+fi
+
 # The expensive EVM compute-phase invariant must NOT be gated on
 # `#ifndef NDEBUG`. Public testnet builds (release WITHOUT NDEBUG) would
 # otherwise reintroduce a per-tx full StrictRecursive validation. Use an

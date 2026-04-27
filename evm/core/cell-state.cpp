@@ -1817,6 +1817,14 @@ td::Ref<vm::Cell> CellEvmState::serialize_to_cell() const {
 }
 
 bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode) {
+    // Audit Q1 (tos16 P0 follow-up): clear any previous strict-load
+    // failure reason on every entry. The strict-walk lambda below
+    // re-populates this field with a structured description (offending
+    // account / kind of mismatch) just before returning `false`, so a
+    // surrounding hydration / repair driver can surface a forensic
+    // error instead of dying on a bare boolean.
+    last_strict_load_failure_reason_.clear();
+
     if (root.is_null()) {
         account_dict_ = vm::Dictionary(256);
         code_.clear();
@@ -1830,7 +1838,12 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode
     try {
         bool special = false;
         (void)vm::load_cell_slice_special(root, special);
-        if (special) return false;
+        if (special) {
+            last_strict_load_failure_reason_ =
+                "state-root cell is special (pruned/library/merkle-update); "
+                "canonical hydration cannot decode the account dict";
+            return false;
+        }
 
         vm::Dictionary new_account_dict(root, 256);
 
@@ -1871,20 +1884,68 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode
 #endif
         std::unordered_map<evmc::bytes32, VerifiedCodeEntry> new_code;
         bool ok = true;
-        bool walked = new_account_dict.check_for_each([&ok, &new_code](td::Ref<vm::CellSlice> value,
-                                                                        td::ConstBitPtr /*key*/, int n) -> bool {
+        std::string& failure_reason = last_strict_load_failure_reason_;
+        // Audit Q1 (tos16 P0 follow-up): capture per-account context the
+        // moment the walk decides to fail. The 256-bit dict key is the
+        // canonical [12 zero bytes || 20-byte address] packing produced
+        // by `address_to_key`, so we recover the offending address by
+        // copying the trailing 20 bytes from `key`. The reason string is
+        // appended to `last_strict_load_failure_reason_` with the kind
+        // of mismatch and the relevant code_hash so a surrounding
+        // hydration / repair driver can emit a structured error.
+        auto fail_with = [&failure_reason](td::ConstBitPtr key,
+                                            const evmc::bytes32* code_hash,
+                                            td::Slice what) {
+            // Recover the EVM address from the 256-bit dict key: the
+            // canonical packing is 12 zero bytes followed by the 20-byte
+            // address. We accept any 256-bit key here (test fixtures
+            // sometimes pack other shapes) and just hex-format the last
+            // 20 bytes; the result is still unambiguous on canonical
+            // state because the upper 12 bytes are zero by construction.
+            unsigned char raw[32];
+            td::BitPtr{raw}.copy_from(key, 256);
+            evmc::address addr{};
+            std::memcpy(addr.bytes, raw + 12, 20);
+            std::string reason = "strict load: ";
+            reason.append(what.data(), what.size());
+            reason.append(" (account=");
+            reason.append(format_evm_address_hex(addr));
+            if (code_hash != nullptr) {
+                reason.append(", code_hash=");
+                evmc::bytes32 ch_copy = *code_hash;
+                std::string hex;
+                hex.reserve(2 + 64);
+                hex.append("0x");
+                static constexpr char kHexDigits[] = "0123456789abcdef";
+                for (auto b : ch_copy.bytes) {
+                    hex.push_back(kHexDigits[(b >> 4) & 0x0F]);
+                    hex.push_back(kHexDigits[b & 0x0F]);
+                }
+                reason.append(hex);
+            }
+            reason.append(")");
+            failure_reason = std::move(reason);
+        };
+        bool walked = new_account_dict.check_for_each([&ok, &new_code, &fail_with](td::Ref<vm::CellSlice> value,
+                                                                        td::ConstBitPtr key, int n) -> bool {
             if (n != 256 || value.is_null() || value->size() != 0 || value->size_refs() != 1) {
                 ok = false;
+                fail_with(key, nullptr,
+                          td::Slice("malformed account dict entry shape"));
                 return false;
             }
             silkworm::Account acct;
             td::Ref<vm::Cell> storage_root, code_root;
             if (!decode_evm_account_data(value->prefetch_ref(0), acct, storage_root, code_root)) {
                 ok = false;
+                fail_with(key, nullptr,
+                          td::Slice("decode_evm_account_data failed"));
                 return false;
             }
             if (!validate_storage_root(storage_root)) {
                 ok = false;
+                fail_with(key, &acct.code_hash,
+                          td::Slice("invalid storage_root cell"));
                 return false;
             }
             // Audit H-01 (P0.2): code_root + code_hash invariant. The
@@ -1899,6 +1960,13 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode
                 code_root, acct.code_hash, td::Slice("strict load"));
             if (verified.is_error()) {
                 ok = false;
+                // Audit Q1: surface the helper's descriptive message
+                // (e.g. "EVM code_root bytecode hash mismatch (strict
+                // load)") plus the offending account / code_hash so the
+                // surrounding hydration driver can emit a structured
+                // error instead of a bare boolean failure.
+                fail_with(key, &acct.code_hash,
+                          td::Slice(verified.error().message()));
                 return false;
             }
             if (acct.code_hash == silkworm::kEmptyHash) {
@@ -1909,25 +1977,56 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode
                                                 acct.code_hash});
             return true;
         });
-        if (!walked || !ok) return false;
+        if (!walked || !ok) {
+            if (last_strict_load_failure_reason_.empty()) {
+                // The walk aborted but the lambda did not pinpoint a
+                // specific account (e.g. the dict iterator itself
+                // rejected the structure). Provide a coarse default so
+                // the caller never gets an empty reason on a `false`
+                // return.
+                last_strict_load_failure_reason_ =
+                    "strict load: account dict walk aborted "
+                    "(malformed dict structure or per-entry validation failure)";
+            }
+            return false;
+        }
         account_dict_ = std::move(new_account_dict);
         code_ = std::move(new_code);
         storage_trie_index_root_ = {};
         touched_storage_tries_.clear();
         dirty_storage_trie_roots_.clear();
         if (mode == CellStateLoadMode::StrictValidateAndRebuildWitness) {
-            return rebuild_trie_witness();
+            if (!rebuild_trie_witness()) {
+                if (last_strict_load_failure_reason_.empty()) {
+                    last_strict_load_failure_reason_ =
+                        "strict load: rebuild_trie_witness failed after "
+                        "successful flat-state walk";
+                }
+                return false;
+            }
+            return true;
         }
         account_trie_.clear();
         trie_witness_ready_ = false;
         return true;
-    } catch (vm::VmError&) {
+    } catch (vm::VmError& e) {
+        last_strict_load_failure_reason_ =
+            std::string("strict load: vm::VmError thrown during account dict walk: ") +
+            e.get_msg();
         return false;
-    } catch (vm::VmVirtError&) {
+    } catch (vm::VmVirtError& e) {
+        last_strict_load_failure_reason_ =
+            std::string("strict load: vm::VmVirtError thrown during account dict walk: ") +
+            e.get_msg();
         return false;
-    } catch (std::exception&) {
+    } catch (std::exception& e) {
+        last_strict_load_failure_reason_ =
+            std::string("strict load: std::exception thrown during account dict walk: ") +
+            (e.what() != nullptr ? e.what() : "<no message>");
         return false;
     } catch (...) {
+        last_strict_load_failure_reason_ =
+            "strict load: unknown exception thrown during account dict walk";
         return false;
     }
 }
