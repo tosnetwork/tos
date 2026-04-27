@@ -268,11 +268,11 @@ class ValidatorManagerInterface : public td::actor::Actor {
                                 td::Promise<ReceivedBlock> promise) {
     }
     virtual void download_zero_state(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
-                                     td::Promise<fullnode::BudgetedBufferSlice> promise) {
+                                     td::Promise<fullnode::DownloadedPersistentState> promise) {
     }
     virtual void download_persistent_state(BlockIdExt block_id, BlockIdExt masterchain_block_id,
                                            PersistentStateType type, td::uint32 priority, td::Timestamp timeout,
-                                           td::Promise<fullnode::BudgetedBufferSlice> promise) {
+                                           td::Promise<fullnode::DownloadedPersistentState> promise) {
     }
     virtual void download_block_proof(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
                                       td::Promise<td::BufferSlice> promise) {

@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include "td/utils/overloaded.h"
+#include "td/utils/port/path.h"
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
 
@@ -25,7 +26,7 @@
 #include "full-node.h"
 
 #include <algorithm>
-#include <atomic>
+#include <limits>
 
 namespace tos {
 
@@ -36,125 +37,8 @@ namespace fullnode {
 namespace {
 
 constexpr td::uint64 kPersistentStatePartSize = 1ULL << 21;
-constexpr td::uint64 kMaxPersistentStateDownloadBytes = 1ULL << 30;
-constexpr td::uint64 kMaxPersistentStateHeapBufferBytes = 256ULL << 20;
-constexpr td::uint64 kMaxTotalPersistentStateDownloadBytes = 512ULL << 20;
-
-// Processing budget covers the transient BufferSlice clones the downstream
-// shard-state pipeline takes while parsing/persisting a downloaded state.
-// The cap matches the download cap (512 MiB) because in the worst case each
-// in-flight 256 MiB download will need a single same-size parse clone, and
-// two concurrent downloads must be admissible without the parse step
-// failing budgeting (the audit's M-01 worst-case peak).
-constexpr td::uint64 kMaxTotalPersistentStateProcessingBytes = 512ULL << 20;
-
-std::atomic<td::uint64> g_persistent_state_download_bytes{0};
-std::atomic<td::uint64> g_persistent_state_processing_bytes{0};
-
-td::Status validate_persistent_state_size(td::uint64 size) {
-  if (size == 0) {
-    return td::Status::Error(ErrorCode::protoviolation, "persistent state has zero size");
-  }
-  if (size > kMaxPersistentStateDownloadBytes) {
-    return td::Status::Error(ErrorCode::protoviolation,
-                             PSTRING() << "persistent state too large: " << size << " > "
-                                       << kMaxPersistentStateDownloadBytes);
-  }
-  if (size > kMaxPersistentStateHeapBufferBytes) {
-    return td::Status::Error(ErrorCode::notready,
-                             PSTRING() << "persistent state too large for heap downloader: " << size << " > "
-                                       << kMaxPersistentStateHeapBufferBytes
-                                       << " (streaming persistent-state downloader required)");
-  }
-  return td::Status::OK();
-}
-
-bool try_reserve_persistent_state_download_memory(td::uint64 size) {
-  auto current = g_persistent_state_download_bytes.load(std::memory_order_relaxed);
-  for (;;) {
-    if (size > kMaxTotalPersistentStateDownloadBytes ||
-        current > kMaxTotalPersistentStateDownloadBytes - size) {
-      return false;
-    }
-    if (g_persistent_state_download_bytes.compare_exchange_weak(
-            current, current + size, std::memory_order_acq_rel, std::memory_order_relaxed)) {
-      return true;
-    }
-  }
-}
-
-void release_persistent_state_download_memory(td::uint64 size) {
-  if (size == 0) {
-    return;
-  }
-  auto previous = g_persistent_state_download_bytes.fetch_sub(size, std::memory_order_acq_rel);
-  CHECK(previous >= size);
-}
-
-void release_persistent_state_processing_memory(td::uint64 size) {
-  if (size == 0) {
-    return;
-  }
-  auto previous = g_persistent_state_processing_bytes.fetch_sub(size, std::memory_order_acq_rel);
-  CHECK(previous >= size);
-}
 
 }  // namespace
-
-bool try_reserve_persistent_state_processing_memory(td::uint64 size) {
-  // Zero-sized reservations are admissible no-ops. They keep callers simple
-  // (e.g. the dtor-only release path) without contending on the global CAS.
-  if (size == 0) {
-    return true;
-  }
-  auto current = g_persistent_state_processing_bytes.load(std::memory_order_relaxed);
-  for (;;) {
-    if (size > kMaxTotalPersistentStateProcessingBytes ||
-        current > kMaxTotalPersistentStateProcessingBytes - size) {
-      return false;
-    }
-    if (g_persistent_state_processing_bytes.compare_exchange_weak(
-            current, current + size, std::memory_order_acq_rel, std::memory_order_relaxed)) {
-      return true;
-    }
-  }
-}
-
-// The reservation destructor is the single point of budget release: it runs
-// exactly once when the last shared_ptr<PersistentStateDownloadReservation>
-// reference is dropped (downstream may keep the buffer alive past the
-// DownloadState actor's lifetime).
-PersistentStateDownloadReservation::~PersistentStateDownloadReservation() {
-  release_persistent_state_download_memory(bytes);
-}
-
-// Mirror destructor for the processing budget. The processing reservation
-// is a separate budget covering transient parse/persist clones; releasing
-// it here is the single point that returns those bytes to the global
-// processing counter, regardless of whether the parse succeeded or failed.
-PersistentStateProcessingReservation::~PersistentStateProcessingReservation() {
-  release_persistent_state_processing_memory(bytes);
-}
-
-namespace testing {
-
-td::uint64 test_get_persistent_state_download_bytes() {
-  return g_persistent_state_download_bytes.load(std::memory_order_acquire);
-}
-
-bool test_try_reserve_persistent_state_download_memory(td::uint64 size) {
-  return try_reserve_persistent_state_download_memory(size);
-}
-
-td::uint64 test_get_persistent_state_processing_bytes() {
-  return g_persistent_state_processing_bytes.load(std::memory_order_acquire);
-}
-
-bool test_try_reserve_persistent_state_processing_memory(td::uint64 size) {
-  return try_reserve_persistent_state_processing_memory(size);
-}
-
-}  // namespace testing
 
 DownloadState::DownloadState(BlockIdExt block_id, BlockIdExt masterchain_block_id, PersistentStateType type,
                              adnl::AdnlNodeIdShort local_id, overlay::OverlayIdShort overlay_id,
@@ -163,7 +47,7 @@ DownloadState::DownloadState(BlockIdExt block_id, BlockIdExt masterchain_block_i
                              td::actor::ActorId<adnl::AdnlSenderInterface> rldp,
                              td::actor::ActorId<overlay::Overlays> overlays, td::actor::ActorId<adnl::Adnl> adnl,
                              td::actor::ActorId<adnl::AdnlExtClient> client,
-                             td::Promise<BudgetedBufferSlice> promise)
+                             td::Promise<DownloadedPersistentState> promise)
     : block_id_(block_id)
     , masterchain_block_id_(masterchain_block_id)
     , type_(type)
@@ -182,11 +66,27 @@ DownloadState::DownloadState(BlockIdExt block_id, BlockIdExt masterchain_block_i
   CHECK(masterchain_block_id_.is_valid() || effective_shard_ == 0);
 }
 
+void DownloadState::cleanup_tempfile() {
+  if (!file_fd_.empty()) {
+    file_fd_.close();
+  }
+  if (!tempfile_path_.empty()) {
+    auto status = td::unlink(tempfile_path_);
+    if (status.is_error()) {
+      LOG(WARNING) << "failed to remove partial tempfile " << tempfile_path_ << ": " << status;
+    }
+    tempfile_path_.clear();
+  }
+}
+
 void DownloadState::abort_query(td::Status reason) {
   // Drop the RAII reservation here: its destructor is the single source of
   // budget release. If `reservation_` is null (e.g., we never reserved or
   // the buffer was already handed off), this is a no-op.
   reservation_.reset();
+  // Tear down any pending tempfile in case we aborted mid-stream so the
+  // partial file does not survive the actor.
+  cleanup_tempfile();
   if (promise_) {
     LOG(WARNING) << "failed to download state " << block_id_.to_str() << " from " << download_from_ << ": " << reason;
     promise_.set_error(std::move(reason));
@@ -199,20 +99,142 @@ void DownloadState::alarm() {
 }
 
 void DownloadState::finish_query() {
-  if (promise_) {
+  if (!promise_) {
+    // Promise was already settled (e.g., disk path delivered an error
+    // before us); drop the reservation locally so the destructor releases
+    // the budget exactly once.
+    reservation_.reset();
+    cleanup_tempfile();
+    stop();
+    return;
+  }
+  if (mode_ == StorageMode::Heap) {
     // Hand both the buffer and the reservation downstream. The reservation
     // shared_ptr keeps the bytes accounted against the global budget for as
     // long as any caller holds the BudgetedBufferSlice (or any copy of the
     // shared_ptr). DO NOT release the budget here: that would prematurely
     // free the accounting while downstream is still holding the buffer.
-    promise_.set_value(BudgetedBufferSlice{std::move(state_), std::move(reservation_)});
-  } else {
-    // Promise was already settled (e.g., disk path delivered an error
-    // before us); drop the reservation locally so the destructor releases
-    // the budget exactly once.
-    reservation_.reset();
+    promise_.set_value(DownloadedPersistentState::memory(
+        BudgetedBufferSlice{std::move(state_), std::move(reservation_)}));
+    stop();
+    return;
   }
+
+  // File mode: fsync, rename .partial -> final, then hand the path
+  // (still owned via BudgetedStateFile.is_temp = true so the consumer's
+  // destructor cleans up after parse).
+  auto status = finalize_tempfile();
+  if (status.is_error()) {
+    cleanup_tempfile();
+    promise_.set_error(std::move(status));
+    reservation_.reset();
+    stop();
+    return;
+  }
+
+  BudgetedStateFile bsf{std::move(tempfile_path_), sum_, std::move(reservation_), /*temp=*/true};
+  tempfile_path_.clear();
+  promise_.set_value(DownloadedPersistentState::file(std::move(bsf)));
   stop();
+}
+
+td::Status DownloadState::open_tempfile(td::uint64 size) {
+  auto root = get_persistent_state_tempfile_dir();
+  if (root.empty()) {
+    return td::Status::Error("persistent state tempfile directory not registered");
+  }
+  // Best-effort: ensure the directory exists.
+  auto mk = td::mkpath(root + "/persistent-state/", 0700);
+  if (mk.is_error()) {
+    return td::Status::Error(PSTRING() << "cannot create tempfile dir " << root << "/persistent-state/: "
+                                       << mk.error());
+  }
+  // Filename pattern: persistent-state/<block_id>.<ptr>.partial
+  // The pid+ptr disambiguator avoids collisions if two downloads target the
+  // same block id concurrently. The .partial suffix is what
+  // cleanup_persistent_state_tempfiles() looks for to sweep residue at
+  // startup.
+  std::string path = PSTRING() << root << "/persistent-state/" << block_id_.id.to_str() << "."
+                               << static_cast<td::uint64>(reinterpret_cast<std::uintptr_t>(this))
+                               << ".partial";
+  auto r_fd = td::FileFd::open(
+      path,
+      td::FileFd::Flags::Write | td::FileFd::Flags::Read | td::FileFd::Flags::Create | td::FileFd::Flags::Truncate);
+  if (r_fd.is_error()) {
+    return td::Status::Error(PSTRING() << "cannot open tempfile " << path << ": " << r_fd.error());
+  }
+  file_fd_ = r_fd.move_as_ok();
+  tempfile_path_ = std::move(path);
+
+  // Pre-size the file so any pwrite at offset < size is well-defined and
+  // we fail early if disk space is unavailable. Achieved via seek + write
+  // of a single zero byte at the end (portable equivalent of ftruncate via
+  // the FileFd API surface).
+  if (size > 0) {
+    auto seek_status = file_fd_.seek(static_cast<td::int64>(size) - 1);
+    if (seek_status.is_error()) {
+      return td::Status::Error(PSTRING() << "cannot seek tempfile to " << size << ": " << seek_status);
+    }
+    char zero = 0;
+    auto write_res = file_fd_.write(td::Slice(&zero, 1));
+    if (write_res.is_error()) {
+      return td::Status::Error(PSTRING() << "cannot pre-extend tempfile to " << size << ": "
+                                         << write_res.error());
+    }
+    if (write_res.ok() != 1) {
+      return td::Status::Error(PSTRING() << "short pre-extend write: " << write_res.ok() << " of 1");
+    }
+  }
+
+  return td::Status::OK();
+}
+
+td::Status DownloadState::write_chunk_to_tempfile(td::Slice chunk) {
+  if (chunk.empty()) {
+    return td::Status::OK();
+  }
+  // Defensive overflow check. sum_ is tracked elsewhere but we never
+  // pwrite past total_size_; if math somehow lands wrong we error out.
+  td::uint64 offset = sum_;
+  if (chunk.size() > total_size_ || offset > total_size_ - chunk.size()) {
+    return td::Status::Error("tempfile write would exceed advertised size");
+  }
+  auto r_written = file_fd_.pwrite(chunk, static_cast<td::int64>(offset));
+  if (r_written.is_error()) {
+    return td::Status::Error(PSTRING() << "tempfile pwrite failed: " << r_written.error());
+  }
+  if (r_written.ok() != chunk.size()) {
+    // Partial pwrite: fail closed rather than retry. RLDP delivers full
+    // chunks so a partial write here means the FS or disk is in trouble.
+    return td::Status::Error(PSTRING() << "short tempfile pwrite: " << r_written.ok() << " of "
+                                       << chunk.size());
+  }
+  return td::Status::OK();
+}
+
+td::Status DownloadState::finalize_tempfile() {
+  if (file_fd_.empty()) {
+    return td::Status::Error("tempfile already closed");
+  }
+  auto sync_status = file_fd_.sync();
+  if (sync_status.is_error()) {
+    return td::Status::Error(PSTRING() << "tempfile fsync failed: " << sync_status);
+  }
+  file_fd_.close();
+  // Rename .partial -> final.
+  std::string final_path = tempfile_path_;
+  constexpr auto suffix = ".partial";
+  constexpr std::size_t suffix_len = sizeof(".partial") - 1;
+  if (final_path.size() >= suffix_len &&
+      final_path.compare(final_path.size() - suffix_len, suffix_len, suffix) == 0) {
+    final_path.resize(final_path.size() - suffix_len);
+  }
+  auto rename_status = td::rename(tempfile_path_, final_path);
+  if (rename_status.is_error()) {
+    return td::Status::Error(PSTRING() << "tempfile rename failed: " << rename_status);
+  }
+  tempfile_path_ = std::move(final_path);
+  return td::Status::OK();
 }
 
 td::Status DownloadState::prepare_download_buffer(td::uint64 size) {
@@ -221,37 +243,51 @@ td::Status DownloadState::prepare_download_buffer(td::uint64 size) {
     return status;
   }
   if (reservation_) {
-    return td::Status::Error(ErrorCode::protoviolation,
-                             "persistent state download size announced twice");
+    return td::Status::Error("persistent state download size announced twice");
   }
   if (!try_reserve_persistent_state_download_memory(size)) {
-    return td::Status::Error(ErrorCode::notready,
-                             PSTRING() << "persistent state download memory budget exceeded: "
-                                       << size << " requested, "
-                                       << kMaxTotalPersistentStateDownloadBytes << " total budget");
+    return td::Status::Error(PSTRING() << "persistent state download memory budget exceeded: "
+                                       << size << " requested");
   }
   // Wrap the reserved bytes in a shared RAII handle. From this point the
   // ONLY way the budget is released is via this shared_ptr's destructor.
   // If make_shared throws (allocation failure), the reservation handle is
   // never constructed, so the dtor never runs and the bytes we just CAS'd
-  // into the global counter would leak. Release them explicitly on failure.
+  // into the global counter would leak. Release them explicitly on failure
+  // via a stack-allocated reservation whose destructor returns the bytes.
   std::shared_ptr<PersistentStateDownloadReservation> reservation;
   try {
     reservation = std::make_shared<PersistentStateDownloadReservation>(size);
   } catch (...) {
-    release_persistent_state_download_memory(size);
-    return td::Status::Error(ErrorCode::notready,
-                             "cannot allocate persistent state download reservation");
+    PersistentStateDownloadReservation rollback{size};
+    (void)rollback;
+    return td::Status::Error("cannot allocate persistent state download reservation");
   }
+
   total_size_ = size;
-  try {
-    state_ = td::BufferSlice{td::narrow_cast<std::size_t>(total_size_)};
-  } catch (...) {
-    // reservation goes out of scope here; its dtor releases the bytes.
-    total_size_ = 0;
-    return td::Status::Error(ErrorCode::notready,
-                             "cannot allocate persistent state download buffer");
+  // Pick storage mode based on the heap threshold. Anything larger than
+  // the threshold bypasses the BufferSlice path entirely so a 1 GiB
+  // state cannot induce a 1 GiB heap allocation.
+  if (size <= persistent_state_heap_threshold_bytes()) {
+    mode_ = StorageMode::Heap;
+    try {
+      state_ = td::BufferSlice{td::narrow_cast<std::size_t>(total_size_)};
+    } catch (...) {
+      // reservation goes out of scope here; its dtor releases the bytes.
+      total_size_ = 0;
+      return td::Status::Error("cannot allocate persistent state download buffer");
+    }
+  } else {
+    mode_ = StorageMode::File;
+    auto file_status = open_tempfile(size);
+    if (file_status.is_error()) {
+      // reservation goes out of scope here; its dtor releases the bytes.
+      cleanup_tempfile();
+      total_size_ = 0;
+      return file_status;
+    }
   }
+
   reservation_ = std::move(reservation);
   sum_ = 0;
   return td::Status::OK();
@@ -486,8 +522,8 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
                                   "persistent state stream exceeds advertised size"));
     return;
   }
-  if (data.size() > kMaxPersistentStateDownloadBytes ||
-      sum_ > kMaxPersistentStateDownloadBytes - data.size()) {
+  if (data.size() > persistent_state_max_file_bytes() ||
+      sum_ > persistent_state_max_file_bytes() - data.size()) {
     abort_query(td::Status::Error(ErrorCode::protoviolation,
                                   "persistent state stream exceeds local size limit"));
     return;
@@ -495,9 +531,23 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
 
   bool short_part = requested_size != 0 && data.size() < requested_size;
   if (data.size() != 0) {
-    auto dst = state_.as_slice();
-    dst.remove_prefix(td::narrow_cast<std::size_t>(sum_));
-    dst.copy_from(data.as_slice());
+    if (mode_ == StorageMode::Heap) {
+      auto dst = state_.as_slice();
+      dst.remove_prefix(td::narrow_cast<std::size_t>(sum_));
+      dst.copy_from(data.as_slice());
+    } else {
+      auto write_status = write_chunk_to_tempfile(data.as_slice());
+      if (write_status.is_error()) {
+        abort_query(std::move(write_status));
+        return;
+      }
+    }
+  }
+  // Defense in depth: data.size() is bounded by total_size_ - sum_ above,
+  // so the add never overflows. Re-check explicitly.
+  if (data.size() > std::numeric_limits<td::uint64>::max() - sum_) {
+    abort_query(td::Status::Error("byte counter overflow"));
+    return;
   }
   sum_ += data.size();
 
@@ -532,7 +582,13 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
 
   if (sum_ == total_size_) {
     status_.set_status(PSTRING() << block_id_.id.to_str() << " : " << sum_ << " bytes, finishing");
-    got_block_state(std::move(state_));
+    if (mode_ == StorageMode::Heap) {
+      got_block_state(std::move(state_));
+    } else {
+      LOG(WARNING) << "finished downloading state " << block_id_.to_str() << ": "
+                   << td::format::as_size(sum_) << " (file)";
+      finish_query();
+    }
     return;
   }
 
@@ -562,6 +618,32 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
 }
 
 void DownloadState::got_block_state(td::BufferSlice data) {
+  // Monolithic delivery path used by zero-state and the local DB
+  // short-circuit. Data arrives in one chunk, no total_size announced.
+  // Use heap mode unconditionally here.
+  if (data.size() > persistent_state_max_file_bytes()) {
+    abort_query(td::Status::Error(ErrorCode::protoviolation,
+                                  PSTRING() << "monolithic state too large: " << data.size() << " > "
+                                            << persistent_state_max_file_bytes()));
+    return;
+  }
+  if (!reservation_) {
+    if (!try_reserve_persistent_state_download_memory(data.size())) {
+      abort_query(td::Status::Error("download budget exceeded for monolithic state"));
+      return;
+    }
+    try {
+      reservation_ = std::make_shared<PersistentStateDownloadReservation>(data.size());
+    } catch (...) {
+      PersistentStateDownloadReservation rollback{data.size()};
+      (void)rollback;
+      abort_query(td::Status::Error("cannot allocate reservation for monolithic state"));
+      return;
+    }
+    mode_ = StorageMode::Heap;
+    total_size_ = data.size();
+    sum_ = data.size();
+  }
   state_ = std::move(data);
   LOG(WARNING) << "finished downloading state " << block_id_.to_str() << ": " << td::format::as_size(state_.size());
   finish_query();

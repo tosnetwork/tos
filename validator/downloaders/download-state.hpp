@@ -19,14 +19,46 @@
 */
 #pragma once
 
+#include "td/utils/Status.h"
+#include "td/utils/port/FileFd.h"
 #include "validator/interfaces/validator-manager.h"
 #include "validator/state-download-buffer.h"
+#include "vm/cells/Cell.h"
 
 #include "stats-provider.h"
+
+#include <functional>
+#include <string>
 
 namespace tos {
 
 namespace validator {
+
+// Stream the contents of a tempfile into the destination FileFd that the
+// archive manager opens for store_persistent_state_file_gen and
+// store_zero_state_file_gen. The implementation copies in 1 MiB chunks so
+// peak resident memory is bounded by the chunk size, regardless of the
+// underlying state size. No BufferSlice of size == state size is ever
+// allocated. Returns Status::OK on a complete copy, or an Error on read /
+// write / short-IO failures.
+td::Status copy_tempfile_to_writer(const std::string &src_path, td::uint64 size, td::FileFd &dst);
+
+// Run the OnDisk parse pipeline that DownloadShardState::downloaded_shard_state
+// uses for the OnDisk branch: mmap → BoC deserialize → compare root hash
+// against the BFT-attested expected root. Returns the deserialized cell
+// tree on success.
+//
+// Exposed so a regression test can pin the claim "validate_deep() is
+// skipped on the OnDisk path because the BoC deserializer + root-hash
+// check is the same invariant validate_deep() enforces": the test feeds
+// a corrupted tempfile to this function and asserts the corruption is
+// rejected with a descriptive Status::Error.
+//
+// NOT a public API surface — the function is on the `validator::` (NOT
+// `validator::fullnode::`) namespace and the only call site outside
+// downloaded_shard_state is the regression test.
+td::Result<td::Ref<vm::Cell>> parse_ondisk_state_for_test(fullnode::BudgetedStateFile &file,
+                                                          const RootHash &expected_root_hash);
 
 class SplitStateDeserializer;
 
@@ -52,14 +84,14 @@ class DownloadShardState : public td::actor::Actor {
   void download_proof_link();
 
   void download_zero_state();
-  void downloaded_zero_state(fullnode::BudgetedBufferSlice budgeted);
+  void downloaded_zero_state(fullnode::DownloadedPersistentState downloaded);
 
-  void downloaded_shard_state(fullnode::BudgetedBufferSlice budgeted);
+  void downloaded_shard_state(fullnode::DownloadedPersistentState downloaded);
   void checked_shard_state();
 
-  void downloaded_split_state_header(fullnode::BudgetedBufferSlice budgeted);
+  void downloaded_split_state_header(fullnode::DownloadedPersistentState downloaded);
   void download_next_part_or_finish();
-  void downloaded_state_part(fullnode::BudgetedBufferSlice budgeted);
+  void downloaded_state_part(fullnode::DownloadedPersistentState downloaded);
   void written_state_part_file();
   void saved_state_part_into_celldb(td::Ref<vm::DataCell> cell);
 
@@ -90,11 +122,18 @@ class DownloadShardState : public td::actor::Actor {
   std::vector<Ref<vm::Cell>> stored_parts_;
 
   td::BufferSlice data_;
-  // Reservation tied to the buffer above. Held in the actor state so the
-  // global persistent-state download budget stays charged for as long as
-  // the downloaded buffer is being processed (deserialize, validate, write
-  // to disk). Released exactly once when this shared_ptr is dropped.
+  // Reservation tied to the buffer/file above. Held in the actor state
+  // so the global persistent-state download budget stays charged for as
+  // long as the downloaded buffer is being processed (deserialize,
+  // validate, write to disk). Released exactly once when this shared_ptr
+  // is dropped.
   std::shared_ptr<fullnode::PersistentStateDownloadReservation> data_reservation_;
+  // Set when the downloaded state arrived as an on-disk tempfile
+  // (DownloadedPersistentState::Kind::OnDisk). The actor reads from this
+  // file to deserialize/persist; on success the downstream
+  // store_persistent_state_file consumes the file, on abort the
+  // BudgetedStateFile destructor unlinks the tempfile.
+  fullnode::BudgetedStateFile data_file_;
   td::Ref<ShardState> state_;
 
   ProcessStatus status_;

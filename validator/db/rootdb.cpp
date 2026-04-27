@@ -383,6 +383,12 @@ void RootDb::store_zero_state_file(BlockIdExt block_id, td::BufferSlice state, t
   td::actor::send_closure(archive_db_, &ArchiveManager::add_zero_state, block_id, std::move(state), std::move(promise));
 }
 
+void RootDb::store_zero_state_file_gen(BlockIdExt block_id, std::function<td::Status(td::FileFd &)> write_data,
+                                       td::Promise<td::Unit> promise) {
+  td::actor::send_closure(archive_db_, &ArchiveManager::add_zero_state_gen, block_id, std::move(write_data),
+                          std::move(promise));
+}
+
 void RootDb::get_zero_state_file(BlockIdExt block_id, td::Promise<td::BufferSlice> promise) {
   td::actor::send_closure(archive_db_, &ArchiveManager::get_zero_state, block_id, std::move(promise));
 }

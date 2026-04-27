@@ -57,14 +57,19 @@ class FullNodeShard : public td::actor::Actor {
 
   virtual void download_block(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,
                               td::Promise<ReceivedBlock> promise) = 0;
-  // Persistent state downloads use BudgetedBufferSlice so the
-  // download-memory budget reservation is RAII-tied to the buffer's
-  // lifetime (released only when the last shared_ptr ref is dropped).
+  // Persistent state downloads return DownloadedPersistentState. Small
+  // states ride the in-memory branch (BudgetedBufferSlice) and keep the
+  // existing fast path; larger states ride the on-disk branch
+  // (BudgetedStateFile) where the downloader streams chunks into a
+  // tempfile via pwrite. The download budget reservation is RAII-tied
+  // to the wrapping handle so it is only released when the last
+  // shared_ptr ref drops (i.e., when the downstream consumer is done
+  // with either the BufferSlice or the tempfile).
   virtual void download_zero_state(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,
-                                   td::Promise<BudgetedBufferSlice> promise) = 0;
+                                   td::Promise<DownloadedPersistentState> promise) = 0;
   virtual void download_persistent_state(BlockIdExt id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                          td::uint32 priority, td::Timestamp timeout,
-                                         td::Promise<BudgetedBufferSlice> promise) = 0;
+                                         td::Promise<DownloadedPersistentState> promise) = 0;
 
   virtual void download_block_proof(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
                                     td::Promise<td::BufferSlice> promise) = 0;

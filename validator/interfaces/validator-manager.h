@@ -299,6 +299,12 @@ class ValidatorManager : public ValidatorManagerInterface {
                                                std::function<td::Status(td::FileFd&)> write_data,
                                                td::Promise<td::Unit> promise) = 0;
   virtual void store_zero_state_file(BlockIdExt block_id, td::BufferSlice state, td::Promise<td::Unit> promise) = 0;
+  // Streaming variant of store_zero_state_file. The writer is invoked
+  // with an open FileFd pointing at the destination archive entry; it
+  // streams the zero-state bytes via FileFd::write/pwrite and returns
+  // Status. No BufferSlice of state size is materialized in memory.
+  virtual void store_zero_state_file_gen(BlockIdExt block_id, std::function<td::Status(td::FileFd&)> write_data,
+                                         td::Promise<td::Unit> promise) = 0;
 
   virtual void set_block_data(BlockHandle handle, td::Ref<BlockData> data, td::Promise<td::Unit> promise) = 0;
   virtual void wait_block_data(BlockHandle handle, td::uint32 priority, td::Timestamp,
@@ -351,16 +357,17 @@ class ValidatorManager : public ValidatorManagerInterface {
   virtual void new_block(BlockHandle handle, td::Ref<ShardState> state, td::Promise<td::Unit> promise) = 0;
 
   virtual void send_get_block_request(BlockIdExt id, td::uint32 priority, td::Promise<ReceivedBlock> promise) = 0;
-  // Persistent / zero state downloads return BudgetedBufferSlice so the
-  // global download-memory budget reservation stays alive end-to-end. The
-  // reservation is released only when the last shared_ptr ref drops, which
-  // ensures the budget covers actual resident memory rather than the
-  // adapter handoff boundary.
+  // Persistent / zero state downloads return DownloadedPersistentState
+  // (in-memory BudgetedBufferSlice or on-disk BudgetedStateFile) so the
+  // global download-memory budget reservation stays alive end-to-end.
+  // The reservation is released only when the last shared_ptr ref
+  // drops, which ensures the budget covers actual resident memory or
+  // disk bytes rather than the adapter handoff boundary.
   virtual void send_get_zero_state_request(BlockIdExt id, td::uint32 priority,
-                                           td::Promise<fullnode::BudgetedBufferSlice> promise) = 0;
+                                           td::Promise<fullnode::DownloadedPersistentState> promise) = 0;
   virtual void send_get_persistent_state_request(BlockIdExt id, BlockIdExt masterchain_block_id,
                                                  PersistentStateType type, td::uint32 priority,
-                                                 td::Promise<fullnode::BudgetedBufferSlice> promise) = 0;
+                                                 td::Promise<fullnode::DownloadedPersistentState> promise) = 0;
   virtual void send_get_block_proof_request(BlockIdExt block_id, td::uint32 priority,
                                             td::Promise<td::BufferSlice> promise) = 0;
   virtual void send_get_block_proof_link_request(BlockIdExt block_id, td::uint32 priority,

@@ -19,9 +19,11 @@
 */
 #include "common/checksum.h"
 #include "common/delay.h"
+#include "td/utils/port/FileFd.h"
 #include "tos/tos-io.hpp"
 #include "validator/downloaders/download-state.hpp"
 #include "validator/fabric.h"
+#include "vm/boc.h"
 
 #include "wait-block-state.hpp"
 
@@ -108,7 +110,7 @@ void WaitBlockState::start() {
     td::actor::send_closure(manager_, &ValidatorManager::try_get_static_file, handle_->id().file_hash, std::move(P));
   } else if (handle_->id().id.seqno == 0) {
     auto P = td::PromiseCreator::lambda(
-        [SelfId = actor_id(this)](td::Result<fullnode::BudgetedBufferSlice> R) {
+        [SelfId = actor_id(this)](td::Result<fullnode::DownloadedPersistentState> R) {
           if (R.is_error()) {
             td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_state_from_net,
                                     R.move_as_error_prefix("net error: "));
@@ -433,12 +435,86 @@ void WaitBlockState::got_state_from_net(td::BufferSlice data) {
                           std::move(P));
 }
 
-void WaitBlockState::got_state_from_net_budgeted(fullnode::BudgetedBufferSlice budgeted) {
+void WaitBlockState::got_state_from_net_budgeted(fullnode::DownloadedPersistentState downloaded) {
   // Pin the reservation to the actor so the global download budget stays
   // charged across deserialize/validate/persist; it is released once
-  // store_zero_state_file completes (see got_state_from_net above).
-  data_reservation_ = std::move(budgeted.reservation);
-  got_state_from_net(std::move(budgeted.data));
+  // the disk write completes (see got_state_from_net above for the
+  // InMemory path).
+  if (downloaded.is_memory()) {
+    data_reservation_ = std::move(downloaded.memory().reservation);
+    got_state_from_net(std::move(downloaded.memory().data));
+    return;
+  }
+  // OnDisk path for zero state. Three stages, all streaming:
+  //   1. mmap the tempfile and validate the file_hash against the
+  //      mmap'd Slice — no heap BufferSlice of file size is allocated.
+  //   2. deserialize + validate the shard state from the mmap'd Slice.
+  //   3. persist via store_zero_state_file_gen with a 1 MiB-chunk
+  //      writer (copy_tempfile_to_writer). No BufferSlice of state
+  //      size is ever allocated, regardless of state size.
+  auto file = std::move(downloaded.file());
+  auto r_slice = fullnode::mmap_persistent_state_file(file);
+  if (r_slice.is_error()) {
+    abort_query(r_slice.move_as_error());
+    return;
+  }
+  td::Slice mapped = r_slice.move_as_ok();
+  if (sha256_bits256(mapped) != handle_->id().file_hash) {
+    abort_query(td::Status::Error("bad zero state from net: file hash mismatch"));
+    return;
+  }
+
+  auto r_root = vm::std_boc_deserialize(mapped);
+  if (r_root.is_error()) {
+    abort_query(r_root.move_as_error_prefix("received bad zero state from net: "));
+    return;
+  }
+  auto r_state = create_shard_state(handle_->id(), r_root.move_as_ok());
+  if (r_state.is_error()) {
+    abort_query(r_state.move_as_error_prefix("received bad zero state from net: "));
+    return;
+  }
+  auto state = r_state.move_as_ok();
+  if (state->root_hash() != handle_->state()) {
+    abort_query(td::Status::Error("received zero state has bad root hash"));
+    return;
+  }
+
+  // Zero state is the seqno=0 case: stamp metadata that the seqno!=0
+  // path normally derives from validate_deep().
+  handle_->set_state_root_hash(handle_->id().root_hash);
+  handle_->set_logical_time(state->get_logical_time());
+  handle_->set_unix_time(state->get_unix_time());
+  handle_->set_is_key_block(handle_->id().is_masterchain() && handle_->id().id.seqno == 0);
+  handle_->set_split(state->before_split());
+
+  prev_state_ = std::move(state);
+
+  // Pin the download reservation across the persist step so the global
+  // download budget stays charged until the archive write fsync's.
+  auto reservation = std::move(file.reservation);
+  auto src_path = file.path;
+  auto src_size = file.size;
+  auto write_data = [src_path, src_size](td::FileFd &dst) -> td::Status {
+    return copy_tempfile_to_writer(src_path, src_size, dst);
+  };
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), reservation = std::move(reservation),
+       file = std::move(file)](td::Result<td::Unit> R) mutable {
+        // Drop the BudgetedStateFile (unmaps + unlinks the tempfile)
+        // and release the download reservation exactly once on this
+        // completion.
+        (void)file;
+        reservation.reset();
+        if (R.is_error()) {
+          td::actor::send_closure(SelfId, &WaitBlockState::abort_query,
+                                  R.move_as_error_prefix("db set error: "));
+        } else {
+          td::actor::send_closure(SelfId, &WaitBlockState::written_state_file);
+        }
+      });
+  td::actor::send_closure(manager_, &ValidatorManager::store_zero_state_file_gen, handle_->id(),
+                          std::move(write_data), std::move(P));
 }
 
 void WaitBlockState::written_state_file() {
@@ -456,7 +532,7 @@ void WaitBlockState::written_state_file() {
 
 void WaitBlockState::failed_to_get_zero_state() {
   auto P = td::PromiseCreator::lambda(
-      [SelfId = actor_id(this)](td::Result<fullnode::BudgetedBufferSlice> R) {
+      [SelfId = actor_id(this)](td::Result<fullnode::DownloadedPersistentState> R) {
         if (R.is_error()) {
           td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_state_from_net,
                                   R.move_as_error_prefix("net error: "));

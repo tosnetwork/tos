@@ -390,6 +390,34 @@ void ArchiveManager::add_zero_state(BlockIdExt block_id, td::BufferSlice data, t
       .release();
 }
 
+void ArchiveManager::add_zero_state_gen(BlockIdExt block_id, std::function<td::Status(td::FileFd &)> write_state,
+                                        td::Promise<td::Unit> promise) {
+  // Streaming zero-state persist: the writer is invoked with an open
+  // FileFd for the destination archive entry and copies the bytes in
+  // 1 MiB chunks (see copy_tempfile_to_writer). No BufferSlice of state
+  // size is materialized in memory.
+  auto id = FileReference{fileref::ZeroState{block_id}};
+  auto hash = id.hash();
+  if (perm_states_.find({0, hash}) != perm_states_.end()) {
+    promise.set_value(td::Unit());
+    return;
+  }
+
+  auto path = db_root_ + "/archive/states/" + id.filename_short();
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), id = id.shortref(), promise = std::move(promise)](td::Result<std::string> R) mutable {
+        if (R.is_error()) {
+          promise.set_error(R.move_as_error());
+        } else {
+          td::actor::send_closure(SelfId, &ArchiveManager::register_perm_state, id);
+          promise.set_value(td::Unit());
+        }
+      });
+  td::actor::create_actor<db::WriteFile>("writefile", db_root_ + "/archive/tmp/", path, std::move(write_state),
+                                         std::move(P))
+      .release();
+}
+
 namespace {
 
 FileReferenceShort create_persistent_state_id(BlockIdExt block_id, BlockIdExt mc_block_id, PersistentStateType type) {

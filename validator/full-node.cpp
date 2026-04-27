@@ -414,7 +414,7 @@ void FullNodeImpl::download_block(BlockIdExt id, td::uint32 priority, td::Timest
 }
 
 void FullNodeImpl::download_zero_state(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,
-                                       td::Promise<BudgetedBufferSlice> promise) {
+                                       td::Promise<DownloadedPersistentState> promise) {
   auto shard = get_shard(id.shard_full());
   if (shard.empty()) {
     VLOG(FULL_NODE_WARNING) << "dropping download state query to unknown shard";
@@ -426,7 +426,7 @@ void FullNodeImpl::download_zero_state(BlockIdExt id, td::uint32 priority, td::T
 
 void FullNodeImpl::download_persistent_state(BlockIdExt id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                              td::uint32 priority, td::Timestamp timeout,
-                                             td::Promise<BudgetedBufferSlice> promise) {
+                                             td::Promise<DownloadedPersistentState> promise) {
   auto shard = get_shard(id.shard_full(), /* historical = */ true);
   if (shard.empty()) {
     VLOG(FULL_NODE_WARNING) << "dropping download state diff query to unknown shard";
@@ -709,17 +709,19 @@ void FullNodeImpl::start_up() {
       td::actor::send_closure(id_, &FullNodeImpl::download_block, id, priority, timeout, std::move(promise));
     }
     void download_zero_state(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,
-                             td::Promise<BudgetedBufferSlice> promise) override {
-      // The promise carries BudgetedBufferSlice end-to-end so the global
-      // download-memory budget reservation stays alive through manager
-      // and downstream consumers. It is released only when the last
+                             td::Promise<DownloadedPersistentState> promise) override {
+      // The promise carries DownloadedPersistentState end-to-end so the
+      // global download-memory budget reservation stays alive through
+      // manager and downstream consumers, regardless of whether the
+      // state is in-memory (BudgetedBufferSlice) or on-disk
+      // (BudgetedStateFile). It is released only when the last
       // shared_ptr reference is dropped (i.e., when downstream finishes
-      // processing the buffer).
+      // processing the buffer or the tempfile).
       td::actor::send_closure(id_, &FullNodeImpl::download_zero_state, id, priority, timeout, std::move(promise));
     }
     void download_persistent_state(BlockIdExt id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                    td::uint32 priority, td::Timestamp timeout,
-                                   td::Promise<BudgetedBufferSlice> promise) override {
+                                   td::Promise<DownloadedPersistentState> promise) override {
       // See download_zero_state above: the budget reservation is
       // forwarded along with the buffer so its lifetime tracks actual
       // resident memory rather than the adapter handoff boundary.

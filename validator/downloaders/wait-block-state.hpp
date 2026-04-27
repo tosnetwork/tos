@@ -63,9 +63,11 @@ class WaitBlockState : public td::actor::Actor {
   void failed_to_get_block_data(td::Status reason);
   void got_state_from_net(td::BufferSlice data);
   // Budgeted variant: received from a download path that carries a
-  // PersistentStateDownloadReservation. The reservation is held in the
-  // actor while the buffer is processed and persisted, then released.
-  void got_state_from_net_budgeted(fullnode::BudgetedBufferSlice budgeted);
+  // PersistentStateDownloadReservation, possibly wrapping either an
+  // in-memory BufferSlice or an on-disk tempfile. The reservation is
+  // held in the actor while the buffer is processed and persisted,
+  // then released.
+  void got_state_from_net_budgeted(fullnode::DownloadedPersistentState downloaded);
   void failed_to_get_zero_state();
   void failed_to_get_state_from_net(td::Status reason);
   void got_proof_link(td::BufferSlice data);

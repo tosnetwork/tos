@@ -773,6 +773,12 @@ void ValidatorManagerImpl::store_zero_state_file(BlockIdExt block_id, td::Buffer
   td::actor::send_closure(db_, &Db::store_zero_state_file, block_id, std::move(state), std::move(promise));
 }
 
+void ValidatorManagerImpl::store_zero_state_file_gen(BlockIdExt block_id,
+                                                     std::function<td::Status(td::FileFd &)> write_data,
+                                                     td::Promise<td::Unit> promise) {
+  td::actor::send_closure(db_, &Db::store_zero_state_file_gen, block_id, std::move(write_data), std::move(promise));
+}
+
 void ValidatorManagerImpl::set_block_data(BlockHandle handle, td::Ref<BlockData> data, td::Promise<td::Unit> promise) {
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), promise = std::move(promise), handle](td::Result<td::Unit> R) mutable {
@@ -973,13 +979,13 @@ void ValidatorManagerImpl::send_get_block_request(BlockIdExt id, td::uint32 prio
 }
 
 void ValidatorManagerImpl::send_get_zero_state_request(BlockIdExt id, td::uint32 priority,
-                                                       td::Promise<fullnode::BudgetedBufferSlice> promise) {
+                                                       td::Promise<fullnode::DownloadedPersistentState> promise) {
   UNREACHABLE();
 }
 
 void ValidatorManagerImpl::send_get_persistent_state_request(BlockIdExt id, BlockIdExt masterchain_block_id,
                                                              PersistentStateType type, td::uint32 priority,
-                                                             td::Promise<fullnode::BudgetedBufferSlice> promise) {
+                                                             td::Promise<fullnode::DownloadedPersistentState> promise) {
   UNREACHABLE();
 }
 

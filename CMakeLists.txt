@@ -780,7 +780,12 @@ target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
   catchain validatorsession validator-disk tos_validator validator-disk )
 
 add_executable(test-download-state-budget test/test-download-state-budget.cpp)
-target_link_libraries(test-download-state-budget PRIVATE full-node tdutils tdactor adnl overlay tl_api dht)
+# Link tos_crypto for vm::std_boc_serialize / std_boc_deserialize, used by
+# the OnDisk corruption regression to assemble a known-good shard-state BoC
+# and verify that the BoC layer + root-hash compare reject every flavor of
+# tempfile corruption (mid-payload byte flip, CRC32C trailer wipe, content
+# swap with valid BoC envelope).
+target_link_libraries(test-download-state-budget PRIVATE validator-common full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
 add_executable(test-http test/test-http.cpp)
 target_link_libraries(test-http PRIVATE toshttp)

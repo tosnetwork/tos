@@ -163,6 +163,8 @@ class ValidatorManagerImpl : public ValidatorManager {
                                        std::function<td::Status(td::FileFd &)> write_data,
                                        td::Promise<td::Unit> promise) override;
   void store_zero_state_file(BlockIdExt block_id, td::BufferSlice state, td::Promise<td::Unit> promise) override;
+  void store_zero_state_file_gen(BlockIdExt block_id, std::function<td::Status(td::FileFd &)> write_data,
+                                 td::Promise<td::Unit> promise) override;
   void wait_block_state(BlockHandle handle, td::uint32 priority, td::Timestamp timeout, bool wait_store,
                         td::Promise<td::Ref<ShardState>> promise) override;
   void wait_block_state_short(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout, bool wait_store,
@@ -252,10 +254,10 @@ class ValidatorManagerImpl : public ValidatorManager {
 
   void send_get_block_request(BlockIdExt id, td::uint32 priority, td::Promise<ReceivedBlock> promise) override;
   void send_get_zero_state_request(BlockIdExt id, td::uint32 priority,
-                                   td::Promise<fullnode::BudgetedBufferSlice> promise) override;
+                                   td::Promise<fullnode::DownloadedPersistentState> promise) override;
   void send_get_persistent_state_request(BlockIdExt id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                          td::uint32 priority,
-                                         td::Promise<fullnode::BudgetedBufferSlice> promise) override;
+                                         td::Promise<fullnode::DownloadedPersistentState> promise) override;
   void send_get_block_proof_request(BlockIdExt block_id, td::uint32 priority,
                                     td::Promise<td::BufferSlice> promise) override {
     UNREACHABLE();

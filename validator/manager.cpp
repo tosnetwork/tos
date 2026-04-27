@@ -1550,6 +1550,12 @@ void ValidatorManagerImpl::store_zero_state_file(BlockIdExt block_id, td::Buffer
   td::actor::send_closure(db_, &Db::store_zero_state_file, block_id, std::move(state), std::move(promise));
 }
 
+void ValidatorManagerImpl::store_zero_state_file_gen(BlockIdExt block_id,
+                                                     std::function<td::Status(td::FileFd &)> write_data,
+                                                     td::Promise<td::Unit> promise) {
+  td::actor::send_closure(db_, &Db::store_zero_state_file_gen, block_id, std::move(write_data), std::move(promise));
+}
+
 void ValidatorManagerImpl::set_block_data(BlockHandle handle, td::Ref<BlockData> data, td::Promise<td::Unit> promise) {
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), data, handle,
                                        promise = std::move(promise)](td::Result<td::Unit> R) mutable {
@@ -1915,13 +1921,13 @@ void ValidatorManagerImpl::send_get_block_request(BlockIdExt id, td::uint32 prio
 }
 
 void ValidatorManagerImpl::send_get_zero_state_request(BlockIdExt id, td::uint32 priority,
-                                                       td::Promise<fullnode::BudgetedBufferSlice> promise) {
+                                                       td::Promise<fullnode::DownloadedPersistentState> promise) {
   callback_->download_zero_state(id, priority, td::Timestamp::in(10.0), std::move(promise));
 }
 
 void ValidatorManagerImpl::send_get_persistent_state_request(BlockIdExt id, BlockIdExt masterchain_block_id,
                                                              PersistentStateType type, td::uint32 priority,
-                                                             td::Promise<fullnode::BudgetedBufferSlice> promise) {
+                                                             td::Promise<fullnode::DownloadedPersistentState> promise) {
   callback_->download_persistent_state(id, masterchain_block_id, type, priority, td::Timestamp::in(3600 * 3),
                                        std::move(promise));
 }
@@ -2095,6 +2101,16 @@ void ValidatorManagerImpl::start_up() {
       "extmessagecleanup", ext_message_pool_.get(), actor_id(this));
   td::mkdir(db_root_ + "/tmp/").ensure();
   td::mkdir(db_root_ + "/catchains/").ensure();
+
+  // Register the tempfile root for the streaming persistent-state
+  // downloader. DownloadState reads this string when it switches from
+  // heap mode to file mode for very large states. We also sweep any
+  // *.partial files left behind by a prior crash so they do not pile up.
+  fullnode::set_persistent_state_tempfile_dir(db_root_ + "/tmp");
+  auto cleanup_status = fullnode::cleanup_persistent_state_tempfiles(db_root_ + "/tmp/persistent-state");
+  if (cleanup_status.is_error()) {
+    LOG(WARNING) << "persistent state tempfile cleanup at startup failed: " << cleanup_status;
+  }
 
   auto Q =
       td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::actor::ActorOwn<adnl::AdnlExtServer>> R) {

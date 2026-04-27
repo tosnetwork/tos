@@ -161,6 +161,21 @@ set(FULL_NODE_SOURCE
   net/get-next-key-blocks.cpp
 )
 
+# Persistent-state download/processing budget primitives. Lives in its own
+# static library so the budget destructor / reservation API live in exactly
+# ONE translation unit; both validator-common (where downloaders/ link) and
+# full-node (where the actor implementation links) PUBLIC link this so they
+# pick up the same set of symbols regardless of link order.
+add_library(validator-state-download-budget STATIC
+  state-download-buffer.cpp
+  state-download-buffer.h
+)
+target_include_directories(validator-state-download-budget PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/..
+)
+target_link_libraries(validator-state-download-budget PUBLIC tdutils)
+
 add_library(validator-db OBJECT ${VALIDATOR_DB_SOURCE})
 target_include_directories(validator-db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_link_libraries(validator-db PUBLIC tdactor adnl rldp tl_api dht tdfec overlay catchain validatorsession tos_db)
@@ -178,7 +193,7 @@ add_library(validator-common OBJECT
   validator-group.cpp
   validator-options.cpp
 )
-target_link_libraries(validator-common PUBLIC validator-db)
+target_link_libraries(validator-common PUBLIC validator-db validator-state-download-budget)
 
 add_library(validator STATIC ${VALIDATOR_SOURCE})
 add_library(validator-disk STATIC ${DISK_VALIDATOR_SOURCE})
@@ -234,4 +249,5 @@ target_link_libraries(validator-disk PRIVATE validator-common validator-db)
 
 target_link_libraries(validator-hardfork PRIVATE validator-common validator-db)
 
+target_link_libraries(full-node PUBLIC validator-state-download-budget)
 target_link_libraries(full-node PRIVATE tdactor adnl rldp rldp2 tl_api dht tdfec overlay catchain validatorsession tos_db)
