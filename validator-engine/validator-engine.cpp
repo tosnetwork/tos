@@ -5447,6 +5447,20 @@ void ValidatorEngine::set_evm_rpc_per_ip_burst(double burst) {
   json_rpc_opts_.per_ip_burst = burst;
 }
 
+void ValidatorEngine::set_json_rpc_trust_proxy_headers(bool trust) {
+  // M-01 hardening: turn on per-IP attribution via X-Forwarded-For /
+  // X-Real-IP. Honoured only when the real peer is loopback or in the
+  // operator-supplied trusted-proxy list. Default off.
+  json_rpc_opts_.trust_proxy_headers = trust;
+}
+
+void ValidatorEngine::add_json_rpc_trusted_proxy(std::string ip) {
+  // Append a single proxy peer IP (numeric textual form). Loopback is
+  // always implicit; this list extends trust to additional intermediate
+  // proxies when the operator runs the JSON-RPC behind one.
+  json_rpc_opts_.trusted_proxies.push_back(std::move(ip));
+}
+
 void ValidatorEngine::get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise) {
   if (state_.is_null()) {
     promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not started"));
@@ -6090,6 +6104,39 @@ int main(int argc, char *argv[]) {
     }
     acts.push_back([&x, v] {
       td::actor::send_closure(x, &ValidatorEngine::set_evm_rpc_per_ip_burst, v);
+    });
+    return td::Status::OK();
+  });
+  // M-01 hardening: control whether the JSON-RPC server honours
+  // X-Forwarded-For / X-Real-IP headers when attributing a request to
+  // a per-IP rate-limit bucket. Default off — direct public listeners
+  // bucket strictly off the real TCP peer IP, which a malicious
+  // direct client cannot forge.
+  p.add_option('\0', "json-rpc-trust-proxy-headers",
+               "Honour X-Forwarded-For / X-Real-IP for per-IP rate-limit "
+               "attribution. Only consulted when the real TCP peer is on "
+               "loopback or appears in --json-rpc-trusted-proxy. Default off.",
+               [&]() {
+                 acts.push_back([&x] {
+                   td::actor::send_closure(
+                       x, &ValidatorEngine::set_json_rpc_trust_proxy_headers,
+                       true);
+                 });
+               });
+  p.add_checked_option('\0', "json-rpc-trusted-proxy",
+      "Add an explicit IP (numeric textual form) to the trusted-proxy "
+      "allow-list used by --json-rpc-trust-proxy-headers. Repeatable. "
+      "Loopback peers are always implicit, so this flag is only needed "
+      "when the reverse proxy lives on a non-loopback address.",
+      [&](td::Slice arg) {
+    std::string ip{arg.data(), arg.size()};
+    if (ip.empty()) {
+      return td::Status::Error("json-rpc-trusted-proxy must not be empty");
+    }
+    acts.push_back([&x, ip = std::move(ip)]() mutable {
+      td::actor::send_closure(x,
+                              &ValidatorEngine::add_json_rpc_trusted_proxy,
+                              std::move(ip));
     });
     return td::Status::OK();
   });

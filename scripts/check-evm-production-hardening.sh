@@ -739,4 +739,116 @@ if ! awk '
     exit 1
 fi
 
+# tos16 H-02 + H-03: bounded streaming BoC importer must (a) treat
+# StreamingBocImportOptions::max_cells == 0 as the safe default rather
+# than unlimited, (b) carry an explicit max_scaffolding_bytes field,
+# (c) wrap every O(cell_count) vector allocation in try/catch returning
+# the canonical "cannot allocate BoC import scaffolding" error so
+# std::bad_alloc cannot escape to the actor boundary, and (d) the
+# OnDisk persistent-state parse path must fail closed when the file
+# size exceeds max_returned_dag_bytes_per_parse without true streaming.
+boc_h="$root/crypto/vm/boc.h"
+boc_cpp="$root/crypto/vm/boc.cpp"
+download_state_cpp="$root/validator/downloaders/download-state.cpp"
+state_buffer_h="$root/validator/state-download-buffer.h"
+
+if ! rg -q 'kDefaultStreamingBocMaxCells' "$boc_h"; then
+    echo "evm production hardening check failed: kDefaultStreamingBocMaxCells must be declared in crypto/vm/boc.h" >&2
+    exit 1
+fi
+
+if ! rg -q 'max_cells = kDefaultStreamingBocMaxCells' "$boc_h"; then
+    echo "evm production hardening check failed: StreamingBocImportOptions::max_cells must default to kDefaultStreamingBocMaxCells (NOT 0/unlimited)" >&2
+    exit 1
+fi
+
+if ! rg -q 'max_scaffolding_bytes' "$boc_h"; then
+    echo "evm production hardening check failed: StreamingBocImportOptions::max_scaffolding_bytes field must be present" >&2
+    exit 1
+fi
+
+if ! rg -q 'BoC scaffolding budget exceeded' "$boc_cpp"; then
+    echo "evm production hardening check failed: std_boc_deserialize_from_file_bounded must enforce max_scaffolding_bytes" >&2
+    exit 1
+fi
+
+scaffolding_catch_hits=$(rg -c 'cannot allocate BoC import scaffolding' "$boc_cpp" || true)
+if [ -z "$scaffolding_catch_hits" ] || [ "$scaffolding_catch_hits" -lt 4 ]; then
+    echo "evm production hardening check failed: vector allocations in std_boc_deserialize_from_file_bounded must be wrapped in try/catch returning 'cannot allocate BoC import scaffolding' (need >=4 hits, got ${scaffolding_catch_hits:-0})" >&2
+    exit 1
+fi
+
+if ! rg -q 'max_returned_dag_bytes_per_parse' "$state_buffer_h"; then
+    echo "evm production hardening check failed: PersistentStateBudgetConfig::max_returned_dag_bytes_per_parse must be present" >&2
+    exit 1
+fi
+
+if ! rg -q 'enable_true_cell_db_streaming_import' "$state_buffer_h"; then
+    echo "evm production hardening check failed: PersistentStateBudgetConfig::enable_true_cell_db_streaming_import flag must be present" >&2
+    exit 1
+fi
+
+if ! rg -q 'enable CellDb streaming importer' "$download_state_cpp"; then
+    echo "evm production hardening check failed: download-state.cpp must fail closed on oversize states without true streaming importer" >&2
+    exit 1
+fi
+
+if ! rg -q 'max_cells_per_parse' "$download_state_cpp"; then
+    echo "evm production hardening check failed: download-state.cpp must forward max_cells_per_parse into vm::StreamingBocImportOptions" >&2
+    exit 1
+fi
+
+# M-01 (audit, 2026-04-27): the JSON-RPC server's per-IP rate-limit
+# attribution MUST be keyed off the real TCP peer IP captured at accept
+# time, not off forgeable X-Forwarded-For / X-Real-IP headers. The
+# helper `JsonRpcServer::resolve_source_ip` is the single chokepoint;
+# trust_proxy_headers + the trusted-proxy allow-list MUST be wired
+# through the JsonRpcServer Options. A regression that re-enables
+# unconditional XFF / XRI honour would let a direct public client
+# rotate per-IP buckets at will.
+if ! rg -q 'resolve_source_ip' "$json_rpc_server_cpp"; then
+    echo "evm production hardening check failed: JsonRpcServer::resolve_source_ip helper missing — per-IP attribution must use a single chokepoint (M-01)" >&2
+    exit 1
+fi
+if ! rg -q 'trust_proxy_headers' "$json_rpc_server_cpp"; then
+    echo "evm production hardening check failed: trust_proxy_headers wiring missing in $json_rpc_server_cpp (M-01)" >&2
+    exit 1
+fi
+if ! rg -q 'peer_ip\(\)|peer_ip\b' "$json_rpc_server_cpp"; then
+    echo "evm production hardening check failed: JsonRpcServer must consult HttpRequest::peer_ip() for per-IP attribution (M-01)" >&2
+    exit 1
+fi
+# The shared "unknown" bucket sentinel must collapse empty
+# attributions instead of bypassing the gate.
+if ! rg -q '"unknown"' "$json_rpc_server_cpp"; then
+    echo "evm production hardening check failed: JsonRpcServer must collapse empty peer attribution to the shared \"unknown\" bucket (M-01)" >&2
+    exit 1
+fi
+
+# M-02 (audit, 2026-04-27): parse_call_object_strict MUST consult the
+# strict blobVersionedHashes parser. The lax parser silently dropped
+# malformed entries; a regression that revives it would re-introduce
+# silent transaction-type downgrade on a bad call object.
+if ! rg -q 'parse_blob_versioned_hashes_strict' "$rpc_handlers"; then
+    echo "evm production hardening check failed: parse_blob_versioned_hashes_strict must exist (M-02)" >&2
+    exit 1
+fi
+# The legacy lax helper must NOT be called from the strict call-object
+# parser. We scan the strict parser's body for any reference to the
+# legacy name; the strict variant is allowed because it carries the
+# `_strict` suffix.
+if awk '
+    /^static td::Result<silkworm::Transaction>$/ { peek = 1; next }
+    peek && /parse_call_object_strict\(/ { in_h = 1; peek = 0; next }
+    peek { peek = 0 }
+    in_h {
+        if (/parse_blob_versioned_hashes\(/) bad = 1
+    }
+    in_h && /^}$/ { in_h = 0 }
+    END { exit (bad ? 0 : 1) }
+' "$rpc_handlers"; then
+    echo "evm production hardening check failed: parse_call_object_strict must NOT call the lax parse_blob_versioned_hashes (M-02)" >&2
+    exit 1
+fi
+
 echo "evm production hardening check passed"

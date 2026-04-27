@@ -89,6 +89,11 @@ td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
 
   metrics_.requests_total->add(1);
 
+  // Stamp the cached TCP peer IP on the parsed request so the
+  // JSON-RPC server can attribute the per-IP rate-limit bucket to the
+  // real connecting client (not to a forgeable X-Forwarded-For).
+  cur_request_->set_peer_ip(peer_ip_);
+
   auto payload = cur_request_->create_empty_payload().move_as_ok();
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this)](td::Result<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> R) {

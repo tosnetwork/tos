@@ -3,6 +3,8 @@
 #include "evm/rpc/handlers.h"
 
 #include <cstdio>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -135,6 +137,130 @@ bool run_m02_listen_matrix() {
   return all_ok;
 }
 
+// M-01: per-IP source-IP attribution matrix.
+//
+// Drives `JsonRpcServer::resolve_source_ip` through every operationally
+// relevant combination of (real TCP peer, X-Forwarded-For,
+// X-Real-IP, trust_proxy_headers, trusted_proxies) and asserts the
+// exact bucket key returned to `consume_per_ip_token`. The function is
+// pure / state-free, so each row stands alone.
+struct M01Case {
+  const char* label;
+  const char* peer_ip;
+  const char* xff;
+  const char* xri;
+  bool trust_proxy_headers;
+  std::vector<std::string> trusted_proxies;
+  const char* expected;
+};
+
+bool run_m01_source_ip_matrix() {
+  const M01Case cases[] = {
+      // Direct request, no proxy headers, no trust flag — must
+      // attribute to the real TCP peer.
+      {"direct: peer 192.0.2.1, no headers, trust=off",
+       "192.0.2.1", "", "", /*trust=*/false, {}, "192.0.2.1"},
+
+      // Direct request, spoofed XFF, trust flag OFF — XFF is ignored;
+      // attribution is the real peer. This is the M-01 fix: a direct
+      // public client cannot self-stamp X-Forwarded-For to rotate
+      // buckets.
+      {"direct: peer 192.0.2.1, spoofed XFF=10.0.0.5, trust=off",
+       "192.0.2.1", "10.0.0.5", "", /*trust=*/false, {}, "192.0.2.1"},
+
+      // Direct request, spoofed XRI, trust flag OFF — XRI ignored.
+      {"direct: peer 192.0.2.1, spoofed XRI=10.0.0.5, trust=off",
+       "192.0.2.1", "", "10.0.0.5", /*trust=*/false, {}, "192.0.2.1"},
+
+      // Loopback proxy + trust flag ON + XFF — honours XFF leftmost.
+      {"loopback proxy: peer 127.0.0.1, XFF=10.0.0.5, trust=on",
+       "127.0.0.1", "10.0.0.5", "", /*trust=*/true, {}, "10.0.0.5"},
+
+      // IPv6 loopback variant (compressed) + trust flag.
+      {"loopback proxy: peer ::1, XFF=10.0.0.5, trust=on",
+       "::1", "10.0.0.5", "", /*trust=*/true, {}, "10.0.0.5"},
+
+      // IPv6 loopback variant (uncompressed) + trust flag.
+      {"loopback proxy: peer 0:0:0:0:0:0:0:1, XFF=10.0.0.5, trust=on",
+       "0:0:0:0:0:0:0:1", "10.0.0.5", "", /*trust=*/true, {},
+       "10.0.0.5"},
+
+      // Loopback proxy + trust ON + XFF CSV — leftmost wins, with
+      // whitespace stripped (RFC 7239 / common reverse proxy
+      // convention).
+      {"loopback proxy: peer 127.0.0.1, XFF=' 10.0.0.5 , 10.0.0.6', trust=on",
+       "127.0.0.1", " 10.0.0.5 , 10.0.0.6", "", /*trust=*/true, {},
+       "10.0.0.5"},
+
+      // Loopback proxy + trust ON + XRI fallback (no XFF).
+      {"loopback proxy: peer 127.0.0.1, XRI=10.0.0.5, trust=on",
+       "127.0.0.1", "", "10.0.0.5", /*trust=*/true, {}, "10.0.0.5"},
+
+      // Trusted-proxy allow-list: explicit listed proxy peer +
+      // trust ON + XFF — honours XFF.
+      {"trusted proxy: peer 192.0.2.1 listed, XFF=10.0.0.5, trust=on",
+       "192.0.2.1", "10.0.0.5", "", /*trust=*/true,
+       {"192.0.2.1"}, "10.0.0.5"},
+
+      // Trusted-proxy allow-list: peer NOT in list + trust ON +
+      // XFF — XFF must still be IGNORED. The trust flag alone does
+      // not authorize a non-loopback / non-listed peer.
+      {"untrusted peer: peer 192.0.2.1, XFF=10.0.0.5, trust=on, no list",
+       "192.0.2.1", "10.0.0.5", "", /*trust=*/true, {}, "192.0.2.1"},
+
+      // Trusted-proxy allow-list: peer not in list (different value).
+      {"untrusted peer: peer 192.0.2.1, XFF=10.0.0.5, trust=on, list=[203.0.113.7]",
+       "192.0.2.1", "10.0.0.5", "", /*trust=*/true,
+       {"203.0.113.7"}, "192.0.2.1"},
+
+      // Empty peer + trust OFF + no headers — collapses to "unknown"
+      // bucket (NOT the empty-bypass branch).
+      {"empty peer, no headers, trust=off -> unknown",
+       "", "", "", /*trust=*/false, {}, "unknown"},
+
+      // Empty peer + trust ON + no headers — empty peer is not
+      // loopback / not in trusted list, so headers stay ignored even
+      // if they were present, and we still collapse to "unknown".
+      {"empty peer, no headers, trust=on -> unknown",
+       "", "", "", /*trust=*/true, {}, "unknown"},
+
+      // Empty peer + trust ON + XFF set, peer not in list — empty
+      // peer is rejected as a trust anchor, XFF stays ignored,
+      // collapses to "unknown".
+      {"empty peer, XFF=10.0.0.5, trust=on, empty list -> unknown",
+       "", "10.0.0.5", "", /*trust=*/true, {}, "unknown"},
+
+      // Loopback peer + trust ON + XFF empty + XRI empty — falls
+      // back to the peer (loopback) IP.
+      {"loopback proxy: peer 127.0.0.1, no headers, trust=on",
+       "127.0.0.1", "", "", /*trust=*/true, {}, "127.0.0.1"},
+
+      // Loopback peer + trust ON + XFF empty + XRI whitespace-only
+      // — whitespace-only header treated as absent, falls back to
+      // peer.
+      {"loopback proxy: peer 127.0.0.1, XRI='   ', trust=on",
+       "127.0.0.1", "", "   ", /*trust=*/true, {}, "127.0.0.1"},
+
+      // 127.0.0.0/8 IPv4 loopback alias is also implicit trust.
+      {"loopback proxy: peer 127.10.0.5, XFF=10.0.0.5, trust=on",
+       "127.10.0.5", "10.0.0.5", "", /*trust=*/true, {},
+       "10.0.0.5"},
+  };
+
+  bool all_ok = true;
+  for (const auto& c : cases) {
+    std::string got = tos::JsonRpcServer::resolve_source_ip(
+        c.peer_ip, c.xff, c.xri, c.trust_proxy_headers, c.trusted_proxies);
+    bool ok = (got == c.expected);
+    printf("    [%s] %s\n", ok ? "PASS" : "FAIL", c.label);
+    if (!ok) {
+      printf("      expected='%s' got='%s'\n", c.expected, got.c_str());
+      all_ok = false;
+    }
+  }
+  return all_ok;
+}
+
 }  // namespace
 
 int main() {
@@ -189,7 +315,13 @@ int main() {
   printf("  M-02 listen-admission matrix: %s\n",
          listen_ok ? "PASS" : "FAIL");
 
-  ok = lru_ok && body_budget_ok && update_ok && listen_ok;
+  // M-01: per-IP source-IP attribution matrix.
+  printf("  M-01 source-IP attribution matrix:\n");
+  bool source_ip_ok = run_m01_source_ip_matrix();
+  printf("  M-01 source-IP attribution matrix: %s\n",
+         source_ip_ok ? "PASS" : "FAIL");
+
+  ok = lru_ok && body_budget_ok && update_ok && listen_ok && source_ip_ok;
   printf("  %s\n", ok ? "PASSED" : "FAILED");
   return ok ? 0 : 1;
 }

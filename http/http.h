@@ -258,6 +258,18 @@ class HttpRequest {
     keep_alive_ = value;
   }
 
+  // Real TCP peer IP address (numeric textual form), captured by the
+  // inbound HTTP connection at accept time. Empty when the connection
+  // does not have a peer (synthetic / parser-only paths). Distinct from
+  // the X-Forwarded-For / X-Real-IP request headers, which are
+  // user-controlled and may be forged by a direct client.
+  const std::string &peer_ip() const {
+    return peer_ip_;
+  }
+  void set_peer_ip(std::string ip) {
+    peer_ip_ = std::move(ip);
+  }
+
   void store_http(td::ChainBufferWriter &output);
   tl_object_ptr<tos_api::http_request> store_tl(td::Bits256 req_id);
 
@@ -278,6 +290,7 @@ class HttpRequest {
   bool keep_alive_ = false;
 
   std::vector<HttpHeader> options_;
+  std::string peer_ip_;
 };
 
 class HttpResponse {

@@ -450,58 +450,114 @@ void JsonRpcServer::HttpCallback::receive_request(
 
 // ─── Request handling ─────────────────────────────────────────────────────
 
+// M-01 hardening: trim ASCII whitespace from both ends of a string.
+static std::string trim_ws(std::string s) {
+  size_t start = 0;
+  while (start < s.size() &&
+         (s[start] == ' ' || s[start] == '\t' ||
+          s[start] == '\r' || s[start] == '\n')) {
+    ++start;
+  }
+  size_t end = s.size();
+  while (end > start &&
+         (s[end - 1] == ' ' || s[end - 1] == '\t' ||
+          s[end - 1] == '\r' || s[end - 1] == '\n')) {
+    --end;
+  }
+  if (start == 0 && end == s.size()) return s;
+  return s.substr(start, end - start);
+}
+
+// M-01 hardening: returns true when `peer` is on the loopback
+// interface (127.0.0.1, ::1, or the canonical-uncompressed IPv6
+// loopback "0:0:0:0:0:0:0:1"). Loopback peers are always implicit
+// trust anchors for proxy headers — operators that keep an admin
+// surface behind SSH / nginx-on-localhost rely on this.
+static bool peer_is_loopback(const std::string& peer) {
+  if (peer == "127.0.0.1") return true;
+  if (peer == "::1") return true;
+  if (peer == "0:0:0:0:0:0:0:1") return true;
+  // 127.0.0.0/8 is the documented loopback range; cover the most
+  // common variants without pulling in a CIDR matcher.
+  if (peer.size() >= 4 && peer.compare(0, 4, "127.") == 0) return true;
+  return false;
+}
+
+// M-01 hardening: returns true when `peer` is loopback or appears in
+// the operator-supplied trusted-proxy allow-list. Allow-list entries
+// are matched verbatim (numeric textual form, no CIDR / DNS).
+static bool peer_is_loopback_or_trusted(
+    const std::string& peer,
+    const std::vector<std::string>& trusted_proxies) {
+  if (peer_is_loopback(peer)) return true;
+  for (const auto& p : trusted_proxies) {
+    if (p == peer) return true;
+  }
+  return false;
+}
+
+std::string JsonRpcServer::resolve_source_ip(
+    const std::string& peer_ip,
+    const std::string& forwarded_for,
+    const std::string& real_ip,
+    bool trust_proxy_headers,
+    const std::vector<std::string>& trusted_proxies) {
+  std::string source = peer_ip;
+  if (trust_proxy_headers &&
+      peer_is_loopback_or_trusted(peer_ip, trusted_proxies)) {
+    if (!forwarded_for.empty()) {
+      // X-Forwarded-For is a comma-separated list; the leftmost entry
+      // is the original client IP per RFC 7239 / common reverse proxy
+      // convention.
+      auto comma = forwarded_for.find(',');
+      std::string first = (comma == std::string::npos)
+                              ? forwarded_for
+                              : forwarded_for.substr(0, comma);
+      first = trim_ws(std::move(first));
+      if (!first.empty()) {
+        source = std::move(first);
+      }
+    } else if (!real_ip.empty()) {
+      std::string xri = trim_ws(real_ip);
+      if (!xri.empty()) {
+        source = std::move(xri);
+      }
+    }
+  }
+  // Empty attribution must never bypass the per-IP gate. Bucket
+  // every untagged caller into a shared "unknown" slot so a flood
+  // from peer-less connections still throttles.
+  if (source.empty()) {
+    source = "unknown";
+  }
+  return source;
+}
+
 // Extract the originating client IP for the in-process per-IP rate
-// limiter. Production deployments terminate TLS / front-end gateway
-// at a reverse proxy that injects `X-Forwarded-For` (or `X-Real-IP`),
-// so we honour the leftmost address from those headers when present.
-// When no proxy header is present (direct connection on a private
-// network, in-process test harness) we return an empty string and the
-// per-IP gate downgrades to a no-op for that request — the global and
-// per-method limiters still apply. The per-IP gate is opt-in (default
-// off), so an empty attribution never softens the floor below the
-// existing limits.
-//
-// We trust ONLY a single hop. A malicious client can forge
-// `X-Forwarded-For` themselves, so this is meaningful only when an
-// operator-controlled proxy is the actual peer; if that is not the
-// case the operator must keep the per-IP gate disabled OR run the
-// node behind a proxy that strips the header.
+// limiter. The attribution starts from the real TCP peer IP captured
+// at accept time by the inbound HTTP connection (NOT from any
+// user-controlled header). Operators that deploy behind a reverse
+// proxy can opt-in to honouring `X-Forwarded-For` / `X-Real-IP` via
+// the `--json-rpc-trust-proxy-headers` flag; when that flag is on,
+// the headers are honoured only when the real peer is on loopback or
+// listed under `--json-rpc-trusted-proxy=...`.
 static std::string extract_source_ip_for_per_ip_rate_limit(
-    const std::unique_ptr<tos::http::HttpRequest> &request) {
-  if (!request) return std::string();
-  std::string xff = request->get_header("X-Forwarded-For");
-  if (!xff.empty()) {
-    auto comma = xff.find(',');
-    std::string first = comma == std::string::npos
-                            ? std::move(xff)
-                            : xff.substr(0, comma);
-    // Strip leading / trailing whitespace.
-    size_t start = 0;
-    while (start < first.size() &&
-           (first[start] == ' ' || first[start] == '\t')) {
-      start++;
-    }
-    size_t end = first.size();
-    while (end > start &&
-           (first[end - 1] == ' ' || first[end - 1] == '\t')) {
-      end--;
-    }
-    if (end > start) {
-      return first.substr(start, end - start);
-    }
-  }
-  std::string xri = request->get_header("X-Real-IP");
-  if (!xri.empty()) {
-    return xri;
-  }
-  return std::string();
+    const std::unique_ptr<tos::http::HttpRequest> &request,
+    bool trust_proxy_headers,
+    const std::vector<std::string>& trusted_proxies) {
+  if (!request) return std::string("unknown");
+  return JsonRpcServer::resolve_source_ip(
+      request->peer_ip(), request->get_header("X-Forwarded-For"),
+      request->get_header("X-Real-IP"), trust_proxy_headers,
+      trusted_proxies);
 }
 
 void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
                                td::Promise<HttpReturn> promise) {
   auto method = request->method();
   auto url = request->url();
-  std::string source_ip = extract_source_ip_for_per_ip_rate_limit(request);
+  std::string source_ip = extract_source_ip_for_per_ip_rate_limit(
+      request, opts_.trust_proxy_headers, opts_.trusted_proxies);
   // Never log the raw URL — query strings
   // can carry the API key (X-API-Key fallback) or other operator secrets and
   // this log line runs BEFORE auth. Strip the query string for logging only;

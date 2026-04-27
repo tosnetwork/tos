@@ -183,6 +183,34 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     double per_ip_requests_per_sec = 30.0;
     double per_ip_burst = 60.0;
     uint32_t per_ip_table_size = 1024;
+
+    // M-01 hardening: control how the per-IP rate gate attributes a
+    // request to a source IP.
+    //
+    // When `trust_proxy_headers` is false (the default), the gate is
+    // keyed strictly off the real TCP peer IP captured by the inbound
+    // HTTP connection. Direct clients cannot bypass the gate by
+    // forging `X-Forwarded-For` / `X-Real-IP`, and a public RPC
+    // listener with no upstream proxy still buckets every direct
+    // client correctly. Empty peer IPs (rare; init_peer_address(2)
+    // failed) are bucketed into a shared "unknown" slot rather than
+    // falling through with no attribution.
+    //
+    // When `trust_proxy_headers` is true, the gate honours the
+    // leftmost `X-Forwarded-For` (or `X-Real-IP` fallback) header ONLY
+    // when the real TCP peer is on the loopback interface or appears
+    // in `trusted_proxies`. This is the documented deployment for an
+    // operator-controlled reverse proxy that terminates TLS and
+    // injects the original client IP. Outside that allow-list the
+    // headers are ignored — a malicious direct client cannot
+    // self-stamp `X-Forwarded-For` to rotate buckets.
+    bool trust_proxy_headers = false;
+    // Optional explicit allow-list of trusted proxy IPs. Loopback
+    // addresses (127.0.0.1, ::1) are always implicit. Each entry is a
+    // single IPv4 / IPv6 address in textual form; CIDR ranges are not
+    // accepted (operators are expected to know the exact peer address
+    // of their reverse proxy).
+    std::vector<std::string> trusted_proxies;
   };
 
   // M-02 hardening: the listen-time decision matrix is broken out so
@@ -208,6 +236,31 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
       bool api_key_empty,
       bool allow_remote_admin,
       bool readonly);
+
+  // M-01 hardening: pure helper that maps a real TCP peer IP plus
+  // optional X-Forwarded-For / X-Real-IP header values onto the
+  // attribution string consumed by the per-IP rate gate.
+  //
+  // Behaviour:
+  //   - If `trust_proxy_headers` is false, the leftmost forwarded /
+  //     real-IP header values are ignored; the function returns the
+  //     real TCP peer IP, or "unknown" when that is empty.
+  //   - If `trust_proxy_headers` is true, the headers are honoured
+  //     ONLY when `peer_ip` is loopback (127.0.0.1, ::1, 0:0:0:0:0:0:0:1)
+  //     or appears verbatim in `trusted_proxies`. The leftmost token
+  //     of `forwarded_for` (CSV) wins; if it is empty, `real_ip` is
+  //     used as a fallback. When neither header is present the
+  //     function falls back to the peer IP itself.
+  //   - The returned string is guaranteed to be non-empty: an empty
+  //     peer with no usable header value is returned as "unknown" so
+  //     the per-IP gate never falls through to the empty-string
+  //     bypass branch.
+  static std::string resolve_source_ip(
+      const std::string& peer_ip,
+      const std::string& forwarded_for,
+      const std::string& real_ip,
+      bool trust_proxy_headers,
+      const std::vector<std::string>& trusted_proxies);
 
   static td::actor::ActorOwn<JsonRpcServer> create(
       td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,

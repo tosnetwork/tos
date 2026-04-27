@@ -23,6 +23,8 @@
 #include "http-server.h"
 #include "http.h"
 
+#include "td/utils/port/IPAddress.h"
+
 namespace tos {
 
 namespace http {
@@ -36,6 +38,21 @@ class HttpInboundConnection : public HttpConnection {
       , metrics_(std::move(metrics)) {
     metrics_.connections->add(1);
     metrics_.connections_total->add(1);
+    // Capture the TCP peer IP exactly once, at accept time. This is the
+    // real connecting client (or the operator's reverse proxy) — it is
+    // NOT under client control, unlike X-Forwarded-For. Used by the
+    // JSON-RPC server's per-IP rate gate via HttpRequest::peer_ip(). On
+    // failure (rare: getpeername(2) errors out e.g. on closed sockets),
+    // peer_ip_ stays empty and the JSON-RPC layer downgrades to the
+    // shared "unknown" bucket.
+    td::IPAddress peer;
+    // BufferedFd<SocketFd> publicly derives from SocketFd, so this
+    // implicitly binds the const SocketFd& parameter.
+    auto status = peer.init_peer_address(buffered_fd_);
+    if (status.is_ok() && peer.is_valid()) {
+      // get_ip_str() uses a thread-local buffer; copy out immediately.
+      peer_ip_ = peer.get_ip_str().str();
+    }
   }
 
   ~HttpInboundConnection() override {
@@ -97,6 +114,11 @@ class HttpInboundConnection : public HttpConnection {
   std::shared_ptr<HttpServer::Callback> http_callback_;
   std::unique_ptr<HttpRequest> cur_request_;
   std::string cur_line_;
+  // Real TCP peer IP address (numeric textual form). Captured exactly
+  // once at accept time and copied onto every parsed HttpRequest before
+  // it is dispatched to the upper-layer callback. Empty when
+  // init_peer_address() failed at construction time.
+  std::string peer_ip_;
 
   HttpServer::AllMetrics metrics_;
 };

@@ -510,6 +510,12 @@ class ValidatorEngine : public td::actor::Actor {
   void set_evm_rpc_per_ip_enabled(bool enabled);
   void set_evm_rpc_per_ip_rate(double rate);
   void set_evm_rpc_per_ip_burst(double burst);
+  // M-01 hardening: opt-in honour of X-Forwarded-For / X-Real-IP
+  // headers (only when the real TCP peer is loopback or explicitly
+  // trusted via `add_json_rpc_trusted_proxy`). Default off — direct
+  // public listeners attribute strictly off the real peer IP.
+  void set_json_rpc_trust_proxy_headers(bool trust);
+  void add_json_rpc_trusted_proxy(std::string ip);
 
   void get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise);
 

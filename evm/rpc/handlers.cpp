@@ -317,10 +317,18 @@ bool consume_per_ip_token(std::string_view source_ip) {
         return true;
     }
     if (source_ip.empty()) {
-        // No attribution available — do not gate. The caller is
-        // responsible for choosing whether to bypass the per-IP gate
-        // (in-process callers, batch fan-out where the IP is already
-        // gated upstream).
+        // No attribution string at all — bypass. The PUBLIC HTTP
+        // dispatcher MUST resolve to a non-empty value (real peer IP
+        // or the synthetic "unknown" sentinel) before reaching this
+        // path; see `JsonRpcServer::resolve_source_ip` (M-01). The
+        // empty-string branch survives only for in-process callers
+        // that have no IP to attribute the call to (test harnesses,
+        // EVM internal reflection paths via the 3-argument
+        // `handle_eth_rpc` overload). External clients NEVER reach
+        // this branch — `resolve_source_ip` collapses an unattributed
+        // peer to the literal "unknown" string, which falls through
+        // to the regular bucket logic below and shares one slot with
+        // every other unattributed external caller.
         return true;
     }
 
@@ -1221,29 +1229,114 @@ static std::string extract_json_array_body(const std::string& json, const std::s
     return "";
 }
 
-// Parse a `blobVersionedHashes` array (vector of "0x..." 32-byte hex strings).
-// Returns empty vector if the field is absent or empty.
-static std::vector<silkworm::Hash> parse_blob_versioned_hashes(const std::string& call_json) {
+// M-02 hardening: strict parser for `blobVersionedHashes` (EIP-4844).
+//
+// Replaces the prior lax parser that silently dropped malformed
+// entries. Strict semantics:
+//   - missing key            -> empty vector (legitimately optional)
+//   - non-array shape        -> Status::Error
+//   - empty array            -> empty vector
+//   - any element that is not a string                   -> Status::Error
+//   - any element missing the "0x" prefix                 -> Status::Error
+//   - any element whose hex body is not exactly 64 chars  -> Status::Error
+//   - any element with a non-hex digit                    -> Status::Error
+//
+// Every error message includes "blobVersionedHashes" so the strict
+// call-object parser can map it through to the JSON-RPC -32602
+// envelope without losing the field name.
+static td::Result<std::vector<silkworm::Hash>>
+parse_blob_versioned_hashes_strict(const std::string& call_json) {
     std::vector<silkworm::Hash> out;
+    auto kp = call_json.find("\"blobVersionedHashes\"");
+    if (kp == std::string::npos) {
+        // Field is optional — absence is legal.
+        return out;
+    }
+    // Locate the colon and the value start. Any non-array shape
+    // (number, object, string, malformed JSON) is a hard error.
+    auto colon = call_json.find(':', kp + 21);  // strlen("\"blobVersionedHashes\"") == 21
+    if (colon == std::string::npos) {
+        return td::Status::Error(
+            "invalid blobVersionedHashes (missing value)");
+    }
+    size_t start = colon + 1;
+    while (start < call_json.size() &&
+           (call_json[start] == ' ' || call_json[start] == '\t')) {
+        ++start;
+    }
+    if (start >= call_json.size()) {
+        return td::Status::Error(
+            "invalid blobVersionedHashes (missing value)");
+    }
+    // null shortcut: explicit null treated as empty.
+    if (call_json.compare(start, 4, "null") == 0) {
+        return out;
+    }
+    if (call_json[start] != '[') {
+        return td::Status::Error(
+            "invalid blobVersionedHashes (expected JSON array)");
+    }
+
     auto body = extract_json_array_body(call_json, "blobVersionedHashes");
-    if (body.empty()) return out;
+    // body may legitimately be empty (the array was []).
     size_t i = 0;
     while (i < body.size()) {
-        if (body[i] == '"') {
-            // hex literal "0x...."
-            size_t end = body.find('"', i + 1);
-            if (end == std::string::npos) break;
-            std::string hex_str = body.substr(i + 1, end - i - 1);
-            silkworm::Bytes bytes;
-            if (parse_hex_bytes(hex_str + "\"", bytes) && bytes.size() == 32) {
-                silkworm::Hash h;
-                std::memcpy(h.bytes, bytes.data(), 32);
-                out.push_back(h);
-            }
-            i = end + 1;
-        } else {
-            i++;
+        // Skip ASCII whitespace and element separators.
+        while (i < body.size() &&
+               (body[i] == ' ' || body[i] == '\t' ||
+                body[i] == '\r' || body[i] == '\n' ||
+                body[i] == ',')) {
+            ++i;
         }
+        if (i >= body.size()) break;
+        if (body[i] != '"') {
+            // Non-string element (number, bool, object, array). Reject.
+            return td::Status::Error(
+                "invalid blobVersionedHashes entry (must be a 0x-prefixed "
+                "string)");
+        }
+        size_t end = body.find('"', i + 1);
+        if (end == std::string::npos) {
+            return td::Status::Error(
+                "invalid blobVersionedHashes entry (unterminated string)");
+        }
+        std::string hex_str = body.substr(i + 1, end - i - 1);
+        if (hex_str.size() < 2 ||
+            (hex_str[0] != '0') ||
+            (hex_str[1] != 'x' && hex_str[1] != 'X')) {
+            return td::Status::Error(
+                "invalid blobVersionedHashes entry (missing 0x prefix)");
+        }
+        // Body length: a 32-byte hash is exactly 64 hex chars after
+        // the 0x prefix. Reject anything shorter (e.g. "0x1234") or
+        // longer (e.g. 33-byte / 65-hex-char strings).
+        if (hex_str.size() != 2 + 64) {
+            return td::Status::Error(
+                "invalid blobVersionedHashes entry (must be 32 bytes)");
+        }
+        // Validate every hex digit explicitly. parse_hex_bytes uses
+        // a lenient terminator search; here every char must be hex.
+        silkworm::Bytes bytes;
+        bytes.resize(32);
+        bool hex_ok = true;
+        for (size_t b = 0; b < 32; ++b) {
+            uint8_t hi = 0;
+            uint8_t lo = 0;
+            if (!parse_hex_byte(hex_str[2 + b * 2], hi) ||
+                !parse_hex_byte(hex_str[2 + b * 2 + 1], lo)) {
+                hex_ok = false;
+                break;
+            }
+            bytes[b] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+        if (!hex_ok) {
+            return td::Status::Error(
+                "invalid blobVersionedHashes entry (non-hex digit)");
+        }
+        silkworm::Hash h;
+        std::memcpy(h.bytes, bytes.data(), 32);
+        out.push_back(h);
+        i = end + 1;
     }
     return out;
 }
@@ -1558,7 +1651,14 @@ parse_call_object_strict(const std::string& params) {
         }
         txn.max_fee_per_blob_gas = mfb_res.move_as_ok();
     }
-    txn.blob_versioned_hashes = parse_blob_versioned_hashes(params);
+    // M-02 hardening: strict blobVersionedHashes parser. Any malformed
+    // entry (non-string, missing 0x prefix, non-hex, length != 32 bytes)
+    // surfaces as -32602 instead of being silently dropped.
+    auto blob_res = parse_blob_versioned_hashes_strict(params);
+    if (blob_res.is_error()) {
+        return td::Status::Error(blob_res.error().message().str());
+    }
+    txn.blob_versioned_hashes = blob_res.move_as_ok();
     if (!txn.blob_versioned_hashes.empty()) {
         txn.type = silkworm::TransactionType::kBlob;
     } else if (!txn.access_list.empty() || !mp_hex.empty()) {

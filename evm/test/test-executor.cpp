@@ -1667,6 +1667,178 @@ static void test_m03_eth_simulate_v1_call_object_strict() {
 
 // ---- positive control: a fully-valid call still succeeds ----
 
+// ---------------------------------------------------------------------------
+// M-02 — strict blobVersionedHashes parser.
+// `parse_call_object_strict` previously delegated to a lax parser that
+// silently dropped malformed entries. The strict parser fails with
+// -32602 on any deviation: missing 0x prefix, non-hex digit, length
+// != 32 bytes, or a non-string element. The happy-path tests below
+// keep the legitimate (empty / valid) shapes accepted.
+// ---------------------------------------------------------------------------
+
+namespace m02_blob_helpers {
+
+static std::string build_call_with_blob_hashes(
+    const std::string& blob_hashes_json) {
+    return std::string(
+        "[{\"from\":\"0x0000000000000000000000000000000000000000\","
+        "\"to\":\"0x0000000000000000000000000000000000000004\","
+        "\"data\":\"0x\","
+        "\"gas\":\"0x186a0\","
+        "\"value\":\"0x0\","
+        "\"nonce\":\"0x0\","
+        "\"maxFeePerBlobGas\":\"0x1\","
+        "\"blobVersionedHashes\":") + blob_hashes_json +
+        "},\"latest\"]";
+}
+
+static bool response_has_invalid_blob(const std::string& json) {
+    return json.find("\"code\":-32602") != std::string::npos &&
+           json.find("invalid blobVersionedHashes") != std::string::npos;
+}
+
+}  // namespace m02_blob_helpers
+
+static void test_m02_blob_versioned_hashes_short_rejected() {
+    printf("=== test_m02_blob_versioned_hashes_short_rejected ===\n");
+    // 2-byte hex (0x1234) — strict parser must reject.
+    std::string params = m02_blob_helpers::build_call_with_blob_hashes(
+        "[\"0x1234\"]");
+    auto r = evm_workchain::handle_eth_rpc("eth_call", params,
+                                           "M02-blob-short");
+    bool handled = static_cast<bool>(r);
+    bool ok = handled && r->is_error &&
+              m02_blob_helpers::response_has_invalid_blob(r->json);
+    printf("  response head: %.250s\n",
+           handled ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m02_blob_versioned_hashes_oversize_rejected() {
+    printf("=== test_m02_blob_versioned_hashes_oversize_rejected ===\n");
+    // 33-byte hex — strict parser must reject (must be exactly 32).
+    std::string oversize = "\"0x" + std::string(66, 'a') + "\"";
+    std::string params = m02_blob_helpers::build_call_with_blob_hashes(
+        "[" + oversize + "]");
+    auto r = evm_workchain::handle_eth_rpc("eth_call", params,
+                                           "M02-blob-oversize");
+    bool handled = static_cast<bool>(r);
+    bool ok = handled && r->is_error &&
+              m02_blob_helpers::response_has_invalid_blob(r->json);
+    printf("  response head: %.250s\n",
+           handled ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m02_blob_versioned_hashes_non_hex_rejected() {
+    printf("=== test_m02_blob_versioned_hashes_non_hex_rejected ===\n");
+    // Non-hex digit ('Z') in an otherwise correct 32-byte string.
+    std::string non_hex = "\"0x" + std::string(63, 'a') + "Z\"";
+    std::string params = m02_blob_helpers::build_call_with_blob_hashes(
+        "[" + non_hex + "]");
+    auto r = evm_workchain::handle_eth_rpc("eth_call", params,
+                                           "M02-blob-non-hex");
+    bool handled = static_cast<bool>(r);
+    bool ok = handled && r->is_error &&
+              m02_blob_helpers::response_has_invalid_blob(r->json);
+    printf("  response head: %.250s\n",
+           handled ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m02_blob_versioned_hashes_non_string_rejected() {
+    printf("=== test_m02_blob_versioned_hashes_non_string_rejected ===\n");
+    // Element is a JSON number, not a string. The lax parser would
+    // have dropped it silently; strict parser rejects.
+    std::string params = m02_blob_helpers::build_call_with_blob_hashes(
+        "[123]");
+    auto r = evm_workchain::handle_eth_rpc("eth_call", params,
+                                           "M02-blob-non-string");
+    bool handled = static_cast<bool>(r);
+    bool ok = handled && r->is_error &&
+              m02_blob_helpers::response_has_invalid_blob(r->json);
+    printf("  response head: %.250s\n",
+           handled ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m02_blob_versioned_hashes_missing_0x_rejected() {
+    printf("=== test_m02_blob_versioned_hashes_missing_0x_rejected ===\n");
+    // 64 hex chars but no 0x prefix.
+    std::string raw = "\"" + std::string(64, 'a') + "\"";
+    std::string params = m02_blob_helpers::build_call_with_blob_hashes(
+        "[" + raw + "]");
+    auto r = evm_workchain::handle_eth_rpc("eth_call", params,
+                                           "M02-blob-no-0x");
+    bool handled = static_cast<bool>(r);
+    bool ok = handled && r->is_error &&
+              m02_blob_helpers::response_has_invalid_blob(r->json);
+    printf("  response head: %.250s\n",
+           handled ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m02_blob_versioned_hashes_valid_accepted() {
+    printf("=== test_m02_blob_versioned_hashes_valid_accepted ===\n");
+    // Two valid 32-byte hashes — strict parser must accept.
+    std::string h1 = "\"0x" + std::string(64, '1') + "\"";
+    std::string h2 = "\"0x" + std::string(64, '2') + "\"";
+    std::string params = m02_blob_helpers::build_call_with_blob_hashes(
+        "[" + h1 + "," + h2 + "]");
+    auto r = evm_workchain::handle_eth_rpc("eth_call", params,
+                                           "M02-blob-valid");
+    bool handled = static_cast<bool>(r);
+    // Contract: strict parser does NOT reject this. Either a
+    // successful execution or any other error is acceptable, EXCEPT
+    // the M-02 -32602 "invalid blobVersionedHashes" path.
+    bool no_invalid_blob =
+        handled &&
+        r->json.find("invalid blobVersionedHashes") == std::string::npos;
+    printf("  response head: %.250s\n",
+           handled ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n",
+           (handled && no_invalid_blob) ? "PASSED" : "FAILED");
+}
+
+static void test_m02_blob_versioned_hashes_missing_optional() {
+    printf("=== test_m02_blob_versioned_hashes_missing_optional ===\n");
+    // No blobVersionedHashes key at all — the field is optional, and
+    // the strict parser must accept the request unchanged.
+    std::string params =
+        "[{\"from\":\"0x0000000000000000000000000000000000000000\","
+        "\"to\":\"0x0000000000000000000000000000000000000004\","
+        "\"data\":\"0x\","
+        "\"gas\":\"0x186a0\","
+        "\"value\":\"0x0\","
+        "\"nonce\":\"0x0\"},\"latest\"]";
+    auto r = evm_workchain::handle_eth_rpc("eth_call", params,
+                                           "M02-blob-missing");
+    bool handled = static_cast<bool>(r);
+    bool no_invalid_blob =
+        handled &&
+        r->json.find("invalid blobVersionedHashes") == std::string::npos;
+    printf("  response head: %.250s\n",
+           handled ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n",
+           (handled && no_invalid_blob) ? "PASSED" : "FAILED");
+}
+
+static void test_m02_blob_versioned_hashes_non_array_rejected() {
+    printf("=== test_m02_blob_versioned_hashes_non_array_rejected ===\n");
+    // Field present but not an array (a string) — strict parser
+    // rejects.
+    std::string params = m02_blob_helpers::build_call_with_blob_hashes(
+        "\"0x1234\"");
+    auto r = evm_workchain::handle_eth_rpc("eth_call", params,
+                                           "M02-blob-non-array");
+    bool handled = static_cast<bool>(r);
+    bool ok = handled && r->is_error &&
+              m02_blob_helpers::response_has_invalid_blob(r->json);
+    printf("  response head: %.250s\n",
+           handled ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 static void test_m03_eth_call_valid_request_still_succeeds() {
     printf("=== test_m03_eth_call_valid_request_still_succeeds ===\n");
     // A canonical, fully-valid eth_call that targets the identity
@@ -13818,6 +13990,18 @@ int main() {
     test_m03_eth_create_access_list_uses_strict_parser();
     test_m03_eth_simulate_v1_call_object_strict();
     test_m03_eth_call_valid_request_still_succeeds();
+
+    // M-02 — strict blobVersionedHashes parser. Fails -32602 on any
+    // malformed entry (missing 0x, non-hex, length != 32, non-string,
+    // non-array shape). Empty / valid arrays still accepted.
+    test_m02_blob_versioned_hashes_short_rejected();
+    test_m02_blob_versioned_hashes_oversize_rejected();
+    test_m02_blob_versioned_hashes_non_hex_rejected();
+    test_m02_blob_versioned_hashes_non_string_rejected();
+    test_m02_blob_versioned_hashes_missing_0x_rejected();
+    test_m02_blob_versioned_hashes_non_array_rejected();
+    test_m02_blob_versioned_hashes_valid_accepted();
+    test_m02_blob_versioned_hashes_missing_optional();
 
     // H-02 — heavy read-only EVM RPC concurrency / rate gates.
     test_eth_call_rate_limit_rejects_busy();
