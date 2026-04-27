@@ -46,6 +46,8 @@
 #include <exception>
 #include <optional>
 #include <string>
+#include <unistd.h>
+#include <unordered_set>
 #include <vector>
 
 #include <evmc/evmc.hpp>
@@ -57,7 +59,11 @@
 
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
+#include "td/utils/filesystem.h"
+#include "td/utils/port/FileFd.h"
+#include "td/utils/port/path.h"
 
+#include "vm/boc.h"
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellTraits.h"
@@ -680,6 +686,271 @@ void fuzz_cell_state_storage_root_safe_no_cache(DriverStats& s) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// BoC streaming-importer fuzz drivers.
+//
+// Targets `vm::std_boc_deserialize_from_file_bounded`, the streaming entry
+// point that the OnDisk persistent-state download path now drives. The
+// drivers feed random byte streams (and deliberately truncated / oversized
+// variants) into the importer and assert the same fail-closed contract as
+// the MPT drivers above:
+//
+//   (a) NO crash. No segfault, no SIGABRT, no assert(), no CHECK abort.
+//   (b) NO C++ exception leaks past the API boundary.
+//   (c) Outcomes partition cleanly: every iteration is either Status::Error
+//       (rejected) or a valid Ref<Cell> (accepted).
+//   (d) When a callback is supplied, no cell hash is reported twice.
+//
+// The persisted-state code-root / storage-trie-index-corruption coverage
+// the audit checklist requires (lines 1097-1112) lands here: every random
+// byte stream that happens to parse as a structurally valid BoC walks the
+// same per-cell deserializer + parent-refcount machinery the OnDisk path
+// uses, so a regression that re-introduces an unbounded recursion or a
+// cell-hash-mismatch panic surfaces as a `failures > 0` exit code.
+// ---------------------------------------------------------------------------
+
+/// Per-process tempfile helper. Each driver writes its random byte stream to
+/// `/tmp/tos-test-mpt-fuzz-<pid>-<seed>-<iter>.boc`, runs the importer, then
+/// unlinks. We avoid mkstemp so the (seed, iter) reproducer is structurally
+/// embedded in the path — when CI surfaces a fuzz hit the file the importer
+/// saw is implicit from the failing-iter line in the driver summary.
+class BocFuzzTempfile {
+  public:
+    BocFuzzTempfile(uint64_t seed, size_t iter) {
+        path_ = "/tmp/tos-test-mpt-fuzz-" +
+                std::to_string(static_cast<long long>(::getpid())) + "-" +
+                std::to_string(static_cast<unsigned long long>(seed)) + "-" +
+                std::to_string(iter) + ".boc";
+    }
+    ~BocFuzzTempfile() { (void)td::unlink(path_); }
+    BocFuzzTempfile(const BocFuzzTempfile&) = delete;
+    BocFuzzTempfile& operator=(const BocFuzzTempfile&) = delete;
+    const std::string& path() const noexcept { return path_; }
+
+    /// Write `bytes` to the path. Returns true on success.
+    bool write(const std::vector<uint8_t>& bytes) {
+        auto r_fd = td::FileFd::open(
+            path_,
+            td::FileFd::Flags::Write | td::FileFd::Flags::Read |
+                td::FileFd::Flags::Create | td::FileFd::Flags::Truncate);
+        if (r_fd.is_error()) return false;
+        auto fd = r_fd.move_as_ok();
+        if (!bytes.empty()) {
+            auto status = fd.write_all(td::Slice(
+                reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+            if (status.is_error()) return false;
+        }
+        auto sync_status = fd.sync();
+        if (sync_status.is_error()) return false;
+        fd.close();
+        return true;
+    }
+
+  private:
+    std::string path_;
+};
+
+/// Round-trip driver. For each iteration:
+///   - generate up to 64 KiB of random bytes (occasionally include a
+///     plausible BoC magic prefix so a fraction of iterations advance past
+///     the header layer);
+///   - write to a tempfile;
+///   - call vm::std_boc_deserialize_from_file_bounded with a small
+///     max_resident_bytes and an empty persist callback;
+///   - assert the result is one of {accepted Ref<Cell>, Status::Error};
+///     never an exception, never a crash.
+void fuzz_boc_streaming_importer_round_trip(DriverStats& s) {
+    DeterministicRng rng(s.seed);
+    for (size_t i = 0; i < s.iters; ++i) {
+        run_one(s, i, [&]() {
+            BocFuzzTempfile tmp(s.seed, i);
+            // Up to 64 KiB random bytes. 1 in 4 iterations stamps the
+            // canonical BoC magic so the header path runs deeper.
+            auto bytes = rng.next_bytes(0, 64 * 1024);
+            if (rng.next32() % 4u == 0u && bytes.size() >= 4) {
+                bytes[0] = 0xB5;
+                bytes[1] = 0xEE;
+                bytes[2] = 0x9C;
+                bytes[3] = 0x72;
+            }
+            if (!tmp.write(bytes)) {
+                // Filesystem couldn't host the tempfile — count as
+                // rejected; nothing to assert about importer behavior.
+                return false;
+            }
+            if (bytes.empty()) {
+                // The importer rejects zero-sized files unconditionally.
+                // Skip the open call to avoid an EBADF from the empty
+                // write path on some hosts.
+                return false;
+            }
+            auto r_fd = td::FileFd::open(tmp.path(), td::FileFd::Flags::Read);
+            if (r_fd.is_error()) return false;
+            auto fd = r_fd.move_as_ok();
+            vm::StreamingBocImportOptions opts;
+            // Small but realistic resident cap. 1 MiB is comfortably
+            // above the importer's per-cell scaffolding for any cell
+            // count up to the BoC default cap, but small enough that a
+            // pathological random stream cannot quietly accept a
+            // multi-MiB working set.
+            opts.max_resident_bytes = 1ULL << 20;
+            opts.max_roots = 16;
+            auto r_root = vm::std_boc_deserialize_from_file_bounded(
+                fd, bytes.size(), opts, vm::StreamingPersistCellFn{});
+            fd.close();
+            // OK or Error — both are clean fail-closed outcomes.
+            return r_root.is_ok();
+        });
+    }
+}
+
+/// Counting persist_cell driver. Asserts the importer never invokes the
+/// callback twice for the same cell hash and never hands a null cell to the
+/// callback. Resident bytes during the import is sampled inside the
+/// callback so the driver also covers the residency-accounting hot path.
+void fuzz_boc_streaming_with_callback(DriverStats& s) {
+    DeterministicRng rng(s.seed);
+    for (size_t i = 0; i < s.iters; ++i) {
+        run_one(s, i, [&]() {
+            BocFuzzTempfile tmp(s.seed, i);
+            auto bytes = rng.next_bytes(0, 64 * 1024);
+            if (rng.next32() % 3u == 0u && bytes.size() >= 4) {
+                bytes[0] = 0xB5;
+                bytes[1] = 0xEE;
+                bytes[2] = 0x9C;
+                bytes[3] = 0x72;
+            }
+            if (!tmp.write(bytes)) return false;
+            if (bytes.empty()) return false;
+            auto r_fd = td::FileFd::open(tmp.path(), td::FileFd::Flags::Read);
+            if (r_fd.is_error()) return false;
+            auto fd = r_fd.move_as_ok();
+            vm::StreamingBocImportOptions opts;
+            opts.max_resident_bytes = 1ULL << 20;
+            opts.max_roots = 16;
+
+            std::unordered_set<std::string> seen_hashes;
+            bool duplicate_seen = false;
+            bool null_cell_seen = false;
+            auto callback = [&](td::Ref<vm::Cell> cell) -> td::Status {
+                if (cell.is_null()) {
+                    null_cell_seen = true;
+                    return td::Status::Error("fuzz: null cell handed to persist_cell");
+                }
+                auto hash = cell->get_hash();
+                std::string key(reinterpret_cast<const char*>(hash.as_slice().begin()),
+                                hash.as_slice().size());
+                if (!seen_hashes.insert(std::move(key)).second) {
+                    duplicate_seen = true;
+                    return td::Status::Error("fuzz: duplicate cell handed to persist_cell");
+                }
+                return td::Status::OK();
+            };
+
+            auto r_root = vm::std_boc_deserialize_from_file_bounded(
+                fd, bytes.size(), opts, callback);
+            fd.close();
+            // The duplicate / null-cell flags MUST NOT trip even on
+            // garbage input; they would indicate a state-machine bug in
+            // the importer rather than a malformed peer payload. Force
+            // a count into the exceptions bucket if either fired.
+            if (duplicate_seen || null_cell_seen) {
+                throw std::runtime_error(
+                    duplicate_seen ? "duplicate persist_cell call"
+                                   : "null cell handed to persist_cell");
+            }
+            return r_root.is_ok();
+        });
+    }
+}
+
+/// Truncated-input driver. Writes a random byte stream of size N - K (K
+/// chosen randomly inside [1, N]) and announces size N to the importer.
+/// The on-disk size cross-check inside the importer must reject every
+/// such mismatch with Status::Error, never a crash.
+void fuzz_boc_streaming_truncated_input(DriverStats& s) {
+    DeterministicRng rng(s.seed);
+    for (size_t i = 0; i < s.iters; ++i) {
+        run_one(s, i, [&]() {
+            BocFuzzTempfile tmp(s.seed, i);
+            // Generate at least 8 bytes so we can shave at least 1.
+            size_t announced = static_cast<size_t>(rng.next_range(8, 64 * 1024));
+            size_t k = static_cast<size_t>(rng.next_range(1, announced));
+            size_t actual = announced - k;
+            std::vector<uint8_t> bytes;
+            bytes.resize(actual);
+            for (size_t b = 0; b < actual; ++b) bytes[b] = rng.next_byte();
+            // Occasional valid-magic prefix; the size-mismatch check
+            // runs before the magic check so the path runs the same
+            // way either way, but we cover both for completeness.
+            if (rng.next32() % 4u == 0u && bytes.size() >= 4) {
+                bytes[0] = 0xB5;
+                bytes[1] = 0xEE;
+                bytes[2] = 0x9C;
+                bytes[3] = 0x72;
+            }
+            if (!tmp.write(bytes)) return false;
+            auto r_fd = td::FileFd::open(tmp.path(), td::FileFd::Flags::Read);
+            if (r_fd.is_error()) return false;
+            auto fd = r_fd.move_as_ok();
+            vm::StreamingBocImportOptions opts;
+            opts.max_resident_bytes = 1ULL << 20;
+            opts.max_roots = 16;
+            // Lie to the importer about the file size: announce N when
+            // the file holds N - K. The importer's fstat cross-check
+            // must surface this as Status::Error.
+            auto r_root = vm::std_boc_deserialize_from_file_bounded(
+                fd, announced, opts, vm::StreamingPersistCellFn{});
+            fd.close();
+            if (r_root.is_ok()) {
+                // Should never happen — a size mismatch must always
+                // fail closed. Force into the exceptions bucket.
+                throw std::runtime_error(
+                    "truncated-input importer accepted a size-mismatched file");
+            }
+            // Status::Error is the only legal outcome — count as rejected.
+            return false;
+        });
+    }
+}
+
+/// Oversized-resident-cap driver. Picks a random max_resident_bytes in
+/// [0, 1 MiB]. Very small caps (e.g. 64 bytes) MUST NOT crash; the
+/// importer either rejects with Status::Error before any resident
+/// allocation, or completes the import within its bookkeeping budget.
+/// In either case the contract is fail-closed, never a crash.
+void fuzz_boc_streaming_oversized_resident_cap(DriverStats& s) {
+    DeterministicRng rng(s.seed);
+    for (size_t i = 0; i < s.iters; ++i) {
+        run_one(s, i, [&]() {
+            BocFuzzTempfile tmp(s.seed, i);
+            auto bytes = rng.next_bytes(0, 64 * 1024);
+            if (rng.next32() % 3u == 0u && bytes.size() >= 4) {
+                bytes[0] = 0xB5;
+                bytes[1] = 0xEE;
+                bytes[2] = 0x9C;
+                bytes[3] = 0x72;
+            }
+            if (!tmp.write(bytes)) return false;
+            if (bytes.empty()) return false;
+            auto r_fd = td::FileFd::open(tmp.path(), td::FileFd::Flags::Read);
+            if (r_fd.is_error()) return false;
+            auto fd = r_fd.move_as_ok();
+            vm::StreamingBocImportOptions opts;
+            // max_resident_bytes ∈ [0, 1 MiB]. Zero is documented as
+            // "no cap"; any other tiny value (incl. 64 bytes) must
+            // either hit the cap-exceeded branch or complete safely.
+            opts.max_resident_bytes =
+                static_cast<td::uint64>(rng.next_range(0, 1024 * 1024));
+            opts.max_roots = 16;
+            auto r_root = vm::std_boc_deserialize_from_file_bounded(
+                fd, bytes.size(), opts, vm::StreamingPersistCellFn{});
+            fd.close();
+            return r_root.is_ok();
+        });
+    }
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -697,7 +968,10 @@ int main(int /*argc*/, char** /*argv*/) {
         0x1337CAFEull,
         0x2026A11Cull,  // year + audit-listing tag
     };
-    constexpr size_t kIters = 2000;  // ~ 6 drivers × 9 calls × 2k = 108k inputs
+    // ~ 6 seeds × 13 drivers × 2k = ~156k inputs (the last 4 drivers cover
+    // the BoC streaming-importer surface required by the audit's
+    // verification checklist for code-root / storage-trie corruption.)
+    constexpr size_t kIters = 2000;
 
     struct DriverDef {
         const char* name;
@@ -722,6 +996,14 @@ int main(int /*argc*/, char** /*argv*/) {
          &fuzz_cell_state_load_trie_witness_trusted_shallow},
         {"fuzz_cell_state_storage_root_safe_no_cache",
          &fuzz_cell_state_storage_root_safe_no_cache},
+        {"fuzz_boc_streaming_importer_round_trip",
+         &fuzz_boc_streaming_importer_round_trip},
+        {"fuzz_boc_streaming_with_callback",
+         &fuzz_boc_streaming_with_callback},
+        {"fuzz_boc_streaming_truncated_input",
+         &fuzz_boc_streaming_truncated_input},
+        {"fuzz_boc_streaming_oversized_resident_cap",
+         &fuzz_boc_streaming_oversized_resident_cap},
     };
 
     tprintf("test-mpt-fuzz: randomized fuzz target for the MPT/witness "

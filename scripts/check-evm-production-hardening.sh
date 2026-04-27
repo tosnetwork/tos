@@ -450,6 +450,56 @@ if ! grep -q "allow_remote_admin_rpc" "$json_rpc_server_cpp"; then
     exit 1
 fi
 
+# Production EVM call-object parser must be the strict variant. The
+# legacy `parse_call_object` accepted hex/decimal inconsistencies that
+# the strict parser rejects up-front (audit J1). A regression that
+# revives the loose parser would re-introduce divergent gas/value
+# accounting on the public eth_* surface.
+if ! rg -q 'parse_call_object_strict' "$rpc_handlers"; then
+    echo "evm production hardening check failed: handle_call must use parse_call_object_strict" >&2
+    exit 1
+fi
+if rg -q '^\s*static silkworm::Transaction parse_call_object\b' "$rpc_handlers"; then
+    echo "evm production hardening check failed: legacy parse_call_object must be deleted" >&2
+    exit 1
+fi
+
+# K1 streaming BoC importer must drive the OnDisk persistent-state
+# parse path. A regression that re-introduces a one-shot
+# vm::std_boc_deserialize call against the mmap'd tempfile would
+# reintroduce the file-size peak resident memory the importer was
+# designed to remove.
+if ! rg -q 'std_boc_deserialize_from_file_bounded' "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm production hardening check failed: streaming BoC importer must drive OnDisk parse" >&2
+    exit 1
+fi
+
+# J2 zero-state OnDisk path must also drive the streaming BoC importer.
+# The mmap stays for the SHA256 file_hash check, but after that gate
+# passes the actual BoC parse must go through the bounded streaming
+# importer so peak resident memory is bounded by `max_resident_bytes`,
+# NOT by the zero-state file size. (See wait-block-state.cpp
+# got_state_from_net_budgeted OnDisk branch.)
+if ! rg -q 'std_boc_deserialize_from_file_bounded' "$root/validator/downloaders/wait-block-state.cpp"; then
+    echo "evm production hardening check failed: zero-state OnDisk path must drive streaming BoC importer" >&2
+    exit 1
+fi
+
+# Audit checklist (lines 1097-1112): the BoC streaming importer must
+# carry randomized fuzz coverage for code-root / storage-trie corruption
+# alongside the MPT primitives. A regression that drops the BoC drivers
+# from test-mpt-fuzz reverts the fuzz contract from "no crash on any
+# random byte stream into the OnDisk parse path" back to "crash space
+# unmeasured".
+if ! rg -q 'fuzz_boc_streaming_importer_round_trip' "$root/evm/test/test-mpt-fuzz.cpp"; then
+    echo "evm production hardening check failed: test-mpt-fuzz must carry BoC streaming importer fuzz drivers" >&2
+    exit 1
+fi
+if ! rg -q 'fuzz_boc_streaming_truncated_input' "$root/evm/test/test-mpt-fuzz.cpp"; then
+    echo "evm production hardening check failed: test-mpt-fuzz must carry truncated-input BoC fuzz driver" >&2
+    exit 1
+fi
+
 if [[ "${TOS_CHECK_ETOS_GIVER_BYTECODE:-0}" == "1" ]]; then
     if ! command -v node >/dev/null 2>&1; then
         echo "evm production hardening check failed: node is required for EToSPoWGiver bytecode equivalence check" >&2

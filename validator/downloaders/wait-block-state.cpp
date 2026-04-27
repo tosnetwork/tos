@@ -448,28 +448,60 @@ void WaitBlockState::got_state_from_net_budgeted(fullnode::DownloadedPersistentS
   // OnDisk path for zero state. Three stages, all streaming:
   //   1. mmap the tempfile and validate the file_hash against the
   //      mmap'd Slice — no heap BufferSlice of file size is allocated.
-  //   2. deserialize + validate the shard state from the mmap'd Slice.
+  //      The mmap is mandatory here: zero state is content-addressed by
+  //      the SHA256 of the BoC envelope (handle_->id().file_hash), and
+  //      that hash MUST be computed over the full byte stream before
+  //      any deserializer logic runs. A streamed-in-chunks SHA256 over
+  //      the same file would also be acceptable, but mmap reuses the
+  //      already-allocated BudgetedStateFile mapping at zero extra
+  //      cost.
+  //   2. deserialize + validate the shard state via the streaming
+  //      bounded BoC importer. Peak resident memory is bounded by
+  //      `opts.max_resident_bytes`, NOT by the file size — the legacy
+  //      one-shot vm::std_boc_deserialize call peaked at file size,
+  //      which is the regression this stage closes.
   //   3. persist via store_zero_state_file_gen with a 1 MiB-chunk
   //      writer (copy_tempfile_to_writer). No BufferSlice of state
   //      size is ever allocated, regardless of state size.
   auto file = std::move(downloaded.file());
-  auto r_slice = fullnode::mmap_persistent_state_file(file);
-  if (r_slice.is_error()) {
-    abort_query(r_slice.move_as_error());
-    return;
-  }
-  td::Slice mapped = r_slice.move_as_ok();
-  if (sha256_bits256(mapped) != handle_->id().file_hash) {
-    abort_query(td::Status::Error("bad zero state from net: file hash mismatch"));
-    return;
+  {
+    auto r_slice = fullnode::mmap_persistent_state_file(file);
+    if (r_slice.is_error()) {
+      abort_query(r_slice.move_as_error());
+      return;
+    }
+    td::Slice mapped = r_slice.move_as_ok();
+    if (sha256_bits256(mapped) != handle_->id().file_hash) {
+      abort_query(td::Status::Error("bad zero state from net: file hash mismatch"));
+      return;
+    }
+    // Drop `mapped` here. The streaming importer reads the same file
+    // fresh through its own FileFd; keeping the mmap around would
+    // double-account the resident bytes of the BoC envelope and is no
+    // longer needed once the file_hash check has passed.
   }
 
-  auto r_root = vm::std_boc_deserialize(mapped);
-  if (r_root.is_error()) {
-    abort_query(r_root.move_as_error_prefix("received bad zero state from net: "));
-    return;
+  td::Ref<vm::Cell> root;
+  {
+    auto r_fd = td::FileFd::open(file.path, td::FileFd::Flags::Read);
+    if (r_fd.is_error()) {
+      abort_query(r_fd.move_as_error_prefix("received bad zero state from net: "));
+      return;
+    }
+    auto fd = r_fd.move_as_ok();
+    auto budget_cfg = fullnode::persistent_state_budget_config();
+    vm::StreamingBocImportOptions opts;
+    opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
+    auto r_root = vm::std_boc_deserialize_from_file_bounded(
+        fd, file.size, opts, vm::StreamingPersistCellFn{});
+    fd.close();
+    if (r_root.is_error()) {
+      abort_query(r_root.move_as_error_prefix("received bad zero state from net: "));
+      return;
+    }
+    root = r_root.move_as_ok();
   }
-  auto r_state = create_shard_state(handle_->id(), r_root.move_as_ok());
+  auto r_state = create_shard_state(handle_->id(), std::move(root));
   if (r_state.is_error()) {
     abort_query(r_state.move_as_error_prefix("received bad zero state from net: "));
     return;
