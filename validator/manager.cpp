@@ -1915,13 +1915,13 @@ void ValidatorManagerImpl::send_get_block_request(BlockIdExt id, td::uint32 prio
 }
 
 void ValidatorManagerImpl::send_get_zero_state_request(BlockIdExt id, td::uint32 priority,
-                                                       td::Promise<td::BufferSlice> promise) {
+                                                       td::Promise<fullnode::BudgetedBufferSlice> promise) {
   callback_->download_zero_state(id, priority, td::Timestamp::in(10.0), std::move(promise));
 }
 
 void ValidatorManagerImpl::send_get_persistent_state_request(BlockIdExt id, BlockIdExt masterchain_block_id,
                                                              PersistentStateType type, td::uint32 priority,
-                                                             td::Promise<td::BufferSlice> promise) {
+                                                             td::Promise<fullnode::BudgetedBufferSlice> promise) {
   callback_->download_persistent_state(id, masterchain_block_id, type, priority, td::Timestamp::in(3600 * 3),
                                        std::move(promise));
 }

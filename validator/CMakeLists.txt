@@ -71,6 +71,7 @@ set(VALIDATOR_HEADERS
   manager.h
   manager.hpp
   shard-client.hpp
+  state-download-buffer.h
   validate-broadcast.hpp
   validator-group.hpp
   validator-options.hpp

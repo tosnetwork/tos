@@ -20,6 +20,7 @@
 #pragma once
 
 #include "validator/interfaces/validator-manager.h"
+#include "validator/state-download-buffer.h"
 
 #include "stats-provider.h"
 
@@ -51,14 +52,14 @@ class DownloadShardState : public td::actor::Actor {
   void download_proof_link();
 
   void download_zero_state();
-  void downloaded_zero_state(td::BufferSlice data);
+  void downloaded_zero_state(fullnode::BudgetedBufferSlice budgeted);
 
-  void downloaded_shard_state(td::BufferSlice data);
+  void downloaded_shard_state(fullnode::BudgetedBufferSlice budgeted);
   void checked_shard_state();
 
-  void downloaded_split_state_header(td::BufferSlice data);
+  void downloaded_split_state_header(fullnode::BudgetedBufferSlice budgeted);
   void download_next_part_or_finish();
-  void downloaded_state_part(td::BufferSlice data);
+  void downloaded_state_part(fullnode::BudgetedBufferSlice budgeted);
   void written_state_part_file();
   void saved_state_part_into_celldb(td::Ref<vm::DataCell> cell);
 
@@ -89,6 +90,11 @@ class DownloadShardState : public td::actor::Actor {
   std::vector<Ref<vm::Cell>> stored_parts_;
 
   td::BufferSlice data_;
+  // Reservation tied to the buffer above. Held in the actor state so the
+  // global persistent-state download budget stays charged for as long as
+  // the downloaded buffer is being processed (deserialize, validate, write
+  // to disk). Released exactly once when this shared_ptr is dropped.
+  std::shared_ptr<fullnode::PersistentStateDownloadReservation> data_reservation_;
   td::Ref<ShardState> state_;
 
   ProcessStatus status_;

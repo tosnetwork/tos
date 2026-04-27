@@ -709,45 +709,22 @@ void FullNodeImpl::start_up() {
       td::actor::send_closure(id_, &FullNodeImpl::download_block, id, priority, timeout, std::move(promise));
     }
     void download_zero_state(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,
-                             td::Promise<td::BufferSlice> promise) override {
-      // ValidatorManagerInterface::Callback uses a plain td::BufferSlice
-      // promise; the internal pipeline emits BudgetedBufferSlice. Adapt
-      // here. The RAII reservation lives in this lambda's local scope
-      // and is destroyed only after promise.set_value() has handed the
-      // buffer to the downstream callback chain — covering the
-      // synchronous handoff at this API boundary.
-      auto adapter = td::PromiseCreator::lambda(
-          [promise = std::move(promise)](td::Result<BudgetedBufferSlice> R) mutable {
-            if (R.is_error()) {
-              promise.set_error(R.move_as_error());
-              return;
-            }
-            auto buf = R.move_as_ok();
-            auto reservation = std::move(buf.reservation);
-            promise.set_value(std::move(buf.data));
-            // reservation drops here; budget bytes are released exactly
-            // once when the last shared_ptr ref disappears.
-            (void)reservation;
-          });
-      td::actor::send_closure(id_, &FullNodeImpl::download_zero_state, id, priority, timeout, std::move(adapter));
+                             td::Promise<BudgetedBufferSlice> promise) override {
+      // The promise carries BudgetedBufferSlice end-to-end so the global
+      // download-memory budget reservation stays alive through manager
+      // and downstream consumers. It is released only when the last
+      // shared_ptr reference is dropped (i.e., when downstream finishes
+      // processing the buffer).
+      td::actor::send_closure(id_, &FullNodeImpl::download_zero_state, id, priority, timeout, std::move(promise));
     }
     void download_persistent_state(BlockIdExt id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                    td::uint32 priority, td::Timestamp timeout,
-                                   td::Promise<td::BufferSlice> promise) override {
-      // See download_zero_state above for the adapter rationale.
-      auto adapter = td::PromiseCreator::lambda(
-          [promise = std::move(promise)](td::Result<BudgetedBufferSlice> R) mutable {
-            if (R.is_error()) {
-              promise.set_error(R.move_as_error());
-              return;
-            }
-            auto buf = R.move_as_ok();
-            auto reservation = std::move(buf.reservation);
-            promise.set_value(std::move(buf.data));
-            (void)reservation;
-          });
+                                   td::Promise<BudgetedBufferSlice> promise) override {
+      // See download_zero_state above: the budget reservation is
+      // forwarded along with the buffer so its lifetime tracks actual
+      // resident memory rather than the adapter handoff boundary.
       td::actor::send_closure(id_, &FullNodeImpl::download_persistent_state, id, masterchain_block_id, type, priority,
-                              timeout, std::move(adapter));
+                              timeout, std::move(promise));
     }
     void download_block_proof(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
                               td::Promise<td::BufferSlice> promise) override {

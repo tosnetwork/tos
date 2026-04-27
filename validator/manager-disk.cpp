@@ -973,13 +973,13 @@ void ValidatorManagerImpl::send_get_block_request(BlockIdExt id, td::uint32 prio
 }
 
 void ValidatorManagerImpl::send_get_zero_state_request(BlockIdExt id, td::uint32 priority,
-                                                       td::Promise<td::BufferSlice> promise) {
+                                                       td::Promise<fullnode::BudgetedBufferSlice> promise) {
   UNREACHABLE();
 }
 
 void ValidatorManagerImpl::send_get_persistent_state_request(BlockIdExt id, BlockIdExt masterchain_block_id,
                                                              PersistentStateType type, td::uint32 priority,
-                                                             td::Promise<td::BufferSlice> promise) {
+                                                             td::Promise<fullnode::BudgetedBufferSlice> promise) {
   UNREACHABLE();
 }
 

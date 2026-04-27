@@ -20,6 +20,7 @@
 #pragma once
 
 #include "interfaces/validator-manager.h"
+#include "validator/state-download-buffer.h"
 
 namespace tos {
 
@@ -61,6 +62,10 @@ class WaitBlockState : public td::actor::Actor {
   void got_block_data(td::Ref<BlockData> data);
   void failed_to_get_block_data(td::Status reason);
   void got_state_from_net(td::BufferSlice data);
+  // Budgeted variant: received from a download path that carries a
+  // PersistentStateDownloadReservation. The reservation is held in the
+  // actor while the buffer is processed and persisted, then released.
+  void got_state_from_net_budgeted(fullnode::BudgetedBufferSlice budgeted);
   void failed_to_get_zero_state();
   void failed_to_get_state_from_net(td::Status reason);
   void got_proof_link(td::BufferSlice data);
@@ -105,6 +110,11 @@ class WaitBlockState : public td::actor::Actor {
 
   td::Ref<ShardState> prev_state_;
   td::Ref<BlockData> block_;
+
+  // Budget reservation held alongside a downloaded zero-state buffer; kept
+  // alive across the deserialize/validate/persist pipeline so the global
+  // download-memory budget reflects actual resident bytes.
+  std::shared_ptr<fullnode::PersistentStateDownloadReservation> data_reservation_;
 
   bool reading_from_db_ = false;
   bool force_reading_from_db_ = false;

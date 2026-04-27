@@ -107,14 +107,15 @@ void WaitBlockState::start() {
     });
     td::actor::send_closure(manager_, &ValidatorManager::try_get_static_file, handle_->id().file_hash, std::move(P));
   } else if (handle_->id().id.seqno == 0) {
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
-      if (R.is_error()) {
-        td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_state_from_net,
-                                R.move_as_error_prefix("net error: "));
-      } else {
-        td::actor::send_closure(SelfId, &WaitBlockState::got_state_from_net, R.move_as_ok());
-      }
-    });
+    auto P = td::PromiseCreator::lambda(
+        [SelfId = actor_id(this)](td::Result<fullnode::BudgetedBufferSlice> R) {
+          if (R.is_error()) {
+            td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_state_from_net,
+                                    R.move_as_error_prefix("net error: "));
+          } else {
+            td::actor::send_closure(SelfId, &WaitBlockState::got_state_from_net_budgeted, R.move_as_ok());
+          }
+        });
     td::actor::send_closure(manager_, &ValidatorManager::send_get_zero_state_request, handle_->id(), priority_,
                             std::move(P));
   } else if (check_persistent_state_desc() && !handle_->received_state() && allow_download) {
@@ -414,16 +415,30 @@ void WaitBlockState::got_state_from_net(td::BufferSlice data) {
   handle_->set_split(state->before_split());
 
   prev_state_ = std::move(state);
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
-    if (R.is_error()) {
-      td::actor::send_closure(SelfId, &WaitBlockState::abort_query, R.move_as_error_prefix("db set error: "));
-    } else {
-      td::actor::send_closure(SelfId, &WaitBlockState::written_state_file);
-    }
-  });
+  // If a download-budget reservation was attached to this buffer (via
+  // got_state_from_net_budgeted), capture it into the disk-write
+  // completion lambda so the budget stays charged until the file is on
+  // disk. Then it is released.
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), reservation = std::move(data_reservation_)](td::Result<td::Unit> R) mutable {
+        reservation.reset();
+        if (R.is_error()) {
+          td::actor::send_closure(SelfId, &WaitBlockState::abort_query, R.move_as_error_prefix("db set error: "));
+        } else {
+          td::actor::send_closure(SelfId, &WaitBlockState::written_state_file);
+        }
+      });
 
   td::actor::send_closure(manager_, &ValidatorManager::store_zero_state_file, handle_->id(), std::move(data),
                           std::move(P));
+}
+
+void WaitBlockState::got_state_from_net_budgeted(fullnode::BudgetedBufferSlice budgeted) {
+  // Pin the reservation to the actor so the global download budget stays
+  // charged across deserialize/validate/persist; it is released once
+  // store_zero_state_file completes (see got_state_from_net above).
+  data_reservation_ = std::move(budgeted.reservation);
+  got_state_from_net(std::move(budgeted.data));
 }
 
 void WaitBlockState::written_state_file() {
@@ -440,14 +455,15 @@ void WaitBlockState::written_state_file() {
 }
 
 void WaitBlockState::failed_to_get_zero_state() {
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
-    if (R.is_error()) {
-      td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_state_from_net,
-                              R.move_as_error_prefix("net error: "));
-    } else {
-      td::actor::send_closure(SelfId, &WaitBlockState::got_state_from_net, R.move_as_ok());
-    }
-  });
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this)](td::Result<fullnode::BudgetedBufferSlice> R) {
+        if (R.is_error()) {
+          td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_state_from_net,
+                                  R.move_as_error_prefix("net error: "));
+        } else {
+          td::actor::send_closure(SelfId, &WaitBlockState::got_state_from_net_budgeted, R.move_as_ok());
+        }
+      });
   td::actor::send_closure(manager_, &ValidatorManager::send_get_zero_state_request, handle_->id(), priority_,
                           std::move(P));
 }

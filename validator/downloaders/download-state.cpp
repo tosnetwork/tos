@@ -235,11 +235,16 @@ void DownloadShardState::downloaded_proof_link(td::BufferSlice data) {
 
 void DownloadShardState::checked_proof_link() {
   if (block_id_.seqno() == 0) {
+    // try_get_static_file returns a plain BufferSlice (no download budget
+    // is involved — it is read straight from disk). Wrap it as a
+    // BudgetedBufferSlice with a null reservation so downstream paths can
+    // share the same handler signature.
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
       if (R.is_error()) {
         td::actor::send_closure(SelfId, &DownloadShardState::download_zero_state);
       } else {
-        td::actor::send_closure(SelfId, &DownloadShardState::downloaded_zero_state, R.move_as_ok());
+        td::actor::send_closure(SelfId, &DownloadShardState::downloaded_zero_state,
+                                fullnode::BudgetedBufferSlice{R.move_as_ok(), {}});
       }
     });
     td::actor::send_closure(manager_, &ValidatorManager::try_get_static_file, block_id_.file_hash, std::move(P));
@@ -249,24 +254,26 @@ void DownloadShardState::checked_proof_link() {
     CHECK(masterchain_block_id_.is_masterchain());
 
     if (split_depth_ == 0) {
-      auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
-        if (R.is_error()) {
-          fail_handler(SelfId, R.move_as_error());
-        } else {
-          td::actor::send_closure(SelfId, &DownloadShardState::downloaded_shard_state, R.move_as_ok());
-        }
-      });
+      auto P = td::PromiseCreator::lambda(
+          [SelfId = actor_id(this)](td::Result<fullnode::BudgetedBufferSlice> R) {
+            if (R.is_error()) {
+              fail_handler(SelfId, R.move_as_error());
+            } else {
+              td::actor::send_closure(SelfId, &DownloadShardState::downloaded_shard_state, R.move_as_ok());
+            }
+          });
       td::actor::send_closure(manager_, &ValidatorManager::send_get_persistent_state_request, block_id_,
                               masterchain_block_id_, UnsplitStateType{}, priority_, std::move(P));
       status_.set_status(PSTRING() << block_id_.id.to_str() << " : downloading state");
     } else {
-      auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
-        if (R.is_error()) {
-          fail_handler(SelfId, R.move_as_error());
-        } else {
-          td::actor::send_closure(SelfId, &DownloadShardState::downloaded_split_state_header, R.move_as_ok());
-        }
-      });
+      auto P = td::PromiseCreator::lambda(
+          [SelfId = actor_id(this)](td::Result<fullnode::BudgetedBufferSlice> R) {
+            if (R.is_error()) {
+              fail_handler(SelfId, R.move_as_error());
+            } else {
+              td::actor::send_closure(SelfId, &DownloadShardState::downloaded_split_state_header, R.move_as_ok());
+            }
+          });
       td::actor::send_closure(manager_, &ValidatorManager::send_get_persistent_state_request, block_id_,
                               masterchain_block_id_, SplitPersistentStateType{}, priority_, std::move(P));
       status_.set_status(PSTRING() << block_id_.id.to_str() << " : downloading state header");
@@ -275,23 +282,27 @@ void DownloadShardState::checked_proof_link() {
 }
 
 void DownloadShardState::download_zero_state() {
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
-    if (R.is_error()) {
-      fail_handler(SelfId, R.move_as_error());
-    } else {
-      td::actor::send_closure(SelfId, &DownloadShardState::downloaded_zero_state, R.move_as_ok());
-    }
-  });
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this)](td::Result<fullnode::BudgetedBufferSlice> R) {
+        if (R.is_error()) {
+          fail_handler(SelfId, R.move_as_error());
+        } else {
+          td::actor::send_closure(SelfId, &DownloadShardState::downloaded_zero_state, R.move_as_ok());
+        }
+      });
   td::actor::send_closure(manager_, &ValidatorManager::send_get_zero_state_request, block_id_, priority_, std::move(P));
 }
 
-void DownloadShardState::downloaded_zero_state(td::BufferSlice data) {
-  if (sha256_bits256(data.as_slice()) != block_id_.file_hash) {
+void DownloadShardState::downloaded_zero_state(fullnode::BudgetedBufferSlice budgeted) {
+  if (sha256_bits256(budgeted.data.as_slice()) != block_id_.file_hash) {
     fail_handler(actor_id(this), td::Status::Error(ErrorCode::protoviolation, "bad zero state: file hash mismatch"));
     return;
   }
 
-  data_ = std::move(data);
+  data_ = std::move(budgeted.data);
+  // Hold the reservation in actor state so the global download budget
+  // stays charged for as long as data_ is being processed and persisted.
+  data_reservation_ = std::move(budgeted.reservation);
   auto S = create_shard_state(block_id_, data_.clone());
   S.ensure();
   state_ = S.move_as_ok();
@@ -300,9 +311,9 @@ void DownloadShardState::downloaded_zero_state(td::BufferSlice data) {
   checked_shard_state();
 }
 
-void DownloadShardState::downloaded_shard_state(td::BufferSlice data) {
+void DownloadShardState::downloaded_shard_state(fullnode::BudgetedBufferSlice budgeted) {
   status_.set_status(PSTRING() << block_id_.id.to_str() << " : processing downloaded state");
-  auto S = create_shard_state(block_id_, data.clone());
+  auto S = create_shard_state(block_id_, budgeted.data.clone());
   if (S.is_error()) {
     fail_handler(actor_id(this), S.move_as_error());
     return;
@@ -319,17 +330,26 @@ void DownloadShardState::downloaded_shard_state(td::BufferSlice data) {
     return;
   }
   state_ = std::move(state);
-  data_ = data.clone();
+  data_ = budgeted.data.clone();
+  // Hold the reservation so the budget covers the entire deserialize +
+  // validate + persist pipeline.
+  data_reservation_ = std::move(budgeted.reservation);
   checked_shard_state();
 }
 
 void DownloadShardState::checked_shard_state() {
   status_.set_status(PSTRING() << block_id_.id.to_str() << " : storing state file");
   LOG(WARNING) << "checked shard state " << block_id_.to_str();
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
-    R.ensure();
-    td::actor::send_closure(SelfId, &DownloadShardState::written_shard_state_file);
-  });
+  // The reservation guards the buffer that store_*_state_file is about to
+  // consume. Hand it into the completion lambda so the global download
+  // budget stays charged until the file write is on disk; release it then
+  // (it is the last thing using the bytes covered by the reservation).
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), reservation = std::move(data_reservation_)](td::Result<td::Unit> R) mutable {
+        R.ensure();
+        reservation.reset();
+        td::actor::send_closure(SelfId, &DownloadShardState::written_shard_state_file);
+      });
   if (block_id_.seqno() == 0) {
     td::actor::send_closure(manager_, &ValidatorManager::store_zero_state_file, block_id_, std::move(data_),
                             std::move(P));
@@ -339,13 +359,13 @@ void DownloadShardState::checked_shard_state() {
   }
 }
 
-void DownloadShardState::downloaded_split_state_header(td::BufferSlice data) {
+void DownloadShardState::downloaded_split_state_header(fullnode::BudgetedBufferSlice budgeted) {
   LOG(INFO) << "processing state header";
   status_.set_status(PSTRING() << block_id_.id.to_str() << " : processing state header");
 
   deserializer_ = std::make_unique<SplitStateDeserializer>();
 
-  auto maybe_header = vm::std_boc_deserialize(data);
+  auto maybe_header = vm::std_boc_deserialize(budgeted.data);
   if (maybe_header.is_error()) {
     fail_handler(actor_id(this), maybe_header.move_as_error());
     return;
@@ -360,12 +380,18 @@ void DownloadShardState::downloaded_split_state_header(td::BufferSlice data) {
 
   parts_ = maybe_parts.move_as_ok();
 
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
-    R.ensure();
-    td::actor::send_closure(SelfId, &DownloadShardState::download_next_part_or_finish);
-  });
+  // Capture the reservation in the completion lambda so the budget stays
+  // charged until store_persistent_state_file has finished writing the
+  // header to disk.
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), reservation = std::move(budgeted.reservation)](td::Result<td::Unit> R) mutable {
+        R.ensure();
+        // reservation drops here once disk write completed.
+        reservation.reset();
+        td::actor::send_closure(SelfId, &DownloadShardState::download_next_part_or_finish);
+      });
   td::actor::send_closure(manager_, &ValidatorManager::store_persistent_state_file, block_id_, masterchain_block_id_,
-                          SplitPersistentStateType{}, std::move(data), std::move(P));
+                          SplitPersistentStateType{}, std::move(budgeted.data), std::move(P));
 }
 
 namespace {
@@ -398,26 +424,27 @@ void DownloadShardState::download_next_part_or_finish() {
   status_.set_status(PSTRING() << block_id_.id.to_str() << " : downloading state part (part " << idx + 1 << " out of "
                                << parts_.size() << ")");
 
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
-    if (R.is_error()) {
-      retry_part_download(SelfId, R.move_as_error());
-    } else {
-      td::actor::send_closure(SelfId, &DownloadShardState::downloaded_state_part, R.move_as_ok());
-    }
-  });
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this)](td::Result<fullnode::BudgetedBufferSlice> R) {
+        if (R.is_error()) {
+          retry_part_download(SelfId, R.move_as_error());
+        } else {
+          td::actor::send_closure(SelfId, &DownloadShardState::downloaded_state_part, R.move_as_ok());
+        }
+      });
   td::actor::send_closure(manager_, &ValidatorManager::send_get_persistent_state_request, block_id_,
                           masterchain_block_id_, SplitAccountStateType{parts_[idx].effective_shard}, priority_,
                           std::move(P));
 }
 
-void DownloadShardState::downloaded_state_part(td::BufferSlice data) {
+void DownloadShardState::downloaded_state_part(fullnode::BudgetedBufferSlice budgeted) {
   size_t idx = stored_parts_.size();
 
   LOG(INFO) << "processing state part " << idx + 1 << " out of " << parts_.size();
   status_.set_status(PSTRING() << block_id_.id.to_str() << " : processing state part (part " << idx + 1 << " out of "
                                << parts_.size() << ")");
 
-  auto maybe_part = vm::std_boc_deserialize(data);
+  auto maybe_part = vm::std_boc_deserialize(budgeted.data);
   if (maybe_part.is_error()) {
     retry_part_download(actor_id(this), maybe_part.move_as_error());
     return;
@@ -434,12 +461,17 @@ void DownloadShardState::downloaded_state_part(td::BufferSlice data) {
 
   stored_parts_.push_back(root);
 
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
-    R.ensure();
-    td::actor::send_closure(SelfId, &DownloadShardState::written_state_part_file);
-  });
+  // Capture the reservation in the completion lambda so the budget stays
+  // charged until store_persistent_state_file has finished persisting the
+  // part to disk.
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), reservation = std::move(budgeted.reservation)](td::Result<td::Unit> R) mutable {
+        R.ensure();
+        reservation.reset();
+        td::actor::send_closure(SelfId, &DownloadShardState::written_state_part_file);
+      });
   td::actor::send_closure(manager_, &ValidatorManager::store_persistent_state_file, block_id_, masterchain_block_id_,
-                          SplitAccountStateType{parts_[idx].effective_shard}, std::move(data), std::move(P));
+                          SplitAccountStateType{parts_[idx].effective_shard}, std::move(budgeted.data), std::move(P));
 
   LOG(INFO) << "storing state part to file " << idx + 1 << " out of " << parts_.size();
   status_.set_status(PSTRING() << block_id_.id.to_str() << " : storing state part to file (part " << idx + 1

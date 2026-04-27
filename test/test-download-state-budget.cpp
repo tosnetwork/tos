@@ -27,8 +27,17 @@
 // "buffer en route" rather than "buffer resident", and concurrent downloads
 // + held buffers could push process memory past the documented 512 MiB
 // ceiling.
+//
+// The full-node Callback regression also pins the manager-side handoff:
+// the adapter from the full-node Callback into ValidatorManagerInterface
+// used to convert BudgetedBufferSlice back into a plain BufferSlice and
+// drop the reservation in the lambda's local scope, releasing the budget
+// before the manager/downstream had finished holding the buffer alive.
 
 #include "validator/net/download-state.hpp"
+#include "validator/state-download-buffer.h"
+
+#include "td/actor/PromiseFuture.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -169,13 +178,81 @@ void test_budgeted_buffer_slice_extends_lifetime() {
   std::printf("  PASSED\n");
 }
 
+void test_full_node_callback_does_not_release_budget_prematurely() {
+  std::printf("=== test_full_node_callback_does_not_release_budget_prematurely ===\n");
+
+  // Models the new full-node -> ValidatorManagerInterface boundary:
+  // both the FullNode Callback and the manager carry BudgetedBufferSlice
+  // promises end-to-end. Before this round's fix the Callback adapter
+  // converted BudgetedBufferSlice -> BufferSlice in a local lambda and
+  // dropped the reservation as soon as set_value() returned, which
+  // released the global budget while the manager still held the buffer
+  // resident.
+  //
+  // The simulation below mirrors that handoff: a producer-side promise
+  // is fulfilled with a BudgetedBufferSlice, the manager-side handler
+  // captures it into an external "manager state" variable, and we
+  // assert the global budget remains charged for as long as that
+  // variable is alive — and only that.
+
+  const td::uint64 baseline = test_get_persistent_state_download_bytes();
+  constexpr td::uint64 kPayload = 256 * kMiB;
+
+  // Step 1: reserve and wrap a 256 MiB buffer just like
+  // DownloadState::finish_query() does.
+  auto reservation = try_reserve(kPayload);
+  EXPECT_TRUE(reservation != nullptr);
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), baseline + kPayload);
+
+  td::BufferSlice payload(kPayload);
+  BudgetedBufferSlice produced{std::move(payload), std::move(reservation)};
+
+  // Step 2: simulate the new full-node -> manager promise plumbing. The
+  // manager-side holder lives outside the producer's lambda — exactly
+  // the case the old adapter mishandled.
+  BudgetedBufferSlice manager_held;
+  td::Promise<BudgetedBufferSlice> manager_promise = [&manager_held](td::Result<BudgetedBufferSlice> R) {
+    if (R.is_error()) {
+      std::fprintf(stderr, "FAIL manager_promise unexpectedly errored\n");
+      std::exit(1);
+    }
+    // Manager handler stores the entire BudgetedBufferSlice (including
+    // the reservation shared_ptr) into a long-lived field. The
+    // reservation lifetime now follows the manager state, not the
+    // lambda scope.
+    manager_held = R.move_as_ok();
+  };
+
+  // Step 3: producer fulfills the promise (the moral equivalent of
+  // promise_.set_value() inside DownloadState::finish_query()).
+  manager_promise.set_value(std::move(produced));
+
+  // The producer's local references are gone; only the manager-side
+  // BudgetedBufferSlice is keeping the reservation alive. Under the old
+  // adapter this would already be `baseline` because the reservation
+  // would have been dropped in the lambda.
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), baseline + kPayload);
+  EXPECT_TRUE(manager_held.reservation != nullptr);
+  EXPECT_EQ(manager_held.data.size(), static_cast<std::size_t>(kPayload));
+
+  // Step 4: manager finishes processing the buffer (writes to disk,
+  // deserializes into ShardState, etc.) and releases its handle. The
+  // reservation drops to zero refcount and the global budget returns to
+  // baseline.
+  manager_held = BudgetedBufferSlice{};
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), baseline);
+
+  std::printf("  PASSED\n");
+}
+
 }  // namespace
 
 int main() {
-  std::printf("test-download-state-budget: P4 RAII budget regression\n");
+  std::printf("test-download-state-budget: persistent-state download RAII budget regression\n");
   test_budget_covers_downstream_lifetime();
   test_oversize_single_reservation_is_rejected();
   test_budgeted_buffer_slice_extends_lifetime();
+  test_full_node_callback_does_not_release_budget_prematurely();
   std::printf("All tests completed.\n");
   return 0;
 }

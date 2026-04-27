@@ -324,11 +324,13 @@ class ValidatorManagerImpl : public ValidatorManager {
   void send_get_block_request(BlockIdExt id, td::uint32 priority, td::Promise<ReceivedBlock> promise) override {
     UNREACHABLE();
   }
-  void send_get_zero_state_request(BlockIdExt id, td::uint32 priority, td::Promise<td::BufferSlice> promise) override {
+  void send_get_zero_state_request(BlockIdExt id, td::uint32 priority,
+                                   td::Promise<fullnode::BudgetedBufferSlice> promise) override {
     UNREACHABLE();
   }
   void send_get_persistent_state_request(BlockIdExt id, BlockIdExt masterchain_block_id, PersistentStateType type,
-                                         td::uint32 priority, td::Promise<td::BufferSlice> promise) override {
+                                         td::uint32 priority,
+                                         td::Promise<fullnode::BudgetedBufferSlice> promise) override {
     UNREACHABLE();
   }
   void send_get_block_proof_request(BlockIdExt block_id, td::uint32 priority,

@@ -180,7 +180,17 @@ td::Status DownloadState::prepare_download_buffer(td::uint64 size) {
   }
   // Wrap the reserved bytes in a shared RAII handle. From this point the
   // ONLY way the budget is released is via this shared_ptr's destructor.
-  auto reservation = std::make_shared<PersistentStateDownloadReservation>(size);
+  // If make_shared throws (allocation failure), the reservation handle is
+  // never constructed, so the dtor never runs and the bytes we just CAS'd
+  // into the global counter would leak. Release them explicitly on failure.
+  std::shared_ptr<PersistentStateDownloadReservation> reservation;
+  try {
+    reservation = std::make_shared<PersistentStateDownloadReservation>(size);
+  } catch (...) {
+    release_persistent_state_download_memory(size);
+    return td::Status::Error(ErrorCode::notready,
+                             "cannot allocate persistent state download reservation");
+  }
   total_size_ = size;
   try {
     state_ = td::BufferSlice{td::narrow_cast<std::size_t>(total_size_)};

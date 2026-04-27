@@ -34,6 +34,7 @@
 #include "interfaces/proof.h"
 #include "interfaces/shard.h"
 #include "overlay/overlays.h"
+#include "state-download-buffer.h"
 #include "td/actor/actor.h"
 #include "td/actor/coro_task.h"
 #include "td/actor/coro_utils.h"
@@ -267,11 +268,11 @@ class ValidatorManagerInterface : public td::actor::Actor {
                                 td::Promise<ReceivedBlock> promise) {
     }
     virtual void download_zero_state(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
-                                     td::Promise<td::BufferSlice> promise) {
+                                     td::Promise<fullnode::BudgetedBufferSlice> promise) {
     }
     virtual void download_persistent_state(BlockIdExt block_id, BlockIdExt masterchain_block_id,
                                            PersistentStateType type, td::uint32 priority, td::Timestamp timeout,
-                                           td::Promise<td::BufferSlice> promise) {
+                                           td::Promise<fullnode::BudgetedBufferSlice> promise) {
     }
     virtual void download_block_proof(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
                                       td::Promise<td::BufferSlice> promise) {

@@ -26,6 +26,7 @@
 #include "adnl/adnl-ext-client.h"
 #include "overlay/overlays.h"
 #include "tos/tos-types.h"
+#include "validator/state-download-buffer.h"
 #include "validator/validator.h"
 
 namespace tos {
@@ -33,44 +34,6 @@ namespace tos {
 namespace validator {
 
 namespace fullnode {
-
-// RAII reservation against the global persistent-state download memory
-// budget. The reservation is held by a shared_ptr alongside the downloaded
-// buffer; the underlying bytes are returned to the global budget only when
-// the last reference is dropped (i.e., when downstream consumers have
-// finished processing the buffer).
-struct PersistentStateDownloadReservation {
-  td::uint64 bytes{0};
-
-  PersistentStateDownloadReservation() = default;
-  explicit PersistentStateDownloadReservation(td::uint64 b) : bytes(b) {
-  }
-  PersistentStateDownloadReservation(const PersistentStateDownloadReservation &) = delete;
-  PersistentStateDownloadReservation &operator=(const PersistentStateDownloadReservation &) = delete;
-  PersistentStateDownloadReservation(PersistentStateDownloadReservation &&) = delete;
-  PersistentStateDownloadReservation &operator=(PersistentStateDownloadReservation &&) = delete;
-  ~PersistentStateDownloadReservation();
-};
-
-// Pairs a downloaded persistent-state buffer with its budget reservation.
-// As long as a BudgetedBufferSlice (or any copy of `reservation`) is held,
-// the corresponding bytes remain accounted against the global budget. The
-// reservation is released exactly once when the last shared_ptr ref is
-// dropped.
-struct BudgetedBufferSlice {
-  td::BufferSlice data;
-  std::shared_ptr<PersistentStateDownloadReservation> reservation;
-};
-
-namespace testing {
-
-// Test-only handle to the global persistent-state download budget. These
-// helpers exist so a unit test can exercise the reservation lifetime
-// invariant without bringing up the full DownloadState actor stack.
-td::uint64 test_get_persistent_state_download_bytes();
-bool test_try_reserve_persistent_state_download_memory(td::uint64 size);
-
-}  // namespace testing
 
 class DownloadState : public td::actor::Actor {
  public:
