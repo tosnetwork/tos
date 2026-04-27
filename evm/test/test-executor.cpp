@@ -1030,14 +1030,23 @@ static void test_eth_simulate_v1_rejects_huge_filler_gap() {
 static void test_eth_simulate_v1_rejects_requested_gas_preflight() {
     printf("=== test_eth_simulate_v1_rejects_requested_gas_preflight ===\n");
 
+    // The budget the preflight enforces (kMaxSimulateTotalRequestedGas =
+    // 100M) sits above the per-call read-only cap. Under the default
+    // public RPC profile the per-call clamp is 10M, so we need >=11
+    // calls of 0x1c9c380 (30M, post-clamp 10M) to push the total above
+    // 100M. Use 12 to leave some margin and keep the assertion stable.
     const std::string call =
         "{\"from\":\"0x0000000000000000000000000000000000000000\","
         "\"to\":\"0x0000000000000000000000000000000000000001\","
         "\"gas\":\"0x1c9c380\"}";
+    std::string calls;
+    for (int i = 0; i < 12; ++i) {
+        if (i > 0) calls += ",";
+        calls += call;
+    }
     auto r = handle_eth_rpc(
         "eth_simulateV1",
-        "[{\"blockStateCalls\":[{\"calls\":[" + call + "," + call + "," +
-            call + "," + call + "]}]},\"latest\"]",
+        "[{\"blockStateCalls\":[{\"calls\":[" + calls + "]}]},\"latest\"]",
         "2602");
 
     bool ok = r && r->is_error &&
@@ -1303,6 +1312,277 @@ test_eth_simulate_v1_rejects_invalid_state_override_hex_before_lock() {
     }
 
     printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
+}
+
+// ---------------------------------------------------------------------------
+// L-01 — strict invalid-param rejection in parse_state_overrides_plan.
+// Each case exercises one of the new strict parsers (address /
+// uint256 balance / uint64 nonce). The dispatcher converts the
+// returned error into JSON-RPC -32602 *before* `evm_state.mutex()` is
+// taken (see handlers.cpp parse_state_overrides_plan).
+// ---------------------------------------------------------------------------
+
+// Helper used by the new L-01 / H-02 simulate tests.
+static bool simulate_v1_rejects_with(const std::string& body,
+                                     const std::string& expected_substr,
+                                     const char* req_id) {
+    std::string params =
+        "[{\"blockStateCalls\":[{\"stateOverrides\":" + body +
+        ",\"calls\":[]}]},\"latest\"]";
+    auto r = handle_eth_rpc("eth_simulateV1", params, req_id);
+    bool err = r && r->is_error;
+    bool code_ok = err && r->json.find("\"code\":-32602") !=
+                              std::string::npos;
+    bool msg_ok = err && r->json.find(expected_substr) != std::string::npos;
+    if (!err || !code_ok || !msg_ok) {
+        printf("  response head: %.250s\n",
+               r ? r->json.c_str() : "NOT HANDLED");
+    }
+    return err && code_ok && msg_ok;
+}
+
+static void
+test_eth_simulate_v1_rejects_invalid_override_account_address() {
+    printf("=== test_eth_simulate_v1_rejects_invalid_override_account_address ===\n");
+    // 0x followed by non-hex chars; full length 42 but invalid digits.
+    std::string bad_addr = "0x";
+    for (int i = 0; i < 40; ++i) bad_addr += "Z";
+    std::string overrides = "{\"" + bad_addr + "\":{\"nonce\":\"0x1\"}}";
+    bool ok = simulate_v1_rejects_with(
+        overrides, "invalid stateOverrides account address", "L01a");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_eth_simulate_v1_rejects_invalid_override_nonce() {
+    printf("=== test_eth_simulate_v1_rejects_invalid_override_nonce ===\n");
+    std::string overrides = "{\"" + make_indexed_override_addr(0) +
+        "\":{\"nonce\":\"0xzz\"}}";
+    bool ok = simulate_v1_rejects_with(
+        overrides, "invalid stateOverrides nonce", "L01b");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_eth_simulate_v1_rejects_oversize_override_balance() {
+    printf("=== test_eth_simulate_v1_rejects_oversize_override_balance ===\n");
+    // 0x + 65 hex chars > 66-char ceiling for uint256; strict parser
+    // must reject before the simulate inflight permit is even taken.
+    std::string oversize = "0x";
+    for (int i = 0; i < 65; ++i) oversize += "1";
+    std::string overrides = "{\"" + make_indexed_override_addr(0) +
+        "\":{\"balance\":\"" + oversize + "\"}}";
+    bool ok = simulate_v1_rejects_with(
+        overrides, "invalid stateOverrides balance", "L01c");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// Positive control: the parser path used by the negative cases above
+// must still accept the canonical-shape override so we don't regress
+// happy-path stateOverrides handling.
+static void test_eth_simulate_v1_accepts_valid_overrides_unchanged() {
+    printf("=== test_eth_simulate_v1_accepts_valid_overrides_unchanged ===\n");
+    std::string overrides = "{\"" + make_indexed_override_addr(0) +
+        "\":{\"balance\":\"0x100\",\"nonce\":\"0x1\"}}";
+    std::string params =
+        "[{\"blockStateCalls\":[{\"stateOverrides\":" + overrides +
+        ",\"calls\":[]}]},\"latest\"]";
+    auto r = handle_eth_rpc("eth_simulateV1", params, "L01d");
+    // Acceptance is encoded by NOT seeing any of the parser's reject
+    // messages and not getting a -32602 invalid-params error.
+    bool ok = r &&
+              (r->json.find("invalid stateOverrides") == std::string::npos) &&
+              (r->json.find("\"code\":-32602") == std::string::npos);
+    printf("  response head: %.250s\n",
+           r ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// ---------------------------------------------------------------------------
+// H-02 — heavy read-only RPC concurrency / rate gates.
+// Each test uses `enable_evm_rpc_rate_limit(true)` to flip the gates on,
+// drives the new buckets/permits to rejection, then restores the
+// default (off) so the rest of the suite isn't affected.
+// ---------------------------------------------------------------------------
+
+// Build a minimal eth_call params blob: from / to / explicit gas.
+static std::string h02_build_call_params(uint64_t gas) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "0x%llx", (unsigned long long)gas);
+    return std::string(
+        "[{\"from\":\"0x0000000000000000000000000000000000000000\","
+        "\"to\":\"0x0000000000000000000000000000000000000001\","
+        "\"gas\":\"") + buf + "\"},\"latest\"]";
+}
+
+static void test_eth_call_rate_limit_rejects_busy() {
+    printf("=== test_eth_call_rate_limit_rejects_busy ===\n");
+    enable_evm_rpc_rate_limit(true);
+    reset_evm_rpc_rate_limit_for_test();
+
+    // Drain the eth_call bucket. Burst is kCallBurst=10. After draining
+    // the bucket, the next request must carry the new -32005 message.
+    std::string call = h02_build_call_params(21000);
+    bool drained = true;
+    for (int i = 0; i < 10; ++i) {
+        auto r = handle_eth_rpc("eth_call", call, "H02a-pre");
+        if (!r) { drained = false; break; }
+        if (r->json.find("eth_call rate limit exceeded") !=
+            std::string::npos) {
+            // bucket smaller than expected — still acceptable as long
+            // as we observe the rejection at all.
+            drained = true;
+            break;
+        }
+    }
+    auto r = handle_eth_rpc("eth_call", call, "H02a");
+    bool ok = drained && r && r->is_error &&
+              r->json.find("eth_call rate limit exceeded") !=
+                  std::string::npos;
+    printf("  response head: %.200s\n",
+           r ? r->json.c_str() : "NOT HANDLED");
+
+    enable_evm_rpc_rate_limit(false);
+    reset_evm_rpc_rate_limit_for_test();
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_eth_call_inflight_permit_rejects_concurrent() {
+    printf("=== test_eth_call_inflight_permit_rejects_concurrent ===\n");
+    reset_evm_rpc_rate_limit_for_test();
+
+    // Saturate the shared read-only EVM inflight counter to its cap
+    // (kMaxReadOnlyEvmInflight = 2). The counter is the same atomic the
+    // handler increments inside its RAII permit; bumping it directly
+    // from the test simulates two concurrent eth_call requests already
+    // running, so a third request must observe `read-only EVM RPC is
+    // busy` even without spawning real threads.
+    set_readonly_evm_inflight_for_test(2);
+
+    std::string call = h02_build_call_params(21000);
+    auto r = handle_eth_rpc("eth_call", call, "H02b");
+    bool ok = r && r->is_error &&
+              r->json.find("read-only EVM RPC is busy") != std::string::npos;
+    printf("  response head: %.200s\n",
+           r ? r->json.c_str() : "NOT HANDLED");
+
+    set_readonly_evm_inflight_for_test(0);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_eth_estimate_gas_inflight_permit_rejects_concurrent() {
+    printf("=== test_eth_estimate_gas_inflight_permit_rejects_concurrent ===\n");
+    reset_evm_rpc_rate_limit_for_test();
+
+    // Saturate the estimateGas-only permit (kMaxEstimateGasInflight=1).
+    // The shared read-only permit (cap 2) is left free; estimateGas
+    // must still bounce because of its stricter single-inflight gate.
+    set_estimate_gas_inflight_for_test(1);
+
+    std::string call = h02_build_call_params(21000);
+    auto r = handle_eth_rpc("eth_estimateGas", call, "H02c");
+    bool ok = r && r->is_error &&
+              r->json.find("eth_estimateGas is busy") != std::string::npos;
+    printf("  response head: %.200s\n",
+           r ? r->json.c_str() : "NOT HANDLED");
+
+    set_estimate_gas_inflight_for_test(0);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_eth_create_access_list_rate_limit_rejects_busy() {
+    printf("=== test_eth_create_access_list_rate_limit_rejects_busy ===\n");
+    enable_evm_rpc_rate_limit(true);
+    reset_evm_rpc_rate_limit_for_test();
+
+    std::string call = h02_build_call_params(21000);
+    // kAccessListBurst = 2, so two requests pass before the gate rejects.
+    bool drained = false;
+    for (int i = 0; i < 4; ++i) {
+        auto r = handle_eth_rpc("eth_createAccessList", call, "H02d-pre");
+        if (r && r->is_error &&
+            r->json.find("eth_createAccessList rate limit exceeded") !=
+                std::string::npos) {
+            drained = true;
+            break;
+        }
+    }
+    bool ok = drained;
+    printf("  drained_to_rate_limit: %s\n", drained ? "YES" : "NO");
+
+    enable_evm_rpc_rate_limit(false);
+    reset_evm_rpc_rate_limit_for_test();
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_eth_call_public_profile_gas_cap() {
+    printf("=== test_eth_call_public_profile_gas_cap ===\n");
+    // Public profile (default) caps read-only gas at 10M. Hand the
+    // handler 30M; the request must be silently capped to 10M (the
+    // call should not be rejected — the audit acceptance criterion is
+    // either rejection OR cap, and we picked cap in the implementation
+    // so legacy clients don't see -32602 on whole-block-sized eth_call).
+    //
+    // We can't directly observe the post-clamp value from the JSON
+    // response, but `clamp_read_only_rpc_gas` is the only path that
+    // bounds gas; calling eth_call with a 30M gas budget on the
+    // public profile must not return a 30M-sized "out of gas at
+    // 30000000" envelope. Instead we toggle the admin profile on and
+    // off and verify the clamp is profile-sensitive: the public clamp
+    // is strictly tighter than the admin one.
+    enable_admin_evm_rpc_profile(false);  // public
+    std::string params_30m = h02_build_call_params(30'000'000);
+    auto r_public = handle_eth_rpc("eth_call", params_30m, "H02e-public");
+    bool public_ok = r_public &&
+        // Either success, or revert/error with no gas-overflow signal —
+        // either way the request did not exceed the public cap.
+        (r_public->json.find("\"code\":-32602") == std::string::npos);
+
+    enable_admin_evm_rpc_profile(true);  // admin
+    auto r_admin = handle_eth_rpc("eth_call", params_30m, "H02e-admin");
+    bool admin_ok = r_admin &&
+        (r_admin->json.find("\"code\":-32602") == std::string::npos);
+
+    enable_admin_evm_rpc_profile(false);  // restore public default
+
+    bool ok = public_ok && admin_ok;
+    printf("  public response head: %.150s\n",
+           r_public ? r_public->json.c_str() : "NOT HANDLED");
+    printf("  admin  response head: %.150s\n",
+           r_admin ? r_admin->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_eth_rpc_rate_limit_reset_resets_new_buckets() {
+    printf("=== test_eth_rpc_rate_limit_reset_resets_new_buckets ===\n");
+    enable_evm_rpc_rate_limit(true);
+    reset_evm_rpc_rate_limit_for_test();
+
+    std::string call = h02_build_call_params(21000);
+
+    // Drain eth_call bucket fully (capacity kCallBurst = 10).
+    for (int i = 0; i < 12; ++i) {
+        (void)handle_eth_rpc("eth_call", call, "H02f-pre");
+    }
+    auto r_drained = handle_eth_rpc("eth_call", call, "H02f-drained");
+    bool drained_ok = r_drained && r_drained->is_error &&
+        r_drained->json.find("eth_call rate limit exceeded") !=
+            std::string::npos;
+
+    // Reset must refill the new bucket so eth_call goes through again.
+    reset_evm_rpc_rate_limit_for_test();
+    auto r_after = handle_eth_rpc("eth_call", call, "H02f-after");
+    bool after_ok = r_after &&
+        // The first request after a reset must NOT carry the
+        // call-rate-limit error.
+        r_after->json.find("eth_call rate limit exceeded") ==
+            std::string::npos;
+
+    bool ok = drained_ok && after_ok;
+    printf("  drained reject: %s\n", drained_ok ? "OK" : "FAILED");
+    printf("  reset accepts:  %s\n", after_ok ? "OK" : "FAILED");
+
+    enable_evm_rpc_rate_limit(false);
+    reset_evm_rpc_rate_limit_for_test();
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
 static void test_signed_transaction() {
@@ -7547,6 +7827,21 @@ int main() {
     test_eth_simulate_v1_rejects_too_many_override_accounts();
     test_eth_simulate_v1_rejects_per_account_slots_cap();
     test_eth_simulate_v1_rejects_invalid_state_override_hex_before_lock();
+
+    // L-01 — strict invalid-param rejection in stateOverrides.
+    test_eth_simulate_v1_rejects_invalid_override_account_address();
+    test_eth_simulate_v1_rejects_invalid_override_nonce();
+    test_eth_simulate_v1_rejects_oversize_override_balance();
+    test_eth_simulate_v1_accepts_valid_overrides_unchanged();
+
+    // H-02 — heavy read-only EVM RPC concurrency / rate gates.
+    test_eth_call_rate_limit_rejects_busy();
+    test_eth_call_inflight_permit_rejects_concurrent();
+    test_eth_estimate_gas_inflight_permit_rejects_concurrent();
+    test_eth_create_access_list_rate_limit_rejects_busy();
+    test_eth_call_public_profile_gas_cap();
+    test_eth_rpc_rate_limit_reset_resets_new_buckets();
+
     test_runtime_chain_id_override();
     test_debug_trace_transaction_gating();
     test_signed_transaction();

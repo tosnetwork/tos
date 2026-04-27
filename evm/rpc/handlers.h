@@ -64,6 +64,16 @@ void enable_evm_rpc_rate_limit(bool enable);
 /// Enabled by default; production profiles may still turn it off by policy.
 void enable_public_evm_getproof(bool enable);
 
+/// Enable the admin/conformance read-only EVM RPC profile. When OFF
+/// (the default), per-request read-only gas (eth_call /
+/// eth_estimateGas / eth_createAccessList / eth_simulateV1) is capped
+/// at the public 10M-gas limit. When ON, the cap is raised to 30M to
+/// match Ethereum L1 block gas — required for the execution-apis
+/// conformance suite and for local tooling that simulates whole-block
+/// sized calls. Must only be enabled on local-only / admin RPC
+/// endpoints.
+void enable_admin_evm_rpc_profile(bool enable);
+
 /// Try to consume one token from the global EVM RPC bucket. Used by the
 /// `eth_sendRawTransaction` fast path in `json-rpc-server-send.cpp`, which
 /// dispatches BEFORE `handle_eth_rpc` and therefore needs to hit the bucket
@@ -79,5 +89,13 @@ size_t max_eth_send_raw_tx_hex_size();
 
 /// Test helper: reset rate limiter token buckets to full capacity.
 void reset_evm_rpc_rate_limit_for_test();
+
+/// Test helpers for the H-02 inflight-permit gates. Each setter pins
+/// the named atomic counter to `value`; the regression tests use them
+/// to simulate "another request already running" without spawning
+/// real threads. NOT for production use.
+void set_readonly_evm_inflight_for_test(uint32_t value);
+void set_estimate_gas_inflight_for_test(uint32_t value);
+void set_access_list_inflight_for_test(uint32_t value);
 
 }  // namespace evm_workchain

@@ -69,6 +69,29 @@ static constexpr uint64_t kMaxGetProofRequestsPerSec = 2; // proof building is C
 static constexpr uint64_t kMaxGetProofBurst = 4;
 static constexpr uint64_t kMaxSimulateRequestsPerSec = 1; // simulation holds EVM state lock
 static constexpr uint64_t kMaxSimulateBurst = 2;
+// Heavy read-only EVM RPC limiters: eth_call / eth_estimateGas /
+// eth_createAccessList all hold the global EVM state mutex while they
+// run silkworm. Without per-method gates they share only the global RPC
+// bucket, so a public RPC node can be pinned by a swarm of 30M-gas
+// simulations and the rest of the validator (sendRawTransaction,
+// compute path, getProof reads) stalls behind the same lock.
+static constexpr uint64_t kCallRequestsPerSec = 5;
+static constexpr uint64_t kEstimateGasRequestsPerSec = 2;
+static constexpr uint64_t kAccessListRequestsPerSec = 1;
+static constexpr uint64_t kCallBurst = 10;
+static constexpr uint64_t kEstimateGasBurst = 4;
+static constexpr uint64_t kAccessListBurst = 2;
+
+// Inflight permits for heavy read-only EVM RPC. The shared
+// "read-only EVM" permit caps how many of {eth_call, eth_estimateGas,
+// eth_createAccessList} can simultaneously hold the global EVM state
+// mutex; eth_estimateGas and eth_createAccessList layer their own
+// stricter single-inflight permits on top because their cost profile
+// (estimateGas runs the call, createAccessList runs with a tracer) is
+// even heavier than a plain eth_call.
+static constexpr uint32_t kMaxReadOnlyEvmInflight = 2;
+static constexpr uint32_t kMaxEstimateGasInflight = 1;
+static constexpr uint32_t kMaxAccessListInflight = 1;
 // stateOverrides budget for eth_simulateV1. Override parsing/apply happens
 // before the global EVM mutex is taken; over-cap requests are rejected
 // with JSON-RPC -32602 without ever entering the lock.
@@ -134,8 +157,14 @@ static RateLimiter g_rpc_limiter{kMaxRpcBurst, kMaxRpcRequestsPerSec};
 static RateLimiter g_getlogs_limiter{kMaxGetLogsBurst, kMaxGetLogsRequestsPerSec};
 static RateLimiter g_getproof_limiter{kMaxGetProofBurst, kMaxGetProofRequestsPerSec};
 static RateLimiter g_simulate_limiter{kMaxSimulateBurst, kMaxSimulateRequestsPerSec};
+static RateLimiter g_call_limiter{kCallBurst, kCallRequestsPerSec};
+static RateLimiter g_estimate_gas_limiter{kEstimateGasBurst, kEstimateGasRequestsPerSec};
+static RateLimiter g_access_list_limiter{kAccessListBurst, kAccessListRequestsPerSec};
 static std::atomic<uint32_t> g_getproof_inflight{0};
 static std::atomic<uint32_t> g_simulate_inflight{0};
+static std::atomic<uint32_t> g_readonly_evm_inflight{0};
+static std::atomic<uint32_t> g_estimate_gas_inflight{0};
+static std::atomic<uint32_t> g_access_list_inflight{0};
 #ifdef TOS_ENABLE_EVM_DEBUG_RPC
 static std::atomic<uint32_t> g_debug_trace_inflight{0};
 #endif
@@ -177,6 +206,12 @@ class AtomicConcurrencyPermit {
 static bool g_rate_limit_enabled = false;
 static bool g_public_getproof_enabled = true;
 
+// Admin/conformance read-only EVM RPC gas-cap profile. Default = false
+// (public profile, capped at 10M gas per read-only call). Switched on
+// at runtime via `enable_admin_evm_rpc_profile()` for local-only /
+// conformance / tooling builds that need 30M gas per call.
+static std::atomic<bool> g_admin_evm_rpc_profile{false};
+
 void enable_evm_rpc_rate_limit(bool enable) {
     g_rate_limit_enabled = enable;
     if (enable) {
@@ -184,11 +219,23 @@ void enable_evm_rpc_rate_limit(bool enable) {
         g_getlogs_limiter.reset();
         g_getproof_limiter.reset();
         g_simulate_limiter.reset();
+        g_call_limiter.reset();
+        g_estimate_gas_limiter.reset();
+        g_access_list_limiter.reset();
     }
 }
 
 void enable_public_evm_getproof(bool enable) {
     g_public_getproof_enabled = enable;
+}
+
+// Toggle the admin/conformance read-only EVM RPC profile. When enabled,
+// per-request read-only gas is capped at kMaxAdminReadOnlyRpcGas (30M)
+// rather than the public default (kMaxPublicReadOnlyRpcGas, 10M). This
+// must only be turned on for local-only / conformance / tooling builds;
+// public-network endpoints should leave it OFF (the default).
+void enable_admin_evm_rpc_profile(bool enable) {
+    g_admin_evm_rpc_profile.store(enable, std::memory_order_relaxed);
 }
 
 // Expose the global EVM bucket so the
@@ -211,8 +258,24 @@ void reset_evm_rpc_rate_limit_for_test() {
     g_getlogs_limiter.reset();
     g_getproof_limiter.reset();
     g_simulate_limiter.reset();
+    g_call_limiter.reset();
+    g_estimate_gas_limiter.reset();
+    g_access_list_limiter.reset();
     g_getproof_inflight.store(0, std::memory_order_relaxed);
     g_simulate_inflight.store(0, std::memory_order_relaxed);
+    g_readonly_evm_inflight.store(0, std::memory_order_relaxed);
+    g_estimate_gas_inflight.store(0, std::memory_order_relaxed);
+    g_access_list_inflight.store(0, std::memory_order_relaxed);
+}
+
+void set_readonly_evm_inflight_for_test(uint32_t value) {
+    g_readonly_evm_inflight.store(value, std::memory_order_relaxed);
+}
+void set_estimate_gas_inflight_for_test(uint32_t value) {
+    g_estimate_gas_inflight.store(value, std::memory_order_relaxed);
+}
+void set_access_list_inflight_for_test(uint32_t value) {
+    g_access_list_inflight.store(value, std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -751,6 +814,66 @@ static intx::uint256 parse_hex_uint256(const std::string& hex_str) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Strict 0x-hex validators / parsers used by stateOverrides input
+// validation. Unlike `parse_hex_uint64` / `parse_hex_uint256` (which
+// silently coerce malformed input to 0 to avoid crashing legacy fast
+// paths), these helpers return an explicit error so the caller can
+// reject the request with JSON-RPC -32602 instead of simulating
+// against a zero-padded surprise value.
+// ---------------------------------------------------------------------------
+
+// True iff `s` is a 0x-prefixed string with at least one hex digit and
+// no non-hex characters. The empty-after-0x case ("0x") returns false
+// because an Ethereum quantity must have at least one digit.
+static bool is_valid_0x_hex(const std::string& s) {
+    if (s.size() < 3) return false;  // need at least "0x" + one digit
+    if (s[0] != '0' || (s[1] != 'x' && s[1] != 'X')) return false;
+    for (size_t i = 2; i < s.size(); ++i) {
+        if (!is_hex_char(s[i])) return false;
+    }
+    return true;
+}
+
+// True iff `s` is exactly "0x" + 40 hex digits — the canonical 20-byte
+// Ethereum address envelope.
+static bool is_valid_address(const std::string& s) {
+    return s.size() == 42 && is_valid_0x_hex(s);
+}
+
+// Strict uint64 hex quantity parser. Accepts "0x" + 1..16 hex digits.
+// Returns error on missing prefix, empty digit sequence, oversize
+// input, or any non-hex character.
+static td::Result<uint64_t> parse_hex_uint64_strict(const std::string& s) {
+    // 0x + up to 16 hex chars = up to 18 chars total (uint64 fits in
+    // 16 nibbles). Anything longer overflows.
+    if (!is_valid_0x_hex(s) || s.size() > 18) {
+        return td::Status::Error("invalid uint64 hex quantity");
+    }
+    // is_valid_0x_hex already guaranteed every char from index 2 is a
+    // valid hex digit, so strtoull cannot fail on partial input.
+    return std::strtoull(s.c_str() + 2, nullptr, 16);
+}
+
+// Strict uint256 hex quantity parser. Accepts "0x" + 1..64 hex digits.
+// Returns error on missing prefix, empty digit sequence, oversize
+// input, or any non-hex character.
+static td::Result<intx::uint256> parse_hex_uint256_strict(const std::string& s) {
+    // 0x + up to 64 hex chars = up to 66 chars total.
+    if (!is_valid_0x_hex(s) || s.size() > 66) {
+        return td::Status::Error("invalid uint256 hex quantity");
+    }
+    // Left-pad to exactly 64 hex digits so intx::from_string sees a
+    // well-formed uint256.
+    std::string padded = s.substr(2);
+    while (padded.size() < 64) padded = "0" + padded;
+    try {
+        return intx::from_string<intx::uint256>("0x" + padded);
+    } catch (...) {
+        return td::Status::Error("invalid uint256 hex quantity");
+    }
+}
+
 // Parse "address" param: accepts single string or array of strings.
 // Ethereum spec: "address": "0x..." OR "address": ["0x...", "0x..."]
 static std::vector<evmc::address> parse_address_param(const std::string& params) {
@@ -890,18 +1013,49 @@ static std::vector<silkworm::AccessListEntry> parse_access_list(const std::strin
     return out;
 }
 
-// Codex round 1 (H-02): hard cap on per-request gas for read-only RPC paths
-// (eth_call / eth_estimateGas / eth_createAccessList / debug_traceCall). The
-// executor only enforces `txn.gas_limit <= block.gas_limit` for `commit_state`
-// and `parse_hex_uint64` happily returns UINT64_MAX on oversized hex, so
-// without this cap a single request could keep the global EVM-state lock for
-// many seconds while burning billions of gas inside silkworm. Picked at 30M
-// to match Ethereum L1 block gas — generous for any legitimate simulation
-// while bounding worst-case CPU per request.
-inline constexpr uint64_t kMaxReadOnlyRpcGas = 30'000'000;
+// Hard cap on per-request gas for read-only RPC paths (eth_call /
+// eth_estimateGas / eth_createAccessList / debug_traceCall). The executor
+// only enforces `txn.gas_limit <= block.gas_limit` for `commit_state` and
+// `parse_hex_uint64` happily returns UINT64_MAX on oversized hex, so
+// without this cap a single request could keep the global EVM-state lock
+// for many seconds while burning billions of gas inside silkworm.
+//
+// Two profiles:
+//   - kMaxPublicReadOnlyRpcGas (10M)  — default for public RPC. Generous
+//                                        enough for normal wallet/dApp
+//                                        simulation while bounding the
+//                                        worst-case CPU a single public
+//                                        request can pin.
+//   - kMaxAdminReadOnlyRpcGas (30M)   — opt-in for admin / conformance /
+//                                        local-only RPC. Matches Ethereum
+//                                        L1 block gas for tooling that
+//                                        runs whole-block-sized eth_calls
+//                                        (geth/erigon parity, the
+//                                        Ethereum execution-apis suite).
+//
+// The admin cap is selected only when the operator explicitly opts in
+// at runtime via `enable_admin_evm_rpc_profile(true)`. Keeping the
+// public cap as the structural default reduces the per-request worst
+// case under public load and matches the audit's P0.2 ask. The legacy
+// `kMaxReadOnlyRpcGas` alias is retained to avoid forcing an audit of
+// every call site at this point in the change set; it now resolves to
+// the admin (high) cap and the helper `clamp_read_only_rpc_gas()` picks
+// the active profile.
+inline constexpr uint64_t kMaxPublicReadOnlyRpcGas = 10'000'000;
+inline constexpr uint64_t kMaxAdminReadOnlyRpcGas = 30'000'000;
+inline constexpr uint64_t kMaxReadOnlyRpcGas = kMaxAdminReadOnlyRpcGas;
+
+// Profile selector lives near `g_rate_limit_enabled` above; declared
+// extern here so the helpers below can read it without re-defining.
+inline uint64_t active_read_only_rpc_gas_cap() noexcept {
+    return g_admin_evm_rpc_profile.load(std::memory_order_relaxed)
+        ? kMaxAdminReadOnlyRpcGas
+        : kMaxPublicReadOnlyRpcGas;
+}
 
 inline uint64_t clamp_read_only_rpc_gas(uint64_t requested) noexcept {
-    return requested > kMaxReadOnlyRpcGas ? kMaxReadOnlyRpcGas : requested;
+    const uint64_t cap = active_read_only_rpc_gas_cap();
+    return requested > cap ? cap : requested;
 }
 
 // Parse a call object from JSON-RPC params:
@@ -995,6 +1149,16 @@ static silkworm::Transaction parse_call_object(const std::string& params) {
 }
 
 static RpcResult handle_call(const std::string& params, const std::string& id) {
+    // Heavy read-only EVM RPC inflight permit acquired *before* parsing /
+    // executing so a swarm of concurrent eth_call requests can't pin
+    // O(N_inflight) gas worth of work behind the global EVM state mutex.
+    AtomicConcurrencyPermit readonly_permit(g_readonly_evm_inflight,
+                                            kMaxReadOnlyEvmInflight);
+    if (!readonly_permit) {
+        return {make_error(id, -32005,
+                           "read-only EVM RPC is busy"), true};
+    }
+
     auto txn = parse_call_object(params);
 
     // For eth_call, gas price should be 0 (no balance needed for simulation).
@@ -1027,6 +1191,23 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
 }
 
 static RpcResult handle_estimate_gas(const std::string& params, const std::string& id) {
+    // Heavy read-only EVM RPC inflight permits. Two layers:
+    //   1. Shared read-only EVM permit (counts against eth_call too).
+    //   2. estimateGas-only permit so a single estimateGas swarm can't
+    //      monopolize all read-only EVM inflight slots.
+    AtomicConcurrencyPermit readonly_permit(g_readonly_evm_inflight,
+                                            kMaxReadOnlyEvmInflight);
+    if (!readonly_permit) {
+        return {make_error(id, -32005,
+                           "read-only EVM RPC is busy"), true};
+    }
+    AtomicConcurrencyPermit estimate_permit(g_estimate_gas_inflight,
+                                            kMaxEstimateGasInflight);
+    if (!estimate_permit) {
+        return {make_error(id, -32005,
+                           "eth_estimateGas is busy"), true};
+    }
+
     auto txn = parse_call_object(params);
 
     // For estimation, gas price = 0 so no balance requirement.
@@ -3007,8 +3188,18 @@ parse_state_overrides_plan(const std::string& bsc_entry) {
         std::string val = body.substr(vstart, i - vstart + 1);
         ++i;  // step past '}'
 
+        // Strict address validation — silent skip on bad addresses
+        // would let a buggy or malicious client see a simulation
+        // shaped against a partially-applied override set, which the
+        // L-01 audit calls out as misleading. Reject hard with -32602
+        // instead.
+        if (!is_valid_address(addr_hex)) {
+            return td::Status::Error("invalid stateOverrides account address");
+        }
         evmc::address addr{};
-        if (!parse_hex_address(addr_hex, addr)) continue;
+        if (!parse_hex_address(addr_hex, addr)) {
+            return td::Status::Error("invalid stateOverrides account address");
+        }
 
         // Enforce the account count cap before pushing the next entry.
         if (plan.size() >= kMaxSimOverrideAccounts) {
@@ -3020,11 +3211,21 @@ parse_state_overrides_plan(const std::string& bsc_entry) {
 
         std::string bal_hex = extract_json_string_value(val, "balance");
         if (!bal_hex.empty()) {
-            ov.balance = parse_hex_uint256(bal_hex);
+            auto bal_res = parse_hex_uint256_strict(bal_hex);
+            if (bal_res.is_error()) {
+                return td::Status::Error(
+                    "invalid stateOverrides balance");
+            }
+            ov.balance = bal_res.move_as_ok();
         }
         std::string nonce_hex = extract_json_string_value(val, "nonce");
         if (!nonce_hex.empty()) {
-            ov.nonce = parse_hex_uint64(nonce_hex);
+            auto nonce_res = parse_hex_uint64_strict(nonce_hex);
+            if (nonce_res.is_error()) {
+                return td::Status::Error(
+                    "invalid stateOverrides nonce");
+            }
+            ov.nonce = nonce_res.move_as_ok();
         }
         std::string code_hex = extract_json_string_value(val, "code");
         if (!code_hex.empty()) {
@@ -3902,8 +4103,11 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
             call_plan.txn.max_priority_fee_per_gas = 0;
             call_plan.txn.max_fee_per_blob_gas = 0;
             if (call_plan.txn.gas_limit < 21000) call_plan.txn.gas_limit = 21000;
-            if (call_plan.txn.gas_limit > kMaxReadOnlyRpcGas) {
-                call_plan.txn.gas_limit = kMaxReadOnlyRpcGas;
+            {
+                const uint64_t cap = active_read_only_rpc_gas_cap();
+                if (call_plan.txn.gas_limit > cap) {
+                    call_plan.txn.gas_limit = cap;
+                }
             }
             if (simulate_requested_gas >
                 kMaxSimulateTotalRequestedGas - call_plan.txn.gas_limit) {
@@ -4372,6 +4576,24 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
 //     "gasUsed":"0x..." }
 
 static RpcResult handle_create_access_list(const std::string& params, const std::string& id) {
+    // Heavy read-only EVM RPC inflight permits. Layered the same way as
+    // eth_estimateGas: shared read-only permit + an access-list-only
+    // single-inflight permit. createAccessList runs the EVM with a
+    // tracer attached, so its per-request CPU cost is even higher than
+    // a plain eth_call.
+    AtomicConcurrencyPermit readonly_permit(g_readonly_evm_inflight,
+                                            kMaxReadOnlyEvmInflight);
+    if (!readonly_permit) {
+        return {make_error(id, -32005,
+                           "read-only EVM RPC is busy"), true};
+    }
+    AtomicConcurrencyPermit access_list_permit(g_access_list_inflight,
+                                                kMaxAccessListInflight);
+    if (!access_list_permit) {
+        return {make_error(id, -32005,
+                           "eth_createAccessList is busy"), true};
+    }
+
     auto txn = parse_call_object(params);
     txn.max_fee_per_gas = 0;
     txn.max_priority_fee_per_gas = 0;
@@ -4779,6 +5001,24 @@ std::optional<RpcResult> handle_eth_rpc(
         if (method == "eth_simulateV1") {
             if (!g_simulate_limiter.try_consume()) {
                 return RpcResult{make_error(id, -32005, "eth_simulateV1 rate limit exceeded"), true};
+            }
+        }
+        // Heavy read-only EVM RPC: per-method rate gates *before* the
+        // global EVM mutex is taken in the handler. The matching inflight
+        // permits inside each handler give the second layer of defense.
+        if (method == "eth_call") {
+            if (!g_call_limiter.try_consume()) {
+                return RpcResult{make_error(id, -32005, "eth_call rate limit exceeded"), true};
+            }
+        }
+        if (method == "eth_estimateGas") {
+            if (!g_estimate_gas_limiter.try_consume()) {
+                return RpcResult{make_error(id, -32005, "eth_estimateGas rate limit exceeded"), true};
+            }
+        }
+        if (method == "eth_createAccessList") {
+            if (!g_access_list_limiter.try_consume()) {
+                return RpcResult{make_error(id, -32005, "eth_createAccessList rate limit exceeded"), true};
             }
         }
         // Global rate limit for all methods
