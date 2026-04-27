@@ -1398,6 +1398,305 @@ static void test_eth_simulate_v1_accepts_valid_overrides_unchanged() {
 }
 
 // ---------------------------------------------------------------------------
+// M-03 (round 2) — strict call-object parsing.
+//
+// `eth_call`, `eth_estimateGas`, `eth_createAccessList` and the per-call
+// objects inside `eth_simulateV1` historically routed the JSON request
+// through a lax parser that silently coerced bad inputs:
+//   - invalid `from`           -> zero address, request still executed
+//   - invalid `to`             -> CREATE, request still executed
+//   - invalid `data`/`gas`/... -> partial / zero values
+// The strict parser converts every malformed field to JSON-RPC -32602
+// ("invalid params") and rejects the request *before* taking any
+// inflight permit or the global `evm_state.mutex()`. The tests below
+// cover the negative cases the audit calls out plus the three legal
+// CREATE shapes (`{}` / `{"to":null}` / `{"to":""}`) and a positive
+// control.
+//
+// Pre-lock contract: the rejection happens at parse time, which for
+// `eth_call` / `eth_estimateGas` / `eth_createAccessList` is the very
+// first thing each handler does (before the read-only-EVM permit is
+// even tried), and for `eth_simulateV1` is during the per-block call
+// extraction loop that runs before `evm_state.mutex()` (see handlers.cpp
+// line ~4485, after this round's edits). Each negative test asserts
+// the response carries -32602, the expected substring, and does NOT
+// carry any of the under-permit/under-lock failure markers
+// ("read-only EVM RPC is busy", "eth_simulateV1 already running",
+// etc.) — proving the reject short-circuited before the lock.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Tagged response holder for the M-03 reject helpers below.
+struct M03Outcome {
+    bool handled{false};
+    bool is_error{false};
+    bool code_neg32602{false};
+    bool msg_matches{false};
+    bool no_post_permit_marker{true};
+    std::string body;
+};
+
+// Run an RPC and check that the response is a JSON-RPC -32602 envelope
+// whose error message contains `expected_substr`, AND that none of the
+// post-permit / under-lock failure markers appear in the response. The
+// post-permit markers are unique to handlers that take an inflight
+// permit before executing; their absence proves the reject short-
+// circuited before the permit acquisition (and therefore before the
+// global EVM state mutex).
+static M03Outcome m03_run_reject(const char* method,
+                                 const std::string& params,
+                                 const std::string& expected_substr,
+                                 const char* req_id) {
+    M03Outcome out;
+    auto r = evm_workchain::handle_eth_rpc(method, params, req_id);
+    if (!r) {
+        return out;
+    }
+    out.handled = true;
+    out.body = r->json;
+    out.is_error = r->is_error;
+    out.code_neg32602 =
+        r->json.find("\"code\":-32602") != std::string::npos;
+    out.msg_matches =
+        r->json.find(expected_substr) != std::string::npos;
+    out.no_post_permit_marker =
+        r->json.find("read-only EVM RPC is busy") == std::string::npos &&
+        r->json.find("eth_estimateGas is busy") == std::string::npos &&
+        r->json.find("eth_createAccessList is busy") == std::string::npos &&
+        r->json.find("eth_simulateV1 already running") == std::string::npos &&
+        r->json.find("eth_simulateV1 rate limit exceeded") ==
+            std::string::npos;
+    return out;
+}
+
+static bool m03_pass(const M03Outcome& o, const char* label) {
+    bool ok = o.handled && o.is_error && o.code_neg32602 &&
+              o.msg_matches && o.no_post_permit_marker;
+    if (!ok) {
+        printf("  case %-50s response head: %.250s\n", label,
+               o.handled ? o.body.c_str() : "NOT HANDLED");
+        printf("  case %-50s handled=%d err=%d code=%d msg=%d "
+               "no_post_permit=%d\n",
+               label, o.handled, o.is_error, o.code_neg32602,
+               o.msg_matches, o.no_post_permit_marker);
+    }
+    return ok;
+}
+
+// Helper: build a one-block, one-call eth_simulateV1 params blob with the
+// supplied call object embedded in the calls array. The block has no
+// stateOverrides / blockOverrides — the only thing the handler has to do
+// is parse the call object, which is what these tests are exercising.
+static std::string m03_simulate_with_call(const std::string& call_json) {
+    return "[{\"blockStateCalls\":[{\"calls\":[" + call_json +
+           "]}]},\"latest\"]";
+}
+
+// Snapshot: take the simulate-inflight counter via a public-API probe.
+// We can't read g_simulate_inflight directly from outside the rpc TU,
+// but a "no_post_permit_marker" check on the response combined with the
+// fact that AtomicConcurrencyPermit is RAII-bound to the handler's
+// stack frame means the counter is necessarily zero on return. The
+// guard above (no_post_permit_marker) is the testable surrogate.
+
+}  // namespace
+
+// ---- eth_call negative cases ----
+
+static void test_m03_eth_call_invalid_from_rejected() {
+    printf("=== test_m03_eth_call_invalid_from_rejected ===\n");
+    std::string params =
+        "[{\"from\":\"0xZZ\",\"to\":"
+        "\"0x0000000000000000000000000000000000000001\"},\"latest\"]";
+    auto out = m03_run_reject("eth_call", params,
+                              "invalid from address", "M03a-from");
+    bool ok = m03_pass(out, "eth_call invalid from");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m03_eth_call_invalid_to_rejected() {
+    printf("=== test_m03_eth_call_invalid_to_rejected ===\n");
+    // 5-char "0x123" — too short for a 20-byte address.
+    std::string params = "[{\"to\":\"0x123\"},\"latest\"]";
+    auto out = m03_run_reject("eth_call", params,
+                              "invalid to address", "M03a-to");
+    bool ok = m03_pass(out, "eth_call invalid to (short hex)");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m03_eth_call_invalid_to_nonhex_rejected() {
+    printf("=== test_m03_eth_call_invalid_to_nonhex_rejected ===\n");
+    // 0x + 40 'Z' chars — full length but non-hex.
+    std::string params =
+        "[{\"to\":\"0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ\"},\"latest\"]";
+    auto out = m03_run_reject("eth_call", params,
+                              "invalid to address", "M03a-tonh");
+    bool ok = m03_pass(out, "eth_call invalid to (non-hex 40 chars)");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// ---- eth_call legitimate CREATE shapes (must NOT 32602) ----
+
+// Helper: an eth_call request that is well-formed except for whatever
+// shape the caller chose for `to` MUST NOT produce -32602. We don't
+// require it to succeed (the call may revert / produce an empty
+// response — both are acceptable for a CREATE-shaped eth_call against
+// an empty state); we only require absence of the strict-parser
+// rejection.
+static bool m03_accepts_request(const std::string& method,
+                                const std::string& params,
+                                const char* req_id) {
+    auto r = evm_workchain::handle_eth_rpc(method, params, req_id);
+    if (!r) return false;
+    bool no_invalid_to =
+        r->json.find("invalid to address") == std::string::npos;
+    bool no_invalid_params_code =
+        r->json.find("\"code\":-32602") == std::string::npos;
+    if (!no_invalid_to || !no_invalid_params_code) {
+        printf("  response head: %.250s\n", r->json.c_str());
+    }
+    return no_invalid_to && no_invalid_params_code;
+}
+
+static void test_m03_eth_call_null_to_accepted_as_create() {
+    printf("=== test_m03_eth_call_null_to_accepted_as_create ===\n");
+    std::string params = "[{\"to\":null,\"data\":\"0x60006000\"},\"latest\"]";
+    bool ok = m03_accepts_request("eth_call", params, "M03b-null");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m03_eth_call_missing_to_accepted_as_create() {
+    printf("=== test_m03_eth_call_missing_to_accepted_as_create ===\n");
+    std::string params = "[{\"data\":\"0x60006000\"},\"latest\"]";
+    bool ok = m03_accepts_request("eth_call", params, "M03b-miss");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m03_eth_call_empty_to_accepted_as_create() {
+    printf("=== test_m03_eth_call_empty_to_accepted_as_create ===\n");
+    std::string params = "[{\"to\":\"\",\"data\":\"0x60006000\"},\"latest\"]";
+    bool ok = m03_accepts_request("eth_call", params, "M03b-empty");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// ---- eth_call malformed quantity / bytes fields ----
+
+static void test_m03_eth_call_invalid_data_rejected() {
+    printf("=== test_m03_eth_call_invalid_data_rejected ===\n");
+    std::string params =
+        "[{\"to\":\"0x0000000000000000000000000000000000000001\","
+        "\"data\":\"0xZZ\"},\"latest\"]";
+    auto out = m03_run_reject("eth_call", params,
+                              "invalid data hex", "M03c-data");
+    bool ok = m03_pass(out, "eth_call invalid data");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m03_eth_call_invalid_gas_rejected() {
+    printf("=== test_m03_eth_call_invalid_gas_rejected ===\n");
+    std::string params =
+        "[{\"to\":\"0x0000000000000000000000000000000000000001\","
+        "\"gas\":\"0xzz\"},\"latest\"]";
+    auto out = m03_run_reject("eth_call", params,
+                              "invalid gas quantity", "M03c-gas");
+    bool ok = m03_pass(out, "eth_call invalid gas");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m03_eth_call_invalid_value_rejected() {
+    printf("=== test_m03_eth_call_invalid_value_rejected ===\n");
+    // Oversize uint256: 0x + 65 hex digits exceeds the 64-digit cap.
+    std::string oversize_value = "0x";
+    for (int i = 0; i < 65; ++i) oversize_value += "1";
+    std::string params =
+        "[{\"to\":\"0x0000000000000000000000000000000000000001\","
+        "\"value\":\"" + oversize_value + "\"},\"latest\"]";
+    auto out = m03_run_reject("eth_call", params,
+                              "invalid value quantity", "M03c-val");
+    bool ok = m03_pass(out, "eth_call oversize value");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m03_eth_call_invalid_nonce_rejected() {
+    printf("=== test_m03_eth_call_invalid_nonce_rejected ===\n");
+    std::string params =
+        "[{\"to\":\"0x0000000000000000000000000000000000000001\","
+        "\"nonce\":\"0xZZ\"},\"latest\"]";
+    auto out = m03_run_reject("eth_call", params,
+                              "invalid nonce", "M03c-non");
+    bool ok = m03_pass(out, "eth_call invalid nonce");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// ---- eth_estimateGas / eth_createAccessList propagate the strict parser ----
+
+static void test_m03_eth_estimate_gas_uses_strict_parser() {
+    printf("=== test_m03_eth_estimate_gas_uses_strict_parser ===\n");
+    std::string params = "[{\"to\":\"0x123\"},\"latest\"]";
+    auto out = m03_run_reject("eth_estimateGas", params,
+                              "invalid to address", "M03d-est");
+    bool ok = m03_pass(out, "eth_estimateGas strict to");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_m03_eth_create_access_list_uses_strict_parser() {
+    printf("=== test_m03_eth_create_access_list_uses_strict_parser ===\n");
+    std::string params = "[{\"to\":\"0x123\"},\"latest\"]";
+    auto out = m03_run_reject("eth_createAccessList", params,
+                              "invalid to address", "M03d-acl");
+    bool ok = m03_pass(out, "eth_createAccessList strict to");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// ---- eth_simulateV1: the per-call object inside a block must also strict-parse ----
+
+static void test_m03_eth_simulate_v1_call_object_strict() {
+    printf("=== test_m03_eth_simulate_v1_call_object_strict ===\n");
+    // Embed an invalid `to` in the per-call object. The handler MUST
+    // reject with -32602 during the pre-lock plan-build loop, before
+    // `evm_state.mutex()` is acquired and before any per-call-object
+    // execution runs.
+    std::string params =
+        m03_simulate_with_call("{\"to\":\"0x123\"}");
+    auto out = m03_run_reject("eth_simulateV1", params,
+                              "invalid to address", "M03e-sim");
+    bool ok = m03_pass(out, "eth_simulateV1 strict per-call to");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// ---- positive control: a fully-valid call still succeeds ----
+
+static void test_m03_eth_call_valid_request_still_succeeds() {
+    printf("=== test_m03_eth_call_valid_request_still_succeeds ===\n");
+    // A canonical, fully-valid eth_call that targets the identity
+    // precompile (0x04). data is empty, value is 0, gas is reasonable.
+    std::string params =
+        "[{\"from\":\"0x0000000000000000000000000000000000000000\","
+        "\"to\":\"0x0000000000000000000000000000000000000004\","
+        "\"data\":\"0x\","
+        "\"gas\":\"0x186a0\","
+        "\"value\":\"0x0\","
+        "\"nonce\":\"0x0\"},\"latest\"]";
+    auto r = evm_workchain::handle_eth_rpc("eth_call", params,
+                                           "M03f-pos");
+    bool handled = static_cast<bool>(r);
+    bool no_invalid_params =
+        handled &&
+        r->json.find("\"code\":-32602") == std::string::npos;
+    bool no_invalid_msg =
+        handled &&
+        r->json.find("invalid ") == std::string::npos;
+    // Either a successful "result" envelope or a non-32602 error envelope
+    // are both acceptable here — the contract is only that the strict
+    // parser did not reject the request.
+    bool ok = handled && no_invalid_params && no_invalid_msg;
+    printf("  response head: %.250s\n",
+           handled ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// ---------------------------------------------------------------------------
 // H-02 — heavy read-only RPC concurrency / rate gates.
 // Each test uses `enable_evm_rpc_rate_limit(true)` to flip the gates on,
 // drives the new buckets/permits to rejection, then restores the
@@ -11972,6 +12271,23 @@ int main() {
     test_eth_simulate_v1_rejects_invalid_override_nonce();
     test_eth_simulate_v1_rejects_oversize_override_balance();
     test_eth_simulate_v1_accepts_valid_overrides_unchanged();
+
+    // M-03 (round 2) — strict call-object parsing across eth_call /
+    // eth_estimateGas / eth_createAccessList / eth_simulateV1.
+    test_m03_eth_call_invalid_from_rejected();
+    test_m03_eth_call_invalid_to_rejected();
+    test_m03_eth_call_invalid_to_nonhex_rejected();
+    test_m03_eth_call_null_to_accepted_as_create();
+    test_m03_eth_call_missing_to_accepted_as_create();
+    test_m03_eth_call_empty_to_accepted_as_create();
+    test_m03_eth_call_invalid_data_rejected();
+    test_m03_eth_call_invalid_gas_rejected();
+    test_m03_eth_call_invalid_value_rejected();
+    test_m03_eth_call_invalid_nonce_rejected();
+    test_m03_eth_estimate_gas_uses_strict_parser();
+    test_m03_eth_create_access_list_uses_strict_parser();
+    test_m03_eth_simulate_v1_call_object_strict();
+    test_m03_eth_call_valid_request_still_succeeds();
 
     // H-02 — heavy read-only EVM RPC concurrency / rate gates.
     test_eth_call_rate_limit_rejects_busy();

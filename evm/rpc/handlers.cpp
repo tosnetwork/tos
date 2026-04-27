@@ -1065,16 +1065,45 @@ static std::vector<silkworm::Hash> parse_blob_versioned_hashes(const std::string
     return out;
 }
 
-// Parse an EIP-2930 access list:
+// Parse an EIP-2930 access list (strict):
 //   [{"address":"0x..","storageKeys":["0x..", ...]}, ...]
-// Returns empty vector if the field is absent/empty.
-static std::vector<silkworm::AccessListEntry> parse_access_list(const std::string& call_json) {
+// Absent / null / `[]` -> empty vector. Present-and-non-empty -> every
+// entry must strictly parse: address is a valid 20-byte 0x-hex, every
+// storageKeys element is exactly 32 bytes 0x-hex. Any deviation returns
+// `td::Status::Error("invalid access list")`. Used exclusively by the
+// strict call-object parser; the prior lax variant was removed since it
+// silently swallowed malformed entries.
+static td::Result<std::vector<silkworm::AccessListEntry>>
+parse_access_list_strict(const std::string& call_json) {
     std::vector<silkworm::AccessListEntry> out;
+    // Locate the accessList key explicitly so we can distinguish "absent"
+    // from "present-but-empty". Absent -> empty vector. Present-but-empty
+    // ([]) -> empty vector. Present and non-empty -> every entry must
+    // strictly parse.
+    auto kp = call_json.find("\"accessList\"");
+    if (kp == std::string::npos) return out;
+    auto colon = call_json.find(':', kp + 12);  // 12 == strlen("\"accessList\"")
+    if (colon == std::string::npos) {
+        return td::Status::Error("invalid access list");
+    }
+    size_t start = colon + 1;
+    while (start < call_json.size() &&
+           (call_json[start] == ' ' || call_json[start] == '\t')) {
+        ++start;
+    }
+    if (start >= call_json.size()) {
+        return td::Status::Error("invalid access list");
+    }
+    // null / empty-array shortcuts.
+    if (call_json.compare(start, 4, "null") == 0) return out;
+    if (call_json[start] != '[') {
+        return td::Status::Error("invalid access list");
+    }
     auto body = extract_json_array_body(call_json, "accessList");
-    if (body.empty()) return out;
-    // Iterate top-level { ... } entries.
+    // body may legitimately be empty (the array was []).
     int depth = 0;
     size_t obj_start = 0;
+    bool saw_entry = false;
     for (size_t i = 0; i < body.size(); i++) {
         if (body[i] == '{') {
             if (depth == 0) obj_start = i;
@@ -1082,30 +1111,64 @@ static std::vector<silkworm::AccessListEntry> parse_access_list(const std::strin
         } else if (body[i] == '}') {
             depth--;
             if (depth == 0) {
+                saw_entry = true;
                 std::string entry = body.substr(obj_start, i - obj_start + 1);
                 silkworm::AccessListEntry ale;
                 std::string addr_hex = extract_json_string_value(entry, "address");
-                if (!addr_hex.empty()) {
-                    parse_hex_address(addr_hex, ale.account);
+                if (addr_hex.empty()) {
+                    return td::Status::Error("invalid access list");
                 }
-                // storageKeys: array of 32-byte hex strings.
-                auto sk_body = extract_json_array_body(entry, "storageKeys");
-                if (!sk_body.empty()) {
-                    size_t k = 0;
-                    while (k < sk_body.size()) {
-                        if (sk_body[k] == '"') {
+                if (!parse_hex_address(addr_hex, ale.account)) {
+                    return td::Status::Error("invalid access list");
+                }
+                // storageKeys is optional; if present every entry must be
+                // a 32-byte 0x-hex string.
+                auto sk_kw = entry.find("\"storageKeys\"");
+                if (sk_kw != std::string::npos) {
+                    auto sk_colon = entry.find(':', sk_kw + 13);
+                    if (sk_colon == std::string::npos) {
+                        return td::Status::Error("invalid access list");
+                    }
+                    size_t sks = sk_colon + 1;
+                    while (sks < entry.size() &&
+                           (entry[sks] == ' ' || entry[sks] == '\t')) {
+                        ++sks;
+                    }
+                    if (sks >= entry.size()) {
+                        return td::Status::Error("invalid access list");
+                    }
+                    if (entry.compare(sks, 4, "null") == 0) {
+                        // null storageKeys -> treat as empty list.
+                    } else if (entry[sks] != '[') {
+                        return td::Status::Error("invalid access list");
+                    } else {
+                        auto sk_body = extract_json_array_body(entry, "storageKeys");
+                        size_t k = 0;
+                        while (k < sk_body.size()) {
+                            // skip whitespace / commas
+                            while (k < sk_body.size() &&
+                                   (sk_body[k] == ' ' || sk_body[k] == '\t' ||
+                                    sk_body[k] == ',' || sk_body[k] == '\n')) {
+                                ++k;
+                            }
+                            if (k >= sk_body.size()) break;
+                            if (sk_body[k] != '"') {
+                                return td::Status::Error("invalid access list");
+                            }
                             size_t end = sk_body.find('"', k + 1);
-                            if (end == std::string::npos) break;
+                            if (end == std::string::npos) {
+                                return td::Status::Error("invalid access list");
+                            }
                             std::string hex_str = sk_body.substr(k + 1, end - k - 1);
                             silkworm::Bytes bytes;
-                            if (parse_hex_bytes(hex_str + "\"", bytes) && bytes.size() == 32) {
-                                evmc::bytes32 b{};
-                                std::memcpy(b.bytes, bytes.data(), 32);
-                                ale.storage_keys.push_back(b);
+                            if (!parse_hex_bytes(hex_str + "\"", bytes) ||
+                                bytes.size() != 32) {
+                                return td::Status::Error("invalid access list");
                             }
+                            evmc::bytes32 b{};
+                            std::memcpy(b.bytes, bytes.data(), 32);
+                            ale.storage_keys.push_back(b);
                             k = end + 1;
-                        } else {
-                            k++;
                         }
                     }
                 }
@@ -1113,6 +1176,10 @@ static std::vector<silkworm::AccessListEntry> parse_access_list(const std::strin
             }
         }
     }
+    if (depth != 0) {
+        return td::Status::Error("invalid access list");
+    }
+    (void)saw_entry;
     return out;
 }
 
@@ -1167,10 +1234,37 @@ inline uint64_t clamp_read_only_rpc_gas(uint64_t requested) noexcept {
     return requested > cap ? cap : requested;
 }
 
-// Parse a call object from JSON-RPC params:
-//   [{"from":"0x...", "to":"0x...", "data":"0x...", "value":"0x...", "gas":"0x..."}, "latest"]
-// All fields are optional per Ethereum spec.
-static silkworm::Transaction parse_call_object(const std::string& params) {
+// Parse a call object from JSON-RPC params, fail-closed with an explicit
+// error on any malformed field. The returned `td::Status::Error` message
+// is mapped to JSON-RPC -32602 by every call site.
+//
+// Replaces the prior lax parser that silently coerced bad inputs:
+//   invalid `from` -> zero address (silently),
+//   invalid `to`   -> CREATE      (silently),
+//   non-hex `data`/`gas`/`nonce` -> partial / zero,
+// any of which would surface through the public RPC as a successful but
+// silently-wrong simulation.
+//
+// Field semantics:
+//   from   : missing / null / "" -> default zero address.
+//            Non-empty -> must be a valid 20-byte 0x-hex address.
+//   to     : missing / null / "" -> CREATE (txn.to = nullopt).
+//            Non-empty -> must be a valid 20-byte 0x-hex address.
+//            (extract_json_string_value collapses {missing, null, ""}
+//             to "", so all three legal CREATE shapes share one branch.)
+//   data
+//   /input : missing / "" -> empty bytes. Non-empty -> valid hex bytes.
+//   value  : missing / "" -> 0. Non-empty -> valid uint256 quantity.
+//   gas
+//   /gasLimit : missing / "" -> default. Non-empty -> valid uint64
+//            quantity (0x + 1..16 hex digits).
+//   nonce  : missing / "" -> 0. Non-empty -> valid uint64 quantity.
+//   gasPrice / maxFeePerGas / maxPriorityFeePerGas / maxFeePerBlobGas:
+//            each, if present, must be a valid uint256 quantity.
+//   accessList : if present, every entry strictly parses — see
+//            parse_access_list_strict.
+static td::Result<silkworm::Transaction>
+parse_call_object_strict(const std::string& params) {
     silkworm::Transaction txn;
     txn.type = silkworm::TransactionType::kLegacy;
     txn.chain_id = current_evm_chain_id();
@@ -1178,74 +1272,108 @@ static silkworm::Transaction parse_call_object(const std::string& params) {
     txn.max_fee_per_gas = 0;
     txn.max_priority_fee_per_gas = 0;
 
-    // Parse "from" (optional — zero address if missing)
+    // ---- from ----
     std::string from_hex = extract_json_string_value(params, "from");
     evmc::address from_addr{};
     if (!from_hex.empty()) {
-        parse_hex_address(from_hex, from_addr);
+        if (!parse_hex_address(from_hex, from_addr)) {
+            return td::Status::Error("invalid from address");
+        }
     }
     txn.set_sender(from_addr);
 
-    // Parse "to" (optional — nullopt means CREATE)
+    // ---- to ----
     std::string to_hex = extract_json_string_value(params, "to");
     if (!to_hex.empty()) {
         evmc::address to_addr{};
-        if (parse_hex_address(to_hex, to_addr)) {
-            txn.to = to_addr;
+        if (!parse_hex_address(to_hex, to_addr)) {
+            return td::Status::Error("invalid to address");
         }
+        txn.to = to_addr;
     }
 
-    // Parse "data" or "input" (optional)
+    // ---- data / input ----
     std::string data_hex = extract_json_string_value(params, "data");
     if (data_hex.empty()) {
         data_hex = extract_json_string_value(params, "input");
     }
     if (!data_hex.empty()) {
-        parse_hex_bytes(data_hex, txn.data);
+        if (!parse_hex_bytes(data_hex, txn.data)) {
+            return td::Status::Error("invalid data hex");
+        }
     }
 
-    // Parse "value" (optional — 0 if missing)
+    // ---- value ----
     std::string value_hex = extract_json_string_value(params, "value");
     if (!value_hex.empty()) {
-        txn.value = parse_hex_uint256(value_hex);
+        auto v_res = parse_hex_uint256_strict(value_hex);
+        if (v_res.is_error()) {
+            return td::Status::Error("invalid value quantity");
+        }
+        txn.value = v_res.move_as_ok();
     }
 
-    // Parse "gas" or "gasLimit" (optional)
+    // ---- gas / gasLimit ----
     std::string gas_hex = extract_json_string_value(params, "gas");
     if (gas_hex.empty()) {
         gas_hex = extract_json_string_value(params, "gasLimit");
     }
     if (!gas_hex.empty()) {
-        txn.gas_limit = parse_hex_uint64(gas_hex);
+        auto g_res = parse_hex_uint64_strict(gas_hex);
+        if (g_res.is_error()) {
+            return td::Status::Error("invalid gas quantity");
+        }
+        txn.gas_limit = g_res.move_as_ok();
     }
 
-    // Parse "gasPrice" / "maxFeePerGas" (optional)
+    // ---- gasPrice / maxFeePerGas ----
+    // Both keys accepted; gasPrice wins when both are present (matches
+    // geth's preference for legacy fields in a mixed call object).
     std::string gp_hex = extract_json_string_value(params, "gasPrice");
     if (gp_hex.empty()) gp_hex = extract_json_string_value(params, "maxFeePerGas");
     if (!gp_hex.empty()) {
-        txn.max_fee_per_gas = parse_hex_uint256(gp_hex);
+        auto gp_res = parse_hex_uint256_strict(gp_hex);
+        if (gp_res.is_error()) {
+            return td::Status::Error("invalid gasPrice quantity");
+        }
+        txn.max_fee_per_gas = gp_res.move_as_ok();
     }
 
-    // Parse "maxPriorityFeePerGas" (optional)
+    // ---- maxPriorityFeePerGas ----
     std::string mp_hex = extract_json_string_value(params, "maxPriorityFeePerGas");
     if (!mp_hex.empty()) {
-        txn.max_priority_fee_per_gas = parse_hex_uint256(mp_hex);
+        auto mp_res = parse_hex_uint256_strict(mp_hex);
+        if (mp_res.is_error()) {
+            return td::Status::Error("invalid maxPriorityFeePerGas quantity");
+        }
+        txn.max_priority_fee_per_gas = mp_res.move_as_ok();
     }
 
-    // Parse "nonce" (optional)
+    // ---- nonce ----
     std::string nonce_hex = extract_json_string_value(params, "nonce");
     if (!nonce_hex.empty()) {
-        txn.nonce = parse_hex_uint64(nonce_hex);
+        auto n_res = parse_hex_uint64_strict(nonce_hex);
+        if (n_res.is_error()) {
+            return td::Status::Error("invalid nonce");
+        }
+        txn.nonce = n_res.move_as_ok();
     }
 
-    // EIP-2930 access list (optional)
-    txn.access_list = parse_access_list(params);
+    // ---- accessList (EIP-2930) ----
+    auto acl_res = parse_access_list_strict(params);
+    if (acl_res.is_error()) {
+        return td::Status::Error(acl_res.error().message().str());
+    }
+    txn.access_list = acl_res.move_as_ok();
 
-    // EIP-4844 blob fields (optional). Presence of blobVersionedHashes
-    // implies a type-3 (blob) transaction.
+    // ---- maxFeePerBlobGas / blobVersionedHashes (EIP-4844) ----
     std::string mfb_hex = extract_json_string_value(params, "maxFeePerBlobGas");
     if (!mfb_hex.empty()) {
-        txn.max_fee_per_blob_gas = parse_hex_uint256(mfb_hex);
+        auto mfb_res = parse_hex_uint256_strict(mfb_hex);
+        if (mfb_res.is_error()) {
+            return td::Status::Error("invalid maxFeePerBlobGas quantity");
+        }
+        txn.max_fee_per_blob_gas = mfb_res.move_as_ok();
     }
     txn.blob_versioned_hashes = parse_blob_versioned_hashes(params);
     if (!txn.blob_versioned_hashes.empty()) {
@@ -1254,13 +1382,21 @@ static silkworm::Transaction parse_call_object(const std::string& params) {
         txn.type = silkworm::TransactionType::kDynamicFee;
     }
 
-    return txn;
+    return std::move(txn);
 }
 
 static RpcResult handle_call(const std::string& params, const std::string& id) {
-    // Heavy read-only EVM RPC inflight permit acquired *before* parsing /
-    // executing so a swarm of concurrent eth_call requests can't pin
-    // O(N_inflight) gas worth of work behind the global EVM state mutex.
+    // M-03: parse the call object BEFORE any inflight permit / state lock so
+    // a malformed request is rejected with -32602 without ever pressuring
+    // the read-only EVM permits or the global EVM state mutex.
+    auto tx_res = parse_call_object_strict(params);
+    if (tx_res.is_error()) {
+        return {make_error(id, -32602, tx_res.error().message().str()), true};
+    }
+
+    // Heavy read-only EVM RPC inflight permit acquired *after* parsing so
+    // a swarm of concurrent eth_call requests can't pin O(N_inflight) gas
+    // worth of work behind the global EVM state mutex.
     AtomicConcurrencyPermit readonly_permit(g_readonly_evm_inflight,
                                             kMaxReadOnlyEvmInflight);
     if (!readonly_permit) {
@@ -1268,7 +1404,7 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
                            "read-only EVM RPC is busy"), true};
     }
 
-    auto txn = parse_call_object(params);
+    auto txn = tx_res.move_as_ok();
 
     // For eth_call, gas price should be 0 (no balance needed for simulation).
     txn.max_fee_per_gas = 0;
@@ -1300,6 +1436,13 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
 }
 
 static RpcResult handle_estimate_gas(const std::string& params, const std::string& id) {
+    // M-03: strict parse before any permit/lock so malformed input fails
+    // closed with -32602 without burning a permit slot.
+    auto tx_res = parse_call_object_strict(params);
+    if (tx_res.is_error()) {
+        return {make_error(id, -32602, tx_res.error().message().str()), true};
+    }
+
     // Heavy read-only EVM RPC inflight permits. Two layers:
     //   1. Shared read-only EVM permit (counts against eth_call too).
     //   2. estimateGas-only permit so a single estimateGas swarm can't
@@ -1317,7 +1460,7 @@ static RpcResult handle_estimate_gas(const std::string& params, const std::strin
                            "eth_estimateGas is busy"), true};
     }
 
-    auto txn = parse_call_object(params);
+    auto txn = tx_res.move_as_ok();
 
     // For estimation, gas price = 0 so no balance requirement.
     txn.max_fee_per_gas = 0;
@@ -4289,7 +4432,16 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
         block_plan.calls.reserve(call_jsons.size());
         for (const auto& call_json : call_jsons) {
             SimulateCallPlan call_plan;
-            call_plan.txn = parse_call_object(call_json);
+            // M-03: every per-call object goes through the same strict
+            // parser as eth_call / eth_estimateGas / eth_createAccessList.
+            // Bad input here rejects the whole simulate request with -32602
+            // *before* `evm_state.mutex()` is acquired below.
+            auto tx_res = parse_call_object_strict(call_json);
+            if (tx_res.is_error()) {
+                return {make_error(id, -32602,
+                                   tx_res.error().message().str()), true};
+            }
+            call_plan.txn = tx_res.move_as_ok();
             call_plan.txn.max_fee_per_gas = 0;
             call_plan.txn.max_priority_fee_per_gas = 0;
             call_plan.txn.max_fee_per_blob_gas = 0;
@@ -4767,6 +4919,14 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
 //     "gasUsed":"0x..." }
 
 static RpcResult handle_create_access_list(const std::string& params, const std::string& id) {
+    // M-03: strict parse before any permit/lock so malformed input fails
+    // closed with -32602 without burning the access-list permit slot or
+    // touching the global EVM state mutex.
+    auto tx_res = parse_call_object_strict(params);
+    if (tx_res.is_error()) {
+        return {make_error(id, -32602, tx_res.error().message().str()), true};
+    }
+
     // Heavy read-only EVM RPC inflight permits. Layered the same way as
     // eth_estimateGas: shared read-only permit + an access-list-only
     // single-inflight permit. createAccessList runs the EVM with a
@@ -4785,7 +4945,7 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
                            "eth_createAccessList is busy"), true};
     }
 
-    auto txn = parse_call_object(params);
+    auto txn = tx_res.move_as_ok();
     txn.max_fee_per_gas = 0;
     txn.max_priority_fee_per_gas = 0;
     if (txn.gas_limit == 10'000'000) txn.gas_limit = 30'000'000;
