@@ -225,6 +225,19 @@ class EvmState {
     void end_witness_consistency_check() noexcept;
     td::Status consume_witness_consistency_error() noexcept;
 
+    /// Audit K-02 (H-01 follow-up): forwarder for the always-on
+    /// `read_code` mismatch counter. RPC handlers that run heavy
+    /// read-only EVM logic without binding a `WitnessFlatConsistencyContext`
+    /// (eth_call's read-only fast path, eth_estimateGas, eth_createAccessList)
+    /// snapshot the counter before silkworm execution and re-read it
+    /// afterwards: a non-zero delta means a corrupt code root was
+    /// observed during the handler's frame, and the response should be
+    /// mapped to JSON-RPC `-32000 corrupt EVM code root` instead of
+    /// silently returning the wrong (or empty) execution result. The
+    /// counter is process-global and monotone, so the snapshot/check
+    /// pattern is correct under any locking discipline.
+    uint64_t code_root_hash_mismatch_count() const noexcept;
+
   private:
     void evict_oldest_receipts();
     void evict_oldest_transactions();

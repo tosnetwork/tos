@@ -434,4 +434,17 @@ td::Status EvmState::consume_witness_consistency_error() noexcept {
     return td::Status::OK();
 }
 
+uint64_t EvmState::code_root_hash_mismatch_count() const noexcept {
+    // Audit K-02 (H-01 follow-up): direct delegate to the namespace-level
+    // accessor in cell-state.cpp. The counter is process-global, not
+    // per-backend, so the helper is defined once and shared across
+    // CellEvmState and any other (test-only) State backends. No lock is
+    // taken because the underlying atomic is read with `relaxed` ordering
+    // — the snapshot/check pattern in the RPC handlers requires only
+    // that increments performed by the same thread (during silkworm's
+    // read_code calls inside the handler's frame) become visible to that
+    // same thread, which is automatic.
+    return evm_workchain::code_root_hash_mismatch_count();
+}
+
 }  // namespace evm_workchain

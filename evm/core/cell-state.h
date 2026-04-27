@@ -200,7 +200,39 @@ enum class TrieWitnessLoadMode {
 /// lazy hot-path call and assert the counter stays at the expected value.
 extern std::atomic<size_t> g_cell_state_full_walks;
 extern std::atomic<size_t> g_storage_index_walks;
+
+/// Audit K-02 (H-01 follow-up): test-only mirror of the always-on
+/// production counter `s_code_root_hash_mismatch_count_inner` (defined in
+/// `cell-state.cpp`). It increments in lockstep with the production
+/// counter so test-only instrumentation can assert the precise number of
+/// `read_code` mismatches the verifier observed even in scenarios where a
+/// `WitnessFlatConsistencyContext` is not bound.
+extern std::atomic<uint64_t> g_code_root_hash_mismatch_count;
 #endif
+
+/// Audit K-02 (H-01 follow-up): always-on counter accessor. Returns the
+/// total number of `read_code` calls that detected a code-root vs
+/// `code_hash` mismatch since process start (or since the last
+/// `reset_code_root_hash_mismatch_count_for_test`). RPC handlers that do
+/// NOT run under an active `WitnessFlatConsistencyContext` (for example
+/// `eth_call`'s read-only fast path) snapshot this counter before
+/// invoking the EVM and compare again afterwards: a non-zero delta means
+/// silkworm internal helpers consumed corrupt bytecode during the
+/// handler's frame, and the handler maps the response to a JSON-RPC
+/// `-32000 corrupt EVM code root` error instead of silently returning
+/// the wrong code (or, worse, "0x" because `read_code` returns an empty
+/// `ByteView` on mismatch). Linked unconditionally — production paths
+/// rely on it.
+uint64_t code_root_hash_mismatch_count() noexcept;
+
+/// Audit K-02 (H-01 follow-up): test-only reset for the always-on
+/// counter exposed by `code_root_hash_mismatch_count`. Production code
+/// must not call this — the counter is monotone for the lifetime of the
+/// process and the RPC handlers' "snapshot-and-check" pattern would race
+/// against any concurrent reset. Used by the K-02 unit tests so the
+/// exact mismatch delta from a single `read_code` invocation is
+/// observable.
+void reset_code_root_hash_mismatch_count_for_test() noexcept;
 
 struct CellEvmStateSizeStats {
     size_t accounts{0};

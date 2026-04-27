@@ -28,7 +28,53 @@ std::atomic<size_t> g_cell_state_full_walks{0};
 std::atomic<size_t> g_storage_index_walks{0};
 std::atomic<size_t> g_witness_consistency_checks{0};
 std::atomic<int> g_witness_verify_depth_max_observed{0};
+// Audit K-02 (H-01 follow-up): test-only mirror of
+// `s_code_root_hash_mismatch_count_inner`. The production counter is
+// always linked because RPC handlers consult it on every heavy read-only
+// EVM call; this mirror exists so unit tests with
+// `TOS_EVM_TEST_INSTRUMENTATION=1` can also access the same counter via
+// the historical `g_*` naming convention used by the rest of the file.
+std::atomic<uint64_t> g_code_root_hash_mismatch_count{0};
 #endif
+
+namespace {
+// Audit K-02 (H-01 follow-up): always-on counter incremented every time
+// `CellEvmState::read_code` detects a code-root vs `code_hash` mismatch.
+// The lazy-decode hook in `read_code` returns an empty `ByteView` on
+// mismatch (so silkworm doesn't execute the wrong bytecode) and forwards
+// the consistency violation into the active
+// `WitnessFlatConsistencyContext` for fail-closed consensus rollback.
+// Read-only RPC paths that do NOT bind a context (eth_call's read-only
+// fast path, eth_estimateGas, eth_createAccessList) would otherwise see
+// the empty return as canonical "no code" and silently mishandle the
+// corruption. They snapshot this counter before silkworm runs and
+// compare afterwards: a non-zero delta is the definitive signal that a
+// `read_code` invocation during their frame surfaced a corrupt code
+// root, and the handler maps its response to JSON-RPC `-32000`.
+//
+// `relaxed` ordering is sufficient: handlers always observe the
+// snapshot/check pair under their own request thread, so the only
+// requirement is that the increment becomes visible to the same thread
+// that performed the snapshot — `relaxed` is enough for that on every
+// supported architecture. No cross-thread synchronization is needed
+// because the per-request EVM execution holds the global EVM state
+// mutex exclusively (or shared, with each request's read_code calls
+// serialized inside the same critical section).
+std::atomic<uint64_t> s_code_root_hash_mismatch_count_inner{0};
+}  // namespace
+
+uint64_t code_root_hash_mismatch_count() noexcept {
+    return s_code_root_hash_mismatch_count_inner.load(
+        std::memory_order_relaxed);
+}
+
+void reset_code_root_hash_mismatch_count_for_test() noexcept {
+    s_code_root_hash_mismatch_count_inner.store(
+        0, std::memory_order_relaxed);
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+    g_code_root_hash_mismatch_count.store(0, std::memory_order_relaxed);
+#endif
+}
 
 namespace {
 
@@ -137,6 +183,29 @@ std::optional<silkworm::Account> CellEvmState::read_account(
     return acct;
 }
 
+// Audit H-01 / K-02 contract for `CellEvmState::read_code`:
+//   * On a `code_hash == kEmptyHash` request the function returns an empty
+//     `ByteView` to mean canonical "no code", and that is the ONLY case
+//     where empty-return is a successful answer.
+//   * On a non-empty `code_hash` request the function tries the hot cache,
+//     then a lazy decode out of the per-account flat-state code cell. The
+//     lazy path computes `keccak(decoded)` and compares against the
+//     account leaf's claimed `code_hash`.
+//   * If the recomputed hash does not match (or the decode produced empty
+//     bytes for a non-empty `code_hash`, which is structurally the same
+//     mismatch), the function (a) records the consistency violation into
+//     the active `WitnessFlatConsistencyContext` so consensus / verified
+//     RPC drains it on the executor frame, (b) increments the always-on
+//     `s_code_root_hash_mismatch_count_inner` counter visible via
+//     `code_root_hash_mismatch_count()` so RPC handlers without a verifier
+//     context can fail-closed, and (c) returns an empty `ByteView` so
+//     silkworm cannot execute the wrong bytecode.
+//   * Therefore: a non-empty `code_hash` paired with an empty return value
+//     is a hard signal of a code-root vs `code_hash` mismatch. Callers
+//     that want a definitive boolean answer (no need to combine with the
+//     `code_hash == kEmptyHash` path) MUST use
+//     `EvmState::read_code_copy_checked`, which surfaces the same
+//     condition as a `td::Status::Error`.
 silkworm::ByteView CellEvmState::read_code(
     const evmc::address& address, const evmc::bytes32& code_hash) const noexcept {
     // Dynamic witness consistency hook (audit H-01): the canonical account
@@ -192,6 +261,16 @@ silkworm::ByteView CellEvmState::read_code(
             record_witness_error_if_active(
                 address,
                 td::Slice("EVM code root decodes empty for non-empty codeHash"));
+            // Audit K-02: bump the always-on mismatch counter so RPC
+            // handlers without a verifier context can detect this code
+            // path and fail-closed (otherwise the empty return would be
+            // mistaken for canonical "no code").
+            s_code_root_hash_mismatch_count_inner.fetch_add(
+                1, std::memory_order_relaxed);
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+            g_code_root_hash_mismatch_count.fetch_add(
+                1, std::memory_order_relaxed);
+#endif
             return {};
         }
         auto actual_hash = keccak_code_hash(silkworm::ByteView{
@@ -199,6 +278,15 @@ silkworm::ByteView CellEvmState::read_code(
         if (actual_hash != code_hash) {
             record_witness_error_if_active(
                 address, td::Slice("EVM code root/hash mismatch"));
+            // Audit K-02: bump the always-on mismatch counter for the
+            // benefit of RPC handlers running without a verifier
+            // context; see the contract block above `read_code`.
+            s_code_root_hash_mismatch_count_inner.fetch_add(
+                1, std::memory_order_relaxed);
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+            g_code_root_hash_mismatch_count.fetch_add(
+                1, std::memory_order_relaxed);
+#endif
             return {};
         }
         auto [it, inserted] = code_.emplace(

@@ -11916,6 +11916,345 @@ void test_h01_update_account_code_mismatch_rejected() {
 }
 
 // =============================================================================
+// K-02 — code-root mismatch counter visible without an active verifier ctx
+// =============================================================================
+//
+// Audit K-02 (H-01 follow-up): `CellEvmState::read_code` returns an empty
+// `ByteView` whenever the lazy decode of an account's bytecode disagrees
+// with the canonical `code_hash` stored on the account leaf. Under an
+// active `WitnessFlatConsistencyContext` the verifier records the
+// violation into `first_error`, which the executor drains as a
+// fail-closed disposition. But read-only RPC paths (eth_call's read-only
+// fast path, eth_estimateGas, eth_createAccessList) do NOT bind a
+// witness context, so silkworm internal helpers that call `read_code`
+// would see "no code" and silently mishandle the corruption.
+//
+// The K-02 fix introduces an always-on, process-global counter
+// `code_root_hash_mismatch_count()` that read_code increments on every
+// detected mismatch. RPC handlers without a verifier context snapshot
+// it before silkworm runs and check it again afterwards: a non-zero
+// delta is the deterministic signal that maps the response to a
+// JSON-RPC `-32000 corrupt EVM code root` error.
+//
+// The five tests below cover:
+//   1. read_code without a verifier ctx still bumps the counter.
+//   2. read_code with a verifier ctx bumps the counter AND records
+//      first_error (the two signals are independent).
+//   3. handle_call against a corrupt-code account returns -32000.
+//   4. handle_estimate_gas against the same returns -32000.
+//   5. reset_code_root_hash_mismatch_count_for_test() returns the
+//      counter to 0 (used by tests, not by production paths).
+
+void test_k2_read_code_no_verifier_records_mismatch() {
+    printf("=== test_k2_read_code_no_verifier_records_mismatch ===\n");
+
+    reset_code_root_hash_mismatch_count_for_test();
+
+    // Build a CellEvmState whose flat-state account leaf carries
+    // code_hash = keccak(A) but the embedded code chain encodes B.
+    evmc::address target_addr = hex_to_addr(
+        "0x000000000000000000000000000000000000a001");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.nonce = 1;
+    corrupt_acct.balance = intx::uint256{0};
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+    evmc::bytes32 code_hash_A{};
+    std::memcpy(code_hash_A.bytes, kh_A.bytes, 32);
+
+    auto state_cell = h01_make_corrupt_code_root_state(target_addr,
+                                                        corrupt_acct, code_B);
+    CHECK(state_cell.not_null());
+    CellEvmState cs;
+    CHECK(cs.load_from_cell(state_cell, CellStateLoadMode::TrustedLazy));
+
+    // No verifier ctx bound: this is the read-only RPC fast path.
+    uint64_t before = code_root_hash_mismatch_count();
+    auto bv = cs.read_code(target_addr, code_hash_A);
+
+    bool returned_empty = bv.empty();
+    uint64_t after = code_root_hash_mismatch_count();
+    bool counter_advanced = after == before + 1;
+
+    printf("  read_code returned empty (mismatch): %s\n",
+           returned_empty ? "OK" : "FAILED");
+    printf("  counter advanced by exactly 1:       %s (delta=%llu)\n",
+           counter_advanced ? "OK" : "FAILED",
+           static_cast<unsigned long long>(after - before));
+
+    bool ok = returned_empty && counter_advanced;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_k2_read_code_with_verifier_records_mismatch_and_first_error() {
+    printf("=== test_k2_read_code_with_verifier_records_mismatch_and_first_error ===\n");
+
+    reset_code_root_hash_mismatch_count_for_test();
+
+    evmc::address target_addr = hex_to_addr(
+        "0x000000000000000000000000000000000000a002");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.nonce = 1;
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+    evmc::bytes32 code_hash_A{};
+    std::memcpy(code_hash_A.bytes, kh_A.bytes, 32);
+
+    auto state_cell = h01_make_corrupt_code_root_state(target_addr,
+                                                        corrupt_acct, code_B);
+    CHECK(state_cell.not_null());
+    CellEvmState cs;
+    CHECK(cs.load_from_cell(state_cell, CellStateLoadMode::TrustedLazy));
+
+    // Bind a verifier ctx — the production consensus / verified RPC
+    // path. Both the per-tx first_error AND the always-on counter must
+    // observe the mismatch.
+    //
+    // Pre-populate `checked_accounts` so the upfront
+    // `verify_account_before_return` dedup short-circuits on the
+    // synthetic flat-only state (no Ethereum MPT witness was wired up
+    // for this lone account). This isolates the test to read_code's
+    // codeHash invariant: without the dedup, the account-leaf witness
+    // verifier would record a "dynamic account witness" mismatch first
+    // (sticky) and the codeHash check inside read_code would still bump
+    // the always-on counter but never reach the
+    // `record_witness_error_if_active` write because the ctx already
+    // holds an error. The K-02 contract is precisely that the counter
+    // is observable INDEPENDENTLY of the witness ctx, so
+    // pre-populating the dedup set lets the test pin both signals
+    // exactly once for the same call.
+    WitnessFlatConsistencyContext ctx{};
+    ctx.enabled = true;
+    ctx.checked_accounts.insert(target_addr);
+    cs.begin_witness_consistency_check(&ctx);
+
+    uint64_t before = code_root_hash_mismatch_count();
+    auto bv = cs.read_code(target_addr, code_hash_A);
+    uint64_t after = code_root_hash_mismatch_count();
+
+    bool returned_empty = bv.empty();
+    bool counter_advanced = after == before + 1;
+    bool first_error_set = ctx.first_error.is_error();
+    std::string offending = ctx.offending_what;
+    bool offending_mentions_code =
+        offending.find("code root") != std::string::npos ||
+        offending.find("code_root") != std::string::npos ||
+        offending.find("code root/hash mismatch") != std::string::npos;
+
+    cs.end_witness_consistency_check();
+
+    printf("  read_code returned empty:           %s\n",
+           returned_empty ? "OK" : "FAILED");
+    printf("  always-on counter advanced by 1:    %s (delta=%llu)\n",
+           counter_advanced ? "OK" : "FAILED",
+           static_cast<unsigned long long>(after - before));
+    printf("  ctx.first_error set:                %s\n",
+           first_error_set ? "OK" : "FAILED");
+    printf("  ctx.offending_what mentions code:   %s (%s)\n",
+           offending_mentions_code ? "OK" : "FAILED",
+           offending.c_str());
+
+    bool ok = returned_empty && counter_advanced && first_error_set &&
+              offending_mentions_code;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+namespace {
+
+// Common helper: corrupt the global EVM state's account dict so that
+// `target_addr` carries `code_hash = keccak(code_for_hash)` but the
+// embedded code chain decodes to `code_for_chain`. Restores the
+// pre-test snapshots in the destructor so downstream tests see a clean
+// global state regardless of pass/fail.
+struct K2GlobalCorruptCodeRootGuard {
+    td::Ref<vm::Cell> pre_state_cell;
+    td::Ref<vm::Cell> pre_witness_cell;
+
+    K2GlobalCorruptCodeRootGuard(const evmc::address& target_addr,
+                                  const silkworm::Account& corrupt_acct,
+                                  const Bytes& code_for_chain) {
+        auto& gs = global_evm_state();
+        {
+            std::unique_lock lock(gs.mutex());
+            auto* cs = dynamic_cast<CellEvmState*>(&gs.state());
+            CHECK(cs != nullptr);
+            pre_state_cell = cs->serialize_to_cell();
+            pre_witness_cell = cs->serialize_trie_witness_to_cell();
+        }
+        auto corrupt_state_cell = h01_make_corrupt_code_root_state(
+            target_addr, corrupt_acct, code_for_chain);
+        CHECK(corrupt_state_cell.not_null());
+        {
+            std::unique_lock lock(gs.mutex());
+            auto* cs = dynamic_cast<CellEvmState*>(&gs.state());
+            CHECK(cs != nullptr);
+            CHECK(cs->load_from_cell(corrupt_state_cell,
+                                      CellStateLoadMode::TrustedLazy));
+        }
+    }
+
+    ~K2GlobalCorruptCodeRootGuard() {
+        auto& gs = global_evm_state();
+        std::unique_lock lock(gs.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&gs.state());
+        if (cs == nullptr) return;
+        (void)cs->load_from_cell(pre_state_cell,
+                                  CellStateLoadMode::TrustedLazy);
+        if (pre_witness_cell.not_null()) {
+            (void)cs->load_trie_witness_from_cell(
+                pre_witness_cell, TrieWitnessLoadMode::TrustedShallow);
+        }
+    }
+};
+
+// Build the eth_call / eth_estimateGas params JSON for a basic CALL to
+// `target_addr` with empty calldata. Gas budget kept tight so the read
+// only reaches the first SLOAD inside the corrupt contract before
+// returning the gas-used estimate.
+std::string k2_build_call_params(const evmc::address& target_addr) {
+    char hex_buf[2 + 40 + 1];
+    snprintf(hex_buf, sizeof(hex_buf), "0x");
+    for (int i = 0; i < 20; ++i) {
+        snprintf(hex_buf + 2 + 2 * i, 3, "%02x", target_addr.bytes[i]);
+    }
+    std::string p = "[{\"to\":\"";
+    p += hex_buf;
+    p += "\",\"data\":\"0x\",\"gas\":\"0x186a0\"},\"latest\"]";
+    return p;
+}
+
+}  // namespace
+
+void test_k2_handle_call_corrupt_code_returns_32000() {
+    printf("=== test_k2_handle_call_corrupt_code_returns_32000 ===\n");
+
+    reset_code_root_hash_mismatch_count_for_test();
+
+    evmc::address target_addr = hex_to_addr(
+        "0x000000000000000000000000000000000000c0d2");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.nonce = 1;
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+
+    auto rpc_resp = std::optional<RpcResult>{};
+    {
+        K2GlobalCorruptCodeRootGuard guard(target_addr, corrupt_acct, code_B);
+        auto params = k2_build_call_params(target_addr);
+        rpc_resp = handle_eth_rpc("eth_call", params, "k2-call");
+    }
+
+    bool got_resp = rpc_resp.has_value();
+    bool is_error = got_resp && rpc_resp->is_error;
+    bool right_code = is_error &&
+                      rpc_resp->json.find("\"code\":-32000") !=
+                          std::string::npos;
+    bool right_message = is_error &&
+                         rpc_resp->json.find("corrupt EVM code root") !=
+                             std::string::npos;
+
+    printf("  RPC returned: %s\n", got_resp ? "yes" : "NO");
+    printf("  RPC reported error: %s\n", is_error ? "yes" : "NO");
+    printf("  error code -32000: %s\n", right_code ? "OK" : "FAILED");
+    printf("  error contains 'corrupt EVM code root': %s\n",
+           right_message ? "OK" : "FAILED");
+
+    bool ok = got_resp && is_error && right_code && right_message;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_k2_handle_estimate_gas_corrupt_code_returns_32000() {
+    printf("=== test_k2_handle_estimate_gas_corrupt_code_returns_32000 ===\n");
+
+    reset_code_root_hash_mismatch_count_for_test();
+
+    evmc::address target_addr = hex_to_addr(
+        "0x000000000000000000000000000000000000c0d3");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.nonce = 1;
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+
+    auto rpc_resp = std::optional<RpcResult>{};
+    {
+        K2GlobalCorruptCodeRootGuard guard(target_addr, corrupt_acct, code_B);
+        auto params = k2_build_call_params(target_addr);
+        rpc_resp = handle_eth_rpc("eth_estimateGas", params, "k2-est");
+    }
+
+    bool got_resp = rpc_resp.has_value();
+    bool is_error = got_resp && rpc_resp->is_error;
+    bool right_code = is_error &&
+                      rpc_resp->json.find("\"code\":-32000") !=
+                          std::string::npos;
+    bool right_message = is_error &&
+                         rpc_resp->json.find("corrupt EVM code root") !=
+                             std::string::npos;
+
+    printf("  RPC returned: %s\n", got_resp ? "yes" : "NO");
+    printf("  RPC reported error: %s\n", is_error ? "yes" : "NO");
+    printf("  error code -32000: %s\n", right_code ? "OK" : "FAILED");
+    printf("  error contains 'corrupt EVM code root': %s\n",
+           right_message ? "OK" : "FAILED");
+
+    bool ok = got_resp && is_error && right_code && right_message;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_k2_counter_resettable_for_test() {
+    printf("=== test_k2_counter_resettable_for_test ===\n");
+
+    // Drive the counter up via the no-verifier-ctx path, then reset.
+    reset_code_root_hash_mismatch_count_for_test();
+    CHECK(code_root_hash_mismatch_count() == 0);
+
+    evmc::address target_addr = hex_to_addr(
+        "0x000000000000000000000000000000000000a005");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.nonce = 1;
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+    evmc::bytes32 code_hash_A{};
+    std::memcpy(code_hash_A.bytes, kh_A.bytes, 32);
+
+    auto state_cell = h01_make_corrupt_code_root_state(target_addr,
+                                                        corrupt_acct, code_B);
+    CHECK(state_cell.not_null());
+    CellEvmState cs;
+    CHECK(cs.load_from_cell(state_cell, CellStateLoadMode::TrustedLazy));
+    (void)cs.read_code(target_addr, code_hash_A);
+    uint64_t value_before_reset = code_root_hash_mismatch_count();
+    bool counter_advanced = value_before_reset > 0;
+
+    reset_code_root_hash_mismatch_count_for_test();
+    bool counter_zeroed = code_root_hash_mismatch_count() == 0;
+
+    printf("  counter advanced before reset:  %s (pre-reset value=%llu)\n",
+           counter_advanced ? "OK" : "FAILED",
+           static_cast<unsigned long long>(value_before_reset));
+    printf("  counter zero after reset:       %s\n",
+           counter_zeroed ? "OK" : "FAILED");
+
+    bool ok = counter_advanced && counter_zeroed;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// =============================================================================
 // H-02 — system-call witness verifier coverage (EIP-4788 / EIP-2935)
 // =============================================================================
 //
@@ -12461,6 +12800,19 @@ int main() {
     test_h01_extcodecopy_flat_witness_drift_rejected();
     test_h01_eth_get_code_corrupt_returns_32000();
     test_h01_update_account_code_mismatch_rejected();
+
+    // Audit K-02 (H-01 follow-up) — code-root mismatch counter visible
+    // even when no `WitnessFlatConsistencyContext` is bound. Read-only
+    // RPC handlers (`eth_call`, `eth_estimateGas`, `eth_createAccessList`)
+    // snapshot/check the counter so silkworm's internal `read_code`
+    // calls during a corrupt-code-root execution surface as JSON-RPC
+    // `-32000 corrupt EVM code root` rather than as silently-empty
+    // bytecode.
+    test_k2_read_code_no_verifier_records_mismatch();
+    test_k2_read_code_with_verifier_records_mismatch_and_first_error();
+    test_k2_handle_call_corrupt_code_returns_32000();
+    test_k2_handle_estimate_gas_corrupt_code_returns_32000();
+    test_k2_counter_resettable_for_test();
 
     // Audit H-02 — system-call witness verifier coverage. EIP-4788 /
     // EIP-2935 system calls run inside a WitnessFlatConsistencyContext

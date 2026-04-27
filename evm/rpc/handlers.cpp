@@ -1419,9 +1419,26 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
         rand_seed);
     const auto& config = evm_chain_config();
 
+    // Audit K-02 (H-01 follow-up): snapshot the always-on code-root
+    // mismatch counter before silkworm runs. `eth_call` does not bind a
+    // `WitnessFlatConsistencyContext` (the read-only fast path keeps RPC
+    // latency low), so silkworm internal helpers that consult
+    // `CellEvmState::read_code` would otherwise see an empty `ByteView`
+    // on a corrupt code root and silently treat it as canonical "no
+    // code". The post-execution counter delta is the deterministic
+    // signal we need to map the response to a JSON-RPC `-32000 corrupt
+    // EVM code root` instead.
+    auto code_mismatch_before =
+        global_evm_state().code_root_hash_mismatch_count();
+
     // Match geth/erigon: bypass sender balance enforcement during read-only
     // calls so wallets can simulate value-bearing calls before holding funds.
     auto result = call_evm_transaction_with_balance_topup(txn, block, global_evm_state(), config);
+
+    if (global_evm_state().code_root_hash_mismatch_count() !=
+        code_mismatch_before) {
+        return {make_error(id, -32000, "corrupt EVM code root"), true};
+    }
 
     if (!result.success) {
         // Return revert data in the error response (EIP-3668 compatible)
@@ -1479,7 +1496,22 @@ static RpcResult handle_estimate_gas(const std::string& params, const std::strin
         rand_seed);
     const auto& config = evm_chain_config();
 
+    // Audit K-02 (H-01 follow-up): snapshot the always-on code-root
+    // mismatch counter before silkworm runs. `eth_estimateGas` is one
+    // of the read-only EVM RPC paths that does NOT bind a
+    // `WitnessFlatConsistencyContext`; without the counter snapshot a
+    // corrupt code root would surface as a falsely-cheap gas estimate
+    // (silkworm would observe an empty `ByteView` from `read_code` and
+    // estimate gas as if the contract had no code).
+    auto code_mismatch_before =
+        global_evm_state().code_root_hash_mismatch_count();
+
     auto result = call_evm_transaction_with_balance_topup(txn, block, global_evm_state(), config);
+
+    if (global_evm_state().code_root_hash_mismatch_count() !=
+        code_mismatch_before) {
+        return {make_error(id, -32000, "corrupt EVM code root"), true};
+    }
 
     if (!result.success) {
         std::string revert_hex = to_hex_data(result.return_data.data(), result.return_data.size());
@@ -4962,6 +4994,14 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
     auto& evm_state = global_evm_state();
     std::unique_lock lock(evm_state.mutex());
 
+    // Audit K-02 (H-01 follow-up): snapshot the always-on code-root
+    // mismatch counter before silkworm runs. `eth_createAccessList`
+    // also does NOT bind a `WitnessFlatConsistencyContext`, so the
+    // tracer would otherwise emit a confidently-empty access list for a
+    // contract whose code root is corrupt (silkworm sees no bytecode →
+    // no SLOAD/SSTORE keys to record).
+    auto code_mismatch_before = evm_state.code_root_hash_mismatch_count();
+
     // Build IntraBlockState wrapping mutable view (commit_state=false → no DB writes)
     auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
     silkworm::IntraBlockState ibs(mutable_state);
@@ -4994,6 +5034,10 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
     }
 
     auto call_result = evm.execute(txn, exec_gas);
+
+    if (evm_state.code_root_hash_mismatch_count() != code_mismatch_before) {
+        return {make_error(id, -32000, "corrupt EVM code root"), true};
+    }
 
     // Optimize per EIP-2930 (drop addresses whose listing isn't profitable)
     if (sender) tracer.optimize_gas(*sender, txn.to.value_or(evmc::address{}),
