@@ -510,9 +510,17 @@ struct StreamingBocImportOptions {
 //     during the cell-build loop. abort never runs before begin.
 //
 // State-machine summary:
-//   begin() -> persist(cell) * N -> finish(root_hash)         (success)
+//   begin() -> persist(cell) * N -> finish(root_hash)
+//                                -> commit_after_root_verified(expected)  (success, durable)
+//   begin() -> persist(cell) * N -> finish(root_hash) -> abort()
+//                                                  (root mismatch; nothing durable)
 //   begin() -> persist(cell) * k -> abort()                   (any error after begin)
 //   (no callbacks at all)                                     (error before begin)
+//
+// Sinks that have no durable state to commit (counting / validation /
+// legacy paths) treat `commit_after_root_verified` as a no-op and may
+// be skipped by callers; CellDb-backed sinks REQUIRE the explicit
+// commit-after-verify step or the parsed cells are discarded.
 //
 // Implementations must be re-entrant only across distinct sinks: a
 // single sink instance is owned by a single std_boc_deserialize_from_file_bounded
@@ -542,8 +550,30 @@ class StreamingCellSink {
     return keep;
   }
 
+  // The importer drives `finish` once the root cell has been parsed.
+  // After tos26 P0-3 the contract is split: `finish` only RECORDS the
+  // parsed root for sinks that override `commit_after_root_verified`,
+  // and durable visibility (e.g. committing a CellDb write batch) is
+  // deferred until the caller invokes `commit_after_root_verified`
+  // with an externally trusted expected root. Sinks that have nothing
+  // durable to commit (counting / validation / legacy paths) keep the
+  // historical "finish == done" semantics and need not override the
+  // commit hook.
   virtual td::Status finish(const Cell::Hash& root_hash) {
     (void)root_hash;
+    return td::Status::OK();
+  }
+
+  // tos26 P0-3: split commit from finish so callers can verify the
+  // imported root against an external expected hash before any cells
+  // become visible to subsequent readers. The default implementation
+  // is a no-op so legacy sinks (counting / validation) continue to
+  // work. Real CellDb-backed sinks override this to commit their
+  // pending batch only after the caller has confirmed `expected_root_hash`
+  // matches the parsed root; on mismatch, the caller MUST instead call
+  // `abort()` so the pending writes are discarded.
+  virtual td::Status commit_after_root_verified(const Cell::Hash& expected_root_hash) {
+    (void)expected_root_hash;
     return td::Status::OK();
   }
 

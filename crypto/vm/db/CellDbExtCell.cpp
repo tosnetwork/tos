@@ -52,13 +52,33 @@ td::Result<td::Ref<DataCell>> CellDbExtCellLoader::load_data_cell(const Cell& ex
   return std::move(data_cell);
 }
 
-td::Result<td::Ref<Cell>> make_celldb_ext_cell(Cell::LevelMask level_mask, td::Slice hash, td::Slice depth,
+td::Result<td::Ref<Cell>> make_celldb_ext_cell(Cell::LevelMask level_mask, td::Slice hashes, td::Slice depths,
                                                std::shared_ptr<CellDbReader> reader) {
   if (reader == nullptr) {
     return td::Status::Error("CellDbExtCell: cannot build replacement cell with null reader");
   }
 
-  PrunnedCellInfo info{level_mask, hash, depth};
+  // Per-level buffer-size validation MUST precede the PrunnedCell::create call
+  // below, because PrunnedCell::init() asserts the same equalities via CHECK
+  // and would otherwise abort the whole process on a malformed input. By
+  // surfacing the mismatch here as a structured td::Status::Error we let the
+  // streaming importer's abort path roll the partial RocksDB batch back
+  // cleanly instead of taking the validator down.
+  const auto n = level_mask.get_hashes_count();
+  const auto expected_hashes_size = static_cast<size_t>(n) * Cell::hash_bytes;
+  const auto expected_depths_size = static_cast<size_t>(n) * Cell::depth_bytes;
+  if (hashes.size() != expected_hashes_size) {
+    return td::Status::Error(PSLICE() << "make_celldb_ext_cell: hashes.size()=" << hashes.size()
+                                       << " expected " << expected_hashes_size << " for level "
+                                       << level_mask.get_level() << " (hashes_count=" << n << ")");
+  }
+  if (depths.size() != expected_depths_size) {
+    return td::Status::Error(PSLICE() << "make_celldb_ext_cell: depths.size()=" << depths.size()
+                                       << " expected " << expected_depths_size << " for level "
+                                       << level_mask.get_level() << " (hashes_count=" << n << ")");
+  }
+
+  PrunnedCellInfo info{level_mask, hashes, depths};
   TRY_RESULT(ext_cell, CellDbExtCell::create(info, CellDbExtCellExtra{std::move(reader)}));
   return td::Ref<Cell>{std::move(ext_cell)};
 }

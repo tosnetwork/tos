@@ -53,11 +53,23 @@ class CellDbExtCellLoader {
 using CellDbExtCell = ExtCell<CellDbExtCellExtra, CellDbExtCellLoader>;
 
 // Build a hash-only / lazy replacement cell backed by `reader`. The returned
-// cell exposes the supplied hash/depth/level_mask immediately (no I/O on
+// cell exposes the supplied hashes/depths/level_mask immediately (no I/O on
 // construction) and only touches the reader on first DataCell materialization.
 // On a CellDb miss or hash mismatch the materialization path returns an error
 // rather than crashing.
-td::Result<td::Ref<Cell>> make_celldb_ext_cell(Cell::LevelMask level_mask, td::Slice hash, td::Slice depth,
+//
+// CONTRACT: `hashes` must be exactly `n * Cell::hash_bytes` bytes and `depths`
+// must be exactly `n * Cell::depth_bytes` bytes, where
+// `n = level_mask.get_hashes_count()`. The buffers carry one entry per
+// significant level in `level_mask` (the same layout used by
+// `DataCell::serialize` for the with-hashes header). For a plain level-0 cell
+// (`n == 1`) this collapses to a single 32-byte hash + single 2-byte depth.
+//
+// Buffer sizes are validated up front; a size mismatch returns
+// `td::Status::Error` rather than tripping the `CHECK` in `PrunnedCell::init`,
+// so the importer can recover via its abort path instead of taking down the
+// process.
+td::Result<td::Ref<Cell>> make_celldb_ext_cell(Cell::LevelMask level_mask, td::Slice hashes, td::Slice depths,
                                                std::shared_ptr<CellDbReader> reader);
 
 }  // namespace vm

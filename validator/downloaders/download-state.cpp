@@ -195,13 +195,19 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedSta
 // root is therefore an ExtCell whose child DAG is durable in CellDb,
 // not a full in-memory DataCell tree.
 //
-// Lifecycle:
-//   1. begin() — opens the writer's RocksDB write batch.
+// Lifecycle (post tos26 P0-3 commit-ordering split):
+//   1. begin() — opens the writer's RocksDB write batch (driven by importer).
 //   2. importer drives persist_and_replace() for every parsed cell.
-//   3. on success: validate root hash; if it matches, finish(root) —
-//      commits the batch — and return the lazy root.
-//   4. on any failure: abort() — rolls back the batch — and propagate
-//      the original error.
+//   3. importer drives finish(parsed_root) — RECORDS the parsed root but
+//      does NOT yet commit; the batch stays open.
+//   4. caller compares parsed_root to `expected_root_hash`:
+//        match  -> commit_after_root_verified(parsed_root) flushes the batch;
+//        mismatch -> abort() rolls back the batch; nothing is durable.
+//   5. on any importer-level failure (steps 1-3): abort() — rolls back
+//      the batch — and propagate the original error.
+// The root hash verification therefore occurs BEFORE any cells become
+// visible to subsequent CellDb readers, closing the audit's CellDb
+// pollution hazard.
 //
 // The function does NOT touch the caller's processing reservation;
 // the caller MUST hold it until AFTER this function returns so the
@@ -250,7 +256,9 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(
     // The importer's contract calls sink.abort() on its own error
     // paths; we still call abort() defensively so a future importer
     // that forgets to abort cannot leak a half-built RocksDB batch.
-    if (!streaming_sink.aborted() && !streaming_sink.finished()) {
+    // tos26 P0-3: abort is now safe even if finish() ran, because
+    // finish no longer commits — the pending batch is still open.
+    if (!streaming_sink.aborted() && !streaming_sink.is_committed()) {
       streaming_sink.abort();
     }
     LOG(WARNING) << "parse_ondisk_state_streaming(phase-b): importer rejected after "
@@ -259,27 +267,38 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(
   }
   auto root = r_root.move_as_ok();
   if (root.is_null()) {
-    if (!streaming_sink.aborted() && !streaming_sink.finished()) {
+    if (!streaming_sink.aborted() && !streaming_sink.is_committed()) {
       streaming_sink.abort();
     }
     return td::Status::Error("parse_ondisk_state_streaming(phase-b): BoC deserialize returned null root");
   }
-  if (RootHash{root->get_hash().bits()} != expected_root_hash) {
-    if (!streaming_sink.aborted() && !streaming_sink.finished()) {
-      streaming_sink.abort();
-    }
-    return td::Status::Error(PSTRING()
-                             << "parse_ondisk_state_streaming(phase-b): root hash mismatch: expected "
-                             << expected_root_hash.to_hex() << " got "
-                             << RootHash{root->get_hash().bits()}.to_hex());
-  }
-  // The importer drives finish() at end-of-parse, so by this point the
-  // RocksDB batch has been committed. Defense in depth: surface a
-  // programming error if the sink is somehow not finished.
+  // tos26 P0-3: verify the parsed root matches the BFT-attested
+  // `expected_root_hash` BEFORE any cell is committed. The importer
+  // drove sink.finish() at end-of-parse, which only RECORDS the
+  // parsed root — the writer's RocksDB batch is still open. On
+  // mismatch we drive abort() to discard the pending batch, leaving
+  // CellDb byte-for-byte identical to its pre-import snapshot.
   if (!streaming_sink.finished()) {
     streaming_sink.abort();
     return td::Status::Error(
         "parse_ondisk_state_streaming(phase-b): sink finished=false on success path");
+  }
+  const auto parsed_hash = root->get_hash();
+  if (RootHash{parsed_hash.bits()} != expected_root_hash) {
+    streaming_sink.abort();
+    return td::Status::Error(PSTRING()
+                             << "parse_ondisk_state_streaming(phase-b): root hash mismatch: expected "
+                             << expected_root_hash.to_hex() << " got "
+                             << RootHash{parsed_hash.bits()}.to_hex());
+  }
+  // Verified — now commit. commit_after_root_verified flushes the
+  // writer's pending batch; on any failure inside commit we still
+  // drive abort() (belt-and-braces: in practice abort cannot
+  // discard an already-issued WriteBatch, but the call is
+  // idempotent and keeps the sink in a known state).
+  if (auto status = streaming_sink.commit_after_root_verified(parsed_hash); status.is_error()) {
+    streaming_sink.abort();
+    return status;
   }
   LOG(INFO) << "parse_ondisk_state_streaming(phase-b): committed "
             << streaming_sink.cells_persisted() << " cell(s); root="

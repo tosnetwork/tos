@@ -212,6 +212,61 @@ if ! rg -q 'create_celldb_streaming_writer' "$root/validator/downloaders/downloa
     exit 1
 fi
 
+# Check 15 — Phase B P0-3: sink finish() must NOT commit the write batch.
+# The audit found that committing in finish() lets a root-hash-mismatched
+# BoC pollute CellDb. Commit MUST be gated on commit_after_root_verified
+# which the caller invokes after expected-root verification.
+if awk '
+    /^td::Status CellDbStreamingSink::finish\(/ { in_fn = 1; next }
+    in_fn && /^}/ { in_fn = 0 }
+    in_fn && /writer_commit_batch_/ { saw_commit = 1 }
+    END { exit (saw_commit ? 0 : 1) }
+' "$root/validator/state-download-buffer.cpp"; then
+    echo "evm hardening failed: CellDbStreamingSink::finish() must NOT call writer_commit_batch_; commit must be in commit_after_root_verified (Phase B P0-3)" >&2
+    exit 1
+fi
+
+# Check 16 — Phase B P0-3: commit_after_root_verified must exist and is the
+# only place that calls writer_commit_batch_. Without it, callers cannot
+# defer commit until after expected-root verification.
+if ! rg -q '^td::Status CellDbStreamingSink::commit_after_root_verified\(' "$root/validator/state-download-buffer.cpp"; then
+    echo "evm hardening failed: CellDbStreamingSink::commit_after_root_verified must be defined (Phase B P0-3)" >&2
+    exit 1
+fi
+if ! awk '
+    /^td::Status CellDbStreamingSink::commit_after_root_verified\(/ { in_fn = 1; next }
+    in_fn && /^}/ { in_fn = 0 }
+    in_fn && /writer_commit_batch_/ { saw_commit = 1 }
+    END { exit (saw_commit ? 0 : 1) }
+' "$root/validator/state-download-buffer.cpp"; then
+    echo "evm hardening failed: commit_after_root_verified must call writer_commit_batch_ (Phase B P0-3)" >&2
+    exit 1
+fi
+
+# Check 17 — Phase B P0-3: parse_ondisk_state_streaming must invoke
+# commit_after_root_verified only AFTER comparing parsed root against
+# expected_root_hash. A regression that calls commit before/without the
+# comparison would let a wrong-root BoC pollute CellDb.
+if ! rg -q 'commit_after_root_verified' "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: parse_ondisk_state_streaming must call commit_after_root_verified (Phase B P0-3)" >&2
+    exit 1
+fi
+
+# Check 18 — Phase B P0-1: sink persist_and_replace must build complete
+# per-level hash/depth buffers for the CellDbExtCell replacement so multi-
+# level / pruned cells survive without triggering CHECK abort. A regression
+# that passes `declared_hash.as_slice()` directly to make_celldb_ext_cell
+# means single-hash mode and will abort on level>0 cells.
+if rg -q 'make_celldb_ext_cell\(.*\.as_slice\(\),' "$root/validator/state-download-buffer.cpp"; then
+    echo "evm hardening failed: persist_and_replace passes single-hash slice to make_celldb_ext_cell; must build per-level hashes/depths buffer (Phase B P0-1)" >&2
+    exit 1
+fi
+# Positive: assert the per-level loop is present.
+if ! rg -q 'level_mask\.is_significant' "$root/validator/state-download-buffer.cpp"; then
+    echo "evm hardening failed: persist_and_replace must iterate level_mask.is_significant(i) to build per-level hash/depth buffers (Phase B P0-1)" >&2
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Existing (non-MPT) production hardening checks.
 # ---------------------------------------------------------------------------

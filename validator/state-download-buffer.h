@@ -430,10 +430,30 @@ std::string get_persistent_state_tempfile_dir();
 //     persisted, immediately before the importer returns the root
 //     cell. The sink records the root hash so the actor can
 //     cross-check against the BFT-attested expected root.
+//
+//     tos26 P0-3: `finish` no longer commits the writer's RocksDB
+//     batch. The cells are written to the open batch but remain
+//     invisible to readers until `commit_after_root_verified` runs.
+//     This lets the caller compare the parsed root against an
+//     externally trusted expected root BEFORE any cells become
+//     durable; on mismatch, `abort()` discards the pending writes.
+//   * `commit_after_root_verified(expected_root_hash)` is called by
+//     the actor AFTER `finish` returns and AFTER it has verified
+//     that the parsed root equals the BFT-attested expected root.
+//     This commits the writer's pending batch and is the single
+//     point at which cells become visible.
 //   * `abort()` is invoked at most once on any error path (header
 //     rejection, descriptor corruption, persist rejection,
-//     finish rejection). After abort the sink's counters reflect
-//     what was observed before the error; no DB writes were committed.
+//     finish rejection, root-hash mismatch in the caller). After
+//     abort the sink's counters reflect what was observed before
+//     the error; no DB writes were committed.
+//
+// Lifecycle (true-streaming sink):
+//   begin() -> persist_and_replace()* -> finish(root_hash)
+//                                    -> commit_after_root_verified(expected)  (success)
+//   begin() -> persist_and_replace()* -> finish(root_hash) -> abort()
+//                                                  (root mismatch; nothing durable)
+//   begin() -> persist_and_replace()* -> abort()         (any error before finish)
 //
 // Memory contract (honest documentation of fallback (b) — see audit
 // notes):
@@ -530,7 +550,18 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
   td::Status persist(td::Ref<vm::Cell> cell) override;
   td::Result<td::Ref<vm::Cell>> persist_and_replace(td::Ref<vm::Cell> cell) override;
   td::Status finish(const vm::Cell::Hash &root_hash) override;
+  // tos26 P0-3: commit the writer's pending RocksDB batch after the
+  // caller has verified the parsed root matches an externally
+  // trusted expected hash. Returns Error if the recorded root does
+  // not match `expected_root_hash`, leaving the sink uncommitted so
+  // the caller can drive abort(). May only be called once, and only
+  // after finish() returned OK and before abort().
+  td::Status commit_after_root_verified(const vm::Cell::Hash &expected_root_hash) override;
   void abort() override;
+
+  bool is_committed() const noexcept {
+    return committed_;
+  }
 
   // Diagnostics. Read after finish (or abort) returns.
   td::uint64 cell_count() const {
@@ -585,6 +616,11 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
   std::atomic<td::uint64> cell_count_{0};
   bool begun_{false};
   bool finished_{false};
+  // tos26 P0-3: commit_after_root_verified flips this to true once the
+  // pending batch has been flushed. While false, abort() (or the
+  // destructor) is responsible for rolling back any open batch so the
+  // CellDb stays byte-for-byte identical to its pre-import snapshot.
+  bool committed_{false};
   bool aborted_{false};
   vm::Cell::Hash root_hash_{};
 };

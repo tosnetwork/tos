@@ -806,19 +806,13 @@ td::Status cleanup_persistent_state_tempfiles(td::CSlice tempfile_root, td::uint
 
 namespace {
 
-// Big-endian 16-bit encoding of a cell depth, in the exact byte format
-// PrunnedCell::init() consumes when materializing a hash-only ExtCell
-// replacement (see crypto/vm/cells/PrunnedCell.h: each per-level depth
-// is decoded via DataCell::load_depth, which is bits_load_ulong on a
-// 16-bit big-endian word). vm::CellTraits::depth_bytes is that byte
-// count; static_assert pins it so a future change to the on-wire depth
-// width fails to compile rather than silently producing a malformed
-// ExtCell.
+// Per-cell ExtCell depth encoding now goes through DataCell::store_depth
+// (see persist_and_replace below) so PrunnedCell::init's per-level
+// big-endian 16-bit format stays in lock-step with the importer. The
+// static_assert pins that on-wire width so a future change fails to
+// compile rather than silently producing a malformed ExtCell.
 static_assert(vm::CellTraits::depth_bytes == sizeof(td::uint16),
               "ExtCell depth slice format assumes 16-bit big-endian depth");
-inline std::array<td::uint8, sizeof(td::uint16)> depth_be_bytes(td::uint16 depth) {
-  return {static_cast<td::uint8>(depth >> 8), static_cast<td::uint8>(depth & 0xff)};
-}
 
 }  // namespace
 
@@ -940,13 +934,8 @@ td::Result<td::Ref<vm::Cell>> CellDbStreamingSink::persist_and_replace(td::Ref<v
         "CellDbStreamingSink::persist_and_replace received non-DataCell from importer");
   }
   auto declared_hash = cell->get_hash();
-  auto level_mask = cell->get_level_mask();
-  // get_depth() defaults to the max-level depth, matching the depth
-  // PrunnedCell stores per-level for the final hash. The importer only
-  // ever delivers fully-resolved cells, so the per-level depth is the
-  // canonical value the ExtCell consumer will compare against.
-  auto depth = cell->get_depth();
-  auto depth_bytes = depth_be_bytes(depth);
+  const auto level_mask = cell->get_level_mask();
+  const auto level = cell->get_level();
 
   // Per-cell idempotent KV write. store_cell_streaming returns Error
   // on hash collision (same key, different bytes already in CellDb);
@@ -955,9 +944,33 @@ td::Result<td::Ref<vm::Cell>> CellDbStreamingSink::persist_and_replace(td::Ref<v
   cells_persisted_++;
   cell_count_.fetch_add(1, std::memory_order_acq_rel);
 
+  // Build the complete per-level hash/depth buffers that the
+  // ExtCell replacement requires. PrunnedCell::init expects exactly
+  // `n * hash_bytes` and `n * depth_bytes` where
+  // `n = level_mask.get_hashes_count()`. For level-0 cells this is a
+  // single 32-byte hash + single 2-byte depth; for Merkle / pruned /
+  // multi-level cells we must walk every significant level so the
+  // ExtCell exposes the same per-level fingerprint the original
+  // DataCell would. The walk mirrors DataCell::serialize()'s
+  // with-hashes header layout.
+  const auto hashes_count = level_mask.get_hashes_count();
+  std::string hashes;
+  std::string depths;
+  hashes.reserve(static_cast<size_t>(hashes_count) * vm::Cell::hash_bytes);
+  depths.reserve(static_cast<size_t>(hashes_count) * vm::Cell::depth_bytes);
+  for (unsigned i = 0; i <= level; ++i) {
+    if (!level_mask.is_significant(i)) {
+      continue;
+    }
+    const auto& level_hash = cell->get_hash(i);
+    hashes.append(level_hash.as_slice().data(), vm::Cell::hash_bytes);
+    td::uint8 depth_buf[vm::Cell::depth_bytes];
+    vm::DataCell::store_depth(depth_buf, cell->get_depth(i));
+    depths.append(reinterpret_cast<const char *>(depth_buf), vm::Cell::depth_bytes);
+  }
+
   TRY_RESULT(replacement,
-             vm::make_celldb_ext_cell(level_mask, declared_hash.as_slice(),
-                                      td::Slice(depth_bytes.data(), depth_bytes.size()), reader_));
+             vm::make_celldb_ext_cell(level_mask, td::Slice(hashes), td::Slice(depths), reader_));
   if (replacement.is_null()) {
     return td::Status::Error(
         "CellDbStreamingSink::persist_and_replace: make_celldb_ext_cell returned null");
@@ -979,21 +992,68 @@ td::Status CellDbStreamingSink::finish(const vm::Cell::Hash &root_hash) {
   if (aborted_) {
     return td::Status::Error("CellDbStreamingSink::finish called after abort");
   }
-  if (true_streaming_active_ && batch_open_) {
-    // Flush the streaming writer's RocksDB batch. After commit returns
-    // OK every cell handed to persist_and_replace is durable and any
-    // subsequent CellDbReader query (incl. lazy ExtCell loads emitted
-    // by THIS import) will observe it.
-    auto status = writer_commit_batch_();
-    batch_open_ = false;
-    if (status.is_error()) {
-      return status;
-    }
-    LOG(INFO) << "CellDbStreamingSink committed " << cells_persisted_
-              << " cell(s); root=" << root_hash.to_hex();
-  }
+  // tos26 P0-3: true-streaming finish does NOT commit. The pending
+  // RocksDB batch stays open; the caller MUST subsequently call
+  // commit_after_root_verified(expected) to flush it (after verifying
+  // the parsed root against an externally trusted expected hash) or
+  // abort() to discard it. Legacy / counting-only sinks have no batch
+  // open, so this is a pure record step for them as well.
   finished_ = true;
   root_hash_ = root_hash;
+  if (true_streaming_active_) {
+    LOG(DEBUG) << "CellDbStreamingSink finished parse of " << cells_persisted_
+               << " cell(s); root=" << root_hash.to_hex()
+               << " (awaiting commit_after_root_verified)";
+  }
+  return td::Status::OK();
+}
+
+td::Status CellDbStreamingSink::commit_after_root_verified(
+    const vm::Cell::Hash &expected_root_hash) {
+  // Legacy / non-true-streaming sinks have nothing to commit; they
+  // record finish() and that is the end of their durability story.
+  // Returning OK keeps a uniform call site at the actor layer.
+  if (!true_streaming_active_) {
+    return td::Status::OK();
+  }
+  if (!finished_) {
+    return td::Status::Error(
+        "CellDbStreamingSink::commit_after_root_verified called before finish");
+  }
+  if (aborted_) {
+    return td::Status::Error(
+        "CellDbStreamingSink::commit_after_root_verified called after abort");
+  }
+  if (committed_) {
+    return td::Status::Error(
+        "CellDbStreamingSink::commit_after_root_verified called twice");
+  }
+  if (root_hash_ != expected_root_hash) {
+    // Sink stays uncommitted; the caller MUST drive abort() to
+    // discard the pending batch. We deliberately do NOT auto-abort
+    // here so the lifecycle is owned end-to-end by the caller.
+    return td::Status::Error(PSTRING()
+                             << "CellDbStreamingSink::commit_after_root_verified: root hash mismatch: "
+                             << "parsed=" << root_hash_.to_hex()
+                             << " expected=" << expected_root_hash.to_hex());
+  }
+  if (!batch_open_ || !writer_commit_batch_) {
+    // begin() opens the batch on every true-streaming import, so a
+    // closed batch here is a programming error (e.g. finish() called
+    // after a previous abort that already drained the batch). Fail
+    // closed; the caller still owns the abort().
+    return td::Status::Error(
+        "CellDbStreamingSink::commit_after_root_verified: no open writer batch");
+  }
+  // Flush the streaming writer's RocksDB batch. After commit returns
+  // OK every cell handed to persist_and_replace is durable and any
+  // subsequent CellDbReader query (incl. lazy ExtCell loads emitted
+  // by THIS import) will observe it.
+  TRY_STATUS(writer_commit_batch_());
+  batch_open_ = false;
+  committed_ = true;
+  LOG(INFO) << "CellDbStreamingSink committed " << cells_persisted_
+            << " cell(s); root=" << expected_root_hash.to_hex();
   return td::Status::OK();
 }
 
@@ -1001,7 +1061,17 @@ void CellDbStreamingSink::abort() {
   // Idempotent. The importer's abort guard guarantees a single call,
   // but we defend in depth in case a future caller wires a path that
   // could trigger a second abort (e.g. a wrapper sink).
-  if (aborted_ || finished_) {
+  if (aborted_) {
+    return;
+  }
+  // tos26 P0-3: a sink that has already committed cannot be rolled
+  // back — the bytes are durable in CellDb. Log a warning so an
+  // operator notices an out-of-sequence abort, but do NOT touch the
+  // (already-closed) batch.
+  if (committed_) {
+    LOG(WARNING) << "CellDbStreamingSink::abort called after commit; "
+                    "no rollback possible (data is already durable)";
+    aborted_ = true;
     return;
   }
   aborted_ = true;

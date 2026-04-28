@@ -107,6 +107,25 @@ class PrunnedCell final : public Cell {
   Info info_;
   ExtraT extra_;
 
+  // PRECONDITION (caller-enforced): `prunned_cell_info.hash` is exactly
+  // `n * hash_bytes` bytes and `prunned_cell_info.depth` is exactly
+  // `n * depth_bytes` bytes, where `n = level_mask.get_hashes_count()`.
+  //
+  // The size-equality CHECKs below are defense-in-depth assertions, NOT a
+  // first line of defense. Callers that build PrunnedCellInfo from
+  // attacker-controlled or network-sourced data MUST validate the buffer
+  // sizes upstream and return a structured error on mismatch — never reach
+  // this function with malformed sizes, because a CHECK failure aborts the
+  // entire process.
+  //
+  // Known callers that pre-validate:
+  //   - `vm::make_celldb_ext_cell` (crypto/vm/db/CellDbExtCell.cpp): rejects
+  //     mismatched `hashes` / `depths` slice sizes with td::Status::Error
+  //     before constructing PrunnedCellInfo.
+  //   - BoC deserializers in `crypto/vm/boc.cpp`: per-level buffers are
+  //     sliced out of the on-wire header at exact widths.
+  //
+  // Any new caller MUST follow the same pattern.
   td::Status init(const PrunnedCellInfo& prunned_cell_info) {
     auto& new_hash = prunned_cell_info.hash;
     auto* hash = info_.get_hashes(trailer_);

@@ -404,6 +404,14 @@ ImportResult run_streaming_import(const PhaseBFixture &fixture, const SyntheticB
   EXPECT_TRUE(root->get_hash() == boc.root_hash);
   EXPECT_TRUE(sink.finished());
   EXPECT_FALSE(sink.aborted());
+  // tos26 P0-3: finish() no longer commits. Drive the explicit
+  // commit-after-verify step that the production downloader runs;
+  // the existing `boc.root_hash` is the trusted expected root in
+  // this synthetic-BoC fixture.
+  EXPECT_FALSE(sink.is_committed());
+  auto commit_status = sink.commit_after_root_verified(boc.root_hash);
+  EXPECT_TRUE(commit_status.is_ok());
+  EXPECT_TRUE(sink.is_committed());
   ImportResult res;
   res.root = std::move(root);
   res.cells_persisted = sink.cells_persisted();
