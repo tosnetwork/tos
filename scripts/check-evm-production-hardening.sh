@@ -167,6 +167,40 @@ if rg -n 'MPT walk|trie witness|persistent_trie_witness|Ethereum stateRoot' \
     exit 1
 fi
 
+# Check 12 — no-MPT native-state follow-up: production runtime bytecode must
+#            be capped at EIP-170 and write paths must mark state corrupt on
+#            oversized code. This prevents genesis/import/repair from
+#            persisting bytecode that normal EVM CREATE could never create.
+if ! rg -q 'kEvmMaxRuntimeCodeBytes\s*=\s*24 \* 1024' "$root/evm/core/cell-codec.h"; then
+    echo "evm hardening failed: kEvmMaxRuntimeCodeBytes EIP-170 cap missing" >&2
+    exit 1
+fi
+if ! rg -q 'code\.size\(\) > kEvmMaxRuntimeCodeBytes' "$root/evm/core/cell-state.cpp"; then
+    echo "evm hardening failed: update_account_code must reject oversized runtime bytecode" >&2
+    exit 1
+fi
+
+# Check 13 — native-state malformed-shape errors must be surfaced through the
+#            read-only RPC corruption gate, not silently interpreted as
+#            missing accounts / zero slots / empty code.
+if ! rg -q 'state_shape_error_count' "$root/evm/rpc/handlers.cpp"; then
+    echo "evm hardening failed: RPC handlers must gate state_shape_error_count()" >&2
+    exit 1
+fi
+if ! rg -q 'corrupt EVM native state shape' "$root/evm/rpc/handlers.cpp"; then
+    echo "evm hardening failed: RPC handlers must return corrupt EVM native state shape" >&2
+    exit 1
+fi
+
+# Check 14 — default persistent-state budget must be internally consistent.
+#            The default single-file cap must not exceed the returned-DAG cap;
+#            otherwise validator-engine default startup fails fast before any
+#            operator flags are supplied.
+if ! rg -q 'max_single_file_bytes\s*=\s*512ULL << 20' "$root/validator/state-download-buffer.h"; then
+    echo "evm hardening failed: default persistent-state single-file cap must match fail-closed returned-DAG cap" >&2
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Existing (non-MPT) production hardening checks.
 # ---------------------------------------------------------------------------
@@ -355,23 +389,21 @@ if ! rg -q 'invalid stateOverrides storage slot' "$rpc_handlers" ||
     exit 1
 fi
 
-# K-02 (audit, 2026-04-27 follow-up): every silkworm-driving read-only
-# RPC handler that does NOT bind a `WitnessFlatConsistencyContext`
-# MUST snapshot `code_root_hash_mismatch_count()` before executing
-# silkworm and check the delta after, mapping any increment to a
-# JSON-RPC `-32000 corrupt EVM code root`. Without this, a corrupt
-# code root surfaces as a confidently-wrong response (empty bytecode,
-# falsely-cheap gas estimate, missing logs). The check pins the
-# four canonical handlers; future heavy read-only RPC handlers must
-# follow the same pattern and add themselves to this list.
+# K-02 / P1-C follow-up: every silkworm-driving read-only RPC handler that
+# does NOT bind a consensus verifier context MUST snapshot the unified RPC
+# state-error counters (`code_root_hash_mismatch_count` +
+# `state_shape_error_count`) before executing silkworm and check the delta
+# afterwards. Without this, corrupt code roots or malformed native account /
+# storage leaves surface as confidently-wrong responses (empty bytecode,
+# falsely-cheap gas estimate, missing logs / access list entries).
 for handler in handle_call handle_estimate_gas handle_create_access_list handle_simulate_v1; do
     if ! awk -v h="$handler" '
         $0 ~ "static RpcResult " h "\\(" { in_h = 1 }
-        in_h && /code_root_hash_mismatch_count\(\)/ { found = 1 }
+        in_h && /snapshot_rpc_state_errors/ { found = 1 }
         in_h && /^}$/ { in_h = 0 }
         END { exit (found ? 0 : 1) }
     ' "$rpc_handlers"; then
-        echo "evm production hardening check failed: $handler must snapshot code_root_hash_mismatch_count before silkworm execution (K-02)" >&2
+        echo "evm production hardening check failed: $handler must snapshot unified RPC state-error counters before silkworm execution (K-02/P1-C)" >&2
         exit 1
     fi
 done
@@ -384,11 +416,11 @@ done
 if rg -q 'handle_debug_trace_transaction' "$rpc_handlers"; then
     if ! awk '
         /static RpcResult handle_debug_trace_transaction\(/ { in_h = 1 }
-        in_h && /code_root_hash_mismatch_count\(\)/ { found = 1 }
+        in_h && /snapshot_rpc_state_errors/ { found = 1 }
         in_h && /^}$/ { in_h = 0 }
         END { exit (found ? 0 : 1) }
     ' "$rpc_handlers"; then
-        echo "evm production hardening check failed: handle_debug_trace_transaction must snapshot code_root_hash_mismatch_count (K-02)" >&2
+        echo "evm production hardening check failed: handle_debug_trace_transaction must snapshot unified RPC state-error counters (K-02/P1-C)" >&2
         exit 1
     fi
 fi

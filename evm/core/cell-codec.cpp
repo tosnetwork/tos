@@ -155,6 +155,12 @@ void bytes32_to_key(const evmc::bytes32& v, unsigned char out[32]) {
 
 td::Ref<vm::Cell> encode_evm_bytecode(td::Slice code) {
     if (code.empty()) return {};
+    // Defensive cap for import / repair helpers that encode bytecode
+    // outside normal EVM CREATE rules. Returning null forces callers that
+    // pair a non-empty code_hash with this root to fail through the
+    // decode_and_verify_code_root chokepoint instead of persisting an
+    // oversized chain.
+    if (code.size() > kEvmMaxRuntimeCodeBytes) return {};
 
     // Build chunks tail-first so the head is the cell whose `next` ref
     // points to the second chunk, etc. Walking the chain at decode time
@@ -204,6 +210,10 @@ std::string decode_evm_bytecode(td::Ref<vm::Cell> root) {
             unsigned data_bytes = (bits - 1) / 8;
             if (data_bytes > 0) {
                 size_t off = out.size();
+                if (data_bytes > kEvmMaxRuntimeCodeBytes ||
+                    off > kEvmMaxRuntimeCodeBytes - data_bytes) {
+                    return {};
+                }
                 out.resize(off + data_bytes);
                 cs.fetch_bytes(reinterpret_cast<unsigned char*>(out.data() + off), data_bytes);
             } else {

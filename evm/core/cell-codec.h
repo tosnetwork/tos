@@ -135,6 +135,12 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
 /// Maximum bytes stored inline per chunk cell.
 constexpr unsigned kEvmBytecodeChunkBytes = 127;
 
+/// EIP-170 maximum deployed runtime bytecode size. Production native-state
+/// import / lazy decode / code-write paths reject bytecode above this cap so
+/// a malformed genesis or state-sync payload cannot persist over-large code
+/// that the EVM would never be allowed to create normally.
+constexpr std::size_t kEvmMaxRuntimeCodeBytes = 24 * 1024;
+
 /// Encode arbitrary EVM bytecode into a chain of cells. Returns null cell
 /// when `code` is empty. Deterministic — identical input bytes produce
 /// identical cell hashes on every binary.

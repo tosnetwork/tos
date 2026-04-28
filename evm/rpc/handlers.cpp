@@ -644,6 +644,31 @@ static std::string make_error(const std::string& id, int code, const std::string
            ",\"message\":\"" + json_escape_string(msg) + "\"}}";
 }
 
+struct RpcStateErrorSnapshot {
+    uint64_t code_root_mismatch{0};
+    uint64_t state_shape{0};
+};
+
+static RpcStateErrorSnapshot snapshot_rpc_state_errors(EvmState& state) noexcept {
+    return RpcStateErrorSnapshot{
+        state.code_root_hash_mismatch_count(),
+        state.state_shape_error_count(),
+    };
+}
+
+static std::optional<RpcResult> rpc_state_error_delta(
+    EvmState& state,
+    const RpcStateErrorSnapshot& before,
+    const std::string& id) {
+    if (state.code_root_hash_mismatch_count() != before.code_root_mismatch) {
+        return RpcResult{make_error(id, -32000, "corrupt EVM code root"), true};
+    }
+    if (state.state_shape_error_count() != before.state_shape) {
+        return RpcResult{make_error(id, -32000, "corrupt EVM native state shape"), true};
+    }
+    return std::nullopt;
+}
+
 // ---------------------------------------------------------------------------
 // Param parsing (minimal: extract hex address from first param)
 // ---------------------------------------------------------------------------
@@ -895,7 +920,10 @@ static RpcResult handle_get_balance(const std::string& params, const std::string
     if (!parse_hex_address(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
-    auto balance = global_evm_state().get_balance(addr);
+    auto& state = global_evm_state();
+    auto before = snapshot_rpc_state_errors(state);
+    auto balance = state.get_balance(addr);
+    if (auto err = rpc_state_error_delta(state, before, id)) return *err;
     return {make_result(id, to_hex_quantity(balance)), false};
 }
 
@@ -904,7 +932,10 @@ static RpcResult handle_get_transaction_count(const std::string& params, const s
     if (!parse_hex_address(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
-    auto nonce = global_evm_state().get_nonce(addr);
+    auto& state = global_evm_state();
+    auto before = snapshot_rpc_state_errors(state);
+    auto nonce = state.get_nonce(addr);
+    if (auto err = rpc_state_error_delta(state, before, id)) return *err;
     return {make_result(id, to_hex_quantity(nonce)), false};
 }
 
@@ -913,7 +944,10 @@ static RpcResult handle_get_code(const std::string& params, const std::string& i
     if (!parse_hex_address(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
-    auto acct = global_evm_state().read_account(addr);
+    auto& state = global_evm_state();
+    auto before = snapshot_rpc_state_errors(state);
+    auto acct = state.read_account(addr);
+    if (auto err = rpc_state_error_delta(state, before, id)) return *err;
     if (!acct) {
         return {make_result(id, "\"0x\""), false};
     }
@@ -927,7 +961,9 @@ static RpcResult handle_get_code(const std::string& params, const std::string& i
     // wrong code (or as canonical empty). `read_code_copy_checked`
     // returns an error in both the empty-decode-with-non-empty-hash
     // and hash-mismatch cases, which we map to `-32000`.
-    auto code_res = global_evm_state().read_code_copy_checked(addr, acct->code_hash);
+    before = snapshot_rpc_state_errors(state);
+    auto code_res = state.read_code_copy_checked(addr, acct->code_hash);
+    if (auto err = rpc_state_error_delta(state, before, id)) return *err;
     if (code_res.is_error()) {
         return {make_error(id, -32000, "corrupt EVM code root"), true};
     }
@@ -1867,17 +1903,13 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
     // code". The post-execution counter delta is the deterministic
     // signal we need to map the response to a JSON-RPC `-32000 corrupt
     // EVM code root` instead.
-    auto code_mismatch_before =
-        global_evm_state().code_root_hash_mismatch_count();
+    auto state_errors_before = snapshot_rpc_state_errors(global_evm_state());
 
     // Match geth/erigon: bypass sender balance enforcement during read-only
     // calls so wallets can simulate value-bearing calls before holding funds.
     auto result = call_evm_transaction_with_balance_topup(txn, block, global_evm_state(), config);
 
-    if (global_evm_state().code_root_hash_mismatch_count() !=
-        code_mismatch_before) {
-        return {make_error(id, -32000, "corrupt EVM code root"), true};
-    }
+    if (auto err = rpc_state_error_delta(global_evm_state(), state_errors_before, id)) return *err;
 
     if (!result.success) {
         // Return revert data in the error response (EIP-3668 compatible)
@@ -1940,15 +1972,11 @@ static RpcResult handle_estimate_gas(const std::string& params, const std::strin
     // snapshot a corrupt code root would surface as a falsely-cheap gas
     // estimate (silkworm would observe an empty `ByteView` from
     // `read_code` and estimate gas as if the contract had no code).
-    auto code_mismatch_before =
-        global_evm_state().code_root_hash_mismatch_count();
+    auto state_errors_before = snapshot_rpc_state_errors(global_evm_state());
 
     auto result = call_evm_transaction_with_balance_topup(txn, block, global_evm_state(), config);
 
-    if (global_evm_state().code_root_hash_mismatch_count() !=
-        code_mismatch_before) {
-        return {make_error(id, -32000, "corrupt EVM code root"), true};
-    }
+    if (auto err = rpc_state_error_delta(global_evm_state(), state_errors_before, id)) return *err;
 
     if (!result.success) {
         std::string revert_hex = to_hex_data(result.return_data.data(), result.return_data.size());
@@ -2421,14 +2449,10 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     // in the trace as a confidently-empty bytecode (no opcodes
     // recorded, gas_used limited to intrinsic). The post-trace counter
     // delta surfaces such a condition deterministically.
-    auto trace_code_mismatch_before =
-        global_evm_state().code_root_hash_mismatch_count();
+    auto trace_state_errors_before = snapshot_rpc_state_errors(global_evm_state());
     auto trace = trace_evm_transaction(
         txn, block, global_evm_state(), evm_chain_config(), kMaxTraceSteps);
-    if (global_evm_state().code_root_hash_mismatch_count() !=
-        trace_code_mismatch_before) {
-        return {make_error(id, -32000, "corrupt EVM code root"), true};
-    }
+    if (auto err = rpc_state_error_delta(global_evm_state(), trace_state_errors_before, id)) return *err;
 
     std::string result;
     auto append_result = [&](std::string_view piece) {
@@ -2677,11 +2701,16 @@ static RpcResult handle_get_storage_at(const std::string& params, const std::str
         }
     }
 
-    auto acct = global_evm_state().read_account(addr);
+    auto& state = global_evm_state();
+    auto before = snapshot_rpc_state_errors(state);
+    auto acct = state.read_account(addr);
+    if (auto err = rpc_state_error_delta(state, before, id)) return *err;
     if (!acct) {
         return {make_result(id, "\"0x" + std::string(64, '0') + "\""), false};
     }
-    auto value = global_evm_state().read_storage_copy(addr, acct->incarnation, slot);
+    before = snapshot_rpc_state_errors(state);
+    auto value = state.read_storage_copy(addr, acct->incarnation, slot);
+    if (auto err = rpc_state_error_delta(state, before, id)) return *err;
     return {make_result(id, to_hex_data(value.bytes, 32)), false};
 }
 
@@ -4803,8 +4832,7 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     // no bytecode. The post-execution counter delta surfaces such a
     // condition deterministically, mapping to a single JSON-RPC
     // `-32000 corrupt EVM code root` for the whole batched simulation.
-    auto sim_code_mismatch_before =
-        evm_state.code_root_hash_mismatch_count();
+    auto sim_state_errors_before = snapshot_rpc_state_errors(evm_state);
 
     for (const auto& block_plan : plan) {
         // ---- Per-block overrides ----
@@ -5240,9 +5268,7 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     // response would otherwise be a confidently-wrong "no code" output
     // (e.g. missing logs / wrong gas). Map the delta to a single
     // -32000 error for the whole batched request.
-    if (evm_state.code_root_hash_mismatch_count() != sim_code_mismatch_before) {
-        return {make_error(id, -32000, "corrupt EVM code root"), true};
-    }
+    if (auto err = rpc_state_error_delta(evm_state, sim_state_errors_before, id)) return *err;
     return {make_result(id, out2), false};
 }
 
@@ -5304,7 +5330,7 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
     // otherwise emit a confidently-empty access list for a contract
     // whose code root is corrupt (silkworm sees no bytecode → no
     // SLOAD/SSTORE keys to record).
-    auto code_mismatch_before = evm_state.code_root_hash_mismatch_count();
+    auto state_errors_before = snapshot_rpc_state_errors(evm_state);
 
     // Build IntraBlockState wrapping mutable view (commit_state=false → no DB writes)
     auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
@@ -5339,9 +5365,7 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
 
     auto call_result = evm.execute(txn, exec_gas);
 
-    if (evm_state.code_root_hash_mismatch_count() != code_mismatch_before) {
-        return {make_error(id, -32000, "corrupt EVM code root"), true};
-    }
+    if (auto err = rpc_state_error_delta(evm_state, state_errors_before, id)) return *err;
 
     // Optimize per EIP-2930 (drop addresses whose listing isn't profitable)
     if (sender) tracer.optimize_gas(*sender, txn.to.value_or(evmc::address{}),

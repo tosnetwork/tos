@@ -6202,7 +6202,7 @@ int main(int argc, char *argv[]) {
   //   --persistent-state-single-file-cap=<bytes>
   //       Per-state download cap. A single peer-advertised state above
   //       this value is rejected before any reservation is taken.
-  //       Default 16 GiB.
+  //       Default 512 MiB until the Phase B true CellDb-backed importer ships.
   //   --persistent-state-resident-cap=<bytes>
   //       Per-parse peak resident memory. The streaming BoC importer
   //       refuses to keep more than this many bytes resident at any
@@ -6258,7 +6258,7 @@ int main(int argc, char *argv[]) {
                "download succeed but fail closed at parse time",
                [&]() { persistent_state_oversize_ack = true; });
   p.add_checked_option('\0', "persistent-state-single-file-cap",
-                       "per-state download cap in bytes (default 16 GiB)",
+                       "per-state download cap in bytes (default 512 MiB until Phase B true CellDb import ships)",
                        [&](td::Slice arg) -> td::Status {
                          td::uint64 v = 0;
                          TRY_STATUS(parse_budget_bytes(arg, v));
@@ -6317,7 +6317,7 @@ int main(int argc, char *argv[]) {
   // H-03 total-cell-bytes cap forwarded to vm::StreamingBocImportOptions.
   p.add_checked_option('\0', "persistent-state-max-total-cell-bytes-per-parse",
                        "max declared cell-data bytes accepted by the streaming BoC importer per parse "
-                       "(default 16 GiB)",
+                       "(default 512 MiB; raise only with matching parser/importer budgets)",
                        [&](td::Slice arg) -> td::Status {
                          td::uint64 v = 0;
                          TRY_STATUS(parse_budget_bytes(arg, v));

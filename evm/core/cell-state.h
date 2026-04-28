@@ -330,6 +330,18 @@ class CellEvmState : public silkworm::State {
     bool lookup_account_data_cell(const evmc::address& address,
                                   td::Ref<vm::Cell>& out) const;
 
+    /// Decode the current account leaf for write paths that need to preserve
+    /// storage/code refs while updating account metadata or bytecode. Missing
+    /// account is a valid result and leaves the output account/refs at their
+    /// defaults. Any malformed existing leaf records a per-state native-shape
+    /// error and returns false; callers must then skip the write so the
+    /// compute-phase counter gate rolls the surrounding transaction back.
+    bool decode_existing_account_for_write(const evmc::address& address,
+                                           const char* where,
+                                           silkworm::Account& acct,
+                                           td::Ref<vm::Cell>& storage_root,
+                                           td::Ref<vm::Cell>& code_root) const;
+
     /// Record a per-state code-integrity error. `noexcept` because every
     /// fault site (including the `noexcept` silkworm State overrides) needs
     /// to bump the counter without surfacing exceptions.

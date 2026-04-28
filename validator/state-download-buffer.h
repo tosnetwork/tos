@@ -252,15 +252,17 @@ struct PersistentStateProcessingReservation {
   ~PersistentStateProcessingReservation();
 };
 
-// Configurable persistent-state budget. The defaults match the post-H-02
-// raised caps; an operator can override any field via the validator-engine
+// Configurable persistent-state budget. The defaults are fail-closed and
+// internally consistent: by default a single downloaded state cannot exceed
+// the current returned-DAG
+// parser ceiling; an operator can override any field via the validator-engine
 // CLI flags or via a direct call to configure_persistent_state_budgets at
 // startup. The reservation hot path reads the live config under a single
 // atomic snapshot so a misconfiguration cannot leave half-applied state.
 struct PersistentStateBudgetConfig {
   td::uint64 max_download_bytes = 16ULL << 30;
   td::uint64 max_processing_bytes = 16ULL << 30;
-  td::uint64 max_single_file_bytes = 16ULL << 30;
+  td::uint64 max_single_file_bytes = 512ULL << 20;
   td::uint64 max_resident_bytes_per_parse = 256ULL << 20;
   // H-02 short-term cap. Until the truly-streaming-into-CellDb importer
   // (returning an ExtCell hash-only root) ships, the OnDisk parse path
@@ -279,11 +281,12 @@ struct PersistentStateBudgetConfig {
   // Defaults to vm::kDefaultStreamingBocMaxScaffoldingBytes.
   td::uint64 max_scaffolding_bytes_per_parse = vm::kDefaultStreamingBocMaxScaffoldingBytes;
   // H-03 total-cell-bytes cap forwarded to vm::StreamingBocImportOptions.
-  // Defaults to vm::kDefaultStreamingBocMaxTotalCellBytes (16 GiB), which
-  // matches the persistent-state single-file ceiling. The actor caps
+  // Default is 512 MiB, matching the fail-closed single-file / returned-DAG
+  // ceilings until true streaming import ships. Operators that raise this
+  // must also raise the matching parser/importer budgets. The actor caps
   // this further at min(file.size, this value) so a small state cannot
   // declare more cell bytes than its envelope contains.
-  td::uint64 max_total_cell_bytes_per_parse = vm::kDefaultStreamingBocMaxTotalCellBytes;
+  td::uint64 max_total_cell_bytes_per_parse = 512ULL << 20;
   // H-02 long-term feature flag. When the future ExtCell hash-only root
   // refactor lands, callers that opt in here will be allowed to parse
   // a state whose `file.size` exceeds `max_returned_dag_bytes_per_parse`

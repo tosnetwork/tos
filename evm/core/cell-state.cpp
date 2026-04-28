@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstring>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace evm_workchain {
@@ -308,6 +309,7 @@ silkworm::ByteView CellEvmState::read_code(
         td::Ref<vm::Cell> storage_root;
         td::Ref<vm::Cell> code_root;
         if (!decode_evm_account_data(account_cell, acct, storage_root, code_root)) {
+            record_state_shape_error("read_code decode_evm_account_data");
             return {};
         }
         if (acct.code_hash != code_hash) {
@@ -350,12 +352,16 @@ silkworm::ByteView CellEvmState::read_code(
         return silkworm::ByteView{it->second.bytes.data(),
                                   it->second.bytes.size()};
     } catch (vm::VmError&) {
+        record_state_shape_error("read_code vm::VmError");
         return {};
     } catch (vm::VmVirtError&) {
+        record_state_shape_error("read_code vm::VmVirtError");
         return {};
     } catch (std::exception&) {
+        record_state_shape_error("read_code std::exception");
         return {};
     } catch (...) {
+        record_state_shape_error("read_code unknown");
         return {};
     }
 }
@@ -480,6 +486,19 @@ void CellEvmState::update_account(const evmc::address& address,
     unsigned char key[32];
     address_to_key(address, key);
 
+    // P1 no-MPT hardening: every write path that observes an existing
+    // native account leaf must decode it through the same fail-closed helper.
+    // If the existing leaf is malformed, do not delete/overwrite it as if the
+    // account were missing; mark state_shape_error and let the compute-phase
+    // snapshot gate reject + rollback the current transaction.
+    silkworm::Account prev_for_shape{};
+    td::Ref<vm::Cell> storage_root, code_root;
+    if (!decode_existing_account_for_write(address, "update_account",
+                                           prev_for_shape,
+                                           storage_root, code_root)) {
+        return;
+    }
+
     if (!current.has_value()) {
         if (initial.has_value()) {
             delta_stats_.deleted_accounts++;
@@ -489,16 +508,6 @@ void CellEvmState::update_account(const evmc::address& address,
     }
     if (!initial.has_value()) {
         delta_stats_.new_accounts++;
-    }
-
-    // Preserve existing storage + code refs when updating an existing account.
-    td::Ref<vm::Cell> storage_root, code_root;
-    {
-        auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
-        if (cs.not_null() && cs->size_refs() > 0) {
-            silkworm::Account prev;
-            decode_evm_account_data(cs->prefetch_ref(0), prev, storage_root, code_root);
-        }
     }
 
     auto data_cell = encode_evm_account_data(*current, storage_root, code_root);
@@ -513,6 +522,17 @@ void CellEvmState::update_account_code(const evmc::address& address,
                                         const evmc::bytes32& code_hash,
                                         silkworm::ByteView code) {
     if (code_hash == silkworm::kEmptyHash) return;
+    if (code.size() > kEvmMaxRuntimeCodeBytes) {
+        record_code_integrity_error();
+        try {
+            LOG(ERROR) << "evm-workchain: update_account_code rejected oversized runtime bytecode "
+                       << "(addr=" << format_evm_address_hex(address)
+                       << ", code.size=" << code.size()
+                       << ", cap=" << kEvmMaxRuntimeCodeBytes << ")";
+        } catch (...) {
+        }
+        return;
+    }
     // Audit H-01 + W8-A P0-B: defensive `keccak(code) == code_hash` on
     // the write path. Production callers (`run_evm` / silkworm CREATE)
     // always pass matching code/hash, so this is normally a free
@@ -552,12 +572,11 @@ void CellEvmState::update_account_code(const evmc::address& address,
     // survives restart via cp.new_data → populate_state_from_shard_accounts.
     unsigned char key[32];
     address_to_key(address, key);
-    auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
     silkworm::Account acct{};
-    td::Ref<vm::Cell> storage_root;
-    if (cs.not_null() && cs->size_refs() > 0) {
-        td::Ref<vm::Cell> _old_code;
-        decode_evm_account_data(cs->prefetch_ref(0), acct, storage_root, _old_code);
+    td::Ref<vm::Cell> storage_root, old_code_root;
+    if (!decode_existing_account_for_write(address, "update_account_code",
+                                           acct, storage_root, old_code_root)) {
+        return;
     }
     acct.code_hash = code_hash;
     auto code_cell = encode_evm_bytecode(
@@ -812,6 +831,9 @@ td::Result<silkworm::Bytes> CellEvmState::decode_and_verify_code_root(
     auto decoded = decode_evm_bytecode(code_root);
     if (decoded.empty()) {
         return with_context("non-empty codeHash has empty decoded bytecode");
+    }
+    if (decoded.size() > kEvmMaxRuntimeCodeBytes) {
+        return with_context("EVM runtime bytecode exceeds EIP-170 size cap");
     }
 
     auto actual = keccak_code_hash(silkworm::ByteView{
@@ -1164,6 +1186,60 @@ bool CellEvmState::lookup_account_data_cell(const evmc::address& address,
         return false;
     } catch (...) {
         record_state_shape_error("lookup_account_data_cell unknown");
+        return false;
+    }
+}
+
+bool CellEvmState::decode_existing_account_for_write(
+    const evmc::address& address,
+    const char* where,
+    silkworm::Account& acct,
+    td::Ref<vm::Cell>& storage_root,
+    td::Ref<vm::Cell>& code_root) const {
+    acct = silkworm::Account{};
+    storage_root = {};
+    code_root = {};
+
+    auto mark = [&](const char* suffix) {
+        try {
+            std::string label = where != nullptr ? where : "decode_existing_account_for_write";
+            label += " ";
+            label += suffix != nullptr ? suffix : "unknown";
+            record_state_shape_error(label.c_str());
+        } catch (...) {
+            record_state_shape_error("decode_existing_account_for_write");
+        }
+    };
+
+    try {
+        unsigned char key[32];
+        address_to_key(address, key);
+        auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
+        if (cs.is_null()) {
+            // Missing account is not corruption; the caller may be creating it.
+            return true;
+        }
+        if (cs->size() != 0 || cs->size_refs() != 1) {
+            mark("dict leaf shape");
+            return false;
+        }
+        if (!decode_evm_account_data(cs->prefetch_ref(0), acct,
+                                     storage_root, code_root)) {
+            mark("decode_evm_account_data");
+            return false;
+        }
+        return true;
+    } catch (vm::VmError&) {
+        mark("vm::VmError");
+        return false;
+    } catch (vm::VmVirtError&) {
+        mark("vm::VmVirtError");
+        return false;
+    } catch (std::exception&) {
+        mark("std::exception");
+        return false;
+    } catch (...) {
+        mark("unknown");
         return false;
     }
 }

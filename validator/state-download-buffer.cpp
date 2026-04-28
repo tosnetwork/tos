@@ -57,18 +57,21 @@ namespace {
 // state path is forced onto disk where RSS is bounded.
 constexpr td::uint64 kHeapThreshold = 64ULL << 20;  // 64 MiB
 
-// Live budget configuration. The H-03 fix raises the processing cap to
-// match the download cap (so a 16 GiB catch-up state that downloads
-// successfully also parses successfully) and exposes the peak resident
-// memory budget per parse to the streaming BoC importer. All four
-// fields are mutated together via configure_persistent_state_budgets so
+// Live budget configuration. The processing/download caps are generous
+// aggregate budgets, while the default single-file / returned-DAG caps stay
+// fail-closed at 512 MiB until the true CellDb-backed importer lands. The
+// peak resident memory budget per parse is forwarded to the streaming BoC
+// importer. All fields are mutated together via
+// configure_persistent_state_budgets so
 // the reservation hot path can take a single snapshot under a mutex.
 //
 // Defaults:
 //   max_download_bytes               16 GiB
 //   max_processing_bytes             16 GiB (raised from the legacy 512 MiB)
-//   max_single_file_bytes            16 GiB
+//   max_single_file_bytes            512 MiB (matches returned-DAG cap)
 //   max_resident_bytes_per_parse     256 MiB
+//   max_returned_dag_bytes_per_parse  512 MiB
+//   max_total_cell_bytes_per_parse    512 MiB
 std::mutex g_budget_config_mu;
 PersistentStateBudgetConfig g_budget_config;
 
@@ -151,6 +154,12 @@ td::Status validate_budget_config(const PersistentStateBudgetConfig& cfg) {
   }
   if (cfg.max_total_cell_bytes_per_parse == 0) {
     return td::Status::Error("max_total_cell_bytes_per_parse must be > 0");
+  }
+  if (cfg.max_total_cell_bytes_per_parse < cfg.max_returned_dag_bytes_per_parse) {
+    return td::Status::Error(PSTRING() << "max_total_cell_bytes_per_parse "
+                                       << cfg.max_total_cell_bytes_per_parse
+                                       << " < max_returned_dag_bytes_per_parse "
+                                       << cfg.max_returned_dag_bytes_per_parse);
   }
   // Phase A hard-block: the true CellDb-backed streaming importer
   // (Phase B) is not yet implemented. Flipping this flag would silently
