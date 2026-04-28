@@ -106,6 +106,50 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedSta
                                                            const vm::StreamingBocImportOptions &opts,
                                                            vm::StreamingCellSink *sink);
 
+// Phase B "true streaming" parse path. Identical surface to the
+// (file, expected_root_hash, opts, sink*) overload above, except this
+// helper OWNS the sink lifecycle: it constructs a `CellDbStreamingSink`
+// from the supplied (`reader`, `writer`) pair, drives the
+// begin/persist/finish/abort state machine around the bounded BoC
+// importer, and returns a hash-only ExtCell-backed root whose child
+// DAG lives durably in CellDb rather than in process memory.
+//
+// Reservation-lifecycle contract:
+//   The caller must hold the persistent-state processing reservation
+//   for the duration of this call. The reservation MUST stay alive
+//   until AFTER this function returns; the sink's `finish()` (which
+//   commits the CellDb batch) runs before the function returns.
+//   The acceptance criterion in the Phase B spec ("Do not release
+//   processing reservation until: BoC parse completed; CellDb batch
+//   committed; root hash verified; downstream manager has either
+//   accepted lazy root or failed; temporary file cleanup is complete")
+//   bottoms out at this function for the first three clauses; the
+//   caller still owns the manager-handoff and tempfile-cleanup
+//   clauses.
+//
+// Failure-mode contract:
+//   On any internal error (file open, importer rejection, root-hash
+//   mismatch, sink finish failure) the function calls `sink.abort()`
+//   before returning so the CellDb write batch is rolled back; the
+//   caller observes the error verbatim and SHOULD release its
+//   reservation as part of its normal failure-cleanup path.
+//
+// Concurrency contract:
+//   `CellDbIn::create_streaming_writer()` is import-only; the validator
+//   manager that constructs the writer must serialize concurrent
+//   imports (Wave 4 of the broader Phase B plan owns that surface).
+//   This helper assumes the caller has already claimed the import slot
+//   and does NOT add its own per-CellDb lock.
+//
+// The function logs `cells_persisted` on success at INFO level so
+// operators can confirm the Phase B path was taken; Wave 6 tests
+// observe `sink.is_true_streaming()` / `sink.cells_persisted()` via
+// the (file, opts, sink*) overload directly.
+td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(
+    fullnode::BudgetedStateFile &file, const RootHash &expected_root_hash,
+    const vm::StreamingBocImportOptions &opts, std::shared_ptr<vm::CellDbReader> reader,
+    std::unique_ptr<CellDbStreamingWriter> writer);
+
 class SplitStateDeserializer;
 
 struct SplitStatePart {

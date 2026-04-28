@@ -24,6 +24,7 @@
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/path.h"
 #include "tos/tos-io.hpp"
+#include "validator/db/celldb.hpp"
 #include "validator/fabric.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
@@ -181,6 +182,109 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedSta
                                        << expected_root_hash.to_hex() << " got "
                                        << RootHash{root->get_hash().bits()}.to_hex());
   }
+  return root;
+}
+
+// Phase B "true streaming" parse path. The caller hands us a paired
+// `CellDbReader` snapshot + import-only `CellDbStreamingWriter`. We
+// build a `CellDbStreamingSink` from those two handles, drive the
+// bounded BoC importer with it, and the sink in turn (a) writes each
+// freshly-deserialized DataCell into the writer's RocksDB batch, and
+// (b) substitutes a hash-only ExtCell-backed replacement so the parent
+// cell never holds a strong DataCell ref to the child. The returned
+// root is therefore an ExtCell whose child DAG is durable in CellDb,
+// not a full in-memory DataCell tree.
+//
+// Lifecycle:
+//   1. begin() — opens the writer's RocksDB write batch.
+//   2. importer drives persist_and_replace() for every parsed cell.
+//   3. on success: validate root hash; if it matches, finish(root) —
+//      commits the batch — and return the lazy root.
+//   4. on any failure: abort() — rolls back the batch — and propagate
+//      the original error.
+//
+// The function does NOT touch the caller's processing reservation;
+// the caller MUST hold it until AFTER this function returns so the
+// reservation lifecycle in the spec ("BoC parse completed; CellDb batch
+// committed; root hash verified") is honored at the call site.
+td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(
+    fullnode::BudgetedStateFile &file, const RootHash &expected_root_hash,
+    const vm::StreamingBocImportOptions &opts, std::shared_ptr<vm::CellDbReader> reader,
+    std::unique_ptr<CellDbStreamingWriter> writer) {
+  if (file.path.empty() || file.size == 0) {
+    return td::Status::Error("parse_ondisk_state_streaming(phase-b): empty BudgetedStateFile");
+  }
+  if (reader == nullptr) {
+    return td::Status::Error("parse_ondisk_state_streaming(phase-b): null CellDbReader");
+  }
+  if (writer == nullptr) {
+    return td::Status::Error("parse_ondisk_state_streaming(phase-b): null CellDbStreamingWriter");
+  }
+
+  // The (reader, writer) constructor of CellDbStreamingSink is
+  // template-instantiated here so the writer's complete type is
+  // visible (validator/db/celldb.hpp is included in this TU). The
+  // resulting sink owns the writer's lifetime via a type-erased
+  // shared_ptr<void>; dropping the sink releases the writer.
+  fullnode::CellDbStreamingSink streaming_sink(std::move(reader), std::move(writer));
+  if (!streaming_sink.is_true_streaming()) {
+    // Defense in depth: the constructor falls back to the legacy
+    // counting path only when reader or writer is null, which we
+    // rejected above. A non-true-streaming sink here is a programming
+    // bug -- fail closed rather than silently committing through a
+    // sink that would NOT actually write to CellDb.
+    return td::Status::Error(
+        "parse_ondisk_state_streaming(phase-b): CellDbStreamingSink "
+        "fell back to non-true-streaming despite non-null handles");
+  }
+
+  TRY_RESULT(fd, td::FileFd::open(file.path, td::FileFd::Flags::Read));
+  // Run the importer. The sink's begin() is invoked inside
+  // std_boc_deserialize_from_file_bounded BEFORE any cell is parsed;
+  // its persist_and_replace() runs once per parsed cell and writes the
+  // cell into the open RocksDB batch; its finish() / abort() is
+  // invoked by the importer at end-of-parse / on error.
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts, &streaming_sink);
+  fd.close();
+  if (r_root.is_error()) {
+    // The importer's contract calls sink.abort() on its own error
+    // paths; we still call abort() defensively so a future importer
+    // that forgets to abort cannot leak a half-built RocksDB batch.
+    if (!streaming_sink.aborted() && !streaming_sink.finished()) {
+      streaming_sink.abort();
+    }
+    LOG(WARNING) << "parse_ondisk_state_streaming(phase-b): importer rejected after "
+                 << streaming_sink.cells_persisted() << " cell(s): " << r_root.error();
+    return r_root.move_as_error();
+  }
+  auto root = r_root.move_as_ok();
+  if (root.is_null()) {
+    if (!streaming_sink.aborted() && !streaming_sink.finished()) {
+      streaming_sink.abort();
+    }
+    return td::Status::Error("parse_ondisk_state_streaming(phase-b): BoC deserialize returned null root");
+  }
+  if (RootHash{root->get_hash().bits()} != expected_root_hash) {
+    if (!streaming_sink.aborted() && !streaming_sink.finished()) {
+      streaming_sink.abort();
+    }
+    return td::Status::Error(PSTRING()
+                             << "parse_ondisk_state_streaming(phase-b): root hash mismatch: expected "
+                             << expected_root_hash.to_hex() << " got "
+                             << RootHash{root->get_hash().bits()}.to_hex());
+  }
+  // The importer drives finish() at end-of-parse, so by this point the
+  // RocksDB batch has been committed. Defense in depth: surface a
+  // programming error if the sink is somehow not finished.
+  if (!streaming_sink.finished()) {
+    streaming_sink.abort();
+    return td::Status::Error(
+        "parse_ondisk_state_streaming(phase-b): sink finished=false on success path");
+  }
+  LOG(INFO) << "parse_ondisk_state_streaming(phase-b): committed "
+            << streaming_sink.cells_persisted() << " cell(s); root="
+            << expected_root_hash.to_hex()
+            << " (lazy ExtCell-backed; child DAG is durable in CellDb)";
   return root;
 }
 
