@@ -1141,6 +1141,97 @@ void CellDb::CellDbStatistics::prepare_stats(std::vector<std::pair<std::string, 
   vec.emplace_back("queries_store", PSTRING() << "ok : " << queries_store_ok_ << " error : " << queries_store_error_);
 }
 
+namespace {
+// Concrete implementation of CellDbStreamingWriter. Holds a
+// shared_ptr to the same vm::KeyValue (RocksDB) instance the rest of
+// CellDbIn uses, so commits become visible to subsequent
+// CellDbReader snapshots.
+class CellDbStreamingWriterImpl final : public CellDbStreamingWriter {
+ public:
+  explicit CellDbStreamingWriterImpl(std::shared_ptr<vm::KeyValue> kv) : kv_(std::move(kv)) {
+  }
+
+  ~CellDbStreamingWriterImpl() override {
+    // Best-effort: if the caller dropped us mid-batch, discard the
+    // buffered writes so we do not leak a half-built RocksDB write
+    // batch. Errors from abort_write_batch are intentionally ignored
+    // here -- there is nothing useful the destructor can do with
+    // them, and the import path will surface its own error via the
+    // explicit abort_batch() call on the happy-error path.
+    if (in_batch_) {
+      auto status = kv_->abort_write_batch();
+      LOG_IF(ERROR, status.is_error())
+          << "CellDbStreamingWriter: abort_write_batch in destructor failed: " << status;
+    }
+  }
+
+  td::Status begin_batch() override {
+    if (in_batch_) {
+      return td::Status::Error("CellDbStreamingWriter::begin_batch: batch already open");
+    }
+    TRY_STATUS(kv_->begin_write_batch());
+    in_batch_ = true;
+    return td::Status::OK();
+  }
+
+  td::Status store_cell(td::Slice hash, td::Slice serialized_cell_bytes) override {
+    if (!in_batch_) {
+      return td::Status::Error("CellDbStreamingWriter::store_cell: no open batch");
+    }
+    if (hash.size() != vm::Cell::hash_bytes) {
+      return td::Status::Error(PSLICE() << "CellDbStreamingWriter::store_cell: hash size " << hash.size()
+                                        << " != expected " << vm::Cell::hash_bytes);
+    }
+    if (serialized_cell_bytes.empty()) {
+      return td::Status::Error("CellDbStreamingWriter::store_cell: empty serialized bytes");
+    }
+    vm::CellStorer storer{*kv_};
+    return storer.store_cell_streaming(hash, serialized_cell_bytes);
+  }
+
+  td::Status store_cell(const td::Ref<vm::DataCell>& cell) override {
+    if (!in_batch_) {
+      return td::Status::Error("CellDbStreamingWriter::store_cell: no open batch");
+    }
+    if (cell.is_null()) {
+      return td::Status::Error("CellDbStreamingWriter::store_cell: null cell");
+    }
+    vm::CellStorer storer{*kv_};
+    return storer.store_cell_streaming(cell);
+  }
+
+  td::Status commit_batch() override {
+    if (!in_batch_) {
+      return td::Status::Error("CellDbStreamingWriter::commit_batch: no open batch");
+    }
+    TRY_STATUS(kv_->commit_write_batch());
+    in_batch_ = false;
+    return td::Status::OK();
+  }
+
+  td::Status abort_batch() override {
+    if (!in_batch_) {
+      // Idempotent: aborting when no batch is open is a no-op rather
+      // than an error so the sink's error-recovery path can call
+      // abort_batch() unconditionally.
+      return td::Status::OK();
+    }
+    TRY_STATUS(kv_->abort_write_batch());
+    in_batch_ = false;
+    return td::Status::OK();
+  }
+
+ private:
+  std::shared_ptr<vm::KeyValue> kv_;
+  bool in_batch_ = false;
+};
+}  // namespace
+
+std::unique_ptr<CellDbStreamingWriter> CellDbIn::create_streaming_writer() {
+  CHECK(cell_db_ != nullptr);
+  return std::make_unique<CellDbStreamingWriterImpl>(cell_db_);
+}
+
 }  // namespace validator
 
 }  // namespace tos

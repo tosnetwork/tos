@@ -48,6 +48,44 @@ class RootDb;
 class CellDb;
 class CellDbAsyncExecutor;
 
+// Per-import streaming writer for the state-download sink. Wraps the
+// existing CellDb KeyValue handle in a small begin/commit/abort surface
+// so the streaming sink can append cells one at a time without going
+// through the whole-DAG `prepare_commit` / `commit` path on
+// `DynamicBagOfCellsDb`.
+//
+// Lifecycle:
+//   - The sink calls `begin_batch()` once before the first cell.
+//   - It then calls `store_cell()` per parsed cell.
+//   - On successful import it calls `commit_batch()`; on any error
+//     it calls `abort_batch()` to discard any partial writes.
+//
+// IMPORT-ONLY. Not exposed via the validator-engine RPC / actor
+// surface. The instance owns no actor thread of its own; the caller
+// is responsible for serializing access (the sink is single-threaded
+// inside its parser).
+//
+// TODO(tos25 W6): regression tests for CellDbStreamingWriter
+//   - begin/store/commit happy path
+//   - begin/store/abort leaves the DB unchanged
+//   - same hash + different bytes during a batch returns Error
+//   - 1M cells in one batch does not OOM
+class CellDbStreamingWriter {
+ public:
+  virtual ~CellDbStreamingWriter() = default;
+  virtual td::Status begin_batch() = 0;
+  // Slice form: caller has already serialized the cell value using
+  // `vm::CellStorer::serialize_value`. `hash` must be the cell's
+  // canonical hash (Cell::hash_bytes long).
+  virtual td::Status store_cell(td::Slice hash, td::Slice serialized_cell_bytes) = 0;
+  // Convenience form: serializes the cell value with refcount = 1
+  // and the non-BoC encoding, matching what the dynamic BoC writes
+  // for a freshly observed cell.
+  virtual td::Status store_cell(const td::Ref<vm::DataCell>& cell) = 0;
+  virtual td::Status commit_batch() = 0;
+  virtual td::Status abort_batch() = 0;
+};
+
 class CellDbBase : public td::actor::Actor {
  public:
   void start_up() override;
@@ -74,6 +112,19 @@ class CellDbIn : public CellDbBase {
                                         td::Promise<std::map<BlockIdExt, RootHash>> promise);
 
   void migrate_cell(td::Bits256 hash);
+
+  // Construct an import-only streaming writer that shares this
+  // CellDb's underlying KeyValue handle. The returned writer's
+  // commit_batch / abort_batch operate on the same RocksDB instance
+  // queried by the existing `CellDbReader`, so cells written through
+  // the streaming writer become visible to subsequent reader
+  // snapshots without any additional plumbing.
+  //
+  // IMPORT-ONLY. The streaming writer is not safe to use concurrently
+  // with the CellDbIn store_cell / store_block_state_permanent
+  // batched writes. Wave 4 will gate this with a state-sync mode flag
+  // that quiesces the regular write path during a streaming import.
+  std::unique_ptr<CellDbStreamingWriter> create_streaming_writer();
 
   void flush_db_stats();
 

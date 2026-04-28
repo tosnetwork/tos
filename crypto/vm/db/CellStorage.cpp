@@ -268,6 +268,48 @@ td::Status CellStorer::set(td::int32 refcnt, const td::Ref<DataCell> &cell, bool
   return kv_.set(cell->get_hash().as_slice(), serialize_value(refcnt, cell, as_boc));
 }
 
+td::Status CellStorer::store_cell_streaming(td::Slice hash, td::Slice serialized_cell_bytes) {
+  // Per-cell streaming write used by the state-sync importer. We do
+  // not walk children and we do not delegate to DynamicBagOfCellsDb;
+  // the importer is responsible for ensuring every referenced child
+  // hash is also written before the importer hands the resulting root
+  // to the rest of the system.
+  //
+  // Idempotency / collision detection: read the existing value (if
+  // any). If absent -> append the write to the current batch. If
+  // present and equal -> OK without writing. If present but different
+  // -> fail closed so the importer aborts.
+  //
+  // The extra read costs roughly one RocksDB point lookup per cell.
+  // For state-sync that is bounded by the source bandwidth and is
+  // acceptable; an in-memory bloom / LRU dedupe can be layered on top
+  // later without changing this method's contract.
+  std::string existing;
+  TRY_RESULT(get_status, kv_.get(hash, existing));
+  if (get_status == KeyValue::GetStatus::Ok) {
+    if (td::Slice(existing) == serialized_cell_bytes) {
+      return td::Status::OK();
+    }
+    return td::Status::Error(PSLICE() << "cell hash collision: " << td::base64_encode(hash)
+                                      << " already stored with different bytes (existing=" << existing.size()
+                                      << "B, new=" << serialized_cell_bytes.size() << "B)");
+  }
+  return kv_.set(hash, serialized_cell_bytes);
+}
+
+td::Status CellStorer::store_cell_streaming(const td::Ref<DataCell> &cell) {
+  if (cell.is_null()) {
+    return td::Status::Error("store_cell_streaming: null cell");
+  }
+  // Refcount of 1 mirrors the value the existing dynamic-BoC path
+  // writes for a freshly observed cell. The importer is expected to
+  // run a refcount reconciliation pass after the streaming load
+  // completes (Wave 4+); until then this represents "owned by the
+  // freshly imported state root" exactly once.
+  std::string serialized = serialize_value(/*refcnt=*/1, cell, /*as_boc=*/false);
+  return store_cell_streaming(cell->get_hash().as_slice(), td::Slice(serialized));
+}
+
 td::Status CellStorer::merge(td::Slice hash, td::int32 refcnt_diff) {
   return kv_.merge(hash, serialize_refcnt_diffs(refcnt_diff));
 }

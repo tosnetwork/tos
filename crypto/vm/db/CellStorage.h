@@ -69,6 +69,36 @@ class CellStorer {
   td::Status set(td::int32 refcnt, const td::Ref<DataCell> &cell, bool as_boc);
   td::Status merge(td::Slice hash, td::int32 refcnt_diff);
 
+  // Per-cell streaming write entry used by import-only paths (state-sync
+  // streaming sink). Unlike `set` / `merge`, this method does NOT walk
+  // children and does NOT touch refcount accounting beyond writing a
+  // refcount-1 record for the cell itself. It is intended to be batched
+  // by the caller via `KeyValue::begin_write_batch` /
+  // `commit_write_batch` and is safe to call from a single-threaded
+  // parser.
+  //
+  // Idempotency / collision semantics:
+  //   - If the same hash is already present with the same serialized
+  //     bytes, the call returns OK and performs no write.
+  //   - If the same hash is already present with DIFFERENT bytes, the
+  //     call returns an Error. This is the fail-closed behavior the
+  //     streaming importer relies on to detect a corrupt source.
+  //   - Otherwise the (hash -> bytes) mapping is appended to the
+  //     current write batch.
+  //
+  // The slice overload assumes the caller has already serialized the
+  // cell into the on-disk RefcntCell value format (see
+  // `serialize_value` above); the DataCell overload is a convenience
+  // wrapper that does the serialization internally.
+  //
+  // TODO(tos25 W6): regression tests for store_cell_streaming
+  //   - same hash + same bytes -> OK (idempotent)
+  //   - same hash + different bytes -> Error
+  //   - 1M cells streaming write does not OOM
+  //   - abort_batch leaves no partial state visible to a fresh CellDbReader
+  td::Status store_cell_streaming(td::Slice hash, td::Slice serialized_cell_bytes);
+  td::Status store_cell_streaming(const td::Ref<DataCell> &cell);
+
   static void merge_value_and_refcnt_diff(std::string &value, td::Slice right);
   static void merge_refcnt_diffs(std::string &left, td::Slice right);
   static std::string serialize_refcnt_diffs(td::int32 refcnt_diff);
