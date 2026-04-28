@@ -6201,8 +6201,9 @@ int main(int argc, char *argv[]) {
   //       parses successfully.
   //   --persistent-state-single-file-cap=<bytes>
   //       Per-state download cap. A single peer-advertised state above
-  //       this value is rejected before any reservation is taken.
-  //       Default 512 MiB until the Phase B true CellDb-backed importer ships.
+  //       this value is rejected before any reservation is taken. Default
+  //       16 GiB; OnDisk catch-up streams cells directly into CellDb so
+  //       file size no longer bounds parse-time RSS.
   //   --persistent-state-resident-cap=<bytes>
   //       Per-parse peak resident memory. The streaming BoC importer
   //       refuses to keep more than this many bytes resident at any
@@ -6252,13 +6253,15 @@ int main(int argc, char *argv[]) {
   // sanity check below.
   bool persistent_state_oversize_ack = false;
   p.add_option('\0', "persistent-state-allow-oversize-single-file",
-               "acknowledge that --persistent-state-single-file-cap may exceed "
-               "--persistent-state-max-returned-dag-bytes-per-parse; without this flag the "
-               "validator engine refuses to start when the two caps would let a state "
-               "download succeed but fail closed at parse time",
+               "no longer required for OnDisk catch-up; Phase B handles oversize files natively. "
+               "Retained as a no-op so existing operator scripts that pass it continue to start. "
+               "Acknowledges that --persistent-state-single-file-cap may exceed "
+               "--persistent-state-max-returned-dag-bytes-per-parse (still meaningful for the "
+               "InMemory parse path)",
                [&]() { persistent_state_oversize_ack = true; });
   p.add_checked_option('\0', "persistent-state-single-file-cap",
-                       "per-state download cap in bytes (default 512 MiB until Phase B true CellDb import ships)",
+                       "per-state download cap in bytes (default 16 GiB; OnDisk catch-up streams "
+                       "cells directly into CellDb so file size no longer bounds parse-time RSS)",
                        [&](td::Slice arg) -> td::Status {
                          td::uint64 v = 0;
                          TRY_STATUS(parse_budget_bytes(arg, v));
@@ -6317,7 +6320,8 @@ int main(int argc, char *argv[]) {
   // H-03 total-cell-bytes cap forwarded to vm::StreamingBocImportOptions.
   p.add_checked_option('\0', "persistent-state-max-total-cell-bytes-per-parse",
                        "max declared cell-data bytes accepted by the streaming BoC importer per parse "
-                       "(default 512 MiB; raise only with matching parser/importer budgets)",
+                       "(default 16 GiB; bounds the streaming BoC importer's declared cells, "
+                       "NOT the returned root DAG residency)",
                        [&](td::Slice arg) -> td::Status {
                          td::uint64 v = 0;
                          TRY_STATUS(parse_budget_bytes(arg, v));
@@ -6369,33 +6373,26 @@ int main(int argc, char *argv[]) {
       LOG(WARNING) << "persistent-state: processing_cap < download_cap; states larger than processing_cap "
                       "will download but fail to import";
     }
-    // Phase A fail-fast sanity check. enable_true_cell_db_streaming_import is
-    // hard-blocked at the validator level, so this branch covers the realistic
-    // case of an operator who raised --persistent-state-single-file-cap above
-    // --persistent-state-max-returned-dag-bytes-per-parse. Without an explicit
-    // acknowledgement (--persistent-state-allow-oversize-single-file) the node
-    // refuses to start so the operator sees the misconfiguration immediately
-    // instead of after a multi-GiB download silently fails at parse time.
+    // Post-Phase-B: the OnDisk catch-up path streams cells directly into
+    // CellDb and returns a hash-only ExtCell root, so a single state file
+    // size larger than max_returned_dag_bytes_per_parse no longer implies a
+    // parse-time OOM. The InMemory parse path remains bounded by
+    // max_returned_dag_bytes_per_parse (it still returns a full DataCell DAG),
+    // but max_single_file_bytes only constrains the OnDisk envelope. The
+    // previous Phase A fail-fast rejection is therefore relaxed to an
+    // informational log so operators with legacy --persistent-state-single-
+    // file-cap settings continue to start cleanly.
     if (cfg.max_single_file_bytes > cfg.max_returned_dag_bytes_per_parse) {
+      LOG(INFO) << "persistent-state: max_single_file_bytes "
+                << fmt_bytes(cfg.max_single_file_bytes)
+                << " > max_returned_dag_bytes_per_parse "
+                << fmt_bytes(cfg.max_returned_dag_bytes_per_parse)
+                << "; OnDisk catch-up streams cells into CellDb (hash-only root) so file size "
+                   "no longer bounds parse-time RSS. InMemory catch-up is still bounded by "
+                   "max_returned_dag_bytes_per_parse.";
       if (persistent_state_oversize_ack) {
-        LOG(WARNING) << "persistent-state: max_single_file_bytes "
-                     << fmt_bytes(cfg.max_single_file_bytes)
-                     << " > max_returned_dag_bytes_per_parse "
-                     << fmt_bytes(cfg.max_returned_dag_bytes_per_parse)
-                     << "; operator acknowledged the parse-time fail-closed window via "
-                        "--persistent-state-allow-oversize-single-file. States between these "
-                        "caps will download but fail closed at parse time until Phase B ships.";
-      } else {
-        LOG(ERROR) << "persistent-state: max_single_file_bytes "
-                   << fmt_bytes(cfg.max_single_file_bytes)
-                   << " > max_returned_dag_bytes_per_parse "
-                   << fmt_bytes(cfg.max_returned_dag_bytes_per_parse)
-                   << "; refusing to start. States between these caps would download but fail "
-                      "closed at parse time. Either lower --persistent-state-single-file-cap, "
-                      "raise --persistent-state-max-returned-dag-bytes-per-parse (accepting "
-                      "the OOM risk), or pass --persistent-state-allow-oversize-single-file "
-                      "to acknowledge the gap.";
-        std::_Exit(2);
+        LOG(INFO) << "persistent-state: --persistent-state-allow-oversize-single-file "
+                     "acknowledged (no longer required after Phase B).";
       }
     }
   }

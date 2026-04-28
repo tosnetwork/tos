@@ -200,12 +200,15 @@ if ! rg -q 'corrupt EVM native state shape' "$root/evm/rpc/handlers.cpp"; then
     exit 1
 fi
 
-# Check 14 — default persistent-state budget must be internally consistent.
-#            The default single-file cap must not exceed the returned-DAG cap;
-#            otherwise validator-engine default startup fails fast before any
-#            operator flags are supplied.
-if ! rg -q 'max_single_file_bytes\s*=\s*512ULL << 20' "$root/validator/state-download-buffer.h"; then
-    echo "evm hardening failed: default persistent-state single-file cap must match fail-closed returned-DAG cap" >&2
+# Phase B step 7: default OnDisk catch-up uses streaming path and large
+# default file cap. A regression that lowers max_single_file_bytes back
+# to 512 MiB silently re-enables the Phase A liveness ceiling.
+if ! rg -q 'max_single_file_bytes\s*=\s*16ULL\s*<<\s*30' "$root/validator/state-download-buffer.h"; then
+    echo "evm hardening failed: validator/state-download-buffer.h must default max_single_file_bytes to 16 GiB after Phase B" >&2
+    exit 1
+fi
+if ! rg -q 'create_celldb_streaming_writer' "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: OnDisk catch-up must consume create_celldb_streaming_writer (Phase B default)" >&2
     exit 1
 fi
 

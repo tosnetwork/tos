@@ -267,26 +267,34 @@ struct PersistentStateProcessingReservation {
 };
 
 // Configurable persistent-state budget. The defaults are fail-closed and
-// internally consistent: by default a single downloaded state cannot exceed
-// the current returned-DAG
-// parser ceiling; an operator can override any field via the validator-engine
-// CLI flags or via a direct call to configure_persistent_state_budgets at
-// startup. The reservation hot path reads the live config under a single
-// atomic snapshot so a misconfiguration cannot leave half-applied state.
+// internally consistent: an operator can override any field via the
+// validator-engine CLI flags or via a direct call to
+// configure_persistent_state_budgets at startup. The reservation hot path
+// reads the live config under a single atomic snapshot so a misconfiguration
+// cannot leave half-applied state.
+//
+// Post-Phase-B contract:
+//   OnDisk catch-up: file size bounded by max_single_file_bytes;
+//   RSS bounded by max_resident_bytes_per_parse during streaming
+//   BoC parse + per-cell CellDb writes; the returned ExtCell root
+//   is O(1) memory.
+//   InMemory catch-up: still returns a full DataCell DAG; bounded
+//   by max_returned_dag_bytes_per_parse.
 struct PersistentStateBudgetConfig {
   td::uint64 max_download_bytes = 16ULL << 30;
   td::uint64 max_processing_bytes = 16ULL << 30;
-  td::uint64 max_single_file_bytes = 512ULL << 20;
+  // Post-Phase-B default: the OnDisk catch-up path streams cells directly
+  // into CellDb (returning a hash-only ExtCell root), so a single state
+  // file no longer needs to fit inside the returned-DAG ceiling. Default
+  // raised to 16 GiB so an unmodified validator-engine binary can
+  // bootstrap from large persistent states without operator overrides.
+  td::uint64 max_single_file_bytes = 16ULL << 30;
   td::uint64 max_resident_bytes_per_parse = 256ULL << 20;
-  // H-02 short-term cap. Until the truly-streaming-into-CellDb importer
-  // (returning an ExtCell hash-only root) ships, the OnDisk parse path
-  // returns the full root cell DAG; resident bytes for the returned DAG
-  // can therefore exceed `max_resident_bytes_per_parse`. The processing
-  // reservation is charged at min(file.size, this value), and a state
-  // whose `file.size` exceeds this value is fail-closed unless
-  // `enable_true_cell_db_streaming_import` is set. Default is 512 MiB
-  // — half of the 1 GiB processing-cap headroom that the post-H-02
-  // ceilings reserve for a single concurrent parse.
+  // InMemory parse path's full-DAG ceiling. The OnDisk catch-up path no
+  // longer produces a full DataCell DAG (Phase B streams cells into
+  // CellDb and returns a hash-only ExtCell root), so this field bounds
+  // only the InMemory branch where the parser still returns a complete
+  // DAG. 512 MiB matches the InMemory heap-path cap.
   td::uint64 max_returned_dag_bytes_per_parse = 512ULL << 20;
   // H-03 cell-count cap forwarded to vm::StreamingBocImportOptions.
   // Defaults to vm::kDefaultStreamingBocMaxCells.
@@ -295,12 +303,13 @@ struct PersistentStateBudgetConfig {
   // Defaults to vm::kDefaultStreamingBocMaxScaffoldingBytes.
   td::uint64 max_scaffolding_bytes_per_parse = vm::kDefaultStreamingBocMaxScaffoldingBytes;
   // H-03 total-cell-bytes cap forwarded to vm::StreamingBocImportOptions.
-  // Default is 512 MiB, matching the fail-closed single-file / returned-DAG
-  // ceilings until true streaming import ships. Operators that raise this
-  // must also raise the matching parser/importer budgets. The actor caps
-  // this further at min(file.size, this value) so a small state cannot
-  // declare more cell bytes than its envelope contains.
-  td::uint64 max_total_cell_bytes_per_parse = 512ULL << 20;
+  // Bounds the streaming BoC importer's declared cells, NOT the returned
+  // root DAG residency. Default raised to 16 GiB after Phase B so a 16 GiB
+  // OnDisk catch-up file can declare matching cell bytes; the returned
+  // root is now O(1) memory under the OnDisk path. The actor caps this
+  // further at min(file.size, this value) so a small state cannot declare
+  // more cell bytes than its envelope contains.
+  td::uint64 max_total_cell_bytes_per_parse = 16ULL << 30;
   // H-02 long-term feature flag. When the future ExtCell hash-only root
   // refactor lands, callers that opt in here will be allowed to parse
   // a state whose `file.size` exceeds `max_returned_dag_bytes_per_parse`
