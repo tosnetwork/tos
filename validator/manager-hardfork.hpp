@@ -197,6 +197,12 @@ class ValidatorManagerImpl : public ValidatorManager {
     // path; the Phase B streaming writer is unreachable here.
     UNREACHABLE();
   }
+  void import_persistent_state_streaming(PersistentStateImportRequest /*request*/,
+                                         td::Promise<PersistentStateImportResult> /*promise*/) override {
+    // tos26 P1-4: hardfork manager does not run state-sync;
+    // the actor-local import path is unreachable here.
+    UNREACHABLE();
+  }
   void store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                    td::BufferSlice state, td::Promise<td::Unit> promise) override {
     UNREACHABLE();

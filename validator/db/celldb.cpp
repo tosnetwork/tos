@@ -38,6 +38,9 @@
 #include "celldb.hpp"
 #include "files-async.hpp"
 #include "rootdb.hpp"
+#include "state-download-buffer.h"
+#include "td/utils/port/FileFd.h"
+#include "vm/boc.h"
 
 namespace tos {
 
@@ -1309,6 +1312,185 @@ void CellDbIn::create_streaming_writer_async(td::Promise<std::unique_ptr<CellDbS
     return;
   }
   promise.set_result(create_streaming_writer());
+}
+
+// tos26 P1-4: drive the entire begin_batch / parse / verify-root /
+// commit lifecycle inside the CellDbIn actor's serialized context.
+//
+// Lifecycle in this body:
+//   1. Reject zero-size or empty-path requests up front.
+//   2. Construct an internal writer (shares this CellDbIn's KeyValue +
+//      single-import gate). The writer NEVER escapes this method.
+//   3. Build a LiveCellDbReaderProvider seeded with the current
+//      pre-commit reader (boc_->get_cell_db_reader()). The provider
+//      handle is what the lazy ExtCells produced during parse bind to;
+//      after we commit the batch we publish a fresh reader on the
+//      same provider so post-commit lazy materializations observe the
+//      just-flushed cells.
+//   4. Construct a CellDbStreamingSink wrapping (provider, writer).
+//      The sink's begin_batch CAS on streaming_writer_in_use_ is the
+//      only place that can fail with "another streaming import is in
+//      flight".
+//   5. Open the tempfile and drive
+//      `vm::std_boc_deserialize_from_file_bounded(file, size, opts, sink)`.
+//   6. On success path, compare parsed root to expected_root_hash,
+//      then commit_after_root_verified — the SINGLE point at which
+//      cells become durable.
+//   7. After commit, publish a fresh reader on the provider so the
+//      lazy ExtCells already minted by the importer pick it up on
+//      next access. This is also re-issued via update_snapshot to
+//      the parent CellDb so subsequent get_cell_db_reader sees the
+//      same flushed cells.
+//   8. Any failure path runs sink.abort() (idempotent) and surfaces
+//      the original error verbatim; the gate is released by the
+//      writer's abort_batch() / dtor path.
+void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest request,
+                                                 td::Promise<PersistentStateImportResult> promise) {
+  // Defer to the action queue if a snapshot/store/gc operation is
+  // currently using the DB; this preserves CellDbIn's existing
+  // serialization contract end-to-end. The streaming-import path
+  // does not flip db_busy_ itself — its contended resource is
+  // streaming_writer_in_use_, which the writer's begin_batch CAS
+  // owns.
+  if (db_busy_) {
+    action_queue_.push_back([self = this, request = std::move(request),
+                             promise = std::move(promise)](td::Result<td::Unit> R) mutable {
+      R.ensure();
+      self->import_persistent_state_streaming(std::move(request), std::move(promise));
+    });
+    return;
+  }
+
+  if (request.tempfile_path.empty() || request.file_size == 0) {
+    promise.set_error(
+        td::Status::Error("CellDbIn::import_persistent_state_streaming: empty tempfile path or zero size"));
+    return;
+  }
+  if (cell_db_ == nullptr || boc_ == nullptr) {
+    promise.set_error(td::Status::Error("CellDbIn::import_persistent_state_streaming: cell_db not initialized"));
+    return;
+  }
+
+  // Construct an actor-local writer. The writer's gate CAS in
+  // begin_batch() rejects a concurrent import; if it fails the sink
+  // surfaces the error on the very first persist/begin invocation
+  // and we abort cleanly.
+  std::unique_ptr<CellDbStreamingWriter> writer = create_streaming_writer();
+  if (writer == nullptr) {
+    promise.set_error(td::Status::Error("CellDbIn::import_persistent_state_streaming: failed to create writer"));
+    return;
+  }
+
+  // Build a LiveCellDbReaderProvider seeded with the current reader.
+  // The lazy ExtCells emitted during parse capture this provider; we
+  // republish a fresh post-commit reader on the same provider after
+  // commit so they observe the just-flushed cells.
+  auto initial_reader = boc_->get_cell_db_reader();
+  auto provider = std::make_shared<LiveCellDbReaderProvider>(initial_reader);
+
+  // Construct the sink. The (provider, writer) constructor template
+  // is instantiated here; the writer's complete type is visible via
+  // celldb.hpp.
+  fullnode::CellDbStreamingSink sink(std::shared_ptr<vm::CellDbReaderProvider>(provider), std::move(writer));
+  if (!sink.is_true_streaming()) {
+    // Defense in depth: provider+writer are both non-null above, so
+    // a non-true-streaming sink here is a programming bug.
+    promise.set_error(
+        td::Status::Error("CellDbIn::import_persistent_state_streaming: sink failed to enter true-streaming mode"));
+    return;
+  }
+
+  // Open and parse the tempfile. The importer drives sink.begin()
+  // (which CAS-claims the gate via writer->begin_batch), then
+  // persist_and_replace per cell (which writes cells into the open
+  // RocksDB batch and substitutes a hash-only ExtCell replacement),
+  // then sink.finish(parsed_hash). On any importer-internal error
+  // it drives sink.abort() automatically.
+  auto r_fd = td::FileFd::open(request.tempfile_path, td::FileFd::Flags::Read);
+  if (r_fd.is_error()) {
+    sink.abort();
+    promise.set_error(r_fd.move_as_error());
+    return;
+  }
+  auto fd = r_fd.move_as_ok();
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, request.file_size, request.opts, &sink);
+  fd.close();
+  if (r_root.is_error()) {
+    if (!sink.aborted() && !sink.is_committed()) {
+      sink.abort();
+    }
+    LOG(WARNING) << "CellDbIn::import_persistent_state_streaming: importer rejected after "
+                 << sink.cells_persisted() << " cell(s): " << r_root.error();
+    promise.set_error(r_root.move_as_error());
+    return;
+  }
+  auto root = r_root.move_as_ok();
+  if (root.is_null()) {
+    if (!sink.aborted() && !sink.is_committed()) {
+      sink.abort();
+    }
+    promise.set_error(td::Status::Error(
+        "CellDbIn::import_persistent_state_streaming: BoC deserialize returned null root"));
+    return;
+  }
+  if (!sink.finished()) {
+    sink.abort();
+    promise.set_error(td::Status::Error(
+        "CellDbIn::import_persistent_state_streaming: sink finished=false on success path"));
+    return;
+  }
+
+  // Verify parsed root against the BFT-attested expected root BEFORE
+  // committing. On mismatch, abort discards the pending RocksDB batch
+  // so CellDb stays byte-for-byte identical to its pre-import
+  // snapshot.
+  const auto parsed_hash = root->get_hash();
+  if (RootHash{parsed_hash.bits()} != request.expected_root_hash) {
+    sink.abort();
+    promise.set_error(td::Status::Error(
+        PSTRING() << "CellDbIn::import_persistent_state_streaming: root hash mismatch: expected "
+                  << request.expected_root_hash.to_hex() << " got " << RootHash{parsed_hash.bits()}.to_hex()));
+    return;
+  }
+  // Verified — commit. commit_after_root_verified flushes the writer's
+  // pending batch and is the single point at which cells become durable.
+  if (auto status = sink.commit_after_root_verified(parsed_hash); status.is_error()) {
+    sink.abort();
+    promise.set_error(status.move_as_error());
+    return;
+  }
+
+  // Republish a fresh reader on the provider so lazy ExtCells minted
+  // during parse pick up a reader that observes the just-flushed cells.
+  // Also rebuild the loader and propagate a fresh snapshot to the
+  // parent CellDb so subsequent get_cell_db_reader / load_cell calls
+  // see the new state — same handshake that store_cell / gc_cont2 do
+  // after their commit.
+  if (!opts_->get_celldb_in_memory()) {
+    boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
+    td::actor::send_closure(parent_, &CellDb::update_snapshot, cell_db_->snapshot());
+  }
+  auto post_commit_reader = boc_->get_cell_db_reader();
+  if (post_commit_reader != nullptr) {
+    provider->publish(post_commit_reader);
+  }
+
+  PersistentStateImportResult result;
+  result.hash_only_root = std::move(root);
+  result.cells_persisted = sink.cells_persisted();
+  result.parsed_root_hash = parsed_hash;
+  LOG(INFO) << "CellDbIn::import_persistent_state_streaming: committed " << result.cells_persisted
+            << " cell(s); root=" << request.expected_root_hash.to_hex()
+            << " (lazy ExtCell-backed; child DAG durable in CellDb)";
+  promise.set_result(std::move(result));
+}
+
+void CellDb::import_persistent_state_streaming(PersistentStateImportRequest request,
+                                               td::Promise<PersistentStateImportResult> promise) {
+  // Forward to the inner CellDbIn actor; the entire import lifecycle
+  // runs inside CellDbIn's serialized loop.
+  td::actor::send_closure(cell_db_, &CellDbIn::import_persistent_state_streaming, std::move(request),
+                          std::move(promise));
 }
 
 }  // namespace validator

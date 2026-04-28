@@ -907,117 +907,67 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
     }
   }
 
-  // Phase B (Step 6): default the OnDisk catch-up to the
-  // CellDb-streaming importer. The legacy in-place
-  // `parse_ondisk_state_streaming(file, size, opts, &counting_sink)`
-  // is REPLACED here with an asynchronous two-step: fetch a
-  // CellDbReader snapshot from the manager, then a paired
-  // CellDbStreamingWriter, then drive the bounded importer through
-  // the (file, size, opts, reader, writer) overload. The sink the
-  // overload owns commits each parsed cell into the writer's RocksDB
-  // batch and substitutes a hash-only ExtCell replacement for every
-  // child, so the returned root never holds a full DataCell DAG in
-  // process memory.
+  // tos26 P1-4: route the entire OnDisk persistent-state import
+  // through a SINGLE actor message into ValidatorManager. The manager
+  // forwards through Db -> RootDb -> CellDb -> CellDbIn, which runs
+  // begin_batch / parse / verify-root / commit inside its serialized
+  // actor loop. The downloader actor never sees a CellDbStreamingWriter
+  // and never touches vm::KeyValue. This closes the audit's
+  // "writer crosses CellDb actor serialization" hazard (P1-4).
   //
   // Reservation lifecycle: data_reservation_ +
-  // state_processing_reservation_ remain charged across BOTH actor
-  // hops. They are released exactly once on the failure cleanup path
-  // (each lambda's failure branch resets actor state) and exactly
-  // once by the eventual checked_shard_state() handoff into the
-  // archive store.
+  // state_processing_reservation_ remain charged across the round-trip
+  // and are released exactly once — either by the success path's
+  // continuation into checked_shard_state() or by fail_handler in the
+  // failure branch of on_streaming_import_done.
   //
-  // Failure mode: if get_cell_db_reader OR create_celldb_streaming_writer
-  // returns an error, the actor surfaces it verbatim through
-  // fail_handler. We deliberately do NOT silently fall back to the
-  // legacy counting sink — the spec mandates "Misconfiguration cannot
-  // silently re-enable full-DAG import"; an operator who sees this
-  // error has a real CellDb wiring problem and must fix it.
-  vm::StreamingBocImportOptions opts;
-  opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
-  opts.max_cells = budget_cfg.max_cells_per_parse;
-  opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
-  opts.max_total_cell_bytes =
+  // Failure mode: any error inside the actor-local import (file open,
+  // importer rejection, root-hash mismatch, commit failure) propagates
+  // verbatim through the promise; we surface it through fail_handler.
+  // We deliberately do NOT silently fall back to a legacy path — an
+  // operator seeing this error has a real CellDb wiring problem and
+  // must fix it.
+  PersistentStateImportRequest req;
+  req.tempfile_path = data_file_.path;
+  req.file_size = data_file_.size;
+  req.expected_root_hash = handle_->state();
+  req.opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
+  req.opts.max_cells = budget_cfg.max_cells_per_parse;
+  req.opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
+  req.opts.max_total_cell_bytes =
       std::min(data_file_.size, budget_cfg.max_total_cell_bytes_per_parse);
 
   td::actor::send_closure(
-      manager_, &ValidatorManager::get_cell_db_reader,
-      td::PromiseCreator::lambda(
-          [SelfId = actor_id(this), opts](td::Result<std::shared_ptr<vm::CellDbReader>> R) mutable {
-            td::actor::send_closure(SelfId, &DownloadShardState::got_celldb_reader_for_ondisk_parse,
-                                    std::move(R), std::move(opts));
-          }));
+      manager_, &ValidatorManager::import_persistent_state_streaming, std::move(req),
+      td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<PersistentStateImportResult> R) {
+        td::actor::send_closure(SelfId, &DownloadShardState::on_streaming_import_done, std::move(R));
+      }));
 }
 
-void DownloadShardState::got_celldb_reader_for_ondisk_parse(
-    td::Result<std::shared_ptr<vm::CellDbReader>> r_reader, vm::StreamingBocImportOptions opts) {
-  if (r_reader.is_error()) {
-    LOG(WARNING) << "Phase B OnDisk parse: get_cell_db_reader failed for " << block_id_.to_str() << ": "
-                 << r_reader.error();
+void DownloadShardState::on_streaming_import_done(td::Result<PersistentStateImportResult> r_result) {
+  if (r_result.is_error()) {
+    LOG(WARNING) << "tos26 P1-4 OnDisk import failed for " << block_id_.to_str() << ": "
+                 << r_result.error();
     data_file_ = fullnode::BudgetedStateFile{};
     data_reservation_.reset();
     state_processing_reservation_.reset();
-    fail_handler(actor_id(this), r_reader.move_as_error());
+    fail_handler(actor_id(this), r_result.move_as_error());
     return;
   }
-  auto reader = r_reader.move_as_ok();
-  if (reader == nullptr) {
+  auto result = r_result.move_as_ok();
+  if (result.hash_only_root.is_null()) {
     data_file_ = fullnode::BudgetedStateFile{};
     data_reservation_.reset();
     state_processing_reservation_.reset();
     fail_handler(actor_id(this),
-                 td::Status::Error("Phase B OnDisk parse: get_cell_db_reader returned null reader"));
+                 td::Status::Error("tos26 P1-4 OnDisk import returned null root"));
     return;
   }
-  td::actor::send_closure(
-      manager_, &ValidatorManager::create_celldb_streaming_writer,
-      td::PromiseCreator::lambda(
-          [SelfId = actor_id(this), reader, opts](
-              td::Result<std::unique_ptr<CellDbStreamingWriter>> R) mutable {
-            td::actor::send_closure(SelfId, &DownloadShardState::got_celldb_writer_for_ondisk_parse,
-                                    std::move(reader), std::move(opts), std::move(R));
-          }));
-}
+  LOG(INFO) << "evm-workchain: persistent-state catch-up routed through actor-local "
+               "import_persistent_state_streaming for "
+            << block_id_.to_str() << ", cells_persisted=" << result.cells_persisted;
 
-void DownloadShardState::got_celldb_writer_for_ondisk_parse(
-    std::shared_ptr<vm::CellDbReader> reader, vm::StreamingBocImportOptions opts,
-    td::Result<std::unique_ptr<CellDbStreamingWriter>> r_writer) {
-  if (r_writer.is_error()) {
-    LOG(WARNING) << "Phase B OnDisk parse: create_celldb_streaming_writer failed for "
-                 << block_id_.to_str() << ": " << r_writer.error();
-    data_file_ = fullnode::BudgetedStateFile{};
-    data_reservation_.reset();
-    state_processing_reservation_.reset();
-    fail_handler(actor_id(this), r_writer.move_as_error());
-    return;
-  }
-  auto writer = r_writer.move_as_ok();
-  if (writer == nullptr) {
-    data_file_ = fullnode::BudgetedStateFile{};
-    data_reservation_.reset();
-    state_processing_reservation_.reset();
-    fail_handler(actor_id(this),
-                 td::Status::Error("Phase B OnDisk parse: create_celldb_streaming_writer returned null writer"));
-    return;
-  }
-  LOG(INFO) << "evm-workchain: persistent-state catch-up routed through Phase B streaming path for "
-            << block_id_.to_str();
-
-  // Drive the bounded importer through the Phase B (reader, writer)
-  // overload. The helper logs `cells_persisted` at INFO on success
-  // ("parse_ondisk_state_streaming(phase-b): committed N cell(s); ...").
-  auto r_root = parse_ondisk_state_streaming(data_file_, handle_->state(), opts, std::move(reader),
-                                             std::move(writer));
-  if (r_root.is_error()) {
-    LOG(WARNING) << "Phase B OnDisk parse failed for " << block_id_.to_str() << ": " << r_root.error();
-    data_file_ = fullnode::BudgetedStateFile{};
-    data_reservation_.reset();
-    state_processing_reservation_.reset();
-    fail_handler(actor_id(this), r_root.move_as_error());
-    return;
-  }
-  auto root = r_root.move_as_ok();
-
-  auto S = create_shard_state(block_id_, std::move(root));
+  auto S = create_shard_state(block_id_, std::move(result.hash_only_root));
   if (S.is_error()) {
     data_file_ = fullnode::BudgetedStateFile{};
     data_reservation_.reset();
@@ -1026,10 +976,9 @@ void DownloadShardState::got_celldb_writer_for_ondisk_parse(
     return;
   }
   auto state = S.move_as_ok();
-  // The root-hash compare inside parse_ondisk_state_streaming(phase-b)
-  // already verified the equivalent of the legacy
-  // `state->root_hash() != handle_->state()` check; the
-  // create_shard_state() output preserves that hash.
+  // CellDbIn already verified parsed_root == expected_root_hash before
+  // committing, so the legacy `state->root_hash() != handle_->state()`
+  // check is redundant.
   state_ = std::move(state);
 
   // data_ stays empty in the OnDisk branch — checked_shard_state()

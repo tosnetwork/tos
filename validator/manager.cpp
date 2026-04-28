@@ -1550,7 +1550,18 @@ void ValidatorManagerImpl::create_celldb_streaming_writer(
   // CellDbIn::create_streaming_writer_async. The writer is paired
   // with a CellDbReader snapshot at the call site and drives
   // `parse_ondisk_state_streaming(file, size, opts, reader, writer)`.
+  // Deprecated: production paths use import_persistent_state_streaming.
   td::actor::send_closure(db_, &Db::create_celldb_streaming_writer, std::move(promise));
+}
+
+void ValidatorManagerImpl::import_persistent_state_streaming(
+    PersistentStateImportRequest request, td::Promise<PersistentStateImportResult> promise) {
+  // tos26 P1-4: forward the actor-local import request through the
+  // Db layer. The entire begin_batch / parse / verify-root / commit
+  // lifecycle runs inside CellDbIn's serialized actor loop, so the
+  // downloader actor never reaches into vm::KeyValue.
+  td::actor::send_closure(db_, &Db::import_persistent_state_streaming, std::move(request),
+                          std::move(promise));
 }
 
 void ValidatorManagerImpl::store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id,

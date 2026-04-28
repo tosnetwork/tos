@@ -178,7 +178,8 @@ target_link_libraries(validator-state-download-budget PUBLIC tdutils tos_crypto)
 
 add_library(validator-db OBJECT ${VALIDATOR_DB_SOURCE})
 target_include_directories(validator-db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
-target_link_libraries(validator-db PUBLIC tdactor adnl rldp tl_api dht tdfec overlay catchain validatorsession tos_db)
+target_link_libraries(validator-db PUBLIC tdactor adnl rldp tl_api dht tdfec overlay catchain validatorsession tos_db
+                      validator-state-download-budget)
 
 add_library(validator-common OBJECT
   downloaders/download-state.cpp

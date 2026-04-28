@@ -26,10 +26,12 @@
 #include <queue>
 
 #include "auto/tl/tos_api.h"
+#include "crypto/vm/boc.h"
 #include "crypto/vm/db/CellDbExtCell.h"
 #include "crypto/vm/db/CellStorage.h"
 #include "crypto/vm/db/DynamicBagOfCellsDb.h"
 #include "interfaces/block-handle.h"
+#include "interfaces/validator-manager.h"
 #include "td/actor/actor.h"
 #include "td/db/KeyValue.h"
 #include "td/db/RocksDb.h"
@@ -146,6 +148,13 @@ class CellDbStreamingWriter {
   virtual td::Status abort_batch() = 0;
 };
 
+// tos26 P1-4: PersistentStateImportRequest / PersistentStateImportResult
+// are declared in validator/interfaces/validator-manager.h so both the
+// Db interface and the ValidatorManager interface can route the
+// request without dragging celldb.hpp into every TU that includes the
+// manager header. This file consumes those types via the include of
+// validator.h above.
+
 class CellDbBase : public td::actor::Actor {
  public:
   void start_up() override;
@@ -192,15 +201,50 @@ class CellDbIn : public CellDbBase {
   // commit/abort then re-enables a fresh import.
   std::unique_ptr<CellDbStreamingWriter> create_streaming_writer();
 
+  // Deprecated: use import_persistent_state_streaming instead.
+  // Retained for tests; production paths must not call this. The
+  // legacy API hands a writer holding `vm::KeyValue` back to the
+  // caller, which is unsafe for any actor that does not run inside
+  // CellDbIn's serialized message loop (audit P1-4).
+  //
   // Actor-message wrapper around create_streaming_writer(). Resolves
   // the promise with a fresh writer. The single-import gate is
   // checked at begin_batch() time on the writer, not here, so this
   // method always succeeds — a second concurrent caller that tries
   // to begin_batch() while another writer is mid-batch will see the
-  // begin_batch() error surface directly. Used by the validator
-  // manager (`ValidatorManager::create_celldb_streaming_writer`) to
-  // pipe a writer back to the persistent-state download actor.
+  // begin_batch() error surface directly.
   void create_streaming_writer_async(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise);
+
+  // tos26 P1-4: run the entire begin_batch → parse →
+  // verify-root → commit_after_root_verified pipeline INSIDE the
+  // CellDbIn actor loop.
+  //
+  // Concurrency contract:
+  //   * Serializes naturally with `store_cell`, `store_block_state_*`,
+  //     `gc_cont2`, `migrate_cells`, and `update_snapshot` because
+  //     all of those run on this actor's queue — between cell
+  //     persistence calls inside the streaming import the actor
+  //     scheduler can interleave a single completed callback's body
+  //     for one of those, and vice versa.
+  //   * The only contended resource is `streaming_writer_in_use_`,
+  //     which prevents two concurrent streaming imports (their
+  //     RocksDB write batches would corrupt each other's pending
+  //     state). A second concurrent import receives a structured
+  //     "another streaming import is in flight" error.
+  //   * The downloader actor never sees a `vm::KeyValue` handle:
+  //     the writer is constructed and destroyed inside CellDbIn.
+  //
+  // Failure modes:
+  //   * Tempfile open / read errors -> sink.abort(), promise.set_error.
+  //   * Streaming importer rejection -> sink.abort(), promise.set_error.
+  //   * Parsed-root != expected_root_hash -> sink.abort(),
+  //     promise.set_error("...root hash mismatch...").
+  //   * commit_after_root_verified failure -> sink.abort(),
+  //     promise.set_error.
+  //   * In every failure case the gate is released (via the writer's
+  //     abort_batch / dtor path) so a future import can claim it.
+  void import_persistent_state_streaming(PersistentStateImportRequest request,
+                                         td::Promise<PersistentStateImportResult> promise);
 
   void flush_db_stats();
 
@@ -360,7 +404,16 @@ class CellDb : public CellDbBase {
   // CellDbIn::create_streaming_writer() and resolve the promise with
   // the resulting writer (or surface the error verbatim if CellDbIn's
   // single-import flag is already taken).
+  // Deprecated: use import_persistent_state_streaming instead.
+  // Retained for tests; production paths must not call this.
   void create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise);
+
+  // tos26 P1-4: forward the actor-local import request to CellDbIn
+  // so the entire streaming-import lifecycle runs inside CellDbIn's
+  // serialized actor loop. The downloader actor invokes this via
+  // ValidatorManager::import_persistent_state_streaming.
+  void import_persistent_state_streaming(PersistentStateImportRequest request,
+                                         td::Promise<PersistentStateImportResult> promise);
 
   void flush_db_stats(std::string stats);
 

@@ -352,7 +352,18 @@ void RootDb::create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbSt
   // import-only (Phase B persistent-state catch-up); CellDbIn's
   // single-import flag guarantees two concurrent imports cannot
   // interleave their RocksDB write batches.
+  // Deprecated: production paths use import_persistent_state_streaming.
   td::actor::send_closure(cell_db_, &CellDb::create_celldb_streaming_writer, std::move(promise));
+}
+
+void RootDb::import_persistent_state_streaming(PersistentStateImportRequest request,
+                                               td::Promise<PersistentStateImportResult> promise) {
+  // tos26 P1-4: forward the actor-local import to CellDb, which
+  // forwards to CellDbIn. The whole streaming-import lifecycle runs
+  // inside CellDbIn's serialized message loop; the downloader actor
+  // never touches vm::KeyValue.
+  td::actor::send_closure(cell_db_, &CellDb::import_persistent_state_streaming, std::move(request),
+                          std::move(promise));
 }
 
 void RootDb::store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id, PersistentStateType type,

@@ -52,6 +52,27 @@ namespace validator {
 // avoid.
 class CellDbStreamingWriter;
 
+// tos26 P1-4: actor-local persistent-state streaming-import payload.
+// Declared here so both Db and ValidatorManager can route the request
+// without dragging celldb.hpp into the manager interface header.
+struct PersistentStateImportRequest {
+  std::string tempfile_path;
+  td::uint64 file_size{0};
+  RootHash expected_root_hash{};
+  vm::StreamingBocImportOptions opts{};
+};
+
+// Result of a successful actor-local streaming import. The
+// `hash_only_root` is a CellDbExtCell-backed lazy root: its child
+// DAG lives durably in CellDb, and lazy materialization goes through
+// the post-commit reader the importer publishes on its
+// LiveCellDbReaderProvider.
+struct PersistentStateImportResult {
+  td::Ref<vm::Cell> hash_only_root;
+  td::uint64 cells_persisted{0};
+  vm::Cell::Hash parsed_root_hash{};
+};
+
 constexpr int VERBOSITY_NAME(VALIDATOR_WARNING) = verbosity_WARNING;
 constexpr int VERBOSITY_NAME(VALIDATOR_NOTICE) = verbosity_INFO;
 constexpr int VERBOSITY_NAME(VALIDATOR_INFO) = verbosity_DEBUG;
@@ -313,6 +334,17 @@ class ValidatorManager : public ValidatorManagerInterface {
   // "Misconfiguration cannot silently re-enable full-DAG import").
   virtual void create_celldb_streaming_writer(
       td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) = 0;
+  // tos26 P1-4: actor-local persistent-state streaming import. The
+  // downloader sends the entire request (tempfile path, expected
+  // root, BoC importer options) to ValidatorManager; the manager
+  // forwards it through Db -> RootDb -> CellDb -> CellDbIn, where
+  // the begin_batch / parse / verify-root / commit lifecycle runs
+  // inside CellDbIn's serialized actor loop. The downloader actor
+  // never sees a `vm::KeyValue` handle and never calls writer
+  // methods directly. Closes the audit's "writer crosses CellDb
+  // actor serialization" hazard.
+  virtual void import_persistent_state_streaming(PersistentStateImportRequest request,
+                                                 td::Promise<PersistentStateImportResult> promise) = 0;
   virtual void store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id,
                                            PersistentStateType type, td::BufferSlice state,
                                            td::Promise<td::Unit> promise) = 0;

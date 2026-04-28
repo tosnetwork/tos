@@ -106,7 +106,19 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedSta
                                                            const vm::StreamingBocImportOptions &opts,
                                                            vm::StreamingCellSink *sink);
 
-// Phase B "true streaming" parse path. Identical surface to the
+// Phase B "true streaming" parse path.
+//
+// tos26 P1-4 NOTE: this overload is RETAINED for direct-driver callers
+// that already have (reader, writer) in hand — primarily the
+// CellDbIn-internal import path and the regression tests in
+// test/test-celldb-streaming-import.cpp. Production downloader code
+// MUST go through `ValidatorManager::import_persistent_state_streaming`
+// so the whole begin/parse/verify-root/commit lifecycle runs inside
+// CellDbIn's serialized actor loop. Calling this overload from the
+// downloader actor would re-introduce the actor-serialization hazard
+// the audit's P1-4 closes.
+//
+// Identical surface to the
 // (file, expected_root_hash, opts, sink*) overload above, except this
 // helper OWNS the sink lifecycle: it constructs a `CellDbStreamingSink`
 // from the supplied (`reader`, `writer`) pair, drives the
@@ -177,21 +189,13 @@ class DownloadShardState : public td::actor::Actor {
   void downloaded_zero_state(fullnode::DownloadedPersistentState downloaded);
 
   void downloaded_shard_state(fullnode::DownloadedPersistentState downloaded);
-  // Phase B persistent-state catch-up: fetch the CellDb reader
-  // snapshot from the validator manager. Called after the OnDisk
-  // parse path has reserved its processing slice; on success the
-  // continuation chains into `got_celldb_writer_for_ondisk_parse`.
-  void got_celldb_reader_for_ondisk_parse(td::Result<std::shared_ptr<vm::CellDbReader>> r_reader,
-                                          vm::StreamingBocImportOptions opts);
-  // Phase B persistent-state catch-up: receive the CellDb streaming
-  // writer paired with the previously-fetched reader, then drive the
-  // bounded BoC importer through the
-  // `parse_ondisk_state_streaming(file, size, opts, reader, writer)`
-  // overload. On success the lazy ExtCell-backed root flows into
-  // checked_shard_state() exactly like the legacy path.
-  void got_celldb_writer_for_ondisk_parse(std::shared_ptr<vm::CellDbReader> reader,
-                                          vm::StreamingBocImportOptions opts,
-                                          td::Result<std::unique_ptr<CellDbStreamingWriter>> r_writer);
+  // tos26 P1-4: completion callback for the actor-local persistent-state
+  // import message. The downloader hands the entire (file, expected
+  // root, options) request to `ValidatorManager::import_persistent_state_streaming`;
+  // this method is invoked when CellDbIn finishes the begin / parse /
+  // verify-root / commit lifecycle. On success the lazy ExtCell-backed
+  // root flows into checked_shard_state() exactly like the legacy path.
+  void on_streaming_import_done(td::Result<PersistentStateImportResult> r_result);
   void checked_shard_state();
 
   void downloaded_split_state_header(fullnode::DownloadedPersistentState downloaded);

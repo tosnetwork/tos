@@ -769,7 +769,19 @@ void ValidatorManagerImpl::create_celldb_streaming_writer(
   // CellDb -> CellDbIn::create_streaming_writer_async. The disk-only
   // variant runs the same persistent-state download path during
   // bootstrap, so the Phase B catch-up wiring is identical.
+  // Deprecated: production paths use import_persistent_state_streaming.
   td::actor::send_closure(db_, &Db::create_celldb_streaming_writer, std::move(promise));
+}
+
+void ValidatorManagerImpl::import_persistent_state_streaming(
+    PersistentStateImportRequest request, td::Promise<PersistentStateImportResult> promise) {
+  // tos26 P1-4: actor-local persistent-state import. Mirror of the
+  // full validator manager (manager.cpp): forward to the Db actor
+  // (RootDb), which routes the request through CellDb to CellDbIn
+  // where the entire begin_batch / parse / verify-root / commit
+  // lifecycle runs inside the serialized actor loop.
+  td::actor::send_closure(db_, &Db::import_persistent_state_streaming, std::move(request),
+                          std::move(promise));
 }
 
 void ValidatorManagerImpl::store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id,

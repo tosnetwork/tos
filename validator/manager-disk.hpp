@@ -158,6 +158,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   void set_block_state_from_data_bulk(std::vector<td::Ref<BlockData>> blocks, td::Promise<td::Unit> promise) override;
   void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) override;
   void create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) override;
+  void import_persistent_state_streaming(PersistentStateImportRequest request,
+                                         td::Promise<PersistentStateImportResult> promise) override;
   void store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                    td::BufferSlice state, td::Promise<td::Unit> promise) override;
   void store_persistent_state_file_gen(BlockIdExt block_id, BlockIdExt masterchain_block_id, PersistentStateType type,

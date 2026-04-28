@@ -65,8 +65,19 @@ class Db : public td::actor::Actor {
   // CellDbIn::create_streaming_writer(). The returned writer is
   // import-only and gated by a single-import flag inside CellDbIn so
   // two concurrent imports cannot interleave their write batches.
+  // Deprecated: production paths must use
+  // import_persistent_state_streaming below; this surface is retained
+  // for tests that drive the writer directly.
   virtual void create_celldb_streaming_writer(
       td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) = 0;
+  // tos26 P1-4: actor-local persistent-state import. The downloader
+  // hands the entire (file, expected root, options) request to the
+  // CellDbIn actor, which drives begin_batch / parse / verify-root /
+  // commit / publish-reader inside its own serialized message loop.
+  // The writer never escapes CellDbIn; the downloader actor never
+  // touches `vm::KeyValue`.
+  virtual void import_persistent_state_streaming(PersistentStateImportRequest request,
+                                                 td::Promise<PersistentStateImportResult> promise) = 0;
 
   virtual void store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id,
                                            PersistentStateType type, td::BufferSlice state,

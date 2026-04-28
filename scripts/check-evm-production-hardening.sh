@@ -207,8 +207,13 @@ if ! rg -q 'max_single_file_bytes\s*=\s*16ULL\s*<<\s*30' "$root/validator/state-
     echo "evm hardening failed: validator/state-download-buffer.h must default max_single_file_bytes to 16 GiB after Phase B" >&2
     exit 1
 fi
-if ! rg -q 'create_celldb_streaming_writer' "$root/validator/downloaders/download-state.cpp"; then
-    echo "evm hardening failed: OnDisk catch-up must consume create_celldb_streaming_writer (Phase B default)" >&2
+# Phase B Step 6 -> tos26 P1-4: the OnDisk catch-up no longer calls
+# create_celldb_streaming_writer directly from the downloader actor;
+# the entire begin_batch / parse / verify-root / commit lifecycle now
+# runs inside CellDbIn via import_persistent_state_streaming. The
+# downloader MUST drive that actor message instead of holding a writer.
+if ! rg -q 'import_persistent_state_streaming' "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: OnDisk catch-up must drive import_persistent_state_streaming (Phase B default; tos26 P1-4)" >&2
     exit 1
 fi
 
@@ -264,6 +269,26 @@ fi
 # Positive: assert the per-level loop is present.
 if ! rg -q 'level_mask\.is_significant' "$root/validator/state-download-buffer.cpp"; then
     echo "evm hardening failed: persist_and_replace must iterate level_mask.is_significant(i) to build per-level hash/depth buffers (Phase B P0-1)" >&2
+    exit 1
+fi
+
+# Check 19 — Phase B P1-4: streaming import must run inside CellDbIn
+# actor's serialization context. The downloader must not call writer
+# methods (begin_batch / store_cell / commit_batch / abort_batch)
+# directly. A regression that revives writer_->begin_batch from inside
+# the downloader actor would re-introduce the actor-serialization hazard
+# the audit closes.
+if rg -nP 'writer_->\s*(begin_batch|store_cell|commit_batch|abort_batch)' \
+    "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: downloader must not call CellDbStreamingWriter directly; route through ValidatorManager::import_persistent_state_streaming (Phase B P1-4)" >&2
+    exit 1
+fi
+if ! rg -q 'import_persistent_state_streaming' "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: CellDbIn::import_persistent_state_streaming must be declared (Phase B P1-4)" >&2
+    exit 1
+fi
+if ! rg -q 'import_persistent_state_streaming' "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: downloader must invoke import_persistent_state_streaming (Phase B P1-4)" >&2
     exit 1
 fi
 
