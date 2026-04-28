@@ -1149,4 +1149,48 @@ if ! rg -q 'on_split_state_part_imported' "$root/validator/downloaders/download-
     exit 1
 fi
 
+# Check 24 — tos27 P1-5: legacy CellDb streaming writer API must not
+# be invoked from production code. The unsafe_for_tests_only suffix
+# is intentional — only test files should reference it.
+if rg -nP 'create_celldb_streaming_writer\b|create_streaming_writer_async\b' \
+       "$root/validator" "$root/validator-engine" \
+       --glob '!**/test*' --glob '!**/*test.cpp' --glob '!**/*-test.cpp' --glob '!**/*_test.cpp' 2>/dev/null \
+       | rg -v 'unsafe_for_tests_only'; then
+    echo "evm hardening failed: legacy CellDb streaming writer API must be renamed *_unsafe_for_tests_only and not invoked from production (tos27 P1-5)" >&2
+    exit 1
+fi
+
+# Check 25 — tos27 P1-4: peer-controlled persistent-state import
+# paths must NOT abort the validator process via .ensure() / CHECK.
+# Every malformed BoC, missing cell, hash mismatch, or DB write
+# failure must surface as a structured td::Status::Error.
+# Allowed: documented internal invariants whose input is local.
+if rg -nP '\.ensure\(\)' "$root/validator/state-download-buffer.cpp" \
+                          "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: import / state-download paths must not call .ensure(); convert to td::Status::Error (tos27 P1-4)" >&2
+    exit 1
+fi
+# CHECK is allowed only above lines tagged with "Internal invariant".
+# The awk gate accepts a comment block whose first line begins with
+# `// Internal invariant:` and whose continuation lines are also `//`
+# comments (so a multi-line justification still satisfies the gate).
+# Any code line, blank line, or non-comment text resets the credit so
+# a stale "Internal invariant" comment higher up the file cannot
+# launder an unrelated CHECK below.
+if awk '
+    /^[[:space:]]*\/\/ Internal invariant:/ { ok = 1; next }
+    /^[[:space:]]*\/\// { if (!ok) { ok = 0 } ; next }
+    /^[[:space:]]*CHECK\(/ {
+        if (!ok) { print FILENAME ":" NR ": " $0; bad = 1 }
+        ok = 0; next
+    }
+    /^[[:space:]]*$/ { ok = 0; next }
+    /./ { ok = 0; next }
+    END { exit (bad ? 1 : 0) }
+' "$root/validator/state-download-buffer.cpp" \
+  "$root/validator/downloaders/download-state.cpp"; then : ; else
+    echo "evm hardening failed: every CHECK in peer-controlled paths must be preceded by an 'Internal invariant:' comment proving the value is local (tos27 P1-4)" >&2
+    exit 1
+fi
+
 echo "evm production hardening check passed"

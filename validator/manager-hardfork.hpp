@@ -192,9 +192,15 @@ class ValidatorManagerImpl : public ValidatorManager {
     UNREACHABLE();
   }
   void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) override;
-  void create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) override {
+  void create_celldb_streaming_writer_unsafe_for_tests_only(
+      td::Promise<std::unique_ptr<CellDbStreamingWriter>> /*promise*/) override {
+    // Test-only. Production state-sync uses
+    // `import_persistent_state_streaming`. Cross-actor direct KV
+    // access is unsafe; do not call from a production path (audit
+    // P1-5).
+    //
     // Hardfork manager does not run the persistent-state download
-    // path; the Phase B streaming writer is unreachable here.
+    // path at all; the Phase B streaming writer is unreachable here.
     UNREACHABLE();
   }
   void import_persistent_state_streaming(PersistentStateImportRequest /*request*/,

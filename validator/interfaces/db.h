@@ -61,14 +61,18 @@ class Db : public td::actor::Actor {
   virtual void store_block_state_part(BlockId effective_block, td::Ref<vm::Cell> cell,
                                       td::Promise<td::Ref<vm::DataCell>> promise) = 0;
   virtual void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) = 0;
-  // Phase B persistent-state catch-up: route through to
+  // Test-only. Production state-sync uses
+  // `import_persistent_state_streaming` below. Cross-actor direct KV
+  // access is unsafe; do not call from a production path (audit
+  // P1-5).
+  //
+  // Phase B persistent-state catch-up: routes through to
   // CellDbIn::create_streaming_writer(). The returned writer is
   // import-only and gated by a single-import flag inside CellDbIn so
   // two concurrent imports cannot interleave their write batches.
-  // Deprecated: production paths must use
-  // import_persistent_state_streaming below; this surface is retained
-  // for tests that drive the writer directly.
-  virtual void create_celldb_streaming_writer(
+  // The `unsafe_for_tests_only` suffix is intentional — only test
+  // files should reference this entry point.
+  virtual void create_celldb_streaming_writer_unsafe_for_tests_only(
       td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) = 0;
   // tos26 P1-4: actor-local persistent-state import. The downloader
   // hands the entire (file, expected root, options) request to the

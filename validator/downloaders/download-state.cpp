@@ -349,7 +349,13 @@ class SplitStateDeserializer {
                                                                            td::Ref<vm::Cell> wrapped_header,
                                                                            td::uint32 split_depth) {
     int shard_prefix_length = shard_pfx_len(shard_id);
-    CHECK(split_depth <= 63 && shard_prefix_length < static_cast<int>(split_depth));
+    // tos27 P1-4: split_depth is sourced from the peer-supplied
+    // persistent_state_desc; surface a structured error instead of
+    // aborting the validator process on a malformed header.
+    if (split_depth > 63 || shard_prefix_length >= static_cast<int>(split_depth)) {
+      return td::Status::Error(PSTRING() << "invalid split state header: split_depth=" << split_depth
+                                         << " shard_prefix_length=" << shard_prefix_length);
+    }
 
     try {
       TRY_RESULT(header, vm::MerkleProof::virtualize(wrapped_header));
@@ -406,7 +412,14 @@ class SplitStateDeserializer {
     }
   }
 
-  td::Ref<vm::Cell> merge(const std::vector<td::Ref<vm::Cell>> &parts) {
+  // tos27 P1-4: merge() now returns a Result so any failure to combine
+  // peer-provided split-state parts (invalid combine, AugmentedDictionary
+  // sanity, virtualized post-pack root, or a VM exception thrown out of
+  // crypto code on hostile input) is surfaced as a structured Status
+  // instead of crashing the validator process. Each fault is annotated
+  // with what was being attempted so an operator log shows the exact
+  // peer-input class that triggered the rejection.
+  td::Result<td::Ref<vm::Cell>> merge(const std::vector<td::Ref<vm::Cell>> &parts) {
     try {
       vm::AugmentedDictionary accounts{256, block::tlb::aug_ShardAccounts};
       for (const auto &part_root : parts) {
@@ -417,24 +430,40 @@ class SplitStateDeserializer {
             false,
         };
         bool rc = accounts.combine_with(part);
-        LOG_CHECK(rc) << "Split state parts have been validated but merging them still resulted in a conflict";
+        // Peer-controlled: each part_root was sourced from a peer
+        // download. A combine_with() failure means the per-part
+        // validation that ran upstream did not catch a conflict with
+        // a sibling part; surface the error to the caller so the
+        // download can be retried instead of aborting the process.
+        if (!rc) {
+          return td::Status::Error(
+              "split state parts merge failed: combine_with reported a conflict on peer-supplied parts");
+        }
       }
 
-      CHECK(accounts.is_valid());
+      // Peer-controlled: AugmentedDictionary::is_valid() runs internal
+      // augmentation invariants over the merged dict whose leaves came
+      // from peers; refuse the merged dict cleanly instead of CHECK()'ing.
+      if (!accounts.is_valid()) {
+        return td::Status::Error("split state parts merge failed: augmented accounts dict is invalid");
+      }
 
       shard_state_.accounts = accounts.get_wrapped_dict_root();
 
       vm::CellBuilder cb;
       block::gen::t_ShardStateUnsplit.pack(cb, shard_state_);
       auto state_root = cb.finalize();
-      CHECK(!state_root->is_virtualized());
+      // Peer-controlled: a virtualized cell would mean a pruned cell
+      // leaked through the merge; reject as malformed rather than abort.
+      if (state_root->is_virtualized()) {
+        return td::Status::Error("split state merge produced virtualized state root");
+      }
       return state_root;
     } catch (const vm::VmError &e) {
-      LOG(FATAL) << "Unexpected VmError: " << e.as_status();
+      return e.as_status();
     } catch (const vm::VmVirtError &) {
-      LOG(FATAL) << "Unexpected VmVirtError";
+      return td::Status::Error("VM virtualization error during split state merge");
     }
-    UNREACHABLE();
   }
 
  private:
@@ -451,6 +480,10 @@ DownloadShardState::DownloadShardState(BlockIdExt block_id, BlockIdExt mastercha
     , manager_(manager)
     , timeout_(timeout)
     , promise_(std::move(promise)) {
+  // Internal invariant: both arguments are constructed by the caller
+  // (WaitBlockState) inside this process from local actor state — split
+  // depth is zero for non-split downloads and otherwise the masterchain
+  // block id is required by contract. Not sourced from peer input.
   CHECK(masterchain_block_id_.is_valid() || split_depth_ == 0);
 
   int shard_prefix_length = shard_pfx_len(block_id_.shard_full().shard);
@@ -469,7 +502,14 @@ void DownloadShardState::start_up() {
   alarm_timestamp() = timeout_;
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<BlockHandle> R) {
-    R.ensure();
+    // tos27 P1-4: get_block_handle reads from the local DB but the
+    // block_id_ key tracks back to peer-supplied state-desc entries.
+    // Surface the DB error through fail_handler so the download can be
+    // retried instead of aborting the validator process.
+    if (R.is_error()) {
+      fail_handler(SelfId, R.move_as_error_prefix("get_block_handle: "));
+      return;
+    }
     td::actor::send_closure(SelfId, &DownloadShardState::got_block_handle, R.move_as_ok());
   });
   td::actor::send_closure(manager_, &ValidatorManager::get_block_handle, block_id_, true, std::move(P));
@@ -482,7 +522,15 @@ void DownloadShardState::got_block_handle(BlockHandle handle) {
     LOG(WARNING) << "shard state " << block_id_.to_str() << " already stored in db";
     td::actor::send_closure(manager_, &ValidatorManagerInterface::get_shard_state_from_db, handle_,
                             [SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
-                              R.ensure();
+                              // tos27 P1-4: the cached state was loaded from local
+                              // CellDb but the cell DAG itself was originally
+                              // imported from a peer; if the read fails (corrupt
+                              // CellDb, missing cell, etc.), surface the error
+                              // instead of aborting the process.
+                              if (R.is_error()) {
+                                fail_handler(SelfId, R.move_as_error_prefix("get_shard_state_from_db: "));
+                                return;
+                              }
                               td::actor::send_closure(SelfId, &DownloadShardState::written_shard_state, R.move_as_ok());
                             });
   } else {
@@ -563,7 +611,14 @@ void DownloadShardState::checked_proof_link() {
     td::actor::send_closure(manager_, &ValidatorManager::try_get_static_file, block_id_.file_hash, std::move(P));
     status_.set_status(PSTRING() << block_id_.id.to_str() << " : downloading zero state");
   } else {
+    // Internal invariant: the constructor enforced
+    // (masterchain_block_id_.is_valid() || split_depth_ == 0). On this
+    // branch (block_id_.seqno() != 0) the masterchain id is required by
+    // the surrounding actor contract and is not sourced from peer input.
     CHECK(masterchain_block_id_.is_valid());
+    // Internal invariant: the masterchain id is set by the validator
+    // manager from the local masterchain head; never a peer-controlled
+    // value.
     CHECK(masterchain_block_id_.is_masterchain());
 
     if (split_depth_ == 0) {
@@ -658,10 +713,28 @@ void DownloadShardState::downloaded_zero_state(fullnode::DownloadedPersistentSta
 
     auto S = create_shard_state(block_id_, data_.clone());
     processing_reservation.reset();
-    S.ensure();
+    // tos27 P1-4: data_ is the peer-supplied zero-state BoC; a parse
+    // failure is a structurally bad payload, not an internal invariant
+    // violation. Surface the error and fail the download cleanly.
+    if (S.is_error()) {
+      data_ = td::BufferSlice{};
+      data_reservation_.reset();
+      fail_handler(actor_id(this), S.move_as_error_prefix("zero state parse: "));
+      return;
+    }
     state_ = S.move_as_ok();
 
-    CHECK(state_->root_hash() == block_id_.root_hash);
+    // tos27 P1-4: root_hash is computed from peer bytes. A mismatch
+    // means the BoC parsed cleanly but represents a different state
+    // than the block id claims; reject as a protocol violation.
+    if (state_->root_hash() != block_id_.root_hash) {
+      data_ = td::BufferSlice{};
+      data_reservation_.reset();
+      fail_handler(actor_id(this),
+                   td::Status::Error(ErrorCode::protoviolation,
+                                     "bad zero state: root hash mismatch after parse"));
+      return;
+    }
     checked_shard_state();
     return;
   }
@@ -724,9 +797,26 @@ void DownloadShardState::downloaded_zero_state(fullnode::DownloadedPersistentSta
   }
   auto root = r_root.move_as_ok();
   auto S = create_shard_state(block_id_, std::move(root));
-  S.ensure();
+  // tos27 P1-4: root came from the peer-supplied zero-state BoC; a
+  // create_shard_state failure is a structurally bad payload, not an
+  // internal invariant violation.
+  if (S.is_error()) {
+    data_file_ = fullnode::BudgetedStateFile{};
+    data_reservation_.reset();
+    fail_handler(actor_id(this), S.move_as_error_prefix("OnDisk zero state parse: "));
+    return;
+  }
   state_ = S.move_as_ok();
-  CHECK(state_->root_hash() == block_id_.root_hash);
+  // tos27 P1-4: peer bytes drove root_hash; a mismatch is a protocol
+  // violation, surface it instead of aborting.
+  if (state_->root_hash() != block_id_.root_hash) {
+    data_file_ = fullnode::BudgetedStateFile{};
+    data_reservation_.reset();
+    fail_handler(actor_id(this),
+                 td::Status::Error(ErrorCode::protoviolation,
+                                   "bad OnDisk zero state: root hash mismatch after parse"));
+    return;
+  }
 
   // data_ stays empty; data_file_ carries the tempfile through to
   // checked_shard_state(), which routes the OnDisk branch through
@@ -1034,7 +1124,18 @@ void DownloadShardState::checked_shard_state() {
         [SelfId = actor_id(this), reservation = std::move(data_reservation_),
          processing_reservation = std::move(state_processing_reservation_),
          file = std::move(data_file_)](td::Result<td::Unit> R) mutable {
-          R.ensure();
+          // tos27 P1-4: archive write of the peer-supplied tempfile.
+          // A storage failure surfaces through fail_handler so the
+          // download can be retried instead of aborting the validator.
+          if (R.is_error()) {
+            // The BudgetedStateFile destructor still runs at scope-exit,
+            // releasing both budgets even on the failure branch.
+            (void)file;
+            reservation.reset();
+            processing_reservation.reset();
+            fail_handler(SelfId, R.move_as_error_prefix("OnDisk archive store: "));
+            return;
+          }
           // The BudgetedStateFile destructor unmaps + unlinks the
           // tempfile when `file` goes out of scope; both reservations
           // return their bytes to the respective global counters.
@@ -1062,7 +1163,14 @@ void DownloadShardState::checked_shard_state() {
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), reservation = std::move(data_reservation_),
        processing_reservation = std::move(state_processing_reservation_)](td::Result<td::Unit> R) mutable {
-        R.ensure();
+        // tos27 P1-4: archive write of the peer-supplied state buffer.
+        // Surface storage errors via fail_handler instead of aborting.
+        if (R.is_error()) {
+          reservation.reset();
+          processing_reservation.reset();
+          fail_handler(SelfId, R.move_as_error_prefix("InMemory archive store: "));
+          return;
+        }
         reservation.reset();
         processing_reservation.reset();
         td::actor::send_closure(SelfId, &DownloadShardState::written_shard_state_file);
@@ -1101,7 +1209,13 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
 
     auto P = td::PromiseCreator::lambda(
         [SelfId = actor_id(this), reservation = std::move(reservation)](td::Result<td::Unit> R) mutable {
-          R.ensure();
+          // tos27 P1-4: archive write of peer-supplied split-state header.
+          // Surface storage errors via fail_handler instead of aborting.
+          if (R.is_error()) {
+            reservation.reset();
+            fail_handler(SelfId, R.move_as_error_prefix("split header archive store: "));
+            return;
+          }
           reservation.reset();
           td::actor::send_closure(SelfId, &DownloadShardState::download_next_part_or_finish);
         });
@@ -1255,7 +1369,16 @@ void DownloadShardState::on_split_state_header_imported(
       [SelfId = actor_id(this), reservation = std::move(reservation),
        processing_reservation = std::move(processing),
        file = std::move(file)](td::Result<td::Unit> R) mutable {
-        R.ensure();
+        // tos27 P1-4: archive store of the OnDisk split-state header
+        // tempfile. A storage failure surfaces as a structured error
+        // through fail_handler so the download can be retried.
+        if (R.is_error()) {
+          (void)file;
+          reservation.reset();
+          processing_reservation.reset();
+          fail_handler(SelfId, R.move_as_error_prefix("OnDisk split header archive store: "));
+          return;
+        }
         (void)file;
         reservation.reset();
         processing_reservation.reset();
@@ -1278,13 +1401,37 @@ void retry_part_download(td::actor::ActorId<DownloadShardState> SelfId, td::Stat
 
 void DownloadShardState::download_next_part_or_finish() {
   if (stored_parts_.size() == parts_.size()) {
-    auto state_root = deserializer_->merge(stored_parts_);
+    // tos27 P1-4: merge() now returns a Result; surface a structured
+    // error if peer-supplied parts cannot be merged into a consistent
+    // accounts dict, instead of aborting the validator process.
+    auto r_state_root = deserializer_->merge(stored_parts_);
+    if (r_state_root.is_error()) {
+      fail_handler(actor_id(this), r_state_root.move_as_error_prefix("split state merge: "));
+      return;
+    }
+    auto state_root = r_state_root.move_as_ok();
     auto maybe_state = create_shard_state(block_id_, state_root);
 
-    // We cannot rollback database changes here without significant elbow grease.
-    maybe_state.ensure();
+    // tos27 P1-4: state_root is derived from peer-supplied parts; a
+    // create_shard_state failure or root-hash mismatch is a structurally
+    // bad payload, not an internal invariant. Note: by this point the
+    // per-part files have already been archived to disk and per-part
+    // celldb writes have been committed, so a failure here leaves
+    // residue in the DB that the surrounding actor cannot rollback. We
+    // still surface the error rather than abort: the validator-engine
+    // is liveness-safe, and a cold restart will GC the orphaned cells
+    // through the celldb LRU sweep.
+    if (maybe_state.is_error()) {
+      fail_handler(actor_id(this), maybe_state.move_as_error_prefix("split state create_shard_state: "));
+      return;
+    }
     state_ = maybe_state.move_as_ok();
-    CHECK(state_->root_hash() == handle_->state());
+    if (state_->root_hash() != handle_->state()) {
+      fail_handler(actor_id(this),
+                   td::Status::Error(ErrorCode::protoviolation,
+                                     "merged split state root hash differs from BFT-attested handle state"));
+      return;
+    }
 
     written_shard_state_file();
     return;
@@ -1337,7 +1484,14 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
 
     auto P = td::PromiseCreator::lambda(
         [SelfId = actor_id(this), reservation = std::move(reservation)](td::Result<td::Unit> R) mutable {
-          R.ensure();
+          // tos27 P1-4: archive store of peer-supplied split-state part.
+          // Surface storage errors via retry_part_download instead of
+          // aborting the validator process.
+          if (R.is_error()) {
+            reservation.reset();
+            retry_part_download(SelfId, R.move_as_error_prefix("split part archive store: "));
+            return;
+          }
           reservation.reset();
           td::actor::send_closure(SelfId, &DownloadShardState::written_state_part_file);
         });
@@ -1488,7 +1642,16 @@ void DownloadShardState::on_split_state_part_imported(
       [SelfId = actor_id(this), reservation = std::move(reservation),
        processing_reservation = std::move(processing),
        file = std::move(file)](td::Result<td::Unit> R) mutable {
-        R.ensure();
+        // tos27 P1-4: archive store of OnDisk split-state part tempfile.
+        // Surface storage errors via retry_part_download instead of
+        // aborting.
+        if (R.is_error()) {
+          (void)file;
+          reservation.reset();
+          processing_reservation.reset();
+          retry_part_download(SelfId, R.move_as_error_prefix("OnDisk split part archive store: "));
+          return;
+        }
         (void)file;
         reservation.reset();
         processing_reservation.reset();
@@ -1503,7 +1666,13 @@ void DownloadShardState::written_state_part_file() {
   size_t idx = stored_parts_.size() - 1;
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<vm::DataCell>> R) {
-    R.ensure();
+    // tos27 P1-4: store_block_state_part wrote a peer-derived cell to
+    // CellDb; surface a storage failure via retry_part_download so the
+    // caller can retry instead of aborting the validator.
+    if (R.is_error()) {
+      retry_part_download(SelfId, R.move_as_error_prefix("store_block_state_part: "));
+      return;
+    }
     td::actor::send_closure(SelfId, &DownloadShardState::saved_state_part_into_celldb, R.move_as_ok());
   });
   td::actor::send_closure(manager_, &ValidatorManager::store_block_state_part,
@@ -1523,7 +1692,13 @@ void DownloadShardState::written_shard_state_file() {
   status_.set_status(PSTRING() << block_id_.id.to_str() << " : storing state to celldb");
   LOG(WARNING) << "written shard state file " << block_id_.to_str();
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
-    R.ensure();
+    // tos27 P1-4: set_block_state commits the canonical block-state
+    // root for cells imported from a peer. A storage failure must
+    // surface as a structured error, not abort the validator process.
+    if (R.is_error()) {
+      fail_handler(SelfId, R.move_as_error_prefix("set_block_state: "));
+      return;
+    }
     td::actor::send_closure(SelfId, &DownloadShardState::written_shard_state, R.move_as_ok());
   });
   td::actor::send_closure(manager_, &ValidatorManager::set_block_state, handle_, std::move(state_), vm::StoreCellHint{},
@@ -1555,9 +1730,21 @@ void DownloadShardState::written_shard_state(td::Ref<ShardState> state) {
   }
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), handle = handle_](td::Result<td::Unit> R) {
+    // Internal invariant: ValidatorManager::archive sets these flags on
+    // the local block handle as part of its archive-promotion path
+    // before resolving the promise; they describe local actor state and
+    // are never sourced from peer input.
     CHECK(handle->handle_moved_to_archive());
+    // Internal invariant: same archive-promotion contract; the flag is
+    // mutated locally before this lambda runs.
     CHECK(handle->moved_to_archive())
-    R.ensure();
+    // tos27 P1-4: archive promotion writes the peer-derived block
+    // handle to the local archive DB. Surface a storage failure as a
+    // structured error instead of aborting the validator process.
+    if (R.is_error()) {
+      fail_handler(SelfId, R.move_as_error_prefix("archive promotion: "));
+      return;
+    }
     td::actor::send_closure(SelfId, &DownloadShardState::written_block_handle);
   });
   td::actor::send_closure(manager_, &ValidatorManager::archive, handle_, std::move(P));

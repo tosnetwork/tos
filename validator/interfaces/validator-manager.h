@@ -46,12 +46,14 @@ namespace tos {
 namespace validator {
 
 // Forward declaration: the full definition lives in validator/db/celldb.hpp.
-// The manager interface only exposes a `create_celldb_streaming_writer`
-// message that returns a unique_ptr to this class (Phase B catch-up
-// path); pulling celldb.hpp into the manager interface header would
-// drag the whole CellDb / RocksDB dependency chain into every
-// translation unit that includes the manager header, which we want to
-// avoid.
+// The manager interface only exposes a
+// `create_celldb_streaming_writer_unsafe_for_tests_only` message
+// that returns a unique_ptr to this class (test-only Phase B
+// catch-up path; production callers use
+// `import_persistent_state_streaming`). Pulling celldb.hpp into the
+// manager interface header would drag the whole CellDb / RocksDB
+// dependency chain into every translation unit that includes the
+// manager header, which we want to avoid.
 class CellDbStreamingWriter;
 
 // Forward declaration for the GC-pause lease (tos27 P0-1). Same
@@ -357,18 +359,23 @@ class ValidatorManager : public ValidatorManagerInterface {
   virtual void set_block_state_from_data_bulk(std::vector<td::Ref<BlockData>> blocks,
                                               td::Promise<td::Unit> promise) = 0;
   virtual void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) = 0;
-  // Phase B persistent-state catch-up: hand back an import-only
+  // Test-only. Production state-sync uses
+  // `import_persistent_state_streaming` below. Cross-actor direct KV
+  // access is unsafe; do not call from a production path (audit
+  // P1-5). The `unsafe_for_tests_only` suffix is intentional — only
+  // test files should reference this entry point.
+  //
+  // Phase B persistent-state catch-up: hands back an import-only
   // CellDb streaming writer. The returned writer wraps the underlying
   // RocksDB KeyValue and is gated by a single-import flag inside
   // CellDbIn so two concurrent persistent-state imports cannot
-  // interleave their write batches. The downloader actor is the only
-  // intended caller; it pairs the writer with a
+  // interleave their write batches. Pairs the writer with a
   // `get_cell_db_reader()` snapshot to drive
   // `parse_ondisk_state_streaming(file, size, opts, reader, writer)`.
   // Errors propagate via the promise; callers MUST NOT silently fall
   // back to the legacy counting sink on failure (see Phase B spec
   // "Misconfiguration cannot silently re-enable full-DAG import").
-  virtual void create_celldb_streaming_writer(
+  virtual void create_celldb_streaming_writer_unsafe_for_tests_only(
       td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) = 0;
   // tos26 P1-4: actor-local persistent-state streaming import. The
   // downloader sends the entire request (tempfile path, expected

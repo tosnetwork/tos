@@ -55,6 +55,11 @@ void WaitBlockState::abort_query(td::Status reason) {
 }
 
 void WaitBlockState::finish_query() {
+  // Internal invariant: finish_query is invoked only after the actor's
+  // state machine has confirmed the state is durably received (either
+  // by reading from local DB or by completing a download + persist
+  // cycle). The handle flag is set by local code paths only and is not
+  // sourced from peer input.
   CHECK(handle_->received_state());
   if (promise_no_store_) {
     promise_no_store_.set_result(prev_state_);
@@ -68,6 +73,9 @@ void WaitBlockState::finish_query() {
 void WaitBlockState::start_up() {
   alarm_timestamp() = timeout_;
 
+  // Internal invariant: handle_ is constructor-injected by the caller
+  // (ValidatorManager) from local block-handle state and is never null
+  // for a properly-spawned actor. Not sourced from peer input.
   CHECK(handle_);
   start();
 }
@@ -167,6 +175,10 @@ void WaitBlockState::start() {
     td::actor::send_closure(manager_, &ValidatorManager::send_get_block_proof_link_request, handle_->id(), priority_,
                             std::move(P));
   } else if (prev_state_.is_null()) {
+    // Internal invariant: this branch is reached only after the
+    // surrounding `else if` chain has confirmed proof/proof-link is
+    // initialized; the flags are mutated locally on the actor strand
+    // and are not sourced from peer input.
     CHECK(handle_->inited_proof() || handle_->inited_proof_link());
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
       if (R.is_error()) {
@@ -243,6 +255,10 @@ void WaitBlockState::got_proof_link(td::BufferSlice data) {
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<BlockHandle> R) {
     if (R.is_ok()) {
       auto h = R.move_as_ok();
+      // Internal invariant: run_check_proof_link_query is the local
+      // proof-link verifier; on success it always sets inited_prev on
+      // the returned handle as part of its post-validation contract.
+      // The flag is mutated by local validator code, not by peer input.
       CHECK(h->inited_prev());
       td::actor::send_closure(SelfId, &WaitBlockState::after_get_proof_link);
     } else {
@@ -347,7 +363,15 @@ void WaitBlockState::got_state_from_db(td::Ref<ShardState> state, bool force_rea
 void WaitBlockState::got_state_from_static_file(td::Ref<ShardState> state, td::BufferSlice data) {
   auto P =
       td::PromiseCreator::lambda([SelfId = actor_id(this), state = std::move(state)](td::Result<td::Unit> R) mutable {
-        R.ensure();
+        // tos27 P1-4: store_zero_state_file persists peer/static-file
+        // bytes to the local archive. Surface a storage failure as a
+        // structured error via abort_query instead of aborting the
+        // validator process.
+        if (R.is_error()) {
+          td::actor::send_closure(SelfId, &WaitBlockState::abort_query,
+                                  R.move_as_error_prefix("store_zero_state_file: "));
+          return;
+        }
         td::actor::send_closure(SelfId, &WaitBlockState::got_state_from_db, std::move(state), false);
       });
   td::actor::send_closure(manager_, &ValidatorManager::store_zero_state_file, handle_->id(), std::move(data),

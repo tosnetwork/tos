@@ -346,14 +346,18 @@ void RootDb::get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> p
   td::actor::send_closure(cell_db_, &CellDb::get_cell_db_reader, std::move(promise));
 }
 
-void RootDb::create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+void RootDb::create_celldb_streaming_writer_unsafe_for_tests_only(
+    td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+  // Test-only. Production state-sync uses
+  // `import_persistent_state_streaming`. Cross-actor direct KV access
+  // is unsafe; do not call from a production path (audit P1-5).
+  //
   // Mirror of get_cell_db_reader: route the request straight to the
   // CellDb actor, which forwards to its CellDbIn child. The writer is
   // import-only (Phase B persistent-state catch-up); CellDbIn's
   // single-import flag guarantees two concurrent imports cannot
   // interleave their RocksDB write batches.
-  // Deprecated: production paths use import_persistent_state_streaming.
-  td::actor::send_closure(cell_db_, &CellDb::create_celldb_streaming_writer, std::move(promise));
+  td::actor::send_closure(cell_db_, &CellDb::create_celldb_streaming_writer_unsafe_for_tests_only, std::move(promise));
 }
 
 void RootDb::import_persistent_state_streaming(PersistentStateImportRequest request,

@@ -1171,12 +1171,18 @@ void CellDb::get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> p
   td::actor::send_closure(cell_db_, &CellDbIn::get_cell_db_reader, std::move(promise));
 }
 
-void CellDb::create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+void CellDb::create_celldb_streaming_writer_unsafe_for_tests_only(
+    td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+  // Test-only. Production state-sync uses
+  // `import_persistent_state_streaming`. Cross-actor direct KV access
+  // is unsafe; do not call from a production path (audit P1-5).
+  //
   // Mirror of get_cell_db_reader: forward straight to the inner
   // CellDbIn actor and resolve the promise from there. The actual
   // single-import gating happens inside the writer's begin_batch()
   // (see `CellDbStreamingWriterImpl::begin_batch`).
-  td::actor::send_closure(cell_db_, &CellDbIn::create_streaming_writer_async, std::move(promise));
+  td::actor::send_closure(cell_db_, &CellDbIn::create_streaming_writer_unsafe_for_tests_only_async,
+                          std::move(promise));
 }
 
 void CellDb::start_up() {
@@ -1399,13 +1405,19 @@ std::unique_ptr<CellDbStreamingWriter> CellDbIn::create_streaming_writer() {
   return std::make_unique<CellDbStreamingWriterImpl>(cell_db_, streaming_writer_in_use_);
 }
 
-void CellDbIn::create_streaming_writer_async(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+void CellDbIn::create_streaming_writer_unsafe_for_tests_only_async(
+    td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+  // Test-only. Production state-sync uses
+  // `import_persistent_state_streaming`. Cross-actor direct KV access
+  // is unsafe; do not call from a production path (audit P1-5).
+  //
   // Construction itself is cheap (just wraps shared_ptrs); the
   // single-import flag is enforced at begin_batch() time. Returning
   // the writer here lets the validator manager hand it back to the
   // downloader actor without a separate priming step.
   if (cell_db_ == nullptr) {
-    promise.set_error(td::Status::Error("CellDbIn::create_streaming_writer_async: cell_db_ not initialized"));
+    promise.set_error(
+        td::Status::Error("CellDbIn::create_streaming_writer_unsafe_for_tests_only_async: cell_db_ not initialized"));
     return;
   }
   promise.set_result(create_streaming_writer());

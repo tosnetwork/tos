@@ -279,11 +279,16 @@ class CellDbIn : public CellDbBase {
   // commit/abort then re-enables a fresh import.
   std::unique_ptr<CellDbStreamingWriter> create_streaming_writer();
 
-  // Deprecated: use import_persistent_state_streaming instead.
-  // Retained for tests; production paths must not call this. The
-  // legacy API hands a writer holding `vm::KeyValue` back to the
-  // caller, which is unsafe for any actor that does not run inside
-  // CellDbIn's serialized message loop (audit P1-4).
+  // Test-only. Production state-sync uses
+  // `import_persistent_state_streaming`. Cross-actor direct KV access
+  // is unsafe; do not call from a production path.
+  //
+  // Hands a writer holding `vm::KeyValue` back to the caller, which
+  // is unsafe for any actor that does not run inside CellDbIn's
+  // serialized message loop (audit P1-4 / P1-5). The
+  // `unsafe_for_tests_only` suffix is intentional — production paths
+  // must use `import_persistent_state_streaming`, which keeps the
+  // writer entirely inside CellDbIn.
   //
   // Actor-message wrapper around create_streaming_writer(). Resolves
   // the promise with a fresh writer. The single-import gate is
@@ -291,7 +296,7 @@ class CellDbIn : public CellDbBase {
   // method always succeeds — a second concurrent caller that tries
   // to begin_batch() while another writer is mid-batch will see the
   // begin_batch() error surface directly.
-  void create_streaming_writer_async(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise);
+  void create_streaming_writer_unsafe_for_tests_only_async(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise);
 
   // tos26 P1-4: run the entire begin_batch → parse →
   // verify-root → commit_after_root_verified pipeline INSIDE the
@@ -551,13 +556,16 @@ class CellDb : public CellDbBase {
     thread_safe_boc_ = std::move(thread_safe_boc);
   }
   void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise);
+  // Test-only. Production state-sync uses
+  // `import_persistent_state_streaming`. Cross-actor direct KV access
+  // is unsafe; do not call from a production path.
+  //
   // Phase B persistent-state catch-up: forward to
   // CellDbIn::create_streaming_writer() and resolve the promise with
   // the resulting writer (or surface the error verbatim if CellDbIn's
-  // single-import flag is already taken).
-  // Deprecated: use import_persistent_state_streaming instead.
-  // Retained for tests; production paths must not call this.
-  void create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise);
+  // single-import flag is already taken). The `unsafe_for_tests_only`
+  // suffix is intentional (audit P1-5).
+  void create_celldb_streaming_writer_unsafe_for_tests_only(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise);
 
   // tos26 P1-4: forward the actor-local import request to CellDbIn
   // so the entire streaming-import lifecycle runs inside CellDbIn's

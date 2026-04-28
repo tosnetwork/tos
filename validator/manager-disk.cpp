@@ -762,15 +762,19 @@ void ValidatorManagerImpl::get_cell_db_reader(td::Promise<std::shared_ptr<vm::Ce
   td::actor::send_closure(db_, &Db::get_cell_db_reader, std::move(promise));
 }
 
-void ValidatorManagerImpl::create_celldb_streaming_writer(
+void ValidatorManagerImpl::create_celldb_streaming_writer_unsafe_for_tests_only(
     td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+  // Test-only. Production state-sync uses
+  // `import_persistent_state_streaming`. Cross-actor direct KV access
+  // is unsafe; do not call from a production path (audit P1-5).
+  //
   // Manager-disk variant: same routing chain as the full validator
   // manager (manager.cpp) — db_ is a RootDb actor and forwards into
-  // CellDb -> CellDbIn::create_streaming_writer_async. The disk-only
-  // variant runs the same persistent-state download path during
-  // bootstrap, so the Phase B catch-up wiring is identical.
-  // Deprecated: production paths use import_persistent_state_streaming.
-  td::actor::send_closure(db_, &Db::create_celldb_streaming_writer, std::move(promise));
+  // CellDb -> CellDbIn::create_streaming_writer_unsafe_for_tests_only_async.
+  // The disk-only variant runs the same persistent-state download
+  // path during bootstrap, so the Phase B catch-up wiring is
+  // identical.
+  td::actor::send_closure(db_, &Db::create_celldb_streaming_writer_unsafe_for_tests_only, std::move(promise));
 }
 
 void ValidatorManagerImpl::import_persistent_state_streaming(
