@@ -1145,11 +1145,12 @@ void test_gc_lease_outlives_60s_window() {
   // (6) Document the production wiring without driving it: a
   //     successful streaming import puts a `gc_lease` into
   //     PersistentStateImportResult, and the downloader actor's
-  //     set_block_state completion callback releases it. The
-  //     hardening Check 21 ensures no fixed-timer resume sneaks
-  //     back in via `delay_action(..., resume_gc_for_import)` and
-  //     that the downloader retains the
-  //     `release_after_root_store_committed` call site.
+  //     set_block_state completion callback releases it. tos30 extends
+  //     that lease so it can carry a rollback manifest: if the lease is
+  //     dropped before root-store completion, CellDbIn conditionally
+  //     erases newly-created imported cells before resuming GC. The
+  //     hardening checks ensure no fixed-timer resume sneaks back in
+  //     and that the rollback manifest path remains actor-routed.
   {
     tos::validator::PersistentStateImportResult result;
     // Default-constructed: gc_lease is null. The downloader actor's
@@ -1178,6 +1179,18 @@ void test_gc_lease_outlives_60s_window() {
     pulled.reset();  // dtor on already-released lease is a no-op.
   }
 
+  // (7) tos30 rollback-carrying constructor remains available. This
+  //     no-actor harness passes an empty ActorId and empty manifest, so
+  //     it cannot drive CellDbIn rollback; the hardening script pins the
+  //     production call sites that pass a real actor id and manifest.
+  {
+    tos::validator::CellDbGcPauseLease lease(td::actor::ActorId<tos::validator::CellDbIn>{},
+                                             std::string{}, 0, 0);
+    EXPECT_FALSE(lease.active());
+    lease.release_after_root_store_committed();
+    EXPECT_FALSE(lease.active());
+  }
+
   std::printf("  PASSED\n");
 }
 
@@ -1188,10 +1201,12 @@ void test_gc_lease_outlives_60s_window() {
 //
 // Production wiring: CellDbIn::import_persistent_state_streaming runs the
 // BoC parse on a `td::thread` worker OFF the actor's message loop. The
-// worker drives a slice-budget-aware sink wrapper that yields the OS
+// worker drives a slice-budget-aware spooling sink that yields the OS
 // scheduler every `kMaxImportCellsPerSlice` cells OR every
-// `kMaxImportSliceWallMs` ms (whichever comes first). This unit-level
-// test pins TWO things:
+// `kMaxImportSliceWallMs` ms (whichever comes first). After root
+// verification, CellDbIn drains that spool through actor-side batches
+// bounded by `kMaxImportActorBatchCells` / `kMaxImportActorBatchBytes`.
+// This unit-level test pins TWO things:
 //
 //   1. The slice-budget constants are declared with sane non-zero values
 //      so a future regression that flips them to 0 or removes them
@@ -1220,6 +1235,8 @@ void test_streaming_import_yields_during_parse() {
   //     that defaulted these to 0 / removed them would surface here.
   EXPECT_TRUE(tos::validator::kMaxImportCellsPerSlice > 0);
   EXPECT_TRUE(tos::validator::kMaxImportSliceWallMs > 0.0);
+  EXPECT_TRUE(tos::validator::kMaxImportActorBatchCells > 0);
+  EXPECT_TRUE(tos::validator::kMaxImportActorBatchBytes > 0);
   EXPECT_EQ(tos::validator::kMaxConcurrentStreamingImports, static_cast<td::uint32>(1));
   // Sanity: the cell-count slice MUST be modest enough that a multi-GiB
   // state's parse interleaves with CellDb message handling. 1k cells per
@@ -1227,6 +1244,8 @@ void test_streaming_import_yields_during_parse() {
   // below any CellDb operation's 95th-percentile latency target.
   EXPECT_TRUE(tos::validator::kMaxImportCellsPerSlice <= 65536);
   EXPECT_TRUE(tos::validator::kMaxImportSliceWallMs <= 100.0);
+  EXPECT_TRUE(tos::validator::kMaxImportActorBatchCells <= 65536);
+  EXPECT_TRUE(tos::validator::kMaxImportActorBatchBytes <= (64ULL << 20));
 
   // (2) Direct sink-driven import still completes against a small
   //     synthetic BoC. The slice budget is large enough that this test

@@ -19,35 +19,23 @@
 #pragma once
 
 /*
- * PHASE B (deferred): True CellDb-backed streaming import.
+ * True CellDb-backed streaming import.
  *
- * The current importer parses the persistent state into a complete in-memory
- * DataCell DAG, then hands the root to the CellDb writer. This bounds parse-time
- * residency to roughly the file size, which is why max_returned_dag_bytes_per_parse
- * exists as a fail-closed cap. As TOS native EVM state grows past that cap,
- * new nodes can no longer bootstrap.
+ * OnDisk persistent-state catch-up can route through
+ * ValidatorManager::import_persistent_state_streaming when
+ * enable_true_cell_db_streaming_import is set. The production path parses the
+ * BoC off the CellDbIn actor, spools verified cells, drains them through
+ * CellDbIn actor-serialized bounded batches, and returns a hash-only
+ * ExtCell-backed root. A GC/rollback lease is held until set_block_state adopts
+ * the root; dropping the lease before adoption conditionally erases newly
+ * imported refcnt=1 cells.
  *
- * The fix is to re-shape parse so each cell is persisted to CellDb as soon as it
- * is finalized, and parents reference children by hash via ExtCell-style refs
- * rather than holding strong DataCell pointers. Required changes:
- *   - crypto/vm/cells/ExtCell.{h,cpp}: hash-only Cell subclass that lazy-loads
- *     children from CellDb on demand.
- *   - crypto/vm/boc.cpp create_data_cell: accept an optional "sink" that receives
- *     each cell as it is finalized; substitute ExtCell refs for child DataCells
- *     once the sink confirms persistence.
- *   - validator/state-download-buffer.cpp CellDbStreamingSink::persist: actually
- *     write to CellDb (currently a counting / validation sink only).
- *   - validator/db/celldb.cpp: expose a sync write path the importer can use
- *     during parse (or a buffered async path with strict ordering).
- *   - validator/manager-disk.cpp: load_block_state / store_block_state must
- *     accept hash-only roots without forcing eager full-DAG materialization.
+ * max_returned_dag_bytes_per_parse remains the fail-closed ceiling for
+ * operators that keep true streaming disabled. With true streaming enabled,
+ * max_total_cell_bytes_per_parse, max_cells_per_parse, max_resident_bytes, and
+ * max_scaffolding_bytes_per_parse bound the importer instead.
  *
- * Phase A (this commit) freezes the OOM-prone path:
- *   - enable_true_cell_db_streaming_import is rejected on configuration.
- *   - max_returned_dag_bytes_per_parse stays as the fail-closed ceiling with
- *     an operator-actionable error message.
- *
- * Known Phase B limitations (NOT load-bearing for safety):
+ * Known streaming limitations (NOT load-bearing for safety):
  *   - The BoC importer still allocates O(cell_count) scaffolding
  *     (offset_table, parent_refcount, cells vector) bounded by
  *     max_scaffolding_bytes_per_parse / max_total_cell_bytes_per_parse.
@@ -302,16 +290,17 @@ struct PersistentStateProcessingReservation {
 struct PersistentStateBudgetConfig {
   td::uint64 max_download_bytes = 16ULL << 30;
   td::uint64 max_processing_bytes = 16ULL << 30;
-  // Post-Phase-B default: the OnDisk catch-up path streams cells directly
-  // into CellDb (returning a hash-only ExtCell root), so a single state
-  // file no longer needs to fit inside the returned-DAG ceiling. Default
-  // raised to 16 GiB so an unmodified validator-engine binary can
-  // bootstrap from large persistent states without operator overrides.
+  // True-streaming default: the OnDisk catch-up path can stream cells
+  // directly into CellDb (returning a hash-only ExtCell root), so a
+  // single state file no longer needs to fit inside the returned-DAG
+  // ceiling. Default raised to 16 GiB so an unmodified validator-engine
+  // binary can bootstrap from large persistent states without operator
+  // overrides.
   td::uint64 max_single_file_bytes = 16ULL << 30;
   td::uint64 max_resident_bytes_per_parse = 256ULL << 20;
   // InMemory parse path's full-DAG ceiling. The OnDisk catch-up path no
-  // longer produces a full DataCell DAG (Phase B streams cells into
-  // CellDb and returns a hash-only ExtCell root), so this field bounds
+  // longer produces a full DataCell DAG when true streaming is enabled
+  // (cells stream into CellDb and the root is hash-only), so this field bounds
   // only the InMemory branch where the parser still returns a complete
   // DAG. 512 MiB matches the InMemory heap-path cap.
   td::uint64 max_returned_dag_bytes_per_parse = 512ULL << 20;
@@ -323,19 +312,17 @@ struct PersistentStateBudgetConfig {
   td::uint64 max_scaffolding_bytes_per_parse = vm::kDefaultStreamingBocMaxScaffoldingBytes;
   // H-03 total-cell-bytes cap forwarded to vm::StreamingBocImportOptions.
   // Bounds the streaming BoC importer's declared cells, NOT the returned
-  // root DAG residency. Default raised to 16 GiB after Phase B so a 16 GiB
-  // OnDisk catch-up file can declare matching cell bytes; the returned
-  // root is now O(1) memory under the OnDisk path. The actor caps this
+  // root DAG residency. Default raised to 16 GiB so a 16 GiB OnDisk
+  // catch-up file can declare matching cell bytes; the returned root is
+  // O(1) memory under the true-streaming path. The actor caps this
   // further at min(file.size, this value) so a small state cannot declare
   // more cell bytes than its envelope contains.
   td::uint64 max_total_cell_bytes_per_parse = 16ULL << 30;
-  // H-02 long-term feature flag. When the future ExtCell hash-only root
-  // refactor lands, callers that opt in here will be allowed to parse
-  // a state whose `file.size` exceeds `max_returned_dag_bytes_per_parse`
-  // because the importer will no longer return the full DAG. Until that
-  // refactor lands the flag is intentionally false; flipping it without
-  // landing the refactor would silently re-enable the OOM hazard the
-  // short-term cap closes.
+  // H-02/tos30 long-term feature flag. When enabled, OnDisk catch-up may
+  // parse a state whose `file.size` exceeds
+  // max_returned_dag_bytes_per_parse because the actor-local importer no
+  // longer returns the full DAG. Operators should enable it together with
+  // explicit max_cells / max_scaffolding / max_total_cell_bytes budgets.
   bool enable_true_cell_db_streaming_import = false;
 };
 
@@ -347,11 +334,10 @@ struct PersistentStateBudgetConfig {
 //
 // Returns Status::OK() on success. On rejection, the previous configuration
 // is preserved unchanged and the returned Status carries an
-// operator-actionable error message. Phase A explicitly rejects any
-// attempt to set `enable_true_cell_db_streaming_import = true` because
-// the Phase B importer is not yet implemented; flipping that flag would
-// silently re-enable the OOM-prone full-DAG parse path (see PHASE B
-// design comment at the top of this header).
+// operator-actionable error message. `enable_true_cell_db_streaming_import`
+// is accepted as an explicit operator opt-in to the actor-local
+// ExtCell-backed import path; the remaining budget fields still bound that
+// path's declared cells, scaffolding, and resident memory.
 td::Status configure_persistent_state_budgets(PersistentStateBudgetConfig cfg);
 
 // Read the live persistent-state budget configuration. The returned
@@ -400,7 +386,9 @@ td::Result<td::Slice> mmap_persistent_state_file(BudgetedStateFile &f);
 
 // Helper used by manager/disk recovery: scan the given tempfile root
 // directory and remove any *.partial files that look like residue from
-// a prior crash.
+// a prior crash. CellDb streaming-import rollback manifests
+// (*.celldb-rollback.*.partial) are deliberately preserved here; CellDbIn
+// scans and replays them during startup before metadata validation.
 //
 // Race-safety contract:
 //   The validator manager calls this function exactly once during

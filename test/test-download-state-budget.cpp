@@ -560,16 +560,18 @@ void test_downloaded_state_file_branch_unlink_on_drop() {
 void test_tempfile_residue_cleanup_on_startup() {
   std::printf("=== test_tempfile_residue_cleanup_on_startup ===\n");
 
-  // Plant a fake *.partial file (pretend a previous process crashed
-  // mid-download), call cleanup_persistent_state_tempfiles, and assert
-  // the .partial file is removed and any non-partial file is preserved.
+  // Plant fake residue from a previous process crash. Ordinary
+  // *.partial files are swept, non-partial files are preserved, and
+  // CellDb rollback manifests are preserved for CellDbIn startup replay.
   auto tmp_dir = std::string("/tmp/tos-test-download-h02-cleanup-") + std::to_string(::getpid());
   td::rmrf(tmp_dir).ignore();
   td::mkpath(tmp_dir + "/persistent-state/", 0700).ensure();
   auto residue_path = tmp_dir + "/persistent-state/something.partial";
+  auto rollback_manifest_path =
+      tmp_dir + "/persistent-state/state.boc.celldb-rollback.12345.partial";
   auto preserve_path = tmp_dir + "/persistent-state/keep_me";
 
-  for (auto path : {residue_path, preserve_path}) {
+  for (auto path : {residue_path, rollback_manifest_path, preserve_path}) {
     auto r_fd = td::FileFd::open(
         path, td::FileFd::Flags::Write | td::FileFd::Flags::Create | td::FileFd::Flags::Truncate);
     EXPECT_TRUE(r_fd.is_ok());
@@ -587,8 +589,9 @@ void test_tempfile_residue_cleanup_on_startup() {
   auto cleanup = cleanup_persistent_state_tempfiles(tmp_dir + "/persistent-state", /*min_age_seconds=*/0);
   EXPECT_TRUE(cleanup.is_ok());
 
-  // .partial gone, non-partial preserved.
+  // Ordinary .partial gone, rollback manifest and non-partial preserved.
   EXPECT_FALSE(td::stat(residue_path).is_ok());
+  EXPECT_TRUE(td::stat(rollback_manifest_path).is_ok());
   EXPECT_TRUE(td::stat(preserve_path).is_ok());
 
   td::rmrf(tmp_dir).ignore();
@@ -3132,7 +3135,7 @@ void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
   std::printf("  peak buffer-mem delta during parse = %llu MiB "
               "(%.1f%% of BoC size)\n",
               static_cast<unsigned long long>(peak_delta / kMiB),
-              100.0 * peak_delta / static_cast<double>(boc_size));
+              100.0 * static_cast<double>(peak_delta) / static_cast<double>(boc_size));
   std::printf("  configured max_resident_bytes = %llu MiB\n",
               static_cast<unsigned long long>((256ULL << 20) / kMiB));
 
@@ -3484,10 +3487,10 @@ void test_h02_oversize_state_without_streaming_import_rejected() {
 void test_h02_oversize_state_with_streaming_enabled_passes() {
   std::printf("=== test_h02_oversize_state_with_streaming_enabled_passes ===\n");
 
-  // With the future streaming importer enabled (or with a small file
-  // that fits inside the returned-DAG cap), the size gate must NOT
-  // reject. We pin both branches: a small-enough file is always
-  // accepted, and a large file is accepted iff the streaming flag is on.
+  // With true CellDb streaming enabled (or with a small file that fits
+  // inside the returned-DAG cap), the size gate must NOT reject. We pin
+  // both branches: a small-enough file is always accepted, and a large
+  // file is accepted iff the streaming flag is on.
   auto saved = persistent_state_budget_config();
 
   PersistentStateBudgetConfig cfg = saved;

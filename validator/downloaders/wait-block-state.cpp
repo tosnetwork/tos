@@ -514,10 +514,9 @@ void WaitBlockState::got_state_from_net_budgeted(fullnode::DownloadedPersistentS
     }
     auto fd = r_fd.move_as_ok();
     auto budget_cfg = fullnode::persistent_state_budget_config();
-    // H-02 short-term cap, mirrored on the zero-state OnDisk path. The
-    // streaming importer still returns the full root DAG; refuse a
-    // zero state larger than the returned-DAG cap unless the future
-    // ExtCell-backed importer is enabled.
+    // H-02 fail-closed cap, mirrored on the zero-state OnDisk path.
+    // With true CellDb streaming enabled, the importer returns a
+    // hash-only ExtCell root instead of the full resident DAG.
     if (file.size > budget_cfg.max_returned_dag_bytes_per_parse &&
         !budget_cfg.enable_true_cell_db_streaming_import) {
       abort_query(td::Status::Error(

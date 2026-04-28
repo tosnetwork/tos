@@ -31,6 +31,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace tos {
 
@@ -271,33 +272,22 @@ class DownloadShardState : public td::actor::Actor {
   // actor state. Held as a shared_ptr so completion lambdas can extend
   // its lifetime past `this` without copying the reservation bytes.
   std::shared_ptr<fullnode::PersistentStateProcessingReservation> state_processing_reservation_;
-  // tos27 P0-1 / P1-3: GC-pause lease taken out by CellDbIn on the
-  // streaming-import success path and held by this actor across
-  // `create_shard_state` -> `set_block_state`. Released exactly once
-  // when `set_block_state` resolves successfully (in
-  // `written_shard_state`). If the actor is destroyed before
-  // `set_block_state` resolves (cancel / shutdown / abort_query) the
-  // lease's destructor releases the pause as a fallback so GC always
-  // resumes — there is no fixed-timer fallback in the importer
-  // anymore. Held by std::unique_ptr because `CellDbGcPauseLease` is
-  // move-only and the present `gc_lease_` slot must be both
-  // default-constructible (empty before the import resolves) and
-  // assign-from-empty-able (release path) without exposing the
-  // lease's full type to users of the actor's public surface.
+  // tos27 P0-1 / tos29 High-2: GC-pause leases taken out by CellDbIn on
+  // streaming-import success paths and held by this actor until the
+  // final canonical root store completes. Unsplit imports push one
+  // lease. Split-state imports push one lease for the header and one for
+  // every imported part; all of them remain active until
+  // `written_shard_state`, after the merged `set_block_state` has stored
+  // the canonical block-state root. This prevents an early header/part
+  // lease destructor from resuming GC while later split parts are still
+  // being downloaded or merged.
   //
-  // Lease lifecycle for split-state imports (tos27 P1-3):
-  //   Each Phase B import (header + every part) issues its own lease.
-  //   We keep only the latest lease in this slot — when a new part's
-  //   lease arrives we drop the previous one. Earlier leases would
-  //   technically extend GC pause for a few extra milliseconds; the
-  //   importer's watchdog logs lingering leases so an operator can
-  //   observe the leak path. This trade follows the audit's
-  //   "easiest correct" recommendation: simpler than a vector-of-leases
-  //   release scheme and still bounded by per-part `store_block_state_part`
-  //   completion (which adds a canonical reference each part import).
-  //   Final release happens in `written_shard_state`, after the
-  //   merged `set_block_state` commits the canonical block-state root.
-  std::unique_ptr<CellDbGcPauseLease> gc_lease_;
+  // If the actor is destroyed before `set_block_state` resolves (cancel /
+  // shutdown / abort_query) the vector's unique_ptr destructors release
+  // all active pauses as a fallback. `retry()` also clears this vector so
+  // a failed attempt does not keep GC paused while the actor redownloads
+  // state from scratch.
+  std::vector<std::unique_ptr<CellDbGcPauseLease>> gc_leases_;
   td::Ref<ShardState> state_;
 
   ProcessStatus status_;

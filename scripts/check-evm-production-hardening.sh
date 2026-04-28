@@ -985,6 +985,10 @@ if ! rg -q 'enable_true_cell_db_streaming_import' "$state_buffer_h"; then
     echo "evm production hardening check failed: PersistentStateBudgetConfig::enable_true_cell_db_streaming_import flag must be present" >&2
     exit 1
 fi
+if rg -n 'reserved for Phase B|tos18 build only ships the fail-closed importer' "$root/validator/state-download-buffer.cpp" "$state_buffer_h" 2>/dev/null; then
+    echo "evm production hardening check failed: enable_true_cell_db_streaming_import must be accepted now that actor-local CellDb streaming import is implemented" >&2
+    exit 1
+fi
 
 if ! rg -q 'persistent-state download rejected:' "$download_state_cpp"; then
     echo "evm production hardening check failed: download-state.cpp must fail closed with operator-actionable message on oversize states without true streaming importer" >&2
@@ -1113,6 +1117,82 @@ if ! rg -q 'continue_import|import_slice|import_worker' "$root/validator/db/cell
     echo "evm hardening failed: CellDbIn must expose a continuation entry point (continue_import/import_slice/import_worker) for sliced streaming import (tos27 P0-2)" >&2
     exit 1
 fi
+# tos29 High-1: the worker thread may parse and seal an import spool, but
+# it must not write CellDb / KeyValue directly. All CellDb writes must run
+# on the CellDbIn actor via bounded spool-drain batches.
+if ! rg -q 'SpoolingImportSink' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: production streaming import must use a worker-owned spool sink, not a worker-owned CellDb writer (tos29 High-1)" >&2
+    exit 1
+fi
+if ! rg -q 'commit_streaming_import_spool_batch' "$root/validator/db/celldb.cpp" "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: CellDbIn must drain verified import spools through actor-side batches (tos29 High-1)" >&2
+    exit 1
+fi
+if ! rg -q 'kMaxImportActorBatchCells|kMaxImportActorBatchBytes' "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: actor-side CellDb import writes must have bounded batch budgets (tos29 High-1)" >&2
+    exit 1
+fi
+if ! rg -q 'rollback_streaming_import_manifest' "$root/validator/db/celldb.cpp" "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: streaming import must provide actor-side rollback for imported cells not adopted by set_block_state (tos30 fail-closed)" >&2
+    exit 1
+fi
+if ! rg -q 'rollback_writer|rollback_spool' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: actor-side streaming import must record newly-created cells in a rollback manifest (tos30 fail-closed)" >&2
+    exit 1
+fi
+if ! rg -q 'write_spooled_cell_record\(job->rollback_writer' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: actor-side streaming import must write rollback records before committing new cells (tos30 fail-closed)" >&2
+    exit 1
+fi
+if ! rg -q 'CellDbGcPauseLease\(td::actor::ActorId<CellDbIn> db, std::string rollback_manifest_path' "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: GC lease must carry the streaming-import rollback manifest until root-store completion (tos30 fail-closed)" >&2
+    exit 1
+fi
+if ! rg -q 'CellDbIn::rollback_streaming_import_manifest' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: dropped streaming-import leases must route rollback through CellDbIn actor serialization (tos30 fail-closed)" >&2
+    exit 1
+fi
+if ! rg -q 'recover_streaming_import_rollbacks_at_startup' "$root/validator/db/celldb.cpp" "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: CellDb must replay residual streaming-import rollback manifests at startup (tos31 replay/rollback)" >&2
+    exit 1
+fi
+if ! rg -q 'rollback_streaming_import_manifest_sync' "$root/validator/db/celldb.cpp" "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: CellDb startup recovery must have a synchronous rollback replay path (tos31 replay/rollback)" >&2
+    exit 1
+fi
+if ! rg -q 'tolerate_trailing_partial' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: startup rollback replay must tolerate a trailing partial manifest record after crash (tos31 replay/rollback)" >&2
+    exit 1
+fi
+if ! awk '
+    /void CellDbIn::start_up\(/ { in_fn = 1 }
+    in_fn && /recover_streaming_import_rollbacks_at_startup/ { saw_recover = 1 }
+    in_fn && /validate_meta\(\);/ { saw_validate = 1; bad = !saw_recover; exit }
+    END { exit (saw_validate && !bad ? 0 : 1) }
+' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: CellDb startup must replay rollback manifests before validate_meta() (tos31 replay/rollback)" >&2
+    exit 1
+fi
+if ! rg -q '\.celldb-rollback\.' "$root/validator/state-download-buffer.cpp" "$root/validator/state-download-buffer.h"; then
+    echo "evm hardening failed: persistent-state tempfile cleanup must preserve CellDb rollback manifests for startup replay (tos31 replay/rollback)" >&2
+    exit 1
+fi
+if ! rg -q 'streaming_rollback_jobs_\.empty\(\)' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: new streaming imports must wait for pending rollback jobs (tos30 fail-closed)" >&2
+    exit 1
+fi
+if ! awk '
+    /void run_streaming_import_worker\(/ { in_worker = 1 }
+    in_worker && /CellDbStreamingSink|CellDbStreamingWriterImpl|begin_write_batch|commit_write_batch|store_cell_streaming/ {
+        print FILENAME ":" NR ": " $0
+        bad = 1
+    }
+    in_worker && /^}/ { in_worker = 0 }
+    END { exit (bad ? 1 : 0) }
+' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: streaming import worker must not construct CellDb writer/sink or call KeyValue write APIs directly (tos29 High-1)" >&2
+    exit 1
+fi
 
 # Check 23 — tos27 P1-3: every OnDisk persistent-state parse path
 # must route through ValidatorManager::import_persistent_state_streaming
@@ -1146,6 +1226,26 @@ if ! rg -q 'on_split_state_header_imported' "$root/validator/downloaders/downloa
 fi
 if ! rg -q 'on_split_state_part_imported' "$root/validator/downloaders/download-state.cpp"; then
     echo "evm hardening failed: split-state part path must define on_split_state_part_imported completion handler (tos27 P1-3)" >&2
+    exit 1
+fi
+# tos29 High-2: split-state imports must retain every header/part GC
+# lease until final merged set_block_state completion. A single latest
+# lease slot can resume GC while older split cells are still not covered
+# by the final canonical root.
+if ! rg -q 'std::vector<std::unique_ptr<CellDbGcPauseLease>> gc_leases_' "$root/validator/downloaders/download-state.hpp"; then
+    echo "evm hardening failed: split-state downloader must hold a vector of GC leases until final root-store completion (tos29 High-2)" >&2
+    exit 1
+fi
+if rg -nP 'latest-only|gc_lease_\s*=' "$root/validator/downloaders/download-state.cpp" "$root/validator/downloaders/download-state.hpp"; then
+    echo "evm hardening failed: split-state GC lease lifecycle must not use latest-only overwrite semantics (tos29 High-2)" >&2
+    exit 1
+fi
+if ! rg -q 'gc_leases_\.push_back\(std::move\(result\.gc_lease\)\)' "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: downloader must append each import GC lease to gc_leases_ (tos29 High-2)" >&2
+    exit 1
+fi
+if ! rg -q 'for \(auto& lease : gc_leases_\)' "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: downloader must release all retained GC leases after set_block_state completion (tos29 High-2)" >&2
     exit 1
 fi
 

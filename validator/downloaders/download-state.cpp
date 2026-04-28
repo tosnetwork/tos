@@ -185,15 +185,12 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedSta
   return root;
 }
 
-// Phase B "true streaming" parse path. The caller hands us a paired
-// `CellDbReader` snapshot + import-only `CellDbStreamingWriter`. We
-// build a `CellDbStreamingSink` from those two handles, drive the
-// bounded BoC importer with it, and the sink in turn (a) writes each
-// freshly-deserialized DataCell into the writer's RocksDB batch, and
-// (b) substitutes a hash-only ExtCell-backed replacement so the parent
-// cell never holds a strong DataCell ref to the child. The returned
-// root is therefore an ExtCell whose child DAG is durable in CellDb,
-// not a full in-memory DataCell tree.
+// Legacy direct-driver true-streaming helper. Production downloader code
+// MUST use ValidatorManager::import_persistent_state_streaming instead:
+// that actor-local path keeps all KeyValue writes on CellDbIn and adds
+// rollback manifests. This helper remains for tests and direct-driver
+// callers that already hold a paired `CellDbReader` snapshot +
+// import-only `CellDbStreamingWriter`.
 //
 // Lifecycle (post tos26 P0-3 commit-ordering split):
 //   1. begin() — opens the writer's RocksDB write batch (driven by importer).
@@ -541,6 +538,14 @@ void DownloadShardState::got_block_handle(BlockHandle handle) {
 void DownloadShardState::retry() {
   deserializer_ = {};
   parts_.clear();
+  stored_parts_.clear();
+  // Dropping these leases before final set_block_state completion asks
+  // CellDbIn to rollback any newly-created import cells still at the
+  // imported refcnt=1 value, then resume the matching GC pauses.
+  // CellDbIn queues a follow-on import until pending rollback jobs have
+  // drained, so retry cannot race an old manifest against an identical
+  // new import.
+  gc_leases_.clear();
   download_state();
 }
 
@@ -943,12 +948,10 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
   // materialization. We charge that smaller number against the
   // processing budget so concurrent imports stack correctly.
   auto budget_cfg = fullnode::persistent_state_budget_config();
-  // H-02 short-term cap. The streaming importer still returns the full
-  // root cell DAG, so resident bytes for the returned tree can exceed
-  // the per-cell residency budget. Charge against the conservative
-  // returned-DAG cap (file.size, capped at max_returned_dag_bytes_per_parse)
-  // and fail closed when the file is larger than that cap unless the
-  // future ExtCell-backed importer is enabled.
+  // H-02 fail-closed cap for operators that keep true CellDb streaming
+  // disabled. With enable_true_cell_db_streaming_import=true this path
+  // continues into CellDbIn::import_persistent_state_streaming, which
+  // returns a hash-only ExtCell root instead of a full resident DAG.
   if (data_file_.size > budget_cfg.max_returned_dag_bytes_per_parse &&
       !budget_cfg.enable_true_cell_db_streaming_import) {
     auto rejected_size = data_file_.size;
@@ -962,11 +965,9 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
                 << "persistent-state download rejected: file size " << rejected_size
                 << " exceeds max_returned_dag_bytes_per_parse="
                 << budget_cfg.max_returned_dag_bytes_per_parse
-                << ". This is a known liveness ceiling pending Phase B (true ExtCell-backed "
-                   "CellDb-streaming importer). Operator options: (a) raise "
-                   "max_returned_dag_bytes_per_parse if you accept the OOM risk for this state, "
-                   "(b) bootstrap from a smaller checkpoint, (c) wait for Phase B which will "
-                   "remove this ceiling."));
+                << ". Operator options: (a) enable true CellDb streaming import for this "
+                   "node, (b) raise max_returned_dag_bytes_per_parse if you accept the "
+                   "full-DAG memory risk, (c) bootstrap from a smaller checkpoint."));
     return;
   }
   td::uint64 processing_charge = data_file_.size;
@@ -1060,9 +1061,11 @@ void DownloadShardState::on_streaming_import_done(td::Result<PersistentStateImpo
   // `set_block_state` has stored the canonical block-state root —
   // see `written_shard_state` below for the release call site. If
   // the actor is destroyed before then (cancel / shutdown /
-  // abort_query), `gc_lease_`'s destructor releases the pause
-  // automatically as a fallback so GC always resumes.
-  gc_lease_ = std::move(result.gc_lease);
+  // abort_query), the lease destructor releases the pause automatically
+  // as a fallback so GC always resumes.
+  if (result.gc_lease) {
+    gc_leases_.push_back(std::move(result.gc_lease));
+  }
   LOG(INFO) << "evm-workchain: persistent-state catch-up routed through actor-local "
                "import_persistent_state_streaming for "
             << block_id_.to_str() << ", cells_persisted=" << result.cells_persisted;
@@ -1237,7 +1240,7 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
   //   * commits its DAG to CellDb after root-hash verification,
   //   * returns a hash-only ExtCell-backed root, and
   //   * issues a GC-pause lease that this actor parks until the final
-  //     `set_block_state` (see `gc_lease_` lifecycle commentary in the
+  //     `set_block_state` (see `gc_leases_` lifecycle commentary in the
   //     header).
   auto file = std::move(downloaded.file());
   auto reservation = file.reservation;
@@ -1249,7 +1252,7 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
   // download budget was happy. Charge the per-parse cap (NOT the file
   // size) since the streaming importer peaks at that smaller number.
   auto budget_cfg = fullnode::persistent_state_budget_config();
-  // H-02 short-term cap, mirrored on the split-state header path.
+  // H-02 fail-closed cap, mirrored on the split-state header path.
   if (file.size > budget_cfg.max_returned_dag_bytes_per_parse &&
       !budget_cfg.enable_true_cell_db_streaming_import) {
     fail_handler(
@@ -1260,11 +1263,9 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
                 << "persistent-state download rejected: split header file size " << file.size
                 << " exceeds max_returned_dag_bytes_per_parse="
                 << budget_cfg.max_returned_dag_bytes_per_parse
-                << ". This is a known liveness ceiling pending Phase B (true ExtCell-backed "
-                   "CellDb-streaming importer). Operator options: (a) raise "
-                   "max_returned_dag_bytes_per_parse if you accept the OOM risk for this state, "
-                   "(b) bootstrap from a smaller checkpoint, (c) wait for Phase B which will "
-                   "remove this ceiling."));
+                << ". Operator options: (a) enable true CellDb streaming import for this "
+                   "node, (b) raise max_returned_dag_bytes_per_parse if you accept the "
+                   "full-DAG memory risk, (c) bootstrap from a smaller checkpoint."));
     return;
   }
   td::uint64 processing_charge = file.size;
@@ -1341,12 +1342,13 @@ void DownloadShardState::on_split_state_header_imported(
                  td::Status::Error("tos27 P1-3 split-state header import returned null root"));
     return;
   }
-  // tos27 P0-1 / P1-3: park the GC-pause lease on the actor. We
-  // intentionally overwrite any prior lease (latest-only policy — see
-  // `gc_lease_` lifecycle commentary in the header). The header lease
-  // is released at the latest by `written_shard_state` after the merged
-  // `set_block_state` commits.
-  gc_lease_ = std::move(result.gc_lease);
+  // tos29 High-2: keep the split header lease alongside every later
+  // part lease until the final merged `set_block_state` commits. Dropping
+  // it here would resume one GC pause while the merged root is still not
+  // canonical.
+  if (result.gc_lease) {
+    gc_leases_.push_back(std::move(result.gc_lease));
+  }
   LOG(INFO) << "tos27 P1-3: split-state header for " << block_id_.to_str()
             << " imported via actor-local path, cells_persisted=" << result.cells_persisted;
 
@@ -1414,13 +1416,13 @@ void DownloadShardState::download_next_part_or_finish() {
 
     // tos27 P1-4: state_root is derived from peer-supplied parts; a
     // create_shard_state failure or root-hash mismatch is a structurally
-    // bad payload, not an internal invariant. Note: by this point the
-    // per-part files have already been archived to disk and per-part
-    // celldb writes have been committed, so a failure here leaves
-    // residue in the DB that the surrounding actor cannot rollback. We
-    // still surface the error rather than abort: the validator-engine
-    // is liveness-safe, and a cold restart will GC the orphaned cells
-    // through the celldb LRU sweep.
+    // bad payload, not an internal invariant. If we fail before the
+    // final set_block_state completion, clearing `gc_leases_` during the
+    // retry path triggers CellDbIn rollback manifests for cells that
+    // have not been adopted by any later `store_cell` /
+    // `store_block_state_part` refcount update. Cells already adopted by
+    // part-state stores are skipped by value-checked rollback and remain
+    // under normal CellDb accounting.
     if (maybe_state.is_error()) {
       fail_handler(actor_id(this), maybe_state.move_as_error_prefix("split state create_shard_state: "));
       return;
@@ -1510,13 +1512,13 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
   // already-imported header; CellDbIn rejects any parsed root that
   // does not match before committing the write batch, so the part
   // identity is verified exactly once at the source-of-truth point.
-  // Each part import issues its own GC-pause lease (see `gc_lease_`
+  // Each part import issues its own GC-pause lease (see `gc_leases_`
   // lifecycle commentary in the header).
   auto file = std::move(downloaded.file());
   auto reservation = file.reservation;
 
   auto budget_cfg = fullnode::persistent_state_budget_config();
-  // H-02 short-term cap, mirrored on the split-state part path.
+  // H-02 fail-closed cap, mirrored on the split-state part path.
   if (file.size > budget_cfg.max_returned_dag_bytes_per_parse &&
       !budget_cfg.enable_true_cell_db_streaming_import) {
     retry_part_download(
@@ -1527,11 +1529,9 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
                 << "persistent-state download rejected: split part file size " << file.size
                 << " exceeds max_returned_dag_bytes_per_parse="
                 << budget_cfg.max_returned_dag_bytes_per_parse
-                << ". This is a known liveness ceiling pending Phase B (true ExtCell-backed "
-                   "CellDb-streaming importer). Operator options: (a) raise "
-                   "max_returned_dag_bytes_per_parse if you accept the OOM risk for this state, "
-                   "(b) bootstrap from a smaller checkpoint, (c) wait for Phase B which will "
-                   "remove this ceiling."));
+                << ". Operator options: (a) enable true CellDb streaming import for this "
+                   "node, (b) raise max_returned_dag_bytes_per_parse if you accept the "
+                   "full-DAG memory risk, (c) bootstrap from a smaller checkpoint."));
     return;
   }
   td::uint64 processing_charge = file.size;
@@ -1623,11 +1623,12 @@ void DownloadShardState::on_split_state_part_imported(
     retry_part_download(actor_id(this), td::Status::Error(error_message));
     return;
   }
-  // tos27 P1-3: latest-only GC-pause-lease policy. If a previous part
-  // (or the header) parked a lease, drop it now and adopt this part's
-  // lease. The importer's watchdog will log any lingering prior leases
-  // (the policy's documented trade-off — see `gc_lease_` commentary).
-  gc_lease_ = std::move(result.gc_lease);
+  // tos29 High-2: retain every split part lease until the final merged
+  // root is stored. Earlier part cells may still be needed by the merged
+  // state before `written_shard_state` runs.
+  if (result.gc_lease) {
+    gc_leases_.push_back(std::move(result.gc_lease));
+  }
   LOG(INFO) << "tos27 P1-3: split-state part " << part_idx + 1 << "/" << parts_.size()
             << " for " << block_id_.to_str()
             << " imported via actor-local path, cells_persisted=" << result.cells_persisted;
@@ -1711,14 +1712,15 @@ void DownloadShardState::written_shard_state(td::Ref<ShardState> state) {
   // block-state root (and walked + ref-incremented the imported cells
   // through `DynamicBagOfCellsDb::dfs_new_cells_in_db`), so the
   // imported cells are referenced by a desc-list entry and GC can no
-  // longer mis-collect them. Release the GC-pause lease that
-  // `on_streaming_import_done` parked on the actor. If the import
-  // path was the legacy InMemory branch (no lease was ever issued)
-  // `gc_lease_` is null and this is a no-op.
-  if (gc_lease_) {
-    gc_lease_->release_after_root_store_committed();
-    gc_lease_.reset();
+  // longer mis-collect them. Release every GC-pause lease parked on the
+  // actor. If the import path was the legacy InMemory branch (no lease
+  // was ever issued) the vector is empty and this is a no-op.
+  for (auto& lease : gc_leases_) {
+    if (lease) {
+      lease->release_after_root_store_committed();
+    }
   }
+  gc_leases_.clear();
   state_ = std::move(state);
   handle_->set_unix_time(state_->get_unix_time());
   handle_->set_is_key_block(block_id_.is_masterchain());
@@ -1767,6 +1769,7 @@ void DownloadShardState::alarm() {
 }
 
 void DownloadShardState::abort_query(td::Status reason) {
+  gc_leases_.clear();
   if (promise_) {
     promise_.set_error(std::move(reason));
   }

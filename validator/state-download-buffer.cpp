@@ -62,8 +62,9 @@ namespace {
 constexpr td::uint64 kHeapThreshold = 64ULL << 20;  // 64 MiB
 
 // Live budget configuration. The processing/download caps are generous
-// aggregate budgets. After Phase B the OnDisk catch-up path streams cells
-// directly into CellDb (returning a hash-only ExtCell root), so the
+// aggregate budgets. With actor-local true streaming enabled, the OnDisk
+// catch-up path streams cells directly into CellDb (returning a hash-only
+// ExtCell root), so the
 // default single-file cap is raised to 16 GiB and is no longer pinned to
 // the InMemory-parse returned-DAG ceiling. The peak resident memory
 // budget per parse is forwarded to the streaming BoC importer. All
@@ -73,10 +74,10 @@ constexpr td::uint64 kHeapThreshold = 64ULL << 20;  // 64 MiB
 // Defaults:
 //   max_download_bytes               16 GiB
 //   max_processing_bytes             16 GiB
-//   max_single_file_bytes            16 GiB (Phase B default OnDisk path)
+//   max_single_file_bytes            16 GiB (true-streaming OnDisk path)
 //   max_resident_bytes_per_parse     256 MiB
 //   max_returned_dag_bytes_per_parse 512 MiB (InMemory parse path only)
-//   max_total_cell_bytes_per_parse   16 GiB (Phase B streaming envelope)
+//   max_total_cell_bytes_per_parse   16 GiB (true-streaming envelope)
 std::mutex g_budget_config_mu;
 PersistentStateBudgetConfig g_budget_config;
 
@@ -172,20 +173,13 @@ td::Status validate_budget_config(const PersistentStateBudgetConfig& cfg) {
                                        << " < max_returned_dag_bytes_per_parse "
                                        << cfg.max_returned_dag_bytes_per_parse);
   }
-  // Phase A hard-block: the true CellDb-backed streaming importer
-  // (Phase B) is not yet implemented. Flipping this flag would silently
-  // re-enable the OOM-prone full-DAG parse path because the parser still
-  // returns a complete DataCell DAG. Refuse the configuration so a
-  // misconfigured operator cannot bypass max_returned_dag_bytes_per_parse
-  // by toggling a flag that has no implementation behind it.
-  if (cfg.enable_true_cell_db_streaming_import) {
-    return td::Status::Error(
-        "enable_true_cell_db_streaming_import is reserved for Phase B "
-        "(true ExtCell-backed CellDb streaming importer). The current "
-        "tos18 build only ships the fail-closed importer; setting this "
-        "flag would silently re-enable the OOM-prone full-DAG path. "
-        "Refusing.");
-  }
+  // tos29/tos30: enable_true_cell_db_streaming_import is now backed by
+  // ValidatorManager::import_persistent_state_streaming. That path parses
+  // off the CellDbIn actor, returns hash-only ExtCell roots, commits cells
+  // through actor-serialized bounded batches, and carries a rollback
+  // manifest until set_block_state adopts the import. Keep the flag as an
+  // explicit operator opt-in for oversized OnDisk catch-up, but no longer
+  // reject it as a placeholder.
   return td::Status::OK();
 }
 
@@ -700,10 +694,12 @@ void BudgetedStateFile::reset() noexcept {
 // Defense-in-depth implementation. See the contract documented in the
 // header above the prototype. The function:
 //   1. Walks `tempfile_root` for *.partial files (recursively).
-//   2. Stats each candidate and skips files whose mtime is newer than
+//   2. Preserves CellDb rollback manifests; CellDbIn replays them
+//      during startup before metadata validation.
+//   3. Stats each remaining candidate and skips files whose mtime is newer than
 //      `now - min_age_seconds`. The skip is logged at DEBUG level so a
 //      future maintainer can see why a file survived.
-//   3. Unlinks every other *.partial file and logs the action with the
+//   4. Unlinks every other *.partial file and logs the action with the
 //      file age (so an operator can sanity-check what was swept).
 //
 // Race-safety reasoning: when called at validator-engine startup, no
@@ -757,6 +753,11 @@ td::Status cleanup_persistent_state_tempfiles(td::CSlice tempfile_root, td::uint
       return td::WalkPath::Action::Continue;
     }
     if (std::memcmp(str.data() + str.size() - suffix_len, suffix, suffix_len) != 0) {
+      return td::WalkPath::Action::Continue;
+    }
+    constexpr auto celldb_rollback_marker = ".celldb-rollback.";
+    if (str.find(celldb_rollback_marker) != std::string::npos) {
+      LOG(WARNING) << "preserving CellDb streaming-import rollback manifest for startup replay: " << str;
       return td::WalkPath::Action::Continue;
     }
 

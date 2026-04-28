@@ -56,46 +56,59 @@ class CellDb;
 class CellDbAsyncExecutor;
 class CellDbIn;
 
-// tos27 P0-2 budgets. The streaming-import worker thread (see
-// `StreamingImportJob` below) checks both budgets per cell inside its
-// per-cell sink callback. When EITHER the cell-count budget OR the
-// wall-clock deadline is exceeded the worker calls
+// tos27/tos29 streaming-import budgets. The streaming-import worker
+// thread (see `StreamingImportJob` below) checks the parse budgets per
+// cell inside its per-cell sink callback. When EITHER the cell-count
+// budget OR the wall-clock deadline is exceeded the worker calls
 // `td::this_thread::yield()` to relinquish its OS scheduler slot.
 //
-// The budgets do NOT bound the CellDbIn actor's message-loop hold time
-// directly — the worker runs OFF the CellDbIn actor, so the message
-// loop is free to interleave `load_cell`, `store_cell`,
+// The parse budgets do NOT bound the CellDbIn actor's message-loop hold
+// time directly — the worker runs OFF the CellDbIn actor, so the
+// message loop is free to interleave `load_cell`, `store_cell`,
 // `store_block_state_permanent`, GC, and `update_snapshot` messages
 // concurrently with the parse. The budgets instead bound how long the
 // worker thread monopolizes a single OS scheduler slot before
-// cooperating with co-resident work, which is the second-order
-// fairness concern. The CellDbIn liveness DoS (the primary tos27 P0-2
-// finding) is structurally eliminated by moving the parse off the
-// actor entirely.
+// cooperating with co-resident work, which is the second-order fairness
+// concern. The CellDbIn liveness DoS (the primary tos27 P0-2 finding)
+// is structurally eliminated by moving the parse off the actor entirely.
 //
-// `kMaxConcurrentStreamingImports = 1` is enforced separately by the
-// `streaming_writer_in_use_` shared atomic flag CAS-ed inside
-// `CellDbStreamingWriterImpl::begin_batch`. A second concurrent import
-// observes the flag set and fails with a structured "another
-// streaming import is in flight" error.
+// tos29: the worker never writes KeyValue / RocksDB. It serializes
+// parsed cells into an import spool only after the parsed root has been
+// verified. CellDbIn then drains that spool through actor-serialized
+// bounded write batches; these constants cap each actor batch so normal
+// CellDb messages can interleave between batches without sharing an
+// open KeyValue write batch with a worker thread.
+//
+// `kMaxConcurrentStreamingImports = 1` is enforced on the production
+// path by `streaming_job_ != nullptr`. The legacy unsafe-for-tests-only
+// writer still has its own `streaming_writer_in_use_` CAS because it
+// hands a writer object to test code.
 constexpr td::uint32 kMaxImportCellsPerSlice = 1024;       // ~1k cells per slice
 constexpr double kMaxImportSliceWallMs = 5.0;              // 5 ms wall deadline
-constexpr td::uint32 kMaxConcurrentStreamingImports = 1;   // serialized via streaming_writer_in_use_
+constexpr td::uint32 kMaxImportActorBatchCells = 1024;     // actor-side CellDb write batch cell cap
+constexpr td::uint64 kMaxImportActorBatchBytes = 4ULL << 20;  // actor-side CellDb write batch byte cap
+constexpr td::uint32 kMaxConcurrentStreamingImports = 1;   // serialized by streaming_job_
 
 // Forward declaration. Full definition is in celldb.cpp because the
-// struct holds the worker thread + the type-erased sink/writer the
-// worker drives, neither of which need to be visible to consumers of
+// struct holds the worker thread + the import spool/sink the worker
+// drives, neither of which need to be visible to consumers of
 // celldb.hpp.
 struct StreamingImportJob;
+struct StreamingImportRollbackJob;
 
-// tos27 P0-1: GC pause lease bound to root-store completion.
+// tos27 P0-1 / tos30: GC pause + rollback lease bound to root-store
+// completion.
 //
 // Issued by `CellDbIn::import_persistent_state_streaming` on the
 // success path; held by the downloader actor through the
 // `set_block_state` callback. The lease's destructor releases the
-// pause exactly once via send_closure to CellDbIn. A canceled or
-// dropped Promise therefore still releases GC (best-effort) without
-// requiring a watchdog timer to drive the resume.
+// pause exactly once via send_closure to CellDbIn. If the importer
+// attached a rollback manifest, dropping the lease before explicit
+// root-store release also asks CellDbIn to conditionally erase every
+// newly-created imported cell whose current serialized value still
+// matches the imported refcnt=1 value. Cells that already existed, or
+// cells whose refcount was later changed by `store_cell` /
+// `store_block_state_part`, are skipped by rollback.
 //
 // The watchdog timer remains in place but is downgraded to a
 // LOG(WARNING) only — it must NOT call `resume_gc_for_import()`.
@@ -109,6 +122,8 @@ class CellDbGcPauseLease {
  public:
   CellDbGcPauseLease() = default;
   explicit CellDbGcPauseLease(td::actor::ActorId<CellDbIn> db) noexcept;
+  CellDbGcPauseLease(td::actor::ActorId<CellDbIn> db, std::string rollback_manifest_path,
+                     td::uint64 rollback_cells, td::uint64 rollback_bytes) noexcept;
   CellDbGcPauseLease(CellDbGcPauseLease&&) noexcept;
   CellDbGcPauseLease& operator=(CellDbGcPauseLease&&) noexcept;
   CellDbGcPauseLease(const CellDbGcPauseLease&) = delete;
@@ -129,7 +144,13 @@ class CellDbGcPauseLease {
   }
 
  private:
+  void drop_uncommitted() noexcept;
+  void clear_rollback_manifest() noexcept;
+
   td::actor::ActorId<CellDbIn> db_;
+  std::string rollback_manifest_path_;
+  td::uint64 rollback_cells_ = 0;
+  td::uint64 rollback_bytes_ = 0;
 };
 
 // Late-binding CellDb reader provider for streaming-import lazy ExtCells.
@@ -298,47 +319,43 @@ class CellDbIn : public CellDbBase {
   // begin_batch() error surface directly.
   void create_streaming_writer_unsafe_for_tests_only_async(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise);
 
-  // tos26 P1-4: run the entire begin_batch → parse →
-  // verify-root → commit_after_root_verified pipeline INSIDE the
-  // CellDbIn actor loop.
+  // tos26 P1-4 / tos29 High-1: production persistent-state import is
+  // split at the actor boundary:
+  //   * worker thread: parse BoC, build hash-only ExtCell replacements,
+  //     serialize parsed cells into a spool, verify parsed root;
+  //   * CellDbIn actor: after root verification, drain the spool through
+  //     bounded KeyValue write batches.
   //
   // Concurrency contract:
-  //   * Serializes naturally with `store_cell`, `store_block_state_*`,
-  //     `gc_cont2`, `migrate_cells`, and `update_snapshot` because
-  //     all of those run on this actor's queue — between cell
-  //     persistence calls inside the streaming import the actor
-  //     scheduler can interleave a single completed callback's body
-  //     for one of those, and vice versa.
-  //   * The only contended resource is `streaming_writer_in_use_`,
-  //     which prevents two concurrent streaming imports (their
-  //     RocksDB write batches would corrupt each other's pending
-  //     state). A second concurrent import receives a structured
-  //     "another streaming import is in flight" error.
-  //   * The downloader actor never sees a `vm::KeyValue` handle:
-  //     the writer is constructed and destroyed inside CellDbIn.
+  //   * CellDb writes serialize naturally with `store_cell`,
+  //     `store_block_state_*`, `gc_cont2`, `migrate_cells`, and
+  //     `update_snapshot` because the worker never calls KeyValue APIs;
+  //     only CellDbIn drains the verified spool.
+  //   * `streaming_job_ != nullptr` prevents two concurrent production
+  //     streaming imports. A second concurrent import receives a
+  //     structured "another streaming import is in flight" error.
+  //   * The downloader actor never sees a `vm::KeyValue` handle, and
+  //     the worker thread never receives one either.
   //
   // Failure modes:
   //   * Tempfile open / read errors -> sink.abort(), promise.set_error.
   //   * Streaming importer rejection -> sink.abort(), promise.set_error.
   //   * Parsed-root != expected_root_hash -> sink.abort(),
   //     promise.set_error("...root hash mismatch...").
-  //   * commit_after_root_verified failure -> sink.abort(),
-  //     promise.set_error.
-  //   * In every failure case the gate is released (via the writer's
-  //     abort_batch / dtor path) so a future import can claim it.
+  //   * spool sealing / actor-side CellDb batch failure -> sink.abort()
+  //     or fail_streaming_import(), promise.set_error.
+  //   * In every failure case `streaming_job_` is cleared so a future
+  //     import can claim the single production slot.
   void import_persistent_state_streaming(PersistentStateImportRequest request,
                                          td::Promise<PersistentStateImportResult> promise);
 
-  // tos27 P0-2: continuation entry point posted from the worker thread
-  // after the off-actor BoC parse + verify + commit completes. Runs on
-  // the CellDbIn actor's serialized message loop and:
-  //   * publishes the post-commit snapshot via boc_->set_loader +
-  //     parent CellDb::update_snapshot,
-  //   * republishes a fresh reader on the per-import provider so lazy
-  //     ExtCells minted during parse observe just-flushed cells,
-  //   * resolves the original promise (success result carries the GC
-  //     lease, error result resumes GC immediately),
-  //   * tears down the StreamingImportJob (joins the worker thread).
+  // tos27 P0-2 / tos29 High-1: continuation entry point posted from the
+  // worker thread after the off-actor BoC parse + root verification
+  // completes. Runs on the CellDbIn actor's serialized message loop,
+  // joins the worker, and then starts actor-side spool draining. This
+  // method does NOT resolve the promise on success; the promise resolves
+  // only after `commit_streaming_import_spool_batch` has durably written
+  // every spooled cell and refreshed the post-commit reader.
   //
   // This is the only path that can resolve the import promise; the
   // worker thread NEVER touches the promise directly because the
@@ -347,6 +364,19 @@ class CellDbIn : public CellDbBase {
   // Named `continue_import_after_worker` so the hardening Check 22
   // grep ("continue_import|import_slice|import_worker") finds it.
   void continue_import_after_worker();
+
+  // tos29 High-1: actor-only CellDb write stage. Drains the verified
+  // worker-created import spool through bounded KeyValue write batches.
+  // The worker never calls this directly; it posts only
+  // `continue_import_after_worker`, and that actor continuation owns the
+  // transition into this method.
+  void commit_streaming_import_spool_batch();
+
+  // Success/failure endpoints for the production import job. Both run on
+  // the CellDbIn actor and tear down `streaming_job_` exactly once.
+  void finish_streaming_import_after_actor_commit();
+  void fail_streaming_import(td::Status error);
+  void drain_streaming_import_rollback_batch();
 
   // tos26 P1-5: re-entrant GC interlock for streaming-import refcount
   // reconciliation.
@@ -385,16 +415,33 @@ class CellDbIn : public CellDbBase {
   void pause_gc_for_import();
   void resume_gc_for_import();
 
+  // tos30: conditional rollback for actor-local streaming imports. The
+  // manifest contains only cells that were absent before the import and
+  // were written with the import's refcnt=1 serialized value. Rollback
+  // runs on CellDbIn in bounded batches; each cell is erased only if the
+  // current DB value still equals that manifest value. This makes lease
+  // destruction / cancel / retry fail-closed without deleting cells that
+  // a later canonical store has already adopted by changing refcounts.
+  void rollback_streaming_import_manifest(std::string rollback_manifest_path, td::uint64 rollback_cells,
+                                          td::uint64 rollback_bytes, std::string reason,
+                                          bool resume_gc_after);
+
   void flush_db_stats();
 
   CellDbIn(td::actor::ActorId<RootDb> root_db, td::actor::ActorId<CellDb> parent, std::string path,
            td::Ref<ValidatorManagerOptions> opts);
+  ~CellDbIn() override;
 
   void validate_meta();
   void start_up() override;
   void alarm() override;
 
  private:
+  td::Result<td::uint64> recover_streaming_import_rollbacks_at_startup();
+  td::Status rollback_streaming_import_manifest_sync(std::string rollback_manifest_path,
+                                                     std::string reason,
+                                                     bool tolerate_trailing_partial);
+
   struct DbEntry {
     BlockIdExt block_id;
     KeyHash prev;
@@ -454,15 +501,13 @@ class CellDbIn : public CellDbBase {
   // external synchronization required.
   uint32_t gc_pause_count_ = 0;
 
-  // tos27 P0-2: streaming-import worker job. Holds the worker thread
-  // running the BoC parse, the per-import provider/promise, and the
-  // off-actor result the worker fills in. At most one job is in
-  // flight at a time; the `kMaxConcurrentStreamingImports = 1` bound
-  // is enforced by the `streaming_writer_in_use_` CAS in the writer's
-  // begin_batch (the writer claims the gate at the start of the
-  // worker's parse and releases it inside the worker's commit/abort).
-  // A nullptr `streaming_job_` means no import is in flight.
+  // tos27/tos29 streaming-import worker job. Holds the worker thread
+  // running the BoC parse, the verified spool path, the per-import
+  // provider/promise, and the actor-side spool-drain cursor. At most
+  // one production import is in flight at a time. A nullptr
+  // `streaming_job_` means no import is in flight.
   std::unique_ptr<StreamingImportJob> streaming_job_;
+  std::deque<std::unique_ptr<StreamingImportRollbackJob>> streaming_rollback_jobs_;
 
   std::function<void(const vm::CellLoader::LoadResult&)> on_load_callback_;
   std::set<td::Bits256> cells_to_migrate_;
