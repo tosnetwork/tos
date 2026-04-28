@@ -661,6 +661,13 @@ static RpcStateErrorSnapshot snapshot_rpc_state_errors(EvmState& state) noexcept
     };
 }
 
+static RpcStateErrorSnapshot snapshot_rpc_state_errors_locked(EvmState& state) noexcept {
+    return RpcStateErrorSnapshot{
+        state.code_integrity_error_count_locked(),
+        state.state_shape_error_count_locked(),
+    };
+}
+
 static std::optional<RpcResult> rpc_state_error_delta(
     EvmState& state,
     const RpcStateErrorSnapshot& before,
@@ -669,6 +676,19 @@ static std::optional<RpcResult> rpc_state_error_delta(
         return RpcResult{make_error(id, -32000, "corrupt EVM code root"), true};
     }
     if (state.state_shape_error_count() != before.state_shape) {
+        return RpcResult{make_error(id, -32000, "corrupt EVM native state shape"), true};
+    }
+    return std::nullopt;
+}
+
+static std::optional<RpcResult> rpc_state_error_delta_locked(
+    EvmState& state,
+    const RpcStateErrorSnapshot& before,
+    const std::string& id) {
+    if (state.code_integrity_error_count_locked() != before.code_integrity) {
+        return RpcResult{make_error(id, -32000, "corrupt EVM code root"), true};
+    }
+    if (state.state_shape_error_count_locked() != before.state_shape) {
         return RpcResult{make_error(id, -32000, "corrupt EVM native state shape"), true};
     }
     return std::nullopt;
@@ -4881,7 +4901,7 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     // no bytecode. The post-execution counter delta surfaces such a
     // condition deterministically, mapping to a single JSON-RPC
     // `-32000 corrupt EVM code root` for the whole batched simulation.
-    auto sim_state_errors_before = snapshot_rpc_state_errors(evm_state);
+    auto sim_state_errors_before = snapshot_rpc_state_errors_locked(evm_state);
 
     for (const auto& block_plan : plan) {
         // ---- Per-block overrides ----
@@ -5317,7 +5337,7 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     // response would otherwise be a confidently-wrong "no code" output
     // (e.g. missing logs / wrong gas). Map the delta to a single
     // -32000 error for the whole batched request.
-    if (auto err = rpc_state_error_delta(evm_state, sim_state_errors_before, id)) return *err;
+    if (auto err = rpc_state_error_delta_locked(evm_state, sim_state_errors_before, id)) return *err;
     return {make_result(id, out2), false};
 }
 
@@ -5379,7 +5399,7 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
     // otherwise emit a confidently-empty access list for a contract
     // whose code root is corrupt (silkworm sees no bytecode → no
     // SLOAD/SSTORE keys to record).
-    auto state_errors_before = snapshot_rpc_state_errors(evm_state);
+    auto state_errors_before = snapshot_rpc_state_errors_locked(evm_state);
 
     // Build IntraBlockState wrapping mutable view (commit_state=false → no DB writes)
     auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
@@ -5414,7 +5434,7 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
 
     auto call_result = evm.execute(txn, exec_gas);
 
-    if (auto err = rpc_state_error_delta(evm_state, state_errors_before, id)) return *err;
+    if (auto err = rpc_state_error_delta_locked(evm_state, state_errors_before, id)) return *err;
 
     // Optimize per EIP-2930 (drop addresses whose listing isn't profitable)
     if (sender) tracer.optimize_gas(*sender, txn.to.value_or(evmc::address{}),
