@@ -337,11 +337,14 @@ struct PersistentStateBudgetConfig {
   // more cell bytes than its envelope contains.
   td::uint64 max_total_cell_bytes_per_parse = 16ULL << 30;
   // Phase B import-spool budget. A 16 GiB state can transiently need an
-  // import spool plus a rollback manifest, so the per-import default is 2x
-  // the default state cap and the global default allows two such imports
-  // across the process before failing closed.
-  td::uint64 max_spool_bytes_per_import = 32ULL << 30;
-  td::uint64 max_total_spool_bytes = 64ULL << 30;
+  // import spool plus a rollback manifest with CellDb serialization
+  // overhead. Reserve a configurable ratio of the source file size
+  // (default 3x) and cap it by max_spool_bytes_per_import; the global
+  // default allows two such imports across the process before failing
+  // closed.
+  td::uint64 max_spool_bytes_per_import = 48ULL << 30;
+  td::uint64 max_total_spool_bytes = 96ULL << 30;
+  td::uint32 spool_reservation_ratio_percent = 300;
   // H-02/tos30 long-term feature flag. When enabled, OnDisk catch-up may
   // parse a state whose `file.size` exceeds
   // max_returned_dag_bytes_per_parse because the actor-local importer no

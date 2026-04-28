@@ -78,8 +78,9 @@ constexpr td::uint64 kHeapThreshold = 64ULL << 20;  // 64 MiB
 //   max_resident_bytes_per_parse     256 MiB
 //   max_returned_dag_bytes_per_parse 512 MiB (InMemory parse path only)
 //   max_total_cell_bytes_per_parse   16 GiB (true-streaming envelope)
-//   max_spool_bytes_per_import       32 GiB (import spool + rollback manifest)
-//   max_total_spool_bytes            64 GiB
+//   max_spool_bytes_per_import       48 GiB (3x 16 GiB file reservation)
+//   max_total_spool_bytes            96 GiB
+//   spool_reservation_ratio_percent  300
 std::mutex g_budget_config_mu;
 PersistentStateBudgetConfig g_budget_config;
 
@@ -187,6 +188,11 @@ td::Status validate_budget_config(const PersistentStateBudgetConfig& cfg) {
                                        << cfg.max_spool_bytes_per_import
                                        << " > max_total_spool_bytes "
                                        << cfg.max_total_spool_bytes);
+  }
+  if (cfg.spool_reservation_ratio_percent < 100) {
+    return td::Status::Error(PSTRING() << "spool_reservation_ratio_percent "
+                                       << cfg.spool_reservation_ratio_percent
+                                       << " < 100");
   }
   // tos29/tos30: enable_true_cell_db_streaming_import is now backed by
   // ValidatorManager::import_persistent_state_streaming. That path parses

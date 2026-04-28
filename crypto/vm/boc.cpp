@@ -1290,7 +1290,14 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
   // here on triggers abort exactly once. The success path explicitly
   // calls finish + disarms the guard before returning the root cell.
   StreamingSinkAbortGuard abort_guard{sink};
+  auto check_cancelled = [&opts]() -> td::Status {
+    if (opts.is_cancelled && opts.is_cancelled()) {
+      return td::Status::Error("std_boc_deserialize_from_file_bounded: import cancelled");
+    }
+    return td::Status::OK();
+  };
 
+  TRY_STATUS(check_cancelled());
   if (size == 0) {
     return td::Status::Error("std_boc_deserialize_from_file_bounded: zero-sized file");
   }
@@ -1301,6 +1308,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
     return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: file size mismatch: announced "
                                       << size << " observed " << stat.size_);
   }
+  TRY_STATUS(check_cancelled());
 
   // The streaming reader buffers reads in 4 MiB chunks by default. The
   // chunk size is intentionally larger than the per-cell ceiling
@@ -1315,6 +1323,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
   constexpr std::size_t kHeaderProbe = 256;
   std::size_t probe_len = static_cast<std::size_t>(std::min<td::uint64>(size, kHeaderProbe));
   TRY_RESULT(header_probe, reader.read(0, probe_len));
+  TRY_STATUS(check_cancelled());
 
   BagOfCells::Info info;
   long long size_est = info.parse_serialized_header(header_probe);
@@ -1357,6 +1366,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
                                       << info.data_size << " > max_total_cell_bytes "
                                       << effective_max_total_cell_bytes);
   }
+  TRY_STATUS(check_cancelled());
 
   // H-03 scaffolding budget. Compute the upper-bound bytes that would be
   // pulled into RAM for the importer's three O(cell_count) tables BEFORE
@@ -1409,6 +1419,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
                                << scaffolding << " > " << effective_max_scaffolding_bytes);
     }
   }
+  TRY_STATUS(check_cancelled());
 
   // Layer 3: optional CRC32C trailer. For a streaming reader we can
   // validate it incrementally by streaming the body in chunks; this
@@ -1420,12 +1431,14 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
     }
     td::uint32 crc_computed = 0;
     auto status = reader.stream(0, size - 4, [&](td::Slice chunk) -> td::Status {
+      TRY_STATUS(check_cancelled());
       crc_computed = td::crc32c_extend(crc_computed, chunk);
-      return td::Status::OK();
+      return check_cancelled();
     });
     if (status.is_error()) {
       return std::move(status);
     }
+    TRY_STATUS(check_cancelled());
     TRY_RESULT(trailer, reader.read(size - 4, 4));
     td::uint32 crc_stored = td::as<td::uint32>(trailer.ubegin());
     if (crc_computed != crc_stored) {
@@ -1458,8 +1471,10 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
                                           << idx);
       }
       root_indices[i] = idx;
+      TRY_STATUS(check_cancelled());
     }
   }
+  TRY_STATUS(check_cancelled());
 
   // Layer 5: build the cell offset table. With `has_index=true` the
   // index lives in the file at info.index_offset (cell_count *
@@ -1485,6 +1500,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
     td::uint64 done = 0;
     constexpr td::uint64 kIndexChunkBytes = 1ULL << 20;
     while (done < index_bytes) {
+      TRY_STATUS(check_cancelled());
       td::uint64 want = std::min<td::uint64>(index_bytes - done, kIndexChunkBytes);
       // Round to a multiple of offset_byte_size so we never split an entry.
       td::uint64 want_aligned = (want / info.offset_byte_size) * info.offset_byte_size;
@@ -1512,6 +1528,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
     td::uint64 cur = 0;
     td::uint64 cells_base = info.data_offset;
     for (int i = 0; i < info.cell_count; ++i) {
+      TRY_STATUS(check_cancelled());
       // Need at least the descriptor (2 bytes) and the trailing data +
       // ref bytes. Read up to 64 bytes to cover any descriptor + small
       // payload; if the descriptor declares more, re-read with the exact
@@ -1538,6 +1555,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
                                         << cur << " != declared data_size " << info.data_size);
     }
   }
+  TRY_STATUS(check_cancelled());
 
   // Layer 5b: count parent references per child index. A cell at
   // index `idx` is held resident in `cells` only as long as it has at
@@ -1561,6 +1579,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
     parent_refcount[static_cast<std::size_t>(idx)] += 1;
   }
   for (int i = 0; i < info.cell_count; ++i) {
+    TRY_STATUS(check_cancelled());
     td::uint64 cell_offset = offset_table[static_cast<std::size_t>(i)];
     td::uint64 cell_end = offset_table[static_cast<std::size_t>(i) + 1];
     if (cell_offset > cell_end || cell_end > info.data_size) {
@@ -1595,12 +1614,14 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
       rc += 1;
     }
   }
+  TRY_STATUS(check_cancelled());
 
   // Sink begin: every header invariant has been validated and the
   // offset table + parent_refcount scaffolding is built. The sink may
   // now allocate per-import resources (write batches, accumulators);
   // the abort guard ensures abort() runs on any error after this point.
   if (sink) {
+    TRY_STATUS(check_cancelled());
     auto begin_status = sink->begin();
     if (begin_status.is_error()) {
       return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: sink begin rejected: "
@@ -1639,6 +1660,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
   // max possible cell length (max_cell_whs is 64 hashes * (32 + 2)
   // bytes plus the 4 ref slots and data).
   for (int i = 0; i < info.cell_count; ++i) {
+    TRY_STATUS(check_cancelled());
     int idx = info.cell_count - 1 - i;
     td::uint64 cell_offset = offset_table[static_cast<std::size_t>(idx)];
     td::uint64 cell_end = offset_table[static_cast<std::size_t>(idx) + 1];
@@ -1744,6 +1766,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
     auto cell_ref = td::Ref<Cell>{std::move(data_cell)};
     if (sink) {
       auto original_hash = cell_ref->get_hash();
+      TRY_STATUS(check_cancelled());
       auto replacement = sink->persist_and_replace(cell_ref);
       if (replacement.is_error()) {
         return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: persist_cell rejected "
@@ -1786,6 +1809,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
   if (root_indices.empty()) {
     return td::Status::Error("std_boc_deserialize_from_file_bounded: BoC has no roots");
   }
+  TRY_STATUS(check_cancelled());
   auto root_idx = root_indices[0];
   auto root = cells[static_cast<std::size_t>(root_idx)];
   if (root.is_null()) {
@@ -1805,6 +1829,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
   // is still armed so abort() runs); a success path disarms the guard
   // so abort() does NOT run on the way out.
   if (sink) {
+    TRY_STATUS(check_cancelled());
     auto finish_status = sink->finish(root->get_hash());
     if (finish_status.is_error()) {
       return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: sink finish rejected: "

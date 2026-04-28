@@ -487,6 +487,13 @@ struct StreamingBocImportOptions {
   // ever allocating. Zero is treated as
   // `kDefaultStreamingBocMaxScaffoldingBytes`.
   td::uint64 max_scaffolding_bytes = kDefaultStreamingBocMaxScaffoldingBytes;
+  // Optional cooperative cancellation hook. The bounded importer checks
+  // this before and during every O(file_size) / O(cell_count) phase,
+  // including the pre-sink header, CRC, index, offset synthesis, parent
+  // walk, and cell-build loops. Returning true aborts with a structured
+  // "import cancelled" error; the sink is not begun if cancellation is
+  // observed before `begin()`.
+  std::function<bool()> is_cancelled;
 };
 
 // Per-cell sink invoked from inside the streaming BoC importer. Each

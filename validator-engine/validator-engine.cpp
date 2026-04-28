@@ -6329,6 +6329,35 @@ int main(int argc, char *argv[]) {
                          cfg.max_total_cell_bytes_per_parse = v;
                          return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
+  p.add_checked_option('\0', "persistent-state-spool-per-import-cap",
+                       "max temporary CellDb streaming-import spool bytes reserved per import "
+                       "(default 48 GiB)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.max_spool_bytes_per_import = v;
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                       });
+  p.add_checked_option('\0', "persistent-state-spool-total-cap",
+                       "process-wide temporary CellDb streaming-import spool budget in bytes "
+                       "(default 96 GiB)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.max_total_spool_bytes = v;
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                       });
+  p.add_checked_option('\0', "persistent-state-spool-reservation-ratio-percent",
+                       "percentage of the source persistent-state file size reserved for import spool "
+                       "plus rollback manifest (default 300)",
+                       [&](td::Slice arg) -> td::Status {
+                         TRY_RESULT(v, td::to_integer_safe<td::uint32>(arg));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.spool_reservation_ratio_percent = v;
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                       });
   auto S = p.run(argc, argv);
   if (S.is_error()) {
     LOG(ERROR) << "failed to parse options: " << S.move_as_error();
@@ -6366,6 +6395,9 @@ int main(int argc, char *argv[]) {
                  << " max_cells_per_parse=" << cfg.max_cells_per_parse
                  << " scaffolding_per_parse=" << fmt_bytes(cfg.max_scaffolding_bytes_per_parse)
                  << " total_cell_bytes_per_parse=" << fmt_bytes(cfg.max_total_cell_bytes_per_parse)
+                 << " spool_per_import=" << fmt_bytes(cfg.max_spool_bytes_per_import)
+                 << " spool_total=" << fmt_bytes(cfg.max_total_spool_bytes)
+                 << " spool_reservation_ratio_percent=" << cfg.spool_reservation_ratio_percent
                  << " true_cell_db_streaming_import="
                  << (cfg.enable_true_cell_db_streaming_import ? "on" : "off")
                  << " streaming_importer=on";

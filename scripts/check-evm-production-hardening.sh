@@ -1022,6 +1022,10 @@ if ! rg -q 'max_scaffolding_bytes' "$boc_h"; then
     echo "evm production hardening check failed: StreamingBocImportOptions::max_scaffolding_bytes field must be present" >&2
     exit 1
 fi
+if ! rg -q 'is_cancelled' "$boc_h" || ! rg -q 'std_boc_deserialize_from_file_bounded: import cancelled' "$boc_cpp"; then
+    echo "evm production hardening check failed: StreamingBocImportOptions must expose and enforce pre-sink cancellation (tos31 P0)" >&2
+    exit 1
+fi
 
 if ! rg -q 'BoC scaffolding budget exceeded' "$boc_cpp"; then
     echo "evm production hardening check failed: std_boc_deserialize_from_file_bounded must enforce max_scaffolding_bytes" >&2
@@ -1284,8 +1288,12 @@ if ! rg -q 'release_streaming_import_after_root_store_committed|adopted marker|\
     echo "evm hardening failed: committed root-store must durably mark rollback manifests adopted before cleanup (tos30 P1)" >&2
     exit 1
 fi
-if ! rg -q 'max_spool_bytes_per_import|max_total_spool_bytes|PersistentStateSpoolReservation|try_reserve_persistent_state_spool_disk' "$root/validator/state-download-buffer.h" "$root/validator/state-download-buffer.cpp"; then
+if ! rg -q 'max_spool_bytes_per_import|max_total_spool_bytes|spool_reservation_ratio_percent|PersistentStateSpoolReservation|try_reserve_persistent_state_spool_disk' "$root/validator/state-download-buffer.h" "$root/validator/state-download-buffer.cpp"; then
     echo "evm hardening failed: persistent-state import spool files must have a dedicated disk budget (tos30 P1)" >&2
+    exit 1
+fi
+if ! rg -q 'persistent-state-spool-reservation-ratio-percent' "$root/validator-engine/validator-engine.cpp"; then
+    echo "evm hardening failed: persistent-state spool reservation ratio must be operator-configurable (tos31 P1)" >&2
     exit 1
 fi
 if ! rg -q 'streaming import spool budget exceeded|rollback spool budget exceeded' "$root/validator/db/celldb.cpp"; then

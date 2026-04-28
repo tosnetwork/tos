@@ -2684,10 +2684,12 @@ void test_tos30_spool_budget_reservation() {
   PersistentStateBudgetConfig cfg = saved;
   cfg.max_spool_bytes_per_import = 128ULL * kMiB;
   cfg.max_total_spool_bytes = 256ULL * kMiB;
+  cfg.spool_reservation_ratio_percent = 250;
   configure_persistent_state_budgets(cfg);
   auto live = persistent_state_budget_config();
   EXPECT_EQ(live.max_spool_bytes_per_import, 128ULL * kMiB);
   EXPECT_EQ(live.max_total_spool_bytes, 256ULL * kMiB);
+  EXPECT_EQ(live.spool_reservation_ratio_percent, static_cast<td::uint32>(250));
   EXPECT_EQ(persistent_state_max_spool_bytes_per_import(), 128ULL * kMiB);
   EXPECT_EQ(persistent_state_total_spool_budget_bytes(), 256ULL * kMiB);
 
@@ -2717,6 +2719,12 @@ void test_tos30_spool_budget_reservation() {
   configure_persistent_state_budgets(invalid);
   EXPECT_EQ(persistent_state_budget_config().max_total_spool_bytes,
             live.max_total_spool_bytes);
+
+  invalid = live;
+  invalid.spool_reservation_ratio_percent = 99;
+  configure_persistent_state_budgets(invalid);
+  EXPECT_EQ(persistent_state_budget_config().spool_reservation_ratio_percent,
+            live.spool_reservation_ratio_percent);
 
   configure_persistent_state_budgets(saved);
   std::printf("  PASSED\n");
@@ -3733,6 +3741,7 @@ void test_h02_h03_budget_config_round_trips_new_fields() {
   cfg.max_total_cell_bytes_per_parse = 8ULL << 30;
   cfg.max_spool_bytes_per_import = 10ULL << 30;
   cfg.max_total_spool_bytes = 20ULL << 30;
+  cfg.spool_reservation_ratio_percent = 275;
   cfg.enable_true_cell_db_streaming_import = false;
   configure_persistent_state_budgets(cfg);
 
@@ -3743,6 +3752,7 @@ void test_h02_h03_budget_config_round_trips_new_fields() {
   EXPECT_EQ(live.max_total_cell_bytes_per_parse, 8ULL << 30);
   EXPECT_EQ(live.max_spool_bytes_per_import, 10ULL << 30);
   EXPECT_EQ(live.max_total_spool_bytes, 20ULL << 30);
+  EXPECT_EQ(live.spool_reservation_ratio_percent, static_cast<td::uint32>(275));
   EXPECT_FALSE(live.enable_true_cell_db_streaming_import);
 
   // Zero values must be refused (otherwise "0 = unlimited" is back in
@@ -3775,6 +3785,12 @@ void test_h02_h03_budget_config_round_trips_new_fields() {
   configure_persistent_state_budgets(invalid);
   EXPECT_EQ(persistent_state_budget_config().max_total_spool_bytes,
             live.max_total_spool_bytes);
+
+  invalid = saved;
+  invalid.spool_reservation_ratio_percent = 0;
+  configure_persistent_state_budgets(invalid);
+  EXPECT_EQ(persistent_state_budget_config().spool_reservation_ratio_percent,
+            live.spool_reservation_ratio_percent);
 
   invalid = saved;
   invalid.max_spool_bytes_per_import = saved.max_total_spool_bytes + 1;

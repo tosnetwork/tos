@@ -626,6 +626,19 @@ void CellDbIn::get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>>
   promise.set_result(boc_->get_cell_db_reader());
 }
 
+td::Status CellDbIn::refresh_loader_after_celldb_mutation(td::Slice context) {
+  if (opts_->get_celldb_in_memory()) {
+    return td::Status::OK();
+  }
+  auto status = boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_));
+  if (status.is_error()) {
+    return status.move_as_error_prefix(PSLICE() << "CellDbIn::" << context
+                                                << ": failed to refresh CellDb loader after CellDb mutation: ");
+  }
+  td::actor::send_closure(parent_, &CellDb::update_snapshot, cell_db_->snapshot());
+  return td::Status::OK();
+}
+
 void CellDbIn::store_block_state_permanent(td::Ref<BlockData> block, td::Promise<td::Ref<vm::DataCell>> promise) {
   if (!permanent_mode_) {
     promise.set_error(td::Status::Error("celldb is not in permanent mode"));
@@ -1769,13 +1782,21 @@ td::Result<td::uint64> streaming_import_spool_reservation_bytes(td::uint64 file_
   if (file_size == 0) {
     return td::Status::Error("streaming import spool reservation requires a non-zero file size");
   }
-  if (file_size > cfg.max_spool_bytes_per_import / 2) {
+  const auto ratio = static_cast<td::uint64>(cfg.spool_reservation_ratio_percent);
+  if (ratio == 0 || file_size > (std::numeric_limits<td::uint64>::max() - 99) / ratio) {
+    return td::Status::Error(PSTRING() << "streaming import spool reservation overflow: "
+                                       << "file_size=" << file_size
+                                       << " ratio_percent=" << cfg.spool_reservation_ratio_percent);
+  }
+  auto reservation_bytes = (file_size * ratio + 99) / 100;
+  if (reservation_bytes > cfg.max_spool_bytes_per_import) {
     return td::Status::Error(PSTRING() << "streaming import spool budget exceeded before import: "
-                                       << "2 * file_size " << file_size
+                                       << "file_size=" << file_size
+                                       << " ratio_percent=" << cfg.spool_reservation_ratio_percent
+                                       << " reservation=" << reservation_bytes
                                        << " > max_spool_bytes_per_import "
                                        << cfg.max_spool_bytes_per_import);
   }
-  auto reservation_bytes = file_size * 2;
   if (reservation_bytes == 0) {
     return td::Status::Error("streaming import spool reservation rounded to zero");
   }
@@ -2220,7 +2241,17 @@ void run_streaming_import_worker(StreamingImportJob* job, SpoolingImportSink* si
   // bounded by `kMaxImportCellsPerSlice` cells / `kMaxImportSliceWallMs` ms.
   SlicedImportSink sliced_sink(sink, job);
 
-  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, job->request.file_size, job->request.opts, &sliced_sink);
+  auto import_opts = job->request.opts;
+  auto caller_cancelled = std::move(import_opts.is_cancelled);
+  import_opts.is_cancelled = [caller_cancelled = std::move(caller_cancelled),
+                              cancel_requested = job->cancel_requested]() mutable {
+    if (cancel_requested != nullptr && cancel_requested->load(std::memory_order_relaxed)) {
+      return true;
+    }
+    return caller_cancelled && caller_cancelled();
+  };
+
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, job->request.file_size, import_opts, &sliced_sink);
   fd.close();
   if (is_cancelled()) {
     if (!sink->aborted() && !sink->is_committed()) {
@@ -2840,9 +2871,6 @@ void CellDbIn::finish_streaming_import_after_actor_commit() {
     return;
   }
 
-  auto job = std::move(streaming_job_);
-  streaming_job_.reset();
-
   // Success path: cells are durable; provider's reader is still the
   // pre-commit one. Refresh it.
   //
@@ -2853,9 +2881,16 @@ void CellDbIn::finish_streaming_import_after_actor_commit() {
   // see the new state — same handshake that store_cell / gc_cont2 do
   // after their commit.
   if (!opts_->get_celldb_in_memory()) {
-    boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
-    td::actor::send_closure(parent_, &CellDb::update_snapshot, cell_db_->snapshot());
+    auto refresh_status = refresh_loader_after_celldb_mutation("finish_streaming_import_after_actor_commit");
+    if (refresh_status.is_error()) {
+      fail_streaming_import(refresh_status.move_as_error());
+      return;
+    }
   }
+
+  auto job = std::move(streaming_job_);
+  streaming_job_.reset();
+
   auto post_commit_reader = boc_->get_cell_db_reader();
   if (post_commit_reader != nullptr) {
     job->provider->publish(post_commit_reader);
@@ -3248,8 +3283,17 @@ void CellDbIn::drain_streaming_import_rollback_batch() {
                << " batches=" << finished->batches
                << " bytes=" << finished->bytes_processed << "/" << finished->bytes;
   if (!opts_->get_celldb_in_memory()) {
-    boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
-    td::actor::send_closure(parent_, &CellDb::update_snapshot, cell_db_->snapshot());
+    auto refresh_status = refresh_loader_after_celldb_mutation("drain_streaming_import_rollback_batch");
+    if (refresh_status.is_error()) {
+      auto refresh_error = refresh_status.move_as_error().to_string();
+      LOG(ERROR) << "CellDbIn::drain_streaming_import_rollback_batch: " << refresh_error;
+      if (finished->resolve_import_promise) {
+        finished->promise_error = td::Status::Error(PSTRING()
+                                                    << finished->promise_error
+                                                    << "; rollback completed but CellDb loader refresh failed: "
+                                                    << refresh_error);
+      }
+    }
   }
   if (finished->resume_gc_after) {
     resume_gc_for_import();

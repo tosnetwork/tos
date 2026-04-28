@@ -569,6 +569,8 @@ class CellDbIn : public CellDbBase {
   std::deque<td::Promise<td::Unit>> action_queue_;
   size_t action_queue_cnt_store_ = 0, action_queue_cnt_load_ = 0;
 
+  td::Status refresh_loader_after_celldb_mutation(td::Slice context);
+
   void release_db() {
     db_busy_ = false;
     while (!db_busy_ && !action_queue_.empty()) {
@@ -605,7 +607,8 @@ class CellDb : public CellDbBase {
       alarm();
     }
     started_ = true;
-    boc_->set_loader(std::make_unique<vm::CellLoader>(std::move(snapshot), on_load_callback_)).ensure();
+    auto status = boc_->set_loader(std::make_unique<vm::CellLoader>(std::move(snapshot), on_load_callback_));
+    LOG_IF(ERROR, status.is_error()) << "CellDb::update_snapshot: failed to refresh CellDb loader: " << status;
   }
   void set_thread_safe_boc(std::shared_ptr<const vm::DynamicBagOfCellsDb> thread_safe_boc) {
     CHECK(opts_->get_celldb_in_memory() || opts_->get_celldb_v2());

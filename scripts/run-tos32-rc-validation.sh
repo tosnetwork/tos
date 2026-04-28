@@ -31,22 +31,32 @@ json_rpc() {
     "http://127.0.0.1:$port/"
 }
 
-json_result() {
-  python3 -c 'import json,sys; print(json.load(sys.stdin).get("result", ""))'
-}
-
-hex_to_int() {
-  python3 -c 'import sys; s=sys.stdin.read().strip(); print(int(s, 16) if s.startswith("0x") else int(s or "0"))'
-}
-
 node_port() {
   echo $((8010 + $1))
 }
 
-node_block_number() {
+node_eth_chain_id() {
   local port
   port="$(node_port "$1")"
-  json_rpc "$port" eth_blockNumber | json_result | hex_to_int
+  local response
+  response="$(json_rpc "$port" eth_chainId)" || return 1
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' <<< "$response"
+}
+
+node_eth_block_number() {
+  local port
+  port="$(node_port "$1")"
+  local response
+  response="$(json_rpc "$port" eth_blockNumber)" || return 1
+  python3 -c 'import json,sys; s=json.load(sys.stdin)["result"]; print(int(s, 16) if isinstance(s, str) and s.startswith("0x") else int(s or 0))' <<< "$response"
+}
+
+node_masterchain_seqno() {
+  local port
+  port="$(node_port "$1")"
+  local response
+  response="$(json_rpc "$port" getMasterchainInfo "{}")" || return 1
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["last"]["seqno"])' <<< "$response"
 }
 
 check_node() {
@@ -59,11 +69,12 @@ check_node() {
     echo "node $node inactive: $active" >&2
     return 1
   fi
-  local chain_id block_number
-  chain_id="$(json_rpc "$port" eth_chainId | json_result)"
-  block_number="$(json_rpc "$port" eth_blockNumber | json_result | hex_to_int)"
-  printf "%s,node=%s,active=%s,chain_id=%s,block=%s\n" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$node" "$active" "$chain_id" "$block_number" \
+  local chain_id evm_block mc_seqno
+  chain_id="$(node_eth_chain_id "$node")"
+  evm_block="$(node_eth_block_number "$node")"
+  mc_seqno="$(node_masterchain_seqno "$node")"
+  printf "%s,node=%s,active=%s,chain_id=%s,evm_block=%s,mc_seqno=%s\n" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$node" "$active" "$chain_id" "$evm_block" "$mc_seqno" \
     | tee -a "$ARTIFACT_DIR/health.csv"
 }
 
@@ -87,21 +98,26 @@ run_catchup_probe() {
   $SUDO systemctl stop tos-validator@3
   sleep "$CATCHUP_LAG_SECONDS"
   local target
-  target="$(node_block_number 1)"
-  echo "target block from node 1 after lag: $target"
+  target="$(node_masterchain_seqno 1)"
+  echo "target masterchain seqno from node 1 after lag: $target"
   $SUDO systemctl start tos-validator@3
   local deadline=$((SECONDS + CATCHUP_TIMEOUT_SECONDS))
   while [ "$SECONDS" -lt "$deadline" ]; do
     local b
-    b="$(node_block_number 3 || echo 0)"
-    echo "node 3 catch-up block=$b target=$target"
+    b="$(node_masterchain_seqno 3 2>/dev/null || true)"
+    if [ -z "$b" ]; then
+      echo "node 3 catch-up: RPC not ready yet"
+      sleep "$HEALTH_INTERVAL_SECONDS"
+      continue
+    fi
+    echo "node 3 catch-up mc_seqno=$b target=$target"
     if [ "$b" -ge "$target" ]; then
       echo "catch-up probe passed"
       return 0
     fi
     sleep "$HEALTH_INTERVAL_SECONDS"
   done
-  echo "catch-up probe failed: node 3 did not reach block $target within ${CATCHUP_TIMEOUT_SECONDS}s" >&2
+  echo "catch-up probe failed: node 3 did not reach masterchain seqno $target within ${CATCHUP_TIMEOUT_SECONDS}s" >&2
   return 1
 }
 

@@ -1349,11 +1349,60 @@ void test_streaming_import_yields_during_parse() {
               static_cast<unsigned long long>(result.cells_persisted));
 }
 
+// ---------------------------------------------------------------------------
+// (10) tos31 P0: cancellation before sink begin
+// ---------------------------------------------------------------------------
+
+void test_streaming_import_cancels_before_sink_begin() {
+  std::printf("=== test_streaming_import_cancels_before_sink_begin (tos31 P0) ===\n");
+
+  auto tmp_dir = std::string("/tmp/tos-test-celldb-streaming-10-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+  auto boc = serialize_synthetic_boc(tmp_dir, /*target_cells=*/32, "synth.boc");
+
+  class BeginCountingSink final : public vm::StreamingCellSink {
+   public:
+    td::Status begin() override {
+      begun = true;
+      return td::Status::OK();
+    }
+    td::Status persist(td::Ref<vm::Cell>) override {
+      return td::Status::Error("unexpected persist after pre-sink cancellation");
+    }
+    void abort() override {
+      aborted = true;
+    }
+
+    bool begun = false;
+    bool aborted = false;
+  } sink;
+
+  auto fd = td::FileFd::open(boc.path, td::FileFd::Flags::Read).move_as_ok();
+  vm::StreamingBocImportOptions opts;
+  int cancel_checks = 0;
+  opts.is_cancelled = [&] {
+    ++cancel_checks;
+    return cancel_checks >= 2;
+  };
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, boc.size, opts, &sink);
+  fd.close();
+
+  EXPECT_TRUE(r_root.is_error());
+  auto error = r_root.move_as_error().to_string();
+  EXPECT_TRUE(error.find("cancelled") != std::string::npos);
+  EXPECT_TRUE(cancel_checks >= 2);
+  EXPECT_FALSE(sink.begun);
+  EXPECT_FALSE(sink.aborted);
+
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  cancellation_checks=%d  PASSED\n", cancel_checks);
+}
+
 }  // namespace
 
 int main() {
   std::printf(
-      "test-celldb-streaming-import: Phase B Step 8 invariant regressions (10 tests)\n");
+      "test-celldb-streaming-import: Phase B Step 8 invariant regressions (11 tests)\n");
   test_replacement_hash_equality();
   test_no_full_dag_residency();
   test_crash_abort_no_partial_state();
@@ -1364,6 +1413,7 @@ int main() {
   test_imported_cells_survive_immediate_gc();
   test_gc_lease_outlives_60s_window();
   test_streaming_import_yields_during_parse();
+  test_streaming_import_cancels_before_sink_begin();
   std::printf("All Phase B invariant tests passed.\n");
   return 0;
 }
