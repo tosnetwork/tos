@@ -510,7 +510,25 @@ void CellEvmState::update_account(const evmc::address& address,
         delta_stats_.new_accounts++;
     }
 
-    auto data_cell = encode_evm_account_data(*current, storage_root, code_root);
+    silkworm::Account account_to_store = *current;
+    // Native-only no-MPT invariant: an account leaf's `code_hash` and embedded
+    // `code_root` must change atomically. Silkworm commonly calls
+    // update_account() before update_account_code() during CREATE/CREATE2. If
+    // we store the new non-empty code_hash here while still preserving the old
+    // code_root, the final native state can become inconsistent when the later
+    // code write is skipped, rejected, or a future caller changes the callback
+    // order. Let update_account_code() be the sole writer that installs a new
+    // non-empty code_hash together with the verified code cell. For metadata
+    // writes, preserve the previously committed code commitment.
+    if (account_to_store.code_hash != prev_for_shape.code_hash) {
+        if (account_to_store.code_hash == silkworm::kEmptyHash) {
+            code_root = {};
+        } else {
+            account_to_store.code_hash = prev_for_shape.code_hash;
+        }
+    }
+
+    auto data_cell = encode_evm_account_data(account_to_store, storage_root, code_root);
     // Wrap the EvmAccountData cell as a single-ref CellSlice (the dict value).
     vm::CellBuilder cb;
     cb.store_ref(data_cell);
@@ -640,18 +658,40 @@ void CellEvmState::update_storage(const evmc::address& address,
 bool CellEvmState::for_each_account_while(
     std::function<bool(const unsigned char[32], const silkworm::Account&)> cb) const {
     bool completed = true;
-    account_dict_.check_for_each([&cb, &completed](td::Ref<vm::CellSlice> value,
+    try {
+        account_dict_.check_for_each([this, &cb, &completed](td::Ref<vm::CellSlice> value,
                                                    td::ConstBitPtr key, int n) -> bool {
-        if (n != 256 || value.is_null() || value->size_refs() == 0) return true;
-        auto data_cell = value->prefetch_ref(0);
-        silkworm::Account acct;
-        td::Ref<vm::Cell> storage_root;
-        if (!decode_evm_account_data(data_cell, acct, storage_root)) return true;
-        unsigned char key_bytes[32];
-        td::BitPtr{key_bytes}.copy_from(key, 256);
-        completed = cb(key_bytes, acct);
-        return completed;
-    });
+            if (n != 256 || value.is_null() || value->size() != 0 || value->size_refs() != 1) {
+                record_state_shape_error("for_each_account_while dict leaf shape");
+                completed = false;
+                return false;
+            }
+            auto data_cell = value->prefetch_ref(0);
+            silkworm::Account acct;
+            td::Ref<vm::Cell> storage_root;
+            if (!decode_evm_account_data(data_cell, acct, storage_root)) {
+                record_state_shape_error("for_each_account_while decode_evm_account_data");
+                completed = false;
+                return false;
+            }
+            unsigned char key_bytes[32];
+            td::BitPtr{key_bytes}.copy_from(key, 256);
+            completed = cb(key_bytes, acct);
+            return completed;
+        });
+    } catch (vm::VmError&) {
+        record_state_shape_error("for_each_account_while vm::VmError");
+        return false;
+    } catch (vm::VmVirtError&) {
+        record_state_shape_error("for_each_account_while vm::VmVirtError");
+        return false;
+    } catch (std::exception&) {
+        record_state_shape_error("for_each_account_while std::exception");
+        return false;
+    } catch (...) {
+        record_state_shape_error("for_each_account_while unknown");
+        return false;
+    }
     return completed;
 }
 
@@ -667,7 +707,11 @@ void CellEvmState::for_each_account(
 bool CellEvmState::for_each_storage_while(
     const evmc::address& address,
     std::function<bool(const evmc::bytes32&, const evmc::bytes32&)> cb) const {
+    const auto shape_before = state_shape_error_count();
     auto storage_root = get_storage_root(address);
+    if (state_shape_error_count() != shape_before) {
+        return false;
+    }
     if (storage_root.is_null()) return true;
     bool completed = true;
     try {

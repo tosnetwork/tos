@@ -1402,29 +1402,54 @@ static std::vector<evmc::address> parse_address_param(const std::string& params)
     return result;
 }
 
-// Find the array body for a key in a single JSON object (no nesting awareness
-// beyond brackets). Returns the substring INSIDE the matched [ ... ], or
-// empty if not found / malformed. The search is bounded to the first '[' that
-// follows `"key"`.
-static std::string extract_json_array_body(const std::string& json, const std::string& key) {
+// Find the array body for a key in a single JSON object. Returns the
+// substring INSIDE the matched [ ... ]. Missing key is OK for optional fields;
+// present-but-malformed arrays are not. The previous string-returning helper
+// could not distinguish [] from an unterminated array, so malformed
+// blobVersionedHashes/accessList/storageKeys could be silently accepted as
+// empty.
+static td::Result<std::string> extract_json_array_body(const std::string& json,
+                                                       const std::string& key) {
     auto kp = json.find("\"" + key + "\"");
-    if (kp == std::string::npos) return "";
+    if (kp == std::string::npos) return std::string{};
     auto colon = json.find(':', kp + key.size() + 2);
-    if (colon == std::string::npos) return "";
+    if (colon == std::string::npos) {
+        return td::Status::Error("invalid " + key + " array");
+    }
     size_t start = colon + 1;
-    while (start < json.size() && (json[start] == ' ' || json[start] == '\t')) ++start;
-    if (start >= json.size() || json[start] != '[') return "";
+    while (start < json.size() &&
+           (json[start] == ' ' || json[start] == '\t' ||
+            json[start] == '\r' || json[start] == '\n')) {
+        ++start;
+    }
+    if (start >= json.size() || json[start] != '[') {
+        return td::Status::Error("invalid " + key + " array");
+    }
     int depth = 1;
-    size_t i = start + 1;
-    while (i < json.size() && depth > 0) {
-        if (json[i] == '[') depth++;
-        else if (json[i] == ']') {
-            depth--;
+    bool in_string = false;
+    bool escaped = false;
+    for (size_t i = start + 1; i < json.size(); ++i) {
+        char c = json[i];
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '\"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (c == '\"') {
+            in_string = true;
+        } else if (c == '[') {
+            ++depth;
+        } else if (c == ']') {
+            --depth;
             if (depth == 0) return json.substr(start + 1, i - start - 1);
         }
-        i++;
     }
-    return "";
+    return td::Status::Error("invalid " + key + " array");
 }
 
 // M-02 hardening: strict parser for `blobVersionedHashes` (EIP-4844).
@@ -1475,7 +1500,11 @@ parse_blob_versioned_hashes_strict(const std::string& call_json) {
             "invalid blobVersionedHashes (expected JSON array)");
     }
 
-    auto body = extract_json_array_body(call_json, "blobVersionedHashes");
+    auto body_res = extract_json_array_body(call_json, "blobVersionedHashes");
+    if (body_res.is_error()) {
+        return td::Status::Error("invalid blobVersionedHashes (malformed array)");
+    }
+    auto body = body_res.move_as_ok();
     // body may legitimately be empty (the array was []).
     size_t i = 0;
     while (i < body.size()) {
@@ -1573,7 +1602,11 @@ parse_access_list_strict(const std::string& call_json) {
     if (call_json[start] != '[') {
         return td::Status::Error("invalid access list");
     }
-    auto body = extract_json_array_body(call_json, "accessList");
+    auto body_res = extract_json_array_body(call_json, "accessList");
+    if (body_res.is_error()) {
+        return td::Status::Error("invalid access list");
+    }
+    auto body = body_res.move_as_ok();
     // body may legitimately be empty (the array was []).
     int depth = 0;
     size_t obj_start = 0;
@@ -1616,7 +1649,11 @@ parse_access_list_strict(const std::string& call_json) {
                     } else if (entry[sks] != '[') {
                         return td::Status::Error("invalid access list");
                     } else {
-                        auto sk_body = extract_json_array_body(entry, "storageKeys");
+                        auto sk_body_res = extract_json_array_body(entry, "storageKeys");
+                        if (sk_body_res.is_error()) {
+                            return td::Status::Error("invalid access list");
+                        }
+                        auto sk_body = sk_body_res.move_as_ok();
                         size_t k = 0;
                         while (k < sk_body.size()) {
                             // skip whitespace / commas

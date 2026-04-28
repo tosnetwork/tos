@@ -83,21 +83,33 @@ class CellStateRollbackSnapshot {
         return true;
     }
 
-    void restore(EvmState& state) {
+    bool restore(EvmState& state) {
         if (!captured_) {
-            return;
+            return true;
         }
         std::unique_lock lock(state.mutex());
         auto* current_cell_state = dynamic_cast<CellEvmState*>(&state.state());
-        if (current_cell_state != nullptr) {
-            // Rebind via TrustedLazy: the captured root cell hash is owned by
-            // this snapshot (no external attacker influence) so the per-rollback
-            // cost stays O(1) instead of O(global state size).
-            CHECK(current_cell_state->load_from_cell(
-                account_root_, CellStateLoadMode::TrustedLazy));
-            CHECK(current_cell_state->load_block_hashes_from_cell(block_hashes_root_));
-            current_cell_state->reset_delta_stats();
+        if (current_cell_state == nullptr) {
+            LOG(ERROR) << "evm-workchain: rollback restore failed: backend is not CellEvmState";
+            return false;
         }
+        // Rebind via TrustedLazy: the captured root cell hash is owned by
+        // this snapshot (no external attacker influence) so the per-rollback
+        // cost stays O(1) instead of O(global state size). Previous code used
+        // CHECK() here; a corrupted in-process snapshot or future codec change
+        // would abort the validator instead of rejecting the candidate. Treat
+        // rollback failure as an explicit fail-closed compute error.
+        if (!current_cell_state->load_from_cell(
+                account_root_, CellStateLoadMode::TrustedLazy)) {
+            LOG(ERROR) << "evm-workchain: rollback restore failed: cannot load account root";
+            return false;
+        }
+        if (!current_cell_state->load_block_hashes_from_cell(block_hashes_root_)) {
+            LOG(ERROR) << "evm-workchain: rollback restore failed: cannot load block hashes";
+            return false;
+        }
+        current_cell_state->reset_delta_stats();
+        return true;
     }
 
     bool captured() const noexcept { return captured_; }
@@ -134,12 +146,15 @@ static bool reject_if_integrity_changed(EvmState& state,
         after.state_shape == before.state_shape) {
         return false;
     }
-    rollback.restore(state);
+    const bool rollback_ok = rollback.restore(state);
     std::string reason;
     if (after.code_integrity != before.code_integrity) {
         reason = std::string("corrupt EVM code root detected during ") + where;
     } else {
         reason = std::string("corrupt EVM native state shape detected during ") + where;
+    }
+    if (!rollback_ok) {
+        reason += "; rollback restore failed";
     }
     LOG(WARNING) << "evm-workchain: consensus reject — " << reason
                  << " (code_delta="
