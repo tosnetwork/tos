@@ -12,7 +12,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG LIBOQS_COMMIT=3cb781fd4737c900ad755ee0bb9e1949d0f68955
 RUN apt-get update && \
     apt-get install -y build-essential git cmake ninja-build pkg-config \
-    autoconf automake libtool libjemalloc-dev ccache gperf wget curl \
+    autoconf automake libtool libjemalloc-dev ccache gperf ripgrep wget curl \
     lsb-release software-properties-common gnupg python3 python3-dev \
     libgmp-dev libssl-dev && \
     rm -rf /var/lib/apt/lists/*
@@ -61,7 +61,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG LIBOQS_COMMIT=3cb781fd4737c900ad755ee0bb9e1949d0f68955
 RUN apt-get update && \
     apt-get install -y build-essential git cmake ninja-build pkg-config \
-    autoconf automake libtool libjemalloc-dev ccache gperf wget curl \
+    autoconf automake libtool libjemalloc-dev ccache gperf ripgrep wget curl \
     lsb-release software-properties-common gnupg python3 python3-dev \
     libgmp-dev libssl-dev && \
     rm -rf /var/lib/apt/lists/*
