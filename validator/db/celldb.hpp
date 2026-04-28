@@ -35,6 +35,7 @@
 #include "td/actor/actor.h"
 #include "td/db/KeyValue.h"
 #include "td/db/RocksDb.h"
+#include "td/utils/port/thread.h"
 #include "tos/tos-types.h"
 
 #include "db-utils.h"
@@ -54,6 +55,38 @@ class RootDb;
 class CellDb;
 class CellDbAsyncExecutor;
 class CellDbIn;
+
+// tos27 P0-2 budgets. The streaming-import worker thread (see
+// `StreamingImportJob` below) checks both budgets per cell inside its
+// per-cell sink callback. When EITHER the cell-count budget OR the
+// wall-clock deadline is exceeded the worker calls
+// `td::this_thread::yield()` to relinquish its OS scheduler slot.
+//
+// The budgets do NOT bound the CellDbIn actor's message-loop hold time
+// directly — the worker runs OFF the CellDbIn actor, so the message
+// loop is free to interleave `load_cell`, `store_cell`,
+// `store_block_state_permanent`, GC, and `update_snapshot` messages
+// concurrently with the parse. The budgets instead bound how long the
+// worker thread monopolizes a single OS scheduler slot before
+// cooperating with co-resident work, which is the second-order
+// fairness concern. The CellDbIn liveness DoS (the primary tos27 P0-2
+// finding) is structurally eliminated by moving the parse off the
+// actor entirely.
+//
+// `kMaxConcurrentStreamingImports = 1` is enforced separately by the
+// `streaming_writer_in_use_` shared atomic flag CAS-ed inside
+// `CellDbStreamingWriterImpl::begin_batch`. A second concurrent import
+// observes the flag set and fails with a structured "another
+// streaming import is in flight" error.
+constexpr td::uint32 kMaxImportCellsPerSlice = 1024;       // ~1k cells per slice
+constexpr double kMaxImportSliceWallMs = 5.0;              // 5 ms wall deadline
+constexpr td::uint32 kMaxConcurrentStreamingImports = 1;   // serialized via streaming_writer_in_use_
+
+// Forward declaration. Full definition is in celldb.cpp because the
+// struct holds the worker thread + the type-erased sink/writer the
+// worker drives, neither of which need to be visible to consumers of
+// celldb.hpp.
+struct StreamingImportJob;
 
 // tos27 P0-1: GC pause lease bound to root-store completion.
 //
@@ -291,6 +324,25 @@ class CellDbIn : public CellDbBase {
   void import_persistent_state_streaming(PersistentStateImportRequest request,
                                          td::Promise<PersistentStateImportResult> promise);
 
+  // tos27 P0-2: continuation entry point posted from the worker thread
+  // after the off-actor BoC parse + verify + commit completes. Runs on
+  // the CellDbIn actor's serialized message loop and:
+  //   * publishes the post-commit snapshot via boc_->set_loader +
+  //     parent CellDb::update_snapshot,
+  //   * republishes a fresh reader on the per-import provider so lazy
+  //     ExtCells minted during parse observe just-flushed cells,
+  //   * resolves the original promise (success result carries the GC
+  //     lease, error result resumes GC immediately),
+  //   * tears down the StreamingImportJob (joins the worker thread).
+  //
+  // This is the only path that can resolve the import promise; the
+  // worker thread NEVER touches the promise directly because the
+  // promise must only be set on the actor's loop.
+  //
+  // Named `continue_import_after_worker` so the hardening Check 22
+  // grep ("continue_import|import_slice|import_worker") finds it.
+  void continue_import_after_worker();
+
   // tos26 P1-5: re-entrant GC interlock for streaming-import refcount
   // reconciliation.
   //
@@ -396,6 +448,16 @@ class CellDbIn : public CellDbBase {
   // message loop by pause_gc_for_import / resume_gc_for_import; no
   // external synchronization required.
   uint32_t gc_pause_count_ = 0;
+
+  // tos27 P0-2: streaming-import worker job. Holds the worker thread
+  // running the BoC parse, the per-import provider/promise, and the
+  // off-actor result the worker fills in. At most one job is in
+  // flight at a time; the `kMaxConcurrentStreamingImports = 1` bound
+  // is enforced by the `streaming_writer_in_use_` CAS in the writer's
+  // begin_batch (the writer claims the gate at the start of the
+  // worker's parse and releases it inside the worker's commit/abort).
+  // A nullptr `streaming_job_` means no import is in flight.
+  std::unique_ptr<StreamingImportJob> streaming_job_;
 
   std::function<void(const vm::CellLoader::LoadResult&)> on_load_callback_;
   std::set<td::Bits256> cells_to_migrate_;

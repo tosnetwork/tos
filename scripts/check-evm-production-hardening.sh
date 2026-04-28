@@ -1102,4 +1102,16 @@ if ! rg -q 'release_after_root_store_committed' "$root/validator/downloaders/dow
     exit 1
 fi
 
+# Check 22 — tos27 P0-2: streaming import must not block CellDbIn
+# actor for a full BoC parse. Either a sliced actor job (yield
+# between cells) or a worker-thread bounded-batch model is required.
+if ! rg -q 'kMaxImportCellsPerSlice|kMaxImportSliceWallMs|StreamingImportJob' "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: streaming import must declare slice budgets / worker-job state to prevent CellDbIn liveness DoS (tos27 P0-2)" >&2
+    exit 1
+fi
+if ! rg -q 'continue_import|import_slice|import_worker' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: CellDbIn must expose a continuation entry point (continue_import/import_slice/import_worker) for sliced streaming import (tos27 P0-2)" >&2
+    exit 1
+fi
+
 echo "evm production hardening check passed"

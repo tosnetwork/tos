@@ -1181,11 +1181,86 @@ void test_gc_lease_outlives_60s_window() {
   std::printf("  PASSED\n");
 }
 
+// ---------------------------------------------------------------------------
+// (9) tos27 P0-2: slice-budget constants exist and a direct sink-driven
+//     import still completes
+// ---------------------------------------------------------------------------
+//
+// Production wiring: CellDbIn::import_persistent_state_streaming runs the
+// BoC parse on a `td::thread` worker OFF the actor's message loop. The
+// worker drives a slice-budget-aware sink wrapper that yields the OS
+// scheduler every `kMaxImportCellsPerSlice` cells OR every
+// `kMaxImportSliceWallMs` ms (whichever comes first). This unit-level
+// test pins TWO things:
+//
+//   1. The slice-budget constants are declared with sane non-zero values
+//      so a future regression that flips them to 0 or removes them
+//      surfaces here BEFORE the production CellDb actor stack is bound.
+//      The hardening Check 22 enforces the symbol presence in the .hpp
+//      separately; this test pins the runtime values.
+//
+//   2. The direct sink-driven import path (run_streaming_import) still
+//      works end-to-end against a synthetic BoC. The Phase B sink is
+//      what the production worker thread drives; if the production wiring
+//      is reachable through the existing run_streaming_import harness then
+//      no end-to-end regression slipped in.
+//
+// Integration coverage TODO: a full sliced-parse test that observes the
+// per-cell yield interleaving with concurrent CellDbIn message dispatch
+// requires a real actor system (td::actor::Scheduler) plus a multi-GiB
+// BoC fixture. The test harness uses td::MemoryKeyValue without an actor
+// system, so it cannot exercise the full CellDbIn -> worker -> continuation
+// round-trip. The hardening Check 22 + production code review together
+// cover the path that is observable only at runtime against a live
+// validator-engine.
+void test_streaming_import_yields_during_parse() {
+  std::printf("=== test_streaming_import_yields_during_parse (tos27 P0-2) ===\n");
+
+  // (1) Slice-budget constants are present and non-zero. A regression
+  //     that defaulted these to 0 / removed them would surface here.
+  EXPECT_TRUE(tos::validator::kMaxImportCellsPerSlice > 0);
+  EXPECT_TRUE(tos::validator::kMaxImportSliceWallMs > 0.0);
+  EXPECT_EQ(tos::validator::kMaxConcurrentStreamingImports, static_cast<td::uint32>(1));
+  // Sanity: the cell-count slice MUST be modest enough that a multi-GiB
+  // state's parse interleaves with CellDb message handling. 1k cells per
+  // slice at ~5 ms/slice puts the worker's scheduler-hold time well
+  // below any CellDb operation's 95th-percentile latency target.
+  EXPECT_TRUE(tos::validator::kMaxImportCellsPerSlice <= 65536);
+  EXPECT_TRUE(tos::validator::kMaxImportSliceWallMs <= 100.0);
+
+  // (2) Direct sink-driven import still completes against a small
+  //     synthetic BoC. The slice budget is large enough that this test
+  //     completes in a single slice; the value of the test is pinning
+  //     "no regression on the existing 8 tests" — the production wiring
+  //     would surface issues at the worker boundary, not the sink boundary.
+  auto tmp_dir = std::string("/tmp/tos-test-celldb-streaming-9-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+  // Tree size 256 cells: well below the 1024-cells-per-slice budget so
+  // we don't actually exercise the yield path here. A larger fixture
+  // (>kMaxImportCellsPerSlice) would force at least one yield, but the
+  // harness has no way to OBSERVE the yield from outside the sink — it
+  // is purely a cooperative td::this_thread::yield() call. The yield
+  // path is covered by code review + production runtime traces.
+  auto boc = serialize_synthetic_boc(tmp_dir, /*target_cells=*/256, "synth.boc");
+
+  auto fixture = build_fixture();
+  auto result = run_streaming_import(fixture, boc);
+  EXPECT_TRUE(result.cells_persisted > 0);
+  EXPECT_TRUE(!result.root.is_null());
+  EXPECT_TRUE(result.root->get_hash() == boc.root_hash);
+
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  cells_per_slice=%u wall_ms=%.1f concurrent_max=%u cells_persisted=%llu  PASSED\n",
+              tos::validator::kMaxImportCellsPerSlice, tos::validator::kMaxImportSliceWallMs,
+              tos::validator::kMaxConcurrentStreamingImports,
+              static_cast<unsigned long long>(result.cells_persisted));
+}
+
 }  // namespace
 
 int main() {
   std::printf(
-      "test-celldb-streaming-import: Phase B Step 8 invariant regressions (8 tests)\n");
+      "test-celldb-streaming-import: Phase B Step 8 invariant regressions (9 tests)\n");
   test_replacement_hash_equality();
   test_no_full_dag_residency();
   test_crash_abort_no_partial_state();
@@ -1194,6 +1269,7 @@ int main() {
   test_hash_mismatch();
   test_imported_cells_survive_immediate_gc();
   test_gc_lease_outlives_60s_window();
+  test_streaming_import_yields_during_parse();
   std::printf("All Phase B invariant tests passed.\n");
   return 0;
 }

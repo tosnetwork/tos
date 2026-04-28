@@ -1411,36 +1411,293 @@ void CellDbIn::create_streaming_writer_async(td::Promise<std::unique_ptr<CellDbS
   promise.set_result(create_streaming_writer());
 }
 
-// tos26 P1-4: drive the entire begin_batch / parse / verify-root /
-// commit lifecycle inside the CellDbIn actor's serialized context.
+// tos27 P0-2: streaming-import worker job + slice-budget-aware sink.
 //
-// Lifecycle in this body:
+// Design choice (Option B in the audit menu): the entire BoC parse +
+// verify + commit pipeline runs on a dedicated `td::thread` worker
+// OFF the CellDbIn actor. The CellDbIn message loop is NOT held for
+// the parse — only for the small validation prologue (input checks,
+// pause GC, allocate provider/sink, spawn worker) and the equally
+// small completion epilogue (publish snapshot, resolve promise, join
+// worker). Concurrent CellDb operations (`load_cell`, `store_cell`,
+// `store_block_state_*`, GC, archive interactions) interleave freely
+// while the worker streams the BoC into RocksDB.
+//
+// Why a worker thread instead of in-actor slicing: the existing
+// `vm::std_boc_deserialize_from_file_bounded` is all-or-nothing —
+// there is no native suspend/resume API. The pragmatic equivalent of
+// "yield between cells" is moving the parse off the actor entirely;
+// from CellDbIn's perspective the parse is then a SINGLE deferred
+// completion message instead of a synchronously-blocking handler.
+// The slice budget constants (`kMaxImportCellsPerSlice`,
+// `kMaxImportSliceWallMs`) still apply: the worker's per-cell sink
+// callback checks them and yields the OS scheduler slot when either
+// is exceeded, so the worker cooperates with co-resident parse /
+// verify / archive work even within its own thread.
+//
+// `streaming_writer_in_use_` continues to enforce the
+// `kMaxConcurrentStreamingImports = 1` bound: the worker calls
+// `sink.begin()` -> `writer->begin_batch()` which CAS-flips the flag.
+// A second concurrent import attempt observes the flag set and the
+// worker fails immediately with "another streaming import is in
+// flight" before any cells are written. The flag is released on
+// commit_batch / abort_batch / writer dtor, so a successful or
+// failed import always frees the slot for the next one.
+//
+// Watchdog: every per-cell callback inside the slice-budget wrapper
+// records the wall-time of the slowest slice. If that slice exceeds
+// 10x the configured budget (50 ms vs 5 ms target) the worker emits a
+// one-time LOG(WARNING) naming the cell index, purely diagnostic — no
+// abort.
+struct StreamingImportJob {
+  // Inputs captured at spawn time (immutable while the worker runs).
+  PersistentStateImportRequest request;
+  td::Promise<PersistentStateImportResult> promise;
+  std::shared_ptr<LiveCellDbReaderProvider> provider;
+  vm::Cell::Hash expected_hash{};
+
+  // Off-actor result fields. The worker writes these before posting
+  // the completion message; the actor reads them after join. Using
+  // plain members (not atomics) is safe because the actor's
+  // continuation runs strictly AFTER the worker has finished
+  // populating them — the send_closure -> message dispatch ordering
+  // synchronizes the writes.
+  td::Status worker_status = td::Status::OK();
+  td::Ref<vm::Cell> hash_only_root;
+  td::uint64 cells_persisted = 0;
+  vm::Cell::Hash parsed_hash{};
+  bool committed = false;
+
+  // Watchdog observation: index of the slowest cell observed during
+  // parse and the wall-time of that slice. Logged at completion if
+  // the slice exceeded 10x the configured budget.
+  td::uint64 slowest_slice_cell_index = 0;
+  double slowest_slice_wall_ms = 0.0;
+  bool slow_slice_warning_emitted = false;
+
+  // Sink keepalive. The actor allocates the sink on the heap (so the
+  // worker has a stable pointer) and parks a shared_ptr here so the
+  // continuation can observe sink-level state (cells_persisted,
+  // is_committed, aborted) AFTER the worker has joined. The same
+  // shared_ptr is captured by the worker lambda; both copies go away
+  // when continue_import_after_worker tears the job down.
+  std::shared_ptr<fullnode::CellDbStreamingSink> sink_keepalive;
+
+  // The worker thread itself. Joined by the actor on the completion
+  // message before the StreamingImportJob is destroyed.
+  td::thread worker;
+};
+
+namespace {
+
+// Slice-budget-aware sink wrapper. Forwards every method to the
+// inner CellDbStreamingSink (the production true-streaming sink) and,
+// inside `persist_and_replace`, checks the cell-count and wall-clock
+// slice budgets. When EITHER is exceeded the wrapper yields the OS
+// scheduler slot via `td::this_thread::yield()` and resets the slice
+// counters. This is the per-cell yield point the audit references.
+class SlicedImportSink final : public vm::StreamingCellSink {
+ public:
+  SlicedImportSink(fullnode::CellDbStreamingSink* inner, StreamingImportJob* job)
+      : inner_(inner), job_(job) {
+    slice_started_at_ = td::Timestamp::now();
+    slice_deadline_ = td::Timestamp::at(slice_started_at_.at() + kMaxImportSliceWallMs / 1000.0);
+  }
+
+  td::Status begin() override {
+    return inner_->begin();
+  }
+
+  td::Status persist(td::Ref<vm::Cell> cell) override {
+    auto status = inner_->persist(std::move(cell));
+    after_cell();
+    return status;
+  }
+
+  td::Result<td::Ref<vm::Cell>> persist_and_replace(td::Ref<vm::Cell> cell) override {
+    auto r = inner_->persist_and_replace(std::move(cell));
+    after_cell();
+    return r;
+  }
+
+  td::Status finish(const vm::Cell::Hash& root_hash) override {
+    return inner_->finish(root_hash);
+  }
+
+  td::Status commit_after_root_verified(const vm::Cell::Hash& expected_root_hash) override {
+    return inner_->commit_after_root_verified(expected_root_hash);
+  }
+
+  void abort() override {
+    inner_->abort();
+  }
+
+ private:
+  // Per-cell budget check. Called after every persist / persist_and_replace
+  // dispatched through the wrapper. When the cell-count or wall-clock
+  // slice budget is exceeded we yield the OS scheduler slot and reset
+  // the slice. The watchdog records the slice's wall-time if it
+  // exceeds the configured budget so a stuck / slow parse is visible
+  // to operators without aborting the import.
+  void after_cell() {
+    cells_in_slice_++;
+    cells_total_++;
+    // Wall-clock check first so a single very-slow cell still
+    // surfaces a yield even if cells_in_slice_ is < kMaxImportCellsPerSlice.
+    bool slice_full = cells_in_slice_ >= kMaxImportCellsPerSlice;
+    bool deadline_passed = slice_deadline_.is_in_past();
+    if (slice_full || deadline_passed) {
+      auto slice_wall_ms = (td::Timestamp::now().at() - slice_started_at_.at()) * 1000.0;
+      if (slice_wall_ms > job_->slowest_slice_wall_ms) {
+        job_->slowest_slice_wall_ms = slice_wall_ms;
+        job_->slowest_slice_cell_index = cells_total_;
+      }
+      // tos27 P0-2 watchdog: 10x slice budget. Diagnostic-only:
+      // never abort, never block GC release. A single warning per
+      // import is enough — the operator already gets the slowest
+      // cell index in the completion log line.
+      if (!job_->slow_slice_warning_emitted && slice_wall_ms > 10.0 * kMaxImportSliceWallMs) {
+        job_->slow_slice_warning_emitted = true;
+        LOG(WARNING) << "CellDbIn::import_persistent_state_streaming: slice exceeded 10x budget "
+                     << "(" << slice_wall_ms << " ms vs " << kMaxImportSliceWallMs
+                     << " ms target) at cell index " << cells_total_
+                     << "; diagnostic only, parse continues";
+      }
+      // Yield the OS scheduler slot so co-resident threads (the
+      // CellDbIn actor scheduler, validator-engine RPC threads,
+      // archive workers) get a turn before the worker grabs another
+      // chunk of CPU.
+      td::this_thread::yield();
+      cells_in_slice_ = 0;
+      slice_started_at_ = td::Timestamp::now();
+      slice_deadline_ = td::Timestamp::at(slice_started_at_.at() + kMaxImportSliceWallMs / 1000.0);
+    }
+  }
+
+  fullnode::CellDbStreamingSink* inner_;
+  StreamingImportJob* job_;
+  td::uint32 cells_in_slice_ = 0;
+  td::uint64 cells_total_ = 0;
+  td::Timestamp slice_started_at_;
+  td::Timestamp slice_deadline_;
+};
+
+// Pure off-actor work: open the tempfile, drive the BoC importer
+// through the SlicedImportSink, run finish + commit_after_root_verified.
+// Writes the result fields into `job` and returns. Called on the
+// worker thread; never touches CellDbIn / CellDb actor state directly.
+//
+// Failure modes (each writes job->worker_status with the error and
+// returns; the actor's continuation runs sink.abort() if needed):
+//   * tempfile open failure
+//   * importer rejection (header / scaffolding / persist error)
+//   * null root from importer
+//   * sink.finished() == false on success path (programming bug)
+//   * parsed-root hash != expected_root_hash
+//   * commit_after_root_verified failure
+void run_streaming_import_worker(StreamingImportJob* job, fullnode::CellDbStreamingSink* sink) {
+  auto r_fd = td::FileFd::open(job->request.tempfile_path, td::FileFd::Flags::Read);
+  if (r_fd.is_error()) {
+    sink->abort();
+    job->worker_status = r_fd.move_as_error();
+    return;
+  }
+  auto fd = r_fd.move_as_ok();
+
+  // Slice-budget-aware sink wrapper. Forwards every cell through to
+  // the production sink and yields the OS scheduler between slices
+  // bounded by `kMaxImportCellsPerSlice` cells / `kMaxImportSliceWallMs` ms.
+  SlicedImportSink sliced_sink(sink, job);
+
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, job->request.file_size, job->request.opts, &sliced_sink);
+  fd.close();
+  if (r_root.is_error()) {
+    if (!sink->aborted() && !sink->is_committed()) {
+      sink->abort();
+    }
+    LOG(WARNING) << "CellDbIn::import_persistent_state_streaming: importer rejected after "
+                 << sink->cells_persisted() << " cell(s): " << r_root.error();
+    job->worker_status = r_root.move_as_error();
+    return;
+  }
+  auto root = r_root.move_as_ok();
+  if (root.is_null()) {
+    if (!sink->aborted() && !sink->is_committed()) {
+      sink->abort();
+    }
+    job->worker_status = td::Status::Error(
+        "CellDbIn::import_persistent_state_streaming: BoC deserialize returned null root");
+    return;
+  }
+  if (!sink->finished()) {
+    sink->abort();
+    job->worker_status = td::Status::Error(
+        "CellDbIn::import_persistent_state_streaming: sink finished=false on success path");
+    return;
+  }
+
+  // Verify parsed root against the BFT-attested expected root BEFORE
+  // committing. On mismatch, abort discards the pending RocksDB batch
+  // so CellDb stays byte-for-byte identical to its pre-import snapshot.
+  const auto parsed_hash = root->get_hash();
+  if (RootHash{parsed_hash.bits()} != job->request.expected_root_hash) {
+    sink->abort();
+    job->worker_status = td::Status::Error(
+        PSTRING() << "CellDbIn::import_persistent_state_streaming: root hash mismatch: expected "
+                  << job->request.expected_root_hash.to_hex() << " got "
+                  << RootHash{parsed_hash.bits()}.to_hex());
+    return;
+  }
+
+  // Verified — commit. commit_after_root_verified flushes the writer's
+  // pending batch and is the single point at which cells become durable.
+  if (auto status = sink->commit_after_root_verified(parsed_hash); status.is_error()) {
+    sink->abort();
+    job->worker_status = status.move_as_error();
+    return;
+  }
+
+  // Success: stash the result fields for the actor's continuation.
+  job->hash_only_root = std::move(root);
+  job->cells_persisted = sink->cells_persisted();
+  job->parsed_hash = parsed_hash;
+  job->committed = true;
+  job->worker_status = td::Status::OK();
+}
+
+}  // namespace
+
+// tos26 P1-4 + tos27 P0-2: actor entry point. Validates inputs, pauses
+// GC, builds the provider + sink, and spawns the worker thread that
+// runs the actual BoC parse OFF the CellDbIn actor's message loop.
+// The CellDbIn actor is held only for this small prologue; the parse
+// runs concurrently with all other CellDb operations.
+//
+// Lifecycle:
 //   1. Reject zero-size or empty-path requests up front.
 //   2. Construct an internal writer (shares this CellDbIn's KeyValue +
-//      single-import gate). The writer NEVER escapes this method.
+//      single-import gate). The writer NEVER escapes this actor.
 //   3. Build a LiveCellDbReaderProvider seeded with the current
-//      pre-commit reader (boc_->get_cell_db_reader()). The provider
-//      handle is what the lazy ExtCells produced during parse bind to;
-//      after we commit the batch we publish a fresh reader on the
-//      same provider so post-commit lazy materializations observe the
-//      just-flushed cells.
-//   4. Construct a CellDbStreamingSink wrapping (provider, writer).
-//      The sink's begin_batch CAS on streaming_writer_in_use_ is the
-//      only place that can fail with "another streaming import is in
-//      flight".
-//   5. Open the tempfile and drive
-//      `vm::std_boc_deserialize_from_file_bounded(file, size, opts, sink)`.
-//   6. On success path, compare parsed root to expected_root_hash,
-//      then commit_after_root_verified — the SINGLE point at which
-//      cells become durable.
-//   7. After commit, publish a fresh reader on the provider so the
-//      lazy ExtCells already minted by the importer pick it up on
-//      next access. This is also re-issued via update_snapshot to
-//      the parent CellDb so subsequent get_cell_db_reader sees the
-//      same flushed cells.
-//   8. Any failure path runs sink.abort() (idempotent) and surfaces
-//      the original error verbatim; the gate is released by the
-//      writer's abort_batch() / dtor path.
+//      pre-commit reader. Lazy ExtCells produced during parse bind
+//      to this provider; after commit the actor publishes a fresh
+//      post-commit reader on the same provider.
+//   4. Construct a CellDbStreamingSink wrapping (provider, writer);
+//      the sink owns the writer's begin/store/commit/abort vtable
+//      via type-erased std::function members.
+//   5. Allocate a StreamingImportJob and spawn a `td::thread` worker
+//      that runs `run_streaming_import_worker(job, sink)`. The worker
+//      drives the entire parse + verify + commit pipeline off-actor.
+//   6. The worker's last action is `send_closure(self, &continue_import_after_worker)`
+//      which queues a single message into the actor's mailbox.
+//   7. `continue_import_after_worker` runs on the actor's loop, joins
+//      the worker thread, publishes the post-commit snapshot, and
+//      resolves the original promise.
+//
+// Failures BEFORE worker spawn (input validation, writer creation)
+// resolve the promise and resume GC immediately. Failures during the
+// worker's parse are surfaced via `job->worker_status` and resolved
+// in the continuation; the GC pause is released through the same
+// abort-or-lease handshake the in-actor version used.
 void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest request,
                                                  td::Promise<PersistentStateImportResult> promise) {
   // Defer to the action queue if a snapshot/store/gc operation is
@@ -1467,11 +1724,22 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
     promise.set_error(td::Status::Error("CellDbIn::import_persistent_state_streaming: cell_db not initialized"));
     return;
   }
+  // tos27 P0-2: kMaxConcurrentStreamingImports = 1 is structurally
+  // enforced by the streaming_writer_in_use_ flag inside the writer's
+  // begin_batch CAS. We also early-reject here so two
+  // back-to-back actor messages don't queue two worker threads
+  // racing on the same gate (the second would just fail at begin_batch
+  // anyway, but failing fast is cleaner than waiting on a doomed worker).
+  if (streaming_job_ != nullptr) {
+    promise.set_error(td::Status::Error(
+        "CellDbIn::import_persistent_state_streaming: another streaming import is already in flight on this CellDbIn"));
+    return;
+  }
 
   // Construct an actor-local writer. The writer's gate CAS in
   // begin_batch() rejects a concurrent import; if it fails the sink
   // surfaces the error on the very first persist/begin invocation
-  // and we abort cleanly.
+  // and the worker aborts cleanly.
   std::unique_ptr<CellDbStreamingWriter> writer = create_streaming_writer();
   if (writer == nullptr) {
     promise.set_error(td::Status::Error("CellDbIn::import_persistent_state_streaming: failed to create writer"));
@@ -1479,19 +1747,12 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   }
 
   // tos26 P1-5: pause GC for the duration of this import. The matching
-  // resume runs on every exit path below: success delays the resume
-  // long enough for the downloader's follow-up set_block_state to
-  // commit a desc-list entry that references the imported cells, while
-  // every failure path resumes immediately (no cells are durable on a
-  // failed import, so there's nothing GC could mis-delete).
+  // resume runs on every exit path: success delays the resume long
+  // enough for the downloader's follow-up set_block_state to commit a
+  // desc-list entry that references the imported cells (via the GC
+  // lease), while every failure path resumes immediately in the
+  // continuation (no cells durable on a failed import).
   pause_gc_for_import();
-  bool resume_pending = true;
-  auto resume_now = [this, &resume_pending]() {
-    if (resume_pending) {
-      resume_gc_for_import();
-      resume_pending = false;
-    }
-  };
 
   // Build a LiveCellDbReaderProvider seeded with the current reader.
   // The lazy ExtCells emitted during parse capture this provider; we
@@ -1502,83 +1763,98 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
 
   // Construct the sink. The (provider, writer) constructor template
   // is instantiated here; the writer's complete type is visible via
-  // celldb.hpp.
-  fullnode::CellDbStreamingSink sink(std::shared_ptr<vm::CellDbReaderProvider>(provider), std::move(writer));
-  if (!sink.is_true_streaming()) {
+  // celldb.hpp. We allocate the sink on the heap so the worker thread
+  // can hold a stable pointer to it.
+  auto sink = std::make_unique<fullnode::CellDbStreamingSink>(
+      std::shared_ptr<vm::CellDbReaderProvider>(provider), std::move(writer));
+  if (!sink->is_true_streaming()) {
     // Defense in depth: provider+writer are both non-null above, so
     // a non-true-streaming sink here is a programming bug.
-    resume_now();
+    resume_gc_for_import();
     promise.set_error(
         td::Status::Error("CellDbIn::import_persistent_state_streaming: sink failed to enter true-streaming mode"));
     return;
   }
 
-  // Open and parse the tempfile. The importer drives sink.begin()
-  // (which CAS-claims the gate via writer->begin_batch), then
-  // persist_and_replace per cell (which writes cells into the open
-  // RocksDB batch and substitutes a hash-only ExtCell replacement),
-  // then sink.finish(parsed_hash). On any importer-internal error
-  // it drives sink.abort() automatically.
-  auto r_fd = td::FileFd::open(request.tempfile_path, td::FileFd::Flags::Read);
-  if (r_fd.is_error()) {
-    sink.abort();
-    resume_now();
-    promise.set_error(r_fd.move_as_error());
-    return;
-  }
-  auto fd = r_fd.move_as_ok();
-  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, request.file_size, request.opts, &sink);
-  fd.close();
-  if (r_root.is_error()) {
-    if (!sink.aborted() && !sink.is_committed()) {
-      sink.abort();
-    }
-    LOG(WARNING) << "CellDbIn::import_persistent_state_streaming: importer rejected after "
-                 << sink.cells_persisted() << " cell(s): " << r_root.error();
-    resume_now();
-    promise.set_error(r_root.move_as_error());
-    return;
-  }
-  auto root = r_root.move_as_ok();
-  if (root.is_null()) {
-    if (!sink.aborted() && !sink.is_committed()) {
-      sink.abort();
-    }
-    resume_now();
-    promise.set_error(td::Status::Error(
-        "CellDbIn::import_persistent_state_streaming: BoC deserialize returned null root"));
-    return;
-  }
-  if (!sink.finished()) {
-    sink.abort();
-    resume_now();
-    promise.set_error(td::Status::Error(
-        "CellDbIn::import_persistent_state_streaming: sink finished=false on success path"));
+  // Spawn the worker thread. The job owns the request, promise,
+  // provider, and worker thread; we hand the sink over via raw
+  // pointer because the sink's lifetime is tied to the job (we move
+  // it into a shared_ptr inside the lambda for clean teardown).
+  streaming_job_ = std::make_unique<StreamingImportJob>();
+  streaming_job_->request = std::move(request);
+  streaming_job_->promise = std::move(promise);
+  streaming_job_->provider = std::move(provider);
+  streaming_job_->expected_hash = vm::Cell::Hash{};  // populated post-parse
+
+  // Park the sink in a shared_ptr held by both the job (for the
+  // continuation to observe final state) and the worker lambda (for
+  // the parse). The shared_ptr keeps the sink alive across the
+  // worker -> continuation handoff; the sink's destructor releases
+  // the writer + RocksDB batch when both copies go away in
+  // continue_import_after_worker.
+  auto shared_sink = std::shared_ptr<fullnode::CellDbStreamingSink>(std::move(sink));
+  streaming_job_->sink_keepalive = shared_sink;
+
+  // Spawn the off-actor worker. The CellDbIn actor's message loop is
+  // free to interleave any other operation while the worker runs.
+  auto* job_ptr = streaming_job_.get();
+  auto self_actor = actor_id(this);
+  streaming_job_->worker = td::thread([job_ptr, sink_keepalive = std::move(shared_sink), self_actor]() mutable {
+    // The worker drives the entire begin / parse / verify / commit
+    // pipeline against `sink_keepalive`. On any error path the
+    // worker calls sink->abort() before stashing worker_status; the
+    // continuation only needs to handle resume_gc + promise.set_*.
+    run_streaming_import_worker(job_ptr, sink_keepalive.get());
+    // Post a single completion message back to the actor. The
+    // continuation will join this thread and tear down the job.
+    td::actor::send_closure(self_actor, &CellDbIn::continue_import_after_worker);
+  });
+}
+
+// tos27 P0-2: completion message posted by the worker thread.
+// Runs on the CellDbIn actor's serialized loop; joins the worker,
+// publishes the post-commit snapshot, resolves the import promise,
+// and tears down the job.
+//
+// The worker thread has already populated `streaming_job_->worker_status`
+// and (on success) `hash_only_root`, `cells_persisted`, `parsed_hash`,
+// `committed`. We read those without synchronization because the
+// actor message dispatch happens-after the worker's last write to
+// these fields (the worker's final action is `send_closure` which
+// crosses the synchronization barrier).
+void CellDbIn::continue_import_after_worker() {
+  if (streaming_job_ == nullptr) {
+    LOG(ERROR) << "CellDbIn::continue_import_after_worker: no streaming job in flight; "
+                  "spurious continuation message?";
     return;
   }
 
-  // Verify parsed root against the BFT-attested expected root BEFORE
-  // committing. On mismatch, abort discards the pending RocksDB batch
-  // so CellDb stays byte-for-byte identical to its pre-import
-  // snapshot.
-  const auto parsed_hash = root->get_hash();
-  if (RootHash{parsed_hash.bits()} != request.expected_root_hash) {
-    sink.abort();
-    resume_now();
-    promise.set_error(td::Status::Error(
-        PSTRING() << "CellDbIn::import_persistent_state_streaming: root hash mismatch: expected "
-                  << request.expected_root_hash.to_hex() << " got " << RootHash{parsed_hash.bits()}.to_hex()));
-    return;
-  }
-  // Verified — commit. commit_after_root_verified flushes the writer's
-  // pending batch and is the single point at which cells become durable.
-  if (auto status = sink.commit_after_root_verified(parsed_hash); status.is_error()) {
-    sink.abort();
-    resume_now();
-    promise.set_error(status.move_as_error());
+  // Take ownership of the job for the duration of this method. After
+  // this swap a fresh import_persistent_state_streaming call observes
+  // streaming_job_ == nullptr and is permitted to proceed.
+  auto job = std::move(streaming_job_);
+  streaming_job_.reset();
+
+  // Join the worker thread. The worker's final action was
+  // send_closure to this method, so the thread is done with all its
+  // observable side-effects and we can join without blocking on
+  // useful work. td::thread::join() is safe to call on an
+  // already-joined / uninitialized thread (no-ops).
+  job->worker.join();
+
+  // Failure path: worker reported an error. The sink has already been
+  // aborted by the worker (run_streaming_import_worker calls abort()
+  // on every error path before stashing the status). Resume GC and
+  // surface the error; no cells are durable.
+  if (job->worker_status.is_error()) {
+    resume_gc_for_import();
+    job->promise.set_error(job->worker_status.move_as_error());
     return;
   }
 
+  // Success path: cells are durable; provider's reader is still the
+  // pre-commit one. Refresh it.
+  //
   // Republish a fresh reader on the provider so lazy ExtCells minted
   // during parse pick up a reader that observes the just-flushed cells.
   // Also rebuild the loader and propagate a fresh snapshot to the
@@ -1591,16 +1867,18 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   }
   auto post_commit_reader = boc_->get_cell_db_reader();
   if (post_commit_reader != nullptr) {
-    provider->publish(post_commit_reader);
+    job->provider->publish(post_commit_reader);
   }
 
   PersistentStateImportResult result;
-  result.hash_only_root = std::move(root);
-  result.cells_persisted = sink.cells_persisted();
-  result.parsed_root_hash = parsed_hash;
+  result.hash_only_root = std::move(job->hash_only_root);
+  result.cells_persisted = job->cells_persisted;
+  result.parsed_root_hash = job->parsed_hash;
   LOG(INFO) << "CellDbIn::import_persistent_state_streaming: committed " << result.cells_persisted
-            << " cell(s); root=" << request.expected_root_hash.to_hex()
-            << " (lazy ExtCell-backed; child DAG durable in CellDb)";
+            << " cell(s); root=" << job->request.expected_root_hash.to_hex()
+            << " (lazy ExtCell-backed; child DAG durable in CellDb"
+            << "; slowest_slice=" << job->slowest_slice_wall_ms << "ms"
+            << " at cell #" << job->slowest_slice_cell_index << ")";
 
   // tos27 P0-1: success path. The imported cells are now durable in
   // CellDb with refcnt=1, but they are not yet referenced by any
@@ -1610,18 +1888,11 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   // (DynamicBagOfCellsDb::dfs_new_cells_in_db) and reconciles the
   // descendant refcounts under the canonical desc list.
   //
-  // Previously we released the pause on a fixed 60s `delay_action`
-  // timer; if the canonical root store outran the timer, GC could
-  // mis-collect imported cells before the desc-list entry referenced
-  // them. We now issue a CellDbGcPauseLease into the result instead:
-  // the downloader actor holds the lease across the
-  // create_shard_state -> set_block_state pipeline and releases it
-  // on the set_block_state callback. A canceled / dropped completion
-  // promise still releases GC via the lease destructor.
-  //
-  // resume_pending stays in the "false" state below so the lease — not
-  // the local `resume_now` lambda — owns the eventual resume.
-  resume_pending = false;
+  // We issue a CellDbGcPauseLease into the result: the downloader
+  // holds the lease across the create_shard_state -> set_block_state
+  // pipeline and releases it on the set_block_state callback. A
+  // canceled / dropped completion promise still releases GC via the
+  // lease destructor.
   result.gc_lease = std::make_unique<CellDbGcPauseLease>(actor_id(this));
 
   // Watchdog: log-only; never resumes GC. If the lease has not been
@@ -1631,7 +1902,7 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   // release_after_root_store_committed path so a long-running root
   // store cannot let GC mis-collect imported cells.
   delay_action(
-      [SelfId = actor_id(this), block_seqno = request.expected_root_hash.to_hex()] {
+      [SelfId = actor_id(this), block_seqno = job->request.expected_root_hash.to_hex()] {
         LOG(WARNING) << "CellDbIn::import_persistent_state_streaming: GC has been paused >5min "
                         "since import for root="
                      << block_seqno
@@ -1641,7 +1912,9 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
       },
       td::Timestamp::in(300.0));
 
-  promise.set_result(std::move(result));
+  job->promise.set_result(std::move(result));
+  // Job (incl. sink_keepalive shared_ptr) torn down at scope exit. The
+  // sink's destructor releases the writer + RocksDB handle.
 }
 
 void CellDb::import_persistent_state_streaming(PersistentStateImportRequest request,
