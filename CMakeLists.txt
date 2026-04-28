@@ -788,6 +788,16 @@ add_executable(test-download-state-budget test/test-download-state-budget.cpp)
 # swap with valid BoC envelope).
 target_link_libraries(test-download-state-budget PRIVATE validator-common full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+# Phase B Step 8 — five invariant regression tests for the true
+# CellDb-backed streaming importer (replacement-hash equality, no
+# full-DAG residency, crash/abort no partial state, lazy load, hash
+# mismatch). Links the same surfaces test-download-state-budget pulls
+# (validator-common drags in the streaming sink + parse helper;
+# tos_db drags in MemoryKeyValue + CellStorer; tos_crypto carries
+# CellDbExtCell + DynamicBagOfCellsDb).
+add_executable(test-celldb-streaming-import test/test-celldb-streaming-import.cpp)
+target_link_libraries(test-celldb-streaming-import PRIVATE validator-common full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
+
 add_executable(test-http test/test-http.cpp)
 target_link_libraries(test-http PRIVATE toshttp)
 
@@ -901,6 +911,7 @@ tos_test(test-rldp)
 tos_test(test-rldp2)
 tos_test(test-validator-session-state)
 tos_test(test-download-state-budget)
+tos_test(test-celldb-streaming-import)
 tos_test(test-quorum)
 tos_test(test-catchain)
 tos_test(test-emulator)
