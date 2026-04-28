@@ -533,6 +533,17 @@ class CellDbIn : public CellDbBase {
     size_t store_cell_bulk_queries_ = 0;
     size_t store_cell_bulk_total_blocks_ = 0;
     PercentileStats gc_cell_time_;
+    td::uint64 streaming_import_started_ = 0;
+    td::uint64 streaming_import_committed_ = 0;
+    td::uint64 streaming_import_failed_ = 0;
+    td::uint64 streaming_import_cells_committed_ = 0;
+    td::uint64 streaming_import_actor_batches_ = 0;
+    td::uint64 streaming_import_rollback_jobs_started_ = 0;
+    td::uint64 streaming_import_rollback_jobs_finished_ = 0;
+    td::uint64 streaming_import_rollback_cells_processed_ = 0;
+    td::uint64 streaming_import_rollback_cells_erased_ = 0;
+    td::uint64 streaming_import_startup_rollback_manifests_ = 0;
+    td::uint64 streaming_import_startup_rollback_cells_erased_ = 0;
     td::Timestamp stats_start_time_ = td::Timestamp::now();
     std::optional<double> in_memory_load_time_;
     std::optional<vm::DynamicBagOfCellsDb::Stats> boc_stats_;

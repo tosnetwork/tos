@@ -804,6 +804,9 @@ std::vector<std::pair<std::string, std::string>> CellDbIn::prepare_stats() {
   stats.emplace_back("action_queue_size", PSTRING() << "total : " << action_queue_.size()
                                                     << " load : " << action_queue_cnt_load_
                                                     << " store : " << action_queue_cnt_store_);
+  stats.emplace_back("streaming_import.inflight", PSTRING() << (streaming_job_ != nullptr));
+  stats.emplace_back("streaming_import.rollback_queue_size", PSTRING() << streaming_rollback_jobs_.size());
+  stats.emplace_back("streaming_import.gc_pause_count", PSTRING() << gc_pause_count_);
 
   return stats;
   // do not clear statistics, it is needed for flush_db_stats
@@ -1301,6 +1304,20 @@ std::vector<std::pair<std::string, std::string>> CellDbIn::CellDbStatistics::pre
     stats.emplace_back("store_cell.bulk.total_blocks", PSTRING() << store_cell_bulk_total_blocks_);
   }
   stats.emplace_back("gc_cell.micros", PSTRING() << gc_cell_time_.to_string());
+  stats.emplace_back("streaming_import.started", PSTRING() << streaming_import_started_);
+  stats.emplace_back("streaming_import.committed", PSTRING() << streaming_import_committed_);
+  stats.emplace_back("streaming_import.failed", PSTRING() << streaming_import_failed_);
+  stats.emplace_back("streaming_import.cells_committed", PSTRING() << streaming_import_cells_committed_);
+  stats.emplace_back("streaming_import.actor_batches", PSTRING() << streaming_import_actor_batches_);
+  stats.emplace_back("streaming_import.rollback.jobs_started", PSTRING() << streaming_import_rollback_jobs_started_);
+  stats.emplace_back("streaming_import.rollback.jobs_finished", PSTRING() << streaming_import_rollback_jobs_finished_);
+  stats.emplace_back("streaming_import.rollback.cells_processed",
+                     PSTRING() << streaming_import_rollback_cells_processed_);
+  stats.emplace_back("streaming_import.rollback.cells_erased", PSTRING() << streaming_import_rollback_cells_erased_);
+  stats.emplace_back("streaming_import.startup_rollback.manifests",
+                     PSTRING() << streaming_import_startup_rollback_manifests_);
+  stats.emplace_back("streaming_import.startup_rollback.cells_erased",
+                     PSTRING() << streaming_import_startup_rollback_cells_erased_);
   stats.emplace_back("total_time.micros", PSTRING() << (td::Timestamp::now().at() - stats_start_time_.at()) * 1e6);
   stats.emplace_back("in_memory", PSTRING() << bool(in_memory_load_time_));
   if (in_memory_load_time_) {
@@ -2176,6 +2193,10 @@ td::Status CellDbIn::rollback_streaming_import_manifest_sync(std::string rollbac
 
   reader.close();
   TRY_STATUS(td::unlink(rollback_manifest_path));
+  cell_db_statistics_.streaming_import_startup_rollback_manifests_++;
+  cell_db_statistics_.streaming_import_rollback_cells_processed_ += cells_processed;
+  cell_db_statistics_.streaming_import_rollback_cells_erased_ += cells_erased;
+  cell_db_statistics_.streaming_import_startup_rollback_cells_erased_ += cells_erased;
   LOG(WARNING) << "CellDbIn replayed streaming import rollback manifest " << rollback_manifest_path
                << " reason=\"" << reason << "\""
                << " processed=" << cells_processed
@@ -2325,6 +2346,7 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   // lease), while every failure path resumes immediately in the
   // continuation (no cells durable on a failed import).
   pause_gc_for_import();
+  cell_db_statistics_.streaming_import_started_++;
 
   // Build a LiveCellDbReaderProvider seeded with the current reader.
   // The lazy ExtCells emitted during parse capture this provider; we
@@ -2586,6 +2608,9 @@ void CellDbIn::finish_streaming_import_after_actor_commit() {
   result.hash_only_root = std::move(job->hash_only_root);
   result.cells_persisted = job->cells_persisted;
   result.parsed_root_hash = job->parsed_hash;
+  cell_db_statistics_.streaming_import_committed_++;
+  cell_db_statistics_.streaming_import_cells_committed_ += job->spool_cells_committed;
+  cell_db_statistics_.streaming_import_actor_batches_ += job->actor_write_batches;
   LOG(INFO) << "CellDbIn::import_persistent_state_streaming: committed " << result.cells_persisted
             << " cell(s); root=" << job->request.expected_root_hash.to_hex()
             << " (lazy ExtCell-backed; child DAG durable in CellDb"
@@ -2655,6 +2680,7 @@ void CellDbIn::fail_streaming_import(td::Status error) {
   }
   auto job = std::move(streaming_job_);
   streaming_job_.reset();
+  cell_db_statistics_.streaming_import_failed_++;
   if (job->provider != nullptr) {
     job->provider->invalidate();
   }
@@ -2677,6 +2703,7 @@ void CellDbIn::fail_streaming_import(td::Status error) {
     rollback->resolve_import_promise = true;
     rollback->promise = std::move(job->promise);
     rollback->promise_error = std::move(error);
+    cell_db_statistics_.streaming_import_rollback_jobs_started_++;
     streaming_rollback_jobs_.push_back(std::move(rollback));
     drain_streaming_import_rollback_batch();
     return;
@@ -2714,6 +2741,7 @@ void CellDbIn::rollback_streaming_import_manifest(std::string rollback_manifest_
   rollback->cells = rollback_cells;
   rollback->bytes = rollback_bytes;
   rollback->resume_gc_after = resume_gc_after;
+  cell_db_statistics_.streaming_import_rollback_jobs_started_++;
   streaming_rollback_jobs_.push_back(std::move(rollback));
   drain_streaming_import_rollback_batch();
 }
@@ -2863,6 +2891,9 @@ void CellDbIn::drain_streaming_import_rollback_batch() {
   auto unlink_status = td::unlink(finished->path);
   LOG_IF(WARNING, unlink_status.is_error())
       << "failed to unlink streaming-import rollback manifest " << finished->path << ": " << unlink_status;
+  cell_db_statistics_.streaming_import_rollback_jobs_finished_++;
+  cell_db_statistics_.streaming_import_rollback_cells_processed_ += finished->cells_processed;
+  cell_db_statistics_.streaming_import_rollback_cells_erased_ += finished->cells_erased;
   LOG(WARNING) << "CellDbIn rolled back streaming import manifest " << finished->path
                << " reason=\"" << finished->reason << "\""
                << " processed=" << finished->cells_processed << "/" << finished->cells

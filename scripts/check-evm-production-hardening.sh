@@ -1177,6 +1177,22 @@ if ! rg -q '\.celldb-rollback\.' "$root/validator/state-download-buffer.cpp" "$r
     echo "evm hardening failed: persistent-state tempfile cleanup must preserve CellDb rollback manifests for startup replay (tos31 replay/rollback)" >&2
     exit 1
 fi
+if ! rg -q 'TOS_RUN_16GIB_CATCHUP' "$root/test/test-download-state-budget.cpp" "$root/scripts/run-tos31-state-sync-verification.sh"; then
+    echo "evm hardening failed: tos31 verification must expose an opt-in real 16 GiB persistent-state catch-up run" >&2
+    exit 1
+fi
+if ! rg -q 'streaming_import\.startup_rollback\.manifests|streaming_import\.gc_pause_count' "$root/validator/db/celldb.cpp" "$root/docs/ops/tos31-tos32-validation.md"; then
+    echo "evm hardening failed: tos31/tos32 validation must expose CellDb streaming import replay/GC stats for alerting" >&2
+    exit 1
+fi
+if [ ! -x "$root/scripts/run-tos31-state-sync-verification.sh" ] || [ ! -x "$root/scripts/run-tos32-rc-validation.sh" ]; then
+    echo "evm hardening failed: tos31/tos32 verification driver scripts must exist and be executable" >&2
+    exit 1
+fi
+if ! rg -q 'Crash / Replay Matrix|Emergency Rollback / Upgrade Plan|Audit Packet' "$root/docs/ops/tos31-tos32-validation.md"; then
+    echo "evm hardening failed: tos31/tos32 validation runbook must include crash matrix, rollback plan, and audit packet" >&2
+    exit 1
+fi
 if ! rg -q 'streaming_rollback_jobs_\.empty\(\)' "$root/validator/db/celldb.cpp"; then
     echo "evm hardening failed: new streaming imports must wait for pending rollback jobs (tos30 fail-closed)" >&2
     exit 1

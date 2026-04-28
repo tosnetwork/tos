@@ -1161,7 +1161,8 @@ void test_link_isolation_helper() {
 // Reviewer-mandated large-scale + adversarial coverage for the persistent
 // state catch-up path. These tests pin the H-02 invariants under realistic
 // state sizes (up to 1 GiB by default; 2 GiB optionally under
-// TOS_RUN_2GIB_FUZZ=1) and against the adversarial input categories the
+// TOS_RUN_2GIB_FUZZ=1, and the full 16 GiB cap optionally under
+// TOS_RUN_16GIB_CATCHUP=1) and against the adversarial input categories the
 // audit explicitly enumerated:
 //
 //   * download interruption mid-stream releases budget + unlinks tempfile
@@ -1258,7 +1259,7 @@ std::string make_large_pseudorandom_tempfile(const std::string &dir, td::uint64 
 //   2. tempfile is unlinked on drop
 //   3. download reservation is released back to the global budget
 //
-// Used for the 1 GiB and (optional) 2 GiB regressions.
+// Used for the 1 GiB and optional 2 GiB / 16 GiB regressions.
 void run_h02_ondisk_catchup(const char *label, td::uint64 state_bytes) {
   std::printf("=== %s (state_bytes=%llu MiB) ===\n", label,
               static_cast<unsigned long long>(state_bytes / kMiB));
@@ -1343,7 +1344,8 @@ void test_h02_1gib_ondisk_catchup_streaming() {
   // budget (2 GiB exercises the SAME mmap + budget code path on bigger
   // input — the 16 GiB per-state cap means 1 GiB is purely a runtime
   // optimization, not a coverage gap). 2 GiB is gated behind
-  // TOS_RUN_2GIB_FUZZ=1 below.
+  // TOS_RUN_2GIB_FUZZ=1 below; the full 16 GiB cap run is separately
+  // gated behind TOS_RUN_16GIB_CATCHUP=1 for RC validation.
   SLOW_TEST_GUARD("test_h02_1gib_ondisk_catchup_streaming");
   run_h02_ondisk_catchup("test_h02_1gib_ondisk_catchup_streaming", 1ULL * kGiB);
 }
@@ -1360,6 +1362,20 @@ void test_h02_2gib_optional_under_env() {
     return;
   }
   run_h02_ondisk_catchup("test_h02_2gib_optional_under_env", 2ULL * kGiB);
+}
+
+void test_h02_16gib_optional_under_env() {
+  // Skipped unless TOS_RUN_16GIB_CATCHUP=1. This is the release-candidate
+  // scale run for the documented max_single_file_bytes / per-state cap.
+  // It writes and mmaps a real 16 GiB tempfile, so it belongs in tos31/tos32
+  // pre-release verification, not in the default developer loop.
+  const char *flag = std::getenv("TOS_RUN_16GIB_CATCHUP");
+  if (flag == nullptr || flag[0] == '\0' || flag[0] == '0') {
+    std::printf("=== test_h02_16gib_optional_under_env SKIPPED "
+                "(set TOS_RUN_16GIB_CATCHUP=1 to enable) ===\n");
+    return;
+  }
+  run_h02_ondisk_catchup("test_h02_16gib_optional_under_env", 16ULL * kGiB);
 }
 
 // Test fixture that drives the storage state machine inside the
@@ -3621,6 +3637,7 @@ int main() {
   test_h02_crash_after_fsync_before_rename_recovered_at_startup();
   test_h02_1gib_ondisk_catchup_streaming();
   test_h02_2gib_optional_under_env();
+  test_h02_16gib_optional_under_env();
 
   // H-03 / M-01 streaming-importer + reservation-lifetime regressions.
   test_h03_streaming_importer_round_trip();
