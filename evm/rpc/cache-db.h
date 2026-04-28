@@ -24,6 +24,8 @@
 #include <string>
 #include <functional>
 
+#include "evm/rpc/cache-codec.h"
+
 #include "td/utils/Status.h"
 #include "vm/cells.h"
 
@@ -39,6 +41,34 @@ struct IncompleteMarkerPruneStats {
     size_t expired_blocks{0};
     size_t overflow_blocks{0};
 };
+
+/// Freshness gate for a stamped cache record. The cache is never canonical
+/// truth — RPC readers must compare a cached stamp against the canonical
+/// chain at the requested block before consuming the record. Mismatches on
+/// any of the four equality checks below MUST be treated as cache-miss
+/// (and the canonical-state path consulted instead).
+///
+/// The detail struct exposes the per-field result for diagnostics; callers
+/// can populate `block_hash_matches_canonical` / `commitment_matches_canonical`
+/// themselves if they prefer that flow over `stamp_is_fresh`. The two latter
+/// fields default to false and are filled by the caller from canonical state.
+struct CacheReadFreshness {
+    bool stamp_present{false};
+    bool workchain_id_matches{false};
+    bool schema_version_matches{false};
+    bool block_hash_matches_canonical{false};
+    bool commitment_matches_canonical{false};
+};
+
+/// Returns true iff every freshness check passes. cache-db.cpp does NOT
+/// decide what is canonical — that is the RPC handler layer's job; the
+/// handler fetches the canonical (block_hash, native_state_commitment) for
+/// the requested block_number and passes them in here.
+bool stamp_is_fresh(const EvmCacheRecordStamp& cached,
+                    uint8_t expected_workchain_id,
+                    uint8_t current_schema_version,
+                    const evmc::bytes32& canonical_block_hash,
+                    const evmc::bytes32& canonical_native_state_commitment);
 
 class EvmRpcCacheDb {
   public:

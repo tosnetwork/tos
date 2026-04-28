@@ -16,6 +16,7 @@
 #include "evm/rpc/cache-codec.h"
 #include "evm/rpc/cache-db.h"
 #include "evm/core/compute-phase.h"
+#include "evm/core/native-commitment.h"
 #include "evm/core/post-accept.h"
 #include "evm/core/state.h"
 #include "evm/core/cell-state.h"
@@ -461,74 +462,27 @@ size_t populate_state_from_shard_accounts(
     if (!data_slice->prefetch_ref_to(cp_new_data_cell)) return 0;
 
     td::Ref<vm::Cell> state_root;
-    evmc::bytes32 eth_state_root{};
+    evmc::bytes32 native_state_commitment{};
     td::Ref<vm::Cell> rpc_cache_root;  // F.4 will hydrate from this
     td::Ref<vm::Cell> block_hashes_root;
-    td::Ref<vm::Cell> trie_witness_root;
-    if (!decode_cp_new_data(cp_new_data_cell, state_root, eth_state_root,
-                            rpc_cache_root, /*verify_eth_state_root=*/true,
+    if (!decode_cp_new_data(cp_new_data_cell, state_root,
+                            native_state_commitment, rpc_cache_root,
                             &block_hashes_root,
-                            nullptr,
-                            &trie_witness_root)) {
-        // Audit Q1 (tos16 P0 follow-up): the decode either failed because
-        // the cp.new_data envelope is malformed (schema / Maybe-tag /
-        // canonical-encoding violation) OR because the embedded
-        // eth_state_root verify rejected the inner ^state_root. The
-        // verify path internally does a strict `load_from_cell(state_root,
-        // true)` and would have populated the temporary CellEvmState's
-        // strict-load reason — but that instance is not reachable from
-        // here. To surface a useful reason regardless, we re-decode
-        // *without* the eth_state_root verify (which is a structural
-        // canonical-encoding check only — never a security regression
-        // because the failure is already fatal) and then probe the
-        // strict-load chokepoint on a local CellEvmState to recover the
-        // per-account corruption reason. If the second decode succeeds,
-        // the verify-step rejection was driven by code-root corruption
-        // and the strict probe surfaces the offending account; if the
-        // second decode also fails, the envelope itself is malformed
-        // and we surface that instead.
-        td::Ref<vm::Cell> probe_state_root;
-        evmc::bytes32 probe_eth_state_root{};
-        td::Ref<vm::Cell> probe_rpc_cache_root;
-        td::Ref<vm::Cell> probe_block_hashes_root;
-        td::Ref<vm::Cell> probe_trie_witness_root;
-        bool envelope_ok = decode_cp_new_data(
-            cp_new_data_cell, probe_state_root, probe_eth_state_root,
-            probe_rpc_cache_root, /*verify_eth_state_root=*/false,
-            &probe_block_hashes_root, nullptr, &probe_trie_witness_root);
-
-        std::string probe_reason;
-        evmc::bytes32 probe_state_root_hash{};
-        if (envelope_ok && probe_state_root.not_null()) {
-            CellEvmState probe_cs;
-            if (probe_cs.load_from_cell(probe_state_root, /*rebuild=*/false)) {
-                // The strict load itself succeeded but the eth_state_root
-                // verify still rejected — the inner state is consistent
-                // but the declared declared.bytes32 disagrees with the
-                // recomputed root. Emit a verifier-side reason.
-                probe_reason =
-                    "decode_cp_new_data: declared eth_state_root does not "
-                    "match recomputed Ethereum state root from inner "
-                    "^state_root (forged or stale eth_state_root)";
-            } else {
-                auto reason = probe_cs.last_strict_load_failure_reason();
-                if (reason.size() != 0) {
-                    probe_reason.assign(reason.data(), reason.size());
-                } else {
-                    probe_reason =
-                        "decode_cp_new_data: strict load of inner "
-                        "^state_root failed (no detail captured)";
-                }
-            }
-            auto h = probe_state_root->get_hash().as_array();
-            std::memcpy(probe_state_root_hash.bytes, h.data(), 32);
-        } else {
-            probe_reason =
-                "decode_cp_new_data: cp.new_data envelope is malformed "
-                "(schema / Maybe-tag / canonical-encoding violation)";
-        }
+                            /*block_accumulator_root_out=*/nullptr)) {
+        // Audit Q1: the decode failed. Under v6 the only failure modes
+        // are a malformed envelope (schema/Maybe-tag/canonical-encoding
+        // violation, including a v5 cell rejected at the version gate)
+        // or a `native_state_commitment` mismatch against the recomputed
+        // commitment over the inner ^state_root. Either way the envelope
+        // is unsafe to hydrate from; surface as a hydration-corruption
+        // error so downstream consensus / RPC code refuses to operate.
+        evmc::bytes32 zero_state_root_hash{};
         mark_evm_hydration_corrupted(
-            probe_state_root_hash, td::Slice(probe_reason));
+            zero_state_root_hash,
+            td::Slice("decode_cp_new_data: cp.new_data envelope rejected "
+                      "(malformed schema, non-v6 version, or declared "
+                      "native_state_commitment does not match recomputed "
+                      "commitment over inner ^state_root)"));
         return 0;
     }
     if (state_root.is_null()) {
@@ -550,20 +504,29 @@ size_t populate_state_from_shard_accounts(
             LOG(ERROR) << "evm-workchain: hydration target is not a CellEvmState";
             return 0;
         }
-        if (!cs->load_from_cell(state_root, false)) {
+        // Hydration is the canonical "load from a freshly persisted
+        // canonical state" path. It runs before any consensus / RPC
+        // request can observe `g_evm_state`, so we walk the full
+        // account/storage tree under the strict mode. The strict walk
+        // funnels every code_root through the H-01 chokepoint
+        // (`decode_and_verify_code_root`), so a `keccak(bytecode) !=
+        // account.code_hash` mismatch is reported via
+        // `last_strict_load_failure_reason()` and surfaced below.
+        if (!cs->load_from_cell(state_root,
+                                CellStateLoadMode::StrictValidateNative)) {
             // Audit Q1 (tos16 P0 follow-up): the strict cell-state load
-            // failed (typically because of a code-root / code-hash
-            // mismatch surfaced by `decode_and_verify_code_root`).
+            // failed — typically because of a code-root / code-hash
+            // mismatch surfaced by `decode_and_verify_code_root`.
             // Surface the descriptive reason captured by the strict
             // walk so the operator / monitoring sees:
             //   * which canonical state_root is corrupt
             //   * which account / code_hash triggered the rejection
             //   * which kind of mismatch the cell-state helper found
-            // We mark the global state corrupted (sticky flag) so
-            // downstream consensus / RPC code refuses to operate
-            // until manual repair / state resync happens. Returning 0
-            // keeps the size_t-returning ABI compatible; the
-            // surrounding caller chain (`hydrate_global_state_if_empty`,
+            // Mark the global state corrupted (sticky flag) so
+            // downstream consensus / RPC code refuses to operate until
+            // manual repair / state resync happens. Returning 0 keeps
+            // the size_t-returning ABI compatible; the surrounding
+            // caller chain (`hydrate_global_state_if_empty`,
             // `init_evm_workchain`) cannot graceful-propagate a Status.
             auto reason = cs->last_strict_load_failure_reason();
             std::string reason_str =
@@ -571,7 +534,6 @@ size_t populate_state_from_shard_accounts(
                     ? std::string(reason.data(), reason.size())
                     : std::string("strict load returned false but no reason "
                                   "was captured (caller bug — please file)");
-            // Compute the canonical state_root cell hash for forensics.
             evmc::bytes32 state_root_hash{};
             if (state_root.not_null()) {
                 auto h = state_root->get_hash().as_array();
@@ -581,22 +543,34 @@ size_t populate_state_from_shard_accounts(
                 state_root_hash, td::Slice(reason_str));
             return 0;
         }
-        if (trie_witness_root.not_null()) {
-            if (!cs->load_trie_witness_from_cell(trie_witness_root)) {
-                LOG(ERROR) << "evm-workchain: CellEvmState::load_trie_witness_from_cell failed during hydration";
-                return 0;
-            }
-        } else if (!cs->rebuild_trie_witness()) {
-            LOG(ERROR) << "evm-workchain: CellEvmState trie witness rebuild failed during hydration";
+
+        // Cross-check the just-loaded state against the declared v6
+        // commitment one more time at this layer. The decoder already
+        // performed this comparison, but recomputing here defends
+        // against a future caller-edit that bypasses the decoder.
+        evmc::bytes32 recomputed_commitment =
+            compute_native_evm_state_commitment(state_root);
+        if (std::memcmp(recomputed_commitment.bytes,
+                        native_state_commitment.bytes, 32) != 0) {
+            evmc::bytes32 state_root_hash{};
+            auto h = state_root->get_hash().as_array();
+            std::memcpy(state_root_hash.bytes, h.data(), 32);
+            mark_evm_hydration_corrupted(
+                state_root_hash,
+                td::Slice("hydration: recomputed native_state_commitment "
+                          "disagrees with declared cp.new_data commitment "
+                          "after strict load (post-decode invariant violation)"));
             return 0;
         }
+
         if (!cs->load_block_hashes_from_cell(block_hashes_root)) {
             LOG(ERROR) << "evm-workchain: CellEvmState::load_block_hashes_from_cell failed during hydration";
             return 0;
         }
     }
-    LOG(WARNING) << "evm-workchain: hydrated world state from executor cell (eth_state_root="
-                 << td::Bits256{eth_state_root.bytes}.to_hex() << ")";
+    LOG(WARNING) << "evm-workchain: hydrated world state from executor cell "
+                    "(native_state_commitment="
+                 << td::Bits256{native_state_commitment.bytes}.to_hex() << ")";
     return 1;
 }
 
@@ -604,7 +578,7 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     const std::vector<GenesisAccount>& accounts) {
     // Phase D — parameterised version. Same single-executor wrapper as the
     // zero-arg overload (the wc=1 ShardAccounts dict contains exactly one
-    // entry, the executor, whose StateInit.data is a cp.new_data v5 cell
+    // entry, the executor, whose StateInit.data is a cp.new_data v6 cell
     // referencing a CellEvmState root); the only thing that varies is which
     // accounts are pre-populated inside that state.
     //
@@ -650,33 +624,16 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     }
     auto state_root = cell_state.serialize_to_cell();
 
-    // Build cp.new_data v5-shaped cell:
-    //   magic + version:8 + has_root:1 + ^state_root + bits256:eth_root
-    //   + has_cache:1 + has_block_hashes:1 + reserved_accumulator:1
-    // eth_state_root comes from the persistent execution trie witness.
-    evmc::bytes32 eth_state_root = cell_state.ethereum_state_root_hash();
-    auto trie_witness_root = cell_state.serialize_trie_witness_to_cell();
-    // rpc_cache_root at genesis is nothing (no cache yet).
-    vm::CellBuilder data_cb;
-    data_cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
-    data_cb.store_long(kCpNewDataSchemaVersion, 8);
-    if (state_root.not_null()) {
-        data_cb.store_long(1, 1);
-        data_cb.store_ref(state_root);
-    } else {
-        data_cb.store_long(0, 1);
-    }
-    data_cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
-    data_cb.store_long(0, 1);   // rpc_cache_root = nothing (Phase F.2)
-    data_cb.store_long(0, 1);   // block_hashes_root = nothing at genesis
-    data_cb.store_long(0, 1);   // reserved accumulator = absent at genesis
-    if (trie_witness_root.not_null()) {
-        data_cb.store_long(1, 1);
-        data_cb.store_ref(trie_witness_root);
-    } else {
-        data_cb.store_long(0, 1);
-    }
-    auto cp_new_data_cell = data_cb.finalize();
+    // Build cp.new_data v6 cell via the canonical encoder. The native
+    // commitment is the cell representation hash of `state_root` (or
+    // zero when state_root is null). At genesis there is no RPC cache
+    // and no block-hash history yet; the reserved block-accumulator slot
+    // is always absent and is handled by the encoder internally.
+    evmc::bytes32 native_state_commitment =
+        compute_native_evm_state_commitment(state_root);
+    auto cp_new_data_cell = encode_cp_new_data_v6(
+        state_root, native_state_commitment,
+        /*rpc_cache_root=*/{}, /*block_hashes_root=*/{});
 
     // Wrap as executor ShardAccount and insert as sole entry.
     td::Bits256 exec_addr_bits;
@@ -726,7 +683,30 @@ size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
     // needs to hydrate from wc=1 ShardAccounts exactly once.
     if (!g_evm_state->needs_initial_hydration()) return 0;
     if (shard_accounts.is_empty()) return 0;
+
     auto count = populate_state_from_shard_accounts(*g_evm_state, shard_accounts);
+
+    // Audit Q1 / tos17 M-02 fail-closed: if hydration corrupted the state
+    // (decode rejection, code_hash mismatch, post-decode invariant
+    // violation, etc.), DO NOT mark initial hydration as done. Leaving
+    // the flag unset means downstream readers see
+    // `needs_initial_hydration() == true` and the sticky
+    // `evm_hydration_corrupted()` flag is set — every consensus / RPC
+    // entry point that consults the flag will refuse to operate until
+    // an operator restart from a known-good snapshot.
+    if (evm_hydration_corrupted()) {
+        LOG(ERROR) << "evm-workchain: canonical hydration corrupted: "
+                   << evm_hydration_failure_reason();
+        return 0;  // intentionally do NOT mark done — readers fail closed
+    }
+
+    if (count == 0) {
+        // No executor account present yet (the shard state we were given
+        // does not yet carry an EVM account). Leave the hydration flag
+        // unset so a later, more complete shard state can still hydrate.
+        return 0;
+    }
+
     g_evm_state->mark_initial_hydration_done();
     return count;
 }
@@ -811,10 +791,12 @@ void init_evm_workchain(const std::string& db_root) {
                 [&hydrated, &decode_fails](const td::Bits256& tx_hash,
                             td::Ref<vm::Cell> cell) -> td::Status {
                     StoredReceipt r;
-                    if (!decode_persisted_receipt(cell, r)) {
+                    EvmCacheRecordStamp out_stamp;  // hydration trusts canonical state; stamp unused
+                    if (!decode_persisted_receipt(cell, r, out_stamp)) {
                         ++decode_fails;
                         return td::Status::OK();
                     }
+                    (void)out_stamp;
                     evmc::bytes32 tx_hash_be{};
                     std::memcpy(tx_hash_be.bytes, tx_hash.data(), 32);
                     g_evm_state->store_receipt(tx_hash_be, std::move(r));
@@ -839,10 +821,12 @@ void init_evm_workchain(const std::string& db_root) {
                 [&txs_hydrated, &tx_decode_fails](const td::Bits256& tx_hash,
                             td::Ref<vm::Cell> cell) -> td::Status {
                     StoredTransaction t;
-                    if (!decode_persisted_transaction(cell, t)) {
+                    EvmCacheRecordStamp out_stamp;  // hydration trusts canonical state; stamp unused
+                    if (!decode_persisted_transaction(cell, t, out_stamp)) {
                         ++tx_decode_fails;
                         return td::Status::OK();
                     }
+                    (void)out_stamp;
                     evmc::bytes32 tx_hash_be{};
                     std::memcpy(tx_hash_be.bytes, tx_hash.data(), 32);
                     g_evm_state->store_transaction(tx_hash_be, std::move(t));
@@ -866,10 +850,12 @@ void init_evm_workchain(const std::string& db_root) {
                 [&blocks_hydrated, &block_decode_fails](
                     uint64_t /*block_number*/, td::Ref<vm::Cell> cell) -> td::Status {
                     StoredBlock b;
-                    if (!decode_persisted_block(cell, b)) {
+                    EvmCacheRecordStamp out_stamp;  // hydration trusts canonical state; stamp unused
+                    if (!decode_persisted_block(cell, b, out_stamp)) {
                         ++block_decode_fails;
                         return td::Status::OK();
                     }
+                    (void)out_stamp;
                     g_evm_state->store_block(b);
                     ++blocks_hydrated;
                     return td::Status::OK();
@@ -894,10 +880,12 @@ void init_evm_workchain(const std::string& db_root) {
                 [&log_blocks_hydrated, &log_decode_fails](
                     uint64_t block_number, td::Ref<vm::Cell> cell) -> td::Status {
                     std::vector<IndexedLog> logs;
-                    if (!decode_persisted_logs_for_block(cell, logs)) {
+                    EvmCacheRecordStamp out_stamp;  // hydration trusts canonical state; stamp unused
+                    if (!decode_persisted_logs_for_block(cell, logs, out_stamp)) {
                         ++log_decode_fails;
                         return td::Status::OK();
                     }
+                    (void)out_stamp;
                     // Re-group by tx_hash preserving order so store_logs
                     // recreates the original log_index sequence. Each
                     // store_logs call appends `logs.size()` entries with

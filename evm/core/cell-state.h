@@ -18,6 +18,13 @@
     serialize_to_cell() / load_from_cell() let callers persist the state via
     any cell store (currently: BoC file; future: TOS CellDb via collator).
 
+    No-MPT native-only adapter: there is no Ethereum execution-layer MPT, no
+    persistent witness, and no in-memory account/storage trie. Native canonical
+    state is the single source of truth, identified by the cell hash of the
+    account dictionary root cell. The Ethereum-format MPT machinery has been
+    removed entirely; readers that need a state commitment use the native
+    state-root commitment computed in evm/core/native-commitment.{h,cpp}.
+
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #pragma once
@@ -25,21 +32,14 @@
 #include <silkworm/core/state/state.hpp>
 #include <silkworm/core/types/account.hpp>
 
-#include "evm/core/mpt-trie.h"
 #include "td/utils/Status.h"
 #include "vm/cells.h"
 #include "vm/dict.h"
 
-#include <atomic>
 #include <cstddef>
 #include <cstring>
-#include <limits>
-#include <map>
-#include <set>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
-#include <mutex>
 
 namespace evm_workchain {
 
@@ -55,174 +55,17 @@ struct AddressHash {
     }
 };
 
-/// Composite key for the dynamic witness consistency tracker: an EVM
-/// account address paired with a 256-bit storage slot. Used to dedupe
-/// per-(address, slot) checks across an EVM transaction so a hot SLOAD /
-/// SSTORE loop doesn't pay the path-bounded MPT proof cost more than once.
-struct StorageKey {
-    evmc::address address{};
-    evmc::bytes32 slot{};
-    bool operator==(const StorageKey& other) const noexcept {
-        return std::memcmp(address.bytes, other.address.bytes, 20) == 0 &&
-               std::memcmp(slot.bytes, other.slot.bytes, 32) == 0;
-    }
-};
-
-struct StorageKeyHash {
-    size_t operator()(const StorageKey& k) const noexcept {
-        // Concatenate address (20 bytes) and slot (32 bytes) into a stable
-        // 52-byte view and hash via std::hash<std::string_view>. Avoids a
-        // bespoke mix and keeps the implementation portable across libstdc++
-        // / libc++ / Windows STLs.
-        unsigned char buf[52];
-        std::memcpy(buf, k.address.bytes, 20);
-        std::memcpy(buf + 20, k.slot.bytes, 32);
-        return std::hash<std::string_view>{}(
-            std::string_view{reinterpret_cast<const char*>(buf), sizeof(buf)});
-    }
-};
-
-/// Per-transaction tracker for the dynamic flat-state / MPT witness
-/// consistency check. The compute-phase opens a context around
-/// `execute_evm_transaction()`; the State read/update path consults the
-/// context inside `noexcept` Silkworm-State overrides and records any
-/// consistency error into `first_error` instead of throwing. The executor
-/// then drains `first_error` after EVM execution and treats a non-OK
-/// status as a fail-closed consensus invariant violation (rollback +
-/// `sk_bad_state`).
-struct WitnessFlatConsistencyContext {
-    bool enabled{false};
-    std::unordered_set<evmc::address, AddressHash> checked_accounts;
-    std::unordered_set<StorageKey, StorageKeyHash> checked_storage;
-    td::Status first_error = td::Status::OK();
-    /// Optional human-readable context for logging on the rollback path.
-    /// Captured at the point of the first detected mismatch, before the
-    /// outer compute-phase rollback overwrites `first_error.message()` via
-    /// move semantics (the message is moved during reject path string
-    /// construction).
-    std::string offending_what;
-};
-
-#ifdef TOS_EVM_TEST_INSTRUMENTATION
-/// Test-only counter incremented every time the dynamic witness consistency
-/// verifier runs the *real* path-bounded MPT proof check (i.e. only the
-/// first time per (address) or (address, slot) inside a transaction).
-/// Fast paths (already-checked dedup, ctx disabled, prior error sticky)
-/// do NOT bump this counter, so a test can assert "static precheck already
-/// covered the address → no double-check" by observing 0.
-extern std::atomic<size_t> g_witness_consistency_checks;
-
-/// Test-only high-water mark of the thread-local recursion-depth guard
-/// used by `verify_account_before_return` / `verify_storage_before_return`.
-/// Each call records `t_witness_verify_depth` after the guard increments
-/// it, so tests can assert "normal verify_account flow only reaches
-/// depth 1 because the dedup-then-call ordering is intact". Reset by the
-/// test before each scenario.
-extern std::atomic<int> g_witness_verify_depth_max_observed;
-
-/// Test-only setter that overrides the thread-local recursion-depth
-/// counter prior to invoking the verifier hooks. Returns the previous
-/// value so tests can restore the counter after the scenario. Used to
-/// drive the depth-guard bail-out path without faking the (correctly
-/// ordered) dedup-before-verify call chain.
-int set_witness_verify_depth_for_testing(int new_depth) noexcept;
-
-/// Test-only getter for the current value of the thread-local depth
-/// counter. Mirrors the setter above and is exposed only so a test can
-/// verify the counter restored cleanly after a guarded call.
-int get_witness_verify_depth_for_testing() noexcept;
-
-/// Sentinel returned by `get_bad_alloc_injection_for_test` and accepted by
-/// `enable_bad_alloc_injection_for_test` to mean "injection disabled". It
-/// is INT_MIN so the production hot path can perform a single signed
-/// integer comparison and bail before any decrement work is attempted.
-constexpr int kWitnessBadAllocInjectionDisabled =
-    std::numeric_limits<int>::min();
-/// Test-only setter that arms a thread-local countdown for the dynamic
-/// witness consistency dedup-set insert. After the next `n` insert
-/// attempts (account or storage) succeed, the (n+1)-th attempt throws
-/// `std::bad_alloc` from inside the verifier's try/catch, exercising the
-/// sticky `first_error` ("witness consistency tracker exhausted
-/// (allocation failure)") path. Pass `kWitnessBadAllocInjectionDisabled`
-/// to disarm. Returns the previous value so tests can save / restore.
-///
-/// Production paths see no overhead: the verifier compares against the
-/// sentinel and skips the decrement-and-throw block entirely when it is
-/// not armed. The setter is wrapped in `TOS_EVM_TEST_INSTRUMENTATION` so
-/// release builds do not link the symbol at all.
-int enable_bad_alloc_injection_for_test(int n) noexcept;
-
-/// Test-only getter for the bad-alloc injection countdown. Returns
-/// `kWitnessBadAllocInjectionDisabled` when no injection is armed.
-int get_bad_alloc_injection_for_test() noexcept;
-#endif
-
-/// Selects how aggressively `CellEvmState::load_from_cell` validates the
-/// supplied state-root cell.
-///
-///   - StrictValidateAndRebuildWitness: full account/storage walk, decode all
-///     bytecode, then rebuild the Ethereum MPT witness from scratch. Used for
-///     hydration, snapshot import, manual repair, and offline verification.
-///   - StrictValidateNoWitness: same eager walk, but leave the witness empty
-///     (caller will load a separate witness cell).
-///   - TrustedLazy: only verify the root cell is non-special and bind the
-///     account dictionary; do NOT walk accounts/storage and do NOT decode
-///     bytecode. Designed for the consensus-bound EVM compute hot path where
-///     the input cell hash is already authenticated by the surrounding TOS
-///     account state and a per-tx full-state scan would be unmetered host
-///     work.
-enum class CellStateLoadMode {
-    StrictValidateAndRebuildWitness,
-    StrictValidateNoWitness,
-    TrustedLazy,
-};
-
-/// Selects how aggressively `CellEvmState::load_trie_witness_from_cell`
-/// validates the supplied witness root cell.
-///
-///   - StrictRecursive: walks the whole account trie (and validates each
-///     cached RLP byte against the recomputed RLP) before binding. Used by
-///     hydration, snapshot import, manual repair, and offline verification.
-///   - TrustedShallow: only verifies the witness root cell decodes into a
-///     non-special root node. Account-trie internal nodes are decoded lazily
-///     on the proof / mutation path. Designed for the consensus-bound EVM
-///     compute hot path where the input cell hash is already authenticated by
-///     the surrounding TOS account state and a strict per-tx walk would be
-///     unmetered host work scaling with global account count.
-enum class TrieWitnessLoadMode {
-    StrictRecursive,
-    TrustedShallow,
-};
-
-#ifdef TOS_EVM_TEST_INSTRUMENTATION
-/// Test-only instrumentation. Each global counter is bumped exactly once per
-/// full-walk operation in CellEvmState. Tests reset to 0 before exercising a
-/// lazy hot-path call and assert the counter stays at the expected value.
-extern std::atomic<size_t> g_cell_state_full_walks;
-extern std::atomic<size_t> g_storage_index_walks;
-
-/// Audit K-02 (H-01 follow-up): test-only mirror of the always-on
-/// production counter `s_code_root_hash_mismatch_count_inner` (defined in
-/// `cell-state.cpp`). It increments in lockstep with the production
-/// counter so test-only instrumentation can assert the precise number of
-/// `read_code` mismatches the verifier observed even in scenarios where a
-/// `WitnessFlatConsistencyContext` is not bound.
-extern std::atomic<uint64_t> g_code_root_hash_mismatch_count;
-#endif
-
 /// Audit K-02 (H-01 follow-up): always-on counter accessor. Returns the
 /// total number of `read_code` calls that detected a code-root vs
 /// `code_hash` mismatch since process start (or since the last
-/// `reset_code_root_hash_mismatch_count_for_test`). RPC handlers that do
-/// NOT run under an active `WitnessFlatConsistencyContext` (for example
-/// `eth_call`'s read-only fast path) snapshot this counter before
-/// invoking the EVM and compare again afterwards: a non-zero delta means
-/// silkworm internal helpers consumed corrupt bytecode during the
-/// handler's frame, and the handler maps the response to a JSON-RPC
-/// `-32000 corrupt EVM code root` error instead of silently returning
-/// the wrong code (or, worse, "0x" because `read_code` returns an empty
-/// `ByteView` on mismatch). Linked unconditionally — production paths
-/// rely on it.
+/// `reset_code_root_hash_mismatch_count_for_test`). RPC handlers
+/// snapshot this counter before invoking the EVM and compare again
+/// afterwards: a non-zero delta means silkworm internal helpers
+/// consumed corrupt bytecode during the handler's frame, and the
+/// handler maps the response to a JSON-RPC `-32000 corrupt EVM code
+/// root` error instead of silently returning the wrong code (or,
+/// worse, "0x" because `read_code` returns an empty `ByteView` on
+/// mismatch). Linked unconditionally — production paths rely on it.
 uint64_t code_root_hash_mismatch_count() noexcept;
 
 /// Audit K-02 (H-01 follow-up): test-only reset for the always-on
@@ -246,6 +89,27 @@ struct CellEvmStateDeltaStats {
     size_t deleted_accounts{0};
     size_t new_storage_slots{0};
     size_t cleared_storage_slots{0};
+};
+
+/// Selects how aggressively `CellEvmState::load_from_cell` validates the
+/// supplied state-root cell.
+///
+///   - TrustedLazy: hot path. Verify the root cell is non-special and
+///     bind the account dictionary. Do NOT walk accounts/storage and do
+///     NOT decode bytecode. Designed for the consensus-bound EVM
+///     compute hot path where the input cell hash is already
+///     authenticated by the surrounding TOS account state and a per-tx
+///     full-state scan would be unmetered host work.
+///   - StrictValidateNative: import / debug / test deep native shape
+///     validation. Iterate the account dictionary; for every account
+///     decode `EvmAccountData`, verify the storage_root dict shape, and
+///     run the H-01 chokepoint `decode_and_verify_code_root` so
+///     `keccak(decoded) == account.code_hash` is enforced before the
+///     bytecode is admitted to the verified-only code cache. No MPT
+///     root is computed.
+enum class CellStateLoadMode {
+    TrustedLazy,
+    StrictValidateNative,
 };
 
 /// silkworm::State implementation backed by a vm::Dictionary of EvmAccountData
@@ -339,130 +203,15 @@ class CellEvmState : public silkworm::State {
                           std::function<void(const evmc::bytes32& slot,
                                               const evmc::bytes32& value)> cb) const;
 
-    /// Bounded state-size scan used before full Ethereum MPT root rebuild.
-    /// Stops as soon as either limit is exceeded, so the preflight itself is
-    /// bounded by the configured safety budget.
+    /// Bounded state-size scan. Stops as soon as either limit is exceeded,
+    /// so the preflight itself is bounded by the configured safety budget.
     CellEvmStateSizeStats count_entries_bounded(size_t max_accounts,
                                                 size_t max_storage_slots) const noexcept;
 
     /// Track actual account/storage growth produced by the next write_to_db().
-    /// Kept for diagnostics/tests; stateRoot production now uses the
-    /// persistent Ethereum trie witness instead of full-state budget scans.
+    /// Kept for diagnostics/tests.
     void reset_delta_stats() noexcept { delta_stats_ = {}; }
     CellEvmStateDeltaStats delta_stats() const noexcept { return delta_stats_; }
-
-    /// Ethereum execution-layer MPT witness. These methods use the persisted
-    /// witness maintained by update_account/update_storage and do not walk the
-    /// full cell state on the hot path.
-    evmc::bytes32 ethereum_state_root_hash() const;
-#ifdef TOS_EVM_TEST_INSTRUMENTATION
-    /// Legacy storage-root helper. May lazy-load and mutate
-    /// `touched_storage_tries_` under a const member, and may trigger strict
-    /// recursive validation on a fresh witness load. The execution-side
-    /// update path (`update_account_trie_leaf`) is the only place this should
-    /// keep getting called — it already runs under a unique lock and benefits
-    /// from the populated cache. Public RPC and any read-only path must use
-    /// `ethereum_storage_root_hash_safe_no_cache` instead.
-    ///
-    /// L-01 (audit): test-only API gated behind
-    /// `TOS_EVM_TEST_INSTRUMENTATION`. Production targets do NOT define
-    /// the macro and therefore do not export this symbol — production
-    /// callers cannot accidentally link against it.
-    evmc::bytes32 ethereum_storage_root_hash_unsafe_for_execution_cache(
-        const evmc::address& address) const;
-    /// Test-only proof helpers. They wrap the path-bounded `_safe` variants
-    /// but discard the `td::Status` so corrupt-witness errors surface as an
-    /// empty proof — fine for the regression suite, never acceptable on the
-    /// production RPC / consensus path. Production code MUST use
-    /// `ethereum_account_proof_safe` and `ethereum_storage_proof_safe[_no_cache]`.
-    ///
-    /// L-01 (audit): same `TOS_EVM_TEST_INSTRUMENTATION` gating.
-    std::vector<silkworm::Bytes> ethereum_account_proof_unsafe_for_tests_only(
-        const evmc::address& address) const;
-    std::vector<silkworm::Bytes> ethereum_storage_proof_unsafe_for_tests_only(
-        const evmc::address& address, const evmc::bytes32& slot) const;
-#endif  // TOS_EVM_TEST_INSTRUMENTATION
-    /// Fail-closed proof variants. A corrupt witness (lazy node fails to
-    /// decode, or a structural inconsistency surfaces during the walk)
-    /// returns a `td::Status` error rather than crashing the node, so RPC
-    /// handlers can map it to a JSON-RPC -32000 response.
-    td::Result<std::vector<silkworm::Bytes>> ethereum_account_proof_safe(
-        const evmc::address& address) const;
-    td::Result<std::vector<silkworm::Bytes>> ethereum_storage_proof_safe(
-        const evmc::address& address, const evmc::bytes32& slot) const;
-
-    /// Read-only proof helper for public RPC `eth_getProof`. Builds the
-    /// storage proof from a temporary local `MptTrie` shallow-loaded directly
-    /// out of `storage_trie_index_root_`, so the `mutable touched_storage_tries_`
-    /// cache is **not** mutated under the shared lock. Returns an empty proof
-    /// when the address has no entry in the witness storage-trie index
-    /// (canonical empty-trie semantics matching `ethereum_storage_proof_safe`).
-    td::Result<std::vector<silkworm::Bytes>> ethereum_storage_proof_safe_no_cache(
-        const evmc::address& address, const evmc::bytes32& slot) const;
-
-    /// Read-only storage-root helper for public RPC `eth_getProof`. Mirrors
-    /// `ethereum_storage_proof_safe_no_cache`: shallow-loads the per-account
-    /// storage trie from `storage_trie_index_root_` into a local temporary
-    /// (never writes `mutable touched_storage_tries_`) and never triggers
-    /// strict recursive validation. Returns the canonical empty-trie root
-    /// when the address has no entry in the witness storage-trie index, and
-    /// a `td::Status` error on any malformed cell so the RPC layer can map
-    /// it to a JSON-RPC `-32000 corrupt EVM trie witness`.
-    td::Result<evmc::bytes32> ethereum_storage_root_hash_safe_no_cache(
-        const evmc::address& address) const;
-    /// Cross-check helpers: re-encode the canonical Ethereum account / storage
-    /// leaf from the flat cell state and compare it to the value the witness
-    /// MPT path-bounded walker reports for `keccak(address)` /
-    /// `keccak(slot)`. Returns `td::Status::OK()` only when the witness leaf
-    /// payload matches the flat state byte-for-byte (or both agree on
-    /// canonical absence). Any mismatch — or a malformed/over-budget descent —
-    /// surfaces as a non-OK status so the EVM compute hot path can fail closed
-    /// before EVM execution starts. The implementation never touches the
-    /// `mutable touched_storage_tries_` cache; it uses its own shallow lookup
-    /// out of `storage_trie_index_root_` for the storage-trie side.
-    td::Status verify_account_witness_matches_flat_state(
-        const evmc::address& address) const;
-    td::Status verify_storage_witness_matches_flat_state(
-        const evmc::address& address, const evmc::bytes32& slot) const;
-
-    /// Open / close a per-transaction dynamic witness consistency check.
-    /// While a context is bound, every State read / mutation path that
-    /// surfaces a flat-dict value to the EVM also runs a path-bounded
-    /// witness MPT proof on first touch and records any disagreement into
-    /// the context. Mutations check the *pre-mutation* value so a write
-    /// path can never silently ratify a corrupt witness.
-    ///
-    /// `begin_witness_consistency_check(ctx)` requires `ctx != nullptr`
-    /// and stores a borrowed pointer; the caller owns `ctx` lifetime and
-    /// MUST call `end_witness_consistency_check()` before destroying it.
-    /// Both calls are idempotent w.r.t. parallel executors (each
-    /// CellEvmState instance is single-writer; locking is done at the
-    /// EvmState facade).
-    void begin_witness_consistency_check(
-        WitnessFlatConsistencyContext* ctx) noexcept;
-    void end_witness_consistency_check() noexcept;
-    /// Drain the context's first error. Returns OK if no mismatch was
-    /// recorded. Resets `first_error` so subsequent transactions get a
-    /// clean slate (the context is conceptually per-tx, but reusing the
-    /// allocated unordered_sets across txs would still be safe).
-    td::Status consume_witness_consistency_error() noexcept;
-    bool trie_witness_ready() const noexcept { return trie_witness_ready_; }
-    bool rebuild_trie_witness() noexcept;
-
-    /// Serialize/load the persistent Ethereum MPT witness. Null witness means
-    /// the empty state trie. The mode-aware overload selects between strict
-    /// recursive validation (hydration/import/repair) and a cheap trusted
-    /// shallow bind suitable for the EVM compute hot path.
-    td::Ref<vm::Cell> serialize_trie_witness_to_cell() const;
-    bool load_trie_witness_from_cell(td::Ref<vm::Cell> root, TrieWitnessLoadMode mode);
-
-    /// Legacy entry point that defaults to `StrictRecursive`. New consensus
-    /// hot-path callers must pass `TrieWitnessLoadMode::TrustedShallow`
-    /// explicitly so a per-tx full account-trie walk is not reintroduced.
-    bool load_trie_witness_from_cell(td::Ref<vm::Cell> root) {
-        return load_trie_witness_from_cell(std::move(root),
-                                            TrieWitnessLoadMode::StrictRecursive);
-    }
 
     /// Serialize the entire account dictionary into a single cell (suitable
     /// for storing in a ShardAccounts cell or a BoC).
@@ -471,18 +220,8 @@ class CellEvmState : public silkworm::State {
 
     /// Replace the current account dictionary with one decoded from the given cell.
     /// Pass a null cell to start from empty.
-    bool load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode);
-
-    /// Legacy boolean shim. Maps `true` to `StrictValidateAndRebuildWitness`
-    /// (preserving the previous default) and `false` to
-    /// `StrictValidateNoWitness`. New callers on the consensus hot path should
-    /// pass `CellStateLoadMode::TrustedLazy` explicitly.
-    bool load_from_cell(td::Ref<vm::Cell> root, bool rebuild_trie_witness = true) {
-        return load_from_cell(
-            std::move(root),
-            rebuild_trie_witness ? CellStateLoadMode::StrictValidateAndRebuildWitness
-                                 : CellStateLoadMode::StrictValidateNoWitness);
-    }
+    bool load_from_cell(td::Ref<vm::Cell> root,
+                        CellStateLoadMode mode = CellStateLoadMode::TrustedLazy);
 
     /// Audit Q1 (tos16 P0 follow-up): describes the most recent strict-mode
     /// `load_from_cell` failure. Empty when the last strict load succeeded
@@ -544,33 +283,12 @@ class CellEvmState : public silkworm::State {
 
     /// Write or clear the storage dict root for an account.
     void set_storage_root(const evmc::address& address, td::Ref<vm::Cell> root);
-    bool ensure_trie_witness();
-    bool rebuild_storage_trie_for_account(const evmc::address& address);
-    bool update_account_trie_leaf(const evmc::address& address,
-                                  const std::optional<silkworm::Account>& account);
 
     /// Look up the inner EvmAccountData cell for an address from the account
     /// dictionary. Returns false if the account is missing or if the dict
-    /// value has the wrong shape. Used by lazy `read_code` and by the lazy
-    /// storage-trie helpers.
+    /// value has the wrong shape. Used by lazy `read_code`.
     bool lookup_account_data_cell(const evmc::address& address,
                                   td::Ref<vm::Cell>& out) const;
-
-    /// Lazy storage-trie helpers. `for_update` marks the trie dirty so the
-    /// next `serialize_trie_witness_to_cell` writes a fresh entry into the
-    /// storage-trie index dictionary. `for_read` only loads into the
-    /// touched-cache without marking dirty.
-    ///
-    /// The mode-aware overloads pick between strict recursive validation
-    /// (used by repair/import paths) and the shallow bind used by the EVM
-    /// compute hot path. Default callers (no `mode` argument) keep the
-    /// historical strict-recursive behaviour for legacy import paths.
-    MptTrie* get_or_load_storage_trie_for_update(const evmc::address& address);
-    MptTrie* get_or_load_storage_trie_for_update(const evmc::address& address,
-                                                  MptWitnessValidationMode mode);
-    const MptTrie* get_or_load_storage_trie_for_read(const evmc::address& address) const;
-    const MptTrie* get_or_load_storage_trie_for_read(
-        const evmc::address& address, MptWitnessValidationMode mode) const;
 
     mutable vm::Dictionary account_dict_;  // 256-bit keys → EvmAccountData cells
 
@@ -600,20 +318,6 @@ class CellEvmState : public silkworm::State {
     // Read-code returns ByteView; needs persistent buffer (per-thread)
     static thread_local silkworm::Bytes tl_code_buf_;
 
-    MptTrie account_trie_;
-
-    // Lazy storage trie witness (P1). `storage_trie_index_root_` holds the
-    // root cell of the witness storage-trie index dictionary (256-bit address
-    // → ^MptTrieRoot). Only addresses actually touched by the current
-    // execution are materialised into `touched_storage_tries_`;
-    // `dirty_storage_trie_roots_` records which of those need to be flushed
-    // back into the index on the next serialize.
-    td::Ref<vm::Cell> storage_trie_index_root_;
-    mutable std::map<evmc::address, MptTrie> touched_storage_tries_;
-    std::set<evmc::address> dirty_storage_trie_roots_;
-
-    bool trie_witness_ready_{true};
-
     /// Audit Q1 (tos16 P0 follow-up): most recent strict-mode
     /// `load_from_cell` failure reason. Populated by the strict-walk
     /// lambda just before it returns `false` (e.g. on
@@ -628,24 +332,6 @@ class CellEvmState : public silkworm::State {
     std::string last_strict_load_failure_reason_;
 
     CellEvmStateDeltaStats delta_stats_;
-
-    /// Borrowed pointer to the active dynamic consistency tracker. Set by
-    /// `begin_witness_consistency_check`, cleared by `end_witness_consistency_check`.
-    /// Mutable so that `noexcept const` Silkworm-State overrides
-    /// (`read_account`, `read_code`, `read_storage`, `previous_incarnation`)
-    /// can record errors without dropping `const`-correctness on the
-    /// public API.
-    mutable WitnessFlatConsistencyContext* witness_ctx_{nullptr};
-
-    /// First-touch verifier hooks. These run inside `noexcept` Silkworm
-    /// State overrides, so they MUST NOT throw. Any verification failure
-    /// is captured into `witness_ctx_->first_error` and surfaced after
-    /// EVM execution by `consume_witness_consistency_error()`.
-    void verify_account_before_return(
-        const evmc::address& address) const noexcept;
-    void verify_storage_before_return(
-        const evmc::address& address,
-        const evmc::bytes32& slot) const noexcept;
 
     /// Audit H-01: keccak256 of the supplied bytecode. Used by
     /// `read_code` / `update_account_code` to enforce the canonical
@@ -684,14 +370,6 @@ class CellEvmState : public silkworm::State {
         const td::Ref<vm::Cell>& code_root,
         const evmc::bytes32& expected_hash,
         td::Slice context);
-
-    /// Audit H-01: record a witness consistency error from a
-    /// `noexcept` State path. Sets `witness_ctx_->first_error` and
-    /// `witness_ctx_->offending_what` only when a context is bound,
-    /// is enabled, and has not already captured an earlier error
-    /// (sticky). Safe to call from any first-touch read/update hook.
-    void record_witness_error_if_active(
-        const evmc::address& address, td::Slice what) const noexcept;
 };
 
 }  // namespace evm_workchain

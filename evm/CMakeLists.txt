@@ -22,13 +22,10 @@ set(EVM_SRC
   core/config-param.cpp
   core/executor.cpp
   core/external-message.cpp
-  core/incremental-trie.cpp
   core/init.cpp
-  core/mpt-prover.cpp
-  core/mpt-trie.cpp
+  core/native-commitment.cpp
   core/post-accept.cpp
   core/state.cpp
-  core/state-root.cpp
   core/tracer.cpp
   core/transaction.cpp
   # rpc/

@@ -675,4 +675,33 @@ void set_evm_rpc_cache_db(std::unique_ptr<EvmRpcCacheDb> db) {
     g_db = std::move(db);
 }
 
+// ---------------------------------------------------------------------------
+// Canonical-identity freshness gate (native-state plan).
+//
+// The cache is never authoritative. Readers consult this helper before
+// consuming a cached record: any mismatch on workchain_id, schema_version,
+// block_hash, or native_state_commitment means the record was produced by
+// a different chain identity (reorg, schema upgrade, pre-stamp legacy
+// binary, foreign workchain) and MUST be treated as a cache-miss.
+// ---------------------------------------------------------------------------
+bool stamp_is_fresh(const EvmCacheRecordStamp& cached,
+                    uint8_t expected_workchain_id,
+                    uint8_t current_schema_version,
+                    const evmc::bytes32& canonical_block_hash,
+                    const evmc::bytes32& canonical_native_state_commitment) {
+    if (cached.workchain_id != expected_workchain_id) return false;
+    if (cached.schema_version != current_schema_version) return false;
+    if (std::memcmp(cached.block_hash.bytes,
+                    canonical_block_hash.bytes,
+                    sizeof(cached.block_hash.bytes)) != 0) {
+        return false;
+    }
+    if (std::memcmp(cached.native_state_commitment.bytes,
+                    canonical_native_state_commitment.bytes,
+                    sizeof(cached.native_state_commitment.bytes)) != 0) {
+        return false;
+    }
+    return true;
+}
+
 }  // namespace evm_workchain

@@ -45,10 +45,10 @@ namespace evm_workchain {
 /// @param cp           ComputePhase to populate with results.
 /// @param account_data Cell that compute-phase produced for this account
 ///                     for the previous EVM executor transaction (or previous
-///                     block if this is the first tx in a block; cp.new_data v5 —
-///                     magic + version + state_root ref + eth_state_root
-///                     + rpc_cache + block-hash history
-///                     + reserved accumulator bit set to nothing).
+///                     block if this is the first tx in a block; cp.new_data
+///                     v6 — magic + version + state_root ref +
+///                     native_state_commitment + rpc_cache + block-hash
+///                     history + reserved accumulator bit set to nothing).
 ///                     Pass null on first activation: the function builds a
 ///                     genesis-equivalent state with EIP-4788 / EIP-2935
 ///                     predeploys present so Cancun / Pectra system calls

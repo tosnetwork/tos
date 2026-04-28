@@ -18,6 +18,10 @@
 */
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
+
 #include <silkworm/core/types/account.hpp>
 #include <evmc/evmc.hpp>
 
@@ -27,7 +31,15 @@ namespace evm_workchain {
 
 constexpr unsigned long long kEvmAccountMagic = 0x45564Dull;  // "EVM"
 constexpr int kEvmMagicBits = 24;
-constexpr unsigned kCpNewDataSchemaVersion = 5;
+
+// v6 layout:
+//   magic:24 + schema_version:uint8(6)
+//   + has_state_root:1 + [state_root:^Cell]
+//   + native_state_commitment:bits256
+//   + Maybe ^EvmRpcCacheRoot
+//   + Maybe ^EvmBlockHashHistoryRoot
+//   + Maybe ^ReservedBlockAccumulatorRoot (must be absent)
+constexpr unsigned kCpNewDataSchemaVersion = 6;
 
 /// Encode a silkworm::Account plus its storage root and (optional) bytecode
 /// chain into an EvmAccountData cell. Either ref may be null.
@@ -67,33 +79,44 @@ void address_to_key(const evmc::address& addr, unsigned char out[32]);
 /// Convert a bytes32 directly to a 256-bit key (identity copy into out).
 void bytes32_to_key(const evmc::bytes32& v, unsigned char out[32]);
 
-/// Decode a `cp.new_data`-shaped cell (the cell that compute-phase writes
-/// into `Transaction::new_data` for wc=1 accounts). Layout:
+/// Encode a `cp.new_data`-shaped cell (the cell that compute-phase writes
+/// into `Transaction::new_data` for wc=1 accounts) using the v6 native-only
+/// layout described above. The reserved block-accumulator slot is always
+/// emitted as an absent Maybe.
+td::Ref<vm::Cell> encode_cp_new_data_v6(
+    const td::Ref<vm::Cell>& state_root,
+    const evmc::bytes32& native_state_commitment,
+    const td::Ref<vm::Cell>& rpc_cache_root,
+    const td::Ref<vm::Cell>& block_hashes_root = {});
+
+/// Decode a `cp.new_data`-shaped cell. Layout:
 ///
-///   v5: magic:24 + schema_version:uint8(5)
+///   v6: magic:24 + schema_version:uint8(6)
 ///       + has_state_root:1 + [state_root:^Cell]
-///       + eth_state_root:bits256 + Maybe ^EvmRpcCacheRoot
+///       + native_state_commitment:bits256
+///       + Maybe ^EvmRpcCacheRoot
 ///       + Maybe ^EvmBlockHashHistoryRoot
 ///       + Maybe ^ReservedBlockAccumulatorRoot (must be absent)
-///       + Maybe ^PersistentEthereumTrieWitness
 ///
 /// On success returns true and populates the output refs/value. `state_root`
 /// may be null if `has_state_root` was zero (valid per the encoder, used at
 /// genesis when the executor account exists with no inner state). The decoder
-/// requires canonical v4 shape, rejects trailing bits/refs, and can verify
-/// that `eth_state_root` is the full trie root recomputed from `state_root`.
+/// requires canonical v6 shape, rejects trailing bits/refs, and recomputes
+/// the native state commitment from `state_root` to cross-check the declared
+/// `native_state_commitment` field.
+///
+/// v5 cells (the prior MPT-based schema) are explicitly rejected; there is
+/// no silent upgrade path.
 ///
 /// Used by both the snapshot compute path (to seed a per-call CellEvmState
 /// from the block-declared pre-state) and the global-state hydration path
 /// (`populate_state_from_shard_accounts`).
 bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                         td::Ref<vm::Cell>& state_root_out,
-                        evmc::bytes32& eth_state_root_out,
+                        evmc::bytes32& native_state_commitment_out,
                         td::Ref<vm::Cell>& rpc_cache_root_out,
-                        bool verify_eth_state_root = true,
                         td::Ref<vm::Cell>* block_hashes_root_out = nullptr,
-                        td::Ref<vm::Cell>* block_accumulator_root_out = nullptr,
-                        td::Ref<vm::Cell>* trie_witness_root_out = nullptr);
+                        td::Ref<vm::Cell>* block_accumulator_root_out = nullptr);
 
 // ---------------------------------------------------------------------------
 // EVM bytecode cell encoding (Phase D.2)

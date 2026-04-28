@@ -297,12 +297,12 @@ void JsonRpcServer::listen(td::IPAddress addr) {
   //      (test harness, staging containers) can still pick a profile
   //      without code changes.
   //   3. The default `EvmRpcProfile::ValidatorMinimal` (the safest
-  //      surface — heavy read-only RPC and eth_getProof disabled,
-  //      debug methods locked even if compiled in).
+  //      surface — heavy read-only RPC disabled, debug methods locked
+  //      even if compiled in).
   //
   // The profile MUST be applied via `set_evm_rpc_profile()`; that
-  // path centralises gas-cap + getProof + debug toggles + bucket
-  // resets in one place (see evm/rpc/handlers.cpp `apply_profile`).
+  // path centralises gas-cap + debug toggles + bucket resets in one
+  // place (see evm/rpc/handlers.cpp `apply_profile`).
   evm_workchain::EvmRpcProfile resolved_profile =
       evm_workchain::EvmRpcProfile::ValidatorMinimal;
   bool profile_resolved_from_options = false;
@@ -325,12 +325,12 @@ void JsonRpcServer::listen(td::IPAddress addr) {
 
   // M-02 hardening: classify the listening address BEFORE applying the
   // EVM RPC profile. The earlier ordering eagerly applied
-  // `set_evm_rpc_profile(AdminLocal)` (which raises gas cap, enables
-  // `eth_getProof`, and unlocks the debug allowlist when compiled in)
-  // even when the address turned out to be non-loopback and the
-  // listener was about to be refused below. With the order reversed,
-  // an `AdminLocal` profile mis-set on a public interface never
-  // touches the global EVM toggles.
+  // `set_evm_rpc_profile(AdminLocal)` (which raises the gas cap and
+  // unlocks the debug allowlist when compiled in) even when the
+  // address turned out to be non-loopback and the listener was about
+  // to be refused below. With the order reversed, an `AdminLocal`
+  // profile mis-set on a public interface never touches the global
+  // EVM toggles.
   bool is_loopback = false;
   {
     auto ip_str = addr.get_ip_str().str();
@@ -1010,8 +1010,12 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     return;
   }
 
-  // Ethereum JSON-RPC sends params as arrays.  Handle eth_* methods with
-  // array params directly, before the object-params check.
+  // Ethereum JSON-RPC sends params as arrays.  Handle eth_* methods
+  // with array params directly, before the object-params check. The
+  // same dispatch covers the TOS-specific EVM read-only methods
+  // (e.g. `tos_evmChainInfo`) advertised via `is_eth_rpc_method` in
+  // evm/rpc/handlers.cpp, so the validator-engine layer needs no
+  // method-name allowlist of its own.
   if (params_val.type() == td::JsonValue::Type::Array &&
       evm_workchain::is_eth_rpc_method(method)) {
     td::JsonBuilder jb;

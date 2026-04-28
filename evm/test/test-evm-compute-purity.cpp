@@ -1,30 +1,11 @@
 /*
-    EVM Workchain — compute-phase purity (P1 audit closure) tests.
+    EVM Workchain — compute-phase purity tests (v6 native-only).
 
     Pins the contract that `run_evm_compute_phase_snapshot` is a pure
     function of (`account_data`, `in_msg_body`, `gas_limit`, block metadata):
     repeated calls with byte-identical inputs MUST yield byte-identical
     `cp.new_data` cell hashes, regardless of the in-process g_evm_state's
     history.
-
-    Tests:
-      1. same_block_validated_twice_is_idempotent
-      2. collator_validator_agree_on_state_root
-      3. fork_order_independence
-      4. restart_validator_matches_collator
-      5. post_accept_missing_side_effect_withholds_partial_block
-      6. block_hash_history_roundtrip_and_read_header
-      7. cp_new_data_declared_root_not_recomputed_per_tx
-      8. same_block_second_evm_tx_is_rejected_without_accumulator
-      9. cp_new_data_rejects_legacy_layouts
-      10. post_accept_recovers_persisted_side_effect_after_memory_loss
-      11. post_accept_replays_side_effect_after_stash_and_db_loss
-      12. chain_id_env_ignored_in_production_build
-      13. pending_side_effect_db_prunes_ttl_and_cap
-      14. post_accept_parser_rejects_special_cells
-      15. post_accept_rejects_gas_used_overflow
-      16. cp_new_data_v5_requires_trie_witness
-      17. invalid_tx_prevalidation_runs_before_system_calls
 
     Build target: test-evm-compute-purity (see evm/test/CMakeLists.txt)
 */
@@ -48,7 +29,7 @@
 #include "evm/core/compute-phase.h"
 #include "evm/core/external-message.h"
 #include "evm/core/init.h"
-#include "evm/core/incremental-trie.h"
+#include "evm/core/native-commitment.h"
 #include "evm/core/post-accept.h"
 #include "evm/core/state.h"
 #include "evm/core/transaction.h"
@@ -107,54 +88,25 @@ namespace ew = evm_workchain;
 // Helpers
 // ---------------------------------------------------------------------------
 
-static evmc::bytes32 compute_eth_state_root_from_cell(td::Ref<vm::Cell> state_root) {
-    auto cell_state = std::make_unique<ew::CellEvmState>();
-    if (state_root.not_null()) {
-        CHECK(cell_state->load_from_cell(state_root));
-    }
-    return cell_state->ethereum_state_root_hash();
-}
-
-// Build a `cp.new_data` v5 cell wrapping the supplied state_root cell. Same
-// layout that `run_evm_compute_phase_snapshot` itself emits (and that the
-// genesis builder produces): magic + version + has_root + ^state_root
-// + eth_state_root + has_cache=0 + has_block_hashes=0
-// + reserved_accumulator=0 + trie_witness.
-static td::Ref<vm::Cell> wrap_state_root_with_declared_eth_root(
-    td::Ref<vm::Cell> state_root,
-    const evmc::bytes32& eth_state_root) {
-    auto cell_state = std::make_unique<ew::CellEvmState>();
-    if (state_root.not_null()) {
-        CHECK(cell_state->load_from_cell(state_root));
-    }
-    auto trie_witness_root = cell_state->serialize_trie_witness_to_cell();
-
-    vm::CellBuilder cb;
-    cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
-    cb.store_long(ew::kCpNewDataSchemaVersion, 8);
-    if (state_root.not_null()) {
-        cb.store_long(1, 1);
-        cb.store_ref(state_root);
-    } else {
-        cb.store_long(0, 1);
-    }
-    cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
-    cb.store_long(0, 1);
-    cb.store_long(0, 1);
-    cb.store_long(0, 1);
-    if (trie_witness_root.not_null()) {
-        cb.store_long(1, 1);
-        cb.store_ref(trie_witness_root);
-    } else {
-        cb.store_long(0, 1);
-    }
-    return cb.finalize();
-}
-
+// Wrap a state_root cell as a v6 cp.new_data cell with a declared
+// native_state_commitment. Used by tests that exercise the encoder /
+// decoder happy path.
 static td::Ref<vm::Cell> wrap_state_root_as_account_data(td::Ref<vm::Cell> state_root) {
-    return wrap_state_root_with_declared_eth_root(
-        state_root,
-        compute_eth_state_root_from_cell(state_root));
+    auto commitment = ew::compute_native_evm_state_commitment(state_root);
+    return ew::encode_cp_new_data_v6(state_root, commitment, /*rpc_cache_root=*/{},
+                                     /*block_hashes_root=*/{});
+}
+
+// Tampered variant: encode v6 with a deliberately-wrong native state
+// commitment (i.e. NOT the cell hash of `state_root`). The strict v6
+// decoder cross-checks the declared commitment against the recomputed
+// one and must fail closed.
+static td::Ref<vm::Cell> wrap_state_root_with_declared_commitment(
+    td::Ref<vm::Cell> state_root,
+    const evmc::bytes32& declared_commitment) {
+    return ew::encode_cp_new_data_v6(state_root, declared_commitment,
+                                     /*rpc_cache_root=*/{},
+                                     /*block_hashes_root=*/{});
 }
 
 // Build an account_data cell with `sender` seeded with `balance` and `nonce`.
@@ -288,11 +240,11 @@ static std::optional<evmc::bytes32> block_hash_from_account_data(
     const td::Ref<vm::Cell>& account_data,
     uint64_t block_number) {
     td::Ref<vm::Cell> state_root;
-    evmc::bytes32 eth_state_root{};
+    evmc::bytes32 native_state_commitment{};
     td::Ref<vm::Cell> rpc_cache_root;
     td::Ref<vm::Cell> block_hashes_root;
-    if (!ew::decode_cp_new_data(account_data, state_root, eth_state_root,
-                                rpc_cache_root, true, &block_hashes_root)) {
+    if (!ew::decode_cp_new_data(account_data, state_root, native_state_commitment,
+                                rpc_cache_root, &block_hashes_root)) {
         return std::nullopt;
     }
     ew::CellEvmState history;
@@ -669,27 +621,17 @@ static void test_block_hash_history_roundtrip_and_read_header() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7 — cp_new_data_declared_root_not_recomputed_per_tx
+// Test 7 — cp_new_data_declared_commitment_must_match_state_root
 // ---------------------------------------------------------------------------
 //
-// Two invariants on the same code path:
-//   1. The compute hot path must NOT do an O(global state) Ethereum trie
-//      recomputation per tx; declared `eth_state_root` is therefore not
-//      used as a verification trigger that scans the full flat state.
-//   2. After P0 (audit `[High] 每笔 EVM tx 仍对 account MPT witness ...`),
-//      the hot path DOES perform an O(root-node) cheap consistency check
-//      between the declared `eth_state_root` and the witnessed root hash.
-//      A deliberately stale declared root must therefore fail closed.
-//
-// This guarantees an attacker cannot have the validator silently execute
-// against a stale or malicious declared root while skipping the full scan.
-//
-// Strict decoders (snapshot import / repair) keep their full
-// declared-root recompute; the hot path delegates to the cheap shallow
-// witness root comparison.
+// In v6 cp.new_data the declared `native_state_commitment` MUST equal the
+// representation hash of the embedded `state_root` cell. The decoder
+// recomputes the commitment from the cell and rejects mismatched envelopes
+// fail-closed; the hot compute path also refuses to execute against the
+// tampered cell.
 
-static void test_cp_new_data_declared_root_not_recomputed_per_tx() {
-    tprintf("[TEST] cp_new_data_declared_root_not_recomputed_per_tx\n");
+static void test_cp_new_data_declared_commitment_must_match_state_root() {
+    tprintf("[TEST] cp_new_data_declared_commitment_must_match_state_root\n");
 
     evmc::address recipient{};
     recipient.bytes[19] = 0x76;
@@ -708,40 +650,33 @@ static void test_cp_new_data_declared_root_not_recomputed_per_tx() {
     cs.update_account(tx->sender, std::nullopt, acct);
 
     auto state_root = cs.serialize_to_cell();
-    auto declared_root = compute_eth_state_root_from_cell(state_root);
-    declared_root.bytes[0] ^= 0x80;
-    auto bad_account_data = wrap_state_root_with_declared_eth_root(
-        state_root,
-        declared_root);
+    auto good_commitment = ew::compute_native_evm_state_commitment(state_root);
+    auto tampered_commitment = good_commitment;
+    tampered_commitment.bytes[0] ^= 0x80;
+    auto bad_account_data = wrap_state_root_with_declared_commitment(
+        state_root, tampered_commitment);
 
     td::Ref<vm::Cell> decoded_state_root;
-    evmc::bytes32 decoded_eth_state_root{};
+    evmc::bytes32 decoded_commitment{};
     td::Ref<vm::Cell> decoded_cache_root;
-    bool strict_decoded = ew::decode_cp_new_data(
+    bool decoded_ok = ew::decode_cp_new_data(
         bad_account_data,
         decoded_state_root,
-        decoded_eth_state_root,
-        decoded_cache_root,
-        /*verify_eth_state_root=*/true);
+        decoded_commitment,
+        decoded_cache_root);
 
     auto out = run_once(bad_account_data, tx->raw_rlp,
                         /*block_seqno=*/818181,
                         /*timestamp=*/1800000300);
-    // Post-P0 invariants:
-    //   - strict decode still rejects the bad declared root;
-    //   - the hot compute path *also* fails closed via the cheap shallow
-    //     witness-root vs declared-root comparison;
-    //   - no full state scan ran (otherwise this test would not finish in
-    //     reasonable time on the larger states the audit calls out).
-    if (strict_decoded) {
-        tprintf("  FAILED: strict decode accepted a tampered eth_state_root\n");
+    if (decoded_ok) {
+        tprintf("  FAILED: decoder accepted a tampered native_state_commitment\n");
         return;
     }
     if (out.success) {
-        tprintf("  FAILED: hot path executed with mismatched eth_state_root\n");
+        tprintf("  FAILED: hot path executed against a mismatched commitment\n");
         return;
     }
-    tprintf("  PASSED (strict decode + hot path both reject the tampered declared root)\n");
+    tprintf("  PASSED (v6 decoder + hot path both reject mismatched native_state_commitment)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -809,47 +744,50 @@ static void test_same_block_second_evm_tx_is_rejected_without_accumulator() {
 // Test 9 — cp_new_data_rejects_legacy_layouts
 // ---------------------------------------------------------------------------
 //
-// TOS has not launched mainnet, so cp.new_data has no backwards-compatibility
-// decoder. Old unversioned layouts and the removed block-accumulator payload
-// must fail closed instead of being interpreted as current v4 state.
+// Old unversioned and v5 layouts and any v6 envelope with a present
+// reserved block-accumulator slot must fail closed instead of being
+// interpreted as current v6 state.
 
 static void test_cp_new_data_rejects_legacy_layouts() {
     tprintf("[TEST] cp_new_data_rejects_legacy_layouts\n");
 
-    auto eth_state_root = compute_eth_state_root_from_cell({});
+    evmc::bytes32 zero_commitment{};
+    // Old unversioned shape: magic + has_state_root + bits256 + 3 maybe-tags
+    // (no schema_version byte).
     vm::CellBuilder cb;
     cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
-    cb.store_long(0, 1);  // old unversioned has_state_root
-    cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
-    cb.store_long(0, 1);  // old has_cache
-    cb.store_long(0, 1);  // old has_block_hashes
-    cb.store_long(0, 1);  // old has_block_accumulator
+    cb.store_long(0, 1);  // pretend has_state_root (also reads as schema_version's MSB)
+    cb.store_bytes(reinterpret_cast<const char*>(zero_commitment.bytes), 32);
+    cb.store_long(0, 1);
+    cb.store_long(0, 1);
+    cb.store_long(0, 1);
     auto old_cell = cb.finalize();
 
     td::Ref<vm::Cell> state_root;
-    evmc::bytes32 decoded_root{};
+    evmc::bytes32 decoded_commitment{};
     td::Ref<vm::Cell> rpc_cache_root;
-    bool decoded = ew::decode_cp_new_data(old_cell, state_root, decoded_root,
-                                          rpc_cache_root);
+    bool decoded_unversioned = ew::decode_cp_new_data(
+        old_cell, state_root, decoded_commitment, rpc_cache_root);
 
+    // Reserved block-accumulator slot must always be absent in v6.
     vm::CellBuilder acc_ref_cb;
     auto accumulator_ref = acc_ref_cb.finalize();
     vm::CellBuilder acc_cb;
     acc_cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
-    acc_cb.store_long(ew::kCpNewDataSchemaVersion, 8);
-    acc_cb.store_long(0, 1);  // has_state_root
-    acc_cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
-    acc_cb.store_long(0, 1);  // has_cache
-    acc_cb.store_long(0, 1);  // has_block_hashes
-    acc_cb.store_long(1, 1);  // removed block accumulator must be rejected
+    acc_cb.store_long(static_cast<long long>(ew::kCpNewDataSchemaVersion), 8);
+    acc_cb.store_long(0, 1);  // has_state_root=0
+    acc_cb.store_bytes(reinterpret_cast<const char*>(zero_commitment.bytes), 32);
+    acc_cb.store_long(0, 1);  // has_cache=0
+    acc_cb.store_long(0, 1);  // has_block_hashes=0
+    acc_cb.store_long(1, 1);  // reserved accumulator must be rejected
     acc_cb.store_ref(accumulator_ref);
     auto accumulator_cell = acc_cb.finalize();
-
     bool accumulator_decoded = ew::decode_cp_new_data(
-        accumulator_cell, state_root, decoded_root, rpc_cache_root);
-    if (decoded || accumulator_decoded) {
+        accumulator_cell, state_root, decoded_commitment, rpc_cache_root);
+
+    if (decoded_unversioned || accumulator_decoded) {
         tprintf("  FAILED: decoded legacy cp.new_data (unversioned=%d accumulator=%d)\n",
-                decoded,
+                decoded_unversioned,
                 accumulator_decoded);
         return;
     }
@@ -1268,11 +1206,16 @@ static void test_post_accept_rejects_gas_used_overflow() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 16 — cp_new_data_v5_requires_trie_witness
+// Test 16 — decode_v5_fails_closed
 // ---------------------------------------------------------------------------
+//
+// Hand-build a v5-shaped cp.new_data cell and assert that
+// `decode_cp_new_data` rejects it. The v5 envelope carried a 32-byte
+// declared root field plus a persistent witness ref; the v6 decoder
+// rejects them outright (no silent upgrade path).
 
-static void test_cp_new_data_v5_requires_trie_witness() {
-    tprintf("[TEST] cp_new_data_v5_requires_trie_witness\n");
+static void test_decode_v5_fails_closed() {
+    tprintf("[TEST] decode_v5_fails_closed\n");
 
     ew::CellEvmState cs;
     evmc::address addr{};
@@ -1280,43 +1223,50 @@ static void test_cp_new_data_v5_requires_trie_witness() {
     silkworm::Account acct{};
     acct.balance = intx::uint256{1};
     cs.update_account(addr, std::nullopt, acct);
-
     auto state_root = cs.serialize_to_cell();
-    auto eth_state_root = cs.ethereum_state_root_hash();
 
-    vm::CellBuilder missing_cb;
-    missing_cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
-    missing_cb.store_long(ew::kCpNewDataSchemaVersion, 8);
-    missing_cb.store_long(1, 1);
-    missing_cb.store_ref(state_root);
-    missing_cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
-    missing_cb.store_long(0, 1);  // rpc_cache
-    missing_cb.store_long(0, 1);  // block_hashes
-    missing_cb.store_long(0, 1);  // reserved accumulator
-    missing_cb.store_long(0, 1);  // missing trie witness must be rejected
-    auto missing_witness_cell = missing_cb.finalize();
+    // v5 layout (the prior schema): magic + schema_version=5 +
+    // has_state_root + ^state_root + bits256 declared_root + has_cache +
+    // has_block_hashes + has_block_accumulator + has_witness +
+    // ^persistent_witness. Field values are all zero / placeholder —
+    // the decoder must reject on schema_version=5 alone, before walking
+    // any of the trailing fields.
+    vm::CellBuilder placeholder_cb;
+    auto witness_placeholder = placeholder_cb.finalize();
+
+    evmc::bytes32 zero_declared_root{};
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
+    cb.store_long(5, 8);  // v5 schema_version
+    cb.store_long(1, 1);  // has_state_root
+    cb.store_ref(state_root);
+    cb.store_bytes(reinterpret_cast<const char*>(zero_declared_root.bytes), 32);
+    cb.store_long(0, 1);  // has_cache
+    cb.store_long(0, 1);  // has_block_hashes
+    cb.store_long(0, 1);  // has_block_accumulator
+    cb.store_long(1, 1);  // has_witness
+    cb.store_ref(witness_placeholder);
+    auto v5_cell = cb.finalize();
 
     td::Ref<vm::Cell> decoded_state_root;
-    evmc::bytes32 decoded_root{};
+    evmc::bytes32 decoded_commitment{};
     td::Ref<vm::Cell> decoded_cache_root;
-    bool missing_decoded = ew::decode_cp_new_data(
-        missing_witness_cell, decoded_state_root, decoded_root, decoded_cache_root,
-        /*verify_eth_state_root=*/true);
+    bool v5_decoded = ew::decode_cp_new_data(
+        v5_cell, decoded_state_root, decoded_commitment, decoded_cache_root);
 
     auto valid_cell = wrap_state_root_as_account_data(state_root);
     bool valid_decoded = ew::decode_cp_new_data(
-        valid_cell, decoded_state_root, decoded_root, decoded_cache_root,
-        /*verify_eth_state_root=*/true);
+        valid_cell, decoded_state_root, decoded_commitment, decoded_cache_root);
 
-    bool ok = !missing_decoded && valid_decoded;
+    bool ok = !v5_decoded && valid_decoded;
     if (!ok) {
         ++g_failures;
-        tprintf("  FAILED: missing_decoded=%d valid_decoded=%d\n",
-                missing_decoded, valid_decoded);
+        tprintf("  FAILED: v5_decoded=%d valid_decoded=%d\n",
+                v5_decoded, valid_decoded);
         return;
     }
     ++g_passes;
-    tprintf("  PASSED (v5 state cells must carry persistent trie witness)\n");
+    tprintf("  PASSED (v5 cp.new_data cells are rejected; v6 cells decode)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1391,17 +1341,163 @@ static void test_invalid_tx_prevalidation_runs_before_system_calls() {
 }
 
 // ---------------------------------------------------------------------------
+// New no-MPT invariant tests (plan §14.3)
+// ---------------------------------------------------------------------------
+
+// 1. cp.new_data v6 roundtrip: build a state_root, encode v6, decode, and
+//    cross-check that the state_root cell hash and native_state_commitment
+//    survive the roundtrip byte-exact.
+static void test_cp_new_data_v6_roundtrip() {
+    tprintf("[TEST] cp_new_data_v6_roundtrip\n");
+
+    ew::CellEvmState cs;
+    evmc::address addr{};
+    addr.bytes[19] = 0x41;
+    silkworm::Account acct{};
+    acct.balance = intx::uint256{1'000'000};
+    acct.nonce = 7;
+    cs.update_account(addr, std::nullopt, acct);
+    auto state_root = cs.serialize_to_cell();
+    if (state_root.is_null()) {
+        ++g_failures;
+        tprintf("  FAILED: serialize_to_cell returned null\n");
+        return;
+    }
+    auto commitment = ew::compute_native_evm_state_commitment(state_root);
+
+    auto encoded = ew::encode_cp_new_data_v6(state_root, commitment,
+                                             /*rpc_cache_root=*/{},
+                                             /*block_hashes_root=*/{});
+    td::Ref<vm::Cell> decoded_state_root;
+    evmc::bytes32 decoded_commitment{};
+    td::Ref<vm::Cell> decoded_cache_root;
+    bool ok = ew::decode_cp_new_data(encoded, decoded_state_root,
+                                     decoded_commitment, decoded_cache_root);
+    if (!ok) {
+        ++g_failures;
+        tprintf("  FAILED: decoder rejected a freshly-encoded v6 cell\n");
+        return;
+    }
+    bool root_matches = decoded_state_root.not_null() &&
+                        decoded_state_root->get_hash() == state_root->get_hash();
+    bool commitment_matches =
+        std::memcmp(decoded_commitment.bytes, commitment.bytes, 32) == 0;
+    if (!root_matches || !commitment_matches) {
+        ++g_failures;
+        tprintf("  FAILED: roundtrip mismatch root=%d commitment=%d\n",
+                root_matches, commitment_matches);
+        return;
+    }
+    ++g_passes;
+    tprintf("  PASSED (v6 cp.new_data roundtrip preserves state_root + commitment)\n");
+}
+
+// 2. native_state_commitment_equals_cell_hash: assert
+//    compute_native_evm_state_commitment(root) byte-equals
+//    root->get_hash().as_array().
+static void test_native_state_commitment_equals_cell_hash() {
+    tprintf("[TEST] native_state_commitment_equals_cell_hash\n");
+
+    ew::CellEvmState cs;
+    for (uint8_t i = 0; i < 4; ++i) {
+        evmc::address a{};
+        a.bytes[19] = static_cast<uint8_t>(0x10 + i);
+        silkworm::Account acct{};
+        acct.balance = intx::uint256{static_cast<uint64_t>(i + 1)};
+        acct.nonce = i;
+        cs.update_account(a, std::nullopt, acct);
+    }
+    auto root = cs.serialize_to_cell();
+    if (root.is_null()) {
+        ++g_failures;
+        tprintf("  FAILED: serialize_to_cell returned null\n");
+        return;
+    }
+    auto commitment = ew::compute_native_evm_state_commitment(root);
+    auto cell_hash = root->get_hash();
+    auto cell_hash_arr = cell_hash.as_array();
+    bool match = std::memcmp(commitment.bytes, cell_hash_arr.data(), 32) == 0;
+    if (!match) {
+        ++g_failures;
+        tprintf("  FAILED: commitment != root cell hash\n");
+        return;
+    }
+    ++g_passes;
+    tprintf("  PASSED (compute_native_evm_state_commitment == cell hash)\n");
+}
+
+// 7. tx_receipt_native_commitments_deterministic: identical inputs MUST
+//    produce byte-identical commitment outputs across repeated calls.
+static void test_tx_receipt_native_commitments_deterministic() {
+    tprintf("[TEST] tx_receipt_native_commitments_deterministic\n");
+
+    std::vector<ew::StoredTransaction> txs;
+    for (int i = 0; i < 3; ++i) {
+        ew::StoredTransaction tx{};
+        tx.from.bytes[19] = static_cast<uint8_t>(0x40 + i);
+        evmc::address to_addr{};
+        to_addr.bytes[19] = static_cast<uint8_t>(0xA0 + i);
+        tx.to = to_addr;
+        tx.value = intx::uint256{static_cast<uint64_t>(1'000 * (i + 1))};
+        tx.nonce = static_cast<uint64_t>(i);
+        tx.gas_limit = 21'000;
+        tx.gas_price = intx::uint256{1'000'000'000};
+        tx.raw_rlp = silkworm::Bytes{0xc0, static_cast<uint8_t>(i)};
+        txs.push_back(std::move(tx));
+    }
+
+    std::vector<ew::StoredReceipt> receipts;
+    for (int i = 0; i < 3; ++i) {
+        ew::StoredReceipt r{};
+        r.success = true;
+        r.gas_used = 21'000;
+        r.cumulative_gas_used = static_cast<uint64_t>(21'000 * (i + 1));
+        r.from.bytes[19] = static_cast<uint8_t>(0x40 + i);
+        r.tx_index = static_cast<uint32_t>(i);
+        receipts.push_back(std::move(r));
+    }
+
+    std::vector<silkworm::Log> logs;
+    for (int i = 0; i < 2; ++i) {
+        silkworm::Log log{};
+        log.address.bytes[19] = static_cast<uint8_t>(0x70 + i);
+        evmc::bytes32 t{};
+        t.bytes[31] = static_cast<uint8_t>(0xAA + i);
+        log.topics.push_back(t);
+        log.data.push_back(static_cast<uint8_t>(0xC0 + i));
+        logs.push_back(std::move(log));
+    }
+
+    auto a_tx = ew::compute_native_tx_list_commitment(txs);
+    auto b_tx = ew::compute_native_tx_list_commitment(txs);
+    auto a_rc = ew::compute_native_receipt_list_commitment(receipts);
+    auto b_rc = ew::compute_native_receipt_list_commitment(receipts);
+    auto a_lg = ew::compute_native_log_list_commitment(logs);
+    auto b_lg = ew::compute_native_log_list_commitment(logs);
+    bool ok =
+        std::memcmp(a_tx.bytes, b_tx.bytes, 32) == 0 &&
+        std::memcmp(a_rc.bytes, b_rc.bytes, 32) == 0 &&
+        std::memcmp(a_lg.bytes, b_lg.bytes, 32) == 0;
+    if (!ok) {
+        ++g_failures;
+        tprintf("  FAILED: commitments not deterministic across calls\n");
+        return;
+    }
+    ++g_passes;
+    tprintf("  PASSED (tx / receipt / log native commitments are deterministic)\n");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    tprintf("EVM Workchain — compute-phase purity (P1 audit closure) tests\n");
-    tprintf("==============================================================\n\n");
+    tprintf("EVM Workchain — compute-phase purity tests (v6 native-only)\n");
+    tprintf("============================================================\n\n");
 
-    // Bring up g_evm_state + the dispatch handler. Snapshot compute uses
-    // per-call trie calculators; the post-accept apply layer still reads
-    // global_evm_state(), so init must run before the tests.
+    // Bring up g_evm_state + the dispatch handler. The post-accept apply
+    // layer reads global_evm_state(), so init must run before the tests.
 #ifndef TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV
     setenv("TOS_EVM_CHAIN_ID", "0xc72dd9d5e883e", 1);
 #endif
@@ -1416,7 +1512,7 @@ int main() {
     test_restart_validator_matches_collator();
     test_post_accept_missing_side_effect_withholds_partial_block();
     test_block_hash_history_roundtrip_and_read_header();
-    test_cp_new_data_declared_root_not_recomputed_per_tx();
+    test_cp_new_data_declared_commitment_must_match_state_root();
     test_same_block_second_evm_tx_is_rejected_without_accumulator();
     test_cp_new_data_rejects_legacy_layouts();
     test_post_accept_recovers_persisted_side_effect_after_memory_loss();
@@ -1425,8 +1521,13 @@ int main() {
     test_pending_side_effect_db_prunes_ttl_and_cap();
     test_post_accept_parser_rejects_special_cells();
     test_post_accept_rejects_gas_used_overflow();
-    test_cp_new_data_v5_requires_trie_witness();
+    test_decode_v5_fails_closed();
     test_invalid_tx_prevalidation_runs_before_system_calls();
+
+    // No-MPT invariant tests (plan §14.3).
+    test_cp_new_data_v6_roundtrip();
+    test_native_state_commitment_equals_cell_hash();
+    test_tx_receipt_native_commitments_deterministic();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
             g_passes.load(), g_failures.load(), g_skips.load());

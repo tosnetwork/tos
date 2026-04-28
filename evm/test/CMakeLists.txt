@@ -45,23 +45,6 @@ else()
   add_test(NAME test-evm-compute-purity COMMAND test-evm-compute-purity)
 endif()
 
-# Randomized fuzz target for the MPT / witness `_safe` API surface required
-# by the security review. Hand-crafted regression coverage already lives in
-# `test-evm-executor`; this binary complements it by feeding random cells /
-# byte streams into every fail-closed entry point and verifying that none
-# of them crash, abort, or leak a C++ exception. Links against
-# `evm_workchain_test` so the same instrumentation symbols resolve as for
-# the other EVM tests.
-add_executable(test-mpt-fuzz test-mpt-fuzz.cpp)
-target_link_libraries(test-mpt-fuzz PRIVATE evm_workchain_test tdutils tos_block tos_crypto)
-target_include_directories(test-mpt-fuzz PRIVATE ${SECP256K1_INCLUDE_DIR})
-
-if (COMMAND tos_test)
-  tos_test(test-mpt-fuzz)
-else()
-  add_test(NAME test-mpt-fuzz COMMAND test-mpt-fuzz)
-endif()
-
 # Optional coverage-guided fuzz harnesses (libFuzzer + AddressSanitizer).
 #
 # Gated behind TOS_BUILD_LIBFUZZER so default builds remain unaffected.
@@ -81,18 +64,6 @@ if(TOS_BUILD_LIBFUZZER)
       "TOS_BUILD_LIBFUZZER requires clang (got ${CMAKE_CXX_COMPILER_ID}). "
       "Reconfigure with -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++.")
   endif()
-
-  add_executable(test-mpt-libfuzzer test-mpt-libfuzzer.cpp)
-  target_link_libraries(test-mpt-libfuzzer
-    PRIVATE
-      evm_workchain_test
-      tdutils
-      tos_block
-      tos_crypto
-  )
-  target_include_directories(test-mpt-libfuzzer PRIVATE ${SECP256K1_INCLUDE_DIR})
-  target_compile_options(test-mpt-libfuzzer PRIVATE -fsanitize=fuzzer,address)
-  target_link_options(test-mpt-libfuzzer PRIVATE -fsanitize=fuzzer,address)
 
   add_executable(test-boc-libfuzzer test-boc-libfuzzer.cpp)
   target_link_libraries(test-boc-libfuzzer

@@ -21,18 +21,15 @@
 #include "evm/core/transaction.h"
 #include "evm/core/tracer.h"
 #include "evm/rpc/subscriptions.h"
-#include "evm/core/state-root.h"
-#include "evm/core/incremental-trie.h"
 #include "evm/core/access-list-tracer.h"
 #include "evm/core/cell-state.h"
-#include "evm/core/mpt-prover.h"
+#include "evm/core/native-commitment.h"
 #include "evm/rpc/cache-db.h"
+#include "evm/rpc/cache-codec.h"
 
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
 #include <evmone/execution_state.hpp>
-#include <silkworm/core/trie/hash_builder.hpp>
-#include <silkworm/core/trie/nibbles.hpp>
 #include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/types/block.hpp>
 #include <silkworm/core/types/receipt.hpp>
@@ -66,8 +63,6 @@ static constexpr uint64_t kMaxRpcRequestsPerSec = 100;   // refill rate (tokens/
 static constexpr uint64_t kMaxRpcBurst = 1000;            // bucket capacity
 static constexpr uint64_t kMaxGetLogsRequestsPerSec = 10; // tighter refill for eth_getLogs
 static constexpr uint64_t kMaxGetLogsBurst = 50;          // tighter burst for eth_getLogs
-static constexpr uint64_t kMaxGetProofRequestsPerSec = 2; // proof building is CPU-heavy
-static constexpr uint64_t kMaxGetProofBurst = 4;
 static constexpr uint64_t kMaxSimulateRequestsPerSec = 1; // simulation holds EVM state lock
 static constexpr uint64_t kMaxSimulateBurst = 2;
 // Heavy read-only EVM RPC limiters: eth_call / eth_estimateGas /
@@ -75,7 +70,7 @@ static constexpr uint64_t kMaxSimulateBurst = 2;
 // run silkworm. Without per-method gates they share only the global RPC
 // bucket, so a public RPC node can be pinned by a swarm of 30M-gas
 // simulations and the rest of the validator (sendRawTransaction,
-// compute path, getProof reads) stalls behind the same lock.
+// compute path) stalls behind the same lock.
 static constexpr uint64_t kCallRequestsPerSec = 5;
 static constexpr uint64_t kEstimateGasRequestsPerSec = 2;
 static constexpr uint64_t kAccessListRequestsPerSec = 1;
@@ -156,12 +151,10 @@ struct RateLimiter {
 
 static RateLimiter g_rpc_limiter{kMaxRpcBurst, kMaxRpcRequestsPerSec};
 static RateLimiter g_getlogs_limiter{kMaxGetLogsBurst, kMaxGetLogsRequestsPerSec};
-static RateLimiter g_getproof_limiter{kMaxGetProofBurst, kMaxGetProofRequestsPerSec};
 static RateLimiter g_simulate_limiter{kMaxSimulateBurst, kMaxSimulateRequestsPerSec};
 static RateLimiter g_call_limiter{kCallBurst, kCallRequestsPerSec};
 static RateLimiter g_estimate_gas_limiter{kEstimateGasBurst, kEstimateGasRequestsPerSec};
 static RateLimiter g_access_list_limiter{kAccessListBurst, kAccessListRequestsPerSec};
-static std::atomic<uint32_t> g_getproof_inflight{0};
 static std::atomic<uint32_t> g_simulate_inflight{0};
 static std::atomic<uint32_t> g_readonly_evm_inflight{0};
 static std::atomic<uint32_t> g_estimate_gas_inflight{0};
@@ -205,7 +198,6 @@ class AtomicConcurrencyPermit {
 // Rate limiting is disabled by default so that test harnesses are not
 // affected.  Production code enables it via enable_evm_rpc_rate_limit().
 static bool g_rate_limit_enabled = false;
-static bool g_public_getproof_enabled = true;
 
 // ---------------------------------------------------------------------------
 // In-process per-IP rate limiter (defense-in-depth against single-source
@@ -410,7 +402,6 @@ uint32_t per_ip_bucket_index_for_test(std::string_view source_ip) {
 //   - eth_call / eth_estimateGas / eth_createAccessList / eth_simulateV1
 //     enable bit (heavy read-only EVM RPC)
 //   - eth_call / eth_estimateGas / eth_createAccessList gas cap
-//   - eth_getProof enable bit
 //   - debug_* RPC method allowlist (even when TOS_ENABLE_EVM_DEBUG_RPC
 //     is compiled in, the runtime profile gates them)
 // =====================================================================
@@ -421,18 +412,15 @@ static std::atomic<EvmRpcProfile> g_evm_rpc_profile{EvmRpcProfile::ValidatorMini
 // state-machine invariants, so there is no data dependency that needs
 // a stronger fence.
 static std::atomic<bool> g_profile_heavy_readonly_enabled{false};
-static std::atomic<bool> g_profile_getproof_enabled{false};
 static std::atomic<bool> g_profile_debug_rpc_enabled{false};
 
 static void reset_rpc_buckets_locked() {
     g_rpc_limiter.reset();
     g_getlogs_limiter.reset();
-    g_getproof_limiter.reset();
     g_simulate_limiter.reset();
     g_call_limiter.reset();
     g_estimate_gas_limiter.reset();
     g_access_list_limiter.reset();
-    g_getproof_inflight.store(0, std::memory_order_relaxed);
     g_simulate_inflight.store(0, std::memory_order_relaxed);
     g_readonly_evm_inflight.store(0, std::memory_order_relaxed);
     g_estimate_gas_inflight.store(0, std::memory_order_relaxed);
@@ -453,12 +441,6 @@ static void apply_profile(EvmRpcProfile profile) {
             // surprising under-budget eth_call results.
             g_profile_heavy_readonly_enabled.store(false,
                 std::memory_order_relaxed);
-            // eth_getProof builds path proofs over the persistent
-            // witness — that is also too heavy for a validator under
-            // public load. Leave it disabled until the operator opts
-            // up to FollowerPublic.
-            g_profile_getproof_enabled.store(false,
-                std::memory_order_relaxed);
             // Debug methods are admin-only at runtime even if the
             // build flag is on (the build flag controls compilation;
             // the profile controls exposure).
@@ -470,8 +452,6 @@ static void apply_profile(EvmRpcProfile profile) {
             // (clamp_read_only_rpc_gas reads the profile to pick).
             g_profile_heavy_readonly_enabled.store(true,
                 std::memory_order_relaxed);
-            g_profile_getproof_enabled.store(true,
-                std::memory_order_relaxed);
             // Public follower MUST NOT expose debug RPC even if the
             // build flag is set.
             g_profile_debug_rpc_enabled.store(false,
@@ -479,8 +459,6 @@ static void apply_profile(EvmRpcProfile profile) {
             break;
         case EvmRpcProfile::AdminLocal:
             g_profile_heavy_readonly_enabled.store(true,
-                std::memory_order_relaxed);
-            g_profile_getproof_enabled.store(true,
                 std::memory_order_relaxed);
             // Admin profile honours the compile flag: we still gate
             // the dispatch entries with #ifdef TOS_ENABLE_EVM_DEBUG_RPC,
@@ -506,16 +484,11 @@ void enable_evm_rpc_rate_limit(bool enable) {
     if (enable) {
         g_rpc_limiter.reset();
         g_getlogs_limiter.reset();
-        g_getproof_limiter.reset();
         g_simulate_limiter.reset();
         g_call_limiter.reset();
         g_estimate_gas_limiter.reset();
         g_access_list_limiter.reset();
     }
-}
-
-void enable_public_evm_getproof(bool enable) {
-    g_public_getproof_enabled = enable;
 }
 
 // Expose the global EVM bucket so the
@@ -536,12 +509,10 @@ size_t max_eth_send_raw_tx_hex_size() {
 void reset_evm_rpc_rate_limit_for_test() {
     g_rpc_limiter.reset();
     g_getlogs_limiter.reset();
-    g_getproof_limiter.reset();
     g_simulate_limiter.reset();
     g_call_limiter.reset();
     g_estimate_gas_limiter.reset();
     g_access_list_limiter.reset();
-    g_getproof_inflight.store(0, std::memory_order_relaxed);
     g_simulate_inflight.store(0, std::memory_order_relaxed);
     g_readonly_evm_inflight.store(0, std::memory_order_relaxed);
     g_estimate_gas_inflight.store(0, std::memory_order_relaxed);
@@ -737,6 +708,145 @@ static std::string lookup_block_hash_hex(uint64_t block_num) {
     return to_hex_data(hash.bytes, 32);
 }
 
+// Cache freshness gate for transaction-by-* RPC paths.
+//
+// Verifies that a cached `StoredTransaction` is still bound to the canonical
+// chain at its claimed block number.  The check has two halves:
+//
+//   1. The transaction's `block_number` must resolve to a canonical block in
+//      `global_evm_state()` — a tx whose host block has been orphaned
+//      (post-reorg) MUST NOT be surfaced.
+//   2. The persisted cache record (if present) must carry an
+//      `EvmCacheRecordStamp` whose (workchain_id, schema_version, block_hash,
+//      native_state_commitment) tuple matches the canonical block.  This
+//      protects against a stale cache cell pointing at an old fork's
+//      block_hash even though the canonical block at that height is fresh.
+//
+// Returns true iff the entry passes both gates (or there is no persisted
+// cache cell to compare against and canonical block lookup succeeds — in
+// which case the in-RAM record came from the live hot path and is trusted).
+// Callers MUST treat a `false` return as a cache-miss and surface JSON-RPC
+// `null`; the cache repair task will rewrite affected windows from
+// canonical state at its own cadence.
+static bool is_stored_tx_canonical(const evmc::bytes32& tx_hash,
+                                    uint64_t block_number) {
+    // Canonical block lookup: the tx's claimed host block must exist in
+    // canonical state. A default-constructed StoredBlock (number==0,
+    // hash==zero) means the block was never indexed or has been pruned;
+    // either way, refuse to serve.
+    StoredBlock canonical = global_evm_state().get_block_copy(block_number);
+    if (canonical.number != block_number) {
+        return false;
+    }
+    bool canonical_hash_is_zero = true;
+    for (auto b : canonical.hash.bytes) {
+        if (b != 0) { canonical_hash_is_zero = false; break; }
+    }
+    if (canonical_hash_is_zero) {
+        return false;
+    }
+
+    // Persisted-cache stamp gate.  If the cache DB is not open (test
+    // harness, cache disabled by operator) the in-RAM record is the only
+    // source of truth and the canonical-block check above is the entire
+    // gate.  When the cache IS open and a cell exists, the stamp must
+    // match canonical; if the cell exists but decode fails, treat as
+    // stale.  A missing cell with cache open means the persisted record
+    // was never written (rare race during hot-path commit) — accept the
+    // RAM entry.
+    auto* cache = evm_rpc_cache_db();
+    if (cache == nullptr) {
+        return true;
+    }
+    td::Bits256 tx_hash_bits;
+    std::memcpy(tx_hash_bits.data(), tx_hash.bytes, 32);
+    auto cell_r = cache->get_transaction(tx_hash_bits);
+    if (cell_r.is_error()) {
+        return false;
+    }
+    auto cell = cell_r.move_as_ok();
+    if (cell.is_null()) {
+        return true;
+    }
+    StoredTransaction decoded;
+    EvmCacheRecordStamp stamp;
+    if (!decode_persisted_transaction(cell, decoded, stamp)) {
+        return false;
+    }
+    return stamp_is_fresh(stamp,
+                          kEvmCacheWorkchainId,
+                          kEvmCacheCodecSchemaVersion,
+                          canonical.hash,
+                          canonical.state_root);
+}
+
+// Cache freshness gate for the per-block log batch (eth_getLogs).
+//
+// `eth_getLogs` iterates a block range and returns matching logs from each
+// block. After a reorg, the persistent log cache may still hold a batch
+// that was minted for an orphaned block at this height; without this
+// gate that batch could be surfaced even though the canonical chain now
+// has different logs at the same `block_number`.
+//
+// Semantics (matching `is_stored_tx_canonical` for receipts/transactions):
+//   * Canonical block at `block_num` must exist (non-zero hash). If the
+//     canonical state has nothing at this height, refuse to serve.
+//   * If no cache DB is open, the in-memory `block_logs_` map is the
+//     single source of truth (post-accept writes both in lock-step
+//     under the state mutex, and there is no orphaned-record vector
+//     to defend against). Accept.
+//   * If the cache DB is open and a persisted log-batch cell exists
+//     for this block, decode it and require the stamp to match the
+//     canonical (workchain_id, schema_version, block_hash,
+//     state_root) tuple. Decode failure or stamp mismatch → stale.
+//   * If the cache DB is open but no persisted cell exists for this
+//     block, accept the in-memory record (post-accept may not have
+//     reached the cache write step yet, or the block had no logs and
+//     the cache write was skipped).
+//
+// Plan §8.2 conformance: callers MUST treat a `false` return as a
+// silent skip — drop this block from the response without emitting an
+// error. The canonical-state rebuild path (debug_rebuildRpcCache and
+// the regular post-accept path) eventually rewrites the cache;
+// clients that need strict snapshot coherence can poll until cache
+// catches up. We do NOT fail open by serving stale logs.
+static bool is_logs_for_block_canonical(uint64_t block_num) {
+    StoredBlock canonical = global_evm_state().get_block_copy(block_num);
+    if (canonical.number != block_num) {
+        return false;
+    }
+    bool canonical_hash_is_zero = true;
+    for (auto b : canonical.hash.bytes) {
+        if (b != 0) { canonical_hash_is_zero = false; break; }
+    }
+    if (canonical_hash_is_zero) {
+        return false;
+    }
+
+    auto* cache = evm_rpc_cache_db();
+    if (cache == nullptr) {
+        return true;
+    }
+    auto cell_r = cache->get_logs_for_block(block_num);
+    if (cell_r.is_error()) {
+        return false;
+    }
+    auto cell = cell_r.move_as_ok();
+    if (cell.is_null()) {
+        return true;
+    }
+    std::vector<IndexedLog> persisted_logs;
+    EvmCacheRecordStamp stamp;
+    if (!decode_persisted_logs_for_block(cell, persisted_logs, stamp)) {
+        return false;
+    }
+    return stamp_is_fresh(stamp,
+                          kEvmCacheWorkchainId,
+                          kEvmCacheCodecSchemaVersion,
+                          canonical.hash,
+                          canonical.state_root);
+}
+
 // Compute Ethereum logs bloom (2048-bit / 256-byte) into caller-provided buffer.
 // For each log: hash(address) and hash(each topic) contribute 3 bits each to the bloom.
 // Reference: ~/s/silkworm/core/types/bloom.cpp
@@ -869,7 +979,8 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
 
     auto tx_hash = decoded.txn.hash();
 
-    // Store receipt
+    // Build receipt + transaction records. Keep pre-move copies so we can
+    // feed them into the native list-commitment helpers below.
     StoredReceipt receipt;
     receipt.success = exec_result.success;
     receipt.gas_used = exec_result.gas_used;
@@ -881,6 +992,7 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     receipt.contract_address = exec_result.contract_address;
     receipt.logs = exec_result.logs;
     receipt.return_data = exec_result.return_data;
+    StoredReceipt receipt_copy = receipt;
     evm_state.store_receipt(tx_hash, std::move(receipt));
 
     // Store transaction for eth_getTransactionByHash + raw RLP for eth_getRawTransactionByHash
@@ -895,6 +1007,7 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     stored_tx.block_number = bn;
     stored_tx.tx_index = 0;
     stored_tx.raw_rlp = raw_tx;  // original bytes from eth_sendRawTransaction
+    StoredTransaction stored_tx_copy = stored_tx;
     evm_state.store_transaction(tx_hash, std::move(stored_tx));
 
     // Store logs for eth_getLogs
@@ -927,32 +1040,27 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     // Compute block-level logs bloom from all transaction logs
     compute_logs_bloom(exec_result.logs, stored_block.logs_bloom);
 
-    // Compute transactionsRoot and receiptsRoot using proper Merkle Patricia Trie.
-    // The trie root functions read from evm_state, which already has the stored tx/receipt.
-    auto transactions_root = try_compute_transactions_root(
-        stored_block.transaction_hashes, evm_state);
-    if (!transactions_root) {
-        return {make_error(id, -32603,
-                "missing raw signed tx rlp for canonical transactionsRoot"), true};
-    }
-    stored_block.transactions_root = *transactions_root;
-    stored_block.receipts_root = compute_receipts_root(
-        stored_block.transaction_hashes, evm_state);
+    // transactionsRoot / receiptsRoot are TOS-native list commitments —
+    // domain-tagged keccak256 over the canonical record stream, NOT
+    // Ethereum MPT roots. Field names stay Ethereum-standard so wallets
+    // and indexers can deserialise the block; the value semantics differ.
+    stored_block.transactions_root =
+        compute_native_tx_list_commitment(std::vector<StoredTransaction>{stored_tx_copy});
+    stored_block.receipts_root =
+        compute_native_receipt_list_commitment(std::vector<StoredReceipt>{receipt_copy});
 
-    // Read stateRoot from the same persistent trie witness used by consensus.
+    // stateRoot is the TOS-native EVM state commitment for the post-tx
+    // state. The canonical commitment is bound by the post-accept path
+    // for blocks produced through consensus; the synchronous test-only
+    // sendRawTransaction path mirrors that by hashing the current cell
+    // backend representation. Returns the all-zero bytes32 when the
+    // backend is not a CellEvmState (legacy in-RAM state for tests).
     {
-        std::unique_lock trie_lock(evm_state.mutex());
+        std::unique_lock state_lock(evm_state.mutex());
         if (auto* cs = dynamic_cast<CellEvmState*>(&evm_state.state())) {
-            if (!cs->trie_witness_ready() && !cs->rebuild_trie_witness()) {
-                return {make_error(id, -32603,
-                        "persistent trie witness unavailable for stateRoot"), true};
-            }
-            stored_block.state_root = cs->ethereum_state_root_hash();
-        } else {
-            IncrementalTrieCalculator calc;
-            stored_block.state_root = calc.compute_state_root(evm_state, nullptr, nullptr);
+            stored_block.state_root =
+                compute_native_evm_state_commitment(cs->serialize_to_cell());
         }
-        evm_state.clear_change_tracking();
     }
 
     evm_state.store_block(stored_block);
@@ -985,6 +1093,55 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, "null"), false};
+    }
+
+    // Stamp freshness gate (plan §8.2): if a stamped record for this tx
+    // exists in the persistent RPC cache, its stamp MUST still match the
+    // canonical block at receipt->block_number. A reorg / fork rollback
+    // could have orphaned the block the stamp was minted for; serving
+    // that receipt would surface a tx that no longer belongs to the
+    // canonical chain. On any of {missing canonical block, stamp decode
+    // failure, stamp stale} we treat this as a cache miss and return
+    // JSON-RPC null — the cache repair task (post-accept rebuild) will
+    // rewrite from canonical state on its own schedule. We do NOT
+    // panic / error out; the read path stays consistent with the
+    // existing "receipt not found" branch.
+    if (auto* cache = evm_rpc_cache_db()) {
+        td::Bits256 tx_hash_bits;
+        std::memcpy(tx_hash_bits.data(), tx_hash.bytes, 32);
+        auto cell_result = cache->get_receipt(tx_hash_bits);
+        if (cell_result.is_ok()) {
+            auto cached_cell = cell_result.move_as_ok();
+            if (cached_cell.not_null()) {
+                StoredReceipt cached_receipt;
+                EvmCacheRecordStamp stamp;
+                if (!decode_persisted_receipt(cached_cell, cached_receipt, stamp)) {
+                    // Reorg / fork rollback or schema-version drift: the
+                    // cached entry cannot be validated. Returning null
+                    // keeps the RPC consistent with the canonical chain
+                    // head; the cache repair task will rewrite from
+                    // canonical state.
+                    return {make_result(id, "null"), false};
+                }
+                if (!global_evm_state().has_block(receipt->block_number)) {
+                    return {make_result(id, "null"), false};
+                }
+                StoredBlock canonical =
+                    global_evm_state().get_block_copy(receipt->block_number);
+                if (!stamp_is_fresh(stamp,
+                                    kEvmCacheWorkchainId,
+                                    kEvmCacheCodecSchemaVersion,
+                                    canonical.hash,
+                                    canonical.state_root)) {
+                    // Reorg / fork rollback: the cached entry was written
+                    // for a block that's no longer canonical. Returning
+                    // null keeps the RPC consistent with the canonical
+                    // chain head; the cache repair task will rewrite
+                    // from canonical state.
+                    return {make_result(id, "null"), false};
+                }
+            }
+        }
     }
 
     // Build receipt JSON
@@ -1703,9 +1860,8 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
     const auto& config = evm_chain_config();
 
     // Audit K-02 (H-01 follow-up): snapshot the always-on code-root
-    // mismatch counter before silkworm runs. `eth_call` does not bind a
-    // `WitnessFlatConsistencyContext` (the read-only fast path keeps RPC
-    // latency low), so silkworm internal helpers that consult
+    // mismatch counter before silkworm runs. `eth_call` is a read-only
+    // fast path, so silkworm internal helpers that consult
     // `CellEvmState::read_code` would otherwise see an empty `ByteView`
     // on a corrupt code root and silently treat it as canonical "no
     // code". The post-execution counter delta is the deterministic
@@ -1780,12 +1936,10 @@ static RpcResult handle_estimate_gas(const std::string& params, const std::strin
     const auto& config = evm_chain_config();
 
     // Audit K-02 (H-01 follow-up): snapshot the always-on code-root
-    // mismatch counter before silkworm runs. `eth_estimateGas` is one
-    // of the read-only EVM RPC paths that does NOT bind a
-    // `WitnessFlatConsistencyContext`; without the counter snapshot a
-    // corrupt code root would surface as a falsely-cheap gas estimate
-    // (silkworm would observe an empty `ByteView` from `read_code` and
-    // estimate gas as if the contract had no code).
+    // mismatch counter before silkworm runs. Without the counter
+    // snapshot a corrupt code root would surface as a falsely-cheap gas
+    // estimate (silkworm would observe an empty `ByteView` from
+    // `read_code` and estimate gas as if the contract had no code).
     auto code_mismatch_before =
         global_evm_state().code_root_hash_mismatch_count();
 
@@ -1822,6 +1976,37 @@ static RpcResult handle_client_version(const std::string& id) {
     return {make_result(id, "\"evm-workchain/0.1.0\""), false};
 }
 
+// tos_evmChainInfo — TOS-native introspection method.
+//
+// Surfaces the load-bearing differences from a vanilla Ethereum node:
+//   - the EVM workchain id (chain id),
+//   - the workchain index (always 1 in the current TOS layout),
+//   - a textual `stateCommitment` selector ("tos-native-cell-hash"),
+//   - explicit `mpt: false` and `ethGetProof: false` flags so wallets
+//     and indexers can branch their behaviour without probing
+//     eth_getProof and decoding a -32601.
+//
+// The native commitment hash itself is a per-block value and is exposed
+// via `eth_getBlockBy*`'s `stateRoot` field; this method only returns
+// the static chain-level descriptor.
+static RpcResult handle_tos_evm_chain_info(const std::string& id) {
+    std::string r = "{";
+    r += "\"chainId\":" + to_hex_quantity(current_evm_chain_id()) + ",";
+    r += "\"workchain\":1,";
+    r += "\"stateCommitment\":\"tos-native-cell-hash\",";
+    r += "\"mpt\":false,";
+    r += "\"ethGetProof\":false,";
+    r += "\"stateRootCompatibility\":\"tos-native-not-ethereum-mpt\"";
+    r += "}";
+    return {make_result(id, r), false};
+}
+
+// stateRoot / transactionsRoot / receiptsRoot below carry TOS-native
+// commitments (cell hash for state, domain-tagged keccak256 list
+// commitments for transactions and receipts). The field NAMES match
+// Ethereum so wallets can deserialise the block, but the field VALUES
+// are NOT Ethereum MPT roots — eth_getProof is unsupported and clients
+// must not attempt to verify these against an Ethereum trie.
 static std::string format_block_json(const StoredBlock& blk, bool full_transactions = false) {
     std::string r = "{";
     r += "\"number\":" + to_hex_quantity(blk.number) + ",";
@@ -1896,6 +2081,47 @@ static std::string format_block_json(const StoredBlock& blk, bool full_transacti
     return r;
 }
 
+// Plan §8.2: cache-read freshness gate for eth_getBlockBy* handlers.
+//
+// The in-memory block container is the hydrated mirror of the persisted
+// cache. Records originally landed via decode_persisted_block, which
+// pairs every block with an EvmCacheRecordStamp written by post-accept
+// from the block's own (number, hash, state_root) fields. After a reorg,
+// the canonical chain's block at a given height may differ from a record
+// still resident in RAM, which would otherwise leak orphaned blocks
+// through eth_getBlockBy{Number,Hash} responses.
+//
+// We reconstruct the stamp from the cached block's own fields (mirroring
+// what the codec writes) and compare it against the canonical block at
+// the same height pulled from the EvmState. The lookup-by-number is the
+// canonical truth here; we still go through stamp_is_fresh so
+// workchain_id / schema_version drift is also caught — defensive depth
+// against codec corruption or schema upgrades that didn't fully
+// invalidate the in-memory mirror.
+static bool block_cache_record_is_fresh(const EvmState& state,
+                                         const StoredBlock& cached_block) {
+    EvmCacheRecordStamp stamp{};
+    stamp.workchain_id = kEvmCacheWorkchainId;
+    stamp.schema_version = kEvmCacheCodecSchemaVersion;
+    stamp.block_seqno = static_cast<uint32_t>(cached_block.number);
+    stamp.block_hash = cached_block.hash;
+    stamp.native_state_commitment = cached_block.state_root;
+
+    // Canonical lookup at the same height. If the chain rolled past this
+    // block (orphan), get_block_copy(N) either returns a different block
+    // (canonical at that height) or — when the height is no longer
+    // populated — a default-zero StoredBlock that fails the stamp match.
+    if (!state.has_block(cached_block.number)) {
+        return false;
+    }
+    StoredBlock canonical = state.get_block_copy(cached_block.number);
+    return stamp_is_fresh(stamp,
+                           kEvmCacheWorkchainId,
+                           kEvmCacheCodecSchemaVersion,
+                           canonical.hash,
+                           canonical.state_root);
+}
+
 static RpcResult handle_get_block_by_number(const std::string& params, const std::string& id) {
     uint64_t bn = global_evm_state().block_number();
     bool full_transactions = false;
@@ -1922,6 +2148,18 @@ static RpcResult handle_get_block_by_number(const std::string& params, const std
 
     auto blk = global_evm_state().get_block_copy(bn);
     if (global_evm_state().has_block(bn)) {
+        // Plan §8.2: gate the cache hit on a canonical-identity stamp
+        // before serializing. Mismatch ⇒ cached block is no longer
+        // canonical at this height (post-reorg orphan, schema drift,
+        // codec corruption). Treat as cache miss and return null per
+        // Ethereum eth_getBlockBy* convention.
+        if (!block_cache_record_is_fresh(global_evm_state(), blk)) {
+            if (is_evm_rpc_block_indexing_incomplete(bn)) {
+                return {make_error(id, -32010,
+                                   "EVM RPC indexing incomplete; retry after cache repair"), true};
+            }
+            return {make_result(id, "null"), false};
+        }
         return {make_result(id, format_block_json(blk, full_transactions)), false};
     }
     if (is_evm_rpc_block_indexing_incomplete(bn)) {
@@ -1999,28 +2237,48 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
     // Parse topics
     topics = parse_topics_array(params);
 
-    // Query logs
-    auto logs = global_evm_state().get_logs(from_block, to_block, addresses, topics);
-
-    // Build JSON array
+    // Plan §8.2 conformance: gate at the BLOCK level, one stamp check
+    // per block_number in the requested range. The in-memory log map
+    // is keyed by block_number and the persistent cache stores one
+    // log-batch cell per block, so a per-block gate is the correct
+    // granularity — receipts/logs within a canonical block share the
+    // same stamp tuple. We iterate the range, run the freshness gate
+    // for each block, and only call into `get_logs(bn, bn, ...)` for
+    // canonical blocks. Stale blocks are silently skipped: this is
+    // option (a) of §8.2 — under-report rather than serve orphaned
+    // logs. The canonical-state rebuild path (post-accept rewrite +
+    // debug_rebuildRpcCache) eventually refreshes the cache; strict-
+    // coherence callers can poll until that lands.
     std::string arr = "[";
-    for (size_t i = 0; i < logs.size(); ++i) {
-        if (i > 0) arr += ",";
-        const auto& il = logs[i];
-        arr += "{\"address\":" + to_hex_addr(il.log.address) + ",";
-        arr += "\"topics\":[";
-        for (size_t j = 0; j < il.log.topics.size(); ++j) {
-            if (j > 0) arr += ",";
-            arr += to_hex_data(il.log.topics[j].bytes, 32);
+    bool first = true;
+    for (uint64_t bn = from_block; bn <= to_block; ++bn) {
+        if (!is_logs_for_block_canonical(bn)) {
+            // Cache stamp disagrees with canonical (or canonical has
+            // no block at this height) — drop this block's logs from
+            // the response. Do not emit an error; eth_getLogs is a
+            // best-effort range query and the canonical rebuild task
+            // will rewrite this window.
+            continue;
         }
-        arr += "],";
-        arr += "\"data\":" + to_hex_data(il.log.data.data(), il.log.data.size()) + ",";
-        arr += "\"blockNumber\":" + to_hex_quantity(il.block_number) + ",";
-        arr += "\"transactionHash\":" + to_hex_data(il.tx_hash.bytes, 32) + ",";
-        arr += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.log_index)) + ",";
-        arr += "\"blockHash\":" + lookup_block_hash_hex(il.block_number) + ",";
-        arr += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.tx_index)) + ",";
-        arr += "\"removed\":false}";
+        auto logs = global_evm_state().get_logs(bn, bn, addresses, topics);
+        for (const auto& il : logs) {
+            if (!first) arr += ",";
+            first = false;
+            arr += "{\"address\":" + to_hex_addr(il.log.address) + ",";
+            arr += "\"topics\":[";
+            for (size_t j = 0; j < il.log.topics.size(); ++j) {
+                if (j > 0) arr += ",";
+                arr += to_hex_data(il.log.topics[j].bytes, 32);
+            }
+            arr += "],";
+            arr += "\"data\":" + to_hex_data(il.log.data.data(), il.log.data.size()) + ",";
+            arr += "\"blockNumber\":" + to_hex_quantity(il.block_number) + ",";
+            arr += "\"transactionHash\":" + to_hex_data(il.tx_hash.bytes, 32) + ",";
+            arr += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.log_index)) + ",";
+            arr += "\"blockHash\":" + lookup_block_hash_hex(il.block_number) + ",";
+            arr += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.tx_index)) + ",";
+            arr += "\"removed\":false}";
+        }
     }
     arr += "]";
     return {make_result(id, arr), false};
@@ -2036,6 +2294,14 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
 
     auto tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!tx) {
+        return {make_result(id, "null"), false};
+    }
+
+    // Reorg / fork rollback gate: ensure the cached entry still binds to a
+    // canonical block at the claimed height. Treat a stamp-fresh failure as
+    // a cache miss so the canonical-state path can rewrite the affected
+    // window at its own cadence.
+    if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
         return {make_result(id, "null"), false};
     }
 
@@ -2151,11 +2417,10 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     auto block = make_evm_block(stored_tx->block_number, 0, rs);
     // Audit K-02: snapshot the always-on code-root mismatch counter
     // before silkworm runs. `trace_evm_transaction` is a read-only
-    // tracing path that does NOT bind a `WitnessFlatConsistencyContext`,
-    // so a corrupt code root would otherwise be reported in the trace
-    // as a confidently-empty bytecode (no opcodes recorded, gas_used
-    // limited to intrinsic). The post-trace counter delta surfaces
-    // such a condition deterministically.
+    // tracing path, so a corrupt code root would otherwise be reported
+    // in the trace as a confidently-empty bytecode (no opcodes
+    // recorded, gas_used limited to intrinsic). The post-trace counter
+    // delta surfaces such a condition deterministically.
     auto trace_code_mismatch_before =
         global_evm_state().code_root_hash_mismatch_count();
     auto trace = trace_evm_transaction(
@@ -2666,6 +2931,11 @@ static RpcResult handle_get_tx_by_block_number_and_index(const std::string& para
         return {make_result(id, "null"), false};
     }
 
+    // Reorg / fork rollback gate: see is_stored_tx_canonical for rationale.
+    if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        return {make_result(id, "null"), false};
+    }
+
     return {make_result(id, format_transaction_json(tx_hash, *tx)), false};
 }
 
@@ -2690,6 +2960,14 @@ static RpcResult handle_get_tx_by_block_hash_and_index(const std::string& params
         return {make_result(id, "null"), false};
     }
 
+    // Reorg / fork rollback gate: see is_stored_tx_canonical for rationale.
+    // Note: the caller-supplied block_hash → block_number mapping was
+    // already validated by `get_block_by_hash_copy` above; this call only
+    // re-checks the stamp freshness against canonical state.
+    if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        return {make_result(id, "null"), false};
+    }
+
     return {make_result(id, format_transaction_json(tx_hash, *tx)), false};
 }
 
@@ -2705,6 +2983,16 @@ static RpcResult handle_get_block_by_hash(const std::string& params, const std::
 
     auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
     if (blk.number != 0 || blk.hash != evmc::bytes32{}) {
+        // Plan §8.2: gate the cache hit. The caller-provided block_hash
+        // MUST equal the cached block's hash (defends against by-hash
+        // index corruption), AND the cached block must still be canonical
+        // at its claimed height. Post-reorg orphans whose by-hash index
+        // entry is still resident in RAM would otherwise be served as
+        // canonical. On miss: return null per Ethereum convention.
+        if (std::memcmp(blk.hash.bytes, block_hash.bytes, 32) != 0 ||
+            !block_cache_record_is_fresh(global_evm_state(), blk)) {
+            return {make_result(id, "null"), false};
+        }
         return {make_result(id, format_block_json(blk, full_transactions)), false};
     }
     return {make_result(id, "null"), false};
@@ -3125,6 +3413,10 @@ static RpcResult handle_get_raw_transaction_by_hash(const std::string& params, c
 
     auto tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!tx) return {make_result(id, "null"), false};
+    // Reorg / fork rollback gate: see is_stored_tx_canonical for rationale.
+    if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        return {make_result(id, "null"), false};
+    }
     return {raw_tx_response(id, *tx), false};
 }
 
@@ -3353,309 +3645,6 @@ static RpcResult handle_debug_get_raw_receipts(const std::string& params, const 
     }
     out += "]";
     return {make_result(id, out), false};
-}
-
-// --- eth_getProof: persistent MPT witness proofs ---
-//
-// Walks the execution-side Ethereum MPT witness persisted in cp.new_data.
-// It does not rebuild account or storage tries from the full flat state.
-//
-// All four fields are now correct for offline verification:
-//   - balance, nonce, codeHash: from CellEvmState
-//   - storageHash: keccak256 of root MPT node of storage trie
-//   - accountProof: list of RLP-encoded MPT nodes (root → leaf for the address)
-//   - storageProof[i].proof: same, for each requested slot in the storage trie
-//
-// Cost: O(path length) per account/storage proof plus response serialization.
-
-static RpcResult handle_get_proof(const std::string& params, const std::string& id) {
-    evmc::address addr{};
-    if (!parse_hex_address(params, addr)) {
-        return {make_error(id, -32602, "invalid address"), true};
-    }
-    AtomicConcurrencyPermit permit(g_getproof_inflight, 1);
-    if (!permit) {
-        return {make_error(id, -32005,
-                           "eth_getProof already running"), true};
-    }
-
-    auto& state = global_evm_state();
-
-    // Codex round 7 (R7-H-17): take the EvmState shared lock ONCE for
-    // the whole proof build, before any backend access. The previous
-    // ordering called `state.read_account(addr)` (which acquires and
-    // releases its own shared_lock) before `proof_lock`, so account
-    // fields could come from snapshot A while the storage / account
-    // tries below saw snapshot B — producing a signed proof that pins
-    // values from inconsistent snapshots. The per-slot read inside the
-    // response loop also re-entered `read_storage_copy` while
-    // `proof_lock` was already held, which is undefined behaviour for
-    // `std::shared_mutex` (recursive ownership is not portable).
-    // Replace both with direct backend access via `state.state()` —
-    // safe under our single-acquire shared lock.
-    constexpr size_t kMaxGetProofResponseBytes = 8 * 1024 * 1024;
-    std::shared_lock proof_lock(state.mutex());
-    auto* cell_state = dynamic_cast<const CellEvmState*>(&state.state());
-    if (!cell_state || !cell_state->trie_witness_ready()) {
-        return {make_error(id, -32603,
-                           "eth_getProof: persistent trie witness unavailable"), true};
-    }
-    auto acct = state.state().read_account(addr);
-    silkworm::Account a;
-    if (acct) a = *acct;
-
-    // Parse storage keys array. params has the shape
-    //   ["0x<addr>", [ "0x<key1>", "0x<key2>", ... ], "<blockTag>"]
-    // Find the INNER array and scan only within its bounds so a later
-    // blockhash string isn't mis-read as a storage key.
-    //
-    // L-01 (strict invalid-param rejection):
-    //   * The second positional parameter MUST be a JSON array. Any
-    //     other shape (string / object / null / missing) returns
-    //     -32602 "storage keys must be a JSON array" rather than
-    //     silently treating it as an empty list.
-    //   * Empty hex ("0x"), oversize hex (> 64 nibbles), and any
-    //     non-hex character return -32602 immediately. The previous
-    //     behaviour was to silently `continue` past invalid input,
-    //     which let callers receive a partial-success response with
-    //     missing storageProof entries — confusing for wallets,
-    //     indexers, and fuzzers.
-    //
-    // Cap storage keys even with persistent witness: each requested slot
-    // emits a path proof, and an uncapped list can still force large JSON
-    // responses. Geth defaults to 1000 keys; we pick 128 — generous for
-    // legitimate wallets / explorers while bounding bandwidth.
-    // Reject excess keys with a JSON-RPC error rather than silently
-    // truncating, so callers know they need to chunk their request.
-    constexpr size_t kMaxGetProofStorageKeys = 128;
-    std::vector<evmc::bytes32> slots;
-    // Locate the second top-level positional parameter. The address
-    // string lives after `[` then a quoted hex address; we scan past
-    // the closing quote and the following `,` to find the start of
-    // the storage-keys parameter. Anything other than `[` here is a
-    // hard rejection per L-01.
-    auto outer_lbrack = params.find('[');
-    auto addr_quote_end = std::string::npos;
-    if (outer_lbrack != std::string::npos) {
-        auto addr_quote_start = params.find('"', outer_lbrack + 1);
-        if (addr_quote_start != std::string::npos) {
-            addr_quote_end = params.find('"', addr_quote_start + 1);
-        }
-    }
-    auto storage_param_start = std::string::npos;
-    if (addr_quote_end != std::string::npos) {
-        // First non-space char after the closing `"` and `,`.
-        auto comma = params.find(',', addr_quote_end + 1);
-        if (comma != std::string::npos) {
-            size_t i = comma + 1;
-            while (i < params.size() && (params[i] == ' ' || params[i] == '\t' ||
-                                         params[i] == '\n' || params[i] == '\r')) {
-                ++i;
-            }
-            storage_param_start = i;
-        }
-    }
-    if (storage_param_start == std::string::npos ||
-        storage_param_start >= params.size()) {
-        return {make_error(id, -32602,
-            "eth_getProof: storage keys must be a JSON array"), true};
-    }
-    // L-01 edge cases:
-    //   * `null` — the caller asked for no proofs. Per the Ethereum
-    //     execution-API spec the response is a successful one with
-    //     an empty `storageProof`. We accept it here without entering
-    //     the array parser; the slots vector stays empty.
-    //   * Anything else that isn't `[` — string, object, number,
-    //     truthy/falsy literal — is hard rejection -32602. The
-    //     post-array parser must run only on a literal `[`.
-    bool storage_keys_is_explicit_null = false;
-    {
-        // Cheap literal check: `null` followed by whitespace, `,`, `]`,
-        // or end of input. Anything else with the prefix `null` (e.g.
-        // `nullable`) falls through to the strict reject below.
-        constexpr std::string_view kNull{"null"};
-        if (storage_param_start + kNull.size() <= params.size() &&
-            params.compare(storage_param_start, kNull.size(), kNull) == 0) {
-            size_t after = storage_param_start + kNull.size();
-            bool boundary_ok =
-                after >= params.size() || params[after] == ',' ||
-                params[after] == ']' || params[after] == ' ' ||
-                params[after] == '\t' || params[after] == '\n' ||
-                params[after] == '\r';
-            if (boundary_ok) {
-                storage_keys_is_explicit_null = true;
-            }
-        }
-    }
-    if (!storage_keys_is_explicit_null &&
-        params[storage_param_start] != '[') {
-        return {make_error(id, -32602,
-            "eth_getProof: storage keys must be a JSON array"), true};
-    }
-    if (!storage_keys_is_explicit_null) {
-        auto kpos = storage_param_start;
-        auto kend = params.find(']', kpos + 1);
-        if (kend == std::string::npos || kend <= kpos) {
-            return {make_error(id, -32602,
-                "eth_getProof: storage keys must be a JSON array"), true};
-        }
-        size_t scan = kpos;
-        while (scan < kend) {
-            auto h = params.find("0x", scan);
-            if (h == std::string::npos || h >= kend) break;
-            auto e = params.find_first_of("\",]", h);
-            if (e == std::string::npos || e > kend) break;
-            // Keys can be any length ≤ 32 bytes per the spec ("0x0", "0x00",
-            // "0x0000...0000" are all the zero slot). parse_hex_bytes rejects
-            // odd-length hex, but "0x0" is odd (1 nibble = half-byte). Handle
-            // both even and odd by reading hex nibbles manually.
-            // h points to the '0' of "0x", e is past the hex digits.
-            size_t hex_start = h + 2;  // past "0x"
-            size_t hex_end = e;
-            size_t hex_len = hex_end - hex_start;
-            if (hex_len == 0 || hex_len > 64) {
-                return {make_error(id, -32602,
-                    "eth_getProof: invalid storage key length"), true};
-            }
-            if (slots.size() >= kMaxGetProofStorageKeys) {
-                return {make_error(id, -32602,
-                                   "eth_getProof: too many storage keys "
-                                   "(max 128 per request)"), true};
-            }
-            evmc::bytes32 s{};
-            size_t nibble_offset = 64 - hex_len;  // left-pad nibbles
-            for (size_t i = 0; i < hex_len; ++i) {
-                uint8_t n;
-                if (!parse_hex_byte(params[hex_start + i], n)) {
-                    return {make_error(id, -32602,
-                        "eth_getProof: invalid storage key hex"), true};
-                }
-                size_t tgt_nibble = nibble_offset + i;
-                size_t byte = tgt_nibble / 2;
-                if (tgt_nibble % 2 == 0) {
-                    s.bytes[byte] = static_cast<uint8_t>(n << 4);
-                } else {
-                    s.bytes[byte] |= n;
-                }
-            }
-            slots.push_back(s);
-            scan = e + 1;
-        }
-    }
-
-    // Persistent witness path: proof generation walks only the MPT path
-    // nodes already carried in cp.new_data, matching execution-client trie
-    // behaviour instead of rebuilding account/storage tries per RPC call.
-    // Use the fail-closed *_safe variants so a corrupt witness yields a
-    // structured RPC error rather than crashing the node via CHECK abort.
-    // The storage-root helper is the *no_cache* safe variant so the public
-    // RPC path under a shared lock never (a) triggers strict recursive
-    // validation of a large target storage trie and (b) writes to the
-    // `mutable touched_storage_tries_` cache.
-    auto storage_hash_res =
-        cell_state->ethereum_storage_root_hash_safe_no_cache(addr);
-    if (storage_hash_res.is_error()) {
-        return {make_error(id, -32000, "corrupt EVM trie witness"), true};
-    }
-    evmc::bytes32 storage_hash = storage_hash_res.move_as_ok();
-    auto account_proof_result = cell_state->ethereum_account_proof_safe(addr);
-    if (account_proof_result.is_error()) {
-        return {make_error(id, -32000, "corrupt EVM trie witness"), true};
-    }
-    auto account_proof = account_proof_result.move_as_ok();
-
-    if (account_proof.empty()) {
-        // Empty trie → emit the canonical empty-trie node so the proof
-        // shape matches geth's (list<str>, never list[]).
-        account_proof.push_back(silkworm::Bytes{0x80});
-    }
-
-    // Helper to append a list of RLP node bytes as JSON array of hex strings.
-    auto append_proof = [&](std::string& out,
-                            const std::vector<silkworm::Bytes>& proof) -> bool {
-        if (!append_bounded(out, "[", kMaxGetProofResponseBytes)) return false;
-        for (size_t i = 0; i < proof.size(); ++i) {
-            if (i > 0 && !append_bounded(out, ",", kMaxGetProofResponseBytes)) return false;
-            if (!append_hex_data_bounded(out, proof[i].data(), proof[i].size(),
-                                         kMaxGetProofResponseBytes)) return false;
-        }
-        return append_bounded(out, "]", kMaxGetProofResponseBytes);
-    };
-
-    // For non-existent accounts geth still surfaces canonical defaults
-    // (empty-code hash, empty-trie storage root), not zero hashes. Our
-    // silkworm::Account default-constructs with code_hash = kEmptyHash and
-    // we already initialise storage_hash to kEmptyRoot above, so emitting
-    // those fields directly produces the expected JSON.
-    std::string r;
-    auto append_r = [&](std::string_view piece) {
-        return append_bounded(r, piece, kMaxGetProofResponseBytes);
-    };
-    auto append_r_str = [&](const std::string& piece) {
-        return append_bounded(r, piece, kMaxGetProofResponseBytes);
-    };
-    auto append_r_hex = [&](const uint8_t* data, size_t len) {
-        return append_hex_data_bounded(r, data, len, kMaxGetProofResponseBytes);
-    };
-
-    if (!append_r("{\"address\":") ||
-        !append_r_str(to_hex_addr(addr)) ||
-        !append_r(",\"balance\":") ||
-        !append_r_str(to_hex_quantity(a.balance)) ||
-        !append_r(",\"nonce\":") ||
-        !append_r_str(to_hex_quantity(a.nonce)) ||
-        !append_r(",\"codeHash\":") ||
-        !append_r_hex(a.code_hash.bytes, 32) ||
-        !append_r(",\"storageHash\":") ||
-        !append_r_hex(storage_hash.bytes, 32) ||
-        !append_r(",\"accountProof\":") ||
-        !append_proof(r, account_proof) ||
-        !append_r(",\"storageProof\":["))
-    {
-        return {make_error(id, -32602,
-                           "eth_getProof response too large"), true};
-    }
-    for (size_t i = 0; i < slots.size(); i++) {
-        if (i > 0 && !append_r(",")) {
-            return {make_error(id, -32602,
-                               "eth_getProof response too large"), true};
-        }
-        // Codex round 7 (R7-H-17): use the underlying backend directly
-        // — `state.read_storage_copy` would re-acquire the same shared
-        // mutex under our `proof_lock`, which is UB for std::shared_mutex.
-        // `silkworm::State::read_storage` is `const noexcept` so a const
-        // reference is enough; no `const_cast` needed.
-        auto v = state.state().read_storage(addr, a.incarnation, slots[i]);
-        // Public RPC path runs under a shared lock, so use the no-cache
-        // variant: it never writes to the `mutable touched_storage_tries_`
-        // cache, avoiding silent data races between concurrent shared-lock
-        // readers and removing a writer-blocking surface.
-        auto slot_proof_result =
-            cell_state->ethereum_storage_proof_safe_no_cache(addr, slots[i]);
-        if (slot_proof_result.is_error()) {
-            return {make_error(id, -32000, "corrupt EVM trie witness"), true};
-        }
-        auto slot_proof = slot_proof_result.move_as_ok();
-        if (slot_proof.empty()) {
-            slot_proof.push_back(silkworm::Bytes{0x80});
-        }
-        if (!append_r("{\"key\":") ||
-            !append_r_hex(slots[i].bytes, 32) ||
-            !append_r(",\"value\":") ||
-            !append_r_str(to_hex_quantity(intx::be::load<intx::uint256>(v))) ||
-            !append_r(",\"proof\":") ||
-            !append_proof(r, slot_proof) ||
-            !append_r("}"))
-        {
-            return {make_error(id, -32602,
-                               "eth_getProof response too large"), true};
-        }
-    }
-    if (!append_r("]}")) {
-        return {make_error(id, -32602,
-                           "eth_getProof response too large"), true};
-    }
-    return {make_result(id, r), false};
 }
 
 // --- eth_simulateV1: simulate one or more blocks of transactions ---
@@ -4807,9 +4796,8 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     silkworm::IntraBlockState ibs(mutable_state);
 
     // Audit K-02 (H-01 follow-up): snapshot the always-on code-root
-    // mismatch counter before the simulation runs. `eth_simulateV1` does
-    // NOT bind a `WitnessFlatConsistencyContext` (read-only fast path,
-    // matching eth_call), so silkworm internal helpers that consult
+    // mismatch counter before the simulation runs. `eth_simulateV1` is
+    // a read-only fast path, so silkworm internal helpers that consult
     // `CellEvmState::read_code` would otherwise see an empty `ByteView`
     // on a corrupt code root and silently treat the contract as having
     // no bytecode. The post-execution counter delta surfaces such a
@@ -5312,11 +5300,10 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
     std::unique_lock lock(evm_state.mutex());
 
     // Audit K-02 (H-01 follow-up): snapshot the always-on code-root
-    // mismatch counter before silkworm runs. `eth_createAccessList`
-    // also does NOT bind a `WitnessFlatConsistencyContext`, so the
-    // tracer would otherwise emit a confidently-empty access list for a
-    // contract whose code root is corrupt (silkworm sees no bytecode →
-    // no SLOAD/SSTORE keys to record).
+    // mismatch counter before silkworm runs. The tracer would
+    // otherwise emit a confidently-empty access list for a contract
+    // whose code root is corrupt (silkworm sees no bytecode → no
+    // SLOAD/SSTORE keys to record).
     auto code_mismatch_before = evm_state.code_root_hash_mismatch_count();
 
     // Build IntraBlockState wrapping mutable view (commit_state=false → no DB writes)
@@ -5673,13 +5660,16 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "debug_rebuildRpcCache" ||
 #endif
            method == "debug_rpcCacheHealth" ||
-           (g_public_getproof_enabled && method == "eth_getProof") ||
            method == "eth_createAccessList" ||
            method == "eth_simulateV1" ||
+           method == "tos_evmChainInfo" ||
            // Rejection methods (we explicitly handle these to return informative errors):
            method == "eth_sign" ||
            method == "eth_signTransaction" ||
-           method == "eth_sendTransaction";
+           method == "eth_sendTransaction" ||
+           // Explicitly unsupported MPT-proof method — handled with a
+           // structured -32601 in the dispatcher.
+           method == "eth_getProof";
 }
 
 std::optional<RpcResult> handle_eth_rpc(
@@ -5703,13 +5693,46 @@ std::optional<RpcResult> handle_eth_rpc(
             "per-IP rate limit exceeded"), true};
     }
 
+    // eth_getProof is unconditionally unsupported: TOS EVM commits state
+    // via TOS-native cell hashes, not Ethereum MPT proofs. Reply with a
+    // structured -32601 *before* any other gate so wallets that probe
+    // for proof support get a deterministic answer regardless of
+    // profile, rate-limit state, or hydration health.
+    if (method == "eth_getProof") {
+        return RpcResult{make_error(id, -32601,
+            "eth_getProof is not supported: TOS EVM uses TOS-native state "
+            "commitments, not Ethereum MPT proofs"), true};
+    }
+
+    // Audit M-02 (tos17): hydration-corruption fail-closed gate.
+    // When canonical hydration has been observed corrupt, every method
+    // that depends on the global EVM state MUST refuse to serve. A small
+    // allowlist of pure-config methods (chainId, net version, client
+    // version banners, the chain-info introspection method) is exempt
+    // because their answers do not depend on the live state.
+    {
+        constexpr std::string_view kStaleConfig[] = {
+            "eth_chainId",
+            "net_version",
+            "web3_clientVersion",
+            "tos_evmChainInfo",
+        };
+        bool is_pure_config = false;
+        for (const auto& m : kStaleConfig) {
+            if (method == m) { is_pure_config = true; break; }
+        }
+        if (!is_pure_config && evm_hydration_corrupted()) {
+            return RpcResult{make_error(id, -32000,
+                std::string("EVM canonical hydration corrupted: ") +
+                evm_hydration_failure_reason()), true};
+        }
+    }
+
     // M-03: profile-driven method gating. Each branch returns -32601
     // ("method not found") with a precise "disabled by node profile"
     // suffix so operators / clients can distinguish "this method does
     // not exist on this build" from "this build supports the method
-    // but the operator profile excludes it". The check runs BEFORE
-    // rate limiting and BEFORE the legacy `g_public_getproof_enabled`
-    // toggle so a profile transition is the single source of truth.
+    // but the operator profile excludes it".
     if (method == "eth_call" || method == "eth_estimateGas" ||
         method == "eth_createAccessList" || method == "eth_simulateV1") {
         // M-03 follow-up: `eth_simulateV1` runs full silkworm
@@ -5722,16 +5745,6 @@ std::optional<RpcResult> handle_eth_rpc(
             return RpcResult{make_error(id, -32601,
                 std::string(method) +
                 " disabled by node profile"), true};
-        }
-    }
-    if (method == "eth_getProof") {
-        if (!g_profile_getproof_enabled.load(std::memory_order_relaxed)) {
-            return RpcResult{make_error(id, -32601,
-                "eth_getProof disabled by node profile"), true};
-        }
-        if (!g_public_getproof_enabled) {
-            return RpcResult{make_error(id, -32601,
-                                        "eth_getProof disabled by node policy"), true};
         }
     }
 #ifdef TOS_ENABLE_EVM_DEBUG_RPC
@@ -5751,11 +5764,6 @@ std::optional<RpcResult> handle_eth_rpc(
         if (method == "eth_getLogs") {
             if (!g_getlogs_limiter.try_consume()) {
                 return RpcResult{make_error(id, -32005, "eth_getLogs rate limit exceeded"), true};
-            }
-        }
-        if (method == "eth_getProof") {
-            if (!g_getproof_limiter.try_consume()) {
-                return RpcResult{make_error(id, -32005, "eth_getProof rate limit exceeded"), true};
             }
         }
         if (method == "eth_simulateV1") {
@@ -5850,9 +5858,9 @@ std::optional<RpcResult> handle_eth_rpc(
     if (method == "debug_rebuildRpcCache")    return handle_debug_rebuild_rpc_cache(params, id);
 #endif
     if (method == "debug_rpcCacheHealth")     return handle_debug_rpc_cache_health(id);
-    if (method == "eth_getProof")             return handle_get_proof(params, id);
     if (method == "eth_createAccessList")     return handle_create_access_list(params, id);
     if (method == "eth_simulateV1")           return handle_simulate_v1(params, id);
+    if (method == "tos_evmChainInfo")         return handle_tos_evm_chain_info(id);
 
     // Reject methods that require node-side accounts (we never store user keys)
     if (method == "eth_sign" || method == "eth_signTransaction" || method == "eth_sendTransaction") {

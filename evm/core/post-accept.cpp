@@ -10,7 +10,7 @@
 #include "block/transaction.h"
 #include "evm/core/compute-phase.h"
 #include "evm/core/init.h"
-#include "evm/core/state-root.h"
+#include "evm/core/native-commitment.h"
 #include "evm/core/transaction.h"
 #include "evm/core/workchain.h"
 #include "evm/rpc/cache-codec.h"
@@ -286,6 +286,34 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     }
     clear_rpc_indexing_incomplete(fx.tx_hash);
 
+    // Per-block canonical-identity stamp. Every cache entry produced for
+    // this block (receipt, transaction, logs, block-by-number,
+    // block-by-hash) carries the same stamp so an RPC reader can decide
+    // whether the cached record still matches the canonical chain at the
+    // referenced (block_number, block_hash) — and skip stale entries after
+    // a reorg without reaching back to consensus state. The receipt-only
+    // sidecar slots (logs_commitment / receipts_commitment) let canonical-
+    // state hydration recompute log/receipt summaries without re-reading
+    // the full RAM containers.
+    //
+    // For mid-block txs (fx.has_block == false) the block summary fields
+    // are filled from the receipt's block_number; block_hash and
+    // native_state_commitment are unavailable until the block's first tx
+    // lands, so they remain zero — readers gate on the matching block-
+    // record stamp before consuming, which is the legacy behavior.
+    EvmCacheRecordStamp stamp{};
+    stamp.workchain_id = kEvmCacheWorkchainId;
+    stamp.schema_version = kEvmCacheCodecSchemaVersion;
+    stamp.block_seqno = static_cast<uint32_t>(
+        fx.has_block ? fx.block.number : fx.receipt.block_number);
+    stamp.block_hash = fx.has_block ? fx.block.hash : evmc::bytes32{};
+    stamp.native_state_commitment =
+        fx.has_block ? fx.block.state_root : evmc::bytes32{};
+    stamp.logs_commitment =
+        compute_native_log_list_commitment(fx.receipt.logs);
+    stamp.receipts_commitment = compute_native_receipt_list_commitment(
+        std::vector<StoredReceipt>{fx.receipt});
+
     // Receipt: store in RAM, persist to cache DB.
     {
         StoredReceipt r = fx.receipt;
@@ -293,7 +321,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     }
     if (auto* cache = evm_rpc_cache_db()) {
         td::Bits256 tx_hash_bits = bytes32_to_bits(fx.tx_hash);
-        auto cell = encode_persisted_receipt(fx.receipt);
+        auto cell = encode_persisted_receipt(fx.receipt, stamp);
         auto put_status = cache->put_receipt(tx_hash_bits, cell);
         if (put_status.is_error()) {
             LOG(WARNING) << "evm-rpc-cache: put_receipt failed for "
@@ -309,7 +337,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     }
     if (auto* cache = evm_rpc_cache_db()) {
         td::Bits256 tx_hash_bits = bytes32_to_bits(fx.tx_hash);
-        auto cell = encode_persisted_transaction(fx.transaction);
+        auto cell = encode_persisted_transaction(fx.transaction, stamp);
         auto put_status = cache->put_transaction(tx_hash_bits, cell);
         if (put_status.is_error()) {
             LOG(WARNING) << "evm-rpc-cache: put_transaction failed for "
@@ -330,7 +358,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
         if (auto* cache = evm_rpc_cache_db()) {
             auto block_logs =
                 state.get_logs_for_block_copy(fx.receipt.block_number);
-            auto cell = encode_persisted_logs_for_block(block_logs);
+            auto cell = encode_persisted_logs_for_block(block_logs, stamp);
             auto put_status =
                 cache->put_logs_for_block(fx.receipt.block_number, cell);
             if (put_status.is_error()) {
@@ -341,7 +369,11 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
         }
     }
 
-    // Block summary (only the block's first tx carries this).
+    // Block summary (only the block's first tx carries this). The persisted
+    // block cell already binds the block's TOS-native state commitment via
+    // StoredBlock.state_root (see W1-A: compute_native_evm_state_commitment),
+    // so a reader can detect a stale entry by comparing the cached value
+    // against the current native commitment for that block_number.
     if (fx.has_block) {
         clear_rpc_block_indexing_incomplete(fx.block.number);
         state.store_block(fx.block);
@@ -487,13 +519,33 @@ EvmStashKey make_stash_key(uint64_t block_seqno,
 
 td::Ref<vm::Cell> encode_pending_side_effects(const EvmBlockSideEffects& fx) {
     constexpr uint32_t kPendingSideEffectsMagic = 0x46585331;  // "FXS1"
+    // Build a stamp from the side-effects record. The pending blob is a
+    // private restart-recovery store keyed by (block_seqno, timestamp,
+    // rand_seed, parent_hash, tx_hash); freshness is enforced by the key
+    // match in take_pending_side_effects, not the stamp. Populate the
+    // sidecar commitments so that when the recovered record gets re-published
+    // through apply_block_side_effects, the encoder seeded by that path will
+    // recompute identical stamps (deterministic).
+    EvmCacheRecordStamp stamp{};
+    stamp.workchain_id = kEvmCacheWorkchainId;
+    stamp.schema_version = kEvmCacheCodecSchemaVersion;
+    stamp.block_seqno = static_cast<uint32_t>(
+        fx.has_block ? fx.block.number : fx.receipt.block_number);
+    stamp.block_hash = fx.has_block ? fx.block.hash : evmc::bytes32{};
+    stamp.native_state_commitment =
+        fx.has_block ? fx.block.state_root : evmc::bytes32{};
+    stamp.logs_commitment =
+        compute_native_log_list_commitment(fx.receipt.logs);
+    stamp.receipts_commitment = compute_native_receipt_list_commitment(
+        std::vector<StoredReceipt>{fx.receipt});
+
     vm::CellBuilder cb;
     cb.store_long(kPendingSideEffectsMagic, 32);
     cb.store_bytes(fx.tx_hash.bytes, 32);
     cb.store_bytes(fx.rand_seed.bytes, 32);
     cb.store_long(fx.has_block ? 1 : 0, 1);
-    cb.store_ref(encode_persisted_receipt(fx.receipt));
-    cb.store_ref(encode_persisted_transaction(fx.transaction));
+    cb.store_ref(encode_persisted_receipt(fx.receipt, stamp));
+    cb.store_ref(encode_persisted_transaction(fx.transaction, stamp));
     if (fx.has_block) {
         cb.store_ref(encode_persisted_block(fx.block));
     }
@@ -517,11 +569,18 @@ bool decode_pending_side_effects(td::Ref<vm::Cell> cell, EvmBlockSideEffects& ou
         if (cs.size() != 0) return false;
         const unsigned expected_refs = out.has_block ? 3 : 2;
         if (cs.size_refs() != expected_refs) return false;
-        if (!decode_persisted_receipt(cs.fetch_ref(), out.receipt)) return false;
-        if (!decode_persisted_transaction(cs.fetch_ref(), out.transaction)) return false;
+        // Stamps are recomputed on re-publish, so we don't enforce them here.
+        EvmCacheRecordStamp receipt_stamp;
+        EvmCacheRecordStamp tx_stamp;
+        EvmCacheRecordStamp block_stamp;
+        (void)receipt_stamp;
+        (void)tx_stamp;
+        (void)block_stamp;
+        if (!decode_persisted_receipt(cs.fetch_ref(), out.receipt, receipt_stamp)) return false;
+        if (!decode_persisted_transaction(cs.fetch_ref(), out.transaction, tx_stamp)) return false;
         out.logs = out.receipt.logs;
         if (out.has_block &&
-            !decode_persisted_block(cs.fetch_ref(), out.block)) {
+            !decode_persisted_block(cs.fetch_ref(), out.block, block_stamp)) {
             return false;
         }
         return true;
@@ -615,6 +674,13 @@ void add_to_bloom(uint8_t bloom[256], const uint8_t* data, size_t len) {
 }
 
 void recompute_block_hash(StoredBlock& block) {
+    // The block_hash is the keccak of the silkworm BlockHeader RLP. The
+    // header carries 32-byte fields named state_root / transactions_root /
+    // receipts_root for Ethereum JSON-RPC wire compatibility — but the
+    // values are TOS-native commitments (see W1-A native-commitment.h), not
+    // Ethereum MPT roots. The hash function does not care: it just RLPs
+    // 32-byte values, so the computed block_hash is a deterministic,
+    // collision-resistant identity for the block.
     silkworm::BlockHeader hdr{};
     std::memcpy(hdr.parent_hash.bytes, block.parent_hash.bytes, 32);
     hdr.ommers_hash = silkworm::kEmptyListHash;
@@ -706,21 +772,31 @@ bool finalize_block_side_effects(std::vector<IndexedSideEffects>& fxs,
         fx.has_block = false;
     }
 
-    auto transactions_root = try_compute_transactions_root_from_records(txs);
-    if (!transactions_root) {
-        g_strict_root_failures.fetch_add(1, std::memory_order_relaxed);
-        for (const auto& indexed : fxs) {
-            mark_rpc_indexing_incomplete(indexed.fx.tx_hash);
+    // Per plan §9: a canonical-rebuildable cache demands raw_rlp on every
+    // transaction. The native commitment can technically commit empty
+    // records, but doing so would leave receipts/logs un-rebuildable from
+    // canonical state if the cache were wiped. Withhold the block's RPC
+    // index when raw_rlp is missing so that property is preserved.
+    for (const auto& tx : txs) {
+        if (tx.raw_rlp.empty()) {
+            g_strict_root_failures.fetch_add(1, std::memory_order_relaxed);
+            for (const auto& indexed : fxs) {
+                mark_rpc_indexing_incomplete(indexed.fx.tx_hash);
+            }
+            mark_rpc_block_indexing_incomplete(accepted_block_seqno);
+            LOG(WARNING) << "evm post-accept: cannot finalize block #"
+                         << accepted_block_seqno
+                         << " because at least one accepted tx lacks raw signed RLP";
+            fxs.clear();
+            return false;
         }
-        mark_rpc_block_indexing_incomplete(accepted_block_seqno);
-        LOG(WARNING) << "evm post-accept: cannot finalize block #"
-                     << accepted_block_seqno
-                     << " because at least one accepted tx lacks raw signed RLP";
-        fxs.clear();
-        return false;
     }
-    block.transactions_root = *transactions_root;
-    block.receipts_root = compute_receipts_root_from_records(receipts);
+    // StoredBlock.{transactions_root,receipts_root} carry TOS-native list
+    // commitments (keccak over a length-prefixed canonical record stream),
+    // not Ethereum MPT roots. The field name is preserved so the wire
+    // format and Ethereum JSON-RPC surface stay byte-stable.
+    block.transactions_root = compute_native_tx_list_commitment(txs);
+    block.receipts_root = compute_native_receipt_list_commitment(receipts);
     recompute_block_hash(block);
 
     fxs.back().fx.has_block = true;
@@ -984,14 +1060,27 @@ RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
             continue;
         }
 
-        auto tx_root = try_compute_transactions_root_from_records(txs);
-        if (!tx_root || *tx_root != block.transactions_root) {
+        // Both fields carry TOS-native list commitments; recompute and
+        // compare to detect a corrupt or stale stored block summary before
+        // we publish derived records.
+        bool tx_rlp_ok = true;
+        for (const auto& tx : txs) {
+            if (tx.raw_rlp.empty()) { tx_rlp_ok = false; break; }
+        }
+        if (!tx_rlp_ok) {
+            ++stats.errors;
+            stats.last_error = "missing raw signed RLP for transactions root rebuild";
+            if (block_number == UINT64_MAX) break;
+            continue;
+        }
+        auto tx_root = compute_native_tx_list_commitment(txs);
+        if (tx_root != block.transactions_root) {
             ++stats.errors;
             stats.last_error = "transactionsRoot mismatch";
             if (block_number == UINT64_MAX) break;
             continue;
         }
-        auto receipts_root = compute_receipts_root_from_records(receipts);
+        auto receipts_root = compute_native_receipt_list_commitment(receipts);
         if (receipts_root != block.receipts_root) {
             ++stats.errors;
             stats.last_error = "receiptsRoot mismatch";
@@ -999,10 +1088,34 @@ RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
             continue;
         }
 
+        // Per-block stamp shared by every record written below. Receipt-
+        // record stamps in apply_block_side_effects bind logs/receipts
+        // commitments to the single tx; in the rebuild path we re-publish
+        // the canonical block-level commitments so RPC readers can re-verify
+        // the cached records against the current canonical chain. The
+        // per-record receipt-only sidecar slots (logs/receipts commitments
+        // for a single tx) are recomputed below per-tx so they match the
+        // values the live apply path would have produced.
+        EvmCacheRecordStamp block_stamp{};
+        block_stamp.workchain_id = kEvmCacheWorkchainId;
+        block_stamp.schema_version = kEvmCacheCodecSchemaVersion;
+        block_stamp.block_seqno = static_cast<uint32_t>(block.number);
+        block_stamp.block_hash = block.hash;
+        block_stamp.native_state_commitment = block.state_root;
+
         for (size_t i = 0; i < block.transaction_hashes.size(); ++i) {
             auto tx_hash_bits = bytes32_to_bits(block.transaction_hashes[i]);
+
+            EvmCacheRecordStamp record_stamp = block_stamp;
+            record_stamp.logs_commitment =
+                compute_native_log_list_commitment(receipts[i].logs);
+            record_stamp.receipts_commitment =
+                compute_native_receipt_list_commitment(
+                    std::vector<StoredReceipt>{receipts[i]});
+
             auto tx_status = cache->put_transaction(
-                tx_hash_bits, encode_persisted_transaction(txs[i]));
+                tx_hash_bits,
+                encode_persisted_transaction(txs[i], record_stamp));
             if (tx_status.is_error()) {
                 ++stats.errors;
                 stats.last_error = tx_status.message().str();
@@ -1012,7 +1125,8 @@ RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
             ++stats.transactions_written;
 
             auto receipt_status = cache->put_receipt(
-                tx_hash_bits, encode_persisted_receipt(receipts[i]));
+                tx_hash_bits,
+                encode_persisted_receipt(receipts[i], record_stamp));
             if (receipt_status.is_error()) {
                 ++stats.errors;
                 stats.last_error = receipt_status.message().str();
@@ -1047,7 +1161,8 @@ RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
 
         auto logs = state.get_logs_for_block_copy(block.number);
         auto logs_status = cache->put_logs_for_block(
-            block.number, encode_persisted_logs_for_block(logs));
+            block.number,
+            encode_persisted_logs_for_block(logs, block_stamp));
         if (logs_status.is_error()) {
             ++stats.errors;
             stats.last_error = logs_status.message().str();

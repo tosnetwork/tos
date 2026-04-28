@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# EVM production hardening checks.
+#
+# MPT permanently removed; this script enforces the no-MPT invariant in
+# addition to existing production hardening (debug RPC default-off,
+# default-genesis test-account guards, instrumentation flags, blob-
+# versioned-hashes strict parsing, hydration corruption fail-closed,
+# verified code cache, streaming BoC importer caps, per-IP attribution,
+# state-growth invariance harness, etc.).
 set -euo pipefail
 
 root="${1:-.}"
@@ -18,6 +26,71 @@ harness_paths=(
     "$root/test/conformance/hive/clients/tos/tos.cmd"
     "$root/test/tostester/src/tostester/zerostate.py"
 )
+
+# ---------------------------------------------------------------------------
+# No-MPT invariant checks.
+#
+# MPT and the persistent-trie witness path have been permanently removed
+# from the EVM workchain. Native cell-state is the only canonical source
+# of truth. The six checks below fail CI if any artefact of the old MPT
+# regime sneaks back in.
+# ---------------------------------------------------------------------------
+
+# Check 1 — MPT source files must NOT exist.
+for f in \
+    evm/core/mpt-trie.h evm/core/mpt-trie.cpp \
+    evm/core/mpt-prover.h evm/core/mpt-prover.cpp \
+    evm/core/incremental-trie.h evm/core/incremental-trie.cpp \
+    evm/core/state-root.h evm/core/state-root.cpp; do
+    if [ -e "$root/$f" ]; then
+        echo "evm hardening failed: MPT source file still exists: $f" >&2
+        exit 1
+    fi
+done
+
+# Check 2 — evm/CMakeLists.txt must NOT compile MPT sources.
+if rg -n 'mpt-trie|mpt-prover|incremental-trie|state-root\.cpp' "$root/evm/CMakeLists.txt"; then
+    echo "evm hardening failed: MPT source still listed in evm/CMakeLists.txt" >&2
+    exit 1
+fi
+
+# Check 3 — Production source must NOT reference active MPT APIs.
+if rg -n 'MptTrie|MptWitness|EthereumTrieWitness|PersistentEthereumTrieWitness|compute_state_root|ethereum_(account|storage)_proof|ethereum_storage_root_hash|trie_witness_root|eth_state_root' "$root/evm" "$root/crypto/block" "$root/validator" "$root/validator-engine"; then
+    echo "evm hardening failed: active MPT/witness/root reference remains" >&2
+    exit 1
+fi
+
+# Check 4 — eth_getProof must NOT have a real handler / enable flag.
+# The literal "eth_getProof" stays in evm/rpc/handlers.cpp on purpose: it sits
+# in the is_eth_rpc_method allowlist so the dispatcher routes to an explicit
+# `-32601 not supported` branch with a canonical message. We reject only real
+# implementations / configurable enables.
+if rg -n 'handle_get_proof|enable_eth_get_proof|enable_public_evm_getproof' \
+        "$root/evm" "$root/validator-engine"; then
+    echo "evm hardening failed: eth_getProof handler / enable-flag remains" >&2
+    exit 1
+fi
+# Require the explicit -32601 reject branch with the canonical message.
+if ! rg -q 'eth_getProof is not supported' "$root/evm/rpc/handlers.cpp"; then
+    echo "evm hardening failed: explicit eth_getProof -32601 reject branch missing in evm/rpc/handlers.cpp" >&2
+    exit 1
+fi
+
+# Check 5 — cp.new_data must be v6 native-only.
+if ! rg -q 'kCpNewDataSchemaVersion\s*=\s*6' "$root/evm/core/cell-codec.h"; then
+    echo "evm hardening failed: cp.new_data schema must be native-only v6" >&2
+    exit 1
+fi
+
+# Check 6 — native commitment helper must exist.
+if ! rg -q 'compute_native_evm_state_commitment' "$root/evm/core"; then
+    echo "evm hardening failed: native EVM state commitment helper missing" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Existing (non-MPT) production hardening checks.
+# ---------------------------------------------------------------------------
 
 if rg -n "test test test test test test test test test test test junk|ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" "$core"; then
     echo "evm production hardening check failed: public test mnemonic/private key must not live under evm/core" >&2
@@ -93,32 +166,8 @@ if awk '
     exit 1
 fi
 
-witness_line=$(rg -n 'trie_witness_ready' "$compute_phase" | head -n1 | cut -d: -f1 || true)
-exec_line=$(rg -n 'execute_evm_transaction\(decoded\.txn' "$compute_phase" | head -n1 | cut -d: -f1 || true)
-if [ -z "$witness_line" ] || [ -z "$exec_line" ] || [ "$witness_line" -ge "$exec_line" ]; then
-    echo "evm production hardening check failed: persistent trie witness must be checked before transaction execution" >&2
-    exit 1
-fi
-prevalidate_line=$(rg -n 'prevalidate_evm_transaction_admission\(.*decoded\.txn|prevalidate_evm_transaction_admission\(' "$compute_phase" | head -n1 | cut -d: -f1 || true)
-if [ -z "$prevalidate_line" ] || [ "$prevalidate_line" -ge "$witness_line" ]; then
-    echo "evm production hardening check failed: cheap EVM tx prevalidation must run before trie witness checks" >&2
-    exit 1
-fi
-
 if rg -n 'estimate_evm_state_size_for_full_root|EVM stateRoot budget exceeded|stateRoot soft budget' "$compute_phase"; then
     echo "evm production hardening check failed: compute phase must not gate stateRoot on full-state budget scans" >&2
-    exit 1
-fi
-
-if ! rg -q 'kCpNewDataSchemaVersion[[:space:]]*=[[:space:]]*5' "$root/evm/core/cell-codec.h" ||
-   ! rg -q 'trie_witness_root_out|PersistentEthereumTrieWitness|has_trie_witness' "$root/evm/core/cell-codec.cpp" "$root/evm/core/cell-codec.h"; then
-    echo "evm production hardening check failed: cp.new_data v5 must carry persistent trie witness" >&2
-    exit 1
-fi
-
-if ! rg -q 'class MptTrie|serialize_to_cell|proof\(' "$root/evm/core/mpt-trie.h" ||
-   ! rg -q 'rlp_cache|load_from_cell|upsert_hashed|erase_hashed' "$root/evm/core/mpt-trie.cpp"; then
-    echo "evm production hardening check failed: persistent Ethereum MPT witness backend is missing" >&2
     exit 1
 fi
 
@@ -166,21 +215,6 @@ if rg -n 'request_total_size\(\);[[:space:]]*got_block_state_part' "$validator_d
     exit 1
 fi
 
-if ! rg -q 'ethereum_account_proof|ethereum_storage_proof|ethereum_storage_root_hash' "$rpc_handlers"; then
-    echo "evm production hardening check failed: eth_getProof must use persistent trie witness proofs" >&2
-    exit 1
-fi
-
-if ! rg -q 'g_public_getproof_enabled[[:space:]]*=[[:space:]]*true' "$rpc_handlers"; then
-    echo "evm production hardening check failed: eth_getProof should default on after persistent proof backend is enabled" >&2
-    exit 1
-fi
-
-if rg -n 'generate_mpt_proof\(|mpt_root\(|compute_storage_root_for_account|For non-target accounts we use kEmptyRoot|other_addr == addr\) their_storage_hash = storage_hash' "$rpc_handlers"; then
-    echo "evm production hardening check failed: eth_getProof must not rebuild or approximate tries per request" >&2
-    exit 1
-fi
-
 if rg -n 'TOS_ALLOW_NPX_SOLC=1' "$cmake_lists"; then
     echo "evm production hardening check failed: CI bytecode equivalence test must not enable npx solc fallback by default" >&2
     exit 1
@@ -200,25 +234,6 @@ fi
 if rg -n 'it->second\.promise\.set_value\(gen_token\(size, priority\)\)' "$validator_token_manager"; then
     echo "evm production hardening check failed: TokenManager must wake pending requests with their own size/priority" >&2
     exit 1
-fi
-
-# Compute hot path must not strict-validate the persistent trie witness.
-# The lazy-load contract is: validate the witness root cell shallowly and
-# bind it to the executor; any mutation/proof path then decodes account /
-# storage trie nodes path-bounded. A regression that re-introduces a
-# strict recursive walk on the consensus path would re-establish the
-# O(global accounts) DoS / liveness ceiling P0 was meant to remove.
-#
-# We accept any of the recognised tokens for the strict-recursive variant
-# (current planned identifier is `TrieWitnessLoadMode::StrictRecursive`,
-# but earlier drafts used `StrictRecursiveValidation` and a function name
-# of `load_trie_witness_strict`). The pattern is intentionally tolerant
-# so the check works whether or not the P0 rename has fully landed.
-if [ -f "$compute_phase" ]; then
-    if rg -n 'load_trie_witness_from_cell\([^)]*Strict|load_trie_witness_strict\(|TrieWitnessLoadMode::Strict' "$compute_phase" >/dev/null; then
-        echo "evm production hardening check failed: compute hot path must not strict-recursively validate trie witness (use TrustedShallow + path-bounded decode)" >&2
-        exit 1
-    fi
 fi
 
 # `TOS_EVM_TEST_INSTRUMENTATION` is a test-only macro that exposes lazy-load
@@ -258,70 +273,6 @@ if ! rg -q 'invalid stateOverrides storage slot' "$rpc_handlers" ||
    ! rg -q 'invalid stateOverrides storage value' "$rpc_handlers" ||
    ! rg -q 'invalid stateOverrides code' "$rpc_handlers"; then
     echo "evm production hardening check failed: eth_simulateV1 stateOverrides parser must explicitly reject invalid hex / oversize values before lock" >&2
-    exit 1
-fi
-
-# Production sources (evm/core, evm/rpc) must NOT call the legacy unsafe
-# MPT/CellState helpers without the explicit `_unsafe_for_*` / `_safe`
-# suffix. The safe variants surface corrupt-witness errors as `td::Status`;
-# the unsafe variants either lazy-mutate `touched_storage_tries_` under a
-# const path (P0.1 H-01) or swallow corrupt-witness errors as kEmptyRoot.
-# Tests are exempt — they are allowed to keep using the *_unsafe_for_tests_only
-# variants for ergonomics. The check is intentionally tolerant: it scans
-# only for raw call-site shapes, then drops anything containing the safe
-# or unsafe-for-tests-only suffixes.
-unsafe_hits=$(
-    rg -n '(ethereum_storage_root_hash|ethereum_account_proof|ethereum_storage_proof)\(' \
-        "$root/evm/core" "$root/evm/rpc" \
-        --type-add 'cpp:*.{c,cc,cpp,h,hpp}' --type cpp \
-        -g '!evm/test/**' \
-        -g '!**/*test*' 2>/dev/null \
-    | rg -v '_unsafe_for_tests_only|_unsafe_for_execution_cache|_safe' \
-    | rg -v '^[[:space:]]*//' \
-    || true
-)
-if [ -n "$unsafe_hits" ]; then
-    echo "evm production hardening check failed: unsafe MPT/CellState API in production path:" >&2
-    echo "$unsafe_hits" >&2
-    exit 1
-fi
-
-# L-01 (audit, 2026-04-27): the `*_unsafe_for_tests_only` API surface MUST
-# be wrapped in `#ifdef TOS_EVM_TEST_INSTRUMENTATION` so production builds
-# of `evm_workchain` (which do not define the macro) do not export the
-# symbols. The check below uses awk to track which lines fall inside an
-# `#ifdef TOS_EVM_TEST_INSTRUMENTATION ... #endif` block; any
-# `*_unsafe_for_tests_only(...)` call site / declaration outside that
-# region (and outside test-* sources) is a regression.
-unsafe_l01_offenders=""
-for f in $(find "$root/evm/core" "$root/evm/rpc" \
-                -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) 2>/dev/null); do
-    case "$f" in
-        */test-*)
-            continue
-            ;;
-    esac
-    out=$(awk -v file="$f" '
-        BEGIN { depth = 0 }
-        /^[[:space:]]*#[[:space:]]*ifdef[[:space:]]+TOS_EVM_TEST_INSTRUMENTATION([[:space:]]|$)/ { depth++; next }
-        /^[[:space:]]*#[[:space:]]*if[[:space:]]+defined\([[:space:]]*TOS_EVM_TEST_INSTRUMENTATION[[:space:]]*\)/ { depth++; next }
-        /^[[:space:]]*#[[:space:]]*if(n)?def[[:space:]]+/ { if (depth > 0) depth++; next }
-        /^[[:space:]]*#[[:space:]]*if[[:space:]]/ { if (depth > 0) depth++; next }
-        /^[[:space:]]*#[[:space:]]*endif/ { if (depth > 0) depth--; next }
-        /unsafe_for_tests_only\(/ {
-            if (depth == 0 && $0 !~ /^[[:space:]]*\/\//) {
-                printf("%s:%d:%s\n", file, NR, $0)
-            }
-        }
-    ' "$f")
-    if [ -n "$out" ]; then
-        unsafe_l01_offenders="${unsafe_l01_offenders}${out}
-"
-    fi
-done
-if [ -n "$unsafe_l01_offenders" ]; then
-    echo "evm production hardening check failed: unsafe API used outside test instrumentation" >&2
-    printf '%s' "$unsafe_l01_offenders" >&2
     exit 1
 fi
 
@@ -423,7 +374,7 @@ fi
 # scoped to the "Strict modes:" section bounded by the
 # `code_ = std::move(new_code);` cache-commit point.
 if ! awk '
-    /Strict modes:/ { in_s = 1 }
+    /StrictValidateNative:/ { in_s = 1 }
     in_s {
         if (/decode_and_verify_code_root\(/) verified = 1
         if (/new_code\.emplace\(|new_code\[/) emplaced = 1
@@ -431,7 +382,7 @@ if ! awk '
     in_s && /code_ = std::move\(new_code\)/ { in_s = 0 }
     END { exit (verified && emplaced ? 0 : 1) }
 ' "$root/evm/core/cell-state.cpp"; then
-    echo "evm production hardening check failed: CellEvmState::load_from_cell strict-mode path must call decode_and_verify_code_root before populating new_code (H-01 P0.2 fail-closed hydration)" >&2
+    echo "evm production hardening check failed: CellEvmState::load_from_cell StrictValidateNative path must call decode_and_verify_code_root before populating new_code (H-01 P0.2 fail-closed hydration)" >&2
     exit 1
 fi
 
@@ -459,7 +410,7 @@ fi
 if ! awk '
     /size_t populate_state_from_shard_accounts\(/ { in_s = 1 }
     in_s {
-        if (/cs->load_from_cell\(state_root, false\)/) saw_load = 1
+        if (/cs->load_from_cell\(state_root,/) saw_load = 1
         if (saw_load && /last_strict_load_failure_reason\(/) reason = 1
         if (saw_load && /mark_evm_hydration_corrupted\(/) marked = 1
         if (saw_load && /state_root_hash/) state_root_logged = 1
@@ -506,38 +457,6 @@ if rg -n '#ifndef NDEBUG' "$compute_phase" >/dev/null 2>&1; then
     exit 1
 fi
 
-# L-02 (a): RPC handlers MUST NOT call the unsafe-for-tests-only
-# MPT / CellState helpers. The safe variants surface corrupt-witness
-# errors as `td::Status`; the unsafe variants either lazy-mutate
-# `touched_storage_tries_` under a const path or swallow corrupt
-# witnesses. The check is scoped to `evm/rpc/` because untrusted JSON
-# inputs land there; `evm/core` legitimately defines wrapper
-# functions whose own name carries the `*_unsafe_for_tests_only`
-# suffix (those wrappers are themselves the test-only API and are
-# already covered by the broader `evm/core` audit on lines ~244-258).
-unsafe_rpc_hits=$(
-    rg -n '(proof_unsafe_for_tests_only|root_hash_unsafe_for_tests_only|ethereum_(account|storage)_proof_unsafe_for_tests_only|ethereum_storage_root_hash_unsafe_for_execution_cache)\(' \
-        "$root/evm/rpc" \
-        --type-add 'cpp:*.{c,cc,cpp,h,hpp}' --type cpp \
-        -g '!evm/test/**' -g '!**/*test*' 2>/dev/null \
-    | rg -v '^[^:]+:[0-9]+:[[:space:]]*//' \
-    || true
-)
-if [ -n "$unsafe_rpc_hits" ]; then
-    echo "evm production hardening check failed: unsafe MPT/CellState API used in production path" >&2
-    echo "$unsafe_rpc_hits" >&2
-    exit 1
-fi
-
-# L-02 (b): the eth_getProof storage-key parser MUST NOT silently
-# `continue` past invalid hex keys (L-01 hardening). Any regression
-# that re-introduces `continue` after `hex_len > 64` or inside the
-# eth_getProof loop is a strict-validation regression.
-if rg -n 'eth_getProof.*continue|hex_len > 64.*continue' "$rpc_handlers" >/dev/null; then
-    echo "evm production hardening check failed: eth_getProof storage key parser must not silently continue past invalid input" >&2
-    exit 1
-fi
-
 # L-02 (c): TOS_EVM_STRICT_COMPUTE_INVARIANTS must default OFF. The
 # expensive per-tx StrictRecursive invariant check is opt-in only.
 if rg -n 'option\(TOS_EVM_STRICT_COMPUTE_INVARIANTS[^)]*ON\b' "$root/evm/CMakeLists.txt" >/dev/null; then
@@ -576,8 +495,7 @@ fi
 
 # L-02 (f): default EvmRpcProfile MUST be ValidatorMinimal (M-03
 # hand-off). A regression that lowers the default to FollowerPublic
-# silently re-exposes heavy read-only RPC + eth_getProof on every
-# validator.
+# silently re-exposes heavy read-only RPC on every validator.
 if ! rg -n 'g_evm_rpc_profile\{[^}]*ValidatorMinimal' "$rpc_handlers" >/dev/null; then
     echo "evm production hardening check failed: default EvmRpcProfile must be ValidatorMinimal" >&2
     exit 1
@@ -603,8 +521,8 @@ fi
 # `validator-engine/json-rpc-server.cpp` (`refusing AdminLocal ...`
 # error strings emitted from `JsonRpcServer::listen`). A regression
 # that silently re-applies `set_evm_rpc_profile(AdminLocal)` on a
-# remote address would re-expose the higher 30M gas cap, eth_getProof
-# and (when compiled in) debug methods to public clients.
+# remote address would re-expose the higher 30M gas cap and
+# (when compiled in) debug methods to public clients.
 json_rpc_server_cpp="$root/validator-engine/json-rpc-server.cpp"
 if ! grep -q "refusing AdminLocal" "$json_rpc_server_cpp"; then
     echo "evm production hardening check failed: missing AdminLocal non-loopback hardening in $json_rpc_server_cpp" >&2
@@ -650,39 +568,20 @@ if ! rg -q 'std_boc_deserialize_from_file_bounded' "$root/validator/downloaders/
     exit 1
 fi
 
-# Audit checklist (lines 1097-1112): the BoC streaming importer must
-# carry randomized fuzz coverage for code-root / storage-trie corruption
-# alongside the MPT primitives. A regression that drops the BoC drivers
-# from test-mpt-fuzz reverts the fuzz contract from "no crash on any
-# random byte stream into the OnDisk parse path" back to "crash space
-# unmeasured".
-if ! rg -q 'fuzz_boc_streaming_importer_round_trip' "$root/evm/test/test-mpt-fuzz.cpp"; then
-    echo "evm production hardening check failed: test-mpt-fuzz must carry BoC streaming importer fuzz drivers" >&2
-    exit 1
-fi
-if ! rg -q 'fuzz_boc_streaming_truncated_input' "$root/evm/test/test-mpt-fuzz.cpp"; then
-    echo "evm production hardening check failed: test-mpt-fuzz must carry truncated-input BoC fuzz driver" >&2
-    exit 1
-fi
-
-# Audit checklist (lines 1097-1112): the deterministic Mulberry32 fuzz
-# drivers in test-mpt-fuzz.cpp explore a fixed seeded space; coverage-
-# guided libFuzzer harnesses explore byte-level mutation patterns the
-# static seed list cannot anticipate. Both surfaces are required for
-# public-readiness fuzz coverage. A regression that drops the
-# coverage-guided harnesses reverts the contract from "no crash on any
-# coverage-discovered input" back to "crash space unmeasured beyond
-# the seed corpus".
-if [ ! -f "$root/evm/test/test-mpt-libfuzzer.cpp" ] || [ ! -f "$root/evm/test/test-boc-libfuzzer.cpp" ]; then
-    echo "evm production hardening check failed: libFuzzer harnesses (test-mpt-libfuzzer.cpp / test-boc-libfuzzer.cpp) must exist for coverage-guided fuzz coverage" >&2
+# Coverage-guided libFuzzer harness for the BoC streaming importer must
+# exist and be gated behind TOS_BUILD_LIBFUZZER. The test-boc-libfuzzer
+# driver is the post-MPT survivor; trie-shaped fuzz harnesses were
+# removed alongside MPT itself.
+if [ ! -f "$root/evm/test/test-boc-libfuzzer.cpp" ]; then
+    echo "evm production hardening check failed: test-boc-libfuzzer.cpp must exist for coverage-guided BoC fuzz coverage" >&2
     exit 1
 fi
 if ! rg -q 'TOS_BUILD_LIBFUZZER' "$root/evm/test/CMakeLists.txt"; then
-    echo "evm production hardening check failed: evm/test/CMakeLists.txt must gate the libFuzzer harnesses behind TOS_BUILD_LIBFUZZER" >&2
+    echo "evm production hardening check failed: evm/test/CMakeLists.txt must gate the libFuzzer harness behind TOS_BUILD_LIBFUZZER" >&2
     exit 1
 fi
 if ! rg -q 'TOS_BUILD_LIBFUZZER' "$cmake_lists"; then
-    echo "evm production hardening check failed: root CMakeLists.txt must declare option(TOS_BUILD_LIBFUZZER ...) so the libFuzzer harnesses can be enabled in CI" >&2
+    echo "evm production hardening check failed: root CMakeLists.txt must declare option(TOS_BUILD_LIBFUZZER ...) so the libFuzzer harness can be enabled in CI" >&2
     exit 1
 fi
 
@@ -913,51 +812,35 @@ if awk '
     exit 1
 fi
 
-# Q-2 (audit, 2026-04-27): every state-growth invariance test in
-# evm/test/test-executor.cpp MUST keep its OFF/ON ratio assertions HARD
-# (i.e. drive `g_test_failures.fetch_add` and surface FAILED on
-# violation). A regression that loosened any of these to "info-only"
-# logging would silently mask a re-introduction of an O(N) per-tx
-# executor walk. Each test name is paired with the explicit assert-
-# folding line `if (!ok) g_test_failures.fetch_add(1)` that lives in
-# the H-01 / Q-2 harness pattern.
+# Q-2 (audit, 2026-04-27, no-MPT regime): under the prior MPT design the
+# state-growth invariant required four explicit OFF/ON-ratio benchmarks
+# threaded through `serialize_trie_witness_to_cell` /
+# `WitnessFlatConsistencyContext`. With MPT permanently removed those
+# witness primitives are gone, so the invariant is now upheld two ways:
+#
+#   (a) `CellEvmState::load_from_cell` defaults to `TrustedLazy` mode,
+#       which by construction binds only the account-dictionary root
+#       and never walks the full state — see evm/core/cell-state.cpp
+#       (W2-A `enum class CellStateLoadMode`).
+#   (b) At least one no-MPT-regime test must continue to demonstrate
+#       behavioural state-growth invariance end-to-end (i.e. a tx
+#       against an N-account world still bounded in time).
+#
+# The check below only enforces (b): a single named anchor test,
+# preserving the "single transfer doesn't full-walk N accounts"
+# observable. The strict 4-test ratio harness is retired with the
+# witness primitives that supported it.
 test_executor_cpp="$root/evm/test/test-executor.cpp"
-for q2_test in \
-    test_q2_state_growth_invariance_sload_1m_slots \
-    test_q2_state_growth_invariance_call \
-    test_q2_state_growth_invariance_create2 \
-    test_q2_state_growth_invariance_eip7702_setcode; do
-    if ! rg -q "void ${q2_test}\\(\\)" "$test_executor_cpp"; then
-        echo "evm production hardening check failed: ${q2_test} must exist in $test_executor_cpp (Q-2)" >&2
-        exit 1
-    fi
-    # Each Q-2 test must contain BOTH a HARD ratio bound assertion
-    # (ratio_off <= kHardOff) and the failure-folding line that bumps
-    # g_test_failures on assertion violation. The `awk` block scopes the
-    # search to the body of the named function so a failure-folding line
-    # in a sibling test does not satisfy this rule by accident.
-    if ! awk -v fn="$q2_test" '
-        $0 ~ ("^void " fn "\\(\\)") { in_fn = 1; next }
-        in_fn && /^void / { in_fn = 0 }
-        in_fn && /ratio_off <= kHardOff/ { saw_hard = 1 }
-        in_fn && /g_test_failures.fetch_add\(1\)/ { saw_fold = 1 }
-        END { exit (saw_hard && saw_fold ? 0 : 1) }
-    ' "$test_executor_cpp"; then
-        echo "evm production hardening check failed: ${q2_test} must HARD-assert ratio_off <= kHardOff and fold to g_test_failures (Q-2)" >&2
-        exit 1
-    fi
-done
-# The Q-2 SLOAD test must scale to ≥ 1M storage slots when
-# TOS_RUN_M_BENCH=1, per the audit checklist (≥ 1M storage slots).
-if ! rg -q 'TOS_RUN_M_BENCH' "$test_executor_cpp"; then
-    echo "evm production hardening check failed: test_q2_state_growth_invariance_sload_1m_slots must support TOS_RUN_M_BENCH=1 to exercise the ≥ 1M storage-slot leg (Q-2)" >&2
+if ! rg -q 'void test_large_state_simple_transfer_no_full_walk\(\)' "$test_executor_cpp"; then
+    echo "evm production hardening check failed: test_large_state_simple_transfer_no_full_walk must exist in $test_executor_cpp (Q-2 no-MPT state-growth invariance anchor)" >&2
     exit 1
 fi
-# The Q-2 CALL test must place all five CALL targets in the EIP-2930
-# access list — losing the access list would let the per-tx accounts-
-# touched scale with global state on first cold read.
-if ! rg -q 'access_list.push_back' "$test_executor_cpp"; then
-    echo "evm production hardening check failed: test_q2_state_growth_invariance_call must seed an access_list to keep first-touch cost constant in N (Q-2)" >&2
+# Belt-and-braces: the load-mode default in cell-state.h must remain
+# TrustedLazy. A regression that flipped it to a strict-walk mode would
+# re-introduce the O(N) per-tx hydration cost that the no-MPT plan
+# explicitly eliminated.
+if ! rg -q 'CellStateLoadMode\s+mode\s*=\s*CellStateLoadMode::TrustedLazy' "$root/evm/core/cell-state.h"; then
+    echo "evm production hardening check failed: CellEvmState::load_from_cell default mode must be CellStateLoadMode::TrustedLazy (Q-2 no-MPT state-growth invariance by construction)" >&2
     exit 1
 fi
 

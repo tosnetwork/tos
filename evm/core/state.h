@@ -27,13 +27,10 @@
 #include <silkworm/core/types/account.hpp>
 #include <silkworm/core/types/log.hpp>
 #include <silkworm/core/types/transaction.hpp>
-#include <silkworm/core/trie/prefix_set.hpp>
 
 #include "td/utils/Status.h"
 
 namespace evm_workchain {
-
-struct WitnessFlatConsistencyContext;
 
 // Capacity limits (following ~/s LruCache pattern: fixed max_size)
 constexpr size_t kMaxCachedReceipts      = 10'000;
@@ -83,9 +80,9 @@ struct StoredBlock {
     std::vector<evmc::bytes32> transaction_hashes;
     // Block-level derived fields
     uint8_t logs_bloom[256]{};          // Ethereum logs bloom (2048-bit)
-    evmc::bytes32 state_root{};         // Incremental MPT state root
-    evmc::bytes32 transactions_root{};  // MPT root of RLP-encoded transactions
-    evmc::bytes32 receipts_root{};      // MPT root of RLP-encoded receipts
+    evmc::bytes32 state_root{};         // TOS-native EVM state commitment (cell hash of state_root)
+    evmc::bytes32 transactions_root{};  // TOS-native commitment over the ordered transaction list
+    evmc::bytes32 receipts_root{};      // TOS-native commitment over the ordered receipt list
 };
 
 /// Log entry with block metadata for eth_getLogs.
@@ -198,44 +195,16 @@ class EvmState {
     /// every per-tx store_logs call.
     std::vector<IndexedLog> get_logs_for_block_copy(uint64_t block_number) const;
 
-    /// --- Change tracking for incremental trie ---
-    /// Track that an account was modified (computes keccak256(addr) and inserts nibbled key).
-    void track_account_change(const evmc::address& addr);
-    /// Track that a storage slot was modified (computes keccak256(addr)+keccak256(slot) nibbled keys).
-    void track_storage_change(const evmc::address& addr, const evmc::bytes32& slot);
-    /// Access the accumulated account change set.
-    silkworm::trie::PrefixSet& account_changes() { return account_changes_; }
-    const silkworm::trie::PrefixSet& account_changes() const { return account_changes_; }
-    /// Access the accumulated storage change set.
-    silkworm::trie::PrefixSet& storage_changes() { return storage_changes_; }
-    const silkworm::trie::PrefixSet& storage_changes() const { return storage_changes_; }
-    /// Clear all tracked changes (typically after trie root computation).
-    void clear_change_tracking();
-
-    /// Audit H-01: open / close / drain the dynamic flat-state / MPT
-    /// witness consistency tracker on the underlying CellEvmState. These
-    /// are forwarders — they do nothing when the backend is the in-memory
-    /// silkworm state (used by some unit tests). The caller owns `ctx`
-    /// and must keep it alive across `begin` / `end`. The caller is also
-    /// responsible for holding `mutex()` exclusively for the duration of
-    /// the bound interval, matching how the executor already takes a
-    /// unique_lock around `execute_evm_transaction`.
-    void begin_witness_consistency_check(
-        WitnessFlatConsistencyContext* ctx) noexcept;
-    void end_witness_consistency_check() noexcept;
-    td::Status consume_witness_consistency_error() noexcept;
-
     /// Audit K-02 (H-01 follow-up): forwarder for the always-on
     /// `read_code` mismatch counter. RPC handlers that run heavy
-    /// read-only EVM logic without binding a `WitnessFlatConsistencyContext`
-    /// (eth_call's read-only fast path, eth_estimateGas, eth_createAccessList)
-    /// snapshot the counter before silkworm execution and re-read it
-    /// afterwards: a non-zero delta means a corrupt code root was
-    /// observed during the handler's frame, and the response should be
-    /// mapped to JSON-RPC `-32000 corrupt EVM code root` instead of
-    /// silently returning the wrong (or empty) execution result. The
-    /// counter is process-global and monotone, so the snapshot/check
-    /// pattern is correct under any locking discipline.
+    /// read-only EVM logic snapshot the counter before silkworm
+    /// execution and re-read it afterwards: a non-zero delta means a
+    /// corrupt code root was observed during the handler's frame, and
+    /// the response should be mapped to JSON-RPC `-32000 corrupt EVM
+    /// code root` instead of silently returning the wrong (or empty)
+    /// execution result. The counter is process-global and monotone,
+    /// so the snapshot/check pattern is correct under any locking
+    /// discipline.
     uint64_t code_root_hash_mismatch_count() const noexcept;
 
   private:
@@ -256,10 +225,6 @@ class EvmState {
     // Insertion order tracking for eviction (FIFO when at capacity)
     std::vector<evmc::bytes32> receipt_insertion_order_;
     std::vector<evmc::bytes32> transaction_insertion_order_;
-
-    // Change tracking for incremental trie root computation
-    silkworm::trie::PrefixSet account_changes_;
-    silkworm::trie::PrefixSet storage_changes_;
 
     bool needs_initial_hydration_{true};
 

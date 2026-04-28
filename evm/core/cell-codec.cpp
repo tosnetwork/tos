@@ -4,14 +4,17 @@
 */
 #include "evm/core/cell-codec.h"
 
-#include "evm/core/cell-state.h"
+#include "evm/core/native-commitment.h"
+
+#include "td/utils/logging.h"
 
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
 #include "vm/excno.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
-#include <memory>
 
 namespace evm_workchain {
 
@@ -19,39 +22,6 @@ namespace {
 
 bool bytes32_equal(const evmc::bytes32& a, const evmc::bytes32& b) noexcept {
     return std::memcmp(a.bytes, b.bytes, 32) == 0;
-}
-
-bool verify_declared_eth_state_root(const td::Ref<vm::Cell>& state_root,
-                                    const td::Ref<vm::Cell>& trie_witness_root,
-                                    const evmc::bytes32& declared) noexcept {
-    try {
-        auto cell_state = std::make_unique<CellEvmState>();
-        if (state_root.not_null() && !cell_state->load_from_cell(state_root, true)) {
-            return false;
-        }
-        auto rebuilt = cell_state->ethereum_state_root_hash();
-        if (!bytes32_equal(rebuilt, declared)) {
-            return false;
-        }
-        if (trie_witness_root.not_null()) {
-            if (!cell_state->load_trie_witness_from_cell(trie_witness_root)) {
-                return false;
-            }
-            auto witnessed = cell_state->ethereum_state_root_hash();
-            if (!bytes32_equal(witnessed, declared)) {
-                return false;
-            }
-        }
-        return true;
-    } catch (vm::VmError&) {
-        return false;
-    } catch (vm::VmVirtError&) {
-        return false;
-    } catch (std::exception&) {
-        return false;
-    } catch (...) {
-        return false;
-    }
 }
 
 }  // namespace
@@ -261,24 +231,57 @@ std::string decode_evm_bytecode(td::Ref<vm::Cell> root) {
     return {};
 }
 
+td::Ref<vm::Cell> encode_cp_new_data_v6(
+    const td::Ref<vm::Cell>& state_root,
+    const evmc::bytes32& native_state_commitment,
+    const td::Ref<vm::Cell>& rpc_cache_root,
+    const td::Ref<vm::Cell>& block_hashes_root) {
+    vm::CellBuilder cb;
+    // magic#45564d (24 bits) + schema_version:uint8(6)
+    cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
+    cb.store_long(static_cast<long long>(kCpNewDataSchemaVersion), 8);
+    // has_state_root:1 + [state_root:^Cell]
+    if (state_root.not_null()) {
+        cb.store_long(1, 1);
+        cb.store_ref(state_root);
+    } else {
+        cb.store_long(0, 1);
+    }
+    // native_state_commitment:bits256
+    cb.store_bytes(native_state_commitment.bytes, 32);
+    // Maybe ^EvmRpcCacheRoot
+    if (rpc_cache_root.not_null()) {
+        cb.store_long(1, 1);
+        cb.store_ref(rpc_cache_root);
+    } else {
+        cb.store_long(0, 1);
+    }
+    // Maybe ^EvmBlockHashHistoryRoot
+    if (block_hashes_root.not_null()) {
+        cb.store_long(1, 1);
+        cb.store_ref(block_hashes_root);
+    } else {
+        cb.store_long(0, 1);
+    }
+    // Maybe ^ReservedBlockAccumulatorRoot — always absent in v6.
+    cb.store_long(0, 1);
+    return cb.finalize();
+}
+
 bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                         td::Ref<vm::Cell>& state_root_out,
-                        evmc::bytes32& eth_state_root_out,
+                        evmc::bytes32& native_state_commitment_out,
                         td::Ref<vm::Cell>& rpc_cache_root_out,
-                        bool verify_eth_state_root,
                         td::Ref<vm::Cell>* block_hashes_root_out,
-                        td::Ref<vm::Cell>* block_accumulator_root_out,
-                        td::Ref<vm::Cell>* trie_witness_root_out) {
+                        td::Ref<vm::Cell>* block_accumulator_root_out) {
     state_root_out = {};
     rpc_cache_root_out = {};
+    native_state_commitment_out = {};
     if (block_hashes_root_out) {
         *block_hashes_root_out = {};
     }
     if (block_accumulator_root_out) {
         *block_accumulator_root_out = {};
-    }
-    if (trie_witness_root_out) {
-        *trie_witness_root_out = {};
     }
     try {
         if (cell.is_null()) return false;
@@ -289,25 +292,30 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
         auto magic = cs.fetch_ulong(kEvmMagicBits);
         if (magic != kEvmAccountMagic) return false;
         auto schema_version = cs.fetch_ulong(8);
-        if (schema_version != kCpNewDataSchemaVersion) return false;
+        if (schema_version == 5) {
+            LOG(ERROR) << "cp.new_data v5 is no longer supported; v6 native-only required";
+            return false;
+        }
+        if (schema_version != kCpNewDataSchemaVersion) {
+            return false;
+        }
+        // has_state_root:1 + [state_root:^Cell]
         auto has_root = cs.fetch_ulong(1);
         if (has_root == 1) {
             if (cs.size_refs() == 0) return false;
             state_root_out = cs.fetch_ref();
         }
+        // native_state_commitment:bits256
         if (cs.size() < 256) return false;
-        cs.fetch_bytes(eth_state_root_out.bytes, 32);
-        // The has_cache Maybe-tag is mandatory in v5 (we always emit it);
-        // refuse cells that omit it rather than silently treating absence as 0.
+        cs.fetch_bytes(native_state_commitment_out.bytes, 32);
+        // Maybe ^EvmRpcCacheRoot — mandatory tag in v6 (we always emit it).
         if (cs.size() < 1) return false;
         auto has_cache = cs.fetch_ulong(1);
         if (has_cache == 1) {
             if (cs.size_refs() == 0) return false;
             rpc_cache_root_out = cs.fetch_ref();
         }
-        // The has_block_hashes Maybe-tag is mandatory in v5. TOS has not
-        // launched mainnet, so old cells are intentionally rejected rather
-        // than silently decoded with empty BLOCKHASH history.
+        // Maybe ^EvmBlockHashHistoryRoot.
         if (cs.size() < 1) return false;
         auto has_block_hashes = cs.fetch_ulong(1);
         if (has_block_hashes == 1) {
@@ -317,41 +325,29 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                 *block_hashes_root_out = std::move(block_hashes_root);
             }
         }
-        // The former in-progress block accumulator is now a reserved Maybe-tag.
-        // TOS has not launched mainnet, so reject cells that still carry it
-        // instead of traversing or preserving quadratic RPC payload history.
+        // Maybe ^ReservedBlockAccumulatorRoot — must be absent in v6.
         if (cs.size() < 1) return false;
         auto has_block_accumulator = cs.fetch_ulong(1);
         if (has_block_accumulator == 1) {
+            LOG(ERROR) << "v6 cp.new_data: reserved accumulator slot must be empty";
             return false;
         }
-        td::Ref<vm::Cell> trie_witness_root;
-        if (schema_version == kCpNewDataSchemaVersion) {
-            if (cs.size() < 1) return false;
-            auto has_trie_witness = cs.fetch_ulong(1);
-            if (has_trie_witness == 1) {
-                if (cs.size_refs() == 0) return false;
-                trie_witness_root = cs.fetch_ref();
-                if (trie_witness_root_out) {
-                    *trie_witness_root_out = trie_witness_root;
-                }
-            } else if (has_root == 1) {
-                return false;
-            }
-        }
-        // Audit #3 (2026-04-26): require canonical encoding. Two cells with the
-        // same logical content must produce the same cell hash; trailing bits or
-        // unaccounted refs would let a peer construct multiple distinct cell
-        // hashes for the same EVM state, breaking account-data identity.
+        // Audit: require canonical encoding. Two cells with the same logical
+        // content must produce the same cell hash; trailing bits or unaccounted
+        // refs would let a peer construct multiple distinct cell hashes for
+        // the same EVM state, breaking account-data identity.
         if (cs.size() != 0 || cs.size_refs() != 0) return false;
-        if (!verify_eth_state_root) {
-            return true;
+        // Cross-check: the declared native_state_commitment must equal the
+        // commitment recomputed directly from the state-root cell. This
+        // closes the only consensus-visible degree of freedom in the v6
+        // layout — a peer cannot ship a state root whose declared commitment
+        // does not match what every other node would compute.
+        auto recomputed = compute_native_evm_state_commitment(state_root_out);
+        if (!bytes32_equal(recomputed, native_state_commitment_out)) {
+            LOG(ERROR) << "v6 cp.new_data: native_state_commitment mismatch";
+            return false;
         }
-        // Audit #5 follow-up: the declared eth_state_root is consensus-visible
-        // account data. Reject stale/forged roots before they can seed restart
-        // hydration and snapshot execution.
-        return verify_declared_eth_state_root(
-            state_root_out, trie_witness_root, eth_state_root_out);
+        return true;
     } catch (vm::VmError&) {
         return false;
     } catch (vm::VmVirtError&) {

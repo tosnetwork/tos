@@ -1,11 +1,20 @@
 /*
-    EVM Workchain — RPC cache cell codec implementation (Phase F scaffold).
+    EVM Workchain — RPC cache cell codec implementation.
 
-    Encodes/decodes PersistedReceipt cells for the future side-channel
-    persisted RPC cache.  See `evm-rpc-cache-codec.h` for the schema and
-    `doc/evm-workchain-rpc-cache-persistence.md` for the broader Phase F
-    design (Option C: side-channel cell tree referenced from `cp.new_data`
-    but not contributing to consensus state_hash).
+    Encodes/decodes PersistedReceipt / PersistedTransaction / PersistedBlock /
+    PersistedLogsForBlock cells for the side-channel persisted RPC cache.
+    See `cache-codec.h` for the schema and `doc/evm-workchain-rpc-cache-
+    persistence.md` for the broader design (Option C: side-channel cell tree
+    referenced from `cp.new_data` but not contributing to consensus
+    state_hash).
+
+    Canonical-identity binding (native-state plan)
+    -----------------------------------------------
+    Every record carries an `EvmCacheRecordStamp` cell as its first ref. The
+    stamp binds the record to (workchain_id, schema_version, block_seqno,
+    block_hash, native_state_commitment, logs_commitment, receipts_commitment).
+    Records that fail to decode the stamp (legacy / corrupt / wrong schema)
+    are rejected and the caller treats them as cache-miss.
 
     Implementation notes
     ---------------------
@@ -26,6 +35,7 @@
 
 #include "evm/core/cell-codec.h"  // encode_evm_bytecode / decode_evm_bytecode
 
+#include "td/utils/logging.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
 #include "vm/excno.hpp"
@@ -49,6 +59,129 @@ bool load_ordinary_slice(td::Ref<vm::Cell> cell, vm::CellSlice& out) noexcept {
     } catch (...) {
         return false;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Canonical-identity stamp (encode_stamp / decode_stamp).
+//
+// Cell layout (single cell, no refs, total = 32 + 8 + 8 + 32 + 256*4 = 1080
+// bits → overflows the 1023-bit per-cell limit). Split across two cells:
+// head (magic + version + workchain + seqno + 2 hashes = 32+8+8+32+256+256
+// = 592 bits) and tail (3 hashes = 768 bits). Both fit comfortably under
+// 1023.
+//
+//   stamp_head:
+//     magic:bits32                       // "STAM"
+//     workchain_id:uint8
+//     schema_version:uint8
+//     block_seqno:uint32
+//     block_hash:bits256
+//     native_state_commitment:bits256
+//     tail:^StampTail
+//
+//   stamp_tail:
+//     logs_commitment:bits256
+//     receipts_commitment:bits256
+// ---------------------------------------------------------------------------
+
+td::Ref<vm::Cell> encode_stamp_impl(const EvmCacheRecordStamp& stamp) {
+    vm::CellBuilder tail;
+    tail.store_bytes(stamp.logs_commitment.bytes, 32);
+    tail.store_bytes(stamp.receipts_commitment.bytes, 32);
+
+    vm::CellBuilder head;
+    head.store_long(static_cast<long long>(kCacheRecordStampMagic),
+                    kCacheRecordStampMagicBits);
+    head.store_long(stamp.workchain_id, 8);
+    head.store_long(stamp.schema_version, 8);
+    head.store_long(static_cast<long long>(stamp.block_seqno), 32);
+    head.store_bytes(stamp.block_hash.bytes, 32);
+    head.store_bytes(stamp.native_state_commitment.bytes, 32);
+    head.store_ref(tail.finalize());
+    return head.finalize();
+}
+
+bool decode_stamp_impl(td::Ref<vm::Cell> cell, EvmCacheRecordStamp& out) {
+    out = EvmCacheRecordStamp{};
+    if (cell.is_null()) return false;
+    vm::CellSlice cs;
+    if (!load_ordinary_slice(cell, cs)) return false;
+
+    long long magic = 0;
+    if (!cs.fetch_long_bool(kCacheRecordStampMagicBits, magic) ||
+        static_cast<unsigned long long>(magic) != kCacheRecordStampMagic) {
+        return false;
+    }
+    long long workchain = 0, schema = 0, seqno = 0;
+    if (!cs.fetch_long_bool(8, workchain)) return false;
+    if (!cs.fetch_long_bool(8, schema)) return false;
+    if (!cs.fetch_long_bool(32, seqno)) return false;
+    out.workchain_id = static_cast<uint8_t>(workchain);
+    out.schema_version = static_cast<uint8_t>(schema);
+    out.block_seqno = static_cast<uint32_t>(seqno);
+
+    if (!cs.fetch_bytes(out.block_hash.bytes, 32)) return false;
+    if (!cs.fetch_bytes(out.native_state_commitment.bytes, 32)) return false;
+
+    if (cs.size_refs() == 0) return false;
+    auto tail_cell = cs.fetch_ref();
+    if (cs.size() != 0 || cs.size_refs() != 0) return false;
+
+    vm::CellSlice tcs;
+    if (!load_ordinary_slice(tail_cell, tcs)) return false;
+    if (!tcs.fetch_bytes(out.logs_commitment.bytes, 32)) return false;
+    if (!tcs.fetch_bytes(out.receipts_commitment.bytes, 32)) return false;
+    if (tcs.size() != 0 || tcs.size_refs() != 0) return false;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Stamped-record outer wrapper.
+//
+// Each public cache record is a 2-ref cell:
+//   stamped_record#_
+//     stamp:^CacheRecordStamp
+//     payload:^Payload                   // existing impl-encoded record
+//     = StampedRecord;
+//
+// This keeps the existing impl encoders/decoders intact and centralises the
+// canonical-identity check in one place. Records produced by older binaries
+// that pre-date the stamp field decode-fail here and the caller treats them
+// as cache-miss (logged warning).
+// ---------------------------------------------------------------------------
+
+td::Ref<vm::Cell> wrap_stamped(td::Ref<vm::Cell> stamp_cell, td::Ref<vm::Cell> payload) {
+    vm::CellBuilder cb;
+    cb.store_ref(std::move(stamp_cell));
+    cb.store_ref(std::move(payload));
+    return cb.finalize();
+}
+
+bool unwrap_stamped(td::Ref<vm::Cell> cell, EvmCacheRecordStamp& stamp_out,
+                    td::Ref<vm::Cell>& payload_out, const char* what) {
+    if (cell.is_null()) {
+        LOG(WARNING) << "evm-rpc-cache: " << what << ": null record cell";
+        return false;
+    }
+    vm::CellSlice cs;
+    if (!load_ordinary_slice(cell, cs)) {
+        LOG(WARNING) << "evm-rpc-cache: " << what << ": failed to load slice";
+        return false;
+    }
+    if (cs.size() != 0 || cs.size_refs() != 2) {
+        LOG(WARNING) << "evm-rpc-cache: " << what
+                     << ": legacy/unstamped record rejected (refs="
+                     << cs.size_refs() << " bits=" << cs.size() << ")";
+        return false;
+    }
+    auto stamp_cell = cs.fetch_ref();
+    payload_out = cs.fetch_ref();
+    if (!decode_stamp_impl(stamp_cell, stamp_out)) {
+        LOG(WARNING) << "evm-rpc-cache: " << what
+                     << ": stamp decode failed (legacy or corrupt record)";
+        return false;
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -620,17 +753,50 @@ bool decode_persisted_block_impl(td::Ref<vm::Cell> cell, StoredBlock& out) {
 // Public API.
 // ---------------------------------------------------------------------------
 
-td::Ref<vm::Cell> encode_persisted_transaction(const StoredTransaction& txn) {
-    return encode_persisted_transaction_impl(txn);
+td::Ref<vm::Cell> encode_stamp(const EvmCacheRecordStamp& stamp) {
+    return encode_stamp_impl(stamp);
 }
-bool decode_persisted_transaction(td::Ref<vm::Cell> cell, StoredTransaction& out) {
-    return decode_persisted_transaction_impl(cell, out);
+
+bool decode_stamp(td::Ref<vm::Cell> cell, EvmCacheRecordStamp& out) {
+    return decode_stamp_impl(cell, out);
 }
-td::Ref<vm::Cell> encode_persisted_block(const StoredBlock& block) {
-    return encode_persisted_block_impl(block);
+
+td::Ref<vm::Cell> encode_persisted_transaction(const StoredTransaction& txn,
+                                                const EvmCacheRecordStamp& stamp) {
+    return wrap_stamped(encode_stamp_impl(stamp), encode_persisted_transaction_impl(txn));
 }
-bool decode_persisted_block(td::Ref<vm::Cell> cell, StoredBlock& out) {
-    return decode_persisted_block_impl(cell, out);
+bool decode_persisted_transaction(td::Ref<vm::Cell> cell, StoredTransaction& out,
+                                   EvmCacheRecordStamp& stamp_out) {
+    out = StoredTransaction{};
+    stamp_out = EvmCacheRecordStamp{};
+    td::Ref<vm::Cell> payload;
+    if (!unwrap_stamped(cell, stamp_out, payload, "persisted_transaction")) return false;
+    return decode_persisted_transaction_impl(payload, out);
+}
+td::Ref<vm::Cell> encode_persisted_block(const StoredBlock& block,
+                                          uint8_t workchain_id,
+                                          uint8_t schema_version) {
+    EvmCacheRecordStamp stamp;
+    stamp.workchain_id = workchain_id;
+    stamp.schema_version = schema_version;
+    // The block_seqno mirrors the EVM block number (workchain seqno and
+    // EVM block number advance in lockstep — see compute-phase.cpp).
+    // Truncating uint64 → uint32 is safe for the stamp because EVM block
+    // numbers do not realistically exceed 2^32 in this network's lifetime,
+    // and the canonical block_hash + native commitment fully disambiguate.
+    stamp.block_seqno = static_cast<uint32_t>(block.number);
+    stamp.block_hash = block.hash;
+    stamp.native_state_commitment = block.state_root;
+    // Receipt-only summary slots are zero for block records.
+    return wrap_stamped(encode_stamp_impl(stamp), encode_persisted_block_impl(block));
+}
+bool decode_persisted_block(td::Ref<vm::Cell> cell, StoredBlock& out,
+                             EvmCacheRecordStamp& stamp_out) {
+    out = StoredBlock{};
+    stamp_out = EvmCacheRecordStamp{};
+    td::Ref<vm::Cell> payload;
+    if (!unwrap_stamped(cell, stamp_out, payload, "persisted_block")) return false;
+    return decode_persisted_block_impl(payload, out);
 }
 
 // ---------------------------------------------------------------------------
@@ -768,14 +934,21 @@ bool decode_indexed_log_list(td::Ref<vm::Cell> root, std::vector<IndexedLog>& ou
 }
 }  // anonymous namespace (Phase F.6 indexed-log helpers)
 
-td::Ref<vm::Cell> encode_persisted_logs_for_block(const std::vector<IndexedLog>& logs) {
-    return encode_indexed_log_list(logs);
+td::Ref<vm::Cell> encode_persisted_logs_for_block(const std::vector<IndexedLog>& logs,
+                                                   const EvmCacheRecordStamp& stamp) {
+    return wrap_stamped(encode_stamp_impl(stamp), encode_indexed_log_list(logs));
 }
-bool decode_persisted_logs_for_block(td::Ref<vm::Cell> cell, std::vector<IndexedLog>& out) {
-    return decode_indexed_log_list(cell, out);
+bool decode_persisted_logs_for_block(td::Ref<vm::Cell> cell,
+                                      std::vector<IndexedLog>& out,
+                                      EvmCacheRecordStamp& stamp_out) {
+    out.clear();
+    stamp_out = EvmCacheRecordStamp{};
+    td::Ref<vm::Cell> payload;
+    if (!unwrap_stamped(cell, stamp_out, payload, "persisted_logs_for_block")) return false;
+    return decode_indexed_log_list(payload, out);
 }
 
-td::Ref<vm::Cell> encode_persisted_receipt(const StoredReceipt& receipt) {
+static td::Ref<vm::Cell> encode_persisted_receipt_payload(const StoredReceipt& receipt) {
     vm::CellBuilder cb;
     cb.store_long(static_cast<long long>(kPersistedReceiptMagic), kPersistedReceiptMagicBits);
     cb.store_long(static_cast<long long>(receipt.type), 8);
@@ -796,7 +969,7 @@ td::Ref<vm::Cell> encode_persisted_receipt(const StoredReceipt& receipt) {
     return cb.finalize();
 }
 
-bool decode_persisted_receipt(td::Ref<vm::Cell> cell, StoredReceipt& out) {
+static bool decode_persisted_receipt_payload(td::Ref<vm::Cell> cell, StoredReceipt& out) {
     out = StoredReceipt{};
     if (cell.is_null()) return false;
     vm::CellSlice cs;
@@ -847,6 +1020,20 @@ bool decode_persisted_receipt(td::Ref<vm::Cell> cell, StoredReceipt& out) {
     if (!decode_log_list(logs_root, out.logs)) return false;
 
     return cs.size() == 0 && cs.size_refs() == 0;
+}
+
+td::Ref<vm::Cell> encode_persisted_receipt(const StoredReceipt& receipt,
+                                            const EvmCacheRecordStamp& stamp) {
+    return wrap_stamped(encode_stamp_impl(stamp), encode_persisted_receipt_payload(receipt));
+}
+
+bool decode_persisted_receipt(td::Ref<vm::Cell> cell, StoredReceipt& out,
+                              EvmCacheRecordStamp& stamp_out) {
+    out = StoredReceipt{};
+    stamp_out = EvmCacheRecordStamp{};
+    td::Ref<vm::Cell> payload;
+    if (!unwrap_stamped(cell, stamp_out, payload, "persisted_receipt")) return false;
+    return decode_persisted_receipt_payload(payload, out);
 }
 
 }  // namespace evm_workchain

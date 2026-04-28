@@ -93,14 +93,27 @@ inline bool is_evm_workchain(tos::WorkchainId wc) noexcept {
 /// Fixed wc=1 TOS outer account that carries the entire EVM world state.
 ///
 /// Every EVM external message is routed to this address. Its `StateInit.data`
-/// is a cell in `cp.new_data` format (magic 0x45564D + schema_version=5
-/// + Maybe ^CellEvmState
-/// root + bits256 eth_state_root + Maybe ^block_hash_history
-/// + reserved accumulator bit set to nothing + Maybe ^persistent_trie_witness).
+/// is a cell in `cp.new_data` v6 native-only format:
+///   magic:24 (0x45564D) + schema_version:uint8 (= 6)
+///   + has_state_root:1 + [state_root:^Cell when has_state_root=1]
+///   + native_state_commitment:bits256
+///   + Maybe ^EvmRpcCacheRoot
+///   + Maybe ^EvmBlockHashHistoryRoot
+///   + Maybe ^ReservedBlockAccumulatorRoot   (must be absent)
+///
+/// `native_state_commitment` is the TOS cell representation hash of
+/// `state_root` — a commitment over the native cell-tree world state.
+/// It is NOT an Ethereum MPT account root and is not consumable by
+/// external Ethereum clients expecting an MPT proof.
+///
 /// On every block the compute phase updates this cell to reflect the
-/// post-execution world state, the EVM BLOCKHASH lookback window, the
-/// persistent Ethereum trie witness, and the single-transaction Ethereum
-/// block root.
+/// post-execution native world state, the cached RPC indexes, and the
+/// EVM BLOCKHASH lookback window. The reserved accumulator slot is
+/// preserved as `nothing` for forward compatibility.
+///
+/// Schema versions <= 5 (the legacy Ethereum-MPT-compatible layout) are
+/// permanently rejected on load. There is no silent upgrade path: a
+/// migration must produce a v6 cell out-of-band before resuming.
 ///
 /// 256-bit address = all zeros except the low bit set to 1:
 ///   0x0000000000000000000000000000000000000000000000000000000000000001

@@ -62,7 +62,13 @@ async function main() {
 
     const block = await provider.getBlock(blockNum);
     check('block has hash', block?.hash?.startsWith('0x'), `block ${blockNum}`);
-    check('block has stateRoot', block?.stateRoot?.startsWith('0x'), `${block?.stateRoot?.slice(0, 18)}...`);
+    // stateRoot is now a TOS-native commitment (cell hash), not an Ethereum MPT root.
+    // We only assert it is a 32-byte hex string; we do NOT compare it to any
+    // canonical empty-MPT constant.
+    const sr = block?.stateRoot;
+    const isHex32 = typeof sr === 'string' && /^0x[0-9a-f]{64}$/i.test(sr);
+    const nonZero = isHex32 && !/^0x0{64}$/i.test(sr);
+    check('block.stateRoot is 32-byte non-zero hex', isHex32 && nonZero, `${sr?.slice(0, 18)}...`);
 
     // 6. Read another seeded account
     const recipient = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
@@ -134,6 +140,21 @@ async function main() {
         const delta = recipientFinal - recipientInitial;
         const deltaTos = Number(ethers.formatEther(delta));
         check('recipient balance increased by 0.1 TOS', delta === ethers.parseEther('0.1'), `+${deltaTos} TOS`);
+    }
+
+    // 12. tos_evmChainInfo — smoke test that the no-MPT advertisement is reachable.
+    try {
+        const info = await provider.send('tos_evmChainInfo', []);
+        check('tos_evmChainInfo: chainId == 5525331', info && Number(info.chainId) === 5525331, `${info?.chainId}`);
+        check('tos_evmChainInfo: workchain == 1', info && info.workchain === 1);
+        check('tos_evmChainInfo: stateCommitment == "tos-native-cell-hash"',
+              info && info.stateCommitment === 'tos-native-cell-hash');
+        check('tos_evmChainInfo: mpt == false', info && info.mpt === false);
+        check('tos_evmChainInfo: ethGetProof == false', info && info.ethGetProof === false);
+        check('tos_evmChainInfo: stateRootCompatibility == "tos-native-not-ethereum-mpt"',
+              info && info.stateRootCompatibility === 'tos-native-not-ethereum-mpt');
+    } catch (e) {
+        check('tos_evmChainInfo reachable', false, e.message);
     }
 
     console.log('='.repeat(60));

@@ -7,8 +7,7 @@
 #include "evm/core/transaction.h"
 #include "evm/core/block-context.h"
 #include "evm/core/executor.h"
-#include "evm/core/state-root.h"
-#include "evm/core/incremental-trie.h"
+#include "evm/core/native-commitment.h"
 #include "evm/core/cell-state.h"
 #include "evm/core/cell-codec.h"
 #include "evm/core/init.h"
@@ -28,9 +27,7 @@
 #include <memory>
 #include <string>
 
-#include "td/utils/ScopeGuard.h"
 #include "td/utils/logging.h"
-#include "td/utils/misc.h"  // td::buffer_to_hex
 
 namespace evm_workchain {
 
@@ -62,7 +59,6 @@ class CellStateRollbackSnapshot {
             return false;
         }
         account_root_ = cell_state_->serialize_to_cell();
-        trie_witness_root_ = cell_state_->serialize_trie_witness_to_cell();
         block_hashes_root_ = cell_state_->serialize_block_hashes_to_cell();
         captured_ = true;
         return true;
@@ -77,19 +73,12 @@ class CellStateRollbackSnapshot {
         if (current_cell_state != nullptr) {
             // Rebind via TrustedLazy: the captured root cell hash is owned by
             // this snapshot (no external attacker influence) so the per-rollback
-            // cost stays O(1) instead of O(global state size). The witness is
-            // similarly restored via TrustedShallow — the captured root is the
-            // pre-execution witness this same code wrote out, so a strict
-            // recursive walk would be redundant and reintroduce O(global account
-            // trie nodes) cost on every rollback path.
+            // cost stays O(1) instead of O(global state size).
             CHECK(current_cell_state->load_from_cell(
                 account_root_, CellStateLoadMode::TrustedLazy));
-            CHECK(current_cell_state->load_trie_witness_from_cell(
-                trie_witness_root_, TrieWitnessLoadMode::TrustedShallow));
             CHECK(current_cell_state->load_block_hashes_from_cell(block_hashes_root_));
             current_cell_state->reset_delta_stats();
         }
-        state.clear_change_tracking();
     }
 
     bool captured() const noexcept { return captured_; }
@@ -97,54 +86,28 @@ class CellStateRollbackSnapshot {
   private:
     CellEvmState* cell_state_{nullptr};
     td::Ref<vm::Cell> account_root_;
-    td::Ref<vm::Cell> trie_witness_root_;
     td::Ref<vm::Cell> block_hashes_root_;
     bool captured_{false};
 };
 
-// Audit H-02: helper that runs an EIP-4788 / EIP-2935 (or any future
-// protocol-injected) system transaction with the dynamic flat-state /
-// MPT witness consistency tracker active. Without this, system calls
-// touch flat-state account / storage / code on every block but bypass
-// the verifier the user-tx path opens — flat/MPT drift on the system
-// contracts (`kBeaconRootsAddress`, `kHistoryStorageAddress`) would
-// only be caught later, after consensus had already accepted writes
-// based on a corrupt witness.
+// Helper that runs an EIP-4788 / EIP-2935 (or any future protocol-injected)
+// system transaction directly against the underlying state. Returns
+// `td::Status::OK()` when the system tx ran without throwing; any system
+// call exception (predeploy missing or corrupt) surfaces as a non-OK status
+// and the caller MUST treat it as a deterministic reject for the entire
+// block-tx attempt.
 //
-// Contract:
-//   * Caller does NOT hold `state.mutex()`. The helper takes the
-//     unique_lock itself, runs `begin_witness_consistency_check`
-//     under that lock, executes the system tx via the same silkworm
-//     EVM machinery the user path uses, and then drains the
-//     consistency tracker via `consume_witness_consistency_error`.
-//   * Returns `td::Status::OK()` only when the system tx ran without
-//     throwing AND the dynamic verifier did not record any
-//     flat/witness drift on the touched account / storage / code
-//     leaves. Any system call exception (predeploy missing or
-//     corrupt) and any verifier-observed drift surface as a non-OK
-//     status; the caller MUST treat this as a deterministic reject
-//     for the entire block-tx attempt.
-//   * Errors produced by `begin_witness_consistency_check` /
-//     `end_witness_consistency_check` cannot occur (the underlying
-//     setter is `noexcept` and does only pointer stores).
-td::Status execute_system_transaction_with_witness(
+// Contract: the caller does NOT hold `state.mutex()`. The helper takes the
+// unique_lock itself and executes the system tx via the same silkworm EVM
+// machinery the user path uses.
+td::Status execute_system_transaction(
     EvmState& state,
     const silkworm::Block& block,
     const silkworm::ChainConfig& config,
     const silkworm::Transaction& sys_txn,
     uint64_t block_seqno,
     const char* label) {
-    WitnessFlatConsistencyContext sys_ctx{};
-    sys_ctx.enabled = true;
-
     std::unique_lock lock(state.mutex());
-    state.begin_witness_consistency_check(&sys_ctx);
-    SCOPE_EXIT {
-        // Always drop the borrowed pointer before the context goes out
-        // of scope. The underlying CellEvmState::end_witness_consistency_check
-        // is noexcept and idempotent.
-        state.end_witness_consistency_check();
-    };
 
     try {
         silkworm::IntraBlockState ibs(state.state());
@@ -160,17 +123,10 @@ td::Status execute_system_transaction_with_witness(
             std::string(label) + " system call threw unknown exception");
     }
 
-    // Drain the verifier. A non-OK status means the system call read or
-    // wrote a flat-state leaf that disagreed with the witness MPT — the
-    // entire block-tx attempt must be rejected by the caller via
-    // `rollback_snapshot.restore` + `reject_compute_phase`.
-    if (auto st = state.consume_witness_consistency_error(); st.is_error()) {
-        return st;
-    }
     return td::Status::OK();
 }
 
-// Build a fresh EvmState seeded from `account_data` (the cp.new_data v5
+// Build a fresh EvmState seeded from `account_data` (the cp.new_data v6
 // cell from the previous block). Returns nullptr if the cell is malformed
 // — caller must handle by emitting `sk_bad_state`. A null `account_data`
 // returns a genesis-equivalent state with the EIP-4788 / EIP-2935
@@ -182,60 +138,34 @@ std::unique_ptr<EvmState> build_local_state_from_account_data(
 
     if (account_data.not_null()) {
         td::Ref<vm::Cell> state_root;
-        evmc::bytes32 eth_state_root{};
+        evmc::bytes32 native_state_commitment{};
         td::Ref<vm::Cell> rpc_cache_root;
         td::Ref<vm::Cell> block_hashes_root;
-        td::Ref<vm::Cell> trie_witness_root;
-        // The cp.new_data cell itself is already bound by the TOS account
-        // state root. Snapshot compute executes from state_root and writes a
-        // fresh eth_state_root after the transaction, so doing a full
-        // Ethereum trie recompute here for every tx is redundant and
-        // unmetered. Full declared-root verification remains enabled for
-        // snapshot/global-state hydration paths.
-        if (!decode_cp_new_data(account_data, state_root, eth_state_root,
+        if (!decode_cp_new_data(account_data, state_root,
+                                native_state_commitment,
                                 rpc_cache_root,
-                                /*verify_eth_state_root=*/false,
                                 &block_hashes_root,
-                                nullptr,
-                                &trie_witness_root)) {
+                                nullptr)) {
+            return nullptr;
+        }
+        // Cross-check the declared native_state_commitment against the
+        // recomputed cell hash of state_root. The decoder already does this,
+        // but recomputing here defends against a future caller-edit that
+        // bypasses the decoder.
+        evmc::bytes32 recomputed =
+            compute_native_evm_state_commitment(state_root);
+        if (std::memcmp(recomputed.bytes,
+                        native_state_commitment.bytes, 32) != 0) {
             return nullptr;
         }
         // Hot path: bind the account dictionary without enumerating accounts,
         // storage, or code. The cell hash of `state_root` is already
         // authenticated by the surrounding TOS account state, and the full
-        // strict scan in `StrictValidate*` modes scales with global state size
-        // — that is unmetered host work and must not run for every EVM tx.
+        // strict scan in `StrictValidateNative` mode scales with global state
+        // size — that is unmetered host work and must not run for every EVM
+        // tx.
         if (state_root.not_null() &&
             !cell_state->load_from_cell(state_root, CellStateLoadMode::TrustedLazy)) {
-            return nullptr;
-        }
-        if (trie_witness_root.not_null()) {
-            // Bind the witness via TrustedShallow: the input cell hash is
-            // already authenticated by the surrounding TOS account state, and
-            // a strict recursive walk here would be O(global account trie
-            // nodes) of unmetered host work per EVM tx. After the cheap bind
-            // we still cross-check the witnessed root hash against the
-            // declared `eth_state_root` from cp.new_data; that comparison is
-            // O(root node) and forces fail-closed on a structurally valid but
-            // semantically mismatched witness.
-            if (!cell_state->load_trie_witness_from_cell(
-                    trie_witness_root,
-                    TrieWitnessLoadMode::TrustedShallow)) {
-                return nullptr;
-            }
-            const auto witnessed_root = cell_state->ethereum_state_root_hash();
-            if (witnessed_root == evmc::bytes32{} ||
-                witnessed_root != eth_state_root) {
-                LOG(WARNING)
-                    << "evm-workchain: trie witness root mismatch: declared="
-                    << td::buffer_to_hex(td::Slice{
-                           reinterpret_cast<const char*>(eth_state_root.bytes), 32})
-                    << " witnessed="
-                    << td::buffer_to_hex(td::Slice{
-                           reinterpret_cast<const char*>(witnessed_root.bytes), 32});
-                return nullptr;
-            }
-        } else if (!cell_state->rebuild_trie_witness()) {
             return nullptr;
         }
         if (!cell_state->load_block_hashes_from_cell(block_hashes_root)) {
@@ -359,13 +289,11 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
 
     // --- Step 3b: EIP-4788 / EIP-2935 system calls (Cancun+ / Pectra+) ---
     //
-    // Audit H-02: each system call runs under its own
-    // `WitnessFlatConsistencyContext`, so any flat/MPT drift on the
-    // system contract's account / storage / code leaves is caught at
-    // first touch and rejects the entire block-tx attempt. The legacy
-    // "continuing — predeploy may be missing" graceful-continue path
-    // is GONE: a system call failure at this stage is a deterministic
-    // consensus-level reject, exactly like a user-tx witness mismatch.
+    // A system call failure at this stage is a deterministic
+    // consensus-level reject (the predeploy is either present and
+    // executable or the entire block-tx attempt is invalid). The
+    // legacy "continuing — predeploy may be missing" graceful-continue
+    // path is GONE.
     {
         const auto rev = config.revision(block_seqno, timestamp);
         if (rev >= EVMC_CANCUN) {
@@ -375,7 +303,7 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             sys_txn.to = silkworm::protocol::kBeaconRootsAddress;
             sys_txn.data = silkworm::Bytes(32, 0);
             sys_txn.set_sender(silkworm::protocol::kSystemAddress);
-            auto st = execute_system_transaction_with_witness(
+            auto st = execute_system_transaction(
                 state, block, config, sys_txn, block_seqno, "EIP-4788");
             if (st.is_error()) {
                 LOG(WARNING) << "evm-workchain: EIP-4788 system call rejected "
@@ -400,7 +328,7 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             sys_txn.data = silkworm::Bytes{
                 silkworm::ByteView{block.header.parent_hash.bytes, 32}};
             sys_txn.set_sender(silkworm::protocol::kSystemAddress);
-            auto st = execute_system_transaction_with_witness(
+            auto st = execute_system_transaction(
                 state, block, config, sys_txn, block_seqno, "EIP-2935");
             if (st.is_error()) {
                 LOG(WARNING) << "evm-workchain: EIP-2935 system call rejected "
@@ -414,191 +342,14 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     }
 
     {
-        std::unique_lock witness_lock(state.mutex());
+        std::unique_lock state_lock(state.mutex());
         if (auto* cs = dynamic_cast<CellEvmState*>(&state.state())) {
-            if (!cs->trie_witness_ready() && !cs->rebuild_trie_witness()) {
-                witness_lock.unlock();
-                rollback_snapshot.restore(state);
-                reject_compute_phase(cp, gas_limit,
-                                     "EVM trie witness is malformed before execution");
-                return nullptr;
-            }
             cs->reset_delta_stats();
         }
     }
 
-    // Audit H-01: the per-transaction dynamic flat-state / MPT witness
-    // consistency tracker. The static precheck below populates this
-    // tracker's dedup sets so the dynamic verifier (running inside the
-    // executor's State read/update path) does not pay the cost a second
-    // time for sender / recipient / access-list entries — they are
-    // already proven consistent before pre-validation runs. The lifetime
-    // is the entire compute scope; we hand the address by pointer to the
-    // executor below and drain the result there.
-    WitnessFlatConsistencyContext witness_ctx{};
-    witness_ctx.enabled = true;
-
-    // P1.2 cross-check: before executing the transaction, prove that the
-    // touched flat-state values agree with the witness MPT leaves. This
-    // catches a structurally-valid-but-semantically-corrupt witness (where
-    // the root hash matches but a leaf payload disagrees with the flat
-    // dict) and fails closed before the EVM mutates anything. The check is
-    // scoped to keys we already know will be touched: sender, recipient,
-    // and every account / slot in the access list. Each verify call uses
-    // the path-budget shallow lookup (256 nodes / 2 MiB per descent) and
-    // explicitly does NOT promote into `touched_storage_tries_`, so this
-    // path stays O(touched access-list keys) of host work.
-    //
-    // Audit H-01 extension: we also seed the dynamic verifier's dedup
-    // sets here so an in-flight EVM read of the same address/slot won't
-    // re-run the path-bounded MPT proof. The dedup sets are
-    // unordered_set<evmc::address> / unordered_set<StorageKey>; if seeding
-    // fails (bad_alloc), we fail closed because the dynamic verifier
-    // would otherwise be unable to record its own findings.
-    {
-        std::unique_lock cross_check_lock(state.mutex());
-        if (auto* cs = dynamic_cast<CellEvmState*>(&state.state())) {
-            auto sender_opt = decoded.txn.sender();
-            auto fail_closed = [&](const td::Status& status,
-                                    const char* what) {
-                cross_check_lock.unlock();
-                LOG(WARNING)
-                    << "evm-workchain: " << what << " witness/flat cross-check"
-                    << " failed: " << status.message();
-                rollback_snapshot.restore(state);
-                reject_compute_phase(
-                    cp, gas_limit,
-                    std::string("EVM witness/flat cross-check failed: ") +
-                        status.message().str());
-            };
-            auto seed_account = [&](const evmc::address& addr) -> bool {
-                try {
-                    witness_ctx.checked_accounts.insert(addr);
-                    return true;
-                } catch (...) {
-                    return false;
-                }
-            };
-            auto seed_storage = [&](const evmc::address& addr,
-                                    const evmc::bytes32& slot) -> bool {
-                try {
-                    StorageKey key{};
-                    key.address = addr;
-                    key.slot = slot;
-                    witness_ctx.checked_storage.insert(key);
-                    return true;
-                } catch (...) {
-                    return false;
-                }
-            };
-            if (sender_opt) {
-                auto sender_status =
-                    cs->verify_account_witness_matches_flat_state(*sender_opt);
-                if (sender_status.is_error()) {
-                    fail_closed(sender_status, "sender account");
-                    return nullptr;
-                }
-                if (!seed_account(*sender_opt)) {
-                    fail_closed(td::Status::Error(
-                                    "witness consistency tracker exhausted"),
-                                "sender account");
-                    return nullptr;
-                }
-            }
-            if (decoded.txn.to.has_value()) {
-                auto recipient_status =
-                    cs->verify_account_witness_matches_flat_state(*decoded.txn.to);
-                if (recipient_status.is_error()) {
-                    fail_closed(recipient_status, "recipient account");
-                    return nullptr;
-                }
-                if (!seed_account(*decoded.txn.to)) {
-                    fail_closed(td::Status::Error(
-                                    "witness consistency tracker exhausted"),
-                                "recipient account");
-                    return nullptr;
-                }
-            }
-            for (const auto& entry : decoded.txn.access_list) {
-                auto entry_status =
-                    cs->verify_account_witness_matches_flat_state(entry.account);
-                if (entry_status.is_error()) {
-                    fail_closed(entry_status, "access-list account");
-                    return nullptr;
-                }
-                if (!seed_account(entry.account)) {
-                    fail_closed(td::Status::Error(
-                                    "witness consistency tracker exhausted"),
-                                "access-list account");
-                    return nullptr;
-                }
-                for (const auto& key : entry.storage_keys) {
-                    auto slot_status =
-                        cs->verify_storage_witness_matches_flat_state(
-                            entry.account, key);
-                    if (slot_status.is_error()) {
-                        fail_closed(slot_status, "access-list storage slot");
-                        return nullptr;
-                    }
-                    if (!seed_storage(entry.account, key)) {
-                        fail_closed(td::Status::Error(
-                                        "witness consistency tracker exhausted"),
-                                    "access-list storage slot");
-                        return nullptr;
-                    }
-                }
-            }
-
-            // Audit H-01 follow-up: the EVM execution path always touches
-            // `block.header.beneficiary` — silkworm's run_evm warms the
-            // beneficiary into the access set (EIP-2929) and the priority-fee
-            // payment writes to its balance. Without seeding it here the
-            // dynamic verifier would (correctly) fire on first touch, paying
-            // a path-bounded MPT proof that we can collapse into the static
-            // pass. Seeding also ensures the dedup-test below observes
-            // exactly zero dynamic checks for a tx whose access list covers
-            // every other touched leaf. The beneficiary is a host-supplied
-            // address (zero in compute_phase today; non-zero in tests with a
-            // real coinbase) — trust comes from `make_evm_block`, not from
-            // tx-supplied data.
-            const auto& beneficiary = block.header.beneficiary;
-            auto beneficiary_status =
-                cs->verify_account_witness_matches_flat_state(beneficiary);
-            if (beneficiary_status.is_error()) {
-                fail_closed(beneficiary_status, "block beneficiary");
-                return nullptr;
-            }
-            if (!seed_account(beneficiary)) {
-                fail_closed(td::Status::Error(
-                                "witness consistency tracker exhausted"),
-                            "block beneficiary");
-                return nullptr;
-            }
-        }
-    }
-
     // --- Step 4: Execute the transaction against the local state ---
-    auto exec_result = execute_evm_transaction(decoded.txn, block, state,
-                                                config, &witness_ctx);
-
-    // Audit H-01: dynamic flat-state / MPT witness consistency violation.
-    // The verifier inside CellEvmState recorded a leaf disagreement on a
-    // touched account or storage slot that was NOT covered by the static
-    // precheck above (CALL target, undeclared SLOAD, CREATE2 destination,
-    // EIP-7702 authority, system contract, …). Any side effects produced
-    // by run_evm are reverted by the rollback snapshot; we emit
-    // sk_bad_state so consensus rejects the entire block-tx attempt.
-    if (exec_result.disposition == EvmTxDisposition::WitnessMismatch) {
-        LOG(WARNING) << "evm-workchain: tx rejected by dynamic witness/flat "
-                     << "consistency tracker (offending="
-                     << (exec_result.witness_offending_what.empty()
-                             ? "?"
-                             : exec_result.witness_offending_what)
-                     << "): " << exec_result.error_message;
-        rollback_snapshot.restore(state);
-        reject_compute_phase(cp, gas_limit, exec_result.error_message);
-        return nullptr;
-    }
+    auto exec_result = execute_evm_transaction(decoded.txn, block, state, config);
 
     // Audit #2 (2026-04-26): pre-validation failures (bad nonce, insufficient
     // funds, intrinsic gas exceeds limit, EIP-1559/4844 violations, EIP-3607
@@ -649,64 +400,23 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     // --- Step 5c: Capture logs ---
     fx->logs = exec_result.logs;
 
-    // --- Step 5d: Read EVM stateRoot from the persistent execution witness ---
-    evmc::bytes32 evm_state_root;
-    {
-        std::unique_lock trie_lock(state.mutex());
-        if (auto* cs = dynamic_cast<CellEvmState*>(&state.state())) {
-            if (!cs->trie_witness_ready() && !cs->rebuild_trie_witness()) {
-                LOG(WARNING) << "evm-workchain: refusing Ethereum stateRoot "
-                             << "read because persistent trie witness is malformed "
-                             << "at block #" << block_seqno;
-                trie_lock.unlock();
-                rollback_snapshot.restore(state);
-                reject_compute_phase(cp, gas_limit,
-                                     "EVM trie witness malformed during root read");
-                return nullptr;
-            }
-            evm_state_root = cs->ethereum_state_root_hash();
-        } else {
-            IncrementalTrieCalculator calc;
-            evm_state_root = calc.compute_state_root(state, nullptr, nullptr);
-        }
-        if (evm_state_root == evmc::bytes32{}) {
-            LOG(WARNING) << "evm-workchain: refusing zero Ethereum stateRoot "
-                         << "at block #" << block_seqno;
-            trie_lock.unlock();
-            rollback_snapshot.restore(state);
-            reject_compute_phase(cp, gas_limit,
-                                 "EVM trie witness produced zero stateRoot");
-            return nullptr;
-        }
-        state.clear_change_tracking();
-    }
-
-    // --- Step 5e: Capture EVM state + trie witness cell trees for TOS account data ---
+    // --- Step 5d: Capture EVM state cell and compute native commitment ---
     td::Ref<vm::Cell> evm_state_cell;
-    td::Ref<vm::Cell> trie_witness_cell;
     {
         std::unique_lock root_lock(state.mutex());
         auto* cs = dynamic_cast<CellEvmState*>(&state.state());
-        if (cs) {
-            evm_state_cell = cs->serialize_to_cell();
-            trie_witness_cell = cs->serialize_trie_witness_to_cell();
+        if (cs == nullptr) {
+            root_lock.unlock();
+            rollback_snapshot.restore(state);
+            reject_compute_phase(
+                cp, gas_limit,
+                "EVM state backend is not a CellEvmState; cannot serialize");
+            return nullptr;
         }
+        evm_state_cell = cs->serialize_to_cell();
     }
-
-    // Optional invariant: persisted cell state + trie witness must round-trip
-    // to the same Ethereum stateRoot without a full trie rebuild. This is an
-    // expensive cross-check (full StrictRecursive validation of the witness
-    // cell) and must be opt-in. Public testnets / release builds without
-    // NDEBUG must NOT pay this cost per EVM tx; gate it behind an explicit
-    // CMake option (default OFF, see `evm/CMakeLists.txt`).
-#ifdef TOS_EVM_STRICT_COMPUTE_INVARIANTS
-    if (evm_state_cell.not_null() || trie_witness_cell.not_null()) {
-        auto verify_cell_state = std::make_unique<CellEvmState>();
-        CHECK(verify_cell_state->load_from_cell(evm_state_cell, false));
-        CHECK(verify_cell_state->load_trie_witness_from_cell(trie_witness_cell));
-        CHECK(verify_cell_state->ethereum_state_root_hash() == evm_state_root);
-    }
-#endif
+    const evmc::bytes32 native_state_commitment =
+        compute_native_evm_state_commitment(evm_state_cell);
 
     {
         vm::CellBuilder actions_cb;
@@ -736,7 +446,7 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     fx->block.gas_limit = block.header.gas_limit;
     fx->block.base_fee_per_gas = block.header.base_fee_per_gas.value_or(0);
     fx->block.transaction_hashes = block_tx_hashes;
-    fx->block.state_root = evm_state_root;
+    fx->block.state_root = native_state_commitment;
     // Audit #5 (2026-04-26): thread the real wc=1 parent block hash through
     // to fx->block.parent_hash. The previous behaviour wrote a zero parent
     // hash here, which made the reported eth-block hash inconsistent with
@@ -764,21 +474,28 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         std::memcpy(fx->block.logs_bloom, bloom, 256);
     }
 
-    // The consensus compute path derives block roots from the side-effect
-    // records produced by this transaction, not from EvmState. Multi-tx EVM
-    // blocks are deliberately rejected above until we have a bounded
-    // incremental trie accumulator that does not put full RPC payloads into
-    // cp.new_data.
-    auto transactions_root =
-        try_compute_transactions_root_from_records(block_transactions);
-    if (!transactions_root) {
+    // The consensus compute path derives block-content commitments from the
+    // side-effect records produced by this transaction, not from any MPT.
+    // Multi-tx EVM blocks are deliberately rejected above until we have a
+    // bounded incremental commitment accumulator that does not put full RPC
+    // payloads into cp.new_data.
+    bool have_raw_rlp_for_all_txs = true;
+    for (const auto& t : block_transactions) {
+        if (t.raw_rlp.empty()) {
+            have_raw_rlp_for_all_txs = false;
+            break;
+        }
+    }
+    if (!have_raw_rlp_for_all_txs) {
         LOG(WARNING) << "evm-workchain: missing raw signed tx RLP while "
-                     << "building transactionsRoot";
+                     << "building native transactions commitment";
         cp.skip_reason = block::ComputePhase::sk_bad_state;
         return nullptr;
     }
-    fx->block.transactions_root = *transactions_root;
-    fx->block.receipts_root = compute_receipts_root_from_records(block_receipts);
+    fx->block.transactions_root =
+        compute_native_tx_list_commitment(block_transactions);
+    fx->block.receipts_root =
+        compute_native_receipt_list_commitment(block_receipts);
 
     {
         silkworm::BlockHeader hdr{};
@@ -825,34 +542,12 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         }
     }
 
-    // --- Step 5g: Embed FULL EVM state + block history in cp.new_data ---
-    {
-        vm::CellBuilder data_cb;
-        data_cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
-        data_cb.store_long(kCpNewDataSchemaVersion, 8);
-        if (evm_state_cell.not_null()) {
-            data_cb.store_long(1, 1);
-            data_cb.store_ref(evm_state_cell);
-        } else {
-            data_cb.store_long(0, 1);
-        }
-        data_cb.store_bytes(reinterpret_cast<const char*>(evm_state_root.bytes), 32);
-        data_cb.store_long(0, 1);  // rpc_cache_root = nothing
-        if (block_hashes_cell.not_null()) {
-            data_cb.store_long(1, 1);
-            data_cb.store_ref(block_hashes_cell);
-        } else {
-            data_cb.store_long(0, 1);
-        }
-        data_cb.store_long(0, 1);  // block_accumulator = disabled/reserved
-        if (trie_witness_cell.not_null()) {
-            data_cb.store_long(1, 1);
-            data_cb.store_ref(trie_witness_cell);
-        } else {
-            data_cb.store_long(0, 1);
-        }
-        cp.new_data = data_cb.finalize();
-    }
+    // --- Step 5g: Encode cp.new_data v6 (native-only) ---
+    cp.new_data = encode_cp_new_data_v6(
+        evm_state_cell,
+        native_state_commitment,
+        /*rpc_cache_root=*/{},
+        block_hashes_cell);
 
     // --- Step 6: Map results back into the host-chain ComputePhase ---
     cp.success = exec_result.success;

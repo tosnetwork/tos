@@ -77,18 +77,17 @@ void reset_evm_rpc_filter_state_for_test();
 /// Production code should call enable_evm_rpc_rate_limit(true) at startup.
 void enable_evm_rpc_rate_limit(bool enable);
 
-/// Enable public eth_getProof backed by the persistent execution trie witness.
-/// Enabled by default; production profiles may still turn it off by policy.
-void enable_public_evm_getproof(bool enable);
-
 /// JSON-RPC node profile selector. The active profile drives every
 /// security-sensitive surface of the EVM RPC handlers in lockstep:
 ///   - which read-only EVM RPC methods (eth_call / eth_estimateGas /
 ///     eth_createAccessList) are enabled at all;
 ///   - the per-request read-only gas cap;
-///   - whether `eth_getProof` is enabled;
 ///   - whether debug_* RPC methods are exposed even when
 ///     `TOS_ENABLE_EVM_DEBUG_RPC` is compiled in.
+/// `eth_getProof` is unconditionally unsupported: TOS EVM commits
+/// state via TOS-native cell hashes, not Ethereum MPT proofs, so the
+/// dispatcher always returns -32601 for that method. There is no
+/// profile or policy toggle that re-enables it.
 ///
 /// `ValidatorMinimal` is the safest default: it pins consensus nodes
 /// behind the "minimal" surface (stop heavy read-only RPC from
@@ -106,8 +105,7 @@ enum class EvmRpcProfile {
 
 /// Set the active EVM RPC profile. Must be called before serving RPC.
 /// Resets per-method rate buckets and inflight counters and re-applies
-/// every profile-dependent toggle (gas cap, debug allowlist, getProof
-/// enable bit) atomically.
+/// every profile-dependent toggle (gas cap, debug allowlist) atomically.
 void set_evm_rpc_profile(EvmRpcProfile profile);
 
 /// Read the currently active EVM RPC profile. Snapshot only — readers

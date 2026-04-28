@@ -161,11 +161,11 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     // applied to a non-loopback listener. Default is `false`: a
     // mis-configured `--evm-rpc-profile=admin` (or
     // `TOS_EVM_RPC_PROFILE=admin`) on a public interface is refused at
-    // listen time so the heavy gas cap, eth_getProof and (when
-    // compiled in) debug methods cannot silently surface to remote
-    // clients. Operators that genuinely need a remote admin endpoint
-    // must set this to true (CLI flag `--allow-remote-admin-rpc`) AND
-    // configure an API key — both checks are enforced together.
+    // listen time so the heavy gas cap and (when compiled in) debug
+    // methods cannot silently surface to remote clients. Operators
+    // that genuinely need a remote admin endpoint must set this to
+    // true (CLI flag `--allow-remote-admin-rpc`) AND configure an API
+    // key — both checks are enforced together.
     bool allow_remote_admin_rpc = false;
 
     // In-process per-IP rate-limit configuration. The gate sits on the

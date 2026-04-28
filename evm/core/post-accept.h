@@ -171,6 +171,11 @@ struct RpcCacheRebuildStats {
 /// Rebuild the durable RPC side-channel cache from the canonical in-memory
 /// block/tx/receipt/log indexes. This is an operator command for repairing
 /// a corrupted or missing RocksDB cache; it never mutates consensus state.
+///
+/// The rebuild verifies stored TOS-native list commitments
+/// (transactions_root / receipts_root on each StoredBlock — both are
+/// `compute_native_*_list_commitment` outputs, not Ethereum MPT roots)
+/// before publishing derived records.
 RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
     uint64_t from_block,
     uint64_t to_block) noexcept;

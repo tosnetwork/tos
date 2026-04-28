@@ -240,6 +240,26 @@ async function main() {
         failed++;
     }
 
+    // 17. tos_evmChainInfo — smoke test the no-MPT regime advertisement.
+    // TOS EVM uses TOS-native cell-hash state commitments (not Ethereum MPT),
+    // and Merkle storage proofs are intentionally unsupported. Wallets that
+    // need to know can read this method to gate any "show storage proof" UI.
+    try {
+        const info = await jsonRpc('tos_evmChainInfo');
+        console.log(`tos_evmChainInfo: ${JSON.stringify(info)}`);
+        check('tos_evmChainInfo.chainId == 5525331', info && Number(info.chainId) === 5525331);
+        check('tos_evmChainInfo.workchain == 1', info && info.workchain === 1);
+        check('tos_evmChainInfo.stateCommitment == "tos-native-cell-hash"',
+              info && info.stateCommitment === 'tos-native-cell-hash');
+        check('tos_evmChainInfo.mpt == false', info && info.mpt === false);
+        check('tos_evmChainInfo.ethGetProof == false', info && info.ethGetProof === false);
+        check('tos_evmChainInfo.stateRootCompatibility == "tos-native-not-ethereum-mpt"',
+              info && info.stateRootCompatibility === 'tos-native-not-ethereum-mpt');
+    } catch (e) {
+        console.log(`tos_evmChainInfo: FAILED - ${e.message}`);
+        failed++;
+    }
+
     // Summary
     console.log(`\n========================================`);
     console.log(`Results: ${passed} passed, ${failed} failed`);

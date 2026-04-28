@@ -6015,13 +6015,13 @@ int main(int argc, char *argv[]) {
   });
   // M-03: EVM RPC profile selector. Three profiles, all routed through
   // `evm_workchain::set_evm_rpc_profile()` (the centralised toggle for
-  // gas cap / getProof / debug methods / rate buckets):
-  //   validator | minimal           — heavy read-only RPC, eth_getProof,
-  //                                   debug methods all DISABLED. The
+  // gas cap / debug methods / rate buckets):
+  //   validator | minimal           — heavy read-only RPC and debug
+  //                                   methods all DISABLED. The
   //                                   safest default for consensus nodes.
-  //   follower  | public            — heavy read-only RPC + eth_getProof
-  //                                   ENABLED at the public 10M gas cap;
-  //                                   debug methods stay DISABLED.
+  //   follower  | public            — heavy read-only RPC ENABLED at
+  //                                   the public 10M gas cap; debug
+  //                                   methods stay DISABLED.
   //   admin     | local             — full surface, 30M gas cap, debug
   //                                   methods exposed if compiled in.
   p.add_checked_option('\0', "evm-rpc-profile",
