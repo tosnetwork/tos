@@ -1998,6 +1998,119 @@ void test_h02_split_state_header_and_part_download_streaming() {
   std::printf("  PASSED\n");
 }
 
+void test_h02_split_state_header_multiple_parts_restart_budget() {
+  std::printf("=== test_h02_split_state_header_multiple_parts_restart_budget ===\n");
+
+  // tos31 split-state validation: model a header plus multiple shard
+  // parts held concurrently across a restart/retry boundary. The
+  // downloader must keep every completed part's reservation alive until
+  // the final merge/root-store handoff, and dropping/re-downloading one
+  // part must release/re-acquire exactly that part's bytes without
+  // touching the header or sibling parts.
+  const td::uint64 download_baseline = test_get_persistent_state_download_bytes();
+  const td::uint64 heap_threshold = persistent_state_heap_threshold_bytes();
+  EXPECT_TRUE(heap_threshold + 3 * kMiB < persistent_state_max_file_bytes());
+
+  auto tmp_dir = std::string("/tmp/tos-test-h02-split-multiparts-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+
+  constexpr td::uint64 kHeaderBytes = 2 * kMiB;
+  auto header_reservation = try_reserve(kHeaderBytes);
+  EXPECT_TRUE(header_reservation != nullptr);
+  td::BufferSlice header_payload(static_cast<std::size_t>(kHeaderBytes));
+  BudgetedBufferSlice header{std::move(header_payload), header_reservation};
+  header_reservation.reset();
+
+  td::uint64 expected_download = download_baseline + kHeaderBytes;
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), expected_download);
+
+  std::vector<td::uint64> part_sizes = {
+      heap_threshold + 1 * kMiB,
+      heap_threshold + 2 * kMiB,
+      heap_threshold + 3 * kMiB,
+  };
+  std::vector<DownloadedPersistentState> parts(part_sizes.size());
+  std::vector<std::string> paths(part_sizes.size());
+  std::vector<char> chunk(static_cast<std::size_t>(4 * kMiB), '\x53');
+
+  auto download_part = [&](std::size_t idx, const std::string &suffix) {
+    TestableDownloadStorage storage(tmp_dir, std::string("block-split-part-") + suffix);
+    EXPECT_TRUE(storage.prepare_download_buffer(part_sizes[idx]).is_ok());
+    expected_download += part_sizes[idx];
+    EXPECT_EQ(test_get_persistent_state_download_bytes(), expected_download);
+
+    td::uint64 offset = 0;
+    while (offset < part_sizes[idx]) {
+      auto take = std::min<td::uint64>(chunk.size(), part_sizes[idx] - offset);
+      auto s = storage.got_block_state_part(td::Slice(chunk.data(), static_cast<std::size_t>(take)),
+                                            offset, static_cast<td::uint32>(take));
+      EXPECT_TRUE(s.is_ok());
+      offset += take;
+    }
+    auto r = storage.finish_query();
+    EXPECT_TRUE(r.is_ok());
+    auto state = r.move_as_ok();
+    EXPECT_TRUE(state.is_file());
+    EXPECT_EQ(state.size(), part_sizes[idx]);
+    EXPECT_TRUE(td::stat(state.file().path).is_ok());
+    EXPECT_EQ(test_get_persistent_state_download_bytes(), expected_download);
+    return state;
+  };
+
+  for (std::size_t i = 0; i < part_sizes.size(); ++i) {
+    auto state = download_part(i, std::to_string(i));
+    paths[i] = state.file().path;
+    parts[i] = std::move(state);
+  }
+
+  // Simulate a restart where header + all completed part handles are
+  // still retained by the catch-up pipeline.
+  td::uint64 all_parts = 0;
+  for (auto size : part_sizes) {
+    all_parts += size;
+  }
+  EXPECT_EQ(test_get_persistent_state_download_bytes(),
+            download_baseline + kHeaderBytes + all_parts);
+  for (const auto &path : paths) {
+    EXPECT_TRUE(td::stat(path).is_ok());
+  }
+
+  // Cancel/retry a middle part. Only that part's bytes and tempfile
+  // should disappear; header and sibling parts remain live.
+  constexpr std::size_t kRetryPart = 1;
+  auto old_retry_path = paths[kRetryPart];
+  parts[kRetryPart] = DownloadedPersistentState{};
+  expected_download -= part_sizes[kRetryPart];
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), expected_download);
+  EXPECT_FALSE(td::stat(old_retry_path).is_ok());
+  EXPECT_TRUE(td::stat(paths[0]).is_ok());
+  EXPECT_TRUE(td::stat(paths[2]).is_ok());
+
+  auto retry_state = download_part(kRetryPart, "1-retry");
+  paths[kRetryPart] = retry_state.file().path;
+  parts[kRetryPart] = std::move(retry_state);
+  EXPECT_EQ(test_get_persistent_state_download_bytes(),
+            download_baseline + kHeaderBytes + all_parts);
+
+  // Final handoff/teardown: dropping parts releases each file branch
+  // independently, then dropping the header releases the heap branch.
+  for (std::size_t i = 0; i < parts.size(); ++i) {
+    auto path = paths[i];
+    parts[i] = DownloadedPersistentState{};
+    expected_download -= part_sizes[i];
+    EXPECT_EQ(test_get_persistent_state_download_bytes(), expected_download);
+    EXPECT_FALSE(td::stat(path).is_ok());
+  }
+  header = BudgetedBufferSlice{};
+  expected_download -= kHeaderBytes;
+  EXPECT_EQ(expected_download, download_baseline);
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), download_baseline);
+
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  parts=%zu total_part_bytes=%llu  PASSED\n", part_sizes.size(),
+              static_cast<unsigned long long>(all_parts));
+}
+
 // ---------------------------------------------------------------------------
 // H-03 streaming BoC importer + processing-reservation lifetime regressions.
 // These tests exercise the new vm::std_boc_deserialize_from_file_bounded
@@ -3633,6 +3746,7 @@ int main() {
   test_h02_chunk_size_overflow_rejected();
   test_h02_download_interrupted_mid_stream_releases_budget_and_unlinks_tempfile();
   test_h02_split_state_header_and_part_download_streaming();
+  test_h02_split_state_header_multiple_parts_restart_budget();
   test_h02_root_hash_mismatch_at_finish_unlinks_tempfile();
   test_h02_crash_after_fsync_before_rename_recovered_at_startup();
   test_h02_1gib_ondisk_catchup_streaming();

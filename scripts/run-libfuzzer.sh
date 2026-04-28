@@ -23,6 +23,14 @@
 #   target = boc
 #   duration_seconds = 30   (smoke; production CI should pass >= 3600)
 #
+# LeakSanitizer is disabled by default for this harness because the linked
+# tree contains process-lifetime singletons/static Status sentinels and the
+# libFuzzer driver itself also leaves small intentional allocations at exit.
+# Those exit-time leaks are not input-dependent BoC failures and otherwise
+# make every bounded smoke run finish with a synthetic "crash". Set
+# TOS_LIBFUZZER_DETECT_LEAKS=1 and provide explicit ASAN_OPTIONS/LSAN_OPTIONS
+# if you are investigating leak behavior specifically.
+#
 # Required configure step (once):
 #   cmake -S . -B build-libfuzzer \
 #       -DTOS_BUILD_LIBFUZZER=ON \
@@ -75,6 +83,11 @@ fi
 
 corpus_dir="$build_dir/libfuzzer-corpus-$target"
 mkdir -p "$corpus_dir"
+
+if [ "${TOS_LIBFUZZER_DETECT_LEAKS:-0}" = "0" ]; then
+    export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}detect_leaks=0"
+    export LSAN_OPTIONS="${LSAN_OPTIONS:+$LSAN_OPTIONS:}detect_leaks=0"
+fi
 
 echo "running $binary for ${duration_seconds}s with corpus $corpus_dir"
 exec "$binary" \

@@ -1181,6 +1181,14 @@ if ! rg -q 'TOS_RUN_16GIB_CATCHUP' "$root/test/test-download-state-budget.cpp" "
     echo "evm hardening failed: tos31 verification must expose an opt-in real 16 GiB persistent-state catch-up run" >&2
     exit 1
 fi
+if ! rg -q 'test_h02_split_state_header_multiple_parts_restart_budget' "$root/test/test-download-state-budget.cpp"; then
+    echo "evm hardening failed: tos31 split-state validation must cover header + multiple parts + retry/restart budget lifecycle" >&2
+    exit 1
+fi
+if ! rg -q 'test_root_mismatch_abort_then_retry' "$root/test/test-celldb-streaming-import.cpp"; then
+    echo "evm hardening failed: tos31 CellDb streaming validation must cover root-mismatch abort followed by retry" >&2
+    exit 1
+fi
 if ! rg -q 'streaming_import\.startup_rollback\.manifests|streaming_import\.gc_pause_count' "$root/validator/db/celldb.cpp" "$root/docs/ops/tos31-tos32-validation.md"; then
     echo "evm hardening failed: tos31/tos32 validation must expose CellDb streaming import replay/GC stats for alerting" >&2
     exit 1

@@ -14,7 +14,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 
-// Phase B Step 8 — five invariant regression tests for the true
+// Phase B Step 8 — invariant regression tests for the true
 // CellDb-backed streaming importer:
 //
 //   1. test_replacement_hash_equality
@@ -32,12 +32,18 @@
 //        state visible: a fresh import against the same KV instance
 //        succeeds and is idempotent on duplicate cells.
 //
-//   4. test_lazy_load
+//   4. test_root_mismatch_abort_then_retry
+//        A parsed BoC whose root does not match the trusted expected root
+//        must not commit its pending CellDb batch. abort() invalidates
+//        already-returned lazy roots, and a retry against the same KV
+//        succeeds cleanly.
+//
+//   5. test_lazy_load
 //        After a successful import the root ExtCell does not load any
 //        DataCell. Walking one specific child path triggers exactly one
 //        load_cell per cell on the path, never the whole DAG.
 //
-//   5. test_hash_mismatch
+//   6. test_hash_mismatch
 //        Corrupting one persisted cell value behind the back of the
 //        streaming writer makes a subsequent lazy load return td::Status::Error
 //        (no CHECK / DCHECK abort).
@@ -656,6 +662,74 @@ void test_crash_abort_no_partial_state() {
   td::rmrf(tmp_dir).ignore();
   std::printf("  partial_cells_aborted=%u  re_import_cells=%llu  PASSED\n", partial_cells,
               static_cast<unsigned long long>(first_import.cells_persisted));
+}
+
+// ---------------------------------------------------------------------------
+// (3b) Root mismatch abort + retry
+// ---------------------------------------------------------------------------
+
+void test_root_mismatch_abort_then_retry() {
+  std::printf("=== test_root_mismatch_abort_then_retry (tos31 crash/retry) ===\n");
+
+  auto tmp_dir = std::string("/tmp/tos-test-celldb-streaming-3b-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+  auto boc = serialize_synthetic_boc(tmp_dir, /*target_cells=*/96, "synth.boc");
+  auto other_boc = serialize_synthetic_boc(tmp_dir, /*target_cells=*/97, "other.boc");
+  EXPECT_TRUE(other_boc.root_hash != boc.root_hash);
+
+  auto fixture = build_fixture();
+
+  // First attempt: parse succeeds and returns a lazy root, but the
+  // trusted expected root intentionally differs. commit_after_root_verified
+  // must fail before flushing the writer's pending batch.
+  auto writer = std::make_unique<TestStreamingWriter>(fixture.kv);
+  tos::validator::fullnode::CellDbStreamingSink sink{fixture.reader, std::move(writer)};
+  EXPECT_TRUE(sink.is_true_streaming());
+
+  auto fd = td::FileFd::open(boc.path, td::FileFd::Flags::Read).move_as_ok();
+  vm::StreamingBocImportOptions opts;
+  opts.max_resident_bytes = 8ULL << 20;
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, boc.size, opts, &sink);
+  fd.close();
+  EXPECT_TRUE(r_root.is_ok());
+  auto root = r_root.move_as_ok();
+  EXPECT_TRUE(!root.is_null());
+  EXPECT_TRUE(root->get_hash() == boc.root_hash);
+  EXPECT_TRUE(sink.finished());
+  EXPECT_FALSE(sink.is_committed());
+
+  auto mismatch = sink.commit_after_root_verified(other_boc.root_hash);
+  EXPECT_TRUE(mismatch.is_error());
+  EXPECT_FALSE(sink.is_committed());
+
+  // Caller-owned abort is still required after root mismatch. It must
+  // discard the open batch and invalidate lazy roots already handed out.
+  sink.abort();
+  EXPECT_TRUE(sink.aborted());
+  auto aborted_load = root->load_cell();
+  EXPECT_TRUE(aborted_load.is_error());
+
+  std::string ignored;
+  auto r_get = fixture.kv->get(boc.root_hash.as_slice(), ignored);
+  EXPECT_TRUE(r_get.is_ok());
+  EXPECT_TRUE(r_get.move_as_ok() == td::KeyValue::GetStatus::NotFound);
+
+  // Second attempt: reuse the same KV. If the failed attempt leaked any
+  // canonical cells or left a poisoned writer lifecycle behind, this
+  // retry would either collide or fail to materialize the root.
+  PhaseBFixture retry_fixture;
+  retry_fixture.kv = fixture.kv;
+  retry_fixture.reader = make_kv_backed_reader(retry_fixture.kv, retry_fixture.dboc_owner);
+  auto retry = run_streaming_import(retry_fixture, boc);
+  EXPECT_TRUE(retry.cells_persisted > 0);
+  EXPECT_TRUE(retry.root->get_hash() == boc.root_hash);
+  auto loaded_retry_root = retry.root->load_cell();
+  EXPECT_TRUE(loaded_retry_root.is_ok());
+  EXPECT_TRUE(loaded_retry_root.move_as_ok().data_cell.not_null());
+
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  retry_cells=%llu  PASSED\n",
+              static_cast<unsigned long long>(retry.cells_persisted));
 }
 
 // ---------------------------------------------------------------------------
@@ -1279,10 +1353,11 @@ void test_streaming_import_yields_during_parse() {
 
 int main() {
   std::printf(
-      "test-celldb-streaming-import: Phase B Step 8 invariant regressions (9 tests)\n");
+      "test-celldb-streaming-import: Phase B Step 8 invariant regressions (10 tests)\n");
   test_replacement_hash_equality();
   test_no_full_dag_residency();
   test_crash_abort_no_partial_state();
+  test_root_mismatch_abort_then_retry();
   test_lazy_load();
   test_lazy_load_after_commit_succeeds();
   test_hash_mismatch();
