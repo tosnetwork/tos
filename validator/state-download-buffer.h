@@ -62,10 +62,18 @@
 #include "vm/boc.h"
 #include "vm/cells/Cell.h"
 
+// tos26 P0-2: pulled in for CellDbReaderProvider + the
+// `make_static_cell_db_reader_provider` factory used by the legacy
+// (raw-reader) template constructor below. CellDbExtCell.h's transitive
+// includes (DynamicBagOfCellsDb.h, ExtCell.h, etc.) do NOT depend on
+// TDDB_USE_ROCKSDB, so the lightweight `validator-state-download-budget`
+// static library this header's .cpp links into can still build cleanly.
+#include "vm/db/CellDbExtCell.h"
+
 namespace vm {
-// Forward-declared to keep this header free of the heavy CellDbExtCell.h
-// transitive include set (DynamicBagOfCellsDb.h, etc.). The streaming sink
-// only stores a shared_ptr, never dereferences the type, in this header.
+// Forward-declared because the streaming sink only stores a
+// shared_ptr<CellDbReader>; the full definition arrives transitively
+// through CellDbExtCell.h above for the legacy-overload body.
 class CellDbReader;
 }  // namespace vm
 
@@ -480,12 +488,22 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
   CellDbStreamingSink(OnCellFn on_cell, ReplaceCellFn replace_cell)
       : on_cell_(std::move(on_cell)), replace_cell_(std::move(replace_cell)) {
   }
-  // Phase B "true streaming" constructor. When BOTH `reader` and `writer`
-  // are non-null, persist_and_replace writes each cell to CellDb via the
-  // shared KeyValue handle wrapped by `writer`, and returns an ExtCell-
-  // backed hash-only replacement so the importer no longer holds a full
-  // DataCell DAG. The legacy default / 1-arg / 2-arg constructors stay
-  // valid and run the counting / fallback path with this flag clear.
+  // Phase B "true streaming" constructor. When BOTH `reader_provider` and
+  // `writer` are non-null, persist_and_replace writes each cell to CellDb
+  // via the shared KeyValue handle wrapped by `writer`, and returns an
+  // ExtCell-backed hash-only replacement whose lazy materialization
+  // late-binds to whichever reader the provider hands out (NOT the
+  // import-time snapshot). The legacy default / 1-arg / 2-arg constructors
+  // stay valid and run the counting / fallback path with this flag clear.
+  //
+  // tos26 P0-2: the constructor takes a `CellDbReaderProvider` instead
+  // of a raw `CellDbReader`. The provider is the single point at which
+  // the sink can swap to a post-commit reader (via
+  // republish_reader / commit_after_root_verified) or invalidate on
+  // abort (via abort()). Lazy ExtCells emitted during parse no longer
+  // hold a snapshot taken before the per-import RocksDB batch was
+  // committed; they reach the canonical reader via the provider on
+  // every materialization.
   //
   // The constructor is a TEMPLATE so it is only instantiated in TUs
   // that actually call it (Wave 5's downloader TU, which already has
@@ -505,12 +523,13 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
   // then dispatches through the std::function instances and never
   // touches the writer type's layout from inside this header's .cpp.
   template <typename WriterT>
-  CellDbStreamingSink(std::shared_ptr<vm::CellDbReader> reader, std::unique_ptr<WriterT> writer)
-      : reader_(std::move(reader)) {
+  CellDbStreamingSink(std::shared_ptr<vm::CellDbReaderProvider> reader_provider,
+                      std::unique_ptr<WriterT> writer)
+      : reader_provider_(std::move(reader_provider)) {
     static_assert(std::is_base_of_v<CellDbStreamingWriter, WriterT>,
                   "CellDbStreamingSink streaming-writer constructor requires a "
                   "CellDbStreamingWriter (or a derived class)");
-    if (reader_ != nullptr && writer != nullptr) {
+    if (reader_provider_ != nullptr && writer != nullptr) {
       auto* raw_writer = writer.get();
       writer_begin_batch_ = [raw_writer]() { return raw_writer->begin_batch(); };
       writer_store_cell_ = [raw_writer](const td::Ref<vm::DataCell>& cell) {
@@ -526,6 +545,24 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
           std::shared_ptr<void>(writer.release(), [](void* p) { delete static_cast<WriterT*>(p); });
       true_streaming_active_ = true;
     }
+  }
+
+  // tos26 P0-2 backward-compat overload. Existing callers pass a raw
+  // `shared_ptr<vm::CellDbReader>`; we wrap it in a degenerate provider
+  // (vm::make_static_cell_db_reader_provider) so the sink's lazy
+  // ExtCell binding still flows through the provider indirection. This
+  // preserves source compatibility for the downloader / test paths
+  // that have not yet been migrated to constructing a real
+  // (swappable) provider. The wrapping is ONLY instantiated in TUs
+  // that actually use this overload AND therefore have
+  // vm/db/CellDbExtCell.h already pulled in via validator/db/celldb.hpp;
+  // the light-weight `validator-state-download-budget` static library
+  // still does not need to see CellDbExtCell.h for its own
+  // instantiations of CellDbStreamingSink.
+  template <typename WriterT>
+  CellDbStreamingSink(std::shared_ptr<vm::CellDbReader> reader, std::unique_ptr<WriterT> writer)
+      : CellDbStreamingSink(vm::make_static_cell_db_reader_provider(std::move(reader)),
+                             std::move(writer)) {
   }
   // Destructor is inline so the type-erased writer_owner_ deleter
   // (captured at construction time) closes any still-open batch via
@@ -558,6 +595,15 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
   // after finish() returned OK and before abort().
   td::Status commit_after_root_verified(const vm::Cell::Hash &expected_root_hash) override;
   void abort() override;
+
+  // tos26 P0-2: publish a fresh post-commit reader on the sink's
+  // CellDbReaderProvider. Production callers invoke this (via
+  // commit_after_root_verified's internal flow, OR explicitly when the
+  // surrounding actor materialized a new reader after CellDb's
+  // update_snapshot ran) so lazy ExtCells emitted during parse pick up
+  // a reader that observes the just-flushed cells. Calling with a null
+  // reader is a no-op; use abort() to invalidate.
+  void republish_reader(std::shared_ptr<vm::CellDbReader> post_commit_reader);
 
   bool is_committed() const noexcept {
     return committed_;
@@ -598,13 +644,16 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
  private:
   OnCellFn on_cell_;
   ReplaceCellFn replace_cell_;
-  // Phase B handles. `reader_` is held directly because vm::CellDbReader's
-  // forward declaration is enough for shared_ptr storage and Wave 5's TU
-  // already pulls vm/db/DynamicBagOfCellsDb.h to build it. The writer is
-  // type-erased into std::function members + a shared_ptr<void> owner;
-  // see the (reader, writer) constructor for the rationale (TDDB_USE_ROCKSDB
-  // not propagated into validator-state-download-budget).
-  std::shared_ptr<vm::CellDbReader> reader_;
+  // Phase B handles. `reader_provider_` is the late-binding indirection
+  // through which lazy ExtCells emitted during parse reach the canonical
+  // reader (see tos26 P0-2). The forward declaration of
+  // vm::CellDbReaderProvider is enough for shared_ptr storage; Wave 5's
+  // TU pulls vm/db/CellDbExtCell.h to instantiate the provider and to
+  // build the (reader, writer) constructor. The writer is type-erased
+  // into std::function members + a shared_ptr<void> owner; see the
+  // (reader_provider, writer) constructor for the rationale
+  // (TDDB_USE_ROCKSDB not propagated into validator-state-download-budget).
+  std::shared_ptr<vm::CellDbReaderProvider> reader_provider_;
   std::shared_ptr<void> writer_owner_;
   std::function<td::Status()> writer_begin_batch_;
   std::function<td::Status(const td::Ref<vm::DataCell>&)> writer_store_cell_;

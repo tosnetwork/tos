@@ -25,15 +25,46 @@
 
 namespace vm {
 
+namespace {
+
+// Degenerate provider used by the legacy `make_celldb_ext_cell` overload
+// that takes a raw `shared_ptr<CellDbReader>`. The reader handed in at
+// construction time is the answer to every `current_reader()` call —
+// there is no swap path. New code SHOULD construct a real provider
+// (e.g. validator::LiveCellDbReaderProvider) so the lazy load can pick
+// up a post-commit reader; this wrapper exists only so existing tests
+// and pre-provider call sites compile unchanged.
+class StaticCellDbReaderProvider final : public CellDbReaderProvider {
+ public:
+  explicit StaticCellDbReaderProvider(std::shared_ptr<CellDbReader> reader) : reader_(std::move(reader)) {
+  }
+  std::shared_ptr<CellDbReader> current_reader() override {
+    return reader_;
+  }
+
+ private:
+  std::shared_ptr<CellDbReader> reader_;
+};
+
+}  // namespace
+
 td::Result<td::Ref<DataCell>> CellDbExtCellLoader::load_data_cell(const Cell& ext_cell,
                                                                   const CellDbExtCellExtra& extra) {
-  if (extra.reader == nullptr) {
-    return td::Status::Error("CellDbExtCell: missing reader at materialization time");
+  if (extra.reader_provider == nullptr) {
+    return td::Status::Error("CellDbExtCell: missing reader provider at materialization time");
+  }
+  // Late-bind the reader on every materialization: the streaming sink
+  // may have published a fresh post-commit reader (or invalidated the
+  // provider on abort) AFTER this ExtCell was minted. Honoring that
+  // swap is the load-bearing contract of CellDbReaderProvider.
+  auto reader = extra.reader_provider->current_reader();
+  if (reader == nullptr) {
+    return td::Status::Error("CellDbExtCell: reader provider invalidated");
   }
 
   // Resolve via the abstract reader; the reader owns CellDb access details.
   auto declared_hash = ext_cell.get_hash();
-  TRY_RESULT(data_cell, extra.reader->load_cell(declared_hash.as_slice()));
+  TRY_RESULT(data_cell, reader->load_cell(declared_hash.as_slice()));
   if (data_cell.is_null()) {
     return td::Status::Error(PSLICE() << "CellDbExtCell: reader returned null cell for hash "
                                       << declared_hash.to_hex());
@@ -53,9 +84,9 @@ td::Result<td::Ref<DataCell>> CellDbExtCellLoader::load_data_cell(const Cell& ex
 }
 
 td::Result<td::Ref<Cell>> make_celldb_ext_cell(Cell::LevelMask level_mask, td::Slice hashes, td::Slice depths,
-                                               std::shared_ptr<CellDbReader> reader) {
-  if (reader == nullptr) {
-    return td::Status::Error("CellDbExtCell: cannot build replacement cell with null reader");
+                                               std::shared_ptr<CellDbReaderProvider> reader_provider) {
+  if (reader_provider == nullptr) {
+    return td::Status::Error("CellDbExtCell: cannot build replacement cell with null reader provider");
   }
 
   // Per-level buffer-size validation MUST precede the PrunnedCell::create call
@@ -79,8 +110,28 @@ td::Result<td::Ref<Cell>> make_celldb_ext_cell(Cell::LevelMask level_mask, td::S
   }
 
   PrunnedCellInfo info{level_mask, hashes, depths};
-  TRY_RESULT(ext_cell, CellDbExtCell::create(info, CellDbExtCellExtra{std::move(reader)}));
+  TRY_RESULT(ext_cell, CellDbExtCell::create(info, CellDbExtCellExtra{std::move(reader_provider)}));
   return td::Ref<Cell>{std::move(ext_cell)};
+}
+
+td::Result<td::Ref<Cell>> make_celldb_ext_cell(Cell::LevelMask level_mask, td::Slice hashes, td::Slice depths,
+                                               std::shared_ptr<CellDbReader> reader) {
+  if (reader == nullptr) {
+    return td::Status::Error("CellDbExtCell: cannot build replacement cell with null reader");
+  }
+  // Wrap the raw reader in a degenerate provider so every code path
+  // ultimately funnels through the same `current_reader()` indirection.
+  // The wrapper has zero observable cost on the hot path (one extra
+  // shared_ptr copy per lazy materialization).
+  auto provider = make_static_cell_db_reader_provider(std::move(reader));
+  return make_celldb_ext_cell(level_mask, hashes, depths, std::move(provider));
+}
+
+std::shared_ptr<CellDbReaderProvider> make_static_cell_db_reader_provider(std::shared_ptr<CellDbReader> reader) {
+  if (reader == nullptr) {
+    return nullptr;
+  }
+  return std::make_shared<StaticCellDbReaderProvider>(std::move(reader));
 }
 
 }  // namespace vm

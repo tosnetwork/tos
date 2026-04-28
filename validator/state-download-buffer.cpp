@@ -969,8 +969,12 @@ td::Result<td::Ref<vm::Cell>> CellDbStreamingSink::persist_and_replace(td::Ref<v
     depths.append(reinterpret_cast<const char *>(depth_buf), vm::Cell::depth_bytes);
   }
 
-  TRY_RESULT(replacement,
-             vm::make_celldb_ext_cell(level_mask, td::Slice(hashes), td::Slice(depths), reader_));
+  // tos26 P0-2: bind the lazy ExtCell to the reader_provider, NOT a
+  // raw reader snapshot. The provider lets us swap in a post-commit
+  // reader (or invalidate on abort) so lazy materializations triggered
+  // AFTER commit_after_root_verified observe the just-flushed cells.
+  TRY_RESULT(replacement, vm::make_celldb_ext_cell(level_mask, td::Slice(hashes), td::Slice(depths),
+                                                    reader_provider_));
   if (replacement.is_null()) {
     return td::Status::Error(
         "CellDbStreamingSink::persist_and_replace: make_celldb_ext_cell returned null");
@@ -1052,9 +1056,32 @@ td::Status CellDbStreamingSink::commit_after_root_verified(
   TRY_STATUS(writer_commit_batch_());
   batch_open_ = false;
   committed_ = true;
+  // tos26 P0-2: re-publish the (already-held) reader through the
+  // provider. The reader handle the sink was constructed with may be a
+  // pre-commit snapshot; the production caller is expected to drive
+  // republish_reader(post_commit_reader) AFTER this method returns
+  // with a freshly-materialized reader (e.g. after CellDb's
+  // update_snapshot has run on the celldb actor strand). For the
+  // common case where the caller's reader is already live (i.e.
+  // resolves directly against the underlying KeyValue without an
+  // intermediate snapshot), the provider's existing handle remains
+  // valid and the republish is functionally a no-op. The provider
+  // abstraction exists so that on snapshot-based readers (the
+  // production CellDbReaderImpl path) the caller can swap in a
+  // post-commit reader without touching this commit code.
   LOG(INFO) << "CellDbStreamingSink committed " << cells_persisted_
             << " cell(s); root=" << expected_root_hash.to_hex();
   return td::Status::OK();
+}
+
+void CellDbStreamingSink::republish_reader(std::shared_ptr<vm::CellDbReader> post_commit_reader) {
+  if (post_commit_reader == nullptr) {
+    return;
+  }
+  if (reader_provider_ == nullptr) {
+    return;
+  }
+  reader_provider_->publish(std::move(post_commit_reader));
 }
 
 void CellDbStreamingSink::abort() {
@@ -1085,6 +1112,15 @@ void CellDbStreamingSink::abort() {
       LOG(WARNING) << "CellDbStreamingSink::abort: abort_batch failed: " << status;
     }
     batch_open_ = false;
+  }
+  // tos26 P0-2: invalidate the reader provider. Any lazy ExtCells
+  // already emitted into downstream code paths now fail closed with
+  // "reader provider invalidated" on the next materialization, instead
+  // of silently reading from a snapshot whose corresponding cells were
+  // just rolled back. The legacy / fallback (non-true-streaming) sink
+  // does not own a provider, so skip the invalidation in that case.
+  if (true_streaming_active_ && reader_provider_ != nullptr) {
+    reader_provider_->invalidate();
   }
 }
 

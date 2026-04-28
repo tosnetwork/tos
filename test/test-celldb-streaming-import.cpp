@@ -746,6 +746,104 @@ void test_lazy_load() {
 }
 
 // ---------------------------------------------------------------------------
+// (4b) tos26 P0-2: Lazy load after commit reaches post-commit cells
+// ---------------------------------------------------------------------------
+//
+// Drives the full streaming-import lifecycle (begin -> persist_and_replace*
+// -> finish -> commit_after_root_verified) end-to-end while holding the
+// returned lazy ExtCell root. After the explicit commit step, materializing
+// the root and descending two levels deep MUST succeed: the lazy
+// CellDbExtCell binds to the sink's CellDbReaderProvider, NOT the pre-
+// commit reader handle, so post-commit lazy loads observe the cells the
+// importer just streamed.
+//
+// Note on harness coverage: this test runs against td::MemoryKeyValue
+// wired through DynamicBagOfCellsDb's CellLoader. That loader is LIVE
+// (no snapshot freeze), so even if the sink had baked a raw reader the
+// post-commit reads would still succeed in this fixture. The audit
+// finding is about production CellDbReaderImpl which IS snapshot-based
+// (see validator/db/celldb.cpp:283 cell_db_->snapshot()); a true
+// integration test would need the production celldb actor stack. This
+// test still pins the contract surface: CellDbExtCellLoader goes
+// through reader_provider->current_reader() on every materialization,
+// and sink-driven lifecycle steps (commit, abort) interact with the
+// provider exactly as documented.
+void test_lazy_load_after_commit_succeeds() {
+  std::printf("=== test_lazy_load_after_commit_succeeds (tos26 P0-2) ===\n");
+
+  auto tmp_dir = std::string("/tmp/tos-test-celldb-streaming-4b-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+  // Use a tree with at least 3 internal levels so we can descend
+  // root -> child[0] -> child[0].child[0] and exercise lazy load past
+  // the immediate root.
+  auto boc = serialize_synthetic_boc(tmp_dir, /*target_cells=*/64, "synth.boc");
+
+  auto fixture = build_fixture(/*instrumented=*/true);
+
+  // Manually drive the import end-to-end so we can hold the root
+  // BEFORE commit_after_root_verified runs and assert the post-commit
+  // lazy descent succeeds.
+  auto writer = std::make_unique<TestStreamingWriter>(fixture.kv);
+  tos::validator::fullnode::CellDbStreamingSink sink{fixture.reader, std::move(writer)};
+  EXPECT_TRUE(sink.is_true_streaming());
+
+  auto fd = td::FileFd::open(boc.path, td::FileFd::Flags::Read).move_as_ok();
+  vm::StreamingBocImportOptions opts;
+  opts.max_resident_bytes = 8ULL << 20;
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, boc.size, opts, &sink);
+  fd.close();
+  EXPECT_TRUE(r_root.is_ok());
+  auto root = r_root.move_as_ok();
+  EXPECT_TRUE(!root.is_null());
+  EXPECT_TRUE(root->get_hash() == boc.root_hash);
+  EXPECT_TRUE(sink.finished());
+  EXPECT_FALSE(sink.is_committed());
+
+  // Step 1: commit. After this, every cell streamed during parse is
+  // durable and visible to the canonical reader.
+  auto commit_status = sink.commit_after_root_verified(boc.root_hash);
+  EXPECT_TRUE(commit_status.is_ok());
+  EXPECT_TRUE(sink.is_committed());
+
+  // Step 2: force materialization of the held root via load_cell.
+  // The lazy ExtCell root must reach the canonical reader through the
+  // provider; if the provider had baked a pre-commit snapshot, this
+  // load would surface "cell not found" in a snapshot-reader fixture.
+  auto loaded_root = root->load_cell();
+  EXPECT_TRUE(loaded_root.is_ok());
+  auto root_loaded = loaded_root.move_as_ok();
+  EXPECT_TRUE(root_loaded.data_cell.not_null());
+
+  // Step 3: descend one level. The first child of a non-leaf root is
+  // itself an ExtCell (the streaming importer replaced every cell
+  // during parse). Materialize it.
+  auto child0 = root_loaded.data_cell->get_ref(0);
+  EXPECT_TRUE(child0.not_null());
+  // Identity probe must NOT trigger any load (ExtCell metadata is
+  // baked at construction time).
+  auto loads_pre_child = fixture.load_counter->load(std::memory_order_acquire);
+  auto child0_hash = child0->get_hash();
+  (void)child0_hash;
+  EXPECT_EQ(fixture.load_counter->load(std::memory_order_acquire), loads_pre_child);
+  auto loaded_child0 = child0->load_cell();
+  EXPECT_TRUE(loaded_child0.is_ok());
+  auto child0_loaded = loaded_child0.move_as_ok();
+  EXPECT_TRUE(child0_loaded.data_cell.not_null());
+
+  // Step 4: descend a second level. This is the "two levels deep"
+  // assertion in the task spec — the lazy load chain must keep working
+  // past the immediate child without hitting a snapshot miss.
+  auto grandchild0 = child0_loaded.data_cell->get_ref(0);
+  EXPECT_TRUE(grandchild0.not_null());
+  auto loaded_grandchild0 = grandchild0->load_cell();
+  EXPECT_TRUE(loaded_grandchild0.is_ok());
+  EXPECT_TRUE(loaded_grandchild0.move_as_ok().data_cell.not_null());
+
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
 // (5) Hash mismatch on lazy load returns Status::Error (no abort)
 // ---------------------------------------------------------------------------
 
@@ -837,11 +935,12 @@ void test_hash_mismatch() {
 
 int main() {
   std::printf(
-      "test-celldb-streaming-import: Phase B Step 8 invariant regressions (5 tests)\n");
+      "test-celldb-streaming-import: Phase B Step 8 invariant regressions (6 tests)\n");
   test_replacement_hash_equality();
   test_no_full_dag_residency();
   test_crash_abort_no_partial_state();
   test_lazy_load();
+  test_lazy_load_after_commit_succeeds();
   test_hash_mismatch();
   std::printf("All Phase B invariant tests passed.\n");
   return 0;

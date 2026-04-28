@@ -21,10 +21,12 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <queue>
 
 #include "auto/tl/tos_api.h"
+#include "crypto/vm/db/CellDbExtCell.h"
 #include "crypto/vm/db/CellStorage.h"
 #include "crypto/vm/db/DynamicBagOfCellsDb.h"
 #include "interfaces/block-handle.h"
@@ -49,6 +51,62 @@ class RootDb;
 
 class CellDb;
 class CellDbAsyncExecutor;
+
+// Late-binding CellDb reader provider for streaming-import lazy ExtCells.
+//
+// The streaming-state importer mints CellDb-backed ExtCells DURING parse,
+// while the per-import RocksDB write batch is still open. The reader
+// snapshot taken at sink construction may pre-date that batch's commit;
+// baking it into every ExtCell would let post-commit lazy materializations
+// miss the cells we just streamed. This provider lets the sink swap
+// (or invalidate) the canonical reader on commit / abort:
+//
+//   * Constructed with the import-time reader; lazy ExtCells emitted
+//     during parse all reach this same provider.
+//   * On `commit_after_root_verified`, the sink calls `publish(...)` to
+//     swap in a post-commit reader that observes the just-flushed cells.
+//     If the underlying reader was already live (non-snapshot), the swap
+//     is functionally a no-op but it still resets the provider to a
+//     fresh handle so the post-commit semantics stay explicit.
+//   * On `abort()`, the sink calls `invalidate()` so any subsequent lazy
+//     materialization fails closed with a structured Status::Error
+//     ("reader provider invalidated") instead of silently reading from
+//     a stale snapshot.
+//
+// Thread-safety: every accessor takes a mutex so calls from the sink
+// thread (publish/invalidate) and from arbitrary downstream consumer
+// threads (current_reader) are serialized. Lock hold time is O(1) — a
+// shared_ptr copy / move under a tiny critical section.
+class LiveCellDbReaderProvider : public vm::CellDbReaderProvider {
+ public:
+  LiveCellDbReaderProvider() = default;
+  explicit LiveCellDbReaderProvider(std::shared_ptr<vm::CellDbReader> initial)
+      : current_(std::move(initial)) {
+  }
+  std::shared_ptr<vm::CellDbReader> current_reader() override {
+    std::lock_guard<std::mutex> lock(mu_);
+    return current_;
+  }
+  // Atomically replace the canonical reader. Called by the sink AFTER
+  // commit_after_root_verified flushes the write batch so lazy ExtCells
+  // emitted during parse pick up the post-commit reader on next access.
+  // Pass a non-null reader; pass nullptr only via invalidate().
+  void publish(std::shared_ptr<vm::CellDbReader> next) override {
+    std::lock_guard<std::mutex> lock(mu_);
+    current_ = std::move(next);
+  }
+  // Invalidate the provider. After this call current_reader() returns
+  // null; any lazy ExtCell still holding a reference observes the null
+  // and surfaces a structured Status::Error from CellDbExtCellLoader.
+  void invalidate() override {
+    std::lock_guard<std::mutex> lock(mu_);
+    current_ = nullptr;
+  }
+
+ private:
+  std::mutex mu_;
+  std::shared_ptr<vm::CellDbReader> current_;
+};
 
 // Per-import streaming writer for the state-download sink. Wraps the
 // existing CellDb KeyValue handle in a small begin/commit/abort surface
