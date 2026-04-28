@@ -207,6 +207,23 @@ class EvmState {
     /// discipline.
     uint64_t code_root_hash_mismatch_count() const noexcept;
 
+    /// W8-A P0-A / P0-B forwarders. Per-state code-integrity error
+    /// counter for the underlying CellEvmState backend (returns 0 for
+    /// non-cell test backends). Used by the consensus compute path:
+    /// the unlocked variant takes the shared mutex internally and is
+    /// safe to call between operations; the `_locked` variant assumes
+    /// the caller already holds `state.mutex()` (compute-phase invokes
+    /// it inline while a unique_lock is held over the side-effect
+    /// capture step).
+    uint64_t code_integrity_error_count() const noexcept;
+    uint64_t code_integrity_error_count_locked() const noexcept;
+
+    /// W8-A P1-C forwarders. Per-state TrustedLazy native-shape error
+    /// counter for the underlying CellEvmState backend. Same locking
+    /// contract as the code-integrity forwarders above.
+    uint64_t state_shape_error_count() const noexcept;
+    uint64_t state_shape_error_count_locked() const noexcept;
+
   private:
     void evict_oldest_receipts();
     void evict_oldest_transactions();

@@ -56,6 +56,55 @@ void reset_code_root_hash_mismatch_count_for_test() noexcept {
         0, std::memory_order_relaxed);
 }
 
+// ---------------------------------------------------------------------------
+// Per-state integrity counters (W8-A: P0-A + P0-B + P1-C)
+// ---------------------------------------------------------------------------
+//
+// The process-global `s_code_root_hash_mismatch_count_inner` counter
+// above remains in place purely as a telemetry / RPC-handler signal —
+// it predates the per-state counters and is still referenced by the
+// `code_root_hash_mismatch_count()` accessor that several read-only
+// RPC handlers snapshot/check. Consensus fail-closed decisions MUST
+// instead observe the per-state counters defined here, because the
+// compute path constructs a fresh per-call `CellEvmState` from
+// `cp.new_data` and rolls it back to the snapshot if a fault is
+// observed. A process-global counter would race against concurrent
+// RPC reads on a different state and either over- or under-trigger
+// the rollback. The two counters are deliberately independent.
+uint64_t CellEvmState::code_integrity_error_count() const noexcept {
+    return code_integrity_error_count_.load(std::memory_order_relaxed);
+}
+
+uint64_t CellEvmState::state_shape_error_count() const noexcept {
+    return state_shape_error_count_.load(std::memory_order_relaxed);
+}
+
+void CellEvmState::reset_code_integrity_error_count_for_test() noexcept {
+    code_integrity_error_count_.store(0, std::memory_order_relaxed);
+}
+
+void CellEvmState::reset_state_shape_error_count_for_test() noexcept {
+    state_shape_error_count_.store(0, std::memory_order_relaxed);
+}
+
+void CellEvmState::record_code_integrity_error() const noexcept {
+    code_integrity_error_count_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void CellEvmState::record_state_shape_error(const char* where) const noexcept {
+    state_shape_error_count_.fetch_add(1, std::memory_order_relaxed);
+    // Best-effort diagnostic — `where` is a static literal at every call
+    // site. Logging is wrapped in a try/catch because the `noexcept`
+    // contract of the silkworm State overrides forbids exception
+    // propagation, even from the logging subsystem itself.
+    try {
+        LOG(WARNING) << "evm-workchain: TrustedLazy state-shape error at "
+                     << (where != nullptr ? where : "<unknown>");
+    } catch (...) {
+        // Swallow — counter is the canonical signal, log is advisory.
+    }
+}
+
 namespace {
 
 bool decode_storage_slice(td::Ref<vm::CellSlice> value, evmc::bytes32& out) {
@@ -145,18 +194,47 @@ CellEvmState::CellEvmState() : account_dict_(256) {}
 
 std::optional<silkworm::Account> CellEvmState::read_account(
     const evmc::address& address) const noexcept {
-    unsigned char key[32];
-    address_to_key(address, key);
-    auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
-    if (cs.is_null()) return std::nullopt;
-    // The dict value is a CellSlice referencing the EvmAccountData cell.
-    // We stored it as a single ref; fetch it.
-    if (cs->size_refs() == 0) return std::nullopt;
-    auto cell = cs->prefetch_ref(0);
-    silkworm::Account acct;
-    td::Ref<vm::Cell> storage_root;
-    if (!decode_evm_account_data(cell, acct, storage_root)) return std::nullopt;
-    return acct;
+    // W8-A P1-C: TrustedLazy first-touch read. Wrap the dictionary
+    // lookup + EvmAccountData decode in noexcept-safe handlers so any
+    // structural fault (vm::VmError / vm::VmVirtError /
+    // std::exception / unknown) increments the per-state shape error
+    // counter and surfaces as a missing account, instead of silently
+    // returning std::nullopt and letting consensus continue against a
+    // corrupt root. The compute-phase fail-closed gate then observes
+    // the counter delta and rolls the surrounding tx back via
+    // sk_bad_state.
+    try {
+        unsigned char key[32];
+        address_to_key(address, key);
+        auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
+        if (cs.is_null()) return std::nullopt;
+        // The dict value is a CellSlice referencing the EvmAccountData
+        // cell. We stored it as a single ref; fetch it.
+        if (cs->size() != 0 || cs->size_refs() != 1) {
+            record_state_shape_error("read_account dict leaf shape");
+            return std::nullopt;
+        }
+        auto cell = cs->prefetch_ref(0);
+        silkworm::Account acct;
+        td::Ref<vm::Cell> storage_root;
+        if (!decode_evm_account_data(cell, acct, storage_root)) {
+            record_state_shape_error("read_account decode_evm_account_data");
+            return std::nullopt;
+        }
+        return acct;
+    } catch (vm::VmError&) {
+        record_state_shape_error("read_account vm::VmError");
+        return std::nullopt;
+    } catch (vm::VmVirtError&) {
+        record_state_shape_error("read_account vm::VmVirtError");
+        return std::nullopt;
+    } catch (std::exception&) {
+        record_state_shape_error("read_account std::exception");
+        return std::nullopt;
+    } catch (...) {
+        record_state_shape_error("read_account unknown exception");
+        return std::nullopt;
+    }
 }
 
 // Audit H-01 / K-02 contract for `CellEvmState::read_code`:
@@ -193,6 +271,12 @@ silkworm::ByteView CellEvmState::read_code(
         // silkworm execute the wrong bytecode. The check is a single
         // 32-byte compare — cheap enough for the hot path.
         if (it->second.hash != code_hash) {
+            // Per-state P0-A signal: consensus path observes this delta
+            // around each execution boundary and fails closed.
+            record_code_integrity_error();
+            // Process-global telemetry — retained for RPC handlers
+            // that already snapshot/check `code_root_hash_mismatch_count()`.
+            // Not consensus-load-bearing.
             s_code_root_hash_mismatch_count_inner.fetch_add(
                 1, std::memory_order_relaxed);
             return {};
@@ -245,10 +329,16 @@ silkworm::ByteView CellEvmState::read_code(
         auto verified = decode_and_verify_code_root(
             code_root, code_hash, td::Slice("read_code lazy decode"));
         if (verified.is_error()) {
-            // Audit K-02: bump the always-on mismatch counter so RPC
-            // handlers can detect this code path and fail-closed
-            // (otherwise the empty return would be mistaken for
-            // canonical "no code").
+            // Per-state P0-A signal: consensus compute phase observes
+            // this delta around the user / system tx execution boundary
+            // and rolls back + emits sk_bad_state instead of letting
+            // silkworm execute the empty `ByteView` as canonical "no
+            // code".
+            record_code_integrity_error();
+            // Process-global telemetry — retained so RPC handlers that
+            // already snapshot/check `code_root_hash_mismatch_count()`
+            // continue to surface a -32000 error. Not consensus-load-
+            // bearing.
             s_code_root_hash_mismatch_count_inner.fetch_add(
                 1, std::memory_order_relaxed);
             return {};
@@ -282,14 +372,25 @@ evmc::bytes32 CellEvmState::read_storage(const evmc::address& address,
         bytes32_to_key(location, key);
         auto cs = storage.lookup(td::ConstBitPtr{key}, 256);
         if (cs.is_null()) return v;
-        decode_storage_slice(cs, v);
+        if (!decode_storage_slice(cs, v)) {
+            // W8-A P1-C: storage leaf shape mismatch on first touch.
+            // Mark per-state shape corruption — consensus fail-closed
+            // gate will roll the surrounding tx back instead of
+            // letting silkworm read a zero-extended slot.
+            record_state_shape_error("read_storage decode_storage_slice");
+            return evmc::bytes32{};
+        }
     } catch (vm::VmError&) {
+        record_state_shape_error("read_storage vm::VmError");
         return evmc::bytes32{};
     } catch (vm::VmVirtError&) {
+        record_state_shape_error("read_storage vm::VmVirtError");
         return evmc::bytes32{};
     } catch (std::exception&) {
+        record_state_shape_error("read_storage std::exception");
         return evmc::bytes32{};
     } catch (...) {
+        record_state_shape_error("read_storage unknown");
         return evmc::bytes32{};
     }
     return v;
@@ -412,14 +513,32 @@ void CellEvmState::update_account_code(const evmc::address& address,
                                         const evmc::bytes32& code_hash,
                                         silkworm::ByteView code) {
     if (code_hash == silkworm::kEmptyHash) return;
-    // Audit H-01: defensive `keccak(code) == code_hash` on the write
-    // path. Production callers (`run_evm` / silkworm CREATE) always
-    // pass matching code/hash, so this is normally a free check. A
-    // mismatched call would mean an upstream code-store bug or a
-    // hostile mutation reaching the State adapter — refuse to persist
-    // it.
+    // Audit H-01 + W8-A P0-B: defensive `keccak(code) == code_hash` on
+    // the write path. Production callers (`run_evm` / silkworm CREATE)
+    // always pass matching code/hash, so this is normally a free
+    // check. A mismatched call means either an upstream code-store
+    // bug or a hostile mutation reaching the State adapter — refuse
+    // to persist the byte stream AND mark this state instance as
+    // code-integrity-corrupt. The compute-phase fail-closed gate
+    // observes the per-state counter delta around the user-tx
+    // boundary, so the surrounding tx aborts via `sk_bad_state` and
+    // rolls back any speculative state changes (the previous
+    // behaviour silently dropped the bytes and let the rest of the
+    // transaction commit, which left `code_hash` and the embedded
+    // code_root inconsistent on disk).
     auto actual_hash = keccak_code_hash(code);
     if (actual_hash != code_hash) {
+        record_code_integrity_error();
+        try {
+            std::string addr_hex = format_evm_address_hex(address);
+            LOG(ERROR) << "evm-workchain: update_account_code rejected "
+                          "mismatched bytecode (addr="
+                       << addr_hex
+                       << ", code.size=" << code.size()
+                       << ")";
+        } catch (...) {
+            // Swallow — the per-state counter is the canonical signal.
+        }
         return;
     }
     // Audit H-01 (P0.4): the verified-only cache invariant holds because
@@ -798,7 +917,7 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode
             reason.append(")");
             failure_reason = std::move(reason);
         };
-        bool walked = new_account_dict.check_for_each([&ok, &new_code, &fail_with](td::Ref<vm::CellSlice> value,
+        bool walked = new_account_dict.check_for_each([this, &ok, &new_code, &fail_with](td::Ref<vm::CellSlice> value,
                                                                         td::ConstBitPtr key, int n) -> bool {
             if (n != 256 || value.is_null() || value->size() != 0 || value->size_refs() != 1) {
                 ok = false;
@@ -832,6 +951,16 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode
                 code_root, acct.code_hash, td::Slice("strict load"));
             if (verified.is_error()) {
                 ok = false;
+                // W8-A P0-A: strict-mode walk corruption increments the
+                // per-state counter so callers that examine
+                // `code_integrity_error_count()` after a failed strict
+                // hydration observe the delta uniformly, regardless of
+                // whether the failure was caught lazily (read_code) or
+                // eagerly (this strict walk). The walk is aborted
+                // atomically — `account_dict_` and `code_` are NOT
+                // moved-into until the entire walk succeeds, so the
+                // commit semantic is unchanged.
+                record_code_integrity_error();
                 fail_with(key, &acct.code_hash,
                           td::Slice(verified.error().message()));
                 return false;
@@ -964,15 +1093,42 @@ void CellEvmState::set_storage_root_for_hydration(const evmc::address& address,
 // ---------------------------------------------------------------------------
 
 td::Ref<vm::Cell> CellEvmState::get_storage_root(const evmc::address& address) const {
-    unsigned char key[32];
-    address_to_key(address, key);
-    auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
-    if (cs.is_null() || cs->size_refs() == 0) return {};
-    auto data_cell = cs->prefetch_ref(0);
-    silkworm::Account acct;
-    td::Ref<vm::Cell> storage_root;
-    if (!decode_evm_account_data(data_cell, acct, storage_root)) return {};
-    return storage_root;
+    // W8-A P1-C: TrustedLazy first-touch helper. Wrap the dict lookup
+    // + EvmAccountData decode in shape-error guards so a malformed
+    // leaf or a thrown VmError doesn't degenerate into "no storage"
+    // — instead the per-state shape counter advances and the
+    // compute-phase fail-closed gate translates the delta into
+    // sk_bad_state.
+    try {
+        unsigned char key[32];
+        address_to_key(address, key);
+        auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
+        if (cs.is_null()) return {};
+        if (cs->size() != 0 || cs->size_refs() != 1) {
+            record_state_shape_error("get_storage_root dict leaf shape");
+            return {};
+        }
+        auto data_cell = cs->prefetch_ref(0);
+        silkworm::Account acct;
+        td::Ref<vm::Cell> storage_root;
+        if (!decode_evm_account_data(data_cell, acct, storage_root)) {
+            record_state_shape_error("get_storage_root decode_evm_account_data");
+            return {};
+        }
+        return storage_root;
+    } catch (vm::VmError&) {
+        record_state_shape_error("get_storage_root vm::VmError");
+        return {};
+    } catch (vm::VmVirtError&) {
+        record_state_shape_error("get_storage_root vm::VmVirtError");
+        return {};
+    } catch (std::exception&) {
+        record_state_shape_error("get_storage_root std::exception");
+        return {};
+    } catch (...) {
+        record_state_shape_error("get_storage_root unknown");
+        return {};
+    }
 }
 
 bool CellEvmState::lookup_account_data_cell(const evmc::address& address,
@@ -982,18 +1138,32 @@ bool CellEvmState::lookup_account_data_cell(const evmc::address& address,
         unsigned char key[32];
         address_to_key(address, key);
         auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
-        if (cs.is_null() || cs->size() != 0 || cs->size_refs() != 1) {
+        if (cs.is_null()) {
+            // Genuine "account does not exist" — not a shape fault.
+            return false;
+        }
+        if (cs->size() != 0 || cs->size_refs() != 1) {
+            // W8-A P1-C: malformed dict leaf — neither pure ref nor
+            // expected wrapper shape. Mark per-state shape corruption
+            // and return as if missing so the lazy `read_code` /
+            // higher caller treats it consistently. Compute-phase
+            // fail-closed observes the counter delta.
+            record_state_shape_error("lookup_account_data_cell leaf shape");
             return false;
         }
         out = cs->prefetch_ref(0);
         return out.not_null();
     } catch (vm::VmError&) {
+        record_state_shape_error("lookup_account_data_cell vm::VmError");
         return false;
     } catch (vm::VmVirtError&) {
+        record_state_shape_error("lookup_account_data_cell vm::VmVirtError");
         return false;
     } catch (std::exception&) {
+        record_state_shape_error("lookup_account_data_cell std::exception");
         return false;
     } catch (...) {
+        record_state_shape_error("lookup_account_data_cell unknown");
         return false;
     }
 }
@@ -1002,17 +1172,41 @@ void CellEvmState::set_storage_root(const evmc::address& address,
                                      td::Ref<vm::Cell> root) {
     unsigned char key[32];
     address_to_key(address, key);
-    auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
-    silkworm::Account acct{};
-    td::Ref<vm::Cell> code_root;
-    if (cs.not_null() && cs->size_refs() > 0) {
-        td::Ref<vm::Cell> old_storage;
-        decode_evm_account_data(cs->prefetch_ref(0), acct, old_storage, code_root);
+    // W8-A P1-C: shape-error guard around the dict lookup + decode of
+    // the existing leaf. A throw or malformed leaf at this point would
+    // otherwise be silently converted into a fresh-account write
+    // (acct{} default), which destroys whatever invariant the caller
+    // expected to be reading. Record the shape error and bail out —
+    // compute-phase fail-closed will roll back any in-flight tx.
+    try {
+        auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
+        silkworm::Account acct{};
+        td::Ref<vm::Cell> code_root;
+        if (cs.not_null()) {
+            if (cs->size() != 0 || cs->size_refs() != 1) {
+                record_state_shape_error("set_storage_root dict leaf shape");
+                return;
+            }
+            td::Ref<vm::Cell> old_storage;
+            if (!decode_evm_account_data(cs->prefetch_ref(0), acct,
+                                          old_storage, code_root)) {
+                record_state_shape_error("set_storage_root decode_evm_account_data");
+                return;
+            }
+        }
+        auto data_cell = encode_evm_account_data(acct, root, code_root);
+        vm::CellBuilder cb;
+        cb.store_ref(data_cell);
+        account_dict_.set_builder(td::ConstBitPtr{key}, 256, cb);
+    } catch (vm::VmError&) {
+        record_state_shape_error("set_storage_root vm::VmError");
+    } catch (vm::VmVirtError&) {
+        record_state_shape_error("set_storage_root vm::VmVirtError");
+    } catch (std::exception&) {
+        record_state_shape_error("set_storage_root std::exception");
+    } catch (...) {
+        record_state_shape_error("set_storage_root unknown");
     }
-    auto data_cell = encode_evm_account_data(acct, root, code_root);
-    vm::CellBuilder cb;
-    cb.store_ref(data_cell);
-    account_dict_.set_builder(td::ConstBitPtr{key}, 256, cb);
 }
 
 // ---------------------------------------------------------------------------

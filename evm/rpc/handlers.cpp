@@ -5440,7 +5440,11 @@ static std::string post_accept_health_json() {
 }
 
 static RpcResult handle_debug_rpc_cache_health(const std::string& id) {
-    // Codex round 6 (R6-H-13) + round 7 (R7-H-15): the count_* methods
+    // Reachable only on the AdminLocal profile — the dispatcher gates
+    // this method on g_profile_debug_rpc_enabled before invoking the
+    // handler, so the RocksDB prefix scans below are not part of the
+    // public RPC surface.
+    // The count_* methods
     // perform full RocksDB prefix scans (`tddb/td/db/RocksDb.cpp::count`
     // iterates every key), so a public caller hitting this method
     // repeatedly forces O(N) cache scans per request. Cache the response
@@ -5683,6 +5687,20 @@ std::optional<RpcResult> handle_eth_rpc(
         return RpcResult{make_error(id, -32600, "request params exceed max size"), true};
     }
 
+    // eth_getProof is unconditionally unsupported: TOS EVM commits state
+    // via TOS-native cell hashes, not Ethereum MPT proofs. Reply with a
+    // structured -32601 *before* any other gate (per-IP rate, profile,
+    // hydration health) so wallets that probe for proof support get a
+    // deterministic capability answer even under rate-limit pressure.
+    // The branch is intentionally above consume_per_ip_token: a flapping
+    // wallet that retries eth_getProof must never be able to wedge its
+    // own source-IP bucket against a non-existent capability.
+    if (method == "eth_getProof") {
+        return RpcResult{make_error(id, -32601,
+            "eth_getProof is not supported: TOS EVM uses TOS-native state "
+            "commitments, not Ethereum MPT proofs"), true};
+    }
+
     // Defense-in-depth: in-process per-IP rate gate. Applied BEFORE
     // every per-method limiter so a single attacker cannot drain the
     // global bucket and starve other source IPs. `source_ip` may be
@@ -5691,17 +5709,6 @@ std::optional<RpcResult> handle_eth_rpc(
     if (!consume_per_ip_token(source_ip)) {
         return RpcResult{make_error(id, -32005,
             "per-IP rate limit exceeded"), true};
-    }
-
-    // eth_getProof is unconditionally unsupported: TOS EVM commits state
-    // via TOS-native cell hashes, not Ethereum MPT proofs. Reply with a
-    // structured -32601 *before* any other gate so wallets that probe
-    // for proof support get a deterministic answer regardless of
-    // profile, rate-limit state, or hydration health.
-    if (method == "eth_getProof") {
-        return RpcResult{make_error(id, -32601,
-            "eth_getProof is not supported: TOS EVM uses TOS-native state "
-            "commitments, not Ethereum MPT proofs"), true};
     }
 
     // Audit M-02 (tos17): hydration-corruption fail-closed gate.
@@ -5757,6 +5764,22 @@ std::optional<RpcResult> handle_eth_rpc(
         }
     }
 #endif
+    // debug_rpcCacheHealth performs full RocksDB prefix scans
+    // (count_receipts / count_transactions / count_blocks_by_number /
+    // ...) on the EVM RPC cache. Even with the in-handler 5s TTL +
+    // single-flight coalescing, exposing it on a public endpoint lets
+    // an attacker amplify scan pressure on the JSON-RPC thread pool.
+    // Restrict it to operators on the AdminLocal profile, mirroring
+    // the gating used for debug_rebuildRpcCache (no compile-flag
+    // requirement here — the method is built unconditionally because
+    // local operator tooling needs it without recompiling).
+    if (method == "debug_rpcCacheHealth") {
+        if (!g_profile_debug_rpc_enabled.load(std::memory_order_relaxed)) {
+            return RpcResult{make_error(id, -32601,
+                std::string(method) +
+                " disabled by node profile"), true};
+        }
+    }
 
     // --- Production hardening: rate limiting ---
     if (g_rate_limit_enabled) {

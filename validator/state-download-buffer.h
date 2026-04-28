@@ -18,6 +18,36 @@
 */
 #pragma once
 
+/*
+ * PHASE B (deferred): True CellDb-backed streaming import.
+ *
+ * The current importer parses the persistent state into a complete in-memory
+ * DataCell DAG, then hands the root to the CellDb writer. This bounds parse-time
+ * residency to roughly the file size, which is why max_returned_dag_bytes_per_parse
+ * exists as a fail-closed cap. As TOS native EVM state grows past that cap,
+ * new nodes can no longer bootstrap.
+ *
+ * The fix is to re-shape parse so each cell is persisted to CellDb as soon as it
+ * is finalized, and parents reference children by hash via ExtCell-style refs
+ * rather than holding strong DataCell pointers. Required changes:
+ *   - crypto/vm/cells/ExtCell.{h,cpp}: hash-only Cell subclass that lazy-loads
+ *     children from CellDb on demand.
+ *   - crypto/vm/boc.cpp create_data_cell: accept an optional "sink" that receives
+ *     each cell as it is finalized; substitute ExtCell refs for child DataCells
+ *     once the sink confirms persistence.
+ *   - validator/state-download-buffer.cpp CellDbStreamingSink::persist: actually
+ *     write to CellDb (currently a counting / validation sink only).
+ *   - validator/db/celldb.cpp: expose a sync write path the importer can use
+ *     during parse (or a buffered async path with strict ordering).
+ *   - validator/manager-disk.cpp: load_block_state / store_block_state must
+ *     accept hash-only roots without forcing eager full-DAG materialization.
+ *
+ * Phase A (this commit) freezes the OOM-prone path:
+ *   - enable_true_cell_db_streaming_import is rejected on configuration.
+ *   - max_returned_dag_bytes_per_parse stays as the fail-closed ceiling with
+ *     an operator-actionable error message.
+ */
+
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -269,7 +299,15 @@ struct PersistentStateBudgetConfig {
 // downloads are in flight is well-defined (existing reservations remain
 // valid) but has the surprising effect of re-validating future requests
 // against a different ceiling.
-void configure_persistent_state_budgets(PersistentStateBudgetConfig cfg);
+//
+// Returns Status::OK() on success. On rejection, the previous configuration
+// is preserved unchanged and the returned Status carries an
+// operator-actionable error message. Phase A explicitly rejects any
+// attempt to set `enable_true_cell_db_streaming_import = true` because
+// the Phase B importer is not yet implemented; flipping that flag would
+// silently re-enable the OOM-prone full-DAG parse path (see PHASE B
+// design comment at the top of this header).
+td::Status configure_persistent_state_budgets(PersistentStateBudgetConfig cfg);
 
 // Read the live persistent-state budget configuration. The returned
 // snapshot is consistent with the value the next reservation will

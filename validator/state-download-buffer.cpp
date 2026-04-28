@@ -152,6 +152,20 @@ td::Status validate_budget_config(const PersistentStateBudgetConfig& cfg) {
   if (cfg.max_total_cell_bytes_per_parse == 0) {
     return td::Status::Error("max_total_cell_bytes_per_parse must be > 0");
   }
+  // Phase A hard-block: the true CellDb-backed streaming importer
+  // (Phase B) is not yet implemented. Flipping this flag would silently
+  // re-enable the OOM-prone full-DAG parse path because the parser still
+  // returns a complete DataCell DAG. Refuse the configuration so a
+  // misconfigured operator cannot bypass max_returned_dag_bytes_per_parse
+  // by toggling a flag that has no implementation behind it.
+  if (cfg.enable_true_cell_db_streaming_import) {
+    return td::Status::Error(
+        "enable_true_cell_db_streaming_import is reserved for Phase B "
+        "(true ExtCell-backed CellDb streaming importer). The current "
+        "tos18 build only ships the fail-closed importer; setting this "
+        "flag would silently re-enable the OOM-prone full-DAG path. "
+        "Refusing.");
+  }
   return td::Status::OK();
 }
 
@@ -585,15 +599,20 @@ td::uint64 persistent_state_total_download_budget_bytes() {
   return load_budget_config_locked().max_download_bytes;
 }
 
-void configure_persistent_state_budgets(PersistentStateBudgetConfig cfg) {
+td::Status configure_persistent_state_budgets(PersistentStateBudgetConfig cfg) {
   auto status = validate_budget_config(cfg);
   if (status.is_error()) {
+    // Preserve the previous configuration on rejection. The caller is
+    // expected to surface this Status (e.g. fail node startup); we still
+    // log it here as a defense-in-depth backstop for any caller that
+    // accidentally drops the return value.
     LOG(ERROR) << "rejecting invalid PersistentStateBudgetConfig: " << status
                << "; keeping previous configuration";
-    return;
+    return status;
   }
   std::lock_guard<std::mutex> g(g_budget_config_mu);
   g_budget_config = cfg;
+  return td::Status::OK();
 }
 
 PersistentStateBudgetConfig persistent_state_budget_config() {

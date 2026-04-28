@@ -293,7 +293,18 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
         if (magic != kEvmAccountMagic) return false;
         auto schema_version = cs.fetch_ulong(8);
         if (schema_version == 5) {
-            LOG(ERROR) << "cp.new_data v5 is no longer supported; v6 native-only required";
+            // v5 (Ethereum-MPT-compat) is permanently rejected. tos18+ runs
+            // a native-only cell-state EVM workchain; the v5 schema was an
+            // internal-devnet-only artefact and has no migration path. Any
+            // node that observes a v5 cp.new_data cell on a tos18+ network
+            // is looking at a pre-tos18 state snapshot that must be
+            // discarded — operators must regenerate the EVM workchain
+            // genesis from a fresh wc=1 v6 native zerostate.
+            LOG(ERROR) << "cp.new_data v5 (Ethereum-MPT-compat) is permanently "
+                          "rejected; tos18+ requires fresh wc=1 v6 native "
+                          "genesis. There is no v5->v6 migration path; "
+                          "operators must regenerate the EVM workchain "
+                          "genesis (see release notes).";
             return false;
         }
         if (schema_version != kCpNewDataSchemaVersion) {

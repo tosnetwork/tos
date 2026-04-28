@@ -738,15 +738,22 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
   // future ExtCell-backed importer is enabled.
   if (data_file_.size > budget_cfg.max_returned_dag_bytes_per_parse &&
       !budget_cfg.enable_true_cell_db_streaming_import) {
+    auto rejected_size = data_file_.size;
     data_file_ = fullnode::BudgetedStateFile{};
     data_reservation_.reset();
     fail_handler(
         actor_id(this),
-        td::Status::Error(ErrorCode::notready,
-                          PSTRING() << "persistent state too large for in-memory returned DAG (file_size="
-                                    << data_file_.size << " > max_returned_dag_bytes_per_parse="
-                                    << budget_cfg.max_returned_dag_bytes_per_parse
-                                    << "); enable CellDb streaming importer"));
+        td::Status::Error(
+            ErrorCode::notready,
+            PSTRING()
+                << "persistent-state download rejected: file size " << rejected_size
+                << " exceeds max_returned_dag_bytes_per_parse="
+                << budget_cfg.max_returned_dag_bytes_per_parse
+                << ". This is a known liveness ceiling pending Phase B (true ExtCell-backed "
+                   "CellDb-streaming importer). Operator options: (a) raise "
+                   "max_returned_dag_bytes_per_parse if you accept the OOM risk for this state, "
+                   "(b) bootstrap from a smaller checkpoint, (c) wait for Phase B which will "
+                   "remove this ceiling."));
     return;
   }
   td::uint64 processing_charge = data_file_.size;
@@ -985,11 +992,17 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
       !budget_cfg.enable_true_cell_db_streaming_import) {
     fail_handler(
         actor_id(this),
-        td::Status::Error(ErrorCode::notready,
-                          PSTRING() << "split persistent state header too large for in-memory returned DAG (file_size="
-                                    << file.size << " > max_returned_dag_bytes_per_parse="
-                                    << budget_cfg.max_returned_dag_bytes_per_parse
-                                    << "); enable CellDb streaming importer"));
+        td::Status::Error(
+            ErrorCode::notready,
+            PSTRING()
+                << "persistent-state download rejected: split header file size " << file.size
+                << " exceeds max_returned_dag_bytes_per_parse="
+                << budget_cfg.max_returned_dag_bytes_per_parse
+                << ". This is a known liveness ceiling pending Phase B (true ExtCell-backed "
+                   "CellDb-streaming importer). Operator options: (a) raise "
+                   "max_returned_dag_bytes_per_parse if you accept the OOM risk for this state, "
+                   "(b) bootstrap from a smaller checkpoint, (c) wait for Phase B which will "
+                   "remove this ceiling."));
     return;
   }
   td::uint64 processing_charge = file.size;
@@ -1182,11 +1195,17 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
       !budget_cfg.enable_true_cell_db_streaming_import) {
     retry_part_download(
         actor_id(this),
-        td::Status::Error(ErrorCode::notready,
-                          PSTRING() << "split persistent state part too large for in-memory returned DAG (file_size="
-                                    << file.size << " > max_returned_dag_bytes_per_parse="
-                                    << budget_cfg.max_returned_dag_bytes_per_parse
-                                    << "); enable CellDb streaming importer"));
+        td::Status::Error(
+            ErrorCode::notready,
+            PSTRING()
+                << "persistent-state download rejected: split part file size " << file.size
+                << " exceeds max_returned_dag_bytes_per_parse="
+                << budget_cfg.max_returned_dag_bytes_per_parse
+                << ". This is a known liveness ceiling pending Phase B (true ExtCell-backed "
+                   "CellDb-streaming importer). Operator options: (a) raise "
+                   "max_returned_dag_bytes_per_parse if you accept the OOM risk for this state, "
+                   "(b) bootstrap from a smaller checkpoint, (c) wait for Phase B which will "
+                   "remove this ceiling."));
     return;
   }
   td::uint64 processing_charge = file.size;

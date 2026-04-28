@@ -89,6 +89,85 @@ if ! rg -q 'compute_native_evm_state_commitment' "$root/evm/core"; then
 fi
 
 # ---------------------------------------------------------------------------
+# W8 round hardening additions (P0/P1/P2 fail-closed assertions).
+#
+# These checks aggregate the invariants introduced by the W8 wave:
+#   - Per-state code/state integrity counter must gate consensus path.
+#   - update_account_code must mark state corrupt on bytecode mismatch.
+#   - cell-codec v5 reject log must carry the fresh-genesis upgrade policy.
+#   - eth_getProof unsupported branch must precede the per-IP rate gate.
+#   - Stale MPT/witness/stateRoot vocabulary must not regress into active
+#     production sources.
+# ---------------------------------------------------------------------------
+
+# Check 7 — compute-phase MUST consult per-state code_integrity_error_count
+#           and use the reject_if_integrity_changed() helper at execution
+#           boundaries (W8-A P0-A fail-closed gate).
+if ! rg -q 'code_integrity_error_count' "$root/evm/core/compute-phase.cpp"; then
+    echo "evm hardening failed: compute-phase.cpp must consult per-state code_integrity_error_count() to fail-closed on corrupt code_root (W8-A P0-A)" >&2
+    exit 1
+fi
+if ! rg -q 'reject_if_integrity_changed' "$root/evm/core/compute-phase.cpp"; then
+    echo "evm hardening failed: compute-phase.cpp must use reject_if_integrity_changed() helper at execution boundaries (W8-A P0-A)" >&2
+    exit 1
+fi
+
+# Check 8 — CellEvmState::update_account_code MUST mark state corrupt on
+#           bytecode/keccak mismatch (W8-A P0-B fail-closed write). The awk
+#           pattern scopes to the function body (between its signature line
+#           and the matching `^}` close) and asserts the mismatch path
+#           invokes record_code_integrity_error before returning.
+if ! awk '
+    /^void CellEvmState::update_account_code|^bool CellEvmState::update_account_code/ { in_fn = 1; next }
+    in_fn && /^}/ { in_fn = 0 }
+    in_fn && /record_code_integrity_error/ { saw = 1 }
+    END { exit saw ? 0 : 1 }
+' "$root/evm/core/cell-state.cpp"; then
+    echo "evm hardening failed: CellEvmState::update_account_code must call record_code_integrity_error() on keccak/code_hash mismatch (W8-A P0-B)" >&2
+    exit 1
+fi
+
+# Check 9 — cell-codec v5 reject log MUST carry the fresh-genesis sentinel
+#           (W8-C P1-D operator-actionable upgrade policy). The literal log
+#           message is split across multiple LOG()-concatenation lines, so
+#           we accept any of three increasingly permissive token sequences;
+#           the loosest still anchors the operator-policy phrase.
+if ! rg -q 'tos18\+ requires fresh wc=1 v6 native genesis|fresh wc=1 v6 native genesis|fresh wc=1 v6 native' "$root/evm/core/cell-codec.cpp"; then
+    echo "evm hardening failed: cell-codec.cpp v5 reject log must reference 'fresh wc=1 v6 native genesis' upgrade policy (W8-C P1-D)" >&2
+    exit 1
+fi
+
+# Check 10 — eth_getProof unsupported branch MUST come BEFORE the per-IP
+#            rate gate (W8-B P2-F: probes must always get the canonical
+#            -32601 even under rate-limit pressure). We anchor on the
+#            specific `if (...)` lines inside handle_eth_rpc (the early
+#            occurrence of the bare token `eth_getProof` is in the
+#            is_eth_rpc_method allowlist; the bare `consume_per_ip_token`
+#            token first occurs at the function definition far above the
+#            dispatcher — neither is the right anchor for this ordering
+#            assertion).
+line_eth_getproof=$(rg -n 'if \(method == "eth_getProof"\)' "$root/evm/rpc/handlers.cpp" | head -1 | awk -F: '{print $1}')
+line_per_ip=$(rg -n 'if \(!consume_per_ip_token\(' "$root/evm/rpc/handlers.cpp" | head -1 | awk -F: '{print $1}')
+if [ -z "$line_eth_getproof" ] || [ -z "$line_per_ip" ]; then
+    echo "evm hardening failed: could not locate eth_getProof / per-IP gate sites (W8-B P2-F)" >&2
+    exit 1
+fi
+if [ "$line_eth_getproof" -ge "$line_per_ip" ]; then
+    echo "evm hardening failed: eth_getProof unsupported branch must precede consume_per_ip_token gate (W8-B P2-F: line $line_eth_getproof vs $line_per_ip)" >&2
+    exit 1
+fi
+
+# Check 11 — no stale MPT/stateRoot/witness vocabulary in active production
+#            files (W8-E P2-H). This script itself documents what we reject,
+#            and test sources may legitimately reference the historical
+#            terms; only the two listed production files are scanned.
+if rg -n 'MPT walk|trie witness|persistent_trie_witness|Ethereum stateRoot' \
+       "$root/evm/CMakeLists.txt" "$root/crypto/block/transaction.cpp"; then
+    echo "evm hardening failed: stale MPT/witness/stateRoot comments must be removed (W8-E P2-H)" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Existing (non-MPT) production hardening checks.
 # ---------------------------------------------------------------------------
 
@@ -749,8 +828,12 @@ if ! rg -q 'enable_true_cell_db_streaming_import' "$state_buffer_h"; then
     exit 1
 fi
 
-if ! rg -q 'enable CellDb streaming importer' "$download_state_cpp"; then
-    echo "evm production hardening check failed: download-state.cpp must fail closed on oversize states without true streaming importer" >&2
+if ! rg -q 'persistent-state download rejected:' "$download_state_cpp"; then
+    echo "evm production hardening check failed: download-state.cpp must fail closed with operator-actionable message on oversize states without true streaming importer" >&2
+    exit 1
+fi
+if ! rg -q 'exceeds max_returned_dag_bytes_per_parse' "$download_state_cpp"; then
+    echo "evm production hardening check failed: download-state.cpp must cite max_returned_dag_bytes_per_parse in the fail-closed oversize-state message" >&2
     exit 1
 fi
 

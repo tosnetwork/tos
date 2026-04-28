@@ -36,6 +36,7 @@
 #include "vm/cells.h"
 #include "vm/dict.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <string_view>
@@ -274,11 +275,48 @@ class CellEvmState : public silkworm::State {
                                      silkworm::ByteView stored_bytes);
 #endif  // TOS_EVM_TEST_INSTRUMENTATION
 
+    /// Per-state code-integrity error counter. Incremented every time the
+    /// no-MPT native state observes a `keccak(decoded_code) != code_hash`
+    /// mismatch — covers `read_code` lazy-decode mismatches, the H-01
+    /// verified-only code cache hit invariant, the strict-load walk
+    /// mismatch path, and the `update_account_code` write-side mismatch
+    /// guard. The compute phase snapshots this counter around each
+    /// execution boundary (cheap prevalidation, EIP-4788 / EIP-2935
+    /// system txs, the user tx, and the final serialize) so any delta
+    /// reliably surfaces as `sk_bad_state` with the rollback snapshot
+    /// restored before `cp.new_data` is written. Read-only / `noexcept`
+    /// so it can be invoked from inside silkworm's `noexcept` State
+    /// overrides.
+    uint64_t code_integrity_error_count() const noexcept;
+
+    /// Per-state native-shape error counter. Incremented whenever a
+    /// `TrustedLazy` first-touch read encounters a malformed dictionary
+    /// node, an account leaf that doesn't decode as `EvmAccountData`,
+    /// or any `vm::VmError` / `vm::VmVirtError` / `std::exception`
+    /// thrown by the dictionary access path. Compute phase fail-closed
+    /// gates pair this with `code_integrity_error_count()` so first-
+    /// touch shape corruption is mapped to `sk_bad_state` instead of
+    /// degenerating into "account does not exist" / "storage = 0"
+    /// reads.
+    uint64_t state_shape_error_count() const noexcept;
+
+    /// Test-only resets for the per-state counters above. Production
+    /// code MUST NOT call these — the counters are monotone for the
+    /// lifetime of the state and the snapshot/check pattern in the
+    /// compute phase would race against any concurrent reset.
+    void reset_code_integrity_error_count_for_test() noexcept;
+    void reset_state_shape_error_count_for_test() noexcept;
+
     // ----- Free helpers (used outside CellEvmState) -----
 
   private:
     /// Read the storage dict root cell for an account. Returns null if account
-    /// has no storage.
+    /// has no storage. On any malformed-shape exception caught by the no-MPT
+    /// `TrustedLazy` first-touch helper, increments the per-state shape
+    /// error counter and returns a null ref so the caller treats the slot as
+    /// missing — compute-phase fail-closed gates then translate the counter
+    /// delta into `sk_bad_state` and roll back any speculative state
+    /// changes.
     td::Ref<vm::Cell> get_storage_root(const evmc::address& address) const;
 
     /// Write or clear the storage dict root for an account.
@@ -286,9 +324,21 @@ class CellEvmState : public silkworm::State {
 
     /// Look up the inner EvmAccountData cell for an address from the account
     /// dictionary. Returns false if the account is missing or if the dict
-    /// value has the wrong shape. Used by lazy `read_code`.
+    /// value has the wrong shape. Used by lazy `read_code`. On any
+    /// malformed-shape failure path the helper records a per-state native-
+    /// shape error so consensus fail-closed checks observe the corruption.
     bool lookup_account_data_cell(const evmc::address& address,
                                   td::Ref<vm::Cell>& out) const;
+
+    /// Record a per-state code-integrity error. `noexcept` because every
+    /// fault site (including the `noexcept` silkworm State overrides) needs
+    /// to bump the counter without surfacing exceptions.
+    void record_code_integrity_error() const noexcept;
+
+    /// Record a per-state native-state-shape error. Accepts a static
+    /// string identifying the call site (used for diagnostic logs). The
+    /// pointer is borrowed; the helper does not retain it.
+    void record_state_shape_error(const char* where) const noexcept;
 
     mutable vm::Dictionary account_dict_;  // 256-bit keys → EvmAccountData cells
 
@@ -370,6 +420,21 @@ class CellEvmState : public silkworm::State {
         const td::Ref<vm::Cell>& code_root,
         const evmc::bytes32& expected_hash,
         td::Slice context);
+
+    /// P0-A / P0-B owner: counts every code-integrity fault observed by
+    /// this CellEvmState instance (lazy-decode mismatch, cache-hit
+    /// poisoning, strict-load mismatch, write-side mismatch). `mutable`
+    /// because the `noexcept` silkworm State overrides — `read_code`
+    /// in particular — are logically `const` from the caller's view but
+    /// must record the fault before returning the empty `ByteView`.
+    mutable std::atomic<uint64_t> code_integrity_error_count_{0};
+
+    /// P1-C owner: counts every TrustedLazy first-touch shape failure
+    /// observed by this CellEvmState instance (malformed dict leaves,
+    /// VmError / VmVirtError / std::exception caught at the dictionary
+    /// access boundary). Same `mutable` rationale as the code-integrity
+    /// counter.
+    mutable std::atomic<uint64_t> state_shape_error_count_{0};
 };
 
 }  // namespace evm_workchain

@@ -6606,7 +6606,434 @@ void test_q1_hydration_emits_structured_error_on_code_root_mismatch() {
     reset_evm_hydration_corruption_for_test();
 }
 
+// =============================================================================
+// W8-A consensus fail-closed regression tests (P0-A + P0-B + P1-C)
+//
+// These tests pin the contract that the compute phase fails closed
+// (cp.accepted = false, sk_bad_state, cp.new_data unchanged) whenever
+// the underlying CellEvmState surfaces a code-integrity or
+// state-shape fault during a consensus run. Each test builds a
+// deliberately-corrupt account_data v6 envelope, drives
+// run_evm_compute_phase_snapshot once with a signed user tx, and
+// asserts the per-state counters recorded the fault.
+// =============================================================================
 
+namespace {
+
+// Wrap a state_root cell into a v6 cp.new_data envelope with the
+// declared native_state_commitment matching the cell hash. Used by
+// the W8-A tests below to feed the snapshot compute path a corrupt
+// state without tripping the envelope-level commitment cross-check.
+td::Ref<vm::Cell> w8a_wrap_state_root_v6(td::Ref<vm::Cell> state_root) {
+    auto commitment = compute_native_evm_state_commitment(state_root);
+    return encode_cp_new_data_v6(state_root, commitment,
+                                 /*rpc_cache_root=*/{},
+                                 /*block_hashes_root=*/{});
+}
+
+// Wrap the raw signed-tx RLP into a body cell that
+// `extract_evm_payload` accepts.
+td::Ref<vm::Cell> w8a_make_body_cell_from_rlp(const silkworm::Bytes& raw) {
+    return encode_evm_bytecode(td::Slice{
+        reinterpret_cast<const char*>(raw.data()), raw.size()});
+}
+
+// Build a state cell whose account dictionary leaf wraps:
+//   `target -> EvmAccountData{acct, code_root=encode(code_for_chain)}`
+// (for code-corruption tests). `target_acct.code_hash` advertises the
+// hash of `code_for_chain_advertised` while the embedded code chain
+// stores `code_for_chain_actual` — the W8-A read_code lazy decode
+// then bumps the per-state code_integrity counter on first touch.
+struct W8aCorruptCodeFixture {
+    td::Ref<vm::Cell> state_root;
+    silkworm::Account funded_sender_acct;
+    evmc::address funded_sender;
+};
+
+W8aCorruptCodeFixture w8a_make_corrupt_code_state(
+    const evmc::address& target_addr,
+    const silkworm::Account& target_acct,
+    const Bytes& code_for_chain_actual,
+    uint32_t sender_seed,
+    const intx::uint256& sender_balance,
+    uint64_t sender_nonce) {
+    auto code_chain = encode_evm_bytecode(td::Slice{
+        reinterpret_cast<const char*>(code_for_chain_actual.data()),
+        code_for_chain_actual.size()});
+    auto data_cell = encode_evm_account_data(
+        target_acct, /*storage_root=*/{}, code_chain);
+    vm::CellBuilder leaf_cb;
+    leaf_cb.store_ref(data_cell);
+
+    vm::Dictionary dict(256);
+    unsigned char tk[32];
+    address_to_key(target_addr, tk);
+    CHECK(dict.set_builder(td::ConstBitPtr{tk}, 256, leaf_cb));
+
+    // Funded sender so the user tx passes prevalidation cleanly.
+    W8aCorruptCodeFixture out;
+    out.funded_sender = address_from_privkey_seed(sender_seed);
+    out.funded_sender_acct.balance = sender_balance;
+    out.funded_sender_acct.nonce = sender_nonce;
+    auto sender_data = encode_evm_account_data(
+        out.funded_sender_acct, /*storage_root=*/{}, /*code_root=*/{});
+    vm::CellBuilder sender_cb;
+    sender_cb.store_ref(sender_data);
+    unsigned char sk[32];
+    address_to_key(out.funded_sender, sk);
+    CHECK(dict.set_builder(td::ConstBitPtr{sk}, 256, sender_cb));
+
+    out.state_root = dict.get_root_cell();
+    CHECK(out.state_root.not_null());
+    return out;
+}
+
+// Build a state cell whose account dictionary contains a malformed
+// leaf for `target_addr`. The leaf has the wrong shape (1 bit + 1 ref
+// instead of 0 bits + 1 ref), which makes `lookup_account_data_cell`
+// reject it and bump the per-state state_shape counter.
+struct W8aMalformedDictFixture {
+    td::Ref<vm::Cell> state_root;
+    silkworm::Account funded_sender_acct;
+    evmc::address funded_sender;
+};
+
+W8aMalformedDictFixture w8a_make_malformed_dict_state(
+    const evmc::address& target_addr,
+    uint32_t sender_seed,
+    const intx::uint256& sender_balance,
+    uint64_t sender_nonce) {
+    vm::Dictionary dict(256);
+
+    // Malformed leaf: store one extra zero bit before the ref so the
+    // lookup helpers see (size=1, refs=1) instead of the canonical
+    // (size=0, refs=1). This is exactly the "wrong shape" pattern
+    // P1-C calls out — TrustedLazy succeeds, but first-touch reads
+    // must fail closed.
+    auto data_cell = encode_evm_account_data(silkworm::Account{},
+                                              /*storage_root=*/{},
+                                              /*code_root=*/{});
+    vm::CellBuilder leaf_cb;
+    leaf_cb.store_long(0, 1);
+    leaf_cb.store_ref(data_cell);
+    unsigned char tk[32];
+    address_to_key(target_addr, tk);
+    CHECK(dict.set_builder(td::ConstBitPtr{tk}, 256, leaf_cb));
+
+    W8aMalformedDictFixture out;
+    out.funded_sender = address_from_privkey_seed(sender_seed);
+    out.funded_sender_acct.balance = sender_balance;
+    out.funded_sender_acct.nonce = sender_nonce;
+    auto sender_data = encode_evm_account_data(
+        out.funded_sender_acct, /*storage_root=*/{}, /*code_root=*/{});
+    vm::CellBuilder sender_cb;
+    sender_cb.store_ref(sender_data);
+    unsigned char sk[32];
+    address_to_key(out.funded_sender, sk);
+    CHECK(dict.set_builder(td::ConstBitPtr{sk}, 256, sender_cb));
+
+    out.state_root = dict.get_root_cell();
+    CHECK(out.state_root.not_null());
+    return out;
+}
+
+// Drive run_evm_compute_phase_snapshot once with a signed legacy
+// transfer to `recipient`; returns the (cp, fx) pair + the captured
+// per-state counter deltas (snapshotted directly from the local
+// CellEvmState built inside compute-phase via the rollback log —
+// which is impossible to retrieve from outside, so the test instead
+// reasons on cp.accepted / cp.skip_reason / cp.new_data).
+struct W8aComputeOutcome {
+    bool ok{false};
+    bool accepted{false};
+    int skip_reason{0};
+    td::Ref<vm::Cell> new_data;
+    std::shared_ptr<EvmBlockSideEffects> fx;
+    std::string vm_log;
+};
+
+W8aComputeOutcome w8a_drive_compute_once(
+    td::Ref<vm::Cell> account_data,
+    const silkworm::Bytes& signed_tx_rlp,
+    uint64_t block_seqno = 1,
+    uint64_t timestamp = 1700000000ULL,
+    uint64_t gas_limit = 1'000'000) {
+    auto body_cell = w8a_make_body_cell_from_rlp(signed_tx_rlp);
+    auto body_cs = vm::load_cell_slice(body_cell);
+    block::ComputePhase cp{};
+    uint8_t rand_seed[32] = {};
+    uint8_t parent_block_hash[32] = {};
+    bool ok = run_evm_compute_phase_snapshot(
+        cp, std::move(account_data), body_cs, gas_limit,
+        block_seqno, timestamp, rand_seed, parent_block_hash);
+    return W8aComputeOutcome{ok, cp.accepted, cp.skip_reason, cp.new_data,
+                              cp.evm_side_effects, cp.vm_log};
+}
+
+}  // namespace
+
+// W8-A regression #1: corrupt code_root on an account that the user tx
+// CALLs must fail-closed in compute phase (P0-A).
+void test_corrupt_code_root_user_tx_fails_closed() {
+    printf("=== test_corrupt_code_root_user_tx_fails_closed ===\n");
+
+    evmc::address target_addr = hex_to_addr(
+        "0x0000000000000000000000000000000000000a01");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.nonce = 1;
+    corrupt_acct.balance = intx::uint256{0};
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+
+    constexpr uint32_t kSenderSeed = 0xA110CE01;
+    intx::uint256 sender_balance{1};
+    for (int i = 0; i < 18; ++i) sender_balance *= intx::uint256{10};
+
+    auto fixture = w8a_make_corrupt_code_state(
+        target_addr, corrupt_acct, code_B,
+        kSenderSeed, sender_balance, /*sender_nonce=*/0);
+    auto account_data = w8a_wrap_state_root_v6(fixture.state_root);
+
+    auto signed_tx = make_signed_raw_transfer(
+        kSenderSeed, /*nonce=*/0, target_addr,
+        /*value=*/intx::uint256{1});
+    CHECK(signed_tx.has_value());
+    auto outcome = w8a_drive_compute_once(account_data, signed_tx->raw_rlp);
+
+    bool returned = outcome.ok;
+    bool not_accepted = !outcome.accepted;
+    bool sk_bad = outcome.skip_reason ==
+                  static_cast<int>(block::ComputePhase::sk_bad_state);
+    bool no_new_data = outcome.new_data.is_null();
+    bool log_mentions_corrupt =
+        outcome.vm_log.find("corrupt EVM code root") != std::string::npos;
+
+    printf("  compute returned:                       %s\n",
+           returned ? "OK" : "FAILED");
+    printf("  cp.accepted == false:                   %s\n",
+           not_accepted ? "OK" : "FAILED");
+    printf("  cp.skip_reason == sk_bad_state:         %s\n",
+           sk_bad ? "OK" : "FAILED");
+    printf("  cp.new_data null (state rolled back):   %s\n",
+           no_new_data ? "OK" : "FAILED");
+    printf("  vm_log mentions 'corrupt EVM code root':%s\n",
+           log_mentions_corrupt ? "OK" : "FAILED");
+
+    bool pass = returned && not_accepted && sk_bad && no_new_data &&
+                log_mentions_corrupt;
+    if (!pass) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", pass ? "PASSED" : "FAILED");
+}
+
+// W8-A regression #2: corrupt EIP-4788 predeploy code_root must
+// fail-closed at the system-tx boundary (P0-A applied to system txs).
+void test_corrupt_predeploy_eip4788_fails_closed() {
+    printf("=== test_corrupt_predeploy_eip4788_fails_closed ===\n");
+
+    const evmc::address beacon_addr = silkworm::protocol::kBeaconRootsAddress;
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_predeploy{};
+    corrupt_predeploy.nonce = 1;
+    corrupt_predeploy.balance = intx::uint256{0};
+    std::memcpy(corrupt_predeploy.code_hash.bytes, kh_A.bytes, 32);
+
+    constexpr uint32_t kSenderSeed = 0xA110CE02;
+    intx::uint256 sender_balance{1};
+    for (int i = 0; i < 18; ++i) sender_balance *= intx::uint256{10};
+
+    auto fixture = w8a_make_corrupt_code_state(
+        beacon_addr, corrupt_predeploy, code_B,
+        kSenderSeed, sender_balance, /*sender_nonce=*/0);
+    auto account_data = w8a_wrap_state_root_v6(fixture.state_root);
+
+    evmc::address recipient{};
+    recipient.bytes[19] = 0x99;
+    auto signed_tx = make_signed_raw_transfer(
+        kSenderSeed, /*nonce=*/0, recipient,
+        /*value=*/intx::uint256{1});
+    CHECK(signed_tx.has_value());
+    auto outcome = w8a_drive_compute_once(account_data, signed_tx->raw_rlp);
+
+    bool returned = outcome.ok;
+    bool not_accepted = !outcome.accepted;
+    bool sk_bad = outcome.skip_reason ==
+                  static_cast<int>(block::ComputePhase::sk_bad_state);
+    bool no_new_data = outcome.new_data.is_null();
+    // Either system-tx-boundary rejection or final-serialize boundary
+    // — both are valid per the audit; we only require the message to
+    // identify a code-root corruption.
+    bool log_mentions_corrupt =
+        outcome.vm_log.find("corrupt EVM code root") != std::string::npos;
+
+    printf("  compute returned:                          %s\n",
+           returned ? "OK" : "FAILED");
+    printf("  cp.accepted == false:                      %s\n",
+           not_accepted ? "OK" : "FAILED");
+    printf("  cp.skip_reason == sk_bad_state:            %s\n",
+           sk_bad ? "OK" : "FAILED");
+    printf("  cp.new_data null:                          %s\n",
+           no_new_data ? "OK" : "FAILED");
+    printf("  vm_log mentions 'corrupt EVM code root':   %s\n",
+           log_mentions_corrupt ? "OK" : "FAILED");
+    printf("  vm_log: %s\n", outcome.vm_log.c_str());
+
+    bool pass = returned && not_accepted && sk_bad && no_new_data &&
+                log_mentions_corrupt;
+    if (!pass) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", pass ? "PASSED" : "FAILED");
+}
+
+// W8-A regression #3: update_account_code mismatch must record a
+// per-state code_integrity error and a subsequent compute-phase tx
+// that touches that account must fail-closed (P0-B).
+void test_update_account_code_mismatch_marks_corrupt() {
+    printf("=== test_update_account_code_mismatch_marks_corrupt ===\n");
+
+    evmc::address target_addr = hex_to_addr(
+        "0x0000000000000000000000000000000000000a02");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    evmc::bytes32 code_hash_A{};
+    std::memcpy(code_hash_A.bytes, kh_A.bytes, 32);
+
+    silkworm::Account acct{};
+    acct.balance = intx::uint256{0};
+    acct.nonce = 1;
+    std::memcpy(acct.code_hash.bytes, kh_A.bytes, 32);
+
+    CellEvmState cs;
+    cs.update_account(target_addr, std::nullopt, acct);
+    uint64_t before = cs.code_integrity_error_count();
+    // Mismatched hash + bytes — must record the fault and not persist.
+    cs.update_account_code(target_addr, /*incarnation=*/0, code_hash_A,
+                            silkworm::ByteView{code_B.data(), code_B.size()});
+    uint64_t after = cs.code_integrity_error_count();
+    bool counter_advanced = after == before + 1;
+
+    printf("  per-state code_integrity_error_count++:   %s (delta=%llu)\n",
+           counter_advanced ? "OK" : "FAILED",
+           static_cast<unsigned long long>(after - before));
+
+    // The compute-phase test side. Use a fresh fixture that has
+    // sender + the target with the code mismatch already wired in
+    // the state cell (mirrors what update_account_code would have
+    // done if the upstream caller had bypassed the check).
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.balance = intx::uint256{0};
+    corrupt_acct.nonce = 1;
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+
+    constexpr uint32_t kSenderSeed = 0xA110CE03;
+    intx::uint256 sender_balance{1};
+    for (int i = 0; i < 18; ++i) sender_balance *= intx::uint256{10};
+    auto fixture = w8a_make_corrupt_code_state(
+        target_addr, corrupt_acct, code_B,
+        kSenderSeed, sender_balance, /*sender_nonce=*/0);
+    auto account_data = w8a_wrap_state_root_v6(fixture.state_root);
+    auto signed_tx = make_signed_raw_transfer(
+        kSenderSeed, /*nonce=*/0, target_addr,
+        /*value=*/intx::uint256{1});
+    CHECK(signed_tx.has_value());
+    auto outcome = w8a_drive_compute_once(account_data, signed_tx->raw_rlp);
+
+    bool tx_failed_closed = outcome.ok && !outcome.accepted &&
+                             outcome.skip_reason ==
+                                 static_cast<int>(block::ComputePhase::sk_bad_state) &&
+                             outcome.new_data.is_null();
+    printf("  compute-phase fails closed on touched acct:%s\n",
+           tx_failed_closed ? "OK" : "FAILED");
+
+    bool pass = counter_advanced && tx_failed_closed;
+    if (!pass) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", pass ? "PASSED" : "FAILED");
+}
+
+// W8-A regression #4: malformed account dict leaf — TrustedLazy load
+// succeeds, but a first-touch read of the malformed account in the
+// compute phase must fail closed via state_shape_error_count (P1-C).
+void test_trusted_lazy_first_touch_malformed_dict_fails_closed() {
+    printf("=== test_trusted_lazy_first_touch_malformed_dict_fails_closed ===\n");
+
+    evmc::address target_addr = hex_to_addr(
+        "0x0000000000000000000000000000000000000a03");
+    constexpr uint32_t kSenderSeed = 0xA110CE04;
+    intx::uint256 sender_balance{1};
+    for (int i = 0; i < 18; ++i) sender_balance *= intx::uint256{10};
+
+    auto fixture = w8a_make_malformed_dict_state(
+        target_addr, kSenderSeed, sender_balance, /*sender_nonce=*/0);
+
+    // Sanity: TrustedLazy load succeeds (root is non-special, dict is
+    // bound — the malformed leaf only surfaces on first-touch read).
+    {
+        CellEvmState probe;
+        bool load_ok = probe.load_from_cell(fixture.state_root,
+                                             CellStateLoadMode::TrustedLazy);
+        printf("  TrustedLazy load succeeded:                %s\n",
+               load_ok ? "OK" : "FAILED");
+        if (!load_ok) {
+            g_test_failures.fetch_add(1);
+            printf("  FAILED\n\n");
+            return;
+        }
+        // First-touch read on the malformed account must bump the
+        // per-state shape counter.
+        uint64_t before = probe.state_shape_error_count();
+        auto acct = probe.read_account(target_addr);
+        uint64_t after = probe.state_shape_error_count();
+        bool absent = !acct.has_value();
+        bool counter_advanced = after > before;
+        printf("  read_account returns absent:               %s\n",
+               absent ? "OK" : "FAILED");
+        printf("  per-state state_shape_error_count++:       %s (delta=%llu)\n",
+               counter_advanced ? "OK" : "FAILED",
+               static_cast<unsigned long long>(after - before));
+        if (!(absent && counter_advanced)) {
+            g_test_failures.fetch_add(1);
+            printf("  FAILED\n\n");
+            return;
+        }
+    }
+
+    // Now drive the compute phase: a tx that targets the malformed
+    // account must fail-closed via the state_shape gate.
+    auto account_data = w8a_wrap_state_root_v6(fixture.state_root);
+    auto signed_tx = make_signed_raw_transfer(
+        kSenderSeed, /*nonce=*/0, target_addr,
+        /*value=*/intx::uint256{1});
+    CHECK(signed_tx.has_value());
+    auto outcome = w8a_drive_compute_once(account_data, signed_tx->raw_rlp);
+
+    bool returned = outcome.ok;
+    bool not_accepted = !outcome.accepted;
+    bool sk_bad = outcome.skip_reason ==
+                  static_cast<int>(block::ComputePhase::sk_bad_state);
+    bool no_new_data = outcome.new_data.is_null();
+    bool log_mentions_shape =
+        outcome.vm_log.find("corrupt EVM native state shape") != std::string::npos;
+
+    printf("  compute returned:                          %s\n",
+           returned ? "OK" : "FAILED");
+    printf("  cp.accepted == false:                      %s\n",
+           not_accepted ? "OK" : "FAILED");
+    printf("  cp.skip_reason == sk_bad_state:            %s\n",
+           sk_bad ? "OK" : "FAILED");
+    printf("  cp.new_data null:                          %s\n",
+           no_new_data ? "OK" : "FAILED");
+    printf("  vm_log mentions 'native state shape':      %s\n",
+           log_mentions_shape ? "OK" : "FAILED");
+    printf("  vm_log: %s\n", outcome.vm_log.c_str());
+
+    bool pass = returned && not_accepted && sk_bad && no_new_data &&
+                log_mentions_shape;
+    if (!pass) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", pass ? "PASSED" : "FAILED");
+}
 
 // =============================================================================
 // No-MPT v6 invariant tests (plan §14.3)
@@ -7053,6 +7480,14 @@ int main() {
     // flag + LOG(ERROR), so the operator / monitoring stack can drive
     // a peer-state resync or manual repair.
     test_q1_hydration_emits_structured_error_on_code_root_mismatch();
+
+    // W8-A regression — consensus compute path must fail-closed when
+    // the underlying CellEvmState surfaces a code-integrity (P0-A /
+    // P0-B) or TrustedLazy state-shape (P1-C) fault during a run.
+    test_corrupt_code_root_user_tx_fails_closed();
+    test_corrupt_predeploy_eip4788_fails_closed();
+    test_update_account_code_mismatch_marks_corrupt();
+    test_trusted_lazy_first_touch_malformed_dict_fails_closed();
 
     // No-MPT v6 invariant tests (plan §14.3).
     test_cp_new_data_v6_roundtrip();

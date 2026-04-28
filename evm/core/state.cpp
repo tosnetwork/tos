@@ -375,4 +375,42 @@ uint64_t EvmState::code_root_hash_mismatch_count() const noexcept {
     return evm_workchain::code_root_hash_mismatch_count();
 }
 
+// ---------------------------------------------------------------------------
+// W8-A P0-A / P0-B / P1-C forwarders
+// ---------------------------------------------------------------------------
+//
+// Production hot path: compute-phase wraps the EvmState backend in a
+// CellEvmState; tests sometimes use silkworm::InMemoryState. The
+// forwarders do a `dynamic_cast` and return 0 for non-cell backends
+// so the snapshot/check pattern in compute-phase is a safe no-op when
+// running against the in-memory test state. Each accessor exists in
+// both a locked (caller already holds state.mutex()) and an unlocked
+// (helper takes the shared lock internally) variant so the compute
+// path can use whichever is appropriate without re-acquiring a held
+// lock or skipping a needed acquisition.
+
+uint64_t EvmState::code_integrity_error_count_locked() const noexcept {
+    if (auto* cs = dynamic_cast<const CellEvmState*>(backend_.get())) {
+        return cs->code_integrity_error_count();
+    }
+    return 0;
+}
+
+uint64_t EvmState::code_integrity_error_count() const noexcept {
+    std::shared_lock lock(mutex_);
+    return code_integrity_error_count_locked();
+}
+
+uint64_t EvmState::state_shape_error_count_locked() const noexcept {
+    if (auto* cs = dynamic_cast<const CellEvmState*>(backend_.get())) {
+        return cs->state_shape_error_count();
+    }
+    return 0;
+}
+
+uint64_t EvmState::state_shape_error_count() const noexcept {
+    std::shared_lock lock(mutex_);
+    return state_shape_error_count_locked();
+}
+
 }  // namespace evm_workchain

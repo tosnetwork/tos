@@ -612,6 +612,15 @@ void interpret_uno_zerostate_accounts_cell(vm::Stack& stack) {
 // `translate-genesis.py` to convert a Hive `/genesis.json` file into a
 // zerostate matching the spec's pre-state.
 //
+// Genesis policy: v6 native-only. The C++ overload this forwards to
+// (`evm_workchain::build_evm_zerostate_accounts_cell(accounts)`) routes
+// through `encode_cp_new_data_v6` and produces a wc=1 native cell-state
+// genesis. v5 / Ethereum-MPT-compat genesis is NOT supported on tos18+
+// — there is no v5->v6 migration path. Any node that boots against a
+// pre-existing v5 cp.new_data cell will refuse to hydrate (see the v5
+// reject branch in `evm/core/cell-codec.cpp::decode_cp_new_data` and
+// the startup fail-closed wired in `validator-engine.cpp`).
+//
 // Stack: ( T -- accounts_cell )
 //
 // Where T is a tuple whose elements are 5-tuples (one per allocation):

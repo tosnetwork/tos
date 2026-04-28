@@ -51,18 +51,19 @@ target_compile_options(evm_workchain PRIVATE
 # the dedicated test library `evm_workchain_test` (below) re-builds the same
 # sources with the macro defined and is the only target the unit tests link.
 option(TOS_EVM_TEST_INSTRUMENTATION
-       "Enable EVM lazy-load + MPT walk counters used by tests" OFF)
+       "Enable EVM lazy native state load counters used by tests" OFF)
 if(TOS_EVM_TEST_INSTRUMENTATION)
   target_compile_definitions(evm_workchain PUBLIC TOS_EVM_TEST_INSTRUMENTATION=1)
 endif()
 
 # Optional expensive EVM compute-phase invariant check. When enabled, every
-# EVM tx re-loads the persisted cell state + trie witness and re-derives the
-# Ethereum stateRoot to verify the witness is internally consistent. This
-# scales with witness size and reintroduces full StrictRecursive validation
-# per tx, so it MUST be opt-in. Default OFF: production / public testnet
-# builds (with or without NDEBUG) never pay this cost. Enable locally with
-# `-DTOS_EVM_STRICT_COMPUTE_INVARIANTS=ON` while debugging witness drift.
+# EVM tx re-loads the persisted native cell state and re-derives the
+# TOS-native EVM state commitment to verify the cell tree is internally
+# consistent. This scales with state size and reintroduces full
+# StrictRecursive validation per tx, so it MUST be opt-in. Default OFF:
+# production / public testnet builds (with or without NDEBUG) never pay
+# this cost. Enable locally with `-DTOS_EVM_STRICT_COMPUTE_INVARIANTS=ON`
+# while debugging native cell state drift.
 option(TOS_EVM_STRICT_COMPUTE_INVARIANTS
        "Enable expensive EVM compute invariant checks" OFF)
 if(TOS_EVM_STRICT_COMPUTE_INVARIANTS)
@@ -84,8 +85,8 @@ target_link_libraries(evm_workchain
 )
 
 # Dedicated test-instrumented build of the same EVM sources. The unit tests
-# link against this library so the lazy-load / MPT-walk counters defined in
-# `evm/core/cell-state.{h,cpp}` are available without forcing every
+# link against this library so the lazy native state load counters defined
+# in `evm/core/cell-state.{h,cpp}` are available without forcing every
 # production-side consumer of `evm_workchain` to ship them. Compile flags
 # and link dependencies must mirror `evm_workchain` exactly so behaviour is
 # identical apart from the instrumentation macro.

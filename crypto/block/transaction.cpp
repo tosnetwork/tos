@@ -1955,11 +1955,11 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // Gas fee accounting for EVM execution
     cp.gas_fees = cfg.compute_gas_price(cp.gas_used);
 
-    // Embed EVM stateRoot in TOS account state.
-    // cp.new_data contains a cell with the 32-byte EVM stateRoot.
-    // Propagate to Transaction::new_data so compute_state() packs it
-    // into the account's StateInit data cell, making it part of the
-    // ShardState cell tree and thus the block state_hash.
+    // Embed TOS-native EVM state commitment in TOS account state.
+    // cp.new_data contains a cell with the 32-byte TOS-native EVM state
+    // commitment. Propagate to Transaction::new_data so compute_state()
+    // packs it into the account's StateInit data cell, making it part of
+    // the ShardState cell tree and thus the block state_hash.
     if (cp.accepted && cp.new_data.not_null()) {
       new_data = cp.new_data;
       // Activate the account only when this EVM transaction is accepted.

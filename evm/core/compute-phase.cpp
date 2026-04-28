@@ -50,6 +50,25 @@ void reject_compute_phase(block::ComputePhase& cp,
     cp.vm_log = std::move(vm_log);
 }
 
+// W8-A: per-state integrity counter snapshot. Captures the
+// (code_integrity, state_shape) pair atomically (under the same shared
+// lock both forwarders take internally) so the compute-phase
+// snapshot/check pattern observes a consistent baseline. Compared
+// after each execution boundary: any positive delta means the
+// underlying CellEvmState detected a code-root mismatch or a
+// TrustedLazy first-touch state-shape fault during the operation.
+struct StateIntegritySnapshot {
+    uint64_t code_integrity{0};
+    uint64_t state_shape{0};
+
+    static StateIntegritySnapshot capture(const EvmState& state) noexcept {
+        StateIntegritySnapshot snap;
+        snap.code_integrity = state.code_integrity_error_count();
+        snap.state_shape = state.state_shape_error_count();
+        return snap;
+    }
+};
+
 class CellStateRollbackSnapshot {
   public:
     bool capture(EvmState& state) {
@@ -89,6 +108,47 @@ class CellStateRollbackSnapshot {
     td::Ref<vm::Cell> block_hashes_root_;
     bool captured_{false};
 };
+
+// W8-A P0-A / P0-B / P1-C: consensus fail-closed gate. Compares the
+// current per-state integrity counters against `before`; if either
+// counter advanced, restores the rollback snapshot (so cp.new_data
+// stays untouched), maps the compute phase to `sk_bad_state` with a
+// deterministic vm_log identifying the boundary at which the fault
+// surfaced, and returns `true` so the caller can early-return
+// `nullptr`. Returns `false` when both counters are unchanged — the
+// caller proceeds normally.
+//
+// `where` is a static literal naming the boundary ("EIP-4788 system
+// transaction", "user transaction execution", "post-execute serialize",
+// etc.). The returned vm_log is consumed verbatim by validator /
+// collator log streams, so the message is meant to be human-readable
+// and forensically useful.
+static bool reject_if_integrity_changed(EvmState& state,
+                                         const StateIntegritySnapshot& before,
+                                         block::ComputePhase& cp,
+                                         uint64_t gas_limit,
+                                         CellStateRollbackSnapshot& rollback,
+                                         const char* where) {
+    auto after = StateIntegritySnapshot::capture(state);
+    if (after.code_integrity == before.code_integrity &&
+        after.state_shape == before.state_shape) {
+        return false;
+    }
+    rollback.restore(state);
+    std::string reason;
+    if (after.code_integrity != before.code_integrity) {
+        reason = std::string("corrupt EVM code root detected during ") + where;
+    } else {
+        reason = std::string("corrupt EVM native state shape detected during ") + where;
+    }
+    LOG(WARNING) << "evm-workchain: consensus reject — " << reason
+                 << " (code_delta="
+                 << (after.code_integrity - before.code_integrity)
+                 << ", shape_delta="
+                 << (after.state_shape - before.state_shape) << ")";
+    reject_compute_phase(cp, gas_limit, reason);
+    return true;
+}
 
 // Helper that runs an EIP-4788 / EIP-2935 (or any future protocol-injected)
 // system transaction directly against the underlying state. Returns
@@ -272,6 +332,20 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         }
     }
 
+    // W8-A P0-A / P0-B / P1-C: capture the rollback snapshot and the
+    // per-state integrity baseline BEFORE any path that may touch the
+    // canonical root. The snapshot binds to the current account dict /
+    // block hashes root cells; the integrity baseline binds the
+    // (code_integrity, state_shape) counter pair so every subsequent
+    // boundary can detect a fault as a positive delta against the same
+    // reference. Both are taken before cheap prevalidation runs so that
+    // a TrustedLazy first-touch fault inside `read_account` (executed
+    // by `prevalidate_evm_transaction_admission`) is still visible to
+    // the gate below.
+    CellStateRollbackSnapshot rollback_snapshot;
+    rollback_snapshot.capture(state);
+    auto integrity_baseline = StateIntegritySnapshot::capture(state);
+
     // tos8 audit: reject cheap admission failures before EIP-4788/EIP-2935
     // system calls and before the bounded full-state budget scan. Wrong
     // chain-id, oversized gas limit, bad nonce, and insufficient-balance
@@ -280,12 +354,23 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             decoded.txn, block, state, config)) {
         LOG(WARNING) << "evm-workchain: tx rejected before system calls: "
                      << *prevalidation_error;
+        // No state mutation happens in prevalidation other than possibly
+        // bumping the per-state shape/code counters; the rollback is
+        // still safe even if the prevalidate itself mutated nothing.
         reject_compute_phase(cp, gas_limit, *prevalidation_error);
         return nullptr;
     }
 
-    CellStateRollbackSnapshot rollback_snapshot;
-    rollback_snapshot.capture(state);
+    // W8-A: gate after cheap prevalidation. Catches integrity faults
+    // surfaced by `prevalidate_evm_transaction_admission` (which calls
+    // `read_account` / `get_code_hash` / `get_balance` on the sender
+    // and recipient — every one of those is a TrustedLazy first-touch
+    // read).
+    if (reject_if_integrity_changed(state, integrity_baseline,
+                                     cp, gas_limit, rollback_snapshot,
+                                     "cheap prevalidation")) {
+        return nullptr;
+    }
 
     // --- Step 3b: EIP-4788 / EIP-2935 system calls (Cancun+ / Pectra+) ---
     //
@@ -294,6 +379,14 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     // executable or the entire block-tx attempt is invalid). The
     // legacy "continuing — predeploy may be missing" graceful-continue
     // path is GONE.
+    //
+    // W8-A: each system tx is wrapped in a snapshot/check pair. A
+    // corrupt EIP-4788 / EIP-2935 predeploy `code_root` would
+    // otherwise execute as empty bytecode (silkworm reads "no code"
+    // and the system call succeeds vacuously) and the rest of the
+    // compute phase would commit anyway. Catching the per-state
+    // counter delta around each system tx maps the corruption to
+    // `sk_bad_state` with the rollback snapshot restored.
     {
         const auto rev = config.revision(block_seqno, timestamp);
         if (rev >= EVMC_CANCUN) {
@@ -303,6 +396,7 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             sys_txn.to = silkworm::protocol::kBeaconRootsAddress;
             sys_txn.data = silkworm::Bytes(32, 0);
             sys_txn.set_sender(silkworm::protocol::kSystemAddress);
+            auto integrity_before_4788 = StateIntegritySnapshot::capture(state);
             auto st = execute_system_transaction(
                 state, block, config, sys_txn, block_seqno, "EIP-4788");
             if (st.is_error()) {
@@ -311,6 +405,11 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
                              << block_seqno << ": " << st.message();
                 rollback_snapshot.restore(state);
                 reject_compute_phase(cp, gas_limit, st.message().str());
+                return nullptr;
+            }
+            if (reject_if_integrity_changed(state, integrity_before_4788,
+                                             cp, gas_limit, rollback_snapshot,
+                                             "EIP-4788 system transaction")) {
                 return nullptr;
             }
         }
@@ -328,6 +427,7 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             sys_txn.data = silkworm::Bytes{
                 silkworm::ByteView{block.header.parent_hash.bytes, 32}};
             sys_txn.set_sender(silkworm::protocol::kSystemAddress);
+            auto integrity_before_2935 = StateIntegritySnapshot::capture(state);
             auto st = execute_system_transaction(
                 state, block, config, sys_txn, block_seqno, "EIP-2935");
             if (st.is_error()) {
@@ -336,6 +436,11 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
                              << block_seqno << ": " << st.message();
                 rollback_snapshot.restore(state);
                 reject_compute_phase(cp, gas_limit, st.message().str());
+                return nullptr;
+            }
+            if (reject_if_integrity_changed(state, integrity_before_2935,
+                                             cp, gas_limit, rollback_snapshot,
+                                             "EIP-2935 system transaction")) {
                 return nullptr;
             }
         }
@@ -349,6 +454,7 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     }
 
     // --- Step 4: Execute the transaction against the local state ---
+    auto integrity_before_user_tx = StateIntegritySnapshot::capture(state);
     auto exec_result = execute_evm_transaction(decoded.txn, block, state, config);
 
     // Audit #2 (2026-04-26): pre-validation failures (bad nonce, insufficient
@@ -365,6 +471,20 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         rollback_snapshot.restore(state);
         reject_compute_phase(cp, gas_limit, exec_result.error_message);
         return nullptr;  // No side effects, cp.new_data stays untouched
+    }
+
+    // W8-A: catch any code-integrity / state-shape fault triggered by
+    // the user tx. silkworm's IntraBlockState reads the underlying
+    // CellEvmState lazily; a corrupt code_root encountered during
+    // CALL / CODECOPY / EXTCODESIZE would surface as an empty
+    // ByteView and bump the per-state counter. Catching it here maps
+    // the run to `sk_bad_state` with the pre-tx rollback restored, so
+    // `cp.new_data` is never written from a state that observed
+    // corruption.
+    if (reject_if_integrity_changed(state, integrity_before_user_tx,
+                                     cp, gas_limit, rollback_snapshot,
+                                     "user transaction execution")) {
+        return nullptr;
     }
 
     auto fx = std::make_shared<EvmBlockSideEffects>();
@@ -540,6 +660,22 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             cs->canonize_block(block_seqno, fx->block.hash);
             block_hashes_cell = cs->serialize_block_hashes_to_cell();
         }
+    }
+
+    // W8-A: final gate before encoding `cp.new_data`. The post-execute
+    // serialize step calls `serialize_to_cell()` and the block-hash
+    // canonize / serialize helpers; while none of those should
+    // observe a corruption that wasn't already caught above, taking
+    // a final snapshot/check guards against any future code that
+    // reads from the state during the side-effect aggregation phase.
+    // We compare against `integrity_baseline` (the pre-prevalidation
+    // baseline) so a non-zero delta from any phase aborts with a
+    // deterministic vm_log instead of letting a corrupt commitment
+    // ship in `cp.new_data`.
+    if (reject_if_integrity_changed(state, integrity_baseline,
+                                     cp, gas_limit, rollback_snapshot,
+                                     "post-execute serialize")) {
+        return nullptr;
     }
 
     // --- Step 5g: Encode cp.new_data v6 (native-only) ---

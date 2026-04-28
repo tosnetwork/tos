@@ -2335,6 +2335,43 @@ void ValidatorEngine::start_validator() {
                                                       rldp_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
 
   evm_workchain::init_evm_workchain(db_root_);
+
+  // tos18 fresh-genesis-only policy (P1-D): if EVM workchain initialisation
+  // attempted to hydrate from a persistent canonical state and that decode
+  // rejected at the cp.new_data envelope (most commonly because the on-disk
+  // cell carries the obsolete v5 / Ethereum-MPT-compat schema rather than
+  // the v6 native schema mandated by tos18+), refuse to start. There is no
+  // v5->v6 migration path: silently continuing with `evm_hydration_corrupted`
+  // set would let the node serve traffic against an empty / partial EVM
+  // state, which is unsafe. The validator-engine has no graceful "abort
+  // startup" pathway from this call site, so escalate to LOG(FATAL) — the
+  // logging layer aborts the process when the FATAL severity is emitted.
+  if (evm_workchain::evm_hydration_corrupted()) {
+    auto reason = evm_workchain::evm_hydration_failure_reason();
+    // The cell-codec v5 reject branch surfaces a "non-v6 version" sentinel
+    // through the hydration failure reason aggregated by init.cpp. Treat
+    // any non-v6 / envelope-rejected reason as a v5-or-pre-tos18 state and
+    // emit operator-actionable text. (Other strict-load failures — e.g.
+    // code-hash mismatch — also abort, but with their own reason text.)
+    if (reason.find("non-v6") != std::string::npos ||
+        reason.find("envelope rejected") != std::string::npos ||
+        reason.find("schema") != std::string::npos) {
+      LOG(FATAL) << "evm-workchain: refusing to start — v5 (Ethereum-MPT-compat) "
+                    "or otherwise-invalid cp.new_data envelope detected during "
+                    "startup hydration. tos18+ requires a fresh wc=1 v6 native "
+                    "EVM workchain genesis; there is no v5->v6 migration path. "
+                    "Operators must regenerate the EVM workchain genesis (see "
+                    "release notes). Hydration failure reason: "
+                 << reason;
+    } else {
+      LOG(FATAL) << "evm-workchain: refusing to start — canonical EVM state "
+                    "hydration failed and the corruption flag is sticky. The "
+                    "node must restart from a known-good wc=1 v6 native state "
+                    "snapshot. Hydration failure reason: "
+                 << reason;
+    }
+  }
+
   uno_workchain::init_uno_workchain(db_root_);
 
   if (json_rpc_addr_) {
@@ -6183,6 +6220,12 @@ int main(int argc, char *argv[]) {
     out = v;
     return td::Status::OK();
   };
+  // Phase A: every persistent-state CLI handler propagates the Status
+  // returned by configure_persistent_state_budgets. A rejected config
+  // (for example, attempting to enable the not-yet-implemented Phase B
+  // importer) now surfaces as a parse-options error and the node refuses
+  // to start, instead of being silently swallowed by the previous
+  // void-returning API.
   p.add_checked_option('\0', "persistent-state-download-cap",
                        "cumulative outstanding persistent-state download budget in bytes (default 16 GiB)",
                        [&](td::Slice arg) -> td::Status {
@@ -6190,8 +6233,7 @@ int main(int argc, char *argv[]) {
                          TRY_STATUS(parse_budget_bytes(arg, v));
                          auto cfg = tos::validator::fullnode::persistent_state_budget_config();
                          cfg.max_download_bytes = v;
-                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
-                         return td::Status::OK();
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
   p.add_checked_option('\0', "persistent-state-processing-cap",
                        "cumulative outstanding persistent-state processing budget in bytes (default 16 GiB)",
@@ -6200,9 +6242,21 @@ int main(int argc, char *argv[]) {
                          TRY_STATUS(parse_budget_bytes(arg, v));
                          auto cfg = tos::validator::fullnode::persistent_state_budget_config();
                          cfg.max_processing_bytes = v;
-                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
-                         return td::Status::OK();
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
+  // Tracks whether the operator has explicitly opted in to the configuration
+  // where max_single_file_bytes > max_returned_dag_bytes_per_parse (states
+  // that download successfully but fail closed at parse time). Without the
+  // override flag, raising the single-file cap above the returned-DAG cap is
+  // a configuration error and node startup fails fast — see the post-parse
+  // sanity check below.
+  bool persistent_state_oversize_ack = false;
+  p.add_option('\0', "persistent-state-allow-oversize-single-file",
+               "acknowledge that --persistent-state-single-file-cap may exceed "
+               "--persistent-state-max-returned-dag-bytes-per-parse; without this flag the "
+               "validator engine refuses to start when the two caps would let a state "
+               "download succeed but fail closed at parse time",
+               [&]() { persistent_state_oversize_ack = true; });
   p.add_checked_option('\0', "persistent-state-single-file-cap",
                        "per-state download cap in bytes (default 16 GiB)",
                        [&](td::Slice arg) -> td::Status {
@@ -6210,8 +6264,7 @@ int main(int argc, char *argv[]) {
                          TRY_STATUS(parse_budget_bytes(arg, v));
                          auto cfg = tos::validator::fullnode::persistent_state_budget_config();
                          cfg.max_single_file_bytes = v;
-                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
-                         return td::Status::OK();
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
   p.add_checked_option('\0', "persistent-state-resident-cap",
                        "per-parse peak resident memory cap in bytes for the streaming BoC importer "
@@ -6221,8 +6274,7 @@ int main(int argc, char *argv[]) {
                          TRY_STATUS(parse_budget_bytes(arg, v));
                          auto cfg = tos::validator::fullnode::persistent_state_budget_config();
                          cfg.max_resident_bytes_per_parse = v;
-                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
-                         return td::Status::OK();
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
   // H-02 short-term cap. Until the truly-streaming-into-CellDb importer
   // (returning an ExtCell hash-only root) ships, the OnDisk parse path
@@ -6238,8 +6290,7 @@ int main(int argc, char *argv[]) {
                          TRY_STATUS(parse_budget_bytes(arg, v));
                          auto cfg = tos::validator::fullnode::persistent_state_budget_config();
                          cfg.max_returned_dag_bytes_per_parse = v;
-                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
-                         return td::Status::OK();
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
   // H-03 cell-count cap forwarded to vm::StreamingBocImportOptions.
   p.add_checked_option('\0', "persistent-state-max-cells-per-parse",
@@ -6250,8 +6301,7 @@ int main(int argc, char *argv[]) {
                          TRY_STATUS(parse_budget_bytes(arg, v));
                          auto cfg = tos::validator::fullnode::persistent_state_budget_config();
                          cfg.max_cells_per_parse = v;
-                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
-                         return td::Status::OK();
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
   // H-03 scaffolding-bytes cap forwarded to vm::StreamingBocImportOptions.
   p.add_checked_option('\0', "persistent-state-max-scaffolding-bytes-per-parse",
@@ -6262,8 +6312,7 @@ int main(int argc, char *argv[]) {
                          TRY_STATUS(parse_budget_bytes(arg, v));
                          auto cfg = tos::validator::fullnode::persistent_state_budget_config();
                          cfg.max_scaffolding_bytes_per_parse = v;
-                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
-                         return td::Status::OK();
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
   // H-03 total-cell-bytes cap forwarded to vm::StreamingBocImportOptions.
   p.add_checked_option('\0', "persistent-state-max-total-cell-bytes-per-parse",
@@ -6274,8 +6323,7 @@ int main(int argc, char *argv[]) {
                          TRY_STATUS(parse_budget_bytes(arg, v));
                          auto cfg = tos::validator::fullnode::persistent_state_budget_config();
                          cfg.max_total_cell_bytes_per_parse = v;
-                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
-                         return td::Status::OK();
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
   auto S = p.run(argc, argv);
   if (S.is_error()) {
@@ -6321,11 +6369,34 @@ int main(int argc, char *argv[]) {
       LOG(WARNING) << "persistent-state: processing_cap < download_cap; states larger than processing_cap "
                       "will download but fail to import";
     }
-    if (!cfg.enable_true_cell_db_streaming_import &&
-        cfg.max_single_file_bytes > cfg.max_returned_dag_bytes_per_parse) {
-      LOG(WARNING) << "persistent-state: max_single_file_bytes > max_returned_dag_bytes_per_parse; "
-                      "states between these caps will download but fail closed at parse time until "
-                      "--enable-true-cell-db-streaming-import is supported";
+    // Phase A fail-fast sanity check. enable_true_cell_db_streaming_import is
+    // hard-blocked at the validator level, so this branch covers the realistic
+    // case of an operator who raised --persistent-state-single-file-cap above
+    // --persistent-state-max-returned-dag-bytes-per-parse. Without an explicit
+    // acknowledgement (--persistent-state-allow-oversize-single-file) the node
+    // refuses to start so the operator sees the misconfiguration immediately
+    // instead of after a multi-GiB download silently fails at parse time.
+    if (cfg.max_single_file_bytes > cfg.max_returned_dag_bytes_per_parse) {
+      if (persistent_state_oversize_ack) {
+        LOG(WARNING) << "persistent-state: max_single_file_bytes "
+                     << fmt_bytes(cfg.max_single_file_bytes)
+                     << " > max_returned_dag_bytes_per_parse "
+                     << fmt_bytes(cfg.max_returned_dag_bytes_per_parse)
+                     << "; operator acknowledged the parse-time fail-closed window via "
+                        "--persistent-state-allow-oversize-single-file. States between these "
+                        "caps will download but fail closed at parse time until Phase B ships.";
+      } else {
+        LOG(ERROR) << "persistent-state: max_single_file_bytes "
+                   << fmt_bytes(cfg.max_single_file_bytes)
+                   << " > max_returned_dag_bytes_per_parse "
+                   << fmt_bytes(cfg.max_returned_dag_bytes_per_parse)
+                   << "; refusing to start. States between these caps would download but fail "
+                      "closed at parse time. Either lower --persistent-state-single-file-cap, "
+                      "raise --persistent-state-max-returned-dag-bytes-per-parse (accepting "
+                      "the OOM risk), or pass --persistent-state-allow-oversize-single-file "
+                      "to acknowledge the gap.";
+        std::_Exit(2);
+      }
     }
   }
 
