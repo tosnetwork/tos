@@ -128,11 +128,13 @@ set(TOS_CRYPTO_SOURCE
   vm/bls.h)
 
 set(TOS_DB_SOURCE
+  vm/db/CellDbExtCell.cpp
   vm/db/DynamicBagOfCellsDb.cpp
   vm/db/DynamicBagOfCellsDbV2.cpp
   vm/db/CellStorage.cpp
   vm/db/TosDb.cpp
 
+  vm/db/CellDbExtCell.h
   vm/db/DynamicBagOfCellsDb.h
   vm/db/CellHashTable.h
   vm/db/CellStorage.h
