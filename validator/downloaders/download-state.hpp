@@ -200,8 +200,29 @@ class DownloadShardState : public td::actor::Actor {
   void checked_shard_state();
 
   void downloaded_split_state_header(fullnode::DownloadedPersistentState downloaded);
+  // tos27 P1-3: completion callback for the actor-local split-state-header
+  // streaming-import message. The OnDisk header parse now flows through
+  // `ValidatorManager::import_persistent_state_streaming` so it gets the
+  // same root-mismatch / commit-after-verify / GC-pause-lease guarantees
+  // as the unsplit-state path; this method receives the lazy
+  // ExtCell-backed root and proceeds with `get_effective_shards_from_header`
+  // exactly like the legacy local-sink path did.
+  void on_split_state_header_imported(fullnode::BudgetedStateFile file,
+                                      std::shared_ptr<fullnode::PersistentStateDownloadReservation> reservation,
+                                      std::shared_ptr<fullnode::PersistentStateProcessingReservation> processing,
+                                      td::Result<PersistentStateImportResult> r_result);
   void download_next_part_or_finish();
   void downloaded_state_part(fullnode::DownloadedPersistentState downloaded);
+  // tos27 P1-3: completion callback for the actor-local split-state-part
+  // streaming-import message. Same lifecycle as
+  // `on_split_state_header_imported` but for an individual split-state
+  // part: the lazy root is hash-checked against `parts_[idx].root_hash`,
+  // pushed into `stored_parts_`, and the tempfile flows into
+  // `store_persistent_state_file_gen` for archive durability.
+  void on_split_state_part_imported(size_t part_idx, fullnode::BudgetedStateFile file,
+                                    std::shared_ptr<fullnode::PersistentStateDownloadReservation> reservation,
+                                    std::shared_ptr<fullnode::PersistentStateProcessingReservation> processing,
+                                    td::Result<PersistentStateImportResult> r_result);
   void written_state_part_file();
   void saved_state_part_into_celldb(td::Ref<vm::DataCell> cell);
 
@@ -250,8 +271,8 @@ class DownloadShardState : public td::actor::Actor {
   // actor state. Held as a shared_ptr so completion lambdas can extend
   // its lifetime past `this` without copying the reservation bytes.
   std::shared_ptr<fullnode::PersistentStateProcessingReservation> state_processing_reservation_;
-  // tos27 P0-1: GC-pause lease taken out by CellDbIn on the streaming
-  // import success path and held by this actor across
+  // tos27 P0-1 / P1-3: GC-pause lease taken out by CellDbIn on the
+  // streaming-import success path and held by this actor across
   // `create_shard_state` -> `set_block_state`. Released exactly once
   // when `set_block_state` resolves successfully (in
   // `written_shard_state`). If the actor is destroyed before
@@ -263,6 +284,19 @@ class DownloadShardState : public td::actor::Actor {
   // default-constructible (empty before the import resolves) and
   // assign-from-empty-able (release path) without exposing the
   // lease's full type to users of the actor's public surface.
+  //
+  // Lease lifecycle for split-state imports (tos27 P1-3):
+  //   Each Phase B import (header + every part) issues its own lease.
+  //   We keep only the latest lease in this slot — when a new part's
+  //   lease arrives we drop the previous one. Earlier leases would
+  //   technically extend GC pause for a few extra milliseconds; the
+  //   importer's watchdog logs lingering leases so an operator can
+  //   observe the leak path. This trade follows the audit's
+  //   "easiest correct" recommendation: simpler than a vector-of-leases
+  //   release scheme and still bounded by per-part `store_block_state_part`
+  //   completion (which adds a canonical reference each part import).
+  //   Final release happens in `written_shard_state`, after the
+  //   merged `set_block_state` commits the canonical block-state root.
   std::unique_ptr<CellDbGcPauseLease> gc_lease_;
   td::Ref<ShardState> state_;
 

@@ -1110,12 +1110,21 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
     return;
   }
 
-  // OnDisk: streaming BoC deserialize → effective shards. Pass the
-  // tempfile straight into store_persistent_state_file_gen to avoid a
-  // heap BufferSlice of file size; the streaming importer further
-  // bounds peak resident memory at the configured per-parse cap so
-  // even a multi-GiB split-state header parses without mmap-resident
-  // peaks.
+  // tos27 P1-3: route the OnDisk split-state header parse through the
+  // SAME actor-local message that full-state imports use
+  // (`ValidatorManager::import_persistent_state_streaming`). Before
+  // this change the header path constructed a local
+  // `fullnode::CellDbStreamingSink` and called the legacy 4-arg
+  // `std_boc_deserialize_from_file_bounded` directly — bypassing the
+  // CellDb-backed lazy-root commit-after-verify lifecycle and the
+  // GC-pause-lease that protects imported cells from being collected
+  // before a canonical reference exists. Now the header parse:
+  //   * runs inside CellDbIn's serialized message loop,
+  //   * commits its DAG to CellDb after root-hash verification,
+  //   * returns a hash-only ExtCell-backed root, and
+  //   * issues a GC-pause lease that this actor parks until the final
+  //     `set_block_state` (see `gc_lease_` lifecycle commentary in the
+  //     header).
   auto file = std::move(downloaded.file());
   auto reservation = file.reservation;
 
@@ -1170,46 +1179,68 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
     }
   }
 
-  td::Ref<vm::Cell> header_root;
-  {
-    auto r_fd = td::FileFd::open(file.path, td::FileFd::Flags::Read);
-    if (r_fd.is_error()) {
-      fail_handler(actor_id(this), r_fd.move_as_error());
-      return;
-    }
-    auto fd = r_fd.move_as_ok();
-    vm::StreamingBocImportOptions opts;
-    opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
-    opts.max_cells = budget_cfg.max_cells_per_parse;
-    opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
-    opts.max_total_cell_bytes = std::min(file.size, budget_cfg.max_total_cell_bytes_per_parse);
-    // K3: wire the real CellDbStreamingSink so split-state header
-    // imports get the same per-cell validation + counter that the
-    // unsplit OnDisk parse uses. The downstream archive store still
-    // owns the actual CellDb commit.
-    fullnode::CellDbStreamingSink streaming_sink;
-    auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts, &streaming_sink);
-    fd.close();
-    if (r_root.is_error()) {
-      LOG(WARNING) << "OnDisk streaming split-state header parse failed for " << block_id_.to_str()
-                   << " after " << streaming_sink.cell_count() << " cells: "
-                   << r_root.error();
-      fail_handler(actor_id(this), r_root.move_as_error());
-      return;
-    }
-    if (!streaming_sink.finished()) {
-      fail_handler(actor_id(this),
-                   td::Status::Error("OnDisk streaming sink finished=false on split-header success path"));
-      return;
-    }
-    LOG(INFO) << "OnDisk streaming split-state header parse for " << block_id_.to_str()
-              << " imported " << streaming_sink.cell_count() << " cells";
-    header_root = r_root.move_as_ok();
-  }
+  // Build the actor-local import request. The expected_root_hash for
+  // a split-state header is the BFT-attested `handle_->state()` — same
+  // as the unsplit OnDisk path. CellDbIn rejects any parsed root that
+  // does not match before committing the write batch, so the header's
+  // identity is verified exactly once at the source-of-truth point.
+  PersistentStateImportRequest req;
+  req.tempfile_path = file.path;
+  req.file_size = file.size;
+  req.expected_root_hash = handle_->state();
+  req.opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
+  req.opts.max_cells = budget_cfg.max_cells_per_parse;
+  req.opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
+  req.opts.max_total_cell_bytes = std::min(file.size, budget_cfg.max_total_cell_bytes_per_parse);
 
-  auto maybe_parts = deserializer_->get_effective_shards_from_header(block_id_.shard_full().shard, handle_->state(),
-                                                                      std::move(header_root), split_depth_);
+  LOG(INFO) << "tos27 P1-3: routing split-state header OnDisk parse for " << block_id_.to_str()
+            << " through actor-local import_persistent_state_streaming (mode=SplitStateHeader)";
+
+  td::actor::send_closure(
+      manager_, &ValidatorManager::import_persistent_state_streaming, std::move(req),
+      td::PromiseCreator::lambda(
+          [SelfId = actor_id(this), file = std::move(file), reservation = std::move(reservation),
+           processing = std::move(split_processing_reservation)](td::Result<PersistentStateImportResult> R) mutable {
+            td::actor::send_closure(SelfId, &DownloadShardState::on_split_state_header_imported, std::move(file),
+                                    std::move(reservation), std::move(processing), std::move(R));
+          }));
+}
+
+void DownloadShardState::on_split_state_header_imported(
+    fullnode::BudgetedStateFile file,
+    std::shared_ptr<fullnode::PersistentStateDownloadReservation> reservation,
+    std::shared_ptr<fullnode::PersistentStateProcessingReservation> processing,
+    td::Result<PersistentStateImportResult> r_result) {
+  if (r_result.is_error()) {
+    LOG(WARNING) << "tos27 P1-3 split-state header import failed for " << block_id_.to_str() << ": "
+                 << r_result.error();
+    reservation.reset();
+    processing.reset();
+    fail_handler(actor_id(this), r_result.move_as_error());
+    return;
+  }
+  auto result = r_result.move_as_ok();
+  if (result.hash_only_root.is_null()) {
+    reservation.reset();
+    processing.reset();
+    fail_handler(actor_id(this),
+                 td::Status::Error("tos27 P1-3 split-state header import returned null root"));
+    return;
+  }
+  // tos27 P0-1 / P1-3: park the GC-pause lease on the actor. We
+  // intentionally overwrite any prior lease (latest-only policy — see
+  // `gc_lease_` lifecycle commentary in the header). The header lease
+  // is released at the latest by `written_shard_state` after the merged
+  // `set_block_state` commits.
+  gc_lease_ = std::move(result.gc_lease);
+  LOG(INFO) << "tos27 P1-3: split-state header for " << block_id_.to_str()
+            << " imported via actor-local path, cells_persisted=" << result.cells_persisted;
+
+  auto maybe_parts = deserializer_->get_effective_shards_from_header(
+      block_id_.shard_full().shard, handle_->state(), std::move(result.hash_only_root), split_depth_);
   if (maybe_parts.is_error()) {
+    reservation.reset();
+    processing.reset();
     fail_handler(actor_id(this), maybe_parts.move_as_error());
     return;
   }
@@ -1222,7 +1253,7 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
   };
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), reservation = std::move(reservation),
-       processing_reservation = std::move(split_processing_reservation),
+       processing_reservation = std::move(processing),
        file = std::move(file)](td::Result<td::Unit> R) mutable {
         R.ensure();
         (void)file;
@@ -1319,12 +1350,14 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
     return;
   }
 
-  // OnDisk: streaming deserialize → store via _gen. The split-state
-  // part path is the second of the two split-state branches H-03
-  // calls out as needing its own processing reservation; without it,
-  // a hostile peer could ship many large parts in succession and
-  // burn unbounded resident memory while the streaming-tempfile
-  // download budget tracks only the on-disk bytes.
+  // tos27 P1-3: route the OnDisk split-state part parse through the
+  // SAME actor-local message that full-state imports use. The
+  // expected_root_hash is the per-part root hash recovered from the
+  // already-imported header; CellDbIn rejects any parsed root that
+  // does not match before committing the write batch, so the part
+  // identity is verified exactly once at the source-of-truth point.
+  // Each part import issues its own GC-pause lease (see `gc_lease_`
+  // lifecycle commentary in the header).
   auto file = std::move(downloaded.file());
   auto reservation = file.reservation;
 
@@ -1373,48 +1406,78 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
     }
   }
 
-  td::Ref<vm::Cell> root;
-  {
-    auto r_fd = td::FileFd::open(file.path, td::FileFd::Flags::Read);
-    if (r_fd.is_error()) {
-      retry_part_download(actor_id(this), r_fd.move_as_error());
-      return;
-    }
-    auto fd = r_fd.move_as_ok();
-    vm::StreamingBocImportOptions opts;
-    opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
-    opts.max_cells = budget_cfg.max_cells_per_parse;
-    opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
-    opts.max_total_cell_bytes = std::min(file.size, budget_cfg.max_total_cell_bytes_per_parse);
-    // K3: wire the real CellDbStreamingSink for the split-state part
-    // OnDisk parse. Same pattern as the header path.
-    fullnode::CellDbStreamingSink streaming_sink;
-    auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts, &streaming_sink);
-    fd.close();
-    if (r_root.is_error()) {
-      LOG(WARNING) << "OnDisk streaming split-state part parse failed for " << block_id_.to_str()
-                   << " part " << idx << " after " << streaming_sink.cell_count() << " cells: "
-                   << r_root.error();
-      retry_part_download(actor_id(this), r_root.move_as_error());
-      return;
-    }
-    if (!streaming_sink.finished()) {
-      retry_part_download(actor_id(this),
-                          td::Status::Error("OnDisk streaming sink finished=false on split-part success path"));
-      return;
-    }
-    LOG(INFO) << "OnDisk streaming split-state part parse for " << block_id_.to_str()
-              << " part " << idx << " imported " << streaming_sink.cell_count() << " cells";
-    root = r_root.move_as_ok();
+  PersistentStateImportRequest req;
+  req.tempfile_path = file.path;
+  req.file_size = file.size;
+  req.expected_root_hash = RootHash{parts_[idx].root_hash.bits()};
+  req.opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
+  req.opts.max_cells = budget_cfg.max_cells_per_parse;
+  req.opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
+  req.opts.max_total_cell_bytes = std::min(file.size, budget_cfg.max_total_cell_bytes_per_parse);
+
+  LOG(INFO) << "tos27 P1-3: routing split-state part " << idx + 1 << "/" << parts_.size()
+            << " for " << block_id_.to_str()
+            << " through actor-local import_persistent_state_streaming (mode=SplitStatePart)";
+
+  td::actor::send_closure(
+      manager_, &ValidatorManager::import_persistent_state_streaming, std::move(req),
+      td::PromiseCreator::lambda(
+          [SelfId = actor_id(this), part_idx = idx, file = std::move(file), reservation = std::move(reservation),
+           processing = std::move(split_processing_reservation)](td::Result<PersistentStateImportResult> R) mutable {
+            td::actor::send_closure(SelfId, &DownloadShardState::on_split_state_part_imported, part_idx,
+                                    std::move(file), std::move(reservation), std::move(processing), std::move(R));
+          }));
+
+  LOG(INFO) << "storing state part to file " << idx + 1 << " out of " << parts_.size();
+  status_.set_status(PSTRING() << block_id_.id.to_str() << " : storing state part to file (part " << idx + 1
+                               << " out of " << parts_.size() << ")");
+}
+
+void DownloadShardState::on_split_state_part_imported(
+    size_t part_idx, fullnode::BudgetedStateFile file,
+    std::shared_ptr<fullnode::PersistentStateDownloadReservation> reservation,
+    std::shared_ptr<fullnode::PersistentStateProcessingReservation> processing,
+    td::Result<PersistentStateImportResult> r_result) {
+  if (r_result.is_error()) {
+    LOG(WARNING) << "tos27 P1-3 split-state part " << part_idx + 1 << "/" << parts_.size()
+                 << " import failed for " << block_id_.to_str() << ": " << r_result.error();
+    reservation.reset();
+    processing.reset();
+    retry_part_download(actor_id(this), r_result.move_as_error());
+    return;
   }
-  if (root->get_hash() != parts_[idx].root_hash) {
+  auto result = r_result.move_as_ok();
+  if (result.hash_only_root.is_null()) {
+    reservation.reset();
+    processing.reset();
+    retry_part_download(actor_id(this),
+                        td::Status::Error("tos27 P1-3 split-state part import returned null root"));
+    return;
+  }
+  // CellDbIn already verified parsed_root == expected_root_hash before
+  // committing, so the legacy `root->get_hash() != parts_[idx].root_hash`
+  // check is redundant here. Keep a defensive double-check for the
+  // identity invariant in case the importer's contract is ever
+  // weakened.
+  if (result.hash_only_root->get_hash() != parts_[part_idx].root_hash) {
+    reservation.reset();
+    processing.reset();
     auto error_message =
         "Hash mismatch for part " +
-        persistent_state_type_to_string(block_id_.shard_full(), SplitAccountStateType{parts_[idx].effective_shard});
+        persistent_state_type_to_string(block_id_.shard_full(),
+                                        SplitAccountStateType{parts_[part_idx].effective_shard});
     retry_part_download(actor_id(this), td::Status::Error(error_message));
     return;
   }
-  stored_parts_.push_back(root);
+  // tos27 P1-3: latest-only GC-pause-lease policy. If a previous part
+  // (or the header) parked a lease, drop it now and adopt this part's
+  // lease. The importer's watchdog will log any lingering prior leases
+  // (the policy's documented trade-off — see `gc_lease_` commentary).
+  gc_lease_ = std::move(result.gc_lease);
+  LOG(INFO) << "tos27 P1-3: split-state part " << part_idx + 1 << "/" << parts_.size()
+            << " for " << block_id_.to_str()
+            << " imported via actor-local path, cells_persisted=" << result.cells_persisted;
+  stored_parts_.push_back(std::move(result.hash_only_root));
 
   auto src_path = file.path;
   auto src_size = file.size;
@@ -1423,7 +1486,7 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
   };
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), reservation = std::move(reservation),
-       processing_reservation = std::move(split_processing_reservation),
+       processing_reservation = std::move(processing),
        file = std::move(file)](td::Result<td::Unit> R) mutable {
         R.ensure();
         (void)file;
@@ -1432,12 +1495,8 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
         td::actor::send_closure(SelfId, &DownloadShardState::written_state_part_file);
       });
   td::actor::send_closure(manager_, &ValidatorManager::store_persistent_state_file_gen, block_id_,
-                          masterchain_block_id_, SplitAccountStateType{parts_[idx].effective_shard},
+                          masterchain_block_id_, SplitAccountStateType{parts_[part_idx].effective_shard},
                           std::move(write_data), std::move(P));
-
-  LOG(INFO) << "storing state part to file " << idx + 1 << " out of " << parts_.size();
-  status_.set_status(PSTRING() << block_id_.id.to_str() << " : storing state part to file (part " << idx + 1
-                               << " out of " << parts_.size() << ")");
 }
 
 void DownloadShardState::written_state_part_file() {

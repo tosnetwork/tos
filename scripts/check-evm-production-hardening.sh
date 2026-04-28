@@ -1114,4 +1114,39 @@ if ! rg -q 'continue_import|import_slice|import_worker' "$root/validator/db/cell
     exit 1
 fi
 
+# Check 23 — tos27 P1-3: every OnDisk persistent-state parse path
+# must route through ValidatorManager::import_persistent_state_streaming
+# (the actor-local CellDb-backed import). A regression that constructs
+# a default (counting) CellDbStreamingSink in a downloader actor body
+# silently bypasses the Phase B path — losing the commit-after-verify
+# ordering and the GC-pause-lease that protects imported cells before
+# a canonical reference exists.
+#
+# The bypass pattern is the no-arg form `CellDbStreamingSink streaming_sink;`
+# (the constructor without (reader, writer) falls back to a counting-only
+# sink). The (reader, writer) form on line 235 is the Phase B helper's
+# legitimate use; the regex `streaming_sink\s*[;,=]` matches the bypass
+# case but NOT the call-style `streaming_sink(reader, writer)` form.
+if rg -nP 'fullnode::CellDbStreamingSink\s+streaming_sink\s*[;,=]' "$root/validator/downloaders/download-state.cpp" "$root/validator/downloaders/wait-block-state.cpp" 2>/dev/null; then
+    echo "evm hardening failed: downloader must not construct a default fullnode::CellDbStreamingSink; use import_persistent_state_streaming actor message (tos27 P1-3)" >&2
+    exit 1
+fi
+# Positive: confirm the split-state path also calls import_persistent_state_streaming.
+# We expect at least three call sites in the downloader: unsplit-state,
+# split-state header, and split-state part.
+import_uses=$(rg -c 'import_persistent_state_streaming' "$root/validator/downloaders/download-state.cpp" || echo 0)
+if [ "${import_uses:-0}" -lt 3 ]; then
+    echo "evm hardening failed: download-state.cpp must invoke import_persistent_state_streaming for both full-state and split-state paths (tos27 P1-3); found ${import_uses} call sites" >&2
+    exit 1
+fi
+# Positive: confirm the split-state-specific completion handlers exist.
+if ! rg -q 'on_split_state_header_imported' "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: split-state header path must define on_split_state_header_imported completion handler (tos27 P1-3)" >&2
+    exit 1
+fi
+if ! rg -q 'on_split_state_part_imported' "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: split-state part path must define on_split_state_part_imported completion handler (tos27 P1-3)" >&2
+    exit 1
+fi
+
 echo "evm production hardening check passed"
