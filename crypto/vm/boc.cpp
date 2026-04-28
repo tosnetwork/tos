@@ -1628,10 +1628,9 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
   // payload size, which is a tight overestimate of the DataCell heap
   // footprint. We charge against `opts.max_resident_bytes` whenever a
   // cell enters the residency window and credit it back when the slot
-  // is released. The budget is advisory: if a single dependency chain
-  // is wider than the cap we still complete the import (correctness
-  // outranks the soft cap) but we surface an error so the caller can
-  // retune the option.
+  // is released. The budget is fail-closed: once the cap is exceeded,
+  // abort immediately instead of parsing the rest of an attacker-controlled
+  // BoC and only returning an error at the end.
   td::uint64 resident_bytes = 0;
   td::uint64 peak_resident_bytes = 0;
   bool resident_cap_exceeded = false;
@@ -1736,6 +1735,10 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
     }
     if (opts.max_resident_bytes > 0 && resident_bytes > opts.max_resident_bytes) {
       resident_cap_exceeded = true;
+      return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: peak resident bytes "
+                                        << peak_resident_bytes << " exceeded cap "
+                                        << opts.max_resident_bytes
+                                        << "; aborting import immediately");
     }
 
     auto cell_ref = td::Ref<Cell>{std::move(data_cell)};

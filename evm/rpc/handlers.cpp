@@ -645,13 +645,18 @@ static std::string make_error(const std::string& id, int code, const std::string
 }
 
 struct RpcStateErrorSnapshot {
-    uint64_t code_root_mismatch{0};
+    uint64_t code_integrity{0};
     uint64_t state_shape{0};
 };
 
 static RpcStateErrorSnapshot snapshot_rpc_state_errors(EvmState& state) noexcept {
+    // Use the per-state native integrity counter, not the legacy process-global
+    // telemetry counter. The legacy counter is intentionally kept for metrics
+    // and old tests, but it can be incremented by an unrelated concurrent RPC
+    // touching a different CellEvmState. Read-only RPC fail-closed decisions
+    // must be scoped to the state object that this request executes against.
     return RpcStateErrorSnapshot{
-        state.code_root_hash_mismatch_count(),
+        state.code_integrity_error_count(),
         state.state_shape_error_count(),
     };
 }
@@ -660,7 +665,7 @@ static std::optional<RpcResult> rpc_state_error_delta(
     EvmState& state,
     const RpcStateErrorSnapshot& before,
     const std::string& id) {
-    if (state.code_root_hash_mismatch_count() != before.code_root_mismatch) {
+    if (state.code_integrity_error_count() != before.code_integrity) {
         return RpcResult{make_error(id, -32000, "corrupt EVM code root"), true};
     }
     if (state.state_shape_error_count() != before.state_shape) {

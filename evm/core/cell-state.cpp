@@ -561,15 +561,12 @@ void CellEvmState::update_account_code(const evmc::address& address,
         }
         return;
     }
-    // Audit H-01 (P0.4): the verified-only cache invariant holds because
-    // we just confirmed `keccak(code) == code_hash` above. Storing the
-    // hash alongside the bytes lets `read_code` re-check the invariant
-    // on every cache hit without recomputing keccak.
-    code_[code_hash] = VerifiedCodeEntry{
-        silkworm::Bytes{code.begin(), code.end()}, code_hash};
-
     // Also embed the bytecode in the account's EvmAccountData cell so it
     // survives restart via cp.new_data → populate_state_from_shard_accounts.
+    // Decode the existing native account leaf BEFORE populating the verified
+    // code cache. If the account leaf is malformed, the write must fail closed
+    // without leaving a fresh cache entry that is not actually committed by the
+    // canonical account dictionary.
     unsigned char key[32];
     address_to_key(address, key);
     silkworm::Account acct{};
@@ -578,6 +575,15 @@ void CellEvmState::update_account_code(const evmc::address& address,
                                            acct, storage_root, old_code_root)) {
         return;
     }
+
+    // Audit H-01 (P0.4): the verified-only cache invariant holds because
+    // we just confirmed `keccak(code) == code_hash` above AND decoded the
+    // existing account leaf cleanly. Storing the hash alongside the bytes lets
+    // `read_code` re-check the invariant on every cache hit without
+    // recomputing keccak.
+    code_[code_hash] = VerifiedCodeEntry{
+        silkworm::Bytes{code.begin(), code.end()}, code_hash};
+
     acct.code_hash = code_hash;
     auto code_cell = encode_evm_bytecode(
         td::Slice(reinterpret_cast<const char*>(code.data()), code.size()));
@@ -601,7 +607,15 @@ void CellEvmState::update_storage(const evmc::address& address,
         delta_stats_.cleared_storage_slots++;
     }
 
+    const auto shape_before = state_shape_error_count();
     auto storage_root = get_storage_root(address);
+    if (state_shape_error_count() != shape_before) {
+        // `get_storage_root()` detected a malformed native account/storage
+        // shape. Do not create a fresh empty storage dictionary and overwrite
+        // the corrupt leaf; compute-phase/RPC gates will fail closed on the
+        // state_shape_error counter delta.
+        return;
+    }
     vm::Dictionary storage(storage_root.is_null() ? td::Ref<vm::Cell>{} : storage_root,
                             256);
 

@@ -180,11 +180,19 @@ if ! rg -q 'code\.size\(\) > kEvmMaxRuntimeCodeBytes' "$root/evm/core/cell-state
     exit 1
 fi
 
-# Check 13 — native-state malformed-shape errors must be surfaced through the
-#            read-only RPC corruption gate, not silently interpreted as
-#            missing accounts / zero slots / empty code.
+# Check 13 — native-state malformed-shape and code-integrity errors must be
+#            surfaced through the read-only RPC corruption gate, not silently
+#            interpreted as missing accounts / zero slots / empty code.
 if ! rg -q 'state_shape_error_count' "$root/evm/rpc/handlers.cpp"; then
     echo "evm hardening failed: RPC handlers must gate state_shape_error_count()" >&2
+    exit 1
+fi
+if ! rg -q 'code_integrity_error_count' "$root/evm/rpc/handlers.cpp"; then
+    echo "evm hardening failed: RPC handlers must gate per-state code_integrity_error_count()" >&2
+    exit 1
+fi
+if awk '/static RpcStateErrorSnapshot snapshot_rpc_state_errors\(/ { in_h = 1 } in_h && /code_root_hash_mismatch_count/ { found = 1 } in_h && /^}/ { in_h = 0 } END { exit(found ? 0 : 1) }' "$root/evm/rpc/handlers.cpp"; then
+    echo "evm hardening failed: RPC corruption gate must not use legacy process-global code_root_hash_mismatch_count()" >&2
     exit 1
 fi
 if ! rg -q 'corrupt EVM native state shape' "$root/evm/rpc/handlers.cpp"; then
@@ -841,6 +849,11 @@ fi
 
 if ! rg -q 'BoC scaffolding budget exceeded' "$boc_cpp"; then
     echo "evm production hardening check failed: std_boc_deserialize_from_file_bounded must enforce max_scaffolding_bytes" >&2
+    exit 1
+fi
+
+if ! rg -q 'aborting import immediately' "$boc_cpp"; then
+    echo "evm production hardening check failed: streaming BoC importer must abort immediately when max_resident_bytes is exceeded" >&2
     exit 1
 fi
 
