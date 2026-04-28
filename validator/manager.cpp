@@ -29,6 +29,7 @@
 #include "common/delay.h"
 #include "common/stats.h"
 #include "evm/core/post-accept-bridge.h"
+#include "db/celldb.hpp"
 #include "db/fileref.hpp"
 #include "downloaders/wait-block-data.hpp"
 #include "downloaders/wait-block-state-merge.hpp"
@@ -1497,6 +1498,18 @@ void ValidatorManagerImpl::finished_wait_data(BlockHandle handle, td::Result<td:
   }
 }
 
+// Phase B audit (Step 6): set_block_state / store_block_state_part /
+// set_block_state_from_data{,_bulk} on this manager are pure
+// `send_closure` passthroughs to the Db actor. They never call
+// `load_cell_slice` / `load_cell` on the incoming `td::Ref<ShardState>`
+// or `td::Ref<vm::Cell>` — every dispatch happens on the opaque Ref.
+// A hash-only `CellDbExtCell`-backed root therefore traverses these
+// boundaries without forcing children to materialize: `get_hash()` /
+// `get_depth()` / `get_level_mask()` on the root are O(1) and the
+// downstream `Db::store_block_state` only persists the root metadata
+// + serialized cell. Eager full-DAG materialization, if any, lives
+// further down the stack (e.g. inside `vm::DynamicBagOfCellsDb` or
+// the archive store) and is out of scope for this commit.
 void ValidatorManagerImpl::set_block_state(BlockHandle handle, td::Ref<ShardState> state, vm::StoreCellHint hint,
                                            td::Promise<td::Ref<ShardState>> promise) {
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), handle,
@@ -1528,6 +1541,16 @@ void ValidatorManagerImpl::set_block_state_from_data_bulk(std::vector<td::Ref<Bl
 
 void ValidatorManagerImpl::get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) {
   td::actor::send_closure(db_, &Db::get_cell_db_reader, std::move(promise));
+}
+
+void ValidatorManagerImpl::create_celldb_streaming_writer(
+    td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+  // Phase B persistent-state catch-up. Mirror of get_cell_db_reader:
+  // forward to the Db actor (RootDb), which routes through CellDb to
+  // CellDbIn::create_streaming_writer_async. The writer is paired
+  // with a CellDbReader snapshot at the call site and drives
+  // `parse_ondisk_state_streaming(file, size, opts, reader, writer)`.
+  td::actor::send_closure(db_, &Db::create_celldb_streaming_writer, std::move(promise));
 }
 
 void ValidatorManagerImpl::store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id,

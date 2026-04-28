@@ -1071,6 +1071,14 @@ void CellDb::get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> p
   td::actor::send_closure(cell_db_, &CellDbIn::get_cell_db_reader, std::move(promise));
 }
 
+void CellDb::create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+  // Mirror of get_cell_db_reader: forward straight to the inner
+  // CellDbIn actor and resolve the promise from there. The actual
+  // single-import gating happens inside the writer's begin_batch()
+  // (see `CellDbStreamingWriterImpl::begin_batch`).
+  td::actor::send_closure(cell_db_, &CellDbIn::create_streaming_writer_async, std::move(promise));
+}
+
 void CellDb::start_up() {
   CellDbBase::start_up();
   boc_ = vm::DynamicBagOfCellsDb::create();
@@ -1146,9 +1154,20 @@ namespace {
 // shared_ptr to the same vm::KeyValue (RocksDB) instance the rest of
 // CellDbIn uses, so commits become visible to subsequent
 // CellDbReader snapshots.
+//
+// Single-import gating: the writer also holds a shared_ptr to an
+// atomic<bool> owned by CellDbIn. begin_batch() compare-exchanges
+// false->true on the flag; if the CAS fails (another streaming
+// importer is already mid-batch), begin_batch() returns an error and
+// does NOT open a RocksDB write batch. commit_batch / abort_batch /
+// dtor all clear the flag exactly once via `release_in_use_flag()`,
+// so a second importer can start a fresh batch immediately after the
+// first one finishes.
 class CellDbStreamingWriterImpl final : public CellDbStreamingWriter {
  public:
-  explicit CellDbStreamingWriterImpl(std::shared_ptr<vm::KeyValue> kv) : kv_(std::move(kv)) {
+  CellDbStreamingWriterImpl(std::shared_ptr<vm::KeyValue> kv,
+                            std::shared_ptr<std::atomic<bool>> in_use_flag)
+      : kv_(std::move(kv)), in_use_flag_(std::move(in_use_flag)) {
   }
 
   ~CellDbStreamingWriterImpl() override {
@@ -1162,14 +1181,38 @@ class CellDbStreamingWriterImpl final : public CellDbStreamingWriter {
       auto status = kv_->abort_write_batch();
       LOG_IF(ERROR, status.is_error())
           << "CellDbStreamingWriter: abort_write_batch in destructor failed: " << status;
+      in_batch_ = false;
     }
+    // Always release the single-import gate when the writer is
+    // dropped, even if we never reached begin_batch(). The CAS on
+    // begin_batch() is the only path that flips holds_in_use_flag_
+    // to true; if it failed (another importer is mid-batch) we leave
+    // their flag alone.
+    release_in_use_flag();
   }
 
   td::Status begin_batch() override {
     if (in_batch_) {
       return td::Status::Error("CellDbStreamingWriter::begin_batch: batch already open");
     }
-    TRY_STATUS(kv_->begin_write_batch());
+    if (in_use_flag_) {
+      bool expected = false;
+      if (!in_use_flag_->compare_exchange_strong(expected, true, std::memory_order_acq_rel,
+                                                 std::memory_order_acquire)) {
+        return td::Status::Error(
+            "CellDbStreamingWriter::begin_batch: another streaming import is in flight on this "
+            "CellDb instance");
+      }
+      holds_in_use_flag_ = true;
+    }
+    auto status = kv_->begin_write_batch();
+    if (status.is_error()) {
+      // RocksDB refused to open the batch; release the gate so the
+      // next importer can try again. Returning the error verbatim
+      // preserves the original RocksDB diagnostic.
+      release_in_use_flag();
+      return status;
+    }
     in_batch_ = true;
     return td::Status::OK();
   }
@@ -1204,8 +1247,15 @@ class CellDbStreamingWriterImpl final : public CellDbStreamingWriter {
     if (!in_batch_) {
       return td::Status::Error("CellDbStreamingWriter::commit_batch: no open batch");
     }
-    TRY_STATUS(kv_->commit_write_batch());
+    auto status = kv_->commit_write_batch();
     in_batch_ = false;
+    // Release the single-import gate regardless of the commit result:
+    // a failed commit aborts the batch (the kv layer rolls it back),
+    // and either way the writer is no longer holding the slot.
+    release_in_use_flag();
+    if (status.is_error()) {
+      return status;
+    }
     return td::Status::OK();
   }
 
@@ -1213,23 +1263,52 @@ class CellDbStreamingWriterImpl final : public CellDbStreamingWriter {
     if (!in_batch_) {
       // Idempotent: aborting when no batch is open is a no-op rather
       // than an error so the sink's error-recovery path can call
-      // abort_batch() unconditionally.
+      // abort_batch() unconditionally. Still release the gate so a
+      // second importer can claim the slot even if the first never
+      // wrote anything.
+      release_in_use_flag();
       return td::Status::OK();
     }
-    TRY_STATUS(kv_->abort_write_batch());
+    auto status = kv_->abort_write_batch();
     in_batch_ = false;
+    release_in_use_flag();
+    if (status.is_error()) {
+      return status;
+    }
     return td::Status::OK();
   }
 
  private:
+  void release_in_use_flag() {
+    if (holds_in_use_flag_ && in_use_flag_) {
+      in_use_flag_->store(false, std::memory_order_release);
+      holds_in_use_flag_ = false;
+    }
+  }
+
   std::shared_ptr<vm::KeyValue> kv_;
+  std::shared_ptr<std::atomic<bool>> in_use_flag_;
   bool in_batch_ = false;
+  bool holds_in_use_flag_ = false;
 };
 }  // namespace
 
 std::unique_ptr<CellDbStreamingWriter> CellDbIn::create_streaming_writer() {
   CHECK(cell_db_ != nullptr);
-  return std::make_unique<CellDbStreamingWriterImpl>(cell_db_);
+  CHECK(streaming_writer_in_use_ != nullptr);
+  return std::make_unique<CellDbStreamingWriterImpl>(cell_db_, streaming_writer_in_use_);
+}
+
+void CellDbIn::create_streaming_writer_async(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+  // Construction itself is cheap (just wraps shared_ptrs); the
+  // single-import flag is enforced at begin_batch() time. Returning
+  // the writer here lets the validator manager hand it back to the
+  // downloader actor without a separate priming step.
+  if (cell_db_ == nullptr) {
+    promise.set_error(td::Status::Error("CellDbIn::create_streaming_writer_async: cell_db_ not initialized"));
+    return;
+  }
+  promise.set_result(create_streaming_writer());
 }
 
 }  // namespace validator

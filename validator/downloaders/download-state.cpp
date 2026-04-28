@@ -888,59 +888,114 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
     }
   }
 
-  // H-03: streaming OnDisk parse. Replaces the legacy mmap +
-  // vm::std_boc_deserialize one-shot materialization with a chunked
-  // pread + per-cell deserialize that bounds peak resident memory at
-  // budget_cfg.max_resident_bytes_per_parse. The same root-hash
-  // compare against handle_->state() that
-  // parse_ondisk_state_for_test() does still runs at the end, so the
-  // existing "validate_deep skipped here is OK because BoC + root-hash
-  // is the same invariant" reasoning still applies.
+  // Phase B (Step 6): default the OnDisk catch-up to the
+  // CellDb-streaming importer. The legacy in-place
+  // `parse_ondisk_state_streaming(file, size, opts, &counting_sink)`
+  // is REPLACED here with an asynchronous two-step: fetch a
+  // CellDbReader snapshot from the manager, then a paired
+  // CellDbStreamingWriter, then drive the bounded importer through
+  // the (file, size, opts, reader, writer) overload. The sink the
+  // overload owns commits each parsed cell into the writer's RocksDB
+  // batch and substitutes a hash-only ExtCell replacement for every
+  // child, so the returned root never holds a full DataCell DAG in
+  // process memory.
   //
-  // K3 (this round): wire a real CellDbStreamingSink. The sink runs
-  // begin/persist/finish/abort around the importer; today its body is
-  // a counting + per-cell-validation pass (defense-in-depth against a
-  // null cell or descriptor corruption surfacing late). The
-  // downstream checked_shard_state() still routes through
-  // store_persistent_state_file (which copies the tempfile into the
-  // archive) and set_block_state (which lands the cell tree into the
-  // cell DB). True streaming-into-CellDb-without-DAG-residency is a
-  // follow-up that requires a deeper refactor of DataCell to use
-  // hash-only references for children — out of scope for this commit.
-  // The sink interface is the load-bearing extension point that lets
-  // that future commit land without changing this actor wiring.
-  fullnode::CellDbStreamingSink streaming_sink;
+  // Reservation lifecycle: data_reservation_ +
+  // state_processing_reservation_ remain charged across BOTH actor
+  // hops. They are released exactly once on the failure cleanup path
+  // (each lambda's failure branch resets actor state) and exactly
+  // once by the eventual checked_shard_state() handoff into the
+  // archive store.
+  //
+  // Failure mode: if get_cell_db_reader OR create_celldb_streaming_writer
+  // returns an error, the actor surfaces it verbatim through
+  // fail_handler. We deliberately do NOT silently fall back to the
+  // legacy counting sink — the spec mandates "Misconfiguration cannot
+  // silently re-enable full-DAG import"; an operator who sees this
+  // error has a real CellDb wiring problem and must fix it.
   vm::StreamingBocImportOptions opts;
   opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
   opts.max_cells = budget_cfg.max_cells_per_parse;
   opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
   opts.max_total_cell_bytes =
       std::min(data_file_.size, budget_cfg.max_total_cell_bytes_per_parse);
-  auto r_root = parse_ondisk_state_streaming(data_file_, handle_->state(), opts, &streaming_sink);
+
+  td::actor::send_closure(
+      manager_, &ValidatorManager::get_cell_db_reader,
+      td::PromiseCreator::lambda(
+          [SelfId = actor_id(this), opts](td::Result<std::shared_ptr<vm::CellDbReader>> R) mutable {
+            td::actor::send_closure(SelfId, &DownloadShardState::got_celldb_reader_for_ondisk_parse,
+                                    std::move(R), std::move(opts));
+          }));
+}
+
+void DownloadShardState::got_celldb_reader_for_ondisk_parse(
+    td::Result<std::shared_ptr<vm::CellDbReader>> r_reader, vm::StreamingBocImportOptions opts) {
+  if (r_reader.is_error()) {
+    LOG(WARNING) << "Phase B OnDisk parse: get_cell_db_reader failed for " << block_id_.to_str() << ": "
+                 << r_reader.error();
+    data_file_ = fullnode::BudgetedStateFile{};
+    data_reservation_.reset();
+    state_processing_reservation_.reset();
+    fail_handler(actor_id(this), r_reader.move_as_error());
+    return;
+  }
+  auto reader = r_reader.move_as_ok();
+  if (reader == nullptr) {
+    data_file_ = fullnode::BudgetedStateFile{};
+    data_reservation_.reset();
+    state_processing_reservation_.reset();
+    fail_handler(actor_id(this),
+                 td::Status::Error("Phase B OnDisk parse: get_cell_db_reader returned null reader"));
+    return;
+  }
+  td::actor::send_closure(
+      manager_, &ValidatorManager::create_celldb_streaming_writer,
+      td::PromiseCreator::lambda(
+          [SelfId = actor_id(this), reader, opts](
+              td::Result<std::unique_ptr<CellDbStreamingWriter>> R) mutable {
+            td::actor::send_closure(SelfId, &DownloadShardState::got_celldb_writer_for_ondisk_parse,
+                                    std::move(reader), std::move(opts), std::move(R));
+          }));
+}
+
+void DownloadShardState::got_celldb_writer_for_ondisk_parse(
+    std::shared_ptr<vm::CellDbReader> reader, vm::StreamingBocImportOptions opts,
+    td::Result<std::unique_ptr<CellDbStreamingWriter>> r_writer) {
+  if (r_writer.is_error()) {
+    LOG(WARNING) << "Phase B OnDisk parse: create_celldb_streaming_writer failed for "
+                 << block_id_.to_str() << ": " << r_writer.error();
+    data_file_ = fullnode::BudgetedStateFile{};
+    data_reservation_.reset();
+    state_processing_reservation_.reset();
+    fail_handler(actor_id(this), r_writer.move_as_error());
+    return;
+  }
+  auto writer = r_writer.move_as_ok();
+  if (writer == nullptr) {
+    data_file_ = fullnode::BudgetedStateFile{};
+    data_reservation_.reset();
+    state_processing_reservation_.reset();
+    fail_handler(actor_id(this),
+                 td::Status::Error("Phase B OnDisk parse: create_celldb_streaming_writer returned null writer"));
+    return;
+  }
+  LOG(INFO) << "evm-workchain: persistent-state catch-up routed through Phase B streaming path for "
+            << block_id_.to_str();
+
+  // Drive the bounded importer through the Phase B (reader, writer)
+  // overload. The helper logs `cells_persisted` at INFO on success
+  // ("parse_ondisk_state_streaming(phase-b): committed N cell(s); ...").
+  auto r_root = parse_ondisk_state_streaming(data_file_, handle_->state(), opts, std::move(reader),
+                                             std::move(writer));
   if (r_root.is_error()) {
-    LOG(WARNING) << "OnDisk streaming parse failed for " << block_id_.to_str()
-                 << " after " << streaming_sink.cell_count() << " cells: "
-                 << r_root.error();
+    LOG(WARNING) << "Phase B OnDisk parse failed for " << block_id_.to_str() << ": " << r_root.error();
     data_file_ = fullnode::BudgetedStateFile{};
     data_reservation_.reset();
     state_processing_reservation_.reset();
     fail_handler(actor_id(this), r_root.move_as_error());
     return;
   }
-  if (!streaming_sink.finished()) {
-    // Defense in depth: the importer's contract guarantees finish runs
-    // on the success path. If the sink reports otherwise we treat it
-    // as a programming bug and fail closed rather than silently
-    // committing a half-validated state.
-    data_file_ = fullnode::BudgetedStateFile{};
-    data_reservation_.reset();
-    state_processing_reservation_.reset();
-    fail_handler(actor_id(this),
-                 td::Status::Error("OnDisk streaming sink finished=false on success path"));
-    return;
-  }
-  LOG(INFO) << "OnDisk streaming parse for " << block_id_.to_str() << " imported "
-            << streaming_sink.cell_count() << " cells";
   auto root = r_root.move_as_ok();
 
   auto S = create_shard_state(block_id_, std::move(root));
@@ -952,17 +1007,19 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
     return;
   }
   auto state = S.move_as_ok();
-  // The root-hash compare above already verified the equivalent of the
-  // legacy `state->root_hash() != handle_->state()` check; the
+  // The root-hash compare inside parse_ondisk_state_streaming(phase-b)
+  // already verified the equivalent of the legacy
+  // `state->root_hash() != handle_->state()` check; the
   // create_shard_state() output preserves that hash.
   state_ = std::move(state);
 
   // data_ stays empty in the OnDisk branch — checked_shard_state()
   // detects this and routes to store_persistent_state_file_gen, which
   // copies the tempfile directly into the archive without ever
-  // materializing a BufferSlice of file size. state_processing_reservation_
-  // remains charged across this handoff and is released by
-  // checked_shard_state() once the archive write completes.
+  // materializing a BufferSlice of file size.
+  // state_processing_reservation_ remains charged across this handoff
+  // and is released by checked_shard_state() once the archive write
+  // completes.
   checked_shard_state();
 }
 

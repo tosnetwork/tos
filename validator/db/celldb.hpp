@@ -19,6 +19,8 @@
 */
 #pragma once
 
+#include <atomic>
+#include <memory>
 #include <optional>
 #include <queue>
 
@@ -122,9 +124,25 @@ class CellDbIn : public CellDbBase {
   //
   // IMPORT-ONLY. The streaming writer is not safe to use concurrently
   // with the CellDbIn store_cell / store_block_state_permanent
-  // batched writes. Wave 4 will gate this with a state-sync mode flag
-  // that quiesces the regular write path during a streaming import.
+  // batched writes; in addition, only ONE streaming writer batch may
+  // be in flight per CellDb at any moment. The shared
+  // `streaming_writer_in_use_` flag is set on a successful
+  // begin_batch() and cleared on commit_batch() / abort_batch() (or
+  // by the writer destructor on a dropped batch). A second concurrent
+  // begin_batch() observes the flag set and returns Status::Error
+  // with "another streaming import is in flight"; the first writer's
+  // commit/abort then re-enables a fresh import.
   std::unique_ptr<CellDbStreamingWriter> create_streaming_writer();
+
+  // Actor-message wrapper around create_streaming_writer(). Resolves
+  // the promise with a fresh writer. The single-import gate is
+  // checked at begin_batch() time on the writer, not here, so this
+  // method always succeeds — a second concurrent caller that tries
+  // to begin_batch() while another writer is mid-batch will see the
+  // begin_batch() error surface directly. Used by the validator
+  // manager (`ValidatorManager::create_celldb_streaming_writer`) to
+  // pipe a writer back to the persistent-state download actor.
+  void create_streaming_writer_async(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise);
 
   void flush_db_stats();
 
@@ -176,6 +194,17 @@ class CellDbIn : public CellDbBase {
   std::shared_ptr<vm::DynamicBagOfCellsDb> boc_;
   std::shared_ptr<vm::KeyValue> cell_db_;
   std::shared_ptr<rocksdb::DB> rocks_db_;
+
+  // Phase B single-import gate. The flag is held in a shared_ptr so
+  // the writer (returned to the caller as a unique_ptr) can flip it
+  // from its dtor / commit / abort even after this actor has shut
+  // down. Set true on a successful begin_batch(); cleared on
+  // commit_batch / abort_batch / writer dtor. A second concurrent
+  // begin_batch() observes the flag set and fails with a clear
+  // "another streaming import is in flight" error so misconfigured
+  // callers cannot interleave two RocksDB write batches against the
+  // same CellDb instance.
+  std::shared_ptr<std::atomic<bool>> streaming_writer_in_use_ = std::make_shared<std::atomic<bool>>(false);
 
   std::function<void(const vm::CellLoader::LoadResult&)> on_load_callback_;
   std::set<td::Bits256> cells_to_migrate_;
@@ -269,6 +298,11 @@ class CellDb : public CellDbBase {
     thread_safe_boc_ = std::move(thread_safe_boc);
   }
   void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise);
+  // Phase B persistent-state catch-up: forward to
+  // CellDbIn::create_streaming_writer() and resolve the promise with
+  // the resulting writer (or surface the error verbatim if CellDbIn's
+  // single-import flag is already taken).
+  void create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise);
 
   void flush_db_stats(std::string stats);
 

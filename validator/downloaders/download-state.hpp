@@ -177,6 +177,21 @@ class DownloadShardState : public td::actor::Actor {
   void downloaded_zero_state(fullnode::DownloadedPersistentState downloaded);
 
   void downloaded_shard_state(fullnode::DownloadedPersistentState downloaded);
+  // Phase B persistent-state catch-up: fetch the CellDb reader
+  // snapshot from the validator manager. Called after the OnDisk
+  // parse path has reserved its processing slice; on success the
+  // continuation chains into `got_celldb_writer_for_ondisk_parse`.
+  void got_celldb_reader_for_ondisk_parse(td::Result<std::shared_ptr<vm::CellDbReader>> r_reader,
+                                          vm::StreamingBocImportOptions opts);
+  // Phase B persistent-state catch-up: receive the CellDb streaming
+  // writer paired with the previously-fetched reader, then drive the
+  // bounded BoC importer through the
+  // `parse_ondisk_state_streaming(file, size, opts, reader, writer)`
+  // overload. On success the lazy ExtCell-backed root flows into
+  // checked_shard_state() exactly like the legacy path.
+  void got_celldb_writer_for_ondisk_parse(std::shared_ptr<vm::CellDbReader> reader,
+                                          vm::StreamingBocImportOptions opts,
+                                          td::Result<std::unique_ptr<CellDbStreamingWriter>> r_writer);
   void checked_shard_state();
 
   void downloaded_split_state_header(fullnode::DownloadedPersistentState downloaded);

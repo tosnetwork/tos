@@ -346,6 +346,15 @@ void RootDb::get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> p
   td::actor::send_closure(cell_db_, &CellDb::get_cell_db_reader, std::move(promise));
 }
 
+void RootDb::create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+  // Mirror of get_cell_db_reader: route the request straight to the
+  // CellDb actor, which forwards to its CellDbIn child. The writer is
+  // import-only (Phase B persistent-state catch-up); CellDbIn's
+  // single-import flag guarantees two concurrent imports cannot
+  // interleave their RocksDB write batches.
+  td::actor::send_closure(cell_db_, &CellDb::create_celldb_streaming_writer, std::move(promise));
+}
+
 void RootDb::store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                          td::BufferSlice state, td::Promise<td::Unit> promise) {
   td::actor::send_closure(archive_db_, &ArchiveManager::add_persistent_state, block_id, masterchain_block_id, type,

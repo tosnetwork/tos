@@ -70,6 +70,7 @@ class RootDb : public Db {
   void store_block_state_part(BlockId effective_block, td::Ref<vm::Cell> cell,
                               td::Promise<td::Ref<vm::DataCell>> promise) override;
   void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) override;
+  void create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) override;
 
   void store_block_handle(BlockHandle handle, td::Promise<td::Unit> promise) override;
   void get_block_handle(BlockIdExt id, td::Promise<BlockHandle> promise) override;

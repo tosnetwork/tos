@@ -43,6 +43,15 @@ namespace tos {
 
 namespace validator {
 
+// Forward declaration: the full definition lives in validator/db/celldb.hpp.
+// The manager interface only exposes a `create_celldb_streaming_writer`
+// message that returns a unique_ptr to this class (Phase B catch-up
+// path); pulling celldb.hpp into the manager interface header would
+// drag the whole CellDb / RocksDB dependency chain into every
+// translation unit that includes the manager header, which we want to
+// avoid.
+class CellDbStreamingWriter;
+
 constexpr int VERBOSITY_NAME(VALIDATOR_WARNING) = verbosity_WARNING;
 constexpr int VERBOSITY_NAME(VALIDATOR_NOTICE) = verbosity_INFO;
 constexpr int VERBOSITY_NAME(VALIDATOR_INFO) = verbosity_DEBUG;
@@ -291,6 +300,19 @@ class ValidatorManager : public ValidatorManagerInterface {
   virtual void set_block_state_from_data_bulk(std::vector<td::Ref<BlockData>> blocks,
                                               td::Promise<td::Unit> promise) = 0;
   virtual void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) = 0;
+  // Phase B persistent-state catch-up: hand back an import-only
+  // CellDb streaming writer. The returned writer wraps the underlying
+  // RocksDB KeyValue and is gated by a single-import flag inside
+  // CellDbIn so two concurrent persistent-state imports cannot
+  // interleave their write batches. The downloader actor is the only
+  // intended caller; it pairs the writer with a
+  // `get_cell_db_reader()` snapshot to drive
+  // `parse_ondisk_state_streaming(file, size, opts, reader, writer)`.
+  // Errors propagate via the promise; callers MUST NOT silently fall
+  // back to the legacy counting sink on failure (see Phase B spec
+  // "Misconfiguration cannot silently re-enable full-DAG import").
+  virtual void create_celldb_streaming_writer(
+      td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) = 0;
   virtual void store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id,
                                            PersistentStateType type, td::BufferSlice state,
                                            td::Promise<td::Unit> promise) = 0;

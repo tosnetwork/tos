@@ -61,6 +61,12 @@ class Db : public td::actor::Actor {
   virtual void store_block_state_part(BlockId effective_block, td::Ref<vm::Cell> cell,
                                       td::Promise<td::Ref<vm::DataCell>> promise) = 0;
   virtual void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) = 0;
+  // Phase B persistent-state catch-up: route through to
+  // CellDbIn::create_streaming_writer(). The returned writer is
+  // import-only and gated by a single-import flag inside CellDbIn so
+  // two concurrent imports cannot interleave their write batches.
+  virtual void create_celldb_streaming_writer(
+      td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) = 0;
 
   virtual void store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id,
                                            PersistentStateType type, td::BufferSlice state,

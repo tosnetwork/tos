@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include "adnl/utils.hpp"
+#include "db/celldb.hpp"
 #include "downloaders/wait-block-data-disk.hpp"
 #include "downloaders/wait-block-state-merge.hpp"
 #include "downloaders/wait-block-state.hpp"
@@ -729,6 +730,14 @@ void ValidatorManagerImpl::finished_wait_data(BlockIdExt block_id, td::Result<td
   }
 }
 
+// Phase B audit (Step 6): identical conclusion to the full validator
+// manager (manager.cpp). set_block_state / store_block_state_part /
+// set_block_state_from_data{,_bulk} on the disk-only variant are
+// pure `send_closure` passthroughs to the Db actor — no
+// `load_cell_slice` / `load_cell` is invoked on the
+// `td::Ref<ShardState>` or `td::Ref<vm::Cell>` parameter at this
+// layer. A hash-only `CellDbExtCell`-backed root therefore flows
+// through these boundaries without forcing children to materialize.
 void ValidatorManagerImpl::set_block_state(BlockHandle handle, td::Ref<ShardState> state, vm::StoreCellHint hint,
                                            td::Promise<td::Ref<ShardState>> promise) {
   td::actor::send_closure(db_, &Db::store_block_state, handle, state, std::move(hint), std::move(promise));
@@ -751,6 +760,16 @@ void ValidatorManagerImpl::set_block_state_from_data_bulk(std::vector<td::Ref<Bl
 
 void ValidatorManagerImpl::get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) {
   td::actor::send_closure(db_, &Db::get_cell_db_reader, std::move(promise));
+}
+
+void ValidatorManagerImpl::create_celldb_streaming_writer(
+    td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) {
+  // Manager-disk variant: same routing chain as the full validator
+  // manager (manager.cpp) — db_ is a RootDb actor and forwards into
+  // CellDb -> CellDbIn::create_streaming_writer_async. The disk-only
+  // variant runs the same persistent-state download path during
+  // bootstrap, so the Phase B catch-up wiring is identical.
+  td::actor::send_closure(db_, &Db::create_celldb_streaming_writer, std::move(promise));
 }
 
 void ValidatorManagerImpl::store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id,

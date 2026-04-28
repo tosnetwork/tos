@@ -22,6 +22,7 @@
 #include <map>
 #include <set>
 
+#include "db/celldb.hpp"
 #include "interfaces/db.h"
 #include "interfaces/validator-manager.h"
 #include "tos/tos-types.h"
@@ -191,6 +192,11 @@ class ValidatorManagerImpl : public ValidatorManager {
     UNREACHABLE();
   }
   void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) override;
+  void create_celldb_streaming_writer(td::Promise<std::unique_ptr<CellDbStreamingWriter>> promise) override {
+    // Hardfork manager does not run the persistent-state download
+    // path; the Phase B streaming writer is unreachable here.
+    UNREACHABLE();
+  }
   void store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                    td::BufferSlice state, td::Promise<td::Unit> promise) override {
     UNREACHABLE();
