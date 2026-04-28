@@ -833,6 +833,26 @@ td::Status CellDbStreamingSink::persist(td::Ref<vm::Cell> cell) {
   return td::Status::OK();
 }
 
+td::Result<td::Ref<vm::Cell>> CellDbStreamingSink::persist_and_replace(td::Ref<vm::Cell> cell) {
+  auto keep = cell;
+  TRY_STATUS(persist(std::move(cell)));
+  if (!replace_cell_) {
+    return keep;
+  }
+  auto replacement = replace_cell_(keep);
+  if (replacement.is_error()) {
+    return replacement.move_as_error();
+  }
+  auto out = replacement.move_as_ok();
+  if (out.is_null()) {
+    return td::Status::Error("CellDbStreamingSink::persist_and_replace returned null cell");
+  }
+  if (out->get_hash() != keep->get_hash()) {
+    return td::Status::Error("CellDbStreamingSink::persist_and_replace returned cell with mismatched hash");
+  }
+  return out;
+}
+
 td::Status CellDbStreamingSink::finish(const vm::Cell::Hash &root_hash) {
   if (!begun_) {
     return td::Status::Error("CellDbStreamingSink::finish called before begin");

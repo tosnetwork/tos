@@ -1743,11 +1743,23 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
 
     auto cell_ref = td::Ref<Cell>{std::move(data_cell)};
     if (sink) {
-      auto persist_status = sink->persist(cell_ref);
-      if (persist_status.is_error()) {
+      auto original_hash = cell_ref->get_hash();
+      auto replacement = sink->persist_and_replace(cell_ref);
+      if (replacement.is_error()) {
         return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: persist_cell rejected "
                                              "cell #"
-                                          << idx << ": " << persist_status.error());
+                                          << idx << ": " << replacement.error());
+      }
+      cell_ref = replacement.move_as_ok();
+      if (cell_ref.is_null()) {
+        return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: persist_cell returned "
+                                             "null replacement for cell #"
+                                          << idx);
+      }
+      if (cell_ref->get_hash() != original_hash) {
+        return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: persist_cell returned "
+                                             "replacement with different hash for cell #"
+                                          << idx);
       }
     }
     cells[static_cast<std::size_t>(idx)] = std::move(cell_ref);

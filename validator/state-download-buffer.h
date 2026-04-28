@@ -429,13 +429,18 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
   // Returning a non-OK Status aborts the import. May be empty (the
   // default) — in that case persist is a counters-only no-op.
   using OnCellFn = std::function<td::Status(td::Ref<vm::Cell>)>;
+  using ReplaceCellFn = std::function<td::Result<td::Ref<vm::Cell>>(td::Ref<vm::Cell>)>;
 
   CellDbStreamingSink() = default;
   explicit CellDbStreamingSink(OnCellFn on_cell) : on_cell_(std::move(on_cell)) {
   }
+  CellDbStreamingSink(OnCellFn on_cell, ReplaceCellFn replace_cell)
+      : on_cell_(std::move(on_cell)), replace_cell_(std::move(replace_cell)) {
+  }
 
   td::Status begin() override;
   td::Status persist(td::Ref<vm::Cell> cell) override;
+  td::Result<td::Ref<vm::Cell>> persist_and_replace(td::Ref<vm::Cell> cell) override;
   td::Status finish(const vm::Cell::Hash &root_hash) override;
   void abort() override;
 
@@ -459,6 +464,7 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
 
  private:
   OnCellFn on_cell_;
+  ReplaceCellFn replace_cell_;
   std::atomic<td::uint64> cell_count_{0};
   bool begun_{false};
   bool finished_{false};

@@ -529,6 +529,19 @@ class StreamingCellSink {
 
   virtual td::Status persist(td::Ref<Cell> cell) = 0;
 
+  // Phase-B extension point. A sink that writes cells into a persistent
+  // backend may return a hash-only / lazy replacement for the cell it
+  // just persisted. The importer will keep the returned cell in its
+  // parent-ref table. The default implementation preserves legacy
+  // behavior by persisting and returning the original DataCell-backed
+  // reference. Implementations MUST return a non-null cell with the
+  // same hash as the input; the importer checks this fail-closed.
+  virtual td::Result<td::Ref<Cell>> persist_and_replace(td::Ref<Cell> cell) {
+    auto keep = cell;
+    TRY_STATUS(persist(std::move(cell)));
+    return keep;
+  }
+
   virtual td::Status finish(const Cell::Hash& root_hash) {
     (void)root_hash;
     return td::Status::OK();
