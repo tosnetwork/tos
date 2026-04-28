@@ -26,6 +26,10 @@
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
+#include "vm/cells/CellTraits.h"
+#include "vm/cells/DataCell.h"
+#include "vm/db/CellDbExtCell.h"
+#include "vm/db/DynamicBagOfCellsDb.h"
 
 #include <atomic>
 #include <cerrno>
@@ -793,6 +797,24 @@ td::Status cleanup_persistent_state_tempfiles(td::CSlice tempfile_root, td::uint
   });
 }
 
+namespace {
+
+// Big-endian 16-bit encoding of a cell depth, in the exact byte format
+// PrunnedCell::init() consumes when materializing a hash-only ExtCell
+// replacement (see crypto/vm/cells/PrunnedCell.h: each per-level depth
+// is decoded via DataCell::load_depth, which is bits_load_ulong on a
+// 16-bit big-endian word). vm::CellTraits::depth_bytes is that byte
+// count; static_assert pins it so a future change to the on-wire depth
+// width fails to compile rather than silently producing a malformed
+// ExtCell.
+static_assert(vm::CellTraits::depth_bytes == sizeof(td::uint16),
+              "ExtCell depth slice format assumes 16-bit big-endian depth");
+inline std::array<td::uint8, sizeof(td::uint16)> depth_be_bytes(td::uint16 depth) {
+  return {static_cast<td::uint8>(depth >> 8), static_cast<td::uint8>(depth & 0xff)};
+}
+
+}  // namespace
+
 // CellDbStreamingSink: minimal counting / per-cell-validation sink that
 // flows behind vm::std_boc_deserialize_from_file_bounded. The sink is
 // the load-bearing extension point that lets the OnDisk parse path
@@ -801,6 +823,24 @@ td::Status cleanup_persistent_state_tempfiles(td::CSlice tempfile_root, td::uint
 // downstream archive store + set_block_state still owns the actual
 // CellDb commit; see comment in state-download-buffer.h for the full
 // memory contract.
+//
+// All four constructors and the destructor are inline in
+// state-download-buffer.h so each instantiates inside the caller's TU
+// (where `CellDbStreamingWriter` is complete via
+// validator/db/celldb.hpp). The light-weight
+// `validator-state-download-budget` static library this .cpp links into
+// intentionally does not pull in tos_db / TDDB_USE_ROCKSDB, so the
+// header type-erases the writer's vtable methods into std::function
+// members. The runtime hot path below dispatches through those
+// callables and never touches CellDbStreamingWriter's incomplete-in-
+// this-TU layout.
+//
+// Note on the destructor: if the sink is dropped while `batch_open_`
+// is still true, we abort the RocksDB batch via writer_abort_batch_
+// inside the inline destructor in the header so no partial commit
+// leaks (idempotent: writer_abort_batch_ collapses to a no-op once the
+// batch has been committed or aborted).
+
 td::Status CellDbStreamingSink::begin() {
   if (begun_) {
     return td::Status::Error("CellDbStreamingSink::begin called twice on same sink");
@@ -808,8 +848,20 @@ td::Status CellDbStreamingSink::begin() {
   if (finished_ || aborted_) {
     return td::Status::Error("CellDbStreamingSink::begin called after finish/abort");
   }
+  if (true_streaming_active_) {
+    // Open the writer's RocksDB batch. The writer is the only caller
+    // that can fail here; surface its Status verbatim so the operator
+    // sees the underlying KV error (e.g. corruption / out-of-space)
+    // rather than a synthetic "begin failed" wrapper.
+    auto status = writer_begin_batch_();
+    if (status.is_error()) {
+      return status;
+    }
+    batch_open_ = true;
+  }
   begun_ = true;
   cell_count_.store(0, std::memory_order_release);
+  cells_persisted_ = 0;
   return td::Status::OK();
 }
 
@@ -834,23 +886,80 @@ td::Status CellDbStreamingSink::persist(td::Ref<vm::Cell> cell) {
 }
 
 td::Result<td::Ref<vm::Cell>> CellDbStreamingSink::persist_and_replace(td::Ref<vm::Cell> cell) {
-  auto keep = cell;
-  TRY_STATUS(persist(std::move(cell)));
-  if (!replace_cell_) {
-    return keep;
+  if (!true_streaming_active_) {
+    // Legacy / fallback path: counting + optional ReplaceCellFn.
+    // Behavior preserved bit-for-bit so existing 1-arg / 2-arg sink
+    // construction sites (tests, counting-only callers) still work.
+    auto keep = cell;
+    TRY_STATUS(persist(std::move(cell)));
+    if (!replace_cell_) {
+      return keep;
+    }
+    auto replacement = replace_cell_(keep);
+    if (replacement.is_error()) {
+      return replacement.move_as_error();
+    }
+    auto out = replacement.move_as_ok();
+    if (out.is_null()) {
+      return td::Status::Error("CellDbStreamingSink::persist_and_replace returned null cell");
+    }
+    if (out->get_hash() != keep->get_hash()) {
+      return td::Status::Error("CellDbStreamingSink::persist_and_replace returned cell with mismatched hash");
+    }
+    return out;
   }
-  auto replacement = replace_cell_(keep);
-  if (replacement.is_error()) {
-    return replacement.move_as_error();
+
+  // Phase B true-streaming path: write to CellDb, replace with ExtCell.
+  if (!begun_) {
+    return td::Status::Error("CellDbStreamingSink::persist_and_replace called before begin");
   }
-  auto out = replacement.move_as_ok();
-  if (out.is_null()) {
-    return td::Status::Error("CellDbStreamingSink::persist_and_replace returned null cell");
+  if (finished_ || aborted_) {
+    return td::Status::Error("CellDbStreamingSink::persist_and_replace called after finish/abort");
   }
-  if (out->get_hash() != keep->get_hash()) {
-    return td::Status::Error("CellDbStreamingSink::persist_and_replace returned cell with mismatched hash");
+  if (cell.is_null()) {
+    return td::Status::Error("CellDbStreamingSink::persist_and_replace received null cell");
   }
-  return out;
+  if (!batch_open_) {
+    return td::Status::Error("CellDbStreamingSink::persist_and_replace called with no open batch");
+  }
+  // The bounded BoC importer constructs DataCell instances and casts
+  // them to Ref<Cell> before invoking the sink (see boc.cpp). We
+  // dynamic-cast back to DataCell so the writer can serialize the cell
+  // contents; a non-DataCell here is a programming bug and we fail
+  // closed rather than silently coerce.
+  td::Ref<vm::DataCell> data_cell{cell};
+  if (data_cell.is_null()) {
+    return td::Status::Error(
+        "CellDbStreamingSink::persist_and_replace received non-DataCell from importer");
+  }
+  auto declared_hash = cell->get_hash();
+  auto level_mask = cell->get_level_mask();
+  // get_depth() defaults to the max-level depth, matching the depth
+  // PrunnedCell stores per-level for the final hash. The importer only
+  // ever delivers fully-resolved cells, so the per-level depth is the
+  // canonical value the ExtCell consumer will compare against.
+  auto depth = cell->get_depth();
+  auto depth_bytes = depth_be_bytes(depth);
+
+  // Per-cell idempotent KV write. store_cell_streaming returns Error
+  // on hash collision (same key, different bytes already in CellDb);
+  // we propagate the exact error so the importer aborts cleanly.
+  TRY_STATUS(writer_store_cell_(data_cell));
+  cells_persisted_++;
+  cell_count_.fetch_add(1, std::memory_order_acq_rel);
+
+  TRY_RESULT(replacement,
+             vm::make_celldb_ext_cell(level_mask, declared_hash.as_slice(),
+                                      td::Slice(depth_bytes.data(), depth_bytes.size()), reader_));
+  if (replacement.is_null()) {
+    return td::Status::Error(
+        "CellDbStreamingSink::persist_and_replace: make_celldb_ext_cell returned null");
+  }
+  if (replacement->get_hash() != declared_hash) {
+    return td::Status::Error(
+        "CellDbStreamingSink::persist_and_replace: ExtCell replacement hash differs from input");
+  }
+  return replacement;
 }
 
 td::Status CellDbStreamingSink::finish(const vm::Cell::Hash &root_hash) {
@@ -862,6 +971,19 @@ td::Status CellDbStreamingSink::finish(const vm::Cell::Hash &root_hash) {
   }
   if (aborted_) {
     return td::Status::Error("CellDbStreamingSink::finish called after abort");
+  }
+  if (true_streaming_active_ && batch_open_) {
+    // Flush the streaming writer's RocksDB batch. After commit returns
+    // OK every cell handed to persist_and_replace is durable and any
+    // subsequent CellDbReader query (incl. lazy ExtCell loads emitted
+    // by THIS import) will observe it.
+    auto status = writer_commit_batch_();
+    batch_open_ = false;
+    if (status.is_error()) {
+      return status;
+    }
+    LOG(INFO) << "CellDbStreamingSink committed " << cells_persisted_
+              << " cell(s); root=" << root_hash.to_hex();
   }
   finished_ = true;
   root_hash_ = root_hash;
@@ -876,6 +998,17 @@ void CellDbStreamingSink::abort() {
     return;
   }
   aborted_ = true;
+  if (true_streaming_active_ && batch_open_ && writer_abort_batch_) {
+    // Best-effort discard. Rolling back the RocksDB batch leaves the
+    // CellDb byte-for-byte identical to its pre-import snapshot. We
+    // never throw out of abort() — the caller path is already in a
+    // failure state.
+    auto status = writer_abort_batch_();
+    if (status.is_error()) {
+      LOG(WARNING) << "CellDbStreamingSink::abort: abort_batch failed: " << status;
+    }
+    batch_open_ = false;
+  }
 }
 
 namespace testing {

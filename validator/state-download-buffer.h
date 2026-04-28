@@ -52,6 +52,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include "td/utils/Slice.h"
@@ -61,8 +62,21 @@
 #include "vm/boc.h"
 #include "vm/cells/Cell.h"
 
+namespace vm {
+// Forward-declared to keep this header free of the heavy CellDbExtCell.h
+// transitive include set (DynamicBagOfCellsDb.h, etc.). The streaming sink
+// only stores a shared_ptr, never dereferences the type, in this header.
+class CellDbReader;
+}  // namespace vm
+
 namespace tos {
 namespace validator {
+
+// Forward-declared so the streaming sink can hold a unique_ptr without
+// pulling validator/db/celldb.hpp (which transitively drags in the actor +
+// RocksDB headers) into every TU that includes state-download-buffer.h.
+class CellDbStreamingWriter;
+
 namespace fullnode {
 
 // Forward declaration of the platform-specific mmap holder. Owns the file
@@ -437,6 +451,71 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
   CellDbStreamingSink(OnCellFn on_cell, ReplaceCellFn replace_cell)
       : on_cell_(std::move(on_cell)), replace_cell_(std::move(replace_cell)) {
   }
+  // Phase B "true streaming" constructor. When BOTH `reader` and `writer`
+  // are non-null, persist_and_replace writes each cell to CellDb via the
+  // shared KeyValue handle wrapped by `writer`, and returns an ExtCell-
+  // backed hash-only replacement so the importer no longer holds a full
+  // DataCell DAG. The legacy default / 1-arg / 2-arg constructors stay
+  // valid and run the counting / fallback path with this flag clear.
+  //
+  // The constructor is a TEMPLATE so it is only instantiated in TUs
+  // that actually call it (Wave 5's downloader TU, which already has
+  // `CellDbStreamingWriter` complete via validator/db/celldb.hpp). The
+  // light-weight `validator-state-download-budget` static library this
+  // header's .cpp links into intentionally does not pull in tos_db /
+  // TDDB_USE_ROCKSDB, so an inline non-template body would fail to
+  // compile in every TU that includes this header without the writer
+  // definition. The template parameter `WriterT` is constrained at the
+  // call site to be `CellDbStreamingWriter` (or a derived test class)
+  // by the static_assert below.
+  //
+  // The body type-erases the writer's vtable methods into std::function
+  // members (`writer_begin_batch_`, `writer_store_cell_`,
+  // `writer_commit_batch_`, `writer_abort_batch_`) plus a void-typed
+  // owner that keeps the unique_ptr alive; the sink's runtime hot path
+  // then dispatches through the std::function instances and never
+  // touches the writer type's layout from inside this header's .cpp.
+  template <typename WriterT>
+  CellDbStreamingSink(std::shared_ptr<vm::CellDbReader> reader, std::unique_ptr<WriterT> writer)
+      : reader_(std::move(reader)) {
+    static_assert(std::is_base_of_v<CellDbStreamingWriter, WriterT>,
+                  "CellDbStreamingSink streaming-writer constructor requires a "
+                  "CellDbStreamingWriter (or a derived class)");
+    if (reader_ != nullptr && writer != nullptr) {
+      auto* raw_writer = writer.get();
+      writer_begin_batch_ = [raw_writer]() { return raw_writer->begin_batch(); };
+      writer_store_cell_ = [raw_writer](const td::Ref<vm::DataCell>& cell) {
+        return raw_writer->store_cell(cell);
+      };
+      writer_commit_batch_ = [raw_writer]() { return raw_writer->commit_batch(); };
+      writer_abort_batch_ = [raw_writer]() { return raw_writer->abort_batch(); };
+      // Type-erase the unique_ptr's destruction into a shared_ptr<void>
+      // whose deleter is captured here (where the writer type is
+      // complete). The sink's destructor just drops the shared_ptr<void>;
+      // the lambda captured in the deleter performs the real `delete`.
+      writer_owner_ =
+          std::shared_ptr<void>(writer.release(), [](void* p) { delete static_cast<WriterT*>(p); });
+      true_streaming_active_ = true;
+    }
+  }
+  // Destructor is inline so the type-erased writer_owner_ deleter
+  // (captured at construction time) closes any still-open batch via
+  // the writer_abort_batch_ std::function. The dtor's body runs in
+  // whatever TU instantiates the sink; it never touches
+  // CellDbStreamingWriter's layout directly because both the abort
+  // call and the eventual delete go through callables.
+  ~CellDbStreamingSink() override {
+    if (true_streaming_active_ && batch_open_ && writer_abort_batch_) {
+      // Best-effort: the importer's normal finish/abort path runs the
+      // commit/abort dance for us; this branch only fires when the
+      // sink is dropped without a matching finish/abort (e.g. a test
+      // tears the sink down out from under the importer).
+      auto status = writer_abort_batch_();
+      (void)status;  // status logged at the explicit abort() site; here
+                     // we are noexcept and cannot throw.
+      batch_open_ = false;
+    }
+  }
 
   td::Status begin() override;
   td::Status persist(td::Ref<vm::Cell> cell) override;
@@ -461,10 +540,39 @@ class CellDbStreamingSink final : public vm::StreamingCellSink {
   vm::Cell::Hash root_hash() const {
     return root_hash_;
   }
+  // Number of cells written to CellDb via the Phase B streaming writer
+  // (i.e. the count of successful `writer_->store_cell` calls). Zero
+  // when the legacy fallback path is in use. Wave 6 tests assert this
+  // equals the cell-count parsed by the importer.
+  td::uint64 cells_persisted() const {
+    return cells_persisted_;
+  }
+  // True iff this sink was built with the (reader, writer) Phase B
+  // constructor and both handles are non-null. Wave 5 (downloader
+  // wire-in) reads this to assert that the real streaming path was
+  // actually wired, instead of the legacy counting/fallback sink.
+  bool is_true_streaming() const {
+    return true_streaming_active_;
+  }
 
  private:
   OnCellFn on_cell_;
   ReplaceCellFn replace_cell_;
+  // Phase B handles. `reader_` is held directly because vm::CellDbReader's
+  // forward declaration is enough for shared_ptr storage and Wave 5's TU
+  // already pulls vm/db/DynamicBagOfCellsDb.h to build it. The writer is
+  // type-erased into std::function members + a shared_ptr<void> owner;
+  // see the (reader, writer) constructor for the rationale (TDDB_USE_ROCKSDB
+  // not propagated into validator-state-download-budget).
+  std::shared_ptr<vm::CellDbReader> reader_;
+  std::shared_ptr<void> writer_owner_;
+  std::function<td::Status()> writer_begin_batch_;
+  std::function<td::Status(const td::Ref<vm::DataCell>&)> writer_store_cell_;
+  std::function<td::Status()> writer_commit_batch_;
+  std::function<td::Status()> writer_abort_batch_;
+  bool true_streaming_active_{false};
+  bool batch_open_{false};
+  td::uint64 cells_persisted_{0};
   std::atomic<td::uint64> cell_count_{0};
   bool begun_{false};
   bool finished_{false};
