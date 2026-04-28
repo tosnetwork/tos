@@ -798,6 +798,9 @@ target_link_libraries(test-download-state-budget PRIVATE validator-common full-n
 add_executable(test-celldb-streaming-import test/test-celldb-streaming-import.cpp)
 target_link_libraries(test-celldb-streaming-import PRIVATE validator-common validator-db full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+add_executable(test-celldb-actor-restart test/test-celldb-actor-restart.cpp)
+target_link_libraries(test-celldb-actor-restart PRIVATE validator-common validator-db full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
+
 add_executable(test-http test/test-http.cpp)
 target_link_libraries(test-http PRIVATE toshttp)
 
@@ -912,6 +915,7 @@ tos_test(test-rldp2)
 tos_test(test-validator-session-state)
 tos_test(test-download-state-budget)
 tos_test(test-celldb-streaming-import)
+tos_test(test-celldb-actor-restart)
 tos_test(test-quorum)
 tos_test(test-catchain)
 tos_test(test-emulator)
