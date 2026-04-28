@@ -53,6 +53,51 @@ class RootDb;
 
 class CellDb;
 class CellDbAsyncExecutor;
+class CellDbIn;
+
+// tos27 P0-1: GC pause lease bound to root-store completion.
+//
+// Issued by `CellDbIn::import_persistent_state_streaming` on the
+// success path; held by the downloader actor through the
+// `set_block_state` callback. The lease's destructor releases the
+// pause exactly once via send_closure to CellDbIn. A canceled or
+// dropped Promise therefore still releases GC (best-effort) without
+// requiring a watchdog timer to drive the resume.
+//
+// The watchdog timer remains in place but is downgraded to a
+// LOG(WARNING) only — it must NOT call `resume_gc_for_import()`.
+// This prevents the prior "fixed 60-second timer can fire while the
+// canonical root store is still committing, allowing GC to
+// mis-collect imported cells" hazard.
+//
+// Move-only: the lease tracks a single pause that must be released
+// exactly once. Copying would create a double-release on destruction.
+class CellDbGcPauseLease {
+ public:
+  CellDbGcPauseLease() = default;
+  explicit CellDbGcPauseLease(td::actor::ActorId<CellDbIn> db) noexcept;
+  CellDbGcPauseLease(CellDbGcPauseLease&&) noexcept;
+  CellDbGcPauseLease& operator=(CellDbGcPauseLease&&) noexcept;
+  CellDbGcPauseLease(const CellDbGcPauseLease&) = delete;
+  CellDbGcPauseLease& operator=(const CellDbGcPauseLease&) = delete;
+  ~CellDbGcPauseLease();
+
+  // Caller invokes after the canonical root-store completion (e.g.
+  // when `ValidatorManager::set_block_state` has resolved). After
+  // this call the lease is inert; the destructor is a no-op.
+  // Idempotent: a second call on an already-released lease is a
+  // no-op so cancel/shutdown paths cannot double-release.
+  void release_after_root_store_committed() noexcept;
+
+  // True iff the lease still holds a live pause that the destructor
+  // (or `release_after_root_store_committed`) would release.
+  bool active() const noexcept {
+    return !db_.empty();
+  }
+
+ private:
+  td::actor::ActorId<CellDbIn> db_;
+};
 
 // Late-binding CellDb reader provider for streaming-import lazy ExtCells.
 //

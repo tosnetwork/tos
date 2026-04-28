@@ -959,10 +959,20 @@ void DownloadShardState::on_streaming_import_done(td::Result<PersistentStateImpo
     data_file_ = fullnode::BudgetedStateFile{};
     data_reservation_.reset();
     state_processing_reservation_.reset();
+    // result.gc_lease (if any) will be released by its destructor
+    // here; that's the "abort" cleanup path for the lease.
     fail_handler(actor_id(this),
                  td::Status::Error("tos26 P1-4 OnDisk import returned null root"));
     return;
   }
+  // tos27 P0-1: take ownership of the GC-pause lease the importer
+  // issued on the success path. We must hold it until
+  // `set_block_state` has stored the canonical block-state root —
+  // see `written_shard_state` below for the release call site. If
+  // the actor is destroyed before then (cancel / shutdown /
+  // abort_query), `gc_lease_`'s destructor releases the pause
+  // automatically as a fallback so GC always resumes.
+  gc_lease_ = std::move(result.gc_lease);
   LOG(INFO) << "evm-workchain: persistent-state catch-up routed through actor-local "
                "import_persistent_state_streaming for "
             << block_id_.to_str() << ", cells_persisted=" << result.cells_persisted;
@@ -1463,6 +1473,18 @@ void DownloadShardState::written_shard_state_file() {
 
 void DownloadShardState::written_shard_state(td::Ref<ShardState> state) {
   status_.set_status(PSTRING() << block_id_.id.to_str() << " : finishing");
+  // tos27 P0-1: `set_block_state` has now stored the canonical
+  // block-state root (and walked + ref-incremented the imported cells
+  // through `DynamicBagOfCellsDb::dfs_new_cells_in_db`), so the
+  // imported cells are referenced by a desc-list entry and GC can no
+  // longer mis-collect them. Release the GC-pause lease that
+  // `on_streaming_import_done` parked on the actor. If the import
+  // path was the legacy InMemory branch (no lease was ever issued)
+  // `gc_lease_` is null and this is a no-op.
+  if (gc_lease_) {
+    gc_lease_->release_after_root_store_committed();
+    gc_lease_.reset();
+  }
   state_ = std::move(state);
   handle_->set_unix_time(state_->get_unix_time());
   handle_->set_is_key_block(block_id_.is_masterchain());

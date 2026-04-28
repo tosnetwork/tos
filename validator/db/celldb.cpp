@@ -45,6 +45,67 @@
 namespace tos {
 
 namespace validator {
+
+// tos27 P0-1: CellDbGcPauseLease — RAII handle that releases an
+// outstanding `pause_gc_for_import()` exactly once. Move-only.
+//
+// Constructed with the CellDbIn ActorId on the success path of
+// `import_persistent_state_streaming`. The downloader holds the
+// lease as a member of its actor state across the
+// create_shard_state -> set_block_state pipeline; on
+// `release_after_root_store_committed` (or on actor destruction)
+// the lease send_closures `resume_gc_for_import` back to CellDbIn.
+//
+// All operations are noexcept. The destructor cannot throw because
+// `td::actor::send_closure` itself is noexcept and the ActorId move
+// is trivial.
+CellDbGcPauseLease::CellDbGcPauseLease(td::actor::ActorId<CellDbIn> db) noexcept : db_(std::move(db)) {
+}
+
+CellDbGcPauseLease::CellDbGcPauseLease(CellDbGcPauseLease&& other) noexcept : db_(std::move(other.db_)) {
+  other.db_ = {};  // invalidate the moved-from lease so its dtor is a no-op
+}
+
+CellDbGcPauseLease& CellDbGcPauseLease::operator=(CellDbGcPauseLease&& other) noexcept {
+  if (this != &other) {
+    // Release any pause we currently hold before adopting the new one.
+    if (!db_.empty()) {
+      td::actor::send_closure(db_, &CellDbIn::resume_gc_for_import);
+    }
+    db_ = std::move(other.db_);
+    other.db_ = {};
+  }
+  return *this;
+}
+
+CellDbGcPauseLease::~CellDbGcPauseLease() {
+  if (!db_.empty()) {
+    // Best-effort release. If the CellDbIn actor has already shut down
+    // the send_closure is a no-op; we still clear our handle so a
+    // subsequent move-from is observably-empty.
+    td::actor::send_closure(db_, &CellDbIn::resume_gc_for_import);
+    db_ = {};
+  }
+}
+
+void CellDbGcPauseLease::release_after_root_store_committed() noexcept {
+  if (!db_.empty()) {
+    td::actor::send_closure(db_, &CellDbIn::resume_gc_for_import);
+    db_ = {};
+  }
+}
+
+// Out-of-line special members for `PersistentStateImportResult` so the
+// (forward-declared in validator-manager.h) `CellDbGcPauseLease` is
+// only required to be complete inside this TU. Every other TU that
+// flows a `td::Promise<PersistentStateImportResult>` through (the
+// validator manager, rootdb, hardfork manager) gets to keep its
+// minimal include set.
+PersistentStateImportResult::PersistentStateImportResult() = default;
+PersistentStateImportResult::~PersistentStateImportResult() = default;
+PersistentStateImportResult::PersistentStateImportResult(PersistentStateImportResult&&) noexcept = default;
+PersistentStateImportResult& PersistentStateImportResult::operator=(PersistentStateImportResult&&) noexcept = default;
+
 class CellDbAsyncExecutor : public vm::DynamicBagOfCellsDb::AsyncExecutor {
  public:
   explicit CellDbAsyncExecutor(td::actor::ActorId<CellDbBase> cell_db) : cell_db_(std::move(cell_db)) {
@@ -1541,7 +1602,7 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
             << " cell(s); root=" << request.expected_root_hash.to_hex()
             << " (lazy ExtCell-backed; child DAG durable in CellDb)";
 
-  // tos26 P1-5: success path. The imported cells are now durable in
+  // tos27 P0-1: success path. The imported cells are now durable in
   // CellDb with refcnt=1, but they are not yet referenced by any
   // canonical block-state desc-list entry — the downloader actor will
   // drive set_block_state -> CellDb::store_cell next, which triggers
@@ -1549,15 +1610,37 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   // (DynamicBagOfCellsDb::dfs_new_cells_in_db) and reconciles the
   // descendant refcounts under the canonical desc list.
   //
-  // We hold the GC pause across that handoff by scheduling the resume
-  // via delay_action; 60s is generous compared to the few-millisecond
-  // actor scheduling latency, but the worst case is just "GC delayed
-  // by one extra alarm cycle", never "GC mis-deletes imported cells".
-  // resume_pending stays true so the lambda can find a pause to release.
-  resume_pending = false;  // ownership transferred to the delayed action
+  // Previously we released the pause on a fixed 60s `delay_action`
+  // timer; if the canonical root store outran the timer, GC could
+  // mis-collect imported cells before the desc-list entry referenced
+  // them. We now issue a CellDbGcPauseLease into the result instead:
+  // the downloader actor holds the lease across the
+  // create_shard_state -> set_block_state pipeline and releases it
+  // on the set_block_state callback. A canceled / dropped completion
+  // promise still releases GC via the lease destructor.
+  //
+  // resume_pending stays in the "false" state below so the lease — not
+  // the local `resume_now` lambda — owns the eventual resume.
+  resume_pending = false;
+  result.gc_lease = std::make_unique<CellDbGcPauseLease>(actor_id(this));
+
+  // Watchdog: log-only; never resumes GC. If the lease has not been
+  // released after 5 minutes the lease is likely stuck (downloader
+  // actor leaked, root-store hung) and an operator should investigate.
+  // Resume is bound exclusively to the lease destructor /
+  // release_after_root_store_committed path so a long-running root
+  // store cannot let GC mis-collect imported cells.
   delay_action(
-      [SelfId = actor_id(this)] { td::actor::send_closure(SelfId, &CellDbIn::resume_gc_for_import); },
-      td::Timestamp::in(60.0));
+      [SelfId = actor_id(this), block_seqno = request.expected_root_hash.to_hex()] {
+        LOG(WARNING) << "CellDbIn::import_persistent_state_streaming: GC has been paused >5min "
+                        "since import for root="
+                     << block_seqno
+                     << "; lease may be stuck (root-store hang or leaked downloader actor). "
+                        "GC will resume when the lease is released; this watchdog only logs.";
+        (void)SelfId;
+      },
+      td::Timestamp::in(300.0));
+
   promise.set_result(std::move(result));
 }
 

@@ -21,6 +21,7 @@
 
 #include "td/utils/Status.h"
 #include "td/utils/port/FileFd.h"
+#include "validator/db/celldb.hpp"
 #include "validator/interfaces/validator-manager.h"
 #include "validator/state-download-buffer.h"
 #include "vm/boc.h"
@@ -249,6 +250,20 @@ class DownloadShardState : public td::actor::Actor {
   // actor state. Held as a shared_ptr so completion lambdas can extend
   // its lifetime past `this` without copying the reservation bytes.
   std::shared_ptr<fullnode::PersistentStateProcessingReservation> state_processing_reservation_;
+  // tos27 P0-1: GC-pause lease taken out by CellDbIn on the streaming
+  // import success path and held by this actor across
+  // `create_shard_state` -> `set_block_state`. Released exactly once
+  // when `set_block_state` resolves successfully (in
+  // `written_shard_state`). If the actor is destroyed before
+  // `set_block_state` resolves (cancel / shutdown / abort_query) the
+  // lease's destructor releases the pause as a fallback so GC always
+  // resumes — there is no fixed-timer fallback in the importer
+  // anymore. Held by std::unique_ptr because `CellDbGcPauseLease` is
+  // move-only and the present `gc_lease_` slot must be both
+  // default-constructible (empty before the import resolves) and
+  // assign-from-empty-able (release path) without exposing the
+  // lease's full type to users of the actor's public surface.
+  std::unique_ptr<CellDbGcPauseLease> gc_lease_;
   td::Ref<ShardState> state_;
 
   ProcessStatus status_;

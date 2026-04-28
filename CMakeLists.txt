@@ -796,7 +796,7 @@ target_link_libraries(test-download-state-budget PRIVATE validator-common full-n
 # tos_db drags in MemoryKeyValue + CellStorer; tos_crypto carries
 # CellDbExtCell + DynamicBagOfCellsDb).
 add_executable(test-celldb-streaming-import test/test-celldb-streaming-import.cpp)
-target_link_libraries(test-celldb-streaming-import PRIVATE validator-common full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
+target_link_libraries(test-celldb-streaming-import PRIVATE validator-common validator-db full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
 add_executable(test-http test/test-http.cpp)
 target_link_libraries(test-http PRIVATE toshttp)

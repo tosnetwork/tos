@@ -19,6 +19,8 @@
 */
 #pragma once
 
+#include <memory>
+
 #include <tos/tos-tl.hpp>
 
 #include "auto/tl/lite_api.h"
@@ -52,6 +54,17 @@ namespace validator {
 // avoid.
 class CellDbStreamingWriter;
 
+// Forward declaration for the GC-pause lease (tos27 P0-1). Same
+// rationale as `CellDbStreamingWriter` above: the lease is defined
+// in `validator/db/celldb.hpp`; pulling that header here would create
+// a circular dependency through `interfaces/validator-manager.h ->
+// db/celldb.hpp -> interfaces/validator-manager.h`. The lease is a
+// move-only RAII type whose destructor releases the GC pause via
+// send_closure to CellDbIn, so by-value membership in
+// `PersistentStateImportResult` does not require the full type at
+// the use site of the import-result struct.
+class CellDbGcPauseLease;
+
 // tos26 P1-4: actor-local persistent-state streaming-import payload.
 // Declared here so both Db and ValidatorManager can route the request
 // without dragging celldb.hpp into the manager interface header.
@@ -67,10 +80,33 @@ struct PersistentStateImportRequest {
 // DAG lives durably in CellDb, and lazy materialization goes through
 // the post-commit reader the importer publishes on its
 // LiveCellDbReaderProvider.
+//
+// tos27 P0-1: `gc_lease` (held via std::unique_ptr to keep the type
+// forward-declarable here) carries the GC-pause lease that the
+// importer issues on the success path. The downloader actor moves
+// the lease into its own state and releases it once
+// `set_block_state` has stored the canonical block-state root, so
+// GC cannot collect imported cells before the desc-list entry that
+// references them is committed. A canceled / dropped Promise
+// destroys the lease, which in turn releases the GC pause via the
+// lease destructor — no fixed timer required.
+//
+// Special-member functions are defined out-of-line in
+// `validator/db/celldb.cpp` so the (incomplete) `CellDbGcPauseLease`
+// only needs to be complete at definition sites, not at every TU
+// that flows a `td::Promise<PersistentStateImportResult>` through.
 struct PersistentStateImportResult {
+  PersistentStateImportResult();
+  ~PersistentStateImportResult();
+  PersistentStateImportResult(PersistentStateImportResult&&) noexcept;
+  PersistentStateImportResult& operator=(PersistentStateImportResult&&) noexcept;
+  PersistentStateImportResult(const PersistentStateImportResult&) = delete;
+  PersistentStateImportResult& operator=(const PersistentStateImportResult&) = delete;
+
   td::Ref<vm::Cell> hash_only_root;
   td::uint64 cells_persisted{0};
   vm::Cell::Hash parsed_root_hash{};
+  std::unique_ptr<CellDbGcPauseLease> gc_lease;
 };
 
 constexpr int VERBOSITY_NAME(VALIDATOR_WARNING) = verbosity_WARNING;

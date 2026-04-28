@@ -1085,4 +1085,21 @@ if ! rg -q 'CellStateLoadMode\s+mode\s*=\s*CellStateLoadMode::TrustedLazy' "$roo
     exit 1
 fi
 
+# Check 21 — tos27 P0-1: GC pause must NOT be released by a fixed
+# timer. Imported cells are at risk of GC if the canonical root
+# store takes longer than the timer; the resume must be bound to
+# `set_block_state` completion via CellDbGcPauseLease.
+if rg -nP 'delay_action\([^)]*resume_gc_for_import' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: GC pause must not be released by a fixed timer; use CellDbGcPauseLease instead (tos27 P0-1)" >&2
+    exit 1
+fi
+if ! rg -q 'class CellDbGcPauseLease' "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: CellDbGcPauseLease type must be declared (tos27 P0-1)" >&2
+    exit 1
+fi
+if ! rg -q 'release_after_root_store_committed' "$root/validator/downloaders/download-state.cpp"; then
+    echo "evm hardening failed: downloader must release CellDbGcPauseLease after root-store completion (tos27 P0-1)" >&2
+    exit 1
+fi
+
 echo "evm production hardening check passed"
