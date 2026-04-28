@@ -273,6 +273,24 @@ struct PersistentStateProcessingReservation {
   ~PersistentStateProcessingReservation();
 };
 
+// RAII reservation for temporary on-disk streaming-import spools. Phase B
+// keeps the downloaded tempfile, the worker import spool, and the rollback
+// manifest as separate files; this budget accounts only the latter two so a
+// peer cannot multiply disk pressure while still staying under the download
+// byte cap.
+struct PersistentStateSpoolReservation {
+  td::uint64 bytes{0};
+
+  PersistentStateSpoolReservation() = default;
+  explicit PersistentStateSpoolReservation(td::uint64 b) : bytes(b) {
+  }
+  PersistentStateSpoolReservation(const PersistentStateSpoolReservation &) = delete;
+  PersistentStateSpoolReservation &operator=(const PersistentStateSpoolReservation &) = delete;
+  PersistentStateSpoolReservation(PersistentStateSpoolReservation &&) = delete;
+  PersistentStateSpoolReservation &operator=(PersistentStateSpoolReservation &&) = delete;
+  ~PersistentStateSpoolReservation();
+};
+
 // Configurable persistent-state budget. The defaults are fail-closed and
 // internally consistent: an operator can override any field via the
 // validator-engine CLI flags or via a direct call to
@@ -318,6 +336,12 @@ struct PersistentStateBudgetConfig {
   // further at min(file.size, this value) so a small state cannot declare
   // more cell bytes than its envelope contains.
   td::uint64 max_total_cell_bytes_per_parse = 16ULL << 30;
+  // Phase B import-spool budget. A 16 GiB state can transiently need an
+  // import spool plus a rollback manifest, so the per-import default is 2x
+  // the default state cap and the global default allows two such imports
+  // across the process before failing closed.
+  td::uint64 max_spool_bytes_per_import = 32ULL << 30;
+  td::uint64 max_total_spool_bytes = 64ULL << 30;
   // H-02/tos30 long-term feature flag. When enabled, OnDisk catch-up may
   // parse a state whose `file.size` exceeds
   // max_returned_dag_bytes_per_parse because the actor-local importer no
@@ -355,6 +379,11 @@ bool try_reserve_persistent_state_download_memory(td::uint64 size);
 // Mirror of the download API for the processing budget.
 bool try_reserve_persistent_state_processing_memory(td::uint64 size);
 
+// Disk budget for CellDb streaming import sidecar files (worker spool +
+// rollback manifest). The reservation must be held until both sidecars are
+// unlinked or deliberately handed to startup recovery.
+bool try_reserve_persistent_state_spool_disk(td::uint64 size);
+
 // Validate the peer-advertised total persistent-state size against the
 // hard download cap. Used by DownloadState before reserving the budget so
 // a hostile peer cannot induce an unbounded heap allocation.
@@ -370,6 +399,10 @@ td::uint64 persistent_state_max_file_bytes();
 // budget. Exposed so tests pin the value and so the OnDisk parse path can
 // reason about whether a single state can occupy the full budget transiently.
 td::uint64 persistent_state_total_download_budget_bytes();
+
+// Hard upper bounds for temporary CellDb streaming-import spool files.
+td::uint64 persistent_state_max_spool_bytes_per_import();
+td::uint64 persistent_state_total_spool_budget_bytes();
 
 // Map an on-disk persistent-state tempfile (the file referenced by the
 // BudgetedStateFile produced by the streaming downloader) into the
@@ -686,6 +719,10 @@ bool test_try_reserve_persistent_state_download_memory(td::uint64 size);
 // can be validated without standing up the DownloadShardState actor.
 td::uint64 test_get_persistent_state_processing_bytes();
 bool test_try_reserve_persistent_state_processing_memory(td::uint64 size);
+
+// Test-only handle to the global persistent-state spool disk budget.
+td::uint64 test_get_persistent_state_spool_bytes();
+bool test_try_reserve_persistent_state_spool_disk(td::uint64 size);
 
 }  // namespace testing
 

@@ -78,6 +78,8 @@ constexpr td::uint64 kHeapThreshold = 64ULL << 20;  // 64 MiB
 //   max_resident_bytes_per_parse     256 MiB
 //   max_returned_dag_bytes_per_parse 512 MiB (InMemory parse path only)
 //   max_total_cell_bytes_per_parse   16 GiB (true-streaming envelope)
+//   max_spool_bytes_per_import       32 GiB (import spool + rollback manifest)
+//   max_total_spool_bytes            64 GiB
 std::mutex g_budget_config_mu;
 PersistentStateBudgetConfig g_budget_config;
 
@@ -88,6 +90,7 @@ PersistentStateBudgetConfig load_budget_config_locked() {
 
 std::atomic<td::uint64> g_persistent_state_download_bytes{0};
 std::atomic<td::uint64> g_persistent_state_processing_bytes{0};
+std::atomic<td::uint64> g_persistent_state_spool_bytes{0};
 
 // Single registered tempfile directory. Set once by the validator manager
 // at start_up; read many times from the actor thread that drives
@@ -173,6 +176,18 @@ td::Status validate_budget_config(const PersistentStateBudgetConfig& cfg) {
                                        << " < max_returned_dag_bytes_per_parse "
                                        << cfg.max_returned_dag_bytes_per_parse);
   }
+  if (cfg.max_spool_bytes_per_import == 0) {
+    return td::Status::Error("max_spool_bytes_per_import must be > 0");
+  }
+  if (cfg.max_total_spool_bytes == 0) {
+    return td::Status::Error("max_total_spool_bytes must be > 0");
+  }
+  if (cfg.max_spool_bytes_per_import > cfg.max_total_spool_bytes) {
+    return td::Status::Error(PSTRING() << "max_spool_bytes_per_import "
+                                       << cfg.max_spool_bytes_per_import
+                                       << " > max_total_spool_bytes "
+                                       << cfg.max_total_spool_bytes);
+  }
   // tos29/tos30: enable_true_cell_db_streaming_import is now backed by
   // ValidatorManager::import_persistent_state_streaming. That path parses
   // off the CellDbIn actor, returns hash-only ExtCell roots, commits cells
@@ -191,6 +206,17 @@ void release_persistent_state_processing_memory(td::uint64 size) {
   if (previous < size) {
     LOG(ERROR) << "persistent state processing budget underflow: prev=" << previous << " size=" << size;
     g_persistent_state_processing_bytes.store(0, std::memory_order_release);
+  }
+}
+
+void release_persistent_state_spool_disk(td::uint64 size) {
+  if (size == 0) {
+    return;
+  }
+  auto previous = g_persistent_state_spool_bytes.fetch_sub(size, std::memory_order_acq_rel);
+  if (previous < size) {
+    LOG(ERROR) << "persistent state spool budget underflow: prev=" << previous << " size=" << size;
+    g_persistent_state_spool_bytes.store(0, std::memory_order_release);
   }
 }
 
@@ -590,6 +616,23 @@ bool try_reserve_persistent_state_processing_memory(td::uint64 size) {
   }
 }
 
+bool try_reserve_persistent_state_spool_disk(td::uint64 size) {
+  if (size == 0) {
+    return true;
+  }
+  auto cap = load_budget_config_locked().max_total_spool_bytes;
+  auto current = g_persistent_state_spool_bytes.load(std::memory_order_relaxed);
+  for (;;) {
+    if (size > cap || current > cap - size) {
+      return false;
+    }
+    if (g_persistent_state_spool_bytes.compare_exchange_weak(
+            current, current + size, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+      return true;
+    }
+  }
+}
+
 td::Status validate_persistent_state_size(td::uint64 size) {
   if (size == 0) {
     return td::Status::Error("persistent state has zero size");
@@ -611,6 +654,14 @@ td::uint64 persistent_state_max_file_bytes() {
 
 td::uint64 persistent_state_total_download_budget_bytes() {
   return load_budget_config_locked().max_download_bytes;
+}
+
+td::uint64 persistent_state_max_spool_bytes_per_import() {
+  return load_budget_config_locked().max_spool_bytes_per_import;
+}
+
+td::uint64 persistent_state_total_spool_budget_bytes() {
+  return load_budget_config_locked().max_total_spool_bytes;
 }
 
 td::Status configure_persistent_state_budgets(PersistentStateBudgetConfig cfg) {
@@ -657,6 +708,10 @@ PersistentStateDownloadReservation::~PersistentStateDownloadReservation() {
 // processing counter, regardless of whether the parse succeeded or failed.
 PersistentStateProcessingReservation::~PersistentStateProcessingReservation() {
   release_persistent_state_processing_memory(bytes);
+}
+
+PersistentStateSpoolReservation::~PersistentStateSpoolReservation() {
+  release_persistent_state_spool_disk(bytes);
 }
 
 // BudgetedStateFile cleanup: unlinks the on-disk tempfile if `is_temp` is
@@ -1141,6 +1196,14 @@ td::uint64 test_get_persistent_state_processing_bytes() {
 
 bool test_try_reserve_persistent_state_processing_memory(td::uint64 size) {
   return try_reserve_persistent_state_processing_memory(size);
+}
+
+td::uint64 test_get_persistent_state_spool_bytes() {
+  return g_persistent_state_spool_bytes.load(std::memory_order_acquire);
+}
+
+bool test_try_reserve_persistent_state_spool_disk(td::uint64 size) {
+  return try_reserve_persistent_state_spool_disk(size);
 }
 
 }  // namespace testing

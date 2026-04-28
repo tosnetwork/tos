@@ -1205,6 +1205,46 @@ if ! rg -q 'streaming_rollback_jobs_\.empty\(\)' "$root/validator/db/celldb.cpp"
     echo "evm hardening failed: new streaming imports must wait for pending rollback jobs (tos30 fail-closed)" >&2
     exit 1
 fi
+if ! rg -q 'cancel_requested' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: streaming import worker must have an explicit cancellation token (tos30 P0)" >&2
+    exit 1
+fi
+if rg -n 'CellDbIn::~CellDbIn\(\) = default' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: CellDbIn destructor must explicitly cancel/join streaming import workers (tos30 P0)" >&2
+    exit 1
+fi
+if ! rg -q 'CellDbIn shutdown preserved streaming-import rollback manifest' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: CellDbIn shutdown must preserve non-empty rollback manifests for startup replay (tos30 P0)" >&2
+    exit 1
+fi
+if ! rg -q 'release_streaming_import_after_root_store_committed|adopted marker|\\.committed' "$root/validator/db/celldb.cpp" "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: committed root-store must durably mark rollback manifests adopted before cleanup (tos30 P1)" >&2
+    exit 1
+fi
+if ! rg -q 'max_spool_bytes_per_import|max_total_spool_bytes|PersistentStateSpoolReservation|try_reserve_persistent_state_spool_disk' "$root/validator/state-download-buffer.h" "$root/validator/state-download-buffer.cpp"; then
+    echo "evm hardening failed: persistent-state import spool files must have a dedicated disk budget (tos30 P1)" >&2
+    exit 1
+fi
+if ! rg -q 'streaming import spool budget exceeded|rollback spool budget exceeded' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: CellDb streaming import must enforce spool budget while writing import and rollback spools (tos30 P1)" >&2
+    exit 1
+fi
+if ! awk '
+    /void CellDbIn::import_persistent_state_streaming\(/ { in_import = 1 }
+    /void CellDbIn::commit_streaming_import_spool_batch\(/ { in_commit = 1 }
+    /void CellDbIn::drain_streaming_import_rollback_batch\(/ { in_rollback = 1 }
+    (in_import || in_commit || in_rollback) && /R\.ensure\(\)/ {
+        print FILENAME ":" NR ": " $0
+        bad = 1
+    }
+    in_import && /^}/ { in_import = 0 }
+    in_commit && /^}/ { in_commit = 0 }
+    in_rollback && /^}/ { in_rollback = 0 }
+    END { exit (bad ? 1 : 0) }
+' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: streaming import/rollback action_queue callbacks must not use R.ensure(); return structured errors instead (tos30 P1)" >&2
+    exit 1
+fi
 if ! awk '
     /void run_streaming_import_worker\(/ { in_worker = 1 }
     in_worker && /CellDbStreamingSink|CellDbStreamingWriterImpl|begin_write_batch|commit_write_batch|store_cell_streaming/ {

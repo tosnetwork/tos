@@ -376,6 +376,7 @@ class CellDbIn : public CellDbBase {
   // the CellDbIn actor and tear down `streaming_job_` exactly once.
   void finish_streaming_import_after_actor_commit();
   void fail_streaming_import(td::Status error);
+  void fail_streaming_import_rollback(td::Status error);
   void drain_streaming_import_rollback_batch();
 
   // tos26 P1-5: re-entrant GC interlock for streaming-import refcount
@@ -425,6 +426,9 @@ class CellDbIn : public CellDbBase {
   void rollback_streaming_import_manifest(std::string rollback_manifest_path, td::uint64 rollback_cells,
                                           td::uint64 rollback_bytes, std::string reason,
                                           bool resume_gc_after);
+  void release_streaming_import_after_root_store_committed(std::string rollback_manifest_path,
+                                                           td::uint64 rollback_cells,
+                                                           td::uint64 rollback_bytes);
 
   void flush_db_stats();
 

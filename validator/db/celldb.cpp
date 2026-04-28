@@ -51,6 +51,8 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <limits>
+#include <set>
 #include <vector>
 
 namespace tos {
@@ -136,8 +138,11 @@ void CellDbGcPauseLease::drop_uncommitted() noexcept {
 
 void CellDbGcPauseLease::release_after_root_store_committed() noexcept {
   if (!db_.empty()) {
-    clear_rollback_manifest();
-    td::actor::send_closure(db_, &CellDbIn::resume_gc_for_import);
+    td::actor::send_closure(db_, &CellDbIn::release_streaming_import_after_root_store_committed,
+                            std::move(rollback_manifest_path_), rollback_cells_, rollback_bytes_);
+    rollback_manifest_path_.clear();
+    rollback_cells_ = 0;
+    rollback_bytes_ = 0;
     db_ = {};
   }
 }
@@ -1575,6 +1580,9 @@ struct StreamingImportJob {
   std::shared_ptr<LiveCellDbReaderProvider> provider;
   std::shared_ptr<StreamingImportSpool> spool;
   std::shared_ptr<StreamingImportSpool> rollback_spool;
+  std::shared_ptr<std::atomic<bool>> cancel_requested = std::make_shared<std::atomic<bool>>(false);
+  std::shared_ptr<fullnode::PersistentStateSpoolReservation> spool_reservation;
+  td::uint64 spool_budget_bytes = 0;
   vm::Cell::Hash expected_hash{};
 
   // Off-actor result fields. The worker writes these before posting
@@ -1636,7 +1644,61 @@ struct StreamingImportRollbackJob {
   td::Status promise_error = td::Status::OK();
 };
 
-CellDbIn::~CellDbIn() = default;
+CellDbIn::~CellDbIn() {
+  if (streaming_job_ != nullptr) {
+    auto job = std::move(streaming_job_);
+    streaming_job_.reset();
+    if (job->cancel_requested != nullptr) {
+      job->cancel_requested->store(true, std::memory_order_relaxed);
+    }
+    if (job->provider != nullptr) {
+      job->provider->invalidate();
+    }
+    job->worker.join();
+    job->worker_joined = true;
+    if (job->sink_keepalive != nullptr && !job->committed) {
+      job->sink_keepalive->abort();
+    }
+    if (!job->spool_reader.empty()) {
+      job->spool_reader.close();
+    }
+    if (!job->rollback_writer.empty()) {
+      auto sync_status = job->rollback_writer.sync();
+      LOG_IF(WARNING, sync_status.is_error())
+          << "CellDbIn shutdown: failed to sync streaming-import rollback manifest before preserving it: "
+          << sync_status;
+      job->rollback_writer.close();
+    }
+    if (job->rollback_spool != nullptr && !job->rollback_spool->path.empty() &&
+        job->rollback_spool->cells > 0) {
+      auto preserved_path = std::move(job->rollback_spool->path);
+      job->rollback_spool->path.clear();
+      LOG(ERROR) << "CellDbIn shutdown preserved streaming-import rollback manifest "
+                 << preserved_path << " cells=" << job->rollback_spool->cells
+                 << " bytes=" << job->rollback_spool->bytes
+                 << "; startup recovery will replay it before metadata validation";
+    }
+    job->promise.set_error(
+        td::Status::Error("CellDbIn::import_persistent_state_streaming cancelled by CellDbIn shutdown"));
+  }
+
+  for (auto& rollback : streaming_rollback_jobs_) {
+    if (rollback == nullptr) {
+      continue;
+    }
+    if (!rollback->reader.empty()) {
+      rollback->reader.close();
+    }
+    LOG(ERROR) << "CellDbIn shutdown left streaming-import rollback manifest "
+               << rollback->path << " reason=\"" << rollback->reason
+               << "\"; startup recovery will replay it";
+    if (rollback->resolve_import_promise) {
+      rollback->promise.set_error(
+          td::Status::Error("CellDbIn shutdown before streaming-import rollback completed"));
+    }
+  }
+  streaming_rollback_jobs_.clear();
+}
 
 namespace {
 
@@ -1645,6 +1707,8 @@ constexpr td::uint32 kStreamingImportSpoolRecordHeaderBytes =
 constexpr td::uint32 kMaxStreamingImportSerializedCellBytes = 1U << 20;
 constexpr const char* kStreamingImportRollbackManifestMarker = ".celldb-rollback.";
 constexpr const char* kStreamingImportPartialSuffix = ".partial";
+constexpr const char* kStreamingImportAdoptedSuffix = ".adopted";
+constexpr const char* kStreamingImportCommittedSuffix = ".committed";
 
 bool has_suffix(const std::string& value, td::Slice suffix) {
   return value.size() >= suffix.size() &&
@@ -1654,6 +1718,68 @@ bool has_suffix(const std::string& value, td::Slice suffix) {
 bool is_streaming_import_rollback_manifest_path(const std::string& path) {
   return path.find(kStreamingImportRollbackManifestMarker) != std::string::npos &&
          has_suffix(path, td::Slice(kStreamingImportPartialSuffix));
+}
+
+std::string streaming_import_adopted_marker_path(const std::string& manifest_path) {
+  return PSTRING() << manifest_path << kStreamingImportAdoptedSuffix;
+}
+
+std::string streaming_import_committed_manifest_path(const std::string& manifest_path) {
+  return PSTRING() << manifest_path << kStreamingImportCommittedSuffix;
+}
+
+bool is_streaming_import_adopted_marker_path(const std::string& path) {
+  return path.find(kStreamingImportRollbackManifestMarker) != std::string::npos &&
+         has_suffix(path, td::Slice(".partial.adopted"));
+}
+
+bool is_streaming_import_committed_manifest_path(const std::string& path) {
+  return path.find(kStreamingImportRollbackManifestMarker) != std::string::npos &&
+         has_suffix(path, td::Slice(".partial.committed"));
+}
+
+std::string streaming_import_manifest_path_from_adopted_marker(const std::string& marker_path) {
+  constexpr std::size_t suffix_len = sizeof(".adopted") - 1;
+  if (marker_path.size() < suffix_len) {
+    return {};
+  }
+  return marker_path.substr(0, marker_path.size() - suffix_len);
+}
+
+td::Status write_streaming_import_adopted_marker(const std::string& manifest_path,
+                                                 td::uint64 rollback_cells,
+                                                 td::uint64 rollback_bytes) {
+  auto marker_path = streaming_import_adopted_marker_path(manifest_path);
+  auto r_fd = td::FileFd::open(marker_path, td::FileFd::Flags::Write |
+                                               td::FileFd::Flags::Create |
+                                               td::FileFd::Flags::Truncate);
+  if (r_fd.is_error()) {
+    return r_fd.move_as_error_prefix("create streaming-import adopted marker: ");
+  }
+  auto fd = r_fd.move_as_ok();
+  auto payload = PSTRING() << "adopted\ncells=" << rollback_cells << "\nbytes=" << rollback_bytes << "\n";
+  TRY_STATUS(fd.write_all(td::Slice(payload.data(), payload.size())));
+  TRY_STATUS(fd.sync());
+  fd.close();
+  return td::Status::OK();
+}
+
+td::Result<td::uint64> streaming_import_spool_reservation_bytes(td::uint64 file_size) {
+  auto cfg = fullnode::persistent_state_budget_config();
+  if (file_size == 0) {
+    return td::Status::Error("streaming import spool reservation requires a non-zero file size");
+  }
+  if (file_size > cfg.max_spool_bytes_per_import / 2) {
+    return td::Status::Error(PSTRING() << "streaming import spool budget exceeded before import: "
+                                       << "2 * file_size " << file_size
+                                       << " > max_spool_bytes_per_import "
+                                       << cfg.max_spool_bytes_per_import);
+  }
+  auto reservation_bytes = file_size * 2;
+  if (reservation_bytes == 0) {
+    return td::Status::Error("streaming import spool reservation rounded to zero");
+  }
+  return reservation_bytes;
 }
 
 td::Result<std::pair<td::FileFd, std::string>> create_streaming_import_sidecar_file(
@@ -1772,8 +1898,12 @@ td::Result<std::pair<std::array<char, vm::Cell::hash_bytes>, std::string>> read_
 class SpoolingImportSink final : public vm::StreamingCellSink {
  public:
   SpoolingImportSink(std::shared_ptr<vm::CellDbReaderProvider> reader_provider,
-                     std::shared_ptr<StreamingImportSpool> spool, td::FileFd spool_fd)
-      : reader_provider_(std::move(reader_provider)), spool_(std::move(spool)), spool_fd_(std::move(spool_fd)) {
+                     std::shared_ptr<StreamingImportSpool> spool, td::FileFd spool_fd,
+                     td::uint64 max_spool_bytes)
+      : reader_provider_(std::move(reader_provider))
+      , spool_(std::move(spool))
+      , spool_fd_(std::move(spool_fd))
+      , max_spool_bytes_(max_spool_bytes) {
   }
 
   td::Status begin() override {
@@ -1818,12 +1948,22 @@ class SpoolingImportSink final : public vm::StreamingCellSink {
     const auto level = cell->get_level();
 
     std::string serialized = vm::CellStorer::serialize_value(/*refcnt=*/1, data_cell, /*as_boc=*/false);
+    const auto record_bytes = kStreamingImportSpoolRecordHeaderBytes + serialized.size();
+    if (max_spool_bytes_ != 0 && spool_ != nullptr &&
+        (spool_->bytes > max_spool_bytes_ || record_bytes > max_spool_bytes_ - spool_->bytes)) {
+      auto attempted = spool_->bytes <= max_spool_bytes_ - std::min<td::uint64>(record_bytes, max_spool_bytes_)
+                           ? spool_->bytes + record_bytes
+                           : std::numeric_limits<td::uint64>::max();
+      return td::Status::Error(PSTRING() << "SpoolingImportSink: import spool budget exceeded: "
+                                         << attempted << " > "
+                                         << max_spool_bytes_);
+    }
     TRY_STATUS(write_spooled_cell_record(spool_fd_, declared_hash.as_slice(),
                                          td::Slice(serialized.data(), serialized.size())));
     ++cells_persisted_;
     if (spool_ != nullptr) {
       ++spool_->cells;
-      spool_->bytes += kStreamingImportSpoolRecordHeaderBytes + serialized.size();
+      spool_->bytes += record_bytes;
     }
 
     const auto hashes_count = level_mask.get_hashes_count();
@@ -1927,6 +2067,7 @@ class SpoolingImportSink final : public vm::StreamingCellSink {
   std::shared_ptr<vm::CellDbReaderProvider> reader_provider_;
   std::shared_ptr<StreamingImportSpool> spool_;
   td::FileFd spool_fd_;
+  td::uint64 max_spool_bytes_ = 0;
   td::uint64 cells_persisted_ = 0;
   bool begun_ = false;
   bool finished_ = false;
@@ -1950,26 +2091,33 @@ class SlicedImportSink final : public vm::StreamingCellSink {
   }
 
   td::Status begin() override {
+    TRY_STATUS(check_cancelled());
     return inner_->begin();
   }
 
   td::Status persist(td::Ref<vm::Cell> cell) override {
+    TRY_STATUS(check_cancelled());
     auto status = inner_->persist(std::move(cell));
     after_cell();
+    TRY_STATUS(check_cancelled());
     return status;
   }
 
   td::Result<td::Ref<vm::Cell>> persist_and_replace(td::Ref<vm::Cell> cell) override {
+    TRY_STATUS(check_cancelled());
     auto r = inner_->persist_and_replace(std::move(cell));
     after_cell();
+    TRY_STATUS(check_cancelled());
     return r;
   }
 
   td::Status finish(const vm::Cell::Hash& root_hash) override {
+    TRY_STATUS(check_cancelled());
     return inner_->finish(root_hash);
   }
 
   td::Status commit_after_root_verified(const vm::Cell::Hash& expected_root_hash) override {
+    TRY_STATUS(check_cancelled());
     return inner_->commit_after_root_verified(expected_root_hash);
   }
 
@@ -1978,6 +2126,14 @@ class SlicedImportSink final : public vm::StreamingCellSink {
   }
 
  private:
+  td::Status check_cancelled() const {
+    if (job_ != nullptr && job_->cancel_requested != nullptr &&
+        job_->cancel_requested->load(std::memory_order_relaxed)) {
+      return td::Status::Error("CellDbIn::import_persistent_state_streaming: streaming import cancelled");
+    }
+    return td::Status::OK();
+  }
+
   // Per-cell budget check. Called after every persist / persist_and_replace
   // dispatched through the wrapper. When the cell-count or wall-clock
   // slice budget is exceeded we yield the OS scheduler slot and reset
@@ -2042,6 +2198,15 @@ class SlicedImportSink final : public vm::StreamingCellSink {
 //   * parsed-root hash != expected_root_hash
 //   * spool sync/close failure while sealing the verified import
 void run_streaming_import_worker(StreamingImportJob* job, SpoolingImportSink* sink) {
+  auto is_cancelled = [&]() {
+    return job != nullptr && job->cancel_requested != nullptr &&
+           job->cancel_requested->load(std::memory_order_relaxed);
+  };
+  if (is_cancelled()) {
+    sink->abort();
+    job->worker_status = td::Status::Error("CellDbIn::import_persistent_state_streaming: streaming import cancelled");
+    return;
+  }
   auto r_fd = td::FileFd::open(job->request.tempfile_path, td::FileFd::Flags::Read);
   if (r_fd.is_error()) {
     sink->abort();
@@ -2057,6 +2222,13 @@ void run_streaming_import_worker(StreamingImportJob* job, SpoolingImportSink* si
 
   auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, job->request.file_size, job->request.opts, &sliced_sink);
   fd.close();
+  if (is_cancelled()) {
+    if (!sink->aborted() && !sink->is_committed()) {
+      sink->abort();
+    }
+    job->worker_status = td::Status::Error("CellDbIn::import_persistent_state_streaming: streaming import cancelled");
+    return;
+  }
   if (r_root.is_error()) {
     if (!sink->aborted() && !sink->is_committed()) {
       sink->abort();
@@ -2222,29 +2394,77 @@ td::Result<td::uint64> CellDbIn::recover_streaming_import_rollbacks_at_startup()
   }
 
   std::vector<std::string> manifests;
-  TRY_STATUS(td::walk_path(root, [&manifests](td::CSlice path, td::WalkPath::Type type) {
+  std::vector<std::string> adopted_markers;
+  std::vector<std::string> committed_manifests;
+  TRY_STATUS(td::walk_path(root, [&manifests, &adopted_markers, &committed_manifests](
+                                     td::CSlice path, td::WalkPath::Type type) {
     if (type != td::WalkPath::Type::RegularFile) {
       return td::WalkPath::Action::Continue;
     }
     auto str = path.str();
     if (is_streaming_import_rollback_manifest_path(str)) {
       manifests.push_back(std::move(str));
+    } else if (is_streaming_import_adopted_marker_path(str)) {
+      adopted_markers.push_back(std::move(str));
+    } else if (is_streaming_import_committed_manifest_path(str)) {
+      committed_manifests.push_back(std::move(str));
     }
     return td::WalkPath::Action::Continue;
   }));
 
-  if (manifests.empty()) {
+  if (manifests.empty() && adopted_markers.empty() && committed_manifests.empty()) {
     return 0;
   }
   std::sort(manifests.begin(), manifests.end());
+  std::sort(adopted_markers.begin(), adopted_markers.end());
+  std::sort(committed_manifests.begin(), committed_manifests.end());
+  std::set<std::string> adopted_manifests;
+  for (const auto& marker : adopted_markers) {
+    adopted_manifests.insert(streaming_import_manifest_path_from_adopted_marker(marker));
+  }
   LOG(WARNING) << "CellDbIn found " << manifests.size()
-               << " residual streaming-import rollback manifest(s); replaying before metadata validation";
+               << " residual streaming-import rollback manifest(s) and "
+               << adopted_markers.size()
+               << " adopted marker(s), plus " << committed_manifests.size()
+               << " committed manifest(s); replaying only unadopted manifests before metadata validation";
+  td::uint64 recovered = 0;
   for (auto& path : manifests) {
+    if (adopted_manifests.count(path) != 0) {
+      auto unlink_manifest = td::unlink(path);
+      LOG_IF(WARNING, unlink_manifest.is_error())
+          << "failed to unlink adopted streaming-import rollback manifest " << path
+          << ": " << unlink_manifest;
+      if (unlink_manifest.is_ok()) {
+        auto marker = streaming_import_adopted_marker_path(path);
+        auto unlink_marker = td::unlink(marker);
+        LOG_IF(WARNING, unlink_marker.is_error())
+            << "failed to unlink streaming-import adopted marker " << marker
+            << ": " << unlink_marker;
+      }
+      continue;
+    }
     TRY_STATUS(rollback_streaming_import_manifest_sync(
         std::move(path), "startup recovery after interrupted streaming import",
         /*tolerate_trailing_partial=*/true));
+    ++recovered;
   }
-  return static_cast<td::uint64>(manifests.size());
+  for (auto& marker : adopted_markers) {
+    auto manifest_path = streaming_import_manifest_path_from_adopted_marker(marker);
+    if (std::find(manifests.begin(), manifests.end(), manifest_path) != manifests.end()) {
+      continue;
+    }
+    auto unlink_marker = td::unlink(marker);
+    LOG_IF(WARNING, unlink_marker.is_error())
+        << "failed to unlink orphaned streaming-import adopted marker " << marker
+        << ": " << unlink_marker;
+  }
+  for (auto& committed : committed_manifests) {
+    auto unlink_committed = td::unlink(committed);
+    LOG_IF(WARNING, unlink_committed.is_error())
+        << "failed to unlink committed streaming-import rollback manifest " << committed
+        << ": " << unlink_committed;
+  }
+  return recovered;
 }
 
 // tos26 P1-4 + tos27 P0-2 + tos29 High-1: actor entry point.
@@ -2288,7 +2508,11 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   if (db_busy_) {
     action_queue_.push_back([self = this, request = std::move(request),
                              promise = std::move(promise)](td::Result<td::Unit> R) mutable {
-      R.ensure();
+      if (R.is_error()) {
+        promise.set_error(R.move_as_error_prefix(
+            "CellDbIn::import_persistent_state_streaming: queued CellDb action failed: "));
+        return;
+      }
       self->import_persistent_state_streaming(std::move(request), std::move(promise));
     });
     return;
@@ -2296,7 +2520,11 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   if (!streaming_rollback_jobs_.empty()) {
     action_queue_.push_back([self = this, request = std::move(request),
                              promise = std::move(promise)](td::Result<td::Unit> R) mutable {
-      R.ensure();
+      if (R.is_error()) {
+        promise.set_error(R.move_as_error_prefix(
+            "CellDbIn::import_persistent_state_streaming: queued rollback action failed: "));
+        return;
+      }
       self->import_persistent_state_streaming(std::move(request), std::move(promise));
     });
     drain_streaming_import_rollback_batch();
@@ -2320,6 +2548,22 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
         "CellDbIn::import_persistent_state_streaming: another streaming import is already in flight on this CellDbIn"));
     return;
   }
+
+  auto r_spool_reservation_bytes = streaming_import_spool_reservation_bytes(request.file_size);
+  if (r_spool_reservation_bytes.is_error()) {
+    promise.set_error(r_spool_reservation_bytes.move_as_error());
+    return;
+  }
+  auto spool_reservation_bytes = r_spool_reservation_bytes.move_as_ok();
+  if (!fullnode::try_reserve_persistent_state_spool_disk(spool_reservation_bytes)) {
+    auto cfg = fullnode::persistent_state_budget_config();
+    promise.set_error(td::Status::Error(
+        PSTRING() << "CellDbIn::import_persistent_state_streaming: streaming import spool budget exhausted: "
+                  << "reservation=" << spool_reservation_bytes
+                  << " max_total_spool_bytes=" << cfg.max_total_spool_bytes));
+    return;
+  }
+  auto spool_reservation = std::make_shared<fullnode::PersistentStateSpoolReservation>(spool_reservation_bytes);
 
   auto r_spool = create_streaming_import_spool_file(request.tempfile_path);
   if (r_spool.is_error()) {
@@ -2359,7 +2603,8 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   // hash/depth metadata, but it never writes CellDb; it only appends
   // serialized cells to `spool_pair.first`.
   auto sink = std::make_unique<SpoolingImportSink>(
-      std::shared_ptr<vm::CellDbReaderProvider>(provider), spool, std::move(spool_pair.first));
+      std::shared_ptr<vm::CellDbReaderProvider>(provider), spool, std::move(spool_pair.first),
+      spool_reservation_bytes);
 
   // Spawn the worker thread. The job owns the request, promise,
   // provider, and worker thread; we hand the sink over via raw
@@ -2371,6 +2616,8 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   streaming_job_->provider = std::move(provider);
   streaming_job_->spool = std::move(spool);
   streaming_job_->rollback_spool = std::move(rollback_spool);
+  streaming_job_->spool_reservation = std::move(spool_reservation);
+  streaming_job_->spool_budget_bytes = spool_reservation_bytes;
   streaming_job_->rollback_writer = std::move(rollback_pair.first);
   streaming_job_->expected_hash = vm::Cell::Hash{};  // populated post-parse
 
@@ -2446,7 +2693,11 @@ void CellDbIn::commit_streaming_import_spool_batch() {
   }
   if (db_busy_) {
     action_queue_.push_back([self = this](td::Result<td::Unit> R) mutable {
-      R.ensure();
+      if (R.is_error()) {
+        self->fail_streaming_import(R.move_as_error_prefix(
+            "CellDbIn::commit_streaming_import_spool_batch: queued CellDb action failed: "));
+        return;
+      }
       self->commit_streaming_import_spool_batch();
     });
     return;
@@ -2527,11 +2778,24 @@ void CellDbIn::commit_streaming_import_spool_batch() {
           return td::Status::Error(
               "CellDb streaming import actor batch: missing rollback manifest writer for new cell");
         }
+        const auto record_bytes = kStreamingImportSpoolRecordHeaderBytes + value.size();
+        const auto import_spool_bytes = job->spool != nullptr ? job->spool->bytes : 0;
+        if (job->spool_budget_bytes != 0 &&
+            (import_spool_bytes > job->spool_budget_bytes ||
+             job->rollback_spool->bytes > job->spool_budget_bytes - import_spool_bytes ||
+             record_bytes > job->spool_budget_bytes - import_spool_bytes - job->rollback_spool->bytes)) {
+          abort_batch();
+          return td::Status::Error(PSTRING() << "CellDb streaming import actor batch: rollback spool budget exceeded: "
+                                             << "import_spool=" << import_spool_bytes
+                                             << " rollback_spool=" << job->rollback_spool->bytes
+                                             << " next_record=" << record_bytes
+                                             << " budget=" << job->spool_budget_bytes);
+        }
         TRY_STATUS(write_spooled_cell_record(job->rollback_writer, hash_slice, value_slice));
         ++job->rollback_spool->cells;
-        job->rollback_spool->bytes += kStreamingImportSpoolRecordHeaderBytes + value.size();
+        job->rollback_spool->bytes += record_bytes;
         ++job->rollback_cells_recorded;
-        job->rollback_bytes_recorded += kStreamingImportSpoolRecordHeaderBytes + value.size();
+        job->rollback_bytes_recorded += record_bytes;
         ++batch_new_cells;
         TRY_STATUS(cell_db_->set(hash_slice, value_slice));
       }
@@ -2746,13 +3010,96 @@ void CellDbIn::rollback_streaming_import_manifest(std::string rollback_manifest_
   drain_streaming_import_rollback_batch();
 }
 
+void CellDbIn::release_streaming_import_after_root_store_committed(std::string rollback_manifest_path,
+                                                                   td::uint64 rollback_cells,
+                                                                   td::uint64 rollback_bytes) {
+  if (rollback_manifest_path.empty() || rollback_cells == 0) {
+    if (!rollback_manifest_path.empty()) {
+      auto status = td::unlink(rollback_manifest_path);
+      LOG_IF(WARNING, status.is_error())
+          << "failed to unlink empty committed streaming-import rollback manifest "
+          << rollback_manifest_path << ": " << status;
+    }
+    resume_gc_for_import();
+    return;
+  }
+
+  auto marker_status = write_streaming_import_adopted_marker(
+      rollback_manifest_path, rollback_cells, rollback_bytes);
+  if (marker_status.is_error()) {
+    auto committed_path = streaming_import_committed_manifest_path(rollback_manifest_path);
+    auto rename_status = td::rename(rollback_manifest_path, committed_path);
+    if (rename_status.is_ok()) {
+      auto unlink_committed = td::unlink(committed_path);
+      LOG_IF(WARNING, unlink_committed.is_error())
+          << "failed to unlink committed streaming-import rollback manifest "
+          << committed_path << ": " << unlink_committed;
+    } else {
+      LOG(ERROR) << "failed to mark streaming-import rollback manifest adopted after root-store commit: marker="
+                 << marker_status << " rename=" << rename_status
+                 << "; manifest=" << rollback_manifest_path
+                 << " may be replayed on startup unless the operator removes it after validating root-store";
+    }
+    resume_gc_for_import();
+    return;
+  }
+
+  auto unlink_manifest = td::unlink(rollback_manifest_path);
+  if (unlink_manifest.is_error()) {
+    LOG(WARNING) << "failed to unlink adopted streaming-import rollback manifest "
+                 << rollback_manifest_path << ": " << unlink_manifest
+                 << "; adopted marker retained so startup recovery will not rollback it";
+    resume_gc_for_import();
+    return;
+  }
+
+  auto marker_path = streaming_import_adopted_marker_path(rollback_manifest_path);
+  auto unlink_marker = td::unlink(marker_path);
+  LOG_IF(WARNING, unlink_marker.is_error())
+      << "failed to unlink streaming-import adopted marker " << marker_path
+      << ": " << unlink_marker;
+  resume_gc_for_import();
+}
+
+void CellDbIn::fail_streaming_import_rollback(td::Status error) {
+  if (streaming_rollback_jobs_.empty()) {
+    LOG(ERROR) << "CellDbIn::fail_streaming_import_rollback with empty rollback queue: " << error;
+    release_db();
+    return;
+  }
+  auto finished = std::move(streaming_rollback_jobs_.front());
+  streaming_rollback_jobs_.pop_front();
+  if (!finished->reader.empty()) {
+    finished->reader.close();
+  }
+  LOG(ERROR) << "CellDbIn rollback failed for manifest " << finished->path
+             << " reason=\"" << finished->reason << "\": " << error;
+  if (finished->resume_gc_after) {
+    resume_gc_for_import();
+  }
+  if (finished->resolve_import_promise) {
+    finished->promise.set_error(
+        td::Status::Error(PSTRING() << "streaming import failed and rollback failed: import error="
+                                    << finished->promise_error << "; rollback error=" << error));
+  }
+  if (!streaming_rollback_jobs_.empty()) {
+    td::actor::send_closure(actor_id(this), &CellDbIn::drain_streaming_import_rollback_batch);
+  } else {
+    release_db();
+  }
+}
+
 void CellDbIn::drain_streaming_import_rollback_batch() {
   if (streaming_rollback_jobs_.empty()) {
     return;
   }
   if (db_busy_) {
     action_queue_.push_front([self = this](td::Result<td::Unit> R) mutable {
-      R.ensure();
+      if (R.is_error()) {
+        self->fail_streaming_import_rollback(R.move_as_error_prefix(
+            "CellDbIn::drain_streaming_import_rollback_batch: queued CellDb action failed: "));
+        return;
+      }
       self->drain_streaming_import_rollback_batch();
     });
     return;

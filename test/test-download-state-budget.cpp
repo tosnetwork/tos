@@ -100,18 +100,23 @@ using tos::validator::fullnode::BudgetedStateFile;
 using tos::validator::fullnode::DownloadedPersistentState;
 using tos::validator::fullnode::PersistentStateDownloadReservation;
 using tos::validator::fullnode::PersistentStateProcessingReservation;
+using tos::validator::fullnode::PersistentStateSpoolReservation;
 using tos::validator::fullnode::cleanup_persistent_state_tempfiles;
 using tos::validator::fullnode::mmap_persistent_state_file;
 using tos::validator::fullnode::persistent_state_heap_threshold_bytes;
 using tos::validator::fullnode::persistent_state_max_file_bytes;
+using tos::validator::fullnode::persistent_state_max_spool_bytes_per_import;
 using tos::validator::fullnode::persistent_state_total_download_budget_bytes;
+using tos::validator::fullnode::persistent_state_total_spool_budget_bytes;
 using tos::validator::fullnode::set_persistent_state_tempfile_dir;
 using tos::validator::fullnode::try_reserve_persistent_state_download_memory;
 using tos::validator::fullnode::validate_persistent_state_size;
 using tos::validator::fullnode::testing::test_get_persistent_state_download_bytes;
 using tos::validator::fullnode::testing::test_get_persistent_state_processing_bytes;
+using tos::validator::fullnode::testing::test_get_persistent_state_spool_bytes;
 using tos::validator::fullnode::testing::test_try_reserve_persistent_state_download_memory;
 using tos::validator::fullnode::testing::test_try_reserve_persistent_state_processing_memory;
+using tos::validator::fullnode::testing::test_try_reserve_persistent_state_spool_disk;
 
 // Helper: reserve `size` bytes against the global download budget and wrap
 // the reservation in a shared_ptr that releases via the same RAII destructor
@@ -130,6 +135,13 @@ std::shared_ptr<PersistentStateProcessingReservation> try_reserve_processing(td:
     return {};
   }
   return std::make_shared<PersistentStateProcessingReservation>(size);
+}
+
+std::shared_ptr<PersistentStateSpoolReservation> try_reserve_spool(td::uint64 size) {
+  if (!test_try_reserve_persistent_state_spool_disk(size)) {
+    return {};
+  }
+  return std::make_shared<PersistentStateSpoolReservation>(size);
 }
 
 void test_budget_covers_downstream_lifetime() {
@@ -2665,6 +2677,51 @@ void test_h03_budget_config_overrides() {
   std::printf("  PASSED\n");
 }
 
+void test_tos30_spool_budget_reservation() {
+  std::printf("=== test_tos30_spool_budget_reservation ===\n");
+
+  auto saved = persistent_state_budget_config();
+  PersistentStateBudgetConfig cfg = saved;
+  cfg.max_spool_bytes_per_import = 128ULL * kMiB;
+  cfg.max_total_spool_bytes = 256ULL * kMiB;
+  configure_persistent_state_budgets(cfg);
+  auto live = persistent_state_budget_config();
+  EXPECT_EQ(live.max_spool_bytes_per_import, 128ULL * kMiB);
+  EXPECT_EQ(live.max_total_spool_bytes, 256ULL * kMiB);
+  EXPECT_EQ(persistent_state_max_spool_bytes_per_import(), 128ULL * kMiB);
+  EXPECT_EQ(persistent_state_total_spool_budget_bytes(), 256ULL * kMiB);
+
+  const auto baseline = test_get_persistent_state_spool_bytes();
+  {
+    auto r1 = try_reserve_spool(128ULL * kMiB);
+    EXPECT_TRUE(r1 != nullptr);
+    EXPECT_EQ(test_get_persistent_state_spool_bytes(), baseline + 128ULL * kMiB);
+
+    auto r2 = try_reserve_spool(128ULL * kMiB);
+    EXPECT_TRUE(r2 != nullptr);
+    EXPECT_EQ(test_get_persistent_state_spool_bytes(), baseline + 256ULL * kMiB);
+
+    EXPECT_FALSE(test_try_reserve_persistent_state_spool_disk(1));
+    EXPECT_EQ(test_get_persistent_state_spool_bytes(), baseline + 256ULL * kMiB);
+  }
+  EXPECT_EQ(test_get_persistent_state_spool_bytes(), baseline);
+
+  PersistentStateBudgetConfig invalid = live;
+  invalid.max_spool_bytes_per_import = 0;
+  configure_persistent_state_budgets(invalid);
+  EXPECT_EQ(persistent_state_budget_config().max_spool_bytes_per_import,
+            live.max_spool_bytes_per_import);
+
+  invalid = live;
+  invalid.max_total_spool_bytes = live.max_spool_bytes_per_import - 1;
+  configure_persistent_state_budgets(invalid);
+  EXPECT_EQ(persistent_state_budget_config().max_total_spool_bytes,
+            live.max_total_spool_bytes);
+
+  configure_persistent_state_budgets(saved);
+  std::printf("  PASSED\n");
+}
+
 // ---------------------------------------------------------------------------
 // K3 streaming-sink wiring tests. These pin the new contract from this
 // round: vm::std_boc_deserialize_from_file_bounded now drives a real
@@ -3664,7 +3721,7 @@ void test_h02_oversize_state_with_streaming_enabled_passes() {
 void test_h02_h03_budget_config_round_trips_new_fields() {
   std::printf("=== test_h02_h03_budget_config_round_trips_new_fields ===\n");
 
-  // The four new H-02/H-03 budget fields must round-trip through
+  // The H-02/H-03/tos30 budget fields must round-trip through
   // configure_persistent_state_budgets / persistent_state_budget_config
   // without being silently zeroed by the validate-budget-config layer.
   auto saved = persistent_state_budget_config();
@@ -3674,6 +3731,8 @@ void test_h02_h03_budget_config_round_trips_new_fields() {
   cfg.max_cells_per_parse = 25'000'000;
   cfg.max_scaffolding_bytes_per_parse = 384ULL << 20;
   cfg.max_total_cell_bytes_per_parse = 8ULL << 30;
+  cfg.max_spool_bytes_per_import = 10ULL << 30;
+  cfg.max_total_spool_bytes = 20ULL << 30;
   cfg.enable_true_cell_db_streaming_import = false;
   configure_persistent_state_budgets(cfg);
 
@@ -3682,6 +3741,8 @@ void test_h02_h03_budget_config_round_trips_new_fields() {
   EXPECT_EQ(live.max_cells_per_parse, static_cast<td::uint64>(25'000'000));
   EXPECT_EQ(live.max_scaffolding_bytes_per_parse, 384ULL << 20);
   EXPECT_EQ(live.max_total_cell_bytes_per_parse, 8ULL << 30);
+  EXPECT_EQ(live.max_spool_bytes_per_import, 10ULL << 30);
+  EXPECT_EQ(live.max_total_spool_bytes, 20ULL << 30);
   EXPECT_FALSE(live.enable_true_cell_db_streaming_import);
 
   // Zero values must be refused (otherwise "0 = unlimited" is back in
@@ -3702,6 +3763,24 @@ void test_h02_h03_budget_config_round_trips_new_fields() {
   configure_persistent_state_budgets(invalid);
   EXPECT_EQ(persistent_state_budget_config().max_total_cell_bytes_per_parse,
             live.max_total_cell_bytes_per_parse);
+
+  invalid = saved;
+  invalid.max_spool_bytes_per_import = 0;
+  configure_persistent_state_budgets(invalid);
+  EXPECT_EQ(persistent_state_budget_config().max_spool_bytes_per_import,
+            live.max_spool_bytes_per_import);
+
+  invalid = saved;
+  invalid.max_total_spool_bytes = 0;
+  configure_persistent_state_budgets(invalid);
+  EXPECT_EQ(persistent_state_budget_config().max_total_spool_bytes,
+            live.max_total_spool_bytes);
+
+  invalid = saved;
+  invalid.max_spool_bytes_per_import = saved.max_total_spool_bytes + 1;
+  configure_persistent_state_budgets(invalid);
+  EXPECT_EQ(persistent_state_budget_config().max_spool_bytes_per_import,
+            live.max_spool_bytes_per_import);
 
   // returned-DAG cap below resident cap must be rejected.
   invalid = saved;
@@ -3764,6 +3843,7 @@ int main() {
   test_h03_streaming_importer_concurrent_3_downloads_under_budget();
   test_h03_corrupt_ondisk_streaming_fail_closed_unlinks();
   test_h03_budget_config_overrides();
+  test_tos30_spool_budget_reservation();
 
   // K3 streaming-sink wiring regressions. These pin the new
   // StreamingCellSink contract and the actor-side wiring of a real
