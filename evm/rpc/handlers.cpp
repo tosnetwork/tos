@@ -1017,6 +1017,13 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     const auto& config = evm_chain_config();
 
     auto exec_result = execute_evm_transaction(decoded.txn, block, evm_state, config);
+    if (exec_result.disposition == EvmTxDisposition::InvalidPreValidation) {
+        return {make_error(id, -32000,
+                           exec_result.error_message.empty()
+                               ? "EVM transaction rejected before execution"
+                               : exec_result.error_message),
+                true};
+    }
 
     auto tx_hash = decoded.txn.hash();
 

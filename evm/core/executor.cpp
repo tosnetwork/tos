@@ -15,8 +15,10 @@
 #include "evm/core/executor.h"
 #include "evm/core/cell-state.h"
 
+#include <exception>
 #include <limits>
 #include <optional>
+#include <utility>
 
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
@@ -28,6 +30,21 @@
 namespace evm_workchain {
 
 namespace {
+
+ExecutionResult make_infrastructure_error(std::string where, const char* message) {
+    ExecutionResult result;
+    result.success = false;
+    result.gas_used = 0;
+    result.error_message = std::move(where);
+    result.error_message += ": ";
+    result.error_message += (message != nullptr ? message : "<no message>");
+    result.disposition = EvmTxDisposition::InvalidPreValidation;
+    return result;
+}
+
+ExecutionResult make_infrastructure_error(std::string where, const std::exception& e) {
+    return make_infrastructure_error(std::move(where), e.what());
+}
 
 std::optional<std::string> prevalidate_evm_transaction_admission_locked(
     const silkworm::Transaction& txn,
@@ -520,12 +537,18 @@ ExecutionResult execute_evm_transaction(
     EvmState& evm_state,
     const silkworm::ChainConfig& config) {
 
-    std::unique_lock lock(evm_state.mutex());
+    try {
+        std::unique_lock lock(evm_state.mutex());
 
-    silkworm::IntraBlockState ibs(evm_state.state());
-    auto result = run_evm(txn, block, ibs, config, /*commit_state=*/true);
+        silkworm::IntraBlockState ibs(evm_state.state());
+        auto result = run_evm(txn, block, ibs, config, /*commit_state=*/true);
 
-    return result;
+        return result;
+    } catch (const std::exception& e) {
+        return make_infrastructure_error("EVM execution threw", e);
+    } catch (...) {
+        return make_infrastructure_error("EVM execution threw", "unknown exception");
+    }
 }
 
 std::optional<std::string> prevalidate_evm_transaction_admission(
@@ -534,10 +557,16 @@ std::optional<std::string> prevalidate_evm_transaction_admission(
     const EvmState& evm_state,
     const silkworm::ChainConfig& config) {
 
-    std::unique_lock lock(evm_state.mutex());
-    auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
-    silkworm::IntraBlockState ibs(mutable_state);
-    return prevalidate_evm_transaction_admission_locked(txn, block, ibs, config);
+    try {
+        std::unique_lock lock(evm_state.mutex());
+        auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
+        silkworm::IntraBlockState ibs(mutable_state);
+        return prevalidate_evm_transaction_admission_locked(txn, block, ibs, config);
+    } catch (const std::exception& e) {
+        return std::string("EVM prevalidation threw: ") + e.what();
+    } catch (...) {
+        return std::string("EVM prevalidation threw: unknown exception");
+    }
 }
 
 ExecutionResult call_evm_transaction(
@@ -550,10 +579,16 @@ ExecutionResult call_evm_transaction(
     // writes to its internal journal.  With commit_state=false we never
     // call write_to_db(), so the underlying State is not mutated.
     // The const_cast is safe because we guarantee no writes reach the DB.
-    std::unique_lock lock(evm_state.mutex());
-    auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
-    silkworm::IntraBlockState ibs(mutable_state);
-    return run_evm(txn, block, ibs, config, /*commit_state=*/false);
+    try {
+        std::unique_lock lock(evm_state.mutex());
+        auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
+        silkworm::IntraBlockState ibs(mutable_state);
+        return run_evm(txn, block, ibs, config, /*commit_state=*/false);
+    } catch (const std::exception& e) {
+        return make_infrastructure_error("EVM read-only call threw", e);
+    } catch (...) {
+        return make_infrastructure_error("EVM read-only call threw", "unknown exception");
+    }
 }
 
 ExecutionResult call_evm_transaction_with_balance_topup(
@@ -562,23 +597,29 @@ ExecutionResult call_evm_transaction_with_balance_topup(
     const EvmState& evm_state,
     const silkworm::ChainConfig& config) {
 
-    std::unique_lock lock(evm_state.mutex());
-    auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
-    silkworm::IntraBlockState ibs(mutable_state);
+    try {
+        std::unique_lock lock(evm_state.mutex());
+        auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
+        silkworm::IntraBlockState ibs(mutable_state);
 
-    auto sender_opt = txn.sender();
-    if (sender_opt) {
-        // Need balance >= value (gas cost is already 0 because the call
-        // path zeroes out max_fee_per_gas / max_priority_fee_per_gas).
-        const intx::uint256 needed = txn.value;
-        if (needed > 0) {
-            const auto current = ibs.get_balance(*sender_opt);
-            if (current < needed) {
-                ibs.add_to_balance(*sender_opt, needed - current);
+        auto sender_opt = txn.sender();
+        if (sender_opt) {
+            // Need balance >= value (gas cost is already 0 because the call
+            // path zeroes out max_fee_per_gas / max_priority_fee_per_gas).
+            const intx::uint256 needed = txn.value;
+            if (needed > 0) {
+                const auto current = ibs.get_balance(*sender_opt);
+                if (current < needed) {
+                    ibs.add_to_balance(*sender_opt, needed - current);
+                }
             }
         }
+        return run_evm(txn, block, ibs, config, /*commit_state=*/false);
+    } catch (const std::exception& e) {
+        return make_infrastructure_error("EVM balance-topup call threw", e);
+    } catch (...) {
+        return make_infrastructure_error("EVM balance-topup call threw", "unknown exception");
     }
-    return run_evm(txn, block, ibs, config, /*commit_state=*/false);
 }
 
 }  // namespace evm_workchain

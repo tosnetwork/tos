@@ -358,7 +358,12 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     // by `prevalidate_evm_transaction_admission`) is still visible to
     // the gate below.
     CellStateRollbackSnapshot rollback_snapshot;
-    rollback_snapshot.capture(state);
+    if (!rollback_snapshot.capture(state)) {
+        reject_compute_phase(
+            cp, gas_limit,
+            "EVM rollback snapshot capture failed before execution");
+        return nullptr;
+    }
     auto integrity_baseline = StateIntegritySnapshot::capture(state);
 
     // tos8 audit: reject cheap admission failures before EIP-4788/EIP-2935
