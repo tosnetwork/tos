@@ -292,6 +292,36 @@ if ! rg -q 'import_persistent_state_streaming' "$root/validator/downloaders/down
     exit 1
 fi
 
+# Check 20 — Phase B P1-5: streaming import must pause GC for the
+# duration of the import + the immediately following set_block_state
+# so refcnt=1 imported cells cannot be GC'd before the root is recorded
+# in the canonical block-state desc list. The pause/resume API is
+# declared on CellDbIn and the alarm() handler must short-circuit when
+# the pause counter is non-zero.
+if ! rg -q 'pause_gc_for_import|gc_pause_count_' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: streaming import must pause GC during commit window (Phase B P1-5)" >&2
+    exit 1
+fi
+if ! rg -q 'pause_gc_for_import' "$root/validator/db/celldb.hpp"; then
+    echo "evm hardening failed: CellDbIn::pause_gc_for_import must be declared (Phase B P1-5)" >&2
+    exit 1
+fi
+# Positive: import_persistent_state_streaming must call pause_gc_for_import.
+if ! awk '
+    /^void CellDbIn::import_persistent_state_streaming\(/ {found=1}
+    found && /pause_gc_for_import/ {ok=1; exit}
+    found && /^}/ {exit}
+    END {exit ok ? 0 : 1}
+' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: import_persistent_state_streaming must call pause_gc_for_import (Phase B P1-5)" >&2
+    exit 1
+fi
+# Positive: alarm() must short-circuit on gc_pause_count_ > 0.
+if ! rg -q 'gc_pause_count_\s*>\s*0' "$root/validator/db/celldb.cpp"; then
+    echo "evm hardening failed: CellDbIn::alarm must short-circuit when gc_pause_count_>0 (Phase B P1-5)" >&2
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Existing (non-MPT) production hardening checks.
 # ---------------------------------------------------------------------------

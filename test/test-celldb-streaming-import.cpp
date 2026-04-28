@@ -931,17 +931,135 @@ void test_hash_mismatch() {
   std::printf("  PASSED\n");
 }
 
+// ---------------------------------------------------------------------------
+// (6) tos26 P1-5: imported cells survive immediate GC trigger
+// ---------------------------------------------------------------------------
+//
+// The streaming importer writes each cell with refcnt=1. The audit's P1-5
+// concern: between import-commit and the downloader's follow-up
+// set_block_state call there is a window where the cells exist with
+// refcnt=1 but no canonical block-state desc-list entry references them;
+// a periodic GC pass that fires inside that window could mis-delete them.
+//
+// Production closes the window with the GC pause counter on CellDbIn
+// (see pause_gc_for_import / resume_gc_for_import in validator/db/celldb.{hpp,cpp}).
+// The pause keeps the alarm() handler in skip_gc() until the downloader's
+// store_cell-of-root runs, after which the existing
+// DynamicBagOfCellsDb::prepare_commit -> dfs_new_cells_in_db walk
+// reconciles refcounts under the canonical desc list.
+//
+// This regression test runs against the test fixture (MemoryKeyValue,
+// no actor system, no CellDbIn alarm). The fixture cannot exercise the
+// pause counter directly because there is no GC trigger to pause. The
+// test instead pins the dual invariant the GC pause defends:
+//
+//   1. Every cell minted into the import's lazy ExtCell DAG is
+//      durably present in the underlying CellDb after commit. If
+//      refcnt accounting were wrong (e.g. cells were never written),
+//      a recursive load of the root's full child DAG would fail.
+//   2. The cells are uniquely referenced (refcnt=1 each in the
+//      streaming-writer encoding) and the lazy descent reaches every
+//      one of them through the production code path
+//      (CellDbExtCellLoader -> CellDbReaderImpl -> kv->get).
+//
+// Together with the production GC-pause hardening check (validated
+// separately by scripts/check-evm-production-hardening.sh), this test
+// is the regression cover for "an accepted streaming import's cells
+// remain reachable from their root post-commit".
+void test_imported_cells_survive_immediate_gc() {
+  std::printf("=== test_imported_cells_survive_immediate_gc (tos26 P1-5) ===\n");
+
+  auto tmp_dir = std::string("/tmp/tos-test-celldb-streaming-6-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+  // Use a 32-cell tree so the recursive walk is bounded but exercises
+  // multiple levels (32 leaves -> 16 -> 8 -> 4 -> 2 -> 1 = 6 levels).
+  auto boc = serialize_synthetic_boc(tmp_dir, /*target_cells=*/32, "synth.boc");
+
+  auto fixture = build_fixture();
+  auto result = run_streaming_import(fixture, boc);
+  auto root = std::move(result.root);
+
+  // Recursively materialize every cell in the imported root's child DAG.
+  // The walker is iterative (queue-based) to avoid unbounded recursion
+  // on pathological DAG shapes; here the synthetic tree is small but the
+  // shape contract is the same as production state roots.
+  std::vector<td::Ref<vm::Cell>> stack;
+  stack.push_back(root);
+  std::unordered_map<std::string, bool> seen;  // hash-bytes -> true
+  td::uint64 walked = 0;
+  while (!stack.empty()) {
+    auto cell = std::move(stack.back());
+    stack.pop_back();
+    EXPECT_TRUE(cell.not_null());
+
+    auto hash_str = cell->get_hash().as_slice().str();
+    if (seen.find(hash_str) != seen.end()) {
+      continue;
+    }
+    seen.emplace(std::move(hash_str), true);
+
+    // Force materialization. If any imported cell were missing from
+    // the underlying CellDb (e.g. mis-deleted by a hypothetical GC
+    // pass that wasn't paused), this load would surface
+    // td::Status::Error.
+    auto r_loaded = cell->load_cell();
+    EXPECT_TRUE(r_loaded.is_ok());
+    auto loaded = r_loaded.move_as_ok();
+    EXPECT_TRUE(loaded.data_cell.not_null());
+    ++walked;
+
+    // Push child refs. Each ref is itself an ExtCell (the streaming
+    // importer replaced every parent's children with hash-only
+    // ExtCells), so descending one more level is another single-cell
+    // load — exactly the pattern the GC pause must protect.
+    auto refs_count = loaded.data_cell->size_refs();
+    for (unsigned i = 0; i < refs_count; ++i) {
+      auto child = loaded.data_cell->get_ref(i);
+      EXPECT_TRUE(child.not_null());
+      stack.push_back(std::move(child));
+    }
+  }
+
+  // Every persisted cell must have been reached (the synthetic tree
+  // has no shared sub-DAG, so walked == cells_persisted exactly).
+  EXPECT_EQ(walked, result.cells_persisted);
+
+  // Sanity: a fresh import against the same kv would be a no-op (every
+  // cell is already idempotently present). This is the same shape as a
+  // node restart re-running the import after process restart; if any
+  // cell had been GC'd this would surface as a hash collision or a
+  // missing-cell error instead.
+  auto fixture2_writer = std::make_unique<TestStreamingWriter>(fixture.kv);
+  tos::validator::fullnode::CellDbStreamingSink sink2{fixture.reader, std::move(fixture2_writer)};
+  EXPECT_TRUE(sink2.is_true_streaming());
+  auto fd2 = td::FileFd::open(boc.path, td::FileFd::Flags::Read).move_as_ok();
+  vm::StreamingBocImportOptions opts2;
+  opts2.max_resident_bytes = 8ULL << 20;
+  auto r_root2 = vm::std_boc_deserialize_from_file_bounded(fd2, boc.size, opts2, &sink2);
+  fd2.close();
+  EXPECT_TRUE(r_root2.is_ok());
+  EXPECT_TRUE(sink2.finished());
+  auto commit_status2 = sink2.commit_after_root_verified(boc.root_hash);
+  EXPECT_TRUE(commit_status2.is_ok());
+
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  walked=%llu cells_persisted=%llu  PASSED\n",
+              static_cast<unsigned long long>(walked),
+              static_cast<unsigned long long>(result.cells_persisted));
+}
+
 }  // namespace
 
 int main() {
   std::printf(
-      "test-celldb-streaming-import: Phase B Step 8 invariant regressions (6 tests)\n");
+      "test-celldb-streaming-import: Phase B Step 8 invariant regressions (7 tests)\n");
   test_replacement_hash_equality();
   test_no_full_dag_residency();
   test_crash_abort_no_partial_state();
   test_lazy_load();
   test_lazy_load_after_commit_succeeds();
   test_hash_mismatch();
+  test_imported_cells_survive_immediate_gc();
   std::printf("All Phase B invariant tests passed.\n");
   return 0;
 }

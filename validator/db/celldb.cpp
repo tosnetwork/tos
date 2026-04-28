@@ -719,6 +719,17 @@ void CellDbIn::alarm() {
     skip_gc();
     return;
   }
+  // tos26 P1-5: streaming-import GC interlock. While a streaming
+  // import is in flight (or its commit window is still pending the
+  // downloader's follow-up set_block_state call), short-circuit to
+  // skip_gc() so the periodic GC trigger reschedules itself instead
+  // of trying to advance the desc-list. This prevents the imported-
+  // but-not-yet-recorded cells from being torn down by gc_cont2
+  // before the canonical block-state desc-list entry references them.
+  if (gc_pause_count_ > 0) {
+    skip_gc();
+    return;
+  }
   auto E = get_block(get_empty_key_hash()).move_as_ok();
   auto N = get_block(E.next).move_as_ok();
   if (N.is_empty()) {
@@ -868,6 +879,31 @@ void CellDbIn::gc_cont2(BlockHandle handle) {
 
 void CellDbIn::skip_gc() {
   alarm_timestamp() = td::Timestamp::in(1.0);
+}
+
+// tos26 P1-5: pause/resume GC during the streaming-import commit window.
+//
+// The pause is re-entrant: every pause must be matched by exactly one
+// resume. While the counter is > 0 the alarm() handler short-circuits to
+// skip_gc(), which reschedules the alarm in 1s. The counter is mutated
+// only on this actor's message loop, so no external synchronization is
+// needed.
+void CellDbIn::pause_gc_for_import() {
+  ++gc_pause_count_;
+}
+
+void CellDbIn::resume_gc_for_import() {
+  if (gc_pause_count_ == 0) {
+    LOG(ERROR) << "CellDbIn::resume_gc_for_import: pause counter already zero; "
+                  "double-resume indicates a lifecycle bug in the import path";
+    return;
+  }
+  --gc_pause_count_;
+  if (gc_pause_count_ == 0) {
+    // Re-arm the alarm immediately so a long-deferred GC pass can
+    // catch up promptly after the import window closes.
+    alarm_timestamp() = td::Timestamp::now();
+  }
 }
 
 std::string CellDbIn::get_key(KeyHash key_hash) {
@@ -1381,6 +1417,21 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
     return;
   }
 
+  // tos26 P1-5: pause GC for the duration of this import. The matching
+  // resume runs on every exit path below: success delays the resume
+  // long enough for the downloader's follow-up set_block_state to
+  // commit a desc-list entry that references the imported cells, while
+  // every failure path resumes immediately (no cells are durable on a
+  // failed import, so there's nothing GC could mis-delete).
+  pause_gc_for_import();
+  bool resume_pending = true;
+  auto resume_now = [this, &resume_pending]() {
+    if (resume_pending) {
+      resume_gc_for_import();
+      resume_pending = false;
+    }
+  };
+
   // Build a LiveCellDbReaderProvider seeded with the current reader.
   // The lazy ExtCells emitted during parse capture this provider; we
   // republish a fresh post-commit reader on the same provider after
@@ -1395,6 +1446,7 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   if (!sink.is_true_streaming()) {
     // Defense in depth: provider+writer are both non-null above, so
     // a non-true-streaming sink here is a programming bug.
+    resume_now();
     promise.set_error(
         td::Status::Error("CellDbIn::import_persistent_state_streaming: sink failed to enter true-streaming mode"));
     return;
@@ -1409,6 +1461,7 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   auto r_fd = td::FileFd::open(request.tempfile_path, td::FileFd::Flags::Read);
   if (r_fd.is_error()) {
     sink.abort();
+    resume_now();
     promise.set_error(r_fd.move_as_error());
     return;
   }
@@ -1421,6 +1474,7 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
     }
     LOG(WARNING) << "CellDbIn::import_persistent_state_streaming: importer rejected after "
                  << sink.cells_persisted() << " cell(s): " << r_root.error();
+    resume_now();
     promise.set_error(r_root.move_as_error());
     return;
   }
@@ -1429,12 +1483,14 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
     if (!sink.aborted() && !sink.is_committed()) {
       sink.abort();
     }
+    resume_now();
     promise.set_error(td::Status::Error(
         "CellDbIn::import_persistent_state_streaming: BoC deserialize returned null root"));
     return;
   }
   if (!sink.finished()) {
     sink.abort();
+    resume_now();
     promise.set_error(td::Status::Error(
         "CellDbIn::import_persistent_state_streaming: sink finished=false on success path"));
     return;
@@ -1447,6 +1503,7 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   const auto parsed_hash = root->get_hash();
   if (RootHash{parsed_hash.bits()} != request.expected_root_hash) {
     sink.abort();
+    resume_now();
     promise.set_error(td::Status::Error(
         PSTRING() << "CellDbIn::import_persistent_state_streaming: root hash mismatch: expected "
                   << request.expected_root_hash.to_hex() << " got " << RootHash{parsed_hash.bits()}.to_hex()));
@@ -1456,6 +1513,7 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   // pending batch and is the single point at which cells become durable.
   if (auto status = sink.commit_after_root_verified(parsed_hash); status.is_error()) {
     sink.abort();
+    resume_now();
     promise.set_error(status.move_as_error());
     return;
   }
@@ -1482,6 +1540,24 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   LOG(INFO) << "CellDbIn::import_persistent_state_streaming: committed " << result.cells_persisted
             << " cell(s); root=" << request.expected_root_hash.to_hex()
             << " (lazy ExtCell-backed; child DAG durable in CellDb)";
+
+  // tos26 P1-5: success path. The imported cells are now durable in
+  // CellDb with refcnt=1, but they are not yet referenced by any
+  // canonical block-state desc-list entry — the downloader actor will
+  // drive set_block_state -> CellDb::store_cell next, which triggers
+  // boc_->inc(root) + prepare_commit's DAG walk
+  // (DynamicBagOfCellsDb::dfs_new_cells_in_db) and reconciles the
+  // descendant refcounts under the canonical desc list.
+  //
+  // We hold the GC pause across that handoff by scheduling the resume
+  // via delay_action; 60s is generous compared to the few-millisecond
+  // actor scheduling latency, but the worst case is just "GC delayed
+  // by one extra alarm cycle", never "GC mis-deletes imported cells".
+  // resume_pending stays true so the lambda can find a pause to release.
+  resume_pending = false;  // ownership transferred to the delayed action
+  delay_action(
+      [SelfId = actor_id(this)] { td::actor::send_closure(SelfId, &CellDbIn::resume_gc_for_import); },
+      td::Timestamp::in(60.0));
   promise.set_result(std::move(result));
 }
 

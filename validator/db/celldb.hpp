@@ -246,6 +246,43 @@ class CellDbIn : public CellDbBase {
   void import_persistent_state_streaming(PersistentStateImportRequest request,
                                          td::Promise<PersistentStateImportResult> promise);
 
+  // tos26 P1-5: re-entrant GC interlock for streaming-import refcount
+  // reconciliation.
+  //
+  // The streaming importer writes each cell with refcnt=1. By itself
+  // that refcount is enough to keep the cells alive against GC, but
+  // the canonical block-state root that USES those cells is recorded
+  // by a SUBSEQUENT `set_block_state -> CellDb::store_cell` call (the
+  // downloader runs this after `import_persistent_state_streaming`
+  // resolves). Between commit-of-import and store-cell-of-root there
+  // is a small window where the cells exist with refcnt=1 but no
+  // canonical block-state desc-list entry references them; if the
+  // periodic GC alarm fires inside that window it could begin tearing
+  // down a state root and inadvertently mark the freshly imported
+  // cells dead.
+  //
+  // We close the window by pausing the GC trigger for the duration
+  // of the streaming import + until the downloader actor has had a
+  // chance to drive set_block_state. The counter is re-entrant so
+  // overlapping (or nested) imports compose correctly: GC is paused
+  // while ANY import holds a pause, and resumes only after every
+  // pause is released.
+  //
+  // The store_cell path that set_block_state ultimately drives runs
+  // through `boc_->inc(cell)` + `prepare_commit` which walks the DAG
+  // and updates descendant refcounts via the existing CellDb logic;
+  // see DynamicBagOfCellsDb::prepare_commit / dfs_new_cells_in_db.
+  // Once that store_cell completes, the imported cells are accounted
+  // for under the canonical block-state desc list and the standard
+  // GC walk will not mis-delete them, so we can safely release the
+  // pause.
+  //
+  // Both functions are intended to be called from this actor's own
+  // message loop (or via send_closure into it); they mutate
+  // gc_pause_count_ without any external synchronization.
+  void pause_gc_for_import();
+  void resume_gc_for_import();
+
   void flush_db_stats();
 
   CellDbIn(td::actor::ActorId<RootDb> root_db, td::actor::ActorId<CellDb> parent, std::string path,
@@ -307,6 +344,13 @@ class CellDbIn : public CellDbBase {
   // callers cannot interleave two RocksDB write batches against the
   // same CellDb instance.
   std::shared_ptr<std::atomic<bool>> streaming_writer_in_use_ = std::make_shared<std::atomic<bool>>(false);
+
+  // tos26 P1-5: re-entrant GC pause counter. While > 0 the periodic
+  // alarm() short-circuits to skip_gc() instead of advancing the
+  // desc-list / running gc_cont. Mutated only on this actor's
+  // message loop by pause_gc_for_import / resume_gc_for_import; no
+  // external synchronization required.
+  uint32_t gc_pause_count_ = 0;
 
   std::function<void(const vm::CellLoader::LoadResult&)> on_load_callback_;
   std::set<td::Bits256> cells_to_migrate_;

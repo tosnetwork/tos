@@ -46,6 +46,17 @@
  *   - enable_true_cell_db_streaming_import is rejected on configuration.
  *   - max_returned_dag_bytes_per_parse stays as the fail-closed ceiling with
  *     an operator-actionable error message.
+ *
+ * Known Phase B limitations (NOT load-bearing for safety):
+ *   - The BoC importer still allocates O(cell_count) scaffolding
+ *     (offset_table, parent_refcount, cells vector) bounded by
+ *     max_scaffolding_bytes_per_parse / max_total_cell_bytes_per_parse.
+ *     This is much smaller than the previous returned-DAG residency
+ *     but is not yet O(1). Future work could introduce a two-pass
+ *     streaming parse (header -> reverse-order cell parse) to reduce
+ *     scaffolding to O(parse window). Operators monitoring large-
+ *     state catch-up should size scaffolding caps proportionally to
+ *     the largest expected persistent-state cell count.
  */
 
 #include <atomic>
