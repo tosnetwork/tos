@@ -9,6 +9,69 @@
 # state-growth invariance harness, etc.).
 set -euo pipefail
 
+if ! command -v rg >/dev/null 2>&1; then
+    rg() {
+        local grep_args=(-I -P)
+        local pattern=""
+        local paths=()
+        local recursive=0
+
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --)
+                    shift
+                    break
+                    ;;
+                -*)
+                    local opt="${1#-}"
+                    local i ch
+                    for ((i = 0; i < ${#opt}; ++i)); do
+                        ch="${opt:i:1}"
+                        case "$ch" in
+                            q|n|c|l|v)
+                                grep_args+=("-$ch")
+                                ;;
+                            P|U)
+                                # -P is already enabled for PCRE-compatible
+                                # patterns; -U is ripgrep's multiline flag and
+                                # has no grep equivalent. The hardening checks
+                                # using -U are best-effort static guards.
+                                ;;
+                            *)
+                                echo "fallback rg: unsupported option -$ch" >&2
+                                return 2
+                                ;;
+                        esac
+                    done
+                    shift
+                    ;;
+                *)
+                    pattern="$1"
+                    shift
+                    break
+                    ;;
+            esac
+        done
+
+        paths=("$@")
+        for p in "${paths[@]}"; do
+            if [ -d "$p" ]; then
+                recursive=1
+                break
+            fi
+        done
+        if [ "$recursive" -eq 1 ]; then
+            grep_args+=(-R)
+        fi
+
+        if [ "${#paths[@]}" -eq 0 ]; then
+            grep "${grep_args[@]}" -- "$pattern"
+        else
+            grep "${grep_args[@]}" -- "$pattern" "${paths[@]}"
+        fi
+    }
+fi
+
 root="${1:-.}"
 core="$root/evm/core"
 create_state="$root/crypto/block/create-state.cpp"
