@@ -622,7 +622,7 @@ if (NOT TOS_ONLY_TOSLIB)
 endif()
 add_subdirectory(lite-client)
 add_subdirectory(emulator)
-add_subdirectory(tolk)
+add_subdirectory(tol)
 
 #BEGIN toslib
 add_subdirectory(toslib)
@@ -882,7 +882,7 @@ if (NOT NIX)
     endif()
 endif()
 
-# Tolk tests
+# Tol tests
 if (NOT NIX)
     if (MSVC)
       set(PYTHON_VER "python")
@@ -890,17 +890,17 @@ if (NOT NIX)
       set(PYTHON_VER "python3")
     endif()
     add_test(
-      NAME test-tolk
-      COMMAND ${PYTHON_VER} tolk-tester.py tests/
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tolk-tester)
+      NAME test-tol
+      COMMAND ${PYTHON_VER} tol-tester.py tests/
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tol-tester)
     if (WIN32)
-        set_property(TEST test-tolk PROPERTY ENVIRONMENT
-          "TOLK_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/tolk/tolk.exe"
+        set_property(TEST test-tol PROPERTY ENVIRONMENT
+          "TOL_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/tol/tol.exe"
           "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift.exe"
           "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
     else()
-        set_property(TEST test-tolk PROPERTY ENVIRONMENT
-          "TOLK_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/tolk/tolk"
+        set_property(TEST test-tol PROPERTY ENVIRONMENT
+          "TOL_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/tol/tol"
           "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
           "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
     endif()

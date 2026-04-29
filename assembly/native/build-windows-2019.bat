@@ -56,7 +56,7 @@ IF %errorlevel% NEQ 0 (
 )
 
 IF "%1"=="-t" (
-ninja storage-daemon storage-daemon-cli blockchain-explorer fift func tolk toslib toslibjson  ^
+ninja storage-daemon storage-daemon-cli blockchain-explorer fift func tol toslib toslibjson  ^
 toslib-cli validator-engine lite-client validator-engine-console generate-random-id ^
 json2tlo dht-server http-proxy rldp-http-proxy adnl-proxy create-state create-hardfork emulator ^
 proxy-liteserver dht-ping-servers dht-resolve all-tests
@@ -65,7 +65,7 @@ IF %errorlevel% NEQ 0 (
   exit /b %errorlevel%
 )
 ) else (
-ninja storage-daemon storage-daemon-cli blockchain-explorer fift func tolk toslib toslibjson  ^
+ninja storage-daemon storage-daemon-cli blockchain-explorer fift func tol toslib toslibjson  ^
 toslib-cli validator-engine lite-client validator-engine-console generate-random-id dht-ping-servers dht-resolve ^
 json2tlo dht-server http-proxy rldp-http-proxy adnl-proxy create-state create-hardfork emulator proxy-liteserver
 IF %errorlevel% NEQ 0 (
@@ -94,7 +94,7 @@ for %%I in (build\storage\storage-daemon\storage-daemon.exe ^
   build\crypto\fift.exe ^
   build\crypto\tlbc.exe ^
   build\crypto\func.exe ^
-  build\tolk\tolk.exe ^
+  build\tol\tol.exe ^
   build\crypto\create-state.exe ^
   build\validator-engine-console\validator-engine-console.exe ^
   build\toslib\toslib-cli.exe ^

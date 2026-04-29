@@ -78,13 +78,13 @@ test $? -eq 0 || { echo "Can't configure tos"; exit 1; }
 
 if [ "$with_tests" = true ]; then
   ninja storage-daemon storage-daemon-cli blockchain-explorer   \
-  toslib toslibjson toslib-cli validator-engine func tolk fift \
+  toslib toslibjson toslib-cli validator-engine func tol fift \
   lite-client validator-engine-console generate-random-id json2tlo dht-server dht-ping-servers dht-resolve \
   http-proxy rldp-http-proxy adnl-proxy create-state create-hardfork tlbc emulator proxy-liteserver all-tests install
   test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
 else
   ninja storage-daemon storage-daemon-cli blockchain-explorer   \
-  toslib toslibjson toslib-cli validator-engine func tolk fift \
+  toslib toslibjson toslib-cli validator-engine func tol fift \
   lite-client validator-engine-console generate-random-id json2tlo dht-server dht-ping-servers dht-resolve \
   http-proxy rldp-http-proxy adnl-proxy create-state create-hardfork tlbc emulator proxy-liteserver
   test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
@@ -101,7 +101,7 @@ if [ "$with_artifacts" = true ]; then
   cp build/blockchain-explorer/blockchain-explorer artifacts/
   cp build/crypto/fift artifacts/
   cp build/crypto/func artifacts/
-  cp build/tolk/tolk artifacts/
+  cp build/tol/tol artifacts/
   cp build/crypto/create-state artifacts/
   cp build/crypto/tlbc artifacts/
   cp build/validator-engine-console/validator-engine-console artifacts/

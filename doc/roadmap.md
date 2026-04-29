@@ -4,7 +4,7 @@
 
 This document sequences the implementation of the actor-model
 strengthening directions defined in [`doc/actor.md`](actor.md) and the
-language execution path defined in [`doc/tolk.md`](tolk.md). It is a
+language execution path defined in [`doc/tol.md`](tol.md). It is a
 coordination document; it does not re-derive the design choices made
 in those two files.
 
@@ -18,20 +18,20 @@ The roadmap covers:
 - the **cross-team dependencies and risks** specific to the actor
   layer.
 
-## 1. Premise: actor.md and tolk.md are paired, not parallel
+## 1. Premise: actor.md and tol.md are paired, not parallel
 
 The two source documents are not independent work streams.
 
 - `actor.md` defines protocol-level directions (§5.1 supervision,
   §5.2 time, §5.3 structured errors, §5.6 request/reply, ... ).
-- `tolk.md` defines the language execution path that lets contract
+- `tol.md` defines the language execution path that lets contract
   authors use those directions (Q1 envelope, Q2 syntax,
   Q3 stdlib, Q4 static analysis).
 
-By construction, **`tolk.md` Q1 is the language surface of
-`actor.md` §5.3 + §5.6**. `tolk.md` Q2 is the language surface of
-`actor.md` §5.5 + §6.5. `tolk.md` Q4 carries §5.5 and §5.6 static
-analysis. Year 2 and Year 3 in `tolk.md` map onto §5.9, §6.5,
+By construction, **`tol.md` Q1 is the language surface of
+`actor.md` §5.3 + §5.6**. `tol.md` Q2 is the language surface of
+`actor.md` §5.5 + §6.5. `tol.md` Q4 carries §5.5 and §5.6 static
+analysis. Year 2 and Year 3 in `tol.md` map onto §5.9, §6.5,
 §5.1, §5.2, §5.4 in `actor.md`.
 
 Both documents independently arrived at the same first-priority
@@ -42,9 +42,9 @@ therefore the right first vertical slice.
 ## 2. The first vertical slice: structured errors + request/reply + envelope
 
 The first slice cuts through every layer of the stack in one
-project: protocol → TVM → Tolk compiler → stdlib → reference
+project: protocol → TVM → Tol compiler → stdlib → reference
 contract → tests → docs. It implements `actor.md` §5.3 + §5.6 and
-`tolk.md` Q1 as a single deliverable.
+`tol.md` Q1 as a single deliverable.
 
 ### Why this slice, and not another
 
@@ -66,13 +66,13 @@ contract → tests → docs. It implements `actor.md` §5.3 + §5.6 and
 
 This slice is the only cut that simultaneously unblocks every
 upper-layer direction in `actor.md` and every upper-layer
-deliverable in `tolk.md`.
+deliverable in `tol.md`.
 
 ## 3. Pre-work: `doc/tos-message-policy.md`
 
 Before any implementation begins, a short policy document fixes the
 cross-cutting decisions that all three subsystems (protocol, TVM,
-Tolk) need to agree on. This is the "cross-cutting resource
+Tol) need to agree on. This is the "cross-cutting resource
 semantics" item from `actor.md` §7 prioritization.
 
 **Target length:** roughly ten pages, written in 1–2 weeks.
@@ -109,7 +109,7 @@ delivered its deliverables.
 
 ### Stage 0 — Policy lock (week 1–2)
 
-**Owners.** Protocol architect, TVM lead, Tolk compiler lead, one
+**Owners.** Protocol architect, TVM lead, Tol compiler lead, one
 contract-team representative.
 
 **Deliverables.**
@@ -148,18 +148,18 @@ contract surfaces.
 envelope and bounce format; conformance fixtures are checked into
 the repository.
 
-### Stage 2 — Tolk compiler support (week 9–14)
+### Stage 2 — Tol compiler support (week 9–14)
 
-**Owners.** Tolk compiler team.
+**Owners.** Tol compiler team.
 
 **Deliverables.**
 
-- An `Envelope` struct in the Tolk standard library with
+- An `Envelope` struct in the Tol standard library with
   auto-derived pack/unpack code matching the Stage 0 TL-B schema.
-- A structured `Error` type in Tolk, with a `throw` form that
+- A structured `Error` type in Tol, with a `throw` form that
   emits a properly classified bounce instead of a flat error
   code.
-- A new compiler pass under `tolk/pipe-check-*.cpp` that warns
+- A new compiler pass under `tol/pipe-check-*.cpp` that warns
   when a `query_id`-bearing inbound message is handled without
   the `query_id` being either propagated to a reply or
   explicitly disclaimed. This is the smallest piece of §5.6
@@ -167,7 +167,7 @@ the repository.
 - Compiler integration with the Stage 1 conformance fixtures so
   that compiled contracts can be replayed against them.
 
-**Exit criterion.** A Tolk contract written against the new
+**Exit criterion.** A Tol contract written against the new
 envelope compiles, deploys to a local test net, and round-trips
 the conformance fixtures with no manual op-code plumbing.
 
@@ -178,13 +178,13 @@ and the static check — not the high-level syntax sugar.
 
 ### Stage 3 — Reference contract migration (week 15–20)
 
-**Owners.** Contract team, with Tolk compiler team support.
+**Owners.** Contract team, with Tol compiler team support.
 
 **Deliverables.**
 
 - One official reference contract — recommended candidate is
   `wallet-v5` because of its narrow surface and high test
-  coverage — fully rewritten in Tolk against the new envelope
+  coverage — fully rewritten in Tol against the new envelope
   and structured error type.
 - A second, slightly more involved candidate (recommended:
   the simplest jetton wallet) rewritten in the same style.
@@ -244,12 +244,12 @@ By end of week 26, the following must all be true:
       definition.
 - [ ] TVM bounce format carries structured errors aligned with
       §5.3.
-- [ ] The Tolk standard library exposes `Envelope` and `Error`
+- [ ] The Tol standard library exposes `Envelope` and `Error`
       types with auto-derived serializers.
 - [ ] At least one new `pipe-check-*` pass enforces `query_id`
       handling at compile time.
 - [ ] At least two official reference contracts are rewritten in
-      Tolk against the new envelope and continue to pass their
+      Tol against the new envelope and continue to pass their
       pre-migration test suites.
 - [ ] Conformance fixtures and fuzzing run in CI.
 - [ ] Gas regressions are documented and within budget.
@@ -266,7 +266,7 @@ because their detail will follow from what the first slice teaches.
 
 ### Slice 2 — Q2 syntax, weeks 27–52 (six months)
 
-Deliver `tolk.md` Q2: `contract`, `receive(...)`, `message`
+Deliver `tol.md` Q2: `contract`, `receive(...)`, `message`
 keywords, and the early form of state-aware dispatch (`receive(...)
 on State`). The envelope from Slice 1 is the wire format these
 keywords compile to; nothing in the wire format changes.
@@ -277,7 +277,7 @@ exhaustiveness checking lands in Slice 3.
 
 ### Slice 3 — Q3 + Q4, weeks 53–78 (six months)
 
-Deliver `tolk.md` Q3 (domain stdlib: jetton, NFT, ownable, wallet,
+Deliver `tol.md` Q3 (domain stdlib: jetton, NFT, ownable, wallet,
 multisig) and Q4 (full §5.5 exhaustiveness, scaffolding CLI,
 test harness, "TVM model for Solidity developers" guide). The
 official reference contracts migrated in Slice 1 are now rewritten
@@ -308,7 +308,7 @@ is approved.
 
 | Phase | Out of scope |
 |---|---|
-| Slice 1 | high-level Tolk syntax (`contract` / `receive`); supervision; scheduled messages; capability handles; new domain stdlib |
+| Slice 1 | high-level Tol syntax (`contract` / `receive`); supervision; scheduled messages; capability handles; new domain stdlib |
 | Slice 2 | exhaustiveness for state machines (still informal); domain stdlib; behaviour traits |
 | Slice 3 | supervision; scheduled messages; capability handles |
 | Slice 4 | supervision; scheduled messages |
@@ -328,7 +328,7 @@ designed to prevent.
 | Slice 1 ships only an envelope, with no high-level syntax, and contract authors find it underwhelming. | Slice 1 is positioned in external communication as a substrate release, not a developer-experience release. The DX win lands in Slice 2. |
 | The migrated reference contracts in Stage 3 expose envelope-design defects that force a Stage 1 rewrite. | This is acceptable cost. Better to find the defects in Stage 3 than after external contracts depend on the format. The 26-week budget includes a notional two-week return path to Stage 1 if needed. |
 | Slice 2 starts before Slice 1 has actually shipped externally. | Slice 2 design work can begin in parallel, but Slice 2 implementation requires a Slice 1 release tag. The roadmap is written with sequential implementation gates. |
-| Tolk compiler team is the bottleneck across multiple slices. | Stages 2 and 3 of Slice 1 are scheduled non-overlapping with Slice 2 design discussion; subsequent slices reuse the Stage 2 patterns rather than re-deriving them. |
+| Tol compiler team is the bottleneck across multiple slices. | Stages 2 and 3 of Slice 1 are scheduled non-overlapping with Slice 2 design discussion; subsequent slices reuse the Stage 2 patterns rather than re-deriving them. |
 
 ## 9. Success criteria per slice
 
@@ -336,7 +336,7 @@ designed to prevent.
 |---|---|
 | Slice 1 | All ten checklist items in §5 are checked. |
 | Slice 2 | At least one new official reference contract is written from scratch using `contract` / `receive(...)` / `message`, deploys, and passes its test suite. |
-| Slice 3 | A new contract author can produce a working Jetton or NFT in under one hour using `tolk new`, the stdlib, and the documentation. |
+| Slice 3 | A new contract author can produce a working Jetton or NFT in under one hour using `tol new`, the stdlib, and the documentation. |
 | Slice 4 | Bounded postponement is used by at least one shipped contract; traits cover at least three official reference contracts without bytecode regression beyond the Slice 1 budget. |
 | Slice 5 | The second-wave stdlib is used by at least three external production contracts. |
 | Slice 6 | Supervision, scheduled messages, and structured errors are in production on at least one workchain and used by at least one official system contract. |
@@ -344,7 +344,7 @@ designed to prevent.
 ## 10. Closing framing
 
 The TOS actor layer is not a research project. The protocol shape
-is fixed by `actor.md`, the language path is fixed by `tolk.md`,
+is fixed by `actor.md`, the language path is fixed by `tol.md`,
 and the work that turns those documents into shipped behavior is
 sequenced here.
 

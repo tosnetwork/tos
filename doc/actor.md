@@ -385,7 +385,7 @@ start before those tradeoffs are explicit.
 
 **Gap.** In FunC, `become` is implemented by hand as bit layout in
 `c4`; the compiler has no idea which behavior the contract is
-currently in. Tolk's `receive(...)` style is a step in the right
+currently in. Tol's `receive(...)` style is a step in the right
 direction but still lacks the notion of a *current state* as a
 first-class concept.
 
@@ -395,12 +395,12 @@ Event, Data) -> {next_state, NextStateName, NewData, Actions}`.
 The runtime dispatcher knows which state the actor is in and routes
 events accordingly. Erlang itself does not statically prove
 exhaustiveness or reachability; those would be additional guarantees
-Tolk could add at the language layer.
+Tol could add at the language layer.
 
-**Direction.** Introduce explicit state-machine syntax in Tolk
+**Direction.** Introduce explicit state-machine syntax in Tol
 that maps cleanly onto the `gen_statem` model:
 
-```tolk
+```tol
 contract Auction {
     states: Open, Settling, Closed
 
@@ -428,10 +428,10 @@ the raw `c4`/`SETCODE` convention.
 from an implicit convention buried in `c4` field layout to a
 statically checkable contract skeleton. A large class of
 high-severity contract bugs — state confusion, double-handling,
-missing transitions — can become compile-time errors if the Tolk
+missing transitions — can become compile-time errors if the Tol
 type system makes state, messages, and allowed transitions explicit.
 Section 6.5 generalizes this idea from one syntax feature into a
-library of reusable Tolk behaviour patterns.
+library of reusable Tol behaviour patterns.
 
 ### 5.6. Standardize request/reply correlation
 
@@ -453,7 +453,7 @@ themselves.
 - Make timeouts on outstanding requests a first-class feature,
   matching `gen_server:call`'s timeout argument; composes with
   5.2.
-- Expose this in Tolk as something close to `co_await
+- Expose this in Tol as something close to `co_await
   send_request(target, body)` at the source level. This cannot
   literally block a transaction; it must compile to continuation
   state, callbacks, or an explicit state-machine transition. The
@@ -654,13 +654,13 @@ Without this, on-chain supervision can become a message-amplification
 attack surface: an adversary triggers a failure and the protocol or
 supervisor pays to repeat the failure indefinitely.
 
-### 6.5. Behaviour patterns for Tolk contracts
+### 6.5. Behaviour patterns for Tol contracts
 
 OTP's most reusable abstraction is the behaviour: `gen_server`,
 `gen_statem`, and `supervisor` are standard callback contracts that
 make common process shapes explicit.
 
-Tolk can use the same idea for smart-contract patterns:
+Tol can use the same idea for smart-contract patterns:
 
 - `request_server` for request/reply contracts;
 - `timed_actor` for contracts with scheduled actions;
@@ -715,7 +715,7 @@ If TOS resources are constrained, the recommendation is:
    and timeouts later.
 
 3. **5.5 (`become` syntax) + 5.9 (bounded postponement).** This is
-   primarily a Tolk/compiler improvement modeled on `gen_statem`,
+   primarily a Tol/compiler improvement modeled on `gen_statem`,
    with lower consensus risk than protocol-level recovery. It gives
    developers explicit state machines and a controlled way to defer
    early messages before the protocol tries to supervise them.

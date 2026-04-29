@@ -69,13 +69,13 @@ cmake -GNinja .. \
 test $? -eq 0 || { echo "Can't configure tos"; exit 1; }
 
 if [ "$with_tests" = true ]; then
-ninja storage-daemon storage-daemon-cli fift func tolk toslib toslibjson toslib-cli \
+ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
       validator-engine lite-client validator-engine-console blockchain-explorer \
       generate-random-id json2tlo dht-server http-proxy rldp-http-proxy dht-ping-servers dht-resolve \
       adnl-proxy create-state emulator proxy-liteserver all-tests install
       test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
 else
-ninja storage-daemon storage-daemon-cli fift func tolk toslib toslibjson toslib-cli \
+ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
       validator-engine lite-client validator-engine-console blockchain-explorer \
       generate-random-id json2tlo dht-server http-proxy rldp-http-proxy \
       adnl-proxy create-state emulator proxy-liteserver dht-ping-servers dht-resolve
@@ -98,7 +98,7 @@ if [ "$with_artifacts" = true ]; then
   mkdir artifacts
   mv build/toslib/libtoslibjson.so.0.5 build/toslib/libtoslibjson.so
   cp build/storage/storage-daemon/storage-daemon build/storage/storage-daemon/storage-daemon-cli \
-     build/crypto/fift build/crypto/tlbc build/crypto/func build/tolk/tolk build/crypto/create-state build/blockchain-explorer/blockchain-explorer \
+     build/crypto/fift build/crypto/tlbc build/crypto/func build/tol/tol build/crypto/create-state build/blockchain-explorer/blockchain-explorer \
      build/validator-engine-console/validator-engine-console build/toslib/toslib-cli build/utils/proxy-liteserver \
      build/toslib/libtoslibjson.so build/http/http-proxy build/rldp-http-proxy/rldp-http-proxy \
      build/dht-server/dht-server build/lite-client/lite-client build/validator-engine/validator-engine \

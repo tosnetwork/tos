@@ -19,7 +19,7 @@ jobs:
         github.event.pull_request.user.login == 'sonofmom' ||
         github.event.pull_request.user.login == 'Trinketer22' ||
         github.event.pull_request.user.login == 'xssnick' ||
-        github.event.pull_request.user.login == 'tolk-vm' ||
+        github.event.pull_request.user.login == 'tol-vm' ||
         github.event.pull_request.user.login == 'DanShaders' ||
         github.event.pull_request.user.login == 'birydrad' ||
         github.event.pull_request.user.login == 'abacabadabacaba' ||

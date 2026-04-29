@@ -3,4 +3,4 @@
 
 command script import lldb_addons.py
 
-settings set target.process.thread.step-avoid-regexp tolk::ASTNodeBase::as<.+>|tolk::Vertex<.+>::get_.+|std::.+
+settings set target.process.thread.step-avoid-regexp tol::ASTNodeBase::as<.+>|tol::Vertex<.+>::get_.+|std::.+

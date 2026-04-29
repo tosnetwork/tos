@@ -250,7 +250,7 @@ def build():
               "vm/        : TVM virtual machine",
               "block/     : block format",
               "emulator/  : transaction emulation",
-              "tolk/      : new compiler",
+              "tol/      : new compiler",
               "catchain/  : consensus protocol"],
              TOS_CARD, TOS_BDR, TOS_TC)
     pdf.card(LR+96, Y+9, 90, 30,

@@ -30,7 +30,7 @@ struct FiftOutput {
 };
 
 // given a valid Fift code PROGRAM{ ... }END>c, compile_asm_program() returns this output
-// now it's used primarily for wasm output (see tolk-js, for example)
+// now it's used primarily for wasm output (see tol-js, for example)
 struct CompiledProgramOutput {
   std::string codeBoc64;
   std::string codeHashHex;

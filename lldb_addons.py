@@ -39,7 +39,7 @@ def print_ast_vertex(valobj, internal_dict, options):
     if not addr.IsValid():
         return "nullptr"
 
-    s = valobj.GetFrame().EvaluateExpression('debug_print((tolk::ASTNodeBase*){})'.format(addr)).GetSummary()
+    s = valobj.GetFrame().EvaluateExpression('debug_print((tol::ASTNodeBase*){})'.format(addr)).GetSummary()
     s = str(s)[1:-1]  # trim quotes
 
     return s
@@ -47,46 +47,46 @@ def print_ast_vertex(valobj, internal_dict, options):
 
 def __lldb_init_module(debugger, _):
     types_with_debug_print = [
-        'tolk::Op',
-        'tolk::OpList',
-        'tolk::TypeData',
-        'tolk::VarDescr',
-        'tolk::TmpVar',
-        'tolk::VarDescrList',
-        'tolk::AsmOp',
-        'tolk::AsmOpList',
-        'tolk::Stack',
-        'tolk::SrcRange',
-        'tolk::LocalVarData',
-        'tolk::FunctionData',
-        'tolk::GlobalVarData',
-        'tolk::GlobalConstData',
-        'tolk::AliasDeclarationData',
-        'tolk::StructFieldData',
-        'tolk::StructData',
-        'tolk::EnumMemberData',
-        'tolk::EnumDefData',
-        'tolk::FlowContext',
-        'tolk::SinkExpression',
-        'tolk::InfoAboutExpr',
-        'tolk::GenericsDeclaration',
-        'tolk::GenericsSubstitutions',
+        'tol::Op',
+        'tol::OpList',
+        'tol::TypeData',
+        'tol::VarDescr',
+        'tol::TmpVar',
+        'tol::VarDescrList',
+        'tol::AsmOp',
+        'tol::AsmOpList',
+        'tol::Stack',
+        'tol::SrcRange',
+        'tol::LocalVarData',
+        'tol::FunctionData',
+        'tol::GlobalVarData',
+        'tol::GlobalConstData',
+        'tol::AliasDeclarationData',
+        'tol::StructFieldData',
+        'tol::StructData',
+        'tol::EnumMemberData',
+        'tol::EnumDefData',
+        'tol::FlowContext',
+        'tol::SinkExpression',
+        'tol::InfoAboutExpr',
+        'tol::GenericsDeclaration',
+        'tol::GenericsSubstitutions',
     ]
     for arg_type in types_with_debug_print:
         debugger.HandleCommand('type summary add --python-script "return lldb_addons.call_cpp_debug_print(valobj, \'{}\')" {}'.format(arg_type, arg_type))
 
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTNodeBase')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTNodeDeclaredTypeBase')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTNodeExpressionBase')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTNodeStatementBase')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTTypeLeaf')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTTypeVararg')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTExprLeaf')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTExprUnary')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTExprBinary')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTExprVararg')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTStatementUnary')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tolk::ASTStatementVararg')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" -x "^tolk::V<.+>$"')
-    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" -x "^tolk::Vertex<.+>$"')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTNodeBase')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTNodeDeclaredTypeBase')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTNodeExpressionBase')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTNodeStatementBase')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTTypeLeaf')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTTypeVararg')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTExprLeaf')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTExprUnary')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTExprBinary')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTExprVararg')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTStatementUnary')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" tol::ASTStatementVararg')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" -x "^tol::V<.+>$"')
+    debugger.HandleCommand('type summary add --python-function "lldb_addons.print_ast_vertex" -x "^tol::Vertex<.+>$"')
     debugger.HandleCommand('type summary add --python-function "lldb_addons.print_td_RefInt256" td::RefInt256')

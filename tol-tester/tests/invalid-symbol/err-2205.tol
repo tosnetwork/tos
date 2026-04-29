@@ -1,0 +1,10 @@
+import "@two-dots/imports/some-math.tol";
+import "../imports/some-math.tol";
+import "../imports/invalid-no-import.tol";
+
+/**
+@path_mapping @two-dots={DIR}/..
+@compilation_should_fail
+@stderr tests/imports/invalid-no-import.tol:2:13
+@stderr Using a non-imported symbol `someAdd`
+ */

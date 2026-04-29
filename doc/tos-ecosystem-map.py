@@ -276,7 +276,7 @@ def build_pdf():
                   "C++ Stack (Native)",
                   ["crypto/ cryptographic primitives", "vm/ TVM virtual machine",
                    "block/ block format", "emulator/ transaction simulation",
-                   "tolk/ new compiler, catchain/ consensus"],
+                   "tol/ new compiler, catchain/ consensus"],
                   fill=(230, 255, 235), border_color=(140, 200, 150))
     pdf.inner_box(LEFT_TOS + 96, row_y + 9, 90, 33,
                   "Rust Stack (86K-line port inside tosctl)",

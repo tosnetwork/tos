@@ -79,7 +79,7 @@ cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
 
 ninja -C "$BUILD_DIR" \
-  storage-daemon storage-daemon-cli fift func tolk toslib toslibjson toslib-cli \
+  storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
   validator-engine lite-client validator-engine-console blockchain-explorer \
   generate-random-id json2tlo dht-server http-proxy rldp-http-proxy \
   adnl-proxy create-state emulator proxy-liteserver dht-ping-servers dht-resolve
@@ -92,7 +92,7 @@ if [ "$with_artifacts" = true ]; then
      $BUILD_DIR/crypto/fift \
      $BUILD_DIR/crypto/tlbc \
      $BUILD_DIR/crypto/func \
-     $BUILD_DIR/tolk/tolk \
+     $BUILD_DIR/tol/tol \
      $BUILD_DIR/crypto/create-state \
      $BUILD_DIR/blockchain-explorer/blockchain-explorer \
      $BUILD_DIR/validator-engine-console/validator-engine-console \

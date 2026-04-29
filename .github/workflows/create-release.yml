@@ -197,12 +197,12 @@ jobs:
           asset_name: func.exe
           tag: ${{ steps.tag.outputs.TAG }}
 
-      - name: Upload Windows 2019 single artifact - tolk
+      - name: Upload Windows 2019 single artifact - tol
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/tolk.exe
-          asset_name: tolk.exe
+          file: artifacts/tos-x86-64-windows/tol.exe
+          asset_name: tol.exe
           tag: ${{ steps.tag.outputs.TAG }}
 
       - name: Upload Windows 2019 single artifact - lite-client
@@ -303,12 +303,12 @@ jobs:
           asset_name: func-mac-x86-64
           tag: ${{ steps.tag.outputs.TAG }}
 
-      - name: Upload Mac x86-64 single artifact - tolk
+      - name: Upload Mac x86-64 single artifact - tol
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/tolk
-          asset_name: tolk-mac-x86-64
+          file: artifacts/tos-x86_64-macos/tol
+          asset_name: tol-mac-x86-64
           tag: ${{ steps.tag.outputs.TAG }}
 
       - name: Upload Mac x86-64 single artifact - lite-client
@@ -410,12 +410,12 @@ jobs:
           asset_name: func-mac-arm64
           tag: ${{ steps.tag.outputs.TAG }}
 
-      - name: Upload Mac arm64 single artifact - tolk
+      - name: Upload Mac arm64 single artifact - tol
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/tolk
-          asset_name: tolk-mac-arm64
+          file: artifacts/tos-arm64-macos/tol
+          asset_name: tol-mac-arm64
           tag: ${{ steps.tag.outputs.TAG }}
 
       - name: Upload Mac arm64 single artifact - lite-client
@@ -524,12 +524,12 @@ jobs:
           asset_name: func-linux-x86_64
           tag: ${{ steps.tag.outputs.TAG }}
 
-      - name: Upload Linux x86-64 single artifact - tolk
+      - name: Upload Linux x86-64 single artifact - tol
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/tolk
-          asset_name: tolk-linux-x86_64
+          file: artifacts/tos-x86_64-linux/tol
+          asset_name: tol-linux-x86_64
           tag: ${{ steps.tag.outputs.TAG }}
 
       - name: Upload Linux x86-64 single artifact - lite-client
@@ -631,12 +631,12 @@ jobs:
           asset_name: func-linux-arm64
           tag: ${{ steps.tag.outputs.TAG }}
 
-      - name: Upload Linux arm64 single artifact - tolk
+      - name: Upload Linux arm64 single artifact - tol
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/tolk
-          asset_name: tolk-linux-arm64
+          file: artifacts/tos-arm64-linux/tol
+          asset_name: tol-linux-arm64
           tag: ${{ steps.tag.outputs.TAG }}
 
       - name: Upload Linux arm64 single artifact - lite-client

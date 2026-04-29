@@ -548,7 +548,7 @@ ninja \
   storage-daemon storage-daemon-cli blockchain-explorer \
   toslib toslibjson toslib-cli \
   validator-engine validator-engine-console \
-  func tolk fift \
+  func tol fift \
   lite-client \
   generate-random-id json2tlo \
   dht-server dht-ping-servers dht-resolve \

@@ -14,7 +14,7 @@ RUN mkdir build && \
         cd build && \
         cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DPORTABLE=1 -DTOS_ARCH= -DTOS_USE_JEMALLOC=ON .. && \
         ninja storage-daemon storage-daemon-cli toslibjson fift func validator-engine validator-engine-console \
-    generate-random-id dht-server lite-client tolk rldp-http-proxy dht-server proxy-liteserver create-state \
+    generate-random-id dht-server lite-client tol rldp-http-proxy dht-server proxy-liteserver create-state \
     blockchain-explorer emulator toslibjson http-proxy adnl-proxy dht-ping-servers dht-resolve
 
 FROM ubuntu:22.04
@@ -43,7 +43,7 @@ COPY --from=builder /tos/build/http/http-proxy  /usr/local/bin/
 COPY --from=builder /tos/build/adnl/adnl-proxy  /usr/local/bin/
 COPY --from=builder /tos/build/toslib/libtoslibjson.so /usr/local/bin/
 COPY --from=builder /tos/build/emulator/libemulator.so /usr/local/bin/
-COPY --from=builder /tos/build/tolk/tolk /usr/local/bin/
+COPY --from=builder /tos/build/tol/tol /usr/local/bin/
 COPY --from=builder /tos/build/crypto/fift /usr/local/bin/
 COPY --from=builder /tos/build/crypto/func /usr/local/bin/
 COPY --from=builder /tos/crypto/smartcont/* /usr/share/tos/smartcont/

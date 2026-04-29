@@ -1,0 +1,7 @@
+tol asdf;
+
+/**
+@compilation_should_fail
+@stderr semver expected
+@stderr tol asdf;
+ */
