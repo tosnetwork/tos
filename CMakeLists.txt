@@ -811,7 +811,8 @@ add_executable(test-emulator
         # doc/tos-message-policy.md v6 §3.4 / §6.2 / §10.1).
         emulator/test/slice-1-account-state-fixtures.cpp
         emulator/test/slice-1-failure-phase-fixtures.cpp
-        emulator/test/slice-1-extra-flags-fixtures.cpp)
+        emulator/test/slice-1-extra-flags-fixtures.cpp
+        emulator/test/slice-1-stage-2-roundtrip-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
 
 get_directory_property(HAS_PARENT PARENT_DIRECTORY)

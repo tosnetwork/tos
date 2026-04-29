@@ -1,0 +1,103 @@
+// =============================================================================
+// Slice 1 Stage 2 — minimal Envelope round-trip contract.
+//
+// Per doc/tos-message-policy.md v6:
+//   - §3.1 (Standard body layout)  — every non-comment internal message body
+//                                    begins with `opcode:uint32 query_id:uint64
+//                                    payload:...`. EchoRequest/EchoReply below
+//                                    are the canonical opcode-tagged shape;
+//                                    the auto-emitted `struct (0x...)` prefix
+//                                    is the §3.1 opcode field.
+//   - §3.2 (Special opcodes)       — opcode 0x00000000 is the text-comment
+//                                    slot and carries no `query_id` field.
+//                                    The `preloadUint(32) == 0` early return
+//                                    below is the policy-mandated fallback:
+//                                    we silently no-op rather than parse a
+//                                    non-existent query_id.
+//   - §4.4 (Reply binding)         — every reply propagates the inbound
+//                                    `query_id` so the recipient's
+//                                    outstanding-request table keyed by
+//                                    `(expected_responder, query_id)`
+//                                    can match the response.
+//
+// This is the smallest contract that exercises the Stage 2 exit criterion
+// in doc/roadmap.md ("a Tol contract written against the new envelope
+// compiles, deploys to a local test net, and round-trips the conformance
+// fixtures"). The corresponding emulator fixture is
+// `emulator/test/slice-1-stage-2-roundtrip-fixture.cpp`, which asserts the
+// outbound reply body's `query_id` equals the inbound envelope's `query_id`
+// verbatim, and that an inbound text-comment body is handled gracefully
+// without emitting a malformed reply.
+//
+// Note on the createMessage TBody interface (tol/builtins.cpp:1862-1864):
+// `createMessage<TBody>` takes a generic body that becomes the inline body
+// of the outbound MessageRelaxed. When TBody is a `struct (0x...)` with an
+// auto-emitted opcode tag, the auto-serializer writes `opcode | fields...`
+// which is bit-identical to the §3.1 envelope shape. No SENDRAWMSG fallback
+// is required here — the reply body is constructed via `createMessage`.
+//
+// The S2-A check pass `tol/pipe-check-query-id-propagation.cpp` (per
+// `doc/tos-message-policy.md` §4.4) treats the `lazy
+// EchoRequest.fromSlice(in.body)` + `body: EchoReply { queryId: msg.queryId,
+// ... }` pattern as a propagating reply and stays silent. This contract
+// therefore compiles clean (no warnings, no errors).
+// =============================================================================
+
+import "@stdlib/common"
+
+// §3.1 application-layer envelope. The auto-emitted opcode tag (the
+// `(0x...)` struct prefix) sits at bits 0..31 of the serialized body, the
+// `queryId` at bits 32..95, and `payload` at bits 96..127. The full body
+// shape is `opcode:uint32 queryId:uint64 payload:int32`, matching the
+// canonical envelope.
+struct (0x10010001) EchoRequest {
+    queryId: uint64;
+    payload: int32;
+}
+
+// Reply opcode is in the §3.2 application-defined range (0x00010000 –
+// 0x7FFFFFFF). It is paired with EchoRequest's opcode by the +1 step;
+// tighter binding (TEP allocation, original_op echo) is out of scope for
+// this minimum-surface contract.
+struct (0x10010002) EchoReply {
+    queryId: uint64;
+    payload: int32;
+}
+
+fun onInternalMessage(in: InMessage) {
+    // §3.2 fallback: a body shorter than 32 bits cannot carry an opcode.
+    // Silently no-op instead of throwing — a contract that reverts on
+    // every malformed inbound creates a DoS surface (any peer can force
+    // the contract into the failure-phase bounce path). The §6.2 inbound
+    // table allows a "no action" outcome for ill-formed bodies.
+    if (in.body.remainingBitsCount() < 32) {
+        return;
+    }
+    // §3.2 text-comment opcode: opcode 0x00000000 has no query_id slot;
+    // attempting to lazy-load EchoRequest.fromSlice on such a body would
+    // throw exit_code 63 (TVM opcode-mismatch) and we'd emit no reply.
+    // We instead short-circuit explicitly so the no-reply behaviour is
+    // documented, not incidental, and the graceful-handling assertion in
+    // `Slice1Stage2Roundtrip.NoEnvelopeFallback` is testing intent.
+    if (in.body.preloadUint(32) == 0) {
+        return;
+    }
+
+    // §4.4 reply binding: parse the inbound envelope and propagate
+    // `queryId` into the reply body literal. The S2-A check pass detects
+    // this exact pattern (`val msg = lazy <Struct>.fromSlice(in.body)` +
+    // `body: <ReplyStruct> { queryId: msg.queryId, ... }`) and stays
+    // silent. Any change to this pattern that breaks propagation will
+    // surface as an S2-A warning at recompile time.
+    val msg = lazy EchoRequest.fromSlice(in.body);
+    val reply = createMessage({
+        bounce: false,
+        dest: in.senderAddress,
+        value: 0,
+        body: EchoReply {
+            queryId: msg.queryId,
+            payload: msg.payload,
+        },
+    });
+    reply.send(SEND_MODE_REGULAR);
+}
