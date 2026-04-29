@@ -8,6 +8,27 @@ set(ZLIB_SOURCE_DIR ${TOS_THIRD_PARTY_SOURCE_DIR}/zlib)
 set(ZLIB_BINARY_DIR ${TOS_THIRD_PARTY_BINARY_DIR}/zlib)
 set(ZLIB_BUILD_DIR ${ZLIB_BINARY_DIR}/src)
 
+# Self-heal stale cache: if a previous configure populated the
+# ZLIB_FOUND / ZLIB_LIBRARY / ZLIB_INCLUDE_DIR cache entries but the
+# actual artifacts under build/third-party/zlib have been wiped (e.g.
+# by a partial clean), the early-return below would skip rebuild and
+# downstream targets would fail with "missing and no known rule to
+# make it". Detect that case and unset the cache so the rebuild path
+# below registers the add_custom_command.
+if (ZLIB_FOUND AND ZLIB_LIBRARY)
+  if (NOT EXISTS "${ZLIB_LIBRARY}" OR NOT IS_DIRECTORY "${ZLIB_INCLUDE_DIR}")
+    message(STATUS
+      "BuildZlib: cached artifacts missing "
+      "(library=${ZLIB_LIBRARY}, include=${ZLIB_INCLUDE_DIR}); rebuilding")
+    unset(ZLIB_FOUND CACHE)
+    unset(ZLIB_LIBRARY CACHE)
+    unset(ZLIB_LIBRARIES CACHE)
+    unset(ZLIB_INCLUDE_DIR CACHE)
+    unset(ZLIB_INCLUDE_DIRS CACHE)
+    unset(ZLIB_LIBRARY_DIRS CACHE)
+  endif()
+endif()
+
 if (ZLIB_FOUND)
   if (NOT ZLIB_LIBRARY AND ZLIB_LIBRARIES)
     list(GET ZLIB_LIBRARIES 0 ZLIB_LIBRARY)
