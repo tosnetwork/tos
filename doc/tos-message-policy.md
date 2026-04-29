@@ -2,7 +2,7 @@
 
 ## 0. Status, scope, and references
 
-**Status.** Draft v2 (post-Stage-0-audit). This document is the policy input for Slice 1 of
+**Status.** Draft v4 (post-second-review). This document is the policy input for Slice 1 of
 [`doc/roadmap.md`](roadmap.md). It must be approved by four owners
 before Slice 1 implementation begins:
 
@@ -56,27 +56,57 @@ The policy below is built on top of TVM v12, not in place of it.
 
 ### 2.1 Internal message envelope
 
-From `block.tlb`:
+`block.tlb` declares **two** `int_msg_info$0` constructors, with
+identical field layout but different parents:
 
 ```
+// Inbound — the schema by which the system delivers a message
+// to its recipient (line 126):
 int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
   src:MsgAddressInt dest:MsgAddressInt
   value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Tomis
   created_lt:uint64 created_at:uint32 = CommonMsgInfo;
+
+// Outbound — the schema user code (Tol / FunC) constructs when
+// sending (line 135). Note the relaxed src type:
+int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
+  src:MsgAddress dest:MsgAddressInt
+  value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Tomis
+  created_lt:uint64 created_at:uint32 = CommonMsgInfoRelaxed;
 ```
+
+The two share the wire bit-layout that this policy governs, so every
+rule below applies bit-symmetrically to both.
+
+Note the layering, since v3 conflated it: the existing
+`createMessage` / message-builder primitives in
+`tol/send-message-api.cpp` and the Tol-stdlib are what pack
+`CommonMsgInfoRelaxed` on send (and unpack `CommonMsgInfo` on
+receive). The Slice 1 `Envelope` type introduced by this policy is
+**body-only** — it packs and unpacks the
+`(opcode, query_id, payload)` triple defined in §3.1, which sits
+inside the message body. `Envelope` does not own the
+`CommonMsgInfo*` fields; those remain the responsibility of the
+message-builder primitives.
 
 `extra_flags` is the renamed-and-repurposed former `ihr_fee` field.
 TVM v12 defines:
 
 - `extra_flags & 1` — enable the new (v12) bounce body format.
 - `extra_flags & 2` — when bouncing, return the whole original
-  body rather than only the root cell without refs.
-- All higher bits are reserved and must be zero on send. Internal
-  messages with reserved bits set are invalid.
+  body rather than only the root cell without refs. This bit is
+  meaningful only when bit 0 is also set (see §10.1's
+  `EXTRA_FLAGS_RICH_BOUNCE` composite constant).
+- All higher bits are reserved and must be zero on send. The
+  current outbound mask in `crypto/block/transaction.cpp:2948,3632`
+  is `extra_flags & 3`, i.e. only bits 0..1 are accepted today;
+  bits 2..3 are reserved by this policy for future activation
+  (see §3.4).
 
 ### 2.2 v12 bounce body
 
 ```
+// block.tlb:170-175
 new_bounce_body#fffffffe
     original_body:^Cell
     original_info:^NewBounceOriginalInfo
@@ -131,17 +161,22 @@ contracts, the Tol standard library, and tooling can rely on it.
 
 ### 3.1 Standard body layout
 
-Every internal message body produced by Tol-generated code must
-begin with:
+Every **non-comment** internal message body produced through the
+Slice 1 `Envelope` library must begin with:
 
 ```
 opcode:uint32  query_id:uint64  payload:...
 ```
 
-- `opcode` — application-defined operation identifier. The
-  remaining bits 32 of every body are reserved for opcode use.
+- `opcode` — application-defined operation identifier. The first
+  32 bits of every non-comment body. See §3.2 for the partition.
 - `query_id` — 64-bit correlation identifier. See §4.
 - `payload` — opcode-specific bits.
+
+The text-comment opcode `0x00000000` is the documented exception
+to the layout above and does not carry a `query_id` field; see
+§3.2 for the body shape and §4.1 for the corresponding scope of
+the `query_id = 0` rule.
 
 This layout is bit-compatible with the TEP-74, TEP-62, and
 wallet-vN message conventions already in use, so existing
@@ -149,7 +184,53 @@ contracts continue to work without change.
 
 ### 3.2 Special opcodes
 
-The first 16 bits of `opcode` partition the opcode space:
+The full 32-bit `opcode` value partitions the opcode space into
+five contiguous ranges:
+
+| Range (32-bit) | Meaning |
+|---|---|
+| `0x00000000` | text-comment opcode (special-cased; see below) |
+| `0x00000001` – `0x000000FF` | reserved for protocol-defined system opcodes (255 slots) |
+| `0x00000100` – `0x0000FFFF` | reserved for future ecosystem-wide standards (TEP-style allocations) |
+| `0x00010000` – `0x7FFFFFFF` | application-defined |
+| `0x80000000` – `0xFFFFFFFF` | high-bit range — see grandfathering note below |
+
+`OP_ERROR = 0x00010001` (§5.2) is reserved by this policy from
+the **application-defined** range.
+
+**Enforcement scope.** Restrictions in this section apply only to
+**new opcode allocations made through the Slice 1 `Envelope`
+library**. The protocol does **not** reject sends with arbitrary
+opcodes — doing so would break a non-trivial set of existing
+reference contracts. Concretely:
+
+- **Low-system range (`0x00000001`–`0x000000FF`).** The Slice 1
+  `Envelope` builder rejects new allocations in this range at
+  Tol compile time unless the opcode is enumerated in this
+  policy. Hand-rolled FunC code that constructs a body with such
+  an opcode continues to work — wire-level validation is
+  unchanged.
+- **High-bit range (`0x80000000`–`0xFFFFFFFF`).** Some TEP-style
+  standards (e.g. excess refund replies) use the high bit to
+  mark reply / notification opcodes, but the convention is
+  **not** universal. Existing reference contracts already use
+  high-bit opcodes outside any TEP, including:
+  - `crypto/smartcont/elector-code.fc:169` —
+    `0xee6f454c` (`return_stake`).
+  - `crypto/smartcont/liquid-staking/op-codes.func:7` —
+    `0xee6f454c` (`new_stake_error`).
+  - `crypto/smartcont/payment-channel-code.fc:16` —
+    `0x912838d1` (`pchan_cmd`).
+
+  A blanket "reject high-bit sends" rule would invalidate these
+  contracts. The policy therefore **grandfathers** all existing
+  high-bit opcodes; the Slice 1 `Envelope` builder warns (does
+  not error) on a fresh high-bit allocation unless the new
+  opcode is registered in an approved TEP or enumerated here.
+  Future standards may tighten this once the ecosystem-wide
+  inventory is complete.
+
+The text-comment slot deserves a special note:
 
 - `0x00000000` — text-comment opcode. The body after the first
   32 bits is interpreted as UTF-8 text. **No `query_id` field is
@@ -160,22 +241,12 @@ The first 16 bits of `opcode` partition the opcode space:
   simple-transfer practice across wallet-v3 / wallet-v4 /
   wallet-v5 / DNS / elector / payment-channel / TEP-62 NFT
   contracts (verified during Stage 0 audit).
-- `0x0001`–`0x00FF` — reserved for future protocol-defined system
-  opcodes. Implementations must reject these on send unless the
-  opcode is documented in this policy.
-- `0x0100`–`0xFFFF` — reserved for future ecosystem-wide standards
-  (TEP-style allocations).
-- `0x00010000`–`0x7FFFFFFF` — application-defined.
-- `0x80000000`–`0xFFFFFFFF` — reserved. The high bit indicates a
-  reply or notification opcode in some TEP-style standards;
-  contracts must not invent new high-bit opcodes outside an
-  approved standard.
 
 **Caveat: `0xfffffffe` is dual-purposed.** The TVM v12 bounce-body
 constructor tag is `new_bounce_body#fffffffe` (see
-`crypto/block/block.tlb:168-175`). Existing reference contracts
+`crypto/block/block.tlb:170-175`). Existing reference contracts
 (`crypto/smartcont/elector-code.fc:407,414`,
-`crypto/smartcont/nominator-pool/pool.fc:16,19`,
+`crypto/smartcont/nominator-pool/pool.fc:19`,
 `crypto/smartcont/liquid-staking/op-codes.func:16`) also use
 `0xfffffffe` as an *application opcode* (`recover_stake_error`).
 This works on the wire because the two are disambiguated by the
@@ -213,24 +284,44 @@ future use:
 - Bit 3 — reserved for the supervision-link tag of `actor.md`
   §5.1. Not implementable until Slice 6.
 
-The TVM v12 rule that internal messages with extra_flags bits
-beyond `0..3` are invalid remains in force.
+**Current v12 enforcement.** Today TVM v12 rejects any `extra_flags`
+bit beyond `0..1`. The outbound mask in `crypto/block/transaction.cpp`
+is `extra_flags & 3` at both sites cited below. Bits 2 and 3 are
+reserved by this policy but **currently invalid to set** — sending
+an internal message with `extra_flags & 12 != 0` triggers
+`check_skip_invalid(45)`. They become legal only when the
+corresponding slice (Slice 4 for bit 2, Slice 6 for bit 3) widens
+the mask in lockstep.
 
 **Synchronized constants.** The `extra_flags` mask is hard-coded
 in three locations today:
 
-- `/home/tomi/tos/crypto/block/transaction.cpp:2948` (action-phase
-  outbound check, `& 3`).
-- `/home/tomi/tos/crypto/block/transaction.cpp:3632`
-  (`prepare_bounce_phase` outbound mask, `& 3`).
-- `/home/tomi/tos/tol/send-message-api.cpp:307-342`
-  (`BounceMode` enum mapping, magic literals `1` and `3`).
+- `crypto/block/transaction.cpp:2948` (action-phase outbound
+  check, `& td::make_refint(3)`).
+- `crypto/block/transaction.cpp:3632` (`prepare_bounce_phase`
+  outbound builder, `& td::make_refint(3)`).
+- `tol/send-message-api.cpp:307-342` (`BounceMode` enum mapping,
+  magic literals `1`, `2`, and `3`).
 
 Slice 1 must lift the magic literals into named stdlib constants
-(suggested names: `EXTRA_FLAGS_NEW_BOUNCE = 1`,
-`EXTRA_FLAGS_FULL_BOUNCE_BODY = 2`) and label all three sites as
-synchronized constants. When Slice 4 activates bit 2 (or Slice 6
-activates bit 3), all three sites must be updated together.
+(`EXTRA_FLAGS_NEW_BOUNCE = 1`, `EXTRA_FLAGS_FULL_BOUNCE_BODY = 2`,
+and the composite `EXTRA_FLAGS_RICH_BOUNCE = 3` defined in §10.1)
+and label all three sites as synchronized constants. When Slice 4
+activates bit 2 (or Slice 6 activates bit 3), the same change must
+land in lockstep at:
+
+1. Both `& td::make_refint(3)` masks in `crypto/block/transaction.cpp`
+   — widen to `& 7` (Slice 4) or `& 15` (Slice 6).
+2. The Tol-stdlib `EXTRA_FLAGS_VALID_MASK` constant introduced in
+   Slice 1 alongside the named bit constants.
+3. The Slice-1 conformance fixtures that assert
+   `extra_flags=0b0100` is rejected (§10.1) — they must be updated
+   to assert acceptance under the new mask.
+
+A Slice 4/6 PR that touches only one of these three sites is a
+hardening violation; the production-hardening script
+(`scripts/check-evm-production-hardening.sh` or its message-policy
+analogue) must grep for divergence between them.
 
 ## 4. `query_id` rules
 
@@ -271,10 +362,35 @@ is the recipient's responsibility, not the sender's.
 
 ### 4.4 Reply binding
 
-A reply message is any message whose body's `query_id` matches
-the `query_id` of an outstanding request the recipient sent
-earlier. The recipient pairs replies by `query_id` lookup in its
-local outstanding-request table. Tol's `pipe-check-*` pass added
+A reply message is any message whose `(src, body.query_id)` pair
+matches an outstanding request the recipient sent earlier.
+**The outstanding-request table key must include the expected
+responder's address**; matching by `query_id` alone allows a
+third address to forge a reply that collides on `query_id`.
+
+The minimum-required key is therefore:
+
+```
+key = (expected_responder, query_id)
+```
+
+Slice 1 `Envelope` reply-helpers store and lookup against this
+two-element key. A stronger three-element form is recommended
+when the contract issues different request opcodes to the same
+peer concurrently:
+
+```
+key = (expected_responder, expected_reply_opcode, query_id)
+```
+
+The `expected_reply_opcode` matches against either the inbound
+opcode or, for `OP_ERROR` replies, the `original_op` field from
+§5.2. The two-element form is the floor; `original_op` is a
+**discriminator within** an `(expected_responder, query_id)`
+pairing, not a substitute for the responder binding.
+
+The recipient pairs replies by lookup in its local
+outstanding-request table. Tol's `pipe-check-*` pass added
 in Slice 1 Stage 2 enforces that:
 
 - Every handler that returns a reply propagates the inbound
@@ -285,15 +401,36 @@ in Slice 1 Stage 2 enforces that:
   table slot.
 
 The check pass file is
-`/home/tomi/tos/tol/pipe-check-query-id-propagation.cpp`
-(injection point: in `tol/tol.cpp` immediately after
-`pipeline_check_serialized_fields()` and before
-`pipeline_lazy_load_insertions()`, while the AST still preserves
-the `in: InMessage` parameter — the subsequent
-`pipeline_transform_onInternalMessage()` rewrites that parameter
-into opaque aux nodes). Slice 1 ships the pass and the
-`disclaim_query_id()` builtin in the same PR; without the
-disclaimer, every legitimate fire-and-forget contract would warn.
+`tol/pipe-check-query-id-propagation.cpp`. Two constraints fix the
+injection point in `tol/tol.cpp`:
+
+1. **AST shape constraint.** The pass must run before
+   `pipeline_transform_onInternalMessage()` (currently
+   `tol/tol.cpp:105`), because the transform rewrites the
+   `in: InMessage` parameter into opaque aux nodes that the check
+   can no longer reason about.
+2. **Error-reporting constraint.** §10.1 specifies the pass uses
+   `error_collector.collect()`, not `.fire()` (warnings, not
+   compile errors). However, `tol/tol.cpp:102` runs
+   `G.error_collector = nullptr;` — any pass injected after that
+   line will dereference a null `error_collector` and crash. The
+   pass therefore must run **before line 102**, in the band
+   between `pipeline_check_serialized_fields()` (line 83) and the
+   error-collector teardown.
+
+The intersection of (1) and (2) leaves a single safe band:
+**after `pipeline_check_serialized_fields()` (line 83) and before
+`G.error_collector = nullptr;` (line 102)**. The
+`pipeline_lazy_load_insertions()` and
+`pipeline_transform_onInternalMessage()` calls at lines 104–105
+are downstream of the teardown and are not valid injection
+points. The Slice 1 hardening script must assert that the new
+pass appears in `tol/tol.cpp` between the two anchor lines and
+not after the teardown.
+
+Slice 1 ships the pass and the `disclaim_query_id()` builtin in
+the same PR; without the disclaimer, every legitimate
+fire-and-forget contract would warn.
 
 ## 5. Error classification
 
@@ -305,9 +442,11 @@ TOS errors are reported on two layers:
   `bounced_by_phase` and `exit_code`. Owned by the protocol;
   applications cannot extend it.
 - **Application tier** — defined here, carried in the message
-  body of failure replies (and, when bit 2 of `extra_flags` is
-  activated in a later slice, in the bounce body itself). Owned
-  by the application; the protocol does not interpret it.
+  body of failure replies. A future bounce-body schema bump (see
+  §5.4) may also expose `error_class` directly in the bounce
+  body; toggling `extra_flags` bit 2 alone is not sufficient
+  because the current `NewBounceBody` has no field for it.
+  Owned by the application; the protocol does not interpret it.
 
 ### 5.2 Application error encoding
 
@@ -367,10 +506,34 @@ Supervisors (`actor.md` §5.1) must distinguish at least classes
 
 A v12 system bounce always includes `bounced_by_phase` and
 `exit_code`. Applications that want to give callers a clean
-error_class on a system bounce should declare an `OP_ERROR` reply
-explicitly in their handler, instead of relying on the TVM
+`error_class` on a system bounce should declare an `OP_ERROR`
+reply explicitly in their handler, instead of relying on the TVM
 bounce alone. The protocol does not synthesize an `error_class`
 from `bounced_by_phase`; that mapping is application policy.
+
+**Future inline error_class in the bounce body — schema bump
+required.** The current `NewBounceBody` schema
+(`block.tlb:170-175`, restated in §2.2) has **no** field for an
+application-level `error_class`. A future activation that puts
+`error_class` into the bounce body itself therefore requires a
+**new bounce-body version** (or a dedicated tagged extension
+cell), not just toggling `extra_flags` bit 2. The bit alone has
+no place to write the value. Slice 4 (or whichever later slice
+takes this on) must therefore ship:
+
+1. A new TL-B constructor — e.g.
+   `new_bounce_body_v2#fffffffd ... error_class:uint8 ...
+   = NewBounceBody;` — defined in `block.tlb`.
+2. A global-version bump (`global_version >= N`) gating the
+   constructor's acceptance, parallel to how v12 gated the
+   current `new_bounce_body#fffffffe`.
+3. The §3.4 mask-widening change synchronized with all three
+   `extra_flags` sites.
+4. Updated `prepare_bounce_phase()` in `crypto/block/transaction.cpp`
+   to populate the new field.
+
+The §3.4 reservation of `extra_flags` bit 2 is necessary but not
+sufficient for this feature.
 
 ## 6. Account lifecycle
 
@@ -389,7 +552,17 @@ The three states from §2.3 are authoritative:
 
 ### 6.2 Inbound message handling
 
-| State | Inbound handling | Bounce? |
+The "Bounce?" column below applies only when **the inbound
+message has `bounce=true` AND the message's remaining value
+covers the bounce's forwarding fee**. Either condition false ⇒
+no bounce is produced. Source: `bounce_enabled = in_msg_info.bounce`
+at `crypto/block/transaction.cpp:921`; `prepare_bounce_phase()`
+returns false at `transaction.cpp:3522` when `!bounce_enabled`;
+when funds do not cover `fwd_fee` the bounce phase records
+`bp.nofunds = true` and no bounce message leaves the recipient
+(`transaction.cpp:3608`).
+
+| State | Inbound handling | Bounce (only if inbound `bounce=true` AND value ≥ `fwd_fee`)? |
 |---|---|---|
 | uninit, no StateInit in msg | Skip compute. | Yes, `bounced_by_phase=0`, `exit_code=-1`. |
 | uninit, StateInit in msg with correct deploy address | Deploy + execute. | Bounce only on compute/action failure. |
@@ -398,6 +571,26 @@ The three states from §2.3 are authoritative:
 | frozen, StateInit with mismatching hash | Skip compute. | Yes, `bounced_by_phase=0`, `exit_code=-2`. |
 | frozen, StateInit with matching hash | Unfreeze, execute. | Bounce on compute/action failure. |
 | suspended (config-controlled) | Skip compute. | Yes, `bounced_by_phase=0`, `exit_code=-4`. |
+
+If `bounce=false` was set on the inbound message, none of the
+"Yes" rows produce a bounce. Value handling follows the normal
+non-bounceable transaction flow and may still credit the
+recipient account. Senders must not use `bounce=false` when they
+need failure signalling or value return.
+
+If `bounce=true` but value is insufficient (`bp.nofunds = true`),
+no bounce is produced either. Senders that depend on bounce
+delivery for error signalling must size `value` to cover at
+least the v12 bounce-message forwarding fee.
+
+The above table partitions by **account state**. Orthogonal to it,
+`exit_code = -3` (insufficient gas to enter the compute phase) can
+be returned for **any** "Execute" / "Deploy + execute" /
+"Unfreeze, execute" row when the inbound `value` does not cover
+the storage rent + minimum compute gas. The bounce shape is the
+same as the other compute-skipped cases:
+`bounced_by_phase = 0`, `exit_code = -3`. Senders that intend to
+deploy or unfreeze a peer must size `value` accordingly.
 
 ### 6.3 Lifecycle transitions visible to senders
 
@@ -414,7 +607,9 @@ choices remain compatible:
 
 - A scheduled message addressed to an account that is `frozen`
   or absent at delivery time follows the same rules as an
-  immediate message: it bounces with `exit_code = -1` or `-2`.
+  immediate message: if `bounce=true` and funds cover the bounce
+  forwarding fee, it bounces with `exit_code = -1` or `-2`;
+  otherwise no bounce is produced.
 - A scheduled message whose sender no longer exists at delivery
   time is delivered normally; the bounce, if any, is dead-lettered
   per `actor.md` §5.7 (also a future slice).
@@ -423,30 +618,69 @@ choices remain compatible:
 
 ## 7. Bounce budgeting
 
-### 7.1 Who pays
+### 7.1 Current TVM behaviour (Slice 1 baseline)
 
-The original sender pays. The bounce delivery cost
-(`fwd_fee` for the bounce + the receiver's `on_bounce` compute
-cost) is reserved out of the message's `value` at send time.
+The original sender's message `value` covers all costs
+downstream. There is **no reservation of receiver-side bounce
+compute gas at send time**. Specifically, when the recipient's
+transaction reaches `prepare_bounce_phase()`:
 
-### 7.2 Reservation rule
+1. The bounce-message forwarding fee `bp.fwd_fees` is computed
+   from the bounce-message size (cells + bits) using
+   `msg_prices.compute_fwd_fees(...)`
+   (`crypto/block/transaction.cpp:3598`).
+2. `msg_balance_remaining` is reduced by the recipient's
+   compute-phase gas fee and any action-phase fine.
+3. If the resulting balance does not cover `bp.fwd_fees`, the
+   bounce phase records `bp.nofunds = true` and **no bounce
+   message leaves the recipient** (`transaction.cpp:3608`).
 
-A sender producing a message with `bounce=true` and `extra_flags &
-1` must reserve at least:
+Slice 1 is wire-compatible with this behaviour. The Tol-stdlib
+helper for sizing `value` on outbound bounce-bearing messages
+must therefore use `fwd_fee_estimate(new_bounce_body_size)` —
+not include a `minimum_bounce_compute_gas` term — and this is
+how the helper is specified.
+
+### 7.2 Sender sizing rule (Slice 1)
+
+A sender producing a message with `bounce=true` and `extra_flags
+& EXTRA_FLAGS_NEW_BOUNCE` should size `value` to at least:
 
 ```
-required_reserve = fwd_fee_estimate(new_bounce_body_size)
-                 + minimum_bounce_compute_gas
+recommended_value ≥ recipient_storage_rent
+                  + recipient_compute_floor   // see exit_code -3 in §6.2
+                  + fwd_fee_estimate(new_bounce_body_size)
+                    // covers the bounce trip back to the sender
 ```
 
-If the receiver's `on_bounce` consumes more than the reserve, the
-bounce drops at the action phase. The protocol does not produce
-second-degree bounces; this matches the existing TVM rule that
-bounced messages cannot themselves bounce.
+`fwd_fee_estimate(new_bounce_body_size)` is the only term that
+the protocol enforces today via `bp.nofunds`. The other two are
+**recommendations** so that the recipient's transaction does not
+trip `exit_code = -3` (no gas) before the inbound is even
+delivered. None of the three terms is the receiver's
+`onBouncedMessage` compute gas — the protocol does not reserve
+that today.
 
-### 7.3 Forced-bounce and amplification protection
+### 7.3 Future: reserved bounce-compute budget (NOT in Slice 1)
 
-This policy commits to two anti-amplification rules:
+A future protocol change could reserve a fixed
+`minimum_bounce_compute_gas` from the sender's `value` so the
+sender's own `onBouncedMessage` is guaranteed to run. This is
+**not** part of Slice 1 and is **not** wire-compatible with the
+current `bp.nofunds` flag — adding it requires either:
+
+- a new bounce-body version with an explicit reserved-gas field, or
+- a new `extra_flags` bit (e.g. bit 4) that signals the reserve.
+
+Either path is a protocol change with a global-version bump. It
+must not silently piggy-back on `extra_flags & 2` (full body) or
+on the §3.4 reservation of bits 2 and 3.
+
+### 7.4 Forced-bounce and amplification protection
+
+This policy commits to two anti-amplification rules that hold
+under both the current §7.1 behaviour and any future §7.3
+extension:
 
 - A bounced message must have `bounce=false` and `bounced=true`,
   matching the TVM convention.
@@ -456,8 +690,7 @@ This policy commits to two anti-amplification rules:
   recursively.
 
 Restart-storm protection at higher levels — the supervision
-restart-intensity rule from `actor.md` §6.4 — depends on this
-policy's bounce-budget rule and can be implemented on top of it
+restart-intensity rule from `actor.md` §6.4 — composes with §7.1
 without further envelope changes.
 
 ## 8. Upgrade and migration policy
@@ -545,9 +778,23 @@ of how clearly the policy describes them.
   yet; `extra_flags & 12` remains illegal to set on send).
 - Lifting hard-coded `extra_flags` magic numbers in
   `crypto/block/transaction.cpp:2948,3632` and
-  `tol/send-message-api.cpp:307-342` into named stdlib constants
-  (`EXTRA_FLAGS_NEW_BOUNCE = 1`,
-  `EXTRA_FLAGS_FULL_BOUNCE_BODY = 2`).
+  `tol/send-message-api.cpp:307-342` into named stdlib constants:
+  - `EXTRA_FLAGS_NEW_BOUNCE = 1` (bit 0 — enable v12 bounce body).
+  - `EXTRA_FLAGS_FULL_BOUNCE_BODY = 2` (bit 1 — return full body
+    on bounce; meaningful **only** when bit 0 is also set).
+  - `EXTRA_FLAGS_RICH_BOUNCE = EXTRA_FLAGS_NEW_BOUNCE |
+    EXTRA_FLAGS_FULL_BOUNCE_BODY = 3` — composite constant that
+    contract authors should use when they want a v12 bounce that
+    carries the whole original body. This is the value emitted by
+    `BounceMode::RichBounce` in `tol/send-message-api.cpp`.
+    Setting bit 1 alone (`extra_flags = 2`) is accepted by the
+    current wire-level mask but has no useful v12 rich-bounce
+    semantics because bit 0 is not set. The high-level
+    Tol-stdlib `Envelope` / `createMessage` builder must reject
+    it at compile time when the value is a literal, and at
+    runtime otherwise.
+  - `EXTRA_FLAGS_VALID_MASK = 3` — the current-mask constant
+    referenced from the synchronized-constants block of §3.4.
 - Tol-stdlib `Envelope` type with auto-derived pack/unpack for
   the `opcode:uint32 query_id:uint64 payload:...` layout. The
   prefix length is locked to 32 bits (do not allow Tol's
@@ -649,6 +896,144 @@ Amendments after sign-off must update this table and append a
 short changelog at the bottom of the file.
 
 ## 13. Changelog
+
+### Draft v4 (post-second-review)
+
+A second review against the in-tree source caught four core
+defects in v3 plus three layering nits. None of the changes
+touches the wire format or the §8.1 compatibility commitments.
+
+- **§6.2 (core) — bounce was written as unconditional.** The v3
+  table's "Yes" cells implied the system always emits a bounce
+  for the listed states. In current TVM, bounce generation
+  requires both inbound `bounce=true` and a remaining message
+  value covering the bounce-message `fwd_fee`. v4 conditions
+  the entire column on those two predicates and cites the
+  enforcement points: `bounce_enabled = in_msg_info.bounce` at
+  `crypto/block/transaction.cpp:921`, the
+  `prepare_bounce_phase()` early return at
+  `transaction.cpp:3522`, and the `bp.nofunds = true` path at
+  `transaction.cpp:3608`.
+- **§7 (core) — bounce budgeting did not match current TVM.**
+  v3's `required_reserve = fwd_fee_estimate(...) +
+  minimum_bounce_compute_gas` was wrong: the current protocol
+  does not reserve receiver-side bounce-compute gas at send
+  time. v4 splits §7 into a §7.1 baseline that describes
+  current behaviour (only `bp.fwd_fees` is enforced; shortfall
+  flips `bp.nofunds`), a §7.2 sender-sizing rule that drops the
+  spurious reserve term, and an explicit §7.3 "future
+  reserved-budget extension" that flags the requirement as a
+  protocol change with a global-version bump — not a Slice 1
+  item.
+- **§4.4 (core) — reply binding was forgeable.** Binding by
+  `query_id` alone allowed any address to reply to a request
+  meant for a specific peer. v4 mandates a minimum
+  `(expected_responder, query_id)` table key in the
+  outstanding-request structure, recommends the three-element
+  `(expected_responder, expected_reply_opcode, query_id)` form
+  for contracts that issue multiple concurrent request opcodes
+  to the same peer, and clarifies that `original_op` is a
+  discriminator within an `(expected_responder, query_id)`
+  pairing — not a substitute for sender binding.
+- **§3.2 (core) — high-bit opcode policy would have broken
+  existing contracts.** v3's blanket "implementations must
+  reject" was incompatible with high-bit opcodes already in use
+  outside any TEP — `0xee6f454c` in `elector-code.fc:169` and
+  `liquid-staking/op-codes.func:7`, `0x912838d1` in
+  `payment-channel-code.fc:16`. v4 grandfathers all existing
+  high-bit opcodes wire-side and limits the restriction to
+  **new** allocations made through the Slice 1 `Envelope`
+  builder. The low-system range (`0x00000001`–`0x000000FF`) is
+  similarly limited to compile-time builder rejection.
+- **§2.1 (nit) — Envelope vs. message conflation.** v3 said
+  `Envelope` "packs against the Relaxed form on send and
+  unpacks the strict form on receive". `Envelope` is body-only
+  — it packs the `(opcode, query_id, payload)` triple. The
+  `CommonMsgInfoRelaxed` packing is owned by the existing
+  `createMessage` / message-builder primitives in
+  `tol/send-message-api.cpp`. v4 splits the two layers
+  explicitly.
+- **§5.1 / §5.4 (nit) — bit 2 is a schema bump, not a flag.**
+  v3 said activating `extra_flags` bit 2 would put
+  `error_class` into the bounce body. The current
+  `NewBounceBody` has no field for it. v4 enumerates the four
+  changes any future inline-error-class slice has to ship: a
+  new TL-B constructor (e.g.
+  `new_bounce_body_v2#fffffffd ... error_class:uint8 ...`), a
+  global-version gate, the synchronized §3.4 mask widening, and
+  the matching `prepare_bounce_phase()` write.
+- **§3.1 (nit) — "Every internal message body" conflicted with
+  the text-comment exception.** v4 scopes the layout sentence
+  to non-comment bodies emitted via the Slice 1 `Envelope`
+  library and points back to §3.2 / §4.1 for the
+  `0x00000000` exception.
+
+Wire format unchanged; TL-B schema unchanged; §8.1 compatibility
+commitments preserved. v4 closes the four sign-off blockers
+identified in the second review and tightens three layering
+issues.
+
+### Draft v3 (post-source-review)
+
+A line-by-line correctness review against the in-tree source
+caught seven defects in v2. None of them changes the wire format,
+the TL-B schema, or the §8.1 compatibility commitments; they
+tighten under-specified text and fix citation drift.
+
+- **§2.1** previously quoted only the inbound `int_msg_info$0`
+  constructor at `block.tlb:126`. The outbound form
+  (`= CommonMsgInfoRelaxed`) at `block.tlb:135` is now also
+  shown, with a note that the policy applies bit-symmetrically to
+  both. The Slice 1 `Envelope` type packs against the Relaxed
+  form on send and the strict form on receive.
+- **§2.2** corrected the `new_bounce_body#fffffffe` line range
+  from `block.tlb:168-175` → `:170-175`.
+- **§3.2** rewrote the opcode partition. v2 mixed "first 16
+  bits" prefixes with full 32-bit value ranges, which made
+  `OP_ERROR = 0x00010001` mathematically fall into both the
+  protocol-system range (16-bit prefix `0x0001`) and the
+  application-defined range (32-bit value). v3 uses a single
+  contiguous 32-bit table; `OP_ERROR` is now unambiguously
+  reserved by this policy from the application-defined range.
+- **§3.2** corrected the `nominator-pool/pool.fc` citation from
+  `:16,19` → `:19`. Line 16 contains `new_stake_error`, not
+  `recover_stake_error = 0xfffffffe`.
+- **§3.4** replaced the inaccurate "TVM v12 rule that internal
+  messages with extra_flags bits beyond `0..3` are invalid" with
+  the source-true statement that the current outbound mask in
+  `transaction.cpp:2948,3632` is `& 3` (bits 0..1 only). v3
+  also makes the Slice 4 / Slice 6 mask-widening obligation
+  explicit: both `& td::make_refint(3)` sites in
+  `transaction.cpp` plus the Tol-stdlib `EXTRA_FLAGS_VALID_MASK`
+  plus the §10.1 conformance fixtures must be updated in lockstep
+  when bit 2 (Slice 4) or bit 3 (Slice 6) activates. A hardening
+  grep is required to catch divergence.
+- **§4.4** tightened the `pipe-check-query-id-propagation.cpp`
+  injection point. v2 specified "after
+  `pipeline_check_serialized_fields()` and before
+  `pipeline_lazy_load_insertions()`", but `tol/tol.cpp:102` runs
+  `G.error_collector = nullptr;` between those two anchors. Since
+  §10.1 requires the pass to use `error_collector.collect()`,
+  injection after line 102 would dereference a null pointer. v3
+  pins the safe band to "after line 83 and before line 102",
+  i.e. before the error-collector teardown, and requires a
+  hardening assertion on the position.
+- **§6.2** added a `exit_code = -3` (insufficient gas to enter
+  compute) note. The state-partitioned table was fully accurate
+  but missed the orthogonal gas-shortage case, which can apply
+  to any "Execute" / "Deploy + execute" / "Unfreeze, execute"
+  row.
+- **§10.1** added the composite `EXTRA_FLAGS_RICH_BOUNCE = 3`
+  and `EXTRA_FLAGS_VALID_MASK = 3` constants. The bit-named
+  constants in v2 (`EXTRA_FLAGS_NEW_BOUNCE = 1`,
+  `EXTRA_FLAGS_FULL_BOUNCE_BODY = 2`) were correct as bit names
+  but easy to misuse: bit 1 in isolation has no defined meaning
+  in v12 (full-body semantics require bit 0). The composite
+  constant is what `BounceMode::RichBounce` actually emits.
+
+Wire format unchanged; TL-B schema unchanged; §8.1 compatibility
+commitments preserved. v3 is purely a precision tightening of v2
+against the in-tree source and is suitable for sign-off.
 
 ### Draft v2 (post-Stage-0 audit)
 
