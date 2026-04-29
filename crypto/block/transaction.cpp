@@ -2945,6 +2945,17 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
     }
     if (cfg.global_version >= 12) {
       td::RefInt256 extra_flags = tlb::t_Tomis.as_integer(info.extra_flags);
+      // Synchronized constant — see doc/tos-message-policy.md §3.4 and §10.1.
+      // The extra_flags mask is duplicated across THREE sites that must be
+      // updated in lockstep when Slice 4 (bit 2) or Slice 6 (bit 3) widens
+      // the mask:
+      //   1. crypto/block/transaction.cpp — this site (action-phase outbound
+      //      check, & td::make_refint(3))
+      //   2. crypto/block/transaction.cpp — sibling site in
+      //      prepare_bounce_phase() outbound builder (& td::make_refint(3))
+      //   3. tol/extra-flags-constants.h — see EXTRA_FLAGS_VALID_MASK
+      // and the matching Tol-stdlib constants in
+      //   crypto/smartcont/tol-stdlib/common.tol.
       if (extra_flags.is_null() || td::cmp(extra_flags & td::make_refint(3), extra_flags) != 0) {
         LOG(DEBUG) << "invalid extra_flags in a proposed outbound message";
         return check_skip_invalid(45);
@@ -3628,6 +3639,17 @@ bool Transaction::prepare_bounce_phase(const ActionPhaseConfig& cfg) {
               && cb.append_cellslice_bool(info.src)   // src:MsgAddressInt
               && cb.append_cellslice_bool(info.dest)  // dest:MsgAddressInt
               && msg_balance.store(cb)                // value:CurrencyCollection
+              // Synchronized constant — see doc/tos-message-policy.md §3.4 and §10.1.
+              // The extra_flags mask is duplicated across THREE sites that must be
+              // updated in lockstep when Slice 4 (bit 2) or Slice 6 (bit 3) widens
+              // the mask:
+              //   1. crypto/block/transaction.cpp — this site
+              //      (prepare_bounce_phase() outbound builder, & td::make_refint(3))
+              //   2. crypto/block/transaction.cpp — sibling site in the
+              //      action-phase outbound check (& td::make_refint(3))
+              //   3. tol/extra-flags-constants.h — see EXTRA_FLAGS_VALID_MASK
+              // and the matching Tol-stdlib constants in
+              //   crypto/smartcont/tol-stdlib/common.tol.
               && block::tlb::t_Tomis.store_integer_ref(
                      cb, in_msg_extra_flags & td::make_refint(3))  // extra_flags:(VarUInteger 16)
               && block::tlb::t_Tomis.store_long(cb, bp.fwd_fees)   // fwd_fee:Tomis
