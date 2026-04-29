@@ -15,7 +15,8 @@
  * Usage:
  *   node wallet-test.js [rpc_url]
  *
- * Default RPC URL: http://127.0.0.1:8081
+ * Default RPC URL: http://127.0.0.1:8011 (validator @1 from setup-testnet.sh;
+ * use 8012 / 8013 for validators @2 / @3).
  *
  * Prerequisites:
  *   npm install ethers
@@ -24,7 +25,7 @@
  * then runs the full wallet flow using ethers.js.
  */
 
-const RPC_URL = process.argv[2] || 'http://127.0.0.1:8081';
+const RPC_URL = process.argv[2] || 'http://127.0.0.1:8011';
 
 async function jsonRpc(method, params = []) {
     const body = JSON.stringify({
