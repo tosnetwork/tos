@@ -21,6 +21,11 @@ cd /tmp/liboqs-src
 git checkout 3cb781fd4737c900ad755ee0bb9e1949d0f68955
 ```
 
+The TOS source tree also vendors this exact upstream revision at
+`third-party/liboqs`. Production builds still honour explicit
+`LIBOQS_INCLUDE_DIR` / `LIBOQS_LIBRARY` first; if no system liboqs is found,
+`uno/CMakeLists.txt` builds the vendored tree directly.
+
 ## Build flags
 
 The pinned build uses only the ML-KEM algorithm family (ML-DSA / SPHINCS /

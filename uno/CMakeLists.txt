@@ -148,52 +148,115 @@ endif()
 find_path(LIBOQS_INCLUDE_DIR oqs/oqs.h)
 find_library(LIBOQS_LIBRARY NAMES oqs)
 
-if (LIBOQS_INCLUDE_DIR AND LIBOQS_LIBRARY)
-  message(STATUS "uno_workchain: found liboqs at ${LIBOQS_LIBRARY}")
-  target_include_directories(uno_workchain PRIVATE ${LIBOQS_INCLUDE_DIR})
-  target_link_libraries(uno_workchain PUBLIC ${LIBOQS_LIBRARY})
+set(TOS_VENDORED_LIBOQS_DIR "${CMAKE_SOURCE_DIR}/third-party/liboqs")
+set(TOS_USING_VENDORED_LIBOQS OFF)
+if (NOT (LIBOQS_INCLUDE_DIR AND LIBOQS_LIBRARY) AND EXISTS "${TOS_VENDORED_LIBOQS_DIR}/CMakeLists.txt")
+  message(STATUS "uno_workchain: system liboqs not found; using vendored liboqs at ${TOS_VENDORED_LIBOQS_DIR}")
+  include(ExternalProject)
+  set(TOS_VENDORED_LIBOQS_BINARY_DIR "${CMAKE_BINARY_DIR}/third-party/liboqs")
+  set(TOS_VENDORED_LIBOQS_INCLUDE_DIR "${TOS_VENDORED_LIBOQS_BINARY_DIR}/include")
+  set(TOS_VENDORED_LIBOQS_ARCHIVE
+      "${TOS_VENDORED_LIBOQS_BINARY_DIR}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}oqs${CMAKE_STATIC_LIBRARY_SUFFIX}")
 
-  # Probe the kem_ml_kem.h header for the FIPS 203 derand prototypes and
-  # surface their availability to mlkem768.cpp. liboqs >= 0.10 exposes both.
-  #
-  # Compile-only probe (no link): we cast the function designator to void
-  # pointer inside a conditional that is never executed — this forces the
-  # compiler to resolve the declaration (fails if not declared) without
-  # emitting a relocation to the symbol, so the check does not require
-  # linking against liboqs (which would drag in OpenSSL as a transitive
-  # dependency of liboqs.a).
-  include(CheckCXXSourceCompiles)
-  set(CMAKE_REQUIRED_INCLUDES_SAVED ${CMAKE_REQUIRED_INCLUDES})
-  set(CMAKE_REQUIRED_INCLUDES ${LIBOQS_INCLUDE_DIR})
-  check_cxx_source_compiles("
-    #include <oqs/oqs.h>
-    #include <oqs/kem_ml_kem.h>
-    int main() {
-      // Declaration-only probe: sizeof(&fn) forces the compiler to resolve
-      // the prototype but does not emit a reference to the symbol body.
-      return sizeof(&OQS_KEM_ml_kem_768_keypair_derand) > 0 ? 0 : 1;
-    }
-  " UNO_OQS_HAS_ML_KEM_KEYPAIR_DERAND)
-  check_cxx_source_compiles("
-    #include <oqs/oqs.h>
-    #include <oqs/kem_ml_kem.h>
-    int main() {
-      return sizeof(&OQS_KEM_ml_kem_768_encaps_derand) > 0 ? 0 : 1;
-    }
-  " UNO_OQS_HAS_ML_KEM_ENCAPS_DERAND)
-  set(CMAKE_REQUIRED_INCLUDES ${CMAKE_REQUIRED_INCLUDES_SAVED})
-
-  if (UNO_OQS_HAS_ML_KEM_KEYPAIR_DERAND)
-    message(STATUS "uno_workchain: liboqs exposes OQS_KEM_ml_kem_768_keypair_derand")
-    target_compile_definitions(uno_workchain PRIVATE OQS_HAVE_ML_KEM_KEYPAIR_DERAND=1)
-  else()
-    message(STATUS "uno_workchain: liboqs build lacks ML-KEM-768 derand keypair — deterministic keygen will error at runtime")
+  file(MAKE_DIRECTORY "${TOS_VENDORED_LIBOQS_INCLUDE_DIR}")
+  if (NOT TARGET tos_vendored_liboqs)
+    ExternalProject_Add(tos_vendored_liboqs
+      SOURCE_DIR "${TOS_VENDORED_LIBOQS_DIR}"
+      BINARY_DIR "${TOS_VENDORED_LIBOQS_BINARY_DIR}"
+      CMAKE_ARGS
+        "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+        "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+        "-DCMAKE_ASM_COMPILER=${CMAKE_ASM_COMPILER}"
+        "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+        "-DBUILD_SHARED_LIBS=OFF"
+        "-DOQS_BUILD_ONLY_LIB=ON"
+        "-DOQS_MINIMAL_BUILD=KEM_ml_kem_768"
+        "-DOQS_ENABLE_KEM_ML_KEM=ON"
+        "-DOQS_USE_CUPQC=OFF"
+        "-DOQS_USE_ICICLE=OFF"
+        "-DOQS_BUILD_FUZZ_TESTS=OFF"
+        "-DOPENSSL_ROOT_DIR=${OPENSSL_BINARY_DIR}"
+        "-DOPENSSL_INCLUDE_DIR=${OPENSSL_INCLUDE_DIR}"
+        "-DOPENSSL_CRYPTO_LIBRARY=${OPENSSL_CRYPTO_LIBRARY}"
+      INSTALL_COMMAND ""
+      BUILD_BYPRODUCTS "${TOS_VENDORED_LIBOQS_ARCHIVE}"
+      DEPENDS OpenSSL)
   endif()
-  if (UNO_OQS_HAS_ML_KEM_ENCAPS_DERAND)
-    message(STATUS "uno_workchain: liboqs exposes OQS_KEM_ml_kem_768_encaps_derand")
+  if (NOT TARGET tos_vendored_liboqs_oqs)
+    add_library(tos_vendored_liboqs_oqs STATIC IMPORTED GLOBAL)
+    set_target_properties(tos_vendored_liboqs_oqs PROPERTIES
+      IMPORTED_LOCATION "${TOS_VENDORED_LIBOQS_ARCHIVE}"
+      INTERFACE_INCLUDE_DIRECTORIES "${TOS_VENDORED_LIBOQS_INCLUDE_DIR}")
+    add_dependencies(tos_vendored_liboqs_oqs tos_vendored_liboqs)
+  endif()
+
+  set(LIBOQS_INCLUDE_DIR "${TOS_VENDORED_LIBOQS_INCLUDE_DIR}")
+  set(LIBOQS_LIBRARY tos_vendored_liboqs_oqs)
+  set(TOS_USING_VENDORED_LIBOQS ON)
+endif()
+
+if (LIBOQS_INCLUDE_DIR AND LIBOQS_LIBRARY)
+  if (TOS_USING_VENDORED_LIBOQS)
+    message(STATUS "uno_workchain: using vendored liboqs target ${LIBOQS_LIBRARY}")
+  else()
+    message(STATUS "uno_workchain: found liboqs at ${LIBOQS_LIBRARY}")
+  endif()
+  target_include_directories(uno_workchain PRIVATE ${LIBOQS_INCLUDE_DIR})
+  if (TARGET ${LIBOQS_LIBRARY})
+    target_link_libraries(uno_workchain PUBLIC ${LIBOQS_LIBRARY})
+    add_dependencies(uno_workchain ${LIBOQS_LIBRARY})
+  else()
+    target_link_libraries(uno_workchain PUBLIC ${LIBOQS_LIBRARY})
+  endif()
+
+  if (TOS_USING_VENDORED_LIBOQS)
+    message(STATUS "uno_workchain: vendored liboqs pin exposes OQS_KEM_ml_kem_768_keypair_derand")
+    target_compile_definitions(uno_workchain PRIVATE OQS_HAVE_ML_KEM_KEYPAIR_DERAND=1)
+    message(STATUS "uno_workchain: vendored liboqs pin exposes OQS_KEM_ml_kem_768_encaps_derand")
     target_compile_definitions(uno_workchain PRIVATE OQS_HAVE_ML_KEM_ENCAPS_DERAND=1)
   else()
-    message(STATUS "uno_workchain: liboqs build lacks ML-KEM-768 derand encaps — deterministic encap will error at runtime")
+    # Probe the kem_ml_kem.h header for the FIPS 203 derand prototypes and
+    # surface their availability to mlkem768.cpp. liboqs >= 0.10 exposes both.
+    #
+    # Compile-only probe (no link): we cast the function designator to void
+    # pointer inside a conditional that is never executed — this forces the
+    # compiler to resolve the declaration (fails if not declared) without
+    # emitting a relocation to the symbol, so the check does not require
+    # linking against liboqs (which would drag in OpenSSL as a transitive
+    # dependency of liboqs.a).
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_INCLUDES_SAVED ${CMAKE_REQUIRED_INCLUDES})
+    set(CMAKE_REQUIRED_INCLUDES ${LIBOQS_INCLUDE_DIR})
+    check_cxx_source_compiles("
+      #include <oqs/oqs.h>
+      #include <oqs/kem_ml_kem.h>
+      int main() {
+        // Declaration-only probe: sizeof(&fn) forces the compiler to resolve
+        // the prototype but does not emit a reference to the symbol body.
+        return sizeof(&OQS_KEM_ml_kem_768_keypair_derand) > 0 ? 0 : 1;
+      }
+    " UNO_OQS_HAS_ML_KEM_KEYPAIR_DERAND)
+    check_cxx_source_compiles("
+      #include <oqs/oqs.h>
+      #include <oqs/kem_ml_kem.h>
+      int main() {
+        return sizeof(&OQS_KEM_ml_kem_768_encaps_derand) > 0 ? 0 : 1;
+      }
+    " UNO_OQS_HAS_ML_KEM_ENCAPS_DERAND)
+    set(CMAKE_REQUIRED_INCLUDES ${CMAKE_REQUIRED_INCLUDES_SAVED})
+
+    if (UNO_OQS_HAS_ML_KEM_KEYPAIR_DERAND)
+      message(STATUS "uno_workchain: liboqs exposes OQS_KEM_ml_kem_768_keypair_derand")
+      target_compile_definitions(uno_workchain PRIVATE OQS_HAVE_ML_KEM_KEYPAIR_DERAND=1)
+    else()
+      message(STATUS "uno_workchain: liboqs build lacks ML-KEM-768 derand keypair — deterministic keygen will error at runtime")
+    endif()
+    if (UNO_OQS_HAS_ML_KEM_ENCAPS_DERAND)
+      message(STATUS "uno_workchain: liboqs exposes OQS_KEM_ml_kem_768_encaps_derand")
+      target_compile_definitions(uno_workchain PRIVATE OQS_HAVE_ML_KEM_ENCAPS_DERAND=1)
+    else()
+      message(STATUS "uno_workchain: liboqs build lacks ML-KEM-768 derand encaps — deterministic encap will error at runtime")
+    endif()
   endif()
 else()
   if (TOS_DEV_STUBS)
