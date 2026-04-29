@@ -1334,6 +1334,10 @@ if ! awk '
     echo "evm hardening failed: streaming import worker must not construct CellDb writer/sink or call KeyValue write APIs directly (tos29 High-1)" >&2
     exit 1
 fi
+if rg -nP '\.ensure\(\)|\bCHECK\(' "$root/validator/db/celldb.cpp" | rg -v 'CELDB_LEGACY_FATAL_INVARIANT'; then
+    echo "evm hardening failed: every remaining CellDb legacy .ensure()/CHECK() must be classified as CELDB_LEGACY_FATAL_INVARIANT or converted to structured error (tos32 RC)" >&2
+    exit 1
+fi
 
 # Check 23 — tos27 P1-3: every OnDisk persistent-state parse path
 # must route through ValidatorManager::import_persistent_state_streaming

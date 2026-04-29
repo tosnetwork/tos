@@ -219,9 +219,9 @@ struct MergeOperatorAddCellRefcnt : public rocksdb::MergeOperator {
     return td::Slice(value.data(), value.size());
   }
   bool FullMergeV2(const MergeOperationInput& merge_in, MergeOperationOutput* merge_out) const override {
-    CHECK(merge_in.existing_value);
+    CHECK(merge_in.existing_value);  // CELDB_LEGACY_FATAL_INVARIANT: RocksDB merge operator provides existing value.
     auto& value = *merge_in.existing_value;
-    CHECK(merge_in.operand_list.size() >= 1);
+    CHECK(merge_in.operand_list.size() >= 1);  // CELDB_LEGACY_FATAL_INVARIANT: RocksDB never calls merge with no operands.
     td::Slice diff;
     std::string diff_buf;
     if (merge_in.operand_list.size() == 1) {
@@ -262,7 +262,7 @@ void CellDbIn::validate_meta() {
       continue;
     }
     auto obj = fetch_tl_object<tos_api::db_celldb_value>(td::BufferSlice{v}, true);
-    obj.ensure();
+    obj.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup validates local CellDb metadata before serving peers.
     auto entry = DbEntry{obj.move_as_ok()};
     root_hashes.insert(vm::CellHash::from_slice(entry.root_hash.as_slice()));
     auto cell = boc_->load_cell(entry.root_hash.as_slice());
@@ -286,12 +286,12 @@ void CellDbIn::validate_meta() {
       constexpr bool delete_unknown_roots = false;
       if (delete_unknown_roots) {
         vm::CellStorer stor{*cell_db_};
-        cell_db_->begin_write_batch().ensure();
+        cell_db_->begin_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: disabled local startup repair path.
         boc_->dec(root);
-        boc_->commit(stor).ensure();
-        cell_db_->commit_write_batch().ensure();
+        boc_->commit(stor).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: disabled local startup repair path.
+        cell_db_->commit_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: disabled local startup repair path.
         if (!opts_->get_celldb_in_memory()) {
-          boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
+          boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: disabled local startup repair path.
         }
         LOG(ERROR) << "Unknown root" << ShardIdFull(shard).to_str() << ":" << info.seq_no << " REMOVED";
       }
@@ -416,14 +416,14 @@ void CellDbIn::start_up() {
       boc_ = vm::DynamicBagOfCellsDb::create(*boc_v1_options);
     }
     boc_->set_celldb_compress_depth(opts_->get_celldb_compress_depth());
-    boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
+    boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup must fail fast if local CellDb loader cannot initialize.
     auto recovered_manifests = recover_streaming_import_rollbacks_at_startup();
     if (recovered_manifests.is_error()) {
       LOG(FATAL) << "CellDb streaming import rollback recovery failed before metadata validation: "
                  << recovered_manifests.move_as_error();
     }
     if (recovered_manifests.ok() > 0) {
-      boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
+      boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup rollback replay requires a fresh local snapshot.
     }
   }
 
@@ -435,12 +435,12 @@ void CellDbIn::start_up() {
   if (get_block(empty).is_error()) {
     DbEntry e{get_empty_key(), empty, empty, RootHash::zero()};
     vm::CellStorer stor{*cell_db_};
-    cell_db_->begin_write_batch().ensure();
+    cell_db_->begin_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup bootstrap of the local empty root.
     set_block(empty, std::move(e));
     boc_->commit(stor);
-    cell_db_->commit_write_batch().ensure();
+    cell_db_->commit_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup bootstrap of the local empty root.
     if (!opts_->get_celldb_in_memory()) {
-      boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
+      boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup bootstrap snapshot refresh.
     }
   }
 
@@ -476,17 +476,17 @@ void CellDbIn::start_up() {
   {
     std::string key = "stats.last_deleted_mc_seqno", value;
     auto R = boc_->meta_get(td::as_slice(key), value);
-    R.ensure();
+    R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup reads local CellDb metadata stats.
     if (R.ok() == td::KeyValue::GetStatus::Ok) {
       auto r_value = td::to_integer_safe<BlockSeqno>(value);
-      r_value.ensure();
+      r_value.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: malformed local CellDb stats metadata is fatal at startup.
       last_deleted_mc_state_ = r_value.move_as_ok();
     }
   }
   {
     std::string key = "opts.permanent_mode", value;
     auto R = boc_->meta_get(td::as_slice(key), value);
-    R.ensure();
+    R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup reads local permanent-mode metadata.
     bool stored_permanent_mode = R.ok() == td::KeyValue::GetStatus::Ok;
     if (stored_permanent_mode) {
       LOG_CHECK(opts_->get_permanent_celldb()) << "permanent_celldb cannot be turned off";
@@ -495,14 +495,14 @@ void CellDbIn::start_up() {
     if (permanent_mode_) {
       LOG(WARNING) << "Celldb is in permanent mode";
       if (!stored_permanent_mode) {
-        cell_db_->begin_write_batch().ensure();
+        cell_db_->begin_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup persists local permanent-mode metadata.
         value = "1";
         vm::CellStorer stor{*cell_db_};
         boc_->meta_set(td::as_slice(key), td::as_slice(value));
-        boc_->commit(stor).ensure();
-        cell_db_->commit_write_batch().ensure();
+        boc_->commit(stor).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup persists local permanent-mode metadata.
+        cell_db_->commit_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup persists local permanent-mode metadata.
         if (!opts_->get_celldb_in_memory()) {
-          boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
+          boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: startup permanent-mode snapshot refresh.
         }
       }
     }
@@ -516,7 +516,7 @@ void CellDbIn::load_cell(RootHash hash, td::Promise<td::Ref<vm::DataCell>> promi
   if (db_busy_) {
     ++action_queue_cnt_load_;
     action_queue_.push_back([self = this, hash, promise = std::move(promise)](td::Result<td::Unit> R) mutable {
-      R.ensure();
+      R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: queued load resumes only after actor-local DB mutation completion.
       --self->action_queue_cnt_load_;
       self->load_cell(hash, std::move(promise));
     });
@@ -539,7 +539,7 @@ void CellDbIn::store_cell(BlockIdExt block_id, td::Ref<vm::Cell> cell, vm::Store
     ++action_queue_cnt_store_;
     action_queue_.push_back([self = this, block_id, cell = std::move(cell), hint = std::move(hint),
                              promise = std::move(promise)](td::Result<td::Unit> R) mutable {
-      R.ensure();
+      R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: queued store resumes only after actor-local DB mutation completion.
       --self->action_queue_cnt_store_;
       self->store_cell(block_id, std::move(cell), std::move(hint), std::move(promise));
     });
@@ -562,20 +562,20 @@ void CellDbIn::store_cell(BlockIdExt block_id, td::Ref<vm::Cell> cell, vm::Store
       async_executor, std::move(hint),
       [=, this, SelfId = actor_id(this), timer = std::move(timer), timer_prepare = td::Timer{},
        promise = std::move(promise), cell = std::move(cell)](td::Result<td::Unit> Res) mutable {
-        Res.ensure();
+        Res.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy non-streaming store prepare failure is local DB fatal.
         timer_prepare.pause();
         td::actor::send_lambda_later(SelfId, [=, this, timer = std::move(timer), promise = std::move(promise),
                                               cell = std::move(cell)]() mutable {
           TD_PERF_COUNTER(celldb_store_cell);
           auto empty = get_empty_key_hash();
           auto ER = get_block(empty);
-          ER.ensure();
+          ER.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local CellDb linked-list sentinel must exist during store.
           auto E = ER.move_as_ok();
 
           auto PR = get_block(E.prev);
-          PR.ensure();
+          PR.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local CellDb linked-list predecessor must exist during store.
           auto P = PR.move_as_ok();
-          CHECK(P.next == empty);
+          CHECK(P.next == empty);  // CELDB_LEGACY_FATAL_INVARIANT: local CellDb linked-list tail invariant.
 
           DbEntry D{block_id, E.prev, empty, cell->get_hash().bits()};
 
@@ -588,16 +588,16 @@ void CellDbIn::store_cell(BlockIdExt block_id, td::Ref<vm::Cell> cell, vm::Store
           }
           td::Timer timer_write;
           vm::CellStorer stor{*cell_db_};
-          cell_db_->begin_write_batch().ensure();
+          cell_db_->begin_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy non-streaming store writes actor-local batch.
           set_block(get_empty_key_hash(), std::move(E));
           set_block(D.prev, std::move(P));
           set_block(key_hash, std::move(D));
-          boc_->commit(stor).ensure();
-          cell_db_->commit_write_batch().ensure();
+          boc_->commit(stor).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy non-streaming store commits local BoC metadata.
+          cell_db_->commit_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy non-streaming store commits local batch.
           timer_write.pause();
 
           if (!opts_->get_celldb_in_memory()) {
-            boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
+            boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy non-streaming store snapshot refresh.
             td::actor::send_closure(parent_, &CellDb::update_snapshot, cell_db_->snapshot());
           }
 
@@ -618,7 +618,7 @@ void CellDbIn::store_cell(BlockIdExt block_id, td::Ref<vm::Cell> cell, vm::Store
 void CellDbIn::get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) {
   if (db_busy_) {
     action_queue_.push_back([self = this, promise = std::move(promise)](td::Result<td::Unit> R) mutable {
-      R.ensure();
+      R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: queued reader request resumes only after actor-local DB mutation completion.
       self->get_cell_db_reader(std::move(promise));
     });
     return;
@@ -648,7 +648,7 @@ void CellDbIn::store_block_state_permanent(td::Ref<BlockData> block, td::Promise
     ++action_queue_cnt_store_;
     action_queue_.push_back(
         [self = this, block = std::move(block), promise = std::move(promise)](td::Result<td::Unit> R) mutable {
-          R.ensure();
+          R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: queued permanent store resumes only after actor-local DB mutation completion.
           --self->action_queue_cnt_store_;
           self->store_block_state_permanent(std::move(block), std::move(promise));
         });
@@ -693,7 +693,7 @@ void CellDbIn::store_block_state_permanent_bulk(std::vector<td::Ref<BlockData>> 
     ++action_queue_cnt_store_;
     action_queue_.push_back(
         [self = this, blocks = std::move(blocks), promise = std::move(promise)](td::Result<td::Unit> R) mutable {
-          R.ensure();
+          R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: queued permanent bulk store resumes only after actor-local DB mutation completion.
           --self->action_queue_cnt_store_;
           self->store_block_state_permanent_bulk(std::move(blocks), std::move(promise));
         });
@@ -745,17 +745,17 @@ void CellDbIn::store_block_state_permanent_bulk(std::vector<td::Ref<BlockData>> 
               timer_prepare.pause();
               td::Timer timer_write;
               vm::CellStorer stor{*cell_db_};
-              cell_db_->begin_write_batch().ensure();
+              cell_db_->begin_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: permanent bulk store writes actor-local batch.
 
               std::map<BlockIdExt, RootHash> state_root_hashes;
               for (auto& update : updates) {
                 state_root_hashes[update.block_id] = update.state_root_hash;
                 for (auto& [k, v] : update.to_store) {
-                  cell_db_->set(k.as_slice(), v).ensure();
+                  cell_db_->set(k.as_slice(), v).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: permanent bulk cell value write is local DB fatal.
                 }
               }
 
-              CHECK(!updates.empty());
+              CHECK(!updates.empty());  // CELDB_LEGACY_FATAL_INVARIANT: permanent bulk path returns only non-empty updates.
               auto empty = get_empty_key_hash();
               auto E = get_block(empty).move_as_ok();
               for (size_t i = 0; i < updates.size(); ++i) {
@@ -770,12 +770,12 @@ void CellDbIn::store_block_state_permanent_bulk(std::vector<td::Ref<BlockData>> 
               }
               set_block(empty, std::move(E));
 
-              boc_->commit(stor).ensure();  // Save meta
-              cell_db_->commit_write_batch().ensure();
+              boc_->commit(stor).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: permanent bulk store commits local BoC metadata.
+              cell_db_->commit_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: permanent bulk store commits local batch.
               timer_write.pause();
 
               if (!opts_->get_celldb_in_memory()) {
-                boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
+                boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: permanent bulk store snapshot refresh.
                 td::actor::send_closure(parent_, &CellDb::update_snapshot, cell_db_->snapshot());
               }
 
@@ -836,7 +836,7 @@ void CellDbIn::flush_db_stats() {
   if (db_busy_) {
     // push_front to prioritize flush_db_stats
     action_queue_.push_front([self = this](td::Result<td::Unit> R) mutable {
-      R.ensure();
+      R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: stats flush is actor-local maintenance after DB mutation completion.
       self->flush_db_stats();
     });
     return;
@@ -912,7 +912,7 @@ void CellDbIn::alarm() {
 
 void CellDbIn::gc(BlockIdExt block_id) {
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<BlockHandle> R) {
-    R.ensure();
+    R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: GC handle lookup is local RootDb invariant.
     td::actor::send_closure(SelfId, &CellDbIn::gc_cont, R.move_as_ok());
   });
   td::actor::send_closure(root_db_, &RootDb::get_block_handle_external, block_id, false, std::move(P));
@@ -925,7 +925,7 @@ void CellDbIn::gc_cont(BlockHandle handle) {
   handle->set_deleted_state_boc();
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), handle](td::Result<td::Unit> R) {
-    R.ensure();
+    R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: GC block-handle persistence is local RootDb invariant.
     td::actor::send_closure(SelfId, &CellDbIn::gc_cont2, handle);
   });
 
@@ -935,12 +935,12 @@ void CellDbIn::gc_cont(BlockHandle handle) {
 void CellDbIn::gc_cont2(BlockHandle handle) {
   if (db_busy_) {
     action_queue_.push_back([self = this, handle = std::move(handle)](td::Result<td::Unit> R) mutable {
-      R.ensure();
+      R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: queued GC resumes only after actor-local DB mutation completion.
       self->gc_cont2(handle);
     });
     return;
   }
-  CHECK(!permanent_mode_);
+  CHECK(!permanent_mode_);  // CELDB_LEGACY_FATAL_INVARIANT: GC is disabled for permanent CellDb mode.
 
   td::PerfWarningTimer timer{"gccell", 0.1};
   td::PerfWarningTimer timer_all{"gccell_all", 0.05};
@@ -948,14 +948,14 @@ void CellDbIn::gc_cont2(BlockHandle handle) {
   td::PerfWarningTimer timer_get_keys{"gccell_get_keys", 0.05};
   auto key_hash = get_key_hash(handle->id());
   auto FR = get_block(key_hash);
-  FR.ensure();
+  FR.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: GC target must exist in local CellDb metadata.
   auto F = FR.move_as_ok();
 
   auto PR = get_block(F.prev);
-  PR.ensure();
+  PR.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: GC predecessor must exist in local CellDb metadata.
   auto P = PR.move_as_ok();
   auto NR = get_block(F.next);
-  NR.ensure();
+  NR.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: GC successor must exist in local CellDb metadata.
   auto N = NR.move_as_ok();
 
   P.next = F.next;
@@ -980,7 +980,7 @@ void CellDbIn::gc_cont2(BlockHandle handle) {
       [this, SelfId = actor_id(this), timer_boc = std::move(timer_boc), F = std::move(F), key_hash, P = std::move(P),
        N = std::move(N), cell = std::move(cell), timer = std::move(timer), timer_all = std::move(timer_all),
        handle](td::Result<td::Unit> R) mutable {
-        R.ensure();
+        R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy GC prepare failure is local DB fatal.
         td::actor::send_lambda_later(
             SelfId,
             [this, timer_boc = std::move(timer_boc), F = std::move(F), key_hash, P = std::move(P), N = std::move(N),
@@ -990,9 +990,9 @@ void CellDbIn::gc_cont2(BlockHandle handle) {
               timer_boc.reset();
 
               td::PerfWarningTimer timer_write_batch{"gccell_write_batch", 0.05};
-              cell_db_->begin_write_batch().ensure();
+              cell_db_->begin_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy GC writes actor-local batch.
 
-              boc_->meta_erase(get_key(key_hash)).ensure();
+              boc_->meta_erase(get_key(key_hash)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy GC erases local metadata.
               set_block(F.prev, std::move(P));
               set_block(F.next, std::move(N));
               if (handle->id().is_masterchain()) {
@@ -1001,8 +1001,8 @@ void CellDbIn::gc_cont2(BlockHandle handle) {
                 boc_->meta_set(td::as_slice(key), td::as_slice(value));
               }
 
-              boc_->commit(stor).ensure();
-              cell_db_->commit_write_batch().ensure();
+              boc_->commit(stor).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy GC commits local BoC metadata.
+              cell_db_->commit_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy GC commits local batch.
 
               alarm_timestamp() = td::Timestamp::now();
               timer_write_batch.reset();
@@ -1018,7 +1018,7 @@ void CellDbIn::gc_cont2(BlockHandle handle) {
 
               td::PerfWarningTimer timer_finish{"gccell_finish", 0.05};
               if (!opts_->get_celldb_in_memory()) {
-                boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
+                boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy GC snapshot refresh.
                 td::actor::send_closure(parent_, &CellDb::update_snapshot, cell_db_->snapshot());
               }
 
@@ -1091,13 +1091,13 @@ td::Result<CellDbIn::DbEntry> CellDbIn::get_block(KeyHash key_hash) {
   const auto key = get_key(key_hash);
   std::string value;
   auto R = boc_->meta_get(td::as_slice(key), value);
-  R.ensure();
+  R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local CellDb metadata read failed.
   auto S = R.move_as_ok();
   if (S == td::KeyValue::GetStatus::NotFound) {
     return td::Status::Error(ErrorCode::notready, "not in db");
   }
   auto obj = fetch_tl_object<tos_api::db_celldb_value>(td::BufferSlice{value}, true);
-  obj.ensure();
+  obj.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local CellDb metadata record is malformed.
   return DbEntry{obj.move_as_ok()};
 }
 
@@ -1121,7 +1121,7 @@ void CellDbIn::migrate_cells() {
   migrate_after_ = td::Timestamp::never();
   if (db_busy_) {
     action_queue_.push_back([self = this](td::Result<td::Unit> R) mutable {
-      R.ensure();
+      R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: queued migration resumes only after actor-local DB mutation completion.
       self->migrate_cells();
     });
     return;
@@ -1136,8 +1136,8 @@ void CellDbIn::migrate_cells() {
   }
   vm::CellStorer stor{*cell_db_};
   auto loader = std::make_unique<vm::CellLoader>(cell_db_->snapshot());
-  boc_->set_loader(std::make_unique<vm::CellLoader>(*loader)).ensure();
-  cell_db_->begin_write_batch().ensure();
+  boc_->set_loader(std::make_unique<vm::CellLoader>(*loader)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local migration installs a private snapshot loader.
+  cell_db_->begin_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local migration writes actor-local batch.
   td::uint32 checked = 0, migrated = 0;
   for (auto it = cells_to_migrate_.begin(); it != cells_to_migrate_.end() && checked < 128;) {
     ++checked;
@@ -1154,11 +1154,11 @@ void CellDbIn::migrate_cells() {
         R.ok().cell_->get_depth() == opts_->get_celldb_compress_depth() && opts_->get_celldb_compress_depth() != 0;
     if (expected_stored_boc != R.ok().stored_boc_) {
       ++migrated;
-      stor.set(R.ok().refcnt(), R.ok().cell_, expected_stored_boc).ensure();
+      stor.set(R.ok().refcnt(), R.ok().cell_, expected_stored_boc).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local migration rewrites cell storage format.
     }
   }
-  cell_db_->commit_write_batch().ensure();
-  boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();
+  cell_db_->commit_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local migration commits actor-local batch.
+  boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local migration restores the shared snapshot loader.
   td::actor::send_closure(parent_, &CellDb::update_snapshot, cell_db_->snapshot());
 
   double time = timer.elapsed();
@@ -1510,8 +1510,8 @@ class CellDbStreamingWriterImpl final : public CellDbStreamingWriter {
 }  // namespace
 
 std::unique_ptr<CellDbStreamingWriter> CellDbIn::create_streaming_writer() {
-  CHECK(cell_db_ != nullptr);
-  CHECK(streaming_writer_in_use_ != nullptr);
+  CHECK(cell_db_ != nullptr);  // CELDB_LEGACY_FATAL_INVARIANT: test-only writer requires initialized CellDb.
+  CHECK(streaming_writer_in_use_ != nullptr);  // CELDB_LEGACY_FATAL_INVARIANT: test-only writer requires import gate.
   return std::make_unique<CellDbStreamingWriterImpl>(cell_db_, streaming_writer_in_use_);
 }
 
