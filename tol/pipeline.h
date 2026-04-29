@@ -47,6 +47,7 @@ void pipeline_mini_borrow_checker_for_mutate();
 void pipeline_optimize_boolean_expressions();
 void pipeline_detect_inline_in_place();
 void pipeline_check_serialized_fields();
+void pipeline_check_query_id_propagation();
 void pipeline_lazy_load_insertions();
 void pipeline_transform_onInternalMessage();
 void pipeline_convert_ast_to_legacy_Expr_Op();

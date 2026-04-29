@@ -82,6 +82,14 @@ TolCompilationResult tol_proceed(const std::string &entrypoint_filename) {
     pipeline_detect_inline_in_place();
     pipeline_check_serialized_fields();
 
+    // doc/tos-message-policy.md §4.4 hardening:
+    // pipeline_check_query_id_propagation MUST be in the band
+    // (pipeline_check_serialized_fields, G.error_collector = nullptr]
+    // i.e. between line 83 and line 102 of this file as of Slice 1.
+    // The pass uses error_collector.collect() and would NPE if
+    // moved past the teardown.
+    pipeline_check_query_id_propagation();
+
     // return errors, if any
     if (!error_collector.empty()) {
       return TolCompilationResult{

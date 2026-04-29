@@ -28,6 +28,7 @@ set(TOL_SOURCE
         pipe-optimize-boolean-expr.cpp
         pipe-detect-inline-in-place.cpp
         pipe-check-serialized-fields.cpp
+        pipe-check-query-id-propagation.cpp
         pipe-lazy-load-insertions.cpp
         pipe-transform-on-message.cpp
         pipe-ast-to-legacy.cpp
