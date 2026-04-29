@@ -1,0 +1,40 @@
+// Per doc/tos-message-policy.md v6 §4.4 — query_id propagation rule.
+//
+// Disclaim case: handler parses an inbound envelope carrying a
+// query_id, but the contract is a legitimate fire-and-forget
+// receiver (e.g. broadcast notification, telemetry sink). It emits
+// no reply that propagates the inbound query_id and explicitly
+// silences the S2-A check pass via the `disclaim_query_id()` stdlib
+// builtin shipped alongside the pass.
+//
+// The S2-A check pass `pipe-check-query-id-propagation` MUST NOT
+// warn on this contract because of the disclaimer.
+import "@stdlib/common"
+
+struct (0x30003000) BroadcastEvent {
+    queryId: uint64;
+    eventCode: uint32;
+    payload: uint64;
+}
+
+@method_id(101)
+fun dummy() {
+    return 0;
+}
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy BroadcastEvent.fromSlice(in.body);
+    // Fire-and-forget: we record the event and produce no reply.
+    // The §4.4 disclaimer makes it explicit that we are aware the
+    // inbound carries a query_id and intentionally drop the
+    // correlation thread.
+    disclaim_query_id();
+    // touch the parsed fields so the lazy load is not optimized away
+    if (msg.eventCode != 0) {
+        throw msg.payload;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

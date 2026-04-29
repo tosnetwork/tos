@@ -1,0 +1,38 @@
+// Per doc/tos-message-policy.md v6 §4.4 — query_id propagation rule.
+// Positive case: handler parses the inbound envelope and propagates
+// the inbound query_id into the reply body. The S2-A check pass
+// `pipe-check-query-id-propagation` MUST NOT warn on this contract.
+import "@stdlib/common"
+
+struct (0x10001000) PingRequest {
+    queryId: uint64;
+    nonce: uint32;
+}
+
+struct (0x10001001) PongReply {
+    queryId: uint64;
+    nonce: uint32;
+}
+
+@method_id(101)
+fun dummy() {
+    return 0;
+}
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy PingRequest.fromSlice(in.body);
+    val reply = createMessage({
+        bounce: false,
+        dest: in.senderAddress,
+        value: 0,
+        body: PongReply {
+            queryId: msg.queryId,
+            nonce: msg.nonce,
+        },
+    });
+    reply.send(SEND_MODE_REGULAR);
+}
+
+/**
+@testcase | 101 | | 0
+ */

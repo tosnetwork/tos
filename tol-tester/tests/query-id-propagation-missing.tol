@@ -1,0 +1,52 @@
+// Per doc/tos-message-policy.md v6 §4.4 — query_id propagation rule.
+//
+// Missing-propagation case: handler parses an inbound envelope that
+// carries a query_id but emits a reply that does NOT propagate it
+// (the reply body uses a hard-coded zero queryId instead of the
+// inbound msg.queryId). The S2-A check pass
+// `pipe-check-query-id-propagation` is expected to emit a
+// COMPILE-TIME WARNING for this contract.
+//
+// At the time this test was added the S2-A pass was not yet
+// committed. Compilation therefore must succeed (no
+// `@compilation_should_fail` annotation) — the warning surface in
+// stderr is verified separately when S2-A lands. A `@stderr`
+// annotation can be added later to assert the warning text once it
+// is stable.
+import "@stdlib/common"
+
+struct (0x20002000) WithdrawRequest {
+    queryId: uint64;
+    amount: uint64;
+}
+
+struct (0x20002001) WithdrawAck {
+    queryId: uint64;
+    amount: uint64;
+}
+
+@method_id(101)
+fun dummy() {
+    return 0;
+}
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy WithdrawRequest.fromSlice(in.body);
+    // Bug: the reply does NOT propagate msg.queryId; it sends 0
+    // instead, which collides with the §4.1 "no correlation
+    // expected" semantics. The S2-A pass should warn.
+    val reply = createMessage({
+        bounce: false,
+        dest: in.senderAddress,
+        value: 0,
+        body: WithdrawAck {
+            queryId: 0,
+            amount: msg.amount,
+        },
+    });
+    reply.send(SEND_MODE_REGULAR);
+}
+
+/**
+@testcase | 101 | | 0
+ */
