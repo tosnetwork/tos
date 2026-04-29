@@ -130,6 +130,10 @@ std::string serialize_imported_cell_value(const td::Ref<vm::DataCell>& cell) {
   return vm::CellStorer::serialize_value(/*refcnt=*/1, cell, /*as_boc=*/false);
 }
 
+tos::BlockIdExt make_test_block_id(td::uint32 seqno, const vm::Cell::Hash& hash) {
+  return tos::BlockIdExt{tos::masterchainId, tos::shardIdAll, seqno, hash.bits(), tos::FileHash::zero()};
+}
+
 bool path_exists(const std::string& path) {
   return td::stat(path).is_ok();
 }
@@ -156,6 +160,17 @@ std::string write_rollback_manifest(const std::string& persistent_state_dir,
   expect_status_ok(fd.sync(), "sync rollback manifest");
   fd.close();
   return path;
+}
+
+void append_trailing_partial_manifest_record(const std::string& manifest_path) {
+  auto fd = expect_result_ok(td::FileFd::open(manifest_path,
+                                             td::FileFd::Flags::Write |
+                                                 td::FileFd::Flags::Append),
+                             "open rollback manifest for trailing partial append");
+  const char partial[] = "partial-record-crash";
+  expect_status_ok(fd.write_all(td::Slice(partial, sizeof(partial) - 1)), "append trailing partial manifest bytes");
+  expect_status_ok(fd.sync(), "sync trailing partial manifest bytes");
+  fd.close();
 }
 
 void write_adopted_marker(const std::string& manifest_path, td::uint64 cells, td::uint64 bytes) {
@@ -203,6 +218,14 @@ class CellDbActorSession {
     return ask<std::shared_ptr<vm::CellDbReader>>(
         [&](td::Promise<std::shared_ptr<vm::CellDbReader>> promise) {
           td::actor::send_closure(cell_db_id_, &tos::validator::CellDb::get_cell_db_reader, std::move(promise));
+        });
+  }
+
+  td::Result<td::Ref<vm::DataCell>> store_cell(tos::BlockIdExt block_id, td::Ref<vm::Cell> cell) {
+    return ask<td::Ref<vm::DataCell>>(
+        [&, block_id, cell = std::move(cell)](td::Promise<td::Ref<vm::DataCell>> promise) mutable {
+          td::actor::send_closure(cell_db_id_, &tos::validator::CellDb::store_cell, block_id, std::move(cell),
+                                  vm::StoreCellHint{}, std::move(promise));
         });
   }
 
@@ -266,6 +289,19 @@ void store_cell_through_actor_writer(const std::string& db_path,
   session.stop();
 }
 
+void store_cell_through_canonical_actor_path(const std::string& db_path,
+                                             const td::Ref<tos::validator::ValidatorManagerOptions>& opts,
+                                             const td::Ref<vm::DataCell>& cell,
+                                             td::uint32 seqno) {
+  CellDbActorSession session(db_path, opts);
+  td::Ref<vm::Cell> cell_ref{cell};
+  auto stored = expect_result_ok(session.store_cell(make_test_block_id(seqno, cell->get_hash()), std::move(cell_ref)),
+                                 "store CellDb test cell through canonical actor path");
+  EXPECT_TRUE(stored.not_null());
+  EXPECT_TRUE(stored->get_hash() == cell->get_hash());
+  session.stop();
+}
+
 bool load_cell_after_actor_restart(const std::string& db_path,
                                    const td::Ref<tos::validator::ValidatorManagerOptions>& opts,
                                    const vm::Cell::Hash& hash) {
@@ -307,6 +343,28 @@ void test_restart_replays_unadopted_manifest() {
   td::rmrf(root).ignore();
 }
 
+void test_restart_tolerates_trailing_partial_manifest_record() {
+  std::printf("=== test_restart_tolerates_trailing_partial_manifest_record ===\n");
+  std::string db_path;
+  std::string persistent_state_dir;
+  auto root = unique_tmp_root("trailing-partial");
+  prepare_temp_roots(root, db_path, persistent_state_dir);
+
+  auto opts = make_options();
+  auto cell = make_test_cell();
+  auto value = serialize_imported_cell_value(cell);
+  store_cell_through_actor_writer(db_path, opts, cell);
+
+  auto manifest = write_rollback_manifest(persistent_state_dir, cell->get_hash(), td::Slice(value), "state");
+  append_trailing_partial_manifest_record(manifest);
+  EXPECT_TRUE(path_exists(manifest));
+
+  EXPECT_FALSE(load_cell_after_actor_restart(db_path, opts, cell->get_hash()));
+  EXPECT_FALSE(path_exists(manifest));
+
+  td::rmrf(root).ignore();
+}
+
 void test_restart_skips_adopted_manifest() {
   std::printf("=== test_restart_skips_adopted_manifest ===\n");
   std::string db_path;
@@ -332,12 +390,95 @@ void test_restart_skips_adopted_manifest() {
   td::rmrf(root).ignore();
 }
 
+void test_restart_unlinks_orphaned_adopted_marker() {
+  std::printf("=== test_restart_unlinks_orphaned_adopted_marker ===\n");
+  std::string db_path;
+  std::string persistent_state_dir;
+  auto root = unique_tmp_root("orphaned-adopted");
+  prepare_temp_roots(root, db_path, persistent_state_dir);
+
+  auto opts = make_options();
+  auto cell = make_test_cell();
+  auto value = serialize_imported_cell_value(cell);
+  store_cell_through_actor_writer(db_path, opts, cell);
+
+  auto missing_manifest = persistent_state_dir + "/state.celldb-rollback.orphan.partial";
+  auto marker = missing_manifest + ".adopted";
+  write_adopted_marker(missing_manifest, /*cells=*/1, /*bytes=*/value.size());
+  EXPECT_FALSE(path_exists(missing_manifest));
+  EXPECT_TRUE(path_exists(marker));
+
+  EXPECT_TRUE(load_cell_after_actor_restart(db_path, opts, cell->get_hash()));
+  EXPECT_FALSE(path_exists(marker));
+
+  td::rmrf(root).ignore();
+}
+
+void test_restart_unlinks_committed_manifest_without_rollback() {
+  std::printf("=== test_restart_unlinks_committed_manifest_without_rollback ===\n");
+  std::string db_path;
+  std::string persistent_state_dir;
+  auto root = unique_tmp_root("committed");
+  prepare_temp_roots(root, db_path, persistent_state_dir);
+
+  auto opts = make_options();
+  auto cell = make_test_cell();
+  auto value = serialize_imported_cell_value(cell);
+  store_cell_through_actor_writer(db_path, opts, cell);
+
+  auto manifest = write_rollback_manifest(persistent_state_dir, cell->get_hash(), td::Slice(value), "state");
+  auto committed = manifest + ".committed";
+  expect_status_ok(td::rename(manifest, committed), "rename manifest to committed fallback");
+  EXPECT_FALSE(path_exists(manifest));
+  EXPECT_TRUE(path_exists(committed));
+
+  EXPECT_TRUE(load_cell_after_actor_restart(db_path, opts, cell->get_hash()));
+  EXPECT_FALSE(path_exists(committed));
+
+  td::rmrf(root).ignore();
+}
+
+void test_restart_preserves_unmarked_manifest_after_canonical_store() {
+  std::printf("=== test_restart_preserves_unmarked_manifest_after_canonical_store ===\n");
+  std::string db_path;
+  std::string persistent_state_dir;
+  auto root = unique_tmp_root("canonical-before-marker");
+  prepare_temp_roots(root, db_path, persistent_state_dir);
+
+  auto opts = make_options();
+  auto cell = make_test_cell();
+  auto value = serialize_imported_cell_value(cell);
+  store_cell_through_actor_writer(db_path, opts, cell);
+
+  auto manifest = write_rollback_manifest(persistent_state_dir, cell->get_hash(), td::Slice(value), "state");
+  EXPECT_TRUE(path_exists(manifest));
+
+  // Simulates the root-store crash window:
+  //   1. streaming import wrote the cell and rollback manifest;
+  //   2. the canonical store path adopted the same cell and changed its
+  //      DB value/refcount;
+  //   3. the process crashed before release_after_root_store_committed()
+  //      could write the adopted marker.
+  // Startup recovery sees an unmarked manifest, but the byte guard must
+  // skip erasing the now-canonical cell.
+  store_cell_through_canonical_actor_path(db_path, opts, cell, /*seqno=*/1);
+
+  EXPECT_TRUE(load_cell_after_actor_restart(db_path, opts, cell->get_hash()));
+  EXPECT_FALSE(path_exists(manifest));
+
+  td::rmrf(root).ignore();
+}
+
 }  // namespace
 
 int main() {
   std::printf("test-celldb-actor-restart: CellDb rollback manifest actor/restart regressions\n");
   test_restart_replays_unadopted_manifest();
+  test_restart_tolerates_trailing_partial_manifest_record();
   test_restart_skips_adopted_manifest();
+  test_restart_unlinks_orphaned_adopted_marker();
+  test_restart_unlinks_committed_manifest_without_rollback();
+  test_restart_preserves_unmarked_manifest_after_canonical_store();
   std::printf("All CellDb actor/restart rollback tests passed.\n");
   return 0;
 }

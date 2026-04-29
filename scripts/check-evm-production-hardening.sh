@@ -1258,6 +1258,10 @@ if ! rg -q 'test_root_mismatch_abort_then_retry' "$root/test/test-celldb-streami
 fi
 if ! rg -q 'test_restart_skips_adopted_manifest' "$root/test/test-celldb-actor-restart.cpp" ||
    ! rg -q 'test_restart_replays_unadopted_manifest' "$root/test/test-celldb-actor-restart.cpp" ||
+   ! rg -q 'test_restart_tolerates_trailing_partial_manifest_record' "$root/test/test-celldb-actor-restart.cpp" ||
+   ! rg -q 'test_restart_unlinks_orphaned_adopted_marker' "$root/test/test-celldb-actor-restart.cpp" ||
+   ! rg -q 'test_restart_unlinks_committed_manifest_without_rollback' "$root/test/test-celldb-actor-restart.cpp" ||
+   ! rg -q 'test_restart_preserves_unmarked_manifest_after_canonical_store' "$root/test/test-celldb-actor-restart.cpp" ||
    ! rg -q 'test-celldb-actor-restart' "$root/scripts/run-tos31-state-sync-verification.sh"; then
     echo "evm hardening failed: tos31 verification must run actor/restart tests for adopted-marker stale-manifest startup recovery" >&2
     exit 1

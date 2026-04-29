@@ -43,6 +43,8 @@ run_step build-celldb-actor-restart \
   cmake --build "$BUILD_DIR" --target test-celldb-actor-restart
 run_step hardening-static \
   bash "$ROOT/scripts/check-evm-production-hardening.sh" "$ROOT"
+run_step celldb-fatal-invariant-audit \
+  bash -c 'root="$1"; rg -n "CELDB_LEGACY_FATAL_INVARIANT" "$root/validator/db/celldb.cpp"' _ "$ROOT"
 run_step test-download-state-budget \
   "$BUILD_DIR/test-download-state-budget"
 run_step test-celldb-streaming-import \
@@ -75,6 +77,7 @@ artifacts: $ARTIFACT_DIR
 
 required default checks:
 - hardening-static
+- celldb-fatal-invariant-audit
 - test-download-state-budget
 - test-celldb-streaming-import
 - test-celldb-actor-restart
