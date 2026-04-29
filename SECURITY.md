@@ -34,7 +34,7 @@ tree):
   surfacing.
 
 Architectural background: see
-[`docs/adr/0001-streaming-cell-import-and-residency.md`](docs/adr/0001-streaming-cell-import-and-residency.md)
+[`doc/adr/0001-streaming-cell-import-and-residency.md`](doc/adr/0001-streaming-cell-import-and-residency.md)
 for the persistent-state download and DAG residency analysis that
 underpins the P2P state sync defenses below.
 
@@ -594,7 +594,7 @@ missing, why it is acceptable today, and what would change that.
   empirical measurement: peak buffer-allocator delta during a 32 MiB
   realistic-density import is ~4 MiB, flat in BoC size, capped by the
   importer's `max_resident_bytes`. See
-  `docs/adr/0001-streaming-cell-import-and-residency.md`. If profiling
+  `doc/adr/0001-streaming-cell-import-and-residency.md`. If profiling
   on a real archive node ever shows the streaming sink retaining the
   full DAG resident, revisit Path A.
 - **N1 per-IP rate limiter.** Planned but not yet landed. Until it
@@ -650,7 +650,7 @@ Such reports must go through the private channel only.
 - `tos14` regression audit (2026-04-27).
 - `tos15` regression audit (2026-04-27).
 - ADR-0001: streaming cell import and DAG residency
-  (`docs/adr/0001-streaming-cell-import-and-residency.md`).
+  (`doc/adr/0001-streaming-cell-import-and-residency.md`).
 - Hardening regression script (`scripts/check-evm-production-hardening.sh`).
 - LibFuzzer driver script (`scripts/run-libfuzzer.sh`).
 - Test concurrency guidance (`CLAUDE.md`).

@@ -1788,7 +1788,7 @@ void ValidateQuery::got_neighbor_out_queue(int i, td::Result<Ref<MessageQueue>> 
     descr.set_queue_root(qinfo.out_queue->prefetch_ref(0));
     // The two full validate_ref calls below may need to be replaced
     // with incremental checks once output queues grow large; this
-    // is tracked as V-007 in docs/TODOS.md.
+    // is tracked as V-007 in doc/TODOS.md.
     if (debug_checks_) {
       REJECT_UNLESS_VOID(block::gen::t_OutMsgQueueInfo.validate_ref(1000000, outq_descr->root_cell()));
       REJECT_UNLESS_VOID(block::tlb::t_OutMsgQueueInfo.validate_ref(1000000, outq_descr->root_cell()));
@@ -1811,7 +1811,7 @@ void ValidateQuery::got_neighbor_out_queue(int i, td::Result<Ref<MessageQueue>> 
       // require masterchain blocks referred to in ProcessedUpto.
       // Skipping this loop when our output queue has no messages
       // for the neighbor shard is tracked as V-008 in
-      // docs/TODOS.md.
+      // doc/TODOS.md.
       for (const auto& entry : descr.processed_upto->list) {
         Ref<MasterchainStateQ> state;
         if (!request_aux_mc_state(entry.mc_seqno, state)) {
@@ -5940,7 +5940,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                       << " has at least one outbound message");
       }
       // Storage transaction re-execution is unimplemented and is
-      // tracked as V-001 in docs/TODOS.md.
+      // tracked as V-001 in doc/TODOS.md.
       return reject_query(PSTRING() << "unable to verify storage transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -5965,7 +5965,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                       << " must have exactly one outbound message");
       }
       // Merge prepare re-execution is unimplemented and is tracked
-      // as V-002 in docs/TODOS.md.
+      // as V-002 in doc/TODOS.md.
       return reject_query(PSTRING() << "unable to verify merge prepare transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -5978,7 +5978,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
       }
       need_credit_phase = true;
       // Merge install re-execution is unimplemented and is tracked
-      // as V-003 in docs/TODOS.md.
+      // as V-003 in doc/TODOS.md.
       return reject_query(PSTRING() << "unable to verify merge install transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -5994,7 +5994,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                       << " must have exactly one outbound message");
       }
       // Split prepare re-execution is unimplemented and is tracked
-      // as V-004 in docs/TODOS.md.
+      // as V-004 in doc/TODOS.md.
       return reject_query(PSTRING() << "unable to verify split prepare transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -6006,7 +6006,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                       << " has no inbound message");
       }
       // Split install re-execution is unimplemented and is tracked
-      // as V-005 in docs/TODOS.md.
+      // as V-005 in doc/TODOS.md.
       return reject_query(PSTRING() << "unable to verify split install transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -6689,7 +6689,7 @@ bool ValidateQuery::check_shard_libraries() {
   std::sort(lib_publishers2_.begin(), lib_publishers2_.end());
   if (lib_publishers_ != lib_publishers2_) {
     // A more diagnostic error message via element-by-element diff
-    // is tracked as V-006 in docs/TODOS.md.
+    // is tracked as V-006 in doc/TODOS.md.
     return reject_query("the set of public libraries and their publishing accounts has not been updated correctly");
   }
   return true;

@@ -934,7 +934,7 @@ bool Collator::unpack_last_mc_state() {
                << " (upgrade validator software?)";
   }
   // Tightening lt bounds with prev_mc_block extents is tracked as
-  // V-010 in docs/TODOS.md.
+  // V-010 in doc/TODOS.md.
   return true;
 }
 
@@ -1145,7 +1145,7 @@ void Collator::got_neighbor_msg_queue(unsigned i, Ref<OutMsgQueueProof> res) {
   outq_descr.clear();
   // require masterchain blocks referred to in ProcessedUpto.
   // Skipping this loop when our output queue has no messages for
-  // the neighbor shard is tracked as V-009 in docs/TODOS.md.
+  // the neighbor shard is tracked as V-009 in doc/TODOS.md.
   for (const auto& entry : descr.processed_upto->list) {
     Ref<MasterchainStateQ> state;
     if (!request_aux_mc_state(entry.mc_seqno, state)) {
@@ -2484,7 +2484,7 @@ td::actor::Task<> Collator::do_collate_inner() {
     // 3. merge prepare / merge install
     LOG(DEBUG) << "create merge prepare/install transactions (NOT IMPLEMENTED YET)";
     // Implementing merge prepare/install for large smart contracts
-    // is tracked as V-011 in docs/TODOS.md.
+    // is tracked as V-011 in doc/TODOS.md.
   }
   // 4. import inbound internal messages, process or transit
   LOG(INFO) << "process inbound internal messages";
@@ -2500,7 +2500,7 @@ td::actor::Task<> Collator::do_collate_inner() {
     // 7. split prepare / split install
     LOG(DEBUG) << "create split prepare/install transactions (NOT IMPLEMENTED YET)";
     // Implementing split prepare/install for large smart contracts
-    // is tracked as V-012 in docs/TODOS.md.
+    // is tracked as V-012 in doc/TODOS.md.
   }
   // 8. tock transactions
   LOG(INFO) << "create tock transactions";
@@ -3551,7 +3551,7 @@ td::Result<std::unique_ptr<block::transaction::Transaction>> Collator::impl_crea
     };
     // ihr_delivered is hard-coded to false; deriving it from
     // IhrPendingInfo when IHR is reactivated is tracked as V-013
-    // in docs/TODOS.md.
+    // in doc/TODOS.md.
     bool ihr_delivered = false;
     if (!trans->unpack_input_msg(ihr_delivered, action_phase_cfg)) {
       if (external) {
@@ -4165,7 +4165,7 @@ bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalT
   // 6.1. check whether we have already processed this message by IHR
   //      (then create a msg_discard_fin InMsg and remove record
   //      from IhrPendingInfo). Implementing the IHR pending-info
-  //      lookup is tracked as V-014 in docs/TODOS.md.
+  //      lookup is tracked as V-014 in doc/TODOS.md.
   // 7. decide what to do with the message
   if (!to_us) {
     // destination is outside our shard, relay transit message

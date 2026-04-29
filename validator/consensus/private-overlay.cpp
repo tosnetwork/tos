@@ -103,7 +103,7 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     auto [awaiter, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
     auto dst = message->destination.get_using(*owning_bus()).adnl_id;
     // Per-request response-size override from the caller is tracked
-    // as V-024 in docs/TODOS.md.
+    // as V-024 in doc/TODOS.md.
     td::actor::send_closure(
         overlays_, &overlay::Overlays::send_query_via, dst, local_id_.adnl_id, overlay_id_, "", std::move(promise),
         message->timeout, std::move(message->request.data),
@@ -205,7 +205,7 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
 
     if (maybe_candidate.is_error()) {
       // Producing a MisbehaviorProof from collected signed
-      // broadcast parts is tracked as V-025 in docs/TODOS.md.
+      // broadcast parts is tracked as V-025 in doc/TODOS.md.
       LOG(WARNING) << "MISBEHAVIOR: Failed to deserialize block candidate broadcast: "
                    << maybe_candidate.move_as_error();
       return;

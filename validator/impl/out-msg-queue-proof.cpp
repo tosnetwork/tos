@@ -407,7 +407,7 @@ void OutMsgQueueImporter::got_proof(std::shared_ptr<CacheEntry> entry, std::vect
     return;
   }
   // Caching query-source proofs in the small cache is tracked as
-  // V-017 in docs/TODOS.md.
+  // V-017 in doc/TODOS.md.
   for (auto& p : proofs) {
     auto block_id = p->block_id_;
     if (entry->result.emplace(block_id, std::move(p)).second) {

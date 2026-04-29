@@ -26,7 +26,7 @@ this way and not the other plausible way?"
 
 1. Pick the next sequential number, four digits, zero-padded
    (e.g. `0002`).
-2. Create `docs/adr/NNNN-short-kebab-case-title.md`.
+2. Create `doc/adr/NNNN-short-kebab-case-title.md`.
 3. Use the following section skeleton:
    - `# ADR-NNNN: Title`
    - `## Status` — one of `Proposed`, `Accepted`, `Superseded by

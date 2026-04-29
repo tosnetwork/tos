@@ -543,7 +543,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   }
 
   // Relocating this handler to the broadcast/overlay actor is
-  // tracked as V-021 in docs/TODOS.md.
+  // tracked as V-021 in doc/TODOS.md.
   template <>
   td::actor::Task<> process(BusHandle, std::shared_ptr<PrecheckCandidateBroadcast> query) {
     if (query->slot < first_nonfinalized_slot_) {
