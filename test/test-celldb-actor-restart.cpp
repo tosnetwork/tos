@@ -289,19 +289,6 @@ void store_cell_through_actor_writer(const std::string& db_path,
   session.stop();
 }
 
-void store_cell_through_canonical_actor_path(const std::string& db_path,
-                                             const td::Ref<tos::validator::ValidatorManagerOptions>& opts,
-                                             const td::Ref<vm::DataCell>& cell,
-                                             td::uint32 seqno) {
-  CellDbActorSession session(db_path, opts);
-  td::Ref<vm::Cell> cell_ref{cell};
-  auto stored = expect_result_ok(session.store_cell(make_test_block_id(seqno, cell->get_hash()), std::move(cell_ref)),
-                                 "store CellDb test cell through canonical actor path");
-  EXPECT_TRUE(stored.not_null());
-  EXPECT_TRUE(stored->get_hash() == cell->get_hash());
-  session.stop();
-}
-
 bool load_cell_after_actor_restart(const std::string& db_path,
                                    const td::Ref<tos::validator::ValidatorManagerOptions>& opts,
                                    const vm::Cell::Hash& hash) {
@@ -450,18 +437,28 @@ void test_restart_preserves_unmarked_manifest_after_canonical_store() {
   auto value = serialize_imported_cell_value(cell);
   store_cell_through_actor_writer(db_path, opts, cell);
 
-  auto manifest = write_rollback_manifest(persistent_state_dir, cell->get_hash(), td::Slice(value), "state");
-  EXPECT_TRUE(path_exists(manifest));
+  std::string manifest;
+  {
+    // Start the actor before creating the manifest so startup recovery
+    // cannot consume it. This models the real root-store crash window:
+    // streaming import has committed and produced a manifest; the
+    // canonical store then adopts the cell; the process crashes before
+    // release_after_root_store_committed() writes the adopted marker.
+    CellDbActorSession session(db_path, opts);
+    auto reader = expect_result_ok(session.get_reader(), "prime CellDb actor before creating rollback manifest");
+    EXPECT_TRUE(reader != nullptr);
 
-  // Simulates the root-store crash window:
-  //   1. streaming import wrote the cell and rollback manifest;
-  //   2. the canonical store path adopted the same cell and changed its
-  //      DB value/refcount;
-  //   3. the process crashed before release_after_root_store_committed()
-  //      could write the adopted marker.
-  // Startup recovery sees an unmarked manifest, but the byte guard must
-  // skip erasing the now-canonical cell.
-  store_cell_through_canonical_actor_path(db_path, opts, cell, /*seqno=*/1);
+    manifest = write_rollback_manifest(persistent_state_dir, cell->get_hash(), td::Slice(value), "state");
+    EXPECT_TRUE(path_exists(manifest));
+
+    td::Ref<vm::Cell> cell_ref{cell};
+    auto stored = expect_result_ok(session.store_cell(make_test_block_id(/*seqno=*/1, cell->get_hash()),
+                                                      std::move(cell_ref)),
+                                   "store CellDb test cell through canonical actor path");
+    EXPECT_TRUE(stored.not_null());
+    EXPECT_TRUE(stored->get_hash() == cell->get_hash());
+    session.stop();
+  }
 
   EXPECT_TRUE(load_cell_after_actor_restart(db_path, opts, cell->get_hash()));
   EXPECT_FALSE(path_exists(manifest));
