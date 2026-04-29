@@ -107,7 +107,13 @@ The plan below is by week number, not calendar date. Stage gates
 are sequential: a stage cannot start before the prior stage has
 delivered its deliverables.
 
-### Stage 0 — Policy lock (week 1–2)
+### Stage 0 — Policy lock (week 1–2) ✅ Completed 2026-04-29
+
+**Status.** ✅ Completed 2026-04-29 — `tos-message-policy.md` v6
+approved by single-signer (`gtosnetwork-dotcom`) per §12; all four
+audit-derived open questions resolved with evidence; wire-surface
+annotation in §2.1 covers both `int_msg_info$0` constructors and
+the v12 bounce body. Slice 1 implementation unblocked.
 
 **Owners.** Protocol architect, TVM lead, Tol compiler lead, one
 contract-team representative.
@@ -134,7 +140,18 @@ contract-team representative.
 no open inconsistencies between the document and the existing
 TVM and contract surfaces.
 
-### Stage 1 — Protocol-touching work, no wire-format change (week 3–8)
+### Stage 1 — Protocol-touching work, no wire-format change (week 3–8) ✅ Completed 2026-04-29
+
+**Status.** ✅ Completed 2026-04-29 — see `actor-layer` branch
+commits `d92d4fa12..40f69bec9` (13 conformance fixtures + 4
+pre-existing emulator tests pass: `17 test(s) passed`). Magic
+literals lifted into named constants in `tol/extra-flags-constants.h`;
+synchronized-constants hardening grep enforced via
+`Slice1ExtraFlagsFixtures.F3_3_synchronized_constants_self_check`;
+`OP_ERROR = 0x00010001` reserved in
+`crypto/smartcont/tol-stdlib/common.tol` and mirrored in
+`crypto/smartcont/tol-stdlib/envelope.tlb`. Wire format unchanged;
+§8.1 commitments preserved.
 
 **Owners.** Protocol team, TVM team.
 
@@ -186,7 +203,19 @@ is checked in with the synchronized-constants hardening grep
 described in `tos-message-policy.md` §3.4; conformance fixtures
 are checked into the repository.
 
-### Stage 2 — Tol compiler support (week 9–14)
+### Stage 2 — Tol compiler support (week 9–14) ⏳ Scaffolding committed; semantics pending
+
+**Status.** ⏳ Scaffolding-only as of 2026-04-29. `Envelope`,
+`Error`, `OP_ERROR`, and `ErrorClass` are in `common.tol`
+(commit `83c01c672`); `disclaim_query_id()` builtin stub is in
+`tol/builtins.cpp` (commit `f48a11533`); the
+`pipe-check-query-id-propagation` pass exists as an injected
+no-op skeleton at the policy-mandated band in `tol/tol.cpp`
+(commit `d92d4fa12`). **The pass body — actual `query_id`
+propagation analysis — is not yet implemented**, and no
+reference contract has been compiled against the new
+`Envelope` library. Stage 2 exit criterion (a Tol contract
+that round-trips the Stage 1 conformance fixtures) is not met.
 
 **Owners.** Tol compiler team.
 
@@ -214,7 +243,12 @@ the conformance fixtures with no manual op-code plumbing.
 slice). Stage 2 ships only the envelope struct, the error type,
 and the static check — not the high-level syntax sugar.
 
-### Stage 3 — Reference contract migration (week 15–20)
+### Stage 3 — Reference contract migration (week 15–20) ⏳ Not started
+
+**Status.** ⏳ Not started. Audit-derived migration delta estimate
+(jetton-minter ~45 LOC, jetton-wallet ~80 LOC, wallet-v5 ~110 LOC)
+is recorded in `tos-message-policy.md` §10.1 from the Stage 0 A5
+audit, but no rewrite work has begun.
 
 **Owners.** Contract team, with Tol compiler team support.
 
@@ -247,7 +281,12 @@ pass their existing test suites unchanged; bytecode-size delta
 is recorded for each (against the §10.1 ≤ 15% budget); the
 migration playbook is checked in under `doc/`.
 
-### Stage 4 — Conformance, fuzzing, gas regression (week 21–24)
+### Stage 4 — Conformance, fuzzing, gas regression (week 21–24) ⏳ Not started
+
+**Status.** ⏳ Not started. Stage 1 conformance fixtures exist
+(`emulator/test/slice-1-*-fixtures.cpp`, 13 cases) but
+property-based BoC / Envelope fuzzing and the gas-regression
+dashboard have not been built.
 
 **Owners.** QA, with protocol team support.
 
@@ -267,7 +306,11 @@ migration playbook is checked in under `doc/`.
 **Exit criterion.** No outstanding fuzz crashes; gas regressions
 are within budget or have a documented justification.
 
-### Stage 5 — Migration documentation and external RFC (week 25–26)
+### Stage 5 — Migration documentation and external RFC (week 25–26) ⏳ Not started
+
+**Status.** ⏳ Not started. `doc/tos-message-envelope-migration.md`
+has not been authored; no external RFC has been published.
+
 
 **Owners.** Documentation, with the architects from Stage 0.
 
@@ -298,38 +341,63 @@ release tag.
 
 ## 5. First-slice deliverables checklist
 
-By end of week 26, the following must all be true:
+By end of week 26, the following must all be true. Status as of
+2026-04-29 noted inline; commit references are on the `actor-layer`
+branch.
 
-- [ ] `doc/tos-message-policy.md` exists and is approved by the
-      §12 authorized owner.
+- [x] `doc/tos-message-policy.md` exists and is approved by the
+      §12 authorized owner. *(v6, single-signer
+      `gtosnetwork-dotcom`, 2026-04-29; commit `ea5869adf` then
+      v6 governance refinement in `063f44f4b`.)*
 - [ ] `doc/tos-message-envelope-migration.md` exists (Stage 5
       contract-author migration playbook).
-- [ ] The two `extra_flags & 3` magic literals in
+- [x] The two `extra_flags & 3` magic literals in
       `crypto/block/transaction.cpp:2948,3632` and the
       `BounceMode` literals in `tol/send-message-api.cpp:307-342`
       are replaced by named constants
       (`EXTRA_FLAGS_NEW_BOUNCE / _FULL_BOUNCE_BODY /
       _RICH_BOUNCE / _VALID_MASK`); the synchronized-constants
-      hardening grep is wired in.
-- [ ] The Tol standard library exposes `Envelope` and `Error`
+      hardening grep is wired in. *(commits `156e92247`
+      Tol-IR side, `9541d022e` transaction.cpp annotations,
+      `83c01c672` Tol-stdlib mirror in `common.tol`; F3.3
+      hardening grep in `slice-1-extra-flags-fixtures.cpp`
+      passes.)*
+- [x] The Tol standard library exposes `Envelope` and `Error`
       types with auto-derived serializers, the
       `disclaim_query_id()` builtin, and the `OP_ERROR` reply
-      helper.
+      helper. *(commits `83c01c672` `common.tol` types,
+      `f48a11533` `disclaim_query_id` builtin stub,
+      `402f944a3` `envelope.tlb` reference doc.)*
 - [ ] `tol/pipe-check-query-id-propagation.cpp` enforces
       `query_id` propagation at Tol compile time, injected
       between `pipeline_check_serialized_fields()` (line 83)
       and `G.error_collector = nullptr;` (line 102) per
-      `tos-message-policy.md` §4.4.
+      `tos-message-policy.md` §4.4. *(Skeleton injected at the
+      correct band in commit `d92d4fa12`; pass body is a
+      `TODO(slice-1)` no-op. Real enforcement is the next
+      Stage 2 deliverable.)*
 - [ ] All three reference contracts (jetton-minter →
       jetton-wallet → wallet-v5) are rewritten in Tol against
       the new `Envelope` library and continue to pass their
       pre-migration test suites; bytecode-size delta is within
-      the §10.1 ≤ 15% budget for each.
+      the §10.1 ≤ 15% budget for each. *(Stage 3 — not started.)*
 - [ ] Conformance fixtures (Stage 1) and BoC / Envelope fuzzing
-      (Stage 4) run in CI.
+      (Stage 4) run in CI. *(Stage 1 fixtures exist and pass
+      locally — `slice-1-{account-state,failure-phase,extra-flags}-fixtures.cpp`,
+      13 cases, commits `5e7c21bc7`, `33b30ccc5`, `69b275817`,
+      registered into `test-emulator` in `dd3acfc83` + linker
+      fix `40f69bec9`. CI integration and Stage 4 fuzzing are
+      not yet done.)*
 - [ ] Gas regressions are documented and within budget.
+      *(Stage 4 — not started.)*
 - [ ] An external RFC has been published with the
       §8.1 zero-wire-change commitment explicitly called out.
+      *(Stage 5 — not started.)*
+
+**Progress as of 2026-04-29:** 3 of 9 checked. Remaining items
+break down to: 1 × Stage 2 (real query_id check), 1 × Stage 3
+(reference-contract migration), 2 × Stage 4 (CI fuzzing + gas
+dashboard), 2 × Stage 5 (migration playbook + external RFC).
 
 If any one of these is missing, the slice is not done. Slipping
 the boundary creates exactly the cross-layer inconsistency this
