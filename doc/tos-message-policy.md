@@ -2,7 +2,7 @@
 
 ## 0. Status, scope, and references
 
-**Status.** Draft v4 (post-second-review). This document is the policy input for Slice 1 of
+**Status.** Draft v5 (post-roadmap-alignment). This document is the policy input for Slice 1 of
 [`doc/roadmap.md`](roadmap.md). It must be approved by four owners
 before Slice 1 implementation begins:
 
@@ -280,9 +280,15 @@ future use:
 
 - Bit 2 — reserved for the application-level error-class extension
   defined in §5. Implementations must not set bit 2 in Slice 1;
-  it is allocated for Slice 4 or later.
+  it is allocated for the future slice that ships an inline
+  bounce-body `error_class` field. Per §5.4 that activation also
+  requires a new bounce-body constructor and a global-version
+  bump, so it is **not** automatically Slice 4 — it lands in
+  whichever post-Slice-1 slice takes on the schema bump (TBD;
+  not Slice 1, not Slice 2, not Slice 3 per `roadmap.md` §6).
 - Bit 3 — reserved for the supervision-link tag of `actor.md`
-  §5.1. Not implementable until Slice 6.
+  §5.1. Activation requires the supervision protocol to be in
+  production, which `roadmap.md` §6 schedules in Slice 6.
 
 **Current v12 enforcement.** Today TVM v12 rejects any `extra_flags`
 bit beyond `0..1`. The outbound mask in `crypto/block/transaction.cpp`
@@ -306,12 +312,15 @@ in three locations today:
 Slice 1 must lift the magic literals into named stdlib constants
 (`EXTRA_FLAGS_NEW_BOUNCE = 1`, `EXTRA_FLAGS_FULL_BOUNCE_BODY = 2`,
 and the composite `EXTRA_FLAGS_RICH_BOUNCE = 3` defined in §10.1)
-and label all three sites as synchronized constants. When Slice 4
-activates bit 2 (or Slice 6 activates bit 3), the same change must
-land in lockstep at:
+and label all three sites as synchronized constants. When the
+future slice that activates bit 2 (the inline-error-class slice
+described in §5.4) or Slice 6 (which activates bit 3 alongside
+the supervision protocol) lands, the same change must land in
+lockstep at:
 
 1. Both `& td::make_refint(3)` masks in `crypto/block/transaction.cpp`
-   — widen to `& 7` (Slice 4) or `& 15` (Slice 6).
+   — widen to `& 7` when bit 2 activates, or `& 15` when bit 3 also
+   activates in Slice 6.
 2. The Tol-stdlib `EXTRA_FLAGS_VALID_MASK` constant introduced in
    Slice 1 alongside the named bit constants.
 3. The Slice-1 conformance fixtures that assert
@@ -495,7 +504,7 @@ distinction:
 | `2` | Permanent — uncaught exception, malformed body, code-rejected | No |
 | `3` | Authorization — caller not permitted | Maybe, after re-auth |
 | `4` | Protocol — opcode unknown, body malformed at envelope level | No |
-| `5` | Reserved for back-pressure / rate-limit (Slice 5+; not yet emitted) | Yes, with backoff |
+| `5` | Reserved for back-pressure / rate-limit (TBD; activation requires the cross-shard delivery SLA work in `actor.md` §5.7, which `roadmap.md` does not yet schedule). Not emitted in Slice 1. | Yes, with backoff |
 | `6`–`15` | Reserved for future expansion | n/a |
 | `16`–`255` | Application-specific | Application-defined |
 
@@ -814,8 +823,10 @@ of how clearly the policy describes them.
 - Conformance fixtures for the bounce-handling rules in §6.2,
   including the four `bounced_by_phase` cases (skip / compute /
   action) and an `extra_flags=0b0100` rejection case.
-- Migration of at least two reference contracts. Recommended
-  migration order from Stage 0 audit:
+- Migration of all three reference contracts in the order below.
+  This list is the canonical migration order; `roadmap.md` Stage 3
+  references this section instead of restating the order, so the
+  two documents stay aligned.
   1. **jetton-minter** (smallest, paired with jetton-wallet,
      ~45 LOC touched).
   2. **jetton-wallet** (~80 LOC, exercises the bounce-handler
@@ -828,7 +839,9 @@ of how clearly the policy describes them.
 ### 10.2 Not in Slice 1
 
 - Activation of `extra_flags & 4` to carry an inline error class
-  in the v12 bounce body. Deferred to Slice 4 or later.
+  in the bounce body. Deferred to whichever future slice ships
+  the §5.4 bounce-body schema bump (TBD; not Slice 1, not Slice 2,
+  not Slice 3 per `roadmap.md` §6).
 - Activation of `extra_flags & 8` for supervision links.
   Deferred to Slice 6.
 - Scheduled-message protocol primitive (`actor.md` §5.2).
@@ -896,6 +909,45 @@ Amendments after sign-off must update this table and append a
 short changelog at the bottom of the file.
 
 ## 13. Changelog
+
+### Draft v5 (post-roadmap-alignment)
+
+A four-document consistency review against `doc/actor.md`,
+`doc/tol.md`, and `doc/roadmap.md` flagged that v4 used Slice
+labels (`Slice 4`, `Slice 5+`, `Slice 6`) that did not match
+`roadmap.md` §6's actual scope assignments
+(Slice 4 = `actor.md` §5.9 + §6.5; Slice 5 = second-wave
+stdlib; Slice 6 = §5.1 + §5.2). v5 replaces the labels with
+content-based placeholders and aligns the contract migration
+clause to be the canonical list that `roadmap.md` references.
+
+- **§3.4** — Bit 2 / bit 3 reservation rewritten. v4 said
+  bit 2 is "allocated for Slice 4 or later"; that is misleading
+  because Slice 4's roadmap content is `actor.md` §5.9 + §6.5,
+  not a wire-format slice. v5 says bit 2 lands in "whichever
+  post-Slice-1 slice takes on the §5.4 schema bump (TBD; not
+  Slice 1, not Slice 2, not Slice 3 per `roadmap.md` §6)".
+  Bit 3 is correctly tied to Slice 6 because supervision lands
+  in Slice 6.
+- **§3.4 synchronized-constants block** — same correction in
+  the mask-widening note: "Slice 4 activates bit 2" replaced by
+  "the future inline-error-class slice activates bit 2".
+- **§5.3 row 5** — "Reserved for back-pressure / rate-limit
+  (Slice 5+; not yet emitted)" replaced with "TBD; activation
+  requires the cross-shard delivery SLA work in `actor.md`
+  §5.7, which `roadmap.md` does not yet schedule".
+- **§10.1 contract-migration clause** — relabelled from
+  "Migration of at least two reference contracts" to "Migration
+  of all three reference contracts" to match the audit-driven
+  three-contract list (jetton-minter → jetton-wallet → wallet-v5).
+  Added a note that this is the canonical list and `roadmap.md`
+  Stage 3 references this section by anchor instead of restating
+  the order.
+- **§10.2** — Bit-2 deferral language tightened to match §3.4.
+
+Wire format unchanged; TL-B schema unchanged; §8.1 compatibility
+commitments preserved. v5 is purely a labelling correction
+against `roadmap.md` §6.
 
 ### Draft v4 (post-second-review)
 

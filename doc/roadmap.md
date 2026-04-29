@@ -116,7 +116,16 @@ contract-team representative.
 
 - `doc/tos-message-policy.md` published and approved by all four
   owner roles.
-- TL-B schema draft for the new envelope and bounce body.
+- A documented annotation of the existing wire surface against
+  which Slice 1 will be built: both `int_msg_info$0` constructors
+  in `crypto/block/block.tlb:126,135` (`CommonMsgInfo` and
+  `CommonMsgInfoRelaxed`), the v12
+  `new_bounce_body#fffffffe` constructor at `block.tlb:170-175`,
+  and the application-layer body shape
+  `opcode:uint32 query_id:uint64 payload:...` defined in
+  `tos-message-policy.md` §3.1. Slice 1 introduces no new TL-B
+  constructor — this deliverable is a reference document, not a
+  schema change.
 - A short list of TEP-compatibility commitments (which existing
   standards must keep working bit-for-bit).
 
@@ -124,29 +133,57 @@ contract-team representative.
 inconsistencies between the document and the existing TVM and
 contract surfaces.
 
-### Stage 1 — Protocol and TVM (week 3–8)
+### Stage 1 — Protocol-touching work, no wire-format change (week 3–8)
 
 **Owners.** Protocol team, TVM team.
 
+Slice 1 is purely an envelope-discipline and Tol-stdlib release;
+**no new TVM opcode and no new bounce-body constructor** are
+introduced (`tos-message-policy.md` §8.1). Application-tier
+errors travel as a body-level `OP_ERROR` reply on top of the
+existing v12 bounce body, not inside it. Putting `error_class`
+into the bounce body itself is a schema bump (new
+`new_bounce_body_v2` constructor + global-version gate +
+synchronized `extra_flags` mask widening), explicitly deferred
+until a future slice (`tos-message-policy.md` §5.4).
+
 **Deliverables.**
 
-- TL-B schema for the new envelope landed in `tl/` and the
-  serializer/deserializer regenerated.
-- TVM bounce-action format updated to carry the structured error
-  payload defined in §5.3, aligned with the existing TVM v12
-  full-bounces work
-  (see [`Changelog.md`](../Changelog.md),
-  [`doc/GlobalVersions.md`](GlobalVersions.md)).
-- Protocol-level support for a per-message delivery receipt that
-  carries the structured error class on bounce.
+- Lift the three hard-coded `extra_flags` magic literals
+  (`crypto/block/transaction.cpp:2948`,
+  `crypto/block/transaction.cpp:3632`,
+  `tol/send-message-api.cpp:307-342`) into named constants
+  (`EXTRA_FLAGS_NEW_BOUNCE = 1`,
+  `EXTRA_FLAGS_FULL_BOUNCE_BODY = 2`,
+  `EXTRA_FLAGS_RICH_BOUNCE = 3`,
+  `EXTRA_FLAGS_VALID_MASK = 3`). The mask itself stays at `& 3`;
+  reservation of bits 2 and 3 is documentary only
+  (`tos-message-policy.md` §3.4 / §10.1).
+- Reserve the `OP_ERROR = 0x00010001` opcode in the TOS
+  internal-opcode registry (`tos-message-policy.md` §5.2). The
+  body shape
+  `(query_id, original_op, error_class, error_code, diagnostic)`
+  is application-layer and lives in the Tol stdlib (Stage 2),
+  not in TL-B.
 - Conformance fixtures: a small fixture set of (input message,
-  expected protocol behavior) pairs covering normal delivery,
-  out-of-gas, frozen recipient, exception in compute phase, and
-  unknown opcode.
+  expected protocol behaviour) pairs covering at minimum:
+  normal delivery; out-of-gas (`exit_code = -3`); frozen
+  recipient with no StateInit (`bounced_by_phase = 0`,
+  `exit_code = -1`); frozen recipient with mismatched StateInit
+  (`exit_code = -2`); compute-phase exception (`bounced_by_phase
+  = 1`); action-phase failure (`bounced_by_phase = 2`); an
+  inbound message with `extra_flags = 0b0100` rejected by the
+  `& 3` mask (`tos-message-policy.md` §10.1). Each fixture
+  asserts the §6.2 conditional-bounce predicates: bounce only
+  emitted when inbound `bounce=true` AND remaining value covers
+  `fwd_fee` (`crypto/block/transaction.cpp:921 / :3522 /
+  :3608`).
 
-**Exit criterion.** The TVM test suite passes against the new
-envelope and bounce format; conformance fixtures are checked into
-the repository.
+**Exit criterion.** The existing TVM test suite still passes
+unchanged (no schema regressions); the named-constants refactor
+is checked in with the synchronized-constants hardening grep
+described in `tos-message-policy.md` §3.4; conformance fixtures
+are checked into the repository.
 
 ### Stage 2 — Tol compiler support (week 9–14)
 
@@ -180,21 +217,34 @@ and the static check — not the high-level syntax sugar.
 
 **Owners.** Contract team, with Tol compiler team support.
 
+The migration order is the audit-driven recommendation from
+`tos-message-policy.md` §10.1 (smallest delta first so the
+playbook accumulates confidence before the largest contract):
+
 **Deliverables.**
 
-- One official reference contract — recommended candidate is
-  `wallet-v5` because of its narrow surface and high test
-  coverage — fully rewritten in Tol against the new envelope
-  and structured error type.
-- A second, slightly more involved candidate (recommended:
-  the simplest jetton wallet) rewritten in the same style.
-- A migration playbook captured from doing the rewrites: what
-  parts of the old code disappear, what compiler errors come up
-  most often, and what the bytecode-size delta looks like.
+1. **`jetton-minter`** — smallest, paired with `jetton-wallet`,
+   estimated ~45 LOC touched. Establishes the basic
+   `Envelope` + `OP_ERROR` rewrite pattern.
+2. **`jetton-wallet`** — ~80 LOC; first contract that exercises
+   the bounce-handler delta (`onBouncedMessage` parsing the
+   v12 bounce body's `original_body` for the original opcode).
+3. **`wallet-v5`** — ~110 LOC, ~16 distinct error codes that
+   need classifying into `error_class` values from
+   `tos-message-policy.md` §5.3. Last because the error
+   classification has the most discretion and benefits from
+   what the first two contracts teach.
 
-**Exit criterion.** Both reference contracts deploy and pass
-their existing test suites unchanged; bytecode-size delta is
-recorded; the migration playbook is in `doc/`.
+A migration playbook captured from doing the three rewrites:
+what parts of the old code disappear, what compiler errors come
+up most often, what the bytecode-size delta looks like, and what
+the `error_class` mapping convention is for hand-rolled error
+codes.
+
+**Exit criterion.** All three reference contracts deploy and
+pass their existing test suites unchanged; bytecode-size delta
+is recorded for each (against the §10.1 ≤ 15% budget); the
+migration playbook is checked in under `doc/`.
 
 ### Stage 4 — Conformance, fuzzing, gas regression (week 21–24)
 
@@ -222,15 +272,26 @@ are within budget or have a documented justification.
 
 **Deliverables.**
 
-- `doc/tos-message-migration.md`: how an existing TEP-style
-  contract (jetton, NFT, wallet-vN) upgrades to the new envelope
-  and error model, with concrete code diffs from the Stage 3
-  rewrites.
-- An external RFC announcing the new envelope, its activation
-  height, and the compatibility commitments.
+- **Internal migration playbook** — extends the Stage 3
+  playbook into a publishable contract-author guide. Lives at
+  `doc/tos-message-envelope-migration.md` (the file is created
+  in this stage; do not confuse it with the policy itself at
+  `doc/tos-message-policy.md`). Contents: how an existing
+  TEP-style contract (jetton, NFT, wallet-vN) upgrades to the
+  Slice 1 `Envelope` library and the `OP_ERROR` reply
+  convention, with concrete diffs lifted from the three
+  Stage 3 rewrites. No wire-format changes are described — this
+  is purely a developer-experience migration.
+- **External RFC** announcing the `Envelope`, `Error`, and
+  `OP_ERROR` conventions; the `0xfffffffe` collision caveat
+  (`tos-message-policy.md` §3.2); and the §8.1 commitment that
+  Slice 1 ships zero wire-format changes. The RFC has no
+  "activation height" because there is nothing to activate at
+  the protocol layer; what activates per-contract is the opt-in
+  three-step path in `tos-message-policy.md` §8.2.
 - Changelog and release-notes entries.
 
-**Exit criterion.** Documentation reviewed by an external
+**Exit criterion.** Migration playbook reviewed by an external
 contract author; RFC posted; release notes attached to the slice
 release tag.
 
@@ -238,22 +299,36 @@ release tag.
 
 By end of week 26, the following must all be true:
 
-- [ ] `doc/tos-message-policy.md` exists and is approved.
-- [ ] `doc/tos-message-migration.md` exists.
-- [ ] TL-B envelope schema is in `tl/` and is the canonical
-      definition.
-- [ ] TVM bounce format carries structured errors aligned with
-      §5.3.
+- [ ] `doc/tos-message-policy.md` exists and is approved by all
+      four §12 owners.
+- [ ] `doc/tos-message-envelope-migration.md` exists (Stage 5
+      contract-author migration playbook).
+- [ ] The two `extra_flags & 3` magic literals in
+      `crypto/block/transaction.cpp:2948,3632` and the
+      `BounceMode` literals in `tol/send-message-api.cpp:307-342`
+      are replaced by named constants
+      (`EXTRA_FLAGS_NEW_BOUNCE / _FULL_BOUNCE_BODY /
+      _RICH_BOUNCE / _VALID_MASK`); the synchronized-constants
+      hardening grep is wired in.
 - [ ] The Tol standard library exposes `Envelope` and `Error`
-      types with auto-derived serializers.
-- [ ] At least one new `pipe-check-*` pass enforces `query_id`
-      handling at compile time.
-- [ ] At least two official reference contracts are rewritten in
-      Tol against the new envelope and continue to pass their
-      pre-migration test suites.
-- [ ] Conformance fixtures and fuzzing run in CI.
+      types with auto-derived serializers, the
+      `disclaim_query_id()` builtin, and the `OP_ERROR` reply
+      helper.
+- [ ] `tol/pipe-check-query-id-propagation.cpp` enforces
+      `query_id` propagation at Tol compile time, injected
+      between `pipeline_check_serialized_fields()` (line 83)
+      and `G.error_collector = nullptr;` (line 102) per
+      `tos-message-policy.md` §4.4.
+- [ ] All three reference contracts (jetton-minter →
+      jetton-wallet → wallet-v5) are rewritten in Tol against
+      the new `Envelope` library and continue to pass their
+      pre-migration test suites; bytecode-size delta is within
+      the §10.1 ≤ 15% budget for each.
+- [ ] Conformance fixtures (Stage 1) and BoC / Envelope fuzzing
+      (Stage 4) run in CI.
 - [ ] Gas regressions are documented and within budget.
-- [ ] An external RFC has been published.
+- [ ] An external RFC has been published with the
+      §8.1 zero-wire-change commitment explicitly called out.
 
 If any one of these is missing, the slice is not done. Slipping
 the boundary creates exactly the cross-layer inconsistency this
@@ -357,3 +432,53 @@ mode. Every later slice depends on it.
 
 The right first action is to start writing
 `doc/tos-message-policy.md`.
+
+## 11. Revision notes
+
+### r1 (post-policy-v5 alignment)
+
+A four-document consistency review against
+`doc/tos-message-policy.md` v5, `doc/actor.md`, and `doc/tol.md`
+caught five places where this roadmap was inconsistent with the
+locked policy. The original sequencing and stage budgets are
+unchanged; r1 only corrects deliverable wording so the four
+documents agree on what Slice 1 actually ships.
+
+- **Stage 0** — "TL-B schema draft for the new envelope and
+  bounce body" replaced with "annotation of the existing wire
+  surface". Slice 1 introduces no new TL-B constructor; the
+  Stage 0 deliverable is a reference document over the existing
+  v12 schema (`policy.md` §8.1).
+- **Stage 1** — "TVM bounce-action format updated to carry the
+  structured error payload" replaced with the application-tier
+  `OP_ERROR` reply on top of the existing v12 bounce body. The
+  Stage 1 deliverable list now matches the
+  `policy.md` §10.1 implementable subset: lift the
+  `extra_flags` magic literals into named constants, reserve
+  the `OP_ERROR` opcode in the TOS registry, ship the
+  conformance fixtures (including the §6.2 conditional-bounce
+  predicates and the `extra_flags=0b0100` rejection case).
+  Putting `error_class` into the bounce body remains future
+  work, gated by a new `new_bounce_body_v2` constructor and
+  global-version bump per `policy.md` §5.4.
+- **Stage 3** — Two-contract recommendation (wallet-v5 +
+  simplest jetton wallet) replaced with the canonical
+  three-contract list from `policy.md` §10.1: jetton-minter →
+  jetton-wallet → wallet-v5. Order is smallest-delta-first so
+  the migration playbook accumulates confidence before the
+  largest contract.
+- **Stage 5 deliverables** — The `doc/tos-message-migration.md`
+  filename was overloaded against the policy doc itself; the
+  Stage 5 contract-author guide is now
+  `doc/tos-message-envelope-migration.md`. The external RFC
+  no longer references an "activation height" because there
+  is nothing to activate at the protocol layer in Slice 1.
+- **§5 checklist** — Items aligned with the corrected stage
+  deliverables: "TL-B envelope schema" and "TVM bounce format
+  carries structured errors" replaced with the named-constants
+  refactor + synchronized-constants hardening grep, plus the
+  `OP_ERROR` opcode reservation. The reference-contract item
+  is updated to require all three migrations within the §10.1
+  ≤ 15% bytecode-overhead budget.
+
+No stage week ranges, owners, or success criteria changed.
