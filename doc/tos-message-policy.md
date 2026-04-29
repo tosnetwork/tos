@@ -2,7 +2,7 @@
 
 ## 0. Status, scope, and references
 
-**Status.** Draft v5 (post-roadmap-alignment). This document is the policy input for Slice 1 of
+**Status.** **Approved 2026-04-29** (single-signer; see §12.1). v5 (post-roadmap-alignment). This document is the policy input for Slice 1 of
 [`doc/roadmap.md`](roadmap.md). It must be approved by four owners
 before Slice 1 implementation begins:
 
@@ -900,15 +900,50 @@ through a documented amendment to this file.
 
 | Role | Name | Date |
 |---|---|---|
-| Protocol architect | | |
-| TVM lead | | |
-| Tol compiler lead | | |
-| Contract-team representative | | |
+| Protocol architect | gtosnetwork-dotcom | 2026-04-29 |
+| TVM lead | gtosnetwork-dotcom | 2026-04-29 |
+| Tol compiler lead | gtosnetwork-dotcom | 2026-04-29 |
+| Contract-team representative | gtosnetwork-dotcom | 2026-04-29 |
+
+### 12.1 Single-signer disclosure
+
+The four sign-off rows above are all signed by the same person.
+This is **not** a multi-party review; it is one engineer who is
+currently wearing all four hats for TOS. Recording this
+explicitly so that a future reader (or a future second engineer)
+can see at a glance that the v5 policy was approved without
+independent multi-eyes review at the role boundary.
+
+What this changes for downstream slices:
+
+- Any deviation from this policy during Slice 1 implementation
+  must still be documented as an amendment to this file (per the
+  paragraph below). The single-signer model does not waive the
+  audit trail.
+- When a second engineer joins the project, the relevant role
+  rows above should be reassigned to that person and a new dated
+  signature row appended. The single-signer signatures stay in
+  the table for traceability; they are not erased.
+- The five Slice 1 scaffolding commits
+  (`d92d4fa12`, `156e92247`, `9541d022e`, `f48a11533`,
+  `83c01c672`) on the `actor-layer` branch were written by AI
+  coding agents under a single-signer review. The signer takes
+  responsibility for them as if they had been hand-written.
 
 Amendments after sign-off must update this table and append a
 short changelog at the bottom of the file.
 
 ## 13. Changelog
+
+### 2026-04-29 — Approved (single-signer)
+
+All four sign-off rows in §12 filled by `gtosnetwork-dotcom` on
+2026-04-29 acting in all four owner roles. Single-signer
+disclosure added as §12.1. Stage 1 implementation may now begin
+on the `actor-layer` branch. The five scaffolding commits already
+on `actor-layer` (`d92d4fa12`, `156e92247`, `9541d022e`,
+`f48a11533`, `83c01c672`) are explicitly within scope of this
+approval.
 
 ### Draft v5 (post-roadmap-alignment)
 
