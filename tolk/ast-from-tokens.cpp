@@ -138,7 +138,7 @@ static AnyExprV maybe_replace_eq_null_with_isNull_check(V<ast_binary_operator> v
 
 // parse `123` / `0xFF` / `0b10001` to td::RefInt256
 static td::RefInt256 parse_tok_int_const(std::string_view text, SrcRange cur_range) {
-  bool bin = text[0] == '0' && text[1] == 'b';
+  bool bin = text.size() >= 2 && text[0] == '0' && text[1] == 'b';
   if (!bin) {
     // this function parses decimal and hex numbers
     td::RefInt256 intval = td::string_to_int256(static_cast<std::string>(text));
