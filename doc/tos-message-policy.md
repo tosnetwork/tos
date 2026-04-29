@@ -2,7 +2,7 @@
 
 ## 0. Status, scope, and references
 
-**Status.** Draft. This document is the policy input for Slice 1 of
+**Status.** Draft v2 (post-Stage-0-audit). This document is the policy input for Slice 1 of
 [`doc/roadmap.md`](roadmap.md). It must be approved by four owners
 before Slice 1 implementation begins:
 
@@ -151,9 +151,15 @@ contracts continue to work without change.
 
 The first 16 bits of `opcode` partition the opcode space:
 
-- `0x0000` — text-comment opcode. The body after the first 32
-  bits is interpreted as UTF-8 text, with `query_id` set to zero.
-  This matches the existing simple-transfer convention.
+- `0x00000000` — text-comment opcode. The body after the first
+  32 bits is interpreted as UTF-8 text. **No `query_id` field is
+  present** at the bit-offset 32–96 range; the body shape for this
+  opcode is `opcode:uint32 utf8_payload:...`, with no 64-bit
+  `query_id` slot. The `query_id = 0` rule of §4.1 therefore does
+  not apply to opcode `0x00000000`. This matches existing
+  simple-transfer practice across wallet-v3 / wallet-v4 /
+  wallet-v5 / DNS / elector / payment-channel / TEP-62 NFT
+  contracts (verified during Stage 0 audit).
 - `0x0001`–`0x00FF` — reserved for future protocol-defined system
   opcodes. Implementations must reject these on send unless the
   opcode is documented in this policy.
@@ -164,6 +170,23 @@ The first 16 bits of `opcode` partition the opcode space:
   reply or notification opcode in some TEP-style standards;
   contracts must not invent new high-bit opcodes outside an
   approved standard.
+
+**Caveat: `0xfffffffe` is dual-purposed.** The TVM v12 bounce-body
+constructor tag is `new_bounce_body#fffffffe` (see
+`crypto/block/block.tlb:168-175`). Existing reference contracts
+(`crypto/smartcont/elector-code.fc:407,414`,
+`crypto/smartcont/nominator-pool/pool.fc:16,19`,
+`crypto/smartcont/liquid-staking/op-codes.func:16`) also use
+`0xfffffffe` as an *application opcode* (`recover_stake_error`).
+This works on the wire because the two are disambiguated by the
+`bounced:Bool` flag in `int_msg_info`, not by the body bits.
+However, it is fragile: an inbound message with `bounced=false`
+carrying body `0xfffffffe` is an application reply, not a system
+bounce. Slice 1 stdlib **must emit a Tol compile-time warning**
+when a contract sends a non-bounced message whose body opcode
+equals `0xfffffffe`, and **must not** allow the Tol-stdlib
+`Envelope` type to be constructed with that opcode without an
+explicit override.
 
 ### 3.3 Optional `reply_to`
 
@@ -193,14 +216,36 @@ future use:
 The TVM v12 rule that internal messages with extra_flags bits
 beyond `0..3` are invalid remains in force.
 
+**Synchronized constants.** The `extra_flags` mask is hard-coded
+in three locations today:
+
+- `/home/tomi/tos/crypto/block/transaction.cpp:2948` (action-phase
+  outbound check, `& 3`).
+- `/home/tomi/tos/crypto/block/transaction.cpp:3632`
+  (`prepare_bounce_phase` outbound mask, `& 3`).
+- `/home/tomi/tos/tol/send-message-api.cpp:307-342`
+  (`BounceMode` enum mapping, magic literals `1` and `3`).
+
+Slice 1 must lift the magic literals into named stdlib constants
+(suggested names: `EXTRA_FLAGS_NEW_BOUNCE = 1`,
+`EXTRA_FLAGS_FULL_BOUNCE_BODY = 2`) and label all three sites as
+synchronized constants. When Slice 4 activates bit 2 (or Slice 6
+activates bit 3), all three sites must be updated together.
+
 ## 4. `query_id` rules
 
 ### 4.1 Allocation
 
 - 64-bit, allocated by the **sender** of the request.
-- A `query_id` of `0` denotes "no correlation expected": the
-  sender does not require a reply, and any contract receiving such
-  a message should treat the conversation as one-shot.
+- The rules in this section apply only when `opcode != 0x00000000`.
+  For the text-comment opcode `0x00000000`, no `query_id` field
+  is present in the body (see §3.2).
+- A `query_id` of `0` (on a non-zero opcode) denotes "no
+  correlation expected": the sender does not require a reply,
+  and any contract receiving such a message should treat the
+  conversation as one-shot. Stage 0 audit confirmed no existing
+  contract emits a non-comment outbound with `query_id = 0`, so
+  this rule does not invalidate any current pattern.
 - All other values are opaque to the protocol. Senders are
   encouraged to use a strictly increasing 64-bit counter scoped
   to their own state, but this is not enforced.
@@ -233,9 +278,22 @@ local outstanding-request table. Tol's `pipe-check-*` pass added
 in Slice 1 Stage 2 enforces that:
 
 - Every handler that returns a reply propagates the inbound
-  `query_id` (or explicitly disclaims it).
+  `query_id` (or explicitly disclaims it via the
+  `disclaim_query_id()` stdlib helper, shipped together with the
+  check pass).
 - Every send-with-reply call produces a `query_id` and reserves a
   table slot.
+
+The check pass file is
+`/home/tomi/tos/tol/pipe-check-query-id-propagation.cpp`
+(injection point: in `tol/tol.cpp` immediately after
+`pipeline_check_serialized_fields()` and before
+`pipeline_lazy_load_insertions()`, while the AST still preserves
+the `in: InMessage` parameter — the subsequent
+`pipeline_transform_onInternalMessage()` rewrites that parameter
+into opaque aux nodes). Slice 1 ships the pass and the
+`disclaim_query_id()` builtin in the same PR; without the
+disclaimer, every legitimate fire-and-forget contract would warn.
 
 ## 5. Error classification
 
@@ -259,11 +317,20 @@ to its caller, the body has the form:
 ```
 opcode = OP_ERROR (0x00010001 — reserved here)
 query_id:uint64
+original_op:uint32
 error_class:uint8
 error_code:uint16
 diagnostic:(Maybe ^Cell)
 ```
 
+- `original_op` — the opcode of the inbound request that this
+  error reply pairs to. Lets receivers match by
+  `(original_op, query_id)` without keeping a per-`query_id`
+  shadow correlation table for every outbound opcode they issue.
+  Mirrors the v12 system bounce body, which already exposes the
+  original opcode at the start of `original_body` (see
+  `crypto/smartcont/tol-stdlib/common.tol:1671-1672`). Cost: 4
+  bytes per `OP_ERROR` reply.
 - `error_class` — one of the values defined in §5.3.
 - `error_code` — opaque to the protocol, defined per application
   domain (jetton, NFT, governance, etc.). Values 0..1023 are
@@ -289,7 +356,8 @@ distinction:
 | `2` | Permanent — uncaught exception, malformed body, code-rejected | No |
 | `3` | Authorization — caller not permitted | Maybe, after re-auth |
 | `4` | Protocol — opcode unknown, body malformed at envelope level | No |
-| `5`–`15` | Reserved for future expansion | n/a |
+| `5` | Reserved for back-pressure / rate-limit (Slice 5+; not yet emitted) | Yes, with backoff |
+| `6`–`15` | Reserved for future expansion | n/a |
 | `16`–`255` | Application-specific | Application-defined |
 
 Supervisors (`actor.md` §5.1) must distinguish at least classes
@@ -475,16 +543,40 @@ of how clearly the policy describes them.
 
 - Reservation of `extra_flags` bits 2 and 3 (no semantic effect
   yet; `extra_flags & 12` remains illegal to set on send).
+- Lifting hard-coded `extra_flags` magic numbers in
+  `crypto/block/transaction.cpp:2948,3632` and
+  `tol/send-message-api.cpp:307-342` into named stdlib constants
+  (`EXTRA_FLAGS_NEW_BOUNCE = 1`,
+  `EXTRA_FLAGS_FULL_BOUNCE_BODY = 2`).
 - Tol-stdlib `Envelope` type with auto-derived pack/unpack for
-  the `opcode:uint32 query_id:uint64 payload:...` layout.
-- Tol-stdlib `Error` type and `OP_ERROR` reply helper, using
-  the `error_class` enum from §5.3.
-- Tol compiler pass enforcing `query_id` propagation.
-- Conformance fixtures for the bounce-handling rules in §6.2.
-- Migration of at least two reference contracts (recommended:
-  wallet-v5 and the simplest Jetton wallet).
+  the `opcode:uint32 query_id:uint64 payload:...` layout. The
+  prefix length is locked to 32 bits (do not allow Tol's
+  `PackOpcode` mechanism to use a shorter prefix for envelope
+  bodies).
+- Tol-stdlib `Error` type and `OP_ERROR` reply helper carrying
+  `(query_id, original_op, error_class, error_code, diagnostic)`,
+  using the `error_class` enum from §5.3.
+- Tol-stdlib `disclaim_query_id()` builtin so the §4.4 check pass
+  can be silenced for legitimate fire-and-forget handlers.
+  Shipped in the same PR as the check pass.
+- Tol compiler pass `pipe-check-query-id-propagation.cpp`
+  enforcing `query_id` propagation, in warning mode (uses
+  `error_collector.collect()`, not `.fire()`).
+- Tol compiler warning when a non-bounced send carries body
+  opcode `0xfffffffe` (the v12 bounce-body tag).
+- Conformance fixtures for the bounce-handling rules in §6.2,
+  including the four `bounced_by_phase` cases (skip / compute /
+  action) and an `extra_flags=0b0100` rejection case.
+- Migration of at least two reference contracts. Recommended
+  migration order from Stage 0 audit:
+  1. **jetton-minter** (smallest, paired with jetton-wallet,
+     ~45 LOC touched).
+  2. **jetton-wallet** (~80 LOC, exercises the bounce-handler
+     delta).
+  3. **wallet-v5** (~110 LOC, 16 errors to classify into
+     `error_class` values).
 - External RFC announcing the `Envelope`, `Error`, and
-  `OP_ERROR` conventions.
+  `OP_ERROR` conventions, plus the `0xfffffffe` collision caveat.
 
 ### 10.2 Not in Slice 1
 
@@ -499,27 +591,45 @@ of how clearly the policy describes them.
 - High-level Tol syntax (`contract` / `receive(...)` /
   `message`). That is Slice 2.
 
-## 11. Open questions
+## 11. Open questions (resolved in v2)
 
-The following items are explicitly left open and must be resolved
-in a follow-up before they affect Slice 1 implementation.
+The four questions raised in v1 were resolved during the Stage 0
+audit. The decisions are captured in the body of the policy; this
+section retains the questions and the chosen answers for traceability.
 
-1. Should `error_class` value `5` ("rate limit / back-pressure")
-   be reserved now, even though the back-pressure mechanism is
-   not in Slice 1? Reserving avoids a future renumber.
-2. Should the Tol-stdlib `Envelope` type optionally carry a
-   `created_at` and `created_lt` snapshot from `CommonMsgInfo`
-   into the user-visible struct, or expose them only via separate
-   helpers? Affects the size of user-facing types.
-3. Does the `query_id = 0` "no correlation" convention conflict
-   with any existing wallet-vN pattern that uses zero for
-   simple-transfer comments? Audit before locking.
-4. Should `OP_ERROR` carry the original opcode of the failed
-   request as a leading field (so the receiver can pair without
-   `query_id` lookup)? Add as a field if yes.
+1. *(v1)* Should `error_class` value `5` be reserved now for
+   back-pressure / rate-limit? — **Resolved: yes.** See §5.3
+   table; `5` is now documented as "Reserved for back-pressure /
+   rate-limit (Slice 5+; not yet emitted)". This is a
+   document-level reservation; no wire format changes. **Confidence: high.**
+2. *(v1)* Should `Envelope` carry `created_at` / `created_lt`?
+   — **Resolved: no.** Those fields belong to `CommonMsgInfo`
+   (transport layer), not the application-layer body that
+   `Envelope` covers. They remain on `InMessage` /
+   `InMessageBounced` (`crypto/smartcont/tol-stdlib/common.tol:1913,1934`).
+   `Envelope` stays a tight `(opcode, query_id, payload)` triple.
+   **Confidence: high.**
+3. *(v1)* Does `query_id = 0` conflict with simple-transfer
+   patterns? — **Resolved: no conflict.** Stage 0 TEP audit
+   verified that text-comment opcode `0x00000000` does not
+   carry a `query_id` field at all (no `load_uint(64)` on the
+   `op==0` branch in any reviewed contract: wallet-v3/v4/v5,
+   DNS, elector, payment-channel, TEP-62 NFT). §3.2 has been
+   tightened to make this offset rule explicit. §4.1 has been
+   updated to scope `query_id = 0` to opcodes other than
+   `0x00000000`. **Confidence: high.**
+4. *(v1)* Should `OP_ERROR` carry `original_op`? — **Resolved:
+   yes, added.** See §5.2; `original_op:uint32` follows
+   `query_id`. The 4-byte cost is justified by symmetry with the
+   v12 bounce body (which already exposes the original opcode at
+   `original_body` start) and avoids forcing every requesting
+   contract to keep a per-`query_id` shadow correlation table.
+   **Confidence: medium** — if the contract-team representative
+   pushes back during sign-off (e.g. "we already keep correlation
+   tables, the field is redundant"), revisit.
 
-These do not block Stage 0 sign-off, but they must be resolved
-before Stage 2 begins.
+There are no v2-introduced open questions. Stage 1 implementation
+may begin after §12 sign-off.
 
 ## 12. Sign-off
 
@@ -537,3 +647,59 @@ through a documented amendment to this file.
 
 Amendments after sign-off must update this table and append a
 short changelog at the bottom of the file.
+
+## 13. Changelog
+
+### Draft v2 (post-Stage-0 audit)
+
+Stage 0 audit completed by five parallel research agents (audit
+reports archived at `/tmp/agent-a{1..5}-report.md`). Changes
+incorporated into this draft:
+
+- **§3.2** clarified that opcode `0x00000000` carries no
+  `query_id` field at all (was previously self-contradictory:
+  said `query_id` "set to zero" while no such field exists on
+  the wire). Resolves §11.3 with high confidence (A1 audit).
+- **§3.2** added the `0xfffffffe` dual-purpose caveat: the v12
+  bounce-body constructor tag collides with the existing
+  `recover_stake_error` application opcode in `elector-code.fc`
+  and `nominator-pool/pool.fc`. Slice 1 stdlib must warn on
+  non-bounced sends carrying body opcode `0xfffffffe` (A2 audit).
+- **§3.4** added the synchronized-constants requirement:
+  `extra_flags` mask is hard-coded in three sites
+  (`crypto/block/transaction.cpp:2948`,
+  `crypto/block/transaction.cpp:3632`,
+  `tol/send-message-api.cpp:307-342`). Slice 1 lifts these into
+  named stdlib constants so Slice 4 bit-2 activation is one-line
+  (A2 audit).
+- **§4.1** scoped the `query_id = 0` rule to non-zero opcodes
+  only, removing the implicit conflict with text-comment
+  bodies (A1, A4 Q3).
+- **§4.4** added the injection point for the new
+  `pipe-check-query-id-propagation.cpp` pass and the requirement
+  that `disclaim_query_id()` ship in the same PR (A3 audit).
+- **§5.2** added `original_op:uint32` field to `OP_ERROR` body
+  layout, between `query_id` and `error_class`, with rationale
+  pointing at the v12 bounce body's existing original-opcode
+  exposure (A4 Q4, medium confidence).
+- **§5.3** promoted `error_class = 5` from "Reserved for future
+  expansion" to "Reserved for back-pressure / rate-limit
+  (Slice 5+; not yet emitted)" (A4 Q1, high confidence).
+- **§10.1** expanded Slice 1 in-scope list with concrete items
+  surfaced by the audit: lifting magic numbers, locking
+  `Envelope` prefix length to 32 bits, `disclaim_query_id()`
+  builtin, `0xfffffffe` Tol compiler warning, conformance
+  fixtures for v12 `bounced_by_phase` cases, and the
+  recommended jetton-minter → jetton-wallet → wallet-v5
+  migration order (A2, A3, A5).
+- **§11** marked all four questions resolved with their answers,
+  evidence pointers, and confidence levels.
+
+Wire format unchanged; TL-B schema unchanged; §8.1 compatibility
+commitments preserved. v2 is purely an audit-driven tightening
+of v1.
+
+### Draft v1
+
+Initial draft. Authored as Stage 0 input for `doc/roadmap.md`
+Slice 1.
