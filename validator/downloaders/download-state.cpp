@@ -1732,14 +1732,6 @@ void DownloadShardState::written_shard_state(td::Ref<ShardState> state) {
   }
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), handle = handle_](td::Result<td::Unit> R) {
-    // Internal invariant: ValidatorManager::archive sets these flags on
-    // the local block handle as part of its archive-promotion path
-    // before resolving the promise; they describe local actor state and
-    // are never sourced from peer input.
-    CHECK(handle->handle_moved_to_archive());
-    // Internal invariant: same archive-promotion contract; the flag is
-    // mutated locally before this lambda runs.
-    CHECK(handle->moved_to_archive())
     // tos27 P1-4: archive promotion writes the peer-derived block
     // handle to the local archive DB. Surface a storage failure as a
     // structured error instead of aborting the validator process.
@@ -1747,6 +1739,14 @@ void DownloadShardState::written_shard_state(td::Ref<ShardState> state) {
       fail_handler(SelfId, R.move_as_error_prefix("archive promotion: "));
       return;
     }
+    // Internal invariant: ValidatorManager::archive sets these flags on
+    // the local block handle as part of its archive-promotion path
+    // before resolving the promise; they describe local actor state and
+    // are never sourced from peer input.
+    CHECK(handle->handle_moved_to_archive());
+    // Internal invariant: same archive-promotion contract; the flag is
+    // mutated locally before this lambda runs.
+    CHECK(handle->moved_to_archive());
     td::actor::send_closure(SelfId, &DownloadShardState::written_block_handle);
   });
   td::actor::send_closure(manager_, &ValidatorManager::archive, handle_, std::move(P));

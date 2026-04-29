@@ -39,12 +39,16 @@ run_step build-download-state-budget \
   cmake --build "$BUILD_DIR" --target test-download-state-budget
 run_step build-celldb-streaming-import \
   cmake --build "$BUILD_DIR" --target test-celldb-streaming-import
+run_step build-celldb-actor-restart \
+  cmake --build "$BUILD_DIR" --target test-celldb-actor-restart
 run_step hardening-static \
   bash "$ROOT/scripts/check-evm-production-hardening.sh" "$ROOT"
 run_step test-download-state-budget \
   "$BUILD_DIR/test-download-state-budget"
 run_step test-celldb-streaming-import \
   "$BUILD_DIR/test-celldb-streaming-import"
+run_step test-celldb-actor-restart \
+  "$BUILD_DIR/test-celldb-actor-restart"
 
 if [ "${TOS_RUN_16GIB_CATCHUP:-0}" != "0" ] && [ -n "${TOS_RUN_16GIB_CATCHUP:-}" ]; then
   run_step test-download-state-budget-16gib \
@@ -73,6 +77,7 @@ required default checks:
 - hardening-static
 - test-download-state-budget
 - test-celldb-streaming-import
+- test-celldb-actor-restart
 
 optional RC checks:
 - TOS_RUN_16GIB_CATCHUP=1

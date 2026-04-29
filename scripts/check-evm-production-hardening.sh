@@ -1256,6 +1256,12 @@ if ! rg -q 'test_root_mismatch_abort_then_retry' "$root/test/test-celldb-streami
     echo "evm hardening failed: tos31 CellDb streaming validation must cover root-mismatch abort followed by retry" >&2
     exit 1
 fi
+if ! rg -q 'test_restart_skips_adopted_manifest' "$root/test/test-celldb-actor-restart.cpp" ||
+   ! rg -q 'test_restart_replays_unadopted_manifest' "$root/test/test-celldb-actor-restart.cpp" ||
+   ! rg -q 'test-celldb-actor-restart' "$root/scripts/run-tos31-state-sync-verification.sh"; then
+    echo "evm hardening failed: tos31 verification must run actor/restart tests for adopted-marker stale-manifest startup recovery" >&2
+    exit 1
+fi
 if ! rg -q 'streaming_import\.startup_rollback\.manifests|streaming_import\.gc_pause_count' "$root/validator/db/celldb.cpp" "$root/docs/ops/tos31-tos32-validation.md"; then
     echo "evm hardening failed: tos31/tos32 validation must expose CellDb streaming import replay/GC stats for alerting" >&2
     exit 1
