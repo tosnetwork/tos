@@ -2,14 +2,15 @@
 
 ## 0. Status, scope, and references
 
-**Status.** **Approved 2026-04-29** (single-signer; see §12.1). v5 (post-roadmap-alignment). This document is the policy input for Slice 1 of
-[`doc/roadmap.md`](roadmap.md). It must be approved by four owners
-before Slice 1 implementation begins:
-
-- Protocol architect
-- TVM lead
-- Tol compiler lead
-- Contract-team representative
+**Status.** **Approved 2026-04-29** (single authorized owner; see §12). v6 (single-signer governance). This document is the policy input for Slice 1 of
+[`doc/roadmap.md`](roadmap.md). It must be approved by the
+authorized owner of record before Slice 1 implementation begins.
+The authorized owner combines the four functional roles —
+Protocol architect, TVM lead, Tol compiler lead, and contract-team
+representative — under one signature for the duration of TOS's
+single-engineer phase. When a second engineer joins, the relevant
+role(s) are reassigned to that person and a fresh signature is
+appended; see §12 for the mechanics.
 
 **Scope.** This document fixes the cross-cutting wire-level and
 lifecycle decisions that the protocol, TVM, and Tol teams must
@@ -893,47 +894,93 @@ may begin after §12 sign-off.
 
 ## 12. Sign-off
 
-This document is approved when all four roles below have signed.
-Approval means: the listed party agrees to implement the policy
-as written for Slice 1, and to escalate any required deviation
-through a documented amendment to this file.
+This document is approved when **the authorized owner of record**
+has signed. Approval means: the signer agrees to implement the
+policy as written for Slice 1, and to escalate any required
+deviation through a documented amendment to this file.
 
-| Role | Name | Date |
+| Role bundle | Name | Date |
 |---|---|---|
-| Protocol architect | gtosnetwork-dotcom | 2026-04-29 |
-| TVM lead | gtosnetwork-dotcom | 2026-04-29 |
-| Tol compiler lead | gtosnetwork-dotcom | 2026-04-29 |
-| Contract-team representative | gtosnetwork-dotcom | 2026-04-29 |
+| Authorized owner (Protocol architect + TVM lead + Tol compiler lead + Contract-team representative) | gtosnetwork-dotcom | 2026-04-29 |
 
-### 12.1 Single-signer disclosure
+The four functional roles listed in the bundle are the same four
+that earlier policy drafts (v1–v5) split into separate sign-off
+rows. v6 collapses them under one signature for the duration of
+TOS's single-engineer phase; the bundling is an operational
+simplification, not an erosion of the underlying responsibilities.
 
-The four sign-off rows above are all signed by the same person.
-This is **not** a multi-party review; it is one engineer who is
-currently wearing all four hats for TOS. Recording this
-explicitly so that a future reader (or a future second engineer)
-can see at a glance that the v5 policy was approved without
-independent multi-eyes review at the role boundary.
+### 12.1 When a second engineer joins
 
-What this changes for downstream slices:
+When TOS adds a second engineer to the project the bundle is
+split, not retroactively re-signed:
+
+- Decide which role(s) move to the new engineer (e.g. Tol
+  compiler lead).
+- Append a new signature row scoped to those roles, dated when
+  the transfer happens.
+- Leave the original `gtosnetwork-dotcom` row in place for the
+  remaining roles, with the original date intact. Audit trail
+  must show the transition, not erase it.
+- A future amendment that is contentious — for example one
+  signer wants to change the bounce-budget rule and another
+  signer disagrees — must be resolved before merging. The
+  single-signer model holds only as long as one person owns all
+  four roles; the moment two signers disagree on an amendment,
+  the amendment is held until both have signed or the
+  disagreement is recorded explicitly in §13.
+
+### 12.2 Audit-trail provisions that do not depend on signer count
+
+These rules apply regardless of whether the policy has one or
+more signers:
 
 - Any deviation from this policy during Slice 1 implementation
-  must still be documented as an amendment to this file (per the
-  paragraph below). The single-signer model does not waive the
-  audit trail.
-- When a second engineer joins the project, the relevant role
-  rows above should be reassigned to that person and a new dated
-  signature row appended. The single-signer signatures stay in
-  the table for traceability; they are not erased.
+  must be documented as an amendment to this file. The
+  single-signer model does not waive the audit trail.
 - The five Slice 1 scaffolding commits
   (`d92d4fa12`, `156e92247`, `9541d022e`, `f48a11533`,
   `83c01c672`) on the `actor-layer` branch were written by AI
-  coding agents under a single-signer review. The signer takes
-  responsibility for them as if they had been hand-written.
-
-Amendments after sign-off must update this table and append a
-short changelog at the bottom of the file.
+  coding agents under the authorized owner's review. The signer
+  takes responsibility for them as if they had been hand-written.
+- Amendments after sign-off must update §12's signature row(s)
+  if the change touches a different role bundle than the
+  original signer is authorized for, and append a short
+  changelog entry at the bottom of the file.
 
 ## 13. Changelog
+
+### Draft v6 (single-signer governance)
+
+The four-signer requirement from v1–v5 is replaced by a single
+authorized owner. v5 disclosed the situation factually (one
+engineer signing all four rows); v6 makes single-owner approval
+the **rule** rather than a documented exception. The four
+functional roles (Protocol architect, TVM lead, Tol compiler
+lead, Contract-team representative) are bundled into a single
+"Authorized owner" row in §12. The split-on-headcount mechanics
+move to §12.1, and the audit-trail provisions that hold under
+either signer count move to §12.2.
+
+Edits:
+
+- **§0 Status** — "approved by four owners" replaced with
+  "approved by the authorized owner of record". The four-role
+  list is retained as documentation of what the bundle covers;
+  it is no longer a signature requirement.
+- **§12 Sign-off** — sign-off table collapsed from four rows to
+  one "Authorized owner" row. The 2026-04-29 approval by
+  `gtosnetwork-dotcom` is preserved verbatim under the bundled
+  role.
+- **§12.1** — repurposed from a single-signer disclosure into
+  the operational mechanics for splitting the bundle when a
+  second engineer joins.
+- **§12.2** — promoted the audit-trail bullet points to a
+  named subsection because they apply regardless of signer
+  count.
+
+The 2026-04-29 approval remains in force; no resigning is
+required. Wire format unchanged; TL-B schema unchanged; §8.1
+compatibility commitments preserved.
 
 ### 2026-04-29 — Approved (single-signer)
 
@@ -943,7 +990,8 @@ disclosure added as §12.1. Stage 1 implementation may now begin
 on the `actor-layer` branch. The five scaffolding commits already
 on `actor-layer` (`d92d4fa12`, `156e92247`, `9541d022e`,
 `f48a11533`, `83c01c672`) are explicitly within scope of this
-approval.
+approval. (Superseded by v6's single-signer governance model on
+the same day; the approval itself stands.)
 
 ### Draft v5 (post-roadmap-alignment)
 

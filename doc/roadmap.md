@@ -114,8 +114,9 @@ contract-team representative.
 
 **Deliverables.**
 
-- `doc/tos-message-policy.md` published and approved by all four
-  owner roles.
+- `doc/tos-message-policy.md` published and approved by the
+  authorized owner of record (single-signer model per
+  `tos-message-policy.md` §12; v6 onwards).
 - A documented annotation of the existing wire surface against
   which Slice 1 will be built: both `int_msg_info$0` constructors
   in `crypto/block/block.tlb:126,135` (`CommonMsgInfo` and
@@ -129,9 +130,9 @@ contract-team representative.
 - A short list of TEP-compatibility commitments (which existing
   standards must keep working bit-for-bit).
 
-**Exit criterion.** All four owners sign off; no open
-inconsistencies between the document and the existing TVM and
-contract surfaces.
+**Exit criterion.** Authorized owner signs off (`policy.md` §12);
+no open inconsistencies between the document and the existing
+TVM and contract surfaces.
 
 ### Stage 1 — Protocol-touching work, no wire-format change (week 3–8)
 
@@ -299,8 +300,8 @@ release tag.
 
 By end of week 26, the following must all be true:
 
-- [ ] `doc/tos-message-policy.md` exists and is approved by all
-      four §12 owners.
+- [ ] `doc/tos-message-policy.md` exists and is approved by the
+      §12 authorized owner.
 - [ ] `doc/tos-message-envelope-migration.md` exists (Stage 5
       contract-author migration playbook).
 - [ ] The two `extra_flags & 3` magic literals in
@@ -433,7 +434,206 @@ mode. Every later slice depends on it.
 The right first action is to start writing
 `doc/tos-message-policy.md`.
 
-## 11. Revision notes
+## 11. Known unscheduled work and cross-Slice blockers
+
+This section makes the gaps in §6 explicit so they are not silently
+forgotten between slices. Every entry below is something the
+implementation cannot rely on existing — either no slice owns it,
+or the slice that nominally owns it is missing prerequisite design
+work.
+
+This section is updated as items move from "unscheduled" to
+"scheduled in Slice N"; do not delete entries when they land —
+move them to a "Closed" subsection at the bottom of §11 with a
+pointer to the slice and PR that resolved them.
+
+### 11.1 `actor.md` sections not yet scheduled in any slice
+
+The Slice 1–6 plan in §6 covers `actor.md` §5.1, §5.2, §5.3, §5.4,
+§5.5, §5.6, §5.9, and §6.5. The remaining seven directions are
+unscheduled at the time of writing:
+
+| `actor.md` § | Content | Downstream impact | Recommended placement |
+|---|---|---|---|
+| §5.7 | Cross-shard delivery SLA + dead-letter handling | Blocks `error_class = 5` (back-pressure) emission (`policy.md` §5.3); blocks Slice 4 `§5.9` postponement design (postpone-expiry semantics depend on undeliverable definition); blocks Slice 6 supervision (failure-class taxonomy) | Pre-design RFC during Slice 1 Stage 4–5; protocol implementation slot inserted between Slice 4 and Slice 5 |
+| §5.8 | Actor-level observability | Operational debuggability blocker once supervised contracts exist; off-chain indexer surface usable independently of on-chain protocol work | Off-chain part: pulled forward to Slice 3 (alongside `tol new` scaffolding). On-chain hooks: bundled into Slice 6. |
+| §6.1 | Release handling and upgrade discipline | TOS already has `SETCODE`-style behaviour replacement; the missing part is operational discipline (compatibility windows, rollback, state-migration proofs). Becomes load-bearing the moment Slice 6 ships supervision-driven restarts. | Pre-design during Slice 4–5; production rollout adjacent to Slice 6. |
+| §6.2 | Application boundaries / lifecycle (validator subsystem, workchain, system-contract package) | Without this, every multi-subsystem upgrade is hand-coordinated. Compounds with §6.1. | Same window as §6.1. |
+| §6.3 | Monitors versus links (one-way observation vs bidirectional failure) | Slice 6's nominal scope only lists §5.1; without §6.3 the supervision design has only a single coarse `supervisor` field. | **Promote into Slice 6 scope explicitly** — current §6 row reads `§5.1 + §5.2 + §5.4` but needs to read `§5.1 + §5.2 + §5.4 + §6.3 + §6.4 + §6.6`. |
+| §6.4 | Restart intensity / circuit breakers | Same — supervision without restart-intensity limits is a message-amplification attack surface. | Promote into Slice 6 scope. |
+| §6.6 | Crash reports / `sys`-style diagnostics | "Let it crash" is unsafe without classified, bounded crash reports. | Promote into Slice 6 scope. |
+
+`§6.3 / §6.4 / §6.6` should be folded into §6's Slice 6 row in a
+later revision rather than continuing to live in this gap table.
+The table here is the holding pen until that update lands.
+
+### 11.2 Per-Slice blockers
+
+Each downstream slice has at least one blocker that is not yet
+resolved. None invalidates the §6 sequencing; all must be cleared
+before the corresponding slice can start.
+
+**Slice 2** — Q2 syntax (`contract` / `receive(...)` / `message`)
+
+- *Hard:* Slice 1 must ship externally (release tag) before Slice 2
+  implementation can begin. Slice 2 *design* may proceed in parallel
+  during Stage 3–5 of Slice 1.
+- *Missing policy:* No `doc/tos-syntax-policy.md` exists. The Q2
+  syntax has no equivalent of `tos-message-policy.md` locking
+  semantics for `contract` storage layout, `receive(...) on State`
+  dispatch, `message(0x…)` opcode auto-derivation, and the
+  exhaustiveness slice between Slice 2 and Slice 3.
+- *Cross-cut:* `actor.md` §5.5 (`become` exhaustiveness /
+  reachability / invariant-preservation) needs an explicit split
+  between Slice 2 (basic exhaustiveness on hand-written `receive`
+  blocks) and Slice 3 (full `gen_statem`-class analysis).
+
+**Slice 3** — Q3 stdlib + Q4 static analysis + scaffolding
+
+- *Hard:* Slice 2 must ship; the three Slice 1 reference contracts
+  (jetton-minter / jetton-wallet / wallet-v5) need a second
+  rewrite using Slice 2 syntax + Slice 3 stdlib (the explicit
+  double-migration in §6).
+- *Budget gate:* `tol.md` Q3 imposes a ≤ 15% bytecode-overhead
+  budget per stdlib pattern. Pattern designs that exceed it must
+  be trimmed before shipping; this can require iterating with the
+  contract team mid-stage.
+- *Missing infra:* The Foundry-class property-based / replay test
+  framework that `tol.md` Q4 requires has no chosen substrate
+  (Tol-VM simulator vs real dev net vs hybrid). Choice must be
+  made before Stage 2 of Slice 3.
+- *Stronger `query_id` analysis:* Slice 1's
+  `pipe-check-query-id-propagation.cpp` warns; Slice 3 Q4 wants
+  reachability proof of the `(expected_responder, query_id)`
+  table (`policy.md` §4.4). Implementation path not yet sketched.
+
+**Slice 4** — `actor.md` §5.9 + §6.5
+
+- *Hard:* Bounded-postponement resource model is undefined.
+  `actor.md` §5.9 enumerates what must be priced: max-outstanding
+  count, size, gas, time/rent budget, postpone-expiry behaviour,
+  determinism guarantees. None designed.
+- *Missing policy:* No `doc/tos-postponement-policy.md` exists.
+- *External dependency:* §5.9 composes with §5.7 (delivery
+  failure handling) — postpone-expiry must produce a defined
+  failure class. §5.7 is in §11.1.
+- *§6.5 traits:* depend on Slice 3 dogfooding having stabilised
+  the recurring patterns; if Slice 3 stdlib hasn't been used by
+  external teams yet, trait abstraction risk is high.
+
+**Slice 5** — Second-wave stdlib + cross-language ABI freeze
+
+- *Hard:* Slice 3 success criterion (`§9` row 3) must be reached:
+  "new contract author can produce a working Jetton or NFT in
+  under one hour using `tol new`, the stdlib, and the
+  documentation". Without that signal, Slice 5 is premature.
+- *Missing design:* Cross-language ABI between FunC and Tol —
+  calling convention, error propagation, type marshalling — has
+  no design document. ABI freeze is the Slice 5 deliverable per
+  `tol.md` Year 2; design must precede freeze.
+- *Cross-cut:* `error_class = 5` back-pressure is reserved by
+  `policy.md` §5.3 but blocked on §5.7 (see §11.1).
+
+**Slice 6** — `actor.md` §5.1 + §5.2 + §5.4
+
+Three independently-blocked sub-features:
+
+- *§5.1 supervision:* `actor.md` §5.1 lists the prerequisites —
+  explicit budgets, restart-intensity limits, supervisor-message
+  funding rules, anti-restart-storm. Restart-intensity is §6.4
+  (unscheduled, see §11.1). Supervisor-message funding overlaps
+  with §7 of `policy.md` (bounce budgeting) but is a distinct
+  resource model.
+- *§5.2 time primitive:* Maximum outstanding timers, rent for
+  scheduled messages, cancellation race semantics, MEV-sensitive
+  expiry, DoS limits — none designed. `policy.md` does not
+  reserve any wire-format bit for scheduled messages.
+- *§5.4 capability addressing:* `actor.md` calls this "the most
+  research-heavy item in the list". The basic shape (handle is
+  private bearer secret vs signature/MAC vs public on-chain
+  grant vs stateful registry) is undecided. **A public RFC must
+  be approved before any implementation work.**
+
+Each sub-feature needs its own policy document
+(`doc/tos-supervision-policy.md`, `doc/tos-time-policy.md`,
+`doc/tos-capability-policy.md`); none exist.
+
+### 11.3 Governance and approval state (Slice 1)
+
+- `tos-message-policy.md` is **Approved 2026-04-29** by the §12
+  authorized owner under the single-signer governance model
+  (policy v6). Stage 1 implementation is unblocked; no further
+  signatures are required to begin Stages 2–5.
+- Single-signer governance does not waive the audit trail. Any
+  Slice 1 deviation from `tos-message-policy.md` must still be
+  recorded as an amendment to that file (`policy.md` §12.2). If
+  such an amendment touches a role that the current authorized
+  owner does not yet exclusively cover (i.e. a second engineer
+  has joined and split the bundle per `policy.md` §12.1), it
+  needs the new owner's signature on the affected role.
+- Per-slice policy documents for Slices 2 / 4 / 6 do not exist;
+  see §11.2 for the names and scope of each missing document.
+  Each will follow the same single-signer model unless the
+  ownership split has happened by the time it is drafted.
+
+### 11.4 Cross-Slice priority of unscheduled work
+
+Sorted by how many later slices each item blocks:
+
+1. **`actor.md` §5.7 design RFC** — blocks Slice 4 (`§5.9`
+   postpone-expiry), Slice 5 (back-pressure `error_class = 5`),
+   Slice 6 (failure taxonomy for supervision). High leverage; can
+   start during Slice 1 Stage 4–5 without taking implementation
+   capacity from Slice 1.
+2. **Slice 2 syntax policy doc** — single Slice 1 successor
+   blocker; should be drafted during Stage 3 of Slice 1 so it can
+   sign off concurrently with Slice 1 ship.
+3. **`actor.md` §5.4 capability public RFC** — Slice 6 long-pole.
+   Needs protocol architect time, not engineering capacity. The
+   earlier this enters RFC review, the lower the schedule risk
+   for Slice 6.
+4. **§6.3 / §6.4 / §6.6 promotion into Slice 6 scope** —
+   editorial change to §6 of this document; should land in the
+   next revision after this section is approved.
+5. **`actor.md` §5.8 off-chain observability** — independently
+   useful; pull forward to Slice 3 alongside `tol new`.
+
+Items 1 and 2 should be in motion before Slice 1 ships. Items
+3–5 should be in motion before Slice 3 ships.
+
+(The earlier four-signer approval item from this list was
+removed when policy v6 made single-signer the rule; see §11.3.)
+
+### 11.5 Closed (track items as they move out of §11)
+
+(empty — populate as §11.1 / §11.2 / §11.3 entries are resolved.)
+
+## 12. Revision notes
+
+### r2 (single-signer governance — policy v6)
+
+`tos-message-policy.md` v6 collapses the four-role sign-off
+requirement into a single authorized owner. This roadmap is
+updated to match:
+
+- §4 Stage 0 deliverable — "approved by all four owner roles"
+  replaced with "approved by the authorized owner of record".
+- §4 Stage 0 exit criterion — "All four owners sign off"
+  replaced with "Authorized owner signs off".
+- §5 first-slice checklist — "approved by all four §12 owners"
+  replaced with "approved by the §12 authorized owner".
+- §11.3 Governance and approval state — rewritten. The previous
+  paragraph framed single-signer as a temporary unblocking
+  provision pending three more signatures; under v6 it is the
+  governance rule, and the audit-trail provisions are the
+  permanent control.
+- §11.4 Cross-Slice priority — the standalone "v5 four-signer
+  approval" item is removed; remaining items renumbered
+  3-becomes-3-after-renumber. A short closure note points back
+  to §11.3.
+
+No §6 sequencing, §4 stage week ranges, §8 risks, or §9 success
+criteria were changed.
 
 ### r1 (post-policy-v5 alignment)
 
