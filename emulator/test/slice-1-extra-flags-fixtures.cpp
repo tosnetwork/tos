@@ -268,8 +268,12 @@ TEST(Slice1ExtraFlagsFixtures, F3_3_synchronized_constants_self_check) {
   CHECK(transaction_cpp_result.is_ok());
   const std::string transaction_cpp_text = transaction_cpp_result.move_as_ok();
 
-  // Count occurrences of the synchronized-constants literal.
-  const std::string mask_literal = "& td::make_refint(3)";
+  // Count occurrences of the synchronized-constants literal in actual
+  // code (NOT comment text). T5's annotation block above each mask
+  // site mentions "& td::make_refint(3)" in `//` comments; we narrow
+  // the grep by requiring the surrounding `extra_flags` identifier so
+  // the count reflects real call sites only.
+  const std::string mask_literal = "extra_flags & td::make_refint(3)";
   size_t mask_literal_count = 0;
   for (size_t pos = 0;
        (pos = transaction_cpp_text.find(mask_literal, pos)) != std::string::npos;

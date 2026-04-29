@@ -812,7 +812,7 @@ add_executable(test-emulator
         emulator/test/slice-1-account-state-fixtures.cpp
         emulator/test/slice-1-failure-phase-fixtures.cpp
         emulator/test/slice-1-extra-flags-fixtures.cpp)
-target_link_libraries(test-emulator PRIVATE emulator)
+target_link_libraries(test-emulator PRIVATE emulator fift-lib)
 
 get_directory_property(HAS_PARENT PARENT_DIRECTORY)
 if (HAS_PARENT)
