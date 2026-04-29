@@ -203,19 +203,33 @@ is checked in with the synchronized-constants hardening grep
 described in `tos-message-policy.md` §3.4; conformance fixtures
 are checked into the repository.
 
-### Stage 2 — Tol compiler support (week 9–14) ⏳ Scaffolding committed; semantics pending
+### Stage 2 — Tol compiler support (week 9–14) ✅ Completed 2026-04-29
 
-**Status.** ⏳ Scaffolding-only as of 2026-04-29. `Envelope`,
-`Error`, `OP_ERROR`, and `ErrorClass` are in `common.tol`
-(commit `83c01c672`); `disclaim_query_id()` builtin stub is in
-`tol/builtins.cpp` (commit `f48a11533`); the
-`pipe-check-query-id-propagation` pass exists as an injected
-no-op skeleton at the policy-mandated band in `tol/tol.cpp`
-(commit `d92d4fa12`). **The pass body — actual `query_id`
-propagation analysis — is not yet implemented**, and no
-reference contract has been compiled against the new
-`Envelope` library. Stage 2 exit criterion (a Tol contract
-that round-trips the Stage 1 conformance fixtures) is not met.
+**Status.** ✅ Completed 2026-04-29 — three deliverables landed
+in parallel on `actor-layer`:
+
+- **S2-A check pass body** (commit `73e3f117d`): replaced the
+  TODO(slice-1) skeleton with a full AST visitor that detects
+  `lazy <Struct>.fromSlice(in.body)` envelope binding,
+  `createMessage<TBody>` reply emission, and
+  `disclaim_query_id()` opt-out, then emits `Error::warning(...)`
+  diagnostics referencing policy v6 §4.4.
+- **S2-B tol-tester cases** (commit `13ae8cc89`): four `.tol`
+  test files under `tol-tester/tests/`
+  (`query-id-{propagation-positive,propagation-missing,disclaim,no-envelope}.tol`)
+  exercising the four expected behaviours of the check pass.
+- **S2-C end-to-end round-trip** (commit `d8debf814`): a minimal
+  `crypto/smartcont/echo-envelope.tol` contract that uses the
+  new Envelope library + an `emulator/test/slice-1-stage-2-roundtrip-fixture.cpp`
+  asserting the inbound `query_id` is propagated verbatim to
+  the outbound reply. Closes the Stage 2 exit criterion (a Tol
+  contract that compiles and round-trips the Stage 1 conformance
+  fixtures).
+
+Test surface as of close: **19/19 emulator fixtures pass**
+(F1×7 + F2×3 + F3×3 + F1.aux + Stage 2 round-trip×2 + 4
+pre-existing emulator-tests cases) and **553/553 tol-tester
+cases pass** (549 pre-existing + 4 S2-B cases).
 
 **Owners.** Tol compiler team.
 
@@ -368,14 +382,14 @@ branch.
       helper. *(commits `83c01c672` `common.tol` types,
       `f48a11533` `disclaim_query_id` builtin stub,
       `402f944a3` `envelope.tlb` reference doc.)*
-- [ ] `tol/pipe-check-query-id-propagation.cpp` enforces
+- [x] `tol/pipe-check-query-id-propagation.cpp` enforces
       `query_id` propagation at Tol compile time, injected
       between `pipeline_check_serialized_fields()` (line 83)
       and `G.error_collector = nullptr;` (line 102) per
-      `tos-message-policy.md` §4.4. *(Skeleton injected at the
-      correct band in commit `d92d4fa12`; pass body is a
-      `TODO(slice-1)` no-op. Real enforcement is the next
-      Stage 2 deliverable.)*
+      `tos-message-policy.md` §4.4. *(Skeleton at correct band
+      in `d92d4fa12`; full visitor body in `73e3f117d`; four
+      tol-tester cases in `13ae8cc89` validate positive /
+      missing / disclaim / no-envelope behaviours.)*
 - [ ] All three reference contracts (jetton-minter →
       jetton-wallet → wallet-v5) are rewritten in Tol against
       the new `Envelope` library and continue to pass their
@@ -394,10 +408,10 @@ branch.
       §8.1 zero-wire-change commitment explicitly called out.
       *(Stage 5 — not started.)*
 
-**Progress as of 2026-04-29:** 3 of 9 checked. Remaining items
-break down to: 1 × Stage 2 (real query_id check), 1 × Stage 3
-(reference-contract migration), 2 × Stage 4 (CI fuzzing + gas
-dashboard), 2 × Stage 5 (migration playbook + external RFC).
+**Progress as of 2026-04-29:** 4 of 9 checked. Remaining items
+break down to: 1 × Stage 3 (reference-contract migration),
+2 × Stage 4 (CI fuzzing + gas dashboard), 2 × Stage 5 (migration
+playbook + external RFC).
 
 If any one of these is missing, the slice is not done. Slipping
 the boundary creates exactly the cross-layer inconsistency this
