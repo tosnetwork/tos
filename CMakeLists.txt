@@ -804,7 +804,14 @@ target_link_libraries(test-celldb-actor-restart PRIVATE validator-common validat
 add_executable(test-http test/test-http.cpp)
 target_link_libraries(test-http PRIVATE toshttp)
 
-add_executable(test-emulator test/test-td-main.cpp emulator/test/emulator-tests.cpp)
+add_executable(test-emulator
+        test/test-td-main.cpp
+        emulator/test/emulator-tests.cpp
+        # Slice 1 conformance fixtures (doc/roadmap.md Stage 1 exit criterion +
+        # doc/tos-message-policy.md v6 §3.4 / §6.2 / §10.1).
+        emulator/test/slice-1-account-state-fixtures.cpp
+        emulator/test/slice-1-failure-phase-fixtures.cpp
+        emulator/test/slice-1-extra-flags-fixtures.cpp)
 target_link_libraries(test-emulator PRIVATE emulator)
 
 get_directory_property(HAS_PARENT PARENT_DIRECTORY)
