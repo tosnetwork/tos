@@ -676,7 +676,8 @@ class CoroSpec final : public td::actor::Actor {
       expect_true(r.is_error(), "sanity: err_task returns error");
 
       // Now check propagation via co_try inside an outer task
-      auto outer = [err_task]() -> Task<int> {
+      auto outer = []() -> Task<int> {
+        auto err_task = []() -> Task<int> { co_return td::Status::Error("boom"); };
         int x = co_await err_task();
         co_return x + 1;  // should never reach
       }();
@@ -694,8 +695,8 @@ class CoroSpec final : public td::actor::Actor {
 
     // Test try_unwrap() error propagation
     {
-      auto err_task = []() -> Task<int> { co_return td::Status::Error("test error"); };
-      auto outer = [err_task]() -> Task<int> {
+      auto outer = []() -> Task<int> {
+        auto err_task = []() -> Task<int> { co_return td::Status::Error("test error"); };
         auto started = err_task().start_immediate();
         int x = co_await std::move(started);
         co_return x + 1;  // should never reach
@@ -793,8 +794,8 @@ class CoroSpec final : public td::actor::Actor {
 
     // Test Task default co_await (propagates errors)
     {
-      auto inner = []() -> Task<int> { co_return 888; };
-      auto outer = [&inner]() -> Task<int> {
+      auto outer = []() -> Task<int> {
+        auto inner = []() -> Task<int> { co_return 888; };
         int x = co_await inner();  // Default: propagates errors, returns T
         co_return x + 1;
       }();
@@ -805,8 +806,8 @@ class CoroSpec final : public td::actor::Actor {
 
     // Test Task default co_await error propagation
     {
-      auto inner = []() -> Task<int> { co_return td::Status::Error("task error"); };
-      auto outer = [&inner]() -> Task<int> {
+      auto outer = []() -> Task<int> {
+        auto inner = []() -> Task<int> { co_return td::Status::Error("task error"); };
         int x = co_await inner();  // Default: propagates error
         co_return x + 1;           // should never reach
       }();
@@ -816,8 +817,8 @@ class CoroSpec final : public td::actor::Actor {
 
     // Test Task::wrap() to prevent error propagation
     {
-      auto inner = []() -> Task<int> { co_return td::Status::Error("wrapped task error"); };
-      auto outer = [&inner]() -> Task<td::Result<int>> {
+      auto outer = []() -> Task<td::Result<int>> {
+        auto inner = []() -> Task<int> { co_return td::Status::Error("wrapped task error"); };
         auto full_result = co_await inner().wrap();  // Explicit: no propagation
         expect_true(full_result.is_error(), "Task::wrap() preserves error");
         co_return full_result;
@@ -836,8 +837,10 @@ class CoroSpec final : public td::actor::Actor {
 
     // Test trace with error from Task
     {
-      auto err_task = []() -> Task<int> { co_return td::Status::Error("original error"); };
-      auto outer = [&]() -> Task<int> { co_return co_await err_task().trace("context"); }();
+      auto outer = []() -> Task<int> {
+        auto err_task = []() -> Task<int> { co_return td::Status::Error("original error"); };
+        co_return co_await err_task().trace("context");
+      }();
       auto result = co_await std::move(outer).wrap();
       expect_true(result.is_error(), "trace propagates error");
       auto msg = result.error().message().str();
@@ -848,8 +851,10 @@ class CoroSpec final : public td::actor::Actor {
 
     // Test trace with success from Task
     {
-      auto ok_task = []() -> Task<int> { co_return 42; };
-      auto outer = [&]() -> Task<int> { co_return co_await ok_task().trace("context"); }();
+      auto outer = []() -> Task<int> {
+        auto ok_task = []() -> Task<int> { co_return 42; };
+        co_return co_await ok_task().trace("context");
+      }();
       auto result = co_await std::move(outer).wrap();
       expect_true(result.is_ok(), "trace passes through success");
       expect_eq(result.ok(), 42, "trace preserves value");
@@ -857,8 +862,10 @@ class CoroSpec final : public td::actor::Actor {
 
     // Test trace with StartedTask
     {
-      auto err_task = []() -> Task<int> { co_return td::Status::Error("started error"); };
-      auto outer = [&]() -> Task<int> { co_return co_await err_task().start().trace("started context"); }();
+      auto outer = []() -> Task<int> {
+        auto err_task = []() -> Task<int> { co_return td::Status::Error("started error"); };
+        co_return co_await err_task().start().trace("started context");
+      }();
       auto result = co_await std::move(outer).wrap();
       expect_true(result.is_error(), "trace works with StartedTask");
       auto msg = result.error().message().str();
@@ -874,7 +881,9 @@ class CoroSpec final : public td::actor::Actor {
         }
       };
       auto actor = create_actor<ErrActor>("ErrActor");
-      auto outer = [&]() -> Task<int> { co_return co_await ask(actor, &ErrActor::get_error).trace("ask context"); }();
+      auto outer = [](td::actor::ActorId<ErrActor> actor_id) -> Task<int> {
+        co_return co_await ask(actor_id, &ErrActor::get_error).trace("ask context");
+      }(actor.get());
       auto result = co_await std::move(outer).wrap();
       expect_true(result.is_error(), "trace works with ask()");
       auto msg = result.error().message().str();
