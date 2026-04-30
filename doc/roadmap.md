@@ -513,19 +513,19 @@ exhaustiveness checking lands in Slice 3.
 
 **Status.** 🚧 In progress as of 2026-04-30. The Slice 2 syntax
 policy input exists at `doc/tos-language-syntax-policy.md`
-(Draft v3, post-v2-security-review). Stages 0–7 have landed on
+(Draft v3, post-v2-security-review). Stages 0–8 have landed on
 `actor-layer`; the compiler implementation commits are Stage 1
 (`081f05d3c`), Stage 2 (`cc6656ce9`), Stage 3
 (`aeafe7906` merged via `8e6b3a3f8`), Stage 4
 (`f697390d3` merged via `4ed03f313`), Stage 5 (`21b3f8a03`
 merged via `6f188fdcf`), Stage 6 (`c7d9448eb` merged via
 `b962f7254`), and Stage 7 (`2e01919ee` merged via
-`c6bb72fc2`). Stage 8 is in progress: `jetton-minter` was
-re-migrated in `38856e950`, and `jetton-wallet` was re-migrated
-in `bd851ebb4`; `wallet-v5` remains. The current regression
-suite reports 616/616 tol-tester pass, 24/24 test-emulator pass,
-and the FunC↔Tol gas-parity gate green for all three Slice 1
-reference contracts.
+`c6bb72fc2`). Stage 8 re-migrated all three Slice 1 reference
+contracts to Slice 2 syntax: `jetton-minter` in `38856e950`,
+`jetton-wallet` in `bd851ebb4`, and `wallet-v5` in `621e7c514`.
+The current regression suite reports 616/616 tol-tester pass,
+24/24 test-emulator pass, and the FunC↔Tol gas-parity gate green
+for all three Slice 1 reference contracts.
 
 **Implementation stages.**
 
@@ -618,8 +618,9 @@ reference contracts.
    `@disclaim_query_id` no longer silences receiver B. Adds
    parser support for `@disclaim_query_id` on `receive(...)`
    blocks. Adds 3 `contract-disclaim-*.tol` tol-tester cases.
-9. 🚧 **Stage 8 — dogfood remigration of jetton-minter /
-   jetton-wallet / wallet-v5.** In progress. `jetton-minter`
+9. ✅ **Stage 8 — dogfood remigration of jetton-minter /
+   jetton-wallet / wallet-v5.** Completed 2026-04-30.
+   `jetton-minter`
    was re-migrated to `contract` / `receive` / contract-local
    `get fun` syntax in commit `38856e950` (Stage 8a), preserving
    the hand-packed outbound body shapes and `@unknown_throw(0xffff)`
@@ -629,7 +630,13 @@ reference contracts.
    contract-local, bounced-message handling keeps its file-scope raw
    c4 helper, and the lowering no longer emits an unreachable
    trailing `return` after terminal unknown-opcode tails. `wallet-v5`
-   remains the final Stage 8 reference-contract migration.
+   was re-migrated in commit `621e7c514` (Stage 8c): it now uses
+   contract-level `@unknown_silent_drop`, contract-level
+   `@on_bounced_policy("manual")`, typed internal prefix carriers,
+   `receive_external(...)`, `receive_external(msg: UnknownOpcode)`,
+   and contract-local `get fun` methods while preserving the
+   wallet-v5 signed-body parsing and short unknown-opcode return
+   path.
 
 ### Slice 3 — Q3 + Q4, weeks 53–78 (six months)
 
@@ -908,6 +915,15 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   cases.
 
 ## 12. Revision notes
+
+### r6 (Slice 2 Stage 8 complete)
+
+- §6 Slice 2 now marks Stage 8 complete: `jetton-minter`,
+  `jetton-wallet`, and `wallet-v5` are all re-migrated to the
+  high-level Slice 2 syntax on `actor-layer`.
+- The current verification snapshot remains 616/616 tol-tester
+  cases, 24/24 test-emulator cases, and a green Slice 1
+  FunC↔Tol gas-parity gate.
 
 ### r5 (Slice 2 Stage 4/6/8 status)
 
