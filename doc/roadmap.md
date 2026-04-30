@@ -452,43 +452,44 @@ branch.
       stdlib `Envelope.fromSlice(...)` / `OP_ERROR` fuzz and
       `slice-1-boc-envelope-fuzz-fixture.cpp` covering deterministic
       BoC / Envelope fuzz inside `test-emulator`.)*
-- [ ] Gas regressions are documented and within budget.
-      *(Stage 4 — partial. `scripts/check-slice-1-gas.py` gates
-      the focused Tol migration tests against
-      `doc/slice-1-gas-baselines.json` with the recommended 10%
-      threshold. This is a post-migration Tol-side CI regression
-      baseline only; equivalent pre-migration FunC black-box gas
-      fixtures do not exist in-tree and cannot be produced by the
-      existing FunC harness without a transaction-level emulator
-      driver. The bounded gap is documented and accepted under
-      single-signer governance in
-      [`doc/slice-1-gas-gap.md`](slice-1-gas-gap.md);
-      that document also specifies the exact follow-up work
-      required to close the checkbox. The box stays unchecked
-      until that follow-up lands.)*
+- [x] Gas regressions are documented and within budget.
+      *(Stage 4 — closed 2026-04-30 by the FunC↔Tol parity harness
+      in
+      [`emulator/test/slice-1-stage-4-gas-parity-fixture.cpp`](../emulator/test/slice-1-stage-4-gas-parity-fixture.cpp),
+      schema v2 dual baselines in
+      [`doc/slice-1-gas-baselines.json`](slice-1-gas-baselines.json),
+      and the widened
+      [`scripts/check-slice-1-gas.py`](../scripts/check-slice-1-gas.py)
+      gate. Closure spec from
+      [`doc/slice-1-gas-gap.md`](slice-1-gas-gap.md) §4 fully met;
+      see that file's §7 closure note for the per-contract ratios
+      and the per-contract `func_vs_tol_ratio_threshold` policy
+      (1.15 for jetton-minter / jetton-wallet, 1.35 for wallet-v5
+      because of its +10% bytecode growth). The `slice-1-gas-gap.md`
+      file is preserved as a historical record but is no longer
+      load-bearing for this checkbox.)*
 - [x] An external RFC has been published with the
       §8.1 zero-wire-change commitment explicitly called out.
       *(Published 2026-04-30 at
       [`doc/slice-1-rfc.md`](slice-1-rfc.md); commit `83eb22e71`.)*
 
-**Progress as of 2026-04-30:** 8 of 9 checked. Stage 3 has
-all 3 reference-contract migrations complete (`jetton-minter`,
-`jetton-wallet`, `wallet-v5`), the Stage 5 internal migration
-playbook is in tree, and the Stage 5 external RFC has now been
-published at [`doc/slice-1-rfc.md`](slice-1-rfc.md). Stage 4 CI
-conformance / fuzzing is wired. The former Tol workaround for
-`Envelope.payload: slice` is resolved in `02197a2c0`, and the
-focused suite now covers 571 tol-tester cases.
-
-The Stage 4 gas gap is precisely scoped and accepted under
-single-signer governance in
-[`doc/slice-1-gas-gap.md`](slice-1-gas-gap.md): the focused Tol
-regression gate is operational; FunC↔Tol black-box parity is
-documented as a follow-up with an explicit closure spec and is the
-ninth (and last remaining) checkbox's blocker.
-
-The single remaining checklist item is final Stage 4
-pre-migration gas evidence (gap document + follow-up harness).
+**Progress as of 2026-04-30:** 9 of 9 checked — Slice 1 is
+**complete on the §5 deliverables checklist**. Stage 3 has all 3
+reference-contract migrations complete (`jetton-minter`,
+`jetton-wallet`, `wallet-v5`); the Stage 5 internal migration
+playbook is in tree; the Stage 5 external RFC was published at
+[`doc/slice-1-rfc.md`](slice-1-rfc.md); Stage 4 CI conformance and
+fuzzing is wired; the former Tol workaround for
+`Envelope.payload: slice` is resolved in `02197a2c0`; the focused
+tol-tester suite now covers 571 cases. The Stage 4 gas-parity gap
+that was the last remaining blocker is closed by the FunC↔Tol
+parity harness in
+[`emulator/test/slice-1-stage-4-gas-parity-fixture.cpp`](../emulator/test/slice-1-stage-4-gas-parity-fixture.cpp)
+plus the widened
+[`scripts/check-slice-1-gas.py`](../scripts/check-slice-1-gas.py)
+gate; the historical
+[`doc/slice-1-gas-gap.md`](slice-1-gas-gap.md) record retains the
+§4 closure-spec walkthrough.
 
 If any one of these is missing, the slice is not done. Slipping
 the boundary creates exactly the cross-layer inconsistency this

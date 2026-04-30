@@ -804,6 +804,93 @@ target_link_libraries(test-celldb-actor-restart PRIVATE validator-common validat
 add_executable(test-http test/test-http.cpp)
 target_link_libraries(test-http PRIVATE toshttp)
 
+# Slice 1 Stage 4 gas-parity harness — pre-compile the migrated reference
+# contracts (.fc and .tol) into .boc files so the runtime fixture in
+# emulator/test/slice-1-stage-4-gas-parity-fixture.cpp can read them via
+# td::read_file rather than shelling out to func/tol/fift at test time.
+# Closes the §4 closure spec in doc/slice-1-gas-gap.md.
+set(SLICE1_GAS_PARITY_DIR ${CMAKE_CURRENT_BINARY_DIR}/slice1-gas-parity)
+file(MAKE_DIRECTORY ${SLICE1_GAS_PARITY_DIR})
+
+# Compile a .tol source to a .boc. Tol's --boc-output emits the BoC
+# write directive into its .fif output; running fift on that .fif then
+# materializes the .boc on disk.
+function(slice1_tol_to_boc TOL_SOURCE OUT_BOC)
+    get_filename_component(_stem ${OUT_BOC} NAME_WE)
+    set(_fif ${SLICE1_GAS_PARITY_DIR}/${_stem}.fif)
+    add_custom_command(
+        OUTPUT ${OUT_BOC}
+        COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
+                $<TARGET_FILE:tol> --boc-output ${OUT_BOC} -o ${_fif} ${TOL_SOURCE}
+        COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
+                $<TARGET_FILE:fift> ${_fif}
+        WORKING_DIRECTORY ${SLICE1_GAS_PARITY_DIR}
+        DEPENDS tol fift ${TOL_SOURCE}
+        COMMENT "Compiling Tol contract ${_stem} -> ${OUT_BOC}"
+        VERBATIM
+    )
+endfunction()
+
+# Compile FunC sources (one or more .fc files) to a .boc. func -W emits
+# the BoC write directive into its .fif output; running fift on that .fif
+# materializes the .boc on disk.
+function(slice1_func_to_boc OUT_BOC WORKING_DIR)
+    get_filename_component(_stem ${OUT_BOC} NAME_WE)
+    set(_fif ${SLICE1_GAS_PARITY_DIR}/${_stem}.fif)
+    set(_sources ${ARGN})
+    add_custom_command(
+        OUTPUT ${OUT_BOC}
+        COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
+                $<TARGET_FILE:func> -W ${OUT_BOC} -A -P -o ${_fif} ${_sources}
+        COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
+                $<TARGET_FILE:fift> ${_fif}
+        WORKING_DIRECTORY ${WORKING_DIR}
+        DEPENDS func fift ${_sources}
+        COMMENT "Compiling FunC contract ${_stem} -> ${OUT_BOC}"
+        VERBATIM
+    )
+endfunction()
+
+set(SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC ${SLICE1_GAS_PARITY_DIR}/jetton-minter-func.boc)
+set(SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC  ${SLICE1_GAS_PARITY_DIR}/jetton-minter-tol.boc)
+set(SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC ${SLICE1_GAS_PARITY_DIR}/jetton-wallet-func.boc)
+set(SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC  ${SLICE1_GAS_PARITY_DIR}/jetton-wallet-tol.boc)
+set(SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC     ${SLICE1_GAS_PARITY_DIR}/wallet-v5-func.boc)
+set(SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC      ${SLICE1_GAS_PARITY_DIR}/wallet-v5-tol.boc)
+
+slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/jetton-minter.tol
+                  ${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC})
+slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/jetton-wallet.tol
+                  ${SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC})
+slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5.tol
+                  ${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC})
+
+slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/jetton-minter.fc)
+slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/jetton-wallet.fc)
+# wallet-v5 lives at crypto/smartcont/wallet-v5-code.fc per the
+# migration playbook (verified via the find search in this slice's
+# closure work). It depends on crypto/smartcont/stdlib.fc, which is
+# passed first so its #pragma version >=0.4.4 declarations are in
+# scope when the contract sources are parsed.
+slice1_func_to_boc(${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/stdlib.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-code.fc)
+
+add_custom_target(slice1_gas_parity_contracts ALL
+    DEPENDS
+        ${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}
+        ${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC}
+        ${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}
+        ${SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC}
+        ${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}
+        ${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC}
+)
+
 add_executable(test-emulator
         test/test-td-main.cpp
         emulator/test/emulator-tests.cpp
@@ -813,8 +900,21 @@ add_executable(test-emulator
         emulator/test/slice-1-failure-phase-fixtures.cpp
         emulator/test/slice-1-extra-flags-fixtures.cpp
         emulator/test/slice-1-boc-envelope-fuzz-fixture.cpp
-        emulator/test/slice-1-stage-2-roundtrip-fixture.cpp)
+        emulator/test/slice-1-stage-2-roundtrip-fixture.cpp
+        # Slice 1 Stage 4 gas-parity harness (closes doc/slice-1-gas-gap.md
+        # §4; reads the .boc files materialized by the
+        # slice1_gas_parity_contracts target above).
+        emulator/test/slice-1-stage-4-gas-parity-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
+add_dependencies(test-emulator slice1_gas_parity_contracts)
+target_compile_definitions(test-emulator PRIVATE
+    SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}"
+    SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC}"
+    SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC="${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}"
+    SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC="${SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC}"
+    SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC="${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}"
+    SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC="${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC}"
+)
 
 get_directory_property(HAS_PARENT PARENT_DIRECTORY)
 if (HAS_PARENT)
