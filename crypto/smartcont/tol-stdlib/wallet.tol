@@ -1,0 +1,15 @@
+// Slice 3 wallet package foundation. Helpers land in Stage 5.
+tol 1.3
+
+import "@stdlib/slice3-common"
+
+const WALLET_PATTERN_ERROR_BASE = 0x0600
+
+fun walletPatternManifestHeader(): Slice3PatternManifestHeader {
+    return Slice3PatternManifestHeader {
+        manifestVersion: SLICE3_PATTERN_MANIFEST_VERSION,
+        patternId: SLICE3_PATTERN_WALLET,
+        publicErrorBase: WALLET_PATTERN_ERROR_BASE,
+        flags: 0
+    };
+}

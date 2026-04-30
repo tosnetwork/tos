@@ -1,0 +1,26 @@
+import "@stdlib/slice3-common"
+import "@stdlib/ownable"
+import "@stdlib/jetton"
+import "@stdlib/nft"
+import "@stdlib/wallet"
+import "@stdlib/multisig"
+
+fun main(): int {
+    val ownable = ownablePatternManifestHeader();
+    val jetton = jettonPatternManifestHeader();
+    val nft = nftPatternManifestHeader();
+    val wallet = walletPatternManifestHeader();
+    val multisig = multisigPatternManifestHeader();
+
+    assert(ownable.manifestVersion == SLICE3_PATTERN_MANIFEST_VERSION) throw 101;
+    assert(ownable.patternId == SLICE3_PATTERN_OWNABLE) throw 102;
+    assert(jetton.patternId == SLICE3_PATTERN_JETTON) throw 103;
+    assert(nft.patternId == SLICE3_PATTERN_NFT) throw 104;
+    assert(wallet.patternId == SLICE3_PATTERN_WALLET) throw 105;
+    assert(multisig.patternId == SLICE3_PATTERN_MULTISIG) throw 106;
+    return ownable.patternId + jetton.patternId + nft.patternId + wallet.patternId + multisig.patternId;
+}
+
+/**
+@testcase | 0 | | 15
+ */

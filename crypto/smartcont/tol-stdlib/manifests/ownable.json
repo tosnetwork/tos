@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "schema": "slice-3-pattern-manifest",
+  "pattern": "ownable",
+  "stage": "Slice 3 Stage 2",
+  "stdlib_import": "@stdlib/ownable",
+  "opcode_prefixes": [],
+  "get_method_ids": [],
+  "require_codes": [
+    {
+      "name": "OWNABLE_ERROR_NOT_OWNER",
+      "value": 769,
+      "hex": "0x0301",
+      "class": "Authorization"
+    },
+    {
+      "name": "OWNABLE_ERROR_NOT_PENDING_OWNER",
+      "value": 770,
+      "hex": "0x0302",
+      "class": "Authorization"
+    }
+  ],
+  "public_errors": [
+    "OWNABLE_ERROR_NOT_OWNER",
+    "OWNABLE_ERROR_NOT_PENDING_OWNER"
+  ],
+  "storage_fields": [
+    {
+      "name": "Ownable.owner",
+      "type": "address"
+    },
+    {
+      "name": "OwnableTransfer.pendingOwner",
+      "type": "address?"
+    }
+  ],
+  "wire_compatibility_exceptions": []
+}

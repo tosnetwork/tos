@@ -667,7 +667,7 @@ reference contracts are already written in high-level `contract` /
 dogfoods the new stdlib patterns without changing wire bytes or
 breaking the gas budget.
 
-**Status.** 🚧 Stage 1 complete as of 2026-04-30; Stage 2 is the active
+**Status.** 🚧 Stage 2 complete as of 2026-04-30; Stage 3 is the active
 implementation gate. The Slice 3 policy RFC and stage plan live at
 [`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md) and are approved.
 The machine-readable Stage 0 baseline capture lives at
@@ -676,8 +676,11 @@ The deterministic replay/property substrate is now checked in via
 `doc/slice-3-replay-fixture-schema.json`,
 `emulator/test/slice-3-replay-fixtures/jetton-minter-stage1.json`,
 `emulator/test/slice-3-replay-fixture.cpp`, and
-`scripts/check-slice-3-replay-fixtures.py`. Implementation now moves to
-Stage 2: stdlib foundation and package shape.
+`scripts/check-slice-3-replay-fixtures.py`. Stage 2 stabilized
+`@stdlib/ownable`, `@stdlib/jetton`, `@stdlib/nft`, `@stdlib/wallet`,
+`@stdlib/multisig`, shared `@stdlib/slice3-common`, and the pattern
+manifest format. Implementation now moves to Stage 3: Jetton vertical
+slice.
 
 **Stage plan.**
 
@@ -692,12 +695,13 @@ Stage 2: stdlib foundation and package shape.
    `jetton-minter` replay fixture plus a deterministic
    `splitmix64-unknown-opcode` negative generator, and wires the
    harness into CI.
-3. 📝 **Stage 2 — stdlib foundation and package shape.** Add stable
-   package layout under `crypto/smartcont/tol-stdlib/` for
-   `ownable`, `jetton`, `nft`, `wallet`, and `multisig`; add shared
-   helpers for ownership, raw replies, `OP_ERROR`, query/reply table
-   storage, and generated pattern manifests.
-4. ⬜ **Stage 3 — Jetton vertical slice.** Ship Jetton master/wallet
+3. ✅ **Stage 2 — stdlib foundation and package shape.** Completed
+   2026-04-30. Adds stable package imports for `ownable`, `jetton`,
+   `nft`, `wallet`, and `multisig`; shared `slice3-common` helpers for
+   raw replies, `OP_ERROR` body construction, and pending-reply key
+   hashing; a pattern-manifest schema plus initial manifests; and a
+   minimal ownable helper with focused tol-tester coverage.
+4. 📝 **Stage 3 — Jetton vertical slice.** Ship Jetton master/wallet
    helpers, migrate the Slice 2 `jetton-minter.tol` and
    `jetton-wallet.tol` to those helpers where wire-compatible, and add
    replay/property coverage for transfer, burn, excesses, bounces,
@@ -861,7 +865,8 @@ before the corresponding slice can start.
 - *Budget gate:* `tol.md` Q3 imposes a ≤ 15% bytecode-overhead
   budget per stdlib pattern. Pattern designs that exceed it must
   be trimmed before shipping; this can require iterating with the
-  contract team mid-stage.
+  contract team mid-stage. Stage 2 has only helper/package foundation;
+  the first production budget comparison resumes in Stage 3 Jetton.
 - *Replay/property substrate:* Closed in Slice 3 Stage 1. The approved
   hybrid substrate now has a schema, JSON fixture directory, runner
   script, CI wiring, and first `jetton-minter` emulator replay fixture
@@ -1017,8 +1022,22 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   fixture `emulator/test/slice-3-replay-fixture.cpp` are checked in and
   CI-wired. The first deterministic negative generator is
   `splitmix64-unknown-opcode`.
+- ✅ **Slice 3 Stage 2 stdlib foundation** — closed 2026-04-30.
+  Stable imports now exist for `@stdlib/ownable`, `@stdlib/jetton`,
+  `@stdlib/nft`, `@stdlib/wallet`, and `@stdlib/multisig`, with shared
+  helpers in `@stdlib/slice3-common`. Pattern manifests live under
+  `crypto/smartcont/tol-stdlib/manifests/`, and the minimal ownable
+  helper has focused tol-tester coverage.
 
 ## 12. Revision notes
+
+### r12 (Slice 3 Stage 2 stdlib foundation)
+
+- §6 Slice 3 now marks Stage 2 complete and Stage 3 active.
+- Added stable Slice 3 stdlib import names, shared helper foundation,
+  initial pattern manifests, and minimal ownable helper coverage.
+- §11.2 / §11.5 now record that package-shape work is closed; production
+  budget comparisons resume with the Stage 3 Jetton vertical slice.
 
 ### r11 (Slice 3 Stage 1 replay harness)
 

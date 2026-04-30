@@ -164,6 +164,18 @@ Deliverables:
   opcode prefixes, get-method ids, auto-numbered `require` codes, public
   error codes, storage fields, and known wire-compatibility exceptions.
 
+Implementation status: complete as of 2026-04-30. The stable import
+names are `@stdlib/ownable`, `@stdlib/jetton`, `@stdlib/nft`,
+`@stdlib/wallet`, and `@stdlib/multisig`, with shared Slice 3 helpers
+in `@stdlib/slice3-common`. The manifest schema is
+`doc/slice-3-pattern-manifest-schema.json`, and the first manifest set
+lives under `crypto/smartcont/tol-stdlib/manifests/`. The minimal
+ownable helper exports `Ownable`, `OwnableTransfer`, explicit
+authorization error codes, owner checks, and two-step pending-owner
+acceptance. Focused coverage is in
+`tol-tester/tests/slice3-ownable-positive.tol` and
+`tol-tester/tests/slice3-stdlib-layout.tol`.
+
 Exit criterion: a minimal `ownable` helper is used by a focused test
 contract, passes replay tests, and stays within the 15% budget.
 
@@ -323,8 +335,6 @@ writing the RFC and the corrective rule now present in the text.
 
 Open issues intentionally left for implementation design:
 
-- Whether stdlib pattern modules are directories with `init.tol` files or
-  flat `.tol` files under `tol-stdlib/`.
 - The concrete representation of the stdlib query/reply pending table.
 - The first external author used for the Stage 8 trial.
 

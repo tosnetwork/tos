@@ -1,0 +1,62 @@
+// Slice 3 ownable pattern foundation.
+tol 1.3
+
+import "@stdlib/slice3-common"
+
+const OWNABLE_ERROR_NOT_OWNER = 0x0301
+const OWNABLE_ERROR_NOT_PENDING_OWNER = 0x0302
+
+struct Ownable {
+    owner: address
+}
+
+struct OwnableTransfer {
+    pendingOwner: address?
+}
+
+fun ownablePatternManifestHeader(): Slice3PatternManifestHeader {
+    return Slice3PatternManifestHeader {
+        manifestVersion: SLICE3_PATTERN_MANIFEST_VERSION,
+        patternId: SLICE3_PATTERN_OWNABLE,
+        publicErrorBase: OWNABLE_ERROR_NOT_OWNER,
+        flags: 0
+    };
+}
+
+fun Ownable.isOwner(self, sender: address): bool {
+    return self.owner == sender;
+}
+
+fun Ownable.requireOwner(self, sender: address, errorCode: int = OWNABLE_ERROR_NOT_OWNER): void {
+    require(self.isOwner(sender), ErrorClass.Authorization, errorCode);
+}
+
+fun Ownable.withOwner(self, newOwner: address): Ownable {
+    return Ownable { owner: newOwner };
+}
+
+fun OwnableTransfer.hasPending(self): bool {
+    return self.pendingOwner != null;
+}
+
+fun OwnableTransfer.start(mutate self, newOwner: address): void {
+    self.pendingOwner = newOwner;
+}
+
+fun OwnableTransfer.clear(mutate self): void {
+    self.pendingOwner = null;
+}
+
+fun OwnableTransfer.requirePendingOwner(
+    self,
+    sender: address,
+    errorCode: int = OWNABLE_ERROR_NOT_PENDING_OWNER
+): void {
+    require(self.pendingOwner != null && self.pendingOwner! == sender, ErrorClass.Authorization, errorCode);
+}
+
+fun ownableAcceptPendingOwner(mutate ownable: Ownable, mutate transfer: OwnableTransfer, sender: address): void {
+    transfer.requirePendingOwner(sender);
+    ownable.owner = sender;
+    transfer.clear();
+}

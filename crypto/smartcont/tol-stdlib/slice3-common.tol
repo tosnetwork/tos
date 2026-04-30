@@ -1,0 +1,74 @@
+// Slice 3 shared helpers for domain stdlib patterns.
+tol 1.3
+
+const SLICE3_PATTERN_MANIFEST_VERSION = 1
+
+const SLICE3_PATTERN_OWNABLE = 1
+const SLICE3_PATTERN_JETTON = 2
+const SLICE3_PATTERN_NFT = 3
+const SLICE3_PATTERN_WALLET = 4
+const SLICE3_PATTERN_MULTISIG = 5
+
+const SLICE3_REPLY_KEY_NO_OPCODE = 0
+const SLICE3_REPLY_KEY_HAS_OPCODE = 1
+
+struct Slice3PatternManifestHeader {
+    manifestVersion: uint16
+    patternId: uint16
+    publicErrorBase: uint16
+    flags: uint16
+}
+
+struct Slice3RawReply {
+    message: cell
+    mode: int
+}
+
+struct Slice3PendingReply {
+    expectedResponder: address
+    queryId: uint64
+    expectedReplyOpcode: uint32?
+    createdAt: uint32
+    expiresAt: uint32
+}
+
+struct Slice3PendingReplyTable {
+    entries: map<uint256, Slice3PendingReply>
+}
+
+fun slice3RawReply(message: cell, mode: int = SEND_MODE_REGULAR): Slice3RawReply {
+    return Slice3RawReply { message, mode };
+}
+
+fun Slice3RawReply.send(self): void {
+    sendRawMessage(self.message, self.mode);
+}
+
+fun slice3Error(queryId: uint64, originalOp: uint32, errorClass: ErrorClass, errorCode: uint16): Error {
+    return Error { queryId, originalOp, errorClass, errorCode, diagnostic: null };
+}
+
+fun slice3ErrorBody(queryId: uint64, originalOp: uint32, errorClass: ErrorClass, errorCode: uint16): cell {
+    return slice3Error(queryId, originalOp, errorClass, errorCode).toCell();
+}
+
+fun slice3PendingReplyKeyHash(
+    expectedResponder: address,
+    queryId: uint64,
+    expectedReplyOpcode: uint32? = null
+): uint256 {
+    var b = beginCell()
+        .storeAddress(expectedResponder)
+        .storeUint(queryId, 64);
+    if (expectedReplyOpcode == null) {
+        b.storeUint(SLICE3_REPLY_KEY_NO_OPCODE, 1);
+    } else {
+        b.storeUint(SLICE3_REPLY_KEY_HAS_OPCODE, 1)
+            .storeUint(expectedReplyOpcode!, 32);
+    }
+    return b.hash();
+}
+
+fun slice3NewPendingReplyTable(): Slice3PendingReplyTable {
+    return Slice3PendingReplyTable { entries: createEmptyMap() };
+}

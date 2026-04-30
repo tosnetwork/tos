@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "schema": "slice-3-pattern-manifest",
+  "pattern": "wallet",
+  "stage": "Slice 3 Stage 5",
+  "stdlib_import": "@stdlib/wallet",
+  "opcode_prefixes": [],
+  "get_method_ids": [],
+  "require_codes": [],
+  "public_errors": [],
+  "storage_fields": [],
+  "wire_compatibility_exceptions": [
+    "wallet-v5 signed external bodies remain raw and are not forced through the internal Envelope/query_id model"
+  ]
+}

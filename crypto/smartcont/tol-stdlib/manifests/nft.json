@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "schema": "slice-3-pattern-manifest",
+  "pattern": "nft",
+  "stage": "Slice 3 Stage 4",
+  "stdlib_import": "@stdlib/nft",
+  "opcode_prefixes": [],
+  "get_method_ids": [],
+  "require_codes": [],
+  "public_errors": [],
+  "storage_fields": [],
+  "wire_compatibility_exceptions": []
+}
