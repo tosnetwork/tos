@@ -523,9 +523,12 @@ merged via `6f188fdcf`), Stage 6 (`c7d9448eb` merged via
 `c6bb72fc2`). Stage 8 re-migrated all three Slice 1 reference
 contracts to Slice 2 syntax: `jetton-minter` in `38856e950`,
 `jetton-wallet` in `bd851ebb4`, and `wallet-v5` in `621e7c514`.
-The current regression suite reports 617/617 tol-tester pass,
-24/24 test-emulator pass, and the FunC↔Tol gas-parity gate green
-for all three Slice 1 reference contracts.
+Post-Stage 8 query-id dispatch hardening landed in `71fe23f53`:
+the 32-bit opcode is now the only contract-wide dispatch field,
+while `queryId` is discovered per matched receiver scope. The
+current regression suite reports 617/617 tol-tester pass, 24/24
+test-emulator pass, and the FunC↔Tol gas-parity gate green for all
+three Slice 1 reference contracts.
 
 **Implementation stages.**
 
@@ -637,6 +640,16 @@ for all three Slice 1 reference contracts.
    and contract-local `get fun` methods while preserving the
    wallet-v5 signed-body parsing and short unknown-opcode return
    path.
+10. ✅ **Post-Stage 8 hardening — receiver-local `queryId`
+    dispatch semantics.** Completed 2026-04-30 in commit
+    `71fe23f53`. Removes the common pre-dispatch `queryId` load
+    from `tol/pipe-lower-contract.cpp`, treats the 32-bit opcode as
+    the only contract-wide dispatch field, and tightens
+    `tol/pipe-check-query-id-propagation.cpp` so receiver scopes do
+    not inherit any function-level query-id source. Adds
+    `contract-mixed-queryid-nonquery-positive.tol` to prove that a
+    query/reply receiver and a non-query receiver can coexist in the
+    same contract without a contract-wide query-id preflight.
 
 ### Slice 3 — Q3 + Q4, weeks 53–78 (six months)
 
