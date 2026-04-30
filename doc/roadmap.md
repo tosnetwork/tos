@@ -920,6 +920,90 @@ Auction, DAO/governance, oracle, and payment-channel templates,
 each one preceded by a short design note. Cross-language ABI is
 frozen at the end of this slice.
 
+**Status.** 🚧 Stage 0 drafted 2026-04-30. The implementation input
+candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
+[`doc/slice-5-func-tol-abi.md`](slice-5-func-tol-abi.md), and
+[`doc/slice-5-abi-manifest-schema.json`](slice-5-abi-manifest-schema.json).
+No second-wave helper implementation begins until Stage 0 security
+review closes.
+
+**Stage plan.**
+
+1. 🚧 **Stage 0 — policy and ABI freeze input.** Drafted
+   2026-04-30.
+
+   - ✅ Draft Slice 5 policy RFC and stage plan.
+   - ✅ Draft FunC<->Tol ABI freeze boundary.
+   - ✅ Draft Slice 5 ABI manifest schema.
+   - ✅ Update roadmap status and dependencies.
+   - ⬜ Security review and approval.
+   - ⬜ Exit criterion: ABI boundary and stage plan are approved.
+
+2. ⬜ **Stage 1 — ABI manifest validator and interop harness.**
+
+   - ⬜ Add `scripts/check-slice-5-abi-manifests.py`.
+   - ⬜ Add one FunC-produced and one Tol-produced fixture that
+     serialize the same body/cell shape and compare the result.
+   - ⬜ Validate opcode width, getter stack order, error-code ranges,
+     `queryId` policy, cell-field encodings, and compatibility
+     exceptions.
+   - ⬜ Wire into release-package checks without changing bytecode.
+
+3. ⬜ **Stage 2 — auction package.**
+
+   - ⬜ Add `@stdlib/auction`.
+   - ⬜ Migrate or wrap `examples/slice4/postponed-auction.tol`
+     through the package where budget permits.
+   - ⬜ Add ABI/behaviour manifests, replay coverage, scaffold output,
+     and tests for bid, too-early bid, close, settle, refund/excess,
+     duplicate `queryId`, stale close, low bid, and malformed body.
+
+4. ⬜ **Stage 3 — DAO / governance package.**
+
+   - ⬜ Add `@stdlib/governance`.
+   - ⬜ Add proposal, vote, quorum/threshold, cancel/expire, execute,
+     and action-list validation helpers.
+   - ⬜ Add tests for duplicate vote, unauthorized proposer, quorum
+     boundary, threshold boundary, expired proposal, malformed action
+     list, replayed execution, and unknown opcode.
+
+5. ⬜ **Stage 4 — oracle package.**
+
+   - ⬜ Add `@stdlib/oracle`.
+   - ⬜ Add reporter-set authorization, round ids, freshness windows,
+     quorum/median aggregation, duplicate report rejection, and stale
+     data handling.
+   - ⬜ Add tests for unauthorized reporter, duplicate reporter,
+     insufficient quorum, stale round, outlier handling, replayed round
+     id, and unknown opcode.
+
+6. ⬜ **Stage 5 — payment-channel package.**
+
+   - ⬜ Add `@stdlib/payment-channel`.
+   - ⬜ Add signed state updates, monotonic sequence numbers,
+     cooperative close, challenge close, settlement, and body builders.
+   - ⬜ Add tests for signature failure, seqno replay, wrong channel id,
+     stale challenge, premature settlement, duplicate close, and
+     malformed state body.
+
+7. ⬜ **Stage 6 — scaffolding, docs, and release candidate.**
+
+   - ⬜ Extend `tol new --pattern` for auction, governance, oracle, and
+     payment-channel.
+   - ⬜ Generate examples, ABI manifests, behaviour manifests, replay
+     stubs, deploy stubs, opcode maps, method-id maps, and error-code
+     maps.
+   - ⬜ Add contract-author docs, audit checklists, and
+     `scripts/check-slice-5-release-package.py`.
+
+8. ⬜ **Stage 7 — ABI freeze sign-off and external adoption.**
+
+   - ⬜ Freeze the ABI manifest schema.
+   - ⬜ Record canonical ABI manifest hashes for second-wave packages.
+   - ⬜ Record at least three external production contracts using the
+     second-wave stdlib, or explicitly mark Slice 5 as
+     release-candidate-only until those deployments exist.
+
 ### Slice 6 — Year 3 protocol-heavy items
 
 `actor.md` §5.1 (supervision) and §5.2 (time primitive) become
@@ -935,7 +1019,7 @@ is approved.
 | Slice 2 | exhaustiveness for state machines (still informal); domain stdlib; behaviour traits |
 | Slice 3 | supervision; scheduled messages; capability handles; bounded postponement; trait / behaviour syntax; new wire surface |
 | Slice 4 | supervision; scheduled messages |
-| Slice 5 | capability handles |
+| Slice 5 | capability handles; protocol delivery SLA / dead-letter handling; protocol back-pressure emission; supervision; scheduled messages |
 | Slice 6 | none of the above (all unblocked) |
 
 A phase boundary is the right place to say no. Pulling Slice 4
@@ -978,13 +1062,13 @@ without protocol support, are the historical failure mode of
 multi-layer systems. The 26-week first slice exists to avoid that
 mode. Every later slice depends on it.
 
-The right next action is Slice 5 Stage 0 design: lock the second-wave
-stdlib targets and the FunC↔Tol cross-language ABI plan before adding
-auction, DAO/governance, oracle, or payment-channel templates. The
-`actor.md` §5.7 delivery-SLA RFC should run in parallel because it still
-blocks protocol-level back-pressure and later supervision semantics,
-but Slice 4's contract-level bounded postponement is complete without
-that dependency.
+The right next action is Slice 5 Stage 0 security review: approve or
+revise the second-wave stdlib target boundaries and the FunC<->Tol ABI
+freeze plan before adding auction, DAO/governance, oracle, or
+payment-channel templates. The `actor.md` §5.7 delivery-SLA RFC should
+run in parallel because it still blocks protocol-level back-pressure and
+later supervision semantics, but Slice 4's contract-level bounded
+postponement is complete without that dependency.
 
 ## 11. Known unscheduled work and cross-Slice blockers
 
@@ -1081,14 +1165,12 @@ before the corresponding slice can start.
 
 **Slice 5** — Second-wave stdlib + cross-language ABI freeze
 
-- *Hard:* Slice 3 success criterion (`§9` row 3) must be reached:
-  "new contract author can produce a working Jetton or NFT in
-  under one hour using `tol new`, the stdlib, and the
-  documentation". Without that signal, Slice 5 is premature.
-- *Missing design:* Cross-language ABI between FunC and Tol —
-  calling convention, error propagation, type marshalling — has
-  no design document. ABI freeze is the Slice 5 deliverable per
-  `tol.md` Year 2; design must precede freeze.
+- *Status:* Stage 0 draft exists. Slice 3 and Slice 4 prerequisites are
+  complete; the next blocker is security review of the Slice 5 policy
+  and ABI boundary.
+- *ABI design:* Cross-language ABI between FunC and Tol now has a draft
+  boundary document and manifest schema. Stage 1 must prove it with a
+  mixed FunC/Tol interop fixture before template implementation begins.
 - *Cross-cut:* `error_class = 5` back-pressure is reserved by
   `policy.md` §5.3 but blocked on §5.7 (see §11.1).
 
@@ -1265,8 +1347,23 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   hardening, postponed-auction reference, check-only behaviour
   manifests, three-pattern trait coverage, generated examples, author
   docs, and `scripts/check-slice-4-release-package.py`.
+- 🚧 **Slice 5 Stage 0 policy / ABI freeze input** — drafted
+  2026-04-30. `doc/tos-slice-5-policy.md`,
+  `doc/slice-5-func-tol-abi.md`, and
+  `doc/slice-5-abi-manifest-schema.json` define the second-wave stdlib
+  stage plan and FunC<->Tol ABI freeze boundary. Security review remains
+  open.
 
 ## 12. Revision notes
+
+### r22 (Slice 5 Stage 0 draft)
+
+- §6 Slice 5 now has a Stage 0-7 implementation plan.
+- Added the Slice 5 policy RFC, FunC<->Tol ABI freeze draft, and ABI
+  manifest schema as review input.
+- Updated §7 and §11 to make clear that Slice 5 does not implement
+  capability handles, scheduled messages, supervision, or protocol
+  back-pressure.
 
 ### r21 (Slice 4 post-review hardening)
 

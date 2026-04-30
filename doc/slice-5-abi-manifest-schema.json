@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "doc/slice-5-abi-manifest-schema.json",
+  "title": "TOS Slice 5 FunC<->Tol ABI manifest",
+  "type": "object",
+  "required": [
+    "version",
+    "schema",
+    "contract",
+    "language",
+    "stage",
+    "messages",
+    "get_methods",
+    "cell_types",
+    "errors",
+    "wire_compatibility_exceptions"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "schema": {
+      "type": "string",
+      "const": "slice-5-abi-manifest"
+    },
+    "contract": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "language": {
+      "type": "string",
+      "enum": [
+        "tol",
+        "func",
+        "mixed"
+      ]
+    },
+    "stage": {
+      "type": "string"
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "direction",
+          "opcode",
+          "query_id",
+          "body_encoding",
+          "fields"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "internal_in",
+              "internal_out",
+              "external_in",
+              "external_out"
+            ]
+          },
+          "opcode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^0x[0-9a-fA-F]{8}$"
+          },
+          "query_id": {
+            "type": "string",
+            "enum": [
+              "required_after_opcode",
+              "optional",
+              "absent",
+              "custom_external"
+            ]
+          },
+          "body_encoding": {
+            "type": "string",
+            "enum": [
+              "tol_auto_struct",
+              "manual_cell",
+              "raw_slice",
+              "tlb_reference"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/field"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "get_methods": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "method_id",
+          "id_source",
+          "arguments",
+          "returns"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "method_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id_source": {
+            "type": "string",
+            "enum": [
+              "explicit",
+              "auto_derived"
+            ]
+          },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/stack_item"
+            }
+          },
+          "returns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/stack_item"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "cell_types": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "encoding",
+          "fields"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "tol_auto_struct",
+              "manual_builder",
+              "tlb_reference",
+              "raw_suffix"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/field"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "code",
+          "class"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "code": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "class": {
+            "type": "string",
+            "enum": [
+              "Ok",
+              "Transient",
+              "Permanent",
+              "Authorization",
+              "Protocol",
+              "BackPressure",
+              "ApplicationSpecific"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "wire_compatibility_exceptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "exception",
+          "reason"
+        ],
+        "properties": {
+          "exception": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "field": {
+      "type": "object",
+      "required": [
+        "name",
+        "type",
+        "bits",
+        "refs"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "type": {
+          "type": "string"
+        },
+        "bits": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "refs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "stack_item": {
+      "type": "object",
+      "required": [
+        "name",
+        "type"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
