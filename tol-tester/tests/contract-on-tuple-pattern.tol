@@ -1,0 +1,41 @@
+struct ContractOnTupleStorage {
+    open: uint32;
+    @on(Settling) payoutsRemaining: uint32;
+    @on(Settling) settlingCounter: uint32;
+}
+
+struct (0x00000063) ContractOnTupleOpen {
+    queryId: uint64;
+}
+
+struct (0x00000064) ContractOnTupleSettle {
+    queryId: uint64;
+}
+
+fun helper(x: int): int {
+    return x;
+}
+
+contract ContractOnTuple {
+    storage: ContractOnTupleStorage
+    states: Open, Settling
+    @initial state Open
+
+    receive(msg: ContractOnTupleOpen) on Open {
+        save(ContractOnTupleStorage { open: 1, payoutsRemaining: 0, settlingCounter: 0 });
+        become Settling;
+    }
+
+    receive(msg: ContractOnTupleSettle) on Settling {
+        val (a, b) = (storage.payoutsRemaining, storage.settlingCounter);
+        val launderedA = helper(a);
+        save(ContractOnTupleStorage { open: launderedA, payoutsRemaining: b, settlingCounter: 0 });
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr forwarding `@on(Settling)` field across function boundary not yet supported
+@stderr doc/tos-language-syntax-policy.md §5
+ */

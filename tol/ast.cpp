@@ -68,6 +68,9 @@ AnnotationKind Vertex<ast_annotation>::parse_kind(std::string_view name) {
   if (name == "@on_bounced_policy") {
     return AnnotationKind::on_bounced_policy;
   }
+  if (name == "@on") {
+    return AnnotationKind::on_states;
+  }
 
   // no special treating, allow with or without arguments, don't analyze
   if (name == "@custom" || name.starts_with("@custom.") || name == "@test" || name.starts_with("@test.") || name == "@deprecated") {

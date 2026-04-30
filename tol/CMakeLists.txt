@@ -29,6 +29,7 @@ set(TOL_SOURCE
         pipe-detect-inline-in-place.cpp
         pipe-check-serialized-fields.cpp
         pipe-check-state-reachability.cpp
+        pipe-check-field-scoping.cpp
         pipe-lower-contract.cpp
         pipe-check-query-id-propagation.cpp
         pipe-lazy-load-insertions.cpp

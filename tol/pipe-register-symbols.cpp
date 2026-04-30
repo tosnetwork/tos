@@ -189,7 +189,12 @@ static StructPtr register_struct(V<ast_struct_declaration> v, StructPtr base_str
         err("redeclaration of field `{}`", field_name).fire(v_field);
       }
     }
-    fields.emplace_back(new StructFieldData(std::move(field_name), v_ident, i, v_field->is_private, v_field->is_readonly, v_field->type_node, v_field->default_value));
+    std::vector<std::string> on_states_copy;
+    on_states_copy.reserve(v_field->on_states.size());
+    for (std::string_view s : v_field->on_states) {
+      on_states_copy.emplace_back(s);
+    }
+    fields.emplace_back(new StructFieldData(std::move(field_name), v_ident, i, v_field->is_private, v_field->is_readonly, v_field->type_node, v_field->default_value, std::move(on_states_copy)));
   }
   if (fields.size() >= 64) {
     err("too big struct (64 or more fields)").fire(v->get_identifier());

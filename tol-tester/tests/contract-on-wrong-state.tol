@@ -1,0 +1,26 @@
+struct ContractOnWrongStateStorage {
+    open: uint32;
+    @on(Settling) payoutsRemaining: uint32;
+}
+
+struct (0x00000053) ContractOnWrongStatePing {
+    queryId: uint64;
+}
+
+contract ContractOnWrongState {
+    storage: ContractOnWrongStateStorage
+    states: Open, Settling
+    @initial state Open
+
+    receive(msg: ContractOnWrongStatePing) on Open {
+        val leak = storage.payoutsRemaining;
+        save(ContractOnWrongStateStorage { open: leak, payoutsRemaining: 0 });
+        become Settling;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr storage field `payoutsRemaining` is annotated `@on(Settling)`
+@stderr doc/tos-language-syntax-policy.md §3.4
+ */

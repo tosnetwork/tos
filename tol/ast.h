@@ -153,6 +153,7 @@ enum class AnnotationKind {
   pure,
   overflow1023_policy,
   on_bounced_policy,
+  on_states,                  // Slice 2 Stage 3: `@on(State1, State2)` on storage struct fields
   custom,
   unknown,
 };
@@ -1471,12 +1472,19 @@ struct Vertex<ast_struct_field> final : ASTOtherVararg {
   bool is_readonly;               // declared as `readonly field: int`
   AnyTypeV type_node;             // always exists, typing struct fields is mandatory
   AnyExprV default_value;         // nullptr if no default
+  // Slice 2 Stage 3 (doc/tos-language-syntax-policy.md §3.4): `@on(State1, State2)` annotation
+  // empty = no annotation (field readable in every state); non-empty = field is only readable
+  // inside receivers whose `on State` clause names one of the listed states.
+  std::vector<std::string_view> on_states;
+  SrcRange on_states_range;       // points at the `@on(...)` syntax for diagnostics; default is undefined()
 
   auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  bool has_on_states_annotation() const { return !on_states.empty(); }
 
-  Vertex(SrcRange range, V<ast_identifier> name_identifier, bool is_private, bool is_readonly, AnyExprV default_value, AnyTypeV type_node)
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, bool is_private, bool is_readonly, AnyExprV default_value, AnyTypeV type_node, std::vector<std::string_view> on_states = {}, SrcRange on_states_range = SrcRange::undefined())
     : ASTOtherVararg(ast_struct_field, range, {name_identifier})
-    , is_private(is_private), is_readonly(is_readonly), type_node(type_node), default_value(default_value) {}
+    , is_private(is_private), is_readonly(is_readonly), type_node(type_node), default_value(default_value)
+    , on_states(std::move(on_states)), on_states_range(on_states_range) {}
 };
 
 template<>
