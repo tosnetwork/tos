@@ -466,29 +466,29 @@ branch.
       that document also specifies the exact follow-up work
       required to close the checkbox. The box stays unchecked
       until that follow-up lands.)*
-- [ ] An external RFC has been published with the
+- [x] An external RFC has been published with the
       §8.1 zero-wire-change commitment explicitly called out.
-      *(RFC not started; playbook exists, but RFC publication
-      and release notes remain pending.)*
+      *(Published 2026-04-30 at
+      [`doc/slice-1-rfc.md`](slice-1-rfc.md); commit `TBD-RFC-HASH`.)*
 
-**Progress as of 2026-04-30:** 7 of 9 checked. Stage 3 has
+**Progress as of 2026-04-30:** 8 of 9 checked. Stage 3 has
 all 3 reference-contract migrations complete (`jetton-minter`,
-`jetton-wallet`, `wallet-v5`), and the Stage 5 internal migration
-playbook now exists. Stage 4 CI conformance / fuzzing is wired.
-The former Tol workaround for `Envelope.payload: slice` is resolved
-in `02197a2c0`, and the focused suite now covers 571 tol-tester
-cases.
+`jetton-wallet`, `wallet-v5`), the Stage 5 internal migration
+playbook is in tree, and the Stage 5 external RFC has now been
+published at [`doc/slice-1-rfc.md`](slice-1-rfc.md). Stage 4 CI
+conformance / fuzzing is wired. The former Tol workaround for
+`Envelope.payload: slice` is resolved in `02197a2c0`, and the
+focused suite now covers 571 tol-tester cases.
 
-The Stage 4 gas gap is now precisely scoped and accepted under
+The Stage 4 gas gap is precisely scoped and accepted under
 single-signer governance in
 [`doc/slice-1-gas-gap.md`](slice-1-gas-gap.md): the focused Tol
 regression gate is operational; FunC↔Tol black-box parity is
 documented as a follow-up with an explicit closure spec and is the
-ninth checkbox's blocker.
+ninth (and last remaining) checkbox's blocker.
 
-Remaining checklist items break down to: final Stage 4
-pre-migration gas evidence (gap document + follow-up harness) and
-the Stage 5 external RFC / release notes.
+The single remaining checklist item is final Stage 4
+pre-migration gas evidence (gap document + follow-up harness).
 
 If any one of these is missing, the slice is not done. Slipping
 the boundary creates exactly the cross-layer inconsistency this

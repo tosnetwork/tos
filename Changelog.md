@@ -3,6 +3,7 @@
 1. Networking improvements: anti-spam measures that could affect block rate have been introduced in overlays, ADNL, and QUIC
 2. Improved tooling for handling QUIC ports
 3. Mempool changes that protect the collation process from external message overload
+4. Slice 1 actor-layer envelope discipline (on the `actor-layer` branch): external RFC published at [`doc/slice-1-rfc.md`](./doc/slice-1-rfc.md). Zero wire-format changes; opt-in Tol-stdlib `Envelope` / `Error` / `OP_ERROR` types; three reference migrations (`jetton-minter`, `jetton-wallet`, `wallet-v5`) all within the bytecode budget.
 
 
 Besides the work of the core team, this update also includes contributions from multiple bug-bounty hunters and [contest](https://t.me/contest/447) participants. The full list will be added to changelog and release note after contest result finalization.
