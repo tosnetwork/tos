@@ -667,7 +667,7 @@ reference contracts are already written in high-level `contract` /
 dogfoods the new stdlib patterns without changing wire bytes or
 breaking the gas budget.
 
-**Status.** 🚧 Stage 3 complete as of 2026-04-30; Stage 4 is the active
+**Status.** 🚧 Stage 4 complete as of 2026-04-30; Stage 5 is the active
 implementation gate. The Slice 3 policy RFC and stage plan live at
 [`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md) and are approved.
 The machine-readable Stage 0 baseline capture lives at
@@ -683,7 +683,11 @@ manifest format. Stage 3 moved the official Jetton master/wallet
 references onto `@stdlib/jetton` compatibility wrappers where
 wire-compatible, added direct stdlib tests and manifest detail, and
 kept the regenerated Jetton Tol BoCs byte-for-byte identical to the
-Stage 0 baseline. Implementation now moves to Stage 4: NFT vertical
+Stage 0 baseline. Stage 4 added the NFT TEP-62 / royalty helper surface
+and fixture-level wire-shape coverage for mint, deploy, transfer,
+ownership replies, static-data replies, royalties, authorization
+failure, unknown opcode mapping, and bounced-message detection.
+Implementation now moves to Stage 5: wallet and multisig vertical
 slice.
 
 **Stage plan.**
@@ -712,11 +716,15 @@ slice.
    and adds focused stdlib coverage for state-init/address derivation,
    TEP-74 body construction, duplicate `query_id` determinism, and
    error-code mapping. The Stage 0 BoC hashes and sizes are unchanged.
-5. 📝 **Stage 4 — NFT vertical slice.** Ship NFT collection/item helpers
-   and official NFT fixtures/contracts with replay/property coverage
-   for mint, transfer, ownership query, collection/item linkage,
-   bounced transfer, unknown opcode, and authorization failures.
-6. ⬜ **Stage 5 — wallet and multisig vertical slice.** Add wallet-v5
+5. ✅ **Stage 4 — NFT vertical slice.** Completed 2026-04-30. Ships
+   NFT collection/item helpers in `@stdlib/nft`, including TEP-62 /
+   royalty opcode constants, collection mint body construction,
+   item state-init/address derivation, raw transfer/deploy/reply
+   builders, bounce-flag detection, and item/collection error mapping.
+   Focused stdlib coverage checks mint, transfer, ownership query
+   replies, collection/item linkage, bounced-message detection, unknown
+   opcode mapping, and authorization failures against manual builders.
+6. 📝 **Stage 5 — wallet and multisig vertical slice.** Add wallet-v5
    helpers for signed external bodies, seqno checks, wallet-id checks,
    action-list validation, and extension parsing while preserving the
    raw wallet-v5 wire shape; add multisig helpers and replay coverage.
@@ -1040,8 +1048,24 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   `jetton-wallet.tol` references dogfood those helpers through
   compatibility wrappers while preserving the Stage 0 Tol BoC hashes and
   sizes exactly.
+- ✅ **Slice 3 Stage 4 NFT vertical slice** — closed 2026-04-30.
+  `@stdlib/nft` now provides TEP-62 / royalty opcode constants,
+  collection mint body construction, item state-init/address helpers,
+  raw transfer/deploy/reply builders, bounce-flag detection, and
+  item/collection error mapping. Coverage is fixture-level because the
+  repo has legacy FunC and JS NFT shapes but no official Tol NFT
+  reference contract to migrate byte-for-byte.
 
 ## 12. Revision notes
+
+### r14 (Slice 3 Stage 4 NFT stdlib)
+
+- §6 Slice 3 now marks Stage 4 complete and Stage 5 active.
+- `@stdlib/nft` owns the NFT helper surface and manifest detail for
+  TEP-62 transfer, ownership, static-data, royalty, and collection mint
+  shapes.
+- §11.5 now records the NFT vertical slice as closed with focused
+  fixture-level wire-shape coverage.
 
 ### r13 (Slice 3 Stage 3 Jetton stdlib)
 

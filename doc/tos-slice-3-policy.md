@@ -230,6 +230,21 @@ Deliverables:
 Exit criterion: a generated NFT collection/item pair deploys, handles
 the canonical message set, and preserves wire-compatible bodies.
 
+Implementation status: complete as of 2026-04-30. `@stdlib/nft` now
+exports the TEP-62 / royalty opcode constants, transfer and reply body
+structs, collection mint body helper, item state-init/address helpers,
+raw transfer / deploy / ownership-assigned / excesses /
+static-data-report / royalty-report builders, bounce-flag helper, and
+item/collection error mapping. Focused coverage is
+`tol-tester/tests/slice3-nft-stdlib-positive.tol`, which checks mint,
+deploy, transfer, ownership-assigned, excesses, static-data report,
+royalty report, collection/item address linkage, authorization failure,
+unknown-opcode mapping, and bounced-message flag detection against
+manual builders. There is no pre-existing official Tol NFT reference
+under `crypto/smartcont/` to migrate byte-for-byte in this stage; the
+wire-compatibility comparison is therefore fixture-level against the
+local legacy FunC and JS wrapper shapes.
+
 ### Stage 5 - Wallet and multisig vertical slice
 
 Deliverables:
