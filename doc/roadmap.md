@@ -517,7 +517,8 @@ policy input exists at `doc/tos-language-syntax-policy.md`
 stages have landed on `actor-layer`; Stage 1 is commit
 `081f05d3c` (`Add Slice 2 Stage 1 contract / receive parser +
 lowering`), and Stage 2 adds the initial state-machine compiler
-surface.
+surface in commit `cc6656ce9` (`Add Slice 2 Stage 2
+state-machine lowering`).
 
 **Implementation stages.**
 
@@ -541,7 +542,7 @@ surface.
    `24 test(s) passed` in `test-emulator`, Slice 1 gas gate
    remains green, and `git diff --check` is clean.
 3. ✅ **Stage 2 — states / `become` / `keep_state` /
-   reachability.** Completed 2026-04-30 on `actor-layer`.
+   reachability.** Completed 2026-04-30 in commit `cc6656ce9`.
    Ships parser support for `states:`, `@initial state`,
    `receive(...) on State`, `become`, and `keep_state`; a new
    `tol/pipe-check-state-reachability.cpp` pass for declared
@@ -837,7 +838,7 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   receive opcode prefixes, and adds five contract-focused
   tol-tester cases.
 - ✅ **Slice 2 Stage 2 state-machine subset** — closed
-  2026-04-30 on `actor-layer`. The compiler now parses
+  2026-04-30 by commit `cc6656ce9`. The compiler now parses
   `states:`, `@initial state`, `receive(...) on State`,
   `become`, and `keep_state`, checks transition discipline and
   state reachability before lowering, protects the reserved
