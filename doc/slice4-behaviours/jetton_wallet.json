@@ -89,6 +89,10 @@
     {
       "exception": "helper-level-manifest",
       "reason": "Stage 5 covers the Slice 3 helper surface without changing jetton-wallet bytecode or re-migrating the reference contract."
+    },
+    {
+      "exception": "pre-section-5-7-backpressure-class",
+      "reason": "JETTON_STDLIB_WALLET_ERROR_INSUFFICIENT_TRANSFER_VALUE reflects the existing Slice 3 helper classification in @stdlib/jetton. This manifest records the legacy value for compatibility only; ErrorClass.BackPressure remains reserved until actor.md §5.7 delivery-SLA semantics are approved."
     }
   ]
 }

@@ -1268,6 +1268,13 @@ removed when policy v6 made single-signer the rule; see §11.3.)
 
 ## 12. Revision notes
 
+### r21 (Slice 4 post-review hardening)
+
+- Closed the post-implementation Slice 4 review findings for
+  postponed-auction FIFO drain pinning, indirect external-message
+  postponement, legacy BackPressure manifest documentation, and
+  comment-safe behaviour-manifest parsing.
+
 ### r20 (Slice 4 complete)
 
 - §6 Slice 4 now marks Stage 6 and Slice 4 complete.

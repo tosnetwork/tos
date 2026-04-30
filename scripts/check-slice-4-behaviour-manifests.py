@@ -146,8 +146,50 @@ def validate_manifest(path: Path) -> dict:
     return data
 
 
+def strip_tol_comments(text: str) -> str:
+    out = []
+    i = 0
+    in_string = False
+    escaped = False
+    while i < len(text):
+        c = text[i]
+        if in_string:
+            out.append(c)
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
+            elif c == '"':
+                in_string = False
+            i += 1
+            continue
+        if c == '"':
+            in_string = True
+            out.append(c)
+            i += 1
+            continue
+        if text.startswith("//", i):
+            while i < len(text) and text[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        if text.startswith("/*", i):
+            out.extend("  ")
+            i += 2
+            while i < len(text) and not text.startswith("*/", i):
+                out.append("\n" if text[i] == "\n" else " ")
+                i += 1
+            if i < len(text):
+                out.extend("  ")
+                i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def parse_source(path: Path) -> dict:
-    text = path.read_text(encoding="utf-8")
+    text = strip_tol_comments(path.read_text(encoding="utf-8"))
     constants = {
         name: value
         for name, value in re.findall(r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[A-Za-z0-9_]+)?\s*=\s*(0x[0-9a-fA-F]+)", text)
@@ -328,6 +370,29 @@ contract BadPostponing {
         generated_rc = run_validation(POSTPONING_MANIFEST, bad_path, "generated", emit=False)
         require(generated_rc == 1, "generated mode should fail on nonconformance")
         print("Error-mode negative self-test: passed")
+        commented_path = Path(td) / "commented-postponing.tol"
+        commented_path.write_text(
+            """
+import "@stdlib/postponement"
+struct CommentedStorage {
+  queue: PostponedQueue // }
+}
+struct (0x53413401) Slice4AuctionBid {
+  queryId: uint64 // }
+}
+contract CommentedPostponing {
+  storage: CommentedStorage
+  receive(msg: Slice4AuctionBid) {
+    msg.queryId; // }
+  }
+}
+""",
+            encoding="utf-8",
+        )
+        parsed = parse_source(commented_path)
+        require(parsed["storage_fields"].get("queue") == "PostponedQueue", "commented struct body parsed incorrectly")
+        require(parsed["structs"]["Slice4AuctionBid"]["fields"].get("queryId") == "uint64", "commented message body parsed incorrectly")
+        print("Comment-stripping parse self-test: passed")
 
     if tol:
         before = compile_fift_hash(tol, POSTPONED_AUCTION)

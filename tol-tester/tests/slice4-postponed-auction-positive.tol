@@ -104,6 +104,21 @@ fun test_open_bid_immediate(): int {
     return storage.highestBid;
 }
 
+@method_id(108)
+fun test_non_expired_low_bid_dropped_on_open(): int {
+    var storage = slice4AuctionInitialStorage();
+    storage.receiveBid(makeBid(1, bidder1(), 0, 10));
+    val touched = storage.openAndDrain(11);
+    assert(storage.opened) throw 1081;
+    assert(touched == 1) throw 1082;
+    assert(storage.queue.isEmpty()) throw 1083;
+    assert(storage.highestBid == 0) throw 1084;
+    assert(storage.drainedCount == 0) throw 1085;
+    storage.receiveBid(makeBid(2, bidder2(), 25, 12));
+    assert(storage.highestBid == 25) throw 1086;
+    return storage.highestBid;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2002
@@ -112,4 +127,5 @@ fun test_open_bid_immediate(): int {
 @testcase | 105 | | 2309
 @testcase | 106 | | 1
 @testcase | 107 | | 55
+@testcase | 108 | | 25
  */

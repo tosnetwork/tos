@@ -26,3 +26,14 @@ Verification entrypoint:
 ```sh
 python3 scripts/check-slice-4-release-package.py
 ```
+
+Post-review security fixes:
+
+- The postponed-auction drain path drops non-expired low bids instead
+  of letting them pin FIFO drain until expiry.
+- External-message postponement hardening follows helper-call reachability
+  from `onExternalMessage`, so indirect enqueue wrappers are rejected.
+- `jetton_wallet` records the legacy pre-§5.7 BackPressure helper
+  classification as a wire-compatibility exception.
+- Behaviour manifest parsing strips comments before regex extraction, so
+  `}` in comments does not truncate struct or contract parsing.

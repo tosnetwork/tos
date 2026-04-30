@@ -20,6 +20,9 @@
 #include "type-system.h"
 
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace tol {
 
@@ -114,6 +117,10 @@ static V<ast_dot_access> as_dot_access(AnyExprV expr) {
 }
 
 class CheckPostponementVisitor final : public ASTVisitorFunctionBody {
+  std::unordered_map<FunctionPtr, std::vector<FunctionPtr>> call_graph;
+  std::unordered_map<FunctionPtr, std::vector<V<ast_function_call>>> enqueue_sites;
+  std::vector<FunctionPtr> external_entrypoints;
+
   void check_queue_field_write(AnyExprV lhs) {
     V<ast_dot_access> dot = as_dot_access(lhs);
     if (!dot) {
@@ -158,11 +165,11 @@ protected:
 
   void visit(V<ast_function_call> v) override {
     FunctionPtr fun_ref = v->fun_maybe;
-    if (is_postponement_enqueue(fun_ref) && cur_f && cur_f->name == "onExternalMessage") {
-      err("external-message postponement is not permitted in Slice 4 Stage 2; external signed bodies must be handled "
-          "or rejected in the current transaction, not stored as postponed internal work. "
-          "See doc/tos-postponement-policy.md §2 / §8.")
-        .collect(v, cur_f);
+    if (cur_f && fun_ref && fun_ref->is_code_function()) {
+      call_graph[cur_f].emplace_back(fun_ref);
+    }
+    if (cur_f && is_postponement_enqueue(fun_ref) && !is_allowed_postponement_helper(cur_f)) {
+      enqueue_sites[cur_f].emplace_back(v);
     }
 
     AnyExprV self_obj = v->get_self_obj();
@@ -182,6 +189,49 @@ public:
   bool should_visit_function(FunctionPtr fun_ref) override {
     return fun_ref->is_code_function() && !fun_ref->is_generic_function();
   }
+
+  void on_enter_function(V<ast_function_declaration> v_function) override {
+    call_graph[cur_f] = {};
+    if (cur_f->name == "onExternalMessage") {
+      external_entrypoints.emplace_back(cur_f);
+    }
+    parent::on_enter_function(v_function);
+  }
+
+  void report_external_enqueue_paths() const {
+    std::unordered_set<FunctionPtr> reachable;
+    std::vector<FunctionPtr> stack = external_entrypoints;
+    while (!stack.empty()) {
+      FunctionPtr current = stack.back();
+      stack.pop_back();
+      if (!reachable.insert(current).second) {
+        continue;
+      }
+      auto edge_it = call_graph.find(current);
+      if (edge_it == call_graph.end()) {
+        continue;
+      }
+      for (FunctionPtr next : edge_it->second) {
+        if (next && !reachable.count(next)) {
+          stack.emplace_back(next);
+        }
+      }
+    }
+
+    for (FunctionPtr fun_ref : reachable) {
+      auto site_it = enqueue_sites.find(fun_ref);
+      if (site_it == enqueue_sites.end()) {
+        continue;
+      }
+      for (V<ast_function_call> site : site_it->second) {
+        err("external-message postponement is not permitted in Slice 4 Stage 2; external signed bodies must be handled "
+            "or rejected in the current transaction, not stored as postponed internal work. "
+            "This check follows helper calls reachable from `onExternalMessage`. "
+            "See doc/tos-postponement-policy.md §2 / §8.")
+          .collect(site, fun_ref);
+      }
+    }
+  }
 };
 
 } // namespace
@@ -189,6 +239,7 @@ public:
 void pipeline_check_postponement() {
   CheckPostponementVisitor visitor;
   visit_ast_of_all_functions(visitor);
+  visitor.report_external_enqueue_paths();
 }
 
 } // namespace tol

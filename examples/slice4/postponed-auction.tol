@@ -108,7 +108,9 @@ fun Slice4PostponedAuctionStorage.openAndDrain(mutate self, now: uint32): uint16
             self.queue.dropNonce(item!.nonce);
         } else {
             val bid = lazy Slice4AuctionBid.fromCell(item!.body());
-            self.applyDrainedBid(bid);
+            if (bid.amount > self.highestBid) {
+                self.applyDrainedBid(bid);
+            }
             self.queue.dropNonce(item!.nonce);
         }
         touched += 1;
