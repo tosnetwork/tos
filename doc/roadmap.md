@@ -777,9 +777,12 @@ landed in [`doc/tos-postponement-policy.md`](tos-postponement-policy.md)
 and [`doc/tos-slice-4-policy.md`](tos-slice-4-policy.md), with the
 initial behaviour-manifest schema at
 [`doc/slice-4-behaviour-manifest-schema.json`](slice-4-behaviour-manifest-schema.json).
-The Stage 0 documents intentionally do not approve protocol activation:
-they define the resource model that must be signed off before stdlib or
-compiler implementation begins.
+Draft v1.1 closes the first security-review findings on schema
+constraints, callback failure semantics, zero-capacity queues, optional
+`query_id` replay keys, and cell-depth budgeting. The Stage 0 documents
+intentionally do not approve protocol activation: they define the
+resource model that must be signed off before stdlib or compiler
+implementation begins.
 
 **Stage plan.**
 

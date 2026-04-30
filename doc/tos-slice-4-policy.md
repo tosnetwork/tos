@@ -4,8 +4,9 @@ Bounded postponement and behaviour traits.
 
 ## 0. Status, scope, and references
 
-**Status.** Draft v1, 2026-04-30. This is the Slice 4 Stage 0
-implementation input candidate. It is not yet an approved release gate.
+**Status.** Draft v1.1, 2026-04-30. This is the Slice 4 Stage 0
+implementation input candidate after the first security-review closure
+pass. It is not yet an approved release gate.
 
 Slice 4 implements `actor.md` section 5.9 and section 6.5 on top of the
 completed Slice 1 message envelope, Slice 2 contract/state syntax, and
@@ -85,13 +86,17 @@ Deliverables:
 - This RFC defines the Slice 4 implementation sequence and trait
   abstraction boundary.
 - `doc/slice-4-behaviour-manifest-schema.json` defines the initial
-  machine-readable behaviour-manifest shape.
+  machine-readable behaviour-manifest shape, including constrained
+  wire-compatibility exceptions, real `ErrorClass` names, optional
+  `query_id` replay-key semantics, and enabled-queue budget minimums.
 - `doc/roadmap.md` records Slice 4 stages and current status.
 
 Exit criterion: maintainer approval of the policy docs. Compiler and
 stdlib implementation begins only after this gate is approved.
 
-Status: draft created 2026-04-30.
+Status: draft v1.1 created 2026-04-30 after closing the first
+security-review findings on schema constraints and drain failure
+semantics.
 
 ### Stage 1 - Postponement stdlib foundation
 
@@ -103,10 +108,14 @@ Deliverables:
 - Implement enqueue, duplicate detection, FIFO drain, expiry cleanup,
   and accounting helpers.
 - Add focused tol-tester cases for enqueue, queue full, duplicate
-  query-id, oversized body, expiry cleanup, and FIFO drain.
+  query-id, optional-`query_id` without author key, oversized body,
+  cell-depth budget, expiry cleanup, callback throw rollback, explicit
+  drop/expiry, and FIFO drain.
 
 Exit criterion: stdlib helper tests pass without changing any reference
-contract or wire body.
+contract or wire body. Stage 1 is a trust-period implementation only:
+contracts written before Stage 2 hardening are not eligible for the
+official reference package.
 
 ### Stage 2 - Postponement compiler hardening
 

@@ -41,9 +41,9 @@ References:
    per-message refund semantics, it must store a refund plan and remain
    solvent enough to honor it.
 6. **The queue must be locally bounded.** Count, body size, total
-   storage footprint, age, and per-transaction drain work are all part
-   of the contract ABI. There is no global default that is safe for all
-   contracts.
+   storage footprint, cell-tree depth, age, and per-transaction drain
+   work are all part of the contract ABI. There is no global default
+   that is safe for all contracts.
 7. **Expiry is observed, not scheduled.** Without the Slice 6 time
    primitive, expiry is checked on enqueue, drain, or explicit cleanup.
    No timeout message is synthesized by the protocol.
@@ -83,6 +83,7 @@ struct PostponedItem {
     expiresAt: uint32
     bodyBits: uint16
     bodyRefs: uint8
+    bodyDepth: uint16
 }
 
 struct PostponedQueue {
@@ -90,6 +91,7 @@ struct PostponedQueue {
     count: uint16
     totalBodyBits: uint32
     totalBodyRefs: uint16
+    lastMeasuredCellDepth: uint16
     items: map<uint64, PostponedItem>
     queryIndex: map<uint256, uint64>
 }
@@ -101,11 +103,17 @@ semantics above are load-bearing:
 - `nonce` gives deterministic FIFO order without scanning hashes.
 - `queryIndex` prevents replay for query-bearing messages by
   `(sender, opcode, query_id)`.
+- Messages whose schema declares `query_id: optional` use the
+  `(sender, opcode, query_id)` replay key only when a `query_id` is
+  actually present. If it is absent, the message follows the non-query
+  rule below.
 - Non-query messages are not postponable by default. A stdlib helper
   may accept an explicit author-supplied idempotency key, but the
-  compiler must not silently invent one.
-- `bodyBits` and `bodyRefs` are measured before insertion and charged
-  against queue totals.
+  compiler must not silently invent one. Behaviour manifests spell this
+  as `missing_query_id: author_key`; otherwise the correct value is
+  `missing_query_id: reject`.
+- `bodyBits`, `bodyRefs`, and `bodyDepth` are measured before insertion
+  and charged against queue limits.
 - `valueCoins` is a record of the inbound value, not a locked coin
   object. Contracts that expose refunds must implement a solvency rule.
 
@@ -122,11 +130,17 @@ Every queue must declare or construct with these limits:
 | `maxTotalBodyRefs` | Aggregate body-ref ceiling | insertion cannot exceed ceiling |
 | `maxAgeSeconds` | Maximum age before expiry | `expiresAt = now + maxAgeSeconds` |
 | `maxDrainItems` | Per-transaction drain bound | drain helper stops after this many items |
+| `maxCellDepth` | Maximum serialized queue subtree depth | helper rejects mutations that would exceed the configured depth; the value must stay below TVM's hard cell-depth limit |
 
 The implementation may add a gas-reserve argument to drain helpers, but
 the first release must not claim a hard gas proof unless the compiler
 can prove it. A conservative `maxDrainItems` bound is required even
 when a gas-reserve helper exists.
+
+When postponement is enabled, `maxItems`, `maxAgeSeconds`,
+`maxDrainItems`, and `maxCellDepth` must all be greater than zero.
+`maxAgeSeconds = 0` is legal only for a disabled queue and means "do not
+enqueue"; it must not be used to create immediately expired live items.
 
 ## 5. Enqueue semantics
 
@@ -137,7 +151,8 @@ An internal receiver may enqueue the current message only after:
    than malformed;
 3. the body snapshot fits per-entry limits;
 4. the queue totals will remain within bounds;
-5. a query-bearing duplicate key does not already exist;
+5. a query-bearing duplicate key or explicit author idempotency key does
+   not already exist;
 6. `expiresAt` is finite and greater than `blockchain.now()`.
 
 Malformed messages are not postponable. They follow the contract's
@@ -167,6 +182,25 @@ The replay callback receives a `PostponedItem` value. It is ordinary
 Tol code, not a second TVM transaction. Authors must treat it as a
 local continuation over a saved message snapshot.
 
+Callback failure semantics are fixed:
+
+- On callback success, the helper deletes the item and decrements all
+  queue accounting in the same transaction.
+- On an expected application-level rejection, the callback must return
+  an explicit failure status or the contract must call an explicit
+  drop/expire helper before retrying. It must not use `throw` as normal
+  flow control.
+- If the callback throws, the TVM transaction aborts under ordinary TVM
+  rules. No queue mutation or outbound action from that transaction is
+  committed; the item remains in the queue at the same `nonce`; and the
+  helper must not catch-and-continue to later items.
+
+This chooses safety over silent loss. It also means a throwing head item
+can block FIFO drain until it expires or a later explicit contract path
+drops it with a documented error/recovery action. Stage 1 tests must
+cover both "throw does not lose the item" and the explicit drop/expiry
+path.
+
 Expiry does not synthesize a bounce. If the contract wants an expiry
 notification or refund, the drain/cleanup path must send it explicitly.
 Until `actor.md` section 5.7 is designed, expiry errors use
@@ -192,6 +226,11 @@ choice, not part of Draft v1.
 
 ## 8. Static-analysis obligations
 
+Stage 1 is a trust-period implementation: tests may use the
+`@stdlib/postponement` helpers before compiler hardening exists, but
+Stage 1 contracts are not eligible for the official reference package
+until the Stage 2 checks below are in place.
+
 The Slice 4 compiler work should add checks in stages:
 
 1. Warning mode for raw maps that look like postponed queues but do not
@@ -216,6 +255,8 @@ mechanism. Behaviour manifests may declare:
 - which message classes are deferrable in which states;
 - the queue field that owns postponed work;
 - the budget constants;
+- how optional or absent `query_id` is handled (`reject` versus an
+  explicit author-supplied idempotency key);
 - which error codes represent queue full, duplicate, expired, and
   non-deferrable messages;
 - whether the behaviour promises FIFO or keyed replay.
@@ -231,8 +272,14 @@ A Slice 4 postponement implementation is not complete unless tests show:
 - queue-full is bounded and deterministic;
 - oversized bodies are rejected before storage mutation;
 - duplicate `(sender, opcode, query_id)` entries cannot accumulate;
+- optional-`query_id` messages without an actual `query_id` either use
+  an explicit author idempotency key or are rejected;
+- serialized queue cell-tree depth stays below the configured
+  `maxCellDepth` and below the TVM hard limit;
 - expired entries are evicted without unbounded scanning;
 - non-query messages require an explicit idempotency key;
+- callback throws abort without losing the head item, and explicit
+  drop/expiry is the only non-successful removal path;
 - direct user access to queue internals is rejected or warned in the
   same mode as the RFC stage requires;
 - draining preserves FIFO order;

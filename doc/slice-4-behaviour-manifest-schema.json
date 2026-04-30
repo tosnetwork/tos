@@ -75,7 +75,8 @@
         "required": [
           "name",
           "opcode",
-          "query_id"
+          "query_id",
+          "missing_query_id"
         ],
         "properties": {
           "name": {
@@ -92,8 +93,81 @@
               "optional",
               "absent"
             ]
+          },
+          "missing_query_id": {
+            "type": "string",
+            "enum": [
+              "not_applicable",
+              "reject",
+              "author_key"
+            ]
           }
         },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "query_id": {
+                  "const": "required"
+                }
+              },
+              "required": [
+                "query_id"
+              ]
+            },
+            "then": {
+              "properties": {
+                "missing_query_id": {
+                  "const": "not_applicable"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "query_id": {
+                  "const": "optional"
+                }
+              },
+              "required": [
+                "query_id"
+              ]
+            },
+            "then": {
+              "properties": {
+                "missing_query_id": {
+                  "enum": [
+                    "reject",
+                    "author_key"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "query_id": {
+                  "const": "absent"
+                }
+              },
+              "required": [
+                "query_id"
+              ]
+            },
+            "then": {
+              "properties": {
+                "missing_query_id": {
+                  "enum": [
+                    "reject",
+                    "author_key"
+                  ]
+                }
+              }
+            }
+          }
+        ],
         "additionalProperties": false
       }
     },
@@ -159,7 +233,8 @@
             "max_total_body_bits",
             "max_total_body_refs",
             "max_age_seconds",
-            "max_drain_items"
+            "max_drain_items",
+            "max_cell_depth"
           ],
           "properties": {
             "max_items": {
@@ -189,6 +264,11 @@
             "max_drain_items": {
               "type": "integer",
               "minimum": 0
+            },
+            "max_cell_depth": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1023
             }
           },
           "additionalProperties": false
@@ -215,15 +295,85 @@
             "maximum": 65535
           },
           "class": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "Ok",
+              "Transient",
+              "Permanent",
+              "Authorization",
+              "Protocol",
+              "BackPressure",
+              "ApplicationSpecific"
+            ]
           }
         },
         "additionalProperties": false
       }
     },
     "wire_compatibility_exceptions": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "exception",
+          "reason"
+        ],
+        "properties": {
+          "exception": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "postponement": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          }
+        },
+        "required": [
+          "postponement"
+        ]
+      },
+      "then": {
+        "properties": {
+          "postponement": {
+            "properties": {
+              "budgets": {
+                "properties": {
+                  "max_items": {
+                    "minimum": 1
+                  },
+                  "max_age_seconds": {
+                    "minimum": 1
+                  },
+                  "max_drain_items": {
+                    "minimum": 1
+                  },
+                  "max_cell_depth": {
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
