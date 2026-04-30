@@ -1,0 +1,30 @@
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): `@unknown_silent_drop` lowers
+// the unknown-opcode dispatch tail into a plain `return;` (no actions, vm exit code 0).
+// This matches `crypto/smartcont/wallet-v5.tol`, which silently drops bodies whose 32-bit
+// opcode tag does not appear in the dispatch table.
+
+struct ContractUnknownSilentDropStorage {
+    counter: uint32;
+}
+
+struct (0x00000001) ContractUnknownSilentDropPing {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractUnknownSilentDrop {
+    storage: ContractUnknownSilentDropStorage
+    @unknown_silent_drop;
+
+    receive(msg: ContractUnknownSilentDropPing) {
+        msg.queryId;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

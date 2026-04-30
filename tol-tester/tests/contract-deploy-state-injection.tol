@@ -1,0 +1,52 @@
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §4.1 v3): state-bearing
+// contract with `@deploy`. The deploy body's `save(...)` does NOT spell `__state` — the
+// lowering injects the contract's `@initial` state tag automatically. Compile must succeed.
+
+struct ContractDeployStateStorage {
+    total: uint32;
+}
+
+struct (0x00000001) ContractDeployStateDeploy {
+    queryId: uint64;
+    initialTotal: uint32;
+}
+
+struct (0x00000031) ContractDeployStateOpen {
+    queryId: uint64;
+    amount: uint32;
+}
+
+struct (0x00000032) ContractDeployStateClose {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractDeployState {
+    storage: ContractDeployStateStorage
+    states: Open, Closed
+    @initial state Open
+
+    @deploy
+    receive(msg: ContractDeployStateDeploy) {
+        // The struct literal contains only user-visible fields; the compiler appends
+        // `__state = Open` (the `@initial` state) during save lowering.
+        save(ContractDeployStateStorage { total: msg.initialTotal });
+    }
+
+    receive(msg: ContractDeployStateOpen) on Open {
+        save(ContractDeployStateStorage { total: msg.amount });
+        become Closed;
+    }
+
+    receive(msg: ContractDeployStateClose) on Closed {
+        keep_state;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

@@ -1445,16 +1445,31 @@ template<>
 // ast_receive_block is a receiver inside a Slice 2 contract declaration
 // example: `receive(msg: MintRequest) { ... }`
 // example: `@disclaim_query_id receive(msg: BroadcastEvent) { ... }`
+// example: `@deploy receive(msg: Deploy) { ... }`
+// example: `receive(msg: UnknownOpcode) { ... }`
 //
 // `@disclaim_query_id` is a Slice 2 Stage 7 per-receiver annotation. When set, the lowering
 // pipeline injects a `disclaim_query_id()` call at the top of this receiver's scope marker so
 // pipeline_check_query_id_propagation skips reply-emission diagnostics for THIS receiver only.
 // See doc/tos-language-syntax-policy.md §3.2.1.
+//
+// `@deploy` (Slice 2 Stage 4) marks the bootstrap receiver: the synthesized onInternalMessage
+// dispatches it BEFORE loadData(), so the body must materialize storage via save(...). For
+// state-bearing contracts, the lowering injects `__state = @initial` into the deploy save().
+// See doc/tos-language-syntax-policy.md §3.6 / §4.1 v3.
+//
+// `is_unknown_opcode_catch_all` (Slice 2 Stage 4) marks the reserved `receive(msg: UnknownOpcode)`
+// catch-all body. It runs as the unknown-opcode last-resort branch when the contract has no
+// `@unknown_silent_drop` / `@unknown_throw(N)` annotation; the parameter is bound to `in.body`
+// (the raw, unparsed slice). See doc/tos-language-syntax-policy.md §3.2 v3.
 struct Vertex<ast_receive_block> final : ASTOtherVararg {
   AnyTypeV message_type_node;
   V<ast_identifier> state_identifier;  // nullptr unless `receive(msg: T) on State`
   bool has_disclaim_query_id_annotation = false;
   SrcRange disclaim_annotation_range;  // points at `@disclaim_query_id` for diagnostics
+  bool is_deploy = false;
+  SrcRange deploy_annotation_range;    // points at `@deploy` for diagnostics
+  bool is_unknown_opcode_catch_all = false;
 
   auto get_param_identifier() const { return children.at(0)->as<ast_identifier>(); }
   std::string_view get_param_name() const { return children.at(0)->as<ast_identifier>()->name; }
@@ -1462,11 +1477,17 @@ struct Vertex<ast_receive_block> final : ASTOtherVararg {
   bool has_state_clause() const { return state_identifier != nullptr; }
   std::string_view get_state_name() const { return state_identifier->name; }
 
-  Vertex(SrcRange range, V<ast_identifier> param_identifier, AnyTypeV message_type_node, V<ast_identifier> state_identifier, V<ast_block_statement> body, bool has_disclaim_query_id_annotation = false, SrcRange disclaim_annotation_range = SrcRange::undefined())
+  Vertex(SrcRange range, V<ast_identifier> param_identifier, AnyTypeV message_type_node, V<ast_identifier> state_identifier, V<ast_block_statement> body,
+         bool has_disclaim_query_id_annotation = false, SrcRange disclaim_annotation_range = SrcRange::undefined(),
+         bool is_deploy = false, SrcRange deploy_annotation_range = SrcRange::undefined(),
+         bool is_unknown_opcode_catch_all = false)
     : ASTOtherVararg(ast_receive_block, range, {param_identifier, body})
     , message_type_node(message_type_node), state_identifier(state_identifier)
     , has_disclaim_query_id_annotation(has_disclaim_query_id_annotation)
-    , disclaim_annotation_range(disclaim_annotation_range) {}
+    , disclaim_annotation_range(disclaim_annotation_range)
+    , is_deploy(is_deploy)
+    , deploy_annotation_range(deploy_annotation_range)
+    , is_unknown_opcode_catch_all(is_unknown_opcode_catch_all) {}
 };
 
 template<>
@@ -1492,6 +1513,19 @@ struct Vertex<ast_get_fun_block> final : ASTOtherVararg {
     , extra_fun_flags(extra_fun_flags), inline_mode(inline_mode) {}
 };
 
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): contract-level unknown-opcode mode.
+// `default_protocol_throw` is the synthesized fallback when no annotation and no UnknownOpcode
+//   receiver are present; the lowering throws OP_ERROR (0x00010001) — see common.tol.
+// `silent_drop` is the explicit `@unknown_silent_drop;` mode (matches wallet-v5 semantics).
+// `throw_code` is the explicit `@unknown_throw(N);` mode (matches jetton-minter 0xffff).
+// `catch_all_receiver` is the `receive(msg: UnknownOpcode)` reserved-receiver mode.
+enum class ContractUnknownMode {
+  default_protocol_throw,
+  silent_drop,
+  throw_code,
+  catch_all_receiver,
+};
+
 template<>
 // ast_contract_declaration is a Slice 2 contract block before lowering
 // example: `contract Wallet { storage: WalletStorage; receive(msg: Transfer) { ... } }`
@@ -1500,6 +1534,13 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
   std::vector<V<ast_identifier>> state_identifiers;
   V<ast_identifier> initial_state_identifier;
   int n_receive_blocks;               // children layout: [name, receive*, get_fun*]; receives come first
+  // Slice 2 Stage 4: contract-level unknown-opcode mode. Parser sets this from
+  // `@unknown_silent_drop` / `@unknown_throw(N)` or from a `receive(msg: UnknownOpcode)` body.
+  // Default `default_protocol_throw` lowers to a `throw OP_ERROR` last branch.
+  // See doc/tos-language-syntax-policy.md §3.2 v3.
+  ContractUnknownMode unknown_mode = ContractUnknownMode::default_protocol_throw;
+  int64_t unknown_throw_code = 0;          // meaningful only when unknown_mode == throw_code
+  SrcRange unknown_annotation_range;       // for diagnostics; points at `@unknown_*` (or the catch-all receive)
 
   auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
   int get_num_receives() const { return n_receive_blocks; }
@@ -1511,7 +1552,10 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
   auto get_state(int i) const { return state_identifiers.at(i); }
   auto get_initial_state_identifier() const { return initial_state_identifier; }
 
-  Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<V<ast_identifier>>&& state_identifiers, V<ast_identifier> initial_state_identifier, std::vector<AnyV>&& receive_blocks, std::vector<AnyV>&& get_fun_blocks)
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<V<ast_identifier>>&& state_identifiers, V<ast_identifier> initial_state_identifier, std::vector<AnyV>&& receive_blocks, std::vector<AnyV>&& get_fun_blocks,
+         ContractUnknownMode unknown_mode = ContractUnknownMode::default_protocol_throw,
+         int64_t unknown_throw_code = 0,
+         SrcRange unknown_annotation_range = SrcRange::undefined())
     : ASTOtherVararg(ast_contract_declaration, range, [&] {
         std::vector<AnyV> children;
         children.reserve(1 + receive_blocks.size() + get_fun_blocks.size());
@@ -1520,7 +1564,8 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
         children.insert(children.end(), get_fun_blocks.begin(), get_fun_blocks.end());
         return children;
       }())
-    , storage_type_node(storage_type_node), state_identifiers(std::move(state_identifiers)), initial_state_identifier(initial_state_identifier), n_receive_blocks(static_cast<int>(receive_blocks.size())) {}
+    , storage_type_node(storage_type_node), state_identifiers(std::move(state_identifiers)), initial_state_identifier(initial_state_identifier), n_receive_blocks(static_cast<int>(receive_blocks.size()))
+    , unknown_mode(unknown_mode), unknown_throw_code(unknown_throw_code), unknown_annotation_range(unknown_annotation_range) {}
 };
 
 template<>

@@ -377,6 +377,28 @@ static void check_state_contract(V<ast_contract_declaration> contract) {
 
   for (int i = 0; i < contract->get_num_receives(); ++i) {
     V<ast_receive_block> receive = contract->get_receive(i);
+    // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6): `@deploy` receivers and the
+    // reserved `receive(msg: UnknownOpcode)` catch-all do NOT participate in the state machine.
+    // The `@deploy` body materializes c4 + injects @initial via lowering; the unknown-opcode
+    // catch-all runs after `loadData()` regardless of state. Both are forbidden from carrying
+    // `become` / `keep_state` (handled below for @deploy) and don't need an `on <State>` clause.
+    if (receive->is_deploy) {
+      if (contains_state_tail_statement(receive->get_body())) {
+        err("`become` and `keep_state` are not permitted inside an `@deploy receive(...)` body; deployment has exactly one authoritative initial state; see doc/tos-language-syntax-policy.md §3.6")
+          .fire(receive->get_body());
+      }
+      continue;
+    }
+    if (receive->is_unknown_opcode_catch_all) {
+      // The catch-all runs after `loadData()` with c4 already materialized; it is allowed to
+      // call `save(...)` as a normal receiver but must not carry `on <State>` (rejected by the
+      // parser already), and `become` / `keep_state` would be ambiguous (no source state).
+      if (contains_state_tail_statement(receive->get_body())) {
+        err("`become` and `keep_state` are not permitted inside `receive(msg: UnknownOpcode)`; the catch-all body has no source state; see doc/tos-language-syntax-policy.md §3.2")
+          .fire(receive->get_body());
+      }
+      continue;
+    }
     if (!receive->has_state_clause()) {
       err("state-bearing contract receiver must declare `on <State>`; see doc/tos-language-syntax-policy.md §3.4")
         .fire(receive);
@@ -399,6 +421,13 @@ static void check_non_state_contract(V<ast_contract_declaration> contract) {
   }
   for (int i = 0; i < contract->get_num_receives(); ++i) {
     V<ast_receive_block> receive = contract->get_receive(i);
+    // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6): `become`/`keep_state` are also
+    // forbidden inside `@deploy` for non-state-bearing contracts (where they are forbidden
+    // anyway, but emit the §3.6-anchored message for clarity).
+    if (receive->is_deploy && contains_state_tail_statement(receive->get_body())) {
+      err("`become` and `keep_state` are not permitted inside an `@deploy receive(...)` body; deployment has exactly one authoritative initial state; see doc/tos-language-syntax-policy.md §3.6")
+        .fire(receive->get_body());
+    }
     if (receive->has_state_clause()) {
       err("`receive(...) on <State>` requires a `states:` declaration; see doc/tos-language-syntax-policy.md §3.4")
         .fire(receive->state_identifier);

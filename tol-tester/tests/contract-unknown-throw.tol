@@ -1,0 +1,30 @@
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): `@unknown_throw(N)` lowers
+// the unknown-opcode dispatch tail into `throw N`. Verified compile-only here; the migration
+// reference is `crypto/smartcont/jetton-minter.tol` which throws 0xffff on unknown opcode
+// (the FUNC_THROW_UNKNOWN_OPCODE convention).
+
+struct ContractUnknownThrowStorage {
+    counter: uint32;
+}
+
+struct (0x00000001) ContractUnknownThrowPing {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractUnknownThrow {
+    storage: ContractUnknownThrowStorage
+    @unknown_throw(0xffff);
+
+    receive(msg: ContractUnknownThrowPing) {
+        msg.queryId;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

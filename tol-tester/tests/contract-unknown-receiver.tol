@@ -1,0 +1,36 @@
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): the reserved compiler
+// pseudo-type `UnknownOpcode` flips a `receive` block into the unknown-opcode catch-all.
+// The parameter is bound to `in.body` (the raw, unparsed slice including the 32-bit opcode
+// prefix). This receiver is mutually exclusive with `@unknown_silent_drop` /
+// `@unknown_throw(N)` annotations.
+
+struct ContractUnknownReceiverStorage {
+    counter: uint32;
+}
+
+struct (0x00000001) ContractUnknownReceiverPing {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractUnknownReceiver {
+    storage: ContractUnknownReceiverStorage
+
+    receive(msg: ContractUnknownReceiverPing) {
+        msg.queryId;
+    }
+
+    receive(msg: UnknownOpcode) {
+        // `msg` is bound to the raw `in.body` slice; the catch-all decides what to do
+        // with bodies whose 32-bit opcode is not in the dispatch table.
+        msg.remainingBitsCount();
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

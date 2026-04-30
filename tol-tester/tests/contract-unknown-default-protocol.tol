@@ -1,0 +1,30 @@
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): a contract with no
+// `@unknown_silent_drop`, no `@unknown_throw(N)`, and no `receive(msg: UnknownOpcode)`
+// catch-all uses the default-protocol-throw mode. The synthesized `onInternalMessage`
+// throws OP_ERROR (0x00010001) — the canonical Protocol-class application error code per
+// `crypto/smartcont/tol-stdlib/common.tol` and `doc/tos-message-policy.md §5.2 / §5.3`.
+
+struct ContractUnknownDefaultStorage {
+    counter: uint32;
+}
+
+struct (0x00000001) ContractUnknownDefaultPing {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractUnknownDefault {
+    storage: ContractUnknownDefaultStorage
+
+    receive(msg: ContractUnknownDefaultPing) {
+        msg.queryId;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

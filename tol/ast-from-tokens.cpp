@@ -2101,10 +2101,19 @@ static AnyV parse_contract_get_fun_block(Lexer& lex, const std::vector<V<ast_ann
   return createV<ast_get_fun_block>(range, v_ident, v_param_list, v_body, ret_type, tvm_method_id_expr, extra_flags, inline_mode);
 }
 
-static AnyV parse_receive_block(Lexer& lex, bool has_disclaim_query_id_annotation = false, SrcRange disclaim_annotation_range = SrcRange::undefined()) {
-  // When `@disclaim_query_id` precedes the `receive(...)` block, anchor the AST node's
-  // SrcRange at the annotation; otherwise use the `receive` keyword as the start.
-  SrcRange range = has_disclaim_query_id_annotation ? disclaim_annotation_range : lex.range_start();
+static AnyV parse_receive_block(Lexer& lex,
+                                bool has_disclaim_query_id_annotation = false,
+                                SrcRange disclaim_annotation_range = SrcRange::undefined(),
+                                bool is_deploy = false,
+                                SrcRange deploy_annotation_range = SrcRange::undefined()) {
+  // When an annotation (`@disclaim_query_id` or `@deploy`) precedes the `receive(...)` block,
+  // anchor the AST node's SrcRange at the earliest annotation; otherwise use the `receive` keyword.
+  SrcRange range = lex.range_start();
+  if (is_deploy && deploy_annotation_range.is_defined()) {
+    range = deploy_annotation_range;
+  } else if (has_disclaim_query_id_annotation && disclaim_annotation_range.is_defined()) {
+    range = disclaim_annotation_range;
+  }
   lex.expect(tok_receive, "`receive`");
   lex.expect(tok_oppar, "`(`");
   auto v_param = parse_identifier(lex, "receive parameter name");
@@ -2118,8 +2127,45 @@ static AnyV parse_receive_block(Lexer& lex, bool has_disclaim_query_id_annotatio
   }
   auto v_body = parse_block_statement(lex, true);
   range.end(v_body->range);
+
+  // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): the reserved literal type name
+  // `UnknownOpcode` flips this receive into the catch-all kind. The parameter is bound to the
+  // raw `in.body` slice at lowering time. Other annotations are mutually exclusive with
+  // `UnknownOpcode` per §3.2 / §3.6.
+  bool is_unknown_opcode_catch_all = false;
+  if (auto leaf = msg_type->try_as<ast_type_leaf_text>(); leaf && leaf->text == "UnknownOpcode") {
+    is_unknown_opcode_catch_all = true;
+    if (state_identifier != nullptr) {
+      err("`receive(msg: UnknownOpcode)` cannot carry an `on <State>` clause; the catch-all body runs irrespective of contract state; see doc/tos-language-syntax-policy.md §3.2")
+        .fire(state_identifier);
+    }
+    if (has_disclaim_query_id_annotation) {
+      err("`@disclaim_query_id` cannot decorate `receive(msg: UnknownOpcode)`; the unknown-opcode catch-all has no parsed query_id surface; see doc/tos-language-syntax-policy.md §3.2")
+        .fire(disclaim_annotation_range);
+    }
+    if (is_deploy) {
+      err("`@deploy` cannot decorate `receive(msg: UnknownOpcode)`; deploy and unknown-opcode catch-all are distinct entry points; see doc/tos-language-syntax-policy.md §3.6")
+        .fire(deploy_annotation_range);
+    }
+  }
+
+  // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6): `@deploy` cannot combine with
+  // `on <State>` (deployment has exactly one initial state) nor with `@disclaim_query_id`.
+  if (is_deploy) {
+    if (state_identifier != nullptr) {
+      err("`@deploy` cannot combine with `on <State>`; deployment has exactly one authoritative initial state; see doc/tos-language-syntax-policy.md §3.6")
+        .fire(state_identifier);
+    }
+    if (has_disclaim_query_id_annotation) {
+      err("`@deploy` cannot combine with `@disclaim_query_id`; the deploy receiver runs before storage exists and has its own scope rules; see doc/tos-language-syntax-policy.md §3.6")
+        .fire(disclaim_annotation_range);
+    }
+  }
+
   return createV<ast_receive_block>(range, v_param, msg_type, state_identifier, v_body,
-                                    has_disclaim_query_id_annotation, disclaim_annotation_range);
+                                    has_disclaim_query_id_annotation, disclaim_annotation_range,
+                                    is_deploy, deploy_annotation_range,
+                                    is_unknown_opcode_catch_all);
 }
 
 static void parse_contract_state_list(Lexer& lex, std::vector<V<ast_identifier>>& state_identifiers) {
@@ -2167,6 +2213,15 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
   // annotations queued for the next `get fun` (see §3.5 / §10.1: parser fix at line 1712 — @method_id is now accepted on contract get fun)
   std::vector<V<ast_annotation>> pending_member_annotations;
 
+  // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): contract-level unknown-opcode mode.
+  // Tracks whether `@unknown_silent_drop;` or `@unknown_throw(N);` was declared at contract scope,
+  // so we can diagnose duplicates and conflicts with a `receive(msg: UnknownOpcode)` body.
+  ContractUnknownMode unknown_mode = ContractUnknownMode::default_protocol_throw;
+  int64_t unknown_throw_code = 0;
+  SrcRange unknown_annotation_range = SrcRange::undefined();
+  bool unknown_set_explicitly = false;
+  std::string_view unknown_set_label;     // for diagnostics ("@unknown_silent_drop", etc.)
+
   while (lex.tok() != tok_clbrace) {
     if (lex.tok() == tok_semicolon) {
       lex.next();
@@ -2192,13 +2247,108 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
         }
         SrcRange annotation_range = lex.cur_range();
         lex.next();
+        // Allow `@disclaim_query_id @deploy receive(...)` ordering — but it is rejected later
+        // inside parse_receive_block as a §3.6 conflict.
+        bool deploy_follows = false;
+        SrcRange deploy_range = SrcRange::undefined();
+        if (lex.tok() == tok_annotation_at && lex.cur_str() == "@deploy") {
+          deploy_follows = true;
+          deploy_range = lex.cur_range();
+          lex.next();
+        }
         if (lex.tok() != tok_receive) {
           err("`@disclaim_query_id` is only valid immediately before a `receive(...)` block; see doc/tos-language-syntax-policy.md §3.2.1").fire(annotation_range);
         }
         if (!storage_type) {
           err("contract `storage:` declaration must appear before `receive(...)` blocks").fire(lex.cur_range());
         }
-        receive_blocks.push_back(parse_receive_block(lex, /*has_disclaim_query_id_annotation=*/true, annotation_range));
+        receive_blocks.push_back(parse_receive_block(lex,
+            /*has_disclaim_query_id_annotation=*/true, annotation_range,
+            /*is_deploy=*/deploy_follows, deploy_range));
+        continue;
+      }
+      // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6):
+      // `@deploy` is a per-receiver annotation marking the bootstrap path that runs before
+      // loadData(). Multiple `@deploy` receivers are a compile error.
+      if (lex.cur_str() == "@deploy") {
+        if (!pending_member_annotations.empty()) {
+          err("`@deploy` cannot follow other annotations").fire(lex.cur_range());
+        }
+        SrcRange annotation_range = lex.cur_range();
+        lex.next();
+        // Allow `@deploy @disclaim_query_id receive(...)` ordering — rejected later as a §3.6 conflict.
+        bool disclaim_follows = false;
+        SrcRange disclaim_range = SrcRange::undefined();
+        if (lex.tok() == tok_annotation_at && lex.cur_str() == "@disclaim_query_id") {
+          disclaim_follows = true;
+          disclaim_range = lex.cur_range();
+          lex.next();
+        }
+        if (lex.tok() != tok_receive) {
+          err("`@deploy` is only valid immediately before a `receive(...)` block; see doc/tos-language-syntax-policy.md §3.6").fire(annotation_range);
+        }
+        if (!storage_type) {
+          err("contract `storage:` declaration must appear before `receive(...)` blocks").fire(lex.cur_range());
+        }
+        receive_blocks.push_back(parse_receive_block(lex,
+            /*has_disclaim_query_id_annotation=*/disclaim_follows, disclaim_range,
+            /*is_deploy=*/true, annotation_range));
+        continue;
+      }
+      // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3):
+      // `@unknown_silent_drop;` / `@unknown_throw(N);` are contract-level statements declaring
+      // the unknown-opcode dispatch tail. Mutually exclusive with each other and with a
+      // `receive(msg: UnknownOpcode)` catch-all receiver (the latter is checked at lowering).
+      if (lex.cur_str() == "@unknown_silent_drop") {
+        if (!pending_member_annotations.empty()) {
+          err("`@unknown_silent_drop` cannot follow other annotations").fire(lex.cur_range());
+        }
+        SrcRange annotation_range = lex.cur_range();
+        lex.next();
+        if (unknown_set_explicitly) {
+          err("contract block already declares `{}`; `@unknown_silent_drop` and `@unknown_throw(...)` are mutually exclusive; see doc/tos-language-syntax-policy.md §3.2",
+              std::string(unknown_set_label)).fire(annotation_range);
+        }
+        unknown_mode = ContractUnknownMode::silent_drop;
+        unknown_annotation_range = annotation_range;
+        unknown_set_explicitly = true;
+        unknown_set_label = "@unknown_silent_drop";
+        if (lex.tok() == tok_semicolon) {
+          lex.next();
+        }
+        continue;
+      }
+      if (lex.cur_str() == "@unknown_throw") {
+        if (!pending_member_annotations.empty()) {
+          err("`@unknown_throw` cannot follow other annotations").fire(lex.cur_range());
+        }
+        SrcRange annotation_range = lex.cur_range();
+        lex.next();
+        if (unknown_set_explicitly) {
+          err("contract block already declares `{}`; `@unknown_silent_drop` and `@unknown_throw(...)` are mutually exclusive; see doc/tos-language-syntax-policy.md §3.2",
+              std::string(unknown_set_label)).fire(annotation_range);
+        }
+        if (lex.tok() != tok_oppar) {
+          err("`@unknown_throw` requires a literal int argument: `@unknown_throw(N);`; see doc/tos-language-syntax-policy.md §3.2").fire(annotation_range);
+        }
+        lex.next();
+        if (lex.tok() != tok_int_const) {
+          err("`@unknown_throw(N)` requires a literal int; see doc/tos-language-syntax-policy.md §3.2").fire(lex.cur_range());
+        }
+        td::RefInt256 parsed_int = parse_tok_int_const(lex.cur_str(), lex.cur_range());
+        if (!parsed_int->signed_fits_bits(64)) {
+          err("`@unknown_throw(N)` literal does not fit a signed 64-bit int").fire(lex.cur_range());
+        }
+        unknown_throw_code = parsed_int->to_long();
+        lex.next();
+        lex.expect(tok_clpar, "`)` after `@unknown_throw(N)` argument");
+        unknown_mode = ContractUnknownMode::throw_code;
+        unknown_annotation_range = annotation_range;
+        unknown_set_explicitly = true;
+        unknown_set_label = "@unknown_throw";
+        if (lex.tok() == tok_semicolon) {
+          lex.next();
+        }
         continue;
       }
       // Otherwise queue this annotation; it must be followed by a member it applies to
@@ -2269,9 +2419,47 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
     err("contract block must contain at least one `receive(...)` declaration").fire(v_ident);
   }
 
+  // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 / §3.6):
+  // - At most one `@deploy` receiver per contract.
+  // - At most one `receive(msg: UnknownOpcode)` receiver per contract.
+  // - `UnknownOpcode` receiver is mutually exclusive with `@unknown_silent_drop` and
+  //   `@unknown_throw(N)` annotations.
+  V<ast_receive_block> first_deploy = nullptr;
+  V<ast_receive_block> first_unknown_catch_all = nullptr;
+  for (AnyV r : receive_blocks) {
+    auto rv = r->as<ast_receive_block>();
+    if (rv->is_deploy) {
+      if (first_deploy != nullptr) {
+        err("contract `{}` declares more than one `@deploy receive(...)`; first declared at {}; see doc/tos-language-syntax-policy.md §3.6",
+            v_ident->name, first_deploy->range.stringify_start_location(false))
+          .fire(rv->deploy_annotation_range);
+      }
+      first_deploy = rv;
+    }
+    if (rv->is_unknown_opcode_catch_all) {
+      if (first_unknown_catch_all != nullptr) {
+        err("contract `{}` declares more than one `receive(msg: UnknownOpcode)`; first declared at {}; see doc/tos-language-syntax-policy.md §3.2",
+            v_ident->name, first_unknown_catch_all->range.stringify_start_location(false))
+          .fire(rv->range);
+      }
+      first_unknown_catch_all = rv;
+    }
+  }
+
+  if (first_unknown_catch_all != nullptr) {
+    if (unknown_set_explicitly) {
+      err("contract `{}` declares both `{}` and `receive(msg: UnknownOpcode)`; pick one of the two unknown-opcode handlers; see doc/tos-language-syntax-policy.md §3.2",
+          v_ident->name, std::string(unknown_set_label))
+        .fire(unknown_annotation_range);
+    }
+    unknown_mode = ContractUnknownMode::catch_all_receiver;
+    unknown_annotation_range = first_unknown_catch_all->range;
+  }
+
   range.end(lex.cur_range());
   lex.next();
-  return createV<ast_contract_declaration>(range, v_ident, storage_type, std::move(state_identifiers), initial_state_identifier, std::move(receive_blocks), std::move(get_fun_blocks));
+  return createV<ast_contract_declaration>(range, v_ident, storage_type, std::move(state_identifiers), initial_state_identifier, std::move(receive_blocks), std::move(get_fun_blocks),
+                                           unknown_mode, unknown_throw_code, unknown_annotation_range);
 }
 
 static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>& declarations) {
