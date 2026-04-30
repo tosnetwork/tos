@@ -513,12 +513,16 @@ exhaustiveness checking lands in Slice 3.
 
 **Status.** 🚧 In progress as of 2026-04-30. The Slice 2 syntax
 policy input exists at `doc/tos-language-syntax-policy.md`
-(Draft v3, post-v2-security-review). The first two implementation
-stages have landed on `actor-layer`; Stage 1 is commit
-`081f05d3c` (`Add Slice 2 Stage 1 contract / receive parser +
-lowering`), and Stage 2 adds the initial state-machine compiler
-surface in commit `cc6656ce9` (`Add Slice 2 Stage 2
-state-machine lowering`).
+(Draft v3, post-v2-security-review). Five of the nine
+implementation stages have landed on `actor-layer`: Stage 1
+(commit `081f05d3c`), Stage 2 (`cc6656ce9`), Stage 3 (`aeafe7906`
+merged via `8e6b3a3f8`), Stage 5 (`21b3f8a03` merged via
+`6f188fdcf`), and Stage 7 (`2e01919ee` merged via `c6bb72fc2`).
+Stage 3, 5, and 7 were authored by three parallel worktree
+agents (each on its own isolated branch) and merged
+sequentially; the combined regression suite reports 598/598
+tol-tester pass, 24/24 test-emulator pass, and the FunC↔Tol
+gas-parity gate green for all three Slice 1 reference contracts.
 
 **Implementation stages.**
 
@@ -556,16 +560,44 @@ state-machine lowering`).
    `583/583` tol-tester cases pass, `24 test(s) passed` in
    `test-emulator`, Slice 1 gas gate remains green, and
    `git diff --check` is clean.
-4. ⏳ **Stage 3 — `@on` + field-scoping / taint analysis.**
-   Deferred per §10.1.
+4. ✅ **Stage 3 — `@on` + field-scoping / taint analysis.**
+   Completed 2026-04-30 in commit `aeafe7906` (worktree
+   contribution) merged to `actor-layer` as `8e6b3a3f8`. Adds
+   `@on(State1, State2)` annotation parsing on storage struct
+   fields, a new `tol/pipe-check-field-scoping.cpp` pass
+   (registered between `pipe-check-state-reachability` and
+   `pipe-lower-contract`) with taint propagation across local
+   aliases, tuple/pattern destructure, free-function passthrough
+   rejection (conservative Stage 3 approximation), and the
+   explicit c4-serialization-escape check. Adds 7
+   `contract-on-*.tol` tol-tester cases (1 positive, 6 negative).
 5. ⏳ **Stage 4 — `@deploy` + unknown-opcode modes.**
    Deferred per §10.1.
-6. ⏳ **Stage 5 — get functions + `method_id` collision
-   detector.** Deferred per §10.1.
+6. ✅ **Stage 5 — get functions + `method_id` collision
+   detector.** Completed 2026-04-30 in commit `21b3f8a03`
+   (worktree contribution) merged to `actor-layer` as
+   `6f188fdcf`. Adds `get fun X(): T { ... }` inside contract
+   blocks, parser fix at `tol/ast-from-tokens.cpp:1712` (now
+   accepts `@method_id` on contract `get fun`), auto-derived
+   `method_id` via `crc16(name) | 0x10000`, per-contract
+   collision detector at `tol/pipe-generate-fif-output.cpp:255-261`
+   covering both auto-derived and `@method_id`-pinned IDs, and
+   read-only `get fun` body enforcement. Adds 5
+   `contract-getfun-*.tol` tol-tester cases.
 7. ⏳ **Stage 6 — `receive_external` + `require` auto-numbering.**
    Deferred per §10.1.
-8. ⏳ **Stage 7 — per-receiver `disclaim_query_id` rewrite.**
-   Deferred per §10.1.
+8. ✅ **Stage 7 — per-receiver `disclaim_query_id` rewrite.**
+   Completed 2026-04-30 in commit `2e01919ee` (worktree
+   contribution) merged to `actor-layer` as `c6bb72fc2`.
+   Closes the codex security review v2 HIGH defect on §3.2.1.
+   Introduces the synthetic `ast_receiver_scope_marker` AST kind
+   emitted by `tol/pipe-lower-contract.cpp` around each lowered
+   receive-branch body; rewrites
+   `tol/pipe-check-query-id-propagation.cpp` to maintain a stack
+   of per-scope `ScopeRecord`s so receiver A's
+   `@disclaim_query_id` no longer silences receiver B. Adds
+   parser support for `@disclaim_query_id` on `receive(...)`
+   blocks. Adds 3 `contract-disclaim-*.tol` tol-tester cases.
 9. ⏳ **Stage 8 — dogfood remigration of jetton-minter /
    jetton-wallet / wallet-v5.** Deferred per §10.1.
 
