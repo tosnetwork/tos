@@ -1556,6 +1556,7 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
   V<ast_identifier> initial_state_identifier;
   int n_receive_blocks;               // children layout: [name, receive*, receive_external*, get_fun*]; receives come first
   int n_receive_external_blocks;      // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8)
+  int on_bounced_policy_flags = 0;     // FunctionData::flagManualOnBounce / flagIgnoreOnBounce for synthesized onInternalMessage
   // Slice 2 Stage 4: contract-level unknown-opcode mode. Parser sets this from
   // `@unknown_silent_drop` / `@unknown_throw(N)` or from a `receive(msg: UnknownOpcode)` body.
   // Default `default_protocol_throw` lowers to a `throw OP_ERROR` last branch.
@@ -1577,6 +1578,7 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
   auto get_initial_state_identifier() const { return initial_state_identifier; }
 
   Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<V<ast_identifier>>&& state_identifiers, V<ast_identifier> initial_state_identifier, std::vector<AnyV>&& receive_blocks, std::vector<AnyV>&& receive_external_blocks, std::vector<AnyV>&& get_fun_blocks,
+         int on_bounced_policy_flags = 0,
          ContractUnknownMode unknown_mode = ContractUnknownMode::default_protocol_throw,
          int64_t unknown_throw_code = 0,
          SrcRange unknown_annotation_range = SrcRange::undefined())
@@ -1592,6 +1594,7 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
     , storage_type_node(storage_type_node), state_identifiers(std::move(state_identifiers)), initial_state_identifier(initial_state_identifier)
     , n_receive_blocks(static_cast<int>(receive_blocks.size()))
     , n_receive_external_blocks(static_cast<int>(receive_external_blocks.size()))
+    , on_bounced_policy_flags(on_bounced_policy_flags)
     , unknown_mode(unknown_mode), unknown_throw_code(unknown_throw_code), unknown_annotation_range(unknown_annotation_range) {}
 };
 

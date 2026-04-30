@@ -2224,8 +2224,26 @@ static V<ast_identifier> parse_initial_state(Lexer& lex) {
 }
 
 static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annotation>>& annotations) {
-  if (!annotations.empty()) {
-    err("contract annotations are {}", slice2_deferred_msg()).fire(annotations.front());
+  int on_bounced_policy_flags = 0;
+  for (auto v_annotation : annotations) {
+    switch (v_annotation->kind) {
+      case AnnotationKind::on_bounced_policy: {
+        if (on_bounced_policy_flags != 0) {
+          err("contract may specify only one @on_bounced_policy annotation").fire(v_annotation);
+        }
+        std::string_view str = v_annotation->get_arg()->get_item(0)->as<ast_string_const>()->str_val;
+        if (str == "manual") {
+          on_bounced_policy_flags |= FunctionData::flagManualOnBounce;
+        } else if (str == "ignore") {
+          on_bounced_policy_flags |= FunctionData::flagIgnoreOnBounce;
+        } else {
+          err("incorrect value for {}", v_annotation->name).fire(v_annotation);
+        }
+        break;
+      }
+      default:
+        err("contract annotations are {}", slice2_deferred_msg()).fire(v_annotation);
+    }
   }
 
   SrcRange range = lex.range_start();
@@ -2504,7 +2522,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
   range.end(lex.cur_range());
   lex.next();
   return createV<ast_contract_declaration>(range, v_ident, storage_type, std::move(state_identifiers), initial_state_identifier, std::move(receive_blocks), std::move(receive_external_blocks), std::move(get_fun_blocks),
-                                           unknown_mode, unknown_throw_code, unknown_annotation_range);
+                                           on_bounced_policy_flags, unknown_mode, unknown_throw_code, unknown_annotation_range);
 }
 
 static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>& declarations) {

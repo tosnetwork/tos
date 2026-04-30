@@ -1,10 +1,14 @@
 // =============================================================================
-// Slice 1 Stage 3.3 — wallet-v5 Tol migration.
+// Slice 2 Stage 8c — wallet-v5 Tol re-migration to high-level syntax.
 //
-// Policy reference: doc/tos-message-policy.md v6 §3.1 (standard body layout),
-// §5.2 (OP_ERROR body), §5.3 (error_class), and §8.1 (bit-for-bit
-// compatibility for existing wallet-vN formats). Per §9.3, wallet external
-// messages are not governed by the Slice 1 internal-message envelope.
+// Policy reference: doc/tos-language-syntax-policy.md §3.1, §3.2
+// (`@unknown_silent_drop`), §3.8 (`receive_external`), §4.1 (wallet-v5-style
+// non-standard internal dispatch caveat), §6.1 (wire-bit-identity), and §7
+// (migration path). Inherits Slice 1 Stage 3.3 wire commitments from
+// doc/tos-message-policy.md v6 §3.1 (standard body layout), §5.2 (OP_ERROR
+// body), §5.3 (error_class), and §8.1 (bit-for-bit compatibility for existing
+// wallet-vN formats). Per §9.3, wallet external messages are not governed by
+// the Slice 1 internal-message envelope.
 //
 // Bytecode delta captured at write time:
 //   FunC cells: 20
@@ -12,7 +16,7 @@
 //   ratio:      1.10
 //
 // §5.3 error-class assignment table:
-//   FunC line | FunC throw(N) | ErrorClass    | error_code
+//   FunC line | FunC throw(N) | ErrorClass    | error_code | Slice 2 site
 //   75        | throw(147)    | Protocol      | 1147
 //   76        | throw(147)    | Protocol      | 1147
 //   77        | throw(137)    | Protocol      | 1137
@@ -32,7 +36,7 @@
 //   182       | throw(133)    | Permanent     | 1133
 //   183       | throw(134)    | Protocol      | 1134
 //   184       | throw(136)    | Permanent     | 1136
-//   205       | throw(138)    | Protocol      | 1138
+//   205       | throw(138)    | Protocol      | 1138       | receive_external(UnknownOpcode)
 //
 // Compatibility note: wallet-v5 is mostly external-message driven, so this
 // migration keeps the signed external/internal body format, extension action
@@ -42,6 +46,11 @@
 // because the reference wallet performs state/action effects rather than a
 // request/reply emission. Bounced internal messages are handled manually so the
 // body-level dispatch remains aligned with the FunC `recv_internal` entry point.
+//
+// Signed internal/external request structs below are prefix carriers only. The
+// signature covers a variable-length prefix and the final 512 bits are the
+// signature, so receiver bodies keep calling `processSignedRequest(in.body /
+// inMsgBody, ...)` against the raw slice instead of unpacking a Tol struct.
 // =============================================================================
 
 import "@stdlib/common"
@@ -118,6 +127,14 @@ struct (PREFIX_EXTENSION_ACTION) ExtensionActionRequest {
     actions: RemainingBitsAndRefs;
 }
 
+struct (PREFIX_SIGNED_INTERNAL) SignedInternalRequest {
+    signedBody: RemainingBitsAndRefs;
+}
+
+struct (PREFIX_SIGNED_EXTERNAL) SignedExternalRequest {
+    signedBody: RemainingBitsAndRefs;
+}
+
 struct SignedRequestHeader {
     opcode: uint32;
     globalId: uint32;
@@ -146,11 +163,6 @@ fun slice.countTrailingZeroes(self): int
 @inline
 fun currentData(): cell {
     return contract.getData();
-}
-
-@inline
-fun loadData(): WalletV5Storage {
-    return WalletV5Storage.fromCell(currentData());
 }
 
 @pure
@@ -451,29 +463,13 @@ fun processSignedRequest(inMsgBody: slice, isExternal: bool): void {
     processActions(cs, isExternal, false);
 }
 
-fun onExternalMessage(inMsgBody: slice) {
-    if (inMsgBody.preloadUint(SIZE_MESSAGE_OPERATION_PREFIX) != PREFIX_SIGNED_EXTERNAL) {
-        throw ERROR_INVALID_MESSAGE_OPERATION;
-    }
-    processSignedRequest(inMsgBody, true);
-}
-
 @on_bounced_policy("manual")
-fun onInternalMessage(in: InMessage) {
-    if (in.body.remainingBitsCount() < SIZE_MESSAGE_OPERATION_PREFIX) {
-        return;
-    }
+contract WalletV5 {
+    storage: WalletV5Storage
+    @unknown_silent_drop;
 
-    var body = in.body;
-    val op = body.preloadUint(SIZE_MESSAGE_OPERATION_PREFIX);
-    if (op != PREFIX_EXTENSION_ACTION && op != PREFIX_SIGNED_INTERNAL) {
-        return;
-    }
-
-    if (op == PREFIX_EXTENSION_ACTION) {
-        disclaim_query_id();
-        body.skipBits(SIZE_MESSAGE_OPERATION_PREFIX);
-
+    @disclaim_query_id
+    receive(msg: ExtensionActionRequest) {
         val (senderAddressWc, senderAddressHash) = in.senderAddress.getWorkchainAndHash();
         val (myAddressWc, _) = contract.getAddress().getWorkchainAndHash();
         if (myAddressWc != senderAddressWc) {
@@ -489,36 +485,41 @@ fun onInternalMessage(in: InMessage) {
             return;
         }
 
-        body.skipBits(SIZE_QUERY_ID);
-        processActions(body, false, true);
-        return;
+        processActions(msg.actions, false, true);
     }
 
-    if (in.body.remainingBitsCount() < SIZE_MESSAGE_OPERATION_PREFIX + SIZE_GLOBAL_ID + SIZE_WALLET_ID + SIZE_VALID_UNTIL + SIZE_SEQNO + SIZE_SIGNATURE) {
-        return;
+    receive(msg: SignedInternalRequest) {
+        if (in.body.remainingBitsCount() < SIZE_MESSAGE_OPERATION_PREFIX + SIZE_GLOBAL_ID + SIZE_WALLET_ID + SIZE_VALID_UNTIL + SIZE_SEQNO + SIZE_SIGNATURE) {
+            return;
+        }
+        processSignedRequest(in.body, false);
     }
-    processSignedRequest(in.body, false);
-}
 
-get fun is_signature_allowed(): int {
-    return currentData().beginParse().preloadInt(SIZE_BOOL);
-}
+    receive_external(msg: SignedExternalRequest) {
+        processSignedRequest(inMsgBody, true);
+    }
 
-get fun seqno(): int {
-    return currentData().beginParse().skipBits(SIZE_BOOL).preloadUint(SIZE_SEQNO);
-}
+    receive_external(msg: UnknownOpcode) {
+        throw ERROR_INVALID_MESSAGE_OPERATION;
+    }
 
-get fun get_subwallet_id(): int {
-    return currentData().beginParse().skipBits(SIZE_BOOL + SIZE_SEQNO).preloadUint(SIZE_WALLET_ID);
-}
+    get fun is_signature_allowed(): int {
+        return storage.isSignatureAllowed as int;
+    }
 
-get fun get_public_key(): int {
-    return currentData().beginParse().skipBits(SIZE_BOOL + SIZE_SEQNO + SIZE_WALLET_ID).preloadUint(SIZE_PUBLIC_KEY);
-}
+    get fun seqno(): int {
+        return storage.seqno;
+    }
 
-get fun get_extensions(): dict {
-    return currentData()
-        .beginParse()
-        .skipBits(SIZE_BOOL + SIZE_SEQNO + SIZE_WALLET_ID + SIZE_PUBLIC_KEY)
-        .preloadDict();
+    get fun get_subwallet_id(): int {
+        return storage.walletId;
+    }
+
+    get fun get_public_key(): int {
+        return storage.publicKey;
+    }
+
+    get fun get_extensions(): dict {
+        return storage.extensions;
+    }
 }

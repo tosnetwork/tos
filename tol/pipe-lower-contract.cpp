@@ -76,6 +76,11 @@ static AnyExprV make_in_body(SrcRange range) {
   return make_dot(range, make_ref(range, "in"), "body");
 }
 
+static bool is_unknown_opcode_type_node(AnyTypeV type_node) {
+  auto leaf = type_node ? type_node->try_as<ast_type_leaf_text>() : nullptr;
+  return leaf && leaf->text == "UnknownOpcode";
+}
+
 static AnyV make_return_void(SrcRange range) {
   return createV<ast_return_statement>(range, createV<ast_empty_expression>(SrcRange::empty_at_end(range)));
 }
@@ -246,6 +251,33 @@ static void check_receive_external_opcode_prefix(V<ast_receive_external_block> r
         message_struct->name, prefix_len)
       .collect(receive->message_type_node);
   }
+}
+
+static bool is_standard_query_id_message_struct(StructPtr message_struct) {
+  if (!message_struct || message_struct->get_num_fields() == 0) {
+    return false;
+  }
+  StructFieldPtr first = message_struct->get_field(0);
+  if (first->name != "queryId" || first->declared_type == nullptr) {
+    return false;
+  }
+  auto intN = first->declared_type->unwrap_alias()->try_as<TypeDataIntN>();
+  return intN && intN->n_bits == 64 && intN->is_unsigned && !intN->is_variadic;
+}
+
+static bool should_emit_common_query_id_preflight(V<ast_contract_declaration> contract, const std::vector<StructPtr>& message_structs) {
+  bool has_typed_receiver = false;
+  for (int i = 0; i < contract->get_num_receives(); ++i) {
+    V<ast_receive_block> receive = contract->get_receive(i);
+    if (receive->is_unknown_opcode_catch_all) {
+      continue;
+    }
+    has_typed_receiver = true;
+    if (!is_standard_query_id_message_struct(message_structs[i])) {
+      return false;
+    }
+  }
+  return has_typed_receiver;
 }
 
 static V<ast_function_declaration> make_load_data_function(V<ast_contract_declaration> contract, StructPtr storage_struct) {
@@ -528,7 +560,9 @@ static std::vector<AnyV> lower_state_statement(AnyV item, const StateLoweringCon
   }
 }
 
-static AnyV make_receive_branch(V<ast_contract_declaration> contract, V<ast_receive_block> receive, StructPtr message_struct, const StateLoweringContext& state_ctx) {
+static AnyV make_receive_branch(
+    V<ast_contract_declaration> contract, V<ast_receive_block> receive, StructPtr message_struct,
+    const StateLoweringContext& state_ctx, bool load_storage_in_branch) {
   SrcRange range = receive->range;
   AnyExprV cond = createV<ast_binary_operator>(
       range, range, "==", tok_eq, make_ref(range, "op"), make_int(range, message_struct->opcode.pack_prefix));
@@ -537,6 +571,9 @@ static AnyV make_receive_branch(V<ast_contract_declaration> contract, V<ast_rece
   // any `@disclaim_query_id` lowering injected at the top, and the user's receiver body.
   std::vector<AnyV> scope_items;
   scope_items.reserve(4 + receive->get_body()->get_items().size());
+  if (load_storage_in_branch) {
+    scope_items.push_back(make_local_decl(range, "storage", make_call(range, make_ref(range, "loadData")), true));
+  }
   scope_items.push_back(make_msg_decode_decl(range, receive));
   if (receive->has_disclaim_query_id_annotation) {
     // Slice 2 Stage 7 (doc/tos-language-syntax-policy.md §3.2.1): the parser annotation
@@ -679,6 +716,7 @@ static AnyV make_external_receive_branch(V<ast_receive_external_block> receive, 
   auto type_leaf = receive->message_type_node->as<ast_type_leaf_text>();
   AnyExprV from_slice = make_method_call(range, make_ref(range, type_leaf->text), "fromSlice", {make_arg(range, make_ref(range, "inMsgBody"))});
   scope_items.push_back(make_local_decl(range, receive->get_param_name(), createV<ast_lazy_operator>(range, from_slice), true));
+  scope_items.push_back(make_local_decl(range, "storage", make_call(range, make_ref(range, "loadData")), true));
   for (AnyV item : receive->get_body()->get_items()) {
     scope_items.push_back(item);
   }
@@ -687,6 +725,19 @@ static AnyV make_external_receive_branch(V<ast_receive_external_block> receive, 
   auto if_body = createV<ast_block_statement>(range, std::move(scope_items));
   auto else_body = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
   return createV<ast_if_statement>(range, false, cond, if_body, else_body);
+}
+
+static AnyV make_external_unknown_tail(V<ast_contract_declaration> contract, V<ast_receive_external_block> receive) {
+  SrcRange range = receive->range;
+  std::vector<AnyV> scope_items;
+  scope_items.reserve(1 + receive->get_body()->get_items().size());
+  scope_items.push_back(make_local_decl(range, receive->get_param_name(), make_ref(range, "inMsgBody"), true));
+  for (AnyV item : receive->get_body()->get_items()) {
+    scope_items.push_back(item);
+  }
+  auto scope_block = createV<ast_block_statement>(range, std::move(scope_items));
+  return createV<ast_receiver_scope_marker>(
+      range, contract->get_identifier()->name, "ExternalUnknownOpcode", receive->range, scope_block);
 }
 
 // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): synthesize the
@@ -713,17 +764,23 @@ static V<ast_function_declaration> make_on_external_function(
   items.push_back(make_local_decl(
       range, "op", make_method_call(range, make_ref(range, "inMsgBody"), "preloadUint", {make_arg(range, make_int(range, 32))}), true));
 
-  // Load storage so user receiver bodies that read `storage.X` typecheck the same way as
-  // for internal receivers. (Externals have no preflight query-id check or @deploy preamble.)
-  items.push_back(make_local_decl(range, "storage", make_call(range, make_ref(range, "loadData")), true));
-
+  V<ast_receive_external_block> unknown_catch_all_receive = nullptr;
   for (int i = 0; i < contract->get_num_externals(); ++i) {
-    items.push_back(make_external_receive_branch(contract->get_external(i), external_message_structs[i]));
+    V<ast_receive_external_block> receive = contract->get_external(i);
+    if (external_message_structs[i] == nullptr) {
+      unknown_catch_all_receive = receive;
+      continue;
+    }
+    items.push_back(make_external_receive_branch(receive, external_message_structs[i]));
   }
-  // Unrecognized external opcode: throw Protocol-class sentinel.
-  // (0x04 << 16) | 0xFFFF = 0x4FFFF — outside 0..1023 reserved range and outside the
-  // auto-numbered `require(...)` window for this contract.
-  items.push_back(make_throw(range, (4LL << 16) | 0xFFFFLL));
+  if (unknown_catch_all_receive != nullptr) {
+    items.push_back(make_external_unknown_tail(contract, unknown_catch_all_receive));
+  } else {
+    // Unrecognized external opcode: throw Protocol-class sentinel.
+    // (0x04 << 16) | 0xFFFF = 0x4FFFF — outside 0..1023 reserved range and outside the
+    // auto-numbered `require(...)` window for this contract.
+    items.push_back(make_throw(range, (4LL << 16) | 0xFFFFLL));
+  }
 
   auto body = createV<ast_block_statement>(range, std::move(items));
   return createV<ast_function_declaration>(
@@ -738,6 +795,8 @@ static V<ast_function_declaration> make_on_internal_function(
   auto name = make_ident(range, "onInternalMessage");
   auto param = createV<ast_parameter>(range, make_ident(range, "in"), make_type(range, "InMessage"), nullptr, false);
   auto params = createV<ast_parameter_list>(range, std::vector<AnyV>{param});
+  bool use_common_query_id_preflight = should_emit_common_query_id_preflight(contract, message_structs);
+  bool load_storage_before_dispatch = contract->unknown_mode != ContractUnknownMode::silent_drop;
 
   // Slice 2 Stage 4 dispatch shape (doc/tos-language-syntax-policy.md §4.1 v3):
   //   1. if `in.body.remainingBitsCount() < 32` → run UnknownMode tail (cannot parse opcode).
@@ -796,21 +855,29 @@ static V<ast_function_declaration> make_on_internal_function(
   auto short_body_else = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
   items.push_back(createV<ast_if_statement>(range, false, bits_cond, short_body_block, short_body_else));
 
-  // 2. parse opcode + queryId preflight from a copy slice.
+  // 2. parse opcode and, for standard-envelope contracts, the queryId preflight
+  // from a copy slice. Wallet-v5-style non-standard bodies intentionally do not
+  // share a common query_id slot; see doc/tos-language-syntax-policy.md §4.1.
   items.push_back(make_local_decl(range, "header", make_in_body(range), false));
   items.push_back(make_local_decl(
       range, "op", make_method_call(range, make_ref(range, "header"), "loadUint", {make_arg(range, make_int(range, 32))}), true));
-  items.push_back(make_local_decl(
-      range, "queryId", make_method_call(range, make_ref(range, "header"), "loadUint", {make_arg(range, make_int(range, 64))}), true));
-  items.push_back(make_query_id_preflight_guard(range));
+  if (use_common_query_id_preflight) {
+    items.push_back(make_local_decl(
+        range, "queryId", make_method_call(range, make_ref(range, "header"), "loadUint", {make_arg(range, make_int(range, 64))}), true));
+    items.push_back(make_query_id_preflight_guard(range));
+  }
 
   // 3. @deploy branch BEFORE loadData() — c4 is empty here.
   if (deploy_receive != nullptr) {
     items.push_back(make_deploy_branch(contract, deploy_receive, deploy_struct, state_ctx, deploy_save_name));
   }
 
-  // 4. loadData() to materialize storage for normal receivers.
-  items.push_back(make_local_decl(range, "storage", make_call(range, make_ref(range, "loadData")), true));
+  // 4. loadData() to materialize storage for normal receivers. In explicit
+  // silent-drop mode, delay this into the matched branch so unknown opcodes can
+  // return without touching c4 (wallet-v5 compatibility).
+  if (load_storage_before_dispatch) {
+    items.push_back(make_local_decl(range, "storage", make_call(range, make_ref(range, "loadData")), true));
+  }
 
   // 5. dispatch table for declared (non-deploy, non-unknown) receivers.
   for (int i = 0; i < contract->get_num_receives(); ++i) {
@@ -818,7 +885,7 @@ static V<ast_function_declaration> make_on_internal_function(
     if (receive->is_deploy || receive->is_unknown_opcode_catch_all) {
       continue;
     }
-    items.push_back(make_receive_branch(contract, receive, message_structs[i], state_ctx));
+    items.push_back(make_receive_branch(contract, receive, message_structs[i], state_ctx, !load_storage_before_dispatch));
   }
 
   // 6. trailing UnknownMode tail.
@@ -833,7 +900,7 @@ static V<ast_function_declaration> make_on_internal_function(
   auto body = createV<ast_block_statement>(range, std::move(items));
   return createV<ast_function_declaration>(
       range, name, params, body, nullptr, nullptr, nullptr, nullptr,
-      FunctionData::EMPTY_TVM_METHOD_ID, FunctionData::flagIsEntrypoint, FunctionInlineMode::notCalculated);
+      FunctionData::EMPTY_TVM_METHOD_ID, FunctionData::flagIsEntrypoint | contract->on_bounced_policy_flags, FunctionInlineMode::notCalculated);
 }
 
 // Names that mutate persistent storage / emit c5 actions.
@@ -1013,8 +1080,19 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
   std::vector<StructPtr> external_message_structs;
   external_message_structs.reserve(contract->get_num_externals());
   std::unordered_map<int64_t, V<ast_receive_external_block>> seen_external_opcodes;
+  V<ast_receive_external_block> first_external_unknown_catch_all = nullptr;
   for (int i = 0; i < contract->get_num_externals(); ++i) {
     V<ast_receive_external_block> receive = contract->get_external(i);
+    if (is_unknown_opcode_type_node(receive->message_type_node)) {
+      if (first_external_unknown_catch_all != nullptr) {
+        err("contract `{}` declares more than one `receive_external(msg: UnknownOpcode)`; first declared at {}; see doc/tos-language-syntax-policy.md §3.8",
+            contract->get_identifier()->name, first_external_unknown_catch_all->range.stringify_start_location(false))
+          .fire(receive->range);
+      }
+      first_external_unknown_catch_all = receive;
+      external_message_structs.push_back(nullptr);
+      continue;
+    }
     StructPtr message_struct = resolve_struct_type(receive->message_type_node, "contract receive_external message type");
     check_receive_external_opcode_prefix(receive, message_struct);
     if (message_struct->opcode.prefix_len == 32) {
