@@ -333,6 +333,9 @@ class InferTypesAndCallsAndFieldsVisitor final {
         return process_assert_statement(v->as<ast_assert_statement>(), std::move(flow));
       case ast_try_catch_statement:
         return process_try_catch_statement(v->as<ast_try_catch_statement>(), std::move(flow));
+      case ast_receiver_scope_marker:
+        // synthetic Slice 2 marker — recurse into the wrapped block transparently.
+        return process_any_statement(v->as<ast_receiver_scope_marker>()->get_wrapped_block(), std::move(flow));
       case ast_empty_statement:
         return flow;
       default:

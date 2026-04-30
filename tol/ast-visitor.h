@@ -148,6 +148,7 @@ protected:
   virtual void visit(V<ast_throw_statement> v)           { return visit_children(v); }
   virtual void visit(V<ast_assert_statement> v)          { return visit_children(v); }
   virtual void visit(V<ast_try_catch_statement> v)       { return visit_children(v); }
+  virtual void visit(V<ast_receiver_scope_marker> v)     { return visit_children(v); }
 
   void visit(AnyV v) final {
     switch (v->kind) {
@@ -197,6 +198,7 @@ protected:
       case ast_throw_statement:                 return visit(v->as<ast_throw_statement>());
       case ast_assert_statement:                return visit(v->as<ast_assert_statement>());
       case ast_try_catch_statement:             return visit(v->as<ast_try_catch_statement>());
+      case ast_receiver_scope_marker:           return visit(v->as<ast_receiver_scope_marker>());
 #ifdef TOL_DEBUG
       case ast_asm_body:
         throw UnexpectedASTNodeKind(v, "ASTVisitor; forgot to filter out asm functions in should_visit_function()?");

@@ -2101,8 +2101,10 @@ static AnyV parse_contract_get_fun_block(Lexer& lex, const std::vector<V<ast_ann
   return createV<ast_get_fun_block>(range, v_ident, v_param_list, v_body, ret_type, tvm_method_id_expr, extra_flags, inline_mode);
 }
 
-static AnyV parse_receive_block(Lexer& lex) {
-  SrcRange range = lex.range_start();
+static AnyV parse_receive_block(Lexer& lex, bool has_disclaim_query_id_annotation = false, SrcRange disclaim_annotation_range = SrcRange::undefined()) {
+  // When `@disclaim_query_id` precedes the `receive(...)` block, anchor the AST node's
+  // SrcRange at the annotation; otherwise use the `receive` keyword as the start.
+  SrcRange range = has_disclaim_query_id_annotation ? disclaim_annotation_range : lex.range_start();
   lex.expect(tok_receive, "`receive`");
   lex.expect(tok_oppar, "`(`");
   auto v_param = parse_identifier(lex, "receive parameter name");
@@ -2116,7 +2118,8 @@ static AnyV parse_receive_block(Lexer& lex) {
   }
   auto v_body = parse_block_statement(lex, true);
   range.end(v_body->range);
-  return createV<ast_receive_block>(range, v_param, msg_type, state_identifier, v_body);
+  return createV<ast_receive_block>(range, v_param, msg_type, state_identifier, v_body,
+                                    has_disclaim_query_id_annotation, disclaim_annotation_range);
 }
 
 static void parse_contract_state_list(Lexer& lex, std::vector<V<ast_identifier>>& state_identifiers) {
@@ -2180,7 +2183,25 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
         initial_state_identifier = parse_initial_state(lex);
         continue;
       }
-      // queue this annotation; it must be followed by a member it applies to
+      // Slice 2 Stage 7 (doc/tos-language-syntax-policy.md §3.2.1):
+      // `@disclaim_query_id` is a per-receiver annotation; consume it directly
+      // and pass the flag into the upcoming receive block.
+      if (lex.cur_str() == "@disclaim_query_id") {
+        if (!pending_member_annotations.empty()) {
+          err("`@disclaim_query_id` cannot follow other annotations").fire(lex.cur_range());
+        }
+        SrcRange annotation_range = lex.cur_range();
+        lex.next();
+        if (lex.tok() != tok_receive) {
+          err("`@disclaim_query_id` is only valid immediately before a `receive(...)` block; see doc/tos-language-syntax-policy.md §3.2.1").fire(annotation_range);
+        }
+        if (!storage_type) {
+          err("contract `storage:` declaration must appear before `receive(...)` blocks").fire(lex.cur_range());
+        }
+        receive_blocks.push_back(parse_receive_block(lex, /*has_disclaim_query_id_annotation=*/true, annotation_range));
+        continue;
+      }
+      // Otherwise queue this annotation; it must be followed by a member it applies to
       // (e.g. `@method_id(N) get fun adminAddress(): address {...}` per §3.5)
       pending_member_annotations.push_back(parse_annotation(lex));
       continue;

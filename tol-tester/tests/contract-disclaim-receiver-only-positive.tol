@@ -1,0 +1,62 @@
+// Per doc/tos-language-syntax-policy.md §3.2.1 (Slice 2 Stage 7) — per-receiver
+// scope confirmation: a contract with two receivers, NEITHER disclaiming, where
+// each receiver propagates the inbound queryId correctly. The check pass must
+// be silent on both receivers; this exercises the per-scope envelope binding
+// without the `@disclaim_query_id` shortcut.
+import "@stdlib/common"
+
+struct ContractDisclaimReceiverOnlyStorage {}
+
+struct (0xC1C10001) ContractDisclaimReceiverOnlyPing {
+    queryId: uint64;
+    nonce: uint32;
+}
+
+struct (0xC1C10002) ContractDisclaimReceiverOnlyAck {
+    queryId: uint64;
+    amount: uint64;
+}
+
+struct (0xC1C10003) ContractDisclaimReceiverOnlyResponse {
+    queryId: uint64;
+    nonce: uint32;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractDisclaimReceiverOnlyPositive {
+    storage: ContractDisclaimReceiverOnlyStorage
+
+    receive(msg: ContractDisclaimReceiverOnlyPing) {
+        val reply = createMessage({
+            bounce: false,
+            dest: in.senderAddress,
+            value: 0,
+            body: ContractDisclaimReceiverOnlyResponse {
+                queryId: msg.queryId,
+                nonce: msg.nonce,
+            },
+        });
+        reply.send(SEND_MODE_REGULAR);
+    }
+
+    receive(msg: ContractDisclaimReceiverOnlyAck) {
+        val reply = createMessage({
+            bounce: false,
+            dest: in.senderAddress,
+            value: 0,
+            body: ContractDisclaimReceiverOnlyResponse {
+                queryId: msg.queryId,
+                nonce: 0,
+            },
+        });
+        reply.send(SEND_MODE_REGULAR);
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

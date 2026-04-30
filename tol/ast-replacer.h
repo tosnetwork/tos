@@ -139,6 +139,7 @@ protected:
   virtual AnyV replace(V<ast_throw_statement> v)               { return replace_children(v); }
   virtual AnyV replace(V<ast_assert_statement> v)              { return replace_children(v); }
   virtual AnyV replace(V<ast_try_catch_statement> v)           { return replace_children(v); }
+  virtual AnyV replace(V<ast_receiver_scope_marker> v)         { return replace_children(v); }
 
   AnyExprV replace(AnyExprV v) final {
     switch (v->kind) {
@@ -193,6 +194,7 @@ protected:
       case ast_throw_statement:                 return replace(v->as<ast_throw_statement>());
       case ast_assert_statement:                return replace(v->as<ast_assert_statement>());
       case ast_try_catch_statement:             return replace(v->as<ast_try_catch_statement>());
+      case ast_receiver_scope_marker:           return replace(v->as<ast_receiver_scope_marker>());
 #ifdef TOL_DEBUG
       case ast_asm_body:
         throw UnexpectedASTNodeKind(v, "ASTReplacer::replace");

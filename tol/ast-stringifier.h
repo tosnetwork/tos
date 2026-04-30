@@ -91,6 +91,7 @@ class ASTStringifier final : public ASTVisitor {
     {ast_try_catch_statement, "ast_try_catch_statement"},
     {ast_become_statement, "ast_become_statement"},
     {ast_keep_state_statement, "ast_keep_state_statement"},
+    {ast_receiver_scope_marker, "ast_receiver_scope_marker"},
     {ast_asm_body, "ast_asm_body"},
     // other
     {ast_genericsT_item, "ast_genericsT_item"},
@@ -266,6 +267,8 @@ class ASTStringifier final : public ASTVisitor {
         return static_cast<std::string>(v->as<ast_become_statement>()->get_state_name());
       case ast_keep_state_statement:
         return "keep_state";
+      case ast_receiver_scope_marker:
+        return std::string("@__receiver_scope(") + static_cast<std::string>(v->as<ast_receiver_scope_marker>()->message_struct_name) + ")";
       case ast_tol_required_version:
         return static_cast<std::string>(v->as<ast_tol_required_version>()->semver);
       case ast_import_directive:
@@ -378,6 +381,7 @@ public:
       case ast_try_catch_statement:           return handle_vertex(v->as<ast_try_catch_statement>());
       case ast_become_statement:              return handle_vertex(v->as<ast_become_statement>());
       case ast_keep_state_statement:          return handle_vertex(v->as<ast_keep_state_statement>());
+      case ast_receiver_scope_marker:         return handle_vertex(v->as<ast_receiver_scope_marker>());
       case ast_asm_body:                      return handle_vertex(v->as<ast_asm_body>());
       // other
       case ast_genericsT_item:                return handle_vertex(v->as<ast_genericsT_item>());

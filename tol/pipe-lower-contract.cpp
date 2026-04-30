@@ -412,28 +412,47 @@ static std::vector<AnyV> lower_state_statement(AnyV item, const StateLoweringCon
   }
 }
 
-static AnyV make_receive_branch(V<ast_receive_block> receive, StructPtr message_struct, const StateLoweringContext& state_ctx) {
+static AnyV make_receive_branch(V<ast_contract_declaration> contract, V<ast_receive_block> receive, StructPtr message_struct, const StateLoweringContext& state_ctx) {
   SrcRange range = receive->range;
   AnyExprV cond = createV<ast_binary_operator>(
       range, range, "==", tok_eq, make_ref(range, "op"), make_int(range, message_struct->opcode.pack_prefix));
 
-  std::vector<AnyV> body_items;
-  body_items.reserve(3 + receive->get_body()->get_items().size());
-  body_items.push_back(make_msg_decode_decl(range, receive));
+  // Per-receiver scope contents: the msg-decode binding, the optional state-guard,
+  // any `@disclaim_query_id` lowering injected at the top, and the user's receiver body.
+  std::vector<AnyV> scope_items;
+  scope_items.reserve(4 + receive->get_body()->get_items().size());
+  scope_items.push_back(make_msg_decode_decl(range, receive));
+  if (receive->has_disclaim_query_id_annotation) {
+    // Slice 2 Stage 7 (doc/tos-language-syntax-policy.md §3.2.1): the parser annotation
+    // lowers to a `disclaim_query_id()` call inserted at the top of the marker scope so
+    // pipeline_check_query_id_propagation observes it as a regular call inside this scope.
+    SrcRange disclaim_range = receive->disclaim_annotation_range.is_defined() ? receive->disclaim_annotation_range : range;
+    scope_items.push_back(make_call(disclaim_range, make_ref(disclaim_range, "disclaim_query_id")));
+  }
   if (state_ctx.enabled) {
-    body_items.push_back(make_state_guard(range, receive, state_ctx));
+    scope_items.push_back(make_state_guard(range, receive, state_ctx));
     for (AnyV item : receive->get_body()->get_items()) {
       std::vector<AnyV> lowered = lower_state_statement(item, state_ctx);
-      body_items.insert(body_items.end(), lowered.begin(), lowered.end());
+      scope_items.insert(scope_items.end(), lowered.begin(), lowered.end());
     }
   } else {
     for (AnyV item : receive->get_body()->get_items()) {
-      body_items.push_back(item);
+      scope_items.push_back(item);
     }
-    body_items.push_back(make_return_void(range));
+    scope_items.push_back(make_return_void(range));
   }
 
-  auto if_body = createV<ast_block_statement>(range, std::move(body_items));
+  // Wrap the receiver scope in an ast_receiver_scope_marker. This binds
+  // pipeline_check_query_id_propagation's per-scope analysis records — receiver A's
+  // `@disclaim_query_id` cannot silence receiver B's reply. See
+  // doc/tos-language-syntax-policy.md §3.2.1, §10.1.
+  auto scope_block = createV<ast_block_statement>(range, std::move(scope_items));
+  AnyV scope_marker = createV<ast_receiver_scope_marker>(
+      range, contract->get_identifier()->name, message_struct->name, receive->range, scope_block);
+
+  std::vector<AnyV> if_body_items;
+  if_body_items.push_back(scope_marker);
+  auto if_body = createV<ast_block_statement>(range, std::move(if_body_items));
   auto else_body = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
   return createV<ast_if_statement>(range, false, cond, if_body, else_body);
 }
@@ -470,7 +489,7 @@ static V<ast_function_declaration> make_on_internal_function(
   items.push_back(make_local_decl(range, "storage", make_call(range, make_ref(range, "loadData")), true));
 
   for (int i = 0; i < contract->get_num_receives(); ++i) {
-    items.push_back(make_receive_branch(contract->get_receive(i), message_structs[i], state_ctx));
+    items.push_back(make_receive_branch(contract, contract->get_receive(i), message_structs[i], state_ctx));
   }
   items.push_back(make_return_void(range));
 

@@ -1,0 +1,77 @@
+// Per doc/tos-language-syntax-policy.md §3.2.1 (Slice 2 Stage 7) — per-receiver
+// disclaim scope.
+//
+// Pre-Stage-7 behavior used a single function-level `disclaimed` boolean per
+// `onInternalMessage`, so receiver A's `@disclaim_query_id` would (incorrectly)
+// silence the propagation warning for receiver B in the same contract. v3
+// closure: this is a HIGH defect (codex security review v2 §3.2.1).
+//
+// Stage 7 wires `pipe-check-query-id-propagation` to per-receiver scope records
+// keyed off `ast_receiver_scope_marker` emitted by the lowering pass. After
+// this commit receiver B's broken reply MUST produce a "reply does not propagate
+// inbound `queryId`" warning even though receiver A disclaimed.
+import "@stdlib/common"
+
+struct ContractDisclaimLeakStorage {}
+
+struct (0xB1B10001) ContractDisclaimLeakTelemetry {
+    queryId: uint64;
+    eventCode: uint32;
+}
+
+struct (0xB1B10002) ContractDisclaimLeakPing {
+    queryId: uint64;
+    nonce: uint32;
+}
+
+struct (0xB1B10003) ContractDisclaimLeakPong {
+    queryId: uint64;
+    nonce: uint32;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractDisclaimLeak {
+    storage: ContractDisclaimLeakStorage
+
+    @disclaim_query_id
+    receive(msg: ContractDisclaimLeakTelemetry) {
+        // Receiver A disclaims — its scope is silenced.
+        val reply = createMessage({
+            bounce: false,
+            dest: in.senderAddress,
+            value: 0,
+            body: ContractDisclaimLeakPong {
+                queryId: 0,
+                nonce: msg.eventCode,
+            },
+        });
+        reply.send(SEND_MODE_REGULAR);
+    }
+
+    receive(msg: ContractDisclaimLeakPing) {
+        // Receiver B does NOT disclaim and emits a reply with queryId=0 instead
+        // of msg.queryId. Per §3.2.1 the per-receiver scope MUST fire its own
+        // "reply does not propagate inbound `queryId`" warning, regardless of
+        // receiver A's disclaim.
+        val reply = createMessage({
+            bounce: false,
+            dest: in.senderAddress,
+            value: 0,
+            body: ContractDisclaimLeakPong {
+                queryId: 0,
+                nonce: msg.nonce,
+            },
+        });
+        reply.send(SEND_MODE_REGULAR);
+    }
+}
+
+/**
+@testcase | 101 | | 0
+@stderr reply does not propagate inbound `queryId`
+@stderr doc/tos-language-syntax-policy.md §3.2.1
+ */
