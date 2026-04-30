@@ -920,18 +920,19 @@ Auction, DAO/governance, oracle, and payment-channel templates,
 each one preceded by a short design note. Cross-language ABI is
 frozen at the end of this slice.
 
-**Status.** 🚧 Stage 0 Draft v1.1, 2026-04-30. The implementation
+**Status.** 🚧 Stage 1 complete, Stage 2 active, 2026-04-30. The implementation
 input candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
 [`doc/slice-5-func-tol-abi.md`](slice-5-func-tol-abi.md), and
 [`doc/slice-5-abi-manifest-schema.json`](slice-5-abi-manifest-schema.json).
-The first Stage 0 security-review findings are addressed; approval is
-still pending. No second-wave helper implementation begins until Stage 0
-security review closes.
+The first Stage 0 security-review findings are addressed and Draft v1.1
+is accepted as the implementation input. Stage 1 has landed the
+dependency-free ABI manifest validator and a FunC/Tol golden fixture
+pair; second-wave helper implementation is now unblocked.
 
 **Stage plan.**
 
-1. 🚧 **Stage 0 — policy and ABI freeze input.** Drafted
-   2026-04-30.
+1. ✅ **Stage 0 — policy and ABI freeze input.** Drafted
+   2026-04-30; approved as Draft v1.1 implementation input.
 
    - ✅ Draft Slice 5 policy RFC and stage plan.
    - ✅ Draft FunC<->Tol ABI freeze boundary.
@@ -942,20 +943,20 @@ security review closes.
      manual/raw fixtures, schema revision discipline, method-id and
      error-code reserved ranges, DAO action policy, and oracle reporter
      lifecycle.
-   - ⬜ Security review and approval.
-   - ⬜ Exit criterion: ABI boundary and stage plan are approved.
+   - ✅ Security review and approval.
+   - ✅ Exit criterion: ABI boundary and stage plan are approved.
 
-2. ⬜ **Stage 1 — ABI manifest validator and interop harness.**
+2. ✅ **Stage 1 — ABI manifest validator and interop harness.**
 
-   - ⬜ Add `scripts/check-slice-5-abi-manifests.py`.
-   - ⬜ Add one FunC-produced and one Tol-produced fixture that
+   - ✅ Add `scripts/check-slice-5-abi-manifests.py`.
+   - ✅ Add one FunC-produced and one Tol-produced fixture that
      serialize the same body/cell shape and compare the result.
-   - ⬜ Validate opcode width, getter stack order, error-code ranges,
+   - ✅ Validate opcode width, getter stack order, error-code ranges,
      `queryId` policy, cell-field encodings, and compatibility
      exceptions.
-   - ⬜ Wire into release-package checks without changing bytecode.
+   - ✅ Wire into release-package checks without changing bytecode.
 
-3. ⬜ **Stage 2 — auction package.**
+3. 🚧 **Stage 2 — auction package.**
 
    - ⬜ Add `@stdlib/auction`.
    - ⬜ Migrate or wrap `examples/slice4/postponed-auction.tol`
@@ -1353,14 +1354,27 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   hardening, postponed-auction reference, check-only behaviour
   manifests, three-pattern trait coverage, generated examples, author
   docs, and `scripts/check-slice-4-release-package.py`.
-- 🚧 **Slice 5 Stage 0 policy / ABI freeze input** — Draft v1.1,
+- ✅ **Slice 5 Stage 0 policy / ABI freeze input** — closed
   2026-04-30. `doc/tos-slice-5-policy.md`,
   `doc/slice-5-func-tol-abi.md`, and
   `doc/slice-5-abi-manifest-schema.json` define the second-wave stdlib
-  stage plan and FunC<->Tol ABI freeze boundary. The first security
-  review fixes have landed; approval remains open.
+  stage plan and FunC<->Tol ABI freeze boundary; Draft v1.1 is the
+  approved implementation input.
+- ✅ **Slice 5 Stage 1 ABI manifest validator** — closed 2026-04-30.
+  `scripts/check-slice-5-abi-manifests.py` validates constrained ABI
+  types, query-id layout, reserved getter/error ranges, manual/raw
+  fixture requirements, Ed25519 signing-input declarations, and the
+  FunC/Tol golden fixture pair under `doc/slice5-abi-fixtures/`.
 
 ## 12. Revision notes
+
+### r24 (Slice 5 Stage 1 ABI validator)
+
+- §6 Slice 5 now marks Stage 0 approved, Stage 1 complete, and Stage 2
+  active.
+- Added the dependency-free Slice 5 ABI manifest validator, the first
+  mixed FunC/Tol ABI manifest, canonical golden fixtures, and the
+  checker runbook.
 
 ### r23 (Slice 5 Stage 0 review fixes)
 
