@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "captured_at_utc": "2026-04-30",
+  "threshold_percent": 10,
+  "scope": "Slice 1 Stage 3 focused Tol migration tests",
+  "note": "These are CI regression baselines for the Tol reference ports captured after Stage 3. They do not claim to be the final pre-migration FunC black-box gas comparison; the in-tree FunC legacy harness currently records bytecode hashes, not equivalent runtime gas fixtures.",
+  "contracts": [
+    {
+      "name": "jetton-minter",
+      "tol_tester_pattern": "jetton-minter",
+      "expected_tests": 3,
+      "baseline_gas": 14303
+    },
+    {
+      "name": "jetton-wallet",
+      "tol_tester_pattern": "jetton-wallet",
+      "expected_tests": 3,
+      "baseline_gas": 33791
+    },
+    {
+      "name": "wallet-v5",
+      "tol_tester_pattern": "wallet-v5",
+      "expected_tests": 3,
+      "baseline_gas": 40960
+    }
+  ]
+}

@@ -8,7 +8,9 @@ on:
       - '.github/workflows/slice-1-conformance.yml'
       - 'CMakeLists.txt'
       - 'crypto/smartcont/**'
+      - 'doc/slice-1-gas-baselines.json'
       - 'emulator/test/slice-1-*.cpp'
+      - 'scripts/check-slice-1-gas.py'
       - 'tol/**'
       - 'tol-tester/**'
   push:
@@ -17,7 +19,9 @@ on:
       - '.github/workflows/slice-1-conformance.yml'
       - 'CMakeLists.txt'
       - 'crypto/smartcont/**'
+      - 'doc/slice-1-gas-baselines.json'
       - 'emulator/test/slice-1-*.cpp'
+      - 'scripts/check-slice-1-gas.py'
       - 'tol/**'
       - 'tol-tester/**'
   workflow_dispatch:
@@ -86,6 +90,14 @@ jobs:
           TOL_EXECUTABLE: ${{ github.workspace }}/build/tol/tol
         run: |
           python3 tol-tester.py tests
+
+      - name: Run Slice 1 gas regression gate
+        env:
+          FIFTPATH: ${{ github.workspace }}/crypto/fift/lib
+          FIFT_EXECUTABLE: ${{ github.workspace }}/build/crypto/fift
+          TOL_EXECUTABLE: ${{ github.workspace }}/build/tol/tol
+        run: |
+          python3 scripts/check-slice-1-gas.py
 
       - name: Run Slice 1 emulator fixtures
         run: |

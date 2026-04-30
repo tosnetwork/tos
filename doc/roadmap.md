@@ -324,8 +324,9 @@ cases) and the Slice 1 CI gate is wired: it compiles the migrated
 Tol reference contracts, runs full `tol-tester`, runs the Slice 1
 emulator fixtures through `test-emulator`, runs a deterministic
 Envelope / `OP_ERROR` fuzz smoke in Tol, and runs deterministic
-BoC / Envelope fuzz smoke through the emulator fixture suite. The
-gas-regression dashboard has not been built.
+BoC / Envelope fuzz smoke through the emulator fixture suite.
+The focused Tol gas-regression gate now exists, but final
+pre-migration FunC black-box gas baselines are not yet available.
 
 **Owners.** QA, with protocol team support.
 
@@ -442,7 +443,12 @@ branch.
       `slice-1-boc-envelope-fuzz-fixture.cpp` covering deterministic
       BoC / Envelope fuzz inside `test-emulator`.)*
 - [ ] Gas regressions are documented and within budget.
-      *(Stage 4 — not started.)*
+      *(Stage 4 — partial. `scripts/check-slice-1-gas.py` gates
+      the focused Tol migration tests against
+      `doc/slice-1-gas-baselines.json` with the recommended 10%
+      threshold. This is a post-migration CI regression baseline;
+      the final checkbox still requires equivalent pre-migration
+      FunC black-box gas fixtures or an explicit written waiver.)*
 - [ ] An external RFC has been published with the
       §8.1 zero-wire-change commitment explicitly called out.
       *(RFC not started; playbook exists, but RFC publication
@@ -452,8 +458,9 @@ branch.
 all 3 reference-contract migrations complete (`jetton-minter`,
 `jetton-wallet`, `wallet-v5`), and the Stage 5 internal migration
 playbook now exists. Stage 4 CI conformance / fuzzing is wired.
-Remaining checklist items break down to: the Stage 4 gas dashboard
-and the Stage 5 external RFC / release notes.
+Remaining checklist items break down to: final Stage 4
+pre-migration gas evidence and the Stage 5 external RFC / release
+notes.
 
 If any one of these is missing, the slice is not done. Slipping
 the boundary creates exactly the cross-layer inconsistency this
