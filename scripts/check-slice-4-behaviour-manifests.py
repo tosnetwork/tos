@@ -21,6 +21,16 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST_DIR = ROOT / "doc" / "slice4-behaviours"
 POSTPONING_MANIFEST = DEFAULT_MANIFEST_DIR / "postponing_state_machine.json"
 POSTPONED_AUCTION = ROOT / "examples" / "slice4" / "postponed-auction.tol"
+SOURCE_BY_BEHAVIOUR = {
+    "jetton_wallet": ROOT / "crypto" / "smartcont" / "tol-stdlib" / "jetton.tol",
+    "nft_item": ROOT / "crypto" / "smartcont" / "tol-stdlib" / "nft.tol",
+    "multisig": ROOT / "crypto" / "smartcont" / "tol-stdlib" / "multisig.tol",
+    "postponing_state_machine": POSTPONED_AUCTION,
+}
+SCAFFOLD_MANIFESTS = (
+    ROOT / "examples" / "slice3" / "jetton-author-trial" / "manifest.json",
+    ROOT / "examples" / "slice3" / "nft-author-trial" / "manifest.json",
+)
 REQUIRED_TOP = {
     "version",
     "schema",
@@ -138,14 +148,21 @@ def validate_manifest(path: Path) -> dict:
 
 def parse_source(path: Path) -> dict:
     text = path.read_text(encoding="utf-8")
+    constants = {
+        name: value
+        for name, value in re.findall(r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[A-Za-z0-9_]+)?\s*=\s*(0x[0-9a-fA-F]+)", text)
+    }
     structs = {}
-    for match in re.finditer(r"struct\s*(?:\((0x[0-9a-fA-F]+)\))?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{(.*?)\}", text, re.S):
+    for match in re.finditer(r"struct\s*(?:\(([A-Za-z_][A-Za-z0-9_]*|0x[0-9a-fA-F]+)\))?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{(.*?)\}", text, re.S):
         body = match.group(3)
         fields = {}
         for field, typ in re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z0-9_?<>]+)", body):
             fields[field] = typ
+        opcode = match.group(1)
+        if opcode and not opcode.startswith("0x"):
+            opcode = constants.get(opcode, opcode)
         structs[match.group(2)] = {
-            "opcode": match.group(1),
+            "opcode": opcode,
             "fields": fields,
         }
     contract_match = re.search(r"contract\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{(.*?)\n\}", text, re.S)
@@ -155,6 +172,7 @@ def parse_source(path: Path) -> dict:
     receive_messages = set(re.findall(r"\breceive\s*\(\s*msg\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)", contract_body))
     receive_external_messages = set(re.findall(r"\breceive_external\s*\(\s*msg\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)", contract_body))
     get_methods = set(re.findall(r"\bget\s+fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", contract_body))
+    functions = set(re.findall(r"\bfun\s+((?:[A-Za-z_][A-Za-z0-9_<>]*\.)?[A-Za-z_][A-Za-z0-9_]*)\s*\(", text))
     storage_struct = storage_match.group(1) if storage_match else None
     states = []
     if states_match:
@@ -169,13 +187,15 @@ def parse_source(path: Path) -> dict:
         "receive_messages": receive_messages,
         "receive_external_messages": receive_external_messages,
         "get_methods": get_methods,
+        "functions": functions,
     }
 
 
 def check_source_against_manifest(source: Path, manifest: dict) -> list[str]:
     parsed = parse_source(source)
     problems = []
-    if not parsed["contract"]:
+    needs_contract = manifest["postponement"]["enabled"] or any(cb["kind"] != "helper" for cb in manifest["callbacks"])
+    if needs_contract and not parsed["contract"]:
         problems.append("source has no `contract X { ... }` declaration")
 
     for cb in manifest["callbacks"]:
@@ -187,6 +207,8 @@ def check_source_against_manifest(source: Path, manifest: dict) -> list[str]:
             problems.append(f"required receive_external callback `{cb['name']}` is absent")
         if cb["kind"] == "get" and not parsed["get_methods"]:
             problems.append(f"required get callback `{cb['name']}` is absent")
+        if cb["kind"] == "helper" and cb["name"] not in parsed["functions"]:
+            problems.append(f"required helper `{cb['name']}` is absent")
 
     for msg in manifest["messages"]:
         struct = parsed["structs"].get(msg["name"])
@@ -254,6 +276,20 @@ def compile_fift_hash(tol: Path, source: Path) -> str:
     return hashlib.sha256(res.stdout.encode("utf-8")).hexdigest()
 
 
+def validate_scaffold_behaviour_conformance(path: Path) -> None:
+    data = load_json(path)
+    entries = data.get("behaviour_conformance")
+    require(isinstance(entries, list) and entries, f"{path}: behaviour_conformance must be a non-empty list")
+    for i, entry in enumerate(entries):
+        prefix = f"{path}: behaviour_conformance[{i}]"
+        require(set(entry) == {"behaviour", "manifest", "mode"}, f"{prefix}: invalid keys")
+        require(entry["mode"] in ("raw", "generated"), f"{prefix}: mode must be raw/generated")
+        manifest_path = (path.parent / entry["manifest"]).resolve()
+        require(manifest_path.exists(), f"{prefix}: manifest not found: {entry['manifest']}")
+        manifest = validate_manifest(manifest_path)
+        require(manifest["behaviour"] == entry["behaviour"], f"{prefix}: behaviour does not match manifest")
+
+
 def run_default_checks(tol: Path | None) -> int:
     manifests = sorted(DEFAULT_MANIFEST_DIR.glob("*.json"))
     require(bool(manifests), f"{DEFAULT_MANIFEST_DIR}: no behaviour manifests found")
@@ -261,9 +297,16 @@ def run_default_checks(tol: Path | None) -> int:
         validate_manifest(path)
     print(f"Validated {len(manifests)} Slice 4 behaviour manifest(s)")
 
-    rc = run_validation(POSTPONING_MANIFEST, POSTPONED_AUCTION, "generated")
-    if rc != 0:
-        return rc
+    for manifest_path in manifests:
+        manifest = validate_manifest(manifest_path)
+        source = SOURCE_BY_BEHAVIOUR.get(manifest["behaviour"])
+        if source:
+            rc = run_validation(manifest_path, source, "generated")
+            if rc != 0:
+                return rc
+    for scaffold in SCAFFOLD_MANIFESTS:
+        validate_scaffold_behaviour_conformance(scaffold)
+    print(f"Validated {len(SCAFFOLD_MANIFESTS)} scaffold behaviour declaration(s)")
 
     bad_source = """
 import "@stdlib/common"

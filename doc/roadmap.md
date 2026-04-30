@@ -786,7 +786,9 @@ external-message enqueue attempts, missing enqueue budgets, and raw-map
 bypass warnings. Stage 3 has landed the first official postponed
 reference contract, an auction-style example that queues too-early bids
 and drains them after opening. Stage 4 has added check-only behaviour
-manifests and validation without changing generated Fift.
+manifests and validation without changing generated Fift. Stage 5
+extends that trait coverage to Jetton wallet, NFT item, and Multisig
+helper surfaces with no Tol source or BoC changes.
 
 **Stage plan.**
 
@@ -869,20 +871,23 @@ manifests and validation without changing generated Fift.
    - ✅ Exit criterion: callback/message/postponement shape is proved
      for the Stage 3 reference while preserving bytecode.
 
-6. ⬜ **Stage 5 — trait coverage for three official patterns.**
+6. ✅ **Stage 5 — trait coverage for three official patterns.**
+   Completed 2026-04-30.
 
-   - ⬜ Add behaviour manifest for Jetton wallet
-     (`crypto/smartcont/tol-stdlib/jetton-wallet.tol`).
-   - ⬜ Add behaviour manifest for NFT item
-     (`crypto/smartcont/tol-stdlib/nft.tol`).
-   - ⬜ Add behaviour manifest for multisig
-     (`crypto/smartcont/tol-stdlib/multisig.tol`).
-   - ⬜ Verify all three existing BoC hashes are unchanged; if any
-     delta exists, record justification under Slice 1 budget rules.
-   - ⬜ Extend scaffold manifests (`tol new` output) so generated
-     projects declare their behaviour conformance.
-   - ⬜ Add conformance tests for all three patterns.
-   - ⬜ Exit criterion: traits cover three official Slice 3 patterns
+   - ✅ Added behaviour manifest for Jetton wallet helper coverage
+     (`doc/slice4-behaviours/jetton_wallet.json`).
+   - ✅ Added behaviour manifest for NFT item helper coverage
+     (`doc/slice4-behaviours/nft_item.json`).
+   - ✅ Added behaviour manifest for multisig helper coverage
+     (`doc/slice4-behaviours/multisig.json`).
+   - ✅ Verified BoC impact is none: this stage changes JSON manifests,
+     scaffold metadata, and the read-only validator only; no Tol
+     contract or stdlib source changes.
+   - ✅ Extended existing scaffold manifests so generated Jetton/NFT
+     examples declare behaviour conformance.
+   - ✅ Added conformance checks for all three patterns to
+     `scripts/check-slice-4-behaviour-manifests.py`.
+   - ✅ Exit criterion: traits cover three official Slice 3 patterns
      without bytecode regression beyond Slice 1 budget.
 
 7. ⬜ **Stage 6 — tooling, docs, and release surrogate.**

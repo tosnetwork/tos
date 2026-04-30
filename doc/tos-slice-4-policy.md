@@ -196,6 +196,11 @@ Deliverables:
 Exit criterion: traits cover three official reference patterns without
 bytecode regression beyond budget.
 
+Implementation status: complete as of 2026-04-30. Stage 5 adds
+`jetton_wallet`, `nft_item`, and `multisig` behaviour manifests under
+`doc/slice4-behaviours/`, extends existing generated project manifests
+with behaviour declarations, and keeps the validation path check-only.
+
 ### Stage 6 - Tooling, docs, and release surrogate
 
 Deliverables:
