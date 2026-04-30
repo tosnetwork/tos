@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "schema": "slice-4-behaviour-manifest",
+  "behaviour": "slice5_oracle",
+  "stage": "slice5-stage4",
+  "mode": "warning",
+  "callbacks": [
+    {
+      "name": "receive_report",
+      "kind": "receive",
+      "required": true
+    },
+    {
+      "name": "receive_finalize",
+      "kind": "receive",
+      "required": true
+    }
+  ],
+  "messages": [
+    {
+      "name": "Slice5OracleReport",
+      "opcode": "0x4f524301",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    },
+    {
+      "name": "Slice5OracleFinalize",
+      "opcode": "0x4f524302",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    }
+  ],
+  "states": [
+    "Collecting",
+    "Finalized"
+  ],
+  "postponement": {
+    "enabled": false,
+    "queue_field": null,
+    "deferrable": [],
+    "budgets": {
+      "max_items": 0,
+      "max_body_bits": 0,
+      "max_body_refs": 0,
+      "max_total_body_bits": 0,
+      "max_total_body_refs": 0,
+      "max_age_seconds": 0,
+      "max_drain_items": 0,
+      "max_cell_depth": 0
+    }
+  },
+  "errors": [
+    {
+      "name": "SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER",
+      "code": 3329,
+      "class": "Authorization"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_OUTLIER",
+      "code": 3333,
+      "class": "Protocol"
+    }
+  ],
+  "wire_compatibility_exceptions": []
+}

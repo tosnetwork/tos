@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "schema": "slice-5-abi-manifest",
+  "contract": "Slice5OracleExample",
+  "language": "tol",
+  "stage": "slice5-stage4-fixed-at-deploy-reporters",
+  "messages": [
+    {
+      "name": "Slice5OracleReport",
+      "direction": "internal_in",
+      "opcode": "0x4f524301",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "roundId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "reporterKey",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0
+        },
+        {
+          "name": "value",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0
+        }
+      ],
+      "fixtures": []
+    },
+    {
+      "name": "Slice5OracleFinalize",
+      "direction": "internal_in",
+      "opcode": "0x4f524302",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "roundId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0
+        }
+      ],
+      "fixtures": []
+    }
+  ],
+  "get_methods": [],
+  "cell_types": [
+    {
+      "name": "Slice5OracleReporterSet",
+      "encoding": "tol_auto_struct",
+      "fields": [
+        {
+          "name": "lifecycle",
+          "type": "uint8",
+          "bits": 8,
+          "refs": 0
+        },
+        {
+          "name": "count",
+          "type": "uint16",
+          "bits": 16,
+          "refs": 0
+        },
+        {
+          "name": "reporters",
+          "type": "dict",
+          "bits": null,
+          "refs": 1
+        }
+      ],
+      "fixtures": []
+    }
+  ],
+  "errors": [
+    {
+      "name": "SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER",
+      "code": 3329,
+      "class": "Authorization"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_DUPLICATE_REPORTER",
+      "code": 3330,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_INSUFFICIENT_QUORUM",
+      "code": 3331,
+      "class": "Transient"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_OUTLIER",
+      "code": 3333,
+      "class": "Protocol"
+    }
+  ],
+  "wire_compatibility_exceptions": []
+}

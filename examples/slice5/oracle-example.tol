@@ -1,0 +1,31 @@
+// Slice 5 oracle example backed by @stdlib/oracle.
+
+import "@stdlib/oracle"
+
+struct Slice5OracleStorage {
+    config: Cell<Slice5OracleConfig>
+    reporterSet: Cell<Slice5OracleReporterSet>
+    round: Cell<Slice5OracleRound>
+}
+
+contract Slice5OracleExample {
+    storage: Slice5OracleStorage
+    @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: Slice5OracleReport) {
+        val config = lazy Slice5OracleConfig.fromCell(storage.config);
+        val reporterSet = lazy Slice5OracleReporterSet.fromCell(storage.reporterSet);
+        var round = lazy Slice5OracleRound.fromCell(storage.round);
+        round.addReport(reporterSet, config, msg);
+        save(Slice5OracleStorage { config: storage.config, reporterSet: storage.reporterSet, round: round.toCell() });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5OracleFinalize) {
+        val config = lazy Slice5OracleConfig.fromCell(storage.config);
+        var round = lazy Slice5OracleRound.fromCell(storage.round);
+        round.finalize(config, msg);
+        save(Slice5OracleStorage { config: storage.config, reporterSet: storage.reporterSet, round: round.toCell() });
+    }
+}

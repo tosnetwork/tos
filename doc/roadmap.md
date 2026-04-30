@@ -920,7 +920,7 @@ Auction, DAO/governance, oracle, and payment-channel templates,
 each one preceded by a short design note. Cross-language ABI is
 frozen at the end of this slice.
 
-**Status.** 🚧 Stage 3 complete, Stage 4 active, 2026-04-30. The implementation
+**Status.** 🚧 Stage 4 complete, Stage 5 active, 2026-04-30. The implementation
 input candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
 [`doc/slice-5-func-tol-abi.md`](slice-5-func-tol-abi.md), and
 [`doc/slice-5-abi-manifest-schema.json`](slice-5-abi-manifest-schema.json).
@@ -928,8 +928,9 @@ The first Stage 0 security-review findings are addressed and Draft v1.1
 is accepted as the implementation input. Stage 1 has landed the
 dependency-free ABI manifest validator and a FunC/Tol golden fixture
 pair. Stage 2 has landed `@stdlib/auction`; Stage 3 has landed
-`@stdlib/governance` with policy-typed action validation and focused
-helper tests.
+`@stdlib/governance`; Stage 4 has landed `@stdlib/oracle` with
+fixed-at-deploy reporter sets, round snapshots, quorum, freshness, and
+median checks.
 
 **Stage plan.**
 
@@ -976,17 +977,17 @@ helper tests.
      boundary, threshold boundary, expired proposal, malformed action
      list, replayed execution, and unknown opcode.
 
-5. 🚧 **Stage 4 — oracle package.**
+5. ✅ **Stage 4 — oracle package.**
 
-   - ⬜ Add `@stdlib/oracle`.
-   - ⬜ Add reporter-set authorization, round ids, freshness windows,
+   - ✅ Add `@stdlib/oracle`.
+   - ✅ Add reporter-set authorization, round ids, freshness windows,
      quorum/median aggregation, duplicate report rejection, and stale
      data handling.
-   - ⬜ Add tests for unauthorized reporter, duplicate reporter,
+   - ✅ Add tests for unauthorized reporter, duplicate reporter,
      insufficient quorum, stale round, outlier handling, replayed round
      id, and unknown opcode.
 
-6. ⬜ **Stage 5 — payment-channel package.**
+6. 🚧 **Stage 5 — payment-channel package.**
 
    - ⬜ Add `@stdlib/payment-channel`.
    - ⬜ Add signed state updates, monotonic sequence numbers,
@@ -1378,8 +1379,20 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   explicit cancel/expire/execute paths, policy-typed SendMsg action
   validation, default rejection for code/data/library/reserve actions,
   a focused example, ABI/behaviour manifests, and ten governance tests.
+- ✅ **Slice 5 Stage 4 oracle stdlib** — closed 2026-04-30.
+  `@stdlib/oracle` ships fixed-at-deploy reporter sets, per-round
+  reporter-set hash snapshots, reporter authorization, freshness windows,
+  quorum/median aggregation, duplicate/outlier/stale/replay rejection,
+  an example, ABI/behaviour manifests, and eight oracle tests.
 
 ## 12. Revision notes
+
+### r27 (Slice 5 Stage 4 oracle stdlib)
+
+- §6 Slice 5 now marks Stage 4 complete and Stage 5 active.
+- Added `@stdlib/oracle`, a fixed-at-deploy reporter-set example, ABI
+  and behaviour manifests, and tests for reporter authorization,
+  quorum, median aggregation, freshness, outliers, and replay rejection.
 
 ### r26 (Slice 5 Stage 3 governance stdlib)
 
