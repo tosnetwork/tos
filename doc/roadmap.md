@@ -697,8 +697,10 @@ verification, and the task-oriented Slice 3 docs. Stage 7 added
 receive-exhaustiveness warnings and manifest-backed reply-correlation
 hardening. Stage 8 added generated Jetton/NFT example projects, release
 notes, a compatibility matrix, an audit checklist, an external-author
-trial record, and `scripts/check-slice-3-release-package.py`. The actual
-non-maintainer author trial remains pending because it requires a human.
+trial record, and `scripts/check-slice-3-release-package.py`. A
+repo-side Jetton surrogate trial passed in about 9 minutes and produced
+two documentation fixes. The actual non-maintainer author trial remains
+pending because it requires a human.
 
 **Stage plan.**
 
@@ -761,9 +763,10 @@ non-maintainer author trial remains pending because it requires a human.
    Repo-side surrogate completed 2026-04-30. Added generated
    Jetton/NFT author-trial examples under `examples/slice3/`, release
    notes, compatibility matrix, audit checklist, external-author trial
-   record, and `scripts/check-slice-3-release-package.py`. The real
-   non-maintainer under-one-hour author trial is still pending and must
-   be completed before calling Slice 3 fully released.
+   record, and `scripts/check-slice-3-release-package.py`. A Jetton
+   surrogate trial passed in about 9 minutes and fixed two doc gaps.
+   The real non-maintainer under-one-hour author trial is still pending
+   and must be completed before calling Slice 3 fully released.
 
 ### Slice 4 — §5.9 + §6.5, Year 2 H1
 
@@ -914,8 +917,9 @@ before the corresponding slice can start.
   `expected_reply_opcode` discrimination and warning-first mode for raw
   code.
 - *External author trial:* Repo-side surrogate is closed in Slice 3
-  Stage 8. A real non-maintainer author trial is still pending and is
-  the remaining Slice 3 release gate.
+  Stage 8, and a Jetton surrogate trial passed in about 9 minutes. A
+  real non-maintainer author trial is still pending and is the remaining
+  Slice 3 release gate.
 
 **Slice 4** — `actor.md` §5.9 + §6.5
 
@@ -1104,8 +1108,10 @@ removed when policy v6 made single-signer the rule; see §11.3.)
 - 🚧 **Slice 3 Stage 8 external-author trial/release package** —
   repo-side surrogate closed 2026-04-30. Generated Jetton/NFT
   author-trial examples, release notes, compatibility matrix, audit
-  checklist, and the release-package checker are checked in. The real
-  non-maintainer author trial remains pending.
+  checklist, and the release-package checker are checked in. A Jetton
+  surrogate trial passed in about 9 minutes and produced the checked-in
+  docs fixes for `ErrorClass` and custom Jetton error-code examples. The
+  real non-maintainer author trial remains pending.
 
 ## 12. Revision notes
 
@@ -1118,6 +1124,9 @@ removed when policy v6 made single-signer the rule; see §11.3.)
 - Added release notes, compatibility matrix, audit checklist,
   external-author trial record, and
   `scripts/check-slice-3-release-package.py`.
+- Recorded a Jetton surrogate trial that completed in about 9 minutes
+  and fixed the `ErrorClass` / custom Jetton error-code documentation
+  gaps.
 
 ### r17 (Slice 3 Stage 7 static-analysis hardening)
 

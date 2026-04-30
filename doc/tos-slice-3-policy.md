@@ -380,9 +380,10 @@ Implementation status: repo-side surrogate complete as of 2026-04-30.
 source, smoke tests, replay/deploy stubs, manifests, and observability
 artifacts. `scripts/check-slice-3-release-package.py` validates those
 examples plus the release notes, compatibility matrix, audit checklist,
-and external-author trial record. The actual non-maintainer
-external-author trial remains pending because it requires a human author
-who did not implement the compiler.
+and external-author trial record. A repo-side Jetton surrogate trial
+completed in about 9 minutes and found two documentation gaps, both now
+fixed. The actual non-maintainer external-author trial remains pending
+because it requires a human author who did not implement the compiler.
 
 ## 5. Required review gates
 
