@@ -456,9 +456,16 @@ branch.
       *(Stage 4 — partial. `scripts/check-slice-1-gas.py` gates
       the focused Tol migration tests against
       `doc/slice-1-gas-baselines.json` with the recommended 10%
-      threshold. This is a post-migration CI regression baseline;
-      the final checkbox still requires equivalent pre-migration
-      FunC black-box gas fixtures or an explicit written waiver.)*
+      threshold. This is a post-migration Tol-side CI regression
+      baseline only; equivalent pre-migration FunC black-box gas
+      fixtures do not exist in-tree and cannot be produced by the
+      existing FunC harness without a transaction-level emulator
+      driver. The bounded gap is documented and accepted under
+      single-signer governance in
+      [`doc/slice-1-gas-gap.md`](slice-1-gas-gap.md);
+      that document also specifies the exact follow-up work
+      required to close the checkbox. The box stays unchecked
+      until that follow-up lands.)*
 - [ ] An external RFC has been published with the
       §8.1 zero-wire-change commitment explicitly called out.
       *(RFC not started; playbook exists, but RFC publication
@@ -471,9 +478,17 @@ playbook now exists. Stage 4 CI conformance / fuzzing is wired.
 The former Tol workaround for `Envelope.payload: slice` is resolved
 in `02197a2c0`, and the focused suite now covers 571 tol-tester
 cases.
+
+The Stage 4 gas gap is now precisely scoped and accepted under
+single-signer governance in
+[`doc/slice-1-gas-gap.md`](slice-1-gas-gap.md): the focused Tol
+regression gate is operational; FunC↔Tol black-box parity is
+documented as a follow-up with an explicit closure spec and is the
+ninth checkbox's blocker.
+
 Remaining checklist items break down to: final Stage 4
-pre-migration gas evidence and the Stage 5 external RFC / release
-notes.
+pre-migration gas evidence (gap document + follow-up harness) and
+the Stage 5 external RFC / release notes.
 
 If any one of these is missing, the slice is not done. Slipping
 the boundary creates exactly the cross-layer inconsistency this
