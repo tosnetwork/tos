@@ -130,6 +130,8 @@ enum ASTNodeKind {
   ast_global_var_declaration,
   ast_constant_declaration,
   ast_type_alias_declaration,
+  ast_receive_block,
+  ast_contract_declaration,
   ast_struct_field,
   ast_struct_body,
   ast_struct_declaration,
@@ -1396,6 +1398,42 @@ struct Vertex<ast_type_alias_declaration> final : ASTOtherVararg {
 };
 
 template<>
+// ast_receive_block is a receiver inside a Slice 2 contract declaration
+// example: `receive(msg: MintRequest) { ... }`
+struct Vertex<ast_receive_block> final : ASTOtherVararg {
+  AnyTypeV message_type_node;
+
+  auto get_param_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  std::string_view get_param_name() const { return children.at(0)->as<ast_identifier>()->name; }
+  auto get_body() const { return children.at(1)->as<ast_block_statement>(); }
+
+  Vertex(SrcRange range, V<ast_identifier> param_identifier, AnyTypeV message_type_node, V<ast_block_statement> body)
+    : ASTOtherVararg(ast_receive_block, range, {param_identifier, body})
+    , message_type_node(message_type_node) {}
+};
+
+template<>
+// ast_contract_declaration is a Slice 2 contract block before lowering
+// example: `contract Wallet { storage: WalletStorage; receive(msg: Transfer) { ... } }`
+struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
+  AnyTypeV storage_type_node;
+
+  auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  int get_num_receives() const { return size() - 1; }
+  auto get_receive(int i) const { return children.at(i + 1)->as<ast_receive_block>(); }
+
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<AnyV>&& receive_blocks)
+    : ASTOtherVararg(ast_contract_declaration, range, [&] {
+        std::vector<AnyV> children;
+        children.reserve(1 + receive_blocks.size());
+        children.push_back(name_identifier);
+        children.insert(children.end(), receive_blocks.begin(), receive_blocks.end());
+        return children;
+      }())
+    , storage_type_node(storage_type_node) {}
+};
+
+template<>
 // ast_struct_field is one field at struct declaration
 // example: `struct Point { x: int, y: int }` is struct declaration, its body contains 2 fields
 struct Vertex<ast_struct_field> final : ASTOtherVararg {
@@ -1528,6 +1566,9 @@ struct Vertex<ast_tol_file> final : ASTOtherVararg {
   const SrcFile* const file;
 
   const std::vector<AnyV>& get_toplevel_declarations() const { return children; }
+
+  Vertex* mutate() const { return const_cast<Vertex*>(this); }
+  void assign_new_children(std::vector<AnyV>&& children);
 
   Vertex(const SrcFile* file, SrcRange range, std::vector<AnyV> toplevel_declarations)
     : ASTOtherVararg(ast_tol_file, range, std::move(toplevel_declarations))

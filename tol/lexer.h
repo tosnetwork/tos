@@ -26,6 +26,9 @@ enum TokenType {
   tok_empty,
 
   tok_fun,
+  tok_contract,
+  tok_receive,
+  tok_storage,
   tok_type,
   tok_enum,
   tok_struct,

@@ -100,6 +100,8 @@ class ASTStringifier final : public ASTVisitor {
     {ast_global_var_declaration, "ast_global_var_declaration"},
     {ast_constant_declaration, "ast_constant_declaration"},
     {ast_type_alias_declaration, "ast_type_alias_declaration"},
+    {ast_receive_block, "ast_receive_block"},
+    {ast_contract_declaration, "ast_contract_declaration"},
     {ast_struct_field, "ast_struct_field"},
     {ast_struct_body, "ast_struct_body"},
     {ast_struct_declaration, "ast_struct_declaration"},
@@ -261,6 +263,10 @@ class ASTStringifier final : public ASTVisitor {
         return static_cast<std::string>(v->as<ast_tol_required_version>()->semver);
       case ast_import_directive:
         return static_cast<std::string>(v->as<ast_import_directive>()->get_file_leaf()->str_val);
+      case ast_receive_block:
+        return static_cast<std::string>(v->as<ast_receive_block>()->get_param_name());
+      case ast_contract_declaration:
+        return static_cast<std::string>(v->as<ast_contract_declaration>()->get_identifier()->name);
       case ast_tol_file:
         return v->as<ast_tol_file>()->file->realpath;
       default:
@@ -374,6 +380,8 @@ public:
       case ast_global_var_declaration:        return handle_vertex(v->as<ast_global_var_declaration>());
       case ast_constant_declaration:          return handle_vertex(v->as<ast_constant_declaration>());
       case ast_type_alias_declaration:        return handle_vertex(v->as<ast_type_alias_declaration>());
+      case ast_receive_block:                 return handle_vertex(v->as<ast_receive_block>());
+      case ast_contract_declaration:          return handle_vertex(v->as<ast_contract_declaration>());
       case ast_struct_field:                  return handle_vertex(v->as<ast_struct_field>());
       case ast_struct_body:                   return handle_vertex(v->as<ast_struct_body>());
       case ast_struct_declaration:            return handle_vertex(v->as<ast_struct_declaration>());

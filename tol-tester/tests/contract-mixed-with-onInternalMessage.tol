@@ -1,0 +1,22 @@
+struct ContractMixedStorage {}
+
+struct (0x00000015) ContractMixedPing {
+    queryId: uint64;
+}
+
+contract ContractMixed {
+    storage: ContractMixedStorage
+
+    receive(msg: ContractMixedPing) {
+    }
+}
+
+fun onInternalMessage(in: InMessage) {
+    return;
+}
+
+/**
+@compilation_should_fail
+@stderr cannot contain both `contract X { ... }` and top-level `fun onInternalMessage(...)`
+@stderr doc/tos-language-syntax-policy.md §6.3
+ */

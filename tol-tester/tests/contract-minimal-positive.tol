@@ -1,0 +1,37 @@
+struct ContractMinimalStorage {}
+
+struct (0x00000015) ContractMinimalPing {
+    queryId: uint64;
+    amount: uint32;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractMinimal {
+    storage: ContractMinimalStorage
+
+    receive(msg: ContractMinimalPing) {
+        msg.amount;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+
+@fif_codegen
+"""
+  onInternalMessage() PROC:<{
+...
+    32 LDU
+    64 PLDU
+...
+    21 EQINT
+...
+      x{00000015} SDBEGINSQ
+...
+  }>
+"""
+ */

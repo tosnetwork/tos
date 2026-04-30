@@ -200,6 +200,10 @@ void Vertex<ast_block_statement>::assign_new_children(std::vector<AnyV>&& childr
   this->children = std::move(children);
 }
 
+void Vertex<ast_tol_file>::assign_new_children(std::vector<AnyV>&& children) {
+  this->children = std::move(children);
+}
+
 void Vertex<ast_dot_access>::assign_target(const DotTarget& target) {
   this->target = target;
 }

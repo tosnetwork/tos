@@ -406,11 +406,14 @@ struct ChunkIdentifierOrKeyword final : ChunkLexerBase {
       case 7:
         if (str == "builtin") return tok_builtin;
         if (str == "private") return tok_private;
+        if (str == "receive") return tok_receive;
+        if (str == "storage") return tok_storage;
         break;
       case 8:
         if (str == "readonly") return tok_readonly;
         if (str == "continue") return tok_continue;
         if (str == "operator") return tok_operator;
+        if (str == "contract") return tok_contract;
         break;
       default:
         break;

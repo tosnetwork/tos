@@ -81,6 +81,7 @@ TolCompilationResult tol_proceed(const std::string &entrypoint_filename) {
     pipeline_optimize_boolean_expressions();
     pipeline_detect_inline_in_place();
     pipeline_check_serialized_fields();
+    pipeline_lower_contracts();
 
     // doc/tos-message-policy.md §4.4 hardening:
     // pipeline_check_query_id_propagation MUST be in the band
