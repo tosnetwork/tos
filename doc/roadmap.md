@@ -920,14 +920,15 @@ Auction, DAO/governance, oracle, and payment-channel templates,
 each one preceded by a short design note. Cross-language ABI is
 frozen at the end of this slice.
 
-**Status.** 🚧 Stage 1 complete, Stage 2 active, 2026-04-30. The implementation
+**Status.** 🚧 Stage 2 complete, Stage 3 active, 2026-04-30. The implementation
 input candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
 [`doc/slice-5-func-tol-abi.md`](slice-5-func-tol-abi.md), and
 [`doc/slice-5-abi-manifest-schema.json`](slice-5-abi-manifest-schema.json).
 The first Stage 0 security-review findings are addressed and Draft v1.1
 is accepted as the implementation input. Stage 1 has landed the
 dependency-free ABI manifest validator and a FunC/Tol golden fixture
-pair; second-wave helper implementation is now unblocked.
+pair. Stage 2 has landed `@stdlib/auction`, a postponed-auction example,
+ABI/behaviour manifests, and focused helper tests.
 
 **Stage plan.**
 
@@ -956,16 +957,16 @@ pair; second-wave helper implementation is now unblocked.
      exceptions.
    - ✅ Wire into release-package checks without changing bytecode.
 
-3. 🚧 **Stage 2 — auction package.**
+3. ✅ **Stage 2 — auction package.**
 
-   - ⬜ Add `@stdlib/auction`.
-   - ⬜ Migrate or wrap `examples/slice4/postponed-auction.tol`
-     through the package where budget permits.
-   - ⬜ Add ABI/behaviour manifests, replay coverage, scaffold output,
+   - ✅ Add `@stdlib/auction`.
+   - ✅ Add a Slice 5 postponed-auction example using the package while
+     leaving the Slice 4 conformance fixture unchanged.
+   - ✅ Add ABI/behaviour manifests, helper coverage, scaffold input,
      and tests for bid, too-early bid, close, settle, refund/excess,
      duplicate `queryId`, stale close, low bid, and malformed body.
 
-4. ⬜ **Stage 3 — DAO / governance package.**
+4. 🚧 **Stage 3 — DAO / governance package.**
 
    - ⬜ Add `@stdlib/governance`.
    - ⬜ Add proposal, vote, quorum/threshold, cancel/expire, execute,
@@ -1365,8 +1366,20 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   types, query-id layout, reserved getter/error ranges, manual/raw
   fixture requirements, Ed25519 signing-input declarations, and the
   FunC/Tol golden fixture pair under `doc/slice5-abi-fixtures/`.
+- ✅ **Slice 5 Stage 2 auction stdlib** — closed 2026-04-30.
+  `@stdlib/auction` ships the second-wave auction helper surface, a
+  Slice 5 postponed-auction example, ABI and behaviour manifests, and
+  focused tol-tester coverage for bid, too-early enqueue, drain, close,
+  settle, duplicate `queryId`, stale close, low bid, malformed body,
+  queue full, and expiry.
 
 ## 12. Revision notes
+
+### r25 (Slice 5 Stage 2 auction stdlib)
+
+- §6 Slice 5 now marks Stage 2 complete and Stage 3 active.
+- Added `@stdlib/auction`, the Slice 5 auction example, auction ABI and
+  behaviour manifests, and focused auction helper tests.
 
 ### r24 (Slice 5 Stage 1 ABI validator)
 

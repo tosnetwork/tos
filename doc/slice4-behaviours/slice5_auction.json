@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "schema": "slice-4-behaviour-manifest",
+  "behaviour": "slice5_auction",
+  "stage": "slice5-stage2",
+  "mode": "warning",
+  "callbacks": [
+    {
+      "name": "receive_bid",
+      "kind": "receive",
+      "required": true
+    },
+    {
+      "name": "receive_close",
+      "kind": "receive",
+      "required": true
+    }
+  ],
+  "messages": [
+    {
+      "name": "Slice5AuctionBid",
+      "opcode": "0x41554301",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    },
+    {
+      "name": "Slice5AuctionClose",
+      "opcode": "0x41554302",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    },
+    {
+      "name": "Slice5AuctionExpire",
+      "opcode": "0x41554303",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    },
+    {
+      "name": "Slice5AuctionSettle",
+      "opcode": "0x41554304",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    }
+  ],
+  "states": [
+    "Pending",
+    "Open",
+    "Closed",
+    "Settled"
+  ],
+  "postponement": {
+    "enabled": true,
+    "queue_field": "queue",
+    "deferrable": [
+      {
+        "message": "Slice5AuctionBid",
+        "from_states": [
+          "Pending"
+        ],
+        "until_states": [
+          "Open",
+          "Closed"
+        ]
+      }
+    ],
+    "budgets": {
+      "max_items": 4,
+      "max_body_bits": 512,
+      "max_body_refs": 4,
+      "max_total_body_bits": 2048,
+      "max_total_body_refs": 16,
+      "max_age_seconds": 120,
+      "max_drain_items": 4,
+      "max_cell_depth": 1023
+    }
+  },
+  "errors": [
+    {
+      "name": "SLICE5_AUCTION_THROW_LOW_BID",
+      "code": 2817,
+      "class": "ApplicationSpecific"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_STALE_CLOSE",
+      "code": 2820,
+      "class": "ApplicationSpecific"
+    }
+  ],
+  "wire_compatibility_exceptions": []
+}
