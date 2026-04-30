@@ -6,8 +6,87 @@
   "stdlib_import": "@stdlib/multisig",
   "opcode_prefixes": [],
   "get_method_ids": [],
-  "require_codes": [],
-  "public_errors": [],
-  "storage_fields": [],
-  "wire_compatibility_exceptions": []
+  "require_codes": [
+    {
+      "name": "MULTISIG_FUNC_THROW_BAD_THRESHOLD",
+      "value": 1801,
+      "class": "Protocol"
+    },
+    {
+      "name": "MULTISIG_FUNC_THROW_NOT_SIGNER",
+      "value": 1802,
+      "class": "Authorization"
+    },
+    {
+      "name": "MULTISIG_FUNC_THROW_DUPLICATE_SIGNER",
+      "value": 1803,
+      "class": "Protocol"
+    },
+    {
+      "name": "MULTISIG_FUNC_THROW_INSUFFICIENT_SIGNATURES",
+      "value": 1804,
+      "class": "Authorization"
+    },
+    {
+      "name": "MULTISIG_FUNC_THROW_PROPOSAL_REPLAY",
+      "value": 1805,
+      "class": "Permanent"
+    },
+    {
+      "name": "MULTISIG_FUNC_THROW_EXPIRED",
+      "value": 1806,
+      "class": "Permanent"
+    },
+    {
+      "name": "MULTISIG_FUNC_THROW_INVALID_ACTIONS",
+      "value": 1807,
+      "class": "Protocol"
+    }
+  ],
+  "public_errors": [
+    "MULTISIG_STDLIB_ERROR_BAD_THRESHOLD",
+    "MULTISIG_STDLIB_ERROR_NOT_SIGNER",
+    "MULTISIG_STDLIB_ERROR_DUPLICATE_SIGNER",
+    "MULTISIG_STDLIB_ERROR_INSUFFICIENT_SIGNATURES",
+    "MULTISIG_STDLIB_ERROR_PROPOSAL_REPLAY",
+    "MULTISIG_STDLIB_ERROR_EXPIRED",
+    "MULTISIG_STDLIB_ERROR_INVALID_ACTIONS"
+  ],
+  "storage_fields": [
+    {
+      "name": "MultisigConfig.threshold",
+      "type": "uint16"
+    },
+    {
+      "name": "MultisigConfig.signerCount",
+      "type": "uint16"
+    },
+    {
+      "name": "MultisigConfig.signers",
+      "type": "dict"
+    },
+    {
+      "name": "MultisigProposal.queryId",
+      "type": "uint64"
+    },
+    {
+      "name": "MultisigProposal.validUntil",
+      "type": "uint32"
+    },
+    {
+      "name": "MultisigProposal.approvals",
+      "type": "dict"
+    },
+    {
+      "name": "MultisigProposal.executed",
+      "type": "bool"
+    },
+    {
+      "name": "MultisigProposal.actions",
+      "type": "cell?"
+    }
+  ],
+  "wire_compatibility_exceptions": [
+    "Stage 5 multisig is helper-level and manifest-backed; full generated contract/scaffold packaging lands in Stage 6"
+  ]
 }

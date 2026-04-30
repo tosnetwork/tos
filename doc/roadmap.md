@@ -667,7 +667,7 @@ reference contracts are already written in high-level `contract` /
 dogfoods the new stdlib patterns without changing wire bytes or
 breaking the gas budget.
 
-**Status.** 🚧 Stage 4 complete as of 2026-04-30; Stage 5 is the active
+**Status.** 🚧 Stage 5 complete as of 2026-04-30; Stage 6 is the active
 implementation gate. The Slice 3 policy RFC and stage plan live at
 [`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md) and are approved.
 The machine-readable Stage 0 baseline capture lives at
@@ -687,8 +687,11 @@ Stage 0 baseline. Stage 4 added the NFT TEP-62 / royalty helper surface
 and fixture-level wire-shape coverage for mint, deploy, transfer,
 ownership replies, static-data replies, royalties, authorization
 failure, unknown opcode mapping, and bounced-message detection.
-Implementation now moves to Stage 5: wallet and multisig vertical
-slice.
+Stage 5 moved wallet-v5 helper logic into `@stdlib/wallet` wrappers
+without changing the raw signed internal/external body model, and added
+`@stdlib/multisig` signer/threshold/replay/action validation helpers
+with focused tests. Implementation now moves to Stage 6: `tol new`
+scaffolding and documentation.
 
 **Stage plan.**
 
@@ -724,11 +727,16 @@ slice.
    Focused stdlib coverage checks mint, transfer, ownership query
    replies, collection/item linkage, bounced-message detection, unknown
    opcode mapping, and authorization failures against manual builders.
-6. 📝 **Stage 5 — wallet and multisig vertical slice.** Add wallet-v5
-   helpers for signed external bodies, seqno checks, wallet-id checks,
-   action-list validation, and extension parsing while preserving the
-   raw wallet-v5 wire shape; add multisig helpers and replay coverage.
-7. ⬜ **Stage 6 — `tol new` scaffolding and documentation.** Generate
+6. ✅ **Stage 5 — wallet and multisig vertical slice.** Completed
+   2026-04-30. `@stdlib/wallet` owns wallet-v5 constants, storage
+   packing, raw signed-body parsing, extension-action body construction,
+   C5 action-list validation, and error mapping; `wallet-v5.tol` keeps
+   compatibility wrappers and preserves raw signed internal/external body
+   processing with the Stage 0 wallet-v5 Tol BoC hash unchanged.
+   `@stdlib/multisig` adds signer-set, duplicate-signer, threshold,
+   pending-proposal replay, expiry, action-list validation, and
+   error-mapping helpers with focused coverage.
+7. 📝 **Stage 6 — `tol new` scaffolding and documentation.** Generate
    source, tests, replay fixtures, deploy skeletons, and manifests for
    Jetton, NFT, wallet, and multisig patterns; publish the task-oriented
    Tol guides and off-chain observability artifacts.
@@ -1055,8 +1063,24 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   item/collection error mapping. Coverage is fixture-level because the
   repo has legacy FunC and JS NFT shapes but no official Tol NFT
   reference contract to migrate byte-for-byte.
+- ✅ **Slice 3 Stage 5 wallet and multisig vertical slice** — closed
+  2026-04-30. `@stdlib/wallet` owns wallet-v5 raw signed-body parsing,
+  extension-action builders, C5 action-chain validation, storage packing,
+  and error mapping while `wallet-v5.tol` preserves its external/internal
+  body shape through compatibility wrappers and keeps the Stage 0 Tol BoC
+  hash unchanged. `@stdlib/multisig` adds signer-set, duplicate-signer,
+  threshold, proposal-replay, expiry, action validation, and error-mapping
+  helpers.
 
 ## 12. Revision notes
+
+### r15 (Slice 3 Stage 5 wallet and multisig stdlib)
+
+- §6 Slice 3 now marks Stage 5 complete and Stage 6 active.
+- `@stdlib/wallet` owns the wallet-v5 helper surface while preserving
+  raw signed body processing in the reference wallet.
+- `@stdlib/multisig` now has signer/threshold/replay/action helpers and
+  focused tests; §11.5 records the stage as closed.
 
 ### r14 (Slice 3 Stage 4 NFT stdlib)
 

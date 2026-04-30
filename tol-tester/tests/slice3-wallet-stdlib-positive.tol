@@ -1,0 +1,120 @@
+import "@stdlib/slice3-common"
+import "@stdlib/wallet"
+
+fun outMsgCell(): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(address("0:6666666666666666666666666666666666666666666666666666666666666666"))
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .endCell();
+}
+
+fun noExtraActions(): RemainingBitsAndRefs {
+    return beginCell()
+        .storeMaybeRef(null)
+        .storeInt(0, 1)
+        .endCell()
+        .beginParse();
+}
+
+fun zeroSignature(): slice {
+    return beginCell()
+        .storeUint(0, 256)
+        .storeUint(0, 256)
+        .endCell()
+        .beginParse();
+}
+
+fun signedExternalBody(): slice {
+    return beginCell()
+        .storeSlice(walletV5BuildSignedBodyPrefix(
+            WALLET_V5_PREFIX_SIGNED_EXTERNAL,
+            1234,
+            77,
+            999999,
+            12,
+            noExtraActions()
+        ).beginParse())
+        .storeSlice(zeroSignature())
+        .endCell()
+        .beginParse();
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(101)
+fun test_manifest_header(): int {
+    val manifest = walletPatternManifestHeader();
+    assert(manifest.manifestVersion == SLICE3_PATTERN_MANIFEST_VERSION) throw 101;
+    assert(manifest.patternId == SLICE3_PATTERN_WALLET) throw 102;
+    assert(manifest.publicErrorBase == WALLET_PATTERN_ERROR_BASE) throw 103;
+    return 1;
+}
+
+@method_id(102)
+fun test_signed_body_shape(): int {
+    val header = walletV5ParseSignedRequestHeader(signedExternalBody());
+    assert(header.opcode == WALLET_V5_PREFIX_SIGNED_EXTERNAL) throw 111;
+    assert(header.globalId == 1234) throw 112;
+    assert(header.walletId == 77) throw 113;
+    assert(header.validUntil == 999999) throw 114;
+    assert(header.seqno == 12) throw 115;
+    assert(header.actions.remainingBitsCount() == 2) throw 116;
+
+    val (signedSlice, signature) = walletV5SplitSignedRequestBody(signedExternalBody());
+    assert(signature.remainingBitsCount() == WALLET_V5_SIZE_SIGNATURE) throw 117;
+    assert(signedSlice.remainingBitsCount() == WALLET_V5_SIZE_MESSAGE_OPERATION_PREFIX + WALLET_V5_SIZE_GLOBAL_ID + WALLET_V5_SIZE_WALLET_ID + WALLET_V5_SIZE_VALID_UNTIL + WALLET_V5_SIZE_SEQNO + 2) throw 118;
+    return 2;
+}
+
+@method_id(103)
+fun test_extension_and_c5_shape(): int {
+    val body = walletV5BuildExtensionActionBody(44, noExtraActions());
+    val expectedBody = beginCell()
+        .storeUint(WALLET_V5_PREFIX_EXTENSION_ACTION, WALLET_V5_SIZE_MESSAGE_OPERATION_PREFIX)
+        .storeUint(44, WALLET_V5_SIZE_QUERY_ID)
+        .storeSlice(noExtraActions())
+        .endCell();
+    assert(body.hash() == expectedBody.hash()) throw 121;
+
+    val c5 = walletV5BuildActionSendMsg(2, outMsgCell(), createEmptyCell());
+    assert(walletV5VerifyC5Actions(c5, true).hash() == c5.hash()) throw 122;
+    return 3;
+}
+
+@method_id(104)
+fun test_external_c5_rejects_missing_ignore_errors(): int {
+    try {
+        walletV5VerifyC5Actions(walletV5BuildActionSendMsg(0, outMsgCell(), createEmptyCell()), true);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(105)
+fun test_error_mapping(): int {
+    val invalidSig = walletV5ErrorForFuncThrow(WALLET_V5_FUNC_THROW_INVALID_SIGNATURE, WALLET_V5_PREFIX_SIGNED_EXTERNAL, 0);
+    assert(invalidSig.errorClass == ErrorClass.Authorization) throw 131;
+    assert(invalidSig.errorCode == WALLET_V5_STDLIB_ERROR_INVALID_SIGNATURE) throw 132;
+
+    val seqno = walletV5ErrorForFuncThrow(WALLET_V5_FUNC_THROW_INVALID_SEQNO, WALLET_V5_PREFIX_SIGNED_EXTERNAL, 0);
+    assert(seqno.errorClass == ErrorClass.Permanent) throw 133;
+    assert(seqno.errorCode == WALLET_V5_STDLIB_ERROR_INVALID_SEQNO) throw 134;
+
+    val c5 = walletV5ErrorForFuncThrow(WALLET_V5_FUNC_THROW_INVALID_C5, WALLET_V5_PREFIX_SIGNED_EXTERNAL, 0);
+    assert(c5.errorClass == ErrorClass.Protocol) throw 135;
+    assert(c5.errorCode == WALLET_V5_STDLIB_ERROR_INVALID_C5) throw 136;
+    return 5;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 137
+@testcase | 105 | | 5
+ */

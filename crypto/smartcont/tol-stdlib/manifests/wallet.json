@@ -4,12 +4,120 @@
   "pattern": "wallet",
   "stage": "Slice 3 Stage 5",
   "stdlib_import": "@stdlib/wallet",
-  "opcode_prefixes": [],
-  "get_method_ids": [],
-  "require_codes": [],
-  "public_errors": [],
-  "storage_fields": [],
+  "opcode_prefixes": [
+    {
+      "name": "WALLET_V5_PREFIX_SIGNED_EXTERNAL",
+      "hex": "0x7369676e",
+      "bits": 32
+    },
+    {
+      "name": "WALLET_V5_PREFIX_SIGNED_INTERNAL",
+      "hex": "0x73696e74",
+      "bits": 32
+    },
+    {
+      "name": "WALLET_V5_PREFIX_EXTENSION_ACTION",
+      "hex": "0x6578746e",
+      "bits": 32
+    },
+    {
+      "name": "WALLET_V5_PREFIX_ACTION_SEND_MSG",
+      "hex": "0x0ec3c86d",
+      "bits": 32
+    }
+  ],
+  "get_method_ids": [
+    "is_signature_allowed",
+    "seqno",
+    "get_subwallet_id",
+    "get_public_key",
+    "get_extensions"
+  ],
+  "require_codes": [
+    {
+      "name": "WALLET_V5_FUNC_THROW_SIGNATURE_DISABLED",
+      "value": 132,
+      "class": "Authorization"
+    },
+    {
+      "name": "WALLET_V5_FUNC_THROW_INVALID_SEQNO",
+      "value": 133,
+      "class": "Permanent"
+    },
+    {
+      "name": "WALLET_V5_FUNC_THROW_INVALID_WALLET_ID",
+      "value": 134,
+      "class": "Protocol"
+    },
+    {
+      "name": "WALLET_V5_FUNC_THROW_INVALID_SIGNATURE",
+      "value": 135,
+      "class": "Authorization"
+    },
+    {
+      "name": "WALLET_V5_FUNC_THROW_EXPIRED",
+      "value": 136,
+      "class": "Permanent"
+    },
+    {
+      "name": "WALLET_V5_FUNC_THROW_EXTERNAL_SEND_MODE",
+      "value": 137,
+      "class": "Protocol"
+    },
+    {
+      "name": "WALLET_V5_FUNC_THROW_INVALID_MESSAGE_OPERATION",
+      "value": 138,
+      "class": "Protocol"
+    },
+    {
+      "name": "WALLET_V5_FUNC_THROW_INVALID_GLOBAL_ID",
+      "value": 148,
+      "class": "Protocol"
+    }
+  ],
+  "public_errors": [
+    "WALLET_V5_STDLIB_ERROR_SIGNATURE_DISABLED",
+    "WALLET_V5_STDLIB_ERROR_INVALID_SEQNO",
+    "WALLET_V5_STDLIB_ERROR_INVALID_WALLET_ID",
+    "WALLET_V5_STDLIB_ERROR_INVALID_SIGNATURE",
+    "WALLET_V5_STDLIB_ERROR_EXPIRED",
+    "WALLET_V5_STDLIB_ERROR_EXTERNAL_SEND_MODE",
+    "WALLET_V5_STDLIB_ERROR_INVALID_MESSAGE_OPERATION",
+    "WALLET_V5_STDLIB_ERROR_ADD_EXTENSION",
+    "WALLET_V5_STDLIB_ERROR_REMOVE_EXTENSION",
+    "WALLET_V5_STDLIB_ERROR_UNSUPPORTED_ACTION",
+    "WALLET_V5_STDLIB_ERROR_DISABLE_SIGNATURE_WITHOUT_EXTENSIONS",
+    "WALLET_V5_STDLIB_ERROR_SIGNATURE_MODE_ALREADY_SET",
+    "WALLET_V5_STDLIB_ERROR_REMOVE_LAST_EXTENSION_SIGNATURE_DISABLED",
+    "WALLET_V5_STDLIB_ERROR_EXTENSION_WRONG_WORKCHAIN",
+    "WALLET_V5_STDLIB_ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE",
+    "WALLET_V5_STDLIB_ERROR_INVALID_C5",
+    "WALLET_V5_STDLIB_ERROR_INVALID_GLOBAL_ID"
+  ],
+  "storage_fields": [
+    {
+      "name": "WalletV5Storage.isSignatureAllowed",
+      "type": "bool"
+    },
+    {
+      "name": "WalletV5Storage.seqno",
+      "type": "uint32"
+    },
+    {
+      "name": "WalletV5Storage.walletId",
+      "type": "uint32"
+    },
+    {
+      "name": "WalletV5Storage.publicKey",
+      "type": "uint256"
+    },
+    {
+      "name": "WalletV5Storage.extensions",
+      "type": "dict"
+    }
+  ],
   "wire_compatibility_exceptions": [
-    "wallet-v5 signed external bodies remain raw and are not forced through the internal Envelope/query_id model"
+    "wallet-v5 signed external bodies remain raw and are not forced through the internal Envelope/query_id model",
+    "wallet-v5 C5 action validation preserves the legacy action_send_msg chain and external ignore-errors send-mode rule"
   ]
 }

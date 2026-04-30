@@ -51,12 +51,20 @@
 // signature covers a variable-length prefix and the final 512 bits are the
 // signature, so receiver bodies keep calling `processSignedRequest(in.body /
 // inMsgBody, ...)` against the raw slice instead of unpacking a Tol struct.
+//
+// Slice 3 Stage 5 keeps these file-scope helper names as compatibility wrappers
+// for existing wallet-v5 tests while delegating signed-body parsing, C5 action
+// validation, extension-action body building, storage packing, and error mapping
+// to `@stdlib/wallet`. The receive paths still consume the raw signed body
+// slices directly, so wallet-v5 external wire bytes are not routed through the
+// internal Envelope/query_id model.
 // =============================================================================
 
 import "@stdlib/common"
 import "@stdlib/tvm-dicts"
 import "@stdlib/gas-payments"
 import "@stdlib/exotic-cells"
+import "@stdlib/wallet"
 
 const ERROR_SIGNATURE_DISABLED = 132
 const ERROR_INVALID_SEQNO = 133
@@ -173,138 +181,44 @@ fun packWalletV5Data(
     publicKey: int,
     extensions: dict
 ): cell {
-    return beginCell()
-        .storeInt(isSignatureAllowed as int, SIZE_BOOL)
-        .storeUint(seqno, SIZE_SEQNO)
-        .storeUint(walletId, SIZE_WALLET_ID)
-        .storeUint(publicKey, SIZE_PUBLIC_KEY)
-        .storeDict(extensions)
-        .endCell();
+    return walletV5PackData(isSignatureAllowed, seqno, walletId, publicKey, extensions);
 }
 
 @pure
 fun walletV5ErrorForThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
-    if (funcThrow == ERROR_SIGNATURE_DISABLED) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Authorization, errorCode: WALLET_V5_ERROR_SIGNATURE_DISABLED, diagnostic: null };
-    }
-    if (funcThrow == ERROR_INVALID_SEQNO) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Permanent, errorCode: WALLET_V5_ERROR_INVALID_SEQNO, diagnostic: null };
-    }
-    if (funcThrow == ERROR_INVALID_WALLET_ID) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Protocol, errorCode: WALLET_V5_ERROR_INVALID_WALLET_ID, diagnostic: null };
-    }
-    if (funcThrow == ERROR_INVALID_SIGNATURE) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Authorization, errorCode: WALLET_V5_ERROR_INVALID_SIGNATURE, diagnostic: null };
-    }
-    if (funcThrow == ERROR_EXPIRED) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Permanent, errorCode: WALLET_V5_ERROR_EXPIRED, diagnostic: null };
-    }
-    if (funcThrow == ERROR_EXTERNAL_SEND_MESSAGE_MUST_HAVE_IGNORE_ERRORS_SEND_MODE) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Protocol, errorCode: WALLET_V5_ERROR_EXTERNAL_SEND_MODE, diagnostic: null };
-    }
-    if (funcThrow == ERROR_INVALID_MESSAGE_OPERATION) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Protocol, errorCode: WALLET_V5_ERROR_INVALID_MESSAGE_OPERATION, diagnostic: null };
-    }
-    if (funcThrow == ERROR_ADD_EXTENSION) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Permanent, errorCode: WALLET_V5_ERROR_ADD_EXTENSION, diagnostic: null };
-    }
-    if (funcThrow == ERROR_REMOVE_EXTENSION) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Permanent, errorCode: WALLET_V5_ERROR_REMOVE_EXTENSION, diagnostic: null };
-    }
-    if (funcThrow == ERROR_UNSUPPORTED_ACTION) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Protocol, errorCode: WALLET_V5_ERROR_UNSUPPORTED_ACTION, diagnostic: null };
-    }
-    if (funcThrow == ERROR_DISABLE_SIGNATURE_WHEN_EXTENSIONS_IS_EMPTY) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Permanent, errorCode: WALLET_V5_ERROR_DISABLE_SIGNATURE_WITHOUT_EXTENSIONS, diagnostic: null };
-    }
-    if (funcThrow == ERROR_THIS_SIGNATURE_MODE_ALREADY_SET) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Permanent, errorCode: WALLET_V5_ERROR_SIGNATURE_MODE_ALREADY_SET, diagnostic: null };
-    }
-    if (funcThrow == ERROR_REMOVE_LAST_EXTENSION_WHEN_SIGNATURE_DISABLED) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Permanent, errorCode: WALLET_V5_ERROR_REMOVE_LAST_EXTENSION_SIGNATURE_DISABLED, diagnostic: null };
-    }
-    if (funcThrow == ERROR_EXTENSION_WRONG_WORKCHAIN) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Protocol, errorCode: WALLET_V5_ERROR_EXTENSION_WRONG_WORKCHAIN, diagnostic: null };
-    }
-    if (funcThrow == ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Authorization, errorCode: WALLET_V5_ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE, diagnostic: null };
-    }
-    if (funcThrow == ERROR_INVALID_GLOBAL_ID) {
-        return Error { queryId, originalOp, errorClass: ErrorClass.Protocol, errorCode: WALLET_V5_ERROR_INVALID_GLOBAL_ID, diagnostic: null };
-    }
-    return Error { queryId, originalOp, errorClass: ErrorClass.Protocol, errorCode: WALLET_V5_ERROR_INVALID_C5, diagnostic: null };
+    return walletV5ErrorForFuncThrow(funcThrow, originalOp, queryId);
 }
 
 @pure
 fun splitSignedRequestBody(body: slice): (slice, slice) {
-    val signature = body.getLastBits(SIZE_SIGNATURE);
-    val signedSlice = body.removeLastBits(SIZE_SIGNATURE);
-    return (signedSlice, signature);
+    return walletV5SplitSignedRequestBody(body);
 }
 
 @pure
 fun parseSignedRequestHeader(body: slice): SignedRequestHeader {
-    val (signedSlice, _) = splitSignedRequestBody(body);
-    var cs = signedSlice;
-    val opcode = cs.loadUint(SIZE_MESSAGE_OPERATION_PREFIX);
-    val globalId = cs.loadUint(SIZE_GLOBAL_ID);
-    val walletId = cs.loadUint(SIZE_WALLET_ID);
-    val validUntil = cs.loadUint(SIZE_VALID_UNTIL);
-    val seqno = cs.loadUint(SIZE_SEQNO);
+    val header = walletV5ParseSignedRequestHeader(body);
     return SignedRequestHeader {
-        opcode,
-        globalId,
-        walletId,
-        validUntil,
-        seqno,
-        actions: cs,
+        opcode: header.opcode,
+        globalId: header.globalId,
+        walletId: header.walletId,
+        validUntil: header.validUntil,
+        seqno: header.seqno,
+        actions: header.actions,
     };
 }
 
 @pure
 fun buildExtensionActionBody(queryId: uint64, actions: RemainingBitsAndRefs): cell {
-    return beginCell()
-        .storeUint(PREFIX_EXTENSION_ACTION, SIZE_MESSAGE_OPERATION_PREFIX)
-        .storeUint(queryId, SIZE_QUERY_ID)
-        .storeSlice(actions)
-        .endCell();
+    return walletV5BuildExtensionActionBody(queryId, actions);
 }
 
 @pure
 fun buildActionSendMsg(mode: int, outMsg: cell, next: cell): cell {
-    return beginCell()
-        .storeUint(PREFIX_ACTION_SEND_MSG, SIZE_MESSAGE_OPERATION_PREFIX)
-        .storeUint(mode, 8)
-        .storeRef(next)
-        .storeRef(outMsg)
-        .endCell();
+    return walletV5BuildActionSendMsg(mode, outMsg, next);
 }
 
 fun verifyC5Actions(c5: cell, isExternal: bool): cell {
-    var (cs, _) = c5.beginParseSpecial();
-    var count = 0;
-    while (!cs.isEmpty()) {
-        cs.enforceAndRemoveActionSendMsgPrefix();
-        if (cs.remainingBitsCount() != 8) {
-            throw ERROR_INVALID_C5;
-        }
-        if (cs.remainingRefsCount() != 2) {
-            throw ERROR_INVALID_C5;
-        }
-        if (isExternal && cs.preloadBits(7).countTrailingZeroes() > 0) {
-            throw ERROR_EXTERNAL_SEND_MESSAGE_MUST_HAVE_IGNORE_ERRORS_SEND_MODE;
-        }
-        val (next, _) = cs.preloadRef().beginParseSpecial();
-        cs = next;
-        count += 1;
-    }
-    if (count > 255) {
-        throw ERROR_INVALID_C5;
-    }
-    if (cs.remainingRefsCount() != 0) {
-        throw ERROR_INVALID_C5;
-    }
-    return c5;
+    return walletV5VerifyC5Actions(c5, isExternal);
 }
 
 fun processActions(cs: slice, isExternal: bool, isExtension: bool): void {

@@ -263,6 +263,24 @@ Exit criterion: wallet-v5 remains wire-compatible for both internal and
 external bodies, and multisig has at least one executable generated
 contract with replay fixtures.
 
+Implementation status: complete as of 2026-04-30 for the Stage 5
+minimum helper slice. `@stdlib/wallet` now owns wallet-v5 constants,
+storage packing, raw signed-body prefix/header parsing, extension-action
+body construction, C5 `action_send_msg` chain validation, and error
+mapping. `crypto/smartcont/wallet-v5.tol` keeps its old helper names as
+compatibility wrappers and still processes signed internal/external
+bodies as raw slices, so the wallet-v5 external body shape is not routed
+through the Slice 1 internal envelope. `@stdlib/multisig` now owns
+signer-set insertion/lookup, duplicate-signer rejection, threshold
+checks, pending-proposal replay checks, expiry checks, action-list
+validation through the wallet action-chain helper, and multisig error
+mapping. Focused coverage is in
+`tol-tester/tests/slice3-wallet-stdlib-positive.tol` and
+`tol-tester/tests/slice3-multisig-stdlib-positive.tol`, while the
+existing wallet-v5 tests continue to pass. The regenerated wallet-v5 Tol
+BoC remains at the Stage 0 baseline: `815` bytes with SHA-256
+`9e8aa8c3e12150389381647bb836ee084ea561f69b33a06c407717a1495c9b03`.
+
 ### Stage 6 - `tol new` scaffolding and documentation
 
 Deliverables:
