@@ -667,7 +667,7 @@ reference contracts are already written in high-level `contract` /
 dogfoods the new stdlib patterns without changing wire bytes or
 breaking the gas budget.
 
-**Status.** 🚧 Stage 2 complete as of 2026-04-30; Stage 3 is the active
+**Status.** 🚧 Stage 3 complete as of 2026-04-30; Stage 4 is the active
 implementation gate. The Slice 3 policy RFC and stage plan live at
 [`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md) and are approved.
 The machine-readable Stage 0 baseline capture lives at
@@ -679,7 +679,11 @@ The deterministic replay/property substrate is now checked in via
 `scripts/check-slice-3-replay-fixtures.py`. Stage 2 stabilized
 `@stdlib/ownable`, `@stdlib/jetton`, `@stdlib/nft`, `@stdlib/wallet`,
 `@stdlib/multisig`, shared `@stdlib/slice3-common`, and the pattern
-manifest format. Implementation now moves to Stage 3: Jetton vertical
+manifest format. Stage 3 moved the official Jetton master/wallet
+references onto `@stdlib/jetton` compatibility wrappers where
+wire-compatible, added direct stdlib tests and manifest detail, and
+kept the regenerated Jetton Tol BoCs byte-for-byte identical to the
+Stage 0 baseline. Implementation now moves to Stage 4: NFT vertical
 slice.
 
 **Stage plan.**
@@ -701,13 +705,14 @@ slice.
    raw replies, `OP_ERROR` body construction, and pending-reply key
    hashing; a pattern-manifest schema plus initial manifests; and a
    minimal ownable helper with focused tol-tester coverage.
-4. 📝 **Stage 3 — Jetton vertical slice.** Ship Jetton master/wallet
-   helpers, migrate the Slice 2 `jetton-minter.tol` and
-   `jetton-wallet.tol` to those helpers where wire-compatible, and add
-   replay/property coverage for transfer, burn, excesses, bounces,
-   authorization failures, unknown opcode, duplicate replies, and
-   replayed `query_id` cases.
-5. ⬜ **Stage 4 — NFT vertical slice.** Ship NFT collection/item helpers
+4. ✅ **Stage 3 — Jetton vertical slice.** Completed 2026-04-30. Ships
+   Jetton master/wallet helpers in `@stdlib/jetton`, migrates the Slice
+   2 `jetton-minter.tol` and `jetton-wallet.tol` helper surface to
+   compatibility wrappers over the stdlib, expands the Jetton manifest,
+   and adds focused stdlib coverage for state-init/address derivation,
+   TEP-74 body construction, duplicate `query_id` determinism, and
+   error-code mapping. The Stage 0 BoC hashes and sizes are unchanged.
+5. 📝 **Stage 4 — NFT vertical slice.** Ship NFT collection/item helpers
    and official NFT fixtures/contracts with replay/property coverage
    for mint, transfer, ownership query, collection/item linkage,
    bounced transfer, unknown opcode, and authorization failures.
@@ -942,12 +947,12 @@ Each sub-feature needs its own policy document
   has joined and split the bundle per `policy.md` §12.1), it
   needs the new owner's signature on the affected role.
 - Per-slice policy documents: Slice 2 exists at
-  `doc/tos-language-syntax-policy.md`; Slice 3 exists in draft at
-  `doc/tos-slice-3-policy.md` and still needs approval before
-  implementation. Slice 4 / 6 policy documents do not exist; see §11.2
-  for the names and scope of each missing document. Each will follow
-  the same single-signer model unless the ownership split has happened
-  by the time it is drafted.
+  `doc/tos-language-syntax-policy.md`; Slice 3 is approved at
+  `doc/tos-slice-3-policy.md` and is the active implementation input.
+  Slice 4 / 6 policy documents do not exist; see §11.2 for the names
+  and scope of each missing document. Each will follow the same
+  single-signer model unless the ownership split has happened by the
+  time it is drafted.
 
 ### 11.4 Cross-Slice priority of unscheduled work
 
@@ -1028,8 +1033,23 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   helpers in `@stdlib/slice3-common`. Pattern manifests live under
   `crypto/smartcont/tol-stdlib/manifests/`, and the minimal ownable
   helper has focused tol-tester coverage.
+- ✅ **Slice 3 Stage 3 Jetton vertical slice** — closed 2026-04-30.
+  `@stdlib/jetton` now provides the shared Jetton opcode constants,
+  state-init/address helpers, raw TEP-74 body builders, basechain guard,
+  and minter/wallet error mapping. The official `jetton-minter.tol` and
+  `jetton-wallet.tol` references dogfood those helpers through
+  compatibility wrappers while preserving the Stage 0 Tol BoC hashes and
+  sizes exactly.
 
 ## 12. Revision notes
+
+### r13 (Slice 3 Stage 3 Jetton stdlib)
+
+- §6 Slice 3 now marks Stage 3 complete and Stage 4 active.
+- `@stdlib/jetton` owns the shared Jetton helper surface and manifest
+  details used by the official minter/wallet references.
+- §11.5 now records that the Jetton vertical slice is closed with
+  byte-for-byte unchanged Tol BoCs against the Stage 0 baseline.
 
 ### r12 (Slice 3 Stage 2 stdlib foundation)
 

@@ -44,10 +44,12 @@ fun Slice3RawReply.send(self): void {
     sendRawMessage(self.message, self.mode);
 }
 
+@pure
 fun slice3Error(queryId: uint64, originalOp: uint32, errorClass: ErrorClass, errorCode: uint16): Error {
     return Error { queryId, originalOp, errorClass, errorCode, diagnostic: null };
 }
 
+@pure
 fun slice3ErrorBody(queryId: uint64, originalOp: uint32, errorClass: ErrorClass, errorCode: uint16): cell {
     return slice3Error(queryId, originalOp, errorClass, errorCode).toCell();
 }

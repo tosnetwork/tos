@@ -1,0 +1,166 @@
+import "@stdlib/slice3-common"
+import "@stdlib/jetton"
+
+fun ownerAddr(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun destAddr(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun responseAddr(): address {
+    return address("0:3333333333333333333333333333333333333333333333333333333333333333");
+}
+
+fun masterAddr(): address {
+    return address("0:4444444444444444444444444444444444444444444444444444444444444444");
+}
+
+fun walletCode(): cell {
+    return beginCell().storeUint(0xc0ffee, 24).endCell();
+}
+
+fun inlineForwardPayload(): RemainingBitsAndRefs {
+    return beginCell().storeUint(0, 1).storeUint(0xaa, 8).endCell().beginParse();
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(101)
+fun test_manifest_header(): int {
+    val manifest = jettonPatternManifestHeader();
+    assert(manifest.manifestVersion == SLICE3_PATTERN_MANIFEST_VERSION) throw 101;
+    assert(manifest.patternId == SLICE3_PATTERN_JETTON) throw 102;
+    assert(manifest.publicErrorBase == JETTON_PATTERN_ERROR_BASE) throw 103;
+    return 1;
+}
+
+@method_id(102)
+fun test_wallet_state_init_and_address(): int {
+    val stateInit = jettonWalletCalculateStateInit(
+        ownerAddr() as any_address,
+        masterAddr() as any_address,
+        walletCode()
+    );
+    val sameStateInit = jettonWalletCalculateStateInit(
+        ownerAddr() as any_address,
+        masterAddr() as any_address,
+        walletCode()
+    );
+    assert(stateInit.hash() == sameStateInit.hash()) throw 111;
+    assert(jettonCalculateWalletAddress(stateInit) == jettonWalletCalculateUserWalletAddress(
+        ownerAddr() as any_address,
+        masterAddr() as any_address,
+        walletCode()
+    )) throw 112;
+    return 2;
+}
+
+@method_id(103)
+fun test_internal_transfer_wire_shape(): int {
+    val stateInit = jettonWalletCalculateStateInit(
+        destAddr() as any_address,
+        masterAddr() as any_address,
+        walletCode()
+    );
+    val toWallet = jettonCalculateWalletAddress(stateInit);
+    val outbound = jettonBuildInternalTransferMessage(
+        toWallet,
+        stateInit,
+        77,
+        7000,
+        ownerAddr() as any_address,
+        responseAddr() as any_address,
+        17,
+        inlineForwardPayload()
+    );
+    val expectedBody = beginCell()
+        .storeUint(JETTON_OP_INTERNAL_TRANSFER, 32)
+        .storeUint(77, 64)
+        .storeCoins(7000)
+        .storeAddress(ownerAddr())
+        .storeAddress(responseAddr())
+        .storeCoins(17)
+        .storeSlice(inlineForwardPayload())
+        .endCell();
+    val expected = beginCell()
+        .storeUint(0x18, 6)
+        .storeAddress(toWallet)
+        .storeCoins(0)
+        .storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .storeRef(stateInit)
+        .storeRef(expectedBody)
+        .endCell();
+    assert(outbound.hash() == expected.hash()) throw 121;
+    return 3;
+}
+
+@method_id(104)
+fun test_duplicate_query_id_is_deterministic(): int {
+    val stateInit = jettonWalletCalculateStateInit(destAddr() as any_address, masterAddr() as any_address, walletCode());
+    val toWallet = jettonCalculateWalletAddress(stateInit);
+    val first = jettonBuildInternalTransferMessage(
+        toWallet,
+        stateInit,
+        99,
+        1,
+        ownerAddr() as any_address,
+        responseAddr() as any_address,
+        0,
+        inlineForwardPayload()
+    );
+    val replay = jettonBuildInternalTransferMessage(
+        toWallet,
+        stateInit,
+        99,
+        1,
+        ownerAddr() as any_address,
+        responseAddr() as any_address,
+        0,
+        inlineForwardPayload()
+    );
+    val differentQueryId = jettonBuildInternalTransferMessage(
+        toWallet,
+        stateInit,
+        100,
+        1,
+        ownerAddr() as any_address,
+        responseAddr() as any_address,
+        0,
+        inlineForwardPayload()
+    );
+    assert(first.hash() == replay.hash()) throw 131;
+    assert(first.hash() != differentQueryId.hash()) throw 132;
+    return 4;
+}
+
+@method_id(105)
+fun test_error_mapping(): int {
+    val ownerError = jettonWalletErrorForFuncThrow(
+        JETTON_WALLET_FUNC_THROW_OWNER_REQUIRED,
+        JETTON_OP_TRANSFER,
+        123
+    );
+    assert(ownerError.errorClass == ErrorClass.Authorization) throw 141;
+    assert(ownerError.errorCode == JETTON_STDLIB_WALLET_ERROR_OWNER_REQUIRED) throw 142;
+
+    val burnError = jettonWalletErrorForFuncThrow(
+        JETTON_WALLET_FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE,
+        JETTON_OP_BURN,
+        124
+    );
+    assert(burnError.errorClass == ErrorClass.BackPressure) throw 143;
+    assert(burnError.errorCode == JETTON_STDLIB_WALLET_ERROR_INSUFFICIENT_BURN_VALUE) throw 144;
+    return 5;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+ */

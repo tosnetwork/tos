@@ -4,10 +4,141 @@
   "pattern": "jetton",
   "stage": "Slice 3 Stage 3",
   "stdlib_import": "@stdlib/jetton",
-  "opcode_prefixes": [],
+  "opcode_prefixes": [
+    {
+      "name": "JETTON_OP_MINT",
+      "hex": "0x00000015",
+      "bits": 32
+    },
+    {
+      "name": "JETTON_OP_CHANGE_ADMIN",
+      "hex": "0x00000003",
+      "bits": 32
+    },
+    {
+      "name": "JETTON_OP_CHANGE_CONTENT",
+      "hex": "0x00000004",
+      "bits": 32
+    },
+    {
+      "name": "JETTON_OP_TRANSFER",
+      "hex": "0x0f8a7ea5",
+      "bits": 32
+    },
+    {
+      "name": "JETTON_OP_TRANSFER_NOTIFICATION",
+      "hex": "0x7362d09c",
+      "bits": 32
+    },
+    {
+      "name": "JETTON_OP_INTERNAL_TRANSFER",
+      "hex": "0x178d4519",
+      "bits": 32
+    },
+    {
+      "name": "JETTON_OP_EXCESSES",
+      "hex": "0xd53276db",
+      "bits": 32
+    },
+    {
+      "name": "JETTON_OP_BURN",
+      "hex": "0x595f07bc",
+      "bits": 32
+    },
+    {
+      "name": "JETTON_OP_BURN_NOTIFICATION",
+      "hex": "0x7bdd97de",
+      "bits": 32
+    }
+  ],
   "get_method_ids": [],
-  "require_codes": [],
-  "public_errors": [],
-  "storage_fields": [],
-  "wire_compatibility_exceptions": []
+  "require_codes": [
+    {
+      "name": "JETTON_MINTER_FUNC_THROW_ADMIN_REQUIRED",
+      "value": 73,
+      "class": "Authorization"
+    },
+    {
+      "name": "JETTON_MINTER_FUNC_THROW_BURN_SENDER_NOT_WALLET",
+      "value": 74,
+      "class": "Authorization"
+    },
+    {
+      "name": "JETTON_WALLET_FUNC_THROW_OWNER_REQUIRED",
+      "value": 705,
+      "class": "Authorization"
+    },
+    {
+      "name": "JETTON_WALLET_FUNC_THROW_INSUFFICIENT_BALANCE",
+      "value": 706,
+      "class": "Permanent"
+    },
+    {
+      "name": "JETTON_WALLET_FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE",
+      "value": 707,
+      "class": "AuthorizationOrBackPressure"
+    },
+    {
+      "name": "JETTON_WALLET_FUNC_THROW_MALFORMED_FORWARD_PAYLOAD",
+      "value": 708,
+      "class": "Protocol"
+    },
+    {
+      "name": "JETTON_WALLET_FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE",
+      "value": 709,
+      "class": "BackPressureOrProtocol"
+    }
+  ],
+  "public_errors": [
+    "JETTON_STDLIB_ERROR_ADMIN_REQUIRED",
+    "JETTON_STDLIB_ERROR_BURN_SENDER_NOT_WALLET",
+    "JETTON_STDLIB_ERROR_UNKNOWN_OPCODE",
+    "JETTON_STDLIB_WALLET_ERROR_WRONG_WORKCHAIN",
+    "JETTON_STDLIB_WALLET_ERROR_OWNER_REQUIRED",
+    "JETTON_STDLIB_WALLET_ERROR_INSUFFICIENT_BALANCE",
+    "JETTON_STDLIB_WALLET_ERROR_INVALID_TRANSFER_SENDER",
+    "JETTON_STDLIB_WALLET_ERROR_MALFORMED_FORWARD_PAYLOAD",
+    "JETTON_STDLIB_WALLET_ERROR_INSUFFICIENT_TRANSFER_VALUE",
+    "JETTON_STDLIB_WALLET_ERROR_INSUFFICIENT_BURN_VALUE",
+    "JETTON_STDLIB_WALLET_ERROR_UNEXPECTED_BOUNCE",
+    "JETTON_STDLIB_WALLET_ERROR_UNKNOWN_OPCODE"
+  ],
+  "storage_fields": [
+    {
+      "name": "JettonMinterStorage.totalSupply",
+      "type": "coins"
+    },
+    {
+      "name": "JettonMinterStorage.adminAddress",
+      "type": "any_address"
+    },
+    {
+      "name": "JettonMinterStorage.content",
+      "type": "cell"
+    },
+    {
+      "name": "JettonMinterStorage.jettonWalletCode",
+      "type": "cell"
+    },
+    {
+      "name": "JettonWalletStorage.balance",
+      "type": "coins"
+    },
+    {
+      "name": "JettonWalletStorage.ownerAddress",
+      "type": "any_address"
+    },
+    {
+      "name": "JettonWalletStorage.jettonMasterAddress",
+      "type": "any_address"
+    },
+    {
+      "name": "JettonWalletStorage.jettonWalletCode",
+      "type": "cell"
+    }
+  ],
+  "wire_compatibility_exceptions": [
+    "Jetton MsgAddress fields stay any_address and raw builders are preserved instead of createMessage() so external/none MsgAddress values are not narrowed",
+    "Duplicate query_id is deterministic at the helper layer; Jetton replay protection is not introduced by Slice 3 Stage 3"
+  ]
 }

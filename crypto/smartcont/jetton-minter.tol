@@ -41,29 +41,29 @@
 // `empty-body` parity fixture in emulator/test/slice-1-stage-4-gas-parity-
 // fixture.cpp) drive this directly and remain green.
 //
-// The file-scope helpers (`mintTokens`, `buildExcessesMessage`, `sendExcesses`,
-// `calculateUserJettonWalletAddress`, `jettonMinterErrorForThrow`, etc.) and
-// the per-opcode struct definitions are kept verbatim because the Slice 1
-// tol-tester suites (`jetton-minter-positive.tol`, `jetton-minter-auth-fail
-// .tol`, `jetton-minter-unknown-opcode.tol`) import them directly; rewiring
-// the test set is outside this stage.
+// Slice 3 Stage 3 keeps the old file-scope helper names as compatibility
+// wrappers because the Slice 1/2 tol-tester suites import them directly. Their
+// bodies now delegate to `@stdlib/jetton` helpers for state-init/address
+// calculation, raw excesses construction, mint sending, and error mapping. The
+// regenerated Tol BoC remains byte-for-byte identical to the Stage 0 baseline.
 // =============================================================================
 
 import "@stdlib/common"
+import "@stdlib/jetton"
 
-const OP_MINT = 0x00000015
-const OP_CHANGE_ADMIN = 0x00000003
-const OP_CHANGE_CONTENT = 0x00000004
-const OP_EXCESSES = 0xd53276db
-const OP_BURN_NOTIFICATION = 0x7bdd97de
+const OP_MINT = JETTON_OP_MINT
+const OP_CHANGE_ADMIN = JETTON_OP_CHANGE_ADMIN
+const OP_CHANGE_CONTENT = JETTON_OP_CHANGE_CONTENT
+const OP_EXCESSES = JETTON_OP_EXCESSES
+const OP_BURN_NOTIFICATION = JETTON_OP_BURN_NOTIFICATION
 
-const FUNC_THROW_ADMIN_REQUIRED = 73
-const FUNC_THROW_BURN_SENDER_NOT_WALLET = 74
-const FUNC_THROW_UNKNOWN_OPCODE = 0xffff
+const FUNC_THROW_ADMIN_REQUIRED = JETTON_MINTER_FUNC_THROW_ADMIN_REQUIRED
+const FUNC_THROW_BURN_SENDER_NOT_WALLET = JETTON_MINTER_FUNC_THROW_BURN_SENDER_NOT_WALLET
+const FUNC_THROW_UNKNOWN_OPCODE = JETTON_FUNC_THROW_UNKNOWN_OPCODE
 
-const JETTON_ERROR_ADMIN_REQUIRED = 1097
-const JETTON_ERROR_BURN_SENDER_NOT_WALLET = 1098
-const JETTON_ERROR_UNKNOWN_OPCODE = 65535
+const JETTON_ERROR_ADMIN_REQUIRED = JETTON_STDLIB_ERROR_ADMIN_REQUIRED
+const JETTON_ERROR_BURN_SENDER_NOT_WALLET = JETTON_STDLIB_ERROR_BURN_SENDER_NOT_WALLET
+const JETTON_ERROR_UNKNOWN_OPCODE = JETTON_STDLIB_ERROR_UNKNOWN_OPCODE
 
 struct JettonMinterStorage {
     totalSupply: coins;
@@ -102,12 +102,13 @@ struct (0xd53276db) Excesses {
 }
 
 @pure
-fun currentAddress(): address
-    asm "MYADDR";
+fun currentAddress(): address {
+    return jettonCurrentAddress();
+}
 
 @pure
 fun sameInternalAndAnyAddressBits(a: address, b: any_address): bool {
-    return (a as slice).bitsEqual(b as slice);
+    return jettonSameInternalAndAnyAddressBits(a, b);
 }
 
 @pure
@@ -117,12 +118,7 @@ fun packJettonWalletData(
     jettonMasterAddress: address,
     jettonWalletCode: cell
 ): cell {
-    return beginCell()
-        .storeCoins(balance)
-        .storeAddressAny(ownerAddress)
-        .storeAddress(jettonMasterAddress)
-        .storeRef(jettonWalletCode)
-        .endCell();
+    return jettonMinterPackWalletData(balance, ownerAddress, jettonMasterAddress, jettonWalletCode);
 }
 
 @pure
@@ -131,16 +127,11 @@ fun calculateJettonWalletStateInit(
     jettonMasterAddress: address,
     jettonWalletCode: cell
 ): cell {
-    return beginCell()
-        .storeUint(0, 2)
-        .storeDict(jettonWalletCode)
-        .storeDict(packJettonWalletData(0, ownerAddress, jettonMasterAddress, jettonWalletCode))
-        .storeUint(0, 1)
-        .endCell();
+    return jettonMinterCalculateWalletStateInit(ownerAddress, jettonMasterAddress, jettonWalletCode);
 }
 
 fun calculateJettonWalletAddress(stateInit: cell): address {
-    return address.fromWorkchainAndHash(BASECHAIN, stateInit.hash());
+    return jettonCalculateWalletAddress(stateInit);
 }
 
 fun calculateUserJettonWalletAddress(
@@ -148,38 +139,12 @@ fun calculateUserJettonWalletAddress(
     jettonMasterAddress: address,
     jettonWalletCode: cell
 ): address {
-    return calculateJettonWalletAddress(
-        calculateJettonWalletStateInit(ownerAddress, jettonMasterAddress, jettonWalletCode)
-    );
+    return jettonMinterCalculateUserWalletAddress(ownerAddress, jettonMasterAddress, jettonWalletCode);
 }
 
 @pure
 fun jettonMinterErrorForThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
-    if (funcThrow == FUNC_THROW_ADMIN_REQUIRED) {
-        return Error {
-            queryId,
-            originalOp,
-            errorClass: ErrorClass.Authorization,
-            errorCode: JETTON_ERROR_ADMIN_REQUIRED,
-            diagnostic: null,
-        };
-    }
-    if (funcThrow == FUNC_THROW_BURN_SENDER_NOT_WALLET) {
-        return Error {
-            queryId,
-            originalOp,
-            errorClass: ErrorClass.Authorization,
-            errorCode: JETTON_ERROR_BURN_SENDER_NOT_WALLET,
-            diagnostic: null,
-        };
-    }
-    return Error {
-        queryId,
-        originalOp,
-        errorClass: ErrorClass.Protocol,
-        errorCode: JETTON_ERROR_UNKNOWN_OPCODE,
-        diagnostic: null,
-    };
+    return jettonMinterErrorForFuncThrow(funcThrow, originalOp, queryId);
 }
 
 fun mintTokens(
@@ -188,33 +153,12 @@ fun mintTokens(
     amount: coins,
     masterMsg: cell
 ): void {
-    val stateInit = calculateJettonWalletStateInit(
-        toAddress,
-        currentAddress(),
-        jettonWalletCode
-    );
-    val toWalletAddress = calculateJettonWalletAddress(stateInit);
-    val msg = beginCell()
-        .storeUint(0x18, 6)
-        .storeAddress(toWalletAddress)
-        .storeCoins(amount)
-        .storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
-        .storeRef(stateInit)
-        .storeRef(masterMsg)
-        .endCell();
-    sendRawMessage(msg, SEND_MODE_PAY_FEES_SEPARATELY);
+    jettonMinterMintTokens(toAddress, jettonWalletCode, amount, masterMsg);
 }
 
 @pure
 fun buildExcessesMessage(responseAddress: any_address, queryId: uint64): cell {
-    return beginCell()
-        .storeUint(0x10, 6)
-        .storeAddressAny(responseAddress)
-        .storeCoins(0)
-        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
-        .storeUint(OP_EXCESSES, 32)
-        .storeUint(queryId, 64)
-        .endCell();
+    return jettonBuildMinterExcessesMessage(responseAddress, queryId);
 }
 
 fun sendExcesses(responseAddress: any_address, queryId: uint64): void {
