@@ -1,0 +1,62 @@
+import "../../crypto/smartcont/jetton-wallet"
+
+@method_id(101)
+fun test_malformed_forward_payload_error(): int {
+    val err = jettonWalletErrorForThrow(
+        FUNC_THROW_MALFORMED_FORWARD_PAYLOAD,
+        OP_TRANSFER,
+        51
+    );
+    assert (err.queryId == 51) throw 101;
+    assert (err.originalOp == OP_TRANSFER) throw 102;
+    assert (err.errorClass == ErrorClass.Protocol) throw 103;
+    return err.errorCode;
+}
+
+@method_id(102)
+fun test_transfer_value_error(): int {
+    val err = jettonWalletErrorForThrow(
+        FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE,
+        OP_TRANSFER,
+        52
+    );
+    assert (err.queryId == 52) throw 111;
+    assert (err.errorClass == ErrorClass.BackPressure) throw 112;
+    return err.errorCode;
+}
+
+@method_id(103)
+fun test_bounce_opcode_error(): int {
+    val err = jettonWalletErrorForThrow(
+        FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE,
+        OP_BURN_NOTIFICATION,
+        53
+    );
+    assert (err.queryId == 53) throw 121;
+    assert (err.errorClass == ErrorClass.Protocol) throw 122;
+    return err.errorCode;
+}
+
+@method_id(104)
+fun test_unknown_opcode_error_body_shape(): int {
+    val err = jettonWalletErrorForThrow(FUNC_THROW_UNKNOWN_OPCODE, 0xabcdef01, 54);
+    var body = beginCell()
+        .storeUint(OP_ERROR, 32)
+        .storeAny(err)
+        .endCell()
+        .beginParse();
+    assert (body.loadUint(32) == OP_ERROR) throw 131;
+    assert (body.loadUint(64) == 54) throw 132;
+    assert (body.loadUint(32) == 0xabcdef01) throw 133;
+    assert (body.loadUint(8) == ErrorClass.Protocol as int) throw 134;
+    assert (body.loadUint(16) == JETTON_WALLET_ERROR_UNKNOWN_OPCODE) throw 135;
+    assert (!body.loadBool()) throw 136;
+    return err.errorCode;
+}
+
+/**
+@testcase | 101 | | 1708
+@testcase | 102 | | 1709
+@testcase | 103 | | 1711
+@testcase | 104 | | 65535
+ */

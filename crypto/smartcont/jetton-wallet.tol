@@ -1,0 +1,561 @@
+// =============================================================================
+// Slice 1 Stage 3.2 — jetton-wallet Tol migration.
+//
+// Policy reference: doc/tos-message-policy.md v6 §3.1 (standard body layout),
+// §5.2 (OP_ERROR body), §5.3 (error_class), and §8.1 (bit-for-bit
+// compatibility for existing TEP-74 formats).
+//
+// Bytecode delta captured at write time:
+//   FunC cells: 17
+//   Tol cells:  10
+//   ratio:      0.59
+//
+// §5.3 error-class assignment table:
+//   FunC line          | FunC throw(N) | ErrorClass    | error_code
+//   imports/params.fc:5 | throw(333)   | Protocol      | 1333
+//   60                 | throw(705)    | Authorization | 1705
+//   61                 | throw(706)    | Permanent     | 1706
+//   68                 | throw(708)    | Protocol      | 1708
+//   88                 | throw(709)    | BackPressure  | 1709
+//   119                | throw(707)    | Authorization | 1707
+//   175                | throw(705)    | Authorization | 1705
+//   176                | throw(706)    | Permanent     | 1706
+//   177                | throw(707)    | BackPressure  | 1710
+//   203                | throw(709)    | Protocol      | 1711
+//   245                | throw(0xffff) | Protocol      | 65535
+//
+// Compatibility note: the FunC reference stores owner/master/response fields
+// as MsgAddress slices and hand-packs all outbound messages. This migration
+// keeps those fields as `any_address` and preserves raw message builders for
+// internal_transfer, transfer_notification, excesses, and burn_notification.
+// createMessage() would make the bodies easier to inspect, but it would also
+// narrow several MsgAddress fields or choose inline/ref body placement for us.
+// =============================================================================
+
+import "@stdlib/common"
+
+const OP_TRANSFER: uint32 = 0x0f8a7ea5
+const OP_TRANSFER_NOTIFICATION: uint32 = 0x7362d09c
+const OP_INTERNAL_TRANSFER: uint32 = 0x178d4519
+const OP_EXCESSES: uint32 = 0xd53276db
+const OP_BURN: uint32 = 0x595f07bc
+const OP_BURN_NOTIFICATION: uint32 = 0x7bdd97de
+
+const MIN_TOS_FOR_STORAGE = 10000000
+const GAS_CONSUMPTION = 10000000
+
+const FUNC_THROW_WRONG_WORKCHAIN = 333
+const FUNC_THROW_OWNER_REQUIRED = 705
+const FUNC_THROW_INSUFFICIENT_BALANCE = 706
+const FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE = 707
+const FUNC_THROW_MALFORMED_FORWARD_PAYLOAD = 708
+const FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE = 709
+const FUNC_THROW_UNKNOWN_OPCODE = 0xffff
+
+const JETTON_WALLET_ERROR_WRONG_WORKCHAIN = 1333
+const JETTON_WALLET_ERROR_OWNER_REQUIRED = 1705
+const JETTON_WALLET_ERROR_INSUFFICIENT_BALANCE = 1706
+const JETTON_WALLET_ERROR_INVALID_TRANSFER_SENDER = 1707
+const JETTON_WALLET_ERROR_MALFORMED_FORWARD_PAYLOAD = 1708
+const JETTON_WALLET_ERROR_INSUFFICIENT_TRANSFER_VALUE = 1709
+const JETTON_WALLET_ERROR_INSUFFICIENT_BURN_VALUE = 1710
+const JETTON_WALLET_ERROR_UNEXPECTED_BOUNCE = 1711
+const JETTON_WALLET_ERROR_UNKNOWN_OPCODE = 65535
+
+@overflow1023_policy("suppress")
+struct JettonWalletStorage {
+    balance: coins;
+    ownerAddress: any_address;
+    jettonMasterAddress: any_address;
+    jettonWalletCode: cell;
+}
+
+struct (OP_TRANSFER) TransferRequest {
+    queryId: uint64;
+    amount: coins;
+    destination: any_address;
+    responseDestination: any_address;
+    customPayload: dict;
+    forwardTosAmount: coins;
+    forwardPayload: RemainingBitsAndRefs;
+}
+
+struct (OP_INTERNAL_TRANSFER) InternalTransferRequest {
+    queryId: uint64;
+    amount: coins;
+    fromAddress: any_address;
+    responseAddress: any_address;
+    forwardTosAmount: coins;
+    forwardPayload: RemainingBitsAndRefs;
+}
+
+struct (OP_BURN) BurnRequest {
+    queryId: uint64;
+    amount: coins;
+    responseAddress: any_address;
+    customPayload: RemainingBitsAndRefs;
+}
+
+struct (OP_TRANSFER_NOTIFICATION) TransferNotification {
+    queryId: uint64;
+    amount: coins;
+    fromAddress: any_address;
+    forwardPayload: RemainingBitsAndRefs;
+}
+
+struct (OP_EXCESSES) WalletExcesses {
+    queryId: uint64;
+}
+
+struct (OP_BURN_NOTIFICATION) BurnNotification {
+    queryId: uint64;
+    amount: coins;
+    ownerAddress: any_address;
+    responseAddress: any_address;
+}
+
+@pure
+fun currentData(): cell
+    asm "c4 PUSH";
+
+fun setCurrentData(data: cell): void
+    asm "c4 POP";
+
+@inline
+fun loadData(): JettonWalletStorage {
+    return JettonWalletStorage.fromCell(currentData());
+}
+
+@inline
+fun saveData(storage: JettonWalletStorage): void {
+    setCurrentData(storage.toCell());
+}
+
+@pure
+fun sameInternalAndAnyAddressBits(a: address, b: any_address): bool {
+    return (a as slice).bitsEqual(b as slice);
+}
+
+fun forceBasechain(addr: any_address): void {
+    if (addr.getWorkchain() != BASECHAIN) {
+        throw FUNC_THROW_WRONG_WORKCHAIN;
+    }
+}
+
+@pure
+fun packJettonWalletData(
+    balance: coins,
+    ownerAddress: any_address,
+    jettonMasterAddress: any_address,
+    jettonWalletCode: cell
+): cell {
+    return beginCell()
+        .storeCoins(balance)
+        .storeAddressAny(ownerAddress)
+        .storeAddressAny(jettonMasterAddress)
+        .storeRef(jettonWalletCode)
+        .endCell();
+}
+
+@pure
+fun calculateJettonWalletStateInit(
+    ownerAddress: any_address,
+    jettonMasterAddress: any_address,
+    jettonWalletCode: cell
+): cell {
+    return beginCell()
+        .storeUint(0, 2)
+        .storeDict(jettonWalletCode)
+        .storeDict(packJettonWalletData(0, ownerAddress, jettonMasterAddress, jettonWalletCode))
+        .storeUint(0, 1)
+        .endCell();
+}
+
+fun calculateJettonWalletAddress(stateInit: cell): address {
+    return address.fromWorkchainAndHash(BASECHAIN, stateInit.hash());
+}
+
+fun calculateUserJettonWalletAddress(
+    ownerAddress: any_address,
+    jettonMasterAddress: any_address,
+    jettonWalletCode: cell
+): address {
+    return calculateJettonWalletAddress(
+        calculateJettonWalletStateInit(ownerAddress, jettonMasterAddress, jettonWalletCode)
+    );
+}
+
+@pure
+fun jettonWalletErrorForThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    if (funcThrow == FUNC_THROW_WRONG_WORKCHAIN) {
+        return Error {
+            queryId,
+            originalOp,
+            errorClass: ErrorClass.Protocol,
+            errorCode: JETTON_WALLET_ERROR_WRONG_WORKCHAIN,
+            diagnostic: null,
+        };
+    }
+    if (funcThrow == FUNC_THROW_OWNER_REQUIRED) {
+        return Error {
+            queryId,
+            originalOp,
+            errorClass: ErrorClass.Authorization,
+            errorCode: JETTON_WALLET_ERROR_OWNER_REQUIRED,
+            diagnostic: null,
+        };
+    }
+    if (funcThrow == FUNC_THROW_INSUFFICIENT_BALANCE) {
+        return Error {
+            queryId,
+            originalOp,
+            errorClass: ErrorClass.Permanent,
+            errorCode: JETTON_WALLET_ERROR_INSUFFICIENT_BALANCE,
+            diagnostic: null,
+        };
+    }
+    if (funcThrow == FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE) {
+        if (originalOp == OP_INTERNAL_TRANSFER) {
+            return Error {
+                queryId,
+                originalOp,
+                errorClass: ErrorClass.Authorization,
+                errorCode: JETTON_WALLET_ERROR_INVALID_TRANSFER_SENDER,
+                diagnostic: null,
+            };
+        }
+        return Error {
+            queryId,
+            originalOp,
+            errorClass: ErrorClass.BackPressure,
+            errorCode: JETTON_WALLET_ERROR_INSUFFICIENT_BURN_VALUE,
+            diagnostic: null,
+        };
+    }
+    if (funcThrow == FUNC_THROW_MALFORMED_FORWARD_PAYLOAD) {
+        return Error {
+            queryId,
+            originalOp,
+            errorClass: ErrorClass.Protocol,
+            errorCode: JETTON_WALLET_ERROR_MALFORMED_FORWARD_PAYLOAD,
+            diagnostic: null,
+        };
+    }
+    if (funcThrow == FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE) {
+        if (originalOp == OP_TRANSFER) {
+            return Error {
+                queryId,
+                originalOp,
+                errorClass: ErrorClass.BackPressure,
+                errorCode: JETTON_WALLET_ERROR_INSUFFICIENT_TRANSFER_VALUE,
+                diagnostic: null,
+            };
+        }
+        return Error {
+            queryId,
+            originalOp,
+            errorClass: ErrorClass.Protocol,
+            errorCode: JETTON_WALLET_ERROR_UNEXPECTED_BOUNCE,
+            diagnostic: null,
+        };
+    }
+    return Error {
+        queryId,
+        originalOp,
+        errorClass: ErrorClass.Protocol,
+        errorCode: JETTON_WALLET_ERROR_UNKNOWN_OPCODE,
+        diagnostic: null,
+    };
+}
+
+@pure
+fun buildInternalTransferMessage(
+    toWalletAddress: address,
+    stateInit: cell,
+    queryId: uint64,
+    amount: coins,
+    ownerAddress: any_address,
+    responseAddress: any_address,
+    forwardTosAmount: coins,
+    forwardPayload: RemainingBitsAndRefs
+): cell {
+    val msgBody = beginCell()
+        .storeUint(OP_INTERNAL_TRANSFER, 32)
+        .storeUint(queryId, 64)
+        .storeCoins(amount)
+        .storeAddressAny(ownerAddress)
+        .storeAddressAny(responseAddress)
+        .storeCoins(forwardTosAmount)
+        .storeSlice(forwardPayload)
+        .endCell();
+    return beginCell()
+        .storeUint(0x18, 6)
+        .storeAddress(toWalletAddress)
+        .storeCoins(0)
+        .storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .storeRef(stateInit)
+        .storeRef(msgBody)
+        .endCell();
+}
+
+@pure
+fun buildTransferNotificationMessage(
+    ownerAddress: any_address,
+    value: coins,
+    queryId: uint64,
+    amount: coins,
+    fromAddress: any_address,
+    forwardPayload: RemainingBitsAndRefs
+): cell {
+    val msgBody = beginCell()
+        .storeUint(OP_TRANSFER_NOTIFICATION, 32)
+        .storeUint(queryId, 64)
+        .storeCoins(amount)
+        .storeAddressAny(fromAddress)
+        .storeSlice(forwardPayload)
+        .endCell();
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddressAny(ownerAddress)
+        .storeCoins(value)
+        .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeRef(msgBody)
+        .endCell();
+}
+
+@pure
+fun buildWalletExcessesMessage(responseAddress: any_address, value: coins, queryId: uint64): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddressAny(responseAddress)
+        .storeCoins(value)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(OP_EXCESSES, 32)
+        .storeUint(queryId, 64)
+        .endCell();
+}
+
+@pure
+fun buildBurnNotificationMessage(
+    jettonMasterAddress: any_address,
+    queryId: uint64,
+    amount: coins,
+    ownerAddress: any_address,
+    responseAddress: any_address
+): cell {
+    val msgBody = beginCell()
+        .storeUint(OP_BURN_NOTIFICATION, 32)
+        .storeUint(queryId, 64)
+        .storeCoins(amount)
+        .storeAddressAny(ownerAddress)
+        .storeAddressAny(responseAddress)
+        .endCell();
+    return beginCell()
+        .storeUint(0x18, 6)
+        .storeAddressAny(jettonMasterAddress)
+        .storeCoins(0)
+        .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeRef(msgBody)
+        .endCell();
+}
+
+fun sendTokens(msg: TransferRequest, senderAddress: address, msgValue: coins, fwdFee: coins): void {
+    forceBasechain(msg.destination);
+    val storage = loadData();
+    val nextBalance = storage.balance - msg.amount;
+
+    if (!sameInternalAndAnyAddressBits(senderAddress, storage.ownerAddress)) {
+        throw FUNC_THROW_OWNER_REQUIRED;
+    }
+    if (nextBalance < 0) {
+        throw FUNC_THROW_INSUFFICIENT_BALANCE;
+    }
+    if (msg.forwardPayload.remainingBitsCount() < 1) {
+        throw FUNC_THROW_MALFORMED_FORWARD_PAYLOAD;
+    }
+
+    val stateInit = calculateJettonWalletStateInit(
+        msg.destination,
+        storage.jettonMasterAddress,
+        storage.jettonWalletCode
+    );
+    val toWalletAddress = calculateJettonWalletAddress(stateInit);
+    val outbound = buildInternalTransferMessage(
+        toWalletAddress,
+        stateInit,
+        msg.queryId,
+        msg.amount,
+        storage.ownerAddress,
+        msg.responseDestination,
+        msg.forwardTosAmount,
+        msg.forwardPayload
+    );
+    var fwdCount = 1;
+    if (msg.forwardTosAmount != 0) {
+        fwdCount = 2;
+    }
+    if (msgValue <= msg.forwardTosAmount + fwdCount * fwdFee + (2 * GAS_CONSUMPTION + MIN_TOS_FOR_STORAGE)) {
+        throw FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE;
+    }
+
+    sendRawMessage(outbound, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+    saveData({
+        balance: nextBalance,
+        ownerAddress: storage.ownerAddress,
+        jettonMasterAddress: storage.jettonMasterAddress,
+        jettonWalletCode: storage.jettonWalletCode,
+    });
+}
+
+fun receiveTokens(
+    msg: InternalTransferRequest,
+    senderAddress: address,
+    originalBalance: coins,
+    fwdFee: coins,
+    msgValue: coins
+): void {
+    val storage = loadData();
+    val nextBalance = storage.balance + msg.amount;
+    val expectedWallet = calculateUserJettonWalletAddress(
+        msg.fromAddress,
+        storage.jettonMasterAddress,
+        storage.jettonWalletCode
+    );
+    if (
+        !sameInternalAndAnyAddressBits(senderAddress, storage.jettonMasterAddress)
+        && senderAddress != expectedWallet
+    ) {
+        throw FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE;
+    }
+
+    val tosBalanceBeforeMsg = originalBalance - msgValue;
+    val storageFee = MIN_TOS_FOR_STORAGE - min(tosBalanceBeforeMsg, MIN_TOS_FOR_STORAGE);
+    var remainingValue = msgValue - (storageFee + GAS_CONSUMPTION);
+
+    if (msg.forwardTosAmount != 0) {
+        remainingValue -= msg.forwardTosAmount + fwdFee;
+        sendRawMessage(
+            buildTransferNotificationMessage(
+                storage.ownerAddress,
+                msg.forwardTosAmount,
+                msg.queryId,
+                msg.amount,
+                msg.fromAddress,
+                msg.forwardPayload
+            ),
+            SEND_MODE_PAY_FEES_SEPARATELY
+        );
+    }
+
+    if (!msg.responseAddress.isNone() && remainingValue > 0) {
+        sendRawMessage(
+            buildWalletExcessesMessage(msg.responseAddress, remainingValue, msg.queryId),
+            SEND_MODE_IGNORE_ERRORS
+        );
+    }
+
+    saveData({
+        balance: nextBalance,
+        ownerAddress: storage.ownerAddress,
+        jettonMasterAddress: storage.jettonMasterAddress,
+        jettonWalletCode: storage.jettonWalletCode,
+    });
+}
+
+fun burnTokens(msg: BurnRequest, senderAddress: address, msgValue: coins, fwdFee: coins): void {
+    val storage = loadData();
+    val nextBalance = storage.balance - msg.amount;
+
+    if (!sameInternalAndAnyAddressBits(senderAddress, storage.ownerAddress)) {
+        throw FUNC_THROW_OWNER_REQUIRED;
+    }
+    if (nextBalance < 0) {
+        throw FUNC_THROW_INSUFFICIENT_BALANCE;
+    }
+    if (msgValue <= fwdFee + 2 * GAS_CONSUMPTION) {
+        throw FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE;
+    }
+
+    sendRawMessage(
+        buildBurnNotificationMessage(
+            storage.jettonMasterAddress,
+            msg.queryId,
+            msg.amount,
+            storage.ownerAddress,
+            msg.responseAddress
+        ),
+        SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
+    );
+    saveData({
+        balance: nextBalance,
+        ownerAddress: storage.ownerAddress,
+        jettonMasterAddress: storage.jettonMasterAddress,
+        jettonWalletCode: storage.jettonWalletCode,
+    });
+}
+
+fun onBouncedMessage(in: InMessageBounced) {
+    var body = in.bouncedBody;
+    body.skipBouncedPrefix();
+    val storage = loadData();
+    val op = body.loadUint(32);
+    if (op != OP_INTERNAL_TRANSFER && op != OP_BURN_NOTIFICATION) {
+        throw FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE;
+    }
+    body.skipBits(64);
+    val bouncedAmount = body.loadCoins();
+    saveData({
+        balance: storage.balance + bouncedAmount,
+        ownerAddress: storage.ownerAddress,
+        jettonMasterAddress: storage.jettonMasterAddress,
+        jettonWalletCode: storage.jettonWalletCode,
+    });
+}
+
+fun onInternalMessage(in: InMessage) {
+    if (in.body.isEmpty()) {
+        return;
+    }
+
+    var body = in.body;
+    val op = body.loadUint(32);
+
+    if (op == OP_TRANSFER) {
+        disclaim_query_id();
+        val msg = lazy TransferRequest.fromSlice(in.body);
+        sendTokens(msg, in.senderAddress, in.valueCoins, in.originalForwardFee);
+        return;
+    }
+
+    if (op == OP_INTERNAL_TRANSFER) {
+        disclaim_query_id();
+        val msg = lazy InternalTransferRequest.fromSlice(in.body);
+        receiveTokens(
+            msg,
+            in.senderAddress,
+            contract.getOriginalBalance(),
+            in.originalForwardFee,
+            in.valueCoins
+        );
+        return;
+    }
+
+    if (op == OP_BURN) {
+        disclaim_query_id();
+        val msg = lazy BurnRequest.fromSlice(in.body);
+        burnTokens(msg, in.senderAddress, in.valueCoins, in.originalForwardFee);
+        return;
+    }
+
+    throw FUNC_THROW_UNKNOWN_OPCODE;
+}
+
+get fun get_wallet_data(): (coins, any_address, any_address, cell) {
+    val storage = loadData();
+    return (
+        storage.balance,
+        storage.ownerAddress,
+        storage.jettonMasterAddress,
+        storage.jettonWalletCode,
+    );
+}
