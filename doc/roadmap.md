@@ -920,12 +920,13 @@ Auction, DAO/governance, oracle, and payment-channel templates,
 each one preceded by a short design note. Cross-language ABI is
 frozen at the end of this slice.
 
-**Status.** 🚧 Stage 0 drafted 2026-04-30. The implementation input
-candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
+**Status.** 🚧 Stage 0 Draft v1.1, 2026-04-30. The implementation
+input candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
 [`doc/slice-5-func-tol-abi.md`](slice-5-func-tol-abi.md), and
 [`doc/slice-5-abi-manifest-schema.json`](slice-5-abi-manifest-schema.json).
-No second-wave helper implementation begins until Stage 0 security
-review closes.
+The first Stage 0 security-review findings are addressed; approval is
+still pending. No second-wave helper implementation begins until Stage 0
+security review closes.
 
 **Stage plan.**
 
@@ -936,6 +937,11 @@ review closes.
    - ✅ Draft FunC<->Tol ABI freeze boundary.
    - ✅ Draft Slice 5 ABI manifest schema.
    - ✅ Update roadmap status and dependencies.
+   - ✅ Address first Stage 0 security-review findings: payment-channel
+     signature material, constrained ABI types, optional-query layout,
+     manual/raw fixtures, schema revision discipline, method-id and
+     error-code reserved ranges, DAO action policy, and oracle reporter
+     lifecycle.
    - ⬜ Security review and approval.
    - ⬜ Exit criterion: ABI boundary and stage plan are approved.
 
@@ -1347,14 +1353,22 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   hardening, postponed-auction reference, check-only behaviour
   manifests, three-pattern trait coverage, generated examples, author
   docs, and `scripts/check-slice-4-release-package.py`.
-- 🚧 **Slice 5 Stage 0 policy / ABI freeze input** — drafted
+- 🚧 **Slice 5 Stage 0 policy / ABI freeze input** — Draft v1.1,
   2026-04-30. `doc/tos-slice-5-policy.md`,
   `doc/slice-5-func-tol-abi.md`, and
   `doc/slice-5-abi-manifest-schema.json` define the second-wave stdlib
-  stage plan and FunC<->Tol ABI freeze boundary. Security review remains
-  open.
+  stage plan and FunC<->Tol ABI freeze boundary. The first security
+  review fixes have landed; approval remains open.
 
 ## 12. Revision notes
+
+### r23 (Slice 5 Stage 0 review fixes)
+
+- Closed the first Slice 5 Stage 0 review findings on signature
+  material, ABI type constraints, optional-query layout, manual/raw
+  fixture requirements, schema revision discipline, method-id and
+  error-code reserved ranges, DAO action-list policy, and oracle
+  reporter lifecycle.
 
 ### r22 (Slice 5 Stage 0 draft)
 

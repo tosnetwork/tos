@@ -1,6 +1,6 @@
 # Slice 5 FunC<->Tol ABI Freeze
 
-Status: Draft v1, 2026-04-30.
+Status: Draft v1.1, 2026-04-30, post-Stage-0-security-review fixes.
 
 This document defines what "FunC<->Tol ABI compatibility" means for
 Slice 5. It is intentionally narrower than source compatibility. The
@@ -43,11 +43,44 @@ have one canonical encoding:
 4. No implicit field insertion by helpers. If a helper adds a field, the
    field appears in the ABI manifest.
 5. Manual raw-cell builders are allowed only when the manifest marks the
-   body encoding as `manual_cell` and names the compatibility reason.
+   body encoding as `manual_cell` and names the compatibility reason and
+   fixture.
 
 External wallet-style bodies are allowed to differ from the internal
 request shape only when the manifest marks direction `external` and
 documents the body encoding.
+
+### 2.1 Signature material rule
+
+Any Slice 5 body or cell that is signed across the FunC<->Tol boundary
+must declare both `signature_algorithm` and `signing_input` in the ABI
+manifest.
+
+The only signature algorithm admitted in Slice 5 is `ed25519`, using
+the TVM Ed25519 verification path. The canonical signed input for
+payment-channel signed states is `cell_hash`: both FunC and Tol must
+construct the same state cell, sign the 256-bit `cell.hash()`, and
+verify that hash. Signing a language-specific serialized byte string is
+not ABI-compatible unless a later policy revision explicitly adds a
+`raw_bits` fixture and proves the FunC/Tol bit layout is identical.
+
+`CHKSIGNU`-style verification over a 256-bit hash is the default
+interop target. `CHKSIGNS`-style verification over a raw slice is
+allowed only when the manifest uses `signing_input = "raw_bits"` and
+the message or cell has a checked fixture. Payment-channel Stage 5 must
+start with `cell_hash`.
+
+### 2.2 Optional `queryId` rule
+
+Messages with `query_id = "optional"` must declare a
+`query_id_presence` value in the ABI manifest. The presence indicator is
+part of the wire layout. FunC and Tol implementations must produce the
+same flag bit, length prefix, or documented custom external indicator.
+
+Messages with `query_id = "required_after_opcode"` use no presence
+indicator: the 64-bit `queryId` immediately follows the opcode.
+Messages with `query_id = "absent"` must not reserve hidden bits for a
+future query id.
 
 ## 3. Getter ABI rule
 
@@ -60,6 +93,9 @@ Every public getter used by a Slice 5 package must declare:
 - each stack item's ABI type;
 - whether the method id is explicit or auto-derived.
 
+Method ids `0` and negative values are reserved for TVM entrypoint
+semantics and are not valid public getters in Slice 5 ABI manifests.
+
 The result stack order is the TVM order observed by callers, not the
 source-code tuple spelling. If a Tol wrapper changes the apparent return
 shape, the manifest must describe the TVM-visible result.
@@ -71,8 +107,8 @@ The Stage 1 validator must support at least these ABI type names:
 | ABI type | TVM/cell meaning |
 |---|---|
 | `int` | TVM integer with manifest-declared signedness/bit width when stored in a cell |
-| `uintN` | unsigned integer stored in exactly `N` bits |
-| `intN` | signed integer stored in exactly `N` bits |
+| `uintN` | unsigned integer stored in exactly `N` bits, where `1 <= N <= 1023` |
+| `intN` | signed integer stored in exactly `N` bits, where `1 <= N <= 1023` |
 | `bool` | one-bit boolean in cells, TVM integer on stack |
 | `coins` | canonical Tol/FunC coin serialization for message cells |
 | `address` | MsgAddress-compatible address serialization |
@@ -83,19 +119,27 @@ The Stage 1 validator must support at least these ABI type names:
 | `dict` | TVM dictionary cell/null representation |
 | `uint256` | unsigned 256-bit integer, commonly used for hashes and public keys |
 | `remaining_bits_and_refs` | raw suffix intentionally preserved as bits/refs |
+| `custom:<Name>` | extension type that must correspond to a manifest `cell_types[].name` |
 
-For any type not listed here, the ABI manifest must either define a
-`cell_type` entry or mark the field as a wire-compatibility exception.
+For any type not listed here, the ABI manifest must use the
+`custom:<Name>` spelling and define a matching `cell_types[].name`, or
+mark the field as a wire-compatibility exception. Ad hoc aliases such as
+`u32` are not ABI type names.
 
 ## 5. Error ABI rule
 
 Slice 5 packages use the Slice 1 error model:
 
-- throw codes are integers in the `0..65535` range;
+- public Slice 5 stdlib error codes are integers in the
+  `1024..65535` range;
 - public stdlib errors are listed in the ABI manifest;
 - application-level error replies use the existing `OP_ERROR` body;
 - `ErrorClass.BackPressure` remains reserved until `actor.md` section
   5.7 is approved.
+
+Codes `0..13` are TVM/system exception space and must not be used for
+Slice 5 public stdlib errors. Lower legacy throw codes may appear only
+as documented compatibility inputs that map to public Slice 5 errors.
 
 Existing Slice 3/4 helpers that already expose BackPressure-class values
 must record those as pre-section-5.7 compatibility exceptions. New Slice
@@ -108,9 +152,11 @@ The manifest is the canonical audit artifact for cross-language
 compatibility.
 
 Stage 1 defines a canonical JSON normalization for hashing. Until that
-normalization is implemented, hashes in release notes are advisory. Once
-Stage 7 freezes the schema, changing any ABI-visible field requires one
-of:
+normalization is implemented, hashes in release notes are advisory.
+After Stage 1 lands, any schema change requires a policy revision entry
+and revalidation of all previously committed Slice 5 ABI manifests.
+Once Stage 7 freezes the schema, changing any ABI-visible field requires
+one of:
 
 - a new manifest version;
 - a compatibility exception with reason and replacement guidance;
@@ -130,6 +176,9 @@ The fixture must fail if:
 - opcode width changes;
 - a `queryId` is inserted, removed, or moved;
 - a manual builder disagrees with Tol auto-serialization;
+- a `manual_cell`, `raw_slice`, or `raw_suffix` fixture is missing;
+- a signed-state fixture signs raw bytes in one implementation and a
+  cell hash in the other;
 - getter stack order changes.
 
 ## 8. Versioning rule
@@ -153,7 +202,8 @@ Reviewers should reject a Slice 5 ABI manifest if:
 - any opcode-bearing body lacks a 32-bit opcode;
 - a request/reply body has ambiguous `queryId` semantics;
 - a getter lists names but not stack order;
-- a `manual_cell` body has no fixture;
+- a `manual_cell`, `raw_slice`, or `raw_suffix` body/cell has no fixture;
 - an error code collides with an existing public error in the package;
 - a BackPressure class appears without a pre-section-5.7 exception;
+- a signed state does not declare Ed25519 and `cell_hash`/`raw_bits`;
 - a field type is too vague to reproduce in both FunC and Tol.

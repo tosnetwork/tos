@@ -4,8 +4,9 @@ Second-wave stdlib and FunC<->Tol ABI freeze.
 
 ## 0. Status, scope, and references
 
-**Status.** Draft v1, 2026-04-30. This is the Slice 5 Stage 0
-implementation-input candidate. It is not yet an approved release gate.
+**Status.** Draft v1.1, 2026-04-30. This is the Slice 5 Stage 0
+implementation-input candidate after the first security-review fixes.
+It is not yet an approved release gate.
 
 Slice 5 implements the `tol.md` Year 2 H2 work on top of completed
 Slices 1-4. Its job is to ship the second-wave stdlib patterns and to
@@ -133,6 +134,15 @@ validation, and optional timelock checks. It must not pretend to be
 protocol governance. It is a contract-level pattern for application
 governance.
 
+Governance action lists must be policy-typed. The default Slice 5
+governance helper admits `SendMsg`-style actions only when the proposal
+policy explicitly allows the target address, value range, and send mode.
+`SetCode`, `SetData`, reserve-currency, or library/code-change actions
+are disallowed by default. If Stage 3 enables any code or data
+replacement action, the proposal must include the expected code/data
+hash and the ABI manifest must record that action class as an explicit
+exception.
+
 ### Oracle
 
 The oracle package covers reporter-set authorization, round ids,
@@ -141,6 +151,13 @@ rejection, and stale-data errors. It must not emit
 `ErrorClass.BackPressure` for congestion and must not claim that quorum
 proves off-chain truth.
 
+Every oracle example must choose and manifest one reporter-set lifecycle:
+fixed at deploy, admin-managed, or governance-managed. Dynamic reporter
+changes must define whether they apply immediately or from the next
+round. In-flight rounds must be evaluated against the reporter snapshot
+declared for that round, not against a mutable set with ambiguous
+history.
+
 ### Payment channel
 
 The payment-channel package covers channel id derivation, signed state
@@ -148,6 +165,11 @@ updates, monotonic sequence numbers, cooperative close, challenge close,
 settlement, replay rejection, and action/body builders. Challenge
 windows are explicit time checks; there is no scheduled wakeup until
 Slice 6.
+
+Signed channel states must use Ed25519 over the canonical state cell
+hash (`cell.hash()`) unless a later policy revision approves a checked
+`raw_bits` encoding. Stage 5 starts with the `cell_hash` form so FunC and
+Tol sign the same 256-bit value.
 
 ## 6. Stage plan
 
@@ -174,12 +196,15 @@ Deliverables:
 - Add at least one FunC-produced and one Tol-produced ABI fixture that
   serialize the same body/cell shape and compare the result.
 - Validate opcode width, getter method ids, error-code ranges,
-  `queryId` policy, cell-field encodings, and wire-compatibility
+  `queryId` policy, optional-query presence indicators, signing inputs,
+  cell-field encodings, raw/manual fixtures, and wire-compatibility
   exceptions against the schema.
 - Add CI/release-package wiring without changing contract bytecode.
 
 Exit criterion: a mixed FunC/Tol fixture proves that the ABI manifest is
-not just documentation.
+not just documentation. The schema is revision-controlled after this
+stage: later schema edits require a policy revision note and revalidation
+of earlier Slice 5 manifests.
 
 ### Stage 2 - Auction package
 
@@ -292,11 +317,14 @@ Reviewers should treat these as blocker-class surfaces:
 - auction funds becoming stuck because close/refund paths depend on
   unpriced queue drain or hidden time;
 - governance double voting, action-list injection, replayed execution,
-  or ambiguous quorum/threshold semantics;
+  ambiguous quorum/threshold semantics, or unsafe `SetCode` / `SetData`
+  action-list permissions;
 - oracle stale data, duplicate reporters, unauthorized reporters,
-  unbounded report sets, or hidden truth assumptions;
+  unbounded report sets, ambiguous reporter-set lifecycle, or hidden
+  truth assumptions;
 - payment-channel signature replay, sequence rollback, premature
-  settlement, challenge-window ambiguity, or channel-id collision;
+  settlement, challenge-window ambiguity, channel-id collision, or
+  cross-language disagreement about signed bytes;
 - any use of `ErrorClass.BackPressure` as active semantics before
   `actor.md` section 5.7 is approved.
 

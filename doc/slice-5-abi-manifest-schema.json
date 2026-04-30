@@ -48,8 +48,12 @@
           "direction",
           "opcode",
           "query_id",
+          "query_id_presence",
           "body_encoding",
-          "fields"
+          "signature_algorithm",
+          "signing_input",
+          "fields",
+          "fixtures"
         ],
         "properties": {
           "name": {
@@ -81,6 +85,16 @@
               "custom_external"
             ]
           },
+          "query_id_presence": {
+            "type": "string",
+            "enum": [
+              "not_applicable",
+              "flag_bit_before_query_id",
+              "flag_bit_after_opcode",
+              "length_prefixed",
+              "custom_external"
+            ]
+          },
           "body_encoding": {
             "type": "string",
             "enum": [
@@ -90,13 +104,188 @@
               "tlb_reference"
             ]
           },
+          "signature_algorithm": {
+            "type": "string",
+            "enum": [
+              "none",
+              "ed25519"
+            ]
+          },
+          "signing_input": {
+            "type": "string",
+            "enum": [
+              "none",
+              "cell_hash",
+              "raw_bits"
+            ]
+          },
           "fields": {
             "type": "array",
             "items": {
               "$ref": "#/$defs/field"
             }
+          },
+          "fixtures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/fixture"
+            }
           }
         },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "opcode": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "opcode"
+              ]
+            },
+            "then": {
+              "properties": {
+                "body_encoding": {
+                  "not": {
+                    "const": "tol_auto_struct"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "query_id": {
+                  "const": "optional"
+                }
+              },
+              "required": [
+                "query_id"
+              ]
+            },
+            "then": {
+              "properties": {
+                "query_id_presence": {
+                  "enum": [
+                    "flag_bit_before_query_id",
+                    "flag_bit_after_opcode",
+                    "length_prefixed",
+                    "custom_external"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "query_id": {
+                  "enum": [
+                    "required_after_opcode",
+                    "absent"
+                  ]
+                }
+              },
+              "required": [
+                "query_id"
+              ]
+            },
+            "then": {
+              "properties": {
+                "query_id_presence": {
+                  "const": "not_applicable"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "query_id": {
+                  "const": "custom_external"
+                }
+              },
+              "required": [
+                "query_id"
+              ]
+            },
+            "then": {
+              "properties": {
+                "query_id_presence": {
+                  "const": "custom_external"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "body_encoding": {
+                  "enum": [
+                    "manual_cell",
+                    "raw_slice"
+                  ]
+                }
+              },
+              "required": [
+                "body_encoding"
+              ]
+            },
+            "then": {
+              "properties": {
+                "fixtures": {
+                  "minItems": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "signature_algorithm": {
+                  "const": "none"
+                }
+              },
+              "required": [
+                "signature_algorithm"
+              ]
+            },
+            "then": {
+              "properties": {
+                "signing_input": {
+                  "const": "none"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "signature_algorithm": {
+                  "const": "ed25519"
+                }
+              },
+              "required": [
+                "signature_algorithm"
+              ]
+            },
+            "then": {
+              "properties": {
+                "signing_input": {
+                  "enum": [
+                    "cell_hash",
+                    "raw_bits"
+                  ]
+                },
+                "fixtures": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        ],
         "additionalProperties": false
       }
     },
@@ -118,7 +307,7 @@
           },
           "method_id": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 1
           },
           "id_source": {
             "type": "string",
@@ -150,7 +339,8 @@
         "required": [
           "name",
           "encoding",
-          "fields"
+          "fields",
+          "fixtures"
         ],
         "properties": {
           "name": {
@@ -171,8 +361,38 @@
             "items": {
               "$ref": "#/$defs/field"
             }
+          },
+          "fixtures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/fixture"
+            }
           }
         },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "encoding": {
+                  "enum": [
+                    "manual_builder",
+                    "raw_suffix"
+                  ]
+                }
+              },
+              "required": [
+                "encoding"
+              ]
+            },
+            "then": {
+              "properties": {
+                "fixtures": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        ],
         "additionalProperties": false
       }
     },
@@ -191,7 +411,7 @@
           },
           "code": {
             "type": "integer",
-            "minimum": 0,
+            "minimum": 1024,
             "maximum": 65535
           },
           "class": {
@@ -245,7 +465,7 @@
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         },
         "type": {
-          "type": "string"
+          "$ref": "#/$defs/abi_type"
         },
         "bits": {
           "type": [
@@ -275,10 +495,62 @@
           "type": "string"
         },
         "type": {
+          "$ref": "#/$defs/abi_type"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fixture": {
+      "type": "object",
+      "required": [
+        "name",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "func",
+            "tol",
+            "cross_language",
+            "golden_cell"
+          ]
+        },
+        "path": {
           "type": "string"
         }
       },
       "additionalProperties": false
+    },
+    "abi_type": {
+      "type": "string",
+      "anyOf": [
+        {
+          "enum": [
+            "int",
+            "bool",
+            "coins",
+            "address",
+            "any_address",
+            "cell",
+            "slice",
+            "builder",
+            "dict",
+            "uint256",
+            "remaining_bits_and_refs"
+          ]
+        },
+        {
+          "pattern": "^(uint|int)([1-9]|[1-9][0-9]{1,2}|10[01][0-9]|102[0-3])$"
+        },
+        {
+          "pattern": "^custom:[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      ]
     }
   },
   "additionalProperties": false
