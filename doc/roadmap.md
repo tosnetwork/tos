@@ -500,7 +500,7 @@ slice is designed to prevent.
 The following are sequenced but described at a coarser grain
 because their detail will follow from what the first slice teaches.
 
-### Slice 2 — Q2 syntax, weeks 27–52 (six months)
+### Slice 2 — Q2 syntax, weeks 27–52 (six months) ✅ Complete
 
 Deliver `tol.md` Q2: `contract`, `receive(...)`, `message`
 keywords, and the early form of state-aware dispatch (`receive(...)
@@ -511,10 +511,11 @@ This slice also begins the first of the §5.5 static-analysis
 features: exhaustiveness checking of `receive` handlers. Full
 exhaustiveness checking lands in Slice 3.
 
-**Status.** 🚧 In progress as of 2026-04-30. The Slice 2 syntax
+**Status.** ✅ Complete as of 2026-04-30. The Slice 2 syntax
 policy input exists at `doc/tos-language-syntax-policy.md`
-(Draft v3, post-v2-security-review). Stages 0–8 have landed on
-`actor-layer`; the compiler implementation commits are Stage 1
+(Draft v3, post-v2-security-review). Stages 0–8 and the
+post-Stage 8 query-id hardening have landed on `actor-layer`; the
+compiler implementation commits are Stage 1
 (`081f05d3c`), Stage 2 (`cc6656ce9`), Stage 3
 (`aeafe7906` merged via `8e6b3a3f8`), Stage 4
 (`f697390d3` merged via `4ed03f313`), Stage 5 (`21b3f8a03`
@@ -928,6 +929,12 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   cases.
 
 ## 12. Revision notes
+
+### r8 (Slice 2 complete)
+
+- §6 Slice 2 now marks the full Slice 2 implementation complete:
+  Stages 0–8 plus the receiver-local `queryId` hardening have
+  landed on `actor-layer`.
 
 ### r7 (Slice 2 queryId dispatch hardening)
 
