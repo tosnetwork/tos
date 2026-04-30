@@ -341,11 +341,13 @@ dashboard have not been built.
 **Exit criterion.** No outstanding fuzz crashes; gas regressions
 are within budget or have a documented justification.
 
-### Stage 5 — Migration documentation and external RFC (week 25–26) ⏳ Not started
+### Stage 5 — Migration documentation and external RFC (week 25–26) 🚧 In progress
 
-**Status.** ⏳ Not started. `doc/tos-message-envelope-migration.md`
-has not been authored; no external RFC has been published.
-
+**Status.** 🚧 In progress as of 2026-04-30. The internal
+contract-author migration playbook exists at
+`doc/tos-message-envelope-migration.md`, drafted from the three
+Stage 3 reference migrations. The external RFC, changelog, and
+release notes have not been published.
 
 **Owners.** Documentation, with the architects from Stage 0.
 
@@ -384,8 +386,10 @@ branch.
       §12 authorized owner. *(v6, single-signer
       `gtosnetwork-dotcom`, 2026-04-29; commit `ea5869adf` then
       v6 governance refinement in `063f44f4b`.)*
-- [ ] `doc/tos-message-envelope-migration.md` exists (Stage 5
-      contract-author migration playbook).
+- [x] `doc/tos-message-envelope-migration.md` exists (Stage 5
+      contract-author migration playbook). *(Drafted 2026-04-30
+      from the three Stage 3 migrations; external RFC and release
+      notes remain pending.)*
 - [x] The two `extra_flags & 3` magic literals in
       `crypto/block/transaction.cpp:2948,3632` and the
       `BounceMode` literals in `tol/send-message-api.cpp:307-342`
@@ -433,13 +437,15 @@ branch.
       *(Stage 4 — not started.)*
 - [ ] An external RFC has been published with the
       §8.1 zero-wire-change commitment explicitly called out.
-      *(Stage 5 — not started.)*
+      *(RFC not started; playbook exists, but RFC publication
+      and release notes remain pending.)*
 
-**Progress as of 2026-04-30:** 5 of 9 checked. Stage 3 has
+**Progress as of 2026-04-30:** 6 of 9 checked. Stage 3 has
 all 3 reference-contract migrations complete (`jetton-minter`,
-`jetton-wallet`, `wallet-v5`).
+`jetton-wallet`, `wallet-v5`), and the Stage 5 internal migration
+playbook now exists.
 Remaining checklist items break down to: 2 × Stage 4 (CI fuzzing
-and gas dashboard), 2 × Stage 5 (migration playbook + external RFC).
+and gas dashboard), plus the Stage 5 external RFC / release notes.
 
 If any one of these is missing, the slice is not done. Slipping
 the boundary creates exactly the cross-layer inconsistency this
