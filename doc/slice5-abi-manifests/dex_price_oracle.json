@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "schema": "slice-5-abi-manifest",
+  "contract": "DexPriceOracle",
+  "language": "tol",
+  "stage": "slice5-stage4-fixed-at-deploy-reporters",
+  "messages": [
+    {
+      "name": "DexPriceStartRound",
+      "direction": "internal_in",
+      "opcode": "0x44584f01",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "roundId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "pairId",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0
+        }
+      ],
+      "fixtures": []
+    },
+    {
+      "name": "DexPriceReport",
+      "direction": "internal_in",
+      "opcode": "0x44584f02",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "roundId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "pairId",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0
+        },
+        {
+          "name": "reporterKey",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0
+        },
+        {
+          "name": "priceNano",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0
+        }
+      ],
+      "fixtures": []
+    }
+  ],
+  "get_methods": [
+    {
+      "name": "getLatestPrice",
+      "method_id": 7424,
+      "id_source": "explicit",
+      "arguments": [],
+      "returns": [
+        {"name": "priceNano", "type": "uint64"}
+      ]
+    },
+    {
+      "name": "getLastRoundId",
+      "method_id": 7425,
+      "id_source": "explicit",
+      "arguments": [],
+      "returns": [
+        {"name": "roundId", "type": "uint64"}
+      ]
+    }
+  ],
+  "cell_types": [],
+  "errors": [
+    {
+      "name": "DEX_PRICE_ORACLE_THROW_WRONG_PAIR",
+      "code": 3841,
+      "class": "Protocol"
+    },
+    {
+      "name": "DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND",
+      "code": 3842,
+      "class": "Transient"
+    },
+    {
+      "name": "DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_STARTER",
+      "code": 3843,
+      "class": "Authorization"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER",
+      "code": 3329,
+      "class": "Authorization"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_DUPLICATE_REPORTER",
+      "code": 3330,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_INSUFFICIENT_QUORUM",
+      "code": 3331,
+      "class": "Transient"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_STALE_ROUND",
+      "code": 3332,
+      "class": "Transient"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_OUTLIER",
+      "code": 3333,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_REPLAYED_ROUND",
+      "code": 3334,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_ROUND_FINALIZED",
+      "code": 3336,
+      "class": "Protocol"
+    }
+  ],
+  "wire_compatibility_exceptions": []
+}

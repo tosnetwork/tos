@@ -1,0 +1,124 @@
+// DexPriceOracle — production-intent TOS/USDC spot price oracle.
+// Backed by @stdlib/oracle with a fixed-at-deploy 3-reporter set and 2-of-3 quorum.
+// Reporters submit price observations; the contract auto-finalizes when quorum is met.
+tol 1.3
+
+import "@stdlib/oracle"
+
+// Opcode namespace: 0x44584f xx (ASCII "DSO\xx")
+const DEX_PRICE_ORACLE_OP_START_ROUND: uint32  = 0x44584f01
+const DEX_PRICE_ORACLE_OP_PRICE_REPORT: uint32 = 0x44584f02
+
+// Pair IDs. Only TOS/USDC is served by this deploy.
+const DEX_PRICE_ORACLE_PAIR_TOS_USDC: uint32 = 1
+
+// Error codes. Base 0x0f00 (3840); all >= 1024 per Slice 5 policy.
+const DEX_PRICE_ORACLE_THROW_WRONG_PAIR: int      = 0x0f01  // 3841
+const DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND: int = 0x0f02  // 3842
+const DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_STARTER: int = 0x0f03  // 3843
+
+struct DexPriceOracleStorage {
+    config: Cell<Slice5OracleConfig>
+    oracleState: Cell<Slice5OracleState>
+    pairId: uint32
+    roundStarter: address
+}
+
+struct (DEX_PRICE_ORACLE_OP_START_ROUND) DexPriceStartRound {
+    queryId: uint64
+    roundId: uint64
+    pairId: uint32
+    now: uint32
+}
+
+struct (DEX_PRICE_ORACLE_OP_PRICE_REPORT) DexPriceReport {
+    queryId: uint64
+    roundId: uint64
+    pairId: uint32
+    reporterKey: uint256
+    priceNano: uint64
+    now: uint32
+}
+
+contract DexPriceOracle {
+    storage: DexPriceOracleStorage
+    @unknown_throw(0xffff);
+
+    // Round starts are restricted to the deploy-time starter address.
+    @disclaim_query_id
+    receive(msg: DexPriceStartRound) {
+        if (msg.pairId != storage.pairId) {
+            throw DEX_PRICE_ORACLE_THROW_WRONG_PAIR;
+        }
+        if (in.senderAddress != storage.roundStarter) {
+            throw DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_STARTER;
+        }
+        val config = lazy Slice5OracleConfig.fromCell(storage.config);
+        var state = lazy Slice5OracleState.fromCell(storage.oracleState);
+        slice5OracleStartRound(mutate state, config, msg.roundId, msg.now);
+        save(DexPriceOracleStorage {
+            config: storage.config,
+            oracleState: state.toCell(),
+            pairId: storage.pairId,
+            roundStarter: storage.roundStarter,
+        });
+    }
+
+    // Authorized reporters submit price observations. Auto-finalizes when quorum is reached.
+    @disclaim_query_id
+    receive(msg: DexPriceReport) {
+        if (msg.pairId != storage.pairId) {
+            throw DEX_PRICE_ORACLE_THROW_WRONG_PAIR;
+        }
+        val config = lazy Slice5OracleConfig.fromCell(storage.config);
+        var state = lazy Slice5OracleState.fromCell(storage.oracleState);
+        if (state.current == null) {
+            throw DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND;
+        }
+        var round = lazy Slice5OracleRound.fromCell(state.current!);
+        val oracleReport = Slice5OracleReport {
+            queryId: msg.queryId,
+            roundId: msg.roundId,
+            reporterKey: msg.reporterKey,
+            value: msg.priceNano,
+            now: msg.now,
+        };
+        round.addReport(state.reporterSet, config, oracleReport);
+        if (round.reportCount >= config.quorum && !round.finalized) {
+            val finalizeMsg = Slice5OracleFinalize {
+                queryId: msg.queryId,
+                roundId: msg.roundId,
+                now: msg.now,
+            };
+            round.finalize(config, finalizeMsg);
+        }
+        state.current = round.toCell();
+        save(DexPriceOracleStorage {
+            config: storage.config,
+            oracleState: state.toCell(),
+            pairId: storage.pairId,
+            roundStarter: storage.roundStarter,
+        });
+    }
+
+    // Returns the latest finalized price in nanoUSDC per TOS. Returns 0 if no round is finalized.
+    @method_id(0x1d00)
+    get fun getLatestPrice(): uint64 {
+        val state = lazy Slice5OracleState.fromCell(storage.oracleState);
+        if (state.current == null) {
+            return 0;
+        }
+        val round = lazy Slice5OracleRound.fromCell(state.current!);
+        if (!round.finalized) {
+            return 0;
+        }
+        return round.medianValue!;
+    }
+
+    // Returns the last started roundId (monotonically increasing, 0 before first round).
+    @method_id(0x1d01)
+    get fun getLastRoundId(): uint64 {
+        val state = lazy Slice5OracleState.fromCell(storage.oracleState);
+        return state.lastRoundId;
+    }
+}

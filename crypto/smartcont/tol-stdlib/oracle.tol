@@ -171,11 +171,18 @@ fun slice5OracleAbsDiff(a: uint64, b: uint64): uint64 {
     return a > b ? a - b : b - a;
 }
 
+fun Slice5OracleRound.outlierAnchor(self): uint64 {
+    if (self.reportCount == 1) {
+        return self.value1!;
+    }
+    return (self.value1! + self.value2!) / 2;
+}
+
 fun Slice5OracleRound.checkOutlier(self, config: Slice5OracleConfig, value: uint64): void {
     if (self.reportCount == 0) {
         return;
     }
-    if (slice5OracleAbsDiff(self.value1!, value) > config.maxDeviation) {
+    if (slice5OracleAbsDiff(self.outlierAnchor(), value) > config.maxDeviation) {
         throw SLICE5_ORACLE_THROW_OUTLIER;
     }
 }

@@ -126,6 +126,10 @@ For any type not listed here, the ABI manifest must use the
 mark the field as a wire-compatibility exception. Ad hoc aliases such as
 `u32` are not ABI type names.
 
+Oracle median helpers use truncating integer division for the two-report
+case: `(value1 + value2) / 2`. FunC reimplementations must use the same
+round-toward-zero convention to match Tol-visible results.
+
 ## 5. Error ABI rule
 
 Slice 5 packages use the Slice 1 error model:

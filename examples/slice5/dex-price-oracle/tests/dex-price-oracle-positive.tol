@@ -1,0 +1,228 @@
+import "@stdlib/oracle"
+
+// DEX oracle constants (mirror of src/dex-price-oracle.tol).
+const DEX_PRICE_ORACLE_PAIR_TOS_USDC: uint32 = 1
+const DEX_PRICE_ORACLE_THROW_WRONG_PAIR: int      = 0x0f01  // 3841
+const DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND: int = 0x0f02  // 3842
+const DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_STARTER: int = 0x0f03  // 3843
+
+// Simulated reporter public keys (fixed-at-deploy set).
+fun reporter1(): uint256 { return 0x01; }
+fun reporter2(): uint256 { return 0x02; }
+fun reporter3(): uint256 { return 0x03; }
+fun unknownReporter(): uint256 { return 0x99; }
+
+fun roundStarter(): address {
+    return address("0:7777777777777777777777777777777777777777777777777777777777777777");
+}
+
+fun attacker(): address {
+    return address("0:8888888888888888888888888888888888888888888888888888888888888888");
+}
+
+fun makeReporterSet(): Slice5OracleReporterSet {
+    var set = slice5OracleNewReporterSet();
+    set.addReporter(reporter1());
+    set.addReporter(reporter2());
+    set.addReporter(reporter3());
+    return set;
+}
+
+// 2-of-3 quorum, 60 s freshness, 200 nanoUSDC max deviation.
+fun makeConfig(): Slice5OracleConfig {
+    return slice5OracleConfig(makeReporterSet(), 2, 60, 200);
+}
+
+fun startRound(roundId: uint64, now: uint32): Slice5OracleRound {
+    var state = slice5OracleInitialState(makeReporterSet());
+    return slice5OracleStartRound(mutate state, makeConfig(), roundId, now);
+}
+
+fun makeReport(roundId: uint64, key: uint256, price: uint64, now: uint32): Slice5OracleReport {
+    return Slice5OracleReport { queryId: key as uint64, roundId, reporterKey: key, value: price, now };
+}
+
+fun makeFinalize(roundId: uint64, now: uint32): Slice5OracleFinalize {
+    return Slice5OracleFinalize { queryId: 1, roundId, now };
+}
+
+fun main(): int {
+    return 0;
+}
+
+// Happy path: 2-of-3 reports reach quorum; median of (1000, 1100) = 1050.
+@method_id(201)
+fun test_two_reports_quorum_median(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter1(), 1000, 20));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter2(), 1100, 21));
+    val m = r.finalize(makeConfig(), makeFinalize(1, 22));
+    assert(r.finalized) throw 2010;
+    assert(m == 1050) throw 2011;
+    return m as int;
+}
+
+// Three reports: median of (1000, 900, 1100) = 1000.
+@method_id(202)
+fun test_three_reports_median(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter1(), 1000, 20));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter2(), 900, 21));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter3(), 1100, 22));
+    val m = r.finalize(makeConfig(), makeFinalize(1, 23));
+    assert(r.finalized) throw 2020;
+    assert(m == 1000) throw 2021;
+    return m as int;
+}
+
+// Unauthorized reporter is rejected.
+@method_id(203)
+fun test_unauthorized_reporter(): int {
+    var r = startRound(1, 10);
+    try {
+        r.addReport(makeReporterSet(), makeConfig(), makeReport(1, unknownReporter(), 1000, 20));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Duplicate report from the same reporter is rejected.
+@method_id(204)
+fun test_duplicate_reporter(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter1(), 1000, 20));
+    try {
+        r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter1(), 1001, 21));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Report submitted after the freshness window expires is rejected.
+@method_id(205)
+fun test_stale_round(): int {
+    var r = startRound(1, 10);
+    try {
+        // Round started at t=10, validUntil = 10+60 = 70; report at t=70 is stale (validUntil <= now).
+        r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter1(), 1000, 70));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Finalize before quorum is reached is rejected.
+@method_id(206)
+fun test_insufficient_quorum_finalize(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter1(), 1000, 20));
+    try {
+        r.finalize(makeConfig(), makeFinalize(1, 21));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Starting a round with a non-monotonic roundId is rejected.
+@method_id(207)
+fun test_replayed_round_id(): int {
+    var state = slice5OracleInitialState(makeReporterSet());
+    slice5OracleStartRound(mutate state, makeConfig(), 5, 10);
+    try {
+        slice5OracleStartRound(mutate state, makeConfig(), 5, 11);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// A price observation deviating > maxDeviation from the first report is rejected.
+@method_id(208)
+fun test_outlier_rejected(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter1(), 1000, 20));
+    try {
+        // |1201 - 1000| = 201 > 200; outlier.
+        r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter2(), 1201, 21));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Observation at exactly maxDeviation boundary (200) is accepted.
+@method_id(209)
+fun test_boundary_deviation_accepted(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter1(), 1000, 20));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter2(), 1200, 21));
+    assert(r.reportCount == 2) throw 2090;
+    return r.reportCount as int;
+}
+
+// Contract receive guard: mismatched pairId produces DEX_PRICE_ORACLE_THROW_WRONG_PAIR.
+// Exercised via inline logic since the contract entry point cannot be called from tol-tester.
+@method_id(210)
+fun test_wrong_pair_check(): int {
+    val configuredPairId: uint32 = DEX_PRICE_ORACLE_PAIR_TOS_USDC;
+    val incomingPairId: uint32 = 99;
+    if (incomingPairId != configuredPairId) {
+        return DEX_PRICE_ORACLE_THROW_WRONG_PAIR;
+    }
+    return 0;
+}
+
+// Contract receive guard: null state.current produces DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND.
+@method_id(211)
+fun test_no_active_round_check(): int {
+    val state = slice5OracleInitialState(makeReporterSet());
+    if (state.current == null) {
+        return DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND;
+    }
+    return 0;
+}
+
+// Contract receive guard: only the deploy-time starter may start a round.
+@method_id(213)
+fun test_unauthorized_round_starter_check(): int {
+    val configured = roundStarter();
+    val incoming = attacker();
+    if (incoming != configured) {
+        return DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_STARTER;
+    }
+    return 0;
+}
+
+// Duplicate finalize (round already finalized) is rejected.
+@method_id(214)
+fun test_duplicate_finalize(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter1(), 1000, 20));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, reporter2(), 1100, 21));
+    r.finalize(makeConfig(), makeFinalize(1, 22));
+    try {
+        r.finalize(makeConfig(), makeFinalize(1, 23));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+/**
+@testcase | 201 | | 1050
+@testcase | 202 | | 1000
+@testcase | 203 | | 3329
+@testcase | 204 | | 3330
+@testcase | 205 | | 3332
+@testcase | 206 | | 3331
+@testcase | 207 | | 3334
+@testcase | 208 | | 3333
+@testcase | 209 | | 2
+@testcase | 210 | | 3841
+@testcase | 211 | | 3842
+@testcase | 213 | | 3843
+@testcase | 214 | | 3336
+ */

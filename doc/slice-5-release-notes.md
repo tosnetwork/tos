@@ -10,7 +10,10 @@ This repo-side release candidate contains:
 - `tol new --pattern` scaffolds for all four second-wave patterns.
 - Generated examples under `examples/slice5/`.
 - ABI freeze hashes in `doc/slice-5-abi-freeze-record.json`.
+- External author trial record for `DexPriceOracle`, the first
+  production-intent adoption candidate.
 
 External adoption remains a Slice 5 release gate: Stage 7 records the
 repo-side ABI freeze and explicitly leaves the three external production
-contract requirement pending unless real evidence is available.
+contract requirement pending until two additional production contracts
+are recorded.

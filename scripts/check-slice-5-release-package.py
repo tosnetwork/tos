@@ -16,9 +16,21 @@ PATTERNS = (
     ("payment-channel", "examples/slice5/payment-channel-scaffold", "payment-channel-positive"),
 )
 
+EXTERNAL_CANDIDATES = (
+    (
+        "dex-price-oracle",
+        "examples/slice5/dex-price-oracle",
+        "src/dex-price-oracle.tol",
+        "dex-price-oracle-positive",
+    ),
+)
+
 REQUIRED_DOCS = (
     "doc/slice-5-author-guide.md",
     "doc/slice-5-audit-checklist.md",
+    "doc/slice-5-compatibility-matrix.md",
+    "doc/slice-5-external-author-trials.md",
+    "doc/slice-5-release-checklist.md",
     "doc/slice-5-release-notes.md",
     "doc/slice-5-release-surrogate-trial.md",
 )
@@ -108,7 +120,24 @@ def main() -> int:
         validate_generated_manifest(root, project / "manifest.json")
         validated.append(pattern)
 
-    print(f"Validated Slice 5 release candidate: {', '.join(validated)} generated examples, ABI manifests, docs, and artifacts")
+    external = []
+    for name, relative_dir, source_relative, test_filter in EXTERNAL_CANDIDATES:
+        project = root / relative_dir
+        require(project.is_dir(), f"{project}: external candidate missing")
+        run([str(tol), "--check-only", str(project / source_relative)])
+        run([sys.executable, str(tester), "tests", test_filter], cwd=project, env=env)
+        manifest = load_json(project / "manifest.json")
+        require(manifest.get("abi_manifest"), f"{project}: external candidate ABI manifest missing")
+        require((root / manifest["abi_manifest"]).exists(), f"{project}: ABI manifest not found")
+        for relative in manifest.get("observability", {}).values():
+            load_json(project / relative)
+        validate_generated_manifest(root, project / "manifest.json")
+        external.append(name)
+
+    print(
+        f"Validated Slice 5 release candidate: {', '.join(validated)} generated examples, "
+        f"{len(external)} external candidate(s), ABI manifests, docs, and artifacts"
+    )
     return 0
 
 

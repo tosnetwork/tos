@@ -38,6 +38,18 @@
   "external_adoption_gate": {
     "status": "pending",
     "required": "3 external production contracts using second-wave stdlib packages",
-    "recorded_contracts": []
+    "recorded_contracts": [
+      {
+        "name": "DexPriceOracle",
+        "pattern": "oracle",
+        "status": "production_intent_candidate_1_of_3",
+        "source": "examples/slice5/dex-price-oracle/src/dex-price-oracle.tol",
+        "tests": "examples/slice5/dex-price-oracle/tests/dex-price-oracle-positive.tol",
+        "abi_manifest": "doc/slice5-abi-manifests/dex_price_oracle.json",
+        "abi_manifest_sha256": "d3e3b6fbf04cfbb6cf735330c151e7265bd1cd45a4c16722ca2ab1fae7b73b95",
+        "trial_report": "doc/slice-5-external-author-trials.md",
+        "remaining_external_contracts": 2
+      }
+    ]
   }
 }

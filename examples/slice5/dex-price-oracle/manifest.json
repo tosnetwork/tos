@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "schema": "slice-5-generated-project",
+  "pattern": "oracle",
+  "contract": "DexPriceOracle",
+  "stdlib_import": "@stdlib/oracle",
+  "abi_manifest": "doc/slice5-abi-manifests/dex_price_oracle.json",
+  "source": "src/dex-price-oracle.tol",
+  "tests": [
+    "tests/dex-price-oracle-positive.tol"
+  ],
+  "replay_fixtures": [],
+  "observability": {
+    "opcodes": "artifacts/opcodes.json",
+    "method_ids": "artifacts/method-ids.json",
+    "error_codes": "artifacts/error-codes.json"
+  },
+  "behaviour_conformance": [
+    {
+      "behaviour": "slice5_oracle",
+      "manifest": "doc/slice4-behaviours/slice5_oracle.json",
+      "mode": "generated"
+    }
+  ]
+}

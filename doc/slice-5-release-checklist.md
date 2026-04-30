@@ -11,7 +11,8 @@ Repo-side release-candidate checklist:
 - [x] `scripts/check-slice-5-abi-manifests.py` is green.
 - [x] `scripts/check-slice-5-release-package.py` is green.
 - [ ] Three external production contracts using the second-wave stdlib
-  are recorded with evidence.
+  are recorded with evidence. Current status: 1/3 production-intent
+  candidates (`DexPriceOracle`).
 
 Release status: repo-side release-candidate complete; external adoption
 pending.

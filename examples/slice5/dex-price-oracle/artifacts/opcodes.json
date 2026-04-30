@@ -1,0 +1,6 @@
+{
+  "opcodes": [
+    {"name": "DEX_PRICE_ORACLE_OP_START_ROUND",  "hex": "0x44584f01"},
+    {"name": "DEX_PRICE_ORACLE_OP_PRICE_REPORT", "hex": "0x44584f02"}
+  ]
+}

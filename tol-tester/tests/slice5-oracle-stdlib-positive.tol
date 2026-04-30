@@ -126,6 +126,19 @@ fun test_duplicate_finalize(): int {
     return 0;
 }
 
+@method_id(409)
+fun test_third_report_uses_running_anchor(): int {
+    var set = reporterSet();
+    val cfg = slice5OracleConfig(set, 3, 60, 200);
+    var state = slice5OracleInitialState(set);
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10);
+    r.addReport(set, cfg, report(1, 101, 1000, 20));
+    r.addReport(set, cfg, report(1, 202, 1200, 21));
+    r.addReport(set, cfg, report(1, 303, 1201, 22));
+    assert(r.reportCount == 3) throw 4091;
+    return r.median(cfg) as int;
+}
+
 /**
 @testcase | 401 | | 3329
 @testcase | 402 | | 3330
@@ -135,4 +148,5 @@ fun test_duplicate_finalize(): int {
 @testcase | 406 | | 3334
 @testcase | 407 | | 20
 @testcase | 408 | | 3336
+@testcase | 409 | | 1200
  */

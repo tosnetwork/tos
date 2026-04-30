@@ -936,7 +936,7 @@ settlement guards. Stage 6 has extended `tol new --pattern`, generated
 Slice 5 examples, and added the release-candidate checker/docs. Stage 7
 has recorded repo-side ABI freeze hashes and compatibility artifacts;
 the remaining release gate is three external production contracts using
-the second-wave stdlib.
+the second-wave stdlib; one production-intent candidate is recorded.
 
 **Stage plan.**
 
@@ -1018,7 +1018,8 @@ the second-wave stdlib.
    - ✅ Record canonical ABI manifest hashes for second-wave packages.
    - ⬜ Record at least three external production contracts using the
      second-wave stdlib, or explicitly mark Slice 5 as
-     release-candidate-only until those deployments exist.
+     release-candidate-only until those deployments exist. Current
+     status: 1/3 production-intent candidates recorded.
 
 ### Slice 6 — Year 3 protocol-heavy items
 
@@ -1406,7 +1407,8 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   package manifest hashes are recorded in
   `doc/slice-5-abi-freeze-record.json`, compatibility/release checklists
   are in tree, and the external adoption gate remains explicitly
-  pending: three external production contracts using second-wave stdlib.
+  pending: two additional external production contracts using
+  second-wave stdlib after the DexPriceOracle oracle candidate.
 
 ## 12. Revision notes
 
@@ -1416,6 +1418,14 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   external adoption pending.
 - Added ABI freeze hash records, the compatibility matrix, and the
   release checklist. No external production adoption is claimed.
+
+### r31 (Slice 5 external author trial 1)
+
+- Recorded `DexPriceOracle` as external production-intent candidate
+  1/3 for the Slice 5 adoption gate.
+- Hardened the oracle helper outlier anchor, documented oracle authoring
+  limits, and added release-package validation for the external
+  candidate.
 
 ### r29 (Slice 5 Stage 6 release candidate)
 

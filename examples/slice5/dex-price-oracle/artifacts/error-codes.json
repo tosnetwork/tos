@@ -1,0 +1,14 @@
+{
+  "error_codes": [
+    {"name": "DEX_PRICE_ORACLE_THROW_WRONG_PAIR",       "code": 3841},
+    {"name": "DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND",  "code": 3842},
+    {"name": "DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_STARTER", "code": 3843},
+    {"name": "SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER", "code": 3329},
+    {"name": "SLICE5_ORACLE_THROW_DUPLICATE_REPORTER",   "code": 3330},
+    {"name": "SLICE5_ORACLE_THROW_INSUFFICIENT_QUORUM",  "code": 3331},
+    {"name": "SLICE5_ORACLE_THROW_STALE_ROUND",          "code": 3332},
+    {"name": "SLICE5_ORACLE_THROW_OUTLIER",              "code": 3333},
+    {"name": "SLICE5_ORACLE_THROW_REPLAYED_ROUND",       "code": 3334},
+    {"name": "SLICE5_ORACLE_THROW_ROUND_FINALIZED",      "code": 3336}
+  ]
+}
