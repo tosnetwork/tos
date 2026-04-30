@@ -1578,8 +1578,8 @@ static V<ast_annotation> parse_annotation(Lexer& lex) {
     case AnnotationKind::custom:
       break;
     case AnnotationKind::method_id:
-      if (!v_arg || v_arg->size() != 1 || v_arg->get_item(0)->kind != ast_int_const) {
-        err("expecting `(number)` after {}", name).fire(range);
+      if (!v_arg || v_arg->size() != 1) {
+        err("expecting one argument after {}", name).fire(range);
       }
       break;
     case AnnotationKind::overflow1023_policy:
@@ -1693,6 +1693,7 @@ static AnyV parse_function_declaration(Lexer& lex, const std::vector<V<ast_annot
   }
 
   int tvm_method_id = FunctionData::EMPTY_TVM_METHOD_ID;
+  AnyExprV tvm_method_id_expr = nullptr;
   FunctionInlineMode inline_mode = FunctionInlineMode::notCalculated;
   for (auto v_annotation : annotations) {
     switch (v_annotation->kind) {
@@ -1712,17 +1713,15 @@ static AnyV parse_function_declaration(Lexer& lex, const std::vector<V<ast_annot
         if (is_contract_getter || genericsT_list || receiver_type || is_entrypoint || n_mutate_params || accepts_self) {
           err("@method_id can be specified only for regular functions").fire(v_annotation);
         }
-        auto v_int = v_annotation->get_arg()->get_item(0)->as<ast_int_const>();
-        if (v_int->intval.is_null() || !v_int->intval->signed_fits_bits(32)) {
-          err("invalid integer constant").fire(v_int);
-        }
-        tvm_method_id = static_cast<int>(v_int->intval->to_long());
+        tvm_method_id_expr = v_annotation->get_arg()->get_item(0);
         break;
       }
       case AnnotationKind::on_bounced_policy: {
         std::string_view str = v_annotation->get_arg()->get_item(0)->as<ast_string_const>()->str_val;
         if (str == "manual") {
           flags |= FunctionData::flagManualOnBounce;
+        } else if (str == "ignore") {
+          flags |= FunctionData::flagIgnoreOnBounce;
         } else {
           err("incorrect value for {}", v_annotation->name).fire(v_annotation);
         }
@@ -1740,7 +1739,7 @@ static AnyV parse_function_declaration(Lexer& lex, const std::vector<V<ast_annot
   }
 
   range.end(v_body->range);
-  return createV<ast_function_declaration>(range, v_ident, v_param_list, v_body, receiver_type, ret_type, genericsT_list, tvm_method_id, flags, inline_mode);
+  return createV<ast_function_declaration>(range, v_ident, v_param_list, v_body, receiver_type, ret_type, genericsT_list, tvm_method_id_expr, tvm_method_id, flags, inline_mode);
 }
 
 static AnyV parse_struct_field(Lexer& lex) {
@@ -1802,15 +1801,7 @@ static AnyV parse_struct_declaration(Lexer& lex, const std::vector<V<ast_annotat
   AnyExprV opcode = nullptr;
   if (lex.tok() == tok_oppar) {     // struct(0x0012) CounterIncrement
     lex.next();
-    lex.check(tok_int_const, "opcode `0x...` or `0b...`");
-    std::string_view opcode_str = lex.cur_str();
-    if (!opcode_str.starts_with("0x") && !opcode_str.starts_with("0b")) {
-      lex.unexpected("opcode `0x...` or `0b...`");
-    }
-    SrcRange opcode_range = lex.cur_range();
-    td::RefInt256 intval = parse_tok_int_const(opcode_str, opcode_range);
-    opcode = createV<ast_int_const>(opcode_range, std::move(intval), opcode_str);
-    lex.next();
+    opcode = parse_expr(lex);
     lex.expect(tok_clpar, "`)`");
   } else {
     opcode = createV<ast_empty_expression>(SrcRange::empty_at_start(range));

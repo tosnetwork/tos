@@ -18,6 +18,7 @@
 #include "ast-visitor.h"
 #include "type-system.h"
 #include "constant-evaluator.h"
+#include "td/utils/crypto.h"
 
 /*
  *   This pipe checks that expressions expected to be constant, are actually constant.
@@ -28,6 +29,93 @@
  */
 
 namespace tol {
+
+static ConstValExpression unwrap_const_cast_local(ConstValExpression val) {
+  while (const ConstValCastToType* val_cast = std::get_if<ConstValCastToType>(&val)) {
+    val = val_cast->inner.front();
+  }
+  return val;
+}
+
+static int get_fixed_width_for_struct_opcode(AnyExprV v_opcode) {
+  if (auto v_lit = v_opcode->try_as<ast_int_const>()) {
+    std::string_view prefix_str = v_lit->orig_str;
+    if (prefix_str.starts_with("0x")) {
+      return static_cast<int>(prefix_str.size() - 2) * 4;
+    }
+    if (prefix_str.starts_with("0b")) {
+      return static_cast<int>(prefix_str.size() - 2);
+    }
+    err("struct opcode literal must use `0x...` or `0b...`").fire(v_opcode);
+  }
+
+  TypePtr opcode_type = v_opcode->inferred_type ? v_opcode->inferred_type->unwrap_alias() : nullptr;
+  if (const auto* t_intN = opcode_type ? opcode_type->try_as<TypeDataIntN>() : nullptr) {
+    if (!t_intN->is_variadic) {
+      return t_intN->n_bits;
+    }
+  }
+  if (const auto* t_enum = opcode_type ? opcode_type->try_as<TypeDataEnum>() : nullptr) {
+    TypePtr enum_storage = t_enum->enum_ref->colon_type ? t_enum->enum_ref->colon_type->unwrap_alias() : nullptr;
+    if (const auto* t_intN = enum_storage ? enum_storage->try_as<TypeDataIntN>() : nullptr) {
+      if (!t_intN->is_variadic) {
+        return t_intN->n_bits;
+      }
+    }
+  }
+
+  err("struct opcode constant must have fixed-width type; use `OP as uint32` or declare `const OP: uint32 = ...`").fire(v_opcode);
+}
+
+static void resolve_struct_opcode_constant(StructPtr struct_ref) {
+  auto v_struct = struct_ref->ast_root->as<ast_struct_declaration>();
+  if (!v_struct->has_opcode()) {
+    return;
+  }
+
+  AnyExprV v_opcode = v_struct->get_opcode();
+  int prefix_len = get_fixed_width_for_struct_opcode(v_opcode);
+  ConstValExpression opcode_val = unwrap_const_cast_local(eval_expression_if_const_or_fire(v_opcode));
+  const ConstValInt* opcode_int = std::get_if<ConstValInt>(&opcode_val);
+  if (!opcode_int) {
+    err("struct opcode constant must be an integer").fire(v_opcode);
+  }
+  if (prefix_len <= 0 || prefix_len > 48) {
+    err("opcode must not exceed 2^48").fire(v_opcode);
+  }
+  if (opcode_int->int_val < 0 || !opcode_int->int_val->unsigned_fits_bits(prefix_len)) {
+    err("struct opcode constant does not fit into {} bits", prefix_len).fire(v_opcode);
+  }
+  struct_ref->mutate()->opcode = StructData::PackOpcode(opcode_int->int_val->to_long(), prefix_len);
+}
+
+static int calculate_method_id_from_name(std::string_view method_name) {
+  unsigned int crc = td::crc16(static_cast<std::string>(method_name));
+  return static_cast<int>(crc & 0xffff) | 0x10000;
+}
+
+static void resolve_function_method_id_constant(FunctionPtr fun_ref) {
+  auto v_func = fun_ref->ast_root->as<ast_function_declaration>();
+  if (!v_func->has_tvm_method_id_expr()) {
+    return;
+  }
+
+  AnyExprV v_method_id = v_func->get_tvm_method_id_expr();
+  ConstValExpression method_id_val = unwrap_const_cast_local(eval_expression_if_const_or_fire(v_method_id));
+  if (const ConstValInt* method_id_int = std::get_if<ConstValInt>(&method_id_val)) {
+    if (method_id_int->int_val.is_null() || !method_id_int->int_val->signed_fits_bits(32)) {
+      err("invalid integer constant").fire(v_method_id);
+    }
+    fun_ref->mutate()->tvm_method_id = static_cast<int>(method_id_int->int_val->to_long());
+    return;
+  }
+  if (const ConstValString* method_id_str = std::get_if<ConstValString>(&method_id_val)) {
+    fun_ref->mutate()->tvm_method_id = calculate_method_id_from_name(method_id_str->str_val);
+    return;
+  }
+
+  err("@method_id expects an integer constant or a string method name").fire(v_method_id);
+}
 
 class ConstantExpressionsChecker final : public ASTVisitorFunctionBody {
 
@@ -88,6 +176,17 @@ void pipeline_check_constant_expressions() {
     std::vector<td::RefInt256> values = calculate_enum_members_with_values(enum_ref);
     for (EnumMemberPtr member_ref : enum_ref->members) {
       member_ref->mutate()->assign_computed_value(values[member_ref->member_idx]);
+    }
+  }
+
+  for (StructPtr struct_ref : get_all_declared_structs()) {
+    if (!struct_ref->is_generic_struct()) {
+      resolve_struct_opcode_constant(struct_ref);
+    }
+  }
+  for (FunctionPtr fun_ref : get_all_not_builtin_functions()) {
+    if (!fun_ref->is_generic_function()) {
+      resolve_function_method_id_constant(fun_ref);
     }
   }
 

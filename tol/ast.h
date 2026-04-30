@@ -1321,6 +1321,7 @@ struct Vertex<ast_function_declaration> final : ASTOtherVararg {
   AnyTypeV receiver_type_node;            // for `fun builder.storeInt`, here is `builder`
   AnyTypeV return_type_node;              // if unspecified (nullptr), means "auto infer"
   V<ast_genericsT_list> genericsT_list;   // for non-generics it's nullptr
+  AnyExprV tvm_method_id_expr;             // specified via @method_id annotation
   int tvm_method_id;                      // specified via @method_id annotation
   int flags;                              // from enum in FunctionData
   FunctionInlineMode inline_mode;         // from annotations like `@inline` or auto-detected "in-place"
@@ -1328,13 +1329,15 @@ struct Vertex<ast_function_declaration> final : ASTOtherVararg {
   bool is_asm_function() const { return children.at(2)->kind == ast_asm_body; }
   bool is_code_function() const { return children.at(2)->kind == ast_block_statement; }
   bool is_builtin_function() const { return children.at(2)->kind == ast_empty_statement; }
+  bool has_tvm_method_id_expr() const { return tvm_method_id_expr != nullptr; }
+  AnyExprV get_tvm_method_id_expr() const { return tvm_method_id_expr; }
 
   Vertex* mutate() const { return const_cast<Vertex*>(this); }
   void assign_fun_ref(FunctionPtr fun_ref);
 
-  Vertex(SrcRange range, V<ast_identifier> name_identifier, V<ast_parameter_list> parameters, AnyV body, AnyTypeV receiver_type_node, AnyTypeV return_type_node, V<ast_genericsT_list> genericsT_list, int tvm_method_id, int flags, FunctionInlineMode inline_mode)
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, V<ast_parameter_list> parameters, AnyV body, AnyTypeV receiver_type_node, AnyTypeV return_type_node, V<ast_genericsT_list> genericsT_list, AnyExprV tvm_method_id_expr, int tvm_method_id, int flags, FunctionInlineMode inline_mode)
     : ASTOtherVararg(ast_function_declaration, range, {name_identifier, parameters, body})
-    , receiver_type_node(receiver_type_node), return_type_node(return_type_node), genericsT_list(genericsT_list), tvm_method_id(tvm_method_id), flags(flags), inline_mode(inline_mode) {}
+    , receiver_type_node(receiver_type_node), return_type_node(return_type_node), genericsT_list(genericsT_list), tvm_method_id_expr(tvm_method_id_expr), tvm_method_id(tvm_method_id), flags(flags), inline_mode(inline_mode) {}
 };
 
 template<>
@@ -1432,7 +1435,7 @@ struct Vertex<ast_struct_declaration> final : ASTOtherVararg {
 
   auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
   bool has_opcode() const { return children.at(1)->kind != ast_empty_expression; }
-  auto get_opcode() const { return children.at(1)->as<ast_int_const>(); }
+  AnyExprV get_opcode() const { return child_as_expr(1); }
   auto get_struct_body() const { return children.at(2)->as<ast_struct_body>(); }
 
   Vertex* mutate() const { return const_cast<Vertex*>(this); }

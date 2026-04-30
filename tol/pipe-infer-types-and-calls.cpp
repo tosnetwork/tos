@@ -1860,8 +1860,18 @@ public:
     const_ref->mutate()->assign_inferred_type(const_ref->declared_type == nullptr ? const_ref->init_value->inferred_type : const_ref->declared_type);
   }
 
+  void start_visiting_function_metadata(V<ast_function_declaration> v_func) {
+    if (v_func->has_tvm_method_id_expr()) {
+      infer_any_expr(v_func->get_tvm_method_id_expr(), FlowContext(), false);
+    }
+  }
+
   // given struct field `a: int = 2 + 3` infer that default value is int, assign inferred_type to all nodes
   void start_visiting_struct_fields(StructPtr struct_ref) {
+    if (auto v_struct = struct_ref->ast_root->try_as<ast_struct_declaration>(); v_struct && v_struct->has_opcode()) {
+      infer_any_expr(v_struct->get_opcode(), FlowContext(), false);
+    }
+
     for (StructFieldPtr field_ref : struct_ref->fields) {
       if (field_ref->has_default_value()) {
         infer_any_expr(field_ref->default_value, FlowContext(), false, field_ref->declared_type);
@@ -1951,6 +1961,11 @@ void pipeline_infer_types_and_calls_and_fields() {
   for (GlobalConstPtr const_ref : get_all_declared_constants()) {
     if (!const_ref->inferred_type) {
       visitor.start_visiting_constant(const_ref);
+    }
+  }
+  for (FunctionPtr fun_ref : get_all_not_builtin_functions()) {
+    if (!fun_ref->is_generic_function()) {
+      visitor.start_visiting_function_metadata(fun_ref->ast_root->as<ast_function_declaration>());
     }
   }
 

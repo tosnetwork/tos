@@ -1,0 +1,12 @@
+const OP_BAD = 0x15;
+
+struct (OP_BAD) Bad {
+    queryId: uint64;
+}
+
+fun main() {}
+
+/**
+@compilation_should_fail
+@stderr struct opcode constant must have fixed-width type
+ */

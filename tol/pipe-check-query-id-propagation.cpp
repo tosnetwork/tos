@@ -53,10 +53,13 @@
  *           `val msg = lazy <Struct>.fromSlice(in.body)`
  *         - inbound_envelope_struct: the type behind that lazy
  *           bind, IF it has a `queryId` field
+ *         - inbound_query_id_local: the LocalVar bound by the
+ *           manual parse sequence
+ *             `val body = in.body; body.loadUint(32); val q = body.loadUint(64)`
  *         - disclaimed: did the handler call `disclaim_query_id()`?
  *         - saw_reply_emit: every `createMessage({...body: ...})`
  *           site, paired with whether the body literal sources
- *           `queryId` from `<msg>.queryId`
+ *           `queryId` from `<msg>.queryId` or the manual local
  *
  *       at end-of-handler:
  *         - if envelope has `queryId` and !disclaimed and no
@@ -66,9 +69,10 @@
  *
  *   The "propagated" check is purely syntactic: the `queryId:`
  *   field initializer in the reply body literal must be an
- *   `ast_dot_access` reading `<envelope_local>.queryId`. Anything
- *   else (computed expressions, `0`, calls, etc.) falls through
- *   to "not propagated".
+ *   `ast_dot_access` reading `<envelope_local>.queryId` or an
+ *   `ast_reference` to the manual queryId local. Anything else
+ *   (computed expressions, `0`, calls, etc.) falls through to
+ *   "not propagated".
  */
 
 namespace tol {
@@ -124,6 +128,17 @@ static bool is_envelope_dot_queryId(AnyExprV expr, LocalVarPtr envelope_local) {
   return v_dot->get_obj()->as<ast_reference>()->sym == envelope_local;
 }
 
+// is `expr` syntactically a reference to a known local?
+static bool is_reference_to_local(AnyExprV expr, LocalVarPtr local_var) {
+  if (!local_var) {
+    return false;
+  }
+  if (expr->kind != ast_reference) {
+    return false;
+  }
+  return expr->as<ast_reference>()->sym == local_var;
+}
+
 // extract the underlying expression from an ast_argument wrapper.
 static AnyExprV unwrap_argument(AnyExprV expr) {
   if (expr->kind == ast_argument) {
@@ -132,11 +147,38 @@ static AnyExprV unwrap_argument(AnyExprV expr) {
   return expr;
 }
 
+static bool is_int_literal_value(AnyExprV expr, int expected) {
+  expr = unwrap_argument(expr);
+  if (expr->kind != ast_int_const) {
+    return false;
+  }
+  auto v_int = expr->as<ast_int_const>();
+  return !v_int->intval.is_null() && v_int->intval->to_long() == expected;
+}
+
+static bool is_slice_loadUint_from_local(AnyExprV expr, LocalVarPtr slice_local, int width) {
+  if (!slice_local || expr->kind != ast_function_call) {
+    return false;
+  }
+  auto v_call = expr->as<ast_function_call>();
+  FunctionPtr fun_ref = v_call->fun_maybe;
+  if (!fun_ref || fun_ref->name != "slice.loadUint" || !v_call->get_self_obj()) {
+    return false;
+  }
+  if (!is_reference_to_local(v_call->get_self_obj(), slice_local)) {
+    return false;
+  }
+  return v_call->get_num_args() == 1 && is_int_literal_value(v_call->get_arg(0), width);
+}
+
 class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
   // per-handler state, reset in on_enter_function
   LocalVarPtr in_param_ref = nullptr;       // the `in: InMessage` parameter
   StructPtr inbound_envelope_struct = nullptr;
   LocalVarPtr inbound_envelope_local = nullptr;
+  LocalVarPtr inbound_body_slice_local = nullptr;
+  bool manual_opcode_loaded = false;
+  LocalVarPtr inbound_query_id_local = nullptr;
   bool disclaimed = false;
 
   struct ReplySite {
@@ -144,6 +186,10 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     bool propagated;     // true iff queryId: <envelope>.queryId
   };
   std::vector<ReplySite> saw_reply_emit;
+
+  bool has_query_id_source() const {
+    return (inbound_envelope_struct && inbound_envelope_local) || inbound_query_id_local;
+  }
 
   // Detect `val msg = lazy <Struct>.fromSlice(in.body)`.
   // The AST shape is:
@@ -154,8 +200,8 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
   void visit(V<ast_assign> v) override {
     parent::visit(v);
 
-    if (inbound_envelope_local || !in_param_ref) {
-      return;        // already bound, or we have no `in` to compare against
+    if (!in_param_ref) {
+      return;
     }
 
     // unwrap `var x = ...` lhs
@@ -171,8 +217,28 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
       return;
     }
 
-    // rhs must be `lazy <call>`
     AnyExprV rhs = v->get_rhs();
+
+    if (!inbound_envelope_local && !inbound_query_id_local) {
+      if (!inbound_body_slice_local && is_in_dot_body(rhs, in_param_ref)) {
+        inbound_body_slice_local = lhs_var;
+        return;
+      }
+      if (inbound_body_slice_local && !manual_opcode_loaded && is_slice_loadUint_from_local(rhs, inbound_body_slice_local, 32)) {
+        manual_opcode_loaded = true;
+        return;
+      }
+      if (inbound_body_slice_local && manual_opcode_loaded && is_slice_loadUint_from_local(rhs, inbound_body_slice_local, 64)) {
+        inbound_query_id_local = lhs_var;
+        return;
+      }
+    }
+
+    if (inbound_envelope_local) {
+      return;        // already bound
+    }
+
+    // rhs must be `lazy <call>`
     if (rhs->kind != ast_lazy_operator) {
       return;
     }
@@ -317,7 +383,7 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
         continue;
       }
       AnyExprV init_val = v_field->get_init_val();
-      if (is_envelope_dot_queryId(init_val, inbound_envelope_local)) {
+      if (is_envelope_dot_queryId(init_val, inbound_envelope_local) || is_reference_to_local(init_val, inbound_query_id_local)) {
         propagated = true;
       }
       break;
@@ -338,13 +404,16 @@ public:
     in_param_ref = &cur_f->parameters[0];
     inbound_envelope_struct = nullptr;
     inbound_envelope_local = nullptr;
+    inbound_body_slice_local = nullptr;
+    manual_opcode_loaded = false;
+    inbound_query_id_local = nullptr;
     disclaimed = false;
     saw_reply_emit.clear();
   }
 
   void on_exit_function(V<ast_function_declaration> v_function) override {
     // only diagnose if we positively identified an envelope with queryId
-    if (!inbound_envelope_struct || !inbound_envelope_local) {
+    if (!has_query_id_source()) {
       return;
     }
     if (disclaimed) {
@@ -362,7 +431,7 @@ public:
     for (const ReplySite& site : saw_reply_emit) {
       if (!site.propagated) {
         err("reply does not propagate inbound `queryId` — "
-            "set `body.queryId = <envelope>.queryId` or call "
+            "set `body.queryId` from the inbound queryId or call "
             "`disclaim_query_id()`. "
             "See doc/tos-message-policy.md \xc2\xa7""4.4.")
           .warning(site.at, cur_f);

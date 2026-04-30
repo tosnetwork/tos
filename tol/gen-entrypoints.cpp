@@ -71,7 +71,7 @@ void handle_onInternalMessage_codegen_start(FunctionPtr f_onInternalMessage, con
   if (!is_modern_onInternalMessage(f_onInternalMessage)) {
     return;
   }
-  // ignore `@on_bounced_policy("manual")`, don't insert "if (isBounced) return"
+  // ignore `@on_bounced_policy("manual")`, don't insert generated bounced handling
   if (f_onInternalMessage->is_manual_on_bounce()) {
     return;
   }
@@ -81,6 +81,21 @@ void handle_onInternalMessage_codegen_start(FunctionPtr f_onInternalMessage, con
 
   AuxData_OnInternalMessage_getField get_isBounced(f_onInternalMessage, "isBounced");
   std::vector ir_isBounced = get_isBounced.generate_get_InMessage_field(code, origin);
+
+  if (f_onInternalMessage->is_ignore_on_bounce()) {
+    // generate: `if (isBounced) return`
+    Op& if_isBounced = code.add_if_else(origin, ir_isBounced);
+    {
+      code.push_set_cur(if_isBounced.block0);
+      code.add_return(origin, {});
+      code.close_pop_cur(origin);
+    }
+    {
+      code.push_set_cur(if_isBounced.block1);
+      code.close_pop_cur(origin);
+    }
+    return;
+  }
 
   if (f_onBouncedMessage) {
     // generate: `if (isBounced) { onBouncedMessage(); return; }

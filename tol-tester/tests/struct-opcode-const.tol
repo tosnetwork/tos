@@ -1,0 +1,41 @@
+const OP_ALPHA: uint32 = 0x01020304;
+const OP_BETA = 0x0f0e0d0c as uint32;
+
+enum LocalOpcode: uint32 {
+    Gamma = 0x0a0b0c0d,
+}
+
+struct (OP_ALPHA) Alpha {
+    queryId: uint64;
+}
+
+struct (OP_BETA) Beta {
+    queryId: uint64;
+}
+
+struct (LocalOpcode.Gamma) Gamma {
+    queryId: uint64;
+}
+
+fun main() {}
+
+@method_id(101)
+fun test_alpha() {
+    return Alpha.fromSlice(stringHexToSlice("01020304000000000000002A")).queryId;
+}
+
+@method_id(102)
+fun test_beta() {
+    return Beta.fromSlice(stringHexToSlice("0f0e0d0c000000000000002B")).queryId;
+}
+
+@method_id(103)
+fun test_gamma() {
+    return Gamma.fromSlice(stringHexToSlice("0a0b0c0d000000000000002C")).queryId;
+}
+
+/**
+@testcase | 101 | | 42
+@testcase | 102 | | 43
+@testcase | 103 | | 44
+ */

@@ -1,0 +1,38 @@
+import "@stdlib/common"
+
+struct (0x40005000) ManualWithdraw {
+    queryId: uint64;
+    amount: uint64;
+}
+
+struct (0x40005001) ManualWithdrawAck {
+    queryId: uint64;
+    amount: uint64;
+}
+
+@method_id(101)
+fun dummy() {
+    return 0;
+}
+
+fun onInternalMessage(in: InMessage) {
+    var body = in.body;
+    val op = body.loadUint(32);
+    val queryId = body.loadUint(64);
+    val amount = body.loadUint(64);
+    val reply = createMessage({
+        bounce: false,
+        dest: in.senderAddress,
+        value: 0,
+        body: ManualWithdrawAck {
+            queryId: 0,
+            amount: amount + queryId,
+        },
+    });
+    reply.send(SEND_MODE_REGULAR);
+}
+
+/**
+@testcase | 101 | | 0
+@stderr reply does not propagate inbound `queryId`
+ */

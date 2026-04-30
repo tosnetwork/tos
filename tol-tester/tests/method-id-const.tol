@@ -1,0 +1,18 @@
+const METHOD_FROM_CONST: int32 = 101;
+
+fun main() {}
+
+@method_id(METHOD_FROM_CONST)
+fun from_const() {
+    return 7;
+}
+
+@method_id("stage3_named_method")
+fun from_name() {
+    return 11;
+}
+
+/**
+@testcase | 101 | | 7
+@testcase | 89444 | | 11
+ */

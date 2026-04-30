@@ -270,7 +270,17 @@ public:
     parent::visit(const_ref->init_value);
   }
 
+  void start_visiting_function_metadata(V<ast_function_declaration> v_func) {
+    if (v_func->has_tvm_method_id_expr()) {
+      parent::visit(v_func->get_tvm_method_id_expr());
+    }
+  }
+
   void start_visiting_struct_fields(StructPtr struct_ref) {
+    if (auto v_struct = struct_ref->ast_root->try_as<ast_struct_declaration>(); v_struct && v_struct->has_opcode()) {
+      parent::visit(v_struct->get_opcode());
+    }
+
     // field `a: int = C`, resolve `C`
     for (StructFieldPtr field_ref : struct_ref->fields) {
       if (field_ref->has_default_value()) {
@@ -295,6 +305,7 @@ void pipeline_resolve_identifiers_and_assign_symbols() {
     for (AnyV v : file->ast->as<ast_tol_file>()->get_toplevel_declarations()) {
       if (auto v_func = v->try_as<ast_function_declaration>(); v_func && !v_func->is_builtin_function()) {
         tol_assert(v_func->fun_ref);
+        visitor.start_visiting_function_metadata(v_func);
         if (visitor.should_visit_function(v_func->fun_ref)) {
           visitor.start_visiting_function(v_func->fun_ref, v_func);
         }

@@ -124,7 +124,8 @@ struct FunctionData final : Symbol {
     flagReallyUsed = 2048,      // calculated via dfs from used functions; declared but unused functions are not codegenerated
     flagCompileTimeVal = 4096,  // calculated only at compile-time for constant arguments: `tos("0.05")`, `"str".crc32()`, and others
     flagAllowAnyWidthT = 16384, // for built-in generic functions that <T> is not restricted to be 1-slot type
-    flagManualOnBounce = 32768, // for onInternalMessage, don't insert "if (isBounced) return"
+    flagManualOnBounce = 32768, // for onInternalMessage, don't insert generated bounced handling
+    flagIgnoreOnBounce = 65536, // for onInternalMessage, generate "if (isBounced) return"
   };
 
   int tvm_method_id = EMPTY_TVM_METHOD_ID;
@@ -217,6 +218,7 @@ struct FunctionData final : Symbol {
   bool is_compile_time_special_gen() const { return std::holds_alternative<FunctionBodyBuiltinGenerateOps*>(body); }
   bool is_variadic_width_T_allowed() const { return flags & flagAllowAnyWidthT; }
   bool is_manual_on_bounce() const { return flags & flagManualOnBounce; }
+  bool is_ignore_on_bounce() const { return flags & flagIgnoreOnBounce; }
 
   bool does_need_codegen() const;
 

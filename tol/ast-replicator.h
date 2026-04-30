@@ -345,6 +345,7 @@ public:
       clone(v_orig->receiver_type_node),
       clone(v_orig->return_type_node),
       v_orig->genericsT_list ? clone(v_orig->genericsT_list) : nullptr,
+      v_orig->has_tvm_method_id_expr() ? clone(v_orig->get_tvm_method_id_expr()) : nullptr,
       v_orig->tvm_method_id,
       v_orig->flags,
       v_orig->inline_mode
@@ -383,6 +384,7 @@ public:
       clone(v_lambda->get_body()),
       nullptr,
       clone(v_lambda->return_type_node),
+      nullptr,
       nullptr,
       FunctionData::EMPTY_TVM_METHOD_ID,
       FunctionData::flagIsLambda,

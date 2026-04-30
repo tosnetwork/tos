@@ -35,6 +35,24 @@
 
 namespace tol {
 
+static StructData::PackOpcode parse_literal_struct_opcode(V<ast_int_const> v_opcode) {
+  StructData::PackOpcode opcode(0, 0);
+  if (v_opcode->intval < 0 || v_opcode->intval > (1ULL << 48)) {
+    err("opcode must not exceed 2^48").fire(v_opcode);
+  }
+  opcode.pack_prefix = v_opcode->intval->to_long();
+
+  std::string_view prefix_str = v_opcode->orig_str;
+  if (prefix_str.starts_with("0x")) {
+    opcode.prefix_len = static_cast<int>(prefix_str.size() - 2) * 4;
+  } else if (prefix_str.starts_with("0b")) {
+    opcode.prefix_len = static_cast<int>(prefix_str.size() - 2);
+  } else {
+    err("struct opcode literal must use `0x...` or `0b...`").fire(v_opcode);
+  }
+  return opcode;
+}
+
 static int calculate_tvm_method_id_for_entrypoint(std::string_view func_name) {
   if (func_name == "main" || func_name == "onInternalMessage") {
     return 0;
@@ -179,19 +197,8 @@ static StructPtr register_struct(V<ast_struct_declaration> v, StructPtr base_str
 
   PackOpcode opcode(0, 0);
   if (v->has_opcode()) {
-    auto v_opcode = v->get_opcode()->as<ast_int_const>();
-    if (v_opcode->intval < 0 || v_opcode->intval > (1ULL << 48)) {
-      err("opcode must not exceed 2^48").fire(v);
-    }
-    opcode.pack_prefix = v_opcode->intval->to_long();
-
-    std::string_view prefix_str = v_opcode->orig_str;
-    if (prefix_str.starts_with("0x")) {
-      opcode.prefix_len = static_cast<int>(prefix_str.size() - 2) * 4;
-    } else if (prefix_str.starts_with("0b")) {
-      opcode.prefix_len = static_cast<int>(prefix_str.size() - 2);
-    } else {
-      tol_assert(false);
+    if (auto v_opcode = v->get_opcode()->try_as<ast_int_const>()) {
+      opcode = parse_literal_struct_opcode(v_opcode);
     }
   }
 
