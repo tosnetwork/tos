@@ -134,6 +134,7 @@ enum ASTNodeKind {
   ast_constant_declaration,
   ast_type_alias_declaration,
   ast_receive_block,
+  ast_receive_external_block,
   ast_get_fun_block,
   ast_contract_declaration,
   ast_struct_field,
@@ -1470,6 +1471,26 @@ struct Vertex<ast_receive_block> final : ASTOtherVararg {
 };
 
 template<>
+// ast_receive_external_block is a Slice 2 Stage 6 external-message receiver inside a contract.
+// example: `receive_external(msg: SignedExternal) { ... }`
+//
+// Per doc/tos-language-syntax-policy.md §3.8, externals do NOT have an InMessage envelope,
+// query_id, or @disclaim_query_id semantics. They lower to a synthesized `onExternalMessage`
+// entry that dispatches by 32-bit body opcode prefix. No `@deploy` (deploys come via internal),
+// no `on State` clause (state-machine guards are internal-only).
+struct Vertex<ast_receive_external_block> final : ASTOtherVararg {
+  AnyTypeV message_type_node;
+
+  auto get_param_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  std::string_view get_param_name() const { return children.at(0)->as<ast_identifier>()->name; }
+  auto get_body() const { return children.at(1)->as<ast_block_statement>(); }
+
+  Vertex(SrcRange range, V<ast_identifier> param_identifier, AnyTypeV message_type_node, V<ast_block_statement> body)
+    : ASTOtherVararg(ast_receive_external_block, range, {param_identifier, body})
+    , message_type_node(message_type_node) {}
+};
+
+template<>
 // ast_get_fun_block is a `get fun` declaration inside a Slice 2 contract block
 // example: `get fun balance(): coins { return storage.totalSupply; }`
 // the optional `@method_id(N)` annotation pins method_id; otherwise it is auto-derived
@@ -1499,28 +1520,34 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
   AnyTypeV storage_type_node;
   std::vector<V<ast_identifier>> state_identifiers;
   V<ast_identifier> initial_state_identifier;
-  int n_receive_blocks;               // children layout: [name, receive*, get_fun*]; receives come first
+  int n_receive_blocks;               // children layout: [name, receive*, receive_external*, get_fun*]; receives come first
+  int n_receive_external_blocks;      // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8)
 
   auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
   int get_num_receives() const { return n_receive_blocks; }
   auto get_receive(int i) const { return children.at(i + 1)->as<ast_receive_block>(); }
-  int get_num_get_funs() const { return size() - 1 - n_receive_blocks; }
-  auto get_get_fun(int i) const { return children.at(i + 1 + n_receive_blocks)->as<ast_get_fun_block>(); }
+  int get_num_externals() const { return n_receive_external_blocks; }
+  auto get_external(int i) const { return children.at(i + 1 + n_receive_blocks)->as<ast_receive_external_block>(); }
+  int get_num_get_funs() const { return size() - 1 - n_receive_blocks - n_receive_external_blocks; }
+  auto get_get_fun(int i) const { return children.at(i + 1 + n_receive_blocks + n_receive_external_blocks)->as<ast_get_fun_block>(); }
   bool has_state_machine() const { return !state_identifiers.empty(); }
   int get_num_states() const { return static_cast<int>(state_identifiers.size()); }
   auto get_state(int i) const { return state_identifiers.at(i); }
   auto get_initial_state_identifier() const { return initial_state_identifier; }
 
-  Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<V<ast_identifier>>&& state_identifiers, V<ast_identifier> initial_state_identifier, std::vector<AnyV>&& receive_blocks, std::vector<AnyV>&& get_fun_blocks)
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<V<ast_identifier>>&& state_identifiers, V<ast_identifier> initial_state_identifier, std::vector<AnyV>&& receive_blocks, std::vector<AnyV>&& receive_external_blocks, std::vector<AnyV>&& get_fun_blocks)
     : ASTOtherVararg(ast_contract_declaration, range, [&] {
         std::vector<AnyV> children;
-        children.reserve(1 + receive_blocks.size() + get_fun_blocks.size());
+        children.reserve(1 + receive_blocks.size() + receive_external_blocks.size() + get_fun_blocks.size());
         children.push_back(name_identifier);
         children.insert(children.end(), receive_blocks.begin(), receive_blocks.end());
+        children.insert(children.end(), receive_external_blocks.begin(), receive_external_blocks.end());
         children.insert(children.end(), get_fun_blocks.begin(), get_fun_blocks.end());
         return children;
       }())
-    , storage_type_node(storage_type_node), state_identifiers(std::move(state_identifiers)), initial_state_identifier(initial_state_identifier), n_receive_blocks(static_cast<int>(receive_blocks.size())) {}
+    , storage_type_node(storage_type_node), state_identifiers(std::move(state_identifiers)), initial_state_identifier(initial_state_identifier)
+    , n_receive_blocks(static_cast<int>(receive_blocks.size()))
+    , n_receive_external_blocks(static_cast<int>(receive_external_blocks.size())) {}
 };
 
 template<>

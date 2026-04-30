@@ -28,6 +28,7 @@ enum TokenType {
   tok_fun,
   tok_contract,
   tok_receive,
+  tok_receive_external,
   tok_storage,
   tok_type,
   tok_enum,

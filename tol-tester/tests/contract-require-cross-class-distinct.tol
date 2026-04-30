@@ -1,0 +1,50 @@
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) — `require(...)`
+// codes for different ErrorClass values land in different top-byte ranges,
+// even when both are the first site of their class within the contract.
+//
+// Authorization (tag=3) → 0x30000 = 196608
+// Permanent     (tag=2) → 0x20000 = 131072
+
+import "@stdlib/common"
+
+struct ContractRequireCrossClassStorage {
+    expectedAdmin: address;
+    deadline: uint32;
+}
+
+struct (0x726E0003) ContractRequireCrossClassPing {
+    queryId: uint64;
+    nowTime: uint32;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractRequireCrossClass {
+    storage: ContractRequireCrossClassStorage
+
+    receive(msg: ContractRequireCrossClassPing) {
+        // Authorization site 0 → 0x30000 = 196608.
+        require(in.senderAddress == storage.expectedAdmin, ErrorClass.Authorization);
+        // Permanent site 0 → 0x20000 = 131072. Different top-byte range, so an
+        // operator inspecting the bounce code can immediately classify the failure
+        // class without consulting the manifest.
+        require(msg.nowTime < storage.deadline, ErrorClass.Permanent);
+    }
+}
+
+/**
+@testcase | 101 | | 0
+
+@fif_codegen
+"""
+      196608 PUSHINT
+"""
+
+@fif_codegen
+"""
+      17 PUSHPOW2
+"""
+ */

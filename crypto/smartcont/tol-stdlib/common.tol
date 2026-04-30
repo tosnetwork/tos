@@ -1982,6 +1982,24 @@ enum ErrorClass: uint8 {
     BackPressure = 5    // Reserved Slice 5+; not yet emitted
 }
 
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7): receiver-side
+// precondition guard. Lowers to `if (!cond) throw <code>` per §3.7. The
+// 2-argument call form is rewritten to the 3-argument form by the
+// `pipe-assign-require-codes` pass: each site gets a unique per-contract
+// per-ErrorClass code so two `require(cond, ErrorClass.Authorization)`
+// sites stay distinguishable in bounce diagnostics. The 3-argument form
+// is the explicit-code escape hatch and passes through unchanged.
+//
+// Implementation note: the 2-arg call form sets `errorCode = -1` as a
+// sentinel; the rewrite pass MUST replace every `-1` site before codegen.
+// If the pass somehow misses a site, the runtime throws -1, which is
+// trivially observable in test fixtures.
+fun require(cond: bool, errorClass: ErrorClass, errorCode: int = -1): void {
+    if (!cond) {
+        __throw(errorCode);
+    }
+}
+
 // SLICE 1 SCAFFOLDING
 // doc/tos-message-policy.md §3.1 — application-layer body envelope.
 // Body-only: the (opcode, query_id, payload) triple. Does NOT own
