@@ -3024,6 +3024,7 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   CHECK(descr);
   auto adnl_id = adnl::AdnlNodeIdShort{
       descr->addr.is_zero() ? ValidatorFullId{descr->key}.compute_short_id().bits256_value() : descr->addr};
+
   auto new_consensus_config = last_masterchain_state_->get_new_consensus_config(shard.workchain);
   if (!consensus_group_admissible(new_consensus_config)) {
     // Fail closed. A missing or unrecognized consensus config (absent
@@ -3625,19 +3626,6 @@ void ValidatorManagerImpl::wait_shard_client_state(BlockSeqno seqno, td::Timesta
   }
 
   shard_client_waiters_[seqno].waiting_.emplace_back(timeout, 0, std::move(promise));
-}
-
-void ValidatorManagerImpl::log_validator_session_stats(validatorsession::ValidatorSessionStats stats) {
-  stats.fix_block_ids();
-  write_session_stats(stats);
-}
-
-void ValidatorManagerImpl::log_new_validator_group_stats(validatorsession::NewValidatorGroupStats stats) {
-  write_session_stats(stats);
-}
-
-void ValidatorManagerImpl::log_end_validator_group_stats(validatorsession::EndValidatorGroupStats stats) {
-  write_session_stats(stats);
 }
 
 void ValidatorManagerImpl::log_stats(std::string data) {

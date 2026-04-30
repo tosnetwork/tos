@@ -86,7 +86,7 @@ class MetricCollector final : public consensus::stats::MetricCollector {
   void collect_block_accepted(const consensus::stats::BlockAccepted& event) override;
 
   void collect_voted(const Voted& event);
-  void collect_cert_observed(const CertObserved& event);
+ void collect_cert_observed(const CertObserved& event);
 
  private:
   void log_fake_catchain_stats(const Flow& flow);
