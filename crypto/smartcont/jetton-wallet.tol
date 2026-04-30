@@ -1,9 +1,12 @@
 // =============================================================================
-// Slice 1 Stage 3.2 — jetton-wallet Tol migration.
+// Slice 2 Stage 8b — jetton-wallet Tol re-migration to high-level syntax.
 //
-// Policy reference: doc/tos-message-policy.md v6 §3.1 (standard body layout),
-// §5.2 (OP_ERROR body), §5.3 (error_class), and §8.1 (bit-for-bit
-// compatibility for existing TEP-74 formats).
+// Policy reference: doc/tos-language-syntax-policy.md §3.1, §3.2
+// (`@unknown_throw`), §3.5 (`get fun`), §6.1 (wire-bit-identity), and §7
+// (migration path). Inherits Slice 1 Stage 3.2 wire commitments from
+// doc/tos-message-policy.md v6 §3.1 (standard body layout), §5.2 (OP_ERROR
+// body), §5.3 (error_class), and §8.1 (bit-for-bit compatibility for existing
+// TEP-74 formats).
 //
 // Bytecode delta captured at write time:
 //   FunC cells: 17
@@ -11,7 +14,7 @@
 //   ratio:      0.59
 //
 // §5.3 error-class assignment table:
-//   FunC line          | FunC throw(N) | ErrorClass    | error_code
+//   FunC line          | FunC throw(N) | ErrorClass    | error_code | Slice 2 site
 //   imports/params.fc:5 | throw(333)   | Protocol      | 1333
 //   60                 | throw(705)    | Authorization | 1705
 //   61                 | throw(706)    | Permanent     | 1706
@@ -22,7 +25,7 @@
 //   176                | throw(706)    | Permanent     | 1706
 //   177                | throw(707)    | BackPressure  | 1710
 //   203                | throw(709)    | Protocol      | 1711
-//   245                | throw(0xffff) | Protocol      | 65535
+//   245                | throw(0xffff) | Protocol      | 65535      | @unknown_throw(0xffff)
 //
 // Compatibility note: the FunC reference stores owner/master/response fields
 // as MsgAddress slices and hand-packs all outbound messages. This migration
@@ -30,6 +33,12 @@
 // internal_transfer, transfer_notification, excesses, and burn_notification.
 // createMessage() would make the bodies easier to inspect, but it would also
 // narrow several MsgAddress fields or choose inline/ref body placement for us.
+//
+// The file-scope helpers and raw outbound builders are kept because the Slice 1
+// tol-tester suites import them directly. The receive-path helpers accept the
+// compiler-loaded `storage` value and return the next storage snapshot so the
+// generated contract receiver remains the single c4 save site. `onBouncedMessage`
+// stays file-scope and therefore keeps a narrowly named raw c4 load/save helper.
 // =============================================================================
 
 import "@stdlib/common"
@@ -122,12 +131,12 @@ fun setCurrentData(data: cell): void
     asm "c4 POP";
 
 @inline
-fun loadData(): JettonWalletStorage {
+fun loadWalletData(): JettonWalletStorage {
     return JettonWalletStorage.fromCell(currentData());
 }
 
 @inline
-fun saveData(storage: JettonWalletStorage): void {
+fun saveWalletData(storage: JettonWalletStorage): void {
     setCurrentData(storage.toCell());
 }
 
@@ -359,9 +368,14 @@ fun buildBurnNotificationMessage(
         .endCell();
 }
 
-fun sendTokens(msg: TransferRequest, senderAddress: address, msgValue: coins, fwdFee: coins): void {
+fun sendTokens(
+    msg: TransferRequest,
+    senderAddress: address,
+    msgValue: coins,
+    fwdFee: coins,
+    storage: JettonWalletStorage
+): JettonWalletStorage {
     forceBasechain(msg.destination);
-    val storage = loadData();
     val nextBalance = storage.balance - msg.amount;
 
     if (!sameInternalAndAnyAddressBits(senderAddress, storage.ownerAddress)) {
@@ -399,12 +413,12 @@ fun sendTokens(msg: TransferRequest, senderAddress: address, msgValue: coins, fw
     }
 
     sendRawMessage(outbound, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
-    saveData({
+    return JettonWalletStorage {
         balance: nextBalance,
         ownerAddress: storage.ownerAddress,
         jettonMasterAddress: storage.jettonMasterAddress,
         jettonWalletCode: storage.jettonWalletCode,
-    });
+    };
 }
 
 fun receiveTokens(
@@ -412,9 +426,9 @@ fun receiveTokens(
     senderAddress: address,
     originalBalance: coins,
     fwdFee: coins,
-    msgValue: coins
-): void {
-    val storage = loadData();
+    msgValue: coins,
+    storage: JettonWalletStorage
+): JettonWalletStorage {
     val nextBalance = storage.balance + msg.amount;
     val expectedWallet = calculateUserJettonWalletAddress(
         msg.fromAddress,
@@ -454,16 +468,21 @@ fun receiveTokens(
         );
     }
 
-    saveData({
+    return JettonWalletStorage {
         balance: nextBalance,
         ownerAddress: storage.ownerAddress,
         jettonMasterAddress: storage.jettonMasterAddress,
         jettonWalletCode: storage.jettonWalletCode,
-    });
+    };
 }
 
-fun burnTokens(msg: BurnRequest, senderAddress: address, msgValue: coins, fwdFee: coins): void {
-    val storage = loadData();
+fun burnTokens(
+    msg: BurnRequest,
+    senderAddress: address,
+    msgValue: coins,
+    fwdFee: coins,
+    storage: JettonWalletStorage
+): JettonWalletStorage {
     val nextBalance = storage.balance - msg.amount;
 
     if (!sameInternalAndAnyAddressBits(senderAddress, storage.ownerAddress)) {
@@ -486,25 +505,25 @@ fun burnTokens(msg: BurnRequest, senderAddress: address, msgValue: coins, fwdFee
         ),
         SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
     );
-    saveData({
+    return JettonWalletStorage {
         balance: nextBalance,
         ownerAddress: storage.ownerAddress,
         jettonMasterAddress: storage.jettonMasterAddress,
         jettonWalletCode: storage.jettonWalletCode,
-    });
+    };
 }
 
 fun onBouncedMessage(in: InMessageBounced) {
     var body = in.bouncedBody;
     body.skipBouncedPrefix();
-    val storage = loadData();
+    val storage = loadWalletData();
     val op = body.loadUint(32);
     if (op != OP_INTERNAL_TRANSFER && op != OP_BURN_NOTIFICATION) {
         throw FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE;
     }
     body.skipBits(64);
     val bouncedAmount = body.loadCoins();
-    saveData({
+    saveWalletData({
         balance: storage.balance + bouncedAmount,
         ownerAddress: storage.ownerAddress,
         jettonMasterAddress: storage.jettonMasterAddress,
@@ -512,50 +531,53 @@ fun onBouncedMessage(in: InMessageBounced) {
     });
 }
 
-fun onInternalMessage(in: InMessage) {
-    if (in.body.isEmpty()) {
-        return;
+contract JettonWallet {
+    storage: JettonWalletStorage
+    @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: TransferRequest) {
+        val nextStorage = sendTokens(
+            msg,
+            in.senderAddress,
+            in.valueCoins,
+            in.originalForwardFee,
+            storage
+        );
+        save(nextStorage);
     }
 
-    var body = in.body;
-    val op = body.loadUint(32);
-
-    if (op == OP_TRANSFER) {
-        disclaim_query_id();
-        val msg = lazy TransferRequest.fromSlice(in.body);
-        sendTokens(msg, in.senderAddress, in.valueCoins, in.originalForwardFee);
-        return;
-    }
-
-    if (op == OP_INTERNAL_TRANSFER) {
-        disclaim_query_id();
-        val msg = lazy InternalTransferRequest.fromSlice(in.body);
-        receiveTokens(
+    @disclaim_query_id
+    receive(msg: InternalTransferRequest) {
+        val nextStorage = receiveTokens(
             msg,
             in.senderAddress,
             contract.getOriginalBalance(),
             in.originalForwardFee,
-            in.valueCoins
+            in.valueCoins,
+            storage
         );
-        return;
+        save(nextStorage);
     }
 
-    if (op == OP_BURN) {
-        disclaim_query_id();
-        val msg = lazy BurnRequest.fromSlice(in.body);
-        burnTokens(msg, in.senderAddress, in.valueCoins, in.originalForwardFee);
-        return;
+    @disclaim_query_id
+    receive(msg: BurnRequest) {
+        val nextStorage = burnTokens(
+            msg,
+            in.senderAddress,
+            in.valueCoins,
+            in.originalForwardFee,
+            storage
+        );
+        save(nextStorage);
     }
 
-    throw FUNC_THROW_UNKNOWN_OPCODE;
-}
-
-get fun get_wallet_data(): (coins, any_address, any_address, cell) {
-    val storage = loadData();
-    return (
-        storage.balance,
-        storage.ownerAddress,
-        storage.jettonMasterAddress,
-        storage.jettonWalletCode,
-    );
+    get fun get_wallet_data(): (coins, any_address, any_address, cell) {
+        return (
+            storage.balance,
+            storage.ownerAddress,
+            storage.jettonMasterAddress,
+            storage.jettonWalletCode,
+        );
+    }
 }

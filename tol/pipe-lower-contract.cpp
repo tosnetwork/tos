@@ -826,7 +826,9 @@ static V<ast_function_declaration> make_on_internal_function(
   for (AnyV t : trailing) {
     items.push_back(t);
   }
-  items.push_back(make_return_void(range));
+  if (contract->unknown_mode == ContractUnknownMode::silent_drop) {
+    items.push_back(make_return_void(range));
+  }
 
   auto body = createV<ast_block_statement>(range, std::move(items));
   return createV<ast_function_declaration>(
