@@ -301,6 +301,21 @@ Exit criterion: a new author can create, build, test, and inspect a
 Jetton or NFT project from `tol new` without hand-writing opcode,
 method-id, or error-code tables.
 
+Implementation status: complete as of 2026-04-30 for the repo-side
+scaffold package. `tol new --pattern jetton|nft|wallet|multisig`
+generates source, a smoke test, replay/deploy stubs, a manifest, and
+off-chain observability artifacts (`opcodes.json`, `method-ids.json`,
+`error-codes.json`, and `replay-trace.json`). The verification entrypoint
+is `scripts/check-slice-3-scaffold.py`, which generates all four
+patterns into a temporary directory, runs `tol --check-only` on each
+source file, executes the generated tol-tester smoke tests, and validates
+the JSON artifacts. Task-oriented docs are
+`doc/slice-3-writing-tol-contracts.md`,
+`doc/slice-3-jetton-walkthrough.md`,
+`doc/slice-3-nft-walkthrough.md`,
+`doc/slice-3-wallet-multisig-walkthrough.md`, and
+`doc/slice-3-tvm-model-for-solidity-developers.md`.
+
 ### Stage 7 - Q4 static-analysis hardening
 
 Deliverables:

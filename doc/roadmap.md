@@ -667,7 +667,7 @@ reference contracts are already written in high-level `contract` /
 dogfoods the new stdlib patterns without changing wire bytes or
 breaking the gas budget.
 
-**Status.** 🚧 Stage 5 complete as of 2026-04-30; Stage 6 is the active
+**Status.** 🚧 Stage 6 complete as of 2026-04-30; Stage 7 is the active
 implementation gate. The Slice 3 policy RFC and stage plan live at
 [`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md) and are approved.
 The machine-readable Stage 0 baseline capture lives at
@@ -690,8 +690,10 @@ failure, unknown opcode mapping, and bounced-message detection.
 Stage 5 moved wallet-v5 helper logic into `@stdlib/wallet` wrappers
 without changing the raw signed internal/external body model, and added
 `@stdlib/multisig` signer/threshold/replay/action validation helpers
-with focused tests. Implementation now moves to Stage 6: `tol new`
-scaffolding and documentation.
+with focused tests. Stage 6 added `tol new --pattern
+jetton|nft|wallet|multisig`, generated project artifacts, scaffold
+verification, and the task-oriented Slice 3 docs. Implementation now
+moves to Stage 7: Q4 static-analysis hardening.
 
 **Stage plan.**
 
@@ -736,11 +738,13 @@ scaffolding and documentation.
    `@stdlib/multisig` adds signer-set, duplicate-signer, threshold,
    pending-proposal replay, expiry, action-list validation, and
    error-mapping helpers with focused coverage.
-7. 📝 **Stage 6 — `tol new` scaffolding and documentation.** Generate
-   source, tests, replay fixtures, deploy skeletons, and manifests for
-   Jetton, NFT, wallet, and multisig patterns; publish the task-oriented
-   Tol guides and off-chain observability artifacts.
-8. ⬜ **Stage 7 — Q4 static-analysis hardening.** Add
+7. ✅ **Stage 6 — `tol new` scaffolding and documentation.** Completed
+   2026-04-30. `tol new --pattern jetton|nft|wallet|multisig` generates
+   source, a smoke test, replay/deploy stubs, a manifest, and
+   observability JSON artifacts; `scripts/check-slice-3-scaffold.py`
+   verifies all generated patterns. Added task-oriented Tol, Jetton,
+   NFT, wallet/multisig, and TVM-for-Solidity docs.
+8. 📝 **Stage 7 — Q4 static-analysis hardening.** Add
    `pipe-check-receive-exhaustiveness.cpp` and strengthen
    request/reply analysis around the
    `(expected_responder, query_id)` table, with warning-first mode for
@@ -1071,8 +1075,22 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   hash unchanged. `@stdlib/multisig` adds signer-set, duplicate-signer,
   threshold, proposal-replay, expiry, action validation, and error-mapping
   helpers.
+- ✅ **Slice 3 Stage 6 `tol new` scaffolding and documentation** —
+  closed 2026-04-30. The `tol` CLI now supports
+  `tol new --pattern jetton|nft|wallet|multisig`, generating source,
+  smoke tests, replay/deploy stubs, manifests, opcode maps, method-id
+  maps, error-code maps, and replay traces. The scaffold checker and
+  task-oriented Slice 3 docs are checked in.
 
 ## 12. Revision notes
+
+### r16 (Slice 3 Stage 6 scaffolding and docs)
+
+- §6 Slice 3 now marks Stage 6 complete and Stage 7 active.
+- Added `tol new --pattern` scaffolding for Jetton, NFT, wallet, and
+  multisig projects plus `scripts/check-slice-3-scaffold.py`.
+- Added task-oriented Slice 3 author docs and recorded generated
+  observability artifacts as the Stage 6 off-chain surface.
 
 ### r15 (Slice 3 Stage 5 wallet and multisig stdlib)
 
