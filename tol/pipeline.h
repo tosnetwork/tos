@@ -27,8 +27,25 @@
 
 #include "fwd-declarations.h"
 #include <string>
+#include <unordered_map>
 
 namespace tol {
+
+// Per-contract origin lookup for method_id collision detection.
+// pipe-lower-contract.cpp populates this; pipe-generate-fif-output.cpp consumes it.
+// Returns "" for legacy file-scope `get fun` (no contract origin).
+// See doc/tos-language-syntax-policy.md §3.5: cross-contract auto-derived ID
+// sharing is NOT a collision; collisions are reported only within a contract.
+std::string_view contract_origin_of_getter(FunctionPtr fun_ref);
+
+// Per-contract method_id collision detector that runs at pre-emission time
+// (called from pipe-generate-fif-output.cpp). Walks all contract getters,
+// groups by their origin contract, and fires a compile error on the second
+// offender's source range when two get-methods in the same contract end up
+// with the same tvm_method_id (auto-derived OR @method_id-pinned).
+// See doc/tos-language-syntax-policy.md §3.5 / §10.1.
+void check_contract_method_id_collisions();
+
 
 void pipeline_discover_and_parse_sources(const std::string& stdlib_filename, const std::string& entrypoint_filename);
 
@@ -48,6 +65,7 @@ void pipeline_optimize_boolean_expressions();
 void pipeline_detect_inline_in_place();
 void pipeline_check_serialized_fields();
 void pipeline_check_state_reachability();
+void pipeline_check_field_scoping();
 void pipeline_lower_contracts();
 void pipeline_check_query_id_propagation();
 void pipeline_lazy_load_insertions();

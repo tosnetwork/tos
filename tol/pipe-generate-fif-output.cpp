@@ -28,6 +28,7 @@
 #include "ast.h"
 #include "compiler-state.h"
 #include "compiler-settings.h"
+#include "pipeline.h"
 #include "type-system.h"
 
 namespace tol {
@@ -235,9 +236,14 @@ void pipeline_generate_fif_output(std::ostream& os) {
   os << std::endl;
   os << "PROGRAM{\n";
 
+  // Per-contract method_id collision detection (Slice 2 §3.5). Reports errors
+  // for both auto-derived `get fun` IDs and `@method_id`-pinned IDs, grouped
+  // by originating contract; cross-contract sharing is intentionally allowed.
+  // Legacy file-scope `get fun` collisions still fire under the existing wording.
+  check_contract_method_id_collisions();
+
   bool has_main_procedure = false;
   int n_inlined_in_place = 0;
-  std::vector<FunctionPtr> all_contract_getters;
   for (FunctionPtr fun_ref : G.all_functions) {
     if (fun_ref->is_asm_function() || !fun_ref->does_need_codegen()) {
       if (G_settings.verbosity >= 2 && fun_ref->is_code_function()) {
@@ -256,15 +262,6 @@ void pipeline_generate_fif_output(std::ostream& os) {
       os << fun_ref->tvm_method_id << " DECLMETHOD " << CodeBlob::fift_name(fun_ref) << "\n";
     } else {
       os << "DECLPROC " << CodeBlob::fift_name(fun_ref) << "\n";
-    }
-
-    if (fun_ref->is_contract_getter()) {
-      for (FunctionPtr other : all_contract_getters) {
-        if (other->tvm_method_id == fun_ref->tvm_method_id) {
-          err("GET methods hash collision: `{}` and `{}` produce the same method_id={}. Consider renaming one of these functions.", other, fun_ref, fun_ref->tvm_method_id).fire(fun_ref->ident_anchor);
-        }
-      }
-      all_contract_getters.push_back(fun_ref);
     }
   }
 

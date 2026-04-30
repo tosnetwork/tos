@@ -133,6 +133,7 @@ enum ASTNodeKind {
   ast_constant_declaration,
   ast_type_alias_declaration,
   ast_receive_block,
+  ast_get_fun_block,
   ast_contract_declaration,
   ast_struct_field,
   ast_struct_body,
@@ -153,6 +154,7 @@ enum class AnnotationKind {
   pure,
   overflow1023_policy,
   on_bounced_policy,
+  on_states,                  // Slice 2 Stage 3: `@on(State1, State2)` on storage struct fields
   custom,
   unknown,
 };
@@ -1437,30 +1439,57 @@ struct Vertex<ast_receive_block> final : ASTOtherVararg {
 };
 
 template<>
+// ast_get_fun_block is a `get fun` declaration inside a Slice 2 contract block
+// example: `get fun balance(): coins { return storage.totalSupply; }`
+// the optional `@method_id(N)` annotation pins method_id; otherwise it is auto-derived
+// from `crc16(name) | 0x10000` (see doc/tos-language-syntax-policy.md §3.5)
+struct Vertex<ast_get_fun_block> final : ASTOtherVararg {
+  AnyTypeV return_type_node;          // mandatory return type
+  AnyExprV tvm_method_id_expr;        // nullptr unless `@method_id(...)` was specified
+  int extra_fun_flags;                // FunctionData::flagMarkedAsPure etc., propagated to the lowered fun
+  FunctionInlineMode inline_mode;     // from `@inline` / `@inline_ref` / `@noinline` annotations
+
+  auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  std::string_view get_name() const { return children.at(0)->as<ast_identifier>()->name; }
+  auto get_param_list() const { return children.at(1)->as<ast_parameter_list>(); }
+  auto get_body() const { return children.at(2)->as<ast_block_statement>(); }
+  bool has_tvm_method_id_expr() const { return tvm_method_id_expr != nullptr; }
+
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, V<ast_parameter_list> param_list, V<ast_block_statement> body, AnyTypeV return_type_node, AnyExprV tvm_method_id_expr, int extra_fun_flags, FunctionInlineMode inline_mode)
+    : ASTOtherVararg(ast_get_fun_block, range, {name_identifier, param_list, body})
+    , return_type_node(return_type_node), tvm_method_id_expr(tvm_method_id_expr)
+    , extra_fun_flags(extra_fun_flags), inline_mode(inline_mode) {}
+};
+
+template<>
 // ast_contract_declaration is a Slice 2 contract block before lowering
 // example: `contract Wallet { storage: WalletStorage; receive(msg: Transfer) { ... } }`
 struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
   AnyTypeV storage_type_node;
   std::vector<V<ast_identifier>> state_identifiers;
   V<ast_identifier> initial_state_identifier;
+  int n_receive_blocks;               // children layout: [name, receive*, get_fun*]; receives come first
 
   auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
-  int get_num_receives() const { return size() - 1; }
+  int get_num_receives() const { return n_receive_blocks; }
   auto get_receive(int i) const { return children.at(i + 1)->as<ast_receive_block>(); }
+  int get_num_get_funs() const { return size() - 1 - n_receive_blocks; }
+  auto get_get_fun(int i) const { return children.at(i + 1 + n_receive_blocks)->as<ast_get_fun_block>(); }
   bool has_state_machine() const { return !state_identifiers.empty(); }
   int get_num_states() const { return static_cast<int>(state_identifiers.size()); }
   auto get_state(int i) const { return state_identifiers.at(i); }
   auto get_initial_state_identifier() const { return initial_state_identifier; }
 
-  Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<V<ast_identifier>>&& state_identifiers, V<ast_identifier> initial_state_identifier, std::vector<AnyV>&& receive_blocks)
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<V<ast_identifier>>&& state_identifiers, V<ast_identifier> initial_state_identifier, std::vector<AnyV>&& receive_blocks, std::vector<AnyV>&& get_fun_blocks)
     : ASTOtherVararg(ast_contract_declaration, range, [&] {
         std::vector<AnyV> children;
-        children.reserve(1 + receive_blocks.size());
+        children.reserve(1 + receive_blocks.size() + get_fun_blocks.size());
         children.push_back(name_identifier);
         children.insert(children.end(), receive_blocks.begin(), receive_blocks.end());
+        children.insert(children.end(), get_fun_blocks.begin(), get_fun_blocks.end());
         return children;
       }())
-    , storage_type_node(storage_type_node), state_identifiers(std::move(state_identifiers)), initial_state_identifier(initial_state_identifier) {}
+    , storage_type_node(storage_type_node), state_identifiers(std::move(state_identifiers)), initial_state_identifier(initial_state_identifier), n_receive_blocks(static_cast<int>(receive_blocks.size())) {}
 };
 
 template<>
@@ -1471,12 +1500,19 @@ struct Vertex<ast_struct_field> final : ASTOtherVararg {
   bool is_readonly;               // declared as `readonly field: int`
   AnyTypeV type_node;             // always exists, typing struct fields is mandatory
   AnyExprV default_value;         // nullptr if no default
+  // Slice 2 Stage 3 (doc/tos-language-syntax-policy.md §3.4): `@on(State1, State2)` annotation
+  // empty = no annotation (field readable in every state); non-empty = field is only readable
+  // inside receivers whose `on State` clause names one of the listed states.
+  std::vector<std::string_view> on_states;
+  SrcRange on_states_range;       // points at the `@on(...)` syntax for diagnostics; default-constructed if no annotation
 
   auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  bool has_on_states_annotation() const { return !on_states.empty(); }
 
-  Vertex(SrcRange range, V<ast_identifier> name_identifier, bool is_private, bool is_readonly, AnyExprV default_value, AnyTypeV type_node)
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, bool is_private, bool is_readonly, AnyExprV default_value, AnyTypeV type_node, std::vector<std::string_view> on_states = {}, SrcRange on_states_range = SrcRange::undefined())
     : ASTOtherVararg(ast_struct_field, range, {name_identifier})
-    , is_private(is_private), is_readonly(is_readonly), type_node(type_node), default_value(default_value) {}
+    , is_private(is_private), is_readonly(is_readonly), type_node(type_node), default_value(default_value)
+    , on_states(std::move(on_states)), on_states_range(on_states_range) {}
 };
 
 template<>

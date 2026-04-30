@@ -1,0 +1,26 @@
+struct ContractGetFunOutsideStorage {}
+
+struct (0x000000a5) ContractGetFunOutsidePing {
+    queryId: uint64;
+}
+
+// §3.5 / §10.1: file-scope `get fun` is rejected when a `contract { ... }` block is also declared in the same file;
+// the get-method must live inside the contract.
+get fun foo(): int {
+    return 0;
+}
+
+contract ContractGetFunOutside {
+    storage: ContractGetFunOutsideStorage
+
+    receive(msg: ContractGetFunOutsidePing) {
+        msg.queryId;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr cannot also declare top-level `get fun
+@stderr move the get-method inside the contract
+@stderr doc/tos-language-syntax-policy.md §3.5
+ */

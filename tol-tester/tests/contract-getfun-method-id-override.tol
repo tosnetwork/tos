@@ -1,0 +1,28 @@
+struct ContractGetFunOverrideStorage {}
+
+struct (0x000000a2) ContractGetFunOverridePing {
+    queryId: uint64;
+}
+
+contract ContractGetFunOverride {
+    storage: ContractGetFunOverrideStorage
+
+    receive(msg: ContractGetFunOverridePing) {
+        msg.queryId;
+    }
+
+    // crc16("adminAddress")|0x10000 would auto-derive to 0x18597; we explicitly pin to 0x67e5 (26597) per §3.5
+    @method_id(0x67e5)
+    get fun adminAddress(): int {
+        return 7;
+    }
+}
+
+/**
+@testcase | 26597 | | 7
+
+@fif_codegen
+"""
+  26597 DECLMETHOD adminAddress()
+"""
+ */
