@@ -121,6 +121,7 @@ enum ASTNodeKind {
   ast_try_catch_statement,
   ast_become_statement,
   ast_keep_state_statement,
+  ast_receiver_scope_marker,
   ast_asm_body,
   // other
   ast_genericsT_item,
@@ -1240,6 +1241,26 @@ struct Vertex<ast_keep_state_statement> final : ASTStatementVararg {
 };
 
 template<>
+// ast_receiver_scope_marker is a synthetic Slice 2 wrapper emitted by `pipeline_lower_contracts`
+// around each receiver's lowered body. It carries no semantic effect at codegen — every later
+// pass treats the marker as transparent and recurses into its inner block. Its sole purpose is
+// to bind per-receiver analysis records inside `pipeline_check_query_id_propagation` (see
+// doc/tos-language-syntax-policy.md §3.2.1, §10.1, codex security review v2 closure).
+//
+// The marker is NOT user-writable. It is constructed only by `tol/pipe-lower-contract.cpp`.
+struct Vertex<ast_receiver_scope_marker> final : ASTStatementUnary {
+  std::string_view contract_name;          // owning contract identifier, for diagnostic anchoring
+  std::string_view message_struct_name;    // inbound message struct name, for diagnostic anchoring
+  SrcRange receiver_source_range;          // pre-lowering ast_receive_block range, for diagnostic anchoring
+
+  AnyV get_wrapped_block() const { return child; }
+
+  Vertex(SrcRange range, std::string_view contract_name, std::string_view message_struct_name, SrcRange receiver_source_range, V<ast_block_statement> wrapped_block)
+    : ASTStatementUnary(ast_receiver_scope_marker, range, wrapped_block)
+    , contract_name(contract_name), message_struct_name(message_struct_name), receiver_source_range(receiver_source_range) {}
+};
+
+template<>
 // ast_asm_body is a body of `asm` function — a set of strings, and optionally stack order manipulations
 // example: `fun skipMessageOp... asm "32 PUSHINT" "SDSKIPFIRST";`
 // user can specify "arg order"; example: `fun store(self: builder, op: int) asm (op self)` then [1, 0]
@@ -1421,9 +1442,17 @@ struct Vertex<ast_type_alias_declaration> final : ASTOtherVararg {
 template<>
 // ast_receive_block is a receiver inside a Slice 2 contract declaration
 // example: `receive(msg: MintRequest) { ... }`
+// example: `@disclaim_query_id receive(msg: BroadcastEvent) { ... }`
+//
+// `@disclaim_query_id` is a Slice 2 Stage 7 per-receiver annotation. When set, the lowering
+// pipeline injects a `disclaim_query_id()` call at the top of this receiver's scope marker so
+// pipeline_check_query_id_propagation skips reply-emission diagnostics for THIS receiver only.
+// See doc/tos-language-syntax-policy.md §3.2.1.
 struct Vertex<ast_receive_block> final : ASTOtherVararg {
   AnyTypeV message_type_node;
   V<ast_identifier> state_identifier;  // nullptr unless `receive(msg: T) on State`
+  bool has_disclaim_query_id_annotation = false;
+  SrcRange disclaim_annotation_range;  // points at `@disclaim_query_id` for diagnostics
 
   auto get_param_identifier() const { return children.at(0)->as<ast_identifier>(); }
   std::string_view get_param_name() const { return children.at(0)->as<ast_identifier>()->name; }
@@ -1431,9 +1460,11 @@ struct Vertex<ast_receive_block> final : ASTOtherVararg {
   bool has_state_clause() const { return state_identifier != nullptr; }
   std::string_view get_state_name() const { return state_identifier->name; }
 
-  Vertex(SrcRange range, V<ast_identifier> param_identifier, AnyTypeV message_type_node, V<ast_identifier> state_identifier, V<ast_block_statement> body)
+  Vertex(SrcRange range, V<ast_identifier> param_identifier, AnyTypeV message_type_node, V<ast_identifier> state_identifier, V<ast_block_statement> body, bool has_disclaim_query_id_annotation = false, SrcRange disclaim_annotation_range = SrcRange::undefined())
     : ASTOtherVararg(ast_receive_block, range, {param_identifier, body})
-    , message_type_node(message_type_node), state_identifier(state_identifier) {}
+    , message_type_node(message_type_node), state_identifier(state_identifier)
+    , has_disclaim_query_id_annotation(has_disclaim_query_id_annotation)
+    , disclaim_annotation_range(disclaim_annotation_range) {}
 };
 
 template<>

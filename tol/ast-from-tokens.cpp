@@ -1985,8 +1985,10 @@ static bool is_deferred_contract_member_name(std::string_view name) {
   return name == "receive_external" || name == "get";
 }
 
-static AnyV parse_receive_block(Lexer& lex) {
-  SrcRange range = lex.range_start();
+static AnyV parse_receive_block(Lexer& lex, bool has_disclaim_query_id_annotation = false, SrcRange disclaim_annotation_range = SrcRange::undefined()) {
+  // When `@disclaim_query_id` precedes the `receive(...)` block, anchor the AST node's
+  // SrcRange at the annotation; otherwise use the `receive` keyword as the start.
+  SrcRange range = has_disclaim_query_id_annotation ? disclaim_annotation_range : lex.range_start();
   lex.expect(tok_receive, "`receive`");
   lex.expect(tok_oppar, "`(`");
   auto v_param = parse_identifier(lex, "receive parameter name");
@@ -2000,7 +2002,8 @@ static AnyV parse_receive_block(Lexer& lex) {
   }
   auto v_body = parse_block_statement(lex, true);
   range.end(v_body->range);
-  return createV<ast_receive_block>(range, v_param, msg_type, state_identifier, v_body);
+  return createV<ast_receive_block>(range, v_param, msg_type, state_identifier, v_body,
+                                    has_disclaim_query_id_annotation, disclaim_annotation_range);
 }
 
 static void parse_contract_state_list(Lexer& lex, std::vector<V<ast_identifier>>& state_identifiers) {
@@ -2056,6 +2059,21 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
           err("contract block may contain only one `@initial state` declaration; see doc/tos-language-syntax-policy.md §3.4").fire(lex.cur_range());
         }
         initial_state_identifier = parse_initial_state(lex);
+        continue;
+      }
+      // Slice 2 Stage 7 (doc/tos-language-syntax-policy.md §3.2.1):
+      // `@disclaim_query_id` is a per-receiver annotation. The lowering pipeline
+      // will inject a `disclaim_query_id()` call at the top of the receiver scope.
+      if (lex.cur_str() == "@disclaim_query_id") {
+        SrcRange annotation_range = lex.cur_range();
+        lex.next();
+        if (lex.tok() != tok_receive) {
+          err("`@disclaim_query_id` is only valid immediately before a `receive(...)` block; see doc/tos-language-syntax-policy.md §3.2.1").fire(annotation_range);
+        }
+        if (!storage_type) {
+          err("contract `storage:` declaration must appear before `receive(...)` blocks").fire(lex.cur_range());
+        }
+        receive_blocks.push_back(parse_receive_block(lex, /*has_disclaim_query_id_annotation=*/true, annotation_range));
         continue;
       }
       err("contract receiver annotations are {}", slice2_deferred_msg()).fire(lex.cur_range());

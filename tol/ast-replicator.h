@@ -209,6 +209,10 @@ class ASTReplicator final {
   static V<ast_try_catch_statement> clone(V<ast_try_catch_statement> v) {
     return createV<ast_try_catch_statement>(v->range, clone(v->get_try_body()), clone(v->get_catch_expr()), clone(v->get_catch_body()));
   }
+  static V<ast_receiver_scope_marker> clone(V<ast_receiver_scope_marker> v) {
+    return createV<ast_receiver_scope_marker>(v->range, v->contract_name, v->message_struct_name, v->receiver_source_range,
+                                              clone(v->get_wrapped_block()->as<ast_block_statement>()));
+  }
   static V<ast_asm_body> clone(V<ast_asm_body> v) {
     return createV<ast_asm_body>(v->range, v->arg_order, v->ret_order, clone(v->get_asm_commands()));
   }
@@ -256,6 +260,7 @@ class ASTReplicator final {
       case ast_throw_statement:                 return clone(v->as<ast_throw_statement>());
       case ast_assert_statement:                return clone(v->as<ast_assert_statement>());
       case ast_try_catch_statement:             return clone(v->as<ast_try_catch_statement>());
+      case ast_receiver_scope_marker:           return clone(v->as<ast_receiver_scope_marker>());
       case ast_asm_body:                        return clone(v->as<ast_asm_body>());
       // other AST nodes that can be children of ast nodes of function/struct body
       case ast_identifier:                      return clone(v->as<ast_identifier>());

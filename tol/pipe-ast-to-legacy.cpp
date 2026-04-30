@@ -2027,6 +2027,11 @@ void process_any_statement(AnyV v, CodeBlob& code) {
       return process_assert_statement(v->as<ast_assert_statement>(), code);
     case ast_try_catch_statement:
       return process_try_catch_statement(v->as<ast_try_catch_statement>(), code);
+    case ast_receiver_scope_marker:
+      // synthetic Slice 2 marker — pass through transparently to the wrapped block.
+      // The marker has NO codegen effect; it only exists so
+      // pipeline_check_query_id_propagation can attribute analysis records per receiver.
+      return process_any_statement(v->as<ast_receiver_scope_marker>()->get_wrapped_block(), code);
     case ast_empty_statement:
       return;
     default:
