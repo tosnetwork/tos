@@ -1,5 +1,13 @@
 import "@stdlib/oracle"
 
+fun starter(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun attacker(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
 fun reporterSet(): Slice5OracleReporterSet {
     var set = slice5OracleNewReporterSet();
     set.addReporter(101);
@@ -9,12 +17,12 @@ fun reporterSet(): Slice5OracleReporterSet {
 }
 
 fun config(): Slice5OracleConfig {
-    return slice5OracleConfig(reporterSet(), 3, 60, 100);
+    return slice5OracleConfig(reporterSet(), 3, 60, 100, starter());
 }
 
 fun round(): Slice5OracleRound {
     var state = slice5OracleInitialState(reporterSet());
-    return slice5OracleStartRound(mutate state, config(), 1, 10);
+    return slice5OracleStartRound(mutate state, config(), 1, 10, starter());
 }
 
 fun report(roundId: uint64, reporterKey: uint256, value: uint64, now: uint32): Slice5OracleReport {
@@ -90,9 +98,9 @@ fun test_outlier_handling(): int {
 @method_id(406)
 fun test_replayed_round_id(): int {
     var state = slice5OracleInitialState(reporterSet());
-    slice5OracleStartRound(mutate state, config(), 2, 10);
+    slice5OracleStartRound(mutate state, config(), 2, 10, starter());
     try {
-        slice5OracleStartRound(mutate state, config(), 2, 11);
+        slice5OracleStartRound(mutate state, config(), 2, 11, starter());
     } catch (code) {
         return code;
     }
@@ -129,14 +137,57 @@ fun test_duplicate_finalize(): int {
 @method_id(409)
 fun test_third_report_uses_running_anchor(): int {
     var set = reporterSet();
-    val cfg = slice5OracleConfig(set, 3, 60, 200);
+    val cfg = slice5OracleConfig(set, 3, 60, 200, starter());
     var state = slice5OracleInitialState(set);
-    var r = slice5OracleStartRound(mutate state, cfg, 1, 10);
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10, starter());
     r.addReport(set, cfg, report(1, 101, 1000, 20));
     r.addReport(set, cfg, report(1, 202, 1200, 21));
     r.addReport(set, cfg, report(1, 303, 1201, 22));
     assert(r.reportCount == 3) throw 4091;
     return r.median(cfg) as int;
+}
+
+@method_id(410)
+fun test_round_starter_authorization(): int {
+    var state = slice5OracleInitialState(reporterSet());
+    try {
+        slice5OracleStartRound(mutate state, config(), 1, 10, attacker());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(411)
+fun test_five_reporter_median(): int {
+    var set = slice5OracleNewReporterSet();
+    set.addReporter(101);
+    set.addReporter(202);
+    set.addReporter(303);
+    set.addReporter(404);
+    set.addReporter(505);
+    val cfg = slice5OracleConfig(set, 5, 60, 1000, starter());
+    var state = slice5OracleInitialState(set);
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10, starter());
+    r.addReport(set, cfg, report(1, 101, 50, 20));
+    r.addReport(set, cfg, report(1, 202, 10, 21));
+    r.addReport(set, cfg, report(1, 303, 40, 22));
+    r.addReport(set, cfg, report(1, 404, 20, 23));
+    r.addReport(set, cfg, report(1, 505, 30, 24));
+    return r.finalize(cfg, finalize(1, 25)) as int;
+}
+
+@method_id(412)
+fun test_two_report_median_truncates(): int {
+    var set = slice5OracleNewReporterSet();
+    set.addReporter(101);
+    set.addReporter(202);
+    val cfg = slice5OracleConfig(set, 2, 60, 100, starter());
+    var state = slice5OracleInitialState(set);
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10, starter());
+    r.addReport(set, cfg, report(1, 101, 1000, 20));
+    r.addReport(set, cfg, report(1, 202, 1001, 21));
+    return r.finalize(cfg, finalize(1, 22)) as int;
 }
 
 /**
@@ -149,4 +200,7 @@ fun test_third_report_uses_running_anchor(): int {
 @testcase | 407 | | 20
 @testcase | 408 | | 3336
 @testcase | 409 | | 1200
+@testcase | 410 | | 3338
+@testcase | 411 | | 30
+@testcase | 412 | | 1000
  */

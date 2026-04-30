@@ -4,7 +4,6 @@ import "@stdlib/oracle"
 const DEX_PRICE_ORACLE_PAIR_TOS_USDC: uint32 = 1
 const DEX_PRICE_ORACLE_THROW_WRONG_PAIR: int      = 0x0f01  // 3841
 const DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND: int = 0x0f02  // 3842
-const DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_STARTER: int = 0x0f03  // 3843
 
 // Simulated reporter public keys (fixed-at-deploy set).
 fun reporter1(): uint256 { return 0x01; }
@@ -30,12 +29,12 @@ fun makeReporterSet(): Slice5OracleReporterSet {
 
 // 2-of-3 quorum, 60 s freshness, 200 nanoUSDC max deviation.
 fun makeConfig(): Slice5OracleConfig {
-    return slice5OracleConfig(makeReporterSet(), 2, 60, 200);
+    return slice5OracleConfig(makeReporterSet(), 2, 60, 200, roundStarter());
 }
 
 fun startRound(roundId: uint64, now: uint32): Slice5OracleRound {
     var state = slice5OracleInitialState(makeReporterSet());
-    return slice5OracleStartRound(mutate state, makeConfig(), roundId, now);
+    return slice5OracleStartRound(mutate state, makeConfig(), roundId, now, roundStarter());
 }
 
 fun makeReport(roundId: uint64, key: uint256, price: uint64, now: uint32): Slice5OracleReport {
@@ -130,9 +129,9 @@ fun test_insufficient_quorum_finalize(): int {
 @method_id(207)
 fun test_replayed_round_id(): int {
     var state = slice5OracleInitialState(makeReporterSet());
-    slice5OracleStartRound(mutate state, makeConfig(), 5, 10);
+    slice5OracleStartRound(mutate state, makeConfig(), 5, 10, roundStarter());
     try {
-        slice5OracleStartRound(mutate state, makeConfig(), 5, 11);
+        slice5OracleStartRound(mutate state, makeConfig(), 5, 11, roundStarter());
     } catch (code) {
         return code;
     }
@@ -188,10 +187,11 @@ fun test_no_active_round_check(): int {
 // Contract receive guard: only the deploy-time starter may start a round.
 @method_id(213)
 fun test_unauthorized_round_starter_check(): int {
-    val configured = roundStarter();
-    val incoming = attacker();
-    if (incoming != configured) {
-        return DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_STARTER;
+    var state = slice5OracleInitialState(makeReporterSet());
+    try {
+        slice5OracleStartRound(mutate state, makeConfig(), 1, 10, attacker());
+    } catch (code) {
+        return code;
     }
     return 0;
 }
@@ -223,6 +223,6 @@ fun test_duplicate_finalize(): int {
 @testcase | 209 | | 2
 @testcase | 210 | | 3841
 @testcase | 211 | | 3842
-@testcase | 213 | | 3843
+@testcase | 213 | | 3338
 @testcase | 214 | | 3336
  */

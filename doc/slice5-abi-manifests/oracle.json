@@ -106,6 +106,49 @@
         }
       ],
       "fixtures": []
+    },
+    {
+      "name": "Slice5OracleConfig",
+      "encoding": "tol_auto_struct",
+      "fields": [
+        {
+          "name": "reporterSetHash",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0
+        },
+        {
+          "name": "reporterCount",
+          "type": "uint16",
+          "bits": 16,
+          "refs": 0
+        },
+        {
+          "name": "quorum",
+          "type": "uint16",
+          "bits": 16,
+          "refs": 0
+        },
+        {
+          "name": "freshnessSeconds",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0
+        },
+        {
+          "name": "maxDeviation",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "roundStarter",
+          "type": "address",
+          "bits": 267,
+          "refs": 0
+        }
+      ],
+      "fixtures": []
     }
   ],
   "errors": [
@@ -128,6 +171,11 @@
       "name": "SLICE5_ORACLE_THROW_OUTLIER",
       "code": 3333,
       "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_UNAUTHORIZED_STARTER",
+      "code": 3338,
+      "class": "Authorization"
     }
   ],
   "wire_compatibility_exceptions": []

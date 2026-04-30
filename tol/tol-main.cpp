@@ -666,7 +666,7 @@ static std::string scaffold_error_code_map(const std::string& pattern) {
     return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER\", \"code\": 3073},\n    {\"name\": \"SLICE5_GOVERNANCE_THROW_INVALID_ACTION\", \"code\": 3078}\n  ]\n}\n";
   }
   if (pattern == "oracle") {
-    return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER\", \"code\": 3329},\n    {\"name\": \"SLICE5_ORACLE_THROW_OUTLIER\", \"code\": 3333}\n  ]\n}\n";
+    return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER\", \"code\": 3329},\n    {\"name\": \"SLICE5_ORACLE_THROW_OUTLIER\", \"code\": 3333},\n    {\"name\": \"SLICE5_ORACLE_THROW_UNAUTHORIZED_STARTER\", \"code\": 3338}\n  ]\n}\n";
   }
   if (pattern == "payment-channel") {
     return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_PAYMENT_THROW_SIGNATURE_FAILURE\", \"code\": 3585},\n    {\"name\": \"SLICE5_PAYMENT_THROW_SEQNO_REPLAY\", \"code\": 3586}\n  ]\n}\n";

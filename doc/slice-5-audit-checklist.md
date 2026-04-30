@@ -12,10 +12,11 @@ Before shipping a Slice 5 contract:
   manifest exception and expected hash are present.
 - Confirm oracle reporter lifecycle is fixed-at-deploy or otherwise
   documented by a later policy revision.
-- Confirm oracle round-start receive handlers authenticate the starter
-  before calling `slice5OracleStartRound`.
-- Confirm oracle deployments accept the three-report inline aggregation
-  cap, or use a reviewed contract-specific larger-set design.
+- Confirm oracle round-start receive handlers pass `in.senderAddress` to
+  `slice5OracleStartRound` and that `Slice5OracleConfig.roundStarter`
+  is the intended starter address.
+- Confirm oracle reporter sets stay within the stdlib's bounded
+  255-reporter map-aggregation limit.
 - Confirm FunC/Tol reimplementations use the same truncating
   two-value median convention.
 - Confirm payment-channel signatures verify the signed-state cell hash

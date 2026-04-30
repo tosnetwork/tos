@@ -936,7 +936,9 @@ settlement guards. Stage 6 has extended `tol new --pattern`, generated
 Slice 5 examples, and added the release-candidate checker/docs. Stage 7
 has recorded repo-side ABI freeze hashes and compatibility artifacts;
 the remaining release gate is three external production contracts using
-the second-wave stdlib; one production-intent candidate is recorded.
+the second-wave stdlib; one production-intent candidate is recorded and
+the first oracle trial findings have been closed for a second-round
+trial.
 
 **Stage plan.**
 
@@ -989,6 +991,10 @@ the second-wave stdlib; one production-intent candidate is recorded.
    - ✅ Add reporter-set authorization, round ids, freshness windows,
      quorum/median aggregation, duplicate report rejection, and stale
      data handling.
+   - ✅ Post-trial hardening: round-start authorization is enforced by
+     `Slice5OracleConfig.roundStarter`, reporter aggregation supports
+     bounded fixed-at-deploy sets up to 255 reporters, and imported
+     contract blocks no longer emit duplicate test entrypoints.
    - ✅ Add tests for unauthorized reporter, duplicate reporter,
      insufficient quorum, stale round, outlier handling, replayed round
      id, and unknown opcode.
@@ -1019,7 +1025,8 @@ the second-wave stdlib; one production-intent candidate is recorded.
    - ⬜ Record at least three external production contracts using the
      second-wave stdlib, or explicitly mark Slice 5 as
      release-candidate-only until those deployments exist. Current
-     status: 1/3 production-intent candidates recorded.
+     status: 1/3 production-intent candidates recorded; round-2
+     external oracle trial requested.
 
 ### Slice 6 — Year 3 protocol-heavy items
 
@@ -1408,16 +1415,20 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   `doc/slice-5-abi-freeze-record.json`, compatibility/release checklists
   are in tree, and the external adoption gate remains explicitly
   pending: two additional external production contracts using
-  second-wave stdlib after the DexPriceOracle oracle candidate.
+  second-wave stdlib after the DexPriceOracle oracle candidate. The
+  first DexPriceOracle trial findings are closed and a second-round
+  oracle trial prompt is recorded.
 
 ## 12. Revision notes
 
-### r30 (Slice 5 Stage 7 ABI freeze release candidate)
+### r32 (Slice 5 external oracle trial hardening)
 
-- §6 Slice 5 now marks repo-side release candidate complete with
-  external adoption pending.
-- Added ABI freeze hash records, the compatibility matrix, and the
-  release checklist. No external production adoption is claimed.
+- Closed the first `DexPriceOracle` trial findings in repo-side code:
+  stdlib-enforced oracle round-start authorization, deterministic
+  map-backed median/outlier aggregation for bounded larger reporter
+  sets, and imported-contract test compilation without duplicate
+  entrypoints.
+- Added second-round external oracle trial instructions.
 
 ### r31 (Slice 5 external author trial 1)
 
@@ -1426,6 +1437,13 @@ removed when policy v6 made single-signer the rule; see §11.3.)
 - Hardened the oracle helper outlier anchor, documented oracle authoring
   limits, and added release-package validation for the external
   candidate.
+
+### r30 (Slice 5 Stage 7 ABI freeze release candidate)
+
+- §6 Slice 5 now marks repo-side release candidate complete with
+  external adoption pending.
+- Added ABI freeze hash records, the compatibility matrix, and the
+  release checklist. No external production adoption is claimed.
 
 ### r29 (Slice 5 Stage 6 release candidate)
 

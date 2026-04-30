@@ -1168,6 +1168,19 @@ void check_contract_method_id_collisions() {
   }
 }
 
+static bool file_declares_own_entrypoint(const SrcFile* file) {
+  auto v_file = file->ast->as<ast_tol_file>();
+  for (AnyV declaration : v_file->get_toplevel_declarations()) {
+    if (declaration->kind == ast_contract_declaration) {
+      return true;
+    }
+    if (auto func = declaration->try_as<ast_function_declaration>(); func && (func->flags & FunctionData::flagIsEntrypoint)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 static void analyze_generated_function(FunctionPtr fun_ref) {
   pipeline_resolve_identifiers_and_assign_symbols(fun_ref);
   pipeline_resolve_types_and_aliases(fun_ref);
@@ -1177,6 +1190,8 @@ static void analyze_generated_function(FunctionPtr fun_ref) {
 
 void pipeline_lower_contracts() {
   std::vector<V<ast_function_declaration>> generated_functions;
+  const SrcFile* entrypoint_file = G.all_src_files.get_entrypoint_file();
+  const bool entrypoint_declares_own_entrypoint = file_declares_own_entrypoint(entrypoint_file);
 
   for (const SrcFile* file : G.all_src_files) {
     auto v_file = file->ast->as<ast_tol_file>();
@@ -1185,6 +1200,15 @@ void pipeline_lower_contracts() {
 
     for (AnyV declaration : v_file->get_toplevel_declarations()) {
       if (auto contract = declaration->try_as<ast_contract_declaration>()) {
+        if (file != entrypoint_file && entrypoint_declares_own_entrypoint) {
+          // Imported contract blocks are library surface for this compile:
+          // top-level structs/constants are already registered, but imported
+          // recv_internal/recv_external entrypoints must not be emitted into
+          // the importing contract or tol-tester unit. Remove the contract AST
+          // so later contract-specific passes see only the entrypoint file.
+          changed = true;
+          continue;
+        }
         changed = true;
         std::vector<AnyV> generated = lower_contract(contract);
         for (AnyV generated_decl : generated) {

@@ -21,7 +21,7 @@ EXTERNAL_CANDIDATES = (
         "dex-price-oracle",
         "examples/slice5/dex-price-oracle",
         "src/dex-price-oracle.tol",
-        "dex-price-oracle-positive",
+        "dex-price-oracle",
     ),
 )
 
@@ -29,6 +29,7 @@ REQUIRED_DOCS = (
     "doc/slice-5-author-guide.md",
     "doc/slice-5-audit-checklist.md",
     "doc/slice-5-compatibility-matrix.md",
+    "doc/slice-5-external-author-round-2-prompt.md",
     "doc/slice-5-external-author-trials.md",
     "doc/slice-5-release-checklist.md",
     "doc/slice-5-release-notes.md",

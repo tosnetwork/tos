@@ -7,6 +7,7 @@
   "abi_manifest": "doc/slice5-abi-manifests/dex_price_oracle.json",
   "source": "src/dex-price-oracle.tol",
   "tests": [
+    "tests/dex-price-oracle-import-positive.tol",
     "tests/dex-price-oracle-positive.tol"
   ],
   "replay_fixtures": [],

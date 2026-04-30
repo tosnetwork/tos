@@ -1,5 +1,5 @@
 // DexPriceOracle — production-intent TOS/USDC spot price oracle.
-// Backed by @stdlib/oracle with a fixed-at-deploy 3-reporter set and 2-of-3 quorum.
+// Backed by @stdlib/oracle with a fixed-at-deploy reporter set and 2-of-N quorum.
 // Reporters submit price observations; the contract auto-finalizes when quorum is met.
 tol 1.3
 
@@ -15,13 +15,11 @@ const DEX_PRICE_ORACLE_PAIR_TOS_USDC: uint32 = 1
 // Error codes. Base 0x0f00 (3840); all >= 1024 per Slice 5 policy.
 const DEX_PRICE_ORACLE_THROW_WRONG_PAIR: int      = 0x0f01  // 3841
 const DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND: int = 0x0f02  // 3842
-const DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_STARTER: int = 0x0f03  // 3843
 
 struct DexPriceOracleStorage {
     config: Cell<Slice5OracleConfig>
     oracleState: Cell<Slice5OracleState>
     pairId: uint32
-    roundStarter: address
 }
 
 struct (DEX_PRICE_ORACLE_OP_START_ROUND) DexPriceStartRound {
@@ -44,23 +42,19 @@ contract DexPriceOracle {
     storage: DexPriceOracleStorage
     @unknown_throw(0xffff);
 
-    // Round starts are restricted to the deploy-time starter address.
+    // Round starts are restricted by Slice5OracleConfig.roundStarter.
     @disclaim_query_id
     receive(msg: DexPriceStartRound) {
         if (msg.pairId != storage.pairId) {
             throw DEX_PRICE_ORACLE_THROW_WRONG_PAIR;
         }
-        if (in.senderAddress != storage.roundStarter) {
-            throw DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_STARTER;
-        }
         val config = lazy Slice5OracleConfig.fromCell(storage.config);
         var state = lazy Slice5OracleState.fromCell(storage.oracleState);
-        slice5OracleStartRound(mutate state, config, msg.roundId, msg.now);
+        slice5OracleStartRound(mutate state, config, msg.roundId, msg.now, in.senderAddress);
         save(DexPriceOracleStorage {
             config: storage.config,
             oracleState: state.toCell(),
             pairId: storage.pairId,
-            roundStarter: storage.roundStarter,
         });
     }
 
@@ -97,7 +91,6 @@ contract DexPriceOracle {
             config: storage.config,
             oracleState: state.toCell(),
             pairId: storage.pairId,
-            roundStarter: storage.roundStarter,
         });
     }
 

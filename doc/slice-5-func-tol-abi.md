@@ -130,6 +130,12 @@ Oracle median helpers use truncating integer division for the two-report
 case: `(value1 + value2) / 2`. FunC reimplementations must use the same
 round-toward-zero convention to match Tol-visible results.
 
+Oracle round-start authorization is ABI-visible through
+`Slice5OracleConfig.roundStarter`. Tol contracts pass the actual
+`in.senderAddress` into `slice5OracleStartRound`; FunC implementations
+must compare the same sender address against the stored starter before
+mutating the active round.
+
 ## 5. Error ABI rule
 
 Slice 5 packages use the Slice 1 error model:

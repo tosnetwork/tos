@@ -14,13 +14,13 @@ const SLICE5_ORACLE_THROW_OUTLIER = 0x0d05
 const SLICE5_ORACLE_THROW_REPLAYED_ROUND = 0x0d06
 const SLICE5_ORACLE_THROW_BAD_CONFIG = 0x0d07
 const SLICE5_ORACLE_THROW_ROUND_FINALIZED = 0x0d08
-const SLICE5_ORACLE_THROW_TOO_MANY_REPORTS = 0x0d09
+const SLICE5_ORACLE_THROW_UNAUTHORIZED_STARTER = 0x0d0a
 
 const SLICE5_ORACLE_OP_REPORT: uint32 = 0x4f524301
 const SLICE5_ORACLE_OP_FINALIZE: uint32 = 0x4f524302
 
 const SLICE5_ORACLE_REPORTER_SET_FIXED_AT_DEPLOY = 1
-const SLICE5_ORACLE_MAX_INLINE_REPORTS = 3
+const SLICE5_ORACLE_MAX_REPORTS = 255
 
 struct Slice5OracleReporterSet {
     lifecycle: uint8
@@ -34,6 +34,7 @@ struct Slice5OracleConfig {
     quorum: uint16
     freshnessSeconds: uint32
     maxDeviation: uint64
+    roundStarter: address
 }
 
 struct Slice5OracleRound {
@@ -45,9 +46,6 @@ struct Slice5OracleRound {
     finalized: bool
     medianValue: uint64?
     reports: map<uint256, uint64>
-    value1: uint64?
-    value2: uint64?
-    value3: uint64?
 }
 
 struct Slice5OracleState {
@@ -109,9 +107,10 @@ fun slice5OracleConfig(
     reporterSet: Slice5OracleReporterSet,
     quorum: uint16,
     freshnessSeconds: uint32,
-    maxDeviation: uint64
+    maxDeviation: uint64,
+    roundStarter: address
 ): Slice5OracleConfig {
-    if (reporterSet.lifecycle != SLICE5_ORACLE_REPORTER_SET_FIXED_AT_DEPLOY || reporterSet.count == 0 || quorum == 0 || quorum > reporterSet.count || quorum > SLICE5_ORACLE_MAX_INLINE_REPORTS || freshnessSeconds == 0) {
+    if (reporterSet.lifecycle != SLICE5_ORACLE_REPORTER_SET_FIXED_AT_DEPLOY || reporterSet.count == 0 || reporterSet.count > SLICE5_ORACLE_MAX_REPORTS || quorum == 0 || quorum > reporterSet.count || freshnessSeconds == 0) {
         throw SLICE5_ORACLE_THROW_BAD_CONFIG;
     }
     return Slice5OracleConfig {
@@ -120,6 +119,7 @@ fun slice5OracleConfig(
         quorum,
         freshnessSeconds,
         maxDeviation,
+        roundStarter,
     };
 }
 
@@ -135,8 +135,12 @@ fun slice5OracleStartRound(
     mutate state: Slice5OracleState,
     config: Slice5OracleConfig,
     roundId: uint64,
-    now: uint32
+    now: uint32,
+    starter: address
 ): Slice5OracleRound {
+    if (starter != config.roundStarter) {
+        throw SLICE5_ORACLE_THROW_UNAUTHORIZED_STARTER;
+    }
     if (roundId <= state.lastRoundId) {
         throw SLICE5_ORACLE_THROW_REPLAYED_ROUND;
     }
@@ -149,9 +153,6 @@ fun slice5OracleStartRound(
         finalized: false,
         medianValue: null,
         reports: createEmptyMap<uint256, uint64>(),
-        value1: null,
-        value2: null,
-        value3: null,
     };
     state.lastRoundId = roundId;
     state.current = round.toCell();
@@ -171,11 +172,44 @@ fun slice5OracleAbsDiff(a: uint64, b: uint64): uint64 {
     return a > b ? a - b : b - a;
 }
 
-fun Slice5OracleRound.outlierAnchor(self): uint64 {
-    if (self.reportCount == 1) {
-        return self.value1!;
+fun slice5OracleInsertSorted(mutate values: array<uint64>, value: uint64): void {
+    values.push(value);
+    var i = values.size() - 1;
+    while (i > 0 && values.get(i - 1) > value) {
+        values.set(values.get(i - 1), i);
+        i -= 1;
     }
-    return (self.value1! + self.value2!) / 2;
+    values.set(value, i);
+}
+
+fun slice5OracleMedianFromSorted(values: array<uint64>): uint64 {
+    val count = values.size();
+    if (count == 0) {
+        throw SLICE5_ORACLE_THROW_INSUFFICIENT_QUORUM;
+    }
+    val mid = count / 2;
+    if (count % 2 == 1) {
+        return values.get(mid);
+    }
+    return (values.get(mid - 1) + values.get(mid)) / 2;
+}
+
+fun Slice5OracleRound.sortedReportValues(self): array<uint64> {
+    var values: array<uint64> = [];
+    var entry = self.reports.findFirst();
+    while (entry.isFound) {
+        slice5OracleInsertSorted(mutate values, entry.loadValue());
+        entry = self.reports.iterateNext(entry);
+    }
+    return values;
+}
+
+fun Slice5OracleRound.medianOfReports(self): uint64 {
+    return slice5OracleMedianFromSorted(self.sortedReportValues());
+}
+
+fun Slice5OracleRound.outlierAnchor(self): uint64 {
+    return self.medianOfReports();
 }
 
 fun Slice5OracleRound.checkOutlier(self, config: Slice5OracleConfig, value: uint64): void {
@@ -198,52 +232,15 @@ fun Slice5OracleRound.addReport(mutate self, reporterSet: Slice5OracleReporterSe
     if (!inserted) {
         throw SLICE5_ORACLE_THROW_DUPLICATE_REPORTER;
     }
-    if (self.reportCount == 0) {
-        self.value1 = report.value;
-    } else if (self.reportCount == 1) {
-        self.value2 = report.value;
-    } else if (self.reportCount == 2) {
-        self.value3 = report.value;
-    } else {
-        throw SLICE5_ORACLE_THROW_TOO_MANY_REPORTS;
-    }
     self.reportCount += 1;
     return self.reportCount;
-}
-
-fun slice5OracleMedian3(a: uint64, b: uint64, c: uint64): uint64 {
-    var x = a;
-    var y = b;
-    var z = c;
-    if (x > y) {
-        val t = x;
-        x = y;
-        y = t;
-    }
-    if (y > z) {
-        val t = y;
-        y = z;
-        z = t;
-    }
-    if (x > y) {
-        val t = x;
-        x = y;
-        y = t;
-    }
-    return y;
 }
 
 fun Slice5OracleRound.median(self, config: Slice5OracleConfig): uint64 {
     if (self.reportCount < config.quorum) {
         throw SLICE5_ORACLE_THROW_INSUFFICIENT_QUORUM;
     }
-    if (self.reportCount == 1) {
-        return self.value1!;
-    }
-    if (self.reportCount == 2) {
-        return (self.value1! + self.value2!) / 2;
-    }
-    return slice5OracleMedian3(self.value1!, self.value2!, self.value3!);
+    return self.medianOfReports();
 }
 
 fun Slice5OracleRound.finalize(mutate self, config: Slice5OracleConfig, msg: Slice5OracleFinalize): uint64 {
