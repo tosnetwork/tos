@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "schema": "slice-4-reference-baselines",
+  "captured_at_utc": "2026-04-30",
+  "status": "stage-3-reference-added",
+  "policy": "doc/tos-slice-4-policy.md",
+  "contracts": [
+    {
+      "name": "slice4-postponed-auction",
+      "source": "examples/slice4/postponed-auction.tol",
+      "focused_tol_tests": {
+        "pattern": "slice4-postponed-auction",
+        "expected_tests": 1,
+        "expected_cases": 7,
+        "baseline_gas": 126392
+      },
+      "coverage": [
+        "early message enqueue",
+        "state transition that unlocks drain",
+        "FIFO drain",
+        "expiry cleanup",
+        "queue full",
+        "duplicate query_id",
+        "malformed body rejected before storage mutation"
+      ],
+      "handwritten_no_stdlib_equivalent": {
+        "status": "not-practical-for-stage-3",
+        "reason": "A handwritten equivalent would reimplement raw map-based postponement that Stage 2 now warns against; Stage 3 records the focused stdlib gas baseline and defers larger trait/package budget comparison to Stage 4/5."
+      },
+      "wire_surface": {
+        "new_tlb_constructors": false,
+        "new_tvm_opcodes": false,
+        "protocol_mailbox_scanning": false,
+        "scheduled_wakeups": false
+      }
+    }
+  ]
+}

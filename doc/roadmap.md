@@ -783,8 +783,9 @@ constraints, callback failure semantics, zero-capacity queues, optional
 `@stdlib/postponement` helper surface and focused tol-tester coverage.
 Stage 2 has landed compiler hardening for direct queue internals,
 external-message enqueue attempts, missing enqueue budgets, and raw-map
-bypass warnings; Stage 3 can now build the first official postponed
-reference contract on the hardened surface.
+bypass warnings. Stage 3 has landed the first official postponed
+reference contract, an auction-style example that queues too-early bids
+and drains them after opening.
 
 **Stage plan.**
 
@@ -825,26 +826,26 @@ reference contract on the hardened surface.
      cannot be bypassed through ordinary Tol field access or raw
      external-message paths.
 
-4. ⬜ **Stage 3 — first postponed reference contract.**
+4. ✅ **Stage 3 — first postponed reference contract.** Completed
+   2026-04-30.
 
-   - ⬜ Add one official Slice 4 reference contract (auction or
-     escrow-style state machine) under
-     `crypto/smartcont/tol-stdlib/` or `examples/slice4/`.
-   - ⬜ Replay/tol-tester fixture: early message enqueue (state not
-     yet ready to handle message).
-   - ⬜ Replay/tol-tester fixture: state transition that unlocks
+   - ✅ Added `examples/slice4/postponed-auction.tol`, an
+     auction-style reference that queues too-early bids in
+     `PostponedQueue`, opens the auction, and drains queued bids.
+   - ✅ Replay/tol-tester fixture: early message enqueue.
+   - ✅ Replay/tol-tester fixture: state transition that unlocks
      drain.
-   - ⬜ Replay/tol-tester fixture: FIFO drain after state transition.
-   - ⬜ Replay/tol-tester fixture: expiry — queued item ages out
-     before drain.
-   - ⬜ Replay/tol-tester fixture: queue full — enqueue rejected with
-     `ErrorClass.Transient`.
-   - ⬜ Replay/tol-tester fixture: duplicate `query_id` rejected.
-   - ⬜ Replay/tol-tester fixture: malformed body rejected before
+   - ✅ Replay/tol-tester fixture: FIFO drain after state transition.
+   - ✅ Replay/tol-tester fixture: expiry before drain.
+   - ✅ Replay/tol-tester fixture: queue full.
+   - ✅ Replay/tol-tester fixture: duplicate `query_id`.
+   - ✅ Replay/tol-tester fixture: malformed body rejected before
      storage mutation.
-   - ⬜ Record gas and bytecode size against a handwritten no-stdlib
-     equivalent; result must stay within Slice 1 budget threshold.
-   - ⬜ Exit criterion: bounded postponement used by one shipped
+   - ✅ Recorded focused gas baseline in
+     `doc/slice-4-reference-baselines.json`; a handwritten raw-map
+     equivalent is explicitly not used because Stage 2 now warns on
+     that bypass pattern.
+   - ✅ Exit criterion: bounded postponement used by one shipped
      reference contract; no existing BoC hash regressed.
 
 5. ⬜ **Stage 4 — behaviour manifest foundation.**

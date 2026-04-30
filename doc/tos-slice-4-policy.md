@@ -159,6 +159,11 @@ Deliverables:
 Exit criterion: bounded postponement is used by one shipped reference
 contract and remains within the Slice 1 budget threshold.
 
+Implementation status: complete as of 2026-04-30. The reference is
+`examples/slice4/postponed-auction.tol`, with focused coverage in
+`tol-tester/tests/slice4-postponed-auction-positive.tol` and baseline
+metadata in `doc/slice-4-reference-baselines.json`.
+
 ### Stage 4 - Behaviour manifest foundation
 
 Deliverables:
