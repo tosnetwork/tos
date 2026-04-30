@@ -1,0 +1,154 @@
+import "@stdlib/governance"
+
+fun target(): address {
+    return address("0:3333333333333333333333333333333333333333333333333333333333333333");
+}
+
+fun policy(): Slice5GovernancePolicy {
+    return slice5GovernancePolicy(1001, 3, 2, 2, target(), 1000, SEND_MODE_REGULAR as int32);
+}
+
+fun action(value: coins = 100): Slice5GovernanceAction {
+    return slice5GovernanceSendAction(target(), value, SEND_MODE_REGULAR as int32);
+}
+
+fun proposal(validUntil: uint32 = 100): Slice5GovernanceProposal {
+    return slice5GovernanceCreateProposal(policy(), 77, 1001, action(), 10, validUntil);
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(301)
+fun test_duplicate_vote(): int {
+    var p = proposal();
+    p.vote(1, true, 20);
+    try {
+        p.vote(1, true, 21);
+    } catch (code) {
+        assert(p.votesFor == 1) throw 3011;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(302)
+fun test_unauthorized_proposer(): int {
+    try {
+        slice5GovernanceCreateProposal(policy(), 77, 9999, action(), 10, 100);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(303)
+fun test_quorum_boundary(): int {
+    var p = proposal();
+    p.vote(1, true, 20);
+    try {
+        p.execute(policy(), 21);
+    } catch (code) {
+        assert(!p.executed) throw 3031;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(304)
+fun test_threshold_boundary(): int {
+    var p = proposal();
+    p.vote(1, true, 20);
+    p.vote(2, false, 21);
+    try {
+        p.execute(policy(), 22);
+    } catch (code) {
+        assert(!p.executed) throw 3041;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(305)
+fun test_execute_success(): int {
+    var p = proposal();
+    p.vote(1, true, 20);
+    p.vote(2, true, 21);
+    val executed = p.execute(policy(), 22);
+    assert(p.executed) throw 3051;
+    assert(executed.value == 100) throw 3052;
+    return executed.value as int;
+}
+
+@method_id(306)
+fun test_expired_proposal(): int {
+    var p = proposal(30);
+    try {
+        p.vote(1, true, 30);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(307)
+fun test_malformed_action_list(): int {
+    try {
+        slice5GovernanceCreateProposal(policy(), 77, 1001, slice5GovernanceCodeAction(123), 10, 100);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(308)
+fun test_replayed_execution(): int {
+    var p = proposal();
+    p.vote(1, true, 20);
+    p.vote(2, true, 21);
+    p.execute(policy(), 22);
+    try {
+        p.execute(policy(), 23);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(309)
+fun test_cancel_and_expire_paths(): int {
+    var p = proposal(30);
+    try {
+        p.expire(29);
+    } catch (code) {
+        assert(!p.canceled) throw 3091;
+        p.expire(30);
+        assert(p.canceled) throw 3092;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(310)
+fun test_action_policy_value_limit(): int {
+    try {
+        slice5GovernanceCreateProposal(policy(), 77, 1001, action(1001), 10, 100);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+/**
+@testcase | 301 | | 3074
+@testcase | 302 | | 3073
+@testcase | 303 | | 3075
+@testcase | 304 | | 3076
+@testcase | 305 | | 100
+@testcase | 306 | | 3077
+@testcase | 307 | | 3078
+@testcase | 308 | | 3079
+@testcase | 309 | | 3082
+@testcase | 310 | | 3078
+ */

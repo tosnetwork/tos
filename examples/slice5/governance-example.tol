@@ -1,0 +1,46 @@
+// Slice 5 governance example backed by @stdlib/governance.
+
+import "@stdlib/governance"
+
+struct Slice5GovernanceStorage {
+    policy: Cell<Slice5GovernancePolicy>
+    proposal: Cell<Slice5GovernanceProposal>?
+}
+
+contract Slice5GovernanceExample {
+    storage: Slice5GovernanceStorage
+    @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: Slice5GovernancePropose) {
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        val action = lazy Slice5GovernanceAction.fromCell(msg.action);
+        val proposal = slice5GovernanceCreateProposal(policy, msg.queryId, msg.proposerKey, action, 0, msg.validUntil);
+        save(Slice5GovernanceStorage { policy: storage.policy, proposal: proposal.toCell() });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5GovernanceVote) {
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
+        proposal.vote(msg.voterKey, msg.support, msg.now);
+        save(Slice5GovernanceStorage { policy: storage.policy, proposal: proposal.toCell() });
+        policy.proposerKey;
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5GovernanceExecute) {
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
+        proposal.execute(policy, msg.now);
+        save(Slice5GovernanceStorage { policy: storage.policy, proposal: proposal.toCell() });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5GovernanceCancel) {
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
+        proposal.cancel(policy, msg.proposerKey, msg.now);
+        save(Slice5GovernanceStorage { policy: storage.policy, proposal: proposal.toCell() });
+    }
+}

@@ -920,15 +920,16 @@ Auction, DAO/governance, oracle, and payment-channel templates,
 each one preceded by a short design note. Cross-language ABI is
 frozen at the end of this slice.
 
-**Status.** 🚧 Stage 2 complete, Stage 3 active, 2026-04-30. The implementation
+**Status.** 🚧 Stage 3 complete, Stage 4 active, 2026-04-30. The implementation
 input candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
 [`doc/slice-5-func-tol-abi.md`](slice-5-func-tol-abi.md), and
 [`doc/slice-5-abi-manifest-schema.json`](slice-5-abi-manifest-schema.json).
 The first Stage 0 security-review findings are addressed and Draft v1.1
 is accepted as the implementation input. Stage 1 has landed the
 dependency-free ABI manifest validator and a FunC/Tol golden fixture
-pair. Stage 2 has landed `@stdlib/auction`, a postponed-auction example,
-ABI/behaviour manifests, and focused helper tests.
+pair. Stage 2 has landed `@stdlib/auction`; Stage 3 has landed
+`@stdlib/governance` with policy-typed action validation and focused
+helper tests.
 
 **Stage plan.**
 
@@ -966,16 +967,16 @@ ABI/behaviour manifests, and focused helper tests.
      and tests for bid, too-early bid, close, settle, refund/excess,
      duplicate `queryId`, stale close, low bid, and malformed body.
 
-4. 🚧 **Stage 3 — DAO / governance package.**
+4. ✅ **Stage 3 — DAO / governance package.**
 
-   - ⬜ Add `@stdlib/governance`.
-   - ⬜ Add proposal, vote, quorum/threshold, cancel/expire, execute,
+   - ✅ Add `@stdlib/governance`.
+   - ✅ Add proposal, vote, quorum/threshold, cancel/expire, execute,
      and action-list validation helpers.
-   - ⬜ Add tests for duplicate vote, unauthorized proposer, quorum
+   - ✅ Add tests for duplicate vote, unauthorized proposer, quorum
      boundary, threshold boundary, expired proposal, malformed action
      list, replayed execution, and unknown opcode.
 
-5. ⬜ **Stage 4 — oracle package.**
+5. 🚧 **Stage 4 — oracle package.**
 
    - ⬜ Add `@stdlib/oracle`.
    - ⬜ Add reporter-set authorization, round ids, freshness windows,
@@ -1372,8 +1373,20 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   focused tol-tester coverage for bid, too-early enqueue, drain, close,
   settle, duplicate `queryId`, stale close, low bid, malformed body,
   queue full, and expiry.
+- ✅ **Slice 5 Stage 3 governance stdlib** — closed 2026-04-30.
+  `@stdlib/governance` ships proposal/vote/quorum/threshold helpers,
+  explicit cancel/expire/execute paths, policy-typed SendMsg action
+  validation, default rejection for code/data/library/reserve actions,
+  a focused example, ABI/behaviour manifests, and ten governance tests.
 
 ## 12. Revision notes
+
+### r26 (Slice 5 Stage 3 governance stdlib)
+
+- §6 Slice 5 now marks Stage 3 complete and Stage 4 active.
+- Added `@stdlib/governance`, a governance example, ABI and behaviour
+  manifests, and tests for proposal, voting, execution, expiration,
+  replay rejection, and action-policy validation.
 
 ### r25 (Slice 5 Stage 2 auction stdlib)
 
