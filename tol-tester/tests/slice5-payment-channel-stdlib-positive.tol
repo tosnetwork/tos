@@ -1,0 +1,151 @@
+import "@stdlib/payment-channel"
+
+const PC_PARTY_A: uint256 = 0xbfb9ac753f4180bab8c11c65b09742ce423ad9596ef9c3445a3e5937ca8c5033
+const PC_PARTY_B: uint256 = 0x9b3cbb18b669b97e35a236d808c0c0c1a4f620b79e31b17a16b35ce1f2cab8ec
+const PC_SALT: uint256 = 0x5555
+
+fun pcConfig(): Slice5PaymentChannelConfig {
+    return slice5PaymentConfig(PC_PARTY_A, PC_PARTY_B, PC_SALT, 1000, 30);
+}
+
+fun pcState(): Slice5PaymentChannelState {
+    return slice5PaymentInitialState(1000);
+}
+
+fun pcSigned(seqno: uint64, a: coins, b: coins, validUntil: uint32 = 200): Slice5PaymentSignedState {
+    return slice5PaymentSignedState(pcConfig(), seqno, a, b, validUntil);
+}
+
+fun zeroSignature(): cell {
+    return beginCell().storeUint(0, 256).storeUint(0, 256).endCell();
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(501)
+fun test_signature_failure(): int {
+    var state = pcState();
+    try {
+        state.cooperativeClose(pcConfig(), pcSigned(1, 700, 300), zeroSignature(), zeroSignature(), 20);
+    } catch (code) {
+        assert(!state.closed) throw 5011;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(502)
+fun test_seqno_replay(): int {
+    var state = pcState();
+    state.applyVerifiedState(pcConfig(), pcSigned(2, 600, 400), 20);
+    try {
+        state.applyVerifiedState(pcConfig(), pcSigned(2, 500, 500), 21);
+    } catch (code) {
+        assert(state.latestSeqno == 2) throw 5021;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(503)
+fun test_wrong_channel_id(): int {
+    var state = pcState();
+    val bad = Slice5PaymentSignedState {
+        channelId: 123,
+        seqno: 1,
+        balanceA: 700,
+        balanceB: 300,
+        validUntil: 200,
+    };
+    try {
+        state.applyVerifiedState(pcConfig(), bad, 20);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(504)
+fun test_stale_challenge(): int {
+    var state = pcState();
+    try {
+        state.applyVerifiedState(pcConfig(), pcSigned(1, 700, 300, 20), 20);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(505)
+fun test_premature_settlement(): int {
+    var state = pcState();
+    state.challengeCloseVerified(pcConfig(), pcSigned(1, 700, 300), 20);
+    try {
+        state.settle(49);
+    } catch (code) {
+        assert(!state.closed) throw 5051;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(506)
+fun test_settlement_success(): int {
+    var state = pcState();
+    state.challengeCloseVerified(pcConfig(), pcSigned(1, 700, 300), 20);
+    val paidB = state.settle(50);
+    assert(state.closed) throw 5061;
+    return paidB as int;
+}
+
+@method_id(507)
+fun test_duplicate_close(): int {
+    var state = pcState();
+    state.challengeCloseVerified(pcConfig(), pcSigned(1, 700, 300), 20);
+    state.settle(50);
+    try {
+        state.settle(51);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(508)
+fun test_malformed_state_body(): int {
+    var state = pcState();
+    val bad = Slice5PaymentSignedState {
+        channelId: pcConfig().channelId,
+        seqno: 1,
+        balanceA: 700,
+        balanceB: 299,
+        validUntil: 200,
+    };
+    try {
+        state.applyVerifiedState(pcConfig(), bad, 20);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(509)
+fun test_hash_to_sign_nonzero(): int {
+    val h = pcSigned(1, 700, 300).hashToSign();
+    assert(h != 0) throw 5091;
+    return 1;
+}
+
+/**
+@testcase | 501 | | 3585
+@testcase | 502 | | 3586
+@testcase | 503 | | 3587
+@testcase | 504 | | 3588
+@testcase | 505 | | 3589
+@testcase | 506 | | 300
+@testcase | 507 | | 3590
+@testcase | 508 | | 3591
+@testcase | 509 | | 1
+ */

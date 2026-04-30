@@ -920,7 +920,7 @@ Auction, DAO/governance, oracle, and payment-channel templates,
 each one preceded by a short design note. Cross-language ABI is
 frozen at the end of this slice.
 
-**Status.** 🚧 Stage 4 complete, Stage 5 active, 2026-04-30. The implementation
+**Status.** 🚧 Stage 5 complete, Stage 6 active, 2026-04-30. The implementation
 input candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
 [`doc/slice-5-func-tol-abi.md`](slice-5-func-tol-abi.md), and
 [`doc/slice-5-abi-manifest-schema.json`](slice-5-abi-manifest-schema.json).
@@ -928,9 +928,10 @@ The first Stage 0 security-review findings are addressed and Draft v1.1
 is accepted as the implementation input. Stage 1 has landed the
 dependency-free ABI manifest validator and a FunC/Tol golden fixture
 pair. Stage 2 has landed `@stdlib/auction`; Stage 3 has landed
-`@stdlib/governance`; Stage 4 has landed `@stdlib/oracle` with
-fixed-at-deploy reporter sets, round snapshots, quorum, freshness, and
-median checks.
+`@stdlib/governance`; Stage 4 has landed `@stdlib/oracle`; Stage 5 has
+landed `@stdlib/payment-channel` with `cell.hash()` signing material,
+monotonic sequence checks, cooperative/challenge close helpers, and
+settlement guards.
 
 **Stage plan.**
 
@@ -987,16 +988,16 @@ median checks.
      insufficient quorum, stale round, outlier handling, replayed round
      id, and unknown opcode.
 
-6. 🚧 **Stage 5 — payment-channel package.**
+6. ✅ **Stage 5 — payment-channel package.**
 
-   - ⬜ Add `@stdlib/payment-channel`.
-   - ⬜ Add signed state updates, monotonic sequence numbers,
+   - ✅ Add `@stdlib/payment-channel`.
+   - ✅ Add signed state updates, monotonic sequence numbers,
      cooperative close, challenge close, settlement, and body builders.
-   - ⬜ Add tests for signature failure, seqno replay, wrong channel id,
+   - ✅ Add tests for signature failure, seqno replay, wrong channel id,
      stale challenge, premature settlement, duplicate close, and
      malformed state body.
 
-7. ⬜ **Stage 6 — scaffolding, docs, and release candidate.**
+7. 🚧 **Stage 6 — scaffolding, docs, and release candidate.**
 
    - ⬜ Extend `tol new --pattern` for auction, governance, oracle, and
      payment-channel.
@@ -1384,8 +1385,21 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   reporter-set hash snapshots, reporter authorization, freshness windows,
   quorum/median aggregation, duplicate/outlier/stale/replay rejection,
   an example, ABI/behaviour manifests, and eight oracle tests.
+- ✅ **Slice 5 Stage 5 payment-channel stdlib** — closed 2026-04-30.
+  `@stdlib/payment-channel` ships channel-id derivation, signed-state
+  cell construction, Ed25519-over-`cell.hash()` verification, monotonic
+  sequence checks, cooperative/challenge close helpers, settlement
+  guards, ABI/behaviour manifests, and nine payment-channel tests.
 
 ## 12. Revision notes
+
+### r28 (Slice 5 Stage 5 payment-channel stdlib)
+
+- §6 Slice 5 now marks Stage 5 complete and Stage 6 active.
+- Added `@stdlib/payment-channel`, a payment-channel example, ABI and
+  behaviour manifests, signed-state fixtures, and tests for signature
+  failure, replay, channel mismatch, challenge timing, duplicate close,
+  malformed states, and settlement.
 
 ### r27 (Slice 5 Stage 4 oracle stdlib)
 
