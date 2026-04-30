@@ -1,0 +1,63 @@
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): two `receive_external`
+// blocks dispatch on the 32-bit body opcode prefix; the synthesized
+// `onExternalMessage` checks each branch in source order and falls through to a
+// Protocol-class throw on no match (top byte 0x04 = ErrorClass.Protocol;
+// reserved sentinel 0xFFFF in the lower 16 bits).
+
+import "@stdlib/common"
+
+struct ContractExternalMultiStorage {}
+
+struct (0x4D554C01) ContractExternalMultiOpA {
+    seqno: uint32;
+}
+
+struct (0x4D554C02) ContractExternalMultiOpB {
+    seqno: uint32;
+    extra: uint32;
+}
+
+struct (0x4D554C00) ContractExternalMultiNoOpInternal {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractExternalMulti {
+    storage: ContractExternalMultiStorage
+
+    receive(msg: ContractExternalMultiNoOpInternal) {
+        msg.queryId;
+    }
+
+    receive_external(msg: ContractExternalMultiOpA) {
+        msg.seqno;
+    }
+
+    receive_external(msg: ContractExternalMultiOpB) {
+        msg.seqno;
+        msg.extra;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+
+@fif_codegen
+"""
+  -1 DECLMETHOD onExternalMessage()
+"""
+
+@fif_codegen
+"""
+      x{4d554c01} SDBEGINSQ
+"""
+
+@fif_codegen
+"""
+      x{4d554c02} SDBEGINSQ
+"""
+ */

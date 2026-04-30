@@ -31,6 +31,7 @@ set(TOL_SOURCE
         pipe-check-state-reachability.cpp
         pipe-check-field-scoping.cpp
         pipe-lower-contract.cpp
+        pipe-assign-require-codes.cpp
         pipe-check-query-id-propagation.cpp
         pipe-lazy-load-insertions.cpp
         pipe-transform-on-message.cpp

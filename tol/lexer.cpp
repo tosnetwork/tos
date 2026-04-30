@@ -415,6 +415,11 @@ struct ChunkIdentifierOrKeyword final : ChunkLexerBase {
         if (str == "operator") return tok_operator;
         if (str == "contract") return tok_contract;
         break;
+      case 16:
+        // Slice 2 Stage 6: external-message receiver entry-point keyword.
+        // See doc/tos-language-syntax-policy.md §3.8.
+        if (str == "receive_external") return tok_receive_external;
+        break;
       default:
         break;
     }

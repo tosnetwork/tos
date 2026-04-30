@@ -251,6 +251,7 @@ static AnyTypeV parse_simple_type(Lexer& lex) {
     case tok_identifier:
     case tok_contract:
     case tok_receive:
+    case tok_receive_external:
     case tok_storage:
     case tok_null: {
       SrcRange range = lex.cur_range();
@@ -345,7 +346,7 @@ AnyExprV parse_expr(Lexer& lex);
 AnyV parse_statement(Lexer& lex, bool in_contract_receive = false);
 
 static bool is_identifier_like(TokenType tok) {
-  return tok == tok_identifier || tok == tok_contract || tok == tok_receive || tok == tok_storage;
+  return tok == tok_identifier || tok == tok_contract || tok == tok_receive || tok == tok_receive_external || tok == tok_storage;
 }
 
 static V<ast_identifier> parse_identifier(Lexer& lex, const char* str_expected) {
@@ -1018,6 +1019,7 @@ static AnyExprV parse_expr100(Lexer& lex) {
     case tok_identifier:
     case tok_contract:
     case tok_receive:
+    case tok_receive_external:
     case tok_storage: {
       auto v_ident = parse_identifier(lex, "identifier");
       SrcRange range = v_ident->range;
@@ -1478,7 +1480,10 @@ static const char* slice2_deferred_msg() {
 }
 
 static bool is_slice2_deferred_statement(std::string_view name) {
-  return name == "require";
+  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) ships `require(...)`;
+  // it's no longer deferred. Keep the helper around for future deferred names.
+  (void)name;
+  return false;
 }
 
 static AnyV parse_become_statement(Lexer& lex) {
@@ -2035,7 +2040,10 @@ static AnyTypeV parse_contract_type_identifier(Lexer& lex, const char* what) {
 }
 
 static bool is_deferred_contract_member_name(std::string_view name) {
-  return name == "receive_external";
+  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8) ships `receive_external`;
+  // the parser handles it as a real keyword above. Reserved for future deferred names.
+  (void)name;
+  return false;
 }
 
 // Parse a `get fun` block inside a contract declaration.
@@ -2168,6 +2176,26 @@ static AnyV parse_receive_block(Lexer& lex,
                                     is_unknown_opcode_catch_all);
 }
 
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): parse a
+// `receive_external(msg: T) { ... }` block. Externals do NOT carry an
+// `on State` clause (state-machine guards apply only to internals) and
+// do NOT accept `@disclaim_query_id` (externals have no query_id).
+static AnyV parse_receive_external_block(Lexer& lex) {
+  SrcRange range = lex.range_start();
+  lex.expect(tok_receive_external, "`receive_external`");
+  lex.expect(tok_oppar, "`(`");
+  auto v_param = parse_identifier(lex, "receive_external parameter name");
+  lex.expect(tok_colon, "`:`");
+  AnyTypeV msg_type = parse_contract_type_identifier(lex, "receive_external message type");
+  lex.expect(tok_clpar, "`)`");
+  if (lex.tok() == tok_identifier && lex.cur_str() == "on") {
+    err("`receive_external(...)` cannot carry an `on State` clause; state-machine guards apply to internal receivers only; see doc/tos-language-syntax-policy.md §3.8").fire(lex.cur_range());
+  }
+  auto v_body = parse_block_statement(lex, true);
+  range.end(v_body->range);
+  return createV<ast_receive_external_block>(range, v_param, msg_type, v_body);
+}
+
 static void parse_contract_state_list(Lexer& lex, std::vector<V<ast_identifier>>& state_identifiers) {
   lex.next();
   lex.expect(tok_colon, "`:`");
@@ -2209,6 +2237,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
   std::vector<V<ast_identifier>> state_identifiers;
   V<ast_identifier> initial_state_identifier = nullptr;
   std::vector<AnyV> receive_blocks;
+  std::vector<AnyV> receive_external_blocks;       // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8)
   std::vector<AnyV> get_fun_blocks;
   // annotations queued for the next `get fun` (see §3.5 / §10.1: parser fix at line 1712 — @method_id is now accepted on contract get fun)
   std::vector<V<ast_annotation>> pending_member_annotations;
@@ -2391,6 +2420,18 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
       receive_blocks.push_back(parse_receive_block(lex));
       continue;
     }
+    if (lex.tok() == tok_receive_external) {
+      // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): external receivers
+      // do not accept any annotations (no `@deploy`, no `@disclaim_query_id`, etc).
+      if (!pending_member_annotations.empty()) {
+        err("`receive_external(...)` blocks do not accept annotations; see doc/tos-language-syntax-policy.md §3.8").fire(pending_member_annotations.front());
+      }
+      if (!storage_type) {
+        err("contract `storage:` declaration must appear before `receive_external(...)` blocks").fire(lex.cur_range());
+      }
+      receive_external_blocks.push_back(parse_receive_external_block(lex));
+      continue;
+    }
     if (lex.tok() == tok_identifier && lex.cur_str() == "get") {
       if (!storage_type) {
         err("contract `storage:` declaration must appear before `get fun` blocks").fire(lex.cur_range());
@@ -2406,7 +2447,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
     if (lex.tok() == tok_identifier && is_deferred_contract_member_name(lex.cur_str())) {
       err("`{}` is {}", lex.cur_str(), slice2_deferred_msg()).fire(lex.cur_range());
     }
-    err("contract blocks may contain only `storage:`, `states:`, `@initial state`, `receive(...)`, and `get fun` declarations in Slice 2 Stage 5; see doc/tos-language-syntax-policy.md §3.1 / §3.5").fire(lex.cur_range());
+    err("contract blocks may contain only `storage:`, `states:`, `@initial state`, `receive(...)`, `receive_external(...)`, and `get fun` declarations; see doc/tos-language-syntax-policy.md §3.1 / §3.5 / §3.8").fire(lex.cur_range());
   }
 
   if (!pending_member_annotations.empty()) {
@@ -2416,6 +2457,10 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
     err("contract block must contain exactly one `storage:` declaration").fire(v_ident);
   }
   if (receive_blocks.empty()) {
+    // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): every contract is
+    // addressable internally, so at least one `receive(...)` is required even when
+    // the contract is wallet-style external-driven. External-only contracts can
+    // still ship a single trivial `receive(msg: NoOpInternal) {}` to satisfy this.
     err("contract block must contain at least one `receive(...)` declaration").fire(v_ident);
   }
 
@@ -2458,13 +2503,14 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
 
   range.end(lex.cur_range());
   lex.next();
-  return createV<ast_contract_declaration>(range, v_ident, storage_type, std::move(state_identifiers), initial_state_identifier, std::move(receive_blocks), std::move(get_fun_blocks),
+  return createV<ast_contract_declaration>(range, v_ident, storage_type, std::move(state_identifiers), initial_state_identifier, std::move(receive_blocks), std::move(receive_external_blocks), std::move(get_fun_blocks),
                                            unknown_mode, unknown_throw_code, unknown_annotation_range);
 }
 
 static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>& declarations) {
   V<ast_contract_declaration> contract_decl = nullptr;
   V<ast_function_declaration> on_internal = nullptr;
+  V<ast_function_declaration> on_external = nullptr;
   V<ast_function_declaration> file_scope_get_fun = nullptr;
 
   for (AnyV v : declarations) {
@@ -2475,6 +2521,8 @@ static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>
       contract_decl = v_contract;
     } else if (auto v_func = v->try_as<ast_function_declaration>(); v_func && v_func->get_identifier()->name == "onInternalMessage") {
       on_internal = v_func;
+    } else if (auto v_func = v->try_as<ast_function_declaration>(); v_func && v_func->get_identifier()->name == "onExternalMessage") {
+      on_external = v_func;
     } else if (auto v_func = v->try_as<ast_function_declaration>(); v_func && (v_func->flags & FunctionData::flagContractGetter) && !file_scope_get_fun) {
       file_scope_get_fun = v_func;
     }
@@ -2482,6 +2530,12 @@ static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>
 
   if (contract_decl && on_internal) {
     err("a .tol file cannot contain both `contract X { ... }` and top-level `fun onInternalMessage(...)`; see doc/tos-language-syntax-policy.md §6.3").fire(on_internal);
+  }
+  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): the contract block synthesizes
+  // `onExternalMessage` from declared `receive_external` blocks; a hand-written
+  // `fun onExternalMessage(...)` would collide with the synthesized one.
+  if (contract_decl && contract_decl->get_num_externals() > 0 && on_external) {
+    err("a .tol file with `receive_external(...)` blocks cannot also declare top-level `fun onExternalMessage(...)`; the contract synthesizes it; see doc/tos-language-syntax-policy.md §3.8").fire(on_external);
   }
   if (contract_decl && file_scope_get_fun) {
     err("a .tol file with a `contract X { ... }` block cannot also declare top-level `get fun {}(...)`; move the get-method inside the contract; see doc/tos-language-syntax-policy.md §3.5",

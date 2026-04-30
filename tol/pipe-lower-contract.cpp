@@ -237,6 +237,17 @@ static void check_receive_opcode_prefix(V<ast_receive_block> receive, StructPtr 
   }
 }
 
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): an external receiver's
+// message struct must also declare a 32-bit opcode prefix.
+static void check_receive_external_opcode_prefix(V<ast_receive_external_block> receive, StructPtr message_struct) {
+  int prefix_len = message_struct->opcode.prefix_len;
+  if (prefix_len != 32) {
+    err("contract receive_external message type `{}` must declare exactly a 32-bit opcode prefix; actual prefix length is {}. See doc/tos-language-syntax-policy.md §3.8.",
+        message_struct->name, prefix_len)
+      .collect(receive->message_type_node);
+  }
+}
+
 static V<ast_function_declaration> make_load_data_function(V<ast_contract_declaration> contract, StructPtr storage_struct) {
   SrcRange range = contract->range;
   auto name = make_ident(range, "loadData");
@@ -650,6 +661,76 @@ static AnyV make_query_id_preflight_guard(SrcRange range) {
   return createV<ast_if_statement>(range, false, cond, if_body, else_body);
 }
 
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): build one dispatch branch
+// for an external receiver. Mirrors `make_receive_branch` but:
+//   - reads the body slice from the synthesized `inMsgBody` parameter (no `in.body`)
+//   - skips state-machine guards (state-machines are internal-only)
+//   - skips the `@disclaim_query_id` injection (externals carry no query_id)
+//   - skips the receiver-scope marker (the marker exists for query-id propagation analysis,
+//     which does not apply to externals)
+static AnyV make_external_receive_branch(V<ast_receive_external_block> receive, StructPtr message_struct) {
+  SrcRange range = receive->range;
+  AnyExprV cond = createV<ast_binary_operator>(
+      range, range, "==", tok_eq, make_ref(range, "op"), make_int(range, message_struct->opcode.pack_prefix));
+
+  std::vector<AnyV> scope_items;
+  scope_items.reserve(2 + receive->get_body()->get_items().size());
+  // local: `let <param> = lazy <T>.fromSlice(inMsgBody);`
+  auto type_leaf = receive->message_type_node->as<ast_type_leaf_text>();
+  AnyExprV from_slice = make_method_call(range, make_ref(range, type_leaf->text), "fromSlice", {make_arg(range, make_ref(range, "inMsgBody"))});
+  scope_items.push_back(make_local_decl(range, receive->get_param_name(), createV<ast_lazy_operator>(range, from_slice), true));
+  for (AnyV item : receive->get_body()->get_items()) {
+    scope_items.push_back(item);
+  }
+  scope_items.push_back(make_return_void(range));
+
+  auto if_body = createV<ast_block_statement>(range, std::move(scope_items));
+  auto else_body = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
+  return createV<ast_if_statement>(range, false, cond, if_body, else_body);
+}
+
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): synthesize the
+// `onExternalMessage(inMsgBody: slice)` entry from the contract's `receive_external` blocks.
+// Per task scope: any unrecognized external opcode throws (the wallet-style
+// "throw on malformed signed request" semantics). Stage 4's @unknown_* annotations
+// apply to internal only and are NOT shared with this dispatch domain.
+//
+// The thrown error code is intentionally a fixed sentinel (Protocol class top-byte,
+// site_index 0xFFFF reserved for "unknown external"). The pipe-assign-require-codes
+// pass uses `1..N` for explicit `require(...)` sites in source order, so the 0xFFFF
+// reservation never collides with auto-numbered codes.
+static V<ast_function_declaration> make_on_external_function(
+    V<ast_contract_declaration> contract, const std::vector<StructPtr>& external_message_structs) {
+  SrcRange range = contract->range;
+
+  auto name = make_ident(range, "onExternalMessage");
+  auto param = createV<ast_parameter>(range, make_ident(range, "inMsgBody"), make_type(range, "slice"), nullptr, false);
+  auto params = createV<ast_parameter_list>(range, std::vector<AnyV>{param});
+
+  std::vector<AnyV> items;
+  // Read the 32-bit opcode prefix WITHOUT advancing inMsgBody, so each receiver's
+  // `lazy T.fromSlice(inMsgBody)` can re-parse the prefix as part of the struct.
+  items.push_back(make_local_decl(
+      range, "op", make_method_call(range, make_ref(range, "inMsgBody"), "preloadUint", {make_arg(range, make_int(range, 32))}), true));
+
+  // Load storage so user receiver bodies that read `storage.X` typecheck the same way as
+  // for internal receivers. (Externals have no preflight query-id check or @deploy preamble.)
+  items.push_back(make_local_decl(range, "storage", make_call(range, make_ref(range, "loadData")), true));
+
+  for (int i = 0; i < contract->get_num_externals(); ++i) {
+    items.push_back(make_external_receive_branch(contract->get_external(i), external_message_structs[i]));
+  }
+  // Unrecognized external opcode: throw Protocol-class sentinel.
+  // (0x04 << 16) | 0xFFFF = 0x4FFFF — outside 0..1023 reserved range and outside the
+  // auto-numbered `require(...)` window for this contract.
+  items.push_back(make_throw(range, (4LL << 16) | 0xFFFFLL));
+
+  auto body = createV<ast_block_statement>(range, std::move(items));
+  return createV<ast_function_declaration>(
+      range, name, params, body, nullptr, nullptr, nullptr, nullptr,
+      FunctionData::EMPTY_TVM_METHOD_ID, FunctionData::flagIsEntrypoint, FunctionInlineMode::notCalculated);
+}
+
 static V<ast_function_declaration> make_on_internal_function(
     V<ast_contract_declaration> contract, const std::vector<StructPtr>& message_structs, const StateLoweringContext& state_ctx, std::string_view deploy_save_name) {
   SrcRange range = contract->range;
@@ -851,12 +932,29 @@ static V<ast_function_declaration> make_get_fun_lowering(V<ast_get_fun_block> ge
 // so we MUST group by contract origin.
 static std::unordered_map<AnyV, std::string> g_contract_getter_origin;
 
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7): map every synthesized
+// function (onInternalMessage, onExternalMessage, getters, loadData, save, state helpers)
+// back to its origin contract name, so the `pipe-assign-require-codes` pass can group
+// `require(...)` sites per-(contract, ErrorClass) for unique site indices.
+static std::unordered_map<AnyV, std::string> g_synthesized_function_origin;
+
 std::string_view contract_origin_of_getter(FunctionPtr fun_ref) {
   if (!fun_ref || !fun_ref->ast_root) {
     return {};
   }
   auto it = g_contract_getter_origin.find(fun_ref->ast_root);
   if (it == g_contract_getter_origin.end()) {
+    return {};
+  }
+  return it->second;
+}
+
+std::string_view contract_origin_of_synthesized_function(FunctionPtr fun_ref) {
+  if (!fun_ref || !fun_ref->ast_root) {
+    return {};
+  }
+  auto it = g_synthesized_function_origin.find(fun_ref->ast_root);
+  if (it == g_synthesized_function_origin.end()) {
     return {};
   }
   return it->second;
@@ -906,6 +1004,28 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     message_structs.push_back(message_struct);
   }
 
+  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): external receivers form a
+  // separate dispatch domain from internal receivers. Opcode prefixes are 32-bit and
+  // unique within the external-only set; an external opcode MAY clash with an internal
+  // opcode without ambiguity because each lands in a distinct entrypoint.
+  std::vector<StructPtr> external_message_structs;
+  external_message_structs.reserve(contract->get_num_externals());
+  std::unordered_map<int64_t, V<ast_receive_external_block>> seen_external_opcodes;
+  for (int i = 0; i < contract->get_num_externals(); ++i) {
+    V<ast_receive_external_block> receive = contract->get_external(i);
+    StructPtr message_struct = resolve_struct_type(receive->message_type_node, "contract receive_external message type");
+    check_receive_external_opcode_prefix(receive, message_struct);
+    if (message_struct->opcode.prefix_len == 32) {
+      auto [it, inserted] = seen_external_opcodes.emplace(message_struct->opcode.pack_prefix, receive);
+      if (!inserted) {
+        err("duplicate contract receive_external opcode `{}`; first receiver with this opcode was declared at {}",
+            std::to_string(message_struct->opcode.pack_prefix), it->second->range.stringify_start_location(false))
+          .collect(receive->message_type_node);
+      }
+    }
+    external_message_structs.push_back(message_struct);
+  }
+
   // Validate get_fun bodies: §3.5 forbids any side-effecting builtins.
   // Also ensure we don't shadow the synthesized `loadData` / `save` / generated state helpers
   // with a get_fun of the same name.
@@ -913,7 +1033,7 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
   for (int i = 0; i < contract->get_num_get_funs(); ++i) {
     V<ast_get_fun_block> get_fun = contract->get_get_fun(i);
     std::string_view name = get_fun->get_name();
-    if (name == "loadData" || name == "save" || name == "onInternalMessage") {
+    if (name == "loadData" || name == "save" || name == "onInternalMessage" || name == "onExternalMessage") {
       err("`get fun {}` shadows a contract-internal function generated by the lowering; pick a different name; see doc/tos-language-syntax-policy.md §3.5",
           name).fire(get_fun->get_identifier());
     }
@@ -944,7 +1064,18 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     generated.push_back(make_load_data_function(contract, storage_struct));
     generated.push_back(make_save_function(contract, storage_struct));
   }
-  generated.push_back(make_on_internal_function(contract, message_structs, state_ctx, deploy_save_name));
+  // Slice 2 Stage 6 (§3.8): only synthesize `onInternalMessage` if the contract actually
+  // declares internal receivers; preserves current behavior for contracts that previously
+  // had to declare at least one `receive(...)`.
+  if (contract->get_num_receives() > 0) {
+    generated.push_back(make_on_internal_function(contract, message_structs, state_ctx, deploy_save_name));
+  }
+  // Slice 2 Stage 6 (§3.8): synthesize the `onExternalMessage` entry only when the
+  // contract declares at least one `receive_external(...)` block. If absent, the
+  // contract continues to behave exactly as a Stage 5 internal-only contract.
+  if (contract->get_num_externals() > 0) {
+    generated.push_back(make_on_external_function(contract, external_message_structs));
+  }
 
   // Synthesize a top-level `fun X(): T { let storage = loadData(); <body> }` per get_fun block.
   // Track origin so the per-contract collision detector can group these correctly.
@@ -954,6 +1085,15 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     V<ast_function_declaration> lowered = make_get_fun_lowering(get_fun, storage_struct);
     g_contract_getter_origin.emplace(static_cast<AnyV>(lowered), contract_name);
     generated.push_back(lowered);
+  }
+
+  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7): tag every synthesized
+  // function with its origin contract name so the `pipe-assign-require-codes` pass
+  // can bucket `require(...)` sites per-(contract, ErrorClass).
+  for (AnyV decl : generated) {
+    if (auto func = decl->try_as<ast_function_declaration>()) {
+      g_synthesized_function_origin.emplace(static_cast<AnyV>(func), contract_name);
+    }
   }
   return generated;
 }

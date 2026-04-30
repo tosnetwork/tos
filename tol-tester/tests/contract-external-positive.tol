@@ -1,0 +1,60 @@
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): a contract that declares
+// a single `receive_external(...)` block compiles cleanly and synthesizes the
+// `onExternalMessage` entry-point. The compiled fif is expected to contain a
+// `recv_external` declaration paired with the synthesized procedure.
+
+import "@stdlib/common"
+
+struct ContractExternalPositiveStorage {}
+
+struct (0x73696701) ContractExternalSignedAction {
+    seqno: uint32;
+    payload: uint32;
+}
+
+struct (0x73696702) ContractExternalNoOpInternal {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractExternalPositive {
+    storage: ContractExternalPositiveStorage
+
+    // Stage 6 keeps the rule that every contract is addressable internally; this
+    // tiny no-op satisfies the contract grammar while the external receiver is the
+    // real entry-point under test.
+    receive(msg: ContractExternalNoOpInternal) {
+        msg.queryId;
+    }
+
+    receive_external(msg: ContractExternalSignedAction) {
+        // Stage 6 ships a wire-shape vocabulary only; the body merely touches the
+        // typed message so the lazy auto-unpack actually runs.
+        msg.seqno;
+        msg.payload;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+
+@fif_codegen
+"""
+  -1 DECLMETHOD onExternalMessage()
+"""
+
+@fif_codegen
+"""
+  onExternalMessage() PROC:<{
+...
+    32 PLDU
+...
+      x{73696701} SDBEGINSQ
+...
+  }>
+"""
+ */

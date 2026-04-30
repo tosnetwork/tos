@@ -1,0 +1,55 @@
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) — auto-numbered
+// `require(cond, ErrorClass.X)` codes. Two sites with the same ErrorClass must
+// receive distinct codes (top byte = ErrorClass.tag = 3 for Authorization,
+// bottom 16 bits = per-(contract, ErrorClass) source-order site index).
+//
+// Site 0 → code (3 << 16) | 0 = 0x30000 = 196608
+// Site 1 → code (3 << 16) | 1 = 0x30001 = 196609
+
+import "@stdlib/common"
+
+struct ContractRequireAutoNumberingStorage {
+    expectedSeqno: uint32;
+}
+
+struct (0x726E0001) ContractRequireAutoNumberingPing {
+    queryId: uint64;
+    seqno: uint32;
+    flag: uint32;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractRequireAutoNumbering {
+    storage: ContractRequireAutoNumberingStorage
+
+    receive(msg: ContractRequireAutoNumberingPing) {
+        // First Authorization site → derived code 0x30000 (196608)
+        require(msg.seqno == storage.expectedSeqno, ErrorClass.Authorization);
+        // Second Authorization site → derived code 0x30001 (196609); the rewrite
+        // pass guarantees these two sites stay distinguishable in bounce diagnostics.
+        require(msg.flag != 0, ErrorClass.Authorization);
+    }
+}
+
+/**
+@testcase | 101 | | 0
+
+@fif_codegen
+"""
+  // require_site_table
+"""
+
+@fif_codegen
+"""
+      196608 PUSHINT
+"""
+
+@fif_codegen
+"""
+      196609 PUSHINT
+"""
+ */

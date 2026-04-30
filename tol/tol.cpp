@@ -85,6 +85,14 @@ TolCompilationResult tol_proceed(const std::string &entrypoint_filename) {
     pipeline_check_field_scoping();
     pipeline_lower_contracts();
 
+    // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7): rewrite
+    // `require(cond, ErrorClass.X)` → `require(cond, ErrorClass.X, derived_code)`
+    // so two same-class sites stay distinguishable in bounce diagnostics.
+    // MUST run after pipeline_lower_contracts (so the synthesized receivers'
+    // bodies are visible) and BEFORE pipeline_check_query_id_propagation
+    // (so the query-id pass walks the final AST shape).
+    pipeline_assign_require_codes();
+
     // doc/tos-message-policy.md §4.4 hardening:
     // pipeline_check_query_id_propagation MUST be in the band
     // (pipeline_check_serialized_fields, G.error_collector = nullptr]

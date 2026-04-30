@@ -1,0 +1,36 @@
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8) — `receive_external`
+// cannot carry an `on State` clause. State-machine guards apply to internal
+// receivers only (the c4 state-tag is loaded inside `onInternalMessage`'s
+// preamble, which externals don't share).
+
+import "@stdlib/common"
+
+struct ContractExternalNoStateStorage {}
+
+struct (0x73696701) ContractExternalNoStateBody {
+    seqno: uint32;
+}
+
+struct (0x73696702) ContractExternalNoStateNoOpInternal {
+    queryId: uint64;
+}
+
+contract ContractExternalNoState {
+    storage: ContractExternalNoStateStorage
+    states: Open
+    @initial state Open
+
+    receive(msg: ContractExternalNoStateNoOpInternal) on Open {
+        msg.queryId;
+    }
+
+    receive_external(msg: ContractExternalNoStateBody) on Open {
+        msg.seqno;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr `receive_external(...)` cannot carry an `on State` clause
+@stderr doc/tos-language-syntax-policy.md §3.8
+ */

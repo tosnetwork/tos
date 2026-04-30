@@ -28,6 +28,7 @@
 #include "fwd-declarations.h"
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace tol {
 
@@ -37,6 +38,30 @@ namespace tol {
 // See doc/tos-language-syntax-policy.md §3.5: cross-contract auto-derived ID
 // sharing is NOT a collision; collisions are reported only within a contract.
 std::string_view contract_origin_of_getter(FunctionPtr fun_ref);
+
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) — per-contract
+// origin lookup for ANY synthesized function (onInternalMessage,
+// onExternalMessage, getters, helpers). Returns "" for hand-written
+// top-level `fun`s. Consumed by `pipe-assign-require-codes.cpp` to bucket
+// `require(...)` sites per (contract, ErrorClass).
+std::string_view contract_origin_of_synthesized_function(FunctionPtr fun_ref);
+
+// Slice 2 Stage 6 manifest accessor. The `pipe-assign-require-codes.cpp`
+// pass populates this; `pipe-generate-fif-output.cpp` reads it to emit a
+// `;; require_site_table` Fif comment so external dev tooling can
+// recover the source location of a fired throw code.
+struct RequireSiteEntry {
+  std::string contract_name;
+  std::string function_name;
+  std::string error_class_name;
+  int error_class_tag;
+  int site_index;
+  int derived_code;
+  std::string source_location;
+  bool explicit_code;
+  int explicit_code_value;
+};
+const std::vector<RequireSiteEntry>& get_require_site_manifest();
 
 // Per-contract method_id collision detector that runs at pre-emission time
 // (called from pipe-generate-fif-output.cpp). Walks all contract getters,
@@ -67,6 +92,7 @@ void pipeline_check_serialized_fields();
 void pipeline_check_state_reachability();
 void pipeline_check_field_scoping();
 void pipeline_lower_contracts();
+void pipeline_assign_require_codes();
 void pipeline_check_query_id_propagation();
 void pipeline_lazy_load_insertions();
 void pipeline_transform_onInternalMessage();
