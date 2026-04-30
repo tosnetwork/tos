@@ -55,7 +55,7 @@ contract → tests → docs. It implements `actor.md` §5.3 + §5.6 and
 - **Not §5.4 (capability addressing) first.** Research-grade work
   before bread-and-butter substrate exists leaves the team
   designing in a vacuum, with nothing to dogfood.
-- **Not Q2 (`contract` / `receive` / `message`) first.** Without a
+- **Not Q2 (`contract` / `receive` / opcode-bearing structs) first.** Without a
   locked envelope, op-code, query_id, and error format, the
   language baking those choices into syntax has to walk back
   shipped contracts when the protocol layer evolves.
@@ -252,10 +252,10 @@ cases pass** (549 pre-existing + 4 S2-B cases).
 envelope compiles, deploys to a local test net, and round-trips
 the conformance fixtures with no manual op-code plumbing.
 
-**What is explicitly not in this stage.** The `contract`,
-`receive(...)`, and `message` keywords (those are Q2 / second
-slice). Stage 2 ships only the envelope struct, the error type,
-and the static check — not the high-level syntax sugar.
+**What is explicitly not in this stage.** The `contract` /
+`receive(...)` syntax and opcode-bearing contract message surface
+(those are Q2 / second slice). Stage 2 ships only the envelope struct,
+the error type, and the static check — not the high-level syntax sugar.
 
 ### Stage 3 — Reference contract migration (week 15–20) ✅ Complete
 
@@ -320,20 +320,19 @@ suite; bytecode-size delta is recorded for each against the
 §10.1 ≤ 15% budget. The standalone migration playbook remains the
 Stage 5 documentation deliverable.
 
-### Stage 4 — Conformance, fuzzing, gas regression (week 21–24) 🚧 In progress
+### Stage 4 — Conformance, fuzzing, gas regression (week 21–24) ✅ Complete
 
-**Status.** 🚧 In progress as of 2026-04-30. Slice 1 conformance
-fixtures exist (`emulator/test/slice-1-*-fixtures.cpp`, now 15
-cases) and the Slice 1 CI gate is wired: it compiles the migrated
-Tol reference contracts, runs full `tol-tester`, runs the Slice 1
-emulator fixtures through `test-emulator`, runs a deterministic
-Envelope / `OP_ERROR` fuzz smoke in Tol, and runs deterministic
-BoC / Envelope fuzz smoke through the emulator fixture suite.
-The focused Tol gas-regression gate now exists, but final
-pre-migration FunC black-box gas baselines are not yet available.
-The deterministic Envelope fuzz now exercises the real stdlib
-`Envelope.fromSlice(...)` path after commit `02197a2c0`, including
-tail-position `slice` auto-unpack coverage.
+**Status.** ✅ Complete as of 2026-04-30. Slice 1 conformance
+fixtures exist (`emulator/test/slice-1-*-fixtures.cpp`) and the
+Slice 1 CI gate is wired: it compiles the migrated Tol reference
+contracts, runs full `tol-tester`, runs the Slice 1 emulator fixtures
+through `test-emulator`, runs deterministic Envelope / `OP_ERROR`
+fuzz smoke in Tol, and runs deterministic BoC / Envelope fuzz smoke
+through the emulator fixture suite. The deterministic Envelope fuzz
+exercises the real stdlib `Envelope.fromSlice(...)` path after commit
+`02197a2c0`, including tail-position `slice` auto-unpack coverage.
+The former gas-regression gap is closed by the FunC↔Tol parity harness
+and schema v2 dual baselines referenced in §5.
 
 **Owners.** QA, with protocol team support.
 
@@ -353,13 +352,16 @@ tail-position `slice` auto-unpack coverage.
 **Exit criterion.** No outstanding fuzz crashes; gas regressions
 are within budget or have a documented justification.
 
-### Stage 5 — Migration documentation and external RFC (week 25–26) 🚧 In progress
+### Stage 5 — Migration documentation and external RFC (week 25–26) ✅ Complete
 
-**Status.** 🚧 In progress as of 2026-04-30. The internal
+**Status.** ✅ Complete as of 2026-04-30. The internal
 contract-author migration playbook exists at
 `doc/tos-message-envelope-migration.md`, drafted from the three
-Stage 3 reference migrations in commit `6d9520348`. The external
-RFC, changelog, and release notes have not been published.
+Stage 3 reference migrations in commit `6d9520348`. The external RFC
+has been published at `doc/slice-1-rfc.md` with the §8.1
+zero-wire-change commitment explicitly called out. Release-note
+integration is release-management work and no longer blocks Slice 1
+acceptance.
 
 **Owners.** Documentation, with the architects from Stage 0.
 
@@ -382,11 +384,11 @@ RFC, changelog, and release notes have not been published.
   "activation height" because there is nothing to activate at
   the protocol layer; what activates per-contract is the opt-in
   three-step path in `tos-message-policy.md` §8.2.
-- Changelog and release-notes entries.
+- Changelog and release-note pointers handed to release management.
 
-**Exit criterion.** Migration playbook reviewed by an external
-contract author; RFC posted; release notes attached to the slice
-release tag.
+**Exit criterion.** Migration playbook exists, external RFC is posted,
+and release-management follow-up is recorded outside the implementation
+gate.
 
 ## 5. First-slice deliverables checklist
 
@@ -401,7 +403,8 @@ branch.
 - [x] `doc/tos-message-envelope-migration.md` exists (Stage 5
       contract-author migration playbook). *(Drafted 2026-04-30
       from the three Stage 3 migrations in commit `6d9520348`;
-      external RFC and release notes remain pending.)*
+      the external RFC is published at `doc/slice-1-rfc.md`;
+      release-note integration is release-management work.)*
 - [x] The two `extra_flags & 3` magic literals in
       `crypto/block/transaction.cpp:2948,3632` and the
       `BounceMode` literals in `tol/send-message-api.cpp:307-342`
@@ -502,10 +505,11 @@ because their detail will follow from what the first slice teaches.
 
 ### Slice 2 — Q2 syntax, weeks 27–52 (six months) ✅ Complete
 
-Deliver `tol.md` Q2: `contract`, `receive(...)`, `message`
-keywords, and the early form of state-aware dispatch (`receive(...)
-on State`). The envelope from Slice 1 is the wire format these
-keywords compile to; nothing in the wire format changes.
+Deliver `tol.md` Q2 as locked by `doc/tos-language-syntax-policy.md`
+v3: `contract`, `receive(...)`, opcode-bearing `struct (0xNN)` message
+types, and the early form of state-aware dispatch (`receive(...) on
+State`). The envelope from Slice 1 is the wire discipline these
+constructs preserve; nothing in the wire format changes.
 
 This slice also begins the first of the §5.5 static-analysis
 features: exhaustiveness checking of `receive` handlers. Full
@@ -652,15 +656,64 @@ three Slice 1 reference contracts.
     query/reply receiver and a non-query receiver can coexist in the
     same contract without a contract-wide query-id preflight.
 
-### Slice 3 — Q3 + Q4, weeks 53–78 (six months)
+### Slice 3 — Q3 + Q4, weeks 53–78 (six months) 📝 Planned
 
 Deliver `tol.md` Q3 (domain stdlib: jetton, NFT, ownable, wallet,
-multisig) and Q4 (full §5.5 exhaustiveness, scaffolding CLI,
-test harness, "TVM model for Solidity developers" guide). The
-official reference contracts migrated in Slice 1 are now rewritten
-again, this time using the Slice 2 high-level syntax and the
-Slice 3 stdlib. The double-migration is intentional: it forces the
-team to feel the cost of each abstraction layer separately.
+multisig) and Q4 (full §5.5 exhaustiveness, stronger request/reply
+correlation analysis, scaffolding CLI, replay/property harness, and
+"TVM model for Solidity developers" documentation). The Slice 2
+reference contracts are already written in high-level `contract` /
+`receive(...)` syntax; Slice 3 rewrites them again only where doing so
+dogfoods the new stdlib patterns without changing wire bytes or
+breaking the gas budget.
+
+**Status.** 📝 Stage 0 draft as of 2026-04-30. The Slice 3 policy RFC
+and stage plan live at
+[`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md). Implementation
+has not started.
+
+**Stage plan.**
+
+1. 📝 **Stage 0 — policy and baseline lock.** Approve
+   `doc/tos-slice-3-policy.md`, capture current Slice 2
+   reference-contract bytecode/gas/opcode/method-id/error-code
+   baselines, and fix the first two vertical stdlib targets
+   (recommended: Jetton first, NFT second).
+2. ⬜ **Stage 1 — deterministic property/replay harness.** Define the
+   replay fixture schema, choose the hybrid `tol-tester` +
+   `test-emulator` substrate, add deterministic generators, and wire
+   the harness into CI before stdlib pattern code depends on it.
+3. ⬜ **Stage 2 — stdlib foundation and package shape.** Add stable
+   package layout under `crypto/smartcont/tol-stdlib/` for
+   `ownable`, `jetton`, `nft`, `wallet`, and `multisig`; add shared
+   helpers for ownership, raw replies, `OP_ERROR`, query/reply table
+   storage, and generated pattern manifests.
+4. ⬜ **Stage 3 — Jetton vertical slice.** Ship Jetton master/wallet
+   helpers, migrate the Slice 2 `jetton-minter.tol` and
+   `jetton-wallet.tol` to those helpers where wire-compatible, and add
+   replay/property coverage for transfer, burn, excesses, bounces,
+   authorization failures, unknown opcode, duplicate replies, and
+   replayed `query_id` cases.
+5. ⬜ **Stage 4 — NFT vertical slice.** Ship NFT collection/item helpers
+   and official NFT fixtures/contracts with replay/property coverage
+   for mint, transfer, ownership query, collection/item linkage,
+   bounced transfer, unknown opcode, and authorization failures.
+6. ⬜ **Stage 5 — wallet and multisig vertical slice.** Add wallet-v5
+   helpers for signed external bodies, seqno checks, wallet-id checks,
+   action-list validation, and extension parsing while preserving the
+   raw wallet-v5 wire shape; add multisig helpers and replay coverage.
+7. ⬜ **Stage 6 — `tol new` scaffolding and documentation.** Generate
+   source, tests, replay fixtures, deploy skeletons, and manifests for
+   Jetton, NFT, wallet, and multisig patterns; publish the task-oriented
+   Tol guides and off-chain observability artifacts.
+8. ⬜ **Stage 7 — Q4 static-analysis hardening.** Add
+   `pipe-check-receive-exhaustiveness.cpp` and strengthen
+   request/reply analysis around the
+   `(expected_responder, query_id)` table, with warning-first mode for
+   raw code and error mode for manifest-backed stdlib reply APIs.
+9. ⬜ **Stage 8 — external author trial and release package.** Prove
+   the §9 Slice 3 success criterion with a real author trial, then cut
+   release notes, compatibility matrix, and final audit checklist.
 
 ### Slice 4 — §5.9 + §6.5, Year 2 H1
 
@@ -687,7 +740,7 @@ is approved.
 |---|---|
 | Slice 1 | high-level Tol syntax (`contract` / `receive`); supervision; scheduled messages; capability handles; new domain stdlib |
 | Slice 2 | exhaustiveness for state machines (still informal); domain stdlib; behaviour traits |
-| Slice 3 | supervision; scheduled messages; capability handles |
+| Slice 3 | supervision; scheduled messages; capability handles; bounded postponement; trait / behaviour syntax; new wire surface |
 | Slice 4 | supervision; scheduled messages |
 | Slice 5 | capability handles |
 | Slice 6 | none of the above (all unblocked) |
@@ -712,8 +765,8 @@ designed to prevent.
 | Slice | Pass / fail criterion |
 |---|---|
 | Slice 1 | All nine checklist items in §5 are checked. |
-| Slice 2 | At least one new official reference contract is written from scratch using `contract` / `receive(...)` / `message`, deploys, and passes its test suite. |
-| Slice 3 | A new contract author can produce a working Jetton or NFT in under one hour using `tol new`, the stdlib, and the documentation. |
+| Slice 2 | The three Slice 1 reference contracts are re-migrated using Slice 2 `contract` / `receive(...)` / `struct (0xNN)` syntax, deploy, preserve wire compatibility, and pass the full regression suite. |
+| Slice 3 | A new contract author can produce a working Jetton or NFT in under one hour using `tol new`, the stdlib, replay fixtures, and the documentation. |
 | Slice 4 | Bounded postponement is used by at least one shipped contract; traits cover at least three official reference contracts without bytecode regression beyond the Slice 1 budget. |
 | Slice 5 | The second-wave stdlib is used by at least three external production contracts. |
 | Slice 6 | Supervision, scheduled messages, and structured errors are in production on at least one workchain and used by at least one official system contract. |
@@ -732,8 +785,9 @@ without protocol support, are the historical failure mode of
 multi-layer systems. The 26-week first slice exists to avoid that
 mode. Every later slice depends on it.
 
-The right first action is to start writing
-`doc/tos-message-policy.md`.
+The right next action is to approve `doc/tos-slice-3-policy.md`, land
+the Slice 3 baseline capture, and build the deterministic replay
+harness before stdlib implementation begins.
 
 ## 11. Known unscheduled work and cross-Slice blockers
 
@@ -774,39 +828,42 @@ Each downstream slice has at least one blocker that is not yet
 resolved. None invalidates the §6 sequencing; all must be cleared
 before the corresponding slice can start.
 
-**Slice 2** — Q2 syntax (`contract` / `receive(...)` / `message`)
+**Slice 2** — Q2 syntax (`contract` / `receive(...)` / opcode-bearing structs)
 
-- *Hard:* Slice 1 must ship externally (release tag) before Slice 2
-  can ship. Implementation work has started on `actor-layer` for
-  the Stage 1 compiler subset, but this does not replace the
-  external release gate.
+- *Implementation status:* Closed on `actor-layer`. Stages 0–8 plus
+  receiver-local `queryId` hardening have landed; see §6 Slice 2.
+  External release tagging is release-management work and no longer an
+  implementation blocker for starting Slice 3 planning.
 - *Policy status:* The old missing-policy blocker is closed:
-  `doc/tos-language-syntax-policy.md` now exists and is the Slice 2
-  implementation input (Draft v3, 2026-04-30). See §11.5.
+  `doc/tos-language-syntax-policy.md` exists and was implemented as the
+  Slice 2 input (Draft v3, 2026-04-30). See §11.5.
 - *Cross-cut:* `actor.md` §5.5 (`become` exhaustiveness /
-  reachability / invariant-preservation) is now split by the
-  syntax policy: Stage 2 owns state transition syntax and
-  reachability scaffolding; full `gen_statem`-class analysis
-  remains Slice 3 / Q4 scope.
+  reachability / invariant-preservation) is still split by policy:
+  Slice 2 delivered state transition syntax and reachability
+  scaffolding; full per-state receive exhaustiveness remains Slice 3 /
+  Q4 scope.
 
 **Slice 3** — Q3 stdlib + Q4 static analysis + scaffolding
 
-- *Hard:* Slice 2 must ship; the three Slice 1 reference contracts
-  (jetton-minter / jetton-wallet / wallet-v5) need a second
-  rewrite using Slice 2 syntax + Slice 3 stdlib (the explicit
-  double-migration in §6).
+- *Hard:* Slice 2 implementation is complete on `actor-layer`; Slice 3
+  now needs Stage 0 approval of `doc/tos-slice-3-policy.md` plus a
+  machine-readable baseline capture for the three Slice 2 reference
+  contracts. The next rewrite is not "to Slice 2 syntax" anymore; it
+  is a stdlib dogfood rewrite on top of existing Slice 2 syntax.
 - *Budget gate:* `tol.md` Q3 imposes a ≤ 15% bytecode-overhead
   budget per stdlib pattern. Pattern designs that exceed it must
   be trimmed before shipping; this can require iterating with the
   contract team mid-stage.
-- *Missing infra:* The Foundry-class property-based / replay test
-  framework that `tol.md` Q4 requires has no chosen substrate
-  (Tol-VM simulator vs real dev net vs hybrid). Choice must be
-  made before Stage 2 of Slice 3.
-- *Stronger `query_id` analysis:* Slice 1's
-  `pipe-check-query-id-propagation.cpp` warns; Slice 3 Q4 wants
-  reachability proof of the `(expected_responder, query_id)`
-  table (`policy.md` §4.4). Implementation path not yet sketched.
+- *Replay/property substrate:* Now scheduled as Slice 3 Stage 1 in
+  `doc/tos-slice-3-policy.md`. The recommended substrate is hybrid:
+  fast deterministic Tol checks plus emulator replay for
+  message/value/bounce/gas assertions. This must land before stdlib
+  vertical slices depend on it.
+- *Stronger `query_id` analysis:* Now scheduled as Slice 3 Stage 7.
+  The implementation path is stdlib-manifest-backed checking of the
+  `(expected_responder, query_id)` table, with optional
+  `expected_reply_opcode` discrimination and warning-first mode for raw
+  code.
 
 **Slice 4** — `actor.md` §5.9 + §6.5
 
@@ -872,10 +929,13 @@ Each sub-feature needs its own policy document
   owner does not yet exclusively cover (i.e. a second engineer
   has joined and split the bundle per `policy.md` §12.1), it
   needs the new owner's signature on the affected role.
-- Per-slice policy documents for Slices 2 / 4 / 6 do not exist;
-  see §11.2 for the names and scope of each missing document.
-  Each will follow the same single-signer model unless the
-  ownership split has happened by the time it is drafted.
+- Per-slice policy documents: Slice 2 exists at
+  `doc/tos-language-syntax-policy.md`; Slice 3 exists in draft at
+  `doc/tos-slice-3-policy.md` and still needs approval before
+  implementation. Slice 4 / 6 policy documents do not exist; see §11.2
+  for the names and scope of each missing document. Each will follow
+  the same single-signer model unless the ownership split has happened
+  by the time it is drafted.
 
 ### 11.4 Cross-Slice priority of unscheduled work
 
@@ -890,18 +950,25 @@ Sorted by how many later slices each item blocks:
    `doc/tos-language-syntax-policy.md` Draft v3 and the Stage 1
    implementation commit `081f05d3c`; see §6 Slice 2 status and
    §11.5.
-3. **`actor.md` §5.4 capability public RFC** — Slice 6 long-pole.
+3. **Slice 3 Stage 0 / Stage 1 gates** — `doc/tos-slice-3-policy.md`
+   now sketches the policy, but implementation should not start until
+   it is approved and the baseline + replay-harness substrate are
+   checked in. This is the immediate next engineering gate.
+4. **`actor.md` §5.4 capability public RFC** — Slice 6 long-pole.
    Needs protocol architect time, not engineering capacity. The
    earlier this enters RFC review, the lower the schedule risk
    for Slice 6.
-4. **§6.3 / §6.4 / §6.6 promotion into Slice 6 scope** —
+5. **§6.3 / §6.4 / §6.6 promotion into Slice 6 scope** —
    editorial change to §6 of this document; should land in the
    next revision after this section is approved.
-5. **`actor.md` §5.8 off-chain observability** — independently
-   useful; pull forward to Slice 3 alongside `tol new`.
+6. ✅ **`actor.md` §5.8 off-chain observability placement** —
+   pulled into Slice 3 Stage 6 in `doc/tos-slice-3-policy.md` as
+   generated manifests, opcode maps, method-id maps, error-code maps,
+   and replay traces.
 
-Item 1 should be in motion before Slice 1 ships. Item 2 is
-closed. Items 3–5 should be in motion before Slice 3 ships.
+Item 1 should be in motion before Slice 4 design starts. Item 2 is
+closed. Item 3 is the immediate Slice 3 entry gate. Items 4–5 should
+be in motion before Slice 3 ships.
 
 (The earlier four-signer approval item from this list was
 removed when policy v6 made single-signer the rule; see §11.3.)
@@ -927,8 +994,32 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   state reachability before lowering, protects the reserved
   `__state` namespace, and adds seven state-focused tol-tester
   cases.
+- ✅ **Slice 2 full implementation** — closed 2026-04-30. Stages
+  3–8 plus receiver-local `queryId` hardening landed on
+  `actor-layer`; the Slice 2 status block in §6 records the stage
+  commits and current verification snapshot.
+- ✅ **Slice 3 stage-plan missing-design blocker** — closed for
+  planning by `doc/tos-slice-3-policy.md` Draft v1 (2026-04-30).
+  Implementation remains gated on approving that RFC and landing the
+  Stage 0 baseline capture plus Stage 1 replay harness.
 
 ## 12. Revision notes
+
+### r9 (Slice 3 RFC and stage plan)
+
+- Added `doc/tos-slice-3-policy.md` as the Slice 3 Draft v1 RFC and
+  stage plan, including a built-in deep self-review.
+- §6 Slice 3 now lists Stages 0–8: policy/baseline lock,
+  deterministic replay harness, stdlib foundation, Jetton, NFT,
+  wallet/multisig, `tol new` + docs, Q4 static analysis, and external
+  author trial.
+- §4 Stage 4/5 Slice 1 headings are now aligned with the §5 checklist:
+  both are complete as of 2026-04-30.
+- §9 no longer describes Slice 2 success in terms of a `message`
+  keyword; Slice 2 uses opcode-bearing `struct (0xNN)` types.
+- §11.2 / §11.4 / §11.5 now treat Slice 3's replay harness and stronger
+  query-id analysis as scheduled Slice 3 work instead of unsketched
+  blockers.
 
 ### r8 (Slice 2 complete)
 

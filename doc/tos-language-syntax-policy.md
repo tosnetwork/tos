@@ -1026,25 +1026,30 @@ directly.
 
 ## 7. Migration path for Slice 1 reference contracts
 
-The three Slice 1 reference migrations (`jetton-minter.tol`,
-`jetton-wallet.tol`, `wallet-v5.tol`) are **NOT re-migrated as
-part of Slice 2**. Slice 2 ships the syntax; Slice 3
-("Q3 + Q4" in `roadmap.md`) does the dogfooding re-migration.
+**Post-implementation note (2026-04-30).** The v3 pre-implementation
+plan expected Slice 3 to re-migrate the three Slice 1 reference
+contracts (`jetton-minter.tol`, `jetton-wallet.tol`, `wallet-v5.tol`)
+to Slice 2 syntax. Slice 2 Stage 8 actually completed that syntax
+re-migration on `actor-layer`; see `doc/roadmap.md` §6 Slice 2.
 
-The Slice 3 migration MUST verify:
-- Bytecode-cell delta against the Slice 1 hand-written form
-  is within ±5%. (§4.4 wire-bit-identity is the strict goal;
-  ±5% is the bytecode-cell layout slack permitted to absorb
-  jump-table vs if-cascade choice.)
+Slice 3 therefore no longer owns "migration to Slice 2 syntax". Slice
+3 owns the next dogfood step: rewriting those already-Slice-2 reference
+contracts to use the Slice 3 domain stdlib where doing so preserves
+wire bytes and stays within the `doc/tos-slice-3-policy.md` budget.
+
+The Slice 3 stdlib migration MUST verify:
 - All Slice 1 conformance fixtures
-  (`emulator/test/slice-1-*-fixtures.cpp`) keep passing
-  unchanged.
+  (`emulator/test/slice-1-*-fixtures.cpp`) keep passing unchanged.
 - The FunC↔Tol gas parity gate
-  (`scripts/check-slice-1-gas.py` schema v2) keeps passing
-  with each Slice 2-migrated contract.
-- The `pipe-check-query-id-propagation` warning surface is
-  unchanged for each migrated contract (no new warnings, no
-  regressions).
+  (`scripts/check-slice-1-gas.py` schema v2) keeps passing with each
+  stdlib-migrated contract.
+- Internal-message wire bodies remain bit-identical where covered by
+  `tos-message-policy.md` §8.1.
+- External-message wire bodies are proven by dedicated wallet-v5
+  fixtures rather than inherited from the internal-message commitment.
+- The `pipe-check-query-id-propagation` warning surface is unchanged
+  for each migrated contract unless a Slice 3 static-analysis stage
+  explicitly records a warning-to-error transition.
 
 ## 8. Out of scope for Slice 2
 
@@ -1299,6 +1304,10 @@ Concrete deltas from v2 to v3:
 - **§3.6.** `@deploy` is not mutually exclusive with
   `@unknown_silent_drop`; unknown mode applies only once storage is
   available and is not an alternate initialization path.
+- **§7 (post-implementation note).** The Slice 2 Stage 8 syntax
+  re-migration of `jetton-minter`, `jetton-wallet`, and `wallet-v5`
+  has landed on `actor-layer`; Slice 3 now owns the stdlib dogfood
+  rewrite, not another migration to Slice 2 syntax.
 - **§3.8 / §6.1.** `receive_external` is scoped to
   prefix-dispatched external bodies. It does not inherit the
   internal `Envelope` / query-id propagation rule, and wallet-v5 exact
