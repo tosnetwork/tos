@@ -1,0 +1,332 @@
+// =============================================================================
+// Slice 1 Stage 3.1 — jetton-minter Tol migration.
+//
+// Policy reference: doc/tos-message-policy.md v6 §3.1 (standard body layout),
+// §5.2 (OP_ERROR body), §5.3 (error_class), and §8.1 (bit-for-bit
+// compatibility for existing TEP-74 formats).
+//
+// Bytecode delta captured at write time:
+//   FunC cells: 11
+//   Tol cells:  9
+//   ratio:      0.82
+//
+// §5.3 error-class assignment table:
+//   FunC line | FunC throw(N) | ErrorClass    | error_code
+//   65        | throw(73)     | Authorization | 1097
+//   80        | throw(74)     | Authorization | 1098
+//   99        | throw(73)     | Authorization | 1097
+//   106       | throw(73)     | Authorization | 1097
+//   111       | throw(0xffff) | Protocol      | 65535
+//
+// Compatibility note: the FunC reference stores several Jetton fields as
+// MsgAddress slices, not MsgAddressInt. This migration keeps those as
+// `any_address` and preserves the original hand-packed outbound layout for
+// mint/excesses sends. Replacing those sends with createMessage()
+// would narrow `response_address` to `address` and alter §8.1 behaviour for
+// non-internal MsgAddress values.
+// =============================================================================
+
+import "@stdlib/common"
+
+const OP_MINT = 0x00000015
+const OP_CHANGE_ADMIN = 0x00000003
+const OP_CHANGE_CONTENT = 0x00000004
+const OP_EXCESSES = 0xd53276db
+const OP_BURN_NOTIFICATION = 0x7bdd97de
+
+const FUNC_THROW_ADMIN_REQUIRED = 73
+const FUNC_THROW_BURN_SENDER_NOT_WALLET = 74
+const FUNC_THROW_UNKNOWN_OPCODE = 0xffff
+
+const JETTON_ERROR_ADMIN_REQUIRED = 1097
+const JETTON_ERROR_BURN_SENDER_NOT_WALLET = 1098
+const JETTON_ERROR_UNKNOWN_OPCODE = 65535
+
+struct JettonMinterStorage {
+    totalSupply: coins;
+    adminAddress: any_address;
+    content: cell;
+    jettonWalletCode: cell;
+}
+
+struct (0x00000015) MintRequest {
+    queryId: uint64;
+    toAddress: any_address;
+    amount: coins;
+    masterMsg: cell;
+}
+
+@overflow1023_policy("suppress")
+struct (0x7bdd97de) BurnNotification {
+    queryId: uint64;
+    jettonAmount: coins;
+    fromAddress: any_address;
+    responseAddress: any_address;
+}
+
+struct (0x00000003) ChangeAdmin {
+    queryId: uint64;
+    newAdminAddress: any_address;
+}
+
+struct (0x00000004) ChangeContent {
+    queryId: uint64;
+    newContent: cell;
+}
+
+struct (0xd53276db) Excesses {
+    queryId: uint64;
+}
+
+@pure
+fun currentAddress(): address
+    asm "MYADDR";
+
+@pure
+fun currentData(): cell
+    asm "c4 PUSH";
+
+fun setCurrentData(data: cell): void
+    asm "c4 POP";
+
+@inline
+fun loadData(): JettonMinterStorage {
+    return JettonMinterStorage.fromCell(currentData());
+}
+
+@inline
+fun saveData(storage: JettonMinterStorage): void {
+    setCurrentData(storage.toCell());
+}
+
+@pure
+fun sameInternalAndAnyAddressBits(a: address, b: any_address): bool {
+    return (a as slice).bitsEqual(b as slice);
+}
+
+@pure
+fun packJettonWalletData(
+    balance: coins,
+    ownerAddress: any_address,
+    jettonMasterAddress: address,
+    jettonWalletCode: cell
+): cell {
+    return beginCell()
+        .storeCoins(balance)
+        .storeAddressAny(ownerAddress)
+        .storeAddress(jettonMasterAddress)
+        .storeRef(jettonWalletCode)
+        .endCell();
+}
+
+@pure
+fun calculateJettonWalletStateInit(
+    ownerAddress: any_address,
+    jettonMasterAddress: address,
+    jettonWalletCode: cell
+): cell {
+    return beginCell()
+        .storeUint(0, 2)
+        .storeDict(jettonWalletCode)
+        .storeDict(packJettonWalletData(0, ownerAddress, jettonMasterAddress, jettonWalletCode))
+        .storeUint(0, 1)
+        .endCell();
+}
+
+fun calculateJettonWalletAddress(stateInit: cell): address {
+    return address.fromWorkchainAndHash(BASECHAIN, stateInit.hash());
+}
+
+fun calculateUserJettonWalletAddress(
+    ownerAddress: any_address,
+    jettonMasterAddress: address,
+    jettonWalletCode: cell
+): address {
+    return calculateJettonWalletAddress(
+        calculateJettonWalletStateInit(ownerAddress, jettonMasterAddress, jettonWalletCode)
+    );
+}
+
+@pure
+fun jettonMinterErrorForThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    if (funcThrow == FUNC_THROW_ADMIN_REQUIRED) {
+        return Error {
+            queryId,
+            originalOp,
+            errorClass: ErrorClass.Authorization,
+            errorCode: JETTON_ERROR_ADMIN_REQUIRED,
+            diagnostic: null,
+        };
+    }
+    if (funcThrow == FUNC_THROW_BURN_SENDER_NOT_WALLET) {
+        return Error {
+            queryId,
+            originalOp,
+            errorClass: ErrorClass.Authorization,
+            errorCode: JETTON_ERROR_BURN_SENDER_NOT_WALLET,
+            diagnostic: null,
+        };
+    }
+    return Error {
+        queryId,
+        originalOp,
+        errorClass: ErrorClass.Protocol,
+        errorCode: JETTON_ERROR_UNKNOWN_OPCODE,
+        diagnostic: null,
+    };
+}
+
+fun mintTokens(
+    toAddress: any_address,
+    jettonWalletCode: cell,
+    amount: coins,
+    masterMsg: cell
+): void {
+    val stateInit = calculateJettonWalletStateInit(
+        toAddress,
+        currentAddress(),
+        jettonWalletCode
+    );
+    val toWalletAddress = calculateJettonWalletAddress(stateInit);
+    val msg = beginCell()
+        .storeUint(0x18, 6)
+        .storeAddress(toWalletAddress)
+        .storeCoins(amount)
+        .storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .storeRef(stateInit)
+        .storeRef(masterMsg)
+        .endCell();
+    sendRawMessage(msg, SEND_MODE_PAY_FEES_SEPARATELY);
+}
+
+@pure
+fun buildExcessesMessage(responseAddress: any_address, queryId: uint64): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddressAny(responseAddress)
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(OP_EXCESSES, 32)
+        .storeUint(queryId, 64)
+        .endCell();
+}
+
+fun sendExcesses(responseAddress: any_address, queryId: uint64): void {
+    sendRawMessage(
+        buildExcessesMessage(responseAddress, queryId),
+        SEND_MODE_IGNORE_ERRORS + SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
+    );
+}
+
+fun onBouncedMessage(in: InMessageBounced) {
+    return;
+}
+
+fun onInternalMessage(in: InMessage) {
+    if (in.body.isEmpty()) {
+        return;
+    }
+
+    var header = in.body;
+    val op = header.loadUint(32);
+    val queryId = header.loadUint(64);
+
+    val storage = loadData();
+
+    if (op == OP_MINT) {
+        disclaim_query_id();
+        if (!sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress)) {
+            throw FUNC_THROW_ADMIN_REQUIRED;
+        }
+        val msg = lazy MintRequest.fromSlice(in.body);
+        var masterMsgBody = msg.masterMsg.beginParse();
+        masterMsgBody.skipBits(32 + 64);
+        val jettonAmount = masterMsgBody.loadCoins();
+        mintTokens(msg.toAddress, storage.jettonWalletCode, msg.amount, msg.masterMsg);
+        saveData({
+            totalSupply: storage.totalSupply + jettonAmount,
+            adminAddress: storage.adminAddress,
+            content: storage.content,
+            jettonWalletCode: storage.jettonWalletCode,
+        });
+        return;
+    }
+
+    if (op == OP_BURN_NOTIFICATION) {
+        var body = in.body;
+        body.skipBits(32 + 64);
+        val jettonAmount = body.loadCoins();
+        val fromAddress = body.loadAddressAny();
+        val expectedWallet = calculateUserJettonWalletAddress(
+            fromAddress,
+            currentAddress(),
+            storage.jettonWalletCode
+        );
+        if (expectedWallet != in.senderAddress) {
+            throw FUNC_THROW_BURN_SENDER_NOT_WALLET;
+        }
+        saveData({
+            totalSupply: storage.totalSupply - jettonAmount,
+            adminAddress: storage.adminAddress,
+            content: storage.content,
+            jettonWalletCode: storage.jettonWalletCode,
+        });
+        val responseAddress = body.loadAddressAny();
+        if (!responseAddress.isNone()) {
+            sendExcesses(responseAddress, queryId);
+        }
+        return;
+    }
+
+    if (op == OP_CHANGE_ADMIN) {
+        disclaim_query_id();
+        if (!sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress)) {
+            throw FUNC_THROW_ADMIN_REQUIRED;
+        }
+        val msg = lazy ChangeAdmin.fromSlice(in.body);
+        saveData({
+            totalSupply: storage.totalSupply,
+            adminAddress: msg.newAdminAddress,
+            content: storage.content,
+            jettonWalletCode: storage.jettonWalletCode,
+        });
+        return;
+    }
+
+    if (op == OP_CHANGE_CONTENT) {
+        disclaim_query_id();
+        if (!sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress)) {
+            throw FUNC_THROW_ADMIN_REQUIRED;
+        }
+        val msg = lazy ChangeContent.fromSlice(in.body);
+        saveData({
+            totalSupply: storage.totalSupply,
+            adminAddress: storage.adminAddress,
+            content: msg.newContent,
+            jettonWalletCode: storage.jettonWalletCode,
+        });
+        return;
+    }
+
+    throw FUNC_THROW_UNKNOWN_OPCODE;
+}
+
+get fun get_jetton_data(): (coins, int, any_address, cell, cell) {
+    val storage = loadData();
+    return (
+        storage.totalSupply,
+        -1,
+        storage.adminAddress,
+        storage.content,
+        storage.jettonWalletCode,
+    );
+}
+
+get fun get_wallet_address(ownerAddress: any_address): address {
+    val storage = loadData();
+    return calculateUserJettonWalletAddress(
+        ownerAddress,
+        currentAddress(),
+        storage.jettonWalletCode
+    );
+}

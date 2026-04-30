@@ -1,0 +1,99 @@
+import "../../crypto/smartcont/jetton-minter"
+
+fun addr1(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun addr2(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+@method_id(101)
+fun test_mint_body_shape(): int {
+    val masterMsg = beginCell()
+        .storeUint(0x178d4519, 32)
+        .storeUint(777, 64)
+        .storeCoins(5000)
+        .endCell();
+    val body = beginCell()
+        .storeUint(OP_MINT, 32)
+        .storeUint(123, 64)
+        .storeAddress(addr1())
+        .storeCoins(9000)
+        .storeRef(masterMsg)
+        .endCell();
+
+    val msg = lazy MintRequest.fromSlice(body.beginParse());
+    assert (msg.queryId == 123) throw 101;
+    assert (sameInternalAndAnyAddressBits(addr1(), msg.toAddress)) throw 102;
+    assert (msg.amount == 9000) throw 103;
+
+    var masterBody = msg.masterMsg.beginParse();
+    masterBody.skipBits(32 + 64);
+    assert (masterBody.loadCoins() == 5000) throw 104;
+    return 1;
+}
+
+@method_id(102)
+fun test_burn_body_and_excesses_shape(): int {
+    val body = beginCell()
+        .storeUint(OP_BURN_NOTIFICATION, 32)
+        .storeUint(456, 64)
+        .storeCoins(7000)
+        .storeAddress(addr1())
+        .storeAddress(addr2())
+        .endCell();
+
+    val msg = lazy BurnNotification.fromSlice(body.beginParse());
+    assert (msg.queryId == 456) throw 111;
+    assert (msg.jettonAmount == 7000) throw 112;
+    assert (sameInternalAndAnyAddressBits(addr1(), msg.fromAddress)) throw 113;
+    assert (sameInternalAndAnyAddressBits(addr2(), msg.responseAddress)) throw 114;
+
+    val expected = beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(addr2())
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(OP_EXCESSES, 32)
+        .storeUint(456, 64)
+        .endCell();
+    assert (buildExcessesMessage(addr2() as any_address, 456).hash() == expected.hash()) throw 115;
+    return 2;
+}
+
+@method_id(103)
+fun test_change_admin_body_shape(): int {
+    val body = beginCell()
+        .storeUint(OP_CHANGE_ADMIN, 32)
+        .storeUint(789, 64)
+        .storeAddress(addr2())
+        .endCell();
+
+    val msg = lazy ChangeAdmin.fromSlice(body.beginParse());
+    assert (msg.queryId == 789) throw 121;
+    assert (sameInternalAndAnyAddressBits(addr2(), msg.newAdminAddress)) throw 122;
+    return 3;
+}
+
+@method_id(104)
+fun test_change_content_body_shape(): int {
+    val content = beginCell().storeUint(0xc0ffee, 24).endCell();
+    val body = beginCell()
+        .storeUint(OP_CHANGE_CONTENT, 32)
+        .storeUint(987, 64)
+        .storeRef(content)
+        .endCell();
+
+    val msg = lazy ChangeContent.fromSlice(body.beginParse());
+    assert (msg.queryId == 987) throw 131;
+    assert (msg.newContent.hash() == content.hash()) throw 132;
+    return 4;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+ */

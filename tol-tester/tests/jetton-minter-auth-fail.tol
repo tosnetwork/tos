@@ -1,0 +1,28 @@
+import "../../crypto/smartcont/jetton-minter"
+
+@method_id(101)
+fun test_admin_required_error(): int {
+    val err = jettonMinterErrorForThrow(FUNC_THROW_ADMIN_REQUIRED, OP_MINT, 11);
+    assert (err.queryId == 11) throw 101;
+    assert (err.originalOp == OP_MINT) throw 102;
+    assert (err.errorClass == ErrorClass.Authorization) throw 103;
+    return err.errorCode;
+}
+
+@method_id(102)
+fun test_burn_sender_error(): int {
+    val err = jettonMinterErrorForThrow(
+        FUNC_THROW_BURN_SENDER_NOT_WALLET,
+        OP_BURN_NOTIFICATION,
+        12
+    );
+    assert (err.queryId == 12) throw 111;
+    assert (err.originalOp == OP_BURN_NOTIFICATION) throw 112;
+    assert (err.errorClass == ErrorClass.Authorization) throw 113;
+    return err.errorCode;
+}
+
+/**
+@testcase | 101 | | 1097
+@testcase | 102 | | 1098
+ */
