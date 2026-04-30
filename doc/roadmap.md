@@ -346,8 +346,8 @@ are within budget or have a documented justification.
 **Status.** 🚧 In progress as of 2026-04-30. The internal
 contract-author migration playbook exists at
 `doc/tos-message-envelope-migration.md`, drafted from the three
-Stage 3 reference migrations. The external RFC, changelog, and
-release notes have not been published.
+Stage 3 reference migrations in commit `6d9520348`. The external
+RFC, changelog, and release notes have not been published.
 
 **Owners.** Documentation, with the architects from Stage 0.
 
@@ -388,8 +388,8 @@ branch.
       v6 governance refinement in `063f44f4b`.)*
 - [x] `doc/tos-message-envelope-migration.md` exists (Stage 5
       contract-author migration playbook). *(Drafted 2026-04-30
-      from the three Stage 3 migrations; external RFC and release
-      notes remain pending.)*
+      from the three Stage 3 migrations in commit `6d9520348`;
+      external RFC and release notes remain pending.)*
 - [x] The two `extra_flags & 3` magic literals in
       `crypto/block/transaction.cpp:2948,3632` and the
       `BounceMode` literals in `tol/send-message-api.cpp:307-342`
@@ -526,7 +526,7 @@ designed to prevent.
 
 | Slice | Pass / fail criterion |
 |---|---|
-| Slice 1 | All ten checklist items in §5 are checked. |
+| Slice 1 | All nine checklist items in §5 are checked. |
 | Slice 2 | At least one new official reference contract is written from scratch using `contract` / `receive(...)` / `message`, deploys, and passes its test suite. |
 | Slice 3 | A new contract author can produce a working Jetton or NFT in under one hour using `tol new`, the stdlib, and the documentation. |
 | Slice 4 | Bounded postponement is used by at least one shipped contract; traits cover at least three official reference contracts without bytecode regression beyond the Slice 1 budget. |
