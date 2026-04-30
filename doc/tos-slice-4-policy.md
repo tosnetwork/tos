@@ -117,6 +117,11 @@ contract or wire body. Stage 1 is a trust-period implementation only:
 contracts written before Stage 2 hardening are not eligible for the
 official reference package.
 
+Implementation status: complete as of 2026-04-30. The helper surface
+is `@stdlib/postponement`, with focused coverage in
+`tol-tester/tests/slice4-postponement-stdlib-positive.tol`. It remains
+trust-period code until Stage 2 compiler hardening lands.
+
 ### Stage 2 - Postponement compiler hardening
 
 Deliverables:

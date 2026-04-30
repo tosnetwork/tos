@@ -1,0 +1,347 @@
+// Slice 4 bounded postponement helpers.
+tol 1.3
+
+const SLICE4_POSTPONEMENT_THROW_DISABLED = 0x0901
+const SLICE4_POSTPONEMENT_THROW_INVALID_BUDGET = 0x0902
+const SLICE4_POSTPONEMENT_THROW_QUEUE_FULL = 0x0903
+const SLICE4_POSTPONEMENT_THROW_BODY_TOO_LARGE = 0x0904
+const SLICE4_POSTPONEMENT_THROW_DUPLICATE = 0x0905
+const SLICE4_POSTPONEMENT_THROW_MISSING_IDEMPOTENCY_KEY = 0x0906
+const SLICE4_POSTPONEMENT_THROW_NOT_FOUND = 0x0907
+const SLICE4_POSTPONEMENT_THROW_CELL_DEPTH = 0x0908
+
+const SLICE4_POSTPONEMENT_KEY_QUERY_ID = 0
+const SLICE4_POSTPONEMENT_KEY_AUTHOR = 1
+const SLICE4_POSTPONEMENT_SIZE_SCAN_CELLS = 1024
+
+struct PostponementBudget {
+    enabled: bool
+    maxItems: uint16
+    maxBodyBits: uint32
+    maxBodyRefs: uint16
+    maxTotalBodyBits: uint32
+    maxTotalBodyRefs: uint16
+    maxAgeSeconds: uint32
+    maxDrainItems: uint16
+    maxCellDepth: uint16
+}
+
+struct PostponedItemKey {
+    sender: address
+    queryId: uint64?
+    authorKey: uint256?
+}
+
+struct PostponedItemValue {
+    body: cell
+    valueCoins: coins
+    originalForwardFee: coins
+}
+
+struct PostponedItem {
+    nonce: uint64
+    opcode: uint32
+    key: Cell<PostponedItemKey>
+    value: Cell<PostponedItemValue>
+    createdAt: uint32
+    expiresAt: uint32
+    bodyBits: uint16
+    bodyRefs: uint8
+    bodyDepth: uint16
+}
+
+struct PostponedQueue {
+    nextNonce: uint64
+    count: uint16
+    totalBodyBits: uint32
+    totalBodyRefs: uint16
+    lastMeasuredCellDepth: uint16
+    items: map<uint64, PostponedItem>
+    queryIndex: map<uint256, uint64>
+}
+
+fun slice4PostponementBudget(
+    maxItems: uint16,
+    maxBodyBits: uint32,
+    maxBodyRefs: uint16,
+    maxTotalBodyBits: uint32,
+    maxTotalBodyRefs: uint16,
+    maxAgeSeconds: uint32,
+    maxDrainItems: uint16,
+    maxCellDepth: uint16,
+    enabled: bool = true
+): PostponementBudget {
+    return PostponementBudget {
+        enabled,
+        maxItems,
+        maxBodyBits,
+        maxBodyRefs,
+        maxTotalBodyBits,
+        maxTotalBodyRefs,
+        maxAgeSeconds,
+        maxDrainItems,
+        maxCellDepth,
+    };
+}
+
+fun slice4NewPostponedQueue(): PostponedQueue {
+    return PostponedQueue {
+        nextNonce: 0,
+        count: 0,
+        totalBodyBits: 0,
+        totalBodyRefs: 0,
+        lastMeasuredCellDepth: 0,
+        items: createEmptyMap<uint64, PostponedItem>(),
+        queryIndex: createEmptyMap<uint256, uint64>(),
+    };
+}
+
+fun PostponementBudget.requireEnabled(self): void {
+    if (!self.enabled) {
+        throw SLICE4_POSTPONEMENT_THROW_DISABLED;
+    }
+    if (
+        self.maxItems == 0 ||
+        self.maxAgeSeconds == 0 ||
+        self.maxDrainItems == 0 ||
+        self.maxCellDepth == 0
+    ) {
+        throw SLICE4_POSTPONEMENT_THROW_INVALID_BUDGET;
+    }
+}
+
+fun slice4PostponementKeyHash(
+    sender: address,
+    opcode: uint32,
+    queryId: uint64?,
+    authorKey: uint256?
+): uint256 {
+    var b = beginCell()
+        .storeAddress(sender)
+        .storeUint(opcode, 32);
+    if (queryId != null) {
+        b.storeUint(SLICE4_POSTPONEMENT_KEY_QUERY_ID, 1)
+            .storeUint(queryId!, 64);
+    } else {
+        if (authorKey == null) {
+            throw SLICE4_POSTPONEMENT_THROW_MISSING_IDEMPOTENCY_KEY;
+        }
+        b.storeUint(SLICE4_POSTPONEMENT_KEY_AUTHOR, 1)
+            .storeUint(authorKey!, 256);
+    }
+    return b.hash();
+}
+
+fun slice4BuildPostponedItem(
+    nonce: uint64,
+    sender: address,
+    opcode: uint32,
+    queryId: uint64?,
+    authorKey: uint256?,
+    body: cell,
+    valueCoins: coins,
+    originalForwardFee: coins,
+    createdAt: uint32,
+    expiresAt: uint32
+): PostponedItem {
+    val (_, bodyBits, bodyRefs, ok) = body.calculateSize(SLICE4_POSTPONEMENT_SIZE_SCAN_CELLS);
+    if (!ok) {
+        throw SLICE4_POSTPONEMENT_THROW_BODY_TOO_LARGE;
+    }
+    return PostponedItem {
+        nonce,
+        opcode,
+        key: PostponedItemKey { sender, queryId, authorKey }.toCell(),
+        value: PostponedItemValue { body, valueCoins, originalForwardFee }.toCell(),
+        createdAt,
+        expiresAt,
+        bodyBits,
+        bodyRefs,
+        bodyDepth: body.depth(),
+    };
+}
+
+fun PostponedItem.sender(self): address {
+    val key = lazy PostponedItemKey.fromCell(self.key);
+    return key.sender;
+}
+
+fun PostponedItem.queryId(self): uint64? {
+    val key = lazy PostponedItemKey.fromCell(self.key);
+    return key.queryId;
+}
+
+fun PostponedItem.authorKey(self): uint256? {
+    val key = lazy PostponedItemKey.fromCell(self.key);
+    return key.authorKey;
+}
+
+fun PostponedItem.body(self): cell {
+    val value = lazy PostponedItemValue.fromCell(self.value);
+    return value.body;
+}
+
+fun PostponedItem.valueCoins(self): coins {
+    val value = lazy PostponedItemValue.fromCell(self.value);
+    return value.valueCoins;
+}
+
+fun PostponedItem.originalForwardFee(self): coins {
+    val value = lazy PostponedItemValue.fromCell(self.value);
+    return value.originalForwardFee;
+}
+
+fun PostponedItem.keyHash(self): uint256 {
+    return slice4PostponementKeyHash(self.sender(), self.opcode, self.queryId(), self.authorKey());
+}
+
+fun PostponedItem.isExpired(self, now: uint32): bool {
+    return self.expiresAt <= now;
+}
+
+fun PostponedQueue.isEmpty(self): bool {
+    return self.count == 0;
+}
+
+fun PostponedQueue.requireCandidateDepth(self, budget: PostponementBudget): uint16 {
+    val depth = self.toCell().depth();
+    if (depth > budget.maxCellDepth) {
+        throw SLICE4_POSTPONEMENT_THROW_CELL_DEPTH;
+    }
+    return depth;
+}
+
+fun PostponedQueue.enqueue(
+    mutate self,
+    budget: PostponementBudget,
+    sender: address,
+    opcode: uint32,
+    queryId: uint64?,
+    authorKey: uint256?,
+    body: cell,
+    valueCoins: coins,
+    originalForwardFee: coins,
+    now: uint32
+): uint64 {
+    budget.requireEnabled();
+    if (self.count >= budget.maxItems) {
+        throw SLICE4_POSTPONEMENT_THROW_QUEUE_FULL;
+    }
+    val keyHash = slice4PostponementKeyHash(sender, opcode, queryId, authorKey);
+    if (self.queryIndex.exists(keyHash)) {
+        throw SLICE4_POSTPONEMENT_THROW_DUPLICATE;
+    }
+
+    val nonce = self.nextNonce;
+    val item = slice4BuildPostponedItem(
+        nonce,
+        sender,
+        opcode,
+        queryId,
+        authorKey,
+        body,
+        valueCoins,
+        originalForwardFee,
+        now,
+        now + budget.maxAgeSeconds
+    );
+    if (
+        item.bodyBits > budget.maxBodyBits ||
+        item.bodyRefs > budget.maxBodyRefs ||
+        item.bodyDepth > budget.maxCellDepth ||
+        self.totalBodyBits + item.bodyBits > budget.maxTotalBodyBits ||
+        self.totalBodyRefs + item.bodyRefs > budget.maxTotalBodyRefs
+    ) {
+        throw SLICE4_POSTPONEMENT_THROW_BODY_TOO_LARGE;
+    }
+
+    var next = self;
+    next.items.set(nonce, item);
+    next.queryIndex.set(keyHash, nonce);
+    next.nextNonce += 1;
+    next.count += 1;
+    next.totalBodyBits += item.bodyBits;
+    next.totalBodyRefs += item.bodyRefs;
+    next.lastMeasuredCellDepth = next.requireCandidateDepth(budget);
+    self = next;
+    return nonce;
+}
+
+fun PostponedQueue.enqueueWithQueryId(
+    mutate self,
+    budget: PostponementBudget,
+    sender: address,
+    opcode: uint32,
+    queryId: uint64,
+    body: cell,
+    valueCoins: coins,
+    originalForwardFee: coins,
+    now: uint32
+): uint64 {
+    return self.enqueue(budget, sender, opcode, queryId, null, body, valueCoins, originalForwardFee, now);
+}
+
+fun PostponedQueue.enqueueWithAuthorKey(
+    mutate self,
+    budget: PostponementBudget,
+    sender: address,
+    opcode: uint32,
+    authorKey: uint256,
+    body: cell,
+    valueCoins: coins,
+    originalForwardFee: coins,
+    now: uint32
+): uint64 {
+    return self.enqueue(budget, sender, opcode, null, authorKey, body, valueCoins, originalForwardFee, now);
+}
+
+fun PostponedQueue.dropNonce(mutate self, nonce: uint64): PostponedItem {
+    val deleted = self.items.deleteAndGetDeleted(nonce);
+    if (!deleted.isFound) {
+        throw SLICE4_POSTPONEMENT_THROW_NOT_FOUND;
+    }
+    val item = deleted.loadValue();
+    self.queryIndex.delete(item.keyHash());
+    self.count -= 1;
+    self.totalBodyBits -= item.bodyBits;
+    self.totalBodyRefs -= item.bodyRefs;
+    return item;
+}
+
+fun PostponedQueue.peekFirst(self): PostponedItem? {
+    val entry = self.items.findFirst();
+    return entry.isFound ? entry.loadValue() : null;
+}
+
+fun PostponedQueue.expireFirst(mutate self, now: uint32): bool {
+    val item = self.peekFirst();
+    if (item == null || !item!.isExpired(now)) {
+        return false;
+    }
+    self.dropNonce(item!.nonce);
+    return true;
+}
+
+fun PostponedQueue.drain(
+    mutate self,
+    budget: PostponementBudget,
+    now: uint32,
+    callback: (PostponedItem) -> void
+): uint16 {
+    budget.requireEnabled();
+    var touched: uint16 = 0;
+    while (touched < budget.maxDrainItems) {
+        val item = self.peekFirst();
+        if (item == null) {
+            return touched;
+        }
+        if (item!.isExpired(now)) {
+            self.dropNonce(item!.nonce);
+        } else {
+            callback(item!);
+            self.dropNonce(item!.nonce);
+        }
+        touched += 1;
+    }
+    return touched;
+}

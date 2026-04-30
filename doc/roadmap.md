@@ -772,29 +772,36 @@ Deliver bounded postponement (`actor.md` §5.9) and trait-based
 behaviour patterns (§6.5). These are language-and-stdlib slices
 with limited protocol exposure.
 
-**Status.** 🚧 Started 2026-04-30. Stage 0 draft policy work has
+**Status.** 🚧 In implementation 2026-04-30. Stage 0 policy work has
 landed in [`doc/tos-postponement-policy.md`](tos-postponement-policy.md)
 and [`doc/tos-slice-4-policy.md`](tos-slice-4-policy.md), with the
 initial behaviour-manifest schema at
 [`doc/slice-4-behaviour-manifest-schema.json`](slice-4-behaviour-manifest-schema.json).
 Draft v1.1 closes the first security-review findings on schema
 constraints, callback failure semantics, zero-capacity queues, optional
-`query_id` replay keys, and cell-depth budgeting. The Stage 0 documents
-intentionally do not approve protocol activation: they define the
-resource model that must be signed off before stdlib or compiler
-implementation begins.
+`query_id` replay keys, and cell-depth budgeting. Stage 1 has landed the
+trust-period `@stdlib/postponement` helper surface and focused
+tol-tester coverage; Stage 2 compiler hardening is still required before
+any postponement contract is eligible for the official reference package.
 
 **Stage plan.**
 
-1. 🚧 **Stage 0 — policy and resource-model lock.** Drafted
+1. ✅ **Stage 0 — policy and resource-model lock.** Completed
    2026-04-30. Defines bounded postponement as explicit contract
    storage, not protocol-mailbox scanning; fixes required budgets
    (`maxItems`, per-body size, total footprint, age, drain bound);
    keeps `ErrorClass.BackPressure` reserved until `actor.md` §5.7; and
    defines trait/behaviour manifests as check-only compiler inputs.
-2. ⬜ **Stage 1 — `@stdlib/postponement` foundation.** Add bounded
-   `PostponedItem` / `PostponedQueue` helpers with enqueue, duplicate
-   detection, FIFO drain, expiry cleanup, accounting, and focused tests.
+2. ✅ **Stage 1 — `@stdlib/postponement` foundation.** Completed
+   2026-04-30. Adds `crypto/smartcont/tol-stdlib/postponement.tol`
+   with `PostponementBudget`, bounded `PostponedItem` /
+   `PostponedQueue` storage, enqueue, duplicate-key detection, FIFO
+   drain, expiry cleanup, explicit drop, and accounting helpers. Focused
+   coverage in `tol-tester/tests/slice4-postponement-stdlib-positive.tol`
+   exercises queue full, duplicate `query_id`, optional `query_id`
+   without an author key, explicit author idempotency keys, oversized
+   bodies, cell-depth budget, expiry, FIFO drain, callback throw
+   preservation, and explicit drop.
 3. ⬜ **Stage 2 — postponement compiler hardening.** Reject direct
    writes to stdlib queue internals in manifest-backed mode, reject
    external-message postponement, require explicit budgets, and warn on
