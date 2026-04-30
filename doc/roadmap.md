@@ -469,7 +469,7 @@ branch.
 - [x] An external RFC has been published with the
       §8.1 zero-wire-change commitment explicitly called out.
       *(Published 2026-04-30 at
-      [`doc/slice-1-rfc.md`](slice-1-rfc.md); commit `TBD-RFC-HASH`.)*
+      [`doc/slice-1-rfc.md`](slice-1-rfc.md); commit `83eb22e71`.)*
 
 **Progress as of 2026-04-30:** 8 of 9 checked. Stage 3 has
 all 3 reference-contract migrations complete (`jetton-minter`,
