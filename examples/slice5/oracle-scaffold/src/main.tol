@@ -1,0 +1,9 @@
+import "@stdlib/oracle"
+
+fun scaffoldPatternId(): int {
+    return slice5OracleManifestHeader().patternId;
+}
+
+fun main(): int {
+    return scaffoldPatternId();
+}

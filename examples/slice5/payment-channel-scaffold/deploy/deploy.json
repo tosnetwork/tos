@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "pattern": "payment-channel",
+  "contract": "PaymentChannelScaffold",
+  "source": "src/main.tol",
+  "network": "local",
+  "state_init": {
+    "code": "build/PaymentChannelScaffold.code.boc",
+    "data": "build/PaymentChannelScaffold.data.boc"
+  }
+}

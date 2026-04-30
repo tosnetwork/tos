@@ -1,0 +1,6 @@
+{
+  "error_codes": [
+    {"name": "SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER", "code": 3329},
+    {"name": "SLICE5_ORACLE_THROW_OUTLIER", "code": 3333}
+  ]
+}

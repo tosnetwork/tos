@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "pattern": "oracle",
+  "contract": "OracleScaffold",
+  "source": "src/main.tol",
+  "network": "local",
+  "state_init": {
+    "code": "build/OracleScaffold.code.boc",
+    "data": "build/OracleScaffold.data.boc"
+  }
+}

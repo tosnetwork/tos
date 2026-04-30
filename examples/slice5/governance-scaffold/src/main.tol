@@ -1,0 +1,9 @@
+import "@stdlib/governance"
+
+fun scaffoldPatternId(): int {
+    return slice5GovernanceManifestHeader().patternId;
+}
+
+fun main(): int {
+    return scaffoldPatternId();
+}

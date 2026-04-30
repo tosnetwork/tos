@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "pattern": "governance",
+  "contract": "GovernanceScaffold",
+  "source": "src/main.tol",
+  "network": "local",
+  "state_init": {
+    "code": "build/GovernanceScaffold.code.boc",
+    "data": "build/GovernanceScaffold.data.boc"
+  }
+}

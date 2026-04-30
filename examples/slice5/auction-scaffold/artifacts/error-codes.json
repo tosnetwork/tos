@@ -1,0 +1,6 @@
+{
+  "error_codes": [
+    {"name": "SLICE5_AUCTION_THROW_LOW_BID", "code": 2817},
+    {"name": "SLICE5_AUCTION_THROW_STALE_CLOSE", "code": 2820}
+  ]
+}

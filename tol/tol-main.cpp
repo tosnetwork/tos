@@ -76,10 +76,10 @@ static struct option long_options[] = {
 void usage(const char* progname) {
   std::cerr
       << "usage: " << progname << " [options] <filename.tol>\n"
-            "       " << progname << " new --pattern <jetton|nft|wallet|multisig> [--name <Name>] [--output <dir>] [--force]\n"
+            "       " << progname << " new --pattern <jetton|nft|wallet|multisig|auction|governance|oracle|payment-channel> [--name <Name>] [--output <dir>] [--force]\n"
             "\tGenerates Fift TVM assembler code from a .tol file\n"
          "new --pattern <name>\n"
-            "\tCreate a Slice 3 stdlib scaffold project for a supported pattern\n"
+            "\tCreate a stdlib scaffold project for a supported pattern\n"
          "-o, --output <fif-filename>\n"
             "\tWrite generated code into specified .fif file instead of stdout\n"
          "--boc-output <boc-filename>\n"
@@ -108,7 +108,14 @@ void usage(const char* progname) {
 }
 
 static bool is_supported_new_pattern(const std::string& pattern) {
-  static const std::set<std::string> supported = {"jetton", "nft", "wallet", "multisig"};
+  static const std::set<std::string> supported = {
+      "jetton", "nft", "wallet", "multisig",
+      "auction", "governance", "oracle", "payment-channel"};
+  return supported.count(pattern) != 0;
+}
+
+static bool is_slice5_new_pattern(const std::string& pattern) {
+  static const std::set<std::string> supported = {"auction", "governance", "oracle", "payment-channel"};
   return supported.count(pattern) != 0;
 }
 
@@ -121,6 +128,18 @@ static std::string default_scaffold_name(const std::string& pattern) {
   }
   if (pattern == "wallet") {
     return "WalletScaffold";
+  }
+  if (pattern == "auction") {
+    return "AuctionScaffold";
+  }
+  if (pattern == "governance") {
+    return "GovernanceScaffold";
+  }
+  if (pattern == "oracle") {
+    return "OracleScaffold";
+  }
+  if (pattern == "payment-channel") {
+    return "PaymentChannelScaffold";
   }
   return "MultisigScaffold";
 }
@@ -331,6 +350,54 @@ contract {{NAME}} {
 }
 )TOL";
   }
+  if (pattern == "auction") {
+    return R"TOL(import "@stdlib/auction"
+
+fun scaffoldPatternId(): int {
+    return slice5AuctionManifestHeader().patternId;
+}
+
+fun main(): int {
+    return scaffoldPatternId();
+}
+)TOL";
+  }
+  if (pattern == "governance") {
+    return R"TOL(import "@stdlib/governance"
+
+fun scaffoldPatternId(): int {
+    return slice5GovernanceManifestHeader().patternId;
+}
+
+fun main(): int {
+    return scaffoldPatternId();
+}
+)TOL";
+  }
+  if (pattern == "oracle") {
+    return R"TOL(import "@stdlib/oracle"
+
+fun scaffoldPatternId(): int {
+    return slice5OracleManifestHeader().patternId;
+}
+
+fun main(): int {
+    return scaffoldPatternId();
+}
+)TOL";
+  }
+  if (pattern == "payment-channel") {
+    return R"TOL(import "@stdlib/payment-channel"
+
+fun scaffoldPatternId(): int {
+    return slice5PaymentManifestHeader().patternId;
+}
+
+fun main(): int {
+    return scaffoldPatternId();
+}
+)TOL";
+  }
   return R"TOL(import "@stdlib/multisig"
 
 struct {{NAME}}Storage {
@@ -387,10 +454,11 @@ fun test_scaffold_pattern(): int {
 static std::string scaffold_manifest_template(const std::string& pattern, const std::string& name) {
   return R"JSON({
   "version": 1,
-  "schema": "slice-3-generated-project",
+  "schema": "{{PROJECT_SCHEMA}}",
   "pattern": "{{PATTERN}}",
   "contract": "{{NAME}}",
   "stdlib_import": "@stdlib/{{PATTERN}}",
+  "abi_manifest": "{{ABI_MANIFEST}}",
   "source": "src/main.tol",
   "tests": [
     "tests/{{PATTERN}}-positive.tol"
@@ -419,6 +487,18 @@ static std::string scaffold_behaviour_conformance(const std::string& pattern) {
     mode = "generated";
   } else if (pattern == "multisig") {
     behaviour = "multisig";
+    mode = "generated";
+  } else if (pattern == "auction") {
+    behaviour = "slice5_auction";
+    mode = "generated";
+  } else if (pattern == "governance") {
+    behaviour = "slice5_governance";
+    mode = "generated";
+  } else if (pattern == "oracle") {
+    behaviour = "slice5_oracle";
+    mode = "generated";
+  } else if (pattern == "payment-channel") {
+    behaviour = "slice5_payment_channel";
     mode = "generated";
   }
   return std::string(",\n") +
@@ -480,7 +560,20 @@ static int scaffold_pattern_id(const std::string& pattern) {
   if (pattern == "jetton") return 2;
   if (pattern == "nft") return 3;
   if (pattern == "wallet") return 4;
+  if (pattern == "multisig") return 5;
+  if (pattern == "auction") return 6;
+  if (pattern == "governance") return 7;
+  if (pattern == "oracle") return 8;
+  if (pattern == "payment-channel") return 9;
   return 5;
+}
+
+static std::string scaffold_abi_manifest_path(const std::string& pattern) {
+  if (pattern == "auction") return "doc/slice5-abi-manifests/auction.json";
+  if (pattern == "governance") return "doc/slice5-abi-manifests/governance.json";
+  if (pattern == "oracle") return "doc/slice5-abi-manifests/oracle.json";
+  if (pattern == "payment-channel") return "doc/slice5-abi-manifests/payment_channel.json";
+  return "doc/slice5-abi-manifests/interop_smoke.json";
 }
 
 static std::string scaffold_opcode_map(const std::string& pattern) {
@@ -516,12 +609,69 @@ static std::string scaffold_opcode_map(const std::string& pattern) {
 }
 )JSON";
   }
+  if (pattern == "auction") {
+    return R"JSON({
+  "opcodes": [
+    {"name": "SLICE5_AUCTION_OP_BID", "hex": "0x41554301"},
+    {"name": "SLICE5_AUCTION_OP_CLOSE", "hex": "0x41554302"},
+    {"name": "SLICE5_AUCTION_OP_EXPIRE", "hex": "0x41554303"},
+    {"name": "SLICE5_AUCTION_OP_SETTLE", "hex": "0x41554304"}
+  ]
+}
+)JSON";
+  }
+  if (pattern == "governance") {
+    return R"JSON({
+  "opcodes": [
+    {"name": "SLICE5_GOVERNANCE_OP_PROPOSE", "hex": "0x474f5601"},
+    {"name": "SLICE5_GOVERNANCE_OP_VOTE", "hex": "0x474f5602"},
+    {"name": "SLICE5_GOVERNANCE_OP_EXECUTE", "hex": "0x474f5603"},
+    {"name": "SLICE5_GOVERNANCE_OP_CANCEL", "hex": "0x474f5604"}
+  ]
+}
+)JSON";
+  }
+  if (pattern == "oracle") {
+    return R"JSON({
+  "opcodes": [
+    {"name": "SLICE5_ORACLE_OP_REPORT", "hex": "0x4f524301"},
+    {"name": "SLICE5_ORACLE_OP_FINALIZE", "hex": "0x4f524302"}
+  ]
+}
+)JSON";
+  }
+  if (pattern == "payment-channel") {
+    return R"JSON({
+  "opcodes": [
+    {"name": "SLICE5_PAYMENT_OP_COOPERATIVE_CLOSE", "hex": "0x50434801"},
+    {"name": "SLICE5_PAYMENT_OP_CHALLENGE_CLOSE", "hex": "0x50434802"},
+    {"name": "SLICE5_PAYMENT_OP_SETTLE", "hex": "0x50434803"}
+  ]
+}
+)JSON";
+  }
   return R"JSON({
   "opcodes": [
     {"name": "MULTISIG_SUBMIT", "hex": "0x4d534947"}
   ]
 }
 )JSON";
+}
+
+static std::string scaffold_error_code_map(const std::string& pattern) {
+  if (pattern == "auction") {
+    return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_AUCTION_THROW_LOW_BID\", \"code\": 2817},\n    {\"name\": \"SLICE5_AUCTION_THROW_STALE_CLOSE\", \"code\": 2820}\n  ]\n}\n";
+  }
+  if (pattern == "governance") {
+    return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER\", \"code\": 3073},\n    {\"name\": \"SLICE5_GOVERNANCE_THROW_INVALID_ACTION\", \"code\": 3078}\n  ]\n}\n";
+  }
+  if (pattern == "oracle") {
+    return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER\", \"code\": 3329},\n    {\"name\": \"SLICE5_ORACLE_THROW_OUTLIER\", \"code\": 3333}\n  ]\n}\n";
+  }
+  if (pattern == "payment-channel") {
+    return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_PAYMENT_THROW_SIGNATURE_FAILURE\", \"code\": 3585},\n    {\"name\": \"SLICE5_PAYMENT_THROW_SEQNO_REPLAY\", \"code\": 3586}\n  ]\n}\n";
+  }
+  return "{\n  \"error_codes\": []\n}\n";
 }
 
 static bool materialize_scaffold(const std::string& output_dir, const std::string& pattern, const std::string& name, bool force) {
@@ -537,6 +687,8 @@ static bool materialize_scaffold(const std::string& output_dir, const std::strin
     content = replace_all(std::move(content), "{{NAME}}", name);
     content = replace_all(std::move(content), "{{PATTERN_ID}}", std::to_string(scaffold_pattern_id(pattern)));
     content = replace_all(std::move(content), "{{BEHAVIOUR_CONFORMANCE}}", scaffold_behaviour_conformance(pattern));
+    content = replace_all(std::move(content), "{{PROJECT_SCHEMA}}", is_slice5_new_pattern(pattern) ? "slice-5-generated-project" : "slice-3-generated-project");
+    content = replace_all(std::move(content), "{{ABI_MANIFEST}}", scaffold_abi_manifest_path(pattern));
     return content;
   };
 
@@ -560,7 +712,7 @@ static bool materialize_scaffold(const std::string& output_dir, const std::strin
       {"README.md", fill(scaffold_readme_template(pattern, name))},
       {"artifacts/opcodes.json", scaffold_opcode_map(pattern)},
       {"artifacts/method-ids.json", "{\n  \"method_ids\": []\n}\n"},
-      {"artifacts/error-codes.json", "{\n  \"error_codes\": []\n}\n"},
+      {"artifacts/error-codes.json", scaffold_error_code_map(pattern)},
       {"artifacts/replay-trace.json", fill(scaffold_replay_template(pattern, name))},
   };
 
@@ -573,7 +725,7 @@ static bool materialize_scaffold(const std::string& output_dir, const std::strin
 }
 
 static int tol_new_usage(const char* progname) {
-  std::cerr << "usage: " << progname << " new --pattern <jetton|nft|wallet|multisig> [--name <Name>] [--output <dir>] [--force]\n";
+  std::cerr << "usage: " << progname << " new --pattern <jetton|nft|wallet|multisig|auction|governance|oracle|payment-channel> [--name <Name>] [--output <dir>] [--force]\n";
   return 2;
 }
 
@@ -613,7 +765,7 @@ static int run_new_command(int argc, char* const argv[]) {
     }
   }
   if (!is_supported_new_pattern(pattern)) {
-    std::cerr << "tol new: --pattern must be one of jetton, nft, wallet, multisig\n";
+    std::cerr << "tol new: --pattern must be one of jetton, nft, wallet, multisig, auction, governance, oracle, payment-channel\n";
     return 2;
   }
   if (name.empty()) {

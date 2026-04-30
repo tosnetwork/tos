@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "schema": "slice-3-generated-replay-trace",
+  "pattern": "governance",
+  "contract": "GovernanceScaffold",
+  "cases": [
+    {
+      "name": "compile-and-positive-test",
+      "kind": "tol-tester",
+      "source": "tests/governance-positive.tol",
+      "expected_exit_code": 0
+    }
+  ]
+}

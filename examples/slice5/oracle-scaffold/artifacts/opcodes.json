@@ -1,0 +1,6 @@
+{
+  "opcodes": [
+    {"name": "SLICE5_ORACLE_OP_REPORT", "hex": "0x4f524301"},
+    {"name": "SLICE5_ORACLE_OP_FINALIZE", "hex": "0x4f524302"}
+  ]
+}
