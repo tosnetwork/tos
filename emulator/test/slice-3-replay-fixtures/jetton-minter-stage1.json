@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "schema": "slice-3-replay-fixture",
+  "fixture_id": "jetton-minter-stage1",
+  "contract": {
+    "name": "jetton-minter",
+    "tol_file": "crypto/smartcont/jetton-minter.tol",
+    "compiled_boc": "build/slice1-gas-parity/jetton-minter-tol.boc",
+    "storage_builder": "jetton-minter-third-admin"
+  },
+  "source_baseline": "doc/slice-3-reference-baselines.json",
+  "runner": {
+    "emulator_filter": "Slice3Replay",
+    "tol_tester_patterns": [
+      "jetton-minter"
+    ]
+  },
+  "cases": [
+    {
+      "name": "empty-body-unknown-throw",
+      "kind": "emulator-replay",
+      "initial_c4": {
+        "builder": "jetton-minter-third-admin",
+        "expect_unchanged": true
+      },
+      "inbound": {
+        "body": {
+          "builder": "empty"
+        }
+      },
+      "expected": {
+        "exit_code": 65535,
+        "actions": 0,
+        "max_gas_used": 1000
+      }
+    },
+    {
+      "name": "unknown-opcode-generator",
+      "kind": "deterministic-negative-generator",
+      "initial_c4": {
+        "builder": "jetton-minter-third-admin",
+        "expect_unchanged": true
+      },
+      "inbound": {
+        "body": {
+          "builder": "unknown-opcode-envelope",
+          "generator": {
+            "name": "splitmix64-unknown-opcode",
+            "seed": 81985529216486895,
+            "count": 8
+          }
+        }
+      },
+      "expected": {
+        "exit_code": 65535,
+        "actions": 0,
+        "max_gas_used": 2000
+      }
+    }
+  ]
+}

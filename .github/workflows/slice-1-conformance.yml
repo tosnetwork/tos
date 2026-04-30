@@ -9,8 +9,13 @@ on:
       - 'CMakeLists.txt'
       - 'crypto/smartcont/**'
       - 'doc/slice-1-gas-baselines.json'
+      - 'doc/slice-3-reference-baselines.json'
+      - 'doc/slice-3-replay-fixture-schema.json'
       - 'emulator/test/slice-1-*.cpp'
+      - 'emulator/test/slice-3-*.cpp'
+      - 'emulator/test/slice-3-replay-fixtures/**'
       - 'scripts/check-slice-1-gas.py'
+      - 'scripts/check-slice-3-replay-fixtures.py'
       - 'tol/**'
       - 'tol-tester/**'
   push:
@@ -20,8 +25,13 @@ on:
       - 'CMakeLists.txt'
       - 'crypto/smartcont/**'
       - 'doc/slice-1-gas-baselines.json'
+      - 'doc/slice-3-reference-baselines.json'
+      - 'doc/slice-3-replay-fixture-schema.json'
       - 'emulator/test/slice-1-*.cpp'
+      - 'emulator/test/slice-3-*.cpp'
+      - 'emulator/test/slice-3-replay-fixtures/**'
       - 'scripts/check-slice-1-gas.py'
+      - 'scripts/check-slice-3-replay-fixtures.py'
       - 'tol/**'
       - 'tol-tester/**'
   workflow_dispatch:
@@ -103,3 +113,7 @@ jobs:
         run: |
           build/test-emulator 2>&1 | tee /tmp/test-emulator.log
           grep "test(s) passed" /tmp/test-emulator.log
+
+      - name: Run Slice 3 replay fixtures
+        run: |
+          python3 scripts/check-slice-3-replay-fixtures.py --test-emulator build/test-emulator

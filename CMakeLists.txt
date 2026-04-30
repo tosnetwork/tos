@@ -904,7 +904,9 @@ add_executable(test-emulator
         # Slice 1 Stage 4 gas-parity harness (closes doc/slice-1-gas-gap.md
         # §4; reads the .boc files materialized by the
         # slice1_gas_parity_contracts target above).
-        emulator/test/slice-1-stage-4-gas-parity-fixture.cpp)
+        emulator/test/slice-1-stage-4-gas-parity-fixture.cpp
+        # Slice 3 Stage 1 deterministic replay harness (doc/tos-slice-3-policy.md).
+        emulator/test/slice-3-replay-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
 add_dependencies(test-emulator slice1_gas_parity_contracts)
 target_compile_definitions(test-emulator PRIVATE

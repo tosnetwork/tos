@@ -134,6 +134,17 @@ contract-level checks in `tol-tester`, but use emulator replay for
 message/value/bounce/gas assertions. Do not require a live devnet for
 the Stage 1 gate.
 
+Implementation status: complete as of 2026-04-30. The replay schema
+is checked in at `doc/slice-3-replay-fixture-schema.json`; the first
+fixture is
+`emulator/test/slice-3-replay-fixtures/jetton-minter-stage1.json`;
+`scripts/check-slice-3-replay-fixtures.py` is the CI entrypoint; and
+`emulator/test/slice-3-replay-fixture.cpp` replays the fixture against
+the compiled Slice 2 `jetton-minter.tol` BoC through `test-emulator`.
+The first deterministic negative generator is
+`splitmix64-unknown-opcode`, with its seed and case count recorded in
+the fixture.
+
 Exit criterion: at least one existing Slice 2 reference contract has a
 checked-in replay fixture and one deterministic negative generator.
 
@@ -312,7 +323,6 @@ writing the RFC and the corrective rule now present in the text.
 
 Open issues intentionally left for implementation design:
 
-- The exact replay fixture file extension and schema name.
 - Whether stdlib pattern modules are directories with `init.tol` files or
   flat `.tol` files under `tol-stdlib/`.
 - The concrete representation of the stdlib query/reply pending table.

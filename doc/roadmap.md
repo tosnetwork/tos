@@ -656,7 +656,7 @@ three Slice 1 reference contracts.
     query/reply receiver and a non-query receiver can coexist in the
     same contract without a contract-wide query-id preflight.
 
-### Slice 3 — Q3 + Q4, weeks 53–78 (six months) 📝 Planned
+### Slice 3 — Q3 + Q4, weeks 53–78 (six months) 🚧 In progress
 
 Deliver `tol.md` Q3 (domain stdlib: jetton, NFT, ownable, wallet,
 multisig) and Q4 (full §5.5 exhaustiveness, stronger request/reply
@@ -667,13 +667,17 @@ reference contracts are already written in high-level `contract` /
 dogfoods the new stdlib patterns without changing wire bytes or
 breaking the gas budget.
 
-**Status.** ✅ Stage 0 complete as of 2026-04-30. The Slice 3 policy
-RFC and stage plan live at
+**Status.** 🚧 Stage 1 complete as of 2026-04-30; Stage 2 is the active
+implementation gate. The Slice 3 policy RFC and stage plan live at
 [`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md) and are approved.
 The machine-readable Stage 0 baseline capture lives at
 [`doc/slice-3-reference-baselines.json`](slice-3-reference-baselines.json).
-Implementation now moves to Stage 1: deterministic property/replay
-harness.
+The deterministic replay/property substrate is now checked in via
+`doc/slice-3-replay-fixture-schema.json`,
+`emulator/test/slice-3-replay-fixtures/jetton-minter-stage1.json`,
+`emulator/test/slice-3-replay-fixture.cpp`, and
+`scripts/check-slice-3-replay-fixtures.py`. Implementation now moves to
+Stage 2: stdlib foundation and package shape.
 
 **Stage plan.**
 
@@ -682,11 +686,13 @@ harness.
    reference-contract bytecode/gas/opcode/method-id/error-code
    baselines in `doc/slice-3-reference-baselines.json`, and fixed the
    first two vertical stdlib targets: Jetton first, NFT second.
-2. 📝 **Stage 1 — deterministic property/replay harness.** Define the
-   replay fixture schema, choose the hybrid `tol-tester` +
-   `test-emulator` substrate, add deterministic generators, and wire
-   the harness into CI before stdlib pattern code depends on it.
-3. ⬜ **Stage 2 — stdlib foundation and package shape.** Add stable
+2. ✅ **Stage 1 — deterministic property/replay harness.** Completed
+   2026-04-30. Defines the replay fixture schema, uses the approved
+   hybrid `tol-tester` + `test-emulator` substrate, adds a
+   `jetton-minter` replay fixture plus a deterministic
+   `splitmix64-unknown-opcode` negative generator, and wires the
+   harness into CI.
+3. 📝 **Stage 2 — stdlib foundation and package shape.** Add stable
    package layout under `crypto/smartcont/tol-stdlib/` for
    `ownable`, `jetton`, `nft`, `wallet`, and `multisig`; add shared
    helpers for ownership, raw replies, `OP_ERROR`, query/reply table
@@ -856,11 +862,10 @@ before the corresponding slice can start.
   budget per stdlib pattern. Pattern designs that exceed it must
   be trimmed before shipping; this can require iterating with the
   contract team mid-stage.
-- *Replay/property substrate:* Now the active Slice 3 Stage 1 gate in
-  `doc/tos-slice-3-policy.md`. The approved substrate is hybrid: fast
-  deterministic Tol checks plus emulator replay for message/value/
-  bounce/gas assertions. This must land before stdlib vertical slices
-  depend on it.
+- *Replay/property substrate:* Closed in Slice 3 Stage 1. The approved
+  hybrid substrate now has a schema, JSON fixture directory, runner
+  script, CI wiring, and first `jetton-minter` emulator replay fixture
+  with a deterministic negative generator.
 - *Stronger `query_id` analysis:* Now scheduled as Slice 3 Stage 7.
   The implementation path is stdlib-manifest-backed checking of the
   `(expected_responder, query_id)` table, with optional
@@ -952,10 +957,9 @@ Sorted by how many later slices each item blocks:
    `doc/tos-language-syntax-policy.md` Draft v3 and the Stage 1
    implementation commit `081f05d3c`; see §6 Slice 2 status and
    §11.5.
-3. **Slice 3 Stage 1 replay harness** — Stage 0 is approved and the
-   reference baseline file is checked in. The immediate next engineering
-   gate is the deterministic replay/property harness; stdlib pattern
-   implementation should not start until this substrate exists.
+3. ✅ **Slice 3 Stage 1 replay harness** — closed 2026-04-30. The
+   deterministic replay/property substrate is checked in and CI-wired;
+   stdlib pattern implementation can start.
 4. **`actor.md` §5.4 capability public RFC** — Slice 6 long-pole.
    Needs protocol architect time, not engineering capacity. The
    earlier this enters RFC review, the lower the schedule risk
@@ -968,9 +972,8 @@ Sorted by how many later slices each item blocks:
    generated manifests, opcode maps, method-id maps, error-code maps,
    and replay traces.
 
-Item 1 should be in motion before Slice 4 design starts. Item 2 is
-closed. Item 3 is the immediate Slice 3 engineering gate. Items 4–5
-should be in motion before Slice 3 ships.
+Item 1 should be in motion before Slice 4 design starts. Items 2, 3,
+and 6 are closed. Items 4–5 should be in motion before Slice 3 ships.
 
 (The earlier four-signer approval item from this list was
 removed when policy v6 made single-signer the rule; see §11.3.)
@@ -1006,8 +1009,24 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   reference-contract bytecode/gas/opcode/method-id/error-code and
   wallet-v5 external-body baselines. Implementation remains gated on
   the Stage 1 replay/property harness before stdlib pattern work starts.
+- ✅ **Slice 3 Stage 1 deterministic replay/property harness** —
+  closed 2026-04-30. The schema
+  `doc/slice-3-replay-fixture-schema.json`, first fixture
+  `emulator/test/slice-3-replay-fixtures/jetton-minter-stage1.json`,
+  runner `scripts/check-slice-3-replay-fixtures.py`, and emulator
+  fixture `emulator/test/slice-3-replay-fixture.cpp` are checked in and
+  CI-wired. The first deterministic negative generator is
+  `splitmix64-unknown-opcode`.
 
 ## 12. Revision notes
+
+### r11 (Slice 3 Stage 1 replay harness)
+
+- §6 Slice 3 now marks Stage 1 complete and Stage 2 active.
+- Added the deterministic replay fixture schema, first `jetton-minter`
+  replay fixture, runner script, and emulator replay fixture.
+- §11.2 / §11.4 / §11.5 now close the replay/property substrate blocker
+  before stdlib foundation work begins.
 
 ### r10 (Slice 3 Stage 0 approved)
 
