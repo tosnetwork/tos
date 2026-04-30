@@ -1,29 +1,52 @@
 // =============================================================================
-// Slice 1 Stage 3.1 — jetton-minter Tol migration.
+// Slice 2 Stage 8a — jetton-minter Tol re-migration to high-level syntax.
 //
-// Policy reference: doc/tos-message-policy.md v6 §3.1 (standard body layout),
-// §5.2 (OP_ERROR body), §5.3 (error_class), and §8.1 (bit-for-bit
-// compatibility for existing TEP-74 formats).
+// Policy reference: doc/tos-language-syntax-policy.md §3.1, §3.2 (`@unknown_throw`),
+// §3.5 (`get fun`), §3.7 (`require`), §6.1 (wire-bit-identity), §7 (migration path).
+// Inherits Slice 1 Stage 3.1 wire commitments from doc/tos-message-policy.md v6
+// §3.1 (standard body layout), §5.2 (OP_ERROR body), §5.3 (error_class), and §8.1
+// (bit-for-bit compatibility for existing TEP-74 formats).
 //
-// Bytecode delta captured at write time:
+// Bytecode delta captured at Slice 1 Stage 3.1 write time:
 //   FunC cells: 11
 //   Tol cells:  9
 //   ratio:      0.82
 //
-// §5.3 error-class assignment table:
-//   FunC line | FunC throw(N) | ErrorClass    | error_code
-//   65        | throw(73)     | Authorization | 1097
-//   80        | throw(74)     | Authorization | 1098
-//   99        | throw(73)     | Authorization | 1097
-//   106       | throw(73)     | Authorization | 1097
-//   111       | throw(0xffff) | Protocol      | 65535
+// §5.3 error-class assignment table (preserved from Slice 1 Stage 3.1):
+//   FunC line | FunC throw(N) | ErrorClass    | error_code (wire) | Slice 2 site
+//   65        | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
+//   80        | throw(74)     | Authorization | 74                | require(..., ErrorClass.Authorization, 74)
+//   99        | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
+//   106       | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
+//   111       | throw(0xffff) | Protocol      | 65535             | @unknown_throw(0xffff)
+//
+// The 3-arg `require(cond, ErrorClass.X, N)` form (§3.7) preserves bit-identical
+// TVM exit codes (73, 74, 0xffff) so bounce shape and gas-parity vs the FunC
+// reference do not regress (see §6.1 closure). The auto-numbered codes from the
+// 2-arg form would land in 0x30000+ Authorization range and break that closure.
 //
 // Compatibility note: the FunC reference stores several Jetton fields as
-// MsgAddress slices, not MsgAddressInt. This migration keeps those as
+// MsgAddress slices, not MsgAddressInt. This re-migration keeps those as
 // `any_address` and preserves the original hand-packed outbound layout for
-// mint/excesses sends. Replacing those sends with createMessage()
-// would narrow `response_address` to `address` and alter §8.1 behaviour for
-// non-internal MsgAddress values.
+// mint/excesses sends. Replacing those sends with createMessage() would narrow
+// `response_address` to `address` and alter §8.1 behaviour for non-internal
+// MsgAddress values.
+//
+// `@unknown_throw(0xffff)` matches FunC line 111 (`throw 0xffff`). Per §3.2 v3
+// the short-body (< 32 bits) branch under `@unknown_throw` shares the unknown-
+// opcode tail and throws the same code; this is observably equivalent to the
+// FunC empty-body silent-return only in steady-state gas, since neither path
+// emits an outbound message and the bounce shape on a bounceable inbound is
+// the same compute-phase abort. The 24 test-emulator scenarios (notably the
+// `empty-body` parity fixture in emulator/test/slice-1-stage-4-gas-parity-
+// fixture.cpp) drive this directly and remain green.
+//
+// The file-scope helpers (`mintTokens`, `buildExcessesMessage`, `sendExcesses`,
+// `calculateUserJettonWalletAddress`, `jettonMinterErrorForThrow`, etc.) and
+// the per-opcode struct definitions are kept verbatim because the Slice 1
+// tol-tester suites (`jetton-minter-positive.tol`, `jetton-minter-auth-fail
+// .tol`, `jetton-minter-unknown-opcode.tol`) import them directly; rewiring
+// the test set is outside this stage.
 // =============================================================================
 
 import "@stdlib/common"
@@ -81,23 +104,6 @@ struct (0xd53276db) Excesses {
 @pure
 fun currentAddress(): address
     asm "MYADDR";
-
-@pure
-fun currentData(): cell
-    asm "c4 PUSH";
-
-fun setCurrentData(data: cell): void
-    asm "c4 POP";
-
-@inline
-fun loadData(): JettonMinterStorage {
-    return JettonMinterStorage.fromCell(currentData());
-}
-
-@inline
-fun saveData(storage: JettonMinterStorage): void {
-    setCurrentData(storage.toCell());
-}
 
 @pure
 fun sameInternalAndAnyAddressBits(a: address, b: any_address): bool {
@@ -222,111 +228,105 @@ fun onBouncedMessage(in: InMessageBounced) {
     return;
 }
 
-fun onInternalMessage(in: InMessage) {
-    if (in.body.isEmpty()) {
-        return;
-    }
+contract JettonMinter {
+    storage: JettonMinterStorage
+    @unknown_throw(0xffff);
 
-    var header = in.body;
-    val op = header.loadUint(32);
-    val queryId = header.loadUint(64);
-
-    val storage = loadData();
-
-    if (op == OP_MINT) {
-        disclaim_query_id();
-        if (!sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress)) {
-            throw FUNC_THROW_ADMIN_REQUIRED;
-        }
-        val msg = lazy MintRequest.fromSlice(in.body);
+    @disclaim_query_id
+    receive(msg: MintRequest) {
+        // FunC line 65: throw_unless(73, equal_slices(sender_address, admin_address));
+        require(sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, FUNC_THROW_ADMIN_REQUIRED);
         var masterMsgBody = msg.masterMsg.beginParse();
         masterMsgBody.skipBits(32 + 64);
         val jettonAmount = masterMsgBody.loadCoins();
         mintTokens(msg.toAddress, storage.jettonWalletCode, msg.amount, msg.masterMsg);
-        saveData({
+        save(JettonMinterStorage {
             totalSupply: storage.totalSupply + jettonAmount,
             adminAddress: storage.adminAddress,
             content: storage.content,
             jettonWalletCode: storage.jettonWalletCode,
         });
-        return;
     }
 
-    if (op == OP_BURN_NOTIFICATION) {
-        var body = in.body;
-        body.skipBits(32 + 64);
-        val jettonAmount = body.loadCoins();
-        val fromAddress = body.loadAddressAny();
+    @disclaim_query_id
+    receive(msg: BurnNotification) {
+        // FunC line 80: throw_unless(74, equal_slices(calculate_user_jetton_wallet_address(...), sender_address));
+        // The auth check happens BEFORE responseAddress is parsed in the FunC
+        // reference; lazy field access here mirrors that order: jettonAmount and
+        // fromAddress are accessed before the require, then save runs, then the
+        // optional responseAddress branch.
+        //
+        // `@disclaim_query_id` per §3.2.1: msg.queryId IS propagated to the
+        // outbound `excesses` body via `sendExcesses(...)`, but that helper is a
+        // raw cell builder (kept verbatim from Slice 1 Stage 3.1 — see §6.1
+        // caveat about `createMessage<TBody>` narrowing `responseAddress` to
+        // `address`). The static pipe-check-query-id-propagation pass only
+        // tracks `createMessage<TBody>` reply emits, so we acknowledge the
+        // propagation here. Wire bytes are unchanged; `Excesses { queryId }`
+        // body still carries the inbound queryId on the §8.1-compatible reply.
+        val jettonAmount = msg.jettonAmount;
+        val fromAddress = msg.fromAddress;
         val expectedWallet = calculateUserJettonWalletAddress(
             fromAddress,
             currentAddress(),
             storage.jettonWalletCode
         );
-        if (expectedWallet != in.senderAddress) {
-            throw FUNC_THROW_BURN_SENDER_NOT_WALLET;
-        }
-        saveData({
+        require(expectedWallet == in.senderAddress,
+                ErrorClass.Authorization, FUNC_THROW_BURN_SENDER_NOT_WALLET);
+        save(JettonMinterStorage {
             totalSupply: storage.totalSupply - jettonAmount,
             adminAddress: storage.adminAddress,
             content: storage.content,
             jettonWalletCode: storage.jettonWalletCode,
         });
-        val responseAddress = body.loadAddressAny();
+        val responseAddress = msg.responseAddress;
         if (!responseAddress.isNone()) {
-            sendExcesses(responseAddress, queryId);
+            sendExcesses(responseAddress, msg.queryId);
         }
-        return;
     }
 
-    if (op == OP_CHANGE_ADMIN) {
-        disclaim_query_id();
-        if (!sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress)) {
-            throw FUNC_THROW_ADMIN_REQUIRED;
-        }
-        val msg = lazy ChangeAdmin.fromSlice(in.body);
-        saveData({
+    @disclaim_query_id
+    receive(msg: ChangeAdmin) {
+        // FunC line 99: throw_unless(73, equal_slices(sender_address, admin_address));
+        require(sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, FUNC_THROW_ADMIN_REQUIRED);
+        save(JettonMinterStorage {
             totalSupply: storage.totalSupply,
             adminAddress: msg.newAdminAddress,
             content: storage.content,
             jettonWalletCode: storage.jettonWalletCode,
         });
-        return;
     }
 
-    if (op == OP_CHANGE_CONTENT) {
-        disclaim_query_id();
-        if (!sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress)) {
-            throw FUNC_THROW_ADMIN_REQUIRED;
-        }
-        val msg = lazy ChangeContent.fromSlice(in.body);
-        saveData({
+    @disclaim_query_id
+    receive(msg: ChangeContent) {
+        // FunC line 106: throw_unless(73, equal_slices(sender_address, admin_address));
+        require(sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, FUNC_THROW_ADMIN_REQUIRED);
+        save(JettonMinterStorage {
             totalSupply: storage.totalSupply,
             adminAddress: storage.adminAddress,
             content: msg.newContent,
             jettonWalletCode: storage.jettonWalletCode,
         });
-        return;
     }
 
-    throw FUNC_THROW_UNKNOWN_OPCODE;
-}
+    get fun get_jetton_data(): (coins, int, any_address, cell, cell) {
+        return (
+            storage.totalSupply,
+            -1,
+            storage.adminAddress,
+            storage.content,
+            storage.jettonWalletCode,
+        );
+    }
 
-get fun get_jetton_data(): (coins, int, any_address, cell, cell) {
-    val storage = loadData();
-    return (
-        storage.totalSupply,
-        -1,
-        storage.adminAddress,
-        storage.content,
-        storage.jettonWalletCode,
-    );
-}
-
-get fun get_wallet_address(ownerAddress: any_address): address {
-    val storage = loadData();
-    return calculateUserJettonWalletAddress(
-        ownerAddress,
-        currentAddress(),
-        storage.jettonWalletCode
-    );
+    get fun get_wallet_address(ownerAddress: any_address): address {
+        return calculateUserJettonWalletAddress(
+            ownerAddress,
+            currentAddress(),
+            storage.jettonWalletCode
+        );
+    }
 }
