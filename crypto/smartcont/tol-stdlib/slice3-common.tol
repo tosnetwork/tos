@@ -11,6 +11,8 @@ const SLICE3_PATTERN_MULTISIG = 5
 
 const SLICE3_REPLY_KEY_NO_OPCODE = 0
 const SLICE3_REPLY_KEY_HAS_OPCODE = 1
+const SLICE3_REPLY_THROW_DUPLICATE_REQUEST = 0x0801
+const SLICE3_REPLY_THROW_UNEXPECTED_REPLY = 0x0802
 
 struct Slice3PatternManifestHeader {
     manifestVersion: uint16
@@ -73,4 +75,54 @@ fun slice3PendingReplyKeyHash(
 
 fun slice3NewPendingReplyTable(): Slice3PendingReplyTable {
     return Slice3PendingReplyTable { entries: createEmptyMap() };
+}
+
+fun Slice3PendingReplyTable.reserve(
+    mutate self,
+    expectedResponder: address,
+    queryId: uint64,
+    expectedReplyOpcode: uint32? = null,
+    createdAt: uint32 = 0,
+    expiresAt: uint32 = 0
+): void {
+    val pending = Slice3PendingReply {
+        expectedResponder,
+        queryId,
+        expectedReplyOpcode,
+        createdAt,
+        expiresAt,
+    };
+    val inserted = self.entries.addIfNotExists(
+        slice3PendingReplyKeyHash(expectedResponder, queryId, expectedReplyOpcode),
+        pending
+    );
+    if (!inserted) {
+        throw SLICE3_REPLY_THROW_DUPLICATE_REQUEST;
+    }
+}
+
+fun Slice3PendingReplyTable.consume(
+    mutate self,
+    actualResponder: address,
+    queryId: uint64,
+    expectedReplyOpcode: uint32? = null
+): Slice3PendingReply {
+    val deleted = self.entries.deleteAndGetDeleted(
+        slice3PendingReplyKeyHash(actualResponder, queryId, expectedReplyOpcode)
+    );
+    if (!deleted.isFound) {
+        throw SLICE3_REPLY_THROW_UNEXPECTED_REPLY;
+    }
+    return deleted.loadValue();
+}
+
+fun Slice3PendingReplyTable.ignoreDuplicate(
+    mutate self,
+    actualResponder: address,
+    queryId: uint64,
+    expectedReplyOpcode: uint32? = null
+): bool {
+    return self.entries.delete(
+        slice3PendingReplyKeyHash(actualResponder, queryId, expectedReplyOpcode)
+    );
 }

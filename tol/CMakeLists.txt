@@ -30,9 +30,11 @@ set(TOL_SOURCE
         pipe-check-serialized-fields.cpp
         pipe-check-state-reachability.cpp
         pipe-check-field-scoping.cpp
+        pipe-check-receive-exhaustiveness.cpp
         pipe-lower-contract.cpp
         pipe-assign-require-codes.cpp
         pipe-check-query-id-propagation.cpp
+        pipe-check-slice3-reply-correlation.cpp
         pipe-lazy-load-insertions.cpp
         pipe-transform-on-message.cpp
         pipe-ast-to-legacy.cpp

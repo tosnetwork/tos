@@ -1,0 +1,26 @@
+struct VisibleUnknownStorage {
+    total: uint32;
+}
+
+struct (0x00000073) VisibleUnknownPing {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract VisibleUnknownPolicy {
+    storage: VisibleUnknownStorage
+    @unknown_silent_drop;
+
+    receive(msg: VisibleUnknownPing) {
+        msg.queryId;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+@stderr_avoid has no visible unknown-opcode policy
+ */

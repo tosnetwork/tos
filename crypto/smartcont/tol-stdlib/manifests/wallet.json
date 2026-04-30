@@ -116,6 +116,20 @@
       "type": "dict"
     }
   ],
+  "reply_correlation": {
+    "table_key": [
+      "expected_responder",
+      "query_id",
+      "expected_reply_opcode?"
+    ],
+    "helpers": [
+      "Slice3PendingReplyTable.reserve",
+      "Slice3PendingReplyTable.consume",
+      "Slice3PendingReplyTable.ignoreDuplicate"
+    ],
+    "raw_code_mode": "warning",
+    "manifest_backed_mode": "error"
+  },
   "wire_compatibility_exceptions": [
     "wallet-v5 signed external bodies remain raw and are not forced through the internal Envelope/query_id model",
     "wallet-v5 C5 action validation preserves the legacy action_send_msg chain and external ignore-errors send-mode rule"

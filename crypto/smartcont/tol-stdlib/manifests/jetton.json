@@ -137,6 +137,20 @@
       "type": "cell"
     }
   ],
+  "reply_correlation": {
+    "table_key": [
+      "expected_responder",
+      "query_id",
+      "expected_reply_opcode?"
+    ],
+    "helpers": [
+      "Slice3PendingReplyTable.reserve",
+      "Slice3PendingReplyTable.consume",
+      "Slice3PendingReplyTable.ignoreDuplicate"
+    ],
+    "raw_code_mode": "warning",
+    "manifest_backed_mode": "error"
+  },
   "wire_compatibility_exceptions": [
     "Jetton MsgAddress fields stay any_address and raw builders are preserved instead of createMessage() so external/none MsgAddress values are not narrowed",
     "Duplicate query_id is deterministic at the helper layer; Jetton replay protection is not introduced by Slice 3 Stage 3"

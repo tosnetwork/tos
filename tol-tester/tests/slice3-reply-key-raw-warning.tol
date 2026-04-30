@@ -1,0 +1,15 @@
+import "@stdlib/slice3-common"
+
+fun responder(): address {
+    return address("0:3333333333333333333333333333333333333333333333333333333333333333");
+}
+
+fun main(): int {
+    val key = slice3PendingReplyKeyHash(responder(), 77, null);
+    return (key != 0) as int;
+}
+
+/**
+@testcase | 0 | | -1
+@stderr raw Slice 3 reply-key construction is warning-only for legacy code
+ */

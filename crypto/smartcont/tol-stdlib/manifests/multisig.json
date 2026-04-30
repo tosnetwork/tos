@@ -86,6 +86,20 @@
       "type": "cell?"
     }
   ],
+  "reply_correlation": {
+    "table_key": [
+      "expected_responder",
+      "query_id",
+      "expected_reply_opcode?"
+    ],
+    "helpers": [
+      "Slice3PendingReplyTable.reserve",
+      "Slice3PendingReplyTable.consume",
+      "Slice3PendingReplyTable.ignoreDuplicate"
+    ],
+    "raw_code_mode": "warning",
+    "manifest_backed_mode": "error"
+  },
   "wire_compatibility_exceptions": [
     "Stage 5 multisig is helper-level and manifest-backed; full generated contract/scaffold packaging lands in Stage 6"
   ]

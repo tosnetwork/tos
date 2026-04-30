@@ -1,0 +1,65 @@
+import "@stdlib/slice3-common"
+
+fun responder1(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun responder2(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(101)
+fun test_responder_binding_and_duplicate_reply(): int {
+    var table = slice3NewPendingReplyTable();
+    table.reserve(responder1(), 77, 0x10050001, 1, 100);
+
+    try {
+        table.consume(responder2(), 77, 0x10050001);
+    } catch (code) {
+        assert(code == SLICE3_REPLY_THROW_UNEXPECTED_REPLY) throw 101;
+    }
+
+    val pending = table.consume(responder1(), 77, 0x10050001);
+    assert(pending.expectedResponder == responder1()) throw 102;
+    assert(pending.queryId == 77) throw 103;
+    assert(pending.expectedReplyOpcode != null) throw 104;
+    assert(pending.expectedReplyOpcode! == 0x10050001) throw 105;
+
+    try {
+        table.consume(responder1(), 77, 0x10050001);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(102)
+fun test_duplicate_request_reservation(): int {
+    var table = slice3NewPendingReplyTable();
+    table.reserve(responder1(), 88, null, 1, 100);
+    try {
+        table.reserve(responder1(), 88, null, 1, 100);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(103)
+fun test_ignore_duplicate_reply_policy(): int {
+    var table = slice3NewPendingReplyTable();
+    table.reserve(responder1(), 99, null, 1, 100);
+    assert(table.ignoreDuplicate(responder1(), 99, null)) throw 111;
+    assert(!table.ignoreDuplicate(responder1(), 99, null)) throw 112;
+    return 1;
+}
+
+/**
+@testcase | 101 | | 2050
+@testcase | 102 | | 2049
+@testcase | 103 | | 1
+ */

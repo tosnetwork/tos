@@ -344,6 +344,21 @@ Exit criterion: the Jetton/NFT/wallet/multisig replay suites include at
 least one spoofed-responder test and one duplicate-reply test, and the
 new checker catches the unsafe variant.
 
+Implementation status: complete as of 2026-04-30 for the repo-side
+static-analysis hardening package. `tol/pipe-check-receive-exhaustiveness.cpp`
+runs before contract lowering and warns on implicit unknown-opcode
+policy plus state/message cells that fall through to the synthesized
+state guard. `tol/pipe-check-slice3-reply-correlation.cpp` runs after
+query-id propagation and rejects direct user access to
+`Slice3PendingReplyTable.entries`, forcing manifest-backed reply APIs
+through `Slice3PendingReplyTable.reserve(...)`, `.consume(...)`, or
+`.ignoreDuplicate(...)`. The stdlib table key is
+`(expected_responder, query_id)` with optional `expected_reply_opcode`;
+`consume(...)` deletes the pending reply before returning it, so spoofed
+responders and duplicate replies hit the same rejected missing-key path.
+Raw `slice3PendingReplyKeyHash(...)` construction remains warning-only
+for legacy code.
+
 ### Stage 8 - External author trial and release package
 
 Deliverables:

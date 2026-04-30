@@ -83,6 +83,7 @@ TolCompilationResult tol_proceed(const std::string &entrypoint_filename) {
     pipeline_check_serialized_fields();
     pipeline_check_state_reachability();
     pipeline_check_field_scoping();
+    pipeline_check_receive_exhaustiveness();
     pipeline_lower_contracts();
 
     // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7): rewrite
@@ -100,6 +101,7 @@ TolCompilationResult tol_proceed(const std::string &entrypoint_filename) {
     // The pass uses error_collector.collect() and would NPE if
     // moved past the teardown.
     pipeline_check_query_id_propagation();
+    pipeline_check_slice3_reply_correlation();
 
     // return errors, if any
     if (!error_collector.empty()) {

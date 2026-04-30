@@ -667,7 +667,7 @@ reference contracts are already written in high-level `contract` /
 dogfoods the new stdlib patterns without changing wire bytes or
 breaking the gas budget.
 
-**Status.** 🚧 Stage 6 complete as of 2026-04-30; Stage 7 is the active
+**Status.** 🚧 Stage 7 complete as of 2026-04-30; Stage 8 is the active
 implementation gate. The Slice 3 policy RFC and stage plan live at
 [`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md) and are approved.
 The machine-readable Stage 0 baseline capture lives at
@@ -692,8 +692,10 @@ without changing the raw signed internal/external body model, and added
 `@stdlib/multisig` signer/threshold/replay/action validation helpers
 with focused tests. Stage 6 added `tol new --pattern
 jetton|nft|wallet|multisig`, generated project artifacts, scaffold
-verification, and the task-oriented Slice 3 docs. Implementation now
-moves to Stage 7: Q4 static-analysis hardening.
+verification, and the task-oriented Slice 3 docs. Stage 7 added
+receive-exhaustiveness warnings and manifest-backed reply-correlation
+hardening. Implementation now moves to Stage 8: external author trial
+and release package surrogate.
 
 **Stage plan.**
 
@@ -744,12 +746,15 @@ moves to Stage 7: Q4 static-analysis hardening.
    observability JSON artifacts; `scripts/check-slice-3-scaffold.py`
    verifies all generated patterns. Added task-oriented Tol, Jetton,
    NFT, wallet/multisig, and TVM-for-Solidity docs.
-8. 📝 **Stage 7 — Q4 static-analysis hardening.** Add
-   `pipe-check-receive-exhaustiveness.cpp` and strengthen
-   request/reply analysis around the
-   `(expected_responder, query_id)` table, with warning-first mode for
-   raw code and error mode for manifest-backed stdlib reply APIs.
-9. ⬜ **Stage 8 — external author trial and release package.** Prove
+8. ✅ **Stage 7 — Q4 static-analysis hardening.** Completed
+   2026-04-30. Added `pipe-check-receive-exhaustiveness.cpp` warning
+   coverage for implicit unknown-opcode policy and state/message cells
+   that fall to the synthesized state guard. Added
+   `pipe-check-slice3-reply-correlation.cpp`, manifest-backed
+   `Slice3PendingReplyTable.reserve/consume/ignoreDuplicate` helpers,
+   and tests for spoofed responders, duplicate replies, raw-key warning
+   mode, and direct table-access compile errors.
+9. 📝 **Stage 8 — external author trial and release package.** Prove
    the §9 Slice 3 success criterion with a real author trial, then cut
    release notes, compatibility matrix, and final audit checklist.
 
@@ -896,8 +901,8 @@ before the corresponding slice can start.
   hybrid substrate now has a schema, JSON fixture directory, runner
   script, CI wiring, and first `jetton-minter` emulator replay fixture
   with a deterministic negative generator.
-- *Stronger `query_id` analysis:* Now scheduled as Slice 3 Stage 7.
-  The implementation path is stdlib-manifest-backed checking of the
+- *Stronger `query_id` analysis:* Closed in Slice 3 Stage 7.
+  The implementation is stdlib-manifest-backed checking of the
   `(expected_responder, query_id)` table, with optional
   `expected_reply_opcode` discrimination and warning-first mode for raw
   code.

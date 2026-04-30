@@ -152,6 +152,20 @@
       "type": "cell"
     }
   ],
+  "reply_correlation": {
+    "table_key": [
+      "expected_responder",
+      "query_id",
+      "expected_reply_opcode?"
+    ],
+    "helpers": [
+      "Slice3PendingReplyTable.reserve",
+      "Slice3PendingReplyTable.consume",
+      "Slice3PendingReplyTable.ignoreDuplicate"
+    ],
+    "raw_code_mode": "warning",
+    "manifest_backed_mode": "error"
+  },
   "wire_compatibility_exceptions": [
     "NFT transfer and notification helpers preserve raw MsgAddress values as any_address and keep custom_payload / forward_payload bits explicit instead of routing through createMessage()",
     "Stage 4 ships fixture-level stdlib coverage because there is no pre-existing official Tol NFT reference contract in crypto/smartcont to migrate byte-for-byte"

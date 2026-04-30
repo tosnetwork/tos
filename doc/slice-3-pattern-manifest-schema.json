@@ -14,6 +14,7 @@
     "require_codes",
     "public_errors",
     "storage_fields",
+    "reply_correlation",
     "wire_compatibility_exceptions"
   ],
   "properties": {
@@ -70,6 +71,9 @@
     },
     "storage_fields": {
       "type": "array"
+    },
+    "reply_correlation": {
+      "type": "object"
     },
     "wire_compatibility_exceptions": {
       "type": "array"

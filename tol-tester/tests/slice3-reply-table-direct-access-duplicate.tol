@@ -1,0 +1,11 @@
+import "@stdlib/slice3-common"
+
+fun bad(): int {
+    var table = slice3NewPendingReplyTable();
+    return table.entries.delete(77) as int;
+}
+
+/**
+@compilation_should_fail
+@stderr duplicate-reply consumption
+ */
