@@ -1,0 +1,34 @@
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6): at most one `@deploy` receiver
+// per contract; declaring two is a compile error. Deployment has a single bootstrap path.
+
+struct ContractDeployMultipleStorage {
+    total: uint32;
+}
+
+struct (0x00000001) ContractDeployMultipleDeployA {
+    queryId: uint64;
+}
+
+struct (0x00000002) ContractDeployMultipleDeployB {
+    queryId: uint64;
+}
+
+contract ContractDeployMultiple {
+    storage: ContractDeployMultipleStorage
+
+    @deploy
+    receive(msg: ContractDeployMultipleDeployA) {
+        save(ContractDeployMultipleStorage { total: 1 });
+    }
+
+    @deploy
+    receive(msg: ContractDeployMultipleDeployB) {
+        save(ContractDeployMultipleStorage { total: 2 });
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr declares more than one `@deploy receive(...)`
+@stderr doc/tos-language-syntax-policy.md §3.6
+ */

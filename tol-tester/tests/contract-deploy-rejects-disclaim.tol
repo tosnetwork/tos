@@ -1,0 +1,27 @@
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §3.2.1): `@deploy` cannot
+// combine with `@disclaim_query_id`. The deploy receiver runs before storage exists and
+// has its own scope rules; mixing it with the per-receiver disclaim semantics is rejected.
+
+struct ContractDeployDisclaimStorage {
+    total: uint32;
+}
+
+struct (0x00000001) ContractDeployDisclaimDeploy {
+    queryId: uint64;
+}
+
+contract ContractDeployDisclaim {
+    storage: ContractDeployDisclaimStorage
+
+    @deploy
+    @disclaim_query_id
+    receive(msg: ContractDeployDisclaimDeploy) {
+        save(ContractDeployDisclaimStorage { total: 0 });
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr `@deploy` cannot combine with `@disclaim_query_id`
+@stderr doc/tos-language-syntax-policy.md §3.6
+ */

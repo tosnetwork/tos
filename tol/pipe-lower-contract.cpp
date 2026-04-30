@@ -343,6 +343,111 @@ static V<ast_function_declaration> make_save_state_function(
       FunctionData::EMPTY_TVM_METHOD_ID, 0, FunctionInlineMode::notCalculated);
 }
 
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §4.1 v3): for state-bearing
+// contracts, the `@deploy` body's `save(...)` calls are rewritten to `__deploySave(...)` so
+// that the deploy path bypasses the regular `make_state_save_function` (which loads the
+// existing `__state` from c4 — c4 is empty during deploy). `__deploySave` writes the
+// hidden `__state` field to the contract's `@initial` state directly without reading c4.
+static V<ast_function_declaration> make_deploy_save_function(
+    V<ast_contract_declaration> contract, StructPtr storage_struct, const StateLoweringContext& state_ctx,
+    std::string_view deploy_save_name) {
+  SrcRange range = contract->range;
+  auto name = make_ident(range, deploy_save_name);
+  auto param = createV<ast_parameter>(
+      range, make_ident(range, "storage"), make_type(range, storage_struct->name), nullptr, false);
+  auto params = createV<ast_parameter_list>(range, std::vector<AnyV>{param});
+  AnyExprV initial_state_expr = make_enum_member(range, state_ctx.enum_name,
+      contract->get_initial_state_identifier()->name);
+  AnyExprV data_literal = make_object_literal(range, state_ctx.data_name, {
+      {"__state", initial_state_expr},
+      {"storage", make_ref(range, "storage")},
+  });
+  AnyExprV set_data = make_method_call(
+      range, make_ref(range, "contract"), "setData", {make_arg(range, make_method_call(range, data_literal, "toCell"))});
+  auto body = createV<ast_block_statement>(range, std::vector<AnyV>{set_data});
+  return createV<ast_function_declaration>(
+      range, name, params, body, nullptr, make_type(range, "void"), nullptr, nullptr,
+      FunctionData::EMPTY_TVM_METHOD_ID, 0, FunctionInlineMode::notCalculated);
+}
+
+// Walk the @deploy body and rewrite each `save(<arg>)` top-level call to a call to the
+// synthesized `__deploySave` helper (state-bearing contracts only). This is a structural
+// rewrite — it preserves arguments and surrounding statements so the user's @deploy body
+// reads as-written. Nested-call positions (e.g. `f(save(x))`) are extremely unlikely given
+// `save(...)` returns void; we still rewrite recursively for safety.
+static AnyExprV rewrite_save_in_deploy_expr(AnyExprV expr, std::string_view deploy_save_name);
+
+static AnyV rewrite_save_in_deploy_statement(AnyV item, std::string_view deploy_save_name);
+
+static V<ast_block_statement> rewrite_save_in_deploy_block(V<ast_block_statement> block, std::string_view deploy_save_name) {
+  std::vector<AnyV> rewritten;
+  rewritten.reserve(block->size());
+  for (AnyV item : block->get_items()) {
+    rewritten.push_back(rewrite_save_in_deploy_statement(item, deploy_save_name));
+  }
+  return createV<ast_block_statement>(block->range, std::move(rewritten));
+}
+
+static AnyExprV rewrite_save_in_deploy_expr(AnyExprV expr, std::string_view deploy_save_name) {
+  if (expr->kind != ast_function_call) {
+    return expr;
+  }
+  auto call = expr->as<ast_function_call>();
+  AnyExprV callee = call->get_callee();
+  if (auto v_ref = callee->try_as<ast_reference>(); v_ref && v_ref->get_name() == "save") {
+    // Rewrite `save(arg)` → `__deploySave(arg)`. Argument list is forwarded verbatim.
+    AnyExprV new_callee = make_ref(call->range, deploy_save_name);
+    return createV<ast_function_call>(call->range, new_callee, call->get_arg_list());
+  }
+  return expr;
+}
+
+static AnyV rewrite_save_in_deploy_statement(AnyV item, std::string_view deploy_save_name) {
+  SrcRange range = item->range;
+  switch (item->kind) {
+    case ast_block_statement:
+      return rewrite_save_in_deploy_block(item->as<ast_block_statement>(), deploy_save_name);
+    case ast_if_statement: {
+      auto if_stmt = item->as<ast_if_statement>();
+      auto if_body = rewrite_save_in_deploy_block(if_stmt->get_if_body(), deploy_save_name);
+      auto else_body = rewrite_save_in_deploy_block(if_stmt->get_else_body(), deploy_save_name);
+      return createV<ast_if_statement>(range, false, if_stmt->get_cond(), if_body, else_body);
+    }
+    case ast_repeat_statement: {
+      auto repeat = item->as<ast_repeat_statement>();
+      return createV<ast_repeat_statement>(range, repeat->get_cond(),
+          rewrite_save_in_deploy_block(repeat->get_body(), deploy_save_name));
+    }
+    case ast_while_statement: {
+      auto while_stmt = item->as<ast_while_statement>();
+      return createV<ast_while_statement>(range, while_stmt->get_cond(),
+          rewrite_save_in_deploy_block(while_stmt->get_body(), deploy_save_name));
+    }
+    case ast_do_while_statement: {
+      auto do_while = item->as<ast_do_while_statement>();
+      return createV<ast_do_while_statement>(range,
+          rewrite_save_in_deploy_block(do_while->get_body(), deploy_save_name), do_while->get_cond());
+    }
+    case ast_try_catch_statement: {
+      auto try_catch = item->as<ast_try_catch_statement>();
+      return createV<ast_try_catch_statement>(range,
+          rewrite_save_in_deploy_block(try_catch->get_try_body(), deploy_save_name),
+          try_catch->get_catch_expr(),
+          rewrite_save_in_deploy_block(try_catch->get_catch_body(), deploy_save_name));
+    }
+    case ast_function_call: {
+      // Top-level expression statement: rewrite if it's a `save(...)` call. ast_function_call
+      // is an ASTExprBinary (i.e. an ASTNodeExpressionBase), so a direct C-style pointer cast
+      // through the polymorphic base is well-defined here.
+      auto v_call = item->as<ast_function_call>();
+      AnyExprV rewritten = rewrite_save_in_deploy_expr(v_call, deploy_save_name);
+      return rewritten;
+    }
+    default:
+      return item;
+  }
+}
+
 static AnyV make_msg_decode_decl(SrcRange range, V<ast_receive_block> receive) {
   auto type_leaf = receive->message_type_node->as<ast_type_leaf_text>();
   AnyExprV from_slice = make_method_call(range, make_ref(range, type_leaf->text), "fromSlice", {make_arg(range, make_in_body(range))});
@@ -457,6 +562,85 @@ static AnyV make_receive_branch(V<ast_contract_declaration> contract, V<ast_rece
   return createV<ast_if_statement>(range, false, cond, if_body, else_body);
 }
 
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §4.1 v3): build the @deploy
+// branch of `onInternalMessage`. Runs BEFORE loadData(); inside the body, references to
+// `storage` are not in scope (the user must call save(...)). For state-bearing contracts,
+// `save(...)` calls in the body are rewritten to `__deploySave(...)` so the helper writes
+// the @initial state tag without needing to read c4 first.
+static AnyV make_deploy_branch(V<ast_contract_declaration> contract, V<ast_receive_block> receive, StructPtr message_struct, const StateLoweringContext& state_ctx, std::string_view deploy_save_name) {
+  SrcRange range = receive->range;
+  AnyExprV cond = createV<ast_binary_operator>(
+      range, range, "==", tok_eq, make_ref(range, "op"), make_int(range, message_struct->opcode.pack_prefix));
+
+  std::vector<AnyV> scope_items;
+  scope_items.reserve(2 + receive->get_body()->get_items().size());
+  scope_items.push_back(make_msg_decode_decl(range, receive));
+  if (state_ctx.enabled) {
+    for (AnyV item : receive->get_body()->get_items()) {
+      scope_items.push_back(rewrite_save_in_deploy_statement(item, deploy_save_name));
+    }
+  } else {
+    for (AnyV item : receive->get_body()->get_items()) {
+      scope_items.push_back(item);
+    }
+  }
+  scope_items.push_back(make_return_void(range));
+
+  auto scope_block = createV<ast_block_statement>(range, std::move(scope_items));
+  AnyV scope_marker = createV<ast_receiver_scope_marker>(
+      range, contract->get_identifier()->name, message_struct->name, receive->range, scope_block);
+
+  std::vector<AnyV> if_body_items{scope_marker};
+  auto if_body = createV<ast_block_statement>(range, std::move(if_body_items));
+  auto else_body = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
+  return createV<ast_if_statement>(range, false, cond, if_body, else_body);
+}
+
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): build the unknown-opcode tail.
+// The contract's ContractUnknownMode picks the shape:
+//   - default_protocol_throw → throw OP_ERROR (0x00010001) per §3.2 / common.tol
+//   - silent_drop            → fall through (no statement; caller appends return)
+//   - throw_code             → throw <unknown_throw_code>
+//   - catch_all_receiver     → run the user's `receive(msg: UnknownOpcode)` body with the
+//                              parameter bound to `in.body` (raw, unparsed slice)
+static std::vector<AnyV> make_unknown_mode_tail(V<ast_contract_declaration> contract, V<ast_receive_block> unknown_catch_all_receive) {
+  SrcRange range = contract->unknown_annotation_range.is_defined() ? contract->unknown_annotation_range : contract->range;
+  std::vector<AnyV> tail;
+  switch (contract->unknown_mode) {
+    case ContractUnknownMode::default_protocol_throw:
+      // OP_ERROR (0x00010001) per crypto/smartcont/tol-stdlib/common.tol — the canonical
+      // Protocol-class application error code. See doc/tos-message-policy.md §5.2 / §5.3.
+      tail.push_back(make_throw(range, 0x00010001));
+      break;
+    case ContractUnknownMode::silent_drop:
+      // Fall through; the caller emits a trailing `return;` for the function. No statement
+      // needed here — the synthesized onInternalMessage returns at the end of the body.
+      break;
+    case ContractUnknownMode::throw_code:
+      tail.push_back(make_throw(range, contract->unknown_throw_code));
+      break;
+    case ContractUnknownMode::catch_all_receiver: {
+      // Bind the receiver's parameter to `in.body` (the raw, unparsed slice including the
+      // 32-bit opcode prefix the dispatcher already pre-loaded into a copy). The catch-all
+      // sees the original slice so it can decide what to do with arbitrary bodies.
+      SrcRange recv_range = unknown_catch_all_receive->range;
+      std::vector<AnyV> scope_items;
+      scope_items.reserve(2 + unknown_catch_all_receive->get_body()->get_items().size());
+      scope_items.push_back(make_local_decl(recv_range,
+          unknown_catch_all_receive->get_param_name(), make_in_body(recv_range), true));
+      for (AnyV item : unknown_catch_all_receive->get_body()->get_items()) {
+        scope_items.push_back(item);
+      }
+      scope_items.push_back(make_return_void(recv_range));
+      auto scope_block = createV<ast_block_statement>(recv_range, std::move(scope_items));
+      tail.push_back(createV<ast_receiver_scope_marker>(
+          recv_range, contract->get_identifier()->name, "UnknownOpcode", recv_range, scope_block));
+      break;
+    }
+  }
+  return tail;
+}
+
 static AnyV make_query_id_preflight_guard(SrcRange range) {
   // Keep the 64-bit query_id preflight live even before per-receiver query handling exists.
   AnyExprV cond = createV<ast_binary_operator>(
@@ -467,29 +651,99 @@ static AnyV make_query_id_preflight_guard(SrcRange range) {
 }
 
 static V<ast_function_declaration> make_on_internal_function(
-    V<ast_contract_declaration> contract, const std::vector<StructPtr>& message_structs, const StateLoweringContext& state_ctx) {
+    V<ast_contract_declaration> contract, const std::vector<StructPtr>& message_structs, const StateLoweringContext& state_ctx, std::string_view deploy_save_name) {
   SrcRange range = contract->range;
 
   auto name = make_ident(range, "onInternalMessage");
   auto param = createV<ast_parameter>(range, make_ident(range, "in"), make_type(range, "InMessage"), nullptr, false);
   auto params = createV<ast_parameter_list>(range, std::vector<AnyV>{param});
 
+  // Slice 2 Stage 4 dispatch shape (doc/tos-language-syntax-policy.md §4.1 v3):
+  //   1. if `in.body.remainingBitsCount() < 32` → run UnknownMode tail (cannot parse opcode).
+  //   2. parse opcode (32 bits) and queryId (64 bits) preflight from a copy slice.
+  //   3. if opcode == Deploy.opcode → run @deploy branch and return BEFORE loadData().
+  //   4. loadData() to materialize storage.
+  //   5. dispatch table for declared receivers.
+  //   6. trailing UnknownMode tail (fell through all declared opcodes).
+  // The `bits < 32` short-body path uses the SAME UnknownMode tail so wallet-v5-style silent
+  // drop is preserved when `@unknown_silent_drop;` is set, and a Protocol throw fires in the
+  // default mode (matching legacy jetton-minter).
   std::vector<AnyV> items;
-  AnyExprV body_empty = make_method_call(range, make_in_body(range), "isEmpty");
-  auto return_body = createV<ast_block_statement>(range, std::vector<AnyV>{make_return_void(range)});
-  auto empty_else = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
-  items.push_back(createV<ast_if_statement>(range, false, body_empty, return_body, empty_else));
 
+  // Identify @deploy receiver and UnknownOpcode catch-all up-front (parser already enforced
+  // that there is at most one of each).
+  V<ast_receive_block> deploy_receive = nullptr;
+  StructPtr deploy_struct = nullptr;
+  V<ast_receive_block> unknown_catch_all_receive = nullptr;
+  for (int i = 0; i < contract->get_num_receives(); ++i) {
+    V<ast_receive_block> receive = contract->get_receive(i);
+    if (receive->is_deploy) {
+      deploy_receive = receive;
+      deploy_struct = message_structs[i];
+    }
+    if (receive->is_unknown_opcode_catch_all) {
+      unknown_catch_all_receive = receive;
+    }
+  }
+
+  // 1. short-body guard: if (in.body.remainingBitsCount() < 32) { <short-body tail> }.
+  // The short-body tail uses the SAME mode as the trailing unknown-opcode dispatch — except
+  // for `catch_all_receiver` mode, where short bodies route to the default Protocol throw
+  // (the user's catch-all body might reference storage, which is not loaded yet at this
+  // point). For wallet-v5-style `@unknown_silent_drop;` this still preserves the byte-for-byte
+  // "drop short bodies silently" semantics; for the default and `@unknown_throw(N)` modes it
+  // throws the same way the legacy hand-written contracts do. See
+  // doc/tos-language-syntax-policy.md §3.2 v3 / §4.1 v3.
+  std::vector<AnyV> short_body_tail;
+  switch (contract->unknown_mode) {
+    case ContractUnknownMode::default_protocol_throw:
+    case ContractUnknownMode::catch_all_receiver:
+      // OP_ERROR (0x00010001) per common.tol — Protocol-class application error.
+      short_body_tail.push_back(make_throw(range, 0x00010001));
+      break;
+    case ContractUnknownMode::silent_drop:
+      short_body_tail.push_back(make_return_void(range));
+      break;
+    case ContractUnknownMode::throw_code:
+      short_body_tail.push_back(make_throw(range, contract->unknown_throw_code));
+      break;
+  }
+  AnyExprV body_bits = make_method_call(range, make_in_body(range), "remainingBitsCount");
+  AnyExprV bits_cond = createV<ast_binary_operator>(
+      range, range, "<", tok_lt, body_bits, make_int(range, 32));
+  auto short_body_block = createV<ast_block_statement>(range, std::move(short_body_tail));
+  auto short_body_else = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
+  items.push_back(createV<ast_if_statement>(range, false, bits_cond, short_body_block, short_body_else));
+
+  // 2. parse opcode + queryId preflight from a copy slice.
   items.push_back(make_local_decl(range, "header", make_in_body(range), false));
   items.push_back(make_local_decl(
       range, "op", make_method_call(range, make_ref(range, "header"), "loadUint", {make_arg(range, make_int(range, 32))}), true));
   items.push_back(make_local_decl(
       range, "queryId", make_method_call(range, make_ref(range, "header"), "loadUint", {make_arg(range, make_int(range, 64))}), true));
   items.push_back(make_query_id_preflight_guard(range));
+
+  // 3. @deploy branch BEFORE loadData() — c4 is empty here.
+  if (deploy_receive != nullptr) {
+    items.push_back(make_deploy_branch(contract, deploy_receive, deploy_struct, state_ctx, deploy_save_name));
+  }
+
+  // 4. loadData() to materialize storage for normal receivers.
   items.push_back(make_local_decl(range, "storage", make_call(range, make_ref(range, "loadData")), true));
 
+  // 5. dispatch table for declared (non-deploy, non-unknown) receivers.
   for (int i = 0; i < contract->get_num_receives(); ++i) {
-    items.push_back(make_receive_branch(contract, contract->get_receive(i), message_structs[i], state_ctx));
+    V<ast_receive_block> receive = contract->get_receive(i);
+    if (receive->is_deploy || receive->is_unknown_opcode_catch_all) {
+      continue;
+    }
+    items.push_back(make_receive_branch(contract, receive, message_structs[i], state_ctx));
+  }
+
+  // 6. trailing UnknownMode tail.
+  std::vector<AnyV> trailing = make_unknown_mode_tail(contract, unknown_catch_all_receive);
+  for (AnyV t : trailing) {
+    items.push_back(t);
   }
   items.push_back(make_return_void(range));
 
@@ -612,11 +866,33 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
   StructPtr storage_struct = resolve_struct_type(contract->storage_type_node, "contract storage type");
   StateLoweringContext state_ctx = make_state_lowering_context(contract, storage_struct);
 
+  // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §4.1 v3): a state-bearing
+  // contract with `@deploy` requires `@initial state X` to be declared so the lowering knows
+  // which state tag to inject into the deploy save().
+  bool has_deploy = false;
+  for (int i = 0; i < contract->get_num_receives(); ++i) {
+    if (contract->get_receive(i)->is_deploy) {
+      has_deploy = true;
+      break;
+    }
+  }
+  if (state_ctx.enabled && has_deploy && contract->get_initial_state_identifier() == nullptr) {
+    err("`@deploy receive(...)` in a state-bearing contract requires `@initial state <Name>` to be declared so the deploy lowering knows which initial state tag to inject; see doc/tos-language-syntax-policy.md §3.6")
+      .fire(contract->get_identifier());
+  }
+
   std::vector<StructPtr> message_structs;
   message_structs.reserve(contract->get_num_receives());
   std::unordered_map<int64_t, V<ast_receive_block>> seen_opcodes;
   for (int i = 0; i < contract->get_num_receives(); ++i) {
     V<ast_receive_block> receive = contract->get_receive(i);
+    // Slice 2 Stage 4 (§3.2 v3): the reserved `UnknownOpcode` pseudo-type has no wire encoding
+    // and skips the message-struct opcode-prefix lookup. Its branch is emitted separately as
+    // the unknown-opcode tail of the dispatch.
+    if (receive->is_unknown_opcode_catch_all) {
+      message_structs.push_back(nullptr);
+      continue;
+    }
     StructPtr message_struct = resolve_struct_type(receive->message_type_node, "contract receive message type");
     check_receive_opcode_prefix(receive, message_struct);
     if (message_struct->opcode.prefix_len == 32) {
@@ -651,6 +927,7 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     checker.check(get_fun);
   }
 
+  std::string deploy_save_name = make_contract_private_name(contract, "DeploySave");
   std::vector<AnyV> generated;
   if (state_ctx.enabled) {
     generated.push_back(state_ctx.enum_decl);
@@ -660,11 +937,14 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     generated.push_back(make_save_state_function(contract, state_ctx));
     generated.push_back(make_state_load_data_function(contract, storage_struct, state_ctx));
     generated.push_back(make_state_save_function(contract, storage_struct, state_ctx));
+    if (has_deploy) {
+      generated.push_back(make_deploy_save_function(contract, storage_struct, state_ctx, deploy_save_name));
+    }
   } else {
     generated.push_back(make_load_data_function(contract, storage_struct));
     generated.push_back(make_save_function(contract, storage_struct));
   }
-  generated.push_back(make_on_internal_function(contract, message_structs, state_ctx));
+  generated.push_back(make_on_internal_function(contract, message_structs, state_ctx, deploy_save_name));
 
   // Synthesize a top-level `fun X(): T { let storage = loadData(); <body> }` per get_fun block.
   // Track origin so the per-contract collision detector can group these correctly.
