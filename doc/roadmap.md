@@ -523,7 +523,7 @@ merged via `6f188fdcf`), Stage 6 (`c7d9448eb` merged via
 `c6bb72fc2`). Stage 8 re-migrated all three Slice 1 reference
 contracts to Slice 2 syntax: `jetton-minter` in `38856e950`,
 `jetton-wallet` in `bd851ebb4`, and `wallet-v5` in `621e7c514`.
-The current regression suite reports 616/616 tol-tester pass,
+The current regression suite reports 617/617 tol-tester pass,
 24/24 test-emulator pass, and the FunC↔Tol gas-parity gate green
 for all three Slice 1 reference contracts.
 
@@ -916,12 +916,22 @@ removed when policy v6 made single-signer the rule; see §11.3.)
 
 ## 12. Revision notes
 
+### r7 (Slice 2 queryId dispatch hardening)
+
+- §6 Slice 2 compiler lowering now treats the 32-bit opcode as the
+  only contract-wide dispatch field. `queryId` is discovered inside
+  each receiver scope from the matched typed body; the common
+  pre-dispatch query-id load has been removed.
+- The current verification snapshot is 617/617 tol-tester cases,
+  24/24 test-emulator cases, and a green Slice 1 FunC↔Tol
+  gas-parity gate.
+
 ### r6 (Slice 2 Stage 8 complete)
 
 - §6 Slice 2 now marks Stage 8 complete: `jetton-minter`,
   `jetton-wallet`, and `wallet-v5` are all re-migrated to the
   high-level Slice 2 syntax on `actor-layer`.
-- The current verification snapshot remains 616/616 tol-tester
+- The verification snapshot at Stage 8 close was 616/616 tol-tester
   cases, 24/24 test-emulator cases, and a green Slice 1
   FunC↔Tol gas-parity gate.
 

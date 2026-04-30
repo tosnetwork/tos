@@ -72,10 +72,10 @@
  *
  *       initial scope (function level) covers a legacy
  *       `onInternalMessage` body (no marker present). When entering
- *       an `ast_receiver_scope_marker`, push a new ScopeRecord
- *       inheriting only the inbound query_id source already known
- *       at the function level (synthesized `loadData`/preamble for
- *       lowered contracts); nothing else carries over.
+ *       an `ast_receiver_scope_marker`, push a fresh ScopeRecord.
+ *       Receiver scopes do not inherit query_id sources from the
+ *       function-level dispatch preamble: opcode dispatch and
+ *       request/reply correlation are separate semantics.
  *
  *       at scope exit:
  *         - if envelope has `queryId` and !disclaimed and no
@@ -220,7 +220,7 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
   // Set when any `ast_receiver_scope_marker` is encountered inside the current
   // function. The marker presence signals a Slice 2 lowered `onInternalMessage`
   // synthesized by `pipeline_lower_contracts`; in that case the synthesized
-  // dispatch preamble (opcode parse, query_id preflight, loadData) at the
+  // dispatch preamble (opcode parse, loadData) at the
   // function-level scope is NOT a receiver and must not produce any
   // function-level diagnostic — every reply/disclaim attribution belongs to
   // a per-receiver marker scope. Legacy hand-written `onInternalMessage`
@@ -261,28 +261,19 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     }
   }
 
-  // Entering a receiver-scope marker: push a ScopeRecord. Inherit the inbound
-  // query_id source already established at the surrounding scope (the synthesized
-  // `loadData`/preamble in `make_on_internal_function` does NOT bind a queryId
-  // local in Slice 2 today, but if a future revision starts doing so we must
-  // propagate it; meanwhile this is conservatively a no-op for current contracts).
-  // Nothing else inherits — disclaim flag, reply sites, and aliases are local
-  // to the receiver scope (§3.2.1).
+  // Entering a receiver-scope marker: push a fresh ScopeRecord. The receiver's
+  // only valid inbound query_id source is discovered inside this scope from
+  // `val msg = lazy T.fromSlice(in.body)` (or from a legacy manual parse within
+  // the same scope). A function-level queryId local must not be inherited:
+  // opcode dispatch and request/reply correlation are separate semantics.
+  // Disclaim flag, reply sites, and aliases are likewise local to the receiver
+  // scope (§3.2.1).
   void visit(V<ast_receiver_scope_marker> v) override {
     saw_any_receiver_marker = true;
     ScopeRecord new_scope;
     new_scope.is_marker_scope = true;
     new_scope.contract_name = v->contract_name;
     new_scope.message_struct_name = v->message_struct_name;
-    if (!scope_stack.empty()) {
-      const ScopeRecord& outer = scope_stack.back();
-      new_scope.inbound_envelope_struct = outer.inbound_envelope_struct;
-      new_scope.inbound_envelope_local = outer.inbound_envelope_local;
-      new_scope.inbound_query_id_local = outer.inbound_query_id_local;
-      // body-slice/opcode-loaded markers and disclaim flag are NOT inherited:
-      // they describe local control-flow inside the surrounding scope, not a
-      // resource the receiver inherits.
-    }
     scope_stack.push_back(std::move(new_scope));
     visit_children(v);
     ScopeRecord finished = std::move(scope_stack.back());
@@ -513,7 +504,7 @@ public:
     // Function-level scope: covers a legacy `onInternalMessage` body without any
     // marker (e.g. crypto/smartcont/wallet-v5.tol). When the function is the
     // synthesized `onInternalMessage` from `pipeline_lower_contracts`, this scope
-    // owns the dispatch preamble (opcode parse, query_id preflight, loadData,
+    // owns the dispatch preamble (opcode parse, loadData,
     // future `@deploy` branch); per §3.2.1 those statements belong to the
     // synthesized function, not any single receiver. Each per-receiver marker
     // pushes its own ScopeRecord on top; only the receiver scope's diagnostics
@@ -533,11 +524,10 @@ public:
     // Skip the function-level diagnostic when any receiver-scope marker was
     // seen in the body — that means this is a synthesized lowered
     // `onInternalMessage` and the dispatch preamble (which the function-level
-    // scope necessarily binds via the synthesized `loadUint(64)` queryId
-    // preflight) is NOT a receiver. Per §3.2.1 only per-receiver markers
+    // scope owns) is NOT a receiver. Per §3.2.1 only per-receiver markers
     // diagnose their own replies/disclaims. Legacy hand-written
-    // `onInternalMessage` files (e.g. crypto/smartcont/wallet-v5.tol) emit
-    // no markers and keep Slice 1 single-flag semantics.
+    // `onInternalMessage` files emit no markers and keep Slice 1 single-flag
+    // semantics.
     if (saw_any_receiver_marker) {
       return;
     }

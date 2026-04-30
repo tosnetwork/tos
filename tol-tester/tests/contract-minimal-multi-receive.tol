@@ -34,8 +34,7 @@ contract ContractMulti {
 """
   onInternalMessage() PROC:<{
 ...
-    32 LDU
-    64 PLDU
+    32 PLDU
 ...
     21 EQINT
 ...
@@ -47,4 +46,6 @@ contract ContractMulti {
 ...
   }>
 """
+
+@fif_codegen_avoid 64 PLDU
  */

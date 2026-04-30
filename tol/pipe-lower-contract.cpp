@@ -253,33 +253,6 @@ static void check_receive_external_opcode_prefix(V<ast_receive_external_block> r
   }
 }
 
-static bool is_standard_query_id_message_struct(StructPtr message_struct) {
-  if (!message_struct || message_struct->get_num_fields() == 0) {
-    return false;
-  }
-  StructFieldPtr first = message_struct->get_field(0);
-  if (first->name != "queryId" || first->declared_type == nullptr) {
-    return false;
-  }
-  auto intN = first->declared_type->unwrap_alias()->try_as<TypeDataIntN>();
-  return intN && intN->n_bits == 64 && intN->is_unsigned && !intN->is_variadic;
-}
-
-static bool should_emit_common_query_id_preflight(V<ast_contract_declaration> contract, const std::vector<StructPtr>& message_structs) {
-  bool has_typed_receiver = false;
-  for (int i = 0; i < contract->get_num_receives(); ++i) {
-    V<ast_receive_block> receive = contract->get_receive(i);
-    if (receive->is_unknown_opcode_catch_all) {
-      continue;
-    }
-    has_typed_receiver = true;
-    if (!is_standard_query_id_message_struct(message_structs[i])) {
-      return false;
-    }
-  }
-  return has_typed_receiver;
-}
-
 static V<ast_function_declaration> make_load_data_function(V<ast_contract_declaration> contract, StructPtr storage_struct) {
   SrcRange range = contract->range;
   auto name = make_ident(range, "loadData");
@@ -689,15 +662,6 @@ static std::vector<AnyV> make_unknown_mode_tail(V<ast_contract_declaration> cont
   return tail;
 }
 
-static AnyV make_query_id_preflight_guard(SrcRange range) {
-  // Keep the 64-bit query_id preflight live even before per-receiver query handling exists.
-  AnyExprV cond = createV<ast_binary_operator>(
-      range, range, "!=", tok_neq, make_ref(range, "queryId"), make_ref(range, "queryId"));
-  auto if_body = createV<ast_block_statement>(range, std::vector<AnyV>{make_return_void(range)});
-  auto else_body = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
-  return createV<ast_if_statement>(range, false, cond, if_body, else_body);
-}
-
 // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): build one dispatch branch
 // for an external receiver. Mirrors `make_receive_branch` but:
 //   - reads the body slice from the synthesized `inMsgBody` parameter (no `in.body`)
@@ -795,12 +759,11 @@ static V<ast_function_declaration> make_on_internal_function(
   auto name = make_ident(range, "onInternalMessage");
   auto param = createV<ast_parameter>(range, make_ident(range, "in"), make_type(range, "InMessage"), nullptr, false);
   auto params = createV<ast_parameter_list>(range, std::vector<AnyV>{param});
-  bool use_common_query_id_preflight = should_emit_common_query_id_preflight(contract, message_structs);
   bool load_storage_before_dispatch = contract->unknown_mode != ContractUnknownMode::silent_drop;
 
   // Slice 2 Stage 4 dispatch shape (doc/tos-language-syntax-policy.md §4.1 v3):
   //   1. if `in.body.remainingBitsCount() < 32` → run UnknownMode tail (cannot parse opcode).
-  //   2. parse opcode (32 bits) and queryId (64 bits) preflight from a copy slice.
+  //   2. parse opcode (32 bits) from a copy slice.
   //   3. if opcode == Deploy.opcode → run @deploy branch and return BEFORE loadData().
   //   4. loadData() to materialize storage.
   //   5. dispatch table for declared receivers.
@@ -855,17 +818,13 @@ static V<ast_function_declaration> make_on_internal_function(
   auto short_body_else = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
   items.push_back(createV<ast_if_statement>(range, false, bits_cond, short_body_block, short_body_else));
 
-  // 2. parse opcode and, for standard-envelope contracts, the queryId preflight
-  // from a copy slice. Wallet-v5-style non-standard bodies intentionally do not
-  // share a common query_id slot; see doc/tos-language-syntax-policy.md §4.1.
+  // 2. parse opcode from a copy slice. queryId is intentionally NOT parsed here:
+  // it is a per-receiver correlation field, not part of the dispatcher contract.
+  // The query-id checker discovers `msg.queryId` from each receiver's decoded
+  // message struct inside its ast_receiver_scope_marker.
   items.push_back(make_local_decl(range, "header", make_in_body(range), false));
   items.push_back(make_local_decl(
       range, "op", make_method_call(range, make_ref(range, "header"), "loadUint", {make_arg(range, make_int(range, 32))}), true));
-  if (use_common_query_id_preflight) {
-    items.push_back(make_local_decl(
-        range, "queryId", make_method_call(range, make_ref(range, "header"), "loadUint", {make_arg(range, make_int(range, 64))}), true));
-    items.push_back(make_query_id_preflight_guard(range));
-  }
 
   // 3. @deploy branch BEFORE loadData() — c4 is empty here.
   if (deploy_receive != nullptr) {

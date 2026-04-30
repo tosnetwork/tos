@@ -1,0 +1,67 @@
+// Slice 2 queryId is per receiver, not a contract-wide dispatch preflight.
+// A query/reply receiver can coexist with a non-query receiver whose body has
+// no `queryId:uint64` field. The dispatcher must read only the 32-bit opcode
+// before branching; the query-id checker discovers `msg.queryId` inside the
+// query receiver's own scope.
+import "@stdlib/common"
+
+struct ContractMixedQueryStorage {}
+
+struct (0x51510001) ContractMixedQueryRequest {
+    queryId: uint64;
+    nonce: uint32;
+}
+
+struct (0x51510002) ContractMixedRawSignal {
+    payload: uint32;
+}
+
+struct (0x51510003) ContractMixedQueryReply {
+    queryId: uint64;
+    nonce: uint32;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractMixedQuery {
+    storage: ContractMixedQueryStorage
+
+    receive(msg: ContractMixedQueryRequest) {
+        val reply = createMessage({
+            bounce: false,
+            dest: in.senderAddress,
+            value: 0,
+            body: ContractMixedQueryReply {
+                queryId: msg.queryId,
+                nonce: msg.nonce,
+            },
+        });
+        reply.send(SEND_MODE_REGULAR);
+    }
+
+    receive(msg: ContractMixedRawSignal) {
+        msg.payload;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+
+@fif_codegen
+"""
+  onInternalMessage() PROC:<{
+...
+    32 PLDU
+...
+    1364262913 PUSHINT
+...
+    1364262914 PUSHINT
+...
+  }>
+"""
+
+@fif_codegen_avoid 64 PLDU
+ */

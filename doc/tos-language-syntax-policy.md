@@ -69,7 +69,6 @@ fun onInternalMessage(in: InMessage) {
     if (in.body.isEmpty()) return;
     var header = in.body;
     val op = header.loadUint(32);
-    val queryId = header.loadUint(64);
     val storage = loadData();
 
     if (op == OP_X) { val msg = lazy XReq.fromSlice(in.body); /* ... */ }
@@ -287,16 +286,14 @@ Two **separate** unknown-opcode rules — v3 split:
    receiver. It is parser/lowering-reserved, not a normal stdlib
    type and not importable into ordinary type positions.
 
-   `@unknown_silent_drop` is wire-equivalent only for bodies whose
-   legacy dispatch reaches the same pre-load parse point before
-   deciding "unknown". TEP-style internal bodies that use the
-   `opcode:uint32 query_id:uint64 ...` shape use the §4.1
-   query-id preflight. Wallet-v5-style bodies whose legacy
-   dispatch intentionally returns after a 32-bit opcode check, with
-   no common `query_id` load, are not covered by that preflight;
-   their byte-for-byte migration must either use the Slice 1 raw
-   entrypoint escape hatch (§6.3) or a future external/wallet
-   migration rule that explicitly preserves that ordering.
+  `@unknown_silent_drop` is wire-equivalent only when the
+  compiler can decide "unknown" from the 32-bit opcode before
+  reading receiver-specific fields. `queryId` is a per-receiver
+  request/reply correlation field, not a contract-wide dispatch
+  preflight. TEP-style bodies still expose `msg.queryId` after a
+  typed receiver has matched; wallet-v5-style signed bodies may
+  use a typed 32-bit prefix carrier and continue parsing the raw
+  body in the receiver.
 
 **Why no string-literal `receive("op_name")` form.** Hashing
 a name to an opcode is wire-instability: a future rename of
@@ -729,15 +726,14 @@ agnostic apply to external receivers:
 - `UnknownOpcode` may be used as an external catch-all marker,
   still with no wire encoding.
 
-The internal-message `@disclaim_query_id` rule and the §4.1
-`op + query_id` preflight do **not** apply to
-`onExternalMessage`. External unknown handling is tracked as a
-separate dispatch domain from internal unknown handling, so a
-wallet-style contract can use silent-drop semantics internally
-and an explicit throw for malformed external signed requests.
-When a contract declares both internal and external receivers,
-the two unknown-mode choices MUST be unambiguous; ambiguity is a
-compile error.
+The internal-message `@disclaim_query_id` rule and query-id
+propagation check do **not** apply to `onExternalMessage`.
+External unknown handling is tracked as a separate dispatch
+domain from internal unknown handling, so a wallet-style contract
+can use silent-drop semantics internally and an explicit throw for
+malformed external signed requests. When a contract declares both
+internal and external receivers, the two unknown-mode choices MUST
+be unambiguous; ambiguity is a compile error.
 
 **v3 scope note.** Slice 2 ships `receive_external` only in the
 vocabulary for prefix-dispatched external bodies. Built-in
@@ -746,11 +742,12 @@ signature/seqno helpers (e.g.
 ErrorClass.Authorization)`) are stdlib additions and follow the
 same Q3 stdlib timeline as the rest of Slice 3 dogfood. Authors
 who need them in Slice 2 use raw TVM intrinsics from
-`@stdlib/tvm-lowlevel` (the existing escape hatch). Exact
-wallet-v5 external byte-for-byte migration remains Slice 3 work
-because the reference body signs a variable-length prefix and
-stores the signature in the trailing 512 bits; a simple Tol
-struct example is not a normative wallet-v5 wire schema.
+`@stdlib/tvm-lowlevel` (the existing escape hatch). Wallet-v5-style
+external migration in Slice 2 is therefore expressed as a typed
+32-bit prefix carrier plus raw receiver-body parsing; a simple Tol
+struct example is not a normative wallet-v5 wire schema because the
+reference body signs a variable-length prefix and stores the
+signature in the trailing 512 bits.
 
 ## 4. Compilation model (lowering contract)
 
@@ -773,9 +770,6 @@ fun onInternalMessage(in: InMessage) {
     // including the 32-bit opcode prefix.
     var header = in.body;
     val op = header.loadUint(32);
-
-    // For standard-envelope internal receivers only:
-    // val queryId = header.loadUint(64);
 
     // @deploy receivers run BEFORE loadData() so an empty c4
     // does not throw before init can populate it.
@@ -808,24 +802,18 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-**Operation-order rationale.** For TEP-style internal receivers
-whose message structs contain the standard
-`opcode:uint32 query_id:uint64 ...` header, the lowering emits the
-64-bit `queryId` preflight before `loadData()` so that a malformed
-body too short to carry both the 32-bit op and the 64-bit query_id
-underflows at the same TVM opcode (`SDU` / `LDU 64`) and at the
-same exit code as the Slice 1 hand-written form. v1's
-`preloadUint(32)` followed by `loadData()` could load storage on a
-malformed body before the queryId underflow fired — observable
-bounce-shape divergence per the codex review. v3 preserves that
-closure for standard-envelope contracts.
-
-For non-standard internal bodies whose legacy dispatch only
-preloads 32 bits before deciding unknown (notably wallet-v5-style
-signed-internal bodies), the compiler MUST NOT insert the common
-64-bit `queryId` preflight. Such receivers are outside the §4.1
-standard-envelope lowering shown above unless the Slice 3
-migration explicitly supplies an equivalent raw parse sequence.
+**Operation-order rationale.** Dispatch is defined only by the
+32-bit opcode prefix. `queryId` is receiver-local correlation
+state: the lowering discovers it by decoding the matched typed
+body (`val msg = lazy T.fromSlice(in.body)`) inside that receiver's
+scope, and `pipe-check-query-id-propagation` diagnoses propagation
+or `@disclaim_query_id` per receiver. The compiler MUST NOT insert
+a common `loadUint(64)` before the dispatch table, even when every
+declared typed receiver happens to use the TEP-style
+`opcode:uint32 query_id:uint64 ...` shape. This keeps
+wallet-v5-style signed bodies and future non-query request bodies
+on the same semantic footing instead of baking one envelope family
+into the dispatcher.
 
 The §3.2 unknown-opcode mode determines the **last branch only**;
 the dispatch table for declared receivers does not vary by
@@ -1201,10 +1189,10 @@ clearly the policy describes them.
   diagnoses at receiver-scope exit.
 - AST → legacy-Expr-Op IR lowering producing the exact
   `onInternalMessage` shape described in §4.1, in particular
-  the v3 operation order for standard-envelope contracts (opcode
-  parse → query_id preflight → `@deploy` branch → `loadData()` →
-  dispatch). Non-standard wallet-style bodies must not receive an
-  implicit common query_id preflight.
+  the v3 operation order (32-bit opcode parse → `@deploy` branch
+  → `loadData()` → dispatch). `queryId` is discovered only from
+  the matched receiver body and never from an implicit common
+  preflight.
 - **Synthesised state enum** declared as a real Tol `enum`
   per the contract's `states:` list, packed via the existing
   `tol/pack-unpack-serializers.cpp:1341` runtime tag-validity
@@ -1284,12 +1272,11 @@ Concrete deltas from v2 to v3:
 - **§0 / §9 / §12.** Status and changelog no longer claim that
   v2 fully closed all prior findings. Remaining open questions are
   tactical only.
-- **§3.2 / §4.1.** Unknown-opcode handling now distinguishes
-  standard-envelope internal bodies from wallet-v5-style bodies
-  that only preload 32 bits before returning on unknown opcodes.
-  The common `query_id` preflight is mandatory for
-  `opcode:uint32 query_id:uint64 ...` receivers and forbidden as
-  an implicit rewrite for non-standard wallet-style bodies.
+- **§3.2 / §4.1.** Unknown-opcode handling now treats the 32-bit
+  opcode as the only contract-wide dispatch field. `queryId` is
+  receiver-local correlation state, so the common `query_id`
+  preflight is removed rather than made conditional on the current
+  receiver set.
 - **§3.2 / §3.7.** `@unknown_throw(N)` participates in the same
   throw-code collision set as explicit and auto-numbered
   `require(...)` sites. Auto-numbering skips explicit
@@ -1314,7 +1301,7 @@ Concrete deltas from v2 to v3:
   available and is not an alternate initialization path.
 - **§3.8 / §6.1.** `receive_external` is scoped to
   prefix-dispatched external bodies. It does not inherit the
-  internal `Envelope` / `query_id` preflight, and wallet-v5 exact
+  internal `Envelope` / query-id propagation rule, and wallet-v5 exact
   external wire parity remains Slice 3 migration work.
 - **§5.** Field-scope taint now covers function-call passthrough,
   tuple/tensor destructuring, pattern matching, `contract.getData`
