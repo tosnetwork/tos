@@ -1,0 +1,25 @@
+struct ContractGetFunSaveRejectedStorage {}
+
+struct (0x000000a4) ContractGetFunSaveRejectedPing {
+    queryId: uint64;
+}
+
+contract ContractGetFunSaveRejected {
+    storage: ContractGetFunSaveRejectedStorage
+
+    receive(msg: ContractGetFunSaveRejectedPing) {
+        msg.queryId;
+    }
+
+    // §3.5: a get fun body must be side-effect-free; `save(...)` is forbidden
+    get fun mutateAndReturn(): int {
+        save(ContractGetFunSaveRejectedStorage {});
+        return 0;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr save(...)` is not permitted in `get fun mutateAndReturn
+@stderr doc/tos-language-syntax-policy.md §3.5
+ */

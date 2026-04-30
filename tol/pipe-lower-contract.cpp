@@ -15,12 +15,14 @@
     along with TOS Blockchain.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include "ast.h"
+#include "ast-visitor.h"
 #include "compilation-errors.h"
 #include "compiler-state.h"
 #include "pipeline.h"
 #include "symtable.h"
 #include "type-system.h"
 
+#include <cstdio>
 #include <unordered_map>
 #include <utility>
 
@@ -478,6 +480,115 @@ static V<ast_function_declaration> make_on_internal_function(
       FunctionData::EMPTY_TVM_METHOD_ID, FunctionData::flagIsEntrypoint, FunctionInlineMode::notCalculated);
 }
 
+// Names that mutate persistent storage / emit c5 actions.
+// `get fun` bodies must be free of these per doc/tos-language-syntax-policy.md §3.5
+// (the get-method execution path has no commit() and must not produce actions).
+static bool is_forbidden_in_get_fun_top_level(std::string_view name) {
+  return name == "save" || name == "saveData" || name == "commitContractDataAndActions"
+      || name == "sendRawMessage" || name == "setData" || name == "setCodePostponed"
+      || name == "reserveBalance" || name == "reserveExtraBalance";
+}
+
+static bool is_forbidden_in_get_fun_method(std::string_view receiver_name, std::string_view method_name) {
+  if (receiver_name == "contract" && (method_name == "setData" || method_name == "setCodePostponed")) {
+    return true;
+  }
+  if (method_name == "send" || method_name == "sendAndEstimateFee") {
+    // OutMessage.send / message.send / etc. — any send-like method
+    return true;
+  }
+  return false;
+}
+
+// Walks a get-fun body and reports `err(...).fire()` if it contains a forbidden side-effecting call.
+// Stops at the first violation (fire() throws).
+class GetFunBodySideEffectChecker final : public ASTVisitorFunctionBody {
+  std::string_view get_fun_name;
+
+protected:
+  void visit(V<ast_function_call> v) override {
+    AnyExprV callee = v->get_callee();
+    if (auto v_ref = callee->try_as<ast_reference>()) {
+      std::string_view name = v_ref->get_name();
+      if (is_forbidden_in_get_fun_top_level(name)) {
+        err("`{}(...)` is not permitted in `get fun {}`; the get-method execution path is read-only and may not emit actions or commit storage; see doc/tos-language-syntax-policy.md §3.5",
+            name, get_fun_name).fire(v);
+      }
+    } else if (auto v_dot = callee->try_as<ast_dot_access>()) {
+      auto field_name = v_dot->get_identifier()->name;
+      std::string_view obj_name;
+      if (auto obj_ref = v_dot->get_obj()->try_as<ast_reference>()) {
+        obj_name = obj_ref->get_name();
+      }
+      if (is_forbidden_in_get_fun_method(obj_name, field_name)) {
+        err("`{}.{}(...)` is not permitted in `get fun {}`; the get-method execution path is read-only and may not emit actions or commit storage; see doc/tos-language-syntax-policy.md §3.5",
+            obj_name.empty() ? std::string("<expr>") : std::string(obj_name), field_name, get_fun_name).fire(v);
+      }
+    }
+    parent::visit(v);
+  }
+
+public:
+  bool should_visit_function(FunctionPtr fun_ref) override {
+    static_cast<void>(fun_ref);
+    return false;   // we drive visit() manually on the get-fun body
+  }
+
+  void check(V<ast_get_fun_block> get_fun) {
+    get_fun_name = get_fun->get_name();
+    // dispatch through the kind-switching overload (defined in ASTVisitorFunctionBody)
+    ASTVisitorFunctionBody::visit(static_cast<AnyV>(get_fun->get_body()));
+  }
+};
+
+// Generate a top-level `fun X(...): T { let storage = loadData(); <body> }`
+// for each get-fun block in the contract. The synthesized function carries
+// flagContractGetter so the existing tvm_method_id pipeline assigns
+// crc16(name) | 0x10000 (or the @method_id override) per §3.5.
+static V<ast_function_declaration> make_get_fun_lowering(V<ast_get_fun_block> get_fun, StructPtr storage_struct) {
+  SrcRange range = get_fun->range;
+  auto name = make_ident(range, get_fun->get_name());
+  auto v_param_list = get_fun->get_param_list();
+  AnyTypeV ret_type = get_fun->return_type_node;
+
+  // body: prepend `let storage = loadData();` (read-only; §3.5)
+  // (void) storage_struct here — we rely on type inference, mirroring make_on_internal_function.
+  static_cast<void>(storage_struct);
+  std::vector<AnyV> body_items;
+  body_items.reserve(1 + get_fun->get_body()->get_items().size());
+  body_items.push_back(make_local_decl(range, "storage", make_call(range, make_ref(range, "loadData")), true));
+  for (AnyV item : get_fun->get_body()->get_items()) {
+    body_items.push_back(item);
+  }
+  auto body = createV<ast_block_statement>(get_fun->get_body()->range, std::move(body_items));
+
+  int flags = FunctionData::flagContractGetter | get_fun->extra_fun_flags;
+  return createV<ast_function_declaration>(
+      range, name, v_param_list, body, nullptr, ret_type, nullptr,
+      get_fun->tvm_method_id_expr,
+      FunctionData::EMPTY_TVM_METHOD_ID,
+      flags,
+      get_fun->inline_mode);
+}
+
+// Map from a synthesized contract-getter function (lowered ast_function_declaration,
+// keyed by the AST node pointer) to the source contract name that produced it.
+// Populated during lowering, consumed by the per-contract method_id collision
+// detector. Per doc §3.5: cross-contract auto-derived ID sharing is NOT a collision,
+// so we MUST group by contract origin.
+static std::unordered_map<AnyV, std::string> g_contract_getter_origin;
+
+std::string_view contract_origin_of_getter(FunctionPtr fun_ref) {
+  if (!fun_ref || !fun_ref->ast_root) {
+    return {};
+  }
+  auto it = g_contract_getter_origin.find(fun_ref->ast_root);
+  if (it == g_contract_getter_origin.end()) {
+    return {};
+  }
+  return it->second;
+}
+
 static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
   StructPtr storage_struct = resolve_struct_type(contract->storage_type_node, "contract storage type");
   StateLoweringContext state_ctx = make_state_lowering_context(contract, storage_struct);
@@ -500,6 +611,27 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     message_structs.push_back(message_struct);
   }
 
+  // Validate get_fun bodies: §3.5 forbids any side-effecting builtins.
+  // Also ensure we don't shadow the synthesized `loadData` / `save` / generated state helpers
+  // with a get_fun of the same name.
+  std::unordered_map<std::string_view, V<ast_get_fun_block>> get_fun_by_name;
+  for (int i = 0; i < contract->get_num_get_funs(); ++i) {
+    V<ast_get_fun_block> get_fun = contract->get_get_fun(i);
+    std::string_view name = get_fun->get_name();
+    if (name == "loadData" || name == "save" || name == "onInternalMessage") {
+      err("`get fun {}` shadows a contract-internal function generated by the lowering; pick a different name; see doc/tos-language-syntax-policy.md §3.5",
+          name).fire(get_fun->get_identifier());
+    }
+    auto [it, inserted] = get_fun_by_name.emplace(name, get_fun);
+    if (!inserted) {
+      err("duplicate `get fun {}` in contract `{}`; first declared at {}",
+          name, contract->get_identifier()->name, it->second->range.stringify_start_location(false))
+        .fire(get_fun->get_identifier());
+    }
+    GetFunBodySideEffectChecker checker;
+    checker.check(get_fun);
+  }
+
   std::vector<AnyV> generated;
   if (state_ctx.enabled) {
     generated.push_back(state_ctx.enum_decl);
@@ -514,7 +646,48 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     generated.push_back(make_save_function(contract, storage_struct));
   }
   generated.push_back(make_on_internal_function(contract, message_structs, state_ctx));
+
+  // Synthesize a top-level `fun X(): T { let storage = loadData(); <body> }` per get_fun block.
+  // Track origin so the per-contract collision detector can group these correctly.
+  std::string contract_name = static_cast<std::string>(contract->get_identifier()->name);
+  for (int i = 0; i < contract->get_num_get_funs(); ++i) {
+    V<ast_get_fun_block> get_fun = contract->get_get_fun(i);
+    V<ast_function_declaration> lowered = make_get_fun_lowering(get_fun, storage_struct);
+    g_contract_getter_origin.emplace(static_cast<AnyV>(lowered), contract_name);
+    generated.push_back(lowered);
+  }
   return generated;
+}
+
+// Per-contract method_id collision detector.
+// Runs at pre-emission time (after all const-expr resolution is done).
+// Groups contract getters by origin contract name, then for each group reports
+// the SECOND offender so the diff is small. Legacy file-scope getters (origin = "")
+// share a single global group, preserving the existing behaviour.
+// See doc/tos-language-syntax-policy.md §3.5 / §10.1.
+void check_contract_method_id_collisions() {
+  // group: contract_name (or "" for file-scope) -> [(method_id, FunctionPtr)]
+  std::unordered_map<std::string, std::unordered_map<int, FunctionPtr>> seen_per_contract;
+  for (FunctionPtr fun_ref : G.all_functions) {
+    if (!fun_ref->is_contract_getter() || !fun_ref->has_tvm_method_id()) {
+      continue;
+    }
+    std::string origin{contract_origin_of_getter(fun_ref)};
+    auto& seen = seen_per_contract[origin];
+    auto [it, inserted] = seen.emplace(fun_ref->tvm_method_id, fun_ref);
+    if (inserted) continue;
+    FunctionPtr first = it->second;
+    if (origin.empty()) {
+      // legacy file-scope path: keep prior wording, no §3.5 reference
+      err("GET methods hash collision: `{}` and `{}` produce the same method_id={}. Consider renaming one of these functions.",
+          first, fun_ref, fun_ref->tvm_method_id).fire(fun_ref->ident_anchor);
+    } else {
+      char id_buf[16];
+      std::snprintf(id_buf, sizeof(id_buf), "0x%x", static_cast<unsigned>(fun_ref->tvm_method_id));
+      err("method_id collision: get fun `{}` (method_id {}) collides with get fun `{}` in contract `{}`; rename one or pin via @method_id(N); see doc/tos-language-syntax-policy.md §3.5",
+          fun_ref->name, std::string(id_buf), first->name, origin).fire(fun_ref->ident_anchor);
+    }
+  }
 }
 
 static void analyze_generated_function(FunctionPtr fun_ref) {

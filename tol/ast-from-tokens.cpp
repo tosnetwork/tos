@@ -2035,7 +2035,70 @@ static AnyTypeV parse_contract_type_identifier(Lexer& lex, const char* what) {
 }
 
 static bool is_deferred_contract_member_name(std::string_view name) {
-  return name == "receive_external" || name == "get";
+  return name == "receive_external";
+}
+
+// Parse a `get fun` block inside a contract declaration.
+// Caller has already consumed `get` (and any annotations are passed in).
+// see doc/tos-language-syntax-policy.md §3.5
+static AnyV parse_contract_get_fun_block(Lexer& lex, const std::vector<V<ast_annotation>>& annotations) {
+  SrcRange range = lex.cur_range();
+  lex.expect(tok_fun, "`fun` after `get`");
+
+  if (!is_identifier_like(lex.tok())) {
+    lex.unexpected("get-method name");
+  }
+  auto v_ident = createV<ast_identifier>(lex.cur_range(), lex.cur_str());
+  lex.next();
+
+  V<ast_parameter_list> v_param_list = parse_parameter_list(lex, nullptr, false);
+
+  AnyTypeV ret_type = nullptr;
+  if (lex.tok() == tok_colon) {
+    lex.next();
+    ret_type = parse_type_from_tokens(lex);
+  } else {
+    err("`get fun` must declare an explicit return type; see doc/tos-language-syntax-policy.md §3.5").fire(v_ident);
+  }
+
+  // process annotations: only @method_id, @inline, @inline_ref, @noinline, @pure, @deprecated, custom are allowed
+  AnyExprV tvm_method_id_expr = nullptr;
+  int extra_flags = 0;
+  FunctionInlineMode inline_mode = FunctionInlineMode::notCalculated;
+  for (auto v_annotation : annotations) {
+    switch (v_annotation->kind) {
+      case AnnotationKind::method_id:
+        if (tvm_method_id_expr) {
+          err("duplicate `@method_id` annotation").fire(v_annotation);
+        }
+        tvm_method_id_expr = v_annotation->get_arg()->get_item(0);
+        break;
+      case AnnotationKind::inline_simple:
+        inline_mode = FunctionInlineMode::inlineViaFif;
+        break;
+      case AnnotationKind::inline_ref:
+        inline_mode = FunctionInlineMode::inlineRef;
+        break;
+      case AnnotationKind::noinline:
+        inline_mode = FunctionInlineMode::noInline;
+        break;
+      case AnnotationKind::pure:
+        extra_flags |= FunctionData::flagMarkedAsPure;
+        break;
+      case AnnotationKind::custom:
+        // allowed; opaque to the compiler (e.g. @deprecated)
+        break;
+      default:
+        err("annotation `@{}` is not applicable to `get fun`; see doc/tos-language-syntax-policy.md §3.5", v_annotation->name).fire(v_annotation);
+    }
+  }
+
+  if (lex.tok() != tok_opbrace) {
+    lex.unexpected("`{ get fun body }`");
+  }
+  auto v_body = parse_block_statement(lex);
+  range.end(v_body->range);
+  return createV<ast_get_fun_block>(range, v_ident, v_param_list, v_body, ret_type, tvm_method_id_expr, extra_flags, inline_mode);
 }
 
 static AnyV parse_receive_block(Lexer& lex) {
@@ -2097,6 +2160,9 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
   std::vector<V<ast_identifier>> state_identifiers;
   V<ast_identifier> initial_state_identifier = nullptr;
   std::vector<AnyV> receive_blocks;
+  std::vector<AnyV> get_fun_blocks;
+  // annotations queued for the next `get fun` (see §3.5 / §10.1: parser fix at line 1712 — @method_id is now accepted on contract get fun)
+  std::vector<V<ast_annotation>> pending_member_annotations;
 
   while (lex.tok() != tok_clbrace) {
     if (lex.tok() == tok_semicolon) {
@@ -2105,15 +2171,24 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
     }
     if (lex.tok() == tok_annotation_at) {
       if (lex.cur_str() == "@initial") {
+        if (!pending_member_annotations.empty()) {
+          err("`@initial state` cannot follow other annotations").fire(lex.cur_range());
+        }
         if (initial_state_identifier) {
           err("contract block may contain only one `@initial state` declaration; see doc/tos-language-syntax-policy.md §3.4").fire(lex.cur_range());
         }
         initial_state_identifier = parse_initial_state(lex);
         continue;
       }
-      err("contract receiver annotations are {}", slice2_deferred_msg()).fire(lex.cur_range());
+      // queue this annotation; it must be followed by a member it applies to
+      // (e.g. `@method_id(N) get fun adminAddress(): address {...}` per §3.5)
+      pending_member_annotations.push_back(parse_annotation(lex));
+      continue;
     }
     if (lex.tok() == tok_storage) {
+      if (!pending_member_annotations.empty()) {
+        err("annotations are not applicable to `storage:`").fire(pending_member_annotations.front());
+      }
       if (storage_type) {
         err("contract block must contain exactly one `storage:` declaration").fire(lex.cur_range());
       }
@@ -2126,6 +2201,9 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
       continue;
     }
     if (lex.tok() == tok_identifier && lex.cur_str() == "states") {
+      if (!pending_member_annotations.empty()) {
+        err("annotations are not applicable to `states:`").fire(pending_member_annotations.front());
+      }
       if (!state_identifiers.empty()) {
         err("contract block may contain only one `states:` declaration; see doc/tos-language-syntax-policy.md §3.4").fire(lex.cur_range());
       }
@@ -2133,10 +2211,22 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
       continue;
     }
     if (lex.tok() == tok_receive) {
+      if (!pending_member_annotations.empty()) {
+        err("contract receiver annotations are {}", slice2_deferred_msg()).fire(pending_member_annotations.front());
+      }
       if (!storage_type) {
         err("contract `storage:` declaration must appear before `receive(...)` blocks").fire(lex.cur_range());
       }
       receive_blocks.push_back(parse_receive_block(lex));
+      continue;
+    }
+    if (lex.tok() == tok_identifier && lex.cur_str() == "get") {
+      if (!storage_type) {
+        err("contract `storage:` declaration must appear before `get fun` blocks").fire(lex.cur_range());
+      }
+      lex.next();
+      get_fun_blocks.push_back(parse_contract_get_fun_block(lex, pending_member_annotations));
+      pending_member_annotations.clear();
       continue;
     }
     if (lex.tok() == tok_fun) {
@@ -2145,9 +2235,12 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
     if (lex.tok() == tok_identifier && is_deferred_contract_member_name(lex.cur_str())) {
       err("`{}` is {}", lex.cur_str(), slice2_deferred_msg()).fire(lex.cur_range());
     }
-    err("contract blocks may contain only `storage:`, `states:`, `@initial state`, and `receive(...)` declarations in Slice 2 Stage 2; see doc/tos-language-syntax-policy.md §3.1").fire(lex.cur_range());
+    err("contract blocks may contain only `storage:`, `states:`, `@initial state`, `receive(...)`, and `get fun` declarations in Slice 2 Stage 5; see doc/tos-language-syntax-policy.md §3.1 / §3.5").fire(lex.cur_range());
   }
 
+  if (!pending_member_annotations.empty()) {
+    err("trailing annotation has no following declaration").fire(pending_member_annotations.front());
+  }
   if (!storage_type) {
     err("contract block must contain exactly one `storage:` declaration").fire(v_ident);
   }
@@ -2157,12 +2250,13 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
 
   range.end(lex.cur_range());
   lex.next();
-  return createV<ast_contract_declaration>(range, v_ident, storage_type, std::move(state_identifiers), initial_state_identifier, std::move(receive_blocks));
+  return createV<ast_contract_declaration>(range, v_ident, storage_type, std::move(state_identifiers), initial_state_identifier, std::move(receive_blocks), std::move(get_fun_blocks));
 }
 
 static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>& declarations) {
   V<ast_contract_declaration> contract_decl = nullptr;
   V<ast_function_declaration> on_internal = nullptr;
+  V<ast_function_declaration> file_scope_get_fun = nullptr;
 
   for (AnyV v : declarations) {
     if (auto v_contract = v->try_as<ast_contract_declaration>()) {
@@ -2172,11 +2266,17 @@ static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>
       contract_decl = v_contract;
     } else if (auto v_func = v->try_as<ast_function_declaration>(); v_func && v_func->get_identifier()->name == "onInternalMessage") {
       on_internal = v_func;
+    } else if (auto v_func = v->try_as<ast_function_declaration>(); v_func && (v_func->flags & FunctionData::flagContractGetter) && !file_scope_get_fun) {
+      file_scope_get_fun = v_func;
     }
   }
 
   if (contract_decl && on_internal) {
     err("a .tol file cannot contain both `contract X { ... }` and top-level `fun onInternalMessage(...)`; see doc/tos-language-syntax-policy.md §6.3").fire(on_internal);
+  }
+  if (contract_decl && file_scope_get_fun) {
+    err("a .tol file with a `contract X { ... }` block cannot also declare top-level `get fun {}(...)`; move the get-method inside the contract; see doc/tos-language-syntax-policy.md §3.5",
+        file_scope_get_fun->get_identifier()->name).fire(file_scope_get_fun);
   }
 }
 
