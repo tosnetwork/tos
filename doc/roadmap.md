@@ -316,12 +316,16 @@ suite; bytecode-size delta is recorded for each against the
 §10.1 ≤ 15% budget. The standalone migration playbook remains the
 Stage 5 documentation deliverable.
 
-### Stage 4 — Conformance, fuzzing, gas regression (week 21–24) ⏳ Not started
+### Stage 4 — Conformance, fuzzing, gas regression (week 21–24) 🚧 In progress
 
-**Status.** ⏳ Not started. Stage 1 conformance fixtures exist
-(`emulator/test/slice-1-*-fixtures.cpp`, 13 cases) but
-property-based BoC / Envelope fuzzing and the gas-regression
-dashboard have not been built.
+**Status.** 🚧 In progress as of 2026-04-30. Slice 1 conformance
+fixtures exist (`emulator/test/slice-1-*-fixtures.cpp`, now 15
+cases) and the Slice 1 CI gate is wired: it compiles the migrated
+Tol reference contracts, runs full `tol-tester`, runs the Slice 1
+emulator fixtures through `test-emulator`, runs a deterministic
+Envelope / `OP_ERROR` fuzz smoke in Tol, and runs deterministic
+BoC / Envelope fuzz smoke through the emulator fixture suite. The
+gas-regression dashboard has not been built.
 
 **Owners.** QA, with protocol team support.
 
@@ -426,13 +430,17 @@ branch.
       completed with FunC 17 cells / Tol 10 cells / ratio 0.59;
       `wallet-v5` completed with FunC 20 cells / Tol 22 cells /
       ratio 1.10.)*
-- [ ] Conformance fixtures (Stage 1) and BoC / Envelope fuzzing
+- [x] Conformance fixtures (Stage 1) and BoC / Envelope fuzzing
       (Stage 4) run in CI. *(Stage 1 fixtures exist and pass
       locally — `slice-1-{account-state,failure-phase,extra-flags}-fixtures.cpp`,
       13 cases, commits `5e7c21bc7`, `33b30ccc5`, `69b275817`,
       registered into `test-emulator` in `dd3acfc83` + linker
-      fix `40f69bec9`. CI integration and Stage 4 fuzzing are
-      not yet done.)*
+      fix `40f69bec9`. CI integration added in
+      `.github/workflows/slice-1-conformance.yml`, with
+      `slice-1-envelope-fuzz-smoke.tol` covering deterministic
+      Envelope / `OP_ERROR` fuzz and
+      `slice-1-boc-envelope-fuzz-fixture.cpp` covering deterministic
+      BoC / Envelope fuzz inside `test-emulator`.)*
 - [ ] Gas regressions are documented and within budget.
       *(Stage 4 — not started.)*
 - [ ] An external RFC has been published with the
@@ -440,12 +448,12 @@ branch.
       *(RFC not started; playbook exists, but RFC publication
       and release notes remain pending.)*
 
-**Progress as of 2026-04-30:** 6 of 9 checked. Stage 3 has
+**Progress as of 2026-04-30:** 7 of 9 checked. Stage 3 has
 all 3 reference-contract migrations complete (`jetton-minter`,
 `jetton-wallet`, `wallet-v5`), and the Stage 5 internal migration
-playbook now exists.
-Remaining checklist items break down to: 2 × Stage 4 (CI fuzzing
-and gas dashboard), plus the Stage 5 external RFC / release notes.
+playbook now exists. Stage 4 CI conformance / fuzzing is wired.
+Remaining checklist items break down to: the Stage 4 gas dashboard
+and the Stage 5 external RFC / release notes.
 
 If any one of these is missing, the slice is not done. Slipping
 the boundary creates exactly the cross-layer inconsistency this

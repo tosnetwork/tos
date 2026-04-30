@@ -812,6 +812,7 @@ add_executable(test-emulator
         emulator/test/slice-1-account-state-fixtures.cpp
         emulator/test/slice-1-failure-phase-fixtures.cpp
         emulator/test/slice-1-extra-flags-fixtures.cpp
+        emulator/test/slice-1-boc-envelope-fuzz-fixture.cpp
         emulator/test/slice-1-stage-2-roundtrip-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
 
