@@ -1,0 +1,14 @@
+struct SliceMiddle {
+    head: uint8;
+    payload: slice;
+    tail: uint8;
+}
+
+fun test_invalid_mid_slice_field(): int {
+    return SliceMiddle.fromSlice(createEmptySlice()).tail;
+}
+
+/**
+@compilation_should_fail
+@stderr because type `slice` can only be used for reading at the final serialized position
+ */

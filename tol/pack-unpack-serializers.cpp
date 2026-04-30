@@ -630,11 +630,14 @@ struct S_Slice final : ISerializer {
   }
 
   std::vector<var_idx_t> unpack(const UnpackContext* ctx, CodeBlob& code, AnyV origin) override {
-    tol_assert(false);   // `slice` can only be used for writing, checked earlier
+    std::vector ir_rem_slice = code.create_tmp_var(TypeDataSlice::create(), origin, "(tail-slice)");
+    code.add_let(origin, ir_rem_slice, ctx->ir_slice);
+    code.add_call(origin, ctx->ir_slice, {}, lookup_function("createEmptySlice"));
+    return ir_rem_slice;
   }
 
   void skip(const UnpackContext* ctx, CodeBlob& code, AnyV origin) override {
-    tol_assert(false);   // `slice` can only be used for writing, checked earlier
+    unpack(ctx, code, origin);
   }
 
   PackSize estimate(const EstimateContext* ctx) override {

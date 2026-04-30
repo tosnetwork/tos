@@ -4,12 +4,6 @@ fun onInternalMessage(in: InMessage) {
     return;
 }
 
-struct FuzzEnvelope {
-    opcode: uint32;
-    queryId: uint64;
-    payload: RemainingBitsAndRefs;
-}
-
 fun payloadHash(s: slice): int {
     return beginCell().storeSlice(s).endCell().hash();
 }
@@ -49,7 +43,7 @@ fun assertEnvelopeRoundtrip(seed: int): int {
         .endCell()
         .beginParse();
 
-    val parsed = FuzzEnvelope.fromSlice(body);
+    val parsed = Envelope.fromSlice(body);
     assert (parsed.opcode == opcode) throw 101;
     assert (parsed.queryId == queryId) throw 102;
     assert (parsed.payload.remainingBitsCount() == 24) throw 103;

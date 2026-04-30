@@ -81,7 +81,7 @@ public:
   explicit PackUnpackAvailabilityChecker(std::vector<MethodCallCandidate>* out_un_pack_candidates)
     : out_un_pack_candidates(out_un_pack_candidates) {}
 
-  std::optional<CantSerializeBecause> detect_why_cant_serialize(TypePtr any_type, bool is_pack) {
+  std::optional<CantSerializeBecause> detect_why_cant_serialize(TypePtr any_type, bool is_pack, bool allow_tail_slice = false) {
     if (any_type->try_as<TypeDataIntN>()) {
       return {};
     }
@@ -128,8 +128,10 @@ public:
       }
 
       called_stack.push_back(struct_ref);
-      for (StructFieldPtr field_ref : struct_ref->fields) {
-        if (auto why = detect_why_cant_serialize(field_ref->declared_type, is_pack)) {
+      for (int field_idx = 0; field_idx < struct_ref->get_num_fields(); ++field_idx) {
+        StructFieldPtr field_ref = struct_ref->get_field(field_idx);
+        bool field_is_tail = allow_tail_slice && field_idx + 1 == struct_ref->get_num_fields();
+        if (auto why = detect_why_cant_serialize(field_ref->declared_type, is_pack, field_is_tail)) {
           return CantSerializeBecause("because field `" + struct_ref->name + "." + field_ref->name + "` of type `" + field_ref->declared_type->as_human_readable() + "` can't be serialized", why.value());
         }
       }
@@ -162,7 +164,7 @@ public:
         if (variant == TypeDataNullLiteral::create()) {
           continue;
         }
-        if (auto why = detect_why_cant_serialize(variant, is_pack)) {
+        if (auto why = detect_why_cant_serialize(variant, is_pack, allow_tail_slice)) {
           return CantSerializeBecause("because variant #" + std::to_string(i + 1) + " of type `" + variant->as_human_readable() + "` can't be serialized", why.value());
         }
       }
@@ -178,7 +180,8 @@ public:
 
     if (const auto* t_tensor = any_type->try_as<TypeDataTensor>()) {
       for (int i = 0; i < t_tensor->size(); ++i) {
-        if (auto why = detect_why_cant_serialize(t_tensor->items[i], is_pack)) {
+        bool item_is_tail = allow_tail_slice && i + 1 == t_tensor->size();
+        if (auto why = detect_why_cant_serialize(t_tensor->items[i], is_pack, item_is_tail)) {
           return CantSerializeBecause("because element `tensor." + std::to_string(i) + "` of type `" + t_tensor->items[i]->as_human_readable() + "` can't be serialized", why.value());
         }
       }
@@ -187,7 +190,8 @@ public:
 
     if (const auto* t_shaped = any_type->try_as<TypeDataShapedTuple>()) {
       for (int i = 0; i < t_shaped->size(); ++i) {
-        if (auto why = detect_why_cant_serialize(t_shaped->items[i], is_pack)) {
+        bool item_is_tail = allow_tail_slice && i + 1 == t_shaped->size();
+        if (auto why = detect_why_cant_serialize(t_shaped->items[i], is_pack, item_is_tail)) {
           return CantSerializeBecause("because element `shaped." + std::to_string(i) + "` of type `" + t_shaped->items[i]->as_human_readable() + "` can't be serialized", why.value());
         }
       }
@@ -217,7 +221,7 @@ public:
         return check_custom_pack_unpack(t_alias, f, is_pack);
       }
 
-      if (auto why = detect_why_cant_serialize(t_alias->underlying_type, is_pack)) {
+      if (auto why = detect_why_cant_serialize(t_alias->underlying_type, is_pack, allow_tail_slice)) {
         return CantSerializeBecause("because alias `" + t_alias->as_human_readable() + "` expands to `" + t_alias->underlying_type->as_human_readable() + "`", why.value());
       }
       return {};
@@ -231,10 +235,10 @@ public:
       return CantSerializeBecause("because type `builder` can not be used for reading, only for writing\n""hint: use `bitsN` or `RemainingBitsAndRefs` for reading\n""hint: using generics, you can substitute `builder` for writing and something other for reading");
     }
     if (any_type == TypeDataSlice::create()) {
-      if (is_pack) {
+      if (is_pack || allow_tail_slice) {
         return {};
       }
-      return CantSerializeBecause("because type `slice` can not be used for reading, it doesn't define binary width\n""hint: replace `slice` with `address` if it's an address, actually\n""hint: replace `slice` with `bits128` and similar if it represents fixed-width data without refs");
+      return CantSerializeBecause("because type `slice` can only be used for reading at the final serialized position, where it consumes the remaining bits and refs\n""hint: move this `slice` field to the end, or use `address` / `bits128` if it represents fixed-width data");
     }
 
     // serialization not available
@@ -253,7 +257,7 @@ public:
 
 bool check_struct_can_be_packed_or_unpacked(TypePtr any_type, bool is_pack, std::string* because_msg, std::vector<MethodCallCandidate>* out_un_pack_candidates) {
   PackUnpackAvailabilityChecker checker(out_un_pack_candidates);
-  if (auto why = checker.detect_why_cant_serialize(any_type, is_pack)) {
+  if (auto why = checker.detect_why_cant_serialize(any_type, is_pack, !is_pack)) {
     if (because_msg != nullptr) {
       *because_msg = why.value().because_msg;
     }

@@ -73,7 +73,7 @@ fun serializeIntField(p: Point) {
     p.toCell();
 }
 
-type NotSerializableTensor = (int8, slice);
+type NotSerializableTensor = (int8, slice, int8);
 
 struct Demo {
     a: int8;

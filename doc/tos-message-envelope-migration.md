@@ -97,8 +97,11 @@ Guidelines:
 - Use `any_address` when the FunC source used `load_msg_addr()` or
   stored a `MsgAddress` slice. Do not replace it with `address` unless
   the original contract already required `MsgAddressInt`.
-- Use `RemainingBitsAndRefs` for tail payloads whose exact bit/ref
-  shape is caller-controlled.
+- Use `slice` or `RemainingBitsAndRefs` for tail payloads whose
+  exact bit/ref shape is caller-controlled. A plain `slice` is now
+  valid for auto-unpack only at the final serialized position; it
+  consumes the remaining bits and refs, which is why
+  `Envelope.payload: slice` can be parsed directly.
 - Use `@overflow1023_policy("suppress")` only when the source format
   is intentionally variable-width and the compiler cannot prove the
   upper bound. The annotation is a compatibility escape hatch, not a
