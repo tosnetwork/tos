@@ -978,10 +978,13 @@ without protocol support, are the historical failure mode of
 multi-layer systems. The 26-week first slice exists to avoid that
 mode. Every later slice depends on it.
 
-The right next action is to review and approve the Slice 4 Stage 0
-resource model in `doc/tos-postponement-policy.md` and
-`doc/tos-slice-4-policy.md`; implementation should start with the
-`@stdlib/postponement` foundation only after that sign-off.
+The right next action is Slice 5 Stage 0 design: lock the second-wave
+stdlib targets and the FunC↔Tol cross-language ABI plan before adding
+auction, DAO/governance, oracle, or payment-channel templates. The
+`actor.md` §5.7 delivery-SLA RFC should run in parallel because it still
+blocks protocol-level back-pressure and later supervision semantics,
+but Slice 4's contract-level bounded postponement is complete without
+that dependency.
 
 ## 11. Known unscheduled work and cross-Slice blockers
 
@@ -1004,7 +1007,7 @@ unscheduled at the time of writing:
 
 | `actor.md` § | Content | Downstream impact | Recommended placement |
 |---|---|---|---|
-| §5.7 | Cross-shard delivery SLA + dead-letter handling | Blocks `error_class = 5` (back-pressure) emission (`policy.md` §5.3); blocks Slice 4 `§5.9` postponement design (postpone-expiry semantics depend on undeliverable definition); blocks Slice 6 supervision (failure-class taxonomy) | Pre-design RFC during Slice 1 Stage 4–5; protocol implementation slot inserted between Slice 4 and Slice 5 |
+| §5.7 | Cross-shard delivery SLA + dead-letter handling | Blocks `error_class = 5` (back-pressure) emission (`policy.md` §5.3), protocol-level delivery-failure semantics, and Slice 6 supervision failure taxonomy. It no longer blocks Slice 4's contract-level bounded postponement because Slice 4 uses explicit expiry/drop semantics and keeps `ErrorClass.BackPressure` reserved. | Pre-design RFC before any back-pressure or supervision implementation; protocol implementation slot adjacent to Slice 5 / before Slice 6. |
 | §5.8 | Actor-level observability | Operational debuggability blocker once supervised contracts exist; off-chain indexer surface usable independently of on-chain protocol work | Off-chain part: pulled forward to Slice 3 (alongside `tol new` scaffolding). On-chain hooks: bundled into Slice 6. |
 | §6.1 | Release handling and upgrade discipline | TOS already has `SETCODE`-style behaviour replacement; the missing part is operational discipline (compatibility windows, rollback, state-migration proofs). Becomes load-bearing the moment Slice 6 ships supervision-driven restarts. | Pre-design during Slice 4–5; production rollout adjacent to Slice 6. |
 | §6.2 | Application boundaries / lifecycle (validator subsystem, workchain, system-contract package) | Without this, every multi-subsystem upgrade is hand-coordinated. Compounds with §6.1. | Same window as §6.1. |
