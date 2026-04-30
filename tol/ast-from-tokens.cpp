@@ -1635,6 +1635,18 @@ static V<ast_annotation> parse_annotation(Lexer& lex) {
       }
       break;
     }
+    case AnnotationKind::on_states: {
+      if (!v_arg || v_arg->size() == 0) {
+        err("expecting `(State1, State2, ...)` after {}; see doc/tos-language-syntax-policy.md §3.4", name).fire(range);
+      }
+      for (int i = 0; i < v_arg->size(); ++i) {
+        AnyExprV item = v_arg->get_item(i);
+        if (item->kind != ast_reference) {
+          err("`@on(...)` arguments must be state identifiers; see doc/tos-language-syntax-policy.md §3.4").fire(item);
+        }
+      }
+      break;
+    }
   }
 
   if (v_arg == nullptr) {
@@ -1793,6 +1805,15 @@ static AnyV parse_function_declaration(Lexer& lex, const std::vector<V<ast_annot
 static AnyV parse_struct_field(Lexer& lex) {
   SrcRange range = lex.range_start();
 
+  // Slice 2 Stage 3: a struct field MAY be prefixed with one annotation; today only `@on(...)` is meaningful.
+  // `@on(...)` is permitted in front of (`private`? `readonly`? name `:` type ...);
+  // it is also permitted as a TRAILING annotation after the type (per the §3.4 example
+  // `payoutsRemaining: uint8 @on(Settling)`). Both forms are accepted; only one annotation per field.
+  std::vector<V<ast_annotation>> field_annotations;
+  while (lex.tok() == tok_annotation_at) {
+    field_annotations.push_back(parse_annotation(lex));
+  }
+
   bool is_private = false;
   if (lex.tok() == tok_private) {
     lex.next();
@@ -1804,11 +1825,17 @@ static AnyV parse_struct_field(Lexer& lex) {
     lex.next();
     is_readonly = true;
   }
-  
+
   auto v_ident = parse_identifier(lex, "field name");
   lex.expect(tok_colon, "`: <type>`");
   AnyTypeV declared_type = parse_type_from_tokens(lex);
   range.end(declared_type->range);
+
+  // accept the §3.4-spelled `payoutsRemaining: uint8 @on(Settling)` trailing position
+  while (lex.tok() == tok_annotation_at) {
+    field_annotations.push_back(parse_annotation(lex));
+    range.end(field_annotations.back()->range);
+  }
 
   AnyExprV default_value = nullptr;
   if (lex.tok() == tok_assign) {    // `id: int = 3`
@@ -1817,7 +1844,33 @@ static AnyV parse_struct_field(Lexer& lex) {
     range.end(default_value->range);
   }
 
-  return createV<ast_struct_field>(range, v_ident, is_private, is_readonly, default_value, declared_type);
+  std::vector<std::string_view> on_states;
+  SrcRange on_states_range = SrcRange::undefined();
+  for (auto v_annotation : field_annotations) {
+    switch (v_annotation->kind) {
+      case AnnotationKind::on_states: {
+        if (!on_states.empty()) {
+          err("`@on(...)` may be specified at most once per field; see doc/tos-language-syntax-policy.md §3.4")
+            .fire(v_annotation);
+        }
+        on_states_range = v_annotation->range;
+        for (int i = 0; i < v_annotation->get_arg()->size(); ++i) {
+          auto ref = v_annotation->get_arg()->get_item(i)->as<ast_reference>();
+          on_states.push_back(ref->get_name());
+        }
+        break;
+      }
+      case AnnotationKind::custom:
+        // allow @custom.* / @deprecated above a field, ignore
+        break;
+      default:
+        err("annotation `{}` is not applicable to a struct field; only `@on(...)` is permitted in Slice 2",
+            v_annotation->name)
+          .fire(v_annotation);
+    }
+  }
+
+  return createV<ast_struct_field>(range, v_ident, is_private, is_readonly, default_value, declared_type, std::move(on_states), on_states_range);
 }
 
 static V<ast_struct_body> parse_struct_body(Lexer& lex, V<ast_identifier> name_ident) {

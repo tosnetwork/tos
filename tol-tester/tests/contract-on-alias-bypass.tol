@@ -1,0 +1,33 @@
+struct ContractOnAliasStorage {
+    open: uint32;
+    @on(Settling) payoutsRemaining: uint32;
+}
+
+struct (0x00000054) ContractOnAliasPing {
+    queryId: uint64;
+}
+
+contract ContractOnAlias {
+    storage: ContractOnAliasStorage
+    states: Open, Settling
+    @initial state Open
+
+    receive(msg: ContractOnAliasPing) on Settling {
+        val foo = storage.payoutsRemaining;
+        save(ContractOnAliasStorage { open: 1, payoutsRemaining: foo });
+        become Open;
+    }
+
+    receive(msg: ContractOnAliasPing) on Open {
+        val foo = storage.payoutsRemaining;
+        val echoed = foo;
+        save(ContractOnAliasStorage { open: echoed, payoutsRemaining: 0 });
+        become Settling;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr was tainted by an `@on(Settling)` storage field
+@stderr doc/tos-language-syntax-policy.md §5
+ */

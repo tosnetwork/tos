@@ -308,20 +308,27 @@ struct StructFieldData final : Symbol {
   AnyTypeV type_node;
   TypePtr declared_type = nullptr;      // = resolved type_node
   AnyExprV default_value;               // nullptr if no default
+  // Slice 2 Stage 3 (doc/tos-language-syntax-policy.md §3.4): `@on(State1, State2)` field scoping.
+  // empty = field readable in every state. Mirror of Vertex<ast_struct_field>::on_states; copied
+  // out into the symbol so passes that only have a StructFieldPtr can still see the annotation.
+  // Diagnostic anchor: callers should fire on `ident_anchor` (the field's identifier vertex).
+  std::vector<std::string> on_states;
 
   bool has_default_value() const { return default_value != nullptr; }
+  bool has_on_states_annotation() const { return !on_states.empty(); }
 
   StructFieldData* mutate() const { return const_cast<StructFieldData*>(this); }
   void assign_resolved_type(TypePtr declared_type);
   void assign_default_value(AnyExprV default_value);
 
-  StructFieldData(std::string name, AnyV ident_anchor, int field_idx, bool is_private, bool is_readonly, AnyTypeV type_node, AnyExprV default_value)
+  StructFieldData(std::string name, AnyV ident_anchor, int field_idx, bool is_private, bool is_readonly, AnyTypeV type_node, AnyExprV default_value, std::vector<std::string> on_states = {})
     : Symbol(std::move(name), ident_anchor)
     , field_idx(field_idx)
     , is_private(is_private)
     , is_readonly(is_readonly)
     , type_node(type_node)
-    , default_value(default_value) {
+    , default_value(default_value)
+    , on_states(std::move(on_states)) {
   }
 };
 

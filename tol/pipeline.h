@@ -48,6 +48,7 @@ void pipeline_optimize_boolean_expressions();
 void pipeline_detect_inline_in_place();
 void pipeline_check_serialized_fields();
 void pipeline_check_state_reachability();
+void pipeline_check_field_scoping();
 void pipeline_lower_contracts();
 void pipeline_check_query_id_propagation();
 void pipeline_lazy_load_insertions();
