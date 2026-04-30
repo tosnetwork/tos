@@ -272,6 +272,10 @@ Follow-up Tol compiler ergonomics exposed by the minter migration
 also landed on `actor-layer` (commit `bf09e60fd`): const / enum
 `struct(...)` opcode tags, const / string `@method_id`, bounced
 ignore policy, and manual-parse `query_id` propagation analysis.
+A later ergonomics fix (commit `02197a2c0`) allows auto-unpack of
+tail-position `slice` fields, so stdlib `Envelope.fromSlice(...)`
+now parses `Envelope.payload: slice` directly instead of requiring
+a local `RemainingBitsAndRefs` surrogate.
 
 **Owners.** Contract team, with Tol compiler team support.
 
@@ -327,6 +331,9 @@ Envelope / `OP_ERROR` fuzz smoke in Tol, and runs deterministic
 BoC / Envelope fuzz smoke through the emulator fixture suite.
 The focused Tol gas-regression gate now exists, but final
 pre-migration FunC black-box gas baselines are not yet available.
+The deterministic Envelope fuzz now exercises the real stdlib
+`Envelope.fromSlice(...)` path after commit `02197a2c0`, including
+tail-position `slice` auto-unpack coverage.
 
 **Owners.** QA, with protocol team support.
 
@@ -411,7 +418,10 @@ branch.
       `disclaim_query_id()` builtin, and the `OP_ERROR` reply
       helper. *(commits `83c01c672` `common.tol` types,
       `f48a11533` `disclaim_query_id` builtin stub,
-      `402f944a3` `envelope.tlb` reference doc.)*
+      `402f944a3` `envelope.tlb` reference doc. Compiler support
+      for direct `Envelope.fromSlice(...)` on
+      `payload: slice` landed in `02197a2c0`, with positive and
+      negative tol-tester coverage for tail-position `slice` fields.)*
 - [x] `tol/pipe-check-query-id-propagation.cpp` enforces
       `query_id` propagation at Tol compile time, injected
       between `pipeline_check_serialized_fields()` (line 83)
@@ -439,7 +449,7 @@ branch.
       fix `40f69bec9`. CI integration added in
       `.github/workflows/slice-1-conformance.yml`, with
       `slice-1-envelope-fuzz-smoke.tol` covering deterministic
-      Envelope / `OP_ERROR` fuzz and
+      stdlib `Envelope.fromSlice(...)` / `OP_ERROR` fuzz and
       `slice-1-boc-envelope-fuzz-fixture.cpp` covering deterministic
       BoC / Envelope fuzz inside `test-emulator`.)*
 - [ ] Gas regressions are documented and within budget.
@@ -458,6 +468,9 @@ branch.
 all 3 reference-contract migrations complete (`jetton-minter`,
 `jetton-wallet`, `wallet-v5`), and the Stage 5 internal migration
 playbook now exists. Stage 4 CI conformance / fuzzing is wired.
+The former Tol workaround for `Envelope.payload: slice` is resolved
+in `02197a2c0`, and the focused suite now covers 571 tol-tester
+cases.
 Remaining checklist items break down to: final Stage 4
 pre-migration gas evidence and the Stage 5 external RFC / release
 notes.
