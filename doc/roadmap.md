@@ -667,19 +667,22 @@ reference contracts are already written in high-level `contract` /
 dogfoods the new stdlib patterns without changing wire bytes or
 breaking the gas budget.
 
-**Status.** 📝 Stage 0 draft as of 2026-04-30. The Slice 3 policy RFC
-and stage plan live at
-[`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md). Implementation
-has not started.
+**Status.** ✅ Stage 0 complete as of 2026-04-30. The Slice 3 policy
+RFC and stage plan live at
+[`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md) and are approved.
+The machine-readable Stage 0 baseline capture lives at
+[`doc/slice-3-reference-baselines.json`](slice-3-reference-baselines.json).
+Implementation now moves to Stage 1: deterministic property/replay
+harness.
 
 **Stage plan.**
 
-1. 📝 **Stage 0 — policy and baseline lock.** Approve
-   `doc/tos-slice-3-policy.md`, capture current Slice 2
+1. ✅ **Stage 0 — policy and baseline lock.** Approved
+   `doc/tos-slice-3-policy.md`, captured current Slice 2
    reference-contract bytecode/gas/opcode/method-id/error-code
-   baselines, and fix the first two vertical stdlib targets
-   (recommended: Jetton first, NFT second).
-2. ⬜ **Stage 1 — deterministic property/replay harness.** Define the
+   baselines in `doc/slice-3-reference-baselines.json`, and fixed the
+   first two vertical stdlib targets: Jetton first, NFT second.
+2. 📝 **Stage 1 — deterministic property/replay harness.** Define the
    replay fixture schema, choose the hybrid `tol-tester` +
    `test-emulator` substrate, add deterministic generators, and wire
    the harness into CI before stdlib pattern code depends on it.
@@ -846,19 +849,18 @@ before the corresponding slice can start.
 **Slice 3** — Q3 stdlib + Q4 static analysis + scaffolding
 
 - *Hard:* Slice 2 implementation is complete on `actor-layer`; Slice 3
-  now needs Stage 0 approval of `doc/tos-slice-3-policy.md` plus a
-  machine-readable baseline capture for the three Slice 2 reference
-  contracts. The next rewrite is not "to Slice 2 syntax" anymore; it
-  is a stdlib dogfood rewrite on top of existing Slice 2 syntax.
+  Stage 0 is complete. The next rewrite is not "to Slice 2 syntax"
+  anymore; it is a stdlib dogfood rewrite on top of existing Slice 2
+  syntax, gated by `doc/slice-3-reference-baselines.json`.
 - *Budget gate:* `tol.md` Q3 imposes a ≤ 15% bytecode-overhead
   budget per stdlib pattern. Pattern designs that exceed it must
   be trimmed before shipping; this can require iterating with the
   contract team mid-stage.
-- *Replay/property substrate:* Now scheduled as Slice 3 Stage 1 in
-  `doc/tos-slice-3-policy.md`. The recommended substrate is hybrid:
-  fast deterministic Tol checks plus emulator replay for
-  message/value/bounce/gas assertions. This must land before stdlib
-  vertical slices depend on it.
+- *Replay/property substrate:* Now the active Slice 3 Stage 1 gate in
+  `doc/tos-slice-3-policy.md`. The approved substrate is hybrid: fast
+  deterministic Tol checks plus emulator replay for message/value/
+  bounce/gas assertions. This must land before stdlib vertical slices
+  depend on it.
 - *Stronger `query_id` analysis:* Now scheduled as Slice 3 Stage 7.
   The implementation path is stdlib-manifest-backed checking of the
   `(expected_responder, query_id)` table, with optional
@@ -950,10 +952,10 @@ Sorted by how many later slices each item blocks:
    `doc/tos-language-syntax-policy.md` Draft v3 and the Stage 1
    implementation commit `081f05d3c`; see §6 Slice 2 status and
    §11.5.
-3. **Slice 3 Stage 0 / Stage 1 gates** — `doc/tos-slice-3-policy.md`
-   now sketches the policy, but implementation should not start until
-   it is approved and the baseline + replay-harness substrate are
-   checked in. This is the immediate next engineering gate.
+3. **Slice 3 Stage 1 replay harness** — Stage 0 is approved and the
+   reference baseline file is checked in. The immediate next engineering
+   gate is the deterministic replay/property harness; stdlib pattern
+   implementation should not start until this substrate exists.
 4. **`actor.md` §5.4 capability public RFC** — Slice 6 long-pole.
    Needs protocol architect time, not engineering capacity. The
    earlier this enters RFC review, the lower the schedule risk
@@ -967,8 +969,8 @@ Sorted by how many later slices each item blocks:
    and replay traces.
 
 Item 1 should be in motion before Slice 4 design starts. Item 2 is
-closed. Item 3 is the immediate Slice 3 entry gate. Items 4–5 should
-be in motion before Slice 3 ships.
+closed. Item 3 is the immediate Slice 3 engineering gate. Items 4–5
+should be in motion before Slice 3 ships.
 
 (The earlier four-signer approval item from this list was
 removed when policy v6 made single-signer the rule; see §11.3.)
@@ -998,12 +1000,24 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   3–8 plus receiver-local `queryId` hardening landed on
   `actor-layer`; the Slice 2 status block in §6 records the stage
   commits and current verification snapshot.
-- ✅ **Slice 3 stage-plan missing-design blocker** — closed for
-  planning by `doc/tos-slice-3-policy.md` Draft v1 (2026-04-30).
-  Implementation remains gated on approving that RFC and landing the
-  Stage 0 baseline capture plus Stage 1 replay harness.
+- ✅ **Slice 3 Stage 0 policy/baseline gate** — closed
+  2026-04-30. `doc/tos-slice-3-policy.md` is approved and
+  `doc/slice-3-reference-baselines.json` captures the three Slice 2
+  reference-contract bytecode/gas/opcode/method-id/error-code and
+  wallet-v5 external-body baselines. Implementation remains gated on
+  the Stage 1 replay/property harness before stdlib pattern work starts.
 
 ## 12. Revision notes
+
+### r10 (Slice 3 Stage 0 approved)
+
+- `doc/tos-slice-3-policy.md` is now approved as the Slice 3 Stage 0
+  implementation input.
+- Added `doc/slice-3-reference-baselines.json`, the machine-readable
+  baseline for the three Slice 2 reference contracts before Slice 3
+  stdlib rewrites.
+- §6 Slice 3 marks Stage 0 complete and Stage 1
+  deterministic replay/property harness as the active next gate.
 
 ### r9 (Slice 3 RFC and stage plan)
 

@@ -4,9 +4,8 @@ Domain stdlib, scaffolding, replay testing, and Q4 static analysis.
 
 ## 0. Status, scope, and references
 
-**Status.** Draft v1 (2026-04-30). This is the Slice 3 Stage 0
-implementation input. It is not approved until this line is changed
-to record the authorized owner and approval date.
+**Status.** Approved 2026-04-30 by the authorized owner of record.
+This is the Slice 3 Stage 0 implementation input.
 
 Slice 3 implements the `tol.md` Q3 + Q4 work on top of the completed
 Slice 1 message envelope and completed Slice 2 contract syntax. The
@@ -104,14 +103,16 @@ Deliverables:
 - This RFC approved as the Slice 3 implementation input.
 - Current Slice 2 reference-contract bytecode, gas, opcode, method-id,
   error-code, and external-body baselines captured in a machine-readable
-  file under `doc/`.
+  file under `doc/`. The Stage 0 baseline file is
+  `doc/slice-3-reference-baselines.json`.
 - A decision record naming the first two vertical stdlib targets. The
-  recommended order is Jetton first, NFT second, because Jetton already
-  has two migrated references and exercises both master/wallet
-  interaction and bounce paths.
+  approved order is Jetton first, NFT second, because Jetton already has
+  two migrated references and exercises both master/wallet interaction
+  and bounce paths.
 
-Exit criterion: the stdlib implementation does not begin until the
-baselines are checked in and the stage order is fixed.
+Exit criterion: complete as of 2026-04-30. The stdlib implementation
+does not begin until Stage 1's deterministic replay/property harness is
+checked in.
 
 ### Stage 1 - Deterministic property/replay harness
 
@@ -294,7 +295,7 @@ merge:
 
 ## 6. Deep self-review of this RFC
 
-The review below is part of Draft v1. It records defects found while
+The review below is part of approved v1. It records defects found while
 writing the RFC and the corrective rule now present in the text.
 
 | ID | Severity | Finding | Resolution in this RFC |
