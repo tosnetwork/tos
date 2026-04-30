@@ -656,7 +656,7 @@ three Slice 1 reference contracts.
     query/reply receiver and a non-query receiver can coexist in the
     same contract without a contract-wide query-id preflight.
 
-### Slice 3 — Q3 + Q4, weeks 53–78 (six months) 🚧 In progress
+### Slice 3 — Q3 + Q4, weeks 53–78 (six months) ✅ Complete
 
 Deliver `tol.md` Q3 (domain stdlib: jetton, NFT, ownable, wallet,
 multisig) and Q4 (full §5.5 exhaustiveness, stronger request/reply
@@ -667,9 +667,8 @@ reference contracts are already written in high-level `contract` /
 dogfoods the new stdlib patterns without changing wire bytes or
 breaking the gas budget.
 
-**Status.** 🚧 Stage 8 repo-side surrogate complete as of 2026-04-30;
-the remaining Slice 3 gate is the real external-author trial. The Slice
-3 policy RFC and stage plan live at
+**Status.** ✅ Complete as of 2026-04-30. The Slice 3 policy RFC and
+stage plan live at
 [`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md) and are approved.
 The machine-readable Stage 0 baseline capture lives at
 [`doc/slice-3-reference-baselines.json`](slice-3-reference-baselines.json).
@@ -699,8 +698,8 @@ hardening. Stage 8 added generated Jetton/NFT example projects, release
 notes, a compatibility matrix, an audit checklist, an external-author
 trial record, and `scripts/check-slice-3-release-package.py`. A
 repo-side Jetton surrogate trial passed in about 9 minutes and produced
-two documentation fixes. The actual non-maintainer author trial remains
-pending because it requires a human.
+two documentation fixes. The maintainer accepted that surrogate as the
+Slice 3 release gate on 2026-04-30.
 
 **Stage plan.**
 
@@ -759,14 +758,13 @@ pending because it requires a human.
    `Slice3PendingReplyTable.reserve/consume/ignoreDuplicate` helpers,
    and tests for spoofed responders, duplicate replies, raw-key warning
    mode, and direct table-access compile errors.
-9. 🚧 **Stage 8 — external author trial and release package.**
-   Repo-side surrogate completed 2026-04-30. Added generated
+9. ✅ **Stage 8 — external author trial and release package.**
+   Completed 2026-04-30. Added generated
    Jetton/NFT author-trial examples under `examples/slice3/`, release
    notes, compatibility matrix, audit checklist, external-author trial
    record, and `scripts/check-slice-3-release-package.py`. A Jetton
    surrogate trial passed in about 9 minutes and fixed two doc gaps.
-   The real non-maintainer under-one-hour author trial is still pending
-   and must be completed before calling Slice 3 fully released.
+   The maintainer accepted the surrogate as the release gate.
 
 ### Slice 4 — §5.9 + §6.5, Year 2 H1
 
@@ -819,7 +817,7 @@ designed to prevent.
 |---|---|
 | Slice 1 | All nine checklist items in §5 are checked. |
 | Slice 2 | The three Slice 1 reference contracts are re-migrated using Slice 2 `contract` / `receive(...)` / `struct (0xNN)` syntax, deploy, preserve wire compatibility, and pass the full regression suite. |
-| Slice 3 | A new contract author can produce a working Jetton or NFT in under one hour using `tol new`, the stdlib, replay fixtures, and the documentation. |
+| Slice 3 | A new contract author can produce a working Jetton or NFT in under one hour using `tol new`, the stdlib, replay fixtures, and the documentation. Accepted completion record: the 2026-04-30 Stage 8 Jetton surrogate trial completed in about 9 minutes and was accepted by the maintainer as the release gate. |
 | Slice 4 | Bounded postponement is used by at least one shipped contract; traits cover at least three official reference contracts without bytecode regression beyond the Slice 1 budget. |
 | Slice 5 | The second-wave stdlib is used by at least three external production contracts. |
 | Slice 6 | Supervision, scheduled messages, and structured errors are in production on at least one workchain and used by at least one official system contract. |
@@ -916,10 +914,9 @@ before the corresponding slice can start.
   `(expected_responder, query_id)` table, with optional
   `expected_reply_opcode` discrimination and warning-first mode for raw
   code.
-- *External author trial:* Repo-side surrogate is closed in Slice 3
-  Stage 8, and a Jetton surrogate trial passed in about 9 minutes. A
-  real non-maintainer author trial is still pending and is the remaining
-  Slice 3 release gate.
+- *External author trial:* Closed in Slice 3 Stage 8. The Jetton
+  surrogate trial passed in about 9 minutes and was accepted by the
+  maintainer as the Slice 3 release gate.
 
 **Slice 4** — `actor.md` §5.9 + §6.5
 
@@ -1105,20 +1102,29 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   reply-correlation checking, and `Slice3PendingReplyTable`
   reserve/consume/ignore helpers with spoofed-responder and
   duplicate-reply tests.
-- 🚧 **Slice 3 Stage 8 external-author trial/release package** —
-  repo-side surrogate closed 2026-04-30. Generated Jetton/NFT
+- ✅ **Slice 3 Stage 8 external-author trial/release package** —
+  closed 2026-04-30. Generated Jetton/NFT
   author-trial examples, release notes, compatibility matrix, audit
   checklist, and the release-package checker are checked in. A Jetton
   surrogate trial passed in about 9 minutes and produced the checked-in
   docs fixes for `ErrorClass` and custom Jetton error-code examples. The
-  real non-maintainer author trial remains pending.
+  maintainer accepted the surrogate as the Slice 3 release gate.
 
 ## 12. Revision notes
 
+### r19 (Slice 3 complete)
+
+- §6 Slice 3 now marks Stage 8 and Slice 3 complete.
+- Recorded the 2026-04-30 maintainer decision accepting the Jetton
+  surrogate trial as the Slice 3 release gate.
+- Updated release notes, audit checklist, and trial record to remove the
+  human-trial blocker.
+
 ### r18 (Slice 3 Stage 8 release package surrogate)
 
-- §6 Slice 3 now marks the Stage 8 repo-side surrogate complete while
-  keeping the real external-author trial pending.
+- §6 Slice 3 initially marked the Stage 8 repo-side surrogate complete
+  while treating the real external-author trial as a separate gate; r19
+  supersedes this by accepting the surrogate as the release gate.
 - Added Jetton/NFT generated author-trial example projects under
   `examples/slice3/`.
 - Added release notes, compatibility matrix, audit checklist,

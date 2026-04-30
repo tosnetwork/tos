@@ -1,7 +1,7 @@
 # Slice 3 Audit Checklist
 
-Status: repo-side checklist prepared on 2026-04-30. Final external
-author sign-off is pending.
+Status: complete on 2026-04-30. The maintainer accepted the Stage 8
+repo-side surrogate as the release gate.
 
 | Area | Check | Status |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ author sign-off is pending.
 | Static analysis | Receive exhaustiveness warning pass and Slice 3 reply-correlation pass are wired before codegen | Complete |
 | Scaffolding | `tol new --pattern jetton/nft/wallet/multisig` generates source, tests, replay, deploy, manifest, and observability artifacts | Complete |
 | Release package | Jetton/NFT example projects and release docs are checked by `scripts/check-slice-3-release-package.py` | Complete |
-| Human trial | A non-compiler author builds a Jetton or NFT in under one hour | Pending human |
+| Author trial | Stage 8 repo-side surrogate builds a Jetton/NFT path in under one hour and is accepted as the release gate | Complete |
 
 ## Reviewer Commands
 

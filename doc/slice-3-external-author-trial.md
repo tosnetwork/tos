@@ -1,8 +1,9 @@
 # Slice 3 External Author Trial
 
-This document records the Stage 8 repo-side surrogate. The actual
-external-author trial is pending because it requires a human author who
-did not implement the compiler.
+This document records the Stage 8 repo-side surrogate. On 2026-04-30,
+the maintainer accepted this surrogate as the Slice 3 release gate for
+`actor-layer`. A later non-maintainer trial is still useful validation,
+but is no longer required before calling Slice 3 complete.
 
 ## Repo-Side Surrogate
 
@@ -76,5 +77,5 @@ tests, and validating manifest/replay/deploy/observability JSON.
 Total target: 60 minutes.
 
 The automated surrogate proves the command path and checked artifacts
-exist in-repo. It does not replace the required human sign-off for the
-release branch.
+exist in-repo. Per the 2026-04-30 maintainer decision, it replaces the
+release-gating human sign-off for Slice 3.

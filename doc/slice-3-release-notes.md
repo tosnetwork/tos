@@ -1,8 +1,7 @@
 # Slice 3 Release Notes
 
-Status: repo-side release-package surrogate complete on 2026-04-30.
-The real external-author trial remains pending because it requires a
-human who did not implement the compiler.
+Status: Slice 3 release package complete on 2026-04-30. The maintainer
+accepted the repo-side Stage 8 surrogate as the release gate.
 
 ## Supported Patterns
 

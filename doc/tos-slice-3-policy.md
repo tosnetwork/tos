@@ -372,7 +372,10 @@ Deliverables:
 - Final audit checklist signed off before the release branch is cut.
 
 Exit criterion: Slice 3 success criterion in `roadmap.md` section 9 is
-met by a real author trial, not by a maintainer demo.
+met by an accepted author-trial record. As of 2026-04-30, the maintainer
+decision is to accept the repo-side surrogate trial as the Stage 8
+release gate for `actor-layer`; a later non-maintainer author trial is a
+post-release validation item, not a blocker for Slice 3 completion.
 
 Implementation status: repo-side surrogate complete as of 2026-04-30.
 `examples/slice3/jetton-author-trial` and
@@ -382,8 +385,8 @@ artifacts. `scripts/check-slice-3-release-package.py` validates those
 examples plus the release notes, compatibility matrix, audit checklist,
 and external-author trial record. A repo-side Jetton surrogate trial
 completed in about 9 minutes and found two documentation gaps, both now
-fixed. The actual non-maintainer external-author trial remains pending
-because it requires a human author who did not implement the compiler.
+fixed. On 2026-04-30, the maintainer accepted this surrogate as a
+replacement for the release-gating external-author trial.
 
 ## 5. Required review gates
 
@@ -422,10 +425,12 @@ writing the RFC and the corrective rule now present in the text.
 | R8 | MEDIUM | The static analysis plan could make raw legacy code fail immediately, blocking migration. | Stage 7 uses warning-first mode for raw code and error mode only for stdlib APIs with explicit manifests. |
 | R9 | LOW | Off-chain observability was recommended for Slice 3 in the roadmap gap table but absent from the coarse Slice 3 paragraph. | Stage 6 adds generated manifests, opcode maps, method-id maps, error-code maps, and replay traces as off-chain observability artifacts. |
 
-Open issues intentionally left for implementation design:
+Open issues intentionally left for post-release validation:
 
-- The concrete representation of the stdlib query/reply pending table.
-- The first external author used for the Stage 8 trial.
+- A later non-maintainer external author should still repeat the Stage 8
+  under-one-hour Jetton/NFT path, but this is no longer a Slice 3 release
+  blocker because the 2026-04-30 maintainer decision accepted the
+  surrogate trial.
 
-None of these open issues changes the security or wire-compatibility
-contract of this RFC.
+This open validation item does not change the security or
+wire-compatibility contract of this RFC.
