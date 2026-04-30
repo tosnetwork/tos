@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "pattern": "nft",
+  "contract": "NftAuthorTrial",
+  "source": "src/main.tol",
+  "network": "local",
+  "state_init": {
+    "code": "build/NftAuthorTrial.code.boc",
+    "data": "build/NftAuthorTrial.data.boc"
+  }
+}

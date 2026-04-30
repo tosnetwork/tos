@@ -667,8 +667,9 @@ reference contracts are already written in high-level `contract` /
 dogfoods the new stdlib patterns without changing wire bytes or
 breaking the gas budget.
 
-**Status.** 🚧 Stage 7 complete as of 2026-04-30; Stage 8 is the active
-implementation gate. The Slice 3 policy RFC and stage plan live at
+**Status.** 🚧 Stage 8 repo-side surrogate complete as of 2026-04-30;
+the remaining Slice 3 gate is the real external-author trial. The Slice
+3 policy RFC and stage plan live at
 [`doc/tos-slice-3-policy.md`](tos-slice-3-policy.md) and are approved.
 The machine-readable Stage 0 baseline capture lives at
 [`doc/slice-3-reference-baselines.json`](slice-3-reference-baselines.json).
@@ -694,8 +695,10 @@ with focused tests. Stage 6 added `tol new --pattern
 jetton|nft|wallet|multisig`, generated project artifacts, scaffold
 verification, and the task-oriented Slice 3 docs. Stage 7 added
 receive-exhaustiveness warnings and manifest-backed reply-correlation
-hardening. Implementation now moves to Stage 8: external author trial
-and release package surrogate.
+hardening. Stage 8 added generated Jetton/NFT example projects, release
+notes, a compatibility matrix, an audit checklist, an external-author
+trial record, and `scripts/check-slice-3-release-package.py`. The actual
+non-maintainer author trial remains pending because it requires a human.
 
 **Stage plan.**
 
@@ -754,9 +757,13 @@ and release package surrogate.
    `Slice3PendingReplyTable.reserve/consume/ignoreDuplicate` helpers,
    and tests for spoofed responders, duplicate replies, raw-key warning
    mode, and direct table-access compile errors.
-9. 📝 **Stage 8 — external author trial and release package.** Prove
-   the §9 Slice 3 success criterion with a real author trial, then cut
-   release notes, compatibility matrix, and final audit checklist.
+9. 🚧 **Stage 8 — external author trial and release package.**
+   Repo-side surrogate completed 2026-04-30. Added generated
+   Jetton/NFT author-trial examples under `examples/slice3/`, release
+   notes, compatibility matrix, audit checklist, external-author trial
+   record, and `scripts/check-slice-3-release-package.py`. The real
+   non-maintainer under-one-hour author trial is still pending and must
+   be completed before calling Slice 3 fully released.
 
 ### Slice 4 — §5.9 + §6.5, Year 2 H1
 
@@ -906,6 +913,9 @@ before the corresponding slice can start.
   `(expected_responder, query_id)` table, with optional
   `expected_reply_opcode` discrimination and warning-first mode for raw
   code.
+- *External author trial:* Repo-side surrogate is closed in Slice 3
+  Stage 8. A real non-maintainer author trial is still pending and is
+  the remaining Slice 3 release gate.
 
 **Slice 4** — `actor.md` §5.9 + §6.5
 
@@ -1086,8 +1096,35 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   smoke tests, replay/deploy stubs, manifests, opcode maps, method-id
   maps, error-code maps, and replay traces. The scaffold checker and
   task-oriented Slice 3 docs are checked in.
+- ✅ **Slice 3 Stage 7 Q4 static-analysis hardening** — closed
+  2026-04-30. Added receive-exhaustiveness warnings, manifest-backed
+  reply-correlation checking, and `Slice3PendingReplyTable`
+  reserve/consume/ignore helpers with spoofed-responder and
+  duplicate-reply tests.
+- 🚧 **Slice 3 Stage 8 external-author trial/release package** —
+  repo-side surrogate closed 2026-04-30. Generated Jetton/NFT
+  author-trial examples, release notes, compatibility matrix, audit
+  checklist, and the release-package checker are checked in. The real
+  non-maintainer author trial remains pending.
 
 ## 12. Revision notes
+
+### r18 (Slice 3 Stage 8 release package surrogate)
+
+- §6 Slice 3 now marks the Stage 8 repo-side surrogate complete while
+  keeping the real external-author trial pending.
+- Added Jetton/NFT generated author-trial example projects under
+  `examples/slice3/`.
+- Added release notes, compatibility matrix, audit checklist,
+  external-author trial record, and
+  `scripts/check-slice-3-release-package.py`.
+
+### r17 (Slice 3 Stage 7 static-analysis hardening)
+
+- §6 Slice 3 now marks Stage 7 complete and Stage 8 active.
+- Added receive-exhaustiveness warnings before contract lowering.
+- Added manifest-backed reply-correlation checks and
+  `Slice3PendingReplyTable` helpers/tests.
 
 ### r16 (Slice 3 Stage 6 scaffolding and docs)
 

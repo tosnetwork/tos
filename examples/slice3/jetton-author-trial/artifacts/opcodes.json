@@ -1,0 +1,8 @@
+{
+  "opcodes": [
+    {"name": "JETTON_OP_MINT", "hex": "0x00000015"},
+    {"name": "JETTON_OP_TRANSFER", "hex": "0x0f8a7ea5"},
+    {"name": "JETTON_OP_INTERNAL_TRANSFER", "hex": "0x178d4519"},
+    {"name": "JETTON_OP_BURN", "hex": "0x595f07bc"}
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "pattern": "jetton",
+  "contract": "JettonAuthorTrial",
+  "source": "src/main.tol",
+  "network": "local",
+  "state_init": {
+    "code": "build/JettonAuthorTrial.code.boc",
+    "data": "build/JettonAuthorTrial.data.boc"
+  }
+}

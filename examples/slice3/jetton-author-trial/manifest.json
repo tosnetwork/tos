@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "schema": "slice-3-generated-project",
+  "pattern": "jetton",
+  "contract": "JettonAuthorTrial",
+  "stdlib_import": "@stdlib/jetton",
+  "source": "src/main.tol",
+  "tests": [
+    "tests/jetton-positive.tol"
+  ],
+  "replay_fixtures": [
+    "replay/jetton-replay.json"
+  ],
+  "observability": {
+    "opcodes": "artifacts/opcodes.json",
+    "method_ids": "artifacts/method-ids.json",
+    "error_codes": "artifacts/error-codes.json",
+    "replay_trace": "artifacts/replay-trace.json"
+  }
+}

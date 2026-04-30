@@ -374,6 +374,16 @@ Deliverables:
 Exit criterion: Slice 3 success criterion in `roadmap.md` section 9 is
 met by a real author trial, not by a maintainer demo.
 
+Implementation status: repo-side surrogate complete as of 2026-04-30.
+`examples/slice3/jetton-author-trial` and
+`examples/slice3/nft-author-trial` are real `tol new` outputs with
+source, smoke tests, replay/deploy stubs, manifests, and observability
+artifacts. `scripts/check-slice-3-release-package.py` validates those
+examples plus the release notes, compatibility matrix, audit checklist,
+and external-author trial record. The actual non-maintainer
+external-author trial remains pending because it requires a human author
+who did not implement the compiler.
+
 ## 5. Required review gates
 
 Every Slice 3 implementation stage must answer these questions before

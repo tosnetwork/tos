@@ -11,11 +11,15 @@ on:
       - 'doc/slice-1-gas-baselines.json'
       - 'doc/slice-3-reference-baselines.json'
       - 'doc/slice-3-replay-fixture-schema.json'
+      - 'doc/slice-3-*.md'
+      - 'examples/slice3/**'
       - 'emulator/test/slice-1-*.cpp'
       - 'emulator/test/slice-3-*.cpp'
       - 'emulator/test/slice-3-replay-fixtures/**'
       - 'scripts/check-slice-1-gas.py'
       - 'scripts/check-slice-3-replay-fixtures.py'
+      - 'scripts/check-slice-3-scaffold.py'
+      - 'scripts/check-slice-3-release-package.py'
       - 'tol/**'
       - 'tol-tester/**'
   push:
@@ -27,11 +31,15 @@ on:
       - 'doc/slice-1-gas-baselines.json'
       - 'doc/slice-3-reference-baselines.json'
       - 'doc/slice-3-replay-fixture-schema.json'
+      - 'doc/slice-3-*.md'
+      - 'examples/slice3/**'
       - 'emulator/test/slice-1-*.cpp'
       - 'emulator/test/slice-3-*.cpp'
       - 'emulator/test/slice-3-replay-fixtures/**'
       - 'scripts/check-slice-1-gas.py'
       - 'scripts/check-slice-3-replay-fixtures.py'
+      - 'scripts/check-slice-3-scaffold.py'
+      - 'scripts/check-slice-3-release-package.py'
       - 'tol/**'
       - 'tol-tester/**'
   workflow_dispatch:
@@ -117,3 +125,16 @@ jobs:
       - name: Run Slice 3 replay fixtures
         run: |
           python3 scripts/check-slice-3-replay-fixtures.py --test-emulator build/test-emulator
+
+      - name: Run Slice 3 scaffold and release package checks
+        run: |
+          python3 scripts/check-slice-3-scaffold.py \
+            --tol build/tol/tol \
+            --tol-tester tol-tester/tol-tester.py \
+            --fift build/crypto/fift \
+            --fiftpath crypto/fift/lib
+          python3 scripts/check-slice-3-release-package.py \
+            --tol build/tol/tol \
+            --tol-tester tol-tester/tol-tester.py \
+            --fift build/crypto/fift \
+            --fiftpath crypto/fift/lib
