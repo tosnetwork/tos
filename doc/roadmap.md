@@ -257,12 +257,19 @@ the conformance fixtures with no manual op-code plumbing.
 slice). Stage 2 ships only the envelope struct, the error type,
 and the static check — not the high-level syntax sugar.
 
-### Stage 3 — Reference contract migration (week 15–20) ⏳ Not started
+### Stage 3 — Reference contract migration (week 15–20) 🚧 In progress
 
-**Status.** ⏳ Not started. Audit-derived migration delta estimate
-(jetton-minter ~45 LOC, jetton-wallet ~80 LOC, wallet-v5 ~110 LOC)
-is recorded in `tos-message-policy.md` §10.1 from the Stage 0 A5
-audit, but no rewrite work has begun.
+**Status.** 🚧 In progress as of 2026-04-30 — Stage 3.1
+`jetton-minter` is complete on `actor-layer` (commit
+`af809de44`). The migration uses the Slice 1 `Envelope` / `Error`
+stdlib surface, preserves the FunC reference contract, records the
+§5.3 error-class table in the Tol file header, and measures the
+§10.1 bytecode budget at **FunC 11 cells / Tol 9 cells / ratio
+0.82**. Follow-up Tol compiler ergonomics exposed by this migration
+also landed on `actor-layer` (commit `bf09e60fd`): const / enum
+`struct(...)` opcode tags, const / string `@method_id`, bounced
+ignore policy, and manual-parse `query_id` propagation analysis.
+`jetton-wallet` and `wallet-v5` remain to be migrated.
 
 **Owners.** Contract team, with Tol compiler team support.
 
@@ -272,13 +279,15 @@ playbook accumulates confidence before the largest contract):
 
 **Deliverables.**
 
-1. **`jetton-minter`** — smallest, paired with `jetton-wallet`,
-   estimated ~45 LOC touched. Establishes the basic
-   `Envelope` + `OP_ERROR` rewrite pattern.
-2. **`jetton-wallet`** — ~80 LOC; first contract that exercises
+1. ✅ **`jetton-minter`** — completed 2026-04-30 in
+   `crypto/smartcont/jetton-minter.tol` with three tol-tester
+   cases (`jetton-minter-{positive,auth-fail,unknown-opcode}.tol`).
+   Establishes the basic `Envelope` + `OP_ERROR` rewrite pattern
+   and the first bytecode-delta measurement.
+2. ⏳ **`jetton-wallet`** — ~80 LOC; first contract that exercises
    the bounce-handler delta (`onBouncedMessage` parsing the
    v12 bounce body's `original_body` for the original opcode).
-3. **`wallet-v5`** — ~110 LOC, ~16 distinct error codes that
+3. ⏳ **`wallet-v5`** — ~110 LOC, ~16 distinct error codes that
    need classifying into `error_class` values from
    `tos-message-policy.md` §5.3. Last because the error
    classification has the most discretion and benefits from
@@ -288,7 +297,9 @@ A migration playbook captured from doing the three rewrites:
 what parts of the old code disappear, what compiler errors come
 up most often, what the bytecode-size delta looks like, and what
 the `error_class` mapping convention is for hand-rolled error
-codes.
+codes. The first playbook fragment is now embedded in the
+`jetton-minter.tol` header; the standalone Stage 5 document still
+waits for all three migrations.
 
 **Exit criterion.** All three reference contracts deploy and
 pass their existing test suites unchanged; bytecode-size delta
@@ -356,7 +367,7 @@ release tag.
 ## 5. First-slice deliverables checklist
 
 By end of week 26, the following must all be true. Status as of
-2026-04-29 noted inline; commit references are on the `actor-layer`
+2026-04-30 noted inline; commit references are on the `actor-layer`
 branch.
 
 - [x] `doc/tos-message-policy.md` exists and is approved by the
@@ -389,12 +400,16 @@ branch.
       `tos-message-policy.md` §4.4. *(Skeleton at correct band
       in `d92d4fa12`; full visitor body in `73e3f117d`; four
       tol-tester cases in `13ae8cc89` validate positive /
-      missing / disclaim / no-envelope behaviours.)*
+      missing / disclaim / no-envelope behaviours. Manual-parse
+      propagation coverage added in `bf09e60fd`.)*
 - [ ] All three reference contracts (jetton-minter →
       jetton-wallet → wallet-v5) are rewritten in Tol against
       the new `Envelope` library and continue to pass their
       pre-migration test suites; bytecode-size delta is within
-      the §10.1 ≤ 15% budget for each. *(Stage 3 — not started.)*
+      the §10.1 ≤ 15% budget for each. *(Stage 3 in progress:
+      `jetton-minter` completed in `af809de44` with FunC 11
+      cells / Tol 9 cells / ratio 0.82; `jetton-wallet` and
+      `wallet-v5` remain.)*
 - [ ] Conformance fixtures (Stage 1) and BoC / Envelope fuzzing
       (Stage 4) run in CI. *(Stage 1 fixtures exist and pass
       locally — `slice-1-{account-state,failure-phase,extra-flags}-fixtures.cpp`,
@@ -408,10 +423,11 @@ branch.
       §8.1 zero-wire-change commitment explicitly called out.
       *(Stage 5 — not started.)*
 
-**Progress as of 2026-04-29:** 4 of 9 checked. Remaining items
-break down to: 1 × Stage 3 (reference-contract migration),
-2 × Stage 4 (CI fuzzing + gas dashboard), 2 × Stage 5 (migration
-playbook + external RFC).
+**Progress as of 2026-04-30:** 4 of 9 checked. Stage 3 has
+1 of 3 reference-contract migrations complete (`jetton-minter`).
+Remaining checklist items break down to: Stage 3 completion
+(`jetton-wallet` + `wallet-v5`), 2 × Stage 4 (CI fuzzing + gas
+dashboard), 2 × Stage 5 (migration playbook + external RFC).
 
 If any one of these is missing, the slice is not done. Slipping
 the boundary creates exactly the cross-layer inconsistency this
