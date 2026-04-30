@@ -2,19 +2,20 @@
 
 ## 0. Status, scope, and references
 
-**Status.** Draft v2 (2026-04-30, post-codex-security-review).
+**Status.** Draft v3 (2026-04-30, post-v2-security-review).
 This document is the policy input for Slice 2 of
 [`doc/roadmap.md`](roadmap.md). It must be approved by the §11
 authorized owner before Slice 2 implementation begins, under the
 single-signer governance model of
 [`doc/tos-message-policy.md`](tos-message-policy.md) §12.1.
 
-v2 closes 4 BLOCKER and 9 HIGH findings raised by the v1
-security review (`/tmp/codex_output.md` archived 2026-04-30).
-The four §3 lock decisions from v1 stand; v2 specifies the
-lowering order, deployment path, unknown-opcode policy, and
-disclaim-query-id pass scoping that v1 left under-specified.
-See §13 changelog for the full delta.
+v3 supersedes the v2 closure claim after the second codex
+security review found three partial closures and one broken
+closure in v2. The four §3 lock decisions from v1 stand; v3
+adds the missing deployment/state-machine interaction rules,
+external-message scope boundary, hidden-state save semantics,
+and pass/taint precision that v2 still left under-specified.
+See §12 changelog for the full delta.
 
 **Scope.** Locks the syntactic-semantic contract for the Slice 2
 high-level Tol surface — `contract` declarations, `receive(...)`
@@ -234,7 +235,7 @@ receive(msg: <TypeName>) { ... }
 ```
 
 `<TypeName>` must be a struct with a `(0x________)` opcode
-prefix that is **exactly 32 bits wide on the wire**. v2
+prefix that is **exactly 32 bits wide on the wire**. v3
 mandate: the compiler accepts only 32-bit opcode prefixes
 inside contract `receive(...)` declarations. Today's Tol
 infers prefix length from literal width
@@ -246,7 +247,7 @@ a message pointing at this section. Authors write
 applies only inside `contract` blocks; free-floating structs
 keep their existing prefix-length inference.
 
-Two **separate** unknown-opcode rules — v2 split:
+Two **separate** unknown-opcode rules — v3 split:
 
 1. **Compile-time exhaustiveness over the *declared* opcode
    set.** The compiler builds the closed map of
@@ -257,9 +258,9 @@ Two **separate** unknown-opcode rules — v2 split:
    Each `contract` declaration MUST resolve to one of the
    following modes; ambiguity is a compile error. The default
    is **`@unknown_silent_drop`**, matching the dominant
-   existing wire convention (`wallet-v5-code.fc:211`,
-   FunC `recv_internal` returning silently on unrecognised
-   bodies).
+   existing "unrecognised body returns normally" convention. Exact
+   wallet-v5 byte ordering has the additional caveat below because
+   its legacy dispatcher returns after only a 32-bit opcode check.
 
    - `@unknown_silent_drop` (default): unknown-opcode message
      causes the synthesised `onInternalMessage` to return
@@ -270,7 +271,10 @@ Two **separate** unknown-opcode rules — v2 split:
      `throw 0xffff` on unknown opcode, authors write
      `@unknown_throw(0xffff)` on the contract. The
      `error_code` is a literal `int` so the wire-level exit
-     code is bit-identical to the FunC original.
+     code is bit-identical to the FunC original. The literal
+     participates in the contract's throw-code collision set
+     (§3.7); it may not collide with an auto-numbered or
+     explicit `require(...)` code in the same contract.
    - `receive(msg: UnknownOpcode) { ... }`: explicit catch-all
      receiver with full receiver-body privileges (read storage,
      send replies, etc.). Mutually exclusive with the
@@ -279,8 +283,20 @@ Two **separate** unknown-opcode rules — v2 split:
    `UnknownOpcode` itself is a **compiler pseudo-type with no
    wire encoding**; it is never serialised, never has an opcode
    tag, and cannot be used as a `createMessage<TBody>` body
-   type. It exists only as a syntactic marker for the
-   catch-all receiver.
+   type. It exists only as a syntactic marker for the catch-all
+   receiver. It is parser/lowering-reserved, not a normal stdlib
+   type and not importable into ordinary type positions.
+
+   `@unknown_silent_drop` is wire-equivalent only for bodies whose
+   legacy dispatch reaches the same pre-load parse point before
+   deciding "unknown". TEP-style internal bodies that use the
+   `opcode:uint32 query_id:uint64 ...` shape use the §4.1
+   query-id preflight. Wallet-v5-style bodies whose legacy
+   dispatch intentionally returns after a 32-bit opcode check, with
+   no common `query_id` load, are not covered by that preflight;
+   their byte-for-byte migration must either use the Slice 1 raw
+   entrypoint escape hatch (§6.3) or a future external/wallet
+   migration rule that explicitly preserves that ordering.
 
 **Why no string-literal `receive("op_name")` form.** Hashing
 a name to an opcode is wire-instability: a future rename of
@@ -306,7 +322,7 @@ attach it to a struct.
 
 The Slice 1 `pipe-check-query-id-propagation` pass currently
 uses one `disclaimed` boolean per `onInternalMessage` function
-(`tol/pipe-check-query-id-propagation.cpp:174`). v2 commits
+(`tol/pipe-check-query-id-propagation.cpp:174`). v3 commits
 that the Slice 2 lowering and the pass are extended together
 so the disclaim flag is **per-receiver**, not
 per-`onInternalMessage`. Concretely:
@@ -319,6 +335,11 @@ per-`onInternalMessage`. Concretely:
   signal to. The simplest implementation tags the lowered
   if-arm with a synthetic AST marker (e.g.
   `@__receiver_scope(T)`) the check pass keys off.
+- The check pass keeps a separate analysis record for each
+  receiver scope: inbound query-id source, local aliases,
+  `disclaim_query_id()` calls, and reply-emission sites. At
+  scope exit it diagnoses only that receiver's record. The
+  legacy top-level `onInternalMessage` path remains one scope.
 - One receiver's `@disclaim_query_id` MUST NOT silence
   warnings emitted from a sibling receiver in the same
   contract.
@@ -398,7 +419,7 @@ struct AuctionStorage {
 ```
 
 The state tag is a real Tol `enum` over the contract's declared
-states (`states: Open, Settling, Closed`). v2 binds explicitly
+states (`states: Open, Settling, Closed`). v3 binds explicitly
 to Tol's existing enum unpack runtime check
 (`tol/pack-unpack-serializers.cpp:1341`): if a corrupted c4 cell
 deserialises to an out-of-range tag, the runtime throws at
@@ -422,7 +443,16 @@ requiring sum-type storage. The c4 layout still includes the
 field unconditionally (enum-like cost model); the check is
 purely at the language layer.
 
-**`become` and `keep_state` — tail-position rules (v2).**
+`save({ ...storage, field: value })` spreads only user-visible
+storage fields. The hidden `__state` field is carried as compiler
+metadata, not as a user-readable `storage.__state` access. For
+state-bearing receivers, `keep_state` preserves the proven
+current tag and `become S` overwrites the hidden tag with `S` at
+codegen time. Authors never spell `__state:` in a literal, and
+spread lowering MUST NOT be implemented by creating a user AST
+read of `storage.__state`.
+
+**`become` and `keep_state` — tail-position rules (v3).**
 Every receiver in a state-bearing contract MUST end every
 control-flow path with either:
 - `become <StaticStateName>;` — transition, emits c4 state-tag
@@ -447,6 +477,10 @@ Both forms are **tail position only**:
   Closed;` so the §5
   `pipe-check-state-reachability.cpp` static graph remains
   sound.
+- `become` and `keep_state` are **not valid inside `@deploy`**
+  receivers. For state-bearing contracts, §3.6 injects the
+  `@initial` state tag into every successful `@deploy save(...)`
+  call. `@initial` is authoritative for deployment.
 
 **Static checks emitted by `tol/pipe-check-state-machine.cpp`
 (new in Slice 2):**
@@ -484,7 +518,7 @@ auto-derives `method_id` from
 `calculate_tvm_method_id_by_func_name(name)` —
 `crc16(name) | 0x10000` per
 `tol/pipe-register-symbols.cpp:78`. **This hash is not
-collision-resistant** for arbitrary identifier sets; v2 commits
+collision-resistant** for arbitrary identifier sets; v3 commits
 that the new `pipe-check-receive-exhaustiveness.cpp` pass also
 detects same-contract method_id collisions across both
 auto-derived `get fun` IDs and explicit `@method_id(N)`
@@ -499,7 +533,7 @@ auto-derived value; this is the migration escape hatch for
 contracts whose external ABI is fixed by an existing TEP
 standard.
 
-**v2 implementation note.** Today
+**v3 implementation note.** Today
 `tol/ast-from-tokens.cpp:1712` rejects `@method_id` on
 `get fun` declarations and `pipe-generate-fif-output.cpp:261`
 only checks `flagContractGetter` collisions. §10.1 lists both
@@ -516,7 +550,7 @@ a contract is materialised when an internal message carrying
 `StateInit` arrives at its address. v1 said "the first executed
 receiver IS the deployment handler" without specifying how that
 receiver could safely run before `loadData()` had something to
-load — v2 fixes this with an explicit `@deploy` annotation.
+load — v3 fixes this with an explicit `@deploy` annotation.
 
 **`@deploy` annotation.** Authors mark exactly one receiver
 with `@deploy` to declare the bootstrap path:
@@ -548,7 +582,7 @@ contract JettonMinter {
 }
 ```
 
-**Lowering rule (§4.1 v2).** The synthesised
+**Lowering rule (§4.1 v3).** The synthesised
 `onInternalMessage` dispatches to the `@deploy` receiver
 **before** calling `loadData()`. Inside the `@deploy`
 receiver body the identifier `storage` is **not in scope**;
@@ -556,27 +590,35 @@ references to `storage.X` are a compile error. The receiver
 must construct the initial storage via `save(struct_literal)`
 and then return.
 
+For a state-bearing contract, a successful `@deploy save(...)`
+automatically writes the hidden `__state` field to the single
+`@initial` state. The deploy receiver's struct literal contains
+only user-visible storage fields; the compiler appends
+`__state = <InitialState>` during save lowering. `become` and
+`keep_state` inside `@deploy` are compile errors, even when the
+target equals `@initial`, because deployment has exactly one
+authoritative initial state source.
+
 **Failure mode of a non-Deploy first message.** TVM activates
 an uninit account when an inbound message carries a
 matching-hash `StateInit` and the message provides enough gas
 (`crypto/block/transaction.cpp:2201`); see §6.2 of
-`tos-message-policy.md` for the full state-machine. v2 commits
-the following deterministic behaviour for a Slice 2 contract
-receiving a non-`@deploy` opcode as its first message:
+`tos-message-policy.md` for the full state-machine. v3 therefore
+does **not** claim that a non-`@deploy` first message leaves the
+account uninit. The deterministic Slice 2 behaviour is:
 
 - The synthesised `onInternalMessage` reaches the `loadData()`
   call with c4 empty.
-- `loadData()` throws (TVM exit code -1 — "no state" — per
-  the v12 bounce body's `bounced_by_phase=0` skip path) and
-  the contract bounces if `bounce=true` and the message value
-  covers `fwd_fee` (`tos-message-policy.md` §6.2).
-- The contract's storage is **not** materialised; subsequent
-  inbound messages still see an uninit account.
-
-This is the same observable behaviour an existing FunC
-contract has when a non-Deploy message arrives first; Slice 2
-does not introduce a new attack surface here. The §4.1 lowering
-v2 ordering preserves it.
+- `loadData()` throws using the existing Tol storage-unpack path.
+  If the inbound message is bounceable and value covers the bounce
+  forwarding fee, the normal TVM bounce rules apply
+  (`tos-message-policy.md` §6.2).
+- Account activation/funding follows TVM, not Tol syntax. On
+  current `crypto/block/transaction.cpp`, an accepted compute with
+  `StateInit` can still transition the account to active even when
+  the receiver body did not materialise valid storage. Deployment
+  tooling MUST either send a valid `@deploy` first message or
+  pre-populate StateInit data exactly as the legacy contract did.
 
 **Constraints on `@deploy`.**
 
@@ -586,10 +628,13 @@ v2 ordering preserves it.
   contract relies on external deployment infrastructure to
   populate c4 before the first message (the existing TON/TOS
   pattern for ext-msg-driven wallets).
-- `@deploy` is mutually exclusive with `@bounce_only` and
-  `@unknown_silent_drop`-defaulted contracts that have no
-  `@deploy` receive must accept the c4-empty-throw bounce
-  path on a non-Deploy first message.
+- `@deploy` is mutually exclusive with `@bounce_only`.
+- `@deploy` is **not** mutually exclusive with
+  `@unknown_silent_drop` or `@unknown_throw`. Unknown-opcode mode
+  applies after storage is available. Before storage exists, any
+  non-`@deploy` opcode follows the c4-empty `loadData()` failure
+  path above; silent-drop mode is not an alternate initialisation
+  path.
 
 ### 3.7 `require(cond, ErrorClass.X)` — sugar over `throw`
 
@@ -608,15 +653,21 @@ if (!(in.senderAddress == storage.adminAddress)) {
 }
 ```
 
-**Error-code derivation (v2).** Each `require(...)` site
+**Error-code derivation (v3).** Each `require(...)` site
 without an explicit third argument is assigned a per-contract
 auto-numbered error_code in the application range
 (`tos-message-policy.md` §5.2 reserves 0..1023 for stdlib).
-v2 specifies the algorithm:
+v3 specifies the algorithm:
 
 - Auto-numbering starts at `1024` and increments by 1 in
   source order across the contract's receivers, getters, and
   helpers; `@method_id`-pinned overrides do not consume slots.
+- Explicit throw-code reservations in the same contract are
+  collected first. The set includes `@unknown_throw(N)` and any
+  `require(..., ErrorClass.X, N)` third argument. Auto-numbering
+  skips already-reserved values, and duplicate explicit values are
+  a compile error unless they are written at the same migrated
+  legacy throw site through a shared named constant.
 - Two `require(cond, ErrorClass.X)` calls in the same contract
   receive distinct codes by construction, so the bounce
   message tells operators **which site** fired even when both
@@ -636,7 +687,7 @@ require(msg.amount <= storage.highBid, ErrorClass.Permanent, 1097);
 
 This is the Slice 1 reference-migration pattern documented in
 `crypto/smartcont/jetton-minter.tol:21` (the explicit
-`JETTON_ERROR_*` constants table). v2 makes the pattern
+`JETTON_ERROR_*` constants table). v3 makes the pattern
 optional rather than mandatory.
 
 ### 3.8 `receive_external(msg: T)` — signed-external messages
@@ -644,22 +695,19 @@ optional rather than mandatory.
 `wallet-v5` (and any future wallet contract) handles external
 messages with Ed25519 signature checks and a seqno; this is
 distinct from the internal-message `receive(...)` form. Slice 2
-covers external messages with a sibling form:
+covers prefix-dispatched external message bodies with a sibling
+form:
 
 ```tol
-struct (0x73696E74) SignedRequest {  // 'sint' prefix per wallet-v5 §3.3
-    publicKey: uint256;
-    signature: bits512;
-    seqno: uint32;
-    body: cell;
+struct (0x7369676e) SignedExternal {  // 'sign'
+    signedBody: RemainingBitsAndRefs;
 }
 
 contract WalletV5 {
     storage: WalletV5Storage
 
-    receive_external(msg: SignedRequest) {
+    receive_external(msg: SignedExternal) {
         // signature/seqno validation goes here
-        require(msg.publicKey == storage.publicKey, ErrorClass.Authorization);
         // ... application logic
     }
 }
@@ -667,16 +715,42 @@ contract WalletV5 {
 
 `receive_external` lowers to a synthesised `onExternalMessage`
 function (the existing TVM external-message entry) instead of
-`onInternalMessage`. All §3.2 rules (32-bit opcode prefix,
-`@disclaim_query_id`, `@unknown_*` modes) apply identically.
+`onInternalMessage`.
 
-**v2 scope note.** Slice 2 ships `receive_external` only in the
-vocabulary. Built-in signature/seqno helpers (e.g.
+External messages do **not** have `int_msg_info`, `InMessage`,
+or the Slice 1 internal `Envelope` / `query_id` contract.
+Therefore only the §3.2 rules that are actually wire-shape
+agnostic apply to external receivers:
+
+- the body prefix for a typed `receive_external(msg: T)` is
+  exactly 32 bits;
+- the compiler builds a declared external-opcode map and handles
+  unknown external opcodes at runtime;
+- `UnknownOpcode` may be used as an external catch-all marker,
+  still with no wire encoding.
+
+The internal-message `@disclaim_query_id` rule and the §4.1
+`op + query_id` preflight do **not** apply to
+`onExternalMessage`. External unknown handling is tracked as a
+separate dispatch domain from internal unknown handling, so a
+wallet-style contract can use silent-drop semantics internally
+and an explicit throw for malformed external signed requests.
+When a contract declares both internal and external receivers,
+the two unknown-mode choices MUST be unambiguous; ambiguity is a
+compile error.
+
+**v3 scope note.** Slice 2 ships `receive_external` only in the
+vocabulary for prefix-dispatched external bodies. Built-in
+signature/seqno helpers (e.g.
 `require(verify_ed25519(msg.signature, msg.body, msg.publicKey),
 ErrorClass.Authorization)`) are stdlib additions and follow the
 same Q3 stdlib timeline as the rest of Slice 3 dogfood. Authors
 who need them in Slice 2 use raw TVM intrinsics from
-`@stdlib/tvm-lowlevel` (the existing escape hatch).
+`@stdlib/tvm-lowlevel` (the existing escape hatch). Exact
+wallet-v5 external byte-for-byte migration remains Slice 3 work
+because the reference body signs a variable-length prefix and
+stores the signature in the trailing 512 bits; a simple Tol
+struct example is not a normative wallet-v5 wire schema.
 
 ## 4. Compilation model (lowering contract)
 
@@ -699,7 +773,9 @@ fun onInternalMessage(in: InMessage) {
     // including the 32-bit opcode prefix.
     var header = in.body;
     val op = header.loadUint(32);
-    val queryId = header.loadUint(64);   // present iff op != 0; see §3.2 of msg policy
+
+    // For standard-envelope internal receivers only:
+    // val queryId = header.loadUint(64);
 
     // @deploy receivers run BEFORE loadData() so an empty c4
     // does not throw before init can populate it.
@@ -732,14 +808,24 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-**Operation-order rationale.** The header parse runs before
-`loadData()` so that a malformed body too short to carry both
-the 32-bit op and the 64-bit query_id underflows at the same
-TVM opcode (`SDU` / `LDU 64`) and at the same exit code as the
-Slice 1 hand-written form. v1's `preloadUint(32)` followed by
-`loadData()` could load storage on a malformed body before
-the queryId underflow fired — observable bounce-shape
-divergence per the codex review. v2 closes that gap.
+**Operation-order rationale.** For TEP-style internal receivers
+whose message structs contain the standard
+`opcode:uint32 query_id:uint64 ...` header, the lowering emits the
+64-bit `queryId` preflight before `loadData()` so that a malformed
+body too short to carry both the 32-bit op and the 64-bit query_id
+underflows at the same TVM opcode (`SDU` / `LDU 64`) and at the
+same exit code as the Slice 1 hand-written form. v1's
+`preloadUint(32)` followed by `loadData()` could load storage on a
+malformed body before the queryId underflow fired — observable
+bounce-shape divergence per the codex review. v3 preserves that
+closure for standard-envelope contracts.
+
+For non-standard internal bodies whose legacy dispatch only
+preloads 32 bits before deciding unknown (notably wallet-v5-style
+signed-internal bodies), the compiler MUST NOT insert the common
+64-bit `queryId` preflight. Such receivers are outside the §4.1
+standard-envelope lowering shown above unless the Slice 3
+migration explicitly supplies an equivalent raw parse sequence.
 
 The §3.2 unknown-opcode mode determines the **last branch only**;
 the dispatch table for declared receivers does not vary by
@@ -750,13 +836,13 @@ a state-tag check:
 
 ```tol
 if (op == op_of(BidRequest)) {
-    val state = storage.state;
+    val state = storage.__state;  // compiler-internal read
     if (state != AuctionState.Open) {
         throw <ErrorClass.Protocol code>;  // wrong state
     }
     val msg = lazy BidRequest.fromSlice(in.body);
     // user body, with `become` / `keep_state` lowered to:
-    //   become Settling   →   save({ ..., state: AuctionState.Settling })
+    //   become Settling   →   save({ ..., __state: AuctionState.Settling })
     //   keep_state        →   no save tag write (other field saves still emit)
     return;
 }
@@ -766,8 +852,12 @@ if (op == op_of(BidRequest)) {
 
 `saveData(struct_literal)` per existing Slice 1 stdlib. State
 tag updates from `become State` are merged into the literal at
-codegen time; authors do NOT spell `state: AuctionState.Settling`
-in the `save(...)` call.
+codegen time; authors do NOT spell
+`__state: AuctionState.Settling` in the `save(...)` call. For
+`save({ ...storage, x: y })`, the spread copies only user-visible
+fields; the hidden `__state` value is supplied from the proven
+current state, an enclosing `become`, or the `@deploy` initial-state
+rule (§3.6).
 
 ### 4.3 `get fun X(): T` lowers to
 
@@ -797,10 +887,10 @@ running in the policy-mandated band between
 2. **`pipe-check-state-reachability.cpp`.** Builds the
    `become` graph from the `@initial` state. Unreachable
    states = compile error.
-3. **`pipe-check-field-scoping.cpp` (v2 expanded).** For each
+3. **`pipe-check-field-scoping.cpp` (v3 expanded).** For each
    `@on(...)` field, traces every read **and every taint
    propagation** outside the listed states. The check is **not**
-   purely syntactic in v2; it tracks at minimum these aliasing
+   purely syntactic in v3; it tracks at minimum these aliasing
    forms:
 
    - **Local-binding alias.** `val foo = storage.payoutsRemaining`
@@ -809,28 +899,49 @@ running in the policy-mandated band between
      proven state is not in `{Settling}` is a compile error.
      Concretely: a `become Closed; use(foo);` sequence — even
      across a function-call boundary — must error.
+   - **Function-call passthrough.** Passing a tainted value as
+     an argument taints the corresponding parameter for the
+     callee body being analyzed; returning that value taints the
+     call expression at the call site. For unknown external
+     helpers whose bodies are unavailable, the checker is
+     conservative: tainted arguments are assumed to escape unless
+     the helper is in an allowlist of pure value-inspecting
+     stdlib functions.
+   - **Tuple / tensor destructuring.** `val (a, b) =
+     (storage.x, storage.y)` and shaped tuple destructuring
+     propagate each element's state-set to the corresponding
+     binding. A combined value carries the union of its element
+     taints until destructured again.
+   - **Pattern matching.** `match` subjects and arm-bound
+     variables inherit the subject's taint. A lazy union match on
+     a storage-derived value is treated as a read of the matched
+     storage field in that arm.
    - **`become`-induced state shift.** When `become S` is
      reached, the analysis flips the proven state to `S` for the
-     dataflow successor. Since v2 §3.4 mandates that `become`
+     dataflow successor. Since v3 §3.4 mandates that `become`
      is tail-position (no statements after it in the same arm),
      this collapses to "the after-`become` continuation is
      unreachable inside the receiver"; the check reduces to a
      same-receiver-only graph plus the `@initial` entry edge.
    - **Serialisation escape — explicitly forbidden.** Receiver
      bodies inside a `contract` block MAY NOT call any of:
-     `storage.toCell()`, `(storage as Cell)`, raw `c4 PUSH`
-     intrinsics, or any `@stdlib/tvm-lowlevel` helper that
-     reaches into c4 directly. Authors who need raw c4 access
-     for a one-shot migration drop out of the `contract` block
-     and use the Slice 1 `onInternalMessage` form (§6.3 escape
-     hatch). v2 commits the compile-time prohibition; the check
-     pass enforces it.
+     `storage.toCell()`, `(storage as Cell)`,
+     `contract.getData()`, local wrappers around
+     `contract.getData()` such as `currentData()`, raw
+     `c4 PUSH` / `c4 POP` intrinsics, `T.fromCell` applied to
+     c4-derived cells, or any `@stdlib/tvm-lowlevel` helper
+     that reaches into c4 directly. Authors who need raw c4
+     access for a one-shot migration drop out of the `contract`
+     block and use the Slice 1 `onInternalMessage` form (§6.3
+     escape hatch). v3 commits the compile-time prohibition; the
+     check pass enforces it.
 
-   v2 acknowledges that perfect aliasing analysis is undecidable
+   v3 acknowledges that perfect aliasing analysis is undecidable
    and that determined adversarial authors can still construct
    bypasses (e.g. via reflection helpers that may exist in
    future stdlib). The Slice 2 commitment is that the **dominant
-   accidental bypass paths** — local-binding alias and direct
+   accidental bypass paths** — local-binding alias, call
+   passthrough, tuple/pattern propagation, and direct
    serialisation — are caught. New reflection / serialisation
    primitives added in future stdlib must extend this taint set
    atomically with their introduction.
@@ -854,17 +965,33 @@ This is verified by re-migrating the three Slice 1 reference
 contracts to Slice 2 syntax (Slice 3 work) and comparing
 compiled BoCs cell-for-cell.
 
-`tos-message-policy.md` §8.1 commitments are inherited
-verbatim.
+`tos-message-policy.md` §8.1 commitments are inherited for
+internal messages. Verbatim, they are:
 
-**v2 caveat for `createMessage<TBody>` reply construction.**
+- The TL-B schema for `CommonMsgInfo` and `int_msg_info$0` will
+  not change in any backward-incompatible way as a result of
+  Slice 1.
+- Existing TEP-74 (Jetton), TEP-62 (NFT), and wallet-vN message
+  formats will continue to be valid bit-for-bit.
+- Existing op codes will not be reassigned.
+- Slice 1 introduces no new TVM opcode and no new bounce-body
+  format. Slice 1 is purely an envelope-discipline and
+  Tol-stdlib release.
+
+`receive_external` is not automatically covered by the internal
+`Envelope` / `int_msg_info` commitment. A Slice 2 external
+receiver may still be bit-identical to a legacy `onExternalMessage`
+implementation, but that must be proven by the Slice 3 migration's
+cell/gas fixtures for that specific external body shape.
+
+**v3 caveat for `createMessage<TBody>` reply construction.**
 The existing Slice 1 reference migrations
 (`crypto/smartcont/jetton-minter.tol:21`,
 `crypto/smartcont/jetton-wallet.tol:27`) document that
 `createMessage<TBody>` is **not** used for outbound replies
 that must be bit-identical to legacy FunC senders, because the
 typed wrapper narrows `MsgAddress` to `address` and may
-reorder body inline / ref placement. v2 inherits the same
+reorder body inline / ref placement. v3 inherits the same
 constraint:
 
 - Slice 2 receiver bodies that emit replies subject to the
@@ -878,7 +1005,7 @@ constraint:
   did not exist before Slice 1) MAY use it; the check pass
   permits it but does not introduce it.
 
-**v2 caveat for `UnknownOpcode` wire encoding.** Per §3.2 v2,
+**v3 caveat for `UnknownOpcode` wire encoding.** Per §3.2 v3,
 `UnknownOpcode` is a compiler pseudo-type. It has **no
 struct prefix**, **no wire encoding**, and **never appears**
 on the wire. It cannot be passed as a `createMessage<TBody>`
@@ -980,12 +1107,10 @@ own future-slice docs:
 
 ## 9. Open questions (for second review)
 
-The §3 decisions remain locked. v2 closes the four BLOCKER
-findings and nine HIGH findings raised by the v1 codex
-security review; the questions below are the remaining
-tactical items. They affect implementation tactics but do not
-invalidate the lowering contract or backwards-compatibility
-commitments above.
+The §3 decisions remain locked after v3. The questions below are
+the remaining tactical items. They affect implementation tactics
+but do not invalidate the lowering contract or backwards-
+compatibility commitments above.
 
 1. **Jump-table threshold.** At what receiver count does the
    compiler switch from if-cascade to dictionary-based
@@ -999,31 +1124,26 @@ commitments above.
    silencer per-pair, per-state, per-Type, or contract-wide
    `@implicit_protocol_default`? Gather data from Slice 3
    migration of state-bearing contracts before locking.
-4. **`UnknownOpcode` reserved type — namespace.** Lives in
-   `@stdlib/common` alongside `Envelope`/`Error`, or in a new
-   `@stdlib/contract`? v2 already locks that it is a compiler
-   pseudo-type with no wire encoding (§3.2, §6.1); the only
-   open item is which import path declares it.
-5. **`@bounce_only` receiver lowering target.** Branches into
+4. **`@bounce_only` receiver lowering target.** Branches into
    `onBouncedMessage` directly, or shares dispatch with the
    inbound path under a flag? The latter is simpler; the
    former is more obvious. Pick after profiling Slice 3.
-6. **`save(...)` partial-update sugar.** `save({ ...storage,
+5. **`save(...)` partial-update sugar.** `save({ ...storage,
    x: y })` is the spread form; do we also support
    `save.x(y)` for single-field updates? Not blocking; defer
    to later DX iteration.
-7. **Auto-numbered `require` error_code reservation window.**
-   v2 §3.7 starts auto-numbering at 1024. Should the window
+6. **Auto-numbered `require` error_code reservation window.**
+   v3 §3.7 starts auto-numbering at 1024. Should the window
    be per-contract independent or globally namespaced (so
    external observers can map a returned code to a single
    contract)? Recommendation pending audit-team input.
-8. **`@deploy` + state-bearing contract interaction.** If a
-   contract has both `states:` and a `@deploy` receiver, does
-   `become` inside `@deploy` set the initial state, or is the
-   `@initial` annotation authoritative? v2 expects the latter
-   (`become` in `@deploy` is a redundant compile error if the
-   target equals `@initial`'s state) but the rule is not yet
-   exercised by any reference migration.
+7. **External unknown-mode spelling.** The semantic rule is
+   locked in §3.8: internal and external dispatch domains have
+   independent unknown handling. The parser spelling for setting
+   an external-only default can be either a domain-qualified
+   contract annotation or the canonical explicit
+   `receive_external(msg: UnknownOpcode)` catch-all. Pick before
+   parser work.
 
 These do not block Stage 0 sign-off but should be resolved
 before the parser PR lands.
@@ -1039,15 +1159,16 @@ clearly the policy describes them.
 - New parser productions for `contract`, `receive`,
   `receive_external`, `become`, `keep_state`, `states:`,
   `@initial`, `@on`, `@deploy`, `@unknown_silent_drop`,
-  `@unknown_throw`, `get fun`, `require`. AST node additions
-  in `tol/ast.h`.
+  `@unknown_throw`, `get fun`, `require`, and the reserved
+  `UnknownOpcode` receiver marker. AST node additions in
+  `tol/ast.h`.
 - **Parser fix in `tol/ast-from-tokens.cpp:1712`** — currently
-  rejects `@method_id(N)` on `get fun`; v2 RFC §3.5 requires
+  rejects `@method_id(N)` on `get fun`; v3 RFC §3.5 requires
   this combination to be accepted. Same PR that adds
   `get fun` accepts `@method_id` on it.
 - **Method-id collision detector in
   `tol/pipe-generate-fif-output.cpp:261`** — currently checks
-  `flagContractGetter` collisions only; v2 §3.5 requires
+  `flagContractGetter` collisions only; v3 §3.5 requires
   detection across both auto-derived and `@method_id`-pinned
   IDs in the same contract.
 - **32-bit opcode prefix enforcement in
@@ -1059,8 +1180,10 @@ clearly the policy describes them.
 - Three new compiler passes
   (`pipe-check-receive-exhaustiveness.cpp`,
   `pipe-check-state-reachability.cpp`,
-  `pipe-check-field-scoping.cpp` — v2-expanded with taint
-  analysis per §5), all in the policy-mandated band between
+  `pipe-check-field-scoping.cpp` — v3-expanded with taint
+  analysis per §5, including function-call passthrough,
+  tuple/pattern propagation, and c4 serialization escapes), all
+  in the policy-mandated band between
   `pipeline_check_serialized_fields()` and the
   `error_collector = nullptr;` teardown.
 - **Pass-ordering hardening in `tol/tol.cpp` 60-114.** The new
@@ -1070,33 +1193,42 @@ clearly the policy describes them.
   position check, mirror of the §4.4 hardening already in
   place for `pipe-check-query-id-propagation` itself).
 - **`pipe-check-query-id-propagation.cpp:174` per-receiver
-  scope.** v2 §3.2.1 requires the existing pass's single
+  scope.** v3 §3.2.1 requires the existing pass's single
   `disclaimed` boolean to be replaced with per-receiver
   tracking. The lowering tags each synthesised dispatch arm
-  with a receiver-scope marker the check pass keys off.
+  with a receiver-scope marker the check pass keys off; the pass
+  keeps separate source/disclaimer/reply records per marker and
+  diagnoses at receiver-scope exit.
 - AST → legacy-Expr-Op IR lowering producing the exact
   `onInternalMessage` shape described in §4.1, in particular
-  the v2 operation order (header parse → `@deploy` branch →
-  `loadData()` → dispatch).
+  the v3 operation order for standard-envelope contracts (opcode
+  parse → query_id preflight → `@deploy` branch → `loadData()` →
+  dispatch). Non-standard wallet-style bodies must not receive an
+  implicit common query_id preflight.
 - **Synthesised state enum** declared as a real Tol `enum`
   per the contract's `states:` list, packed via the existing
   `tol/pack-unpack-serializers.cpp:1341` runtime tag-validity
   check. This binds the policy's "out-of-range tag throws at
   loadData" guarantee to existing infrastructure rather than
-  introducing a new check.
-- `UnknownOpcode` reserved type in `@stdlib/common` as a
-  compiler pseudo-type with no wire encoding (§3.2 v2 + §6.1
-  v2 caveat).
+  introducing a new check. For `@deploy`, lowering injects the
+  single `@initial` tag into the hidden `__state` field and
+  rejects `become` / `keep_state` in the deploy receiver.
+- `UnknownOpcode` is parser/lowering-reserved as a compiler
+  pseudo-type with no wire encoding (§3.2 v3 + §6.1 v3 caveat).
+  It is not a normal symbol exported from `@stdlib/common`.
 - New `tol-tester/tests/contract-*.tol` cases covering: a
   minimal one-receive contract, a multi-receive contract, a
   state-bearing contract with `become`/`keep_state`, an
   exhaustiveness-warning case, a reachability-error case, a
   field-scoping-error case, an alias-bypass case (negative —
   must error), a get-fun auto-method-id case, an
-  `@deploy`-receiver-runs-before-loadData case, an
+  `@deploy`-receiver-runs-before-loadData case, a state-bearing
+  `@deploy` case that auto-injects `@initial`, a negative
+  `become`-inside-`@deploy` case, an
   `@unknown_silent_drop` wallet-v5-style case, an
   `@unknown_throw(0xffff)` minter-style case, and a
-  `receive_external` skeleton.
+  `receive_external` skeleton with external-domain unknown
+  handling.
 - Updated `tol.md` Q2 reflecting the locked surface.
 
 ### 10.2 Not in Slice 2
@@ -1138,20 +1270,78 @@ signature stays for traceability.
 
 ## 12. Changelog
 
+### Draft v3 (2026-04-30, post-v2-security-review)
+
+v3 corrects the v2 closure overclaim. The v2 review found 11
+SOLID, 3 PARTIAL, and 1 BROKEN closure among the 15 BLOCKER/HIGH
+items supplied for verification; the prompt's "out of 13" count
+did not match its own item list. v3 keeps the Slice 2 surface but
+tightens the rules that were still ambiguous or wrong against the
+in-tree implementation.
+
+Concrete deltas from v2 to v3:
+
+- **§0 / §9 / §12.** Status and changelog no longer claim that
+  v2 fully closed all prior findings. Remaining open questions are
+  tactical only.
+- **§3.2 / §4.1.** Unknown-opcode handling now distinguishes
+  standard-envelope internal bodies from wallet-v5-style bodies
+  that only preload 32 bits before returning on unknown opcodes.
+  The common `query_id` preflight is mandatory for
+  `opcode:uint32 query_id:uint64 ...` receivers and forbidden as
+  an implicit rewrite for non-standard wallet-style bodies.
+- **§3.2 / §3.7.** `@unknown_throw(N)` participates in the same
+  throw-code collision set as explicit and auto-numbered
+  `require(...)` sites. Auto-numbering skips explicit
+  reservations; duplicate explicit throw codes are compile errors
+  unless they intentionally name the same migrated legacy site.
+- **§3.2 / §10.1.** `UnknownOpcode` is a parser/lowering-reserved
+  pseudo-type, not a normal `@stdlib/common` export.
+- **§3.2.1 / §10.1.** The query-id pass extension is specified as
+  per-receiver analysis records keyed by lowered receiver-scope
+  markers, not just "replace the boolean".
+- **§3.4 / §3.6 / §4.2.** Hidden `__state` semantics are now
+  explicit: spreads copy only user-visible fields, `become` /
+  `keep_state` do not create user AST reads of `storage.__state`,
+  `@deploy` auto-injects the single `@initial` tag, and
+  `become` / `keep_state` inside `@deploy` are compile errors.
+- **§3.6.** Non-Deploy first-message behavior no longer claims
+  storage is not materialized and the account remains uninit.
+  The text now follows current `transaction.cpp`: TVM activation
+  and funding are not Tol syntax guarantees.
+- **§3.6.** `@deploy` is not mutually exclusive with
+  `@unknown_silent_drop`; unknown mode applies only once storage is
+  available and is not an alternate initialization path.
+- **§3.8 / §6.1.** `receive_external` is scoped to
+  prefix-dispatched external bodies. It does not inherit the
+  internal `Envelope` / `query_id` preflight, and wallet-v5 exact
+  external wire parity remains Slice 3 migration work.
+- **§5.** Field-scope taint now covers function-call passthrough,
+  tuple/tensor destructuring, pattern matching, `contract.getData`
+  / `currentData` wrappers, `T.fromCell` on c4-derived cells, and
+  raw c4 intrinsics.
+- **§6.1.** The four `tos-message-policy.md` §8.1 commitments are
+  included verbatim and explicitly scoped to internal-message
+  compatibility.
+- **§10.1.** Implementation constraints and tests now cover
+  state-bearing `@deploy`, deploy-state injection, negative
+  `become` inside `@deploy`, external-domain unknown handling, and
+  the expanded taint set.
+
 ### Draft v2 (2026-04-30, post-codex-security-review)
 
-Closes the four BLOCKER and nine HIGH findings from the v1
-codex security review (`/tmp/codex_output.md`). The §3
-first-principles decisions stand; v2 adds the lowering-order
-specificity, deployment-path soundness, unknown-opcode
-compatibility, and pass-ordering rules that v1 had under-
-specified. The wire-bit-identity commitment (§6.1) is
-preserved verbatim.
+Addressed the four BLOCKER and nine HIGH findings from the v1
+codex security review (`/tmp/codex_output.md`), but did not fully
+close all of them; v3 supersedes the closure claim above. The §3
+first-principles decisions stand; v2 added the lowering-order
+specificity, deployment-path soundness attempt, unknown-opcode
+compatibility modes, and pass-ordering rules that v1 had under-
+specified.
 
 Concrete deltas from v1 to v2:
 
-- **§3.2 (BLOCKER+HIGH).** Two BLOCKERs and three HIGHs
-  closed.
+- **§3.2 (BLOCKER+HIGH).** Addressed two BLOCKERs and three
+  HIGHs; v3 later tightened wallet-style non-standard bodies.
   - 32-bit opcode prefix is now enforced for receivers; the
     free-floating-struct prefix-width inference at
     `tol/pipe-register-symbols.cpp:45` is overridden inside
@@ -1169,10 +1359,10 @@ Concrete deltas from v1 to v2:
     no wire encoding (§3.2, §6.1 v2 caveat).
   - New §3.2.1 fixes the disclaim_query_id BLOCKER: per-
     receiver scoping and explicit pass-ordering constraint.
-- **§3.4 (HIGH+HIGH).** Both HIGHs closed.
+- **§3.4 (HIGH+HIGH).** Addressed both HIGHs.
   - `become` is now a tail position; statements after it in
     the same arm are unreachable code and a compile error.
-    Closes the "post-`become` storage read" footgun.
+    Addresses the "post-`become` storage read" footgun.
   - `become` accepts only static identifiers; runtime-target
     forms like `become if (cond) A else B` are a compile
     error so the §5 reachability graph remains sound.
@@ -1185,7 +1375,7 @@ Concrete deltas from v1 to v2:
     (`tol/pack-unpack-serializers.cpp:1341`); a corrupted c4
     cell with out-of-range tag throws at `loadData()` BEFORE
     any receiver body runs.
-- **§3.5 (HIGH+MEDIUM).** Both closed.
+- **§3.5 (HIGH+MEDIUM).** Addressed both.
   - `compute_method_id` named explicitly as
     `crc16(name) | 0x10000` per
     `tol/pipe-register-symbols.cpp:78`; not collision-
@@ -1197,7 +1387,9 @@ Concrete deltas from v1 to v2:
   - v2 requires the parser fix at
     `tol/ast-from-tokens.cpp:1712` to accept `@method_id`
     on `get fun`.
-- **§3.6 (BLOCKER×2).** Both BLOCKERs closed.
+- **§3.6 (BLOCKER×2).** Addressed both BLOCKERs; v3 later
+  corrected the non-Deploy first-message and state-bearing deploy
+  details.
   - New `@deploy` annotation marks a receiver that runs
     BEFORE `loadData()` (§4.1 v2 lowering order). The
     `storage` identifier is not in scope inside the receiver;
@@ -1206,7 +1398,8 @@ Concrete deltas from v1 to v2:
     deterministic bounce via the v12 `bounced_by_phase=0`
     skip path. No new attack surface is introduced; the
     behaviour matches existing FunC contracts.
-- **§3.7 (HIGH+MEDIUM).** Both closed.
+- **§3.7 (HIGH+MEDIUM).** Addressed both; v3 later added
+  throw-code collision handling for `@unknown_throw`.
   - Auto-numbered error_code algorithm specified: per-contract
     counter starting at 1024, deterministic in source order.
     Two `require(..., ErrorClass.X)` sites in the same
@@ -1220,7 +1413,7 @@ Concrete deltas from v1 to v2:
   (`crypto/smartcont/jetton-minter.tol:225-232`):
   empty-check → header-copy parse (op + queryId) →
   `@deploy` branch (no loadData) → `loadData()` → dispatch.
-  Closes the "v1 loaded storage on malformed bodies before
+  Addresses the "v1 loaded storage on malformed bodies before
   queryId underflow" wire-divergence BLOCKER.
 - **§5 (HIGH).** `pipe-check-field-scoping.cpp` upgraded
   from purely-syntactic to taint-tracking: local-binding
@@ -1246,10 +1439,10 @@ Concrete deltas from v1 to v2:
   cases for `@deploy` / `@unknown_*` / `receive_external` /
   alias-bypass-negative.
 
-Wire format unchanged; TL-B schema unchanged;
-`tos-message-policy.md` §8.1 commitments preserved verbatim.
-v2 is purely a security-driven tightening of v1 against the
-in-tree code and the existing reference migrations.
+Wire format unchanged; TL-B schema unchanged. v2 intended to
+preserve `tos-message-policy.md` §8.1 verbatim, but v3 adds the
+explicit internal/external scope boundary and other corrections
+above.
 
 ### Draft v1 (2026-04-30)
 
