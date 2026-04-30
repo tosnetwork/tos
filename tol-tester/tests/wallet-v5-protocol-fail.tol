@@ -1,0 +1,61 @@
+import "../../crypto/smartcont/wallet-v5"
+
+fun dummyOutMsg(): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(address("0:6666666666666666666666666666666666666666666666666666666666666666"))
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .endCell();
+}
+
+@method_id(101)
+fun test_external_c5_requires_ignore_errors(): int {
+    try {
+        verifyC5Actions(buildActionSendMsg(0, dummyOutMsg(), createEmptyCell()), true);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(102)
+fun test_set_signature_mode_requires_extension(): int {
+    contract.setData(packWalletV5Data(true, 1, 2, 3, null));
+    val actions = beginCell()
+        .storeMaybeRef(null)
+        .storeInt(-1, 1)
+        .storeUint(PREFIX_SET_SIGNATURE_ALLOWED, 8)
+        .storeInt(0, 1)
+        .endCell()
+        .beginParse();
+    try {
+        processActions(actions, false, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(103)
+fun test_error_body_shape(): int {
+    val err = walletV5ErrorForThrow(ERROR_INVALID_GLOBAL_ID, PREFIX_SIGNED_EXTERNAL, 0);
+    var body = beginCell()
+        .storeUint(OP_ERROR, 32)
+        .storeAny(err)
+        .endCell()
+        .beginParse();
+    assert (body.loadUint(32) == OP_ERROR) throw 131;
+    assert (body.loadUint(64) == 0) throw 132;
+    assert (body.loadUint(32) == PREFIX_SIGNED_EXTERNAL) throw 133;
+    assert (body.loadUint(8) == ErrorClass.Protocol as int) throw 134;
+    assert (body.loadUint(16) == WALLET_V5_ERROR_INVALID_GLOBAL_ID) throw 135;
+    assert (!body.loadBool()) throw 136;
+    return err.errorCode;
+}
+
+/**
+@testcase | 101 | | 137
+@testcase | 102 | | 146
+@testcase | 103 | | 1148
+ */
