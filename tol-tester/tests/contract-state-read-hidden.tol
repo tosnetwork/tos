@@ -1,0 +1,24 @@
+struct ContractStateReadHiddenStorage {
+    total: uint32;
+}
+
+struct (0x00000046) ContractStateReadHiddenPing {
+    queryId: uint64;
+}
+
+contract ContractStateReadHidden {
+    storage: ContractStateReadHiddenStorage
+    states: Open
+    @initial state Open
+
+    receive(msg: ContractStateReadHiddenPing) on Open {
+        storage.__state;
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr receiver code may not read compiler-reserved `storage.__state`
+@stderr doc/tos-language-syntax-policy.md §3.4
+ */

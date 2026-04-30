@@ -81,6 +81,7 @@ TolCompilationResult tol_proceed(const std::string &entrypoint_filename) {
     pipeline_optimize_boolean_expressions();
     pipeline_detect_inline_in_place();
     pipeline_check_serialized_fields();
+    pipeline_check_state_reachability();
     pipeline_lower_contracts();
 
     // doc/tos-message-policy.md §4.4 hardening:

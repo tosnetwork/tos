@@ -1,0 +1,23 @@
+struct ContractStateReservedFieldStorage {
+    __state: uint8;
+}
+
+struct (0x00000045) ContractStateReservedFieldPing {
+    queryId: uint64;
+}
+
+contract ContractStateReservedField {
+    storage: ContractStateReservedFieldStorage
+    states: Open
+    @initial state Open
+
+    receive(msg: ContractStateReservedFieldPing) on Open {
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr may not declare compiler-reserved field `__state`
+@stderr doc/tos-language-syntax-policy.md §3.4
+ */

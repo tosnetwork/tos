@@ -1,0 +1,28 @@
+struct ContractStateTailStorage {
+    total: uint32;
+}
+
+struct (0x00000044) ContractStateTailPing {
+    queryId: uint64;
+}
+
+contract ContractStateTail {
+    storage: ContractStateTailStorage
+    states: Open, Closed
+    @initial state Open
+
+    receive(msg: ContractStateTailPing) on Open {
+        become Closed;
+        msg.queryId;
+    }
+
+    receive(msg: ContractStateTailPing) on Closed {
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr statements after `become` or `keep_state` are not permitted
+@stderr doc/tos-language-syntax-policy.md §3.4
+ */

@@ -89,6 +89,8 @@ class ASTStringifier final : public ASTVisitor {
     {ast_throw_statement, "ast_throw_statement"},
     {ast_assert_statement, "ast_assert_statement"},
     {ast_try_catch_statement, "ast_try_catch_statement"},
+    {ast_become_statement, "ast_become_statement"},
+    {ast_keep_state_statement, "ast_keep_state_statement"},
     {ast_asm_body, "ast_asm_body"},
     // other
     {ast_genericsT_item, "ast_genericsT_item"},
@@ -259,6 +261,10 @@ class ASTStringifier final : public ASTVisitor {
         return static_cast<std::string>(v->as<ast_object_field>()->get_field_name());
       case ast_object_literal:
         return "↓" + std::to_string(v->as<ast_object_literal>()->get_body()->get_num_fields());
+      case ast_become_statement:
+        return static_cast<std::string>(v->as<ast_become_statement>()->get_state_name());
+      case ast_keep_state_statement:
+        return "keep_state";
       case ast_tol_required_version:
         return static_cast<std::string>(v->as<ast_tol_required_version>()->semver);
       case ast_import_directive:
@@ -367,6 +373,8 @@ public:
       case ast_throw_statement:               return handle_vertex(v->as<ast_throw_statement>());
       case ast_assert_statement:              return handle_vertex(v->as<ast_assert_statement>());
       case ast_try_catch_statement:           return handle_vertex(v->as<ast_try_catch_statement>());
+      case ast_become_statement:              return handle_vertex(v->as<ast_become_statement>());
+      case ast_keep_state_statement:          return handle_vertex(v->as<ast_keep_state_statement>());
       case ast_asm_body:                      return handle_vertex(v->as<ast_asm_body>());
       // other
       case ast_genericsT_item:                return handle_vertex(v->as<ast_genericsT_item>());

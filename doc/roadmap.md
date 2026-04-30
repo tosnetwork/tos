@@ -513,10 +513,11 @@ exhaustiveness checking lands in Slice 3.
 
 **Status.** 🚧 In progress as of 2026-04-30. The Slice 2 syntax
 policy input exists at `doc/tos-language-syntax-policy.md`
-(Draft v3, post-v2-security-review). The first implementation
-commit has landed on `actor-layer`:
+(Draft v3, post-v2-security-review). The first two implementation
+stages have landed on `actor-layer`; Stage 1 is commit
 `081f05d3c` (`Add Slice 2 Stage 1 contract / receive parser +
-lowering`).
+lowering`), and Stage 2 adds the initial state-machine compiler
+surface.
 
 **Implementation stages.**
 
@@ -539,8 +540,21 @@ lowering`).
    close: `tol` target builds, `576/576` tol-tester cases pass,
    `24 test(s) passed` in `test-emulator`, Slice 1 gas gate
    remains green, and `git diff --check` is clean.
-3. ⏳ **Stage 2 — states / `become` / `keep_state` /
-   reachability.** Deferred per §10.1.
+3. ✅ **Stage 2 — states / `become` / `keep_state` /
+   reachability.** Completed 2026-04-30 on `actor-layer`.
+   Ships parser support for `states:`, `@initial state`,
+   `receive(...) on State`, `become`, and `keep_state`; a new
+   `tol/pipe-check-state-reachability.cpp` pass for declared
+   states, initial-state singleton, receiver state clauses,
+   tail-position transition discipline, hidden `__state`
+   namespace protection, and reachability from `@initial`; and
+   state-aware lowering that synthesizes an internal state enum
+   plus `__<Contract>StateData` wrapper while leaving the user
+   storage struct unchanged. Adds seven `contract-state-*.tol`
+   tol-tester cases. Verification at close: `tol` target builds,
+   `583/583` tol-tester cases pass, `24 test(s) passed` in
+   `test-emulator`, Slice 1 gas gate remains green, and
+   `git diff --check` is clean.
 4. ⏳ **Stage 3 — `@on` + field-scoping / taint analysis.**
    Deferred per §10.1.
 5. ⏳ **Stage 4 — `@deploy` + unknown-opcode modes.**
@@ -822,8 +836,21 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   lowers it to ordinary Tol `onInternalMessage`, enforces 32-bit
   receive opcode prefixes, and adds five contract-focused
   tol-tester cases.
+- ✅ **Slice 2 Stage 2 state-machine subset** — closed
+  2026-04-30 on `actor-layer`. The compiler now parses
+  `states:`, `@initial state`, `receive(...) on State`,
+  `become`, and `keep_state`, checks transition discipline and
+  state reachability before lowering, protects the reserved
+  `__state` namespace, and adds seven state-focused tol-tester
+  cases.
 
 ## 12. Revision notes
+
+### r4 (Slice 2 Stage 2 status)
+
+- §6 Slice 2 now marks Stage 2 complete. Stages 3–8 remain
+  explicitly deferred per `doc/tos-language-syntax-policy.md`
+  §10.1.
 
 ### r3 (Slice 2 Stage 1 status)
 

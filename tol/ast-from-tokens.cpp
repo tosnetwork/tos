@@ -1339,7 +1339,7 @@ static AnyV parse_return_statement(Lexer& lex) {
   return createV<ast_return_statement>(range, child);
 }
 
-static AnyV parse_if_statement(Lexer& lex) {
+static AnyV parse_if_statement(Lexer& lex, bool in_contract_receive = false) {
   SrcRange range = lex.range_start();
   lex.expect(tok_if, "`if`");
 
@@ -1347,15 +1347,15 @@ static AnyV parse_if_statement(Lexer& lex) {
   AnyExprV cond = parse_expr(lex);
   lex.expect(tok_clpar, "`)`");
 
-  V<ast_block_statement> if_body = parse_block_statement(lex);
+  V<ast_block_statement> if_body = parse_block_statement(lex, in_contract_receive);
   V<ast_block_statement> else_body = nullptr;
   if (lex.tok() == tok_else) {  // else if(e) { } or else { }
     lex.next();
     if (lex.tok() == tok_if) {
-      AnyV v_inner_if = parse_if_statement(lex);
+      AnyV v_inner_if = parse_if_statement(lex, in_contract_receive);
       else_body = createV<ast_block_statement>(v_inner_if->range, {v_inner_if});
     } else {
-      else_body = parse_block_statement(lex);
+      else_body = parse_block_statement(lex, in_contract_receive);
     }
   } else {  // no 'else', create empty block
     else_body = createV<ast_block_statement>(SrcRange::empty_at_end(if_body->range), {});
@@ -1364,32 +1364,32 @@ static AnyV parse_if_statement(Lexer& lex) {
   return createV<ast_if_statement>(range, false, cond, if_body, else_body);
 }
 
-static AnyV parse_repeat_statement(Lexer& lex) {
+static AnyV parse_repeat_statement(Lexer& lex, bool in_contract_receive = false) {
   SrcRange range = lex.range_start();
   lex.expect(tok_repeat, "`repeat`");
   lex.expect(tok_oppar, "`(`");
   AnyExprV cond = parse_expr(lex);
   lex.expect(tok_clpar, "`)`");
-  V<ast_block_statement> body = parse_block_statement(lex);
+  V<ast_block_statement> body = parse_block_statement(lex, in_contract_receive);
   range.end(body->range);
   return createV<ast_repeat_statement>(range, cond, body);
 }
 
-static AnyV parse_while_statement(Lexer& lex) {
+static AnyV parse_while_statement(Lexer& lex, bool in_contract_receive = false) {
   SrcRange range = lex.range_start();
   lex.expect(tok_while, "`while`");
   lex.expect(tok_oppar, "`(`");
   AnyExprV cond = parse_expr(lex);
   lex.expect(tok_clpar, "`)`");
-  V<ast_block_statement> body = parse_block_statement(lex);
+  V<ast_block_statement> body = parse_block_statement(lex, in_contract_receive);
   range.end(body->range);
   return createV<ast_while_statement>(range, cond, body);
 }
 
-static AnyV parse_do_while_statement(Lexer& lex) {
+static AnyV parse_do_while_statement(Lexer& lex, bool in_contract_receive = false) {
   SrcRange range = lex.range_start();
   lex.expect(tok_do, "`do`");
-  V<ast_block_statement> body = parse_block_statement(lex);
+  V<ast_block_statement> body = parse_block_statement(lex, in_contract_receive);
   lex.expect(tok_while, "`while`");
   lex.expect(tok_oppar, "`(`");
   AnyExprV cond = parse_expr(lex);
@@ -1441,10 +1441,10 @@ static AnyV parse_assert_statement(Lexer& lex) {
   return createV<ast_assert_statement>(range, cond, thrown_code);
 }
 
-static AnyV parse_try_catch_statement(Lexer& lex) {
+static AnyV parse_try_catch_statement(Lexer& lex, bool in_contract_receive = false) {
   SrcRange range = lex.range_start();
   lex.expect(tok_try, "`try`");
-  V<ast_block_statement> try_body = parse_block_statement(lex);
+  V<ast_block_statement> try_body = parse_block_statement(lex, in_contract_receive);
 
   std::vector<AnyExprV> catch_args;
   lex.expect(tok_catch, "`catch`");
@@ -1468,7 +1468,7 @@ static AnyV parse_try_catch_statement(Lexer& lex) {
   }
   V<ast_tensor> catch_expr = createV<ast_tensor>(catch_range, std::move(catch_args));
 
-  V<ast_block_statement> catch_body = parse_block_statement(lex);
+  V<ast_block_statement> catch_body = parse_block_statement(lex, in_contract_receive);
   range.end(catch_body->range);
   return createV<ast_try_catch_statement>(range, try_body, catch_expr, catch_body);
 }
@@ -1478,12 +1478,34 @@ static const char* slice2_deferred_msg() {
 }
 
 static bool is_slice2_deferred_statement(std::string_view name) {
-  return name == "require" || name == "become" || name == "keep_state";
+  return name == "require";
+}
+
+static AnyV parse_become_statement(Lexer& lex) {
+  SrcRange range = lex.range_start();
+  lex.check(tok_identifier, "`become`");
+  lex.next();
+  auto state_identifier = parse_identifier(lex, "state name after `become`");
+  range.end(state_identifier->range);
+  return createV<ast_become_statement>(range, state_identifier);
+}
+
+static AnyV parse_keep_state_statement(Lexer& lex) {
+  SrcRange range = lex.cur_range();
+  lex.check(tok_identifier, "`keep_state`");
+  lex.next();
+  return createV<ast_keep_state_statement>(range);
 }
 
 AnyV parse_statement(Lexer& lex, bool in_contract_receive) {
   if (in_contract_receive && lex.tok() == tok_identifier && is_slice2_deferred_statement(lex.cur_str())) {
     err("`{}` is {}", lex.cur_str(), slice2_deferred_msg()).fire(lex.cur_range());
+  }
+  if (in_contract_receive && lex.tok() == tok_identifier && lex.cur_str() == "become") {
+    return parse_become_statement(lex);
+  }
+  if (in_contract_receive && lex.tok() == tok_identifier && lex.cur_str() == "keep_state") {
+    return parse_keep_state_statement(lex);
   }
 
   switch (lex.tok()) {
@@ -1491,23 +1513,23 @@ AnyV parse_statement(Lexer& lex, bool in_contract_receive) {
     case tok_val:   // only as a separate declaration
       return parse_local_vars_declaration(lex, true);
     case tok_opbrace:
-      return parse_block_statement(lex);
+      return parse_block_statement(lex, in_contract_receive);
     case tok_return:
       return parse_return_statement(lex);
     case tok_if:
-      return parse_if_statement(lex);
+      return parse_if_statement(lex, in_contract_receive);
     case tok_repeat:
-      return parse_repeat_statement(lex);
+      return parse_repeat_statement(lex, in_contract_receive);
     case tok_do:
-      return parse_do_while_statement(lex);
+      return parse_do_while_statement(lex, in_contract_receive);
     case tok_while:
-      return parse_while_statement(lex);
+      return parse_while_statement(lex, in_contract_receive);
     case tok_throw:
       return parse_throw_expression(lex);
     case tok_assert:
       return parse_assert_statement(lex);
     case tok_try:
-      return parse_try_catch_statement(lex);
+      return parse_try_catch_statement(lex, in_contract_receive);
     case tok_semicolon:
       return createV<ast_empty_statement>(lex.cur_range());
     case tok_break:
@@ -1960,7 +1982,7 @@ static AnyTypeV parse_contract_type_identifier(Lexer& lex, const char* what) {
 }
 
 static bool is_deferred_contract_member_name(std::string_view name) {
-  return name == "states" || name == "receive_external" || name == "get";
+  return name == "receive_external" || name == "get";
 }
 
 static AnyV parse_receive_block(Lexer& lex) {
@@ -1971,9 +1993,41 @@ static AnyV parse_receive_block(Lexer& lex) {
   lex.expect(tok_colon, "`:`");
   AnyTypeV msg_type = parse_contract_type_identifier(lex, "receive message type");
   lex.expect(tok_clpar, "`)`");
+  V<ast_identifier> state_identifier = nullptr;
+  if (lex.tok() == tok_identifier && lex.cur_str() == "on") {
+    lex.next();
+    state_identifier = parse_identifier(lex, "state name after `on`");
+  }
   auto v_body = parse_block_statement(lex, true);
   range.end(v_body->range);
-  return createV<ast_receive_block>(range, v_param, msg_type, v_body);
+  return createV<ast_receive_block>(range, v_param, msg_type, state_identifier, v_body);
+}
+
+static void parse_contract_state_list(Lexer& lex, std::vector<V<ast_identifier>>& state_identifiers) {
+  lex.next();
+  lex.expect(tok_colon, "`:`");
+  state_identifiers.push_back(parse_identifier(lex, "state name"));
+  while (lex.tok() == tok_comma) {
+    lex.next();
+    state_identifiers.push_back(parse_identifier(lex, "state name"));
+  }
+  if (lex.tok() == tok_semicolon) {
+    lex.next();
+  }
+}
+
+static V<ast_identifier> parse_initial_state(Lexer& lex) {
+  lex.check(tok_annotation_at, "`@initial`");
+  lex.next();
+  auto state_keyword = parse_identifier(lex, "`state` after `@initial`");
+  if (state_keyword->name != "state") {
+    err("expected `state` after `@initial`").fire(state_keyword);
+  }
+  auto initial_state = parse_identifier(lex, "initial state name");
+  if (lex.tok() == tok_semicolon) {
+    lex.next();
+  }
+  return initial_state;
 }
 
 static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annotation>>& annotations) {
@@ -1987,6 +2041,8 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
   lex.expect(tok_opbrace, "`{`");
 
   AnyTypeV storage_type = nullptr;
+  std::vector<V<ast_identifier>> state_identifiers;
+  V<ast_identifier> initial_state_identifier = nullptr;
   std::vector<AnyV> receive_blocks;
 
   while (lex.tok() != tok_clbrace) {
@@ -1995,6 +2051,13 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
       continue;
     }
     if (lex.tok() == tok_annotation_at) {
+      if (lex.cur_str() == "@initial") {
+        if (initial_state_identifier) {
+          err("contract block may contain only one `@initial state` declaration; see doc/tos-language-syntax-policy.md §3.4").fire(lex.cur_range());
+        }
+        initial_state_identifier = parse_initial_state(lex);
+        continue;
+      }
       err("contract receiver annotations are {}", slice2_deferred_msg()).fire(lex.cur_range());
     }
     if (lex.tok() == tok_storage) {
@@ -2007,6 +2070,13 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
       if (lex.tok() == tok_semicolon) {
         lex.next();
       }
+      continue;
+    }
+    if (lex.tok() == tok_identifier && lex.cur_str() == "states") {
+      if (!state_identifiers.empty()) {
+        err("contract block may contain only one `states:` declaration; see doc/tos-language-syntax-policy.md §3.4").fire(lex.cur_range());
+      }
+      parse_contract_state_list(lex, state_identifiers);
       continue;
     }
     if (lex.tok() == tok_receive) {
@@ -2022,7 +2092,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
     if (lex.tok() == tok_identifier && is_deferred_contract_member_name(lex.cur_str())) {
       err("`{}` is {}", lex.cur_str(), slice2_deferred_msg()).fire(lex.cur_range());
     }
-    err("contract blocks may contain only `storage:` and `receive(...)` declarations in Slice 2 Stage 1; see doc/tos-language-syntax-policy.md §3.1").fire(lex.cur_range());
+    err("contract blocks may contain only `storage:`, `states:`, `@initial state`, and `receive(...)` declarations in Slice 2 Stage 2; see doc/tos-language-syntax-policy.md §3.1").fire(lex.cur_range());
   }
 
   if (!storage_type) {
@@ -2034,7 +2104,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
 
   range.end(lex.cur_range());
   lex.next();
-  return createV<ast_contract_declaration>(range, v_ident, storage_type, std::move(receive_blocks));
+  return createV<ast_contract_declaration>(range, v_ident, storage_type, std::move(state_identifiers), initial_state_identifier, std::move(receive_blocks));
 }
 
 static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>& declarations) {

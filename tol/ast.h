@@ -119,6 +119,8 @@ enum ASTNodeKind {
   ast_throw_statement,
   ast_assert_statement,
   ast_try_catch_statement,
+  ast_become_statement,
+  ast_keep_state_statement,
   ast_asm_body,
   // other
   ast_genericsT_item,
@@ -1219,6 +1221,25 @@ struct Vertex<ast_try_catch_statement> final : ASTStatementVararg {
 };
 
 template<>
+// ast_become_statement is a Slice 2 state-machine transition inside a contract receiver
+// example: `become Closed;`
+struct Vertex<ast_become_statement> final : ASTStatementVararg {
+  auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  std::string_view get_state_name() const { return get_identifier()->name; }
+
+  Vertex(SrcRange range, V<ast_identifier> state_identifier)
+    : ASTStatementVararg(ast_become_statement, range, {state_identifier}) {}
+};
+
+template<>
+// ast_keep_state_statement is a Slice 2 state-machine tail marker inside a contract receiver
+// example: `keep_state;`
+struct Vertex<ast_keep_state_statement> final : ASTStatementVararg {
+  Vertex(SrcRange range)
+    : ASTStatementVararg(ast_keep_state_statement, range, {}) {}
+};
+
+template<>
 // ast_asm_body is a body of `asm` function — a set of strings, and optionally stack order manipulations
 // example: `fun skipMessageOp... asm "32 PUSHINT" "SDSKIPFIRST";`
 // user can specify "arg order"; example: `fun store(self: builder, op: int) asm (op self)` then [1, 0]
@@ -1402,14 +1423,17 @@ template<>
 // example: `receive(msg: MintRequest) { ... }`
 struct Vertex<ast_receive_block> final : ASTOtherVararg {
   AnyTypeV message_type_node;
+  V<ast_identifier> state_identifier;  // nullptr unless `receive(msg: T) on State`
 
   auto get_param_identifier() const { return children.at(0)->as<ast_identifier>(); }
   std::string_view get_param_name() const { return children.at(0)->as<ast_identifier>()->name; }
   auto get_body() const { return children.at(1)->as<ast_block_statement>(); }
+  bool has_state_clause() const { return state_identifier != nullptr; }
+  std::string_view get_state_name() const { return state_identifier->name; }
 
-  Vertex(SrcRange range, V<ast_identifier> param_identifier, AnyTypeV message_type_node, V<ast_block_statement> body)
+  Vertex(SrcRange range, V<ast_identifier> param_identifier, AnyTypeV message_type_node, V<ast_identifier> state_identifier, V<ast_block_statement> body)
     : ASTOtherVararg(ast_receive_block, range, {param_identifier, body})
-    , message_type_node(message_type_node) {}
+    , message_type_node(message_type_node), state_identifier(state_identifier) {}
 };
 
 template<>
@@ -1417,12 +1441,18 @@ template<>
 // example: `contract Wallet { storage: WalletStorage; receive(msg: Transfer) { ... } }`
 struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
   AnyTypeV storage_type_node;
+  std::vector<V<ast_identifier>> state_identifiers;
+  V<ast_identifier> initial_state_identifier;
 
   auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
   int get_num_receives() const { return size() - 1; }
   auto get_receive(int i) const { return children.at(i + 1)->as<ast_receive_block>(); }
+  bool has_state_machine() const { return !state_identifiers.empty(); }
+  int get_num_states() const { return static_cast<int>(state_identifiers.size()); }
+  auto get_state(int i) const { return state_identifiers.at(i); }
+  auto get_initial_state_identifier() const { return initial_state_identifier; }
 
-  Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<AnyV>&& receive_blocks)
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<V<ast_identifier>>&& state_identifiers, V<ast_identifier> initial_state_identifier, std::vector<AnyV>&& receive_blocks)
     : ASTOtherVararg(ast_contract_declaration, range, [&] {
         std::vector<AnyV> children;
         children.reserve(1 + receive_blocks.size());
@@ -1430,7 +1460,7 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
         children.insert(children.end(), receive_blocks.begin(), receive_blocks.end());
         return children;
       }())
-    , storage_type_node(storage_type_node) {}
+    , storage_type_node(storage_type_node), state_identifiers(std::move(state_identifiers)), initial_state_identifier(initial_state_identifier) {}
 };
 
 template<>
