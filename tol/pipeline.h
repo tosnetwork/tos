@@ -96,6 +96,7 @@ void pipeline_lower_contracts();
 void pipeline_assign_require_codes();
 void pipeline_check_query_id_propagation();
 void pipeline_check_slice3_reply_correlation();
+void pipeline_check_postponement();
 void pipeline_lazy_load_insertions();
 void pipeline_transform_onInternalMessage();
 void pipeline_convert_ast_to_legacy_Expr_Op();

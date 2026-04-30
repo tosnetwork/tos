@@ -780,9 +780,11 @@ initial behaviour-manifest schema at
 Draft v1.1 closes the first security-review findings on schema
 constraints, callback failure semantics, zero-capacity queues, optional
 `query_id` replay keys, and cell-depth budgeting. Stage 1 has landed the
-trust-period `@stdlib/postponement` helper surface and focused
-tol-tester coverage; Stage 2 compiler hardening is still required before
-any postponement contract is eligible for the official reference package.
+`@stdlib/postponement` helper surface and focused tol-tester coverage.
+Stage 2 has landed compiler hardening for direct queue internals,
+external-message enqueue attempts, missing enqueue budgets, and raw-map
+bypass warnings; Stage 3 can now build the first official postponed
+reference contract on the hardened surface.
 
 **Stage plan.**
 
@@ -802,26 +804,25 @@ any postponement contract is eligible for the official reference package.
    without an author key, explicit author idempotency keys, oversized
    bodies, cell-depth budget, expiry, FIFO drain, callback throw
    preservation, and explicit drop.
-3. ⬜ **Stage 2 — postponement compiler hardening.**
+3. ✅ **Stage 2 — postponement compiler hardening.** Completed
+   2026-04-30.
 
-   - ⬜ Add compiler check pass wired at correct pipeline position
-     (after symbol registration, before contract lowering).
-   - ⬜ Error mode: reject direct writes to stdlib queue internals
-     (`PostponedQueue` / `PostponedItem` fields) in manifest-backed
-     contracts.
-   - ⬜ Error mode: reject `enqueue`-style calls on external-message
-     (`receive_external`) paths.
-   - ⬜ Error mode: reject queue construction that omits any required
-     budget parameter (`maxItems`, `maxAgeSeconds`, `maxDrainItems`,
-     `maxCellDepth`).
-   - ⬜ Warning mode: flag raw `map`-based postponement structures that
+   - ✅ Added `tol/pipe-check-postponement.cpp`, wired in the resolved
+     AST/type-checking band before codegen.
+   - ✅ Error mode: rejects direct access to private `PostponedQueue`
+     maps and direct writes to queue accounting fields.
+   - ✅ Error mode: rejects `enqueue`-style calls from
+     `onExternalMessage`.
+   - ✅ Error mode: enqueue helpers require the explicit budget argument;
+     missing-budget tests fail at call-arity checking.
+   - ✅ Warning mode: flags raw `map<*, PostponedItem>` mutators that
      bypass the stdlib helper.
-   - ⬜ Negative tol-tester cases: direct-internal-write, external
-     enqueue, missing-budget, raw-map.
-   - ⬜ Positive tol-tester cases: valid manifest-backed usage passes
-     without warnings.
-   - ⬜ Exit criterion: hardening tests prove bounded queues cannot be
-     bypassed through ordinary Tol field access or raw
+   - ✅ Negative tol-tester cases: direct-internal-write, external
+     enqueue, missing-budget.
+   - ✅ Positive/warning tol-tester cases: raw-map legacy warning plus
+     Stage 1 valid stdlib usage.
+   - ✅ Exit criterion: targeted hardening tests prove bounded queues
+     cannot be bypassed through ordinary Tol field access or raw
      external-message paths.
 
 4. ⬜ **Stage 3 — first postponed reference contract.**

@@ -1,0 +1,24 @@
+import "@stdlib/postponement"
+
+fun sender1(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun budget(): PostponementBudget {
+    return slice4PostponementBudget(4, 256, 4, 1024, 16, 100, 4, 1023);
+}
+
+fun body(): cell {
+    return beginCell().storeUint(1, 8).endCell();
+}
+
+fun onExternalMessage(bodySlice: slice) {
+    var queue = slice4NewPostponedQueue();
+    queue.enqueueWithQueryId(budget(), sender1(), 0x10000001, 77, body(), 0, 0, 10);
+    bodySlice.skipBits(0);
+}
+
+/**
+@compilation_should_fail
+@stderr external-message postponement is not permitted in Slice 4 Stage 2
+ */

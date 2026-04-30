@@ -35,6 +35,7 @@ set(TOL_SOURCE
         pipe-assign-require-codes.cpp
         pipe-check-query-id-propagation.cpp
         pipe-check-slice3-reply-correlation.cpp
+        pipe-check-postponement.cpp
         pipe-lazy-load-insertions.cpp
         pipe-transform-on-message.cpp
         pipe-ast-to-legacy.cpp

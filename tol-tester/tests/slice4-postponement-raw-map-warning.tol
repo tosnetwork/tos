@@ -1,0 +1,21 @@
+import "@stdlib/postponement"
+
+fun sender1(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun body(): cell {
+    return beginCell().storeUint(1, 8).endCell();
+}
+
+fun main(): int {
+    var raw = createEmptyMap<uint64, PostponedItem>();
+    val item = slice4BuildPostponedItem(0, sender1(), 0x10000001, 77, null, body(), 0, 0, 10, 110);
+    raw.set(0, item);
+    return raw.mustGet(0).queryId()!;
+}
+
+/**
+@testcase | 0 | | 77
+@stderr raw map-based postponement is warning-only for legacy code
+ */

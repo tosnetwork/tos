@@ -1,0 +1,12 @@
+import "@stdlib/postponement"
+
+fun bad(): int {
+    val queue = slice4NewPostponedQueue();
+    val direct = queue.items.get(0);
+    return direct.isFound as int;
+}
+
+/**
+@compilation_should_fail
+@stderr direct access to `PostponedQueue.items` bypasses Slice 4 duplicate-key, FIFO, expiry, and budget accounting
+ */

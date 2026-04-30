@@ -119,8 +119,9 @@ official reference package.
 
 Implementation status: complete as of 2026-04-30. The helper surface
 is `@stdlib/postponement`, with focused coverage in
-`tol-tester/tests/slice4-postponement-stdlib-positive.tol`. It remains
-trust-period code until Stage 2 compiler hardening lands.
+`tol-tester/tests/slice4-postponement-stdlib-positive.tol`. Stage 2
+compiler hardening has landed, so official postponed reference contracts
+may now use this surface.
 
 ### Stage 2 - Postponement compiler hardening
 
@@ -134,6 +135,13 @@ Deliverables:
 
 Exit criterion: hardening tests prove bounded queues cannot be bypassed
 through ordinary Tol field access or raw external-message paths.
+
+Implementation status: complete as of 2026-04-30. The compiler pass is
+`tol/pipe-check-postponement.cpp`; focused coverage lives in
+`tol-tester/tests/slice4-postponement-direct-*`,
+`tol-tester/tests/slice4-postponement-external-enqueue.tol`,
+`tol-tester/tests/slice4-postponement-missing-budget.tol`, and
+`tol-tester/tests/slice4-postponement-raw-map-warning.tol`.
 
 ### Stage 3 - First postponed reference contract
 

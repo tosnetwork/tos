@@ -102,6 +102,7 @@ TolCompilationResult tol_proceed(const std::string &entrypoint_filename) {
     // moved past the teardown.
     pipeline_check_query_id_propagation();
     pipeline_check_slice3_reply_correlation();
+    pipeline_check_postponement();
 
     // return errors, if any
     if (!error_collector.empty()) {

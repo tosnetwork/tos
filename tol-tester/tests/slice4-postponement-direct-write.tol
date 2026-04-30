@@ -1,0 +1,12 @@
+import "@stdlib/postponement"
+
+fun bad(): int {
+    var queue = slice4NewPostponedQueue();
+    queue.totalBodyBits = 100;
+    return queue.totalBodyBits;
+}
+
+/**
+@compilation_should_fail
+@stderr direct write to `PostponedQueue.totalBodyBits` bypasses Slice 4 bounded-postponement accounting
+ */
