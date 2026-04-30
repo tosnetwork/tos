@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "schema": "slice-4-behaviour-manifest",
+  "behaviour": "request_server",
+  "stage": "Slice 4 Stage 4",
+  "mode": "warning",
+  "callbacks": [
+    {
+      "name": "receive_request",
+      "kind": "receive",
+      "required": true
+    }
+  ],
+  "messages": [
+    {
+      "name": "Request",
+      "opcode": "0x00000000",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    }
+  ],
+  "states": [],
+  "postponement": {
+    "enabled": false,
+    "queue_field": null,
+    "deferrable": [],
+    "budgets": {
+      "max_items": 0,
+      "max_body_bits": 0,
+      "max_body_refs": 0,
+      "max_total_body_bits": 0,
+      "max_total_body_refs": 0,
+      "max_age_seconds": 0,
+      "max_drain_items": 0,
+      "max_cell_depth": 0
+    }
+  },
+  "errors": [],
+  "wire_compatibility_exceptions": []
+}

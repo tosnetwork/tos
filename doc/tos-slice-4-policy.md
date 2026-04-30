@@ -177,6 +177,11 @@ Deliverables:
 Exit criterion: the compiler can prove callback/message/error shape for
   a small generated contract while preserving bytecode.
 
+Implementation status: complete as of 2026-04-30. The manifests live in
+`doc/slice4-behaviours/`; `scripts/check-slice-4-behaviour-manifests.py`
+validates schema shape, warning/error conformance modes, the postponed
+auction reference, and bytecode-visible no-op behaviour.
+
 ### Stage 5 - Trait coverage for three official patterns
 
 Deliverables:
