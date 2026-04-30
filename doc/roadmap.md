@@ -511,6 +511,49 @@ This slice also begins the first of the §5.5 static-analysis
 features: exhaustiveness checking of `receive` handlers. Full
 exhaustiveness checking lands in Slice 3.
 
+**Status.** 🚧 In progress as of 2026-04-30. The Slice 2 syntax
+policy input exists at `doc/tos-language-syntax-policy.md`
+(Draft v3, post-v2-security-review). The first implementation
+commit has landed on `actor-layer`:
+`081f05d3c` (`Add Slice 2 Stage 1 contract / receive parser +
+lowering`).
+
+**Implementation stages.**
+
+1. ✅ **Stage 0 — syntax policy RFC / implementation input.**
+   `doc/tos-language-syntax-policy.md` exists and has been
+   revised through v3 after the security-review closure pass.
+   It locks the Stage 1 subset against §3.1 / §3.2 / §4.1 /
+   §6.1 / §10.1 for implementation on `actor-layer`.
+2. ✅ **Stage 1 — minimum `contract` / `receive` parser +
+   lowering.** Completed 2026-04-30 in commit `081f05d3c`.
+   Ships lexer tokens `contract` / `receive` / `storage`,
+   AST nodes for contract declarations and receive blocks,
+   parser support for
+   `contract X { storage: S; receive(msg: T)+ }`, explicit
+   rejection of the deferred Slice 2 features, a new
+   `tol/pipe-lower-contract.cpp` pass that synthesizes the
+   simple no-state/no-`@deploy` `onInternalMessage` dispatcher,
+   32-bit receive opcode-prefix enforcement, and five new
+   `tol-tester/tests/contract-*.tol` cases. Verification at
+   close: `tol` target builds, `576/576` tol-tester cases pass,
+   `24 test(s) passed` in `test-emulator`, Slice 1 gas gate
+   remains green, and `git diff --check` is clean.
+3. ⏳ **Stage 2 — states / `become` / `keep_state` /
+   reachability.** Deferred per §10.1.
+4. ⏳ **Stage 3 — `@on` + field-scoping / taint analysis.**
+   Deferred per §10.1.
+5. ⏳ **Stage 4 — `@deploy` + unknown-opcode modes.**
+   Deferred per §10.1.
+6. ⏳ **Stage 5 — get functions + `method_id` collision
+   detector.** Deferred per §10.1.
+7. ⏳ **Stage 6 — `receive_external` + `require` auto-numbering.**
+   Deferred per §10.1.
+8. ⏳ **Stage 7 — per-receiver `disclaim_query_id` rewrite.**
+   Deferred per §10.1.
+9. ⏳ **Stage 8 — dogfood remigration of jetton-minter /
+   jetton-wallet / wallet-v5.** Deferred per §10.1.
+
 ### Slice 3 — Q3 + Q4, weeks 53–78 (six months)
 
 Deliver `tol.md` Q3 (domain stdlib: jetton, NFT, ownable, wallet,
@@ -636,17 +679,17 @@ before the corresponding slice can start.
 **Slice 2** — Q2 syntax (`contract` / `receive(...)` / `message`)
 
 - *Hard:* Slice 1 must ship externally (release tag) before Slice 2
-  implementation can begin. Slice 2 *design* may proceed in parallel
-  during Stage 3–5 of Slice 1.
-- *Missing policy:* No `doc/tos-syntax-policy.md` exists. The Q2
-  syntax has no equivalent of `tos-message-policy.md` locking
-  semantics for `contract` storage layout, `receive(...) on State`
-  dispatch, `message(0x…)` opcode auto-derivation, and the
-  exhaustiveness slice between Slice 2 and Slice 3.
+  can ship. Implementation work has started on `actor-layer` for
+  the Stage 1 compiler subset, but this does not replace the
+  external release gate.
+- *Policy status:* The old missing-policy blocker is closed:
+  `doc/tos-language-syntax-policy.md` now exists and is the Slice 2
+  implementation input (Draft v3, 2026-04-30). See §11.5.
 - *Cross-cut:* `actor.md` §5.5 (`become` exhaustiveness /
-  reachability / invariant-preservation) needs an explicit split
-  between Slice 2 (basic exhaustiveness on hand-written `receive`
-  blocks) and Slice 3 (full `gen_statem`-class analysis).
+  reachability / invariant-preservation) is now split by the
+  syntax policy: Stage 2 owns state transition syntax and
+  reachability scaffolding; full `gen_statem`-class analysis
+  remains Slice 3 / Q4 scope.
 
 **Slice 3** — Q3 stdlib + Q4 static analysis + scaffolding
 
@@ -745,9 +788,10 @@ Sorted by how many later slices each item blocks:
    Slice 6 (failure taxonomy for supervision). High leverage; can
    start during Slice 1 Stage 4–5 without taking implementation
    capacity from Slice 1.
-2. **Slice 2 syntax policy doc** — single Slice 1 successor
-   blocker; should be drafted during Stage 3 of Slice 1 so it can
-   sign off concurrently with Slice 1 ship.
+2. ✅ **Slice 2 syntax policy doc** — closed 2026-04-30 by
+   `doc/tos-language-syntax-policy.md` Draft v3 and the Stage 1
+   implementation commit `081f05d3c`; see §6 Slice 2 status and
+   §11.5.
 3. **`actor.md` §5.4 capability public RFC** — Slice 6 long-pole.
    Needs protocol architect time, not engineering capacity. The
    earlier this enters RFC review, the lower the schedule risk
@@ -758,17 +802,40 @@ Sorted by how many later slices each item blocks:
 5. **`actor.md` §5.8 off-chain observability** — independently
    useful; pull forward to Slice 3 alongside `tol new`.
 
-Items 1 and 2 should be in motion before Slice 1 ships. Items
-3–5 should be in motion before Slice 3 ships.
+Item 1 should be in motion before Slice 1 ships. Item 2 is
+closed. Items 3–5 should be in motion before Slice 3 ships.
 
 (The earlier four-signer approval item from this list was
 removed when policy v6 made single-signer the rule; see §11.3.)
 
 ### 11.5 Closed (track items as they move out of §11)
 
-(empty — populate as §11.1 / §11.2 / §11.3 entries are resolved.)
+- ✅ **Slice 2 syntax policy doc missing-policy blocker** —
+  closed 2026-04-30. `doc/tos-language-syntax-policy.md` exists
+  and is the implementation input for Slice 2 (Draft v3,
+  post-v2-security-review). The prior `doc/tos-syntax-policy.md`
+  placeholder name in §11.2 is retired in favour of the actual
+  file name.
+- ✅ **Slice 2 Stage 1 minimum compiler subset** — closed
+  2026-04-30 by commit `081f05d3c`. The compiler now parses the
+  Stage 1 `contract X { storage: S; receive(msg: T)+ }` surface,
+  lowers it to ordinary Tol `onInternalMessage`, enforces 32-bit
+  receive opcode prefixes, and adds five contract-focused
+  tol-tester cases.
 
 ## 12. Revision notes
+
+### r3 (Slice 2 Stage 1 status)
+
+- §6 Slice 2 now carries an implementation-stage checklist.
+  Stage 0 policy input and Stage 1 minimum parser/lowering are
+  marked complete; Stages 2–8 remain explicitly deferred per
+  `doc/tos-language-syntax-policy.md` §10.1.
+- §11.2 / §11.4 / §11.5 now close the old "missing Slice 2
+  syntax policy" blocker and point to the actual policy file
+  `doc/tos-language-syntax-policy.md`.
+- No Slice 1 stage status, wire-format commitment, or later-slice
+  success criterion changed.
 
 ### r2 (single-signer governance — policy v6)
 
