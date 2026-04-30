@@ -285,6 +285,8 @@ def validate_scaffold_behaviour_conformance(path: Path) -> None:
         require(set(entry) == {"behaviour", "manifest", "mode"}, f"{prefix}: invalid keys")
         require(entry["mode"] in ("raw", "generated"), f"{prefix}: mode must be raw/generated")
         manifest_path = (path.parent / entry["manifest"]).resolve()
+        if not manifest_path.exists():
+            manifest_path = (ROOT / entry["manifest"]).resolve()
         require(manifest_path.exists(), f"{prefix}: manifest not found: {entry['manifest']}")
         manifest = validate_manifest(manifest_path)
         require(manifest["behaviour"] == entry["behaviour"], f"{prefix}: behaviour does not match manifest")

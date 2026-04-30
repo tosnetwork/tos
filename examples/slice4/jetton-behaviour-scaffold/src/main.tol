@@ -1,0 +1,32 @@
+import "@stdlib/jetton"
+
+struct Slice4JettonBehaviourStorage {
+    totalSupply: coins;
+    adminAddress: any_address;
+    content: cell;
+    jettonWalletCode: cell;
+}
+
+struct (JETTON_OP_MINT) Slice4JettonBehaviourMint {
+    queryId: uint64;
+    toAddress: any_address;
+    amount: coins;
+    masterMsg: cell;
+}
+
+fun scaffoldPatternId(): int {
+    return jettonPatternManifestHeader().patternId;
+}
+
+contract Slice4JettonBehaviour {
+    storage: Slice4JettonBehaviourStorage
+    @unknown_throw(65535);
+
+    @disclaim_query_id
+    receive(msg: Slice4JettonBehaviourMint) {
+        require(jettonSameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, JETTON_MINTER_FUNC_THROW_ADMIN_REQUIRED);
+        msg.masterMsg;
+        save(storage);
+    }
+}

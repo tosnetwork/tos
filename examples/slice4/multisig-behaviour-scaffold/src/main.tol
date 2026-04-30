@@ -1,0 +1,35 @@
+import "@stdlib/multisig"
+
+struct Slice4MultisigBehaviourStorage {
+    config: MultisigConfig;
+    pending: dict;
+}
+
+struct (0x4d534947) Slice4MultisigBehaviourSubmit {
+    queryId: uint64;
+    validUntil: uint32;
+    signer: uint256;
+    actions: cell;
+}
+
+fun scaffoldPatternId(): int {
+    return multisigPatternManifestHeader().patternId;
+}
+
+contract Slice4MultisigBehaviour {
+    storage: Slice4MultisigBehaviourStorage
+    @unknown_throw(1807);
+
+    @disclaim_query_id
+    receive(msg: Slice4MultisigBehaviourSubmit) {
+        multisigRequireValidThreshold(storage.config.threshold, storage.config.signerCount);
+        multisigRequireSigner(storage.config.signers, msg.signer);
+        multisigRequireNewProposal(storage.pending, msg.queryId);
+        multisigRequireNotExpired(msg.validUntil, blockchain.now());
+        multisigValidateActions(msg.actions, false);
+        save(Slice4MultisigBehaviourStorage {
+            config: storage.config,
+            pending: multisigAddPendingProposal(storage.pending, msg.queryId),
+        });
+    }
+}

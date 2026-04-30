@@ -403,9 +403,32 @@ static std::string scaffold_manifest_template(const std::string& pattern, const 
     "method_ids": "artifacts/method-ids.json",
     "error_codes": "artifacts/error-codes.json",
     "replay_trace": "artifacts/replay-trace.json"
-  }
+  }{{BEHAVIOUR_CONFORMANCE}}
 }
 )JSON";
+}
+
+static std::string scaffold_behaviour_conformance(const std::string& pattern) {
+  std::string behaviour = "request_server";
+  std::string mode = "raw";
+  if (pattern == "jetton") {
+    behaviour = "jetton_wallet";
+    mode = "generated";
+  } else if (pattern == "nft") {
+    behaviour = "nft_item";
+    mode = "generated";
+  } else if (pattern == "multisig") {
+    behaviour = "multisig";
+    mode = "generated";
+  }
+  return std::string(",\n") +
+         "  \"behaviour_conformance\": [\n" +
+         "    {\n" +
+         "      \"behaviour\": \"" + behaviour + "\",\n" +
+         "      \"manifest\": \"doc/slice4-behaviours/" + behaviour + ".json\",\n" +
+         "      \"mode\": \"" + mode + "\"\n" +
+         "    }\n" +
+         "  ]";
 }
 
 static std::string scaffold_replay_template(const std::string& pattern, const std::string& name) {
@@ -513,6 +536,7 @@ static bool materialize_scaffold(const std::string& output_dir, const std::strin
     content = replace_all(std::move(content), "{{PATTERN}}", pattern);
     content = replace_all(std::move(content), "{{NAME}}", name);
     content = replace_all(std::move(content), "{{PATTERN_ID}}", std::to_string(scaffold_pattern_id(pattern)));
+    content = replace_all(std::move(content), "{{BEHAVIOUR_CONFORMANCE}}", scaffold_behaviour_conformance(pattern));
     return content;
   };
 
@@ -609,7 +633,7 @@ static int run_new_command(int argc, char* const argv[]) {
   if (!materialize_scaffold(output_dir, pattern, name, force)) {
     return 2;
   }
-  std::cout << "Created Slice 3 " << pattern << " scaffold at " << output_dir << "\n";
+  std::cout << "Created Tol " << pattern << " scaffold at " << output_dir << "\n";
   return 0;
 }
 

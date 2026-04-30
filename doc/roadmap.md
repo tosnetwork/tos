@@ -772,7 +772,7 @@ Deliver bounded postponement (`actor.md` §5.9) and trait-based
 behaviour patterns (§6.5). These are language-and-stdlib slices
 with limited protocol exposure.
 
-**Status.** 🚧 In implementation 2026-04-30. Stage 0 policy work has
+**Status.** ✅ Complete 2026-04-30. Stage 0 policy work has
 landed in [`doc/tos-postponement-policy.md`](tos-postponement-policy.md)
 and [`doc/tos-slice-4-policy.md`](tos-slice-4-policy.md), with the
 initial behaviour-manifest schema at
@@ -788,7 +788,11 @@ reference contract, an auction-style example that queues too-early bids
 and drains them after opening. Stage 4 has added check-only behaviour
 manifests and validation without changing generated Fift. Stage 5
 extends that trait coverage to Jetton wallet, NFT item, and Multisig
-helper surfaces with no Tol source or BoC changes.
+helper surfaces with no Tol source or BoC changes. Stage 6 has landed
+the release-package surrogate: `tol new` emits behaviour-conformance
+metadata, Slice 4 author docs and release notes are checked in, generated
+Slice 4 scaffold examples live under `examples/slice4/`, and
+`scripts/check-slice-4-release-package.py` validates the package.
 
 **Stage plan.**
 
@@ -890,22 +894,23 @@ helper surfaces with no Tol source or BoC changes.
    - ✅ Exit criterion: traits cover three official Slice 3 patterns
      without bytecode regression beyond Slice 1 budget.
 
-7. ⬜ **Stage 6 — tooling, docs, and release surrogate.**
+7. ✅ **Stage 6 — tooling, docs, and release surrogate.**
+   Completed 2026-04-30.
 
-   - ⬜ Extend `tol new` output with behaviour-manifest declarations
+   - ✅ Extend `tol new` output with behaviour-manifest declarations
      where applicable.
-   - ⬜ Add author documentation for bounded postponement usage.
-   - ⬜ Add author documentation for behaviour conformance and
+   - ✅ Add author documentation for bounded postponement usage.
+   - ✅ Add author documentation for behaviour conformance and
      manifest selection.
-   - ⬜ Add `scripts/check-slice-4-release-package.py` (validates
+   - ✅ Add `scripts/check-slice-4-release-package.py` (validates
      docs, manifests, generated examples, and focused tests).
-   - ⬜ Add generated contract examples under `examples/slice4/`.
-   - ⬜ Run repo-side author surrogate trial (or record human trial
+   - ✅ Add generated contract examples under `examples/slice4/`.
+   - ✅ Run repo-side author surrogate trial (or record human trial
      if available); acceptance criterion mirrors Slice 3 surrogate
      gate.
-   - ⬜ Update roadmap and release notes with Slice 4 completion
+   - ✅ Update roadmap and release notes with Slice 4 completion
      record.
-   - ⬜ Exit criterion: a contract author can generate or inspect a
+   - ✅ Exit criterion: a contract author can generate or inspect a
      behaviour manifest and run bounded-postponement tests without
      reading compiler source.
 
@@ -955,7 +960,7 @@ designed to prevent.
 | Slice 1 | All nine checklist items in §5 are checked. |
 | Slice 2 | The three Slice 1 reference contracts are re-migrated using Slice 2 `contract` / `receive(...)` / `struct (0xNN)` syntax, deploy, preserve wire compatibility, and pass the full regression suite. |
 | Slice 3 | A new contract author can produce a working Jetton or NFT in under one hour using `tol new`, the stdlib, replay fixtures, and the documentation. Accepted completion record: the 2026-04-30 Stage 8 Jetton surrogate trial completed in about 9 minutes and was accepted by the maintainer as the release gate. |
-| Slice 4 | Bounded postponement is used by at least one shipped contract; traits cover at least three official reference contracts without bytecode regression beyond the Slice 1 budget. |
+| Slice 4 | Bounded postponement is used by at least one shipped contract; traits cover at least three official reference contracts without bytecode regression beyond the Slice 1 budget. Accepted completion record: the 2026-04-30 repo-side release-package surrogate generated Jetton/NFT/Multisig examples and passed `scripts/check-slice-4-release-package.py`. |
 | Slice 5 | The second-wave stdlib is used by at least three external production contracts. |
 | Slice 6 | Supervision, scheduled messages, and structured errors are in production on at least one workchain and used by at least one official system contract. |
 
@@ -1058,20 +1063,18 @@ before the corresponding slice can start.
 
 **Slice 4** — `actor.md` §5.9 + §6.5
 
-- *Status:* Started. Draft Stage 0 inputs now exist at
-  `doc/tos-postponement-policy.md`, `doc/tos-slice-4-policy.md`, and
-  `doc/slice-4-behaviour-manifest-schema.json`.
-- *Hard, pending approval:* The bounded-postponement resource model is
-  drafted but not approved. The draft prices max-outstanding count,
-  per-body size, total storage footprint, age, explicit drain bounds,
-  duplicate handling, and observed expiry.
+- *Status:* Complete on `actor-layer`. Stage 0 inputs are approved and
+  the implementation has landed through Stage 6.
+- *Resource model:* The bounded-postponement resource model prices
+  max-outstanding count, per-body size, total storage footprint, age,
+  explicit drain bounds, duplicate handling, and observed expiry.
 - *External dependency:* §5.9 still composes with §5.7 (delivery
-  failure handling). Draft v1 avoids depending on §5.7 by keeping
+  failure handling). Slice 4 avoids depending on §5.7 by keeping
   `ErrorClass.BackPressure` reserved and using explicit contract-level
   expiry/error handling.
-- *§6.5 traits:* Slice 3 dogfooding is complete. Draft v1 therefore
-  starts traits as check-only behaviour manifests over existing
-  stdlib/reference patterns, not as bytecode-visible dynamic dispatch.
+- *§6.5 traits:* Traits ship as check-only behaviour manifests over
+  existing stdlib/reference patterns, not as bytecode-visible dynamic
+  dispatch.
 
 **Slice 5** — Second-wave stdlib + cross-language ABI freeze
 
@@ -1125,7 +1128,7 @@ Each sub-feature needs its own policy document
   needs the new owner's signature on the affected role.
 - Per-slice policy documents: Slice 2 exists at
   `doc/tos-language-syntax-policy.md`; Slice 3 is approved at
-  `doc/tos-slice-3-policy.md`; Slice 4 draft inputs now exist at
+  `doc/tos-slice-3-policy.md`; Slice 4 is complete under
   `doc/tos-postponement-policy.md` and `doc/tos-slice-4-policy.md`.
   Slice 6 policy documents do not exist; see §11.2 for the names and
   scope of each missing document. Each will follow the same
@@ -1136,11 +1139,10 @@ Each sub-feature needs its own policy document
 
 Sorted by how many later slices each item blocks:
 
-1. **`actor.md` §5.7 design RFC** — blocks Slice 4 (`§5.9`
-   postpone-expiry), Slice 5 (back-pressure `error_class = 5`),
-   Slice 6 (failure taxonomy for supervision). High leverage; can
-   start during Slice 1 Stage 4–5 without taking implementation
-   capacity from Slice 1.
+1. **`actor.md` §5.7 design RFC** — no longer blocks Slice 4's bounded
+   contract-level postponement, but still blocks protocol-level delivery
+   failure semantics, Slice 5 back-pressure `error_class = 5`, and
+   Slice 6 failure taxonomy for supervision.
 2. ✅ **Slice 2 syntax policy doc** — closed 2026-04-30 by
    `doc/tos-language-syntax-policy.md` Draft v3 and the Stage 1
    implementation commit `081f05d3c`; see §6 Slice 2 status and
@@ -1160,9 +1162,9 @@ Sorted by how many later slices each item blocks:
    generated manifests, opcode maps, method-id maps, error-code maps,
    and replay traces.
 
-Item 1 remains the next protocol-design dependency. Slice 4 Draft v1
-avoids blocking on it by keeping back-pressure emission out of scope,
-but §5.7 still needs a design RFC before any protocol-level delivery
+Item 1 remains the next protocol-design dependency. Slice 4 avoids
+blocking on it by keeping back-pressure emission out of scope, but §5.7
+still needs a design RFC before any protocol-level delivery
 failure semantics or `ErrorClass.BackPressure` activation. Items 2, 3,
 and 6 are closed. Items 4–5 should be in motion before Slice 6 design
 starts.
@@ -1255,8 +1257,22 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   surrogate trial passed in about 9 minutes and produced the checked-in
   docs fixes for `ErrorClass` and custom Jetton error-code examples. The
   maintainer accepted the surrogate as the Slice 3 release gate.
+- ✅ **Slice 4 full implementation** — closed 2026-04-30. Stages 0–6
+  landed on `actor-layer`: bounded postponement stdlib, compiler
+  hardening, postponed-auction reference, check-only behaviour
+  manifests, three-pattern trait coverage, generated examples, author
+  docs, and `scripts/check-slice-4-release-package.py`.
 
 ## 12. Revision notes
+
+### r20 (Slice 4 complete)
+
+- §6 Slice 4 now marks Stage 6 and Slice 4 complete.
+- Recorded the repo-side Slice 4 release-package surrogate as the
+  accepted completion record.
+- Updated §9, §11.2, §11.3, §11.4, and §11.5 to reflect that Slice 4 no
+  longer waits on the §5.7 delivery-SLA RFC for contract-level bounded
+  postponement.
 
 ### r19 (Slice 3 complete)
 

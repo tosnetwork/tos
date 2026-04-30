@@ -4,9 +4,9 @@ Bounded postponement and behaviour traits.
 
 ## 0. Status, scope, and references
 
-**Status.** Draft v1.1, 2026-04-30. This is the Slice 4 Stage 0
-implementation input candidate after the first security-review closure
-pass. It is not yet an approved release gate.
+**Status.** Implemented v1.1, 2026-04-30. This is the Slice 4 policy
+input after the first security-review closure pass, with Stages 1-6
+landed on `actor-layer`.
 
 Slice 4 implements `actor.md` section 5.9 and section 6.5 on top of the
 completed Slice 1 message envelope, Slice 2 contract/state syntax, and
@@ -217,6 +217,14 @@ Exit criterion: a contract author can generate or inspect a behaviour
 manifest and run the bounded-postponement tests without reading compiler
 source.
 
+Implementation status: complete as of 2026-04-30. `tol new` manifests
+now emit `behaviour_conformance` entries, author docs live in
+`doc/slice-4-bounded-postponement-guide.md` and
+`doc/slice-4-behaviour-conformance.md`, generated Slice 4 examples live
+under `examples/slice4/`, and
+`scripts/check-slice-4-release-package.py` validates the repo-side
+release surrogate.
+
 ## 5. Acceptance criteria
 
 Slice 4 is complete only when:
@@ -248,9 +256,5 @@ Reviewers should treat these as blocker-class surfaces:
 
 ## 7. Open questions
 
-1. Which reference contract should be the Stage 3 dogfood target:
-   auction, escrow, or a smaller state-machine reference.
-2. Whether behaviour conformance should be spelled in source syntax or
-   remain manifest-selected during the first compiler stage.
-3. Whether a later Slice 4 revision should allow optional self-message
-   wakeups. Draft v1 keeps them out to preserve wire minimality.
+1. Whether a later Slice 4 revision should allow optional self-message
+   wakeups. This revision keeps them out to preserve wire minimality.
