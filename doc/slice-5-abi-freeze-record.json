@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "schema": "slice-5-abi-freeze-record",
+  "status": "repo_side_release_candidate_complete_external_adoption_pending",
+  "date": "2026-04-30",
+  "hash_algorithm": "sha256(json.dumps(obj, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False))",
+  "schema_hash": {
+    "path": "doc/slice-5-abi-manifest-schema.json",
+    "sha256": "4b0d73247abc7f41bd2b84c870e568abfc1301e3b492147ce9db8ab4dea1e579"
+  },
+  "manifest_hashes": [
+    {
+      "pattern": "auction",
+      "path": "doc/slice5-abi-manifests/auction.json",
+      "sha256": "278c5f6818369b2f0156a0172916b572bbfdf752e71a36459bc4aefa133984b3"
+    },
+    {
+      "pattern": "governance",
+      "path": "doc/slice5-abi-manifests/governance.json",
+      "sha256": "bda949ebe57b88b67ff225a9307641919518b6536c951bfe7bf1ceaa3b4ae385"
+    },
+    {
+      "pattern": "interop_smoke",
+      "path": "doc/slice5-abi-manifests/interop_smoke.json",
+      "sha256": "51f9e38bc1ca77e4356a474628d7331727bd55f4b4a4858d5d300862d14f3741"
+    },
+    {
+      "pattern": "oracle",
+      "path": "doc/slice5-abi-manifests/oracle.json",
+      "sha256": "a13b895442f906eac2428a4a9092239f8529906dc1bdc39895228608f6fc7e7b"
+    },
+    {
+      "pattern": "payment-channel",
+      "path": "doc/slice5-abi-manifests/payment_channel.json",
+      "sha256": "06dd9be3ded9b917578a7395d24f326dcd0a44cd8fd5f01a703c08fe6545620a"
+    }
+  ],
+  "external_adoption_gate": {
+    "status": "pending",
+    "required": "3 external production contracts using second-wave stdlib packages",
+    "recorded_contracts": []
+  }
+}

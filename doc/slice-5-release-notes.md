@@ -9,6 +9,7 @@ This repo-side release candidate contains:
 - `@stdlib/payment-channel` with signed-state cell-hash verification.
 - `tol new --pattern` scaffolds for all four second-wave patterns.
 - Generated examples under `examples/slice5/`.
+- ABI freeze hashes in `doc/slice-5-abi-freeze-record.json`.
 
 External adoption remains a Slice 5 release gate: Stage 7 records the
 repo-side ABI freeze and explicitly leaves the three external production

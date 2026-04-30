@@ -920,7 +920,8 @@ Auction, DAO/governance, oracle, and payment-channel templates,
 each one preceded by a short design note. Cross-language ABI is
 frozen at the end of this slice.
 
-**Status.** 🚧 Stage 6 complete, Stage 7 active, 2026-04-30. The implementation
+**Status.** ✅ Repo-side release candidate complete, external adoption
+pending, 2026-04-30. The implementation
 input candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
 [`doc/slice-5-func-tol-abi.md`](slice-5-func-tol-abi.md), and
 [`doc/slice-5-abi-manifest-schema.json`](slice-5-abi-manifest-schema.json).
@@ -932,7 +933,10 @@ pair. Stage 2 has landed `@stdlib/auction`; Stage 3 has landed
 landed `@stdlib/payment-channel` with `cell.hash()` signing material,
 monotonic sequence checks, cooperative/challenge close helpers, and
 settlement guards. Stage 6 has extended `tol new --pattern`, generated
-Slice 5 examples, and added the release-candidate checker/docs.
+Slice 5 examples, and added the release-candidate checker/docs. Stage 7
+has recorded repo-side ABI freeze hashes and compatibility artifacts;
+the remaining release gate is three external production contracts using
+the second-wave stdlib.
 
 **Stage plan.**
 
@@ -1008,10 +1012,10 @@ Slice 5 examples, and added the release-candidate checker/docs.
    - ✅ Add contract-author docs, audit checklists, and
      `scripts/check-slice-5-release-package.py`.
 
-8. 🚧 **Stage 7 — ABI freeze sign-off and external adoption.**
+8. ✅ **Stage 7 — ABI freeze sign-off and external adoption.**
 
-   - ⬜ Freeze the ABI manifest schema.
-   - ⬜ Record canonical ABI manifest hashes for second-wave packages.
+   - ✅ Freeze the ABI manifest schema.
+   - ✅ Record canonical ABI manifest hashes for second-wave packages.
    - ⬜ Record at least three external production contracts using the
      second-wave stdlib, or explicitly mark Slice 5 as
      release-candidate-only until those deployments exist.
@@ -1397,8 +1401,21 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   `examples/slice5/` include source, tests, replay/deploy stubs,
   observability artifacts, ABI/behaviour manifest pointers, docs, and
   `scripts/check-slice-5-release-package.py`.
+- ✅ **Slice 5 Stage 7 ABI freeze release candidate** — closed
+  2026-04-30 as repo-side release-candidate complete. ABI schema and
+  package manifest hashes are recorded in
+  `doc/slice-5-abi-freeze-record.json`, compatibility/release checklists
+  are in tree, and the external adoption gate remains explicitly
+  pending: three external production contracts using second-wave stdlib.
 
 ## 12. Revision notes
+
+### r30 (Slice 5 Stage 7 ABI freeze release candidate)
+
+- §6 Slice 5 now marks repo-side release candidate complete with
+  external adoption pending.
+- Added ABI freeze hash records, the compatibility matrix, and the
+  release checklist. No external production adoption is claimed.
 
 ### r29 (Slice 5 Stage 6 release candidate)
 
