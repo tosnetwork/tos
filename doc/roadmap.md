@@ -772,6 +772,47 @@ Deliver bounded postponement (`actor.md` §5.9) and trait-based
 behaviour patterns (§6.5). These are language-and-stdlib slices
 with limited protocol exposure.
 
+**Status.** 🚧 Started 2026-04-30. Stage 0 draft policy work has
+landed in [`doc/tos-postponement-policy.md`](tos-postponement-policy.md)
+and [`doc/tos-slice-4-policy.md`](tos-slice-4-policy.md), with the
+initial behaviour-manifest schema at
+[`doc/slice-4-behaviour-manifest-schema.json`](slice-4-behaviour-manifest-schema.json).
+The Stage 0 documents intentionally do not approve protocol activation:
+they define the resource model that must be signed off before stdlib or
+compiler implementation begins.
+
+**Stage plan.**
+
+1. 🚧 **Stage 0 — policy and resource-model lock.** Drafted
+   2026-04-30. Defines bounded postponement as explicit contract
+   storage, not protocol-mailbox scanning; fixes required budgets
+   (`maxItems`, per-body size, total footprint, age, drain bound);
+   keeps `ErrorClass.BackPressure` reserved until `actor.md` §5.7; and
+   defines trait/behaviour manifests as check-only compiler inputs.
+2. ⬜ **Stage 1 — `@stdlib/postponement` foundation.** Add bounded
+   `PostponedItem` / `PostponedQueue` helpers with enqueue, duplicate
+   detection, FIFO drain, expiry cleanup, accounting, and focused tests.
+3. ⬜ **Stage 2 — postponement compiler hardening.** Reject direct
+   writes to stdlib queue internals in manifest-backed mode, reject
+   external-message postponement, require explicit budgets, and warn on
+   raw map-based queues.
+4. ⬜ **Stage 3 — first postponed reference contract.** Add one shipped
+   reference contract, likely auction or escrow style, that genuinely
+   defers "too early" messages and records replay/gas/bytecode budget
+   against a handwritten equivalent.
+5. ⬜ **Stage 4 — behaviour manifest foundation.** Add manifests for
+   `request_server`, `state_machine`, and `postponing_state_machine`;
+   add check-only compiler conformance without bytecode-visible trait
+   objects.
+6. ⬜ **Stage 5 — trait coverage for three official patterns.** Cover
+   at least three existing Slice 3 patterns, candidate order Jetton
+   wallet, NFT item, multisig, without bytecode regression beyond the
+   Slice 1 budget.
+7. ⬜ **Stage 6 — tooling, docs, and release surrogate.** Extend
+   generated project manifests/docs, add Slice 4 release-package checks,
+   and run a repo-side author surrogate unless a human trial is
+   explicitly available.
+
 ### Slice 5 — second-wave stdlib, Year 2 H2
 
 Auction, DAO/governance, oracle, and payment-channel templates,
@@ -836,9 +877,10 @@ without protocol support, are the historical failure mode of
 multi-layer systems. The 26-week first slice exists to avoid that
 mode. Every later slice depends on it.
 
-The right next action is to approve `doc/tos-slice-3-policy.md`, land
-the Slice 3 baseline capture, and build the deterministic replay
-harness before stdlib implementation begins.
+The right next action is to review and approve the Slice 4 Stage 0
+resource model in `doc/tos-postponement-policy.md` and
+`doc/tos-slice-4-policy.md`; implementation should start with the
+`@stdlib/postponement` foundation only after that sign-off.
 
 ## 11. Known unscheduled work and cross-Slice blockers
 
@@ -920,17 +962,20 @@ before the corresponding slice can start.
 
 **Slice 4** — `actor.md` §5.9 + §6.5
 
-- *Hard:* Bounded-postponement resource model is undefined.
-  `actor.md` §5.9 enumerates what must be priced: max-outstanding
-  count, size, gas, time/rent budget, postpone-expiry behaviour,
-  determinism guarantees. None designed.
-- *Missing policy:* No `doc/tos-postponement-policy.md` exists.
-- *External dependency:* §5.9 composes with §5.7 (delivery
-  failure handling) — postpone-expiry must produce a defined
-  failure class. §5.7 is in §11.1.
-- *§6.5 traits:* depend on Slice 3 dogfooding having stabilised
-  the recurring patterns; if Slice 3 stdlib hasn't been used by
-  external teams yet, trait abstraction risk is high.
+- *Status:* Started. Draft Stage 0 inputs now exist at
+  `doc/tos-postponement-policy.md`, `doc/tos-slice-4-policy.md`, and
+  `doc/slice-4-behaviour-manifest-schema.json`.
+- *Hard, pending approval:* The bounded-postponement resource model is
+  drafted but not approved. The draft prices max-outstanding count,
+  per-body size, total storage footprint, age, explicit drain bounds,
+  duplicate handling, and observed expiry.
+- *External dependency:* §5.9 still composes with §5.7 (delivery
+  failure handling). Draft v1 avoids depending on §5.7 by keeping
+  `ErrorClass.BackPressure` reserved and using explicit contract-level
+  expiry/error handling.
+- *§6.5 traits:* Slice 3 dogfooding is complete. Draft v1 therefore
+  starts traits as check-only behaviour manifests over existing
+  stdlib/reference patterns, not as bytecode-visible dynamic dispatch.
 
 **Slice 5** — Second-wave stdlib + cross-language ABI freeze
 
@@ -984,9 +1029,10 @@ Each sub-feature needs its own policy document
   needs the new owner's signature on the affected role.
 - Per-slice policy documents: Slice 2 exists at
   `doc/tos-language-syntax-policy.md`; Slice 3 is approved at
-  `doc/tos-slice-3-policy.md` and is the active implementation input.
-  Slice 4 / 6 policy documents do not exist; see §11.2 for the names
-  and scope of each missing document. Each will follow the same
+  `doc/tos-slice-3-policy.md`; Slice 4 draft inputs now exist at
+  `doc/tos-postponement-policy.md` and `doc/tos-slice-4-policy.md`.
+  Slice 6 policy documents do not exist; see §11.2 for the names and
+  scope of each missing document. Each will follow the same
   single-signer model unless the ownership split has happened by the
   time it is drafted.
 
@@ -1018,8 +1064,12 @@ Sorted by how many later slices each item blocks:
    generated manifests, opcode maps, method-id maps, error-code maps,
    and replay traces.
 
-Item 1 should be in motion before Slice 4 design starts. Items 2, 3,
-and 6 are closed. Items 4–5 should be in motion before Slice 3 ships.
+Item 1 remains the next protocol-design dependency. Slice 4 Draft v1
+avoids blocking on it by keeping back-pressure emission out of scope,
+but §5.7 still needs a design RFC before any protocol-level delivery
+failure semantics or `ErrorClass.BackPressure` activation. Items 2, 3,
+and 6 are closed. Items 4–5 should be in motion before Slice 6 design
+starts.
 
 (The earlier four-signer approval item from this list was
 removed when policy v6 made single-signer the rule; see §11.3.)
