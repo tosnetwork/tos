@@ -1,0 +1,445 @@
+// Slice 6 public capability-grant helper surface.
+//
+// This is a stdlib authorization plane over public account addresses. It does
+// not implement protocol admission control and it intentionally rejects the
+// reusable-public-bearer-token model from doc/tos-capability-policy.md.
+tol 1.3
+
+const SLICE6_CAPABILITY_THROW_INVALID_BUDGET = 0x1401
+const SLICE6_CAPABILITY_THROW_INVALID_GRANT = 0x1402
+const SLICE6_CAPABILITY_THROW_EXPIRED = 0x1403
+const SLICE6_CAPABILITY_THROW_SENDER_MISMATCH = 0x1404
+const SLICE6_CAPABILITY_THROW_CONSTRAINTS_HASH_MISMATCH = 0x1405
+const SLICE6_CAPABILITY_THROW_SELECTOR_MISMATCH = 0x1406
+const SLICE6_CAPABILITY_THROW_REPLAY = 0x1407
+const SLICE6_CAPABILITY_THROW_REVOKED = 0x1408
+const SLICE6_CAPABILITY_THROW_STORAGE_FULL = 0x1409
+const SLICE6_CAPABILITY_THROW_TARGET_MISMATCH = 0x140a
+const SLICE6_CAPABILITY_THROW_VALUE_EXCEEDS = 0x140b
+const SLICE6_CAPABILITY_THROW_WORKCHAIN_MISMATCH = 0x140c
+const SLICE6_CAPABILITY_THROW_COUNTERPARTY_MISMATCH = 0x140d
+const SLICE6_CAPABILITY_THROW_PUBLIC_SECRET_REJECTED = 0x140e
+const SLICE6_CAPABILITY_THROW_SIGNATURE_FAILURE = 0x140f
+
+const SLICE6_CAPABILITY_VERSION: uint8 = 1
+const SLICE6_CAPABILITY_CONSTRAINTS_TAG: uint16 = 0xc601
+
+struct Slice6CapabilityArgumentBound {
+    minValue: uint64
+    maxValue: uint64
+}
+
+struct Slice6CapabilityConstraintsV1 {
+    tag: uint16
+    selector: uint32
+    maxValue: coins?
+    validFromMcSeqno: uint32
+    expiresAtMcSeqno: uint32
+    maxUses: uint32?
+    requiredCounterparty: address?
+    requiredWorkchain: int32?
+    replayDomain: uint256
+    delegatedDepth: uint8
+    argumentBounds: map<uint16, Slice6CapabilityArgumentBound>
+}
+
+struct Slice6CapabilityGrantParties {
+    issuer: address
+    target: address
+    grantee: address?
+}
+
+struct Slice6CapabilityGrantProof {
+    granteePubkey: uint256?
+    selector: uint32
+    constraintsHash: uint256
+    validFrom: uint64
+    expiresAt: uint64
+    nonce: uint64
+    revocationEpoch: uint64
+}
+
+struct Slice6CapabilityGrantV1 {
+    version: uint8
+    parties: Cell<Slice6CapabilityGrantParties>
+    proof: Cell<Slice6CapabilityGrantProof>
+}
+
+struct Slice6CapabilityUseContext {
+    sender: address
+    target: address
+    selector: uint32
+    valueCoins: coins
+    counterparty: address?
+    currentMcSeqno: uint64
+    workchain: int32
+}
+
+struct Slice6CapabilityRegistry {
+    maxActiveGrants: uint16
+    maxRevokedHandles: uint16
+    maxEpochEntries: uint16
+    activeGrantCount: uint16
+    revokedHandleCount: uint16
+    epochEntryCount: uint16
+    activeGrants: map<uint256, bool>
+    consumedNonces: map<uint256, bool>
+    revokedHandles: map<uint256, uint32>
+    minEpochs: map<uint256, uint64>
+}
+
+fun slice6CapabilityArgumentBound(minValue: uint64, maxValue: uint64): Slice6CapabilityArgumentBound {
+    if (maxValue < minValue) {
+        throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
+    }
+    return Slice6CapabilityArgumentBound {
+        minValue,
+        maxValue,
+    };
+}
+
+fun slice6CapabilityEmptyArgumentBounds(): map<uint16, Slice6CapabilityArgumentBound> {
+    return createEmptyMap<uint16, Slice6CapabilityArgumentBound>();
+}
+
+fun slice6CapabilityConstraints(
+    selector: uint32,
+    maxValue: coins?,
+    validFromMcSeqno: uint32,
+    expiresAtMcSeqno: uint32,
+    maxUses: uint32?,
+    requiredCounterparty: address?,
+    requiredWorkchain: int32?,
+    replayDomain: uint256,
+    delegatedDepth: uint8
+): Slice6CapabilityConstraintsV1 {
+    if (expiresAtMcSeqno <= validFromMcSeqno || delegatedDepth > 32) {
+        throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
+    }
+    return Slice6CapabilityConstraintsV1 {
+        tag: SLICE6_CAPABILITY_CONSTRAINTS_TAG,
+        selector,
+        maxValue,
+        validFromMcSeqno,
+        expiresAtMcSeqno,
+        maxUses,
+        requiredCounterparty,
+        requiredWorkchain,
+        replayDomain,
+        delegatedDepth,
+        argumentBounds: slice6CapabilityEmptyArgumentBounds(),
+    };
+}
+
+fun Slice6CapabilityConstraintsV1.constraintsHash(self): uint256 {
+    return self.toCell().hash();
+}
+
+fun slice6CapabilityGrant(
+    issuer: address,
+    target: address,
+    grantee: address?,
+    granteePubkey: uint256?,
+    selector: uint32,
+    constraints: Slice6CapabilityConstraintsV1,
+    validFrom: uint64,
+    expiresAt: uint64,
+    nonce: uint64,
+    revocationEpoch: uint64
+): Slice6CapabilityGrantV1 {
+    if (selector != constraints.selector || expiresAt <= validFrom) {
+        throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
+    }
+    if (grantee == null && granteePubkey == null) {
+        throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
+    }
+    val parties = Slice6CapabilityGrantParties {
+        issuer,
+        target,
+        grantee,
+    };
+    val proof = Slice6CapabilityGrantProof {
+        granteePubkey,
+        selector,
+        constraintsHash: constraints.constraintsHash(),
+        validFrom,
+        expiresAt,
+        nonce,
+        revocationEpoch,
+    };
+    return Slice6CapabilityGrantV1 {
+        version: SLICE6_CAPABILITY_VERSION,
+        parties: parties.toCell(),
+        proof: proof.toCell(),
+    };
+}
+
+fun Slice6CapabilityGrantV1.handleId(self): uint256 {
+    return self.toCell().hash();
+}
+
+fun Slice6CapabilityGrantV1.partiesValue(self): Slice6CapabilityGrantParties {
+    return self.parties.load();
+}
+
+fun Slice6CapabilityGrantV1.proofValue(self): Slice6CapabilityGrantProof {
+    return self.proof.load();
+}
+
+fun slice6CapabilityUseContext(
+    sender: address,
+    target: address,
+    selector: uint32,
+    valueCoins: coins,
+    counterparty: address?,
+    currentMcSeqno: uint64,
+    workchain: int32
+): Slice6CapabilityUseContext {
+    return Slice6CapabilityUseContext {
+        sender,
+        target,
+        selector,
+        valueCoins,
+        counterparty,
+        currentMcSeqno,
+        workchain,
+    };
+}
+
+fun Slice6CapabilityGrantV1.signatureHash(
+    self,
+    constraints: Slice6CapabilityConstraintsV1,
+    context: Slice6CapabilityUseContext
+): uint256 {
+    return beginCell()
+        .storeUint(self.handleId(), 256)
+        .storeUint(constraints.constraintsHash(), 256)
+        .storeAddress(context.sender)
+        .storeAddress(context.target)
+        .storeUint(context.selector, 32)
+        .storeCoins(context.valueCoins)
+        .storeUint(context.currentMcSeqno, 64)
+        .endCell()
+        .hash();
+}
+
+fun Slice6CapabilityGrantV1.signatureBoundValid(
+    self,
+    constraints: Slice6CapabilityConstraintsV1,
+    context: Slice6CapabilityUseContext,
+    signature: cell
+): bool {
+    val proof = self.proofValue();
+    if (proof.granteePubkey == null) {
+        return false;
+    }
+    try {
+        return isSignatureValid(
+            self.signatureHash(constraints, context) as int,
+            signature.beginParse(),
+            proof.granteePubkey! as int
+        );
+    } catch (_) {
+        return false;
+    }
+}
+
+fun Slice6CapabilityGrantV1.requireSignatureBound(
+    self,
+    constraints: Slice6CapabilityConstraintsV1,
+    context: Slice6CapabilityUseContext,
+    signature: cell
+): void {
+    if (!self.signatureBoundValid(constraints, context, signature)) {
+        throw SLICE6_CAPABILITY_THROW_SIGNATURE_FAILURE;
+    }
+}
+
+fun Slice6CapabilityGrantV1.requireContext(
+    self,
+    constraints: Slice6CapabilityConstraintsV1,
+    context: Slice6CapabilityUseContext
+): void {
+    if (self.version != SLICE6_CAPABILITY_VERSION || constraints.tag != SLICE6_CAPABILITY_CONSTRAINTS_TAG) {
+        throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
+    }
+
+    val parties = self.partiesValue();
+    val proof = self.proofValue();
+    if (parties.target != context.target) {
+        throw SLICE6_CAPABILITY_THROW_TARGET_MISMATCH;
+    }
+    if (proof.selector != context.selector || constraints.selector != context.selector) {
+        throw SLICE6_CAPABILITY_THROW_SELECTOR_MISMATCH;
+    }
+    if (proof.constraintsHash != constraints.constraintsHash()) {
+        throw SLICE6_CAPABILITY_THROW_CONSTRAINTS_HASH_MISMATCH;
+    }
+    if (context.currentMcSeqno < proof.validFrom || context.currentMcSeqno >= proof.expiresAt) {
+        throw SLICE6_CAPABILITY_THROW_EXPIRED;
+    }
+    if (context.currentMcSeqno < constraints.validFromMcSeqno || context.currentMcSeqno >= constraints.expiresAtMcSeqno) {
+        throw SLICE6_CAPABILITY_THROW_EXPIRED;
+    }
+    if (constraints.maxValue != null && context.valueCoins > constraints.maxValue!) {
+        throw SLICE6_CAPABILITY_THROW_VALUE_EXCEEDS;
+    }
+    if (constraints.requiredCounterparty != null) {
+        if (context.counterparty == null || context.counterparty! != constraints.requiredCounterparty!) {
+            throw SLICE6_CAPABILITY_THROW_COUNTERPARTY_MISMATCH;
+        }
+    }
+    if (constraints.requiredWorkchain != null && context.workchain != constraints.requiredWorkchain!) {
+        throw SLICE6_CAPABILITY_THROW_WORKCHAIN_MISMATCH;
+    }
+    if (parties.grantee != null && context.sender != parties.grantee!) {
+        throw SLICE6_CAPABILITY_THROW_SENDER_MISMATCH;
+    }
+}
+
+fun slice6CapabilityRegistry(
+    maxActiveGrants: uint16,
+    maxRevokedHandles: uint16,
+    maxEpochEntries: uint16
+): Slice6CapabilityRegistry {
+    if (maxActiveGrants == 0 || maxRevokedHandles == 0 || maxEpochEntries == 0) {
+        throw SLICE6_CAPABILITY_THROW_INVALID_BUDGET;
+    }
+    return Slice6CapabilityRegistry {
+        maxActiveGrants,
+        maxRevokedHandles,
+        maxEpochEntries,
+        activeGrantCount: 0,
+        revokedHandleCount: 0,
+        epochEntryCount: 0,
+        activeGrants: createEmptyMap<uint256, bool>(),
+        consumedNonces: createEmptyMap<uint256, bool>(),
+        revokedHandles: createEmptyMap<uint256, uint32>(),
+        minEpochs: createEmptyMap<uint256, uint64>(),
+    };
+}
+
+fun Slice6CapabilityRegistry.registerGrant(mutate self, grant: Slice6CapabilityGrantV1): void {
+    val handle = grant.handleId();
+    if (self.activeGrants.exists(handle)) {
+        return;
+    }
+    if (self.activeGrantCount >= self.maxActiveGrants) {
+        throw SLICE6_CAPABILITY_THROW_STORAGE_FULL;
+    }
+    self.activeGrants.set(handle, true);
+    self.activeGrantCount += 1;
+}
+
+fun Slice6CapabilityRegistry.requireRegistered(self, grant: Slice6CapabilityGrantV1): void {
+    if (!self.activeGrants.exists(grant.handleId())) {
+        throw SLICE6_CAPABILITY_THROW_REVOKED;
+    }
+}
+
+fun Slice6CapabilityRegistry.nonceKey(self, grant: Slice6CapabilityGrantV1): uint256 {
+    val proof = grant.proofValue();
+    return beginCell()
+        .storeUint(grant.handleId(), 256)
+        .storeUint(proof.nonce, 64)
+        .endCell()
+        .hash();
+}
+
+fun Slice6CapabilityRegistry.consumeNonce(mutate self, grant: Slice6CapabilityGrantV1): void {
+    val key = self.nonceKey(grant);
+    if (self.consumedNonces.exists(key)) {
+        throw SLICE6_CAPABILITY_THROW_REPLAY;
+    }
+    self.consumedNonces.set(key, true);
+}
+
+fun Slice6CapabilityRegistry.revokeHandle(mutate self, handleId: uint256, expiresAtMcSeqno: uint32): void {
+    if (self.revokedHandles.exists(handleId)) {
+        self.revokedHandles.set(handleId, expiresAtMcSeqno);
+        return;
+    }
+    if (self.revokedHandleCount >= self.maxRevokedHandles) {
+        throw SLICE6_CAPABILITY_THROW_STORAGE_FULL;
+    }
+    self.revokedHandles.set(handleId, expiresAtMcSeqno);
+    self.revokedHandleCount += 1;
+}
+
+fun Slice6CapabilityRegistry.isHandleRevoked(self, handleId: uint256, currentMcSeqno: uint32): bool {
+    val revoked = self.revokedHandles.get(handleId);
+    if (!revoked.isFound) {
+        return false;
+    }
+    return currentMcSeqno < revoked.loadValue();
+}
+
+fun slice6CapabilityEpochKey(issuer: address, grantee: address?): uint256 {
+    return beginCell()
+        .storeAddress(issuer)
+        .storeAddressOpt(grantee)
+        .endCell()
+        .hash();
+}
+
+fun Slice6CapabilityRegistry.setMinEpoch(
+    mutate self,
+    issuer: address,
+    grantee: address?,
+    minEpoch: uint64
+): void {
+    val key = slice6CapabilityEpochKey(issuer, grantee);
+    if (!self.minEpochs.exists(key)) {
+        if (self.epochEntryCount >= self.maxEpochEntries) {
+            throw SLICE6_CAPABILITY_THROW_STORAGE_FULL;
+        }
+        self.epochEntryCount += 1;
+    }
+    self.minEpochs.set(key, minEpoch);
+}
+
+fun Slice6CapabilityRegistry.requireNotEpochRevoked(self, grant: Slice6CapabilityGrantV1): void {
+    val parties = grant.partiesValue();
+    val proof = grant.proofValue();
+    val key = slice6CapabilityEpochKey(parties.issuer, parties.grantee);
+    val minEpoch = self.minEpochs.get(key);
+    if (minEpoch.isFound && proof.revocationEpoch < minEpoch.loadValue()) {
+        throw SLICE6_CAPABILITY_THROW_REVOKED;
+    }
+}
+
+fun Slice6CapabilityRegistry.requireNotRevoked(
+    self,
+    grant: Slice6CapabilityGrantV1,
+    currentMcSeqno: uint32
+): void {
+    if (self.isHandleRevoked(grant.handleId(), currentMcSeqno)) {
+        throw SLICE6_CAPABILITY_THROW_REVOKED;
+    }
+    self.requireNotEpochRevoked(grant);
+}
+
+fun Slice6CapabilityRegistry.requireCapability(
+    mutate self,
+    grant: Slice6CapabilityGrantV1,
+    constraints: Slice6CapabilityConstraintsV1,
+    context: Slice6CapabilityUseContext,
+    requireRegisteredGrant: bool = true,
+    consumeSingleUseNonce: bool = true
+): void {
+    grant.requireContext(constraints, context);
+    if (requireRegisteredGrant) {
+        self.requireRegistered(grant);
+    }
+    self.requireNotRevoked(grant, context.currentMcSeqno as uint32);
+    if (consumeSingleUseNonce) {
+        self.consumeNonce(grant);
+    }
+}
+
+fun slice6RejectPublicCapabilitySecret(secretHash: uint256): void {
+    if (secretHash != 0) {
+        throw SLICE6_CAPABILITY_THROW_PUBLIC_SECRET_REJECTED;
+    }
+    throw SLICE6_CAPABILITY_THROW_PUBLIC_SECRET_REJECTED;
+}

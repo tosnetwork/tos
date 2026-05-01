@@ -1,0 +1,43 @@
+import "@stdlib/capability"
+
+fun exampleIssuer(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun exampleTarget(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun exampleGrantee(): address {
+    return address("0:3333333333333333333333333333333333333333333333333333333333333333");
+}
+
+fun slice6CapabilityExampleGrant(): Slice6CapabilityGrantV1 {
+    val constraints = slice6CapabilityConstraints(
+        0x43415001,
+        1000000000,
+        100,
+        1000,
+        1,
+        null,
+        0,
+        0xfeed,
+        0
+    );
+    return slice6CapabilityGrant(
+        exampleIssuer(),
+        exampleTarget(),
+        exampleGrantee(),
+        null,
+        0x43415001,
+        constraints,
+        100,
+        1000,
+        1,
+        0
+    );
+}
+
+fun main(): int {
+    return slice6CapabilityExampleGrant().version;
+}

@@ -1,0 +1,214 @@
+import "@stdlib/capability"
+
+fun capIssuer(): address {
+    return address("0:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+}
+
+fun capTarget(): address {
+    return address("0:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+}
+
+fun capOtherTarget(): address {
+    return address("0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+}
+
+fun capGrantee(): address {
+    return address("0:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
+}
+
+fun capOtherSender(): address {
+    return address("0:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+}
+
+fun capCounterparty(): address {
+    return address("0:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+}
+
+fun capConstraints(selector: uint32 = 0x43415001): Slice6CapabilityConstraintsV1 {
+    return slice6CapabilityConstraints(selector, 1000, 10, 100, 1, capCounterparty(), 0, 0x1234, 0);
+}
+
+fun capGrant(selector: uint32 = 0x43415001): Slice6CapabilityGrantV1 {
+    return slice6CapabilityGrant(capIssuer(), capTarget(), capGrantee(), null, selector, capConstraints(selector), 10, 100, 7, 2);
+}
+
+fun capCtx(
+    sender: address,
+    target: address,
+    selector: uint32,
+    valueCoins: coins,
+    now: uint64
+): Slice6CapabilityUseContext {
+    return slice6CapabilityUseContext(sender, target, selector, valueCoins, capCounterparty(), now, 0);
+}
+
+fun capCtxDefault(): Slice6CapabilityUseContext {
+    return capCtx(capGrantee(), capTarget(), 0x43415001, 100, 20);
+}
+
+fun capRegistry(maxRevoked: uint16 = 2, maxEpochs: uint16 = 2): Slice6CapabilityRegistry {
+    var reg = slice6CapabilityRegistry(4, maxRevoked, maxEpochs);
+    reg.registerGrant(capGrant());
+    return reg;
+}
+
+fun zeroSignature(): cell {
+    return beginCell().storeUint(0, 256).storeUint(0, 256).endCell();
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(701)
+fun test_constraints_hash_stable_and_selector_covered(): int {
+    val a = capConstraints();
+    val b = capConstraints();
+    val c = capConstraints(0x43415002);
+    assert(a.constraintsHash() == b.constraintsHash()) throw 7011;
+    assert(a.constraintsHash() != c.constraintsHash()) throw 7012;
+    return a.tag;
+}
+
+@method_id(702)
+fun test_sender_bound_capability_success(): int {
+    var reg = capRegistry();
+    reg.requireCapability(capGrant(), capConstraints(), capCtxDefault());
+    return 1;
+}
+
+@method_id(703)
+fun test_sender_bound_wrong_sender_rejected(): int {
+    var reg = capRegistry();
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtx(capOtherSender(), capTarget(), 0x43415001, 100, 20));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(704)
+fun test_replay_different_target_rejected(): int {
+    var reg = capRegistry();
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtx(capGrantee(), capOtherTarget(), 0x43415001, 100, 20));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(705)
+fun test_selector_mismatch_rejected(): int {
+    var reg = capRegistry();
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtx(capGrantee(), capTarget(), 0x43415002, 100, 20));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(706)
+fun test_expired_grant_rejected(): int {
+    var reg = capRegistry();
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtx(capGrantee(), capTarget(), 0x43415001, 100, 100));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(707)
+fun test_single_use_nonce_replay_rejected(): int {
+    var reg = capRegistry();
+    reg.requireCapability(capGrant(), capConstraints(), capCtxDefault());
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtxDefault());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(708)
+fun test_revoked_handle_rejected(): int {
+    var reg = capRegistry();
+    reg.revokeHandle(capGrant().handleId(), 50);
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtxDefault(), true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(709)
+fun test_revocation_storage_full_rejected(): int {
+    var reg = capRegistry(1);
+    reg.revokeHandle(capGrant().handleId(), 50);
+    try {
+        reg.revokeHandle(slice6CapabilityGrant(capIssuer(), capTarget(), capGrantee(), null, 0x43415002, capConstraints(0x43415002), 10, 100, 8, 2).handleId(), 50);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(710)
+fun test_epoch_revocation_rejected(): int {
+    var reg = capRegistry();
+    reg.setMinEpoch(capIssuer(), capGrantee(), 3);
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtxDefault(), true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(711)
+fun test_value_limit_rejected(): int {
+    var reg = capRegistry();
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtx(capGrantee(), capTarget(), 0x43415001, 1001, 20), true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(712)
+fun test_signature_bound_zero_signature_fails(): int {
+    val constraints = capConstraints();
+    val grant = slice6CapabilityGrant(capIssuer(), capTarget(), null, 0x123456, 0x43415001, constraints, 10, 100, 7, 2);
+    return grant.signatureBoundValid(constraints, capCtxDefault(), zeroSignature()) ? 1 : 0;
+}
+
+@method_id(713)
+fun test_public_secret_rejected(): int {
+    try {
+        slice6RejectPublicCapabilitySecret(1);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+/**
+@testcase | 701 | | 50689
+@testcase | 702 | | 1
+@testcase | 703 | | 5124
+@testcase | 704 | | 5130
+@testcase | 705 | | 5126
+@testcase | 706 | | 5123
+@testcase | 707 | | 5127
+@testcase | 708 | | 5128
+@testcase | 709 | | 5129
+@testcase | 710 | | 5128
+@testcase | 711 | | 5131
+@testcase | 712 | | 0
+@testcase | 713 | | 5134
+ */

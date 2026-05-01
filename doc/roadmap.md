@@ -1038,8 +1038,8 @@ multi-address structs.
 (monitors versus links), §6.4 (restart intensity), and §6.6 (crash
 reports) form the Slice 6 design surface.
 
-**Status.** 🟡 Stages 1–5 are complete as of 2026-05-01; Stage 6
-capability handles are next. Stage 0 design review findings were
+**Status.** 🟡 Stages 1–6 are complete as of 2026-05-01; Stage 7
+observability and release packaging are next. Stage 0 design review findings were
 addressed in Draft v0.2 and re-review approved. The implementation layer now
 includes `@stdlib/delivery`, `@stdlib/schedule`, `@stdlib/time`, and
 the monitor/link/supervision foundations in `@stdlib/supervision`:
@@ -1051,7 +1051,10 @@ author-facing timer budgets, and release-checker guardrails against
 caller-controlled `msg.now` scheduling, `OP_MONITOR_DOWN` notification
 construction, explicit monitor/link registration, child registry state,
 restart-intensity windows, circuit breakers, recovery-message builders,
-and partial-recovery escalation records. Protocol
+partial-recovery escalation records, public capability grants,
+canonical capability-constraints hashing, sender-bound validation,
+stateful grant registries, single-use nonce consumption, revocation
+epochs, and bounded revoked-handle storage. Protocol
 activation of validator scheduled delivery and production BackPressure
 emission remains gated to later Slice 6 stages. The Stage 0 input
 documents are
@@ -1227,30 +1230,34 @@ authorization plane, not reusable public bearer secrets.
    Exit criterion: a supervised example recovers one failed child and
    stops under a restart storm without message amplification.
 
-7. ⏳ **Stage 6 — capability handles.**
+7. ✅ **Stage 6 — capability handles.**
 
-   - ⏳ Add `crypto/smartcont/tol-stdlib/capability.tol`:
-     `CapabilityConstraintsV1`, `computeConstraintsHash`,
-     `CapabilityGrantV1`, `computeGrantId`, `GrantRegistry`,
-     `RevocationSet`, `EpochMap`.
-   - ⏳ Implement verification helpers: `verifySenderBound`,
-     `verifySingleUseNonce`, `isGrantExpired`, `isGrantRevoked`,
-     `verifySelectorsMatch`, `requireCapability`.
-   - ⏳ Bounded revocation storage; Stage 6 baseline rejects writes
-     that exceed budget unless caller compacts first.
-   - ⏳ Reject reusable public bearer secrets (release checker rule).
-   - ⏳ Add manifest schema for capability grants.
-   - ⏳ Add emulator fixtures: sender-bound success/failure; replay same
-     target; expired grant; revoked grant; selector mismatch;
-     `constraints_hash` mismatch; revocation storage full.
-   - ⏳ Add tol-tester cases: `slice6-capability-grant-positive.tol`,
-     `slice6-capability-sender-bound-positive.tol`,
-     `slice6-capability-expired-negative.tol`,
-     `slice6-capability-revoked-negative.tol`,
-     `slice6-capability-replay-negative.tol`,
-     `slice6-capability-constraints-hash-negative.tol`.
-   - ⏳ Add `examples/slice6/capability-example.tol`.
-   - ⏳ Update roadmap. Commit + push:
+   - ✅ Add `crypto/smartcont/tol-stdlib/capability.tol`:
+     `Slice6CapabilityConstraintsV1`, `constraintsHash`,
+     `Slice6CapabilityGrantV1`, `handleId`,
+     `Slice6CapabilityRegistry`, nonce consumption, revoked-handle set,
+     and epoch map helpers.
+   - ✅ Implement verification helpers: sender-bound context checking,
+     optional signature-bound validation, single-use nonce replay
+     rejection, expiry checks, revoked-handle checks, selector/target
+     checks, constraints-hash checks, and `requireCapability`.
+   - ✅ Bounded revocation storage; Stage 6 baseline rejects writes
+     that exceed budget and does not silently drop unexpired revoked
+     handles.
+   - ✅ Reject reusable public bearer secrets in stdlib and release
+     checker guardrails.
+   - ✅ Add `doc/slice-6-capability-manifest-schema.json`.
+   - ✅ Add emulator fixtures: sender-bound success/failure; replay to a
+     different target; expired grant; selector mismatch; value bounds;
+     single-use nonce replay; revocation storage full.
+   - ✅ Add tol-tester coverage in `slice6-capability-stdlib-positive.tol`
+     for constraints-hash stability, selector coverage, sender-bound
+     success/failure, target replay rejection, selector mismatch,
+     expiry, nonce replay, revoked handles, revocation storage full,
+     epoch revocation, value limits, signature failure, and public-secret
+     rejection.
+   - ✅ Add `examples/slice6/capability-example.tol`.
+   - ✅ Update roadmap. Commit + push:
      *Slice 6 Stage 6 capability handles*
 
    Exit criterion: one official example uses sender-bound or
@@ -1700,6 +1707,19 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r48 (Slice 6 Stage 6 capability handles)
+
+- Added `@stdlib/capability` with ref-packed public grants, canonical
+  `CapabilityConstraintsV1` hashing, sender-bound validation, optional
+  signature-bound validation, stateful grant registration, single-use
+  nonce consumption, revocation epochs, and bounded revoked-handle
+  storage.
+- Added a capability manifest schema and release-checker guardrail
+  against reusable public bearer capability tokens.
+- Added Tol, emulator, and example coverage for replay, expiry,
+  selector/target mismatch, constraints-hash mismatch, revoked handles,
+  epoch revocation, storage-full behavior, and public-secret rejection.
 
 ### r47 (Slice 6 Stage 5 supervision stdlib)
 

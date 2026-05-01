@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tos.local/slice-6-capability-manifest-schema.json",
+  "title": "TOS Slice 6 Capability Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "capabilities"],
+  "properties": {
+    "contract": {
+      "type": "string",
+      "minLength": 1
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "selector",
+          "binding",
+          "single_use",
+          "revocation",
+          "constraints_display"
+        ],
+        "properties": {
+          "selector": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{8}$"
+          },
+          "binding": {
+            "type": "string",
+            "enum": ["sender_bound", "signature_bound", "stateful_registry"]
+          },
+          "single_use": {
+            "type": "boolean"
+          },
+          "revocation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["revoked_handle_limit", "epoch_entry_limit", "full_set_behavior"],
+            "properties": {
+              "revoked_handle_limit": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "epoch_entry_limit": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "full_set_behavior": {
+                "type": "string",
+                "const": "reject_until_compacted"
+              }
+            }
+          },
+          "constraints_display": {
+            "type": "array",
+            "minItems": 7,
+            "items": {
+              "type": "string",
+              "enum": [
+                "target",
+                "selector",
+                "max_value",
+                "validity_window",
+                "max_uses",
+                "grantee_or_signer",
+                "required_counterparty",
+                "delegated_depth"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -33,6 +33,7 @@ def check_required_surface() -> None:
     schedule = read("crypto/smartcont/tol-stdlib/schedule.tol")
     time = read("crypto/smartcont/tol-stdlib/time.tol")
     supervision = read("crypto/smartcont/tol-stdlib/supervision.tol")
+    capability = read("crypto/smartcont/tol-stdlib/capability.tol")
 
     for needle in [
         "BACK_PRESSURE_ACTIVATION_GATE = false",
@@ -78,6 +79,20 @@ def check_required_surface() -> None:
         if needle not in supervision:
             fail(f"supervision stdlib missing {needle}")
 
+    for needle in [
+        "Slice6CapabilityGrantV1",
+        "Slice6CapabilityConstraintsV1",
+        "constraintsHash",
+        "requireCapability",
+        "consumeNonce",
+        "revokeHandle",
+        "setMinEpoch",
+        "signatureBoundValid",
+        "slice6RejectPublicCapabilitySecret",
+    ]:
+        if needle not in capability:
+            fail(f"capability stdlib missing {needle}")
+
     schema = json.loads(read("doc/slice-6-timer-manifest-schema.json"))
     timer_props = schema["properties"]["slice6"]["properties"]["timers"]["items"]["properties"]
     for required in [
@@ -90,6 +105,12 @@ def check_required_surface() -> None:
         if required not in timer_props:
             fail(f"timer manifest schema missing {required}")
 
+    capability_schema = json.loads(read("doc/slice-6-capability-manifest-schema.json"))
+    capability_props = capability_schema["properties"]["capabilities"]["items"]["properties"]
+    for required in ["binding", "single_use", "revocation", "constraints_display"]:
+        if required not in capability_props:
+            fail(f"capability manifest schema missing {required}")
+
 
 def iter_slice6_tol_sources() -> list[Path]:
     paths = [
@@ -97,6 +118,7 @@ def iter_slice6_tol_sources() -> list[Path]:
         ROOT / "crypto/smartcont/tol-stdlib/schedule.tol",
         ROOT / "crypto/smartcont/tol-stdlib/time.tol",
         ROOT / "crypto/smartcont/tol-stdlib/supervision.tol",
+        ROOT / "crypto/smartcont/tol-stdlib/capability.tol",
     ]
     paths.extend(sorted((ROOT / "tol-tester/tests").glob("slice6-*.tol")))
     examples = ROOT / "examples/slice6"
@@ -124,11 +146,21 @@ def check_extra_flags_bit3_still_reserved() -> None:
             fail(f"{path.relative_to(ROOT)} sets extra_flags bit 3")
 
 
+def check_no_reusable_public_bearer_capability() -> None:
+    forbidden = re.compile(r"\b(bearerToken|bearerSecret|ReusableBearer|PublicBearer)\b")
+    for path in iter_slice6_tol_sources():
+        rel = path.relative_to(ROOT)
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if forbidden.search(line):
+                fail(f"{rel}:{lineno}: reusable public bearer capability token is forbidden")
+
+
 def main() -> None:
     check_required_surface()
     check_no_caller_controlled_now_scheduling()
     check_extra_flags_bit3_still_reserved()
-    print("Validated Slice 6 release-package guardrails: delivery, schedule, time, supervision, no msg.now scheduling")
+    check_no_reusable_public_bearer_capability()
+    print("Validated Slice 6 release-package guardrails: delivery, schedule, time, supervision, capability, no msg.now scheduling")
 
 
 if __name__ == "__main__":
