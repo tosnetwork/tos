@@ -54,8 +54,27 @@ fun test_error_body_shape(): int {
     return err.errorCode;
 }
 
+@method_id(104)
+fun test_validate_actions_rejects_before_state_mutation(): int {
+    contract.setData(packWalletV5Data(true, 1, 2, 3, null));
+    val actions = beginCell()
+        .storeMaybeRef(null)
+        .storeInt(-1, 1)
+        .storeUint(PREFIX_SET_SIGNATURE_ALLOWED, 8)
+        .storeInt(0, 1)
+        .endCell()
+        .beginParse();
+    try {
+        validateActions(actions, false, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 101 | | 137
 @testcase | 102 | | 146
 @testcase | 103 | | 1148
+@testcase | 104 | | 146
  */

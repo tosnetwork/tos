@@ -241,6 +241,8 @@ contract VestingVault {
             in.valueCoins,
             null,
             blockchain.currentMcSeqno() as uint64,
+            0,
+            constraints.replayDomain,
             0
         );
         reg.requireCapability(grant, constraints, ctx);

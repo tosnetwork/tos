@@ -1966,10 +1966,10 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // commitment. Propagate to Transaction::new_data so compute_state()
     // packs it into the account's StateInit data cell, making it part of
     // the ShardState cell tree and thus the block state_hash.
-    if (cp.accepted && cp.new_data.not_null()) {
+    if (cp.success && cp.new_data.not_null()) {
       new_data = cp.new_data;
-      // Activate the account only when this EVM transaction is accepted.
-      // Rejected compute must not install an active marker account.
+      // Activate the account only when this EVM transaction succeeds.
+      // Reverted/rejected compute must not install an active marker account.
       if (acc_status == Account::acc_uninit) {
         acc_status = Account::acc_active;
         was_activated = true;

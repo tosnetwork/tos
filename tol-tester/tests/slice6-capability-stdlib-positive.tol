@@ -37,9 +37,11 @@ fun capCtx(
     target: address,
     selector: uint32,
     valueCoins: coins,
-    now: uint64
+    now: uint64,
+    replayDomain: uint256 = 0x1234,
+    delegationDepth: uint8 = 0
 ): Slice6CapabilityUseContext {
-    return slice6CapabilityUseContext(sender, target, selector, valueCoins, capCounterparty(), now, 0);
+    return slice6CapabilityUseContext(sender, target, selector, valueCoins, capCounterparty(), now, 0, replayDomain, delegationDepth);
 }
 
 fun capCtxDefault(): Slice6CapabilityUseContext {
@@ -257,6 +259,98 @@ fun test_max_uses_enforced_without_nonce_consumption(): int {
     return 0;
 }
 
+@method_id(719)
+fun test_epoch_revocation_cannot_rollback(): int {
+    var reg = capRegistry();
+    reg.setMinEpoch(capIssuer(), capGrantee(), 5);
+    try {
+        reg.setMinEpoch(capIssuer(), capGrantee(), 3);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(720)
+fun test_pubkey_bound_requires_signature_path(): int {
+    val constraints = capConstraints();
+    val grant = slice6CapabilityGrant(capIssuer(), capTarget(), null, 0x123456, 0x43415001, constraints, 10, 100, 7, 2);
+    var reg = slice6CapabilityRegistry(4, 2, 2);
+    reg.registerGrant(grant);
+    try {
+        reg.requireCapability(grant, constraints, capCtxDefault(), true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(721)
+fun test_replay_domain_mismatch_rejected(): int {
+    var reg = capRegistry();
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtx(capGrantee(), capTarget(), 0x43415001, 100, 20, 0x9999), true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(722)
+fun test_delegation_depth_exceeded_rejected(): int {
+    var reg = capRegistry();
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtx(capGrantee(), capTarget(), 0x43415001, 100, 20, 0x1234, 1), true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(723)
+fun test_argument_bound_rejected(): int {
+    var constraints = capConstraints();
+    constraints.setArgumentBound(7, slice6CapabilityArgumentBound(10, 20));
+    val grant = slice6CapabilityGrant(capIssuer(), capTarget(), capGrantee(), null, 0x43415001, constraints, 10, 100, 8, 2);
+    var reg = slice6CapabilityRegistry(4, 2, 2);
+    reg.registerGrant(grant);
+    var ctx = capCtxDefault();
+    ctx.setArgumentValue(7, 21);
+    try {
+        reg.requireCapability(grant, constraints, ctx, true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(724)
+fun test_argument_bound_success(): int {
+    var constraints = capConstraints();
+    constraints.setArgumentBound(7, slice6CapabilityArgumentBound(10, 20));
+    val grant = slice6CapabilityGrant(capIssuer(), capTarget(), capGrantee(), null, 0x43415001, constraints, 10, 100, 8, 2);
+    var reg = slice6CapabilityRegistry(4, 2, 2);
+    reg.registerGrant(grant);
+    var ctx = capCtxDefault();
+    ctx.setArgumentValue(7, 20);
+    reg.requireCapability(grant, constraints, ctx, true, false);
+    return 1;
+}
+
+@method_id(725)
+fun test_pubkey_bound_signature_path_checks_signature(): int {
+    val constraints = capConstraints();
+    val grant = slice6CapabilityGrant(capIssuer(), capTarget(), null, 0x123456, 0x43415001, constraints, 10, 100, 7, 2);
+    var reg = slice6CapabilityRegistry(4, 2, 2);
+    reg.registerGrant(grant);
+    try {
+        reg.requireCapabilityWithSignature(grant, constraints, capCtxDefault(), zeroSignature(), true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 701 | | 50689
 @testcase | 702 | | 1
@@ -276,4 +370,11 @@ fun test_max_uses_enforced_without_nonce_consumption(): int {
 @testcase | 716 | | 5128
 @testcase | 717 | | 1
 @testcase | 718 | | 5127
+@testcase | 719 | | 5136
+@testcase | 720 | | 5137
+@testcase | 721 | | 5138
+@testcase | 722 | | 5139
+@testcase | 723 | | 5140
+@testcase | 724 | | 1
+@testcase | 725 | | 5135
  */

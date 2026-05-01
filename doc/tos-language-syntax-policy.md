@@ -596,8 +596,9 @@ and then return.
 `contract.getAddress()` is allowed inside `@deploy`: it lowers
 to TVM `MYADDR` and does not read c4. The deploy-time ban is on
 storage reads and direct c4 escape hatches such as
-`contract.getData()` / `contract.loadData()`, not on address
-introspection.
+`contract.getData()` / `contract.loadData()`, helper functions
+that reach those APIs, or raw c4 aliases such as `PUSHROOT` /
+`POPROOT`, not on address introspection.
 
 For a state-bearing contract, a successful `@deploy save(...)`
 automatically writes the hidden `__state` field to the single
@@ -954,7 +955,9 @@ running in the policy-mandated band between
      `contract.getData()`, local wrappers around
      `contract.getData()` such as `currentData()`, asm functions
      whose body mentions the c4 register, raw `c4 PUSH` / `c4 POP`
-     intrinsics, `T.fromCell` applied to c4-derived cells, or any
+     intrinsics, Fift c4 aliases such as `PUSHROOT` / `POPROOT`,
+     non-asm helper functions whose reachable body reads c4,
+     `T.fromCell` applied to c4-derived cells, or any
      `@stdlib/tvm-lowlevel` helper
      that reaches into c4 directly. Authors who need raw c4
      access for a one-shot migration drop out of the `contract`
@@ -1354,7 +1357,7 @@ Concrete deltas from v2 to v3:
 - **§5.** Field-scope taint now covers function-call passthrough,
   tuple/tensor destructuring, pattern matching, `contract.getData`
   / `currentData` wrappers, `T.fromCell` on c4-derived cells, and
-  raw c4 intrinsics.
+  raw c4 intrinsics including `PUSHROOT` / `POPROOT` aliases.
 - **§6.1.** The four `tos-message-policy.md` §8.1 commitments are
   included verbatim and explicitly scoped to internal-message
   compatibility.

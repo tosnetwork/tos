@@ -13,6 +13,7 @@ contract ContractPrefixConst {
     storage: ContractPrefixConstStorage
     @unknown_throw(0xffff);
 
+    @disclaim_query_id
     receive(msg: ContractPrefixConstPing) {
         save(ContractPrefixConstStorage { value: msg.value });
     }

@@ -69,6 +69,11 @@
       "class": "Protocol"
     },
     {
+      "name": "JETTON_MINTER_FUNC_THROW_INVALID_AMOUNT",
+      "value": 76,
+      "class": "Permanent"
+    },
+    {
       "name": "JETTON_WALLET_FUNC_THROW_OWNER_REQUIRED",
       "value": 705,
       "class": "Authorization"

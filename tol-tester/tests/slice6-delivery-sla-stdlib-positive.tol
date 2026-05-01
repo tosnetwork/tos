@@ -165,7 +165,7 @@ fun test_dead_letter_oversized_record_rejected(): int {
     var sink = slice6NewDeadLetterSink();
     val diagnostic = beginCell().storeUint(0, 256).storeUint(0, 256).endCell();
     try {
-        sink.addRecord(slice6Budget(2, 5, 900, 0), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), diagnostic, 1, 10);
+        sink.addRecord(slice6Budget(2, 5, 400, 1), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), diagnostic, 1, 10);
     } catch (code) {
         assert(sink.count == 0) throw 6111;
         return code;
@@ -230,6 +230,16 @@ fun test_backpressure_constructor_is_runtime_gated(): int {
     return 0;
 }
 
+@method_id(617)
+fun test_dead_letter_zero_ref_budget_rejected(): int {
+    try {
+        slice6Budget(2, 5, 900, 0).requireEnabled();
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 601 | | 1
 @testcase | 602 | | 1
@@ -247,4 +257,5 @@ fun test_backpressure_constructor_is_runtime_gated(): int {
 @testcase | 614 | | 5
 @testcase | 615 | | 3843
 @testcase | 616 | | 3848
+@testcase | 617 | | 3841
  */

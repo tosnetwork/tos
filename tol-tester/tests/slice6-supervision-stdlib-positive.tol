@@ -150,6 +150,18 @@ fun test_supervisor_record_child_restart_auto_escalates(): int {
     return supervisor.getChild(1).state;
 }
 
+@method_id(694)
+fun test_circuit_breaker_cooldown_not_extended_while_open(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    val budget = supBudget(1, 10, 5);
+    assert(child.recordRestart(budget, 101, 500, 10)) throw 6941;
+    assert(!child.recordRestart(budget, 102, 500, 10)) throw 6942;
+    val firstCooldown = child.cooldownUntil!;
+    assert(!child.recordRestart(budget, 103, 500, 10)) throw 6943;
+    assert(child.cooldownUntil! == firstCooldown) throw 6944;
+    return child.cooldownUntil!;
+}
+
 /**
 @testcase | 681 | | 2
 @testcase | 682 | | 4866
@@ -164,4 +176,5 @@ fun test_supervisor_record_child_restart_auto_escalates(): int {
 @testcase | 691 | | 1
 @testcase | 692 | | 4865
 @testcase | 693 | | 3
+@testcase | 694 | | 107
  */

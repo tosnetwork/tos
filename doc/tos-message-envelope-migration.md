@@ -262,9 +262,10 @@ TEP-style migration:
 - signed external messages are outside the Slice 1 internal-message
   envelope and must remain unchanged;
 - signed internal wallet requests retain the wallet-vN body shape;
-- signed internal wallet requests must commit the advanced seqno before
-  action processing, so an action-phase failure cannot leave the same
-  signed internal body replayable until `valid_until`;
+- signed internal wallet requests pre-validate the action chain before
+  committing state, then commit the advanced seqno before C5/action-phase
+  execution so a post-commit action-phase failure cannot reopen the same
+  signed internal body until `valid_until`;
 - C5 action-list validation is a wallet behavior, not an Envelope
   behavior, so keep low-level parsing if that is what FunC did;
 - use `@on_bounced_policy("manual")` when FunC's `recv_internal`

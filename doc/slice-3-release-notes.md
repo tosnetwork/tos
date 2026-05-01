@@ -31,9 +31,9 @@ Stage 3 and Stage 5 preserved the checked reference Tol BoC hashes for
 Jetton and wallet-v5 after stdlib wrapper migration. PR #6 later
 recaptured the Jetton minter Tol baseline after adding the explicit
 `addr_none` admin rejection, and recaptured wallet-v5 after making
-signed-internal seqno advancement survive action-phase failure; these
-are reference-contract safety changes, not TL-B constructor, TVM opcode,
-or wire-format changes.
+signed-internal requests pre-validate their action chain before the
+seqno/state commit; these are reference-contract safety changes, not
+TL-B constructor, TVM opcode, or wire-format changes.
 
 ## Escape Hatches
 

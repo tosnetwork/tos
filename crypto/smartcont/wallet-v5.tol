@@ -221,6 +221,91 @@ fun verifyC5Actions(c5: cell, isExternal: bool): cell {
     return walletV5VerifyC5Actions(c5, isExternal);
 }
 
+fun validateActions(cs: slice, isExternal: bool, isExtension: bool): void {
+    val c5Actions = cs.loadMaybeRef();
+    if (c5Actions != null) {
+        verifyC5Actions(c5Actions!, isExternal);
+    }
+    if (cs.loadInt(1) == 0) {
+        return;
+    }
+
+    var simulatedLoaded = false;
+    var simulatedSignatureAllowed = 0;
+    var simulatedExtensions: dict = null;
+
+    while (true) {
+        val isAddExtension = cs.tryStripPrefix(PREFIX_ADD_EXTENSION, 8);
+        var isRemoveExtension = false;
+        if (!isAddExtension) {
+            isRemoveExtension = cs.tryStripPrefix(PREFIX_REMOVE_EXTENSION, 8);
+        }
+
+        if (isAddExtension || isRemoveExtension) {
+            if (!simulatedLoaded) {
+                var dataSlice = currentData().beginParse();
+                simulatedSignatureAllowed = dataSlice.loadInt(SIZE_BOOL);
+                var dataTail = dataSlice.skipBits(SIZE_SEQNO + SIZE_WALLET_ID + SIZE_PUBLIC_KEY);
+                simulatedExtensions = dataTail.preloadDict();
+                simulatedLoaded = true;
+            }
+            val extensionAddress = cs.loadAddressAny();
+            val (addressWc, addressHash) = extensionAddress.getWorkchainAndHash();
+            val (myAddressWc, _) = contract.getAddress().getWorkchainAndHash();
+            if (myAddressWc != addressWc) {
+                throw ERROR_EXTENSION_WRONG_WORKCHAIN;
+            }
+
+            if (isAddExtension) {
+                val isSuccess = simulatedExtensions.uDictSetBuilderIfNotExists(
+                    SIZE_ADDRESS_HASH,
+                    addressHash,
+                    beginCell().storeInt(-1, 1)
+                );
+                if (!isSuccess) {
+                    throw ERROR_ADD_EXTENSION;
+                }
+            } else {
+                val isSuccess = simulatedExtensions.uDictDelete(SIZE_ADDRESS_HASH, addressHash);
+                if (!isSuccess) {
+                    throw ERROR_REMOVE_EXTENSION;
+                }
+                if (simulatedExtensions == null && !simulatedSignatureAllowed) {
+                    throw ERROR_REMOVE_LAST_EXTENSION_WHEN_SIGNATURE_DISABLED;
+                }
+            }
+        } else {
+            if (cs.tryStripPrefix(PREFIX_SET_SIGNATURE_ALLOWED, 8)) {
+                if (!isExtension) {
+                    throw ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE;
+                }
+                if (!simulatedLoaded) {
+                    var dataSlice = currentData().beginParse();
+                    simulatedSignatureAllowed = dataSlice.loadInt(SIZE_BOOL);
+                    var dataTail = dataSlice.skipBits(SIZE_SEQNO + SIZE_WALLET_ID + SIZE_PUBLIC_KEY);
+                    simulatedExtensions = dataTail.preloadDict();
+                    simulatedLoaded = true;
+                }
+                val allowSignature = cs.loadInt(1);
+                if (simulatedSignatureAllowed == allowSignature) {
+                    throw ERROR_THIS_SIGNATURE_MODE_ALREADY_SET;
+                }
+                if (!allowSignature && simulatedExtensions == null) {
+                    throw ERROR_DISABLE_SIGNATURE_WHEN_EXTENSIONS_IS_EMPTY;
+                }
+                simulatedSignatureAllowed = allowSignature;
+            } else {
+                throw ERROR_UNSUPPORTED_ACTION;
+            }
+        }
+
+        if (!cs.remainingRefsCount()) {
+            return;
+        }
+        cs = cs.preloadRef().beginParse();
+    }
+}
+
 fun processActions(cs: slice, isExternal: bool, isExtension: bool): void {
     val c5Actions = cs.loadMaybeRef();
     if (c5Actions != null) {
@@ -361,6 +446,8 @@ fun processSignedRequest(inMsgBody: slice, isExternal: bool): void {
         acceptExternalMessage();
     }
 
+    validateActions(cs, isExternal, false);
+
     storedSeqno += 1;
     contract.setData(
         beginCell()
@@ -370,9 +457,9 @@ fun processSignedRequest(inMsgBody: slice, isExternal: bool): void {
             .endCell()
     );
 
-    // Commit the seqno before action processing for both external and signed
-    // internal requests. Otherwise an action-phase failure could roll back the
-    // internal signed seqno and leave the signed body replayable until validUntil.
+    // Commit only after the action chain has been validated without state
+    // mutation. The following processActions pass should not compute-throw; the
+    // commit then closes the replay window before action-phase execution.
     commitContractDataAndActions();
 
     processActions(cs, isExternal, false);

@@ -1526,9 +1526,10 @@ closed. They are no longer start gates for downstream implementation on
 **Slice 6** — `actor.md` §5.1 + §5.2 + §5.4 + §5.7 + §6.3 + §6.4 + §6.6
 
 Slice 6 is repo-side complete on `actor-layer`. Stage 0 review closed,
-Stages 1–8 landed, and the later external-author hardening closed the
-major authoring gaps found by VestingVault and the Slice 5 production
-trials.
+Stages 1–8 landed, and the later external-author plus PR #6 security
+hardening closed the major authoring and bounded-resource gaps found by
+VestingVault, the Slice 5 production trials, and the two security-review
+rounds.
 
 - *§5.1 supervision:* Explicit budgets, restart-intensity windows,
   circuit breakers, recovery budgets, monitor notifications, and bounded
@@ -1577,10 +1578,11 @@ trials.
 
 Sorted by how directly each item affects production readiness:
 
-1. 🟡 **Third-party security review of `actor-layer`** — required before
-   treating the branch as production-ready. Review should focus on
-   compiler lowering/static checks, bounded-resource assumptions,
-   capability/supervision/scheduler semantics, and wire compatibility.
+1. 🟡 **Final third-party re-review of `actor-layer` hardening** —
+   required before treating the branch as production-ready. The first two
+   security-review rounds have been addressed in code and tests; final
+   sign-off should focus on the new bounded-resource, capability,
+   wallet/jetton, and compiler-static-check fixes.
 2. 🟡 **Production activation plan execution** — TOS is not live yet.
    Activation height, validator feature flags, rollback procedure, and
    production BackPressure emission remain deployment gates, not coding
@@ -1774,10 +1776,24 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   mc-seqno budgets from wall-clock duration budgets, hardened safe
   payment examples, fixed state-qualified same-opcode contract lowering,
   and added release-checker coverage for the new authoring guardrails.
-  Real validator activation remains a deployment step because TOS is not
-  live.
+  PR #6 security hardening added fail-closed capability signature paths,
+  monotonic revocation epochs, bounded dead-letter size accounting,
+  stable supervision cooldowns, wallet action prevalidation before
+  seqno/state commit, jetton supply overflow/underflow guards, and
+  compiler checks for deploy/c4 escape paths. Real validator activation
+  remains a deployment step because TOS is not live.
 
 ## 12. Revision notes
+
+### r54 (PR #6 second-round hardening)
+
+- Closed the second-round PR #6 findings across capability grants,
+  delivery records, supervision cooldowns, time horizon errors,
+  wallet-v5 commit ordering, Jetton supply arithmetic, EVM deployment
+  activation, and Tol field-scoping/c4 escape checks.
+- Updated Slice 6 docs, release checks, and audit guidance so the new
+  fail-closed capability and bounded-resource invariants remain visible
+  to contract authors and future reviewers.
 
 ### r53 (§11 roadmap status cleanup)
 

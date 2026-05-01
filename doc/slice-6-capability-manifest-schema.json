@@ -56,7 +56,7 @@
           },
           "constraints_display": {
             "type": "array",
-            "minItems": 7,
+            "minItems": 9,
             "items": {
               "type": "string",
               "enum": [
@@ -67,7 +67,9 @@
                 "max_uses",
                 "grantee_or_signer",
                 "required_counterparty",
-                "delegated_depth"
+                "replay_domain",
+                "delegated_depth",
+                "argument_bounds"
               ]
             }
           }

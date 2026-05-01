@@ -29,6 +29,8 @@ Rules for production contracts:
 - Dead-letter records must be funded with a concrete escrow coin amount.
   The stdlib rejects records below `Slice6DeadLetterBudget.minRecordEscrowCoins`;
   do not pass a caller-supplied boolean as a substitute for paid storage.
+  The compatibility default is intentionally tiny for tests; production
+  manifests must set this to a rent-backed per-record amount.
 - Use `save({ ...storage, changedField: value })` for storage updates and
   `save(storage)` for pure state transitions. Spread preserves unchanged
   fields while evaluating the base storage value once.
@@ -53,14 +55,26 @@ Rules for production contracts:
   and tracked handle-use counters. `maxUses` is enforced by the
   registry; consumed nonces and use counters are bounded storage, not
   free append-only logs.
+- Populate `Slice6CapabilityUseContext` with the target's replay
+  domain, the current delegation depth, and any argument values covered
+  by `argumentBounds`. These fields are checked at runtime, not merely
+  displayed in the wallet hash.
+- Use `requireCapabilityWithSignature(...)` for pubkey-bound grants.
+  Plain `requireCapability(...)` rejects `grantee == null` /
+  `granteePubkey != null` grants so an author cannot accidentally create
+  an any-sender pubkey capability without verifying a signature.
 - Treat `revokeHandle(handle, 0)` as permanent revocation. Repeating a
   revocation may only extend the revocation horizon; it must not shorten
-  or undo an earlier revocation.
+  or undo an earlier revocation. `setMinEpoch(...)` is also monotonic:
+  lowering the minimum epoch is rejected.
 - Treat `one_for_all` and `rest_for_one` as best-effort non-atomic
   recovery sequences. Each child recovery is a separate transaction.
   Prefer `Slice6SupervisorState.recordChildRestart(...)` over calling
   `Slice6ChildSpec.recordRestart(...)` directly, so exhausted recovery
   budgets automatically mark the supervisor's final-failure escalation.
+  `emitEscalation()` marks `finalFailure`; it does not send an outgoing
+  message. Callers must dispatch their escalation or dead-letter action
+  explicitly after observing the flag.
 
 `Cell<T>` is a typed cell reference. `T.toCell()` produces a `Cell<T>`,
 `cell.beginParse()` plus `T.fromSlice(...)` parses an untyped cell, and

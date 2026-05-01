@@ -325,6 +325,7 @@ fun Slice6DeadLetterBudget.requireEnabled(self): void {
         self.maxRecords == 0 ||
         self.retentionBlocks == 0 ||
         self.maxRecordBits == 0 ||
+        self.maxRecordRefs == 0 ||
         self.maxCellDepth == 0
     ) {
         throw SLICE6_DELIVERY_THROW_INVALID_BUDGET;
@@ -361,7 +362,7 @@ fun slice6BuildDeadLetterRecord(
         diagnostic,
     }.toCell();
     val (_, bits, refs, ok) = value.calculateSize(SLICE6_DELIVERY_SIZE_SCAN_CELLS);
-    if (!ok) {
+    if (!ok || bits > 0xffff || refs > 0xff) {
         throw SLICE6_DELIVERY_THROW_RECORD_TOO_LARGE;
     }
     return Slice6DeadLetterRecord {

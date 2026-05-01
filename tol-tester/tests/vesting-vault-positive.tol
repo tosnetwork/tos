@@ -90,6 +90,8 @@ fun tvContextFull(sender: address, now: uint64): Slice6CapabilityUseContext {
         100000000,    // valueCoins: 0.1 TOS
         null,
         now,
+        0,
+        0xdead1234,
         0
     );
 }

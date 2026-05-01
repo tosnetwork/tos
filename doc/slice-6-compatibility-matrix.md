@@ -9,7 +9,7 @@
 | `OP_MONITOR_DOWN` | System opcode `0x00000010` | Available | Not encoded as `OP_ERROR` |
 | `extra_flags` bit 3 | None | Reserved/invalid | No mask widening in Slice 6 baseline |
 | Supervision strategies | Contract-level stdlib | Available | Non-atomic best-effort recovery |
-| Capability handles | Contract-level stdlib | Available | Public grants, no bearer secrets |
+| Capability handles | Contract-level stdlib | Available | Public grants, no bearer secrets, pubkey grants require signature path |
 | Failure traces | Off-chain artifact schema | Available | Bounded, payer-labelled records |
 
 Slice 6 repo-side code is additive for existing Slice 1-5 contracts. The

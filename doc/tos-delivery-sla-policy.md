@@ -168,13 +168,16 @@ The system sink is workchain-local and bounded by config:
 Every persistent sink record is paid from sender escrow. The stdlib
 insertion API takes the concrete escrow coin amount and rejects records
 below `min_record_escrow_coins`; a boolean "funded" flag is not a valid
-storage-cost proof. If escrow is insufficient, no persistent system-sink
-record is created; validators may include only a non-persistent block-local
-counter for observability. If the sink is full, the protocol first removes
-expired records. If no slot is available after expiry cleanup, the new
-persistent record is dropped and the sink's bounded `dropped_count` is
-incremented. The protocol must not evict an unexpired paid record to store
-a new attacker-funded record.
+storage-cost proof. The measured record bit/ref counts must fit the
+declared storage fields before any narrowing cast; oversize records are
+rejected as too large, not wrapped into a smaller apparent budget. If
+escrow is insufficient, no persistent system-sink record is created;
+validators may include only a non-persistent block-local counter for
+observability. If the sink is full, the protocol first removes expired
+records. If no slot is available after expiry cleanup, the new persistent
+record is dropped and the sink's bounded `dropped_count` is incremented.
+The protocol must not evict an unexpired paid record to store a new
+attacker-funded record.
 
 ## 6. Funding rules
 

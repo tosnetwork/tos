@@ -61,6 +61,7 @@ const OP_BURN_NOTIFICATION = JETTON_OP_BURN_NOTIFICATION
 const FUNC_THROW_ADMIN_REQUIRED = JETTON_MINTER_FUNC_THROW_ADMIN_REQUIRED
 const FUNC_THROW_BURN_SENDER_NOT_WALLET = JETTON_MINTER_FUNC_THROW_BURN_SENDER_NOT_WALLET
 const FUNC_THROW_INVALID_ADMIN = JETTON_MINTER_FUNC_THROW_INVALID_ADMIN
+const FUNC_THROW_INVALID_AMOUNT = JETTON_MINTER_FUNC_THROW_INVALID_AMOUNT
 const FUNC_THROW_UNKNOWN_OPCODE = JETTON_FUNC_THROW_UNKNOWN_OPCODE
 
 const JETTON_ERROR_ADMIN_REQUIRED = JETTON_STDLIB_ERROR_ADMIN_REQUIRED
@@ -187,9 +188,15 @@ contract JettonMinter {
         var masterMsgBody = msg.masterMsg.beginParse();
         masterMsgBody.skipBits(32 + 64);
         val jettonAmount = masterMsgBody.loadCoins();
+        var newTotalSupply: coins = 0;
+        try {
+            newTotalSupply = storage.totalSupply + jettonAmount;
+        } catch (_) {
+            require(false, ErrorClass.Permanent, FUNC_THROW_INVALID_AMOUNT);
+        }
         mintTokens(msg.toAddress, storage.jettonWalletCode, msg.amount, msg.masterMsg);
         save(JettonMinterStorage {
-            totalSupply: storage.totalSupply + jettonAmount,
+            totalSupply: newTotalSupply,
             adminAddress: storage.adminAddress,
             content: storage.content,
             jettonWalletCode: storage.jettonWalletCode,
@@ -221,6 +228,8 @@ contract JettonMinter {
         );
         require(expectedWallet == in.senderAddress,
                 ErrorClass.Authorization, FUNC_THROW_BURN_SENDER_NOT_WALLET);
+        require(jettonAmount <= storage.totalSupply,
+                ErrorClass.Permanent, FUNC_THROW_INVALID_AMOUNT);
         save(JettonMinterStorage {
             totalSupply: storage.totalSupply - jettonAmount,
             adminAddress: storage.adminAddress,

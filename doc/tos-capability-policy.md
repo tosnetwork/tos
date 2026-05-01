@@ -54,6 +54,13 @@ secret. A call is authorized only when the target verifies one of:
 - a contract-local grant registry entry that is active and not revoked;
 - a single-use nonce that is consumed during the call.
 
+The stdlib default is fail-closed: `requireCapability(...)` accepts
+sender-bound grants, but rejects pubkey-bound grants unless the caller
+uses `requireCapabilityWithSignature(...)` or has otherwise taken the
+signature-checked path. A grant with both `grantee` and `grantee_pubkey`
+may be sender-bound and additionally signature-audited; a grant with
+neither is invalid.
+
 ## 4. Constraints
 
 Constraints may include:
@@ -90,6 +97,9 @@ part of the hashed constraints even though it is also copied into the
 grant header for cheap dispatch. If the two values differ, the grant is
 invalid. Future constraint encodings must use a new `version` and a
 different constructor tag; wallets must display the version they decode.
+The runtime context must also supply the replay domain, current
+delegation depth, and argument values referenced by `argument_bounds`;
+these fields are checked by the stdlib and are not display-only metadata.
 
 A conforming wallet or SDK must decode and display at least:
 
@@ -100,7 +110,9 @@ A conforming wallet or SDK must decode and display at least:
 - max uses;
 - grantee or signer;
 - required counterparty;
-- delegated depth.
+- replay domain;
+- delegated depth;
+- argument bounds.
 
 If any of those fields are present but undecodable, the wallet must show
 the grant as unknown/high-risk and must not summarize it as a safe
@@ -134,6 +146,9 @@ The Stage 6 baseline rejects a revocation write that would exceed its
 declared budget unless the caller pays to compact expired entries first.
 It must not silently drop the oldest unexpired revocation, because that
 would reactivate a previously revoked grant.
+Revocation updates are monotonic: a handle revocation may extend its
+expiry or become permanent (`expires_at_mc_seqno = 0`), but may not be
+shortened; a minimum epoch may be raised, but may not be lowered.
 
 ## 6. Relationship to account permissions
 
@@ -154,7 +169,8 @@ Stage 6 should start with a stdlib and manifest shape:
 - `@stdlib/capability`
 - `CapabilityGrant`
 - `CapabilityConstraints`
-- `requireCapability(...)`
+- `requireCapability(...)` for sender-bound grants;
+- `requireCapabilityWithSignature(...)` for pubkey-bound grants;
 - manifest-declared selectors and constraints;
 - release checker validation that grants are sender-bound,
   signature-bound, stateful, or single-use.

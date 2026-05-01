@@ -110,11 +110,26 @@ def check_required_surface() -> None:
     for needle in [
         "Slice6CapabilityGrantV1",
         "Slice6CapabilityConstraintsV1",
+        "Slice6CapabilityUseContext",
         "constraintsHash",
         "requireCapability",
+        "requireCapabilityWithSignature",
         "consumeNonce",
+        "maxConsumedNonces",
+        "maxTrackedUses",
+        "requireUseConsumable",
+        "consumeUse",
         "revokeHandle",
         "setMinEpoch",
+        "SLICE6_CAPABILITY_THROW_INVALID_EPOCH",
+        "SLICE6_CAPABILITY_THROW_SIGNATURE_REQUIRED",
+        "SLICE6_CAPABILITY_THROW_REPLAY_DOMAIN_MISMATCH",
+        "SLICE6_CAPABILITY_THROW_DELEGATION_DEPTH_EXCEEDED",
+        "SLICE6_CAPABILITY_THROW_ARGUMENT_BOUND",
+        "replayDomain",
+        "delegationDepth",
+        "argumentBounds",
+        "setArgumentBound",
         "signatureBoundValid",
         "slice6RejectPublicCapabilitySecret",
     ]:
@@ -159,6 +174,10 @@ def check_required_surface() -> None:
     for required in ["binding", "single_use", "revocation", "constraints_display"]:
         if required not in capability_props:
             fail(f"capability manifest schema missing {required}")
+    display_enum = set(capability_props["constraints_display"]["items"]["enum"])
+    for required in ["replay_domain", "delegated_depth", "argument_bounds"]:
+        if required not in display_enum:
+            fail(f"capability manifest schema display vocabulary missing {required}")
 
 
 def check_release_artifacts() -> None:

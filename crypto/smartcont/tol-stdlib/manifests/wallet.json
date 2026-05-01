@@ -133,6 +133,6 @@
   "wire_compatibility_exceptions": [
     "wallet-v5 signed external bodies remain raw and are not forced through the internal Envelope/query_id model",
     "wallet-v5 C5 action validation preserves the legacy action_send_msg chain and external ignore-errors send-mode rule",
-    "wallet-v5 signed internal seqno is committed before action processing so action-phase failures do not reopen the replay window"
+    "wallet-v5 signed internal action chains are pre-validated before the seqno/state commit, then committed before action-phase execution so post-commit action failures do not reopen the replay window"
   ]
 }

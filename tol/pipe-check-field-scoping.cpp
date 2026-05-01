@@ -40,6 +40,7 @@
 //
 
 #include "ast.h"
+#include "ast-visitor.h"
 #include "compilation-errors.h"
 #include "compiler-state.h"
 #include "pipeline.h"
@@ -111,6 +112,31 @@ static bool is_contract_reference(AnyExprV expr) {
   return false;
 }
 
+static bool expr_references_storage(AnyExprV expr) {
+  if (is_storage_reference(expr)) {
+    return true;
+  }
+  switch (expr->kind) {
+    case ast_dot_access:
+      return expr_references_storage(expr->as<ast_dot_access>()->get_obj());
+    case ast_argument:
+      return expr_references_storage(expr->as<ast_argument>()->get_expr());
+    case ast_cast_as_operator:
+      return expr_references_storage(expr->as<ast_cast_as_operator>()->get_expr());
+    case ast_not_null_operator:
+      return expr_references_storage(expr->as<ast_not_null_operator>()->get_expr());
+    case ast_lazy_operator:
+      return expr_references_storage(expr->as<ast_lazy_operator>()->get_expr());
+    case ast_unary_operator:
+      return expr_references_storage(expr->as<ast_unary_operator>()->get_rhs());
+    case ast_binary_operator:
+      return expr_references_storage(expr->as<ast_binary_operator>()->get_lhs()) ||
+             expr_references_storage(expr->as<ast_binary_operator>()->get_rhs());
+    default:
+      return false;
+  }
+}
+
 // True if `dot_access` is `storage.<some_field>` (NOT `storage.method(...)` shape).
 // Caller still has to look up the field on the storage struct.
 static bool is_storage_field_dot(V<ast_dot_access> dot) {
@@ -127,7 +153,10 @@ static void check_block(V<ast_block_statement> block, FieldScopingContext& ctx);
 // ---------- escape-hatch detection ----------
 
 static bool asm_command_mentions_c4(std::string_view command) {
-  return command.find("c4") != std::string_view::npos || command.find("C4") != std::string_view::npos;
+  return command.find("c4") != std::string_view::npos ||
+         command.find("C4") != std::string_view::npos ||
+         command.find("PUSHROOT") != std::string_view::npos ||
+         command.find("POPROOT") != std::string_view::npos;
 }
 
 static bool asm_function_uses_c4_register(FunctionPtr fun_ref) {
@@ -172,6 +201,63 @@ static FunctionPtr resolve_called_function(V<ast_function_call> fc) {
   return nullptr;
 }
 
+static bool function_body_uses_c4_escape(FunctionPtr fun_ref, std::unordered_set<FunctionPtr>& seen);
+
+class C4EscapeScanner final : public ASTVisitorFunctionBody {
+  std::unordered_set<FunctionPtr>& seen_;
+
+  void visit(V<ast_dot_access> v) override {
+    if (is_contract_reference(v->get_obj())) {
+      std::string_view method = v->get_field_name();
+      if (method == "getData" || method == "rawData" || method == "loadData") {
+        found = true;
+      }
+    }
+    parent::visit(v);
+  }
+
+  void visit(V<ast_function_call> v) override {
+    if (FunctionPtr called_fun = resolve_called_function(v)) {
+      if (asm_function_uses_c4_register(called_fun) || function_body_uses_c4_escape(called_fun, seen_)) {
+        found = true;
+      }
+    }
+    if (auto ref = v->get_callee()->try_as<ast_reference>()) {
+      std::string_view name = ref->get_name();
+      if (name == "currentData" || name == "getContractData" || name == "rawC4Push" || name == "rawC4Pop") {
+        found = true;
+      }
+    }
+    parent::visit(v);
+  }
+
+public:
+  explicit C4EscapeScanner(std::unordered_set<FunctionPtr>& seen)
+    : seen_(seen) {}
+
+  bool found = false;
+
+  bool should_visit_function(FunctionPtr fun_ref) override {
+    return fun_ref->is_code_function() && !fun_ref->is_generic_function();
+  }
+};
+
+static bool function_body_uses_c4_escape(FunctionPtr fun_ref, std::unordered_set<FunctionPtr>& seen) {
+  if (!fun_ref || !fun_ref->ast_root || !fun_ref->is_code_function() || fun_ref->is_generic_function()) {
+    return false;
+  }
+  if (!seen.insert(fun_ref).second) {
+    return false;
+  }
+  auto v_fun = fun_ref->ast_root->try_as<ast_function_declaration>();
+  if (!v_fun || !v_fun->get_body()->try_as<ast_block_statement>()) {
+    return false;
+  }
+  C4EscapeScanner scanner(seen);
+  scanner.start_visiting_function(fun_ref, v_fun);
+  return scanner.found;
+}
+
 // `storage.toCell()` / `storage.toSlice()` / `(storage as Cell)` / `contract.getData()`
 // are explicit c4 serialisation escapes; §5 forbids them inside state-bearing contract receivers.
 static bool detect_c4_serialisation_escape(AnyExprV expr, FieldScopingContext& ctx) {
@@ -181,6 +267,13 @@ static bool detect_c4_serialisation_escape(AnyExprV expr, FieldScopingContext& c
       err("c4 serialization escapes `@on` scoping; asm function `{}` uses c4 and is not permitted inside a state-bearing receiver. "
           "See doc/tos-language-syntax-policy.md §5.", called_fun->name)
         .collect(expr);
+    } else if (called_fun) {
+      std::unordered_set<FunctionPtr> seen;
+      if (function_body_uses_c4_escape(called_fun, seen)) {
+        err("c4 serialization escapes `@on` scoping; helper function `{}` reaches c4 and is not permitted inside a state-bearing receiver. "
+            "See doc/tos-language-syntax-policy.md §5.", called_fun->name)
+          .collect(expr);
+      }
     }
     AnyExprV callee = fc->get_callee();
     if (auto dot = callee->try_as<ast_dot_access>()) {
@@ -283,6 +376,9 @@ static std::vector<std::string> compute_taint_of_expr(AnyExprV expr, FieldScopin
     }
     case ast_reference: {
       auto ref = expr->as<ast_reference>();
+      if (is_storage_reference(expr) && ctx.in_deploy_receiver) {
+        return {"@deploy"};
+      }
       auto it = ctx.tainted_locals.find(static_cast<std::string>(ref->get_name()));
       if (it != ctx.tainted_locals.end()) {
         return it->second;
@@ -445,6 +541,13 @@ static void check_call_arguments(V<ast_function_call> call, FieldScopingContext&
   auto args = call->get_arg_list();
   for (int i = 0; i < args->size(); ++i) {
     AnyExprV arg_expr = args->get_arg(i)->get_expr();
+    if (ctx.in_deploy_receiver && expr_references_storage(arg_expr)) {
+      err("`storage` may not be forwarded across function boundary inside an `@deploy receive(...)` body "
+          "because deployment runs before storage exists. Inline the initialization value instead. "
+          "See doc/tos-language-syntax-policy.md §3.6.")
+        .collect(arg_expr);
+      continue;
+    }
     std::vector<std::string> taint = compute_taint_of_expr(arg_expr, ctx);
     if (!taint.empty()) {
       err("forwarding `@on({})` field across function boundary not yet supported; inline the use site at "
@@ -469,6 +572,12 @@ static void check_expr(AnyExprV expr, FieldScopingContext& ctx) {
     case ast_reference: {
       // a bare read of a tainted local in this state = error
       auto ref = expr->as<ast_reference>();
+      if (is_storage_reference(expr) && ctx.in_deploy_receiver) {
+        err("`storage` may not be read inside an `@deploy receive(...)` body because deployment runs before storage exists. "
+            "See doc/tos-language-syntax-policy.md §3.6.")
+          .collect(expr);
+        return;
+      }
       auto it = ctx.tainted_locals.find(static_cast<std::string>(ref->get_name()));
       if (it != ctx.tainted_locals.end()) {
         if (!ctx.current_state.empty() && !state_in_list(it->second, ctx.current_state)) {

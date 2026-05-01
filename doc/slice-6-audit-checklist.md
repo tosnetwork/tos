@@ -17,6 +17,8 @@
 - Dead-letter storage has finite record, bit, ref, and retention bounds.
 - Record insertion uses a concrete escrow coin amount and checks
   `minRecordEscrowCoins`; a boolean "funded" flag is not sufficient.
+- Record insertion rejects cells whose measured bit/ref counts exceed
+  the storage field width before narrowing to `uint16` / `uint8`.
 - Full-sink behavior rejects or counts drops; it never creates a free
   unbounded record.
 - Production BackPressure emission remains runtime-gated until the
@@ -39,8 +41,12 @@
 - Partial recovery records include recovered child count and escalation
   target.
 - Restart storms open a circuit breaker instead of amplifying messages.
+- Crash notifications while a circuit is already open do not extend the
+  cooldown indefinitely.
 - Supervisor-level restart helpers set final-failure escalation when a
   child restart cannot be funded or exceeds the restart window.
+- `emitEscalation` / `finalFailure` is a state flag; the contract still
+  sends any escalation or dead-letter message explicitly.
 
 ## Capability
 
@@ -49,8 +55,11 @@
   `Slice6CapabilityUseContext.currentMcSeqno` are masterchain seqnos,
   never Unix timestamps.
 - Wallet or SDK display includes target, selector, max value, validity
-  window, max uses, grantee or signer, counterparty, and delegated depth.
+  window, max uses, grantee or signer, counterparty, replay domain,
+  delegated depth, and argument bounds.
 - A grant is sender-bound, signature-bound, stateful, or single-use.
+- Pubkey-bound grants use `requireCapabilityWithSignature(...)`; plain
+  `requireCapability(...)` is not accepted as a signature check.
 - Reusable public bearer tokens are rejected.
 - Revoked-handle, epoch, consumed-nonce, and handle-use maps have finite
   bounds and full-set behavior is reject-until-compacted.
@@ -58,6 +67,9 @@
   hashed constraints.
 - Revocation is monotonic: zero means permanent, and repeated revocation
   may extend but not shorten the revocation horizon.
+- Minimum revocation epochs are monotonic and cannot be lowered.
+- Replay domain, delegation depth, and argument bounds are populated in
+  `Slice6CapabilityUseContext` and enforced at runtime.
 
 ## Value Dispatch
 

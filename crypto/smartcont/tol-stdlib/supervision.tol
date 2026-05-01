@@ -338,8 +338,10 @@ fun Slice6ChildSpec.recordRestart(
 ): bool {
     self.resetWindowIfExpired(budget, nowMcSeqno);
     if (!self.canRestart(budget, nowMcSeqno, recoveryGas, recoveryValue)) {
-        self.state = SLICE6_CHILD_CIRCUIT_OPEN;
-        self.cooldownUntil = slice6SupervisionAddBlocks(nowMcSeqno, budget.cooldownBlocks);
+        if (!self.isCircuitBreakerTripped(nowMcSeqno)) {
+            self.state = SLICE6_CHILD_CIRCUIT_OPEN;
+            self.cooldownUntil = slice6SupervisionAddBlocks(nowMcSeqno, budget.cooldownBlocks);
+        }
         return false;
     }
     self.restartCount += 1;
