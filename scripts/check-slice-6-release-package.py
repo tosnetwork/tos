@@ -21,6 +21,7 @@ REQUIRED_DOCS = [
     "doc/slice-6-audit-checklist.md",
     "doc/slice-6-compatibility-matrix.md",
     "doc/slice-6-release-notes.md",
+    "doc/slice-6-activation-plan.md",
 ]
 
 REQUIRED_EXAMPLES = {
@@ -50,6 +51,7 @@ def check_required_surface() -> None:
     time = read("crypto/smartcont/tol-stdlib/time.tol")
     supervision = read("crypto/smartcont/tol-stdlib/supervision.tol")
     capability = read("crypto/smartcont/tol-stdlib/capability.tol")
+    dogfood = read("crypto/smartcont/slice6-dogfood.tol")
 
     for needle in [
         "BACK_PRESSURE_ACTIVATION_GATE = false",
@@ -109,6 +111,17 @@ def check_required_surface() -> None:
         if needle not in capability:
             fail(f"capability stdlib missing {needle}")
 
+    for needle in [
+        "Slice6DogfoodFailureRecord",
+        "sendAfterBlocks",
+        "slice6BuildMonitorDownNotification",
+        "recordRestart",
+        "addRecord",
+        "SLICE6_ATTEMPT_SUPERVISOR_RECOVERY",
+    ]:
+        if needle not in dogfood:
+            fail(f"Slice 6 dogfood service missing {needle}")
+
     schema = json.loads(read("doc/slice-6-timer-manifest-schema.json"))
     timer_props = schema["properties"]["slice6"]["properties"]["timers"]["items"]["properties"]
     for required in [
@@ -154,6 +167,7 @@ def iter_slice6_tol_sources() -> list[Path]:
         ROOT / "crypto/smartcont/tol-stdlib/time.tol",
         ROOT / "crypto/smartcont/tol-stdlib/supervision.tol",
         ROOT / "crypto/smartcont/tol-stdlib/capability.tol",
+        ROOT / "crypto/smartcont/slice6-dogfood.tol",
     ]
     paths.extend(sorted((ROOT / "tol-tester/tests").glob("slice6-*.tol")))
     examples = ROOT / "examples/slice6"

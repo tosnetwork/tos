@@ -1038,8 +1038,8 @@ multi-address structs.
 (monitors versus links), §6.4 (restart intensity), and §6.6 (crash
 reports) form the Slice 6 design surface.
 
-**Status.** 🟡 Stages 1–7 are complete as of 2026-05-01; Stage 8
-system-contract dogfood and production-gate planning are next. Stage 0 design review findings were
+**Status.** ✅ Slice 6 repo-side implementation is complete as of
+2026-05-01; real production workchain activation is pending. Stage 0 design review findings were
 addressed in Draft v0.2 and re-review approved. The implementation layer now
 includes `@stdlib/delivery`, `@stdlib/schedule`, `@stdlib/time`, and
 the monitor/link/supervision foundations in `@stdlib/supervision`:
@@ -1055,8 +1055,9 @@ partial-recovery escalation records, public capability grants,
 canonical capability-constraints hashing, sender-bound validation,
 stateful grant registries, single-use nonce consumption, revocation
 epochs, bounded revoked-handle storage, failure-trace schema, Slice 6
-examples, author guide, audit checklist, compatibility matrix, and
-release notes. Protocol
+examples, author guide, audit checklist, compatibility matrix, release
+notes, activation/rollback plan, and a repo-side supervised dogfood
+service. Protocol
 activation of validator scheduled delivery and production BackPressure
 emission remains gated to later Slice 6 stages. The Stage 0 input
 documents are
@@ -1290,24 +1291,25 @@ authorization plane, not reusable public bearer secrets.
    scheduled messages without replaying raw chain history; release
    checker validates all Stage 1–6 invariants.
 
-9. ⏳ **Stage 8 — system-contract dogfood and production gate.**
+9. ✅ **Stage 8 — system-contract dogfood and production gate.**
 
-   - ⏳ Apply scheduled messages + supervision + structured failures to
-     at least one official system contract or create a minimal
-     `crypto/smartcont/slice6-dogfood.tol` supervised service contract.
-   - ⏳ Add emulator/conformance end-to-end tests for the dogfood contract.
-   - ⏳ Run full verification suite.
-   - ⏳ Add `doc/slice-6-activation-plan.md`: activation height (TBD —
+   - ✅ Add `crypto/smartcont/slice6-dogfood.tol`, a repo-side
+     supervised workchain-local service surrogate that combines scheduled
+     heartbeat actions, monitor DOWN notifications, supervision restart
+     intensity, and structured delivery/dead-letter failure records.
+   - ✅ Add tol-tester and emulator/conformance tests for the dogfood
+     service.
+   - ✅ Run full practical verification suite.
+   - ✅ Add `doc/slice-6-activation-plan.md`: activation height (TBD —
      pending production deployment), capability flags, rollback plan.
-   - ⏳ Update roadmap: ✅ repo-side complete; ⏳ production activation
+   - ✅ Update roadmap: repo-side complete; production activation
      pending.
-   - ⏳ Commit + push:
+   - ✅ Commit + push:
      *Slice 6 Stage 8 system contract dogfood*
 
-   Exit criterion: Slice 6 success criterion in §9 is met repo-side
-   (supervision, scheduled messages, structured errors used by one
-   official system contract); production activation is a separate
-   deployment step recorded in `doc/slice-6-activation-plan.md`.
+   Exit criterion: Slice 6 success criterion in §9 is met repo-side by
+   `crypto/smartcont/slice6-dogfood.tol`; production activation remains
+   a separate deployment step recorded in `doc/slice-6-activation-plan.md`.
 
 ## 7. Out of scope at each phase
 
@@ -1712,6 +1714,19 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r50 (Slice 6 Stage 8 system contract dogfood)
+
+- Added `crypto/smartcont/slice6-dogfood.tol`, a repo-side supervised
+  workchain-local service surrogate that uses scheduled heartbeat
+  actions, monitor DOWN notifications, restart-intensity supervision,
+  and structured dead-letter failure records together.
+- Added Tol and emulator dogfood tests for scheduled handles, funded and
+  unfunded dead-letter behavior, monitor notification hashing, restart
+  storm escalation, and structured failure-record hashes.
+- Added `doc/slice-6-activation-plan.md` with production activation
+  height marked `TBD`, `extra_flags` bit 3 still disabled, BackPressure
+  emission still gated, and rollback requirements for future deployment.
 
 ### r49 (Slice 6 Stage 7 release package)
 

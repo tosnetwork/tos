@@ -1,0 +1,243 @@
+// Slice 6 repo-side system-service dogfood surrogate.
+//
+// This is not a production workchain deployment. It is a compact service-shaped
+// contract module that uses the approved Slice 6 repo-side surfaces together:
+// scheduled messages, monitor DOWN notifications, supervision restart
+// intensity, and structured delivery/dead-letter failure records.
+tol 1.3
+
+import "@stdlib/time"
+import "@stdlib/schedule"
+import "@stdlib/supervision"
+import "@stdlib/delivery"
+
+const SLICE6_DOGFOOD_FAILURE_CHILD_DOWN: uint16 = 0x1601
+const SLICE6_DOGFOOD_PHASE_RECOVERY: uint8 = 6
+const SLICE6_DOGFOOD_QUERY_ID: uint64 = 0x6001
+
+struct Slice6DogfoodAddresses {
+    service: address
+    child: address
+    supervisor: address
+}
+
+struct Slice6DogfoodBudgets {
+    timer: Cell<Slice6TimerBudget>
+    monitor: Cell<Slice6MonitorBudget>
+    recovery: Cell<Slice6RecoveryBudget>
+    deadLetter: Cell<Slice6DeadLetterBudget>
+}
+
+struct Slice6DogfoodConfig {
+    addresses: Cell<Slice6DogfoodAddresses>
+    budgets: Cell<Slice6DogfoodBudgets>
+}
+
+struct Slice6DogfoodState {
+    supervisor: Cell<Slice6SupervisorState>
+    deadLetters: Cell<Slice6DeadLetterSink>
+    lastScheduledHandle: uint256
+    lastMonitorDownHash: uint256
+    lastFailureRecordHash: uint256
+    finalFailure: bool
+}
+
+struct Slice6DogfoodFailureRecord {
+    deliveryId: uint256
+    monitorDownHash: uint256
+    recoveryMessageHash: uint256
+    deadLetterNonce: uint64?
+    failureClass: uint8
+    failureCode: uint16
+    createdAtMcSeqno: uint32
+}
+
+fun slice6DogfoodServiceAddress(): address {
+    return address("0:1212121212121212121212121212121212121212121212121212121212121212");
+}
+
+fun slice6DogfoodChildAddress(): address {
+    return address("0:3434343434343434343434343434343434343434343434343434343434343434");
+}
+
+fun slice6DogfoodSupervisorAddress(): address {
+    return address("0:5656565656565656565656565656565656565656565656565656565656565656");
+}
+
+fun slice6DogfoodAddresses(): Slice6DogfoodAddresses {
+    return Slice6DogfoodAddresses {
+        service: slice6DogfoodServiceAddress(),
+        child: slice6DogfoodChildAddress(),
+        supervisor: slice6DogfoodSupervisorAddress(),
+    };
+}
+
+fun slice6DogfoodBudgets(maxRestarts: uint16): Slice6DogfoodBudgets {
+    val addrs = slice6DogfoodAddresses();
+    return Slice6DogfoodBudgets {
+        timer: slice6TimerBudget(4, 512, 1, 1000, 8).toCell(),
+        monitor: slice6MonitorBudget(4, 512, 1, 8).toCell(),
+        recovery: slice6RecoveryBudget(maxRestarts, 20, 10, 1000, 1000000000, addrs.supervisor).toCell(),
+        deadLetter: slice6DeadLetterBudget(4, 100, 1023, 1, 8).toCell(),
+    };
+}
+
+fun slice6DogfoodConfig(maxRestarts: uint16 = 2): Slice6DogfoodConfig {
+    return Slice6DogfoodConfig {
+        addresses: slice6DogfoodAddresses().toCell(),
+        budgets: slice6DogfoodBudgets(maxRestarts).toCell(),
+    };
+}
+
+fun Slice6DogfoodConfig.addressesValue(self): Slice6DogfoodAddresses {
+    return self.addresses.load();
+}
+
+fun Slice6DogfoodConfig.budgetsValue(self): Slice6DogfoodBudgets {
+    return self.budgets.load();
+}
+
+fun slice6DogfoodHeartbeatBody(): cell {
+    return beginCell()
+        .storeUint(0x53443601, 32)
+        .storeUint(SLICE6_DOGFOOD_QUERY_ID, 64)
+        .endCell();
+}
+
+fun slice6DogfoodInitialState(config: Slice6DogfoodConfig): Slice6DogfoodState {
+    val addrs = config.addressesValue();
+    var supervisor = slice6SupervisorState(4);
+    supervisor.addChild(slice6ChildSpec(1, addrs.child, 0, SLICE6_RESTART_ONE_FOR_ONE, 100));
+    return Slice6DogfoodState {
+        supervisor: supervisor.toCell(),
+        deadLetters: slice6NewDeadLetterSink().toCell(),
+        lastScheduledHandle: 0,
+        lastMonitorDownHash: 0,
+        lastFailureRecordHash: 0,
+        finalFailure: false,
+    };
+}
+
+fun slice6DogfoodScheduleHeartbeatAction(
+    config: Slice6DogfoodConfig,
+    trustedCurrentMcSeqno: uint32
+): Slice6ScheduledActionV1 {
+    val addrs = config.addressesValue();
+    val budgets = config.budgetsValue();
+    return sendAfterBlocks(
+        budgets.timer.load(),
+        addrs.service,
+        slice6DogfoodHeartbeatBody(),
+        trustedCurrentMcSeqno,
+        20,
+        200,
+        1000000000,
+        0,
+        addrs.supervisor
+    );
+}
+
+fun slice6DogfoodScheduleHeartbeatHandle(
+    config: Slice6DogfoodConfig,
+    trustedCurrentMcSeqno: uint32,
+    originTxLt: uint64,
+    originTxHash: uint256,
+    originActionIndex: uint16
+): uint256 {
+    val addrs = config.addressesValue();
+    val action = slice6DogfoodScheduleHeartbeatAction(config, trustedCurrentMcSeqno);
+    return slice6ScheduledHandle(originTxLt, originTxHash, originActionIndex, addrs.supervisor, action);
+}
+
+fun Slice6DogfoodState.recordScheduledHandle(mutate self, handle: uint256): void {
+    self.lastScheduledHandle = handle;
+}
+
+fun slice6DogfoodMonitorDown(
+    config: Slice6DogfoodConfig,
+    originalMessageHash: uint256?,
+    createdAtMcSeqno: uint32
+): Slice6MonitorDownNotification {
+    val addrs = config.addressesValue();
+    val budgets = config.budgetsValue();
+    val reg = slice6MonitorRegistration(addrs.child, addrs.supervisor, addrs.supervisor, SLICE6_DOGFOOD_QUERY_ID, budgets.monitor.load());
+    return slice6BuildMonitorDownNotification(
+        reg,
+        DELIVERY_FAILURE_CLASS_PERMANENT,
+        SLICE6_DOGFOOD_FAILURE_CHILD_DOWN,
+        SLICE6_DOGFOOD_PHASE_RECOVERY,
+        originalMessageHash,
+        createdAtMcSeqno as uint64,
+        null,
+        budgets.monitor.load()
+    );
+}
+
+fun slice6DogfoodDeliveryId(
+    config: Slice6DogfoodConfig,
+    originalMessageHash: uint256,
+    nowMcSeqno: uint32
+): uint256 {
+    val addrs = config.addressesValue();
+    return slice6DeliveryIdInput(
+        slice6DeliveryOrigin(1, originalMessageHash, 0, SLICE6_ATTEMPT_SUPERVISOR_RECOVERY, 0),
+        slice6DeliveryRoute(addrs.supervisor, addrs.child, 0, 0),
+        slice6DeliveryPayload(
+            slice6CurrencyCollection(1000000000),
+            null,
+            slice6DogfoodHeartbeatBody().hash(),
+            nowMcSeqno,
+            100
+        )
+    ).deliveryId();
+}
+
+fun Slice6DogfoodState.handleChildDown(
+    mutate self,
+    config: Slice6DogfoodConfig,
+    originalMessageHash: uint256,
+    nowMcSeqno: uint32,
+    escrowFunded: bool
+): Slice6DogfoodFailureRecord {
+    val addrs = config.addressesValue();
+    val budgets = config.budgetsValue();
+    val note = slice6DogfoodMonitorDown(config, originalMessageHash, nowMcSeqno);
+    var supervisor = self.supervisor.load();
+    var child = supervisor.getChild(1);
+    val restarted = child.recordRestart(budgets.recovery.load(), nowMcSeqno, 500, 10);
+    supervisor.children.set(child.childId, child);
+    if (!restarted) {
+        supervisor.emitEscalation();
+    }
+    self.supervisor = supervisor.toCell();
+    self.finalFailure = supervisor.finalFailure;
+
+    val recovery = slice6BuildRecoveryMessage(child, slice6DogfoodHeartbeatBody(), 10);
+    val deliveryId = slice6DogfoodDeliveryId(config, originalMessageHash, nowMcSeqno);
+    var sink = self.deadLetters.load();
+    val added = sink.addRecord(
+        budgets.deadLetter.load(),
+        deliveryId,
+        DELIVERY_FAILURE_CLASS_PERMANENT,
+        SLICE6_DOGFOOD_FAILURE_CHILD_DOWN,
+        SLICE6_DOGFOOD_PHASE_RECOVERY,
+        slice6RouteHash(0, 0, 0),
+        null,
+        escrowFunded,
+        nowMcSeqno
+    );
+    self.deadLetters = sink.toCell();
+
+    val record = Slice6DogfoodFailureRecord {
+        deliveryId,
+        monitorDownHash: note.toCell().hash(),
+        recoveryMessageHash: recovery.toCell().hash(),
+        deadLetterNonce: added ? sink.nextNonce - 1 : null,
+        failureClass: DELIVERY_FAILURE_CLASS_PERMANENT,
+        failureCode: SLICE6_DOGFOOD_FAILURE_CHILD_DOWN,
+        createdAtMcSeqno: nowMcSeqno,
+    };
+    self.lastMonitorDownHash = record.monitorDownHash;
+    self.lastFailureRecordHash = record.toCell().hash();
+    return record;
+}

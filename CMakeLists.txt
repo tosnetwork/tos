@@ -933,6 +933,8 @@ add_executable(test-emulator
         emulator/test/slice-6-stage5-supervision-fixtures.cpp
         # Slice 6 Stage 6 capability-grant predicate fixtures.
         emulator/test/slice-6-stage6-capability-fixtures.cpp
+        # Slice 6 Stage 8 system-service dogfood predicate fixtures.
+        emulator/test/slice-6-stage8-dogfood-fixtures.cpp
         # Slice 5 receive-context harness for production receive handlers.
         emulator/test/slice-5-receive-context-fixture.cpp
         emulator/test/tos-report-bond-oracle-fixture.cpp)
