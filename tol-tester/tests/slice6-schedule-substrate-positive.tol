@@ -172,6 +172,35 @@ fun test_force_expiry_on_escrow_depletion(): int {
     return 1;
 }
 
+@method_id(643)
+fun test_cancel_already_canceled(): int {
+    var entry = schedDefaultEntry();
+    assert(entry.cancel(schedCancel()) == SLICE6_SCHEDULE_CANCEL_OK) throw 6431;
+    val result = entry.cancel(schedCancel());
+    assert(result == SLICE6_SCHEDULE_CANCEL_ALREADY_CANCELED) throw 6432;
+    assert(entry.canceled && !entry.pending) throw 6433;
+    return result;
+}
+
+@method_id(644)
+fun test_schedule_rejects_unsafe_send_mode(): int {
+    try {
+        _ = slice6ScheduledAction(
+            schedTarget(),
+            schedBody(44),
+            1000,
+            SEND_MODE_CARRY_ALL_BALANCE,
+            100,
+            20,
+            schedCancel(),
+            schedDeadLetter()
+        );
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 631 | | 120
 @testcase | 632 | | 4098
@@ -185,4 +214,6 @@ fun test_force_expiry_on_escrow_depletion(): int {
 @testcase | 640 | | 3
 @testcase | 641 | | 4
 @testcase | 642 | | 1
+@testcase | 643 | | 5
+@testcase | 644 | | 4097
  */

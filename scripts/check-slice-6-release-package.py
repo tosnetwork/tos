@@ -66,11 +66,20 @@ def check_required_surface() -> None:
     for needle in [
         "Slice6ScheduledActionV1",
         "slice6ScheduledHandle",
+        "SLICE6_SCHEDULE_SAFE_SEND_MODE_MASK",
+        "slice6RequireSafeSendMode",
         "SLICE6_SCHEDULE_CANCEL_NOT_AUTHORIZED",
+        "SLICE6_SCHEDULE_CANCEL_ALREADY_CANCELED",
         "forceExpireIfEscrowDepleted",
     ]:
         if needle not in schedule:
             fail(f"schedule stdlib missing {needle}")
+    for needle in [
+        "(sendMode & SLICE6_SCHEDULE_SAFE_SEND_MODE_MASK) != sendMode",
+        "slice6RequireSafeSendMode(sendMode)",
+    ]:
+        if needle not in schedule:
+            fail(f"schedule stdlib missing safe send-mode validation: {needle}")
 
     for needle in [
         "Slice6TimerBudget",

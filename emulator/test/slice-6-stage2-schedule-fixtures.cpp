@@ -16,9 +16,11 @@
 namespace {
 
 constexpr td::uint8 kCancelOk = 0;
+constexpr td::uint8 kCancelUnknown = 1;
 constexpr td::uint8 kCancelNotAuthorized = 2;
 constexpr td::uint8 kCancelDelivered = 3;
 constexpr td::uint8 kCancelExpired = 4;
+constexpr td::uint8 kCancelAlreadyCanceled = 5;
 constexpr td::uint32 kUint32Max = 0xffffffffu;
 
 td::uint32 deliver_by(td::uint32 not_before, td::uint32 expire_after) {
@@ -53,6 +55,12 @@ struct ScheduledState {
     }
     if (expired) {
       return kCancelExpired;
+    }
+    if (canceled) {
+      return kCancelAlreadyCanceled;
+    }
+    if (!pending) {
+      return kCancelUnknown;
     }
     if (caller != cancel_authority) {
       return kCancelNotAuthorized;
@@ -111,6 +119,15 @@ TEST(Slice6Stage2ScheduleFixtures, CancellationAuthorizationAndRaceStates) {
   expired.pending = false;
   expired.expired = true;
   CHECK(expired.cancel(/*caller=*/1) == kCancelExpired);
+
+  ScheduledState canceled;
+  CHECK(canceled.cancel(/*caller=*/1) == kCancelOk);
+  CHECK(canceled.cancel(/*caller=*/1) == kCancelAlreadyCanceled);
+  CHECK(canceled.cancel(/*caller=*/2) == kCancelAlreadyCanceled);
+
+  ScheduledState unknown;
+  unknown.pending = false;
+  CHECK(unknown.cancel(/*caller=*/1) == kCancelUnknown);
 }
 
 TEST(Slice6Stage2ScheduleFixtures, DeadLetterDoesNotInheritCancellationAuthority) {

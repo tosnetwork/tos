@@ -14,6 +14,10 @@ const SLICE6_SCHEDULE_CANCEL_ALREADY_EXPIRED: uint8 = 4
 const SLICE6_SCHEDULE_CANCEL_ALREADY_CANCELED: uint8 = 5
 
 const SLICE6_SCHEDULE_UINT32_MAX = 0xffffffff
+// Scheduled delivery may only use ordinary send, pay-fees-separately, and
+// bounce-on-action-fail. This rejects IGNORE_ERRORS, DESTROY, carry-all-value,
+// carry-all-balance, fee-estimation, and any future unknown mode bits.
+const SLICE6_SCHEDULE_SAFE_SEND_MODE_MASK: uint16 = 17
 
 struct Slice6ScheduledActionV1 {
     target: address
@@ -36,6 +40,12 @@ struct Slice6ScheduledEntryV1 {
     canceled: bool
 }
 
+fun slice6RequireSafeSendMode(sendMode: uint16): void {
+    if ((sendMode & SLICE6_SCHEDULE_SAFE_SEND_MODE_MASK) != sendMode) {
+        throw SLICE6_SCHEDULE_THROW_INVALID_ACTION;
+    }
+}
+
 fun slice6ScheduledAction(
     target: address,
     body: cell,
@@ -49,7 +59,8 @@ fun slice6ScheduledAction(
     if (expireAfterBlocks == 0) {
         throw SLICE6_SCHEDULE_THROW_INVALID_ACTION;
     }
-    slice6ScheduleDeliverBy(notBeforeMcSeqno, expireAfterBlocks);
+    slice6RequireSafeSendMode(sendMode);
+    _ = slice6ScheduleDeliverBy(notBeforeMcSeqno, expireAfterBlocks);
     return Slice6ScheduledActionV1 {
         target,
         body,
