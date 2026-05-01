@@ -14,6 +14,21 @@ when adding custom Jetton operations.
 Keep TEP-74 bodies raw when preserving `any_address` fields or exact
 inline/ref body placement matters.
 
+The reference minter rejects `addr_none` in `ChangeAdmin`. Treat admin
+renouncement as a separate explicit operation in custom contracts; do not
+reuse `ChangeAdmin(addr_none)` as an accidental one-way lock.
+
+`MintRequest.queryId` is a correlation id, not a built-in replay nonce.
+The reference minter preserves the TEP-74 storage layout and therefore
+does not store consumed mint query ids. If production mint retries must
+be idempotent, add an explicit storage-backed mint nonce in the custom
+contract or enforce monotonic admin sequence numbers off-chain.
+
+`jettonMinterErrorForThrow` and `jettonWalletErrorForThrow` are mapping
+helpers for tests, off-chain decoding, and custom reply paths. The
+reference contracts keep legacy throw/bounce behavior for compatibility;
+`@unknown_throw` does not emit `OP_ERROR` automatically.
+
 ## Adding Custom Constraints
 
 To add a supply cap, define a local error code constant (stdlib uses 73–75)

@@ -64,6 +64,11 @@
       "class": "Authorization"
     },
     {
+      "name": "JETTON_MINTER_FUNC_THROW_INVALID_ADMIN",
+      "value": 75,
+      "class": "Protocol"
+    },
+    {
       "name": "JETTON_WALLET_FUNC_THROW_OWNER_REQUIRED",
       "value": 705,
       "class": "Authorization"
@@ -92,6 +97,7 @@
   "public_errors": [
     "JETTON_STDLIB_ERROR_ADMIN_REQUIRED",
     "JETTON_STDLIB_ERROR_BURN_SENDER_NOT_WALLET",
+    "JETTON_STDLIB_ERROR_INVALID_ADMIN",
     "JETTON_STDLIB_ERROR_UNKNOWN_OPCODE",
     "JETTON_STDLIB_WALLET_ERROR_WRONG_WORKCHAIN",
     "JETTON_STDLIB_WALLET_ERROR_OWNER_REQUIRED",
@@ -153,6 +159,8 @@
   },
   "wire_compatibility_exceptions": [
     "Jetton MsgAddress fields stay any_address and raw builders are preserved instead of createMessage() so external/none MsgAddress values are not narrowed",
-    "Duplicate query_id is deterministic at the helper layer; Jetton replay protection is not introduced by Slice 3 Stage 3"
+    "Duplicate query_id is deterministic at the helper layer; Jetton replay protection is not introduced by Slice 3 Stage 3",
+    "MintRequest remains non-idempotent to preserve TEP-74 storage layout; admin retry nonce discipline is off-chain unless a custom contract adds storage-backed mint nonces",
+    "ChangeAdmin rejects addr_none; intentional renouncement must use a custom explicit operation"
   ]
 }

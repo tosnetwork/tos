@@ -34,9 +34,9 @@ sequences the work lives at [`doc/roadmap.md`](roadmap.md).
 - Named `extra_flags` constants
   (`EXTRA_FLAGS_NEW_BOUNCE`, `EXTRA_FLAGS_FULL_BOUNCE_BODY`,
   `EXTRA_FLAGS_RICH_BOUNCE`, `EXTRA_FLAGS_VALID_MASK`) replacing the
-  three hard-coded `& 3` magic literals in
-  `crypto/block/transaction.cpp` and `tol/send-message-api.cpp`. The
-  mask itself stays at `& 3`.
+  independent `& 3` magic masks in transaction/validation code and
+  `tol/send-message-api.cpp`. The mask value itself stays `3` until a
+  later global-version amendment activates reserved bits.
 - Three reference-contract migrations: `jetton-minter`,
   `jetton-wallet`, and `wallet-v5`, each rewritten in Tol against the
   new stdlib while keeping its FunC source in place as the canonical

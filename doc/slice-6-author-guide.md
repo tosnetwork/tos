@@ -45,6 +45,14 @@ Rules for production contracts:
 - Do not use public bearer secrets. Capability handles are public ids;
   authorization must be sender-bound, signature-bound, stateful, or
   single-use.
+- Size every capability registry dimension explicitly:
+  active grants, revoked handles, revocation epochs, consumed nonces,
+  and tracked handle-use counters. `maxUses` is enforced by the
+  registry; consumed nonces and use counters are bounded storage, not
+  free append-only logs.
+- Treat `revokeHandle(handle, 0)` as permanent revocation. Repeating a
+  revocation may only extend the revocation horizon; it must not shorten
+  or undo an earlier revocation.
 - Treat `one_for_all` and `rest_for_one` as best-effort non-atomic
   recovery sequences. Each child recovery is a separate transaction.
 

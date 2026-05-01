@@ -22,7 +22,21 @@ fun test_burn_sender_error(): int {
     return err.errorCode;
 }
 
+@method_id(103)
+fun test_invalid_admin_error(): int {
+    val err = jettonMinterErrorForThrow(
+        FUNC_THROW_INVALID_ADMIN,
+        OP_CHANGE_ADMIN,
+        13
+    );
+    assert (err.queryId == 13) throw 121;
+    assert (err.originalOp == OP_CHANGE_ADMIN) throw 122;
+    assert (err.errorClass == ErrorClass.Protocol) throw 123;
+    return err.errorCode;
+}
+
 /**
 @testcase | 101 | | 1097
 @testcase | 102 | | 1098
+@testcase | 103 | | 1099
  */

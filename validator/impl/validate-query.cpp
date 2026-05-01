@@ -32,6 +32,7 @@
 #include "td/utils/format.h"
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
+#include "tol/extra-flags-constants.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
 #include "vm/cells/MerkleUpdate.h"
@@ -62,6 +63,9 @@ namespace tos {
 namespace validator {
 using td::Ref;
 using namespace std::literals::string_literals;
+
+static bool extra_flags_within_valid_mask(const block::gen::CommonMsgInfo::Record_int_msg_info& info,
+                                          int global_version);
 
 /**
  * Converts the error context to a string representation to show it in case of validation error.
@@ -3842,6 +3846,10 @@ bool ValidateQuery::check_imported_message(Ref<vm::Cell> msg_env) {
     return reject_query("cannot unpack MsgEnvelope of an imported internal message with hash "s +
                         (env.msg.not_null() ? env.msg->get_hash().to_hex() : "(unknown)"));
   }
+  if (!extra_flags_within_valid_mask(info, global_version_)) {
+    return reject_query("imported internal message with hash "s + env.msg->get_hash().to_hex() +
+                        " has invalid reserved extra_flags");
+  }
   if (!tos::shard_contains(shard_, next_prefix)) {
     return reject_query("imported message with hash "s + env.msg->get_hash().to_hex() + " has next hop address " +
                         next_prefix.to_str() + "... not in this shard");
@@ -4067,6 +4075,10 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
     if (!tlb::unpack_cell_inexact(msg, info)) {
       return reject_query("InMsg with key "s + key.to_hex(256) +
                           " is not a msg_import_ext$000, but it does not refer to an inbound internal message");
+    }
+    if (!extra_flags_within_valid_mask(info, global_version_)) {
+      return reject_query("inbound internal message with hash "s + key.to_hex(256) +
+                          " has invalid reserved extra_flags");
     }
     // extract source, current, next hop and destination address prefixes
     dest_prefix = block::tlb::t_MsgAddressInt.get_prefix(info.dest);
@@ -5598,6 +5610,16 @@ std::unique_ptr<block::Account> ValidateQuery::CheckAccountTxs::unpack_account(t
 static td::RefInt256 get_ihr_fee(const block::gen::CommonMsgInfo::Record_int_msg_info& info, int global_version) {
   // Legacy: extra_flags was previously ihr_fee
   return global_version >= 12 ? td::zero_refint() : block::tlb::t_Tomis.as_integer(std::move(info.extra_flags));
+}
+
+static bool extra_flags_within_valid_mask(const block::gen::CommonMsgInfo::Record_int_msg_info& info,
+                                          int global_version) {
+  if (global_version < 12) {
+    return true;
+  }
+  auto extra_flags = block::tlb::t_Tomis.as_integer(info.extra_flags);
+  return extra_flags.not_null() &&
+         td::cmp(extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK), extra_flags) == 0;
 }
 
 /**

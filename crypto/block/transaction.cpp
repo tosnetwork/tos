@@ -28,6 +28,7 @@
 #include "td/utils/bits.h"
 #include "td/utils/uint128.h"
 #include "tos/tos-shard.h"
+#include "tol/extra-flags-constants.h"
 #include <cstring>
 #include "vm/vm.h"
 
@@ -65,6 +66,11 @@ bool is_uno_workchain(tos::WorkchainId wc) {
 /// branch — see `prepare_compute_phase` §Uno Workchain dispatch).
 bool has_custom_compute_phase(tos::WorkchainId wc) {
   return is_evm_workchain(wc) || is_uno_workchain(wc);
+}
+
+bool extra_flags_within_valid_mask(const td::RefInt256& extra_flags) {
+  return extra_flags.not_null() &&
+         td::cmp(extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK), extra_flags) == 0;
 }
 
 /**
@@ -924,7 +930,7 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
       if (cfg->global_version >= 12) {
         ihr_fee = td::zero_refint();
         in_msg_extra_flags = tlb::t_Tomis.as_integer(in_msg_info.extra_flags);
-        if (in_msg_extra_flags.is_null()) {
+        if (!extra_flags_within_valid_mask(in_msg_extra_flags)) {
           return false;
         }
         new_bounce_format = in_msg_extra_flags->get_bit(0);
@@ -1823,7 +1829,7 @@ bool Transaction::run_precompiled_contract(const ComputePhaseConfig& cfg, precom
   LOG(INFO) << "Running precompiled smart contract " << impl.get_name() << ": exit_code=" << result.exit_code
             << " accepted=" << result.accepted << " success=" << cp.success << " gas_used=" << gas_usage
             << " time=" << time_tvm.real << "s cpu_time=" << time_tvm.cpu;
-  if (cp.accepted & use_msg_state) {
+  if (cp.success && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
   }
@@ -2200,7 +2206,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   cp.gas_used = std::min<long long>(gas.gas_consumed(), gas.gas_limit);
   cp.accepted = (gas.gas_credit == 0);
   cp.success = (cp.accepted && vm.committed());
-  if (cp.accepted & use_msg_state) {
+  if (cp.success && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
   }
@@ -2946,17 +2952,7 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
     if (cfg.global_version >= 12) {
       td::RefInt256 extra_flags = tlb::t_Tomis.as_integer(info.extra_flags);
       // Synchronized constant — see doc/tos-message-policy.md §3.4 and §10.1.
-      // The extra_flags mask is duplicated across THREE sites that must be
-      // updated in lockstep when Slice 4 (bit 2) or Slice 6 (bit 3) widens
-      // the mask:
-      //   1. crypto/block/transaction.cpp — this site (action-phase outbound
-      //      check, & td::make_refint(3))
-      //   2. crypto/block/transaction.cpp — sibling site in
-      //      prepare_bounce_phase() outbound builder (& td::make_refint(3))
-      //   3. tol/extra-flags-constants.h — see EXTRA_FLAGS_VALID_MASK
-      // and the matching Tol-stdlib constants in
-      //   crypto/smartcont/tol-stdlib/common.tol.
-      if (extra_flags.is_null() || td::cmp(extra_flags & td::make_refint(3), extra_flags) != 0) {
+      if (!extra_flags_within_valid_mask(extra_flags)) {
         LOG(DEBUG) << "invalid extra_flags in a proposed outbound message";
         return check_skip_invalid(45);
       }
@@ -3639,19 +3635,8 @@ bool Transaction::prepare_bounce_phase(const ActionPhaseConfig& cfg) {
               && cb.append_cellslice_bool(info.src)   // src:MsgAddressInt
               && cb.append_cellslice_bool(info.dest)  // dest:MsgAddressInt
               && msg_balance.store(cb)                // value:CurrencyCollection
-              // Synchronized constant — see doc/tos-message-policy.md §3.4 and §10.1.
-              // The extra_flags mask is duplicated across THREE sites that must be
-              // updated in lockstep when Slice 4 (bit 2) or Slice 6 (bit 3) widens
-              // the mask:
-              //   1. crypto/block/transaction.cpp — this site
-              //      (prepare_bounce_phase() outbound builder, & td::make_refint(3))
-              //   2. crypto/block/transaction.cpp — sibling site in the
-              //      action-phase outbound check (& td::make_refint(3))
-              //   3. tol/extra-flags-constants.h — see EXTRA_FLAGS_VALID_MASK
-              // and the matching Tol-stdlib constants in
-              //   crypto/smartcont/tol-stdlib/common.tol.
               && block::tlb::t_Tomis.store_integer_ref(
-                     cb, in_msg_extra_flags & td::make_refint(3))  // extra_flags:(VarUInteger 16)
+                     cb, in_msg_extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK))  // extra_flags:(VarUInteger 16)
               && block::tlb::t_Tomis.store_long(cb, bp.fwd_fees)   // fwd_fee:Tomis
               && cb.store_long_bool(info.created_lt, 64)           // created_lt:uint64
               && cb.store_long_bool(info.created_at, 32)           // created_at:uint32

@@ -91,10 +91,18 @@ fun Slice6TimerBudget.requireHorizon(
     notBeforeMcSeqno: uint32,
     expireAfterBlocks: uint32
 ): void {
+    self.requireEnabled();
+    if (expireAfterBlocks == 0) {
+        throw SLICE6_TIME_THROW_INVALID_BUDGET;
+    }
     if (notBeforeMcSeqno < trustedCurrentMcSeqno) {
         throw SLICE6_TIME_THROW_PAST_SEQNO;
     }
-    val span = notBeforeMcSeqno - trustedCurrentMcSeqno + expireAfterBlocks;
+    val delayBlocks = notBeforeMcSeqno - trustedCurrentMcSeqno;
+    if (delayBlocks > SLICE6_SCHEDULE_UINT32_MAX - expireAfterBlocks) {
+        throw SLICE6_TIME_THROW_HORIZON;
+    }
+    val span = delayBlocks + expireAfterBlocks;
     if (span > self.maxFutureHorizonBlocks) {
         throw SLICE6_TIME_THROW_HORIZON;
     }

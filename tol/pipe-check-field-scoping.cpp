@@ -66,6 +66,8 @@ struct FieldScopingContext {
   StructPtr storage_struct = nullptr;
   // the state being analysed for this receiver, or empty if non-state-bearing receiver
   std::string current_state;
+  // true while analysing an @deploy body, which runs before c4/storage exists
+  bool in_deploy_receiver = false;
   // map: local-var name -> the @on(...) state-set tainting that name
   // a value of {} (empty vector) means "untainted". We only insert entries for tainted vars.
   // shadowing within nested blocks is approximated by assignment (Stage 3 conservative).
@@ -185,10 +187,19 @@ static std::vector<std::string> check_storage_field_access(V<ast_dot_access> dot
     return {};
   }
   StructFieldPtr field = ctx.storage_struct->find_field(field_name);
-  if (!field || !field->has_on_states_annotation()) {
+  if (!field) {
     return {};
   }
-  if (!ctx.current_state.empty() && !state_in_list(field->on_states, ctx.current_state)) {
+  if (ctx.in_deploy_receiver) {
+    err("storage field `{}` may not be read inside an `@deploy receive(...)` body "
+        "because deployment runs before storage exists. See doc/tos-language-syntax-policy.md §3.6.",
+        field_name)
+      .collect(dot);
+    return field->has_on_states_annotation() ? field->on_states : std::vector<std::string>{};
+  }
+  if (!field->has_on_states_annotation()) {
+    return {};
+  } else if (!ctx.current_state.empty() && !state_in_list(field->on_states, ctx.current_state)) {
     err("storage field `{}` is annotated `@on({})` and may not be read inside a `receive(...) on {}` body. "
         "See doc/tos-language-syntax-policy.md §3.4.",
         field_name, format_state_list(field->on_states), ctx.current_state)
@@ -647,9 +658,17 @@ static void check_state_contract(V<ast_contract_declaration> contract) {
   for (int i = 0; i < contract->get_num_receives(); ++i) {
     V<ast_receive_block> receive = contract->get_receive(i);
     if (!receive->has_state_clause()) {
+      if (receive->is_deploy) {
+        ctx.current_state.clear();
+        ctx.in_deploy_receiver = true;
+        ctx.tainted_locals.clear();
+        check_block(receive->get_body(), ctx);
+        ctx.in_deploy_receiver = false;
+      }
       continue;     // already diagnosed by pipe-check-state-reachability
     }
     ctx.current_state = static_cast<std::string>(receive->state_identifier->name);
+    ctx.in_deploy_receiver = false;
     ctx.tainted_locals.clear();
     check_block(receive->get_body(), ctx);
   }

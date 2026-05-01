@@ -24,12 +24,14 @@ The current green gates are:
 | Full tol-tester | 629/629 tests passing, gas 5248281 |
 | Emulator fixtures | 26 test(s) passed |
 | Slice 3 replay runner | 2 Slice3Replay emulator tests passed |
-| Slice 1 Tol gas | Jetton minter 14303, Jetton wallet 33791, wallet-v5 39313 |
+| Slice 1 Tol gas | Jetton minter 17122, Jetton wallet 33791, wallet-v5 39313 |
 | FunC-vs-Tol parity | Jetton minter 0.810, Jetton wallet 0.483, wallet-v5 1.311 <= wallet threshold 1.35 |
 
 Stage 3 and Stage 5 preserved the checked reference Tol BoC hashes for
-Jetton and wallet-v5 after stdlib wrapper migration. Slice 3 adds no
-TL-B constructor, TVM opcode, or wire-format change.
+Jetton and wallet-v5 after stdlib wrapper migration. PR #6 later
+recaptured the Jetton minter Tol baseline after adding the explicit
+`addr_none` admin rejection; this is a reference-contract safety
+change, not a TL-B constructor, TVM opcode, or wire-format change.
 
 ## Escape Hatches
 

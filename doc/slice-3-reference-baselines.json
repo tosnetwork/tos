@@ -31,16 +31,16 @@
       "focused_tol_tests": {
         "pattern": "jetton-minter",
         "expected_tests": 3,
-        "baseline_gas": 14303
+        "baseline_gas": 17122
       },
       "bytecode": {
         "func_cells": 11,
         "tol_cells": 9,
         "tol_over_func_cell_ratio": 0.82,
         "func_boc_bytes": 509,
-        "tol_boc_bytes": 483,
+        "tol_boc_bytes": 494,
         "func_boc_sha256": "86c39a4617dd924ea246fd0d30668e5704351a04156c40c67a6450da88ae16c2",
-        "tol_boc_sha256": "ec48d61cee436991b6248c58631e86d7241b9fe487ca3250859ad28cb363823c"
+        "tol_boc_sha256": "9de1902d24881d9ac35fa88347c27cf9929f96dbc0a2b2b90d0150c4049f6e85"
       },
       "func_vs_tol_gas": {
         "func_gas_baseline": 3468,

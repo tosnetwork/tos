@@ -46,8 +46,13 @@ fun capCtxDefault(): Slice6CapabilityUseContext {
     return capCtx(capGrantee(), capTarget(), 0x43415001, 100, 20);
 }
 
-fun capRegistry(maxRevoked: uint16 = 2, maxEpochs: uint16 = 2): Slice6CapabilityRegistry {
-    var reg = slice6CapabilityRegistry(4, maxRevoked, maxEpochs);
+fun capRegistry(
+    maxRevoked: uint16 = 2,
+    maxEpochs: uint16 = 2,
+    maxConsumedNonces: uint16 = 64,
+    maxTrackedUses: uint16 = 64
+): Slice6CapabilityRegistry {
+    var reg = slice6CapabilityRegistry(4, maxRevoked, maxEpochs, maxConsumedNonces, maxTrackedUses);
     reg.registerGrant(capGrant());
     return reg;
 }
@@ -197,6 +202,61 @@ fun test_public_secret_rejected(): int {
     return 0;
 }
 
+@method_id(714)
+fun test_public_secret_zero_allowed(): int {
+    slice6RejectPublicCapabilitySecret(0);
+    return 1;
+}
+
+@method_id(715)
+fun test_consumed_nonce_storage_full_rejected(): int {
+    var reg = capRegistry(2, 2, 1, 64);
+    reg.requireCapability(capGrant(), capConstraints(), capCtxDefault(), true, true);
+    val secondGrant = slice6CapabilityGrant(capIssuer(), capTarget(), capGrantee(), null, 0x43415001, capConstraints(), 10, 100, 8, 2);
+    reg.registerGrant(secondGrant);
+    try {
+        reg.requireCapability(secondGrant, capConstraints(), capCtxDefault(), true, true);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(716)
+fun test_revocation_zero_is_permanent(): int {
+    var reg = capRegistry();
+    reg.revokeHandle(capGrant().handleId(), 0);
+    assert(reg.isHandleRevoked(capGrant().handleId(), 1000000)) throw 7161;
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtxDefault(), true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(717)
+fun test_revocation_cannot_be_shortened(): int {
+    var reg = capRegistry();
+    val handle = capGrant().handleId();
+    reg.revokeHandle(handle, 100);
+    reg.revokeHandle(handle, 10);
+    assert(reg.isHandleRevoked(handle, 50)) throw 7171;
+    return reg.isHandleRevoked(handle, 100) ? 0 : 1;
+}
+
+@method_id(718)
+fun test_max_uses_enforced_without_nonce_consumption(): int {
+    var reg = capRegistry();
+    reg.requireCapability(capGrant(), capConstraints(), capCtxDefault(), true, false);
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtxDefault(), true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 701 | | 50689
 @testcase | 702 | | 1
@@ -211,4 +271,9 @@ fun test_public_secret_rejected(): int {
 @testcase | 711 | | 5131
 @testcase | 712 | | 0
 @testcase | 713 | | 5134
+@testcase | 714 | | 1
+@testcase | 715 | | 5129
+@testcase | 716 | | 5128
+@testcase | 717 | | 1
+@testcase | 718 | | 5127
  */

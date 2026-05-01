@@ -48,8 +48,12 @@
   window, max uses, grantee or signer, counterparty, and delegated depth.
 - A grant is sender-bound, signature-bound, stateful, or single-use.
 - Reusable public bearer tokens are rejected.
-- Revoked-handle and epoch maps have finite bounds and full-set behavior
-  is reject-until-compacted.
+- Revoked-handle, epoch, consumed-nonce, and handle-use maps have finite
+  bounds and full-set behavior is reject-until-compacted.
+- `maxUses` is enforced by registry state, not only displayed in the
+  hashed constraints.
+- Revocation is monotonic: zero means permanent, and repeated revocation
+  may extend but not shorten the revocation horizon.
 
 ## Value Dispatch
 

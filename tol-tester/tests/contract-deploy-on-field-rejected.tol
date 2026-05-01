@@ -1,0 +1,37 @@
+// `@deploy` runs before loadData(), so state-qualified storage fields are not
+// available even if the contract has an @initial state.
+
+struct ContractDeployOnFieldStorage {
+    total: uint32;
+    @on(Open) gated: uint32;
+}
+
+struct (0x00000001) ContractDeployOnFieldDeploy {
+    queryId: uint64;
+}
+
+struct (0x00000031) ContractDeployOnFieldPing {
+    queryId: uint64;
+}
+
+contract ContractDeployOnField {
+    storage: ContractDeployOnFieldStorage
+    states: Open
+    @initial state Open
+
+    @deploy
+    receive(msg: ContractDeployOnFieldDeploy) {
+        val leaked = storage.gated;
+        save(ContractDeployOnFieldStorage { total: leaked, gated: 0 });
+    }
+
+    receive(msg: ContractDeployOnFieldPing) on Open {
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr storage field `gated` may not be read inside an `@deploy receive(...)` body
+@stderr doc/tos-language-syntax-policy.md §3.6
+ */

@@ -44,7 +44,7 @@ pattern of each migrated contract:
 
 | Contract | Pattern | Tests | Baseline gas |
 |---|---|---|---:|
-| `jetton-minter` | `jetton-minter` | 3 | 14303 |
+| `jetton-minter` | `jetton-minter` | 3 | 17122 |
 | `jetton-wallet` | `jetton-wallet` | 3 | 33791 |
 | `wallet-v5` | `wallet-v5` | 3 | 40960 |
 
@@ -54,6 +54,11 @@ that makes the Tol stdlib parsing path more expensive than these
 totals by more than 10% — e.g. a regression in
 `Envelope.fromSlice(...)` introduced after commit `02197a2c0` — is
 caught at CI time.
+
+The `jetton-minter` Tol-side baseline was recaptured on 2026-05-01
+after PR #6 security hardening added an explicit `addr_none`
+`ChangeAdmin` rejection and its regression cases. The FunC-vs-Tol
+parity scenarios remain within the existing 1.15 budget.
 
 ## 2. What the current gate does *not* protect
 

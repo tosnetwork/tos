@@ -207,10 +207,11 @@ error mapping helpers. `crypto/smartcont/jetton-minter.tol` and
 compatibility wrappers for existing tests while dogfooding the stdlib
 implementation underneath. The direct stdlib coverage is
 `tol-tester/tests/slice3-jetton-stdlib-positive.tol`; the legacy
-Jetton suites still pass. The regenerated Tol BoCs match the Stage 0
-baseline exactly:
-`jetton-minter-tol.boc` stays `483` bytes with SHA-256
-`ec48d61cee436991b6248c58631e86d7241b9fe487ca3250859ad28cb363823c`;
+Jetton suites still pass. PR #6 security hardening later added an
+explicit `addr_none` `ChangeAdmin` rejection in the minter reference
+contract. The recaptured Tol BoCs are:
+`jetton-minter-tol.boc` is `494` bytes with SHA-256
+`9de1902d24881d9ac35fa88347c27cf9929f96dbc0a2b2b90d0150c4049f6e85`;
 `jetton-wallet-tol.boc` stays `740` bytes with SHA-256
 `7448e96820d6656b57e9c7e27411197e624f48efe4b9dcf4fae1efb13d86b798`.
 

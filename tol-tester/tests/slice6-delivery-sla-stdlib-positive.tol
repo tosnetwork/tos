@@ -198,6 +198,17 @@ fun test_backpressure_activation_gate_reserved(): int {
     return DELIVERY_FAILURE_CLASS_BACK_PRESSURE;
 }
 
+@method_id(615)
+fun test_dead_letter_retention_overflow_rejected(): int {
+    var sink = slice6NewDeadLetterSink();
+    try {
+        sink.addRecord(slice6Budget(2, 5), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), null, true, 0xfffffffe);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 601 | | 1
 @testcase | 602 | | 1
@@ -213,4 +224,5 @@ fun test_backpressure_activation_gate_reserved(): int {
 @testcase | 612 | | 2
 @testcase | 613 | | 3847
 @testcase | 614 | | 5
+@testcase | 615 | | 3843
  */

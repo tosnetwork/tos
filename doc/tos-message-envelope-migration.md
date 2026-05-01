@@ -189,6 +189,14 @@ If the compiler cannot prove that a raw send propagates the inbound
 `disclaim_query_id()` in the inbound branch and document why the
 legacy send is still wire-compatible.
 
+For high-value state-mutating admin operations such as Jetton minting,
+`query_id` remains a correlation field, not an automatic idempotency
+nonce. The TEP-74-compatible `MintRequest` migration intentionally does
+not add storage for consumed mint query ids because doing so would change
+the minter storage layout. Production admins must treat mint messages as
+non-idempotent and manage retries off-chain unless the contract defines a
+new, storage-backed mint nonce in its own extension surface.
+
 ## 6. Error Classification
 
 Every migrated contract should expose a pure helper that maps legacy
@@ -236,6 +244,14 @@ Known policy tension: `tos-message-policy.md` v6 describes
 value. Resolve that wording before publishing the external RFC; until
 then, new migrations should follow the in-tree reference contract and
 call out the assignment in their header table.
+
+The mapping helper is not automatic outbound behavior. `@unknown_throw`
+and `require(...)` preserve the legacy TVM throw/bounce path for
+wire-compatible migrations; they do not synthesize an `OP_ERROR` message
+before throwing. Use the helper for tests, off-chain decoding, or a new
+contract surface that explicitly sends an application-level `OP_ERROR`
+reply. Do not silently add an `OP_ERROR` send to a TEP-compatible
+reference migration unless the standard's wire behavior is being revised.
 
 ## 7. Wallet-vN Special Case
 
@@ -323,6 +339,12 @@ Before merging a migration:
       is already outside the stdlib-reserved range.
 - [ ] Every `query_id` is propagated to correlated replies or
       explicitly disclaimed.
+- [ ] Non-idempotent state-changing operations, especially admin mint or
+      upgrade paths, document their retry/nonce discipline.
+- [ ] `OP_ERROR` mapping helpers are either used by an explicit reply
+      path or documented as decode/test helpers for legacy throw paths.
+- [ ] Any `addr_none` transition for an authority field is either
+      rejected or exposed through an explicit renounce operation.
 - [ ] Raw builders are justified by a compatibility note.
 - [ ] Address types match the source wire format.
 - [ ] Bounce handling matches the FunC observable behavior.

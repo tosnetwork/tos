@@ -17,6 +17,7 @@
 //   65        | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
 //   80        | throw(74)     | Authorization | 74                | require(..., ErrorClass.Authorization, 74)
 //   99        | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
+//   99a       | throw(75)     | Protocol      | 75                | reject addr_none admin to avoid accidental irrecoverable renounce
 //   106       | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
 //   111       | throw(0xffff) | Protocol      | 65535             | @unknown_throw(0xffff)
 //
@@ -59,10 +60,12 @@ const OP_BURN_NOTIFICATION = JETTON_OP_BURN_NOTIFICATION
 
 const FUNC_THROW_ADMIN_REQUIRED = JETTON_MINTER_FUNC_THROW_ADMIN_REQUIRED
 const FUNC_THROW_BURN_SENDER_NOT_WALLET = JETTON_MINTER_FUNC_THROW_BURN_SENDER_NOT_WALLET
+const FUNC_THROW_INVALID_ADMIN = JETTON_MINTER_FUNC_THROW_INVALID_ADMIN
 const FUNC_THROW_UNKNOWN_OPCODE = JETTON_FUNC_THROW_UNKNOWN_OPCODE
 
 const JETTON_ERROR_ADMIN_REQUIRED = JETTON_STDLIB_ERROR_ADMIN_REQUIRED
 const JETTON_ERROR_BURN_SENDER_NOT_WALLET = JETTON_STDLIB_ERROR_BURN_SENDER_NOT_WALLET
+const JETTON_ERROR_INVALID_ADMIN = JETTON_STDLIB_ERROR_INVALID_ADMIN
 const JETTON_ERROR_UNKNOWN_OPCODE = JETTON_STDLIB_ERROR_UNKNOWN_OPCODE
 
 struct JettonMinterStorage {
@@ -235,6 +238,8 @@ contract JettonMinter {
         // FunC line 99: throw_unless(73, equal_slices(sender_address, admin_address));
         require(sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
                 ErrorClass.Authorization, FUNC_THROW_ADMIN_REQUIRED);
+        require(!msg.newAdminAddress.isNone(),
+                ErrorClass.Protocol, FUNC_THROW_INVALID_ADMIN);
         save(JettonMinterStorage {
             totalSupply: storage.totalSupply,
             adminAddress: msg.newAdminAddress,

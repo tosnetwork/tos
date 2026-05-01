@@ -91,9 +91,22 @@ fun test_change_content_body_shape(): int {
     return 4;
 }
 
+@method_id(105)
+fun test_change_admin_addr_none_detectable(): int {
+    val body = beginCell()
+        .storeUint(OP_CHANGE_ADMIN, 32)
+        .storeUint(790, 64)
+        .storeUint(0, 2)
+        .endCell();
+
+    val msg = lazy ChangeAdmin.fromSlice(body.beginParse());
+    return msg.newAdminAddress.isNone() ? 1 : 0;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
 @testcase | 103 | | 3
 @testcase | 104 | | 4
+@testcase | 105 | | 1
  */

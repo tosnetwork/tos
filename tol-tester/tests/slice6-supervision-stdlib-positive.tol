@@ -129,6 +129,17 @@ fun test_emit_escalation_sets_final_failure(): int {
     return supervisor.finalFailure ? 1 : 0;
 }
 
+@method_id(692)
+fun test_restart_window_overflow_rejected(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 0xfffffffe);
+    try {
+        child.recordRestart(supBudget(2, 10), 0xffffffff, 500, 10);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 681 | | 2
 @testcase | 682 | | 4866
@@ -141,4 +152,5 @@ fun test_emit_escalation_sets_final_failure(): int {
 @testcase | 689 | | 1
 @testcase | 690 | | 1
 @testcase | 691 | | 1
+@testcase | 692 | | 4865
  */

@@ -167,10 +167,8 @@ until a future slice (`tos-message-policy.md` §5.4).
 
 **Deliverables.**
 
-- Lift the three hard-coded `extra_flags` magic literals
-  (`crypto/block/transaction.cpp:2948`,
-  `crypto/block/transaction.cpp:3632`,
-  `tol/send-message-api.cpp:307-342`) into named constants
+- Lift the independent `extra_flags` magic literals in the transaction,
+  validation, and send-message helper paths into named constants
   (`EXTRA_FLAGS_NEW_BOUNCE = 1`,
   `EXTRA_FLAGS_FULL_BOUNCE_BODY = 2`,
   `EXTRA_FLAGS_RICH_BOUNCE = 3`,
@@ -405,10 +403,9 @@ branch.
       from the three Stage 3 migrations in commit `6d9520348`;
       the external RFC is published at `doc/slice-1-rfc.md`;
       release-note integration is release-management work.)*
-- [x] The two `extra_flags & 3` magic literals in
-      `crypto/block/transaction.cpp:2948,3632` and the
-      `BounceMode` literals in `tol/send-message-api.cpp:307-342`
-      are replaced by named constants
+- [x] The independent `extra_flags & 3` masks in transaction /
+      validation code and the `BounceMode` literals in
+      `tol/send-message-api.cpp:307-342` are replaced by named constants
       (`EXTRA_FLAGS_NEW_BOUNCE / _FULL_BOUNCE_BODY /
       _RICH_BOUNCE / _VALID_MASK`); the synchronized-constants
       hardening grep is wired in. *(commits `156e92247`

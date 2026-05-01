@@ -79,12 +79,17 @@ struct Slice6CapabilityRegistry {
     maxActiveGrants: uint16
     maxRevokedHandles: uint16
     maxEpochEntries: uint16
+    maxConsumedNonces: uint16
+    maxTrackedUses: uint16
     activeGrantCount: uint16
     revokedHandleCount: uint16
     epochEntryCount: uint16
+    consumedNonceCount: uint16
+    trackedUseCount: uint16
     activeGrants: map<uint256, bool>
     consumedNonces: map<uint256, bool>
-    revokedHandles: map<uint256, uint32>
+    handleUseCounts: map<uint256, uint32>
+    revokedHandles: map<uint256, uint64>
     minEpochs: map<uint256, uint64>
 }
 
@@ -114,6 +119,9 @@ fun slice6CapabilityConstraints(
     delegatedDepth: uint8
 ): Slice6CapabilityConstraintsV1 {
     if (expiresAtMcSeqno <= validFromMcSeqno || delegatedDepth > 32) {
+        throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
+    }
+    if (maxUses != null && maxUses! == 0) {
         throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
     }
     return Slice6CapabilityConstraintsV1 {
@@ -300,21 +308,34 @@ fun Slice6CapabilityGrantV1.requireContext(
 fun slice6CapabilityRegistry(
     maxActiveGrants: uint16,
     maxRevokedHandles: uint16,
-    maxEpochEntries: uint16
+    maxEpochEntries: uint16,
+    maxConsumedNonces: uint16 = 64,
+    maxTrackedUses: uint16 = 64
 ): Slice6CapabilityRegistry {
-    if (maxActiveGrants == 0 || maxRevokedHandles == 0 || maxEpochEntries == 0) {
+    if (
+        maxActiveGrants == 0 ||
+        maxRevokedHandles == 0 ||
+        maxEpochEntries == 0 ||
+        maxConsumedNonces == 0 ||
+        maxTrackedUses == 0
+    ) {
         throw SLICE6_CAPABILITY_THROW_INVALID_BUDGET;
     }
     return Slice6CapabilityRegistry {
         maxActiveGrants,
         maxRevokedHandles,
         maxEpochEntries,
+        maxConsumedNonces,
+        maxTrackedUses,
         activeGrantCount: 0,
         revokedHandleCount: 0,
         epochEntryCount: 0,
+        consumedNonceCount: 0,
+        trackedUseCount: 0,
         activeGrants: createEmptyMap<uint256, bool>(),
         consumedNonces: createEmptyMap<uint256, bool>(),
-        revokedHandles: createEmptyMap<uint256, uint32>(),
+        handleUseCounts: createEmptyMap<uint256, uint32>(),
+        revokedHandles: createEmptyMap<uint256, uint64>(),
         minEpochs: createEmptyMap<uint256, uint64>(),
     };
 }
@@ -351,12 +372,73 @@ fun Slice6CapabilityRegistry.consumeNonce(mutate self, grant: Slice6CapabilityGr
     if (self.consumedNonces.exists(key)) {
         throw SLICE6_CAPABILITY_THROW_REPLAY;
     }
+    if (self.consumedNonceCount >= self.maxConsumedNonces) {
+        throw SLICE6_CAPABILITY_THROW_STORAGE_FULL;
+    }
     self.consumedNonces.set(key, true);
+    self.consumedNonceCount += 1;
 }
 
-fun Slice6CapabilityRegistry.revokeHandle(mutate self, handleId: uint256, expiresAtMcSeqno: uint32): void {
+fun Slice6CapabilityRegistry.requireNonceConsumable(self, grant: Slice6CapabilityGrantV1): void {
+    val key = self.nonceKey(grant);
+    if (self.consumedNonces.exists(key)) {
+        throw SLICE6_CAPABILITY_THROW_REPLAY;
+    }
+    if (self.consumedNonceCount >= self.maxConsumedNonces) {
+        throw SLICE6_CAPABILITY_THROW_STORAGE_FULL;
+    }
+}
+
+fun Slice6CapabilityRegistry.requireUseConsumable(
+    self,
+    grant: Slice6CapabilityGrantV1,
+    constraints: Slice6CapabilityConstraintsV1
+): void {
+    if (constraints.maxUses == null) {
+        return;
+    }
+    val handle = grant.handleId();
+    val current = self.handleUseCounts.get(handle);
+    val used = current.isFound ? current.loadValue() : 0 as uint32;
+    if (used >= constraints.maxUses!) {
+        throw SLICE6_CAPABILITY_THROW_REPLAY;
+    }
+    if (!current.isFound) {
+        if (self.trackedUseCount >= self.maxTrackedUses) {
+            throw SLICE6_CAPABILITY_THROW_STORAGE_FULL;
+        }
+    }
+}
+
+fun Slice6CapabilityRegistry.consumeUse(
+    mutate self,
+    grant: Slice6CapabilityGrantV1,
+    constraints: Slice6CapabilityConstraintsV1
+): void {
+    if (constraints.maxUses == null) {
+        return;
+    }
+    self.requireUseConsumable(grant, constraints);
+    val handle = grant.handleId();
+    val current = self.handleUseCounts.get(handle);
+    val used = current.isFound ? current.loadValue() : 0 as uint32;
+    if (!current.isFound) {
+        self.trackedUseCount += 1;
+    }
+    self.handleUseCounts.set(handle, used + 1);
+}
+
+fun Slice6CapabilityRegistry.revokeHandle(mutate self, handleId: uint256, expiresAtMcSeqno: uint64): void {
     if (self.revokedHandles.exists(handleId)) {
-        self.revokedHandles.set(handleId, expiresAtMcSeqno);
+        val existing = self.revokedHandles.get(handleId).loadValue();
+        // Revocation is monotonic: a second write may extend the revocation
+        // horizon or make it permanent, but must never shorten it.
+        if (existing == 0) {
+            return;
+        }
+        if (expiresAtMcSeqno == 0 || expiresAtMcSeqno > existing) {
+            self.revokedHandles.set(handleId, expiresAtMcSeqno);
+        }
         return;
     }
     if (self.revokedHandleCount >= self.maxRevokedHandles) {
@@ -366,12 +448,13 @@ fun Slice6CapabilityRegistry.revokeHandle(mutate self, handleId: uint256, expire
     self.revokedHandleCount += 1;
 }
 
-fun Slice6CapabilityRegistry.isHandleRevoked(self, handleId: uint256, currentMcSeqno: uint32): bool {
+fun Slice6CapabilityRegistry.isHandleRevoked(self, handleId: uint256, currentMcSeqno: uint64): bool {
     val revoked = self.revokedHandles.get(handleId);
     if (!revoked.isFound) {
         return false;
     }
-    return currentMcSeqno < revoked.loadValue();
+    val expiresAt = revoked.loadValue();
+    return expiresAt == 0 || currentMcSeqno < expiresAt;
 }
 
 fun slice6CapabilityEpochKey(issuer: address, grantee: address?): uint256 {
@@ -411,7 +494,7 @@ fun Slice6CapabilityRegistry.requireNotEpochRevoked(self, grant: Slice6Capabilit
 fun Slice6CapabilityRegistry.requireNotRevoked(
     self,
     grant: Slice6CapabilityGrantV1,
-    currentMcSeqno: uint32
+    currentMcSeqno: uint64
 ): void {
     if (self.isHandleRevoked(grant.handleId(), currentMcSeqno)) {
         throw SLICE6_CAPABILITY_THROW_REVOKED;
@@ -431,7 +514,12 @@ fun Slice6CapabilityRegistry.requireCapability(
     if (requireRegisteredGrant) {
         self.requireRegistered(grant);
     }
-    self.requireNotRevoked(grant, context.currentMcSeqno as uint32);
+    self.requireNotRevoked(grant, context.currentMcSeqno);
+    self.requireUseConsumable(grant, constraints);
+    if (consumeSingleUseNonce) {
+        self.requireNonceConsumable(grant);
+    }
+    self.consumeUse(grant, constraints);
     if (consumeSingleUseNonce) {
         self.consumeNonce(grant);
     }
@@ -441,5 +529,4 @@ fun slice6RejectPublicCapabilitySecret(secretHash: uint256): void {
     if (secretHash != 0) {
         throw SLICE6_CAPABILITY_THROW_PUBLIC_SECRET_REJECTED;
     }
-    throw SLICE6_CAPABILITY_THROW_PUBLIC_SECRET_REJECTED;
 }

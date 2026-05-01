@@ -22,13 +22,14 @@
 //
 //   * doc/tos-message-policy.md v5 (Approved 2026-04-29) --
 //     - §3.4 "Extension reservation in `extra_flags`": bits 2 and 3 are
-//       reserved by this policy but currently invalid to set; the outbound
-//       mask is `extra_flags & 3` and any attempt to send an outbound with
-//       `extra_flags & 12 != 0` triggers `check_skip_invalid(45)`.
-//     - §3.4 "Synchronized constants": the mask `3` is duplicated across
-//       three sites (transaction.cpp:2948, transaction.cpp:3632, and
-//       tol/extra-flags-constants.h); a Slice-4/6 PR that touches only one
-//       is a hardening violation.
+//       reserved by this policy but currently invalid to set; the active
+//       mask is `tol::EXTRA_FLAGS_VALID_MASK`, currently 3, and any attempt
+//       to send an outbound with `extra_flags & 12 != 0` triggers
+//       `check_skip_invalid(45)`.
+//     - §3.4 "Synchronized constants": the mask is owned by
+//       tol/extra-flags-constants.h and consumed by transaction.cpp and
+//       validate-query.cpp; a Slice-4/6 PR that touches only one is a
+//       hardening violation.
 //     - §10.1: the canonical Slice-1 in-scope items include "an
 //       `extra_flags=0b0100` rejection case".
 //
@@ -46,18 +47,17 @@
 // Three fixtures live in this file:
 //
 //   F3.1 -- accepted boundary: extra_flags in {0, 1, 2, 3} all pass the
-//           `extra_flags & 3 == extra_flags` gate at transaction.cpp:2948.
+//           `extra_flags & EXTRA_FLAGS_VALID_MASK == extra_flags` gate.
 //   F3.2 -- rejected boundary: extra_flags in {4, 8, 12} all fail the gate
 //           and would trigger `check_skip_invalid(45)`. This is the
 //           canonical Stage 1 case (`extra_flags=0b0100`).
 //   F3.3 -- synchronized-constants self-check: EXTRA_FLAGS_VALID_MASK == 3
-//           and the literal `td::make_refint(3)` appears at both
-//           transaction.cpp sites. A drift in any of the three locations
-//           breaks this fixture.
+//           and the production code consumes that named constant instead of
+//           reintroducing independent numeric masks.
 //
 // The fixtures intentionally exercise the gate expression directly (the
-// exact `extra_flags & td::make_refint(3) == extra_flags` predicate from
-// transaction.cpp:2959) rather than driving the full transaction emulator
+// exact `extra_flags & EXTRA_FLAGS_VALID_MASK == extra_flags` predicate from
+// transaction.cpp) rather than driving the full transaction emulator
 // for every value. This keeps the fixture targeted at the §3.4 invariant
 // it is meant to defend, and makes it cheap to run in the standard test
 // suite.
@@ -76,11 +76,9 @@
 
 namespace tos_slice1_fixtures {
 
-// Mirror of the gate expression from
-// crypto/block/transaction.cpp:2959 (action-phase outbound check):
+// Mirror of the gate expression from transaction.cpp / validate-query.cpp:
 //
-//     if (extra_flags.is_null() ||
-//         td::cmp(extra_flags & td::make_refint(3), extra_flags) != 0) {
+//     if (!extra_flags_within_valid_mask(extra_flags)) {
 //       LOG(DEBUG) << "invalid extra_flags in a proposed outbound message";
 //       return check_skip_invalid(45);
 //     }
@@ -88,23 +86,20 @@ namespace tos_slice1_fixtures {
 // Returns true when the value is accepted by the gate (no rejection),
 // false when the gate would invoke `check_skip_invalid(45)`.
 //
-// We intentionally re-encode the gate predicate here verbatim. If the
-// production gate changes, a Slice 4/6 PR that widens the mask must
-// also update this helper -- F3.3 catches the divergence between
-// transaction.cpp and tol/extra-flags-constants.h, and the body of
-// F3.1/F3.2 below adapts the boundary buckets at the same time.
+// We intentionally re-encode the gate predicate here with the shared
+// named mask. If the production gate changes, a Slice 4/6 PR that
+// widens the mask must also update this helper and the boundary buckets.
 static bool gate_accepts(int extra_flags_value) {
   td::RefInt256 extra_flags = td::make_refint(extra_flags_value);
   if (extra_flags.is_null()) {
     return false;
   }
-  return td::cmp(extra_flags & td::make_refint(3), extra_flags) == 0;
+  return td::cmp(extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK), extra_flags) == 0;
 }
 
 // Locate sibling source files relative to this file's on-disk location.
-// We use this to grep for the literal `& td::make_refint(3)` at the two
-// transaction.cpp sites and the named-constant declaration in
-// tol/extra-flags-constants.h.
+// We use this to grep for the shared named mask at transaction/validator
+// sites and the named-constant declaration in tol/extra-flags-constants.h.
 static std::string current_dir() {
   return td::PathView(td::realpath(__FILE__).move_as_ok()).parent_dir().str();
 }
@@ -121,7 +116,8 @@ static std::string current_dir() {
 //       correctness).
 //
 // Each value in {0, 1, 2, 3} is a legal v12 outbound `extra_flags`. The
-// gate at transaction.cpp:2948 must accept all four; no check_skip_invalid
+// transaction outbound and validator inbound gates must accept all four;
+// no check_skip_invalid path may be taken for those values.
 // is invoked.
 // -----------------------------------------------------------------------------
 TEST(Slice1ExtraFlagsFixtures, F3_1_accepted_boundary) {
@@ -167,7 +163,7 @@ TEST(Slice1ExtraFlagsFixtures, F3_1_accepted_boundary) {
 //   8  = 0b1000 -- bit 3 alone
 //   12 = 0b1100 -- bits 2 and 3 together
 //
-// The action-phase outbound check at transaction.cpp:2948 must reject all
+// The action-phase outbound check must reject all
 // three. The error code is `check_skip_invalid(45)`; we verify the gate
 // rejection here, and document the error code via the citation above.
 // -----------------------------------------------------------------------------
@@ -199,12 +195,9 @@ TEST(Slice1ExtraFlagsFixtures, F3_2_rejected_boundary) {
 // F3.3 -- Synchronized-constants self-check.
 //
 // Cite: doc/tos-message-policy.md v5 §3.4 "Synchronized constants" --
-//       the mask `3` is hard-coded at three sites:
-//         (1) crypto/block/transaction.cpp:2948 (action-phase outbound)
-//         (2) crypto/block/transaction.cpp:3632 (prepare_bounce_phase)
-//         (3) tol/extra-flags-constants.h (this header's
-//             EXTRA_FLAGS_VALID_MASK)
-//       A Slice-4/6 PR that touches only one is a hardening violation.
+//       the mask is owned by tol::EXTRA_FLAGS_VALID_MASK and consumed by
+//       transaction.cpp / validate-query.cpp. A Slice-4/6 PR that widens one
+//       side without the others is a hardening violation.
 //
 // Two layers of protection:
 //
@@ -213,11 +206,10 @@ TEST(Slice1ExtraFlagsFixtures, F3_2_rejected_boundary) {
 //      without updating this fixture (and the production gate), the
 //      build fails here.
 //
-//   2. Runtime grep of crypto/block/transaction.cpp for the literal
-//      `& td::make_refint(3)` at both sites. If a Slice 4/6 PR widens
-//      the production mask without updating the header, the runtime
-//      check fails. (We do not require an exact line number because
-//      surrounding code may move, but we do require both occurrences.)
+//   2. Runtime grep of crypto/block/transaction.cpp and
+//      validator/impl/validate-query.cpp for the named mask. If a Slice 4/6
+//      PR widens the production mask without updating the header, the runtime
+//      check fails.
 // -----------------------------------------------------------------------------
 
 // Compile-time invariant: this header's EXTRA_FLAGS_VALID_MASK must equal
@@ -251,7 +243,7 @@ TEST(Slice1ExtraFlagsFixtures, F3_3_synchronized_constants_self_check) {
   CHECK(tol::EXTRA_FLAGS_FULL_BOUNCE_BODY == 2);
   CHECK(tol::EXTRA_FLAGS_RICH_BOUNCE == 3);
 
-  // Locate the two sibling source files relative to the test binary's
+  // Locate the sibling source files relative to the test binary's
   // build location is unreliable, so we use __FILE__ realpath. From
   // /home/tomi/tos/emulator/test/ the production sites live at
   // ../../crypto/block/transaction.cpp and the header at
@@ -261,33 +253,34 @@ TEST(Slice1ExtraFlagsFixtures, F3_3_synchronized_constants_self_check) {
       test_dir + "/../../crypto/block/transaction.cpp";
   const std::string constants_header_path =
       test_dir + "/../../tol/extra-flags-constants.h";
+  const std::string validate_query_path =
+      test_dir + "/../../validator/impl/validate-query.cpp";
 
-  // Read transaction.cpp and confirm the literal `& td::make_refint(3)`
-  // appears exactly at the two synchronized-constants sites.
+  // Read transaction.cpp and confirm the shared named mask drives the
+  // common helper, the inbound check, the outbound action-phase check,
+  // and the bounce builder.
   auto transaction_cpp_result = td::read_file_str(transaction_cpp_path);
   CHECK(transaction_cpp_result.is_ok());
   const std::string transaction_cpp_text = transaction_cpp_result.move_as_ok();
 
-  // Count occurrences of the synchronized-constants literal in actual
-  // code (NOT comment text). T5's annotation block above each mask
-  // site mentions "& td::make_refint(3)" in `//` comments; we narrow
-  // the grep by requiring the surrounding `extra_flags` identifier so
-  // the count reflects real call sites only.
-  const std::string mask_literal = "extra_flags & td::make_refint(3)";
-  size_t mask_literal_count = 0;
-  for (size_t pos = 0;
-       (pos = transaction_cpp_text.find(mask_literal, pos)) != std::string::npos;
-       pos += mask_literal.size()) {
-    ++mask_literal_count;
-  }
+  const std::string mask_literal = "tol::EXTRA_FLAGS_VALID_MASK";
+  CHECK(transaction_cpp_text.find("bool extra_flags_within_valid_mask") !=
+        std::string::npos);
+  CHECK(transaction_cpp_text.find("extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK)") !=
+        std::string::npos);
+  CHECK(transaction_cpp_text.find("!extra_flags_within_valid_mask(in_msg_extra_flags)") !=
+        std::string::npos);
+  CHECK(transaction_cpp_text.find("!extra_flags_within_valid_mask(extra_flags)") !=
+        std::string::npos);
+  CHECK(transaction_cpp_text.find("in_msg_extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK)") !=
+        std::string::npos);
 
-  // §3.4 enumerates exactly two sites in transaction.cpp:
-  //   line 2948 (action-phase outbound check)
-  //   line 3632 (prepare_bounce_phase outbound builder)
-  // If either is missing, or a third unaccounted-for occurrence appears
-  // (potentially a Slice 4/6 widening that left a stray site behind), the
-  // synchronized-constants invariant is broken.
-  CHECK(mask_literal_count == 2);
+  auto validate_query_result = td::read_file_str(validate_query_path);
+  CHECK(validate_query_result.is_ok());
+  const std::string validate_query_text = validate_query_result.move_as_ok();
+  CHECK(validate_query_text.find(mask_literal) != std::string::npos);
+  CHECK(validate_query_text.find("extra_flags_within_valid_mask(info, global_version_)") !=
+        std::string::npos);
 
   // Read the constants header and confirm EXTRA_FLAGS_VALID_MASK = 3.
   // We grep the literal text rather than rely solely on the static_assert

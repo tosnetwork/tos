@@ -99,10 +99,11 @@ TVM v12 defines:
   meaningful only when bit 0 is also set (see §10.1's
   `EXTRA_FLAGS_RICH_BOUNCE` composite constant).
 - All higher bits are reserved and must be zero on send. The
-  current outbound mask in `crypto/block/transaction.cpp:2948,3632`
-  is `extra_flags & 3`, i.e. only bits 0..1 are accepted today;
-  bits 2..3 are reserved by this policy for future activation
-  (see §3.4).
+  current active mask is the named constant
+  `tol::EXTRA_FLAGS_VALID_MASK == 3` on the C++ side and
+  `EXTRA_FLAGS_VALID_MASK == 3` in the Tol stdlib, i.e. only
+  bits 0..1 are accepted today. Bits 2..3 are reserved by this
+  policy for future activation (see §3.4).
 
 ### 2.2 v12 bounce body
 
@@ -300,44 +301,46 @@ future use:
   behavior.
 
 **Current v12 enforcement.** Today TVM v12 rejects any `extra_flags`
-bit beyond `0..1`. The outbound mask in `crypto/block/transaction.cpp`
-is `extra_flags & 3` at both sites cited below. Bits 2 and 3 are
-reserved by this policy but **currently invalid to set** — sending
-an internal message with `extra_flags & 12 != 0` triggers
-`check_skip_invalid(45)`. They become legal only when the
-corresponding approved protocol amendment widens the mask in lockstep.
+bit beyond `0..1`. The active mask is
+`tol::EXTRA_FLAGS_VALID_MASK == 3` on the C++ side and
+`EXTRA_FLAGS_VALID_MASK == 3` in the Tol stdlib. Bits 2 and 3 are
+reserved by this policy but **currently invalid to set** — sending or
+importing an internal message with `extra_flags & 12 != 0` is rejected.
+Outbound action-list sends return `check_skip_invalid(45)`; inbound
+ordinary messages fail transaction / block validation. The reserved bits
+become legal only when the corresponding approved protocol amendment
+widens the mask in lockstep.
 
-**Synchronized constants.** The `extra_flags` mask is hard-coded
-in three locations today:
+**Synchronized constants.** The `extra_flags` mask is owned by
+`tol/extra-flags-constants.h` and mirrored in the Tol stdlib. Production
+consumers use the named constant rather than independent numeric masks:
 
-- `crypto/block/transaction.cpp:2948` (action-phase outbound
-  check, `& td::make_refint(3)`).
-- `crypto/block/transaction.cpp:3632` (`prepare_bounce_phase`
-  outbound builder, `& td::make_refint(3)`).
-- `tol/send-message-api.cpp:307-342` (`BounceMode` enum mapping,
-  magic literals `1`, `2`, and `3`).
+- `crypto/block/transaction.cpp` validates inbound ordinary messages,
+  validates action-phase outbound messages, and masks bounce-body
+  `extra_flags` with `tol::EXTRA_FLAGS_VALID_MASK`.
+- `validator/impl/validate-query.cpp` validates ordinary inbound message
+  descriptors with `tol::EXTRA_FLAGS_VALID_MASK`.
+- `tol/send-message-api.cpp:307-342` maps `BounceMode` to the named bit
+  constants `EXTRA_FLAGS_NEW_BOUNCE`, `EXTRA_FLAGS_FULL_BOUNCE_BODY`,
+  and `EXTRA_FLAGS_RICH_BOUNCE`.
 
-Slice 1 must lift the magic literals into named stdlib constants
-(`EXTRA_FLAGS_NEW_BOUNCE = 1`, `EXTRA_FLAGS_FULL_BOUNCE_BODY = 2`,
-and the composite `EXTRA_FLAGS_RICH_BOUNCE = 3` defined in §10.1)
-and label all three sites as synchronized constants. When the
-future slice that activates bit 2 (the inline-error-class slice
+When the future slice that activates bit 2 (the inline-error-class slice
 described in §5.4) or a Slice 6 supervision amendment that activates bit
 3 lands, the same change must land in lockstep at:
 
-1. Both `& td::make_refint(3)` masks in `crypto/block/transaction.cpp`
-   — widen to `& 7` when bit 2 activates, or `& 15` only when bit 2 and
-   bit 3 are both approved and activated.
+1. `tol::EXTRA_FLAGS_VALID_MASK` in `tol/extra-flags-constants.h`.
 2. The Tol-stdlib `EXTRA_FLAGS_VALID_MASK` constant introduced in
    Slice 1 alongside the named bit constants.
 3. The Slice-1 conformance fixtures that assert
    `extra_flags=0b0100` is rejected (§10.1) — they must be updated
    to assert acceptance under the new mask.
+4. Any activation-specific validator / transaction fixtures proving that
+   queued messages cannot pre-seed reserved bits before the global-version
+   amendment.
 
-A Slice 4/6 PR that touches only one of these three sites is a
-hardening violation; the production-hardening script
-(`scripts/check-evm-production-hardening.sh` or its message-policy
-analogue) must grep for divergence between them.
+A Slice 4/6 PR that touches only one of these sites is a hardening
+violation; the production-hardening script or message-policy analogue
+must grep for divergence between them.
 
 ## 4. `query_id` rules
 
@@ -791,10 +794,9 @@ of how clearly the policy describes them.
 ### 10.1 In Slice 1
 
 - Reservation of `extra_flags` bits 2 and 3 (no semantic effect
-  yet; `extra_flags & 12` remains illegal to set on send).
-- Lifting hard-coded `extra_flags` magic numbers in
-  `crypto/block/transaction.cpp:2948,3632` and
-  `tol/send-message-api.cpp:307-342` into named stdlib constants:
+  yet; `extra_flags & 12` remains illegal to send or import).
+- Lifting hard-coded `extra_flags` magic numbers in the transaction,
+  validation, and send-message helper paths into named constants:
   - `EXTRA_FLAGS_NEW_BOUNCE = 1` (bit 0 — enable v12 bounce body).
   - `EXTRA_FLAGS_FULL_BOUNCE_BODY = 2` (bit 1 — return full body
     on bounce; meaningful **only** when bit 0 is also set).
@@ -1142,14 +1144,12 @@ tighten under-specified text and fix citation drift.
   `recover_stake_error = 0xfffffffe`.
 - **§3.4** replaced the inaccurate "TVM v12 rule that internal
   messages with extra_flags bits beyond `0..3` are invalid" with
-  the source-true statement that the current outbound mask in
-  `transaction.cpp:2948,3632` is `& 3` (bits 0..1 only). v3
-  also makes the Slice 4 / Slice 6 mask-widening obligation
-  explicit: both `& td::make_refint(3)` sites in
-  `transaction.cpp` plus the Tol-stdlib `EXTRA_FLAGS_VALID_MASK`
-  plus the §10.1 conformance fixtures must be updated in lockstep
-  when bit 2 (Slice 4) or bit 3 (Slice 6) activates. A hardening
-  grep is required to catch divergence.
+  the source-true statement that the current mask is `& 3`
+  (bits 0..1 only). Later hardening made that mask a named C++
+  constant consumed by transaction and validation code, with the
+  Tol-stdlib `EXTRA_FLAGS_VALID_MASK` and §10.1 conformance
+  fixtures updated in lockstep when bit 2 (Slice 4) or bit 3
+  (Slice 6) activates.
 - **§4.4** tightened the `pipe-check-query-id-propagation.cpp`
   injection point. v2 specified "after
   `pipeline_check_serialized_fields()` and before
@@ -1193,12 +1193,10 @@ incorporated into this draft:
   and `nominator-pool/pool.fc`. Slice 1 stdlib must warn on
   non-bounced sends carrying body opcode `0xfffffffe` (A2 audit).
 - **§3.4** added the synchronized-constants requirement:
-  `extra_flags` mask is hard-coded in three sites
-  (`crypto/block/transaction.cpp:2948`,
-  `crypto/block/transaction.cpp:3632`,
-  `tol/send-message-api.cpp:307-342`). Slice 1 lifts these into
-  named stdlib constants so Slice 4 bit-2 activation is one-line
-  (A2 audit).
+  the active `extra_flags` mask is owned by
+  `tol::EXTRA_FLAGS_VALID_MASK`, mirrored by the Tol-stdlib
+  `EXTRA_FLAGS_VALID_MASK`, and exercised by conformance fixtures
+  so Slice 4 bit-2 activation cannot update only one site (A2 audit).
 - **§4.1** scoped the `query_id = 0` rule to non-zero opcodes
   only, removing the implicit conflict with text-comment
   bodies (A1, A4 Q3).

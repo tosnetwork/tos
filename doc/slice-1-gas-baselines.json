@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "captured_at_utc": "2026-04-30",
+  "captured_at_utc": "2026-05-01",
   "threshold_percent": 10,
   "func_vs_tol_ratio_threshold": 1.15,
   "scope": "Slice 1 Stage 4 dual baselines (Tol-side regression + FunC-vs-Tol parity)",
@@ -10,7 +10,7 @@
       "name": "jetton-minter",
       "tol_tester_pattern": "jetton-minter",
       "expected_tests": 3,
-      "baseline_gas": 14303,
+      "baseline_gas": 17122,
       "func_gas_baseline": 3468,
       "tol_gas_baseline": 2810
     },

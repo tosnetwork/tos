@@ -144,6 +144,16 @@ fun test_wall_clock_budget_rejects_disabled(): int {
     return 0;
 }
 
+@method_id(663)
+fun test_require_horizon_rejects_zero_expiry(): int {
+    try {
+        timeBudget().requireHorizon(100, 100, 0);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 651 | | 20
 @testcase | 652 | | 110
@@ -157,4 +167,5 @@ fun test_wall_clock_budget_rejects_disabled(): int {
 @testcase | 660 | | 1000
 @testcase | 661 | | 4355
 @testcase | 662 | | 4353
+@testcase | 663 | | 4353
  */

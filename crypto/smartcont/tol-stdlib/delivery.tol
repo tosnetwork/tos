@@ -28,6 +28,7 @@ const SLICE6_PRESSURE_SCOPE_SHARD_ROUTE: uint8 = 1
 
 const SLICE6_DELIVERY_SIZE_SCAN_CELLS = 1024
 const SLICE6_EXTRA_FLAGS_VALID_MASK: uint16 = 3
+const SLICE6_DELIVERY_UINT32_MAX: uint32 = 0xffffffff
 
 // Compatibility names used by the Stage 1 docs/tests.
 const BACK_PRESSURE_ACTIVATION_GATE = false
@@ -439,6 +440,9 @@ fun Slice6DeadLetterSink.addRecord(
     if (self.count >= budget.maxRecords) {
         self.droppedCount += 1;
         return false;
+    }
+    if (nowMcSeqno > SLICE6_DELIVERY_UINT32_MAX - budget.retentionBlocks) {
+        throw SLICE6_DELIVERY_THROW_INVALID_INPUT;
     }
 
     val nonce = self.nextNonce;
