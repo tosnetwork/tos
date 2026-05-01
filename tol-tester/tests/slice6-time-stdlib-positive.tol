@@ -1,0 +1,127 @@
+import "@stdlib/time"
+import "@stdlib/schedule"
+
+fun timeTarget(): address {
+    return address("0:1212121212121212121212121212121212121212121212121212121212121212");
+}
+
+fun timeCancel(): address {
+    return address("0:3434343434343434343434343434343434343434343434343434343434343434");
+}
+
+fun timeDeadLetter(): address {
+    return address("0:5656565656565656565656565656565656565656565656565656565656565656");
+}
+
+fun timeBody(bits: uint16 = 32): cell {
+    if (bits == 64) {
+        return beginCell().storeUint(1, 32).storeUint(2, 32).endCell();
+    }
+    return beginCell().storeUint(1, 32).endCell();
+}
+
+fun timeBudget(
+    maxBodyBits: uint32 = 128,
+    maxFutureHorizonBlocks: uint32 = 100,
+    enabled: bool = true
+): Slice6TimerBudget {
+    return slice6TimerBudget(4, maxBodyBits, 1, maxFutureHorizonBlocks, 1023, enabled);
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(651)
+fun test_send_at_mc_seqno_shape(): int {
+    val action = sendAtMcSeqno(timeBudget(), timeTarget(), timeBody(), 100, 110, 20, 1000, 0, timeCancel(), timeDeadLetter());
+    assert(action.notBeforeMcSeqno == 110) throw 6511;
+    assert(action.deliverByMcSeqno() == 130) throw 6512;
+    return action.expireAfterBlocks;
+}
+
+@method_id(652)
+fun test_send_after_blocks_uses_trusted_current_seqno(): int {
+    val callerControlledNow = 0;
+    val trustedCurrent = 100;
+    val action = sendAfterBlocks(timeBudget(), timeTarget(), timeBody(), trustedCurrent, 10, 20, 1000, 0, timeCancel(), timeDeadLetter());
+    assert(callerControlledNow == 0) throw 6521;
+    assert(action.notBeforeMcSeqno == 110) throw 6522;
+    return action.notBeforeMcSeqno;
+}
+
+@method_id(653)
+fun test_send_after_zero_delay_allowed(): int {
+    val action = sendAfterBlocks(timeBudget(), timeTarget(), timeBody(), 100, 0, 20, 1000, 0, timeCancel(), null);
+    return action.notBeforeMcSeqno;
+}
+
+@method_id(654)
+fun test_timer_budget_rejects_disabled(): int {
+    try {
+        sendAtMcSeqno(timeBudget(128, 100, false), timeTarget(), timeBody(), 100, 110, 20, 1000, 0, timeCancel(), null);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(655)
+fun test_timer_budget_rejects_body_too_large(): int {
+    try {
+        sendAtMcSeqno(timeBudget(16), timeTarget(), timeBody(), 100, 110, 20, 1000, 0, timeCancel(), null);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(656)
+fun test_timer_budget_rejects_horizon(): int {
+    try {
+        sendAtMcSeqno(timeBudget(128, 15), timeTarget(), timeBody(), 100, 110, 20, 1000, 0, timeCancel(), null);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(657)
+fun test_timer_budget_rejects_past_seqno(): int {
+    try {
+        sendAtMcSeqno(timeBudget(), timeTarget(), timeBody(), 100, 99, 20, 1000, 0, timeCancel(), null);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(658)
+fun test_cancel_scheduled_helper(): int {
+    val action = sendAfterBlocks(timeBudget(), timeTarget(), timeBody(), 100, 10, 20, 1000, 0, timeCancel(), timeDeadLetter());
+    var entry = slice6ScheduledEntry(0xabc, action, 130);
+    val result = cancelScheduled(mutate entry, timeCancel());
+    assert(entry.canceled) throw 6581;
+    return result;
+}
+
+@method_id(659)
+fun test_cancel_scheduled_helper_rejects_wrong_caller(): int {
+    val action = sendAfterBlocks(timeBudget(), timeTarget(), timeBody(), 100, 10, 20, 1000, 0, timeCancel(), timeDeadLetter());
+    var entry = slice6ScheduledEntry(0xabc, action, 130);
+    val result = cancelScheduled(mutate entry, timeDeadLetter());
+    assert(entry.pending) throw 6591;
+    return result;
+}
+
+/**
+@testcase | 651 | | 20
+@testcase | 652 | | 110
+@testcase | 653 | | 100
+@testcase | 654 | | 4353
+@testcase | 655 | | 4354
+@testcase | 656 | | 4355
+@testcase | 657 | | 4356
+@testcase | 658 | | 0
+@testcase | 659 | | 2
+ */

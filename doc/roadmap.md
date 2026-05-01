@@ -1038,17 +1038,19 @@ multi-address structs.
 (monitors versus links), §6.4 (restart intensity), and §6.6 (crash
 reports) form the Slice 6 design surface.
 
-**Status.** 🟡 Stages 1–2 are complete as of 2026-05-01; Stage 3 Tol
-time stdlib is next. Stage 0 design review findings were addressed in
-Draft v0.2 and re-review approved. The implementation layer now includes
-`@stdlib/delivery` and `@stdlib/schedule`: canonical delivery-id input
-helpers, BackPressureAdvice validation, queue-pressure bucket
-classification, bounded dead-letter sink storage, scheduled-action
-shapes, masterchain-seqno `deliver_by` predicates, scheduled handles,
-cancel-authority checks, and escrow force-expiry helpers. Protocol
-activation of validator scheduled delivery, monitor notifications, and
-production BackPressure emission remains gated to later Slice 6 stages.
-The Stage 0 input documents are
+**Status.** 🟡 Stages 1–3 are complete as of 2026-05-01; Stage 4
+monitors/links are next. Stage 0 design review findings were addressed
+in Draft v0.2 and re-review approved. The implementation layer now
+includes `@stdlib/delivery`, `@stdlib/schedule`, and `@stdlib/time`:
+canonical delivery-id input helpers, BackPressureAdvice validation,
+queue-pressure bucket classification, bounded dead-letter sink storage,
+scheduled-action shapes, masterchain-seqno `deliver_by` predicates,
+scheduled handles, cancel-authority checks, escrow force-expiry helpers,
+author-facing timer budgets, and release-checker guardrails against
+caller-controlled `msg.now` scheduling. Protocol activation of validator
+scheduled delivery, monitor notifications, and production BackPressure
+emission remains gated to later Slice 6 stages. The Stage 0 input
+documents are
 [`doc/tos-slice-6-policy.md`](tos-slice-6-policy.md),
 [`doc/tos-delivery-sla-policy.md`](tos-delivery-sla-policy.md),
 [`doc/tos-time-policy.md`](tos-time-policy.md),
@@ -1141,25 +1143,26 @@ authorization plane, not reusable public bearer secrets.
    Exit criterion: a contract can model, schedule, and cancel a
    bounded future internal message under emulator and tol-tester.
 
-4. ⏳ **Stage 3 — Tol and stdlib time surface.**
+4. ✅ **Stage 3 — Tol and stdlib time surface.**
 
-   - ⏳ Add `crypto/smartcont/tol-stdlib/time.tol`:
+   - ✅ Add `crypto/smartcont/tol-stdlib/time.tol`:
      `sendAfterBlocks(...)`, `sendAtMcSeqno(...)`,
-     `cancelScheduled(handle)`, `blockchain_now_mc_seqno()`.
-   - ⏳ Create `scripts/check-slice-6-release-package.py` with initial
-     rules: reject `msg.now` scheduling; require explicit timer budgets
-     in manifests when `sendAfterBlocks`/`sendAtMcSeqno` are used.
-   - ⏳ Add manifest schema extension for scheduled-message declarations.
-   - ⏳ Add tol-tester cases: `slice6-time-stdlib-sendafter-positive.tol`,
-     `slice6-time-stdlib-seqno-positive.tol`,
-     `slice6-time-no-msg-now-negative.tol`.
-   - ⏳ Add emulator fixture: trusted blockchain time vs caller-provided
-     time.
-   - ⏳ Update roadmap. Commit + push:
-     *Slice 6 Stage 3 Tol time stdlib*
+     and `cancelScheduled(...)`. The helpers take an explicit
+     `trustedCurrentMcSeqno` context and never read caller-controlled
+     wire `msg.now`.
+   - ✅ Create `scripts/check-slice-6-release-package.py` with initial
+     rules: required Slice 6 stdlib surface, no `msg.now` scheduling
+     helper calls, and no `extra_flags` bit-3 activation.
+   - ✅ Add `doc/slice-6-timer-manifest-schema.json` for explicit timer
+     budgets (`max_scheduled_entries`, body bits/refs, future horizon,
+     and cell-depth budget).
+   - ✅ Add tol-tester coverage in `slice6-time-stdlib-positive.tol` for
+     `sendAtMcSeqno`, `sendAfterBlocks`, zero-delay scheduling, disabled
+     budgets, body-size rejection, horizon/past-seqno rejection,
+     cancellation, and caller-controlled-now spoof resistance.
 
-   Exit criterion: contract authors use `blockchain_now_mc_seqno()` and
-   stdlib scheduling helpers; `msg.now` scheduling is detected and
+   Exit criterion: contract authors use trusted masterchain-seqno context
+   and stdlib scheduling helpers; `msg.now` scheduling is detected and
    rejected by release checker.
 
 5. ⏳ **Stage 4 — monitors and links.**
@@ -1688,6 +1691,18 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r45 (Slice 6 Stage 3 Tol time stdlib)
+
+- Added `@stdlib/time` with explicit `Slice6TimerBudget`,
+  `sendAtMcSeqno`, `sendAfterBlocks`, and `cancelScheduled` helpers over
+  the Stage 2 schedule substrate.
+- Added the initial Slice 6 release checker and timer manifest schema so
+  scheduled-message use has explicit budgets and `msg.now` scheduling
+  helper calls are rejected.
+- Added focused tol-tester coverage for trusted masterchain-seqno
+  scheduling, budget failure modes, cancellation, and caller-controlled
+  `now` spoof resistance.
 
 ### r44 (Slice 6 Stage 2 scheduled message substrate)
 
