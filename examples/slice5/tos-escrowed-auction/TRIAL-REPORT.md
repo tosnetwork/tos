@@ -44,7 +44,7 @@ message field as `caller_controlled: true`, enforced by
 | **Contract name** | TosEscrowedAuction |
 | **Intended production use** | English auction for on-chain assets (NFTs, token lots, governance items). Bidders compete with increasing bids; the seller collects the winning bid at settlement. Real-world targets: in-game item sales, DAO treasury asset auctions, NFT primary sales. |
 | **Stdlib package(s) used** | `@stdlib/auction` (backed by `@stdlib/postponement`) |
-| **Files created** | `examples/slice5/tos-escrowed-auction/src/tos-escrowed-auction.tol` (152 lines), `tests/tos-escrowed-auction-positive.tol` (24 cases), `tests/tos-escrowed-auction-import-positive.tol` (2 cases), `manifest.json`, `artifacts/opcodes.json`, `artifacts/method-ids.json`, `artifacts/error-codes.json`, `doc/slice5-abi-manifests/tos_escrowed_auction.json` |
+| **Files created** | `examples/slice5/tos-escrowed-auction/src/tos-escrowed-auction.tol` (152 lines), `tests/tos-escrowed-auction-positive.tol` (26 cases), `tests/tos-escrowed-auction-import-positive.tol` (2 cases), `manifest.json`, `artifacts/opcodes.json`, `artifacts/method-ids.json`, `artifacts/error-codes.json`, `doc/slice5-abi-manifests/tos_escrowed_auction.json` |
 | **Would deploy with real funds?** | **No, not as written without the three production fixes documented in §4.** The contract itself is sound, but the security model requires explicit author attention to three stdlib gaps that the ecosystem does not surface via compiler warnings, documentation, or example code. |
 
 ---
@@ -78,9 +78,9 @@ git diff --check
 |---|---|
 | `--check-only` on contract source | Clean (no output) |
 | `--check-only` on both test files | Clean (no output) |
-| tol-tester full run | **2 tests, 26 cases, gas 220,736 — all pass** |
-| `check-slice-5-abi-manifests.py` | `Validated 9 Slice 5 ABI manifest(s); compared 1 FunC/Tol fixture pair(s)` |
-| `check-slice-5-release-package.py` | `Validated Slice 5 release candidate: auction, governance, oracle, payment-channel generated examples, 3 external candidate(s), ABI manifests, docs, and artifacts` |
+| tol-tester full run | **2 test files: 2 import cases + 26 positive cases, gas 434,811 — all pass** |
+| `check-slice-5-abi-manifests.py` | `Validated 10 Slice 5 ABI manifest(s); compared 1 FunC/Tol fixture pair(s)` |
+| `check-slice-5-release-package.py` | `Validated Slice 5 release candidate: auction, governance, oracle, payment-channel generated examples, 5 external candidate(s), ABI manifests, docs, and artifacts` |
 | `git diff --check` | Clean |
 
 **Skipped verification:**
@@ -110,18 +110,24 @@ git diff --check
 | T524 | Settle before close rejected | `2823` (NOT_CLOSED) | `2823` | State machine |
 | T525 | Duplicate settle rejected | `2822` (ALREADY_SETTLED) | `2822` | Replay protection |
 | T526 | Duplicate close rejected | `2821` (ALREADY_CLOSED) | `2821` | Replay protection |
+| T527 | Exact immediate bid replay rejected without state change | `2817` (LOW_BID) | `2817` | Replay protection |
 | T530 | Forged `msg.bidder` accepted by raw stdlib — documents vulnerability | `1` (forged wins) | `1` | **Security gap documented** |
 | T531 | Contract bidder override: real sender (`in.senderAddress`) wins | `1` (safe) | `1` | Authorization |
 | T540 | `msg.now` spoofing to force early close — safe vs. vulnerable paths | `1` (safe path rejected) | `1` | **Time integrity** |
 | T550 | Bid at exactly `closesAt` boundary rejected | `2821` (ALREADY_CLOSED) | `2821` | Boundary value |
 | T551 | Close at exactly `closesAt` (boundary) accepted | `1` | `1` | Boundary value |
-| T552 | Queue full: actual error is postponement-layer code, **not** auction constant | `2307` (0x0903) | `2307` | **Error code gap** |
+| T552 | Queue full rethrows auction-level code | `2819` (0x0b03) | `2819` | Queue bound |
+| T553 | Oversized postponed bid body rejected without queue mutation | `2308` (0x0904) | `2308` | Storage bound |
 | T560 | Unknown opcode yields `0xffff` | `65535` | `65535` | Unknown opcode |
 | T570 | Invalid config (`closesAt ≤ opensAt`) rejected at construction | `2824` | `2824` | Config validation |
 | T580 | Contract error constants accessible from importer | `1` | `1` | Import |
 | T581 | Storage struct fields accessible from importer | `1` | `1` | Import |
 
-> **Note on T552.** The initial expected value was `2819` (`SLICE5_AUCTION_THROW_QUEUE_FULL`). The test failed with `2307`. Investigation revealed that the auction stdlib's own queue-full constant is **never thrown**; the actual error originates from the postponement layer. This is Finding F-004.
+> **Note on T552.** The initial trial expected `2819`
+> (`SLICE5_AUCTION_THROW_QUEUE_FULL`) and observed `2307` from the
+> postponement layer. Post-trial hardening fixed this: queue full now rethrows
+> the auction-level code, while T553 separately covers the lower-level
+> body-size storage bound (`2308`).
 
 ---
 
@@ -168,13 +174,13 @@ git diff --check
 
 ---
 
-### F-004 — `SLICE5_AUCTION_THROW_QUEUE_FULL` (0x0b03) is never thrown
+### F-004 — `SLICE5_AUCTION_THROW_QUEUE_FULL` (0x0b03) originally was not thrown
 
 - **Severity:** MEDIUM
 - **Area:** stdlib / ABI
-- **Description:** When the postponement queue is full, the actual error thrown is `SLICE4_POSTPONEMENT_THROW_QUEUE_FULL` (value `0x0903 = 2307`) from deep inside the postponement layer. `SLICE5_AUCTION_THROW_QUEUE_FULL` (value `0x0b03 = 2819`) is defined in the auction stdlib but is never reached by any code path — it is a dead constant. Discovered when test T552 was initially written expecting `2819` and failed with `2307`.
-- **Why this matters in production:** On-chain error monitoring, off-chain indexers, and client SDK error matchers will subscribe to `0x0b03` for queue-full events and never receive one. Queue-full events are silently emitted as `0x0903`, a postponement-layer code not listed in the auction ABI manifest.
-- **Workaround used:** Updated T552 to expect `2307`. Documented the discrepancy in the ABI manifest under `wire_compatibility_exceptions` and in `artifacts/error-codes.json`.
+- **Description:** During the first trial, a full postponement queue threw `SLICE4_POSTPONEMENT_THROW_QUEUE_FULL` (value `0x0903 = 2307`) from deep inside the postponement layer instead of the auction-level `SLICE5_AUCTION_THROW_QUEUE_FULL` (value `0x0b03 = 2819`). Discovered when test T552 was initially written expecting `2819` and failed with `2307`.
+- **Why this matters in production:** On-chain error monitoring, off-chain indexers, and client SDK error matchers should subscribe to the auction ABI's own queue-full error code, not a lower-layer implementation detail.
+- **Workaround used:** Historical only. The trial initially updated T552 to expect `2307`; post-trial hardening restored the intended auction-level code.
 - **Post-trial disposition:** closed. `postponeBid` now catches `SLICE4_POSTPONEMENT_THROW_QUEUE_FULL` and rethrows `SLICE5_AUCTION_THROW_QUEUE_FULL`, making the auction-level error code observable.
 
 ---
@@ -202,14 +208,14 @@ git diff --check
 
 ---
 
-### F-007 — `slice5AuctionDefaultBudget()` `maxItems: 4` is too tight for production
+### F-007 — auction queue budget must be explicit for high-traffic auctions
 
 - **Severity:** LOW
 - **Area:** stdlib / docs
-- **Description:** The default postponement budget hardcodes `maxItems: 4`. A production auction with a pre-open marketing phase can easily receive 4+ bids before `opensAt`. The 5th bid fails with the opaque postponement-layer error `2307`, not a clear "bid rejected" message.
+- **Description:** The original default postponement budget hardcoded `maxItems: 4`. A production auction with a pre-open marketing phase can easily receive more than four bids before `opensAt`.
 - **Why this matters in production:** A popular auction could silently reject valid bids during its pre-open period, causing bidder confusion and potential legal disputes over whether a bid was accepted.
 - **Workaround used:** Used `slice5AuctionConfigWithBudget(...)` instead of `slice5AuctionConfig(...)` for deployments expecting more than 4 pre-open bids.
-- **Recommended fix:** Raise `slice5AuctionDefaultBudget()` to `maxItems: 16`. Document the storage-cost trade-off in the author guide. Consider exposing `maxItems` as a parameter in `slice5AuctionConfig(...)`.
+- **Post-trial disposition:** closed for the default path. `slice5AuctionDefaultBudget()` now uses `maxItems: 16`, queue-full rethrows the auction-level code `2819`, and T552 locks the capacity behavior. Authors with higher expected pre-open traffic should still use `slice5AuctionConfigWithBudget(...)` and explicitly budget storage.
 
 ---
 
@@ -238,7 +244,7 @@ git diff --check
 |-----|---------------------|--------------------------|
 | Is `blockchain.now()` available as a replacement for `msg.now`? | Searched "now", "unix_time", "timestamp" in author guide, audit checklist, compatibility matrix | Direct source inspection of `tol-stdlib/common.tol:403` — not mentioned in any policy or guide document |
 | Does `msg.bidder` need to be overridden with `in.senderAddress`? | Author guide, audit checklist, compatibility matrix, example source | Nothing warns about this. Had to construct test T530 to prove the gap experimentally |
-| What error code does a full postponement queue produce? | Expected `SLICE5_AUCTION_THROW_QUEUE_FULL (0x0b03)` based on auction stdlib constants | Test T552 failed; traced call chain through `postponement.tol` to find `0x0903` |
+| What error code does a full postponement queue produce? | Expected `SLICE5_AUCTION_THROW_QUEUE_FULL (0x0b03)` based on auction stdlib constants | Current answer: `2819`. The original trial observed `2307`; post-trial hardening now catches the postponement-layer code and rethrows the auction-level code. |
 | How do I dispatch funds after `settle()`? | Author guide auction section | Not documented for auction. Cross-referenced payment-channel guide; reverse-engineered the pattern |
 | What do import-positive test files look like? | No tol-tester documentation for the `*-import-positive.tol` convention | Studied `tos-council-fund-import-positive.tol` as template |
 | How does the tol-tester parse `@testcase` table rows? | Searched docs folder | Read `tol-tester.py` source directly |
@@ -250,7 +256,7 @@ git diff --check
 
 1. **`slice5AuctionConfigWithBudget` is not mentioned in the author guide** — found by searching `auction.tol` directly when the default budget proved too small.
 2. **`blockchain.now()` is not mentioned anywhere in policy docs or author guide** — found via `grep -n "now" common.tol`.
-3. **Test T552 failed on first run** with `2819` instead of `2307` — required tracing `postponeBid → queue.enqueueWithQueryId → PostponedQueue.requireBudget → SLICE4_POSTPONEMENT_THROW_QUEUE_FULL` through two stdlib files.
+3. **Test T552 failed on the first trial run** with `2307` instead of `2819` — required tracing `postponeBid -> queue.enqueueWithQueryId -> PostponedQueue.requireBudget -> SLICE4_POSTPONEMENT_THROW_QUEUE_FULL` through two stdlib files. Post-trial hardening now rethrows `2819`.
 4. **ABI manifest `method_id` values** — derived by reading existing artifact `method-ids.json` files and doing hex arithmetic; no generator utility.
 5. **ABI manifest `bits: null` for variable-length types** — inferred from existing manifests; the schema does not document which types require `null` vs. an integer.
 6. **No `tol new --pattern auction` in the tested build** — the author guide documents the subcommand; the binary was not available. Worked from examples directly.
@@ -263,15 +269,15 @@ git diff --check
 
 | Property | Status | Notes |
 |----------|--------|-------|
-| **Authorization** | PARTIAL | Seller checks use `in.senderAddress` — correct and enforced. Bidder identity requires manual override of `msg.bidder`; no compiler or stdlib enforcement exists. |
-| **Replay protection** | PARTIAL | `settle()` and `closeAndDrain()` are state-guarded against double-call (tests T525, T526). No `queryId` deduplication for bid messages — two bids from the same sender with identical `queryId` but different amounts are both accepted or rejected on bid-value comparison alone. |
+| **Authorization** | FIXED for production/reference paths | Seller checks use `in.senderAddress`; bidder identity uses `receiveTrustedBid(...)`. The Slice 5 release checker rejects production/reference sources that trust `msg.bidder`. |
+| **Replay protection** | HANDLED by auction semantics | Duplicate close/settle throw `ALREADY_CLOSED`/`ALREADY_SETTLED` (T525, T526). Exact immediate bid replay is rejected as `LOW_BID` without state change (T527). Postponed duplicate query IDs are rejected by the Slice 4 queue index. A new higher amount with a reused queryId is treated as a new economic bid, not idempotent replay. |
 | **Value transfer / payout correctness** | FIXED for reference path | `settle()` returns the highest bid amount. The standalone reference example now saves settled state and emits seller payout with `slice5AuctionEmitPayout(...)`; this trial contract intentionally keeps an off-chain pending-payout path. |
 | **Duplicate messages** | HANDLED | Duplicate close/settle throw `ALREADY_CLOSED`/`ALREADY_SETTLED`. Duplicate bids are handled by bid-value comparison, not by `queryId` deduplication. |
 | **Malformed messages** | HANDLED | Auto-deserialization via `lazy T.fromSlice` throws on malformed input at the Tol runtime layer. |
 | **Expiry / staleness** | FIXED | `msg.now` is caller-controlled and untrustworthy. Production/reference contracts use `blockchain.now()` for all time checks, and the release checker rejects regression. |
 | **Unknown opcodes** | HANDLED | `@unknown_throw(0xffff)` covers all unrecognized internal opcodes. |
-| **Storage bounds** | NOT TESTED | Postponement queue stores full bid bodies in `c4`. Large bodies (near `maxBodyBits: 512` per the default budget) fill storage faster. No test exercises the body-size budget boundary. |
-| **Bounce / failure behavior** | NOT TESTED | `@disclaim_query_id` on all handlers disables automatic query-id propagation. Default TVM bounce applies when the contract throws. No explicit `@bounce_only` handler is declared. |
+| **Storage bounds** | FIXED | T553 covers the postponed bid body-size budget and proves an oversized queued body is rejected without mutating the queue. T552 covers queue item capacity. |
+| **Bounce / failure behavior** | PROTOCOL DEFAULT | `@disclaim_query_id` on all handlers disables automatic query-id propagation. Failed receives rely on standard TVM bounce behavior; this contract has no custom bounce-only handler. |
 | **ABI compatibility** | HANDLED with exceptions | Wire-compatible with `@stdlib/auction` ABI. Two documented exceptions in `wire_compatibility_exceptions`: (1) `msg.bidder` is ignored at the receive-handler layer; (2) `msg.now` is ignored at the receive-handler layer. Both are contract-layer decisions with no impact on wire encoding. |
 
 ---
@@ -280,12 +286,12 @@ git diff --check
 
 ### Verdict: ACCEPTED WITH FIXES
 
-The Tol compiler, `tol-tester`, stdlib, ABI manifest infrastructure, and release package checker all work correctly for this use case. Compilation is clean across all three source files, all 26 test cases pass, and all validator scripts pass.
+The Tol compiler, `tol-tester`, stdlib, ABI manifest infrastructure, and release package checker all work correctly for this use case. Compilation is clean across all three source files, all 28 test cases pass, and all validator scripts pass.
 
 The contract is not production-deployable as-is due to two external integration obligations:
 
 1. **Off-chain payout dispatch** — the contract records the winning bid in `pendingPayout` but does not send the funds. The deploying team must read `getPendingPayout()` and issue a separate transfer transaction.
-2. **Error code monitoring** — subscribe to `2307` (not `2819`) for queue-full alerts.
+2. **Error code monitoring** — subscribe to `2819` for auction queue-full alerts; `2307` remains the lower-level Slice 4 postponement code for direct postponement users.
 
 Both obligations are documented in contract comments and the ABI manifest.
 

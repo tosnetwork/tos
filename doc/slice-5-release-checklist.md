@@ -12,6 +12,9 @@ Repo-side release-candidate checklist:
 - [x] `scripts/check-slice-5-release-package.py` is green.
 - [x] Receive-handler emulator coverage exists for security-critical
   `in.senderAddress` / `blockchain.now()` context injection.
+- [x] External-candidate manifests that declare emulator fixtures are
+  release-checked for an existing fixture, `test-emulator` target,
+  `integrated` status, and CMake wiring.
 - [x] ABI manifests annotate inbound wire fields with
   `caller_controlled: true`.
 - [x] First external trial findings are closed in repo-side code/docs and

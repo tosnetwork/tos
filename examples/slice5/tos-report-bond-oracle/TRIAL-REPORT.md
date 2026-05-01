@@ -225,32 +225,27 @@ does the same and is checked by the release package gate.
 
 ---
 
-### F-B005 — MEDIUM: Emulator fixture requires manual CMake integration
+### F-B005 — MEDIUM: Emulator fixture originally required manual CMake integration
 
-**File:** `examples/slice5/tos-report-bond-oracle/tests/tos-report-bond-oracle-emulator.cpp`
+**File:** `emulator/test/tos-report-bond-oracle-fixture.cpp`
 
 The SmartContract emulator test fixture requires:
 1. Moving the `.cpp` file to `emulator/test/`
 2. Adding a CMake target that compiles the Tol contract to a `.boc` file
 3. Defining the `TOS_REPORT_BOND_ORACLE_BOC` preprocessor constant
 
-There is no documented workflow for adding new contracts to the emulator test suite.
-The existing `slice-5-receive-context-fixture.cpp` shows the pattern, but the
-corresponding CMakeLists.txt entry is not visible from the example directory, and
-the step "compute `kReporterSetHash` from the reporter set cell" has no automated tool.
-
-**Specific blocker:** The `reporterSetHash` field in `Slice5OracleConfig` must equal
-`Slice5OracleReporterSet.toCell().hash()`. The C++ fixture must hard-code this value,
-but computing a TVM cell hash from C++ requires either running the Tol serializer or
-adding a helper getter to the contract. Neither approach is documented.
-
-**Fix:** Add a `slice5OracleReporterSetHash(reporterSet)` getter to the oracle scaffold,
-or document a CLI command for computing cell hashes offline. Add a CMake template for
-wiring new contracts into the emulator test suite.
+**Post-trial disposition:** closed. The fixture was moved to `emulator/test/`, the
+contract BoC is built by the top-level CMake target, `TOS_REPORT_BOND_ORACLE_BOC` is
+defined for `test-emulator`, and `examples/slice5/tos-report-bond-oracle/manifest.json`
+declares the integrated emulator fixture. The Slice 5 release checker now validates
+that declared emulator fixtures exist, are marked `integrated`, target `test-emulator`,
+and are wired into `CMakeLists.txt`. The original reporter-set-hash blocker was
+removed at the root: deployment builds `Slice5OracleConfig` inside Tol, so C++ no
+longer hard-codes `reporterSetHash`.
 
 ---
 
-### F-B006 — MEDIUM: Finalize handler sends up to 3 messages in one transaction — gas budget undocumented
+### F-B006 — MEDIUM: Finalize handler sends up to 3 messages in one transaction — gas budget originally undocumented
 
 **File:** `examples/slice5/tos-report-bond-oracle/src/tos-report-bond-oracle.tol`
 **Line range:** finalize handler
@@ -412,10 +407,10 @@ The fixture in `tests/tos-report-bond-oracle-emulator.cpp` covers:
 | `BlockchainNowControlsFreshness` (fail) | `set_now(70)` | report at expiry is stale |
 | `WrongStarterThrowsUnauthorized` | `set_sender_address(attacker)` | starter guard works |
 
-**Blocker for running these tests:** The C++ storage builder requires `kReporterSetHash`
-— the TVM cell hash of `Slice5OracleReporterSet{reporters: {1→true, 2→true, 3→true}}`.
-This value must be computed offline (see F-B005). All test structure is correct; only
-the storage initialization constant needs filling in.
+**Post-trial disposition:** integrated. The fixture deploys through the real Tol
+`@deploy` handler instead of hard-coding nested storage cells, so the reporter-set hash
+is computed by the stdlib path under test. `test-emulator` runs this fixture as part of
+the normal emulator gate.
 
 ---
 
@@ -427,9 +422,9 @@ the storage initialization constant needs filling in.
 2. **`map<uint256, coins>` validity unknown** — Used `uint64` (nanoTON) instead,
    capping the bond at ~18,446 TON. The valid map value types are not listed.
 
-3. **Emulator storage initialization** — Building `TosReportBondStorage` from C++ requires
-   bit-exact serialization of nested structs including the reporter set cell hash. No
-   tool exists to compute this from a Tol source file without running the compiler.
+3. **Emulator storage initialization** — closed. The fixture sends the real deploy body
+   and lets the Tol contract build `TosReportBondStorage`, avoiding manual nested-cell
+   construction and reporter-set-hash constants.
 
 4. **No `tol-tester` injection for `in.valueCoins`** — Tests T618 and T619 simulate
    the receive-handler guards inline because tol-tester cannot inject message value.
@@ -464,7 +459,7 @@ the storage initialization constant needs filling in.
 | T618 | Bond guard (inline) | 4866 (INSUFFICIENT_BOND) |
 | T619 | No round guard (inline) | 4867 (NO_ACTIVE_ROUND) |
 | T680–T683 | Import | 1, 2, 1, 1 |
-| E1–E4 | Emulator | pending CMake setup |
+| E1–E5 | Emulator | integrated in `test-emulator`; deploy/start, value gate, sender identity, trusted freshness, finalize refund cleanup |
 
 ---
 
@@ -476,7 +471,7 @@ the storage initialization constant needs filling in.
 | F-B002 DexPriceOracle msg.reporterKey + msg.now | HIGH | Closed: address-derived reporter identity plus trusted oracle helpers; release checker rejects raw oracle receive paths |
 | F-B003 TosCouncilFund msg.now | HIGH | Closed: vote/execute/cancel use `blockchain.now()` and sender-derived authority |
 | F-B004 TosStreamChannel no payout dispatch | HIGH | Closed: payment-channel payout helper dispatches after saved closed state; reference example is gated |
-| F-B005 Emulator CMake workflow | MEDIUM | Document CMake integration steps; add reporter set hash tool |
+| F-B005 Emulator CMake workflow | MEDIUM | Closed: integrated CMake fixture declared in manifest and validated by release checker; reporter-set hash is computed by Tol deploy path |
 | F-B006 Multi-send gas budget | MEDIUM | Closed: bond refunds use `slice5OracleEmitBondRefund(...)` with bounce-on-action-fail; release checker rejects raw `SEND_MODE_REGULAR` sends |
 | F-B007 coins map value type | MEDIUM | Closed: `map<uint256, coins>` has compiler coverage and docs; bounded `uint64` remains an intentional contract choice |
 | F-B008 stdlib addReport uses report.now | LOW | Closed: trusted report/finalize helpers exist and release checker rejects caller-controlled time/identity in production candidates |

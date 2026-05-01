@@ -180,6 +180,21 @@ def validate_generated_manifest(root: Path, manifest_path: Path) -> None:
         require(behaviour.get("behaviour") == entry.get("behaviour"), f"{manifest_path}: behaviour mismatch")
 
 
+def validate_emulator_tests(root: Path, project: Path, name: str, manifest: dict) -> None:
+    entries = manifest.get("emulator_tests", [])
+    if name == "tos-report-bond-oracle":
+        require(entries, f"{project}: bond oracle must declare its receive-context emulator fixture")
+    cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    for index, entry in enumerate(entries):
+        prefix = f"{project}: emulator_tests[{index}]"
+        require(entry.get("status") == "integrated", f"{prefix}: status must be integrated")
+        require(entry.get("cmake_target") == "test-emulator", f"{prefix}: cmake_target must be test-emulator")
+        fixture = root / entry.get("fixture", "")
+        require(fixture.exists() and fixture.is_file(), f"{prefix}: fixture missing: {fixture}")
+        require(str(entry["fixture"]) in cmake, f"{prefix}: fixture is not wired into CMakeLists.txt")
+        require(entry.get("note"), f"{prefix}: integration note missing")
+
+
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -237,6 +252,7 @@ def main() -> int:
         require((root / manifest["abi_manifest"]).exists(), f"{project}: ABI manifest not found")
         for relative in manifest.get("observability", {}).values():
             load_json(project / relative)
+        validate_emulator_tests(root, project, name, manifest)
         validate_generated_manifest(root, project / "manifest.json")
         external.append(name)
 

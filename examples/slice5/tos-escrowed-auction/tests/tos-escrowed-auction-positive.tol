@@ -1,4 +1,5 @@
 import "@stdlib/auction"
+import "@stdlib/postponement"
 
 // Error codes mirroring the contract (cannot import contract source into stdlib-only tests
 // without also importing the contract's contract block; see import test for that path).
@@ -27,6 +28,16 @@ fun intruder(): address {
 // Auction: opens at t=10, closes at t=100, minBid=500.
 fun makeConfig(): Slice5AuctionConfig {
     return slice5AuctionConfig(seller(), 500, 10, 100);
+}
+
+fun tightBodyBudgetConfig(): Slice5AuctionConfig {
+    return slice5AuctionConfigWithBudget(
+        seller(),
+        500,
+        10,
+        100,
+        slice4PostponementBudget(16, 64, 4, 8192, 64, 120, 16, 1023)
+    );
 }
 
 fun freshState(): Slice5AuctionState {
@@ -249,6 +260,21 @@ fun test_duplicate_close(): int {
     return 0;
 }
 
+// T527: Exact immediate bid replay is rejected by amount ordering and leaves state unchanged.
+@method_id(527)
+fun test_exact_bid_replay_rejected(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(77, bidder1(), 600, 20));
+    try {
+        state.receiveBid(makeConfig(), makeBid(77, bidder1(), 600, 21));
+    } catch (code) {
+        assert(state.highestBid == 600) throw 5270;
+        assert(state.highestBidder == bidder1()) throw 5271;
+        return code;
+    }
+    return 0;
+}
+
 // --- msg.bidder override simulation ---
 // Documents and tests the security property that msg.bidder must be overridden with
 // in.senderAddress. We show that the stdlib applyBid accepts whichever bidder address
@@ -368,6 +394,19 @@ fun test_queue_full(): int {
     return 0;
 }
 
+// T553: Postponed bid body-size budget is enforced before storage changes.
+@method_id(553)
+fun test_postponed_bid_body_too_large(): int {
+    var state = freshState();
+    try {
+        state.receiveBid(tightBodyBudgetConfig(), makeBid(1, bidder1(), 600, 5));
+    } catch (code) {
+        assert(state.queue.count == 0) throw 5530;
+        return code;
+    }
+    return 0;
+}
+
 // --- Unknown opcode simulation ---
 // The contract uses @unknown_throw(0xffff). Any unrecognized opcode throws 65535.
 @method_id(560)
@@ -405,12 +444,14 @@ fun test_invalid_config_closes_before_opens(): int {
 @testcase | 524 | | 2823
 @testcase | 525 | | 2822
 @testcase | 526 | | 2821
+@testcase | 527 | | 2817
 @testcase | 530 | | 1
 @testcase | 531 | | 1
 @testcase | 540 | | 1
 @testcase | 550 | | 2821
 @testcase | 551 | | 1
 @testcase | 552 | | 2819
+@testcase | 553 | | 2308
 @testcase | 560 | | 65535
 @testcase | 570 | | 2824
  */

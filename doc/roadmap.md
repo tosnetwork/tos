@@ -949,7 +949,11 @@ production candidates, and compiler coverage/documentation for
 5 reference examples onto the same production guardrails: sender-derived
 auction/governance/oracle identity, trusted-chain-time oracle finalization,
 and explicit auction/payment-channel payout helpers, all enforced by the
-Slice 5 release checker.
+Slice 5 release checker. The remaining bonded-oracle emulator workflow
+gap is also closed: external-candidate manifests with emulator fixtures
+are validated against CMake wiring, and the bonded oracle fixture relies
+on the Tol deploy path to compute nested reporter-set hashes instead of
+manual C++ storage constants.
 
 **Stage plan.**
 
@@ -1036,6 +1040,9 @@ Slice 5 release checker.
    - ✅ Extend release checks to cover standalone Slice 5 reference
      examples, including safe oracle/governance identity derivation and
      explicit auction/payment-channel payout dispatch.
+   - ✅ Validate integrated emulator fixture metadata for
+     production-intent candidates and cover auction postponed-body
+     storage bounds.
 
 8. ✅ **Stage 7 — ABI freeze sign-off and external adoption.**
 
