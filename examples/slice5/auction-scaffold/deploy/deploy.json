@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "pattern": "auction",
+  "contract": "AuctionScaffold",
+  "source": "src/main.tol",
+  "network": "local",
+  "state_init": {
+    "code": "build/AuctionScaffold.code.boc",
+    "data": "build/AuctionScaffold.data.boc"
+  }
+}

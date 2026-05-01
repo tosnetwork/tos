@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "schema": "slice-4-behaviour-manifest",
+  "behaviour": "jetton_wallet",
+  "stage": "Slice 4 Stage 5",
+  "mode": "error",
+  "callbacks": [
+    {
+      "name": "jettonWalletPackData",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "jettonWalletCalculateStateInit",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "jettonWalletCalculateUserWalletAddress",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "jettonBuildInternalTransferMessage",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "jettonBuildTransferNotificationMessage",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "jettonBuildWalletExcessesMessage",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "jettonBuildBurnNotificationMessage",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "jettonWalletErrorForFuncThrow",
+      "kind": "helper",
+      "required": true
+    }
+  ],
+  "messages": [],
+  "states": [],
+  "postponement": {
+    "enabled": false,
+    "queue_field": null,
+    "deferrable": [],
+    "budgets": {
+      "max_items": 0,
+      "max_body_bits": 0,
+      "max_body_refs": 0,
+      "max_total_body_bits": 0,
+      "max_total_body_refs": 0,
+      "max_age_seconds": 0,
+      "max_drain_items": 0,
+      "max_cell_depth": 0
+    }
+  },
+  "errors": [
+    {
+      "name": "JETTON_STDLIB_WALLET_ERROR_OWNER_REQUIRED",
+      "code": 1705,
+      "class": "Authorization"
+    },
+    {
+      "name": "JETTON_STDLIB_WALLET_ERROR_INSUFFICIENT_BALANCE",
+      "code": 1706,
+      "class": "Permanent"
+    },
+    {
+      "name": "JETTON_STDLIB_WALLET_ERROR_INVALID_TRANSFER_SENDER",
+      "code": 1707,
+      "class": "Authorization"
+    },
+    {
+      "name": "JETTON_STDLIB_WALLET_ERROR_INSUFFICIENT_TRANSFER_VALUE",
+      "code": 1709,
+      "class": "BackPressure"
+    }
+  ],
+  "wire_compatibility_exceptions": [
+    {
+      "exception": "helper-level-manifest",
+      "reason": "Stage 5 covers the Slice 3 helper surface without changing jetton-wallet bytecode or re-migrating the reference contract."
+    },
+    {
+      "exception": "pre-section-5-7-backpressure-class",
+      "reason": "JETTON_STDLIB_WALLET_ERROR_INSUFFICIENT_TRANSFER_VALUE reflects the existing Slice 3 helper classification in @stdlib/jetton. This manifest records the legacy value for compatibility only; ErrorClass.BackPressure remains reserved until actor.md §5.7 delivery-SLA semantics are approved."
+    }
+  ]
+}

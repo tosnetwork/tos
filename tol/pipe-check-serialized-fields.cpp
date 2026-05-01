@@ -38,7 +38,10 @@ static Error err_theoretical_overflow_1023(StructPtr struct_ref, PackSize size) 
                   ">     struct {} {\n"
                   ">         ...\n"
                   ">         more: Cell<ExtraFields>;\n"
-                  ">     }\n",
+                  ">     }\n\n"
+                  "Note: `address` serializes to 267 bits. Several inline addresses plus ordinary fields can exceed\n"
+                  "the TVM 1023-bit cell limit. The compiler will not automatically move fields into refs because\n"
+                  "that would change the wire ABI; use an explicit `Cell<...>` field for multi-address groups.\n",
                   struct_ref,
                   exceeds_in_bits ? 1023 : 4,
                   exceeds_in_bits ? "bits" : "refs",

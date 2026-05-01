@@ -1,0 +1,27 @@
+fun hiddenRootRead(): cell asm "PUSHROOT";
+
+struct ContractAsmRootEscapeStorage {
+    always: uint32
+    @on(Closed) secret: uint32
+}
+
+struct (0x0000009a) ContractAsmRootEscapePing {
+    queryId: uint64
+}
+
+contract ContractAsmRootEscape {
+    storage: ContractAsmRootEscapeStorage
+    states: Closed
+    @initial state Closed
+    @unknown_throw(0xffff);
+
+    receive(msg: ContractAsmRootEscapePing) on Closed {
+        hiddenRootRead();
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr asm function `hiddenRootRead` uses c4
+ */

@@ -1,0 +1,37 @@
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6): `become` and `keep_state` are
+// compile errors inside an `@deploy receive(...)` body — deployment has exactly one
+// authoritative initial state, so issuing a transition would be ambiguous.
+
+struct ContractDeployRejectsBecomeStorage {
+    total: uint32;
+}
+
+struct (0x00000001) ContractDeployRejectsBecomeDeploy {
+    queryId: uint64;
+}
+
+struct (0x00000031) ContractDeployRejectsBecomeOpen {
+    queryId: uint64;
+}
+
+contract ContractDeployRejectsBecome {
+    storage: ContractDeployRejectsBecomeStorage
+    states: Open, Settling
+    @initial state Open
+
+    @deploy
+    receive(msg: ContractDeployRejectsBecomeDeploy) {
+        save(ContractDeployRejectsBecomeStorage { total: 0 });
+        become Settling;
+    }
+
+    receive(msg: ContractDeployRejectsBecomeOpen) on Open {
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr `become` and `keep_state` are not permitted inside an `@deploy receive(...)` body
+@stderr doc/tos-language-syntax-policy.md §3.6
+ */

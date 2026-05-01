@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "schema": "slice-4-behaviour-manifest",
+  "behaviour": "multisig",
+  "stage": "Slice 4 Stage 5",
+  "mode": "error",
+  "callbacks": [
+    {
+      "name": "multisigRequireValidThreshold",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "multisigRequireSigner",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "multisigAddSigner",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "multisigAddApproval",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "multisigRequireNewProposal",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "multisigValidateActions",
+      "kind": "helper",
+      "required": true
+    },
+    {
+      "name": "multisigErrorForFuncThrow",
+      "kind": "helper",
+      "required": true
+    }
+  ],
+  "messages": [],
+  "states": [
+    "collecting",
+    "executed",
+    "expired"
+  ],
+  "postponement": {
+    "enabled": false,
+    "queue_field": null,
+    "deferrable": [],
+    "budgets": {
+      "max_items": 0,
+      "max_body_bits": 0,
+      "max_body_refs": 0,
+      "max_total_body_bits": 0,
+      "max_total_body_refs": 0,
+      "max_age_seconds": 0,
+      "max_drain_items": 0,
+      "max_cell_depth": 0
+    }
+  },
+  "errors": [
+    {
+      "name": "MULTISIG_STDLIB_ERROR_BAD_THRESHOLD",
+      "code": 2801,
+      "class": "Protocol"
+    },
+    {
+      "name": "MULTISIG_STDLIB_ERROR_NOT_SIGNER",
+      "code": 2802,
+      "class": "Authorization"
+    },
+    {
+      "name": "MULTISIG_STDLIB_ERROR_DUPLICATE_SIGNER",
+      "code": 2803,
+      "class": "Protocol"
+    },
+    {
+      "name": "MULTISIG_STDLIB_ERROR_PROPOSAL_REPLAY",
+      "code": 2805,
+      "class": "Permanent"
+    }
+  ],
+  "wire_compatibility_exceptions": [
+    {
+      "exception": "helper-level-manifest",
+      "reason": "Stage 5 covers multisig helper behaviour before full generated multisig contract packaging lands."
+    }
+  ]
+}

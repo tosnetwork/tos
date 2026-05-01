@@ -1,0 +1,99 @@
+import "../../crypto/smartcont/slice6-dogfood"
+import "@stdlib/supervision"
+
+fun dogConfig(maxRestarts: uint16 = 2): Slice6DogfoodConfig {
+    return slice6DogfoodConfig(maxRestarts);
+}
+
+fun dogHash(v: uint32): uint256 {
+    return beginCell().storeUint(v, 32).endCell().hash();
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(721)
+fun test_dogfood_initializes_supervisor_child(): int {
+    val config = dogConfig();
+    val state = slice6DogfoodInitialState(config);
+    return state.supervisor.load().childCount;
+}
+
+@method_id(722)
+fun test_dogfood_schedules_heartbeat(): int {
+    val action = slice6DogfoodScheduleHeartbeatAction(dogConfig(), 100);
+    assert(action.notBeforeMcSeqno == 120) throw 7221;
+    assert(action.expireAfterBlocks == 200) throw 7222;
+    return action.valueCoins;
+}
+
+@method_id(723)
+fun test_dogfood_scheduled_handle_is_stable(): int {
+    val a = slice6DogfoodScheduleHeartbeatHandle(dogConfig(), 100, 1, dogHash(1), 0);
+    val b = slice6DogfoodScheduleHeartbeatHandle(dogConfig(), 100, 1, dogHash(1), 0);
+    val c = slice6DogfoodScheduleHeartbeatHandle(dogConfig(), 100, 1, dogHash(1), 1);
+    assert(a == b) throw 7231;
+    assert(a != c) throw 7232;
+    return (a != 0) as int;
+}
+
+@method_id(724)
+fun test_dogfood_monitor_down_notification(): int {
+    val note = slice6DogfoodMonitorDown(dogConfig(), dogHash(2), 1000);
+    assert(note.failureCode == SLICE6_DOGFOOD_FAILURE_CHILD_DOWN) throw 7241;
+    assert(note.originalMessageHash! == dogHash(2)) throw 7242;
+    return note.failureClass;
+}
+
+@method_id(725)
+fun test_dogfood_funded_child_down_records_dead_letter(): int {
+    val config = dogConfig();
+    var state = slice6DogfoodInitialState(config);
+    val record = state.handleChildDown(config, dogHash(3), 101, 1);
+    assert(record.deadLetterNonce! == 0) throw 7251;
+    assert(state.deadLetters.load().count == 1) throw 7252;
+    assert(!state.finalFailure) throw 7253;
+    return record.failureCode;
+}
+
+@method_id(726)
+fun test_dogfood_unfunded_child_down_does_not_create_free_record(): int {
+    val config = dogConfig();
+    var state = slice6DogfoodInitialState(config);
+    val record = state.handleChildDown(config, dogHash(4), 101, 0);
+    assert(record.deadLetterNonce == null) throw 7261;
+    assert(state.deadLetters.load().count == 0) throw 7262;
+    return state.deadLetters.load().droppedCount;
+}
+
+@method_id(727)
+fun test_dogfood_restart_storm_escalates(): int {
+    val config = dogConfig(1);
+    var state = slice6DogfoodInitialState(config);
+    state.handleChildDown(config, dogHash(5), 101, 1);
+    state.handleChildDown(config, dogHash(6), 102, 1);
+    assert(state.finalFailure) throw 7271;
+    return state.supervisor.load().getChild(1).state;
+}
+
+@method_id(728)
+fun test_dogfood_failure_record_hash_is_structured(): int {
+    val config = dogConfig();
+    var state = slice6DogfoodInitialState(config);
+    val record = state.handleChildDown(config, dogHash(7), 101, 1);
+    assert(record.monitorDownHash == state.lastMonitorDownHash) throw 7281;
+    assert(record.toCell().hash() == state.lastFailureRecordHash) throw 7282;
+    return (record.recoveryMessageHash != 0) as int;
+}
+
+/**
+@testcase | 721 | | 1
+@testcase | 722 | | 1000000000
+@testcase | 723 | | -1
+@testcase | 724 | | 2
+@testcase | 725 | | 5633
+@testcase | 726 | | 1
+@testcase | 727 | | 3
+@testcase | 728 | | -1
+ */

@@ -1,0 +1,135 @@
+// TOS application-layer message envelope — TL-B reference document.
+//
+// This file is a REFERENCE DOCUMENT, not a build input. It is NOT
+// consumed by the `block-auto.cpp` codegen pipeline that processes
+// `crypto/block/block.tlb`; it exists so that other-language SDKs,
+// chain explorers, and external tooling can implement the TOS
+// application-layer envelope convention without having to read Tol
+// source.
+//
+// Authoritative policy:
+//   doc/tos-message-policy.md v5 (Approved 2026-04-29)
+//     §3.1 — Standard body layout (Envelope)
+//     §3.2 — Special opcodes (text-comment exception)
+//     §4.1 — query_id allocation
+//     §5.2 — OP_ERROR body
+//     §5.3 — error_class enum table
+//
+// Canonical Tol-side definitions:
+//   crypto/smartcont/tol-stdlib/common.tol:1944-2024
+//     (`Envelope`, `Error`, `ErrorClass`, `OP_ERROR`,
+//      `EXTRA_FLAGS_*` constants).
+//
+// This file is a language-agnostic mirror of those Tol structs.
+// The wire-bit encoding implied by every constructor below is
+// bit-equivalent to what the Tol structs above would produce.
+//
+// Layering note. This file is BODY-ONLY. It does not redefine
+// `CommonMsgInfo`, `int_msg_info$0`, `MsgAddressInt`, `Tomis`, or
+// any other transport-layer type. Those continue to live in
+// `crypto/block/block.tlb` and are owned by the protocol layer
+// (see policy §2.1 for the layering boundary). The constructors
+// below describe only the bits that sit INSIDE the message body —
+// the `(opcode, query_id, payload)` triple per policy §3.1.
+//
+// Precedent. This file follows the pattern set by
+// `crypto/smartcont/liquid-staking/interaction.tlb`: an
+// application-specific TL-B reference that lives next to the
+// application code rather than in the protocol-core schema.
+
+// === Standard envelope (policy §3.1) =====================================
+//
+// Every non-comment internal message body produced through the
+// Slice 1 `Envelope` library begins with a 32-bit opcode followed by
+// a 64-bit query_id and an opcode-specific payload. The opcode
+// prefix is locked to 32 bits per policy §10.1 — Tol's `PackOpcode`
+// shortening mechanism is intentionally disabled for envelope
+// bodies.
+//
+// This constructor applies only when `opcode != 0x00000000`. The
+// text-comment opcode `0x00000000` is the documented exception and
+// uses the `text_comment` constructor below; see policy §3.2.
+
+envelope#_ opcode:uint32 query_id:uint64 payload:Any = Envelope;
+
+// === Text-comment exception (policy §3.2) ================================
+//
+// The opcode `0x00000000` is the documented exception to the
+// canonical Envelope body shape: the body is `opcode:uint32`
+// followed directly by UTF-8 text, with NO `query_id` field present
+// at the bit-offset 32..96 range. The `query_id = 0` rule of
+// policy §4.1 therefore does not apply to this opcode (there is no
+// `query_id` slot at all).
+//
+// This matches existing simple-transfer practice across wallet-v3 /
+// wallet-v4 / wallet-v5 / DNS / elector / payment-channel / TEP-62
+// NFT contracts, verified during the policy Stage 0 audit.
+
+text_comment#00000000 utf8_payload:bytes = TextCommentEnvelope;
+
+// === Application error reply (policy §5.2) ===============================
+//
+// `OP_ERROR = 0x00010001` is reserved by the policy from the
+// application-defined opcode range (`0x00010000`–`0x7FFFFFFF`).
+//
+// `original_op` sits between `query_id` and `error_class` so
+// receivers can match by `(original_op, query_id)` per policy §4.4
+// without keeping a per-`query_id` shadow correlation table for
+// every outbound opcode they issue. This is symmetric with the v12
+// system bounce body (`new_bounce_body#fffffffe` in
+// `crypto/block/block.tlb:170-175`), which already exposes the
+// original opcode at the start of `original_body`.
+//
+// `error_code` is opaque to the protocol; values 0..1023 are
+// reserved for the Tol standard library and 1024+ are
+// application-defined (policy §5.2).
+//
+// `diagnostic` is an optional cell carrying human-readable detail.
+// Implementations must tolerate its absence.
+
+op_error#00010001
+    query_id:uint64
+    original_op:uint32
+    error_class:uint8
+    error_code:uint16
+    diagnostic:(Maybe ^Cell)
+    = OpError;
+
+// === Error class enum (policy §5.3) ======================================
+//
+// `error_class` is an 8-bit value carried inside the OpError body.
+// TL-B has no native enum syntax, so the domain is expressed as a
+// set of magic-prefixed constructors of the same parent type
+// `ErrorClass` — the standard TL-B idiom for tagged unions / enums.
+// Each `$` prefix is the 8-bit binary encoding of the corresponding
+// `error_class` byte value.
+//
+// Supervisors (actor.md §5.1) must distinguish at least Transient
+// (1) and Permanent (2) when deciding whether to restart.
+//
+// Values 0..5 are policy-defined; 6..15 are reserved for future
+// expansion of the protocol; 16..255 are application-defined.
+
+error_class_ok            $00000000 = ErrorClass;  // 0x00 — no error
+error_class_transient     $00000001 = ErrorClass;  // 0x01 — retry plausible (gas, congestion)
+error_class_permanent     $00000010 = ErrorClass;  // 0x02 — uncaught exception, malformed body
+error_class_authorization $00000011 = ErrorClass;  // 0x03 — caller not permitted; maybe after re-auth
+error_class_protocol      $00000100 = ErrorClass;  // 0x04 — opcode unknown / envelope malformed
+error_class_back_pressure $00000101 = ErrorClass;  // 0x05 — Reserved Slice 5+; not yet emitted
+
+// 0x06..0x0F — Reserved for future protocol expansion.
+// 0x10..0xFF — Application-defined.
+//
+// Constructors for the reserved and application-defined ranges are
+// intentionally not enumerated here; downstream tooling that needs
+// to round-trip an unknown value should treat the byte as opaque.
+
+// === Wire-equivalence invariant ==========================================
+//
+// Any change to the wire encoding implied by this file MUST be
+// paired with the corresponding change in
+// `crypto/smartcont/tol-stdlib/common.tol:1944-2024` AND must be
+// accompanied by a v6+ revision of `doc/tos-message-policy.md`.
+// The two files (this `.tlb` and the Tol structs in `common.tol`)
+// are wire-equivalent by policy; divergence between them is a
+// hardening violation.

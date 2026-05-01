@@ -1,0 +1,153 @@
+// Slice 4 reference: bounded postponement for too-early auction bids.
+
+import "@stdlib/postponement"
+
+const SLICE4_AUCTION_THROW_LOW_BID = 0x0a01
+
+struct Slice4PostponedAuctionStorage {
+    opened: bool
+    highestBid: coins
+    highestBidder: address
+    drainedCount: uint16
+    lastDrainedQueryId: uint64
+    queue: PostponedQueue
+}
+
+struct (0x53413401) Slice4AuctionBid {
+    queryId: uint64
+    bidder: address
+    amount: coins
+    now: uint32
+}
+
+struct (0x53413402) Slice4AuctionOpen {
+    queryId: uint64
+    now: uint32
+}
+
+struct (0x53413403) Slice4AuctionExpire {
+    queryId: uint64
+    now: uint32
+}
+
+fun slice4AuctionNullBidder(): address {
+    return address("0:0000000000000000000000000000000000000000000000000000000000000000");
+}
+
+fun slice4AuctionBudget(): PostponementBudget {
+    return slice4PostponementBudget(
+        4,
+        512,
+        4,
+        2048,
+        16,
+        60,
+        4,
+        1023
+    );
+}
+
+fun slice4AuctionInitialStorage(): Slice4PostponedAuctionStorage {
+    return Slice4PostponedAuctionStorage {
+        opened: false,
+        highestBid: 0,
+        highestBidder: slice4AuctionNullBidder(),
+        drainedCount: 0,
+        lastDrainedQueryId: 0,
+        queue: slice4NewPostponedQueue(),
+    };
+}
+
+fun Slice4PostponedAuctionStorage.applyBid(mutate self, bid: Slice4AuctionBid): void {
+    if (bid.amount <= self.highestBid) {
+        throw SLICE4_AUCTION_THROW_LOW_BID;
+    }
+    self.highestBid = bid.amount;
+    self.highestBidder = bid.bidder;
+}
+
+fun Slice4PostponedAuctionStorage.receiveBid(mutate self, bid: Slice4AuctionBid): uint16 {
+    if (self.opened) {
+        self.applyBid(bid);
+        return self.queue.count;
+    }
+    self.queue.enqueueWithQueryId(
+        slice4AuctionBudget(),
+        bid.bidder,
+        0x53413401,
+        bid.queryId,
+        bid.toCell(),
+        bid.amount,
+        0,
+        bid.now
+    );
+    return self.queue.count;
+}
+
+fun Slice4PostponedAuctionStorage.receiveRawBidBody(mutate self, body: cell): void {
+    val bid = lazy Slice4AuctionBid.fromCell(body);
+    self.receiveBid(bid);
+}
+
+fun Slice4PostponedAuctionStorage.applyDrainedBid(mutate self, bid: Slice4AuctionBid): void {
+    self.drainedCount += 1;
+    self.lastDrainedQueryId = bid.queryId;
+    self.applyBid(bid);
+}
+
+fun Slice4PostponedAuctionStorage.openAndDrain(mutate self, now: uint32): uint16 {
+    self.opened = true;
+    val budget = slice4AuctionBudget();
+    var touched: uint16 = 0;
+    while (touched < budget.maxDrainItems) {
+        val item = self.queue.peekFirst();
+        if (item == null) {
+            return touched;
+        }
+        if (item!.isExpired(now)) {
+            self.queue.dropNonce(item!.nonce);
+        } else {
+            val bid = lazy Slice4AuctionBid.fromCell(item!.body());
+            if (bid.amount > self.highestBid) {
+                self.applyDrainedBid(bid);
+            }
+            self.queue.dropNonce(item!.nonce);
+        }
+        touched += 1;
+    }
+    return touched;
+}
+
+fun Slice4PostponedAuctionStorage.expireQueued(mutate self, now: uint32): uint16 {
+    var expired: uint16 = 0;
+    while (self.queue.expireFirst(now)) {
+        expired += 1;
+    }
+    return expired;
+}
+
+contract Slice4PostponedAuction {
+    storage: Slice4PostponedAuctionStorage
+    @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: Slice4AuctionBid) {
+        var next = storage;
+        next.receiveBid(msg);
+        save(next);
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice4AuctionOpen) {
+        var next = storage;
+        next.openAndDrain(msg.now);
+        save(next);
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice4AuctionExpire) {
+        var next = storage;
+        next.expireQueued(msg.now);
+        save(next);
+    }
+}

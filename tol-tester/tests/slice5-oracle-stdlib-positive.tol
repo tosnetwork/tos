@@ -1,0 +1,252 @@
+import "@stdlib/oracle"
+
+fun starter(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun attacker(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun reporterSet(): Slice5OracleReporterSet {
+    var set = slice5OracleNewReporterSet();
+    set.addReporter(101);
+    set.addReporter(202);
+    set.addReporter(303);
+    return set;
+}
+
+fun config(): Slice5OracleConfig {
+    return slice5OracleConfig(reporterSet(), 3, 60, 100, starter());
+}
+
+fun round(): Slice5OracleRound {
+    var state = slice5OracleInitialState(reporterSet());
+    return slice5OracleStartRound(mutate state, config(), 1, 10, starter());
+}
+
+fun report(roundId: uint64, reporterKey: uint256, value: uint64, now: uint32): Slice5OracleReport {
+    return Slice5OracleReport { queryId: reporterKey as uint64, roundId, reporterKey, value, now };
+}
+
+fun finalize(roundId: uint64, now: uint32): Slice5OracleFinalize {
+    return Slice5OracleFinalize { queryId: 1, roundId, now };
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(401)
+fun test_unauthorized_reporter(): int {
+    var r = round();
+    try {
+        r.addReport(reporterSet(), config(), report(1, 404, 10, 20));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(402)
+fun test_duplicate_reporter(): int {
+    var r = round();
+    r.addReport(reporterSet(), config(), report(1, 101, 10, 20));
+    try {
+        r.addReport(reporterSet(), config(), report(1, 101, 11, 21));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(403)
+fun test_insufficient_quorum(): int {
+    var r = round();
+    r.addReport(reporterSet(), config(), report(1, 101, 10, 20));
+    try {
+        r.finalize(config(), finalize(1, 21));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(404)
+fun test_stale_round(): int {
+    var r = round();
+    try {
+        r.addReport(reporterSet(), config(), report(1, 101, 10, 70));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(405)
+fun test_outlier_handling(): int {
+    var r = round();
+    r.addReport(reporterSet(), config(), report(1, 101, 1000, 20));
+    try {
+        r.addReport(reporterSet(), config(), report(1, 202, 1200, 21));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(406)
+fun test_replayed_round_id(): int {
+    var state = slice5OracleInitialState(reporterSet());
+    slice5OracleStartRound(mutate state, config(), 2, 10, starter());
+    try {
+        slice5OracleStartRound(mutate state, config(), 2, 11, starter());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(407)
+fun test_median_finalize(): int {
+    var r = round();
+    r.addReport(reporterSet(), config(), report(1, 101, 10, 20));
+    r.addReport(reporterSet(), config(), report(1, 202, 30, 21));
+    r.addReport(reporterSet(), config(), report(1, 303, 20, 22));
+    val m = r.finalize(config(), finalize(1, 23));
+    assert(r.finalized) throw 4071;
+    assert(m == 20) throw 4072;
+    return m as int;
+}
+
+@method_id(408)
+fun test_duplicate_finalize(): int {
+    var r = round();
+    r.addReport(reporterSet(), config(), report(1, 101, 10, 20));
+    r.addReport(reporterSet(), config(), report(1, 202, 30, 21));
+    r.addReport(reporterSet(), config(), report(1, 303, 20, 22));
+    r.finalize(config(), finalize(1, 23));
+    try {
+        r.finalize(config(), finalize(1, 24));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(409)
+fun test_third_report_uses_running_anchor(): int {
+    var set = reporterSet();
+    val cfg = slice5OracleConfig(set, 3, 60, 200, starter());
+    var state = slice5OracleInitialState(set);
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10, starter());
+    r.addReport(set, cfg, report(1, 101, 1000, 20));
+    r.addReport(set, cfg, report(1, 202, 1200, 21));
+    r.addReport(set, cfg, report(1, 303, 1201, 22));
+    assert(r.reportCount == 3) throw 4091;
+    return r.median(cfg) as int;
+}
+
+@method_id(410)
+fun test_round_starter_authorization(): int {
+    var state = slice5OracleInitialState(reporterSet());
+    try {
+        slice5OracleStartRound(mutate state, config(), 1, 10, attacker());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(411)
+fun test_five_reporter_median(): int {
+    var set = slice5OracleNewReporterSet();
+    set.addReporter(101);
+    set.addReporter(202);
+    set.addReporter(303);
+    set.addReporter(404);
+    set.addReporter(505);
+    val cfg = slice5OracleConfig(set, 5, 60, 1000, starter());
+    var state = slice5OracleInitialState(set);
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10, starter());
+    r.addReport(set, cfg, report(1, 101, 50, 20));
+    r.addReport(set, cfg, report(1, 202, 10, 21));
+    r.addReport(set, cfg, report(1, 303, 40, 22));
+    r.addReport(set, cfg, report(1, 404, 20, 23));
+    r.addReport(set, cfg, report(1, 505, 30, 24));
+    return r.finalize(cfg, finalize(1, 25)) as int;
+}
+
+@method_id(412)
+fun test_two_report_median_truncates(): int {
+    var set = slice5OracleNewReporterSet();
+    set.addReporter(101);
+    set.addReporter(202);
+    val cfg = slice5OracleConfig(set, 2, 60, 100, starter());
+    var state = slice5OracleInitialState(set);
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10, starter());
+    r.addReport(set, cfg, report(1, 101, 1000, 20));
+    r.addReport(set, cfg, report(1, 202, 1001, 21));
+    return r.finalize(cfg, finalize(1, 22)) as int;
+}
+
+@method_id(413)
+fun test_bond_refund_message_helper(): int {
+    val msg = slice5OracleBondRefundMessage(starter(), tos("1"));
+    return msg.hash() != 0 ? 1 : 0;
+}
+
+@method_id(414)
+fun test_start_round_rejects_active_predecessor(): int {
+    var state = slice5OracleInitialState(reporterSet());
+    slice5OracleStartRound(mutate state, config(), 1, 10, starter());
+    try {
+        slice5OracleStartRound(mutate state, config(), 2, 11, starter());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(415)
+fun test_add_report_wrong_reporter_set_rejected(): int {
+    var r = round();
+    var altSet = slice5OracleNewReporterSet();
+    altSet.addReporter(101);
+    altSet.addReporter(202);
+    altSet.addReporter(303);
+    altSet.addReporter(404);
+    try {
+        r.addReport(altSet, config(), report(1, 404, 10, 20));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(416)
+fun test_start_round_allowed_after_stale(): int {
+    var state = slice5OracleInitialState(reporterSet());
+    slice5OracleStartRound(mutate state, config(), 1, 10, starter());
+    val r = slice5OracleStartRound(mutate state, config(), 2, 71, starter());
+    return r.roundId as int;
+}
+
+/**
+@testcase | 401 | | 3329
+@testcase | 402 | | 3330
+@testcase | 403 | | 3331
+@testcase | 404 | | 3332
+@testcase | 405 | | 3333
+@testcase | 406 | | 3334
+@testcase | 407 | | 20
+@testcase | 408 | | 3336
+@testcase | 409 | | 1200
+@testcase | 410 | | 3338
+@testcase | 411 | | 30
+@testcase | 412 | | 1000
+@testcase | 413 | | 1
+@testcase | 414 | | 3337
+@testcase | 415 | | 3329
+@testcase | 416 | | 2
+ */

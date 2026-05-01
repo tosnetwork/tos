@@ -1,0 +1,8 @@
+{
+  "opcodes": [
+    {"name": "SLICE5_AUCTION_OP_BID", "hex": "0x41554301"},
+    {"name": "SLICE5_AUCTION_OP_CLOSE", "hex": "0x41554302"},
+    {"name": "SLICE5_AUCTION_OP_EXPIRE", "hex": "0x41554303"},
+    {"name": "SLICE5_AUCTION_OP_SETTLE", "hex": "0x41554304"}
+  ]
+}

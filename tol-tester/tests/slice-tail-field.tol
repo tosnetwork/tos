@@ -1,0 +1,83 @@
+import "@stdlib/common"
+
+fun onInternalMessage(in: InMessage) {
+    return;
+}
+
+struct SliceTail {
+    head: uint8;
+    payload: slice;
+}
+
+struct NestedSliceTail {
+    prefix: uint8;
+    inner: SliceTail;
+}
+
+fun payloadHash(s: slice): int {
+    return beginCell().storeSlice(s).endCell().hash();
+}
+
+fun makePayload(): slice {
+    return beginCell()
+        .storeUint(0xCAFE, 16)
+        .storeRef(beginCell().storeUint(0x12345678, 32).endCell())
+        .endCell()
+        .beginParse();
+}
+
+@method_id(101)
+fun test_stdlib_envelope_payload_slice_from_slice(): int {
+    val payload = makePayload();
+    val body = beginCell()
+        .storeUint(0x10050001, 32)
+        .storeUint(77, 64)
+        .storeSlice(payload)
+        .endCell()
+        .beginParse();
+
+    val envelope = Envelope.fromSlice(body);
+    assert (envelope.opcode == 0x10050001) throw 101;
+    assert (envelope.queryId == 77) throw 102;
+    assert (envelope.payload.remainingBitsCount() == 16) throw 103;
+    assert (envelope.payload.remainingRefsCount() == 1) throw 104;
+    assert (payloadHash(envelope.payload) == payloadHash(makePayload())) throw 105;
+    return 1;
+}
+
+@method_id(102)
+fun test_nested_tail_slice_from_slice(): int {
+    val payload = makePayload();
+    val body = beginCell()
+        .storeUint(0xAB, 8)
+        .storeUint(0xCD, 8)
+        .storeSlice(payload)
+        .endCell()
+        .beginParse();
+
+    val nested = NestedSliceTail.fromSlice(body);
+    assert (nested.prefix == 0xAB) throw 111;
+    assert (nested.inner.head == 0xCD) throw 112;
+    assert (nested.inner.payload.remainingBitsCount() == 16) throw 113;
+    assert (nested.inner.payload.remainingRefsCount() == 1) throw 114;
+    return 2;
+}
+
+@method_id(103)
+fun test_tail_slice_to_cell_roundtrip(): int {
+    val obj = SliceTail {
+        head: 0xEF,
+        payload: makePayload(),
+    };
+    val parsed = SliceTail.fromCell(obj.toCell());
+    assert (parsed.head == 0xEF) throw 121;
+    assert (parsed.payload.remainingBitsCount() == 16) throw 122;
+    assert (parsed.payload.remainingRefsCount() == 1) throw 123;
+    return 3;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+ */

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "doc/slice-3-pattern-manifest-schema.json",
+  "title": "TOS Slice 3 stdlib pattern manifest",
+  "type": "object",
+  "required": [
+    "version",
+    "schema",
+    "pattern",
+    "stage",
+    "stdlib_import",
+    "opcode_prefixes",
+    "get_method_ids",
+    "require_codes",
+    "public_errors",
+    "storage_fields",
+    "reply_correlation",
+    "wire_compatibility_exceptions"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "schema": {
+      "type": "string",
+      "const": "slice-3-pattern-manifest"
+    },
+    "pattern": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string"
+    },
+    "stdlib_import": {
+      "type": "string",
+      "pattern": "^@stdlib/[a-z0-9._/-]+$"
+    },
+    "opcode_prefixes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "hex",
+          "bits"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "hex": {
+            "type": "string"
+          },
+          "bits": {
+            "type": "integer",
+            "const": 32
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "get_method_ids": {
+      "type": "array"
+    },
+    "require_codes": {
+      "type": "array"
+    },
+    "public_errors": {
+      "type": "array"
+    },
+    "storage_fields": {
+      "type": "array"
+    },
+    "reply_correlation": {
+      "type": "object"
+    },
+    "wire_compatibility_exceptions": {
+      "type": "array"
+    }
+  },
+  "additionalProperties": false
+}

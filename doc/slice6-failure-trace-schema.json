@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tos.local/slice6-failure-trace-schema.json",
+  "title": "TOS Slice 6 Failure Trace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "trace_id",
+    "created_at_mc_seqno",
+    "source",
+    "phase",
+    "failure_class",
+    "failure_code",
+    "resource_bounds"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+    "created_at_mc_seqno": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "source": {
+      "type": "string",
+      "enum": ["delivery", "scheduler", "monitor", "supervisor", "capability"]
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["import", "compute", "action", "bounce", "dead_letter", "recovery", "authorization"]
+    },
+    "failure_class": {
+      "type": "string",
+      "enum": ["Transient", "Permanent", "Protocol", "Undeliverable", "BackPressure", "Authorization"]
+    },
+    "failure_code": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "delivery_id": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+    "scheduled_handle": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+    "monitor_notification_hash": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+    "supervisor_recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "child_id", "recovered_count", "final_failure"],
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["one_for_one", "one_for_all", "rest_for_one", "dynamic"]
+        },
+        "child_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recovered_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "final_failure": {
+          "type": "boolean"
+        }
+      }
+    },
+    "capability_handle": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+    "resource_bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payer", "max_bits", "max_refs", "retention_blocks"],
+      "properties": {
+        "payer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_bits": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1023
+        },
+        "max_refs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "retention_blocks": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "diagnostic_hash": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    }
+  }
+}

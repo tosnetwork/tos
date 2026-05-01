@@ -1,0 +1,33 @@
+struct ContractGetFunCollisionStorage {}
+
+struct (0x000000a3) ContractGetFunCollisionPing {
+    queryId: uint64;
+}
+
+contract ContractGetFunCollision {
+    storage: ContractGetFunCollisionStorage
+
+    receive(msg: ContractGetFunCollisionPing) {
+        msg.queryId;
+    }
+
+    @method_id(0x12345)
+    get fun first(): int {
+        return 1;
+    }
+
+    // pinned to the same method_id as `first` — must be rejected per §3.5
+    @method_id(0x12345)
+    get fun second(): int {
+        return 2;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr method_id collision
+@stderr second
+@stderr first
+@stderr ContractGetFunCollision
+@stderr doc/tos-language-syntax-policy.md §3.5
+ */

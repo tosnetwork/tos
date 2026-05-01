@@ -1,0 +1,42 @@
+import "../../crypto/smartcont/jetton-wallet"
+
+@method_id(101)
+fun test_owner_required_error(): int {
+    val err = jettonWalletErrorForThrow(FUNC_THROW_OWNER_REQUIRED, OP_TRANSFER, 41);
+    assert (err.queryId == 41) throw 101;
+    assert (err.originalOp == OP_TRANSFER) throw 102;
+    assert (err.errorClass == ErrorClass.Authorization) throw 103;
+    return err.errorCode;
+}
+
+@method_id(102)
+fun test_internal_transfer_sender_error(): int {
+    val err = jettonWalletErrorForThrow(
+        FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE,
+        OP_INTERNAL_TRANSFER,
+        42
+    );
+    assert (err.queryId == 42) throw 111;
+    assert (err.originalOp == OP_INTERNAL_TRANSFER) throw 112;
+    assert (err.errorClass == ErrorClass.Authorization) throw 113;
+    return err.errorCode;
+}
+
+@method_id(103)
+fun test_burn_value_error(): int {
+    val err = jettonWalletErrorForThrow(
+        FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE,
+        OP_BURN,
+        43
+    );
+    assert (err.queryId == 43) throw 121;
+    assert (err.originalOp == OP_BURN) throw 122;
+    assert (err.errorClass == ErrorClass.BackPressure) throw 123;
+    return err.errorCode;
+}
+
+/**
+@testcase | 101 | | 1705
+@testcase | 102 | | 1707
+@testcase | 103 | | 1710
+ */

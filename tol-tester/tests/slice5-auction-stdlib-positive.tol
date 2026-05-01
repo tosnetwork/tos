@@ -1,0 +1,226 @@
+import "@stdlib/auction"
+import "@stdlib/postponement"
+
+fun seller(): address {
+    return address("0:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+}
+
+fun bidderA(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun bidderB(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun auctionConfig(): Slice5AuctionConfig {
+    return slice5AuctionConfig(seller(), 10, 50, 100);
+}
+
+fun bid(queryId: uint64, bidder: address, amount: coins, now: uint32): Slice5AuctionBid {
+    return Slice5AuctionBid { queryId, bidder, amount, now };
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(201)
+fun test_bid_after_open(): int {
+    var state = slice5AuctionInitialState();
+    state.receiveBid(auctionConfig(), bid(1, bidderA(), 15, 60));
+    assert(state.opened) throw 2011;
+    assert(state.highestBid == 15) throw 2012;
+    assert(state.queue.isEmpty()) throw 2013;
+    return state.highestBid as int;
+}
+
+@method_id(202)
+fun test_too_early_bid_enqueue(): int {
+    var state = slice5AuctionInitialState();
+    val count = state.receiveBid(auctionConfig(), bid(1, bidderA(), 15, 20));
+    assert(count == 1) throw 2021;
+    assert(!state.opened) throw 2022;
+    assert(state.highestBid == 0) throw 2023;
+    return state.queue.count as int;
+}
+
+@method_id(203)
+fun test_close_drains_fifo(): int {
+    var state = slice5AuctionInitialState();
+    val config = auctionConfig();
+    state.receiveBid(config, bid(1, bidderA(), 15, 20));
+    state.receiveBid(config, bid(2, bidderB(), 25, 21));
+    val touched = state.closeAndDrain(config, 101);
+    assert(state.closed) throw 2031;
+    assert(touched == 2) throw 2032;
+    assert(state.queue.isEmpty()) throw 2033;
+    assert(state.highestBid == 25) throw 2034;
+    assert(state.lastDrainedQueryId == 2) throw 2035;
+    return (state.drainedCount as int) * 1000 + state.highestBid as int;
+}
+
+@method_id(204)
+fun test_refund_excess_for_rejected_bid(): int {
+    var state = slice5AuctionInitialState();
+    val config = auctionConfig();
+    state.receiveBid(config, bid(1, bidderA(), 30, 60));
+    val rejected = bid(2, bidderB(), 20, 61);
+    assert(state.excessForRejectedBid(rejected) == 20) throw 2041;
+    return state.excessForRejectedBid(rejected) as int;
+}
+
+@method_id(205)
+fun test_duplicate_query_id(): int {
+    var state = slice5AuctionInitialState();
+    val config = auctionConfig();
+    state.receiveBid(config, bid(7, bidderA(), 15, 20));
+    try {
+        state.receiveBid(config, bid(7, bidderA(), 20, 21));
+    } catch (code) {
+        assert(state.queue.count == 1) throw 2051;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(206)
+fun test_stale_close(): int {
+    var state = slice5AuctionInitialState();
+    try {
+        state.closeAndDrain(auctionConfig(), 90);
+    } catch (code) {
+        assert(!state.closed) throw 2061;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(207)
+fun test_low_bid_rejected(): int {
+    var state = slice5AuctionInitialState();
+    val config = auctionConfig();
+    state.receiveBid(config, bid(1, bidderA(), 30, 60));
+    try {
+        state.receiveBid(config, bid(2, bidderB(), 30, 61));
+    } catch (code) {
+        assert(state.highestBid == 30) throw 2071;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(208)
+fun test_malformed_body(): int {
+    var state = slice5AuctionInitialState();
+    try {
+        state.receiveRawBidBody(auctionConfig(), beginCell().storeUint(SLICE5_AUCTION_OP_BID, 32).storeUint(9, 64).endCell());
+    } catch (code) {
+        assert(code != 0) throw 2081;
+        assert(state.queue.isEmpty()) throw 2082;
+        return 1;
+    }
+    return 0;
+}
+
+@method_id(209)
+fun test_queue_full(): int {
+    var state = slice5AuctionInitialState();
+    val config = auctionConfig();
+    state.receiveBid(config, bid(1, bidderA(), 11, 20));
+    state.receiveBid(config, bid(2, bidderA(), 12, 20));
+    state.receiveBid(config, bid(3, bidderA(), 13, 20));
+    state.receiveBid(config, bid(4, bidderA(), 14, 20));
+    state.receiveBid(config, bid(5, bidderA(), 15, 20));
+    state.receiveBid(config, bid(6, bidderA(), 16, 20));
+    state.receiveBid(config, bid(7, bidderA(), 17, 20));
+    state.receiveBid(config, bid(8, bidderA(), 18, 20));
+    state.receiveBid(config, bid(9, bidderA(), 19, 20));
+    state.receiveBid(config, bid(10, bidderA(), 20, 20));
+    state.receiveBid(config, bid(11, bidderA(), 21, 20));
+    state.receiveBid(config, bid(12, bidderA(), 22, 20));
+    state.receiveBid(config, bid(13, bidderA(), 23, 20));
+    state.receiveBid(config, bid(14, bidderA(), 24, 20));
+    state.receiveBid(config, bid(15, bidderA(), 25, 20));
+    state.receiveBid(config, bid(16, bidderA(), 26, 20));
+    try {
+        state.receiveBid(config, bid(17, bidderA(), 27, 20));
+    } catch (code) {
+        assert(state.queue.count == 16) throw 2091;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(210)
+fun test_expiry_cleanup(): int {
+    var state = slice5AuctionInitialState();
+    val config = auctionConfig();
+    state.receiveBid(config, bid(1, bidderA(), 15, 20));
+    assert(state.expireQueued(139) == 0) throw 2101;
+    val expired = state.expireQueued(140);
+    assert(expired == 1) throw 2102;
+    assert(state.queue.isEmpty()) throw 2103;
+    return expired as int;
+}
+
+@method_id(211)
+fun test_settle_and_replay_rejection(): int {
+    var state = slice5AuctionInitialState();
+    val config = auctionConfig();
+    state.receiveBid(config, bid(1, bidderA(), 30, 60));
+    state.closeAndDrain(config, 101);
+    val amount = state.settle();
+    try {
+        state.settle();
+    } catch (code) {
+        assert(amount == 30) throw 2111;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(212)
+fun test_trusted_bid_overrides_bidder_and_now(): int {
+    var state = slice5AuctionInitialState();
+    val config = auctionConfig();
+    val forged = bid(1, seller(), 30, 999999);
+    state.receiveTrustedBidAt(config, forged, bidderB(), 60);
+    assert(state.highestBidder == bidderB()) throw 2121;
+    assert(state.highestBid == 30) throw 2122;
+    return state.highestBid as int;
+}
+
+@method_id(213)
+fun test_require_seller(): int {
+    val state = slice5AuctionInitialState();
+    try {
+        state.requireSeller(auctionConfig(), bidderA());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(214)
+fun test_payout_message_helper(): int {
+    val msg = slice5AuctionPayoutMessage(seller(), 123);
+    return msg.hash() != 0 ? 1 : 0;
+}
+
+/**
+@testcase | 201 | | 15
+@testcase | 202 | | 1
+@testcase | 203 | | 2025
+@testcase | 204 | | 20
+@testcase | 205 | | 2309
+@testcase | 206 | | 2820
+@testcase | 207 | | 2817
+@testcase | 208 | | 1
+@testcase | 209 | | 2819
+@testcase | 210 | | 1
+@testcase | 211 | | 2822
+@testcase | 212 | | 30
+@testcase | 213 | | 2825
+@testcase | 214 | | 1
+ */

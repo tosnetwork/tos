@@ -1,0 +1,12 @@
+import "@stdlib/slice3-common"
+
+fun bad(): int {
+    var table = slice3NewPendingReplyTable();
+    val direct = table.entries.get(77);
+    return direct.isFound as int;
+}
+
+/**
+@compilation_should_fail
+@stderr direct access to `Slice3PendingReplyTable.entries` bypasses `(expected_responder, query_id)`
+ */

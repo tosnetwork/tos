@@ -1,0 +1,25 @@
+// Per doc/tos-message-policy.md v6 §4.4 — query_id propagation rule.
+//
+// Baseline case: handler does NOT use the
+// `lazy <Struct>.fromSlice(in.body)` idiom that identifies an
+// envelope shape with a `query_id` field. The body is consumed only
+// as the inbound `valueCoins`; no Envelope-typed view is taken.
+//
+// The S2-A check pass `pipe-check-query-id-propagation` therefore
+// has nothing to identify as a query_id-bearing inbound and MUST
+// stay silent on this contract — no warning, no error.
+import "@stdlib/common"
+
+@method_id(101)
+fun dummy() {
+    return 0;
+}
+
+fun onInternalMessage(in: InMessage) {
+    // Acknowledge inbound value only; do not parse the body envelope.
+    return in.valueCoins;
+}
+
+/**
+@testcase | 101 | | 0
+ */

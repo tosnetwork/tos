@@ -1,0 +1,334 @@
+// vesting-vault.tol — Slice 6 external developer trial contract.
+//
+// A token vesting vault: the owner deploys with beneficiary address, cliff,
+// vest period, and total amount.  The owner then funds the vault by attaching
+// totalAmount coins to a VaultFund message.  After the cliff the beneficiary
+// may claim vested tokens, but each claim must carry a Slice6 capability grant
+// signed by the owner.  The owner can revoke the vault at any time.
+//
+// Stdlib exercised:
+//   @stdlib/time      — wall-clock duration budgets for vesting bounds
+//   @stdlib/capability — gated claim authority with nonce replay prevention
+//   @stdlib/safe-payments — excess refund, payout send-mode, rent guardrails
+//
+// Design notes:
+//   * Capability validity windows use blockchain.currentMcSeqno(), backed by
+//     TVM PREVMCBLOCKS. Unix timestamps are used only for the vesting math.
+//   * Storage updates use save({ ...storage, x: y }) so unchanged fields are
+//     preserved without mechanical full-struct copies.
+
+import "@stdlib/common"
+import "@stdlib/time"
+import "@stdlib/capability"
+import "@stdlib/safe-payments"
+
+// ── Opcodes (32-bit, per doc/tos-language-syntax-policy.md §3.2 v3) ───────────
+
+const VAULT_OP_DEPLOY          = 0x00000001
+const VAULT_OP_FUND            = 0x00000002
+const VAULT_OP_CLAIM           = 0x00000003
+const VAULT_OP_REVOKE          = 0x00000004
+const VAULT_OP_REGISTER_GRANT  = 0x00000005
+const VAULT_OP_REVOKE_GRANT    = 0x00000006
+
+// ── Error codes (explicit per §3.7; all above 1024 to avoid auto-num range) ───
+
+const VAULT_ERR_NOT_OWNER          = 0x2001   // 8193
+const VAULT_ERR_NOT_BENEFICIARY    = 0x2002   // 8194
+const VAULT_ERR_CLIFF_NOT_PASSED   = 0x2003   // 8195
+const VAULT_ERR_NOTHING_TO_CLAIM   = 0x2004   // 8196
+const VAULT_ERR_FUND_SHORTAGE      = 0x2005   // 8197
+const VAULT_ERR_BAD_PARAMS         = 0x2006   // 8198
+const VAULT_ERR_CAP_FULL           = 0x2007   // 8199
+
+// ── Domain constants ──────────────────────────────────────────────────────────
+
+// Selector for vault-claim capability grants.  Must be agreed off-chain.
+const VAULT_CLAIM_SELECTOR: uint32 = 0x56455301
+
+// Minimum gas the beneficiary must attach when claiming (prevents free drain).
+const VAULT_MIN_CLAIM_GAS: coins = 50000000    // 0.05 TOS
+const VAULT_MIN_RETAINED_BALANCE: coins = 100000000    // 0.1 TOS
+
+// Wall-clock vesting budget parameters (vest period capped at 3 years).
+// This is deliberately separate from Slice6TimerBudget, whose horizon fields are
+// masterchain-seqno blocks for scheduled-message APIs.
+const VAULT_MAX_VEST_HORIZON_SECONDS: uint32 = 94608000
+
+// Capability registry sizing.
+const VAULT_MAX_ACTIVE_GRANTS:    uint16 = 16
+const VAULT_MAX_REVOKED_HANDLES:  uint16 = 32
+const VAULT_MAX_EPOCH_ENTRIES:    uint16 = 8
+
+// ── Storage ───────────────────────────────────────────────────────────────────
+
+struct VestingVaultStorage {
+    owner: address;
+    beneficiary: address;
+    cliffSeconds: uint32;        // seconds from fundedAt to first claim
+    vestPeriodSeconds: uint32;   // total linear vesting duration
+    totalAmount: coins;          // total coins to vest
+    claimedAmount: coins;        // coins already sent to beneficiary
+    fundedAt: uint32;            // unix timestamp at VaultFund acceptance
+    capRegistry: Cell<Slice6CapabilityRegistry>;
+    wallClockBudget: Cell<Slice6WallClockBudget>;
+}
+
+// ── Message types ─────────────────────────────────────────────────────────────
+
+struct (0x00000001) VaultDeploy {
+    queryId: uint64;
+    beneficiary: address;
+    cliffSeconds: uint32;
+    vestPeriodSeconds: uint32;
+    totalAmount: coins;
+}
+
+struct (0x00000002) VaultFund {
+    queryId: uint64;
+}
+
+// grant/constraints passed as raw cells to avoid inline Cell<T> parsing complexity.
+struct (0x00000003) VaultClaim {
+    queryId: uint64;
+    grantCell: cell;
+    constraintsCell: cell;
+}
+
+struct (0x00000004) VaultRevoke {
+    queryId: uint64;
+}
+
+struct (0x00000005) VaultRegisterGrant {
+    queryId: uint64;
+    grantCell: cell;
+}
+
+struct (0x00000006) VaultRevokeGrant {
+    queryId: uint64;
+    handleId: uint256;
+    expiresAtMcSeqno: uint32;
+}
+
+// ── File-scope helpers (pure; testable via @method_id outside the contract) ───
+
+// How many coins have vested by nowTs.  Zero before cliff; linear thereafter;
+// capped at totalAmount.
+@pure
+fun vaultVestedAmount(
+    fundedAt: uint32,
+    cliffSeconds: uint32,
+    vestPeriodSeconds: uint32,
+    totalAmount: coins,
+    nowTs: uint32
+): coins {
+    if (nowTs < fundedAt + cliffSeconds) {
+        return 0;
+    }
+    val elapsed = nowTs - fundedAt;
+    if (elapsed >= vestPeriodSeconds) {
+        return totalAmount;
+    }
+    // Integer linear vest: floor(elapsed * total / vestPeriod)
+    val vestable = (elapsed as int) * (totalAmount as int) / (vestPeriodSeconds as int);
+    return vestable as coins;
+}
+
+// How many coins are available to claim right now.
+@pure
+fun vaultClaimableAmount(
+    fundedAt: uint32,
+    cliffSeconds: uint32,
+    vestPeriodSeconds: uint32,
+    totalAmount: coins,
+    claimedAmount: coins,
+    nowTs: uint32
+): coins {
+    val vested = vaultVestedAmount(fundedAt, cliffSeconds, vestPeriodSeconds, totalAmount, nowTs);
+    if (vested <= claimedAmount) {
+        return 0;
+    }
+    return vested - claimedAmount;
+}
+
+// Build the contract's wall-clock vesting duration budget.
+@pure
+fun vaultWallClockBudget(): Slice6WallClockBudget {
+    return slice6WallClockBudget(VAULT_MAX_VEST_HORIZON_SECONDS);
+}
+
+// Validate that vestPeriodSeconds is within the supported horizon.
+// Throws SLICE6_TIME_THROW_HORIZON if the period exceeds the wall-clock budget.
+fun vaultValidateVestPeriod(vestPeriodSeconds: uint32): void {
+    vaultWallClockBudget().requireDurationWithinBudget(vestPeriodSeconds);
+}
+
+fun vaultPaymentBody(queryId: uint64): cell {
+    return beginCell()
+        .storeUint(0xd53276db, 32)
+        .storeUint(queryId, 64)
+        .endCell();
+}
+
+// ── Contract ──────────────────────────────────────────────────────────────────
+
+contract VestingVault {
+    storage: VestingVaultStorage
+    states: Pending, Active, Closed
+    @initial state Pending
+    @unknown_throw(0xffff);
+    @implicit_protocol_default;
+
+    // ── Deploy (runs before loadData; storage not in scope) ───────────────────
+    @deploy
+    receive(msg: VaultDeploy) {
+        disclaim_query_id();
+        require(msg.vestPeriodSeconds > 0,                    ErrorClass.Permanent, VAULT_ERR_BAD_PARAMS);
+        require(msg.cliffSeconds < msg.vestPeriodSeconds,     ErrorClass.Permanent, VAULT_ERR_BAD_PARAMS);
+        require(msg.totalAmount > 0,                          ErrorClass.Permanent, VAULT_ERR_BAD_PARAMS);
+        save(VestingVaultStorage {
+            owner:             in.senderAddress,
+            beneficiary:       msg.beneficiary,
+            cliffSeconds:      msg.cliffSeconds,
+            vestPeriodSeconds: msg.vestPeriodSeconds,
+            totalAmount:       msg.totalAmount,
+            claimedAmount:     0,
+            fundedAt:          0,
+            capRegistry:       slice6CapabilityRegistry(
+                                   VAULT_MAX_ACTIVE_GRANTS,
+                                   VAULT_MAX_REVOKED_HANDLES,
+                                   VAULT_MAX_EPOCH_ENTRIES
+                               ).toCell(),
+            wallClockBudget:   vaultWallClockBudget().toCell(),
+        });
+    }
+
+    // ── Fund: owner attaches totalAmount coins → vault becomes Active ─────────
+    @disclaim_query_id
+    receive(msg: VaultFund) on Pending {
+        require(in.senderAddress == storage.owner,           ErrorClass.Authorization, VAULT_ERR_NOT_OWNER);
+        require(in.valueCoins >= storage.totalAmount,        ErrorClass.Permanent,    VAULT_ERR_FUND_SHORTAGE);
+        val now32 = blockchain.now() as uint32;
+        vaultValidateVestPeriod(storage.vestPeriodSeconds);
+        slice6RefundExcessWithBody(in.senderAddress, in.valueCoins, storage.totalAmount, vaultPaymentBody(msg.queryId));
+        save({ ...storage, claimedAmount: 0, fundedAt: now32 });
+        become Active;
+    }
+
+    // ── Claim: beneficiary presents capability grant ───────────────────────────
+    @disclaim_query_id
+    receive(msg: VaultClaim) on Active {
+        require(in.valueCoins >= VAULT_MIN_CLAIM_GAS,        ErrorClass.Permanent, VAULT_ERR_FUND_SHORTAGE);
+        val nowTs = blockchain.now() as uint32;
+        val claimable = vaultClaimableAmount(
+            storage.fundedAt,
+            storage.cliffSeconds,
+            storage.vestPeriodSeconds,
+            storage.totalAmount,
+            storage.claimedAmount,
+            nowTs
+        );
+        require(claimable > 0,                               ErrorClass.Permanent, VAULT_ERR_NOTHING_TO_CLAIM);
+
+        // Parse and validate capability grant.
+        val grant       = Slice6CapabilityGrantV1.fromSlice(msg.grantCell.beginParse());
+        val constraints = Slice6CapabilityConstraintsV1.fromSlice(msg.constraintsCell.beginParse());
+        var reg = storage.capRegistry.load();
+        val ctx = slice6CapabilityUseContext(
+            in.senderAddress,
+            contract.getAddress(),
+            VAULT_CLAIM_SELECTOR,
+            in.valueCoins,
+            null,
+            blockchain.currentMcSeqno() as uint64,
+            0,
+            constraints.replayDomain,
+            0
+        );
+        reg.requireCapability(grant, constraints, ctx);
+
+        // Send claimable amount to beneficiary.
+        slice6RequireMinimumBalanceAfterPayout(claimable, VAULT_MIN_RETAINED_BALANCE);
+        slice6SendCoinsWithBody(storage.beneficiary, claimable, vaultPaymentBody(msg.queryId));
+
+        val newClaimed = storage.claimedAmount + claimable;
+        save({ ...storage, claimedAmount: newClaimed, capRegistry: reg.toCell() });
+        if (newClaimed >= storage.totalAmount) {
+            become Closed;
+        } else {
+            keep_state;
+        }
+    }
+
+    // ── Revoke (Pending): owner cancels before funding ─────────────────────────
+    @disclaim_query_id
+    receive(msg: VaultRevoke) on Pending {
+        require(in.senderAddress == storage.owner,           ErrorClass.Authorization, VAULT_ERR_NOT_OWNER);
+        save(storage);
+        become Closed;
+    }
+
+    // ── Revoke (Active): owner claws back unvested coins ──────────────────────
+    @disclaim_query_id
+    receive(msg: VaultRevoke) on Active {
+        require(in.senderAddress == storage.owner,           ErrorClass.Authorization, VAULT_ERR_NOT_OWNER);
+        val remaining = storage.totalAmount - storage.claimedAmount;
+        slice6RequireMinimumBalanceAfterPayout(remaining, VAULT_MIN_RETAINED_BALANCE);
+        slice6SendCoinsWithBody(storage.owner, remaining, vaultPaymentBody(msg.queryId));
+        save(storage);
+        become Closed;
+    }
+
+    // ── RegisterGrant: owner pre-authorises a beneficiary delegation ──────────
+    @disclaim_query_id
+    receive(msg: VaultRegisterGrant) on Active {
+        require(in.senderAddress == storage.owner,           ErrorClass.Authorization, VAULT_ERR_NOT_OWNER);
+        val grant = Slice6CapabilityGrantV1.fromSlice(msg.grantCell.beginParse());
+        var reg = storage.capRegistry.load();
+        reg.registerGrant(grant);
+        save({ ...storage, capRegistry: reg.toCell() });
+        keep_state;
+    }
+
+    // ── RevokeGrant: owner invalidates a specific handle ─────────────────────
+    @disclaim_query_id
+    receive(msg: VaultRevokeGrant) on Active {
+        require(in.senderAddress == storage.owner,           ErrorClass.Authorization, VAULT_ERR_NOT_OWNER);
+        var reg = storage.capRegistry.load();
+        reg.revokeHandle(msg.handleId, msg.expiresAtMcSeqno);
+        save({ ...storage, capRegistry: reg.toCell() });
+        keep_state;
+    }
+
+    // ── Get methods ───────────────────────────────────────────────────────────
+
+    get fun owner(): address {
+        return storage.owner;
+    }
+
+    get fun beneficiary(): address {
+        return storage.beneficiary;
+    }
+
+    get fun totalAmount(): coins {
+        return storage.totalAmount;
+    }
+
+    get fun claimedAmount(): coins {
+        return storage.claimedAmount;
+    }
+
+    // Returns currently vested amount, or 0 if the vault has not been funded.
+    get fun vestedAmount(): coins {
+        if (storage.fundedAt == 0) {
+            return 0;
+        }
+        return vaultVestedAmount(
+            storage.fundedAt,
+            storage.cliffSeconds,
+            storage.vestPeriodSeconds,
+            storage.totalAmount,
+            blockchain.now() as uint32
+        );
+    }
+}

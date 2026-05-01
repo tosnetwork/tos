@@ -1,0 +1,45 @@
+import "../../crypto/smartcont/wallet-v5"
+
+@method_id(101)
+fun test_signature_and_auth_errors(): int {
+    val err1 = walletV5ErrorForThrow(ERROR_INVALID_SIGNATURE, PREFIX_SIGNED_EXTERNAL, 0);
+    assert (err1.errorClass == ErrorClass.Authorization) throw 101;
+    assert (err1.errorCode == WALLET_V5_ERROR_INVALID_SIGNATURE) throw 102;
+
+    val err2 = walletV5ErrorForThrow(ERROR_SIGNATURE_DISABLED, PREFIX_SIGNED_INTERNAL, 0);
+    assert (err2.errorClass == ErrorClass.Authorization) throw 103;
+    assert (err2.errorCode == WALLET_V5_ERROR_SIGNATURE_DISABLED) throw 104;
+
+    val err3 = walletV5ErrorForThrow(ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE, PREFIX_EXTENSION_ACTION, 55);
+    assert (err3.queryId == 55) throw 105;
+    assert (err3.errorClass == ErrorClass.Authorization) throw 106;
+    return err1.errorCode + err2.errorCode + err3.errorCode;
+}
+
+@method_id(102)
+fun test_permanent_errors(): int {
+    val err1 = walletV5ErrorForThrow(ERROR_INVALID_SEQNO, PREFIX_SIGNED_EXTERNAL, 0);
+    val err2 = walletV5ErrorForThrow(ERROR_EXPIRED, PREFIX_SIGNED_EXTERNAL, 0);
+    val err3 = walletV5ErrorForThrow(ERROR_ADD_EXTENSION, PREFIX_EXTENSION_ACTION, 55);
+    assert (err1.errorClass == ErrorClass.Permanent) throw 111;
+    assert (err2.errorClass == ErrorClass.Permanent) throw 112;
+    assert (err3.errorClass == ErrorClass.Permanent) throw 113;
+    return err1.errorCode + err2.errorCode + err3.errorCode;
+}
+
+@method_id(103)
+fun test_protocol_errors(): int {
+    val err1 = walletV5ErrorForThrow(ERROR_INVALID_MESSAGE_OPERATION, 0, 0);
+    val err2 = walletV5ErrorForThrow(ERROR_INVALID_C5, PREFIX_SIGNED_EXTERNAL, 0);
+    val err3 = walletV5ErrorForThrow(ERROR_INVALID_GLOBAL_ID, PREFIX_SIGNED_EXTERNAL, 0);
+    assert (err1.errorClass == ErrorClass.Protocol) throw 121;
+    assert (err2.errorClass == ErrorClass.Protocol) throw 122;
+    assert (err3.errorClass == ErrorClass.Protocol) throw 123;
+    return err1.errorCode + err2.errorCode + err3.errorCode;
+}
+
+/**
+@testcase | 101 | | 3413
+@testcase | 102 | | 3408
+@testcase | 103 | | 3433
+ */

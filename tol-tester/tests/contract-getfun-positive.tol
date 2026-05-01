@@ -1,0 +1,29 @@
+struct ContractGetFunPositiveStorage {}
+
+struct (0x000000a1) ContractGetFunPositivePing {
+    queryId: uint64;
+    amount: uint32;
+}
+
+contract ContractGetFunPositive {
+    storage: ContractGetFunPositiveStorage
+
+    receive(msg: ContractGetFunPositivePing) {
+        msg.amount;
+    }
+
+    // crc16("balance") | 0x10000 = 0x196c0 = 104128 (auto-derived per §3.5)
+    // we don't read storage here so that the test can run with the default empty c4
+    get fun balance(): int {
+        return 42;
+    }
+}
+
+/**
+@testcase | 104128 | | 42
+
+@fif_codegen
+"""
+  104128 DECLMETHOD balance()
+"""
+ */

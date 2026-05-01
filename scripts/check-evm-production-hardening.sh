@@ -1266,7 +1266,7 @@ if ! rg -q 'test_restart_skips_adopted_manifest' "$root/test/test-celldb-actor-r
     echo "evm hardening failed: tos31 verification must run actor/restart tests for adopted-marker stale-manifest startup recovery" >&2
     exit 1
 fi
-if ! rg -q 'streaming_import\.startup_rollback\.manifests|streaming_import\.gc_pause_count' "$root/validator/db/celldb.cpp" "$root/docs/ops/tos31-tos32-validation.md"; then
+if ! rg -q 'streaming_import\.startup_rollback\.manifests|streaming_import\.gc_pause_count' "$root/validator/db/celldb.cpp" "$root/doc/ops/tos31-tos32-validation.md"; then
     echo "evm hardening failed: tos31/tos32 validation must expose CellDb streaming import replay/GC stats for alerting" >&2
     exit 1
 fi
@@ -1274,7 +1274,7 @@ if [ ! -x "$root/scripts/run-tos31-state-sync-verification.sh" ] || [ ! -x "$roo
     echo "evm hardening failed: tos31/tos32 verification driver scripts must exist and be executable" >&2
     exit 1
 fi
-if ! rg -q 'Crash / Replay Matrix|Emergency Rollback / Upgrade Plan|Audit Packet' "$root/docs/ops/tos31-tos32-validation.md"; then
+if ! rg -q 'Crash / Replay Matrix|Emergency Rollback / Upgrade Plan|Audit Packet' "$root/doc/ops/tos31-tos32-validation.md"; then
     echo "evm hardening failed: tos31/tos32 validation runbook must include crash matrix, rollback plan, and audit packet" >&2
     exit 1
 fi

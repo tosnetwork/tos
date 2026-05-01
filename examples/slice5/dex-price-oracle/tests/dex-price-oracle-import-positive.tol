@@ -1,0 +1,26 @@
+import "../src/dex-price-oracle"
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(221)
+fun test_imported_contract_constants(): int {
+    return DEX_PRICE_ORACLE_PAIR_TOS_USDC as int;
+}
+
+@method_id(222)
+fun test_imported_contract_message_shape(): int {
+    val msg = DexPriceStartRound {
+        queryId: 1,
+        roundId: 2,
+        pairId: DEX_PRICE_ORACLE_PAIR_TOS_USDC,
+        now: 3,
+    };
+    return msg.pairId as int;
+}
+
+/**
+@testcase | 221 | | 1
+@testcase | 222 | | 1
+ */

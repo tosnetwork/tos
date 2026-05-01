@@ -1,0 +1,44 @@
+import "@stdlib/nft"
+
+struct Slice4NftBehaviourStorage {
+    ownerAddress: any_address;
+    nextItemIndex: uint64;
+    collectionContent: cell;
+    nftItemCode: cell;
+}
+
+struct (NFT_COLLECTION_OP_MINT) Slice4NftBehaviourMint {
+    queryId: uint64;
+    itemIndex: uint64;
+    amount: coins;
+    owner: any_address;
+    individualContent: cell;
+}
+
+fun scaffoldPatternId(): int {
+    return nftPatternManifestHeader().patternId;
+}
+
+contract Slice4NftBehaviour {
+    storage: Slice4NftBehaviourStorage
+    @unknown_throw(65535);
+
+    @disclaim_query_id
+    receive(msg: Slice4NftBehaviourMint) {
+        require(nftSameAddressBits(in.senderAddress, storage.ownerAddress),
+                ErrorClass.Authorization, NFT_COLLECTION_FUNC_THROW_UNAUTHORIZED);
+        val stateInit = nftItemStateInit(msg.itemIndex, contract.getAddress(), storage.nftItemCode);
+        val itemAddress = nftItemAddress(BASECHAIN, stateInit);
+        val itemContent = nftMintItemContent(msg.owner, msg.individualContent);
+        sendRawMessage(nftBuildDeployItemMessage(itemAddress, msg.amount, stateInit, itemContent),
+                       SEND_MODE_PAY_FEES_SEPARATELY);
+        if (msg.itemIndex == storage.nextItemIndex) {
+            save(Slice4NftBehaviourStorage {
+                ownerAddress: storage.ownerAddress,
+                nextItemIndex: storage.nextItemIndex + 1,
+                collectionContent: storage.collectionContent,
+                nftItemCode: storage.nftItemCode,
+            });
+        }
+    }
+}

@@ -1,0 +1,77 @@
+import "@stdlib/slice3-common"
+import "@stdlib/ownable"
+
+fun owner1(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun owner2(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(101)
+fun test_owner_check(): int {
+    val ownable = Ownable { owner: owner1() };
+    ownable.requireOwner(owner1());
+    assert(ownable.isOwner(owner1())) throw 101;
+    assert(!ownable.isOwner(owner2())) throw 102;
+    return 1;
+}
+
+@method_id(102)
+fun test_owner_error(): int {
+    val ownable = Ownable { owner: owner1() };
+    try {
+        ownable.requireOwner(owner2());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(103)
+fun test_two_step_transfer(): int {
+    var ownable = Ownable { owner: owner1() };
+    var transfer = OwnableTransfer { pendingOwner: null };
+
+    assert(!transfer.hasPending()) throw 111;
+    ownable.requireOwner(owner1());
+    transfer.start(owner2());
+    assert(transfer.hasPending()) throw 112;
+    transfer.requirePendingOwner(owner2());
+    ownableAcceptPendingOwner(mutate ownable, mutate transfer, owner2());
+    assert(ownable.isOwner(owner2())) throw 113;
+    assert(!transfer.hasPending()) throw 114;
+    return 1;
+}
+
+@method_id(104)
+fun test_pending_owner_error(): int {
+    val transfer = OwnableTransfer { pendingOwner: owner1() };
+    try {
+        transfer.requirePendingOwner(owner2());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(105)
+fun test_query_key_hash(): int {
+    val noOpcode = slice3PendingReplyKeyHash(owner1(), 77, null);
+    val withOpcode = slice3PendingReplyKeyHash(owner1(), 77, 0x10050001);
+    assert(noOpcode != withOpcode) throw 121;
+    return (slice3ErrorBody(77, 0x10050001, ErrorClass.Authorization, OWNABLE_ERROR_NOT_OWNER).hash() != 0) as int;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 769
+@testcase | 103 | | 1
+@testcase | 104 | | 770
+@testcase | 105 | | -1
+ */

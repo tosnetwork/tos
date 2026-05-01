@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "schema": "slice-5-abi-manifest",
+  "contract": "Slice5AuctionExample",
+  "language": "tol",
+  "stage": "slice5-stage2",
+  "messages": [
+    {
+      "name": "Slice5AuctionBid",
+      "direction": "internal_in",
+      "opcode": "0x41554301",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "bits": null,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "amount",
+          "type": "coins",
+          "bits": null,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
+      ],
+      "fixtures": []
+    },
+    {
+      "name": "Slice5AuctionClose",
+      "direction": "internal_in",
+      "opcode": "0x41554302",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
+      ],
+      "fixtures": []
+    },
+    {
+      "name": "Slice5AuctionExpire",
+      "direction": "internal_in",
+      "opcode": "0x41554303",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
+      ],
+      "fixtures": []
+    },
+    {
+      "name": "Slice5AuctionSettle",
+      "direction": "internal_in",
+      "opcode": "0x41554304",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
+      ],
+      "fixtures": []
+    }
+  ],
+  "get_methods": [],
+  "cell_types": [],
+  "errors": [
+    {
+      "name": "SLICE5_AUCTION_THROW_LOW_BID",
+      "code": 2817,
+      "class": "ApplicationSpecific"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_TOO_EARLY",
+      "code": 2818,
+      "class": "Transient"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_QUEUE_FULL",
+      "code": 2819,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_STALE_CLOSE",
+      "code": 2820,
+      "class": "ApplicationSpecific"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_ALREADY_CLOSED",
+      "code": 2821,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_ALREADY_SETTLED",
+      "code": 2822,
+      "class": "ApplicationSpecific"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_NOT_CLOSED",
+      "code": 2823,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_MALFORMED_ACTION",
+      "code": 2824,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_UNAUTHORIZED_SELLER",
+      "code": 2825,
+      "class": "Authorization"
+    }
+  ],
+  "wire_compatibility_exceptions": [
+    {
+      "exception": "Slice5AuctionBid.bidder is caller-controlled wire data",
+      "reason": "Production handlers must bind bidder identity to in.senderAddress via receiveTrustedBid() or slice5AuctionTrustedBid(); the wire field remains for ABI compatibility."
+    },
+    {
+      "exception": "Slice5Auction*.now fields are caller-controlled wire data",
+      "reason": "Production handlers must use blockchain.now() for time-sensitive decisions; the wire fields remain for compatibility and deterministic fixtures."
+    }
+  ]
+}

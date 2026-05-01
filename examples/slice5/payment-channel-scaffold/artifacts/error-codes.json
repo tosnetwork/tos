@@ -1,0 +1,6 @@
+{
+  "error_codes": [
+    {"name": "SLICE5_PAYMENT_THROW_SIGNATURE_FAILURE", "code": 3585},
+    {"name": "SLICE5_PAYMENT_THROW_SEQNO_REPLAY", "code": 3586}
+  ]
+}

@@ -1,0 +1,215 @@
+import "@stdlib/payment-channel"
+
+// Party keys (simulated Ed25519 public keys — not real signing keys).
+const PARTY_A: uint256 = 0xbfb9ac753f4180bab8c11c65b09742ce423ad9596ef9c3445a3e5937ca8c5033
+const PARTY_B: uint256 = 0x9b3cbb18b669b97e35a236d808c0c0c1a4f620b79e31b17a16b35ce1f2cab8ec
+const SALT: uint256    = 0xdeadbeef1234
+
+// totalBalance = 2000 coins; challengeWindow = 30 s.
+fun pcConfig(): Slice5PaymentChannelConfig {
+    return slice5PaymentConfig(PARTY_A, PARTY_B, SALT, 2000, 30);
+}
+
+fun pcState(): Slice5PaymentChannelState {
+    return slice5PaymentInitialState(2000);
+}
+
+// Build a valid signed state for the channel. Default validUntil well in the future.
+fun pcSigned(seqno: uint64, a: coins, b: coins, validUntil: uint32 = 500): Slice5PaymentSignedState {
+    return slice5PaymentSignedState(pcConfig(), seqno, a, b, validUntil);
+}
+
+// Zero signature cell — triggers SIGNATURE_FAILURE without real keys.
+fun zeroSig(): cell {
+    return beginCell().storeUint(0, 256).storeUint(0, 256).endCell();
+}
+
+fun main(): int {
+    return 0;
+}
+
+// Cooperative close requires valid Ed25519 signatures; zero signatures → SIGNATURE_FAILURE.
+// This test confirms the signature gate is in place and uses cell_hash signing input.
+@method_id(301)
+fun test_cooperative_close_requires_signatures(): int {
+    var state = pcState();
+    try {
+        state.cooperativeClose(pcConfig(), pcSigned(1, 1400, 600), zeroSig(), zeroSig(), 10);
+    } catch (code) {
+        assert(!state.closed) throw 3010;
+        return code;
+    }
+    return 0;
+}
+
+// Seqno replay: submitting a state with seqno ≤ latestSeqno is rejected.
+@method_id(302)
+fun test_seqno_replay(): int {
+    var state = pcState();
+    state.applyVerifiedState(pcConfig(), pcSigned(3, 1500, 500), 10);
+    try {
+        state.applyVerifiedState(pcConfig(), pcSigned(3, 1400, 600), 11);
+    } catch (code) {
+        assert(state.latestSeqno == 3) throw 3020;
+        assert(state.balanceB == 500) throw 3021;
+        return code;
+    }
+    return 0;
+}
+
+// Wrong channel ID: a signed state bound to a different channel is rejected.
+@method_id(303)
+fun test_wrong_channel_binding(): int {
+    var state = pcState();
+    val wrongState = Slice5PaymentSignedState {
+        channelId: 0x12345678,
+        seqno: 1,
+        balanceA: 1400,
+        balanceB: 600,
+        validUntil: 500,
+    };
+    try {
+        state.applyVerifiedState(pcConfig(), wrongState, 10);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Stale challenge: a signed state whose validUntil has already passed is rejected.
+@method_id(304)
+fun test_stale_signed_state(): int {
+    var state = pcState();
+    // validUntil=10, now=10: validUntil <= now → STALE_CHALLENGE.
+    try {
+        state.applyVerifiedState(pcConfig(), pcSigned(1, 1400, 600, 10), 10);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Premature settlement: settle while challenge window is still open is rejected.
+@method_id(305)
+fun test_premature_settlement(): int {
+    var state = pcState();
+    state.challengeCloseVerified(pcConfig(), pcSigned(1, 1400, 600), 10);
+    // challengeExpiresAt = 10 + 30 = 40; settle at now=39 → premature.
+    try {
+        state.settle(39);
+    } catch (code) {
+        assert(!state.closed) throw 3050;
+        return code;
+    }
+    return 0;
+}
+
+// Settlement after challenge window: returns correct balanceB for partyB.
+@method_id(306)
+fun test_settlement_success(): int {
+    var state = pcState();
+    state.challengeCloseVerified(pcConfig(), pcSigned(1, 1400, 600), 10);
+    val paidB = state.settle(40);
+    assert(state.closed) throw 3060;
+    return paidB as int;
+}
+
+// Duplicate close: settling an already-closed channel is rejected.
+@method_id(307)
+fun test_duplicate_close(): int {
+    var state = pcState();
+    state.challengeCloseVerified(pcConfig(), pcSigned(1, 1400, 600), 10);
+    state.settle(40);
+    try {
+        state.settle(41);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Malformed state: balanceA + balanceB ≠ totalBalance is rejected.
+@method_id(308)
+fun test_malformed_balance_sum(): int {
+    var state = pcState();
+    val bad = Slice5PaymentSignedState {
+        channelId: pcConfig().channelId,
+        seqno: 1,
+        balanceA: 1400,
+        balanceB: 599,  // 1400 + 599 = 1999 ≠ 2000
+        validUntil: 500,
+    };
+    try {
+        state.applyVerifiedState(pcConfig(), bad, 10);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Signed state hash is non-zero — confirms hashToSign() uses toCell().hash(), not raw bits.
+@method_id(309)
+fun test_signed_state_hash_nonzero(): int {
+    val h = pcSigned(1, 1400, 600).hashToSign();
+    assert(h != 0) throw 3090;
+    return 1;
+}
+
+// Channel supersede: a higher-seqno state during the challenge window updates balances
+// and resets the expiry. The superseding settle pays the new balanceB.
+@method_id(310)
+fun test_channel_supersede(): int {
+    var state = pcState();
+    // Party A challenges at t=10 with seqno=1 (partyA favoured).
+    state.challengeCloseVerified(pcConfig(), pcSigned(1, 1800, 200), 10);
+    assert(state.challengeExpiresAt == 40) throw 3100;
+    assert(state.balanceB == 200) throw 3101;
+    // Party B supersedes at t=20 with seqno=2 (honest final state).
+    state.challengeCloseVerified(pcConfig(), pcSigned(2, 1400, 600), 20);
+    assert(state.challengeSeqno == 2) throw 3102;
+    assert(state.challengeExpiresAt == 50) throw 3103;
+    // Settle after the updated window.
+    val paidB = state.settle(50);
+    assert(state.closed) throw 3104;
+    return paidB as int;
+}
+
+// Lower-seqno state during an active challenge is rejected (cannot roll back).
+@method_id(311)
+fun test_challenge_seqno_cannot_roll_back(): int {
+    var state = pcState();
+    state.challengeCloseVerified(pcConfig(), pcSigned(5, 1400, 600), 10);
+    try {
+        state.challengeCloseVerified(pcConfig(), pcSigned(4, 1600, 400), 11);
+    } catch (code) {
+        assert(state.challengeSeqno == 5) throw 3110;
+        return code;
+    }
+    return 0;
+}
+
+// Cooperative close cooperative path: verify state after signature-bypassed verified-close.
+@method_id(312)
+fun test_cooperative_close_state_after_apply(): int {
+    var state = pcState();
+    val paidB = state.cooperativeCloseVerified(pcConfig(), pcSigned(1, 1400, 600), 10);
+    assert(state.closed) throw 3120;
+    assert(state.cooperativeClosed) throw 3121;
+    assert(state.balanceB == 600) throw 3122;
+    return paidB as int;
+}
+
+/**
+@testcase | 301 | | 3585
+@testcase | 302 | | 3586
+@testcase | 303 | | 3587
+@testcase | 304 | | 3588
+@testcase | 305 | | 3589
+@testcase | 306 | | 600
+@testcase | 307 | | 3590
+@testcase | 308 | | 3591
+@testcase | 309 | | 1
+@testcase | 310 | | 600
+@testcase | 311 | | 3586
+@testcase | 312 | | 600
+ */

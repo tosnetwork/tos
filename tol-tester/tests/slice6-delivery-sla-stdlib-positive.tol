@@ -1,0 +1,286 @@
+import "@stdlib/delivery"
+
+fun slice6Addr1(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun slice6Addr2(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun slice6Route(): uint256 {
+    return slice6RouteHash(0, 0, 7);
+}
+
+fun slice6BodyHash(v: uint32): uint256 {
+    return beginCell().storeUint(v, 32).endCell().hash();
+}
+
+fun slice6Input(
+    originActionIndex: uint16 = 0,
+    attemptKind: uint8 = SLICE6_ATTEMPT_IMMEDIATE,
+    extraFlags: uint16 = 0,
+    bodyMarker: uint32 = 1
+): Slice6DeliveryIdInputV1 {
+    return slice6DeliveryIdInput(
+        slice6DeliveryOrigin(1000, 0xaaa, originActionIndex, attemptKind, 0),
+        slice6DeliveryRoute(slice6Addr1(), slice6Addr2(), 0, extraFlags),
+        slice6DeliveryPayload(
+            slice6CurrencyCollection(1000),
+            null,
+            slice6BodyHash(bodyMarker),
+            0,
+            0
+        )
+    );
+}
+
+fun slice6Budget(
+    maxRecords: uint16 = 2,
+    retentionBlocks: uint32 = 5,
+    maxRecordBits: uint16 = 900,
+    maxRecordRefs: uint8 = 4,
+    maxCellDepth: uint16 = 1023
+): Slice6DeadLetterBudget {
+    return slice6DeadLetterBudget(maxRecords, retentionBlocks, maxRecordBits, maxRecordRefs, maxCellDepth);
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(601)
+fun test_delivery_id_stable(): int {
+    val a = slice6Input().deliveryId();
+    val b = slice6Input().deliveryId();
+    assert(a == b) throw 6011;
+    assert(a != 0) throw 6012;
+    return 1;
+}
+
+@method_id(602)
+fun test_delivery_id_action_index_changes_hash(): int {
+    val a = slice6Input(0).deliveryId();
+    val b = slice6Input(1).deliveryId();
+    assert(a != b) throw 6021;
+    return 1;
+}
+
+@method_id(603)
+fun test_delivery_id_rejects_reserved_extra_flags(): int {
+    try {
+        slice6Input(0, SLICE6_ATTEMPT_IMMEDIATE, 4).deliveryId();
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(604)
+fun test_backpressure_advice_valid(): int {
+    val advice = Slice6BackPressureAdviceV1 {
+        tag: SLICE6_BACK_PRESSURE_ADVICE_V1_TAG,
+        deliveryId: slice6Input().deliveryId(),
+        bucket: SLICE6_PRESSURE_BUCKET_CONGESTED,
+        scope: SLICE6_PRESSURE_SCOPE_SHARD_ROUTE,
+        minRetryAfterBlocks: 3,
+        adviceValidUntil: 120,
+        routeHash: slice6Route(),
+    };
+    advice.requireValid();
+    return advice.bucket;
+}
+
+@method_id(605)
+fun test_backpressure_rejects_zero_retry_for_congested(): int {
+    try {
+        val advice = Slice6BackPressureAdviceV1 {
+            tag: SLICE6_BACK_PRESSURE_ADVICE_V1_TAG,
+            deliveryId: slice6Input().deliveryId(),
+            bucket: SLICE6_PRESSURE_BUCKET_CONGESTED,
+            scope: SLICE6_PRESSURE_SCOPE_SHARD_ROUTE,
+            minRetryAfterBlocks: 0,
+            adviceValidUntil: 120,
+            routeHash: slice6Route(),
+        };
+        advice.requireValid();
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(606)
+fun test_pressure_bucket_thresholds(): int {
+    val normal = slice6PressureBucket(2, 1000, 5, 10, 8000, 9500);
+    val delayed = slice6PressureBucket(5, 1000, 5, 10, 8000, 9500);
+    val congested = slice6PressureBucket(10, 1000, 5, 10, 8000, 9500);
+    val rejecting = slice6PressureBucket(1, 9500, 5, 10, 8000, 9500);
+    return normal + delayed * 10 + congested * 100 + rejecting * 1000;
+}
+
+@method_id(607)
+fun test_dead_letter_add_funded_record(): int {
+    var sink = slice6NewDeadLetterSink();
+    val added = sink.addRecord(slice6Budget(), slice6Input().deliveryId(), 1, 77, 2, slice6Route(), null, 1, 10);
+    assert(added) throw 6071;
+    assert(sink.count == 1) throw 6072;
+    assert(sink.peekFirst()!.failureCode() == 77) throw 6073;
+    return sink.count;
+}
+
+@method_id(608)
+fun test_dead_letter_full_drops_new_record_without_eviction(): int {
+    var sink = slice6NewDeadLetterSink();
+    val budget = slice6Budget(1);
+    assert(sink.addRecord(budget, slice6Input(0).deliveryId(), 1, 1, 2, slice6Route(), null, 1, 10)) throw 6081;
+    assert(!sink.addRecord(budget, slice6Input(1).deliveryId(), 1, 2, 2, slice6Route(), null, 1, 11)) throw 6082;
+    assert(sink.count == 1) throw 6083;
+    assert(sink.peekFirst()!.failureCode() == 1) throw 6084;
+    return sink.count * 10 + sink.droppedCount;
+}
+
+@method_id(609)
+fun test_dead_letter_expired_cleanup_before_full_drop(): int {
+    var sink = slice6NewDeadLetterSink();
+    val budget = slice6Budget(1, 5);
+    assert(sink.addRecord(budget, slice6Input(0).deliveryId(), 1, 1, 2, slice6Route(), null, 1, 10)) throw 6091;
+    assert(sink.addRecord(budget, slice6Input(1).deliveryId(), 1, 2, 2, slice6Route(), null, 1, 15)) throw 6092;
+    assert(sink.count == 1) throw 6093;
+    assert(sink.peekFirst()!.nonce == 1) throw 6094;
+    return sink.count * 10 + sink.peekFirst()!.nonce;
+}
+
+@method_id(610)
+fun test_dead_letter_no_free_persistent_record_without_escrow(): int {
+    var sink = slice6NewDeadLetterSink();
+    val added = sink.addRecord(slice6Budget(), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), null, 0, 10);
+    assert(!added) throw 6101;
+    assert(sink.count == 0) throw 6102;
+    return sink.droppedCount;
+}
+
+@method_id(611)
+fun test_dead_letter_oversized_record_rejected(): int {
+    var sink = slice6NewDeadLetterSink();
+    val diagnostic = beginCell().storeUint(0, 256).storeUint(0, 256).endCell();
+    try {
+        sink.addRecord(slice6Budget(2, 5, 400, 1), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), diagnostic, 1, 10);
+    } catch (code) {
+        assert(sink.count == 0) throw 6111;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(612)
+fun test_dead_letter_expire_first(): int {
+    var sink = slice6NewDeadLetterSink();
+    val budget = slice6Budget(2, 5);
+    sink.addRecord(budget, slice6Input(0).deliveryId(), 1, 1, 2, slice6Route(), null, 1, 10);
+    sink.addRecord(budget, slice6Input(1).deliveryId(), 1, 2, 2, slice6Route(), null, 1, 11);
+    assert(!sink.expireFirst(14)) throw 6121;
+    assert(sink.expireFirst(15)) throw 6122;
+    assert(sink.count == 1) throw 6123;
+    return sink.peekFirst()!.failureCode();
+}
+
+@method_id(613)
+fun test_pressure_bucket_invalid_config(): int {
+    try {
+        slice6PressureBucket(1, 1000, 10, 5, 8000, 9500);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(614)
+fun test_backpressure_activation_gate_reserved(): int {
+    assert(!BACK_PRESSURE_ACTIVATION_GATE) throw 6141;
+    assert(DELIVERY_FAILURE_CLASS_BACK_PRESSURE == 5) throw 6142;
+    return DELIVERY_FAILURE_CLASS_BACK_PRESSURE;
+}
+
+@method_id(615)
+fun test_dead_letter_retention_overflow_rejected(): int {
+    var sink = slice6NewDeadLetterSink();
+    try {
+        sink.addRecord(slice6Budget(2, 5), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), null, 1, 0xfffffffe);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(616)
+fun test_backpressure_constructor_is_runtime_gated(): int {
+    try {
+        slice6BackPressureAdvice(
+            slice6Input().deliveryId(),
+            SLICE6_PRESSURE_BUCKET_CONGESTED,
+            SLICE6_PRESSURE_SCOPE_SHARD_ROUTE,
+            3,
+            120,
+            slice6Route()
+        );
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(617)
+fun test_dead_letter_zero_ref_budget_rejected(): int {
+    try {
+        slice6Budget(2, 5, 900, 0).requireEnabled();
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(618)
+fun test_dead_letter_diagnostic_depth_prechecked(): int {
+    var sink = slice6NewDeadLetterSink();
+    val diagnostic = beginCell().storeRef(beginCell().storeUint(1, 1).endCell()).endCell();
+    try {
+        sink.addRecord(slice6Budget(2, 5, 900, 4, 1), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), diagnostic, 1, 10);
+    } catch (code) {
+        assert(sink.count == 0) throw 6181;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(619)
+fun test_dead_letter_zero_escrow_budget_rejected(): int {
+    try {
+        slice6DeadLetterBudget(2, 5, 900, 4, 1023, 0).requireEnabled();
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+/**
+@testcase | 601 | | 1
+@testcase | 602 | | 1
+@testcase | 603 | | 3843
+@testcase | 604 | | 2
+@testcase | 605 | | 3842
+@testcase | 606 | | 3210
+@testcase | 607 | | 1
+@testcase | 608 | | 11
+@testcase | 609 | | 11
+@testcase | 610 | | 1
+@testcase | 611 | | 3844
+@testcase | 612 | | 2
+@testcase | 613 | | 3847
+@testcase | 614 | | 5
+@testcase | 615 | | 3843
+@testcase | 616 | | 3848
+@testcase | 617 | | 3841
+@testcase | 618 | | 3844
+@testcase | 619 | | 3841
+ */

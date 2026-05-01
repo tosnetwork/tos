@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "schema": "slice-5-abi-fixture",
+  "contract": "Slice5InteropSmoke",
+  "message": "InteropTransfer",
+  "producer_language": "tol",
+  "body_encoding": "manual_cell",
+  "canonical_body_hex": "51350001000000000000002a0011111111111111111111111111111111111111111111111111111111111111110000000000003039",
+  "canonical_sha256": "f1c96049fd10428ae774a8839452843b13d3029300ff3d8ec8ad5b6b22213706",
+  "fields": {
+    "opcode": "0x51350001",
+    "queryId": 42,
+    "recipient_workchain": 0,
+    "recipient_hash_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+    "amount": 12345
+  }
+}

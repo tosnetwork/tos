@@ -16,6 +16,7 @@
 
 #include <ethash/keccak.hpp>
 #include "vm/cells/CellBuilder.h"
+#include "vm/excno.hpp"
 
 #include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/execution/evm.hpp>
@@ -24,7 +25,9 @@
 #include <silkworm/core/types/block.hpp>
 #include <silkworm/core/types/transaction.hpp>
 
+#include <exception>
 #include <memory>
+#include <new>
 #include <string>
 
 #include "td/utils/logging.h"
@@ -72,15 +75,26 @@ struct StateIntegritySnapshot {
 class CellStateRollbackSnapshot {
   public:
     bool capture(EvmState& state) {
-        std::unique_lock lock(state.mutex());
-        cell_state_ = dynamic_cast<CellEvmState*>(&state.state());
-        if (cell_state_ == nullptr) {
+        try {
+            std::unique_lock lock(state.mutex());
+            cell_state_ = dynamic_cast<CellEvmState*>(&state.state());
+            if (cell_state_ == nullptr) {
+                return false;
+            }
+            account_root_ = cell_state_->serialize_to_cell();
+            block_hashes_root_ = cell_state_->serialize_block_hashes_to_cell();
+            captured_ = account_root_.not_null() && block_hashes_root_.not_null();
+            return captured_;
+        } catch (vm::VmError&) {
+            LOG(ERROR) << "evm-workchain: rollback snapshot capture failed with vm::VmError";
+            return false;
+        } catch (const std::bad_alloc&) {
+            LOG(ERROR) << "evm-workchain: rollback snapshot capture failed with std::bad_alloc";
+            return false;
+        } catch (const std::exception& e) {
+            LOG(ERROR) << "evm-workchain: rollback snapshot capture failed: " << e.what();
             return false;
         }
-        account_root_ = cell_state_->serialize_to_cell();
-        block_hashes_root_ = cell_state_->serialize_block_hashes_to_cell();
-        captured_ = true;
-        return true;
     }
 
     bool restore(EvmState& state) {
@@ -365,6 +379,12 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         return nullptr;
     }
     auto integrity_baseline = StateIntegritySnapshot::capture(state);
+    auto reject_serialization_failure =
+        [&](std::string reason) -> std::shared_ptr<EvmBlockSideEffects> {
+            rollback_snapshot.restore(state);
+            reject_compute_phase(cp, gas_limit, std::move(reason));
+            return nullptr;
+        };
 
     // tos8 audit: reject cheap admission failures before EIP-4788/EIP-2935
     // system calls and before the bounded full-state budget scan. Wrong
@@ -542,21 +562,33 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
 
     // --- Step 5d: Capture EVM state cell and compute native commitment ---
     td::Ref<vm::Cell> evm_state_cell;
-    {
-        std::unique_lock root_lock(state.mutex());
-        auto* cs = dynamic_cast<CellEvmState*>(&state.state());
-        if (cs == nullptr) {
-            root_lock.unlock();
-            rollback_snapshot.restore(state);
-            reject_compute_phase(
-                cp, gas_limit,
-                "EVM state backend is not a CellEvmState; cannot serialize");
-            return nullptr;
+    evmc::bytes32 native_state_commitment{};
+    try {
+        {
+            std::unique_lock root_lock(state.mutex());
+            auto* cs = dynamic_cast<CellEvmState*>(&state.state());
+            if (cs == nullptr) {
+                return reject_serialization_failure(
+                    "EVM state backend is not a CellEvmState; cannot serialize");
+            }
+            evm_state_cell = cs->serialize_to_cell();
         }
-        evm_state_cell = cs->serialize_to_cell();
+        if (evm_state_cell.is_null()) {
+            return reject_serialization_failure(
+                "EVM state serialization returned null");
+        }
+        native_state_commitment =
+            compute_native_evm_state_commitment(evm_state_cell);
+    } catch (vm::VmError&) {
+        return reject_serialization_failure(
+            "EVM state serialization failed with vm::VmError");
+    } catch (const std::bad_alloc&) {
+        return reject_serialization_failure(
+            "EVM state serialization failed with std::bad_alloc");
+    } catch (const std::exception& e) {
+        return reject_serialization_failure(
+            std::string("EVM state serialization failed: ") + e.what());
     }
-    const evmc::bytes32 native_state_commitment =
-        compute_native_evm_state_commitment(evm_state_cell);
 
     {
         vm::CellBuilder actions_cb;
@@ -674,12 +706,30 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     // Persist the EVM block-hash history alongside the account dictionary so
     // BLOCKHASH can be answered after snapshot rebuild or validator restart.
     td::Ref<vm::Cell> block_hashes_cell;
-    {
-        std::unique_lock root_lock(state.mutex());
-        if (auto* cs = dynamic_cast<CellEvmState*>(&state.state())) {
+    try {
+        {
+            std::unique_lock root_lock(state.mutex());
+            auto* cs = dynamic_cast<CellEvmState*>(&state.state());
+            if (cs == nullptr) {
+                return reject_serialization_failure(
+                    "EVM state backend is not a CellEvmState; cannot serialize block hashes");
+            }
             cs->canonize_block(block_seqno, fx->block.hash);
             block_hashes_cell = cs->serialize_block_hashes_to_cell();
         }
+        if (block_hashes_cell.is_null()) {
+            return reject_serialization_failure(
+                "EVM block-hash serialization returned null");
+        }
+    } catch (vm::VmError&) {
+        return reject_serialization_failure(
+            "EVM block-hash serialization failed with vm::VmError");
+    } catch (const std::bad_alloc&) {
+        return reject_serialization_failure(
+            "EVM block-hash serialization failed with std::bad_alloc");
+    } catch (const std::exception& e) {
+        return reject_serialization_failure(
+            std::string("EVM block-hash serialization failed: ") + e.what());
     }
 
     // W8-A: final gate before encoding `cp.new_data`. The post-execute
@@ -699,11 +749,26 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     }
 
     // --- Step 5g: Encode cp.new_data v6 (native-only) ---
-    cp.new_data = encode_cp_new_data_v6(
-        evm_state_cell,
-        native_state_commitment,
-        /*rpc_cache_root=*/{},
-        block_hashes_cell);
+    try {
+        cp.new_data = encode_cp_new_data_v6(
+            evm_state_cell,
+            native_state_commitment,
+            /*rpc_cache_root=*/{},
+            block_hashes_cell);
+        if (cp.new_data.is_null()) {
+            return reject_serialization_failure(
+                "EVM cp.new_data encoding returned null");
+        }
+    } catch (vm::VmError&) {
+        return reject_serialization_failure(
+            "EVM cp.new_data encoding failed with vm::VmError");
+    } catch (const std::bad_alloc&) {
+        return reject_serialization_failure(
+            "EVM cp.new_data encoding failed with std::bad_alloc");
+    } catch (const std::exception& e) {
+        return reject_serialization_failure(
+            std::string("EVM cp.new_data encoding failed: ") + e.what());
+    }
 
     // --- Step 6: Map results back into the host-chain ComputePhase ---
     cp.success = exec_result.success;

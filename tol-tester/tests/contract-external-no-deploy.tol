@@ -1,0 +1,37 @@
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8) — `receive_external`
+// must NOT carry annotations. Stage 4's `@deploy` lands in another worktree and is
+// mutually exclusive with externals (deploys come via internal messages); for
+// now the same code-path rejects ANY pending annotation in front of
+// `receive_external(...)`. We exercise it with `@inline` (a known annotation
+// already wired into the parser); the message wording is annotation-class-agnostic.
+
+import "@stdlib/common"
+
+struct ContractExternalNoDeployStorage {}
+
+struct (0x73696701) ContractExternalNoDeployBody {
+    seqno: uint32;
+}
+
+struct (0x73696702) ContractExternalNoDeployInternalNoOp {
+    queryId: uint64;
+}
+
+contract ContractExternalNoDeploy {
+    storage: ContractExternalNoDeployStorage
+
+    receive(msg: ContractExternalNoDeployInternalNoOp) {
+        msg.queryId;
+    }
+
+    @inline
+    receive_external(msg: ContractExternalNoDeployBody) {
+        msg.seqno;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr receive_external(...)` blocks do not accept annotations
+@stderr doc/tos-language-syntax-policy.md §3.8
+ */

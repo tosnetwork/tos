@@ -1,0 +1,35 @@
+struct ContractOnC4EscapeStorage {
+    open: uint32;
+    @on(Settling) payoutsRemaining: uint32;
+}
+
+struct (0x00000057) ContractOnC4EscapeOpen {
+    queryId: uint64;
+}
+
+struct (0x00000059) ContractOnC4EscapeSettle {
+    queryId: uint64;
+}
+
+contract ContractOnC4Escape {
+    storage: ContractOnC4EscapeStorage
+    states: Open, Settling
+    @initial state Open
+
+    receive(msg: ContractOnC4EscapeOpen) on Open {
+        save(ContractOnC4EscapeStorage { open: 1, payoutsRemaining: 0 });
+        become Settling;
+    }
+
+    receive(msg: ContractOnC4EscapeSettle) on Settling {
+        val raw = storage.toCell();
+        save(ContractOnC4EscapeStorage { open: 0, payoutsRemaining: 0 });
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr c4 serialization escapes `@on` scoping
+@stderr doc/tos-language-syntax-policy.md §5
+ */

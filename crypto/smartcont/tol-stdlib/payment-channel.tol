@@ -1,0 +1,282 @@
+// Slice 5 two-party payment-channel helper surface.
+tol 1.3
+
+import "@stdlib/slice3-common"
+
+const SLICE5_PATTERN_PAYMENT_CHANNEL = 9
+const SLICE5_PAYMENT_ERROR_BASE = 0x0e00
+
+const SLICE5_PAYMENT_THROW_SIGNATURE_FAILURE = 0x0e01
+const SLICE5_PAYMENT_THROW_SEQNO_REPLAY = 0x0e02
+const SLICE5_PAYMENT_THROW_WRONG_CHANNEL = 0x0e03
+const SLICE5_PAYMENT_THROW_STALE_CHALLENGE = 0x0e04
+const SLICE5_PAYMENT_THROW_PREMATURE_SETTLEMENT = 0x0e05
+const SLICE5_PAYMENT_THROW_DUPLICATE_CLOSE = 0x0e06
+const SLICE5_PAYMENT_THROW_MALFORMED_STATE = 0x0e07
+
+const SLICE5_PAYMENT_OP_COOPERATIVE_CLOSE: uint32 = 0x50434801
+const SLICE5_PAYMENT_OP_CHALLENGE_CLOSE: uint32 = 0x50434802
+const SLICE5_PAYMENT_OP_SETTLE: uint32 = 0x50434803
+
+struct Slice5PaymentChannelConfig {
+    partyA: uint256
+    partyB: uint256
+    channelId: uint256
+    totalBalance: coins
+    challengeWindow: uint32
+}
+
+struct Slice5PaymentSignedState {
+    channelId: uint256
+    seqno: uint64
+    balanceA: coins
+    balanceB: coins
+    validUntil: uint32
+}
+
+struct Slice5PaymentChannelState {
+    latestSeqno: uint64
+    balanceA: coins
+    balanceB: coins
+    closing: bool
+    closed: bool
+    cooperativeClosed: bool
+    challengeSeqno: uint64
+    challengeExpiresAt: uint32
+}
+
+struct (SLICE5_PAYMENT_OP_COOPERATIVE_CLOSE) Slice5PaymentCooperativeClose {
+    queryId: uint64
+    signedState: Cell<Slice5PaymentSignedState>
+    signatureA: cell
+    signatureB: cell
+    now: uint32
+}
+
+struct (SLICE5_PAYMENT_OP_CHALLENGE_CLOSE) Slice5PaymentChallengeClose {
+    queryId: uint64
+    signedState: Cell<Slice5PaymentSignedState>
+    signatureA: cell
+    signatureB: cell
+    now: uint32
+}
+
+struct (SLICE5_PAYMENT_OP_SETTLE) Slice5PaymentSettle {
+    queryId: uint64
+    now: uint32
+}
+
+fun slice5PaymentManifestHeader(): Slice3PatternManifestHeader {
+    return Slice3PatternManifestHeader {
+        manifestVersion: SLICE3_PATTERN_MANIFEST_VERSION,
+        patternId: SLICE5_PATTERN_PAYMENT_CHANNEL,
+        publicErrorBase: SLICE5_PAYMENT_ERROR_BASE,
+        flags: 0,
+    };
+}
+
+fun slice5PaymentChannelId(partyA: uint256, partyB: uint256, salt: uint256): uint256 {
+    return beginCell()
+        .storeUint(partyA, 256)
+        .storeUint(partyB, 256)
+        .storeUint(salt, 256)
+        .endCell()
+        .hash();
+}
+
+fun slice5PaymentConfig(
+    partyA: uint256,
+    partyB: uint256,
+    salt: uint256,
+    totalBalance: coins,
+    challengeWindow: uint32
+): Slice5PaymentChannelConfig {
+    if (partyA == partyB || totalBalance == 0 || challengeWindow == 0) {
+        throw SLICE5_PAYMENT_THROW_MALFORMED_STATE;
+    }
+    return Slice5PaymentChannelConfig {
+        partyA,
+        partyB,
+        channelId: slice5PaymentChannelId(partyA, partyB, salt),
+        totalBalance,
+        challengeWindow,
+    };
+}
+
+fun slice5PaymentInitialState(totalBalance: coins): Slice5PaymentChannelState {
+    return Slice5PaymentChannelState {
+        latestSeqno: 0,
+        balanceA: totalBalance,
+        balanceB: 0,
+        closing: false,
+        closed: false,
+        cooperativeClosed: false,
+        challengeSeqno: 0,
+        challengeExpiresAt: 0,
+    };
+}
+
+fun slice5PaymentSignedState(
+    config: Slice5PaymentChannelConfig,
+    seqno: uint64,
+    balanceA: coins,
+    balanceB: coins,
+    validUntil: uint32
+): Slice5PaymentSignedState {
+    val state = Slice5PaymentSignedState {
+        channelId: config.channelId,
+        seqno,
+        balanceA,
+        balanceB,
+        validUntil,
+    };
+    state.requireWellFormed(config, 0);
+    return state;
+}
+
+fun Slice5PaymentSignedState.hashToSign(self): uint256 {
+    return self.toCell().hash();
+}
+
+fun Slice5PaymentSignedState.requireWellFormed(self, config: Slice5PaymentChannelConfig, now: uint32): void {
+    if (self.channelId != config.channelId) {
+        throw SLICE5_PAYMENT_THROW_WRONG_CHANNEL;
+    }
+    if (self.balanceA + self.balanceB != config.totalBalance) {
+        throw SLICE5_PAYMENT_THROW_MALFORMED_STATE;
+    }
+    if (self.validUntil <= now) {
+        throw SLICE5_PAYMENT_THROW_STALE_CHALLENGE;
+    }
+}
+
+fun Slice5PaymentSignedState.signaturesAreValid(
+    self,
+    config: Slice5PaymentChannelConfig,
+    signatureA: cell,
+    signatureB: cell
+): bool {
+    val zeroSignatureHash = beginCell().storeUint(0, 256).storeUint(0, 256).endCell().hash();
+    if (signatureA.hash() == zeroSignatureHash || signatureB.hash() == zeroSignatureHash) {
+        return false;
+    }
+    val hash = self.hashToSign();
+    try {
+        return isSignatureValid(hash as int, signatureA.beginParse(), config.partyA as int) &&
+            isSignatureValid(hash as int, signatureB.beginParse(), config.partyB as int);
+    } catch (_) {
+        return false;
+    }
+}
+
+fun Slice5PaymentSignedState.requireSignatures(
+    self,
+    config: Slice5PaymentChannelConfig,
+    signatureA: cell,
+    signatureB: cell
+): void {
+    if (!self.signaturesAreValid(config, signatureA, signatureB)) {
+        throw SLICE5_PAYMENT_THROW_SIGNATURE_FAILURE;
+    }
+}
+
+fun Slice5PaymentChannelState.applyVerifiedState(
+    mutate self,
+    config: Slice5PaymentChannelConfig,
+    signedState: Slice5PaymentSignedState,
+    now: uint32
+): void {
+    if (self.closed) {
+        throw SLICE5_PAYMENT_THROW_DUPLICATE_CLOSE;
+    }
+    signedState.requireWellFormed(config, now);
+    if (signedState.seqno <= self.latestSeqno) {
+        throw SLICE5_PAYMENT_THROW_SEQNO_REPLAY;
+    }
+    self.latestSeqno = signedState.seqno;
+    self.balanceA = signedState.balanceA;
+    self.balanceB = signedState.balanceB;
+}
+
+fun Slice5PaymentChannelState.cooperativeClose(
+    mutate self,
+    config: Slice5PaymentChannelConfig,
+    signedState: Slice5PaymentSignedState,
+    signatureA: cell,
+    signatureB: cell,
+    now: uint32
+): coins {
+    signedState.requireSignatures(config, signatureA, signatureB);
+    self.applyVerifiedState(config, signedState, now);
+    self.closed = true;
+    self.cooperativeClosed = true;
+    return self.balanceB;
+}
+
+fun Slice5PaymentChannelState.cooperativeCloseVerified(
+    mutate self,
+    config: Slice5PaymentChannelConfig,
+    signedState: Slice5PaymentSignedState,
+    now: uint32
+): coins {
+    self.applyVerifiedState(config, signedState, now);
+    self.closed = true;
+    self.cooperativeClosed = true;
+    return self.balanceB;
+}
+
+fun Slice5PaymentChannelState.challengeClose(
+    mutate self,
+    config: Slice5PaymentChannelConfig,
+    signedState: Slice5PaymentSignedState,
+    signatureA: cell,
+    signatureB: cell,
+    now: uint32
+): uint32 {
+    signedState.requireSignatures(config, signatureA, signatureB);
+    self.applyVerifiedState(config, signedState, now);
+    if (!self.closing) {
+        self.closing = true;
+        self.challengeExpiresAt = now + config.challengeWindow;
+    }
+    self.challengeSeqno = signedState.seqno;
+    return self.challengeExpiresAt;
+}
+
+fun Slice5PaymentChannelState.challengeCloseVerified(
+    mutate self,
+    config: Slice5PaymentChannelConfig,
+    signedState: Slice5PaymentSignedState,
+    now: uint32
+): uint32 {
+    self.applyVerifiedState(config, signedState, now);
+    if (!self.closing) {
+        self.closing = true;
+        self.challengeExpiresAt = now + config.challengeWindow;
+    }
+    self.challengeSeqno = signedState.seqno;
+    return self.challengeExpiresAt;
+}
+
+fun Slice5PaymentChannelState.settle(mutate self, now: uint32): coins {
+    if (self.closed) {
+        throw SLICE5_PAYMENT_THROW_DUPLICATE_CLOSE;
+    }
+    if (!self.closing || now < self.challengeExpiresAt) {
+        throw SLICE5_PAYMENT_THROW_PREMATURE_SETTLEMENT;
+    }
+    self.closed = true;
+    return self.balanceB;
+}
+
+fun slice5PaymentPayoutMessage(to: address, amount: coins): OutMessage {
+    return createMessage({
+        bounce: BounceMode.NoBounce,
+        dest: to,
+        value: amount,
+    });
+}
+
+fun slice5PaymentEmitPayout(to: address, amount: coins, mode: int = SEND_MODE_BOUNCE_ON_ACTION_FAIL): void {
+    slice5PaymentPayoutMessage(to, amount).send(mode);
+}

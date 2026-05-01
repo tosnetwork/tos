@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "schema": "slice-3-pattern-manifest",
+  "pattern": "nft",
+  "stage": "Slice 3 Stage 4",
+  "stdlib_import": "@stdlib/nft",
+  "opcode_prefixes": [
+    {
+      "name": "NFT_OP_TRANSFER",
+      "hex": "0x5fcc3d14",
+      "bits": 32
+    },
+    {
+      "name": "NFT_OP_OWNERSHIP_ASSIGNED",
+      "hex": "0x05138d91",
+      "bits": 32
+    },
+    {
+      "name": "NFT_OP_EXCESSES",
+      "hex": "0xd53276db",
+      "bits": 32
+    },
+    {
+      "name": "NFT_OP_GET_STATIC_DATA",
+      "hex": "0x02fcb26a",
+      "bits": 32
+    },
+    {
+      "name": "NFT_OP_REPORT_STATIC_DATA",
+      "hex": "0x8b771735",
+      "bits": 32
+    },
+    {
+      "name": "NFT_OP_GET_ROYALTY_PARAMS",
+      "hex": "0x693d3950",
+      "bits": 32
+    },
+    {
+      "name": "NFT_OP_REPORT_ROYALTY_PARAMS",
+      "hex": "0xa8cb00ad",
+      "bits": 32
+    },
+    {
+      "name": "NFT_COLLECTION_OP_MINT",
+      "hex": "0x00000001",
+      "bits": 32
+    },
+    {
+      "name": "NFT_COLLECTION_OP_BATCH_MINT",
+      "hex": "0x00000002",
+      "bits": 32
+    },
+    {
+      "name": "NFT_COLLECTION_OP_CHANGE_OWNER",
+      "hex": "0x00000003",
+      "bits": 32
+    },
+    {
+      "name": "NFT_COLLECTION_OP_CHANGE_CONTENT",
+      "hex": "0x00000004",
+      "bits": 32
+    }
+  ],
+  "get_method_ids": [],
+  "require_codes": [
+    {
+      "name": "NFT_ITEM_FUNC_THROW_WRONG_WORKCHAIN",
+      "value": 333,
+      "class": "Protocol"
+    },
+    {
+      "name": "NFT_ITEM_FUNC_THROW_UNAUTHORIZED",
+      "value": 401,
+      "class": "Authorization"
+    },
+    {
+      "name": "NFT_ITEM_FUNC_THROW_NOT_ENOUGH_TOS",
+      "value": 402,
+      "class": "BackPressure"
+    },
+    {
+      "name": "NFT_ITEM_FUNC_THROW_UNKNOWN_OPCODE",
+      "value": 406,
+      "class": "Protocol"
+    },
+    {
+      "name": "NFT_ITEM_FUNC_THROW_NO_FORWARD_PAYLOAD",
+      "value": 708,
+      "class": "Protocol"
+    },
+    {
+      "name": "NFT_COLLECTION_FUNC_THROW_UNAUTHORIZED",
+      "value": 401,
+      "class": "Authorization"
+    },
+    {
+      "name": "NFT_COLLECTION_FUNC_THROW_BAD_ITEM_INDEX",
+      "value": 402,
+      "class": "Protocol"
+    },
+    {
+      "name": "NFT_COLLECTION_FUNC_THROW_BATCH_TOO_LARGE",
+      "value": 399,
+      "class": "BackPressure"
+    },
+    {
+      "name": "NFT_COLLECTION_FUNC_THROW_UNKNOWN_OPCODE",
+      "value": 65535,
+      "class": "Protocol"
+    }
+  ],
+  "public_errors": [
+    "NFT_STDLIB_ERROR_WRONG_WORKCHAIN",
+    "NFT_STDLIB_ERROR_UNAUTHORIZED",
+    "NFT_STDLIB_ERROR_NOT_ENOUGH_TOS",
+    "NFT_STDLIB_ERROR_UNKNOWN_OPCODE",
+    "NFT_STDLIB_ERROR_NO_FORWARD_PAYLOAD",
+    "NFT_STDLIB_ERROR_BAD_ITEM_INDEX",
+    "NFT_STDLIB_ERROR_BATCH_TOO_LARGE"
+  ],
+  "storage_fields": [
+    {
+      "name": "NftCollection.ownerAddress",
+      "type": "any_address"
+    },
+    {
+      "name": "NftCollection.nextItemIndex",
+      "type": "uint64"
+    },
+    {
+      "name": "NftCollection.content",
+      "type": "cell"
+    },
+    {
+      "name": "NftCollection.nftItemCode",
+      "type": "cell"
+    },
+    {
+      "name": "NftItem.index",
+      "type": "uint64"
+    },
+    {
+      "name": "NftItem.collectionAddress",
+      "type": "any_address"
+    },
+    {
+      "name": "NftItem.ownerAddress",
+      "type": "any_address"
+    },
+    {
+      "name": "NftItem.content",
+      "type": "cell"
+    }
+  ],
+  "reply_correlation": {
+    "table_key": [
+      "expected_responder",
+      "query_id",
+      "expected_reply_opcode?"
+    ],
+    "helpers": [
+      "Slice3PendingReplyTable.reserve",
+      "Slice3PendingReplyTable.consume",
+      "Slice3PendingReplyTable.ignoreDuplicate"
+    ],
+    "raw_code_mode": "warning",
+    "manifest_backed_mode": "error"
+  },
+  "wire_compatibility_exceptions": [
+    "NFT transfer and notification helpers preserve raw MsgAddress values as any_address and keep custom_payload / forward_payload bits explicit instead of routing through createMessage()",
+    "Stage 4 ships fixture-level stdlib coverage because there is no pre-existing official Tol NFT reference contract in crypto/smartcont to migrate byte-for-byte"
+  ]
+}

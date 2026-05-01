@@ -1,0 +1,30 @@
+struct ExhaustDefaultStorage {
+    total: uint32;
+}
+
+struct (0x00000081) ExhaustDefaultAdvance {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ExhaustivenessSuppressDefault {
+    storage: ExhaustDefaultStorage
+    states: Open, Closed
+    @initial state Open
+    @unknown_throw(0x00010001);
+    @implicit_protocol_default;
+
+    receive(msg: ExhaustDefaultAdvance) on Open {
+        save(ExhaustDefaultStorage { total: msg.queryId as uint32 });
+        become Closed;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+@stderr_avoid receive exhaustiveness warning
+ */

@@ -1,0 +1,27 @@
+fun hiddenC4Read(): cell asm "c4 PUSH";
+
+struct ContractAsmEscapeStorage {
+    always: uint32
+    @on(Closed) secret: uint32
+}
+
+struct (0x00000097) ContractAsmEscapePing {
+    queryId: uint64
+}
+
+contract ContractAsmEscape {
+    storage: ContractAsmEscapeStorage
+    states: Closed
+    @initial state Closed
+    @unknown_throw(0xffff);
+
+    receive(msg: ContractAsmEscapePing) on Closed {
+        hiddenC4Read();
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr asm function `hiddenC4Read` uses c4
+ */

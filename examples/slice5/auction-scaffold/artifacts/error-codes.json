@@ -1,0 +1,8 @@
+{
+  "error_codes": [
+    {"name": "SLICE5_AUCTION_THROW_LOW_BID", "code": 2817},
+    {"name": "SLICE5_AUCTION_THROW_QUEUE_FULL", "code": 2819},
+    {"name": "SLICE5_AUCTION_THROW_STALE_CLOSE", "code": 2820},
+    {"name": "SLICE5_AUCTION_THROW_UNAUTHORIZED_SELLER", "code": 2825}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "schema": "slice-5-abi-fixture",
+  "contract": "Slice5PaymentChannelExample",
+  "message": "Slice5PaymentCooperativeClose",
+  "producer_language": "golden",
+  "body_encoding": "tol_auto_struct",
+  "canonical_body_hex": "504348010000000000000001",
+  "canonical_sha256": "ce2ece5bd3d53d1286267402a40ff71c5bc2b4b760b015b21449a87037fc7945",
+  "fields": {
+    "signed_state": "Slice5PaymentSignedState",
+    "signing_input": "cell_hash",
+    "signature_algorithm": "ed25519"
+  }
+}

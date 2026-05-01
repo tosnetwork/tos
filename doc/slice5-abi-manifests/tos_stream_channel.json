@@ -1,0 +1,276 @@
+{
+  "version": 1,
+  "schema": "slice-5-abi-manifest",
+  "contract": "TosStreamChannel",
+  "language": "tol",
+  "stage": "slice5-stage5",
+  "messages": [
+    {
+      "name": "Slice5PaymentCooperativeClose",
+      "direction": "internal_in",
+      "opcode": "0x50434801",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "ed25519",
+      "signing_input": "cell_hash",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "signedState",
+          "type": "cell",
+          "bits": null,
+          "refs": 1,
+          "caller_controlled": true
+        },
+        {
+          "name": "signatureA",
+          "type": "cell",
+          "bits": 512,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "signatureB",
+          "type": "cell",
+          "bits": 512,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
+      ],
+      "fixtures": [
+        {
+          "name": "payment_channel_signed_state_golden",
+          "kind": "golden_cell",
+          "path": "doc/slice5-abi-fixtures/payment-channel-signed-state.json",
+          "wire_reuse_of": "Slice5PaymentChannelExample"
+        }
+      ]
+    },
+    {
+      "name": "Slice5PaymentChallengeClose",
+      "direction": "internal_in",
+      "opcode": "0x50434802",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "ed25519",
+      "signing_input": "cell_hash",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "signedState",
+          "type": "cell",
+          "bits": null,
+          "refs": 1,
+          "caller_controlled": true
+        },
+        {
+          "name": "signatureA",
+          "type": "cell",
+          "bits": 512,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "signatureB",
+          "type": "cell",
+          "bits": 512,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
+      ],
+      "fixtures": [
+        {
+          "name": "payment_channel_challenge_signed_state_golden",
+          "kind": "golden_cell",
+          "path": "doc/slice5-abi-fixtures/payment-channel-challenge-signed-state.json",
+          "wire_reuse_of": "Slice5PaymentChannelExample"
+        }
+      ]
+    },
+    {
+      "name": "Slice5PaymentSettle",
+      "direction": "internal_in",
+      "opcode": "0x50434803",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
+      ],
+      "fixtures": []
+    }
+  ],
+  "get_methods": [
+    {
+      "name": "getChannelId",
+      "method_id": 11265,
+      "id_source": "explicit",
+      "arguments": [],
+      "returns": [
+        {
+          "name": "channelId",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "isClosing",
+      "method_id": 11266,
+      "id_source": "explicit",
+      "arguments": [],
+      "returns": [
+        {
+          "name": "closing",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "isClosed",
+      "method_id": 11267,
+      "id_source": "explicit",
+      "arguments": [],
+      "returns": [
+        {
+          "name": "closed",
+          "type": "bool"
+        }
+      ]
+    }
+  ],
+  "cell_types": [
+    {
+      "name": "Slice5PaymentSignedState",
+      "encoding": "tol_auto_struct",
+      "fields": [
+        {
+          "name": "channelId",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0
+        },
+        {
+          "name": "seqno",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "balanceA",
+          "type": "coins",
+          "bits": null,
+          "refs": 0
+        },
+        {
+          "name": "balanceB",
+          "type": "coins",
+          "bits": null,
+          "refs": 0
+        },
+        {
+          "name": "validUntil",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0
+        }
+      ],
+      "fixtures": [
+        {
+          "name": "payment_channel_signed_state_golden",
+          "kind": "golden_cell",
+          "path": "doc/slice5-abi-fixtures/payment-channel-signed-state.json"
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "name": "SLICE5_PAYMENT_THROW_SIGNATURE_FAILURE",
+      "code": 3585,
+      "class": "Authorization"
+    },
+    {
+      "name": "SLICE5_PAYMENT_THROW_SEQNO_REPLAY",
+      "code": 3586,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_PAYMENT_THROW_WRONG_CHANNEL",
+      "code": 3587,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_PAYMENT_THROW_STALE_CHALLENGE",
+      "code": 3588,
+      "class": "Transient"
+    },
+    {
+      "name": "SLICE5_PAYMENT_THROW_PREMATURE_SETTLEMENT",
+      "code": 3589,
+      "class": "Transient"
+    },
+    {
+      "name": "SLICE5_PAYMENT_THROW_DUPLICATE_CLOSE",
+      "code": 3590,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_PAYMENT_THROW_MALFORMED_STATE",
+      "code": 3591,
+      "class": "Protocol"
+    }
+  ],
+  "wire_compatibility_exceptions": [
+    {
+      "exception": "Slice5PaymentCooperativeClose.now, Slice5PaymentChallengeClose.now, and Slice5PaymentSettle.now remain wire fields but are ignored by production receive handlers",
+      "reason": "The production contract uses blockchain.now() for signed-state freshness, challenge-window start, and settlement-window checks. The caller-controlled wire field is retained only for ABI compatibility with the external trial body shape."
+    },
+    {
+      "exception": "TosStreamChannel dispatches balanceB payout after saving closed state",
+      "reason": "The stdlib state helpers still return balanceB and do not send by themselves. This production candidate stores partyBAddress in contract storage and calls slice5PaymentEmitPayout after save() in cooperativeClose and settle."
+    }
+  ]
+}

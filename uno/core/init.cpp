@@ -925,7 +925,9 @@ uint32_t LiveUnoState::last_solve_ts() const noexcept {
 void LiveUnoState::advance_mine_state(uint64_t new_remaining,
                                       uint32_t gen_utime) noexcept {
     std::lock_guard<std::mutex> lk(mutex_);
-    ++mine_epoch_;
+    if (mine_epoch_ < std::numeric_limits<uint32_t>::max()) {
+        ++mine_epoch_;
+    }
     mine_remaining_ = new_remaining;
     last_solve_ts_  = gen_utime;
 
@@ -1677,7 +1679,7 @@ void init_uno_workchain(const std::string& db_root) {
             if (g_live && !g_live->hydrate_from_cell_if_needed(std::move(state_data))) {
                 cp.skip_reason = block::ComputePhase::sk_bad_state;
                 cp.success = false;
-                cp.accepted = true;
+                cp.accepted = false;
                 cp.gas_used = 0;
                 cp.gas_limit = gas_limit;
                 cp.vm_steps = 1;

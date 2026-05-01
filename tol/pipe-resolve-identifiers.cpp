@@ -216,12 +216,17 @@ class AssignSymInsideFunctionVisitor final : public ASTVisitorFunctionBody {
   void visit(V<ast_block_statement> v) override {
     current_scope.open_scope();
     if (v == cur_f->ast_root->as<ast_function_declaration>()->get_body()) {
+      // Parameter defaults are evaluated at each call site. They may call
+      // global helper functions, but they must not capture this function's
+      // own parameters; lowering has no parameter-substitution model for that.
       for (int i = 0; i < cur_f->get_num_params(); ++i) {
         LocalVarPtr param_ref = &cur_f->parameters[i];
-        current_scope.add_local_var(param_ref);
         if (param_ref->has_default_value()) {
           parent::visit(param_ref->default_value);
         }
+      }
+      for (int i = 0; i < cur_f->get_num_params(); ++i) {
+        current_scope.add_local_var(&cur_f->parameters[i]);
       }
     }
 
@@ -270,7 +275,17 @@ public:
     parent::visit(const_ref->init_value);
   }
 
+  void start_visiting_function_metadata(V<ast_function_declaration> v_func) {
+    if (v_func->has_tvm_method_id_expr()) {
+      parent::visit(v_func->get_tvm_method_id_expr());
+    }
+  }
+
   void start_visiting_struct_fields(StructPtr struct_ref) {
+    if (auto v_struct = struct_ref->ast_root->try_as<ast_struct_declaration>(); v_struct && v_struct->has_opcode()) {
+      parent::visit(v_struct->get_opcode());
+    }
+
     // field `a: int = C`, resolve `C`
     for (StructFieldPtr field_ref : struct_ref->fields) {
       if (field_ref->has_default_value()) {
@@ -295,6 +310,7 @@ void pipeline_resolve_identifiers_and_assign_symbols() {
     for (AnyV v : file->ast->as<ast_tol_file>()->get_toplevel_declarations()) {
       if (auto v_func = v->try_as<ast_function_declaration>(); v_func && !v_func->is_builtin_function()) {
         tol_assert(v_func->fun_ref);
+        visitor.start_visiting_function_metadata(v_func);
         if (visitor.should_visit_function(v_func->fun_ref)) {
           visitor.start_visiting_function(v_func->fun_ref, v_func);
         }

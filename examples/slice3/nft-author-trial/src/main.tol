@@ -1,0 +1,44 @@
+import "@stdlib/nft"
+
+struct NftAuthorTrialStorage {
+    ownerAddress: any_address;
+    nextItemIndex: uint64;
+    collectionContent: cell;
+    nftItemCode: cell;
+}
+
+struct (NFT_COLLECTION_OP_MINT) NftAuthorTrialMint {
+    queryId: uint64;
+    itemIndex: uint64;
+    amount: coins;
+    owner: any_address;
+    individualContent: cell;
+}
+
+fun scaffoldPatternId(): int {
+    return nftPatternManifestHeader().patternId;
+}
+
+contract NftAuthorTrial {
+    storage: NftAuthorTrialStorage
+    @unknown_throw(65535);
+
+    @disclaim_query_id
+    receive(msg: NftAuthorTrialMint) {
+        require(nftSameAddressBits(in.senderAddress, storage.ownerAddress),
+                ErrorClass.Authorization, NFT_COLLECTION_FUNC_THROW_UNAUTHORIZED);
+        val stateInit = nftItemStateInit(msg.itemIndex, contract.getAddress(), storage.nftItemCode);
+        val itemAddress = nftItemAddress(BASECHAIN, stateInit);
+        val itemContent = nftMintItemContent(msg.owner, msg.individualContent);
+        sendRawMessage(nftBuildDeployItemMessage(itemAddress, msg.amount, stateInit, itemContent),
+                       SEND_MODE_PAY_FEES_SEPARATELY);
+        if (msg.itemIndex == storage.nextItemIndex) {
+            save(NftAuthorTrialStorage {
+                ownerAddress: storage.ownerAddress,
+                nextItemIndex: storage.nextItemIndex + 1,
+                collectionContent: storage.collectionContent,
+                nftItemCode: storage.nftItemCode,
+            });
+        }
+    }
+}

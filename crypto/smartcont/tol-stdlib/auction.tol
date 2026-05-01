@@ -1,0 +1,288 @@
+// Slice 5 auction helper surface.
+tol 1.3
+
+import "@stdlib/postponement"
+import "@stdlib/slice3-common"
+
+const SLICE5_PATTERN_AUCTION = 6
+const SLICE5_AUCTION_ERROR_BASE = 0x0b00
+
+const SLICE5_AUCTION_THROW_LOW_BID = 0x0b01
+const SLICE5_AUCTION_THROW_TOO_EARLY = 0x0b02
+const SLICE5_AUCTION_THROW_QUEUE_FULL = 0x0b03
+const SLICE5_AUCTION_THROW_STALE_CLOSE = 0x0b04
+const SLICE5_AUCTION_THROW_ALREADY_CLOSED = 0x0b05
+const SLICE5_AUCTION_THROW_ALREADY_SETTLED = 0x0b06
+const SLICE5_AUCTION_THROW_NOT_CLOSED = 0x0b07
+const SLICE5_AUCTION_THROW_MALFORMED_ACTION = 0x0b08
+const SLICE5_AUCTION_THROW_UNAUTHORIZED_SELLER = 0x0b09
+
+const SLICE5_AUCTION_OP_BID: uint32 = 0x41554301
+const SLICE5_AUCTION_OP_CLOSE: uint32 = 0x41554302
+const SLICE5_AUCTION_OP_EXPIRE: uint32 = 0x41554303
+const SLICE5_AUCTION_OP_SETTLE: uint32 = 0x41554304
+
+struct Slice5AuctionConfig {
+    seller: address
+    minBid: coins
+    opensAt: uint32
+    closesAt: uint32
+    budget: PostponementBudget
+}
+
+struct Slice5AuctionState {
+    opened: bool
+    closed: bool
+    settled: bool
+    highestBid: coins
+    highestBidder: address
+    drainedCount: uint16
+    lastDrainedQueryId: uint64
+    queue: PostponedQueue
+}
+
+struct (SLICE5_AUCTION_OP_BID) Slice5AuctionBid {
+    queryId: uint64
+    bidder: address
+    amount: coins
+    now: uint32
+}
+
+struct (SLICE5_AUCTION_OP_CLOSE) Slice5AuctionClose {
+    queryId: uint64
+    now: uint32
+}
+
+struct (SLICE5_AUCTION_OP_EXPIRE) Slice5AuctionExpire {
+    queryId: uint64
+    now: uint32
+}
+
+struct (SLICE5_AUCTION_OP_SETTLE) Slice5AuctionSettle {
+    queryId: uint64
+    now: uint32
+}
+
+fun slice5AuctionNullAddress(): address {
+    return address("0:0000000000000000000000000000000000000000000000000000000000000000");
+}
+
+fun slice5AuctionManifestHeader(): Slice3PatternManifestHeader {
+    return Slice3PatternManifestHeader {
+        manifestVersion: SLICE3_PATTERN_MANIFEST_VERSION,
+        patternId: SLICE5_PATTERN_AUCTION,
+        publicErrorBase: SLICE5_AUCTION_ERROR_BASE,
+        flags: 0,
+    };
+}
+
+fun slice5AuctionDefaultBudget(): PostponementBudget {
+    return slice4PostponementBudget(
+        16,
+        512,
+        4,
+        8192,
+        64,
+        120,
+        16,
+        1023
+    );
+}
+
+fun slice5AuctionConfigWithBudget(
+    seller: address,
+    minBid: coins,
+    opensAt: uint32,
+    closesAt: uint32,
+    budget: PostponementBudget
+): Slice5AuctionConfig {
+    if (closesAt <= opensAt) {
+        throw SLICE5_AUCTION_THROW_MALFORMED_ACTION;
+    }
+    budget.requireEnabled();
+    return Slice5AuctionConfig { seller, minBid, opensAt, closesAt, budget };
+}
+
+fun slice5AuctionConfig(
+    seller: address,
+    minBid: coins,
+    opensAt: uint32,
+    closesAt: uint32
+): Slice5AuctionConfig {
+    return slice5AuctionConfigWithBudget(seller, minBid, opensAt, closesAt, slice5AuctionDefaultBudget());
+}
+
+fun slice5AuctionInitialState(): Slice5AuctionState {
+    return Slice5AuctionState {
+        opened: false,
+        closed: false,
+        settled: false,
+        highestBid: 0,
+        highestBidder: slice5AuctionNullAddress(),
+        drainedCount: 0,
+        lastDrainedQueryId: 0,
+        queue: slice4NewPostponedQueue(),
+    };
+}
+
+fun Slice5AuctionState.requireAcceptingBid(self, config: Slice5AuctionConfig, now: uint32): void {
+    if (self.closed || self.settled || now >= config.closesAt) {
+        throw SLICE5_AUCTION_THROW_ALREADY_CLOSED;
+    }
+}
+
+fun Slice5AuctionState.applyBid(mutate self, config: Slice5AuctionConfig, bid: Slice5AuctionBid): void {
+    self.requireAcceptingBid(config, bid.now);
+    if (bid.amount < config.minBid || bid.amount <= self.highestBid) {
+        throw SLICE5_AUCTION_THROW_LOW_BID;
+    }
+    self.opened = true;
+    self.highestBid = bid.amount;
+    self.highestBidder = bid.bidder;
+}
+
+fun slice5AuctionTrustedBidAt(msg: Slice5AuctionBid, sender: address, now: uint32): Slice5AuctionBid {
+    return Slice5AuctionBid {
+        queryId: msg.queryId,
+        bidder: sender,
+        amount: msg.amount,
+        now,
+    };
+}
+
+fun slice5AuctionTrustedBid(msg: Slice5AuctionBid, sender: address): Slice5AuctionBid {
+    return slice5AuctionTrustedBidAt(msg, sender, blockchain.now() as uint32);
+}
+
+fun Slice5AuctionState.postponeBid(mutate self, config: Slice5AuctionConfig, bid: Slice5AuctionBid): uint16 {
+    try {
+        self.queue.enqueueWithQueryId(
+            config.budget,
+            bid.bidder,
+            SLICE5_AUCTION_OP_BID,
+            bid.queryId,
+            bid.toCell(),
+            bid.amount,
+            0,
+            bid.now
+        );
+    } catch (code) {
+        if (code == SLICE4_POSTPONEMENT_THROW_QUEUE_FULL) {
+            throw SLICE5_AUCTION_THROW_QUEUE_FULL;
+        }
+        throw code;
+    }
+    return self.queue.count;
+}
+
+fun Slice5AuctionState.receiveBid(mutate self, config: Slice5AuctionConfig, bid: Slice5AuctionBid): uint16 {
+    self.requireAcceptingBid(config, bid.now);
+    if (bid.now < config.opensAt) {
+        return self.postponeBid(config, bid);
+    }
+    self.applyBid(config, bid);
+    return self.queue.count;
+}
+
+fun Slice5AuctionState.receiveTrustedBidAt(mutate self, config: Slice5AuctionConfig, msg: Slice5AuctionBid, sender: address, now: uint32): uint16 {
+    return self.receiveBid(config, slice5AuctionTrustedBidAt(msg, sender, now));
+}
+
+fun Slice5AuctionState.receiveTrustedBid(mutate self, config: Slice5AuctionConfig, msg: Slice5AuctionBid, sender: address): uint16 {
+    return self.receiveBid(config, slice5AuctionTrustedBid(msg, sender));
+}
+
+fun Slice5AuctionState.receiveRawBidBody(mutate self, config: Slice5AuctionConfig, body: cell): void {
+    val bid = lazy Slice5AuctionBid.fromCell(body);
+    self.receiveBid(config, bid);
+}
+
+fun Slice5AuctionState.applyDrainedBid(mutate self, config: Slice5AuctionConfig, bid: Slice5AuctionBid): bool {
+    if (self.closed || self.settled || bid.amount < config.minBid || bid.amount <= self.highestBid) {
+        return false;
+    }
+    self.drainedCount += 1;
+    self.lastDrainedQueryId = bid.queryId;
+    self.highestBid = bid.amount;
+    self.highestBidder = bid.bidder;
+    return true;
+}
+
+fun Slice5AuctionState.openAndDrain(mutate self, config: Slice5AuctionConfig, now: uint32): uint16 {
+    if (now < config.opensAt) {
+        throw SLICE5_AUCTION_THROW_TOO_EARLY;
+    }
+    if (self.closed || self.settled) {
+        throw SLICE5_AUCTION_THROW_ALREADY_CLOSED;
+    }
+    self.opened = true;
+    var touched: uint16 = 0;
+    while (touched < config.budget.maxDrainItems) {
+        val item = self.queue.peekFirst();
+        if (item == null) {
+            return touched;
+        }
+        if (item!.isExpired(now)) {
+            self.queue.dropNonce(item!.nonce);
+        } else {
+            val bid = lazy Slice5AuctionBid.fromCell(item!.body());
+            self.applyDrainedBid(config, bid);
+            self.queue.dropNonce(item!.nonce);
+        }
+        touched += 1;
+    }
+    return touched;
+}
+
+fun Slice5AuctionState.closeAndDrain(mutate self, config: Slice5AuctionConfig, now: uint32): uint16 {
+    if (now < config.closesAt) {
+        throw SLICE5_AUCTION_THROW_STALE_CLOSE;
+    }
+    if (self.closed || self.settled) {
+        throw SLICE5_AUCTION_THROW_ALREADY_CLOSED;
+    }
+    val touched = self.openAndDrain(config, now);
+    self.closed = true;
+    return touched;
+}
+
+fun Slice5AuctionState.expireQueued(mutate self, now: uint32): uint16 {
+    var expired: uint16 = 0;
+    while (self.queue.expireFirst(now)) {
+        expired += 1;
+    }
+    return expired;
+}
+
+fun Slice5AuctionState.settle(mutate self): coins {
+    if (!self.closed) {
+        throw SLICE5_AUCTION_THROW_NOT_CLOSED;
+    }
+    if (self.settled) {
+        throw SLICE5_AUCTION_THROW_ALREADY_SETTLED;
+    }
+    self.settled = true;
+    return self.highestBid;
+}
+
+fun Slice5AuctionState.requireSeller(self, config: Slice5AuctionConfig, sender: address): void {
+    if (sender != config.seller) {
+        throw SLICE5_AUCTION_THROW_UNAUTHORIZED_SELLER;
+    }
+}
+
+fun slice5AuctionPayoutMessage(to: address, amount: coins): OutMessage {
+    return createMessage({
+        bounce: BounceMode.NoBounce,
+        dest: to,
+        value: amount,
+    });
+}
+
+fun slice5AuctionEmitPayout(to: address, amount: coins, mode: int = SEND_MODE_BOUNCE_ON_ACTION_FAIL): void {
+    slice5AuctionPayoutMessage(to, amount).send(mode);
+}
+
+fun Slice5AuctionState.excessForRejectedBid(self, bid: Slice5AuctionBid): coins {
+    return bid.amount <= self.highestBid ? bid.amount : 0;
+}

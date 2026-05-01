@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "schema": "slice-4-behaviour-manifest",
+  "behaviour": "postponing_state_machine",
+  "stage": "Slice 4 Stage 4",
+  "mode": "error",
+  "callbacks": [
+    {
+      "name": "receive_bid",
+      "kind": "receive",
+      "required": true
+    },
+    {
+      "name": "receive_open",
+      "kind": "receive",
+      "required": true
+    },
+    {
+      "name": "receive_expire",
+      "kind": "receive",
+      "required": false
+    }
+  ],
+  "messages": [
+    {
+      "name": "Slice4AuctionBid",
+      "opcode": "0x53413401",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    },
+    {
+      "name": "Slice4AuctionOpen",
+      "opcode": "0x53413402",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    },
+    {
+      "name": "Slice4AuctionExpire",
+      "opcode": "0x53413403",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    }
+  ],
+  "states": [
+    "pre_open",
+    "open"
+  ],
+  "postponement": {
+    "enabled": true,
+    "queue_field": "queue",
+    "deferrable": [
+      {
+        "message": "Slice4AuctionBid",
+        "from_states": [
+          "pre_open"
+        ],
+        "until_states": [
+          "open"
+        ]
+      }
+    ],
+    "budgets": {
+      "max_items": 4,
+      "max_body_bits": 512,
+      "max_body_refs": 4,
+      "max_total_body_bits": 2048,
+      "max_total_body_refs": 16,
+      "max_age_seconds": 60,
+      "max_drain_items": 4,
+      "max_cell_depth": 1023
+    }
+  },
+  "errors": [
+    {
+      "name": "SLICE4_AUCTION_THROW_LOW_BID",
+      "code": 2561,
+      "class": "ApplicationSpecific"
+    }
+  ],
+  "wire_compatibility_exceptions": [
+    {
+      "exception": "no-handwritten-raw-map-equivalent",
+      "reason": "The reference intentionally uses @stdlib/postponement; raw map postponement is warning-only legacy code after Stage 2."
+    }
+  ]
+}

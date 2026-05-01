@@ -1,0 +1,31 @@
+struct ContractStateUnreachableStorage {
+    total: uint32;
+}
+
+struct (0x00000041) ContractStateUnreachablePing {
+    queryId: uint64;
+}
+
+contract ContractStateUnreachable {
+    storage: ContractStateUnreachableStorage
+    states: Open, Closed, Dead
+    @initial state Open
+
+    receive(msg: ContractStateUnreachablePing) on Open {
+        become Closed;
+    }
+
+    receive(msg: ContractStateUnreachablePing) on Closed {
+        keep_state;
+    }
+
+    receive(msg: ContractStateUnreachablePing) on Dead {
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr state `Dead` is unreachable from `@initial`
+@stderr doc/tos-language-syntax-policy.md §3.4
+ */

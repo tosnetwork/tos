@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "contract": "TosReportBondOracle",
+  "error_codes": [
+    {
+      "name": "BOND_ORACLE_THROW_UNAUTHORIZED",
+      "code": 4865,
+      "hex": "0x1301",
+      "class": "Authorization",
+      "description": "in.senderAddress is not in the authorized reporter address registry"
+    },
+    {
+      "name": "BOND_ORACLE_THROW_INSUFFICIENT_BOND",
+      "code": 4866,
+      "hex": "0x1302",
+      "class": "Value",
+      "description": "in.valueCoins < BOND_ORACLE_MIN_BOND (1 TON) on a SubmitReport message"
+    },
+    {
+      "name": "BOND_ORACLE_THROW_NO_ACTIVE_ROUND",
+      "code": 4867,
+      "hex": "0x1303",
+      "class": "State",
+      "description": "A SubmitReport or Finalize message arrived when no round is active"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER",
+      "code": 3329,
+      "hex": "0x0d01",
+      "class": "Authorization",
+      "description": "Stdlib: resolved reporter key not found in the reporter set map"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_DUPLICATE_REPORTER",
+      "code": 3330,
+      "hex": "0x0d02",
+      "class": "Protocol",
+      "description": "Stdlib: reporter key has already submitted a report in this round"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_INSUFFICIENT_QUORUM",
+      "code": 3331,
+      "hex": "0x0d03",
+      "class": "State",
+      "description": "Stdlib: finalize called before quorum report count was reached"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_STALE_ROUND",
+      "code": 3332,
+      "hex": "0x0d04",
+      "class": "Transient",
+      "description": "Stdlib: blockchain.now() >= round.validUntil"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_OUTLIER",
+      "code": 3333,
+      "hex": "0x0d05",
+      "class": "Value",
+      "description": "Stdlib: submitted value deviates > maxDeviation from the running median anchor"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_REPLAYED_ROUND",
+      "code": 3334,
+      "hex": "0x0d06",
+      "class": "Protocol",
+      "description": "Stdlib: roundId <= state.lastRoundId (non-monotonic start) or mismatched roundId in report/finalize"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_BAD_CONFIG",
+      "code": 3335,
+      "hex": "0x0d07",
+      "class": "Protocol",
+      "description": "Stdlib: invalid oracle configuration at deploy time"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_ROUND_FINALIZED",
+      "code": 3336,
+      "hex": "0x0d08",
+      "class": "Protocol",
+      "description": "Stdlib: attempted to finalize an already-finalized round"
+    },
+    {
+      "name": "SLICE5_ORACLE_THROW_UNAUTHORIZED_STARTER",
+      "code": 3338,
+      "hex": "0x0d0a",
+      "class": "Authorization",
+      "description": "Stdlib: in.senderAddress != config.roundStarter on a StartRound message"
+    }
+  ]
+}

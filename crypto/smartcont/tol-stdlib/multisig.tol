@@ -1,0 +1,178 @@
+// Slice 3 multisig package foundation and signer/threshold helpers.
+tol 1.3
+
+import "@stdlib/slice3-common"
+import "@stdlib/tvm-dicts"
+import "@stdlib/wallet"
+
+const MULTISIG_PATTERN_ERROR_BASE = 0x0700
+
+const MULTISIG_FUNC_THROW_BAD_THRESHOLD = 1801
+const MULTISIG_FUNC_THROW_NOT_SIGNER = 1802
+const MULTISIG_FUNC_THROW_DUPLICATE_SIGNER = 1803
+const MULTISIG_FUNC_THROW_INSUFFICIENT_SIGNATURES = 1804
+const MULTISIG_FUNC_THROW_PROPOSAL_REPLAY = 1805
+const MULTISIG_FUNC_THROW_EXPIRED = 1806
+const MULTISIG_FUNC_THROW_INVALID_ACTIONS = 1807
+
+const MULTISIG_STDLIB_ERROR_BAD_THRESHOLD = 2801
+const MULTISIG_STDLIB_ERROR_NOT_SIGNER = 2802
+const MULTISIG_STDLIB_ERROR_DUPLICATE_SIGNER = 2803
+const MULTISIG_STDLIB_ERROR_INSUFFICIENT_SIGNATURES = 2804
+const MULTISIG_STDLIB_ERROR_PROPOSAL_REPLAY = 2805
+const MULTISIG_STDLIB_ERROR_EXPIRED = 2806
+const MULTISIG_STDLIB_ERROR_INVALID_ACTIONS = 2807
+
+const MULTISIG_SIGNER_KEY_BITS = 256
+const MULTISIG_PROPOSAL_KEY_BITS = 64
+
+struct MultisigConfig {
+    threshold: uint16;
+    signerCount: uint16;
+    signers: dict;
+}
+
+struct MultisigProposal {
+    queryId: uint64;
+    validUntil: uint32;
+    approvalCount: uint16;
+    approvals: dict;
+    executed: bool;
+    actions: cell?;
+}
+
+fun multisigPatternManifestHeader(): Slice3PatternManifestHeader {
+    return Slice3PatternManifestHeader {
+        manifestVersion: SLICE3_PATTERN_MANIFEST_VERSION,
+        patternId: SLICE3_PATTERN_MULTISIG,
+        publicErrorBase: MULTISIG_PATTERN_ERROR_BASE,
+        flags: 0
+    };
+}
+
+@pure
+fun multisigErrorForFuncThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    if (funcThrow == MULTISIG_FUNC_THROW_BAD_THRESHOLD) {
+        return slice3Error(queryId, originalOp, ErrorClass.Protocol, MULTISIG_STDLIB_ERROR_BAD_THRESHOLD);
+    }
+    if (funcThrow == MULTISIG_FUNC_THROW_NOT_SIGNER) {
+        return slice3Error(queryId, originalOp, ErrorClass.Authorization, MULTISIG_STDLIB_ERROR_NOT_SIGNER);
+    }
+    if (funcThrow == MULTISIG_FUNC_THROW_DUPLICATE_SIGNER) {
+        return slice3Error(queryId, originalOp, ErrorClass.Protocol, MULTISIG_STDLIB_ERROR_DUPLICATE_SIGNER);
+    }
+    if (funcThrow == MULTISIG_FUNC_THROW_INSUFFICIENT_SIGNATURES) {
+        return slice3Error(queryId, originalOp, ErrorClass.Authorization, MULTISIG_STDLIB_ERROR_INSUFFICIENT_SIGNATURES);
+    }
+    if (funcThrow == MULTISIG_FUNC_THROW_PROPOSAL_REPLAY) {
+        return slice3Error(queryId, originalOp, ErrorClass.Permanent, MULTISIG_STDLIB_ERROR_PROPOSAL_REPLAY);
+    }
+    if (funcThrow == MULTISIG_FUNC_THROW_EXPIRED) {
+        return slice3Error(queryId, originalOp, ErrorClass.Permanent, MULTISIG_STDLIB_ERROR_EXPIRED);
+    }
+    return slice3Error(queryId, originalOp, ErrorClass.Protocol, MULTISIG_STDLIB_ERROR_INVALID_ACTIONS);
+}
+
+fun multisigRequireValidThreshold(threshold: int, signerCount: int): void {
+    if (threshold <= 0 || signerCount <= 0 || threshold > signerCount) {
+        throw MULTISIG_FUNC_THROW_BAD_THRESHOLD;
+    }
+}
+
+fun multisigRequireThresholdReached(approvalCount: int, threshold: int): void {
+    if (approvalCount < threshold) {
+        throw MULTISIG_FUNC_THROW_INSUFFICIENT_SIGNATURES;
+    }
+}
+
+fun multisigRequireNotExpired(validUntil: int, nowTs: int): void {
+    if (validUntil <= nowTs) {
+        throw MULTISIG_FUNC_THROW_EXPIRED;
+    }
+}
+
+fun multisigRequireNotExecuted(executed: bool): void {
+    if (executed) {
+        throw MULTISIG_FUNC_THROW_PROPOSAL_REPLAY;
+    }
+}
+
+fun multisigHasSigner(signers: dict, publicKey: uint256): bool {
+    val (_, found) = signers.uDictGet(MULTISIG_SIGNER_KEY_BITS, publicKey);
+    return found;
+}
+
+fun multisigRequireSigner(signers: dict, publicKey: uint256): void {
+    if (!multisigHasSigner(signers, publicKey)) {
+        throw MULTISIG_FUNC_THROW_NOT_SIGNER;
+    }
+}
+
+fun multisigAddSigner(signers: dict, publicKey: uint256): dict {
+    var next = signers;
+    val inserted = next.uDictSetBuilderIfNotExists(
+        MULTISIG_SIGNER_KEY_BITS,
+        publicKey,
+        beginCell().storeInt(-1, 1)
+    );
+    if (!inserted) {
+        throw MULTISIG_FUNC_THROW_DUPLICATE_SIGNER;
+    }
+    return next;
+}
+
+fun multisigAddApproval(approvals: dict, publicKey: uint256): dict {
+    var next = approvals;
+    val inserted = next.uDictSetBuilderIfNotExists(
+        MULTISIG_SIGNER_KEY_BITS,
+        publicKey,
+        beginCell().storeInt(-1, 1)
+    );
+    if (!inserted) {
+        throw MULTISIG_FUNC_THROW_DUPLICATE_SIGNER;
+    }
+    return next;
+}
+
+fun MultisigProposal.recordApproval(mutate self, publicKey: uint256): uint16 {
+    self.approvals = multisigAddApproval(self.approvals, publicKey);
+    self.approvalCount += 1;
+    return self.approvalCount;
+}
+
+@pure
+fun multisigProposalKey(queryId: uint64): uint64 {
+    return queryId;
+}
+
+fun multisigHasPendingProposal(pending: dict, queryId: uint64): bool {
+    val (_, found) = pending.uDictGet(MULTISIG_PROPOSAL_KEY_BITS, multisigProposalKey(queryId));
+    return found;
+}
+
+fun multisigRequireNewProposal(pending: dict, queryId: uint64): void {
+    if (multisigHasPendingProposal(pending, queryId)) {
+        throw MULTISIG_FUNC_THROW_PROPOSAL_REPLAY;
+    }
+}
+
+fun multisigAddPendingProposal(pending: dict, queryId: uint64): dict {
+    var next = pending;
+    val inserted = next.uDictSetBuilderIfNotExists(
+        MULTISIG_PROPOSAL_KEY_BITS,
+        multisigProposalKey(queryId),
+        beginCell().storeInt(-1, 1)
+    );
+    if (!inserted) {
+        throw MULTISIG_FUNC_THROW_PROPOSAL_REPLAY;
+    }
+    return next;
+}
+
+fun multisigValidateActions(actions: cell, isExternal: bool): cell {
+    try {
+        return walletV5VerifyC5Actions(actions, isExternal);
+    } catch (_) {
+        throw MULTISIG_FUNC_THROW_INVALID_ACTIONS;
+    }
+}

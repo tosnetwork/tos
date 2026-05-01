@@ -1414,6 +1414,15 @@ static AsmOp compile_expect_type(std::vector<VarDescr>&, std::vector<VarDescr>& 
   return AsmOp::Nop(origin);
 }
 
+// fun disclaim_query_id(): void;
+// Slice 1 scaffolding stub; see doc/tos-message-policy.md §4.4.
+// Detected by name in the future pipe-check-query-id-propagation pass
+// to silence the warning for legitimate fire-and-forget handlers.
+// Compile-time marker only — emits no TVM opcodes at runtime.
+static AsmOp compile_disclaim_query_id(std::vector<VarDescr>&, std::vector<VarDescr>&, AnyV origin) {
+  return AsmOp::Nop(origin);
+}
+
 // implemented in dedicated files
 
 using GenerateOpsImpl = FunctionBodyBuiltinGenerateOps::GenerateOpsImpl;
@@ -1853,6 +1862,18 @@ void define_builtins() {
   define_builtin_func("createMessage", {CreateMessageOptions}, OutMessage, declTBody,
                                 generate_createMessage,
                                 FunctionData::flagMarkedAsPure | FunctionData::flagAllowAnyWidthT);
+
+  // disclaim_query_id() — Slice 1 scaffolding stub.
+  // See doc/tos-message-policy.md §4.4. The future
+  // pipe-check-query-id-propagation pass detects calls to this
+  // builtin to silence the warning for legitimate fire-and-forget
+  // handlers (e.g. broadcast notifications, telemetry pings).
+  // Currently a runtime no-op; the compile-time check that
+  // distinguishes "disclaimed" from "not propagated" lands in a
+  // follow-up PR.
+  define_builtin_func("disclaim_query_id", {}, Unit, nullptr,
+                                compile_disclaim_query_id,
+                                FunctionData::flagMarkedAsPure);
   define_builtin_func("createExternalLogMessage", {CreateExternalLogMessageOptions}, OutMessage, declTBody,
                                 generate_createExternalLogMessage,
                                 FunctionData::flagMarkedAsPure | FunctionData::flagAllowAnyWidthT);

@@ -1,0 +1,22 @@
+struct ContractFreeFunStorage {}
+
+struct (0x00000015) ContractFreeFunPing {
+    queryId: uint64;
+}
+
+contract ContractFreeFun {
+    storage: ContractFreeFunStorage
+
+    fun helper(): int {
+        return 1;
+    }
+
+    receive(msg: ContractFreeFunPing) {
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr free-standing `fun` declarations are not permitted inside a contract block
+@stderr doc/tos-language-syntax-policy.md §3.1
+ */

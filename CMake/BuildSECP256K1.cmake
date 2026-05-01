@@ -1,5 +1,22 @@
 include(AndroidThirdParty)
 
+# Self-heal stale cache: if a previous configure populated
+# SECP256K1_LIBRARY / SECP256K1_INCLUDE_DIR but the actual artifacts under
+# build/third-party/secp256k1 have been wiped (e.g. by a partial clean),
+# the cache-hit `else()` branch below would silently skip rebuild and
+# downstream targets would fail with
+# "INTERFACE_INCLUDE_DIRECTORIES includes non-existent path". Detect that
+# case and unset the cache so the rebuild path runs.
+if (SECP256K1_LIBRARY)
+  if (NOT EXISTS "${SECP256K1_LIBRARY}" OR NOT IS_DIRECTORY "${SECP256K1_INCLUDE_DIR}")
+    message(STATUS
+      "BuildSECP256K1: cached artifacts missing "
+      "(library=${SECP256K1_LIBRARY}, include=${SECP256K1_INCLUDE_DIR}); rebuilding")
+    unset(SECP256K1_LIBRARY CACHE)
+    unset(SECP256K1_INCLUDE_DIR CACHE)
+  endif()
+endif()
+
 if (NOT SECP256K1_LIBRARY)
   set(SECP256K1_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third-party/secp256k1)
   set(SECP256K1_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/third-party/secp256k1)

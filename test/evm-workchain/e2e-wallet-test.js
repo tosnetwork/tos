@@ -14,7 +14,8 @@
  *   npm install ethers    # once
  *   node e2e-wallet-test.js [rpc_url]
  *
- * Default RPC URL: http://127.0.0.1:8081
+ * Default RPC URL: http://127.0.0.1:8011 (validator @1 from setup-testnet.sh;
+ * use 8012 / 8013 for validators @2 / @3).
  *
  * Prerequisites:
  *   - Node.js 18+ (for fetch)
@@ -23,7 +24,7 @@
  *   - A funded account must exist (the test uses a known private key)
  */
 
-const RPC_URL = process.argv[2] || 'http://127.0.0.1:8081';
+const RPC_URL = process.argv[2] || 'http://127.0.0.1:8011';
 
 async function main() {
     let ethers;

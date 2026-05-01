@@ -1,0 +1,20 @@
+import "@stdlib/postponement"
+
+fun sender1(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun body(): cell {
+    return beginCell().storeUint(1, 8).endCell();
+}
+
+fun bad(): int {
+    var queue = slice4NewPostponedQueue();
+    queue.enqueueWithQueryId(sender1(), 0x10000001, 77, body(), 0, 0, 10);
+    return queue.count;
+}
+
+/**
+@compilation_should_fail
+@stderr too few arguments in call to `PostponedQueue.enqueueWithQueryId`, expected 8, have 7
+ */

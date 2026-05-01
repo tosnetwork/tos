@@ -1,0 +1,27 @@
+fun hiddenCtrRead(): cell asm "4 PUSHCTRX";
+
+struct ContractAsmCtrEscapeStorage {
+    always: uint32
+    @on(Closed) secret: uint32
+}
+
+struct (0x0000009d) ContractAsmCtrEscapePing {
+    queryId: uint64
+}
+
+contract ContractAsmCtrEscape {
+    storage: ContractAsmCtrEscapeStorage
+    states: Closed
+    @initial state Closed
+    @unknown_throw(0xffff);
+
+    receive(msg: ContractAsmCtrEscapePing) on Closed {
+        hiddenCtrRead();
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr asm function `hiddenCtrRead` uses c4
+ */

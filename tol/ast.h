@@ -119,6 +119,9 @@ enum ASTNodeKind {
   ast_throw_statement,
   ast_assert_statement,
   ast_try_catch_statement,
+  ast_become_statement,
+  ast_keep_state_statement,
+  ast_receiver_scope_marker,
   ast_asm_body,
   // other
   ast_genericsT_item,
@@ -130,6 +133,10 @@ enum ASTNodeKind {
   ast_global_var_declaration,
   ast_constant_declaration,
   ast_type_alias_declaration,
+  ast_receive_block,
+  ast_receive_external_block,
+  ast_get_fun_block,
+  ast_contract_declaration,
   ast_struct_field,
   ast_struct_body,
   ast_struct_declaration,
@@ -149,6 +156,7 @@ enum class AnnotationKind {
   pure,
   overflow1023_policy,
   on_bounced_policy,
+  on_states,                  // Slice 2 Stage 3: `@on(State1, State2)` on storage struct fields
   custom,
   unknown,
 };
@@ -998,13 +1006,15 @@ template<>
 struct Vertex<ast_object_field> final : ASTExprUnary {
 private:
   V<ast_identifier> identifier;
+  bool spread_field = false;
 
 public:
   StructFieldPtr field_ref = nullptr;   // assigned at type inferring
 
   AnyExprV get_init_val() const { return child; }
-  std::string_view get_field_name() const { return identifier->name; }
-  V<ast_identifier> get_field_identifier() const { return identifier; }
+  bool is_spread() const { return spread_field; }
+  std::string_view get_field_name() const { tol_assert(!spread_field); return identifier->name; }
+  V<ast_identifier> get_field_identifier() const { tol_assert(!spread_field); return identifier; }
 
   Vertex* mutate() const { return const_cast<Vertex*>(this); }
   void assign_field_ref(StructFieldPtr field_ref);
@@ -1012,6 +1022,11 @@ public:
   Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyExprV init_val)
     : ASTExprUnary(ast_object_field, range, init_val)
     , identifier(name_identifier) {}
+
+  Vertex(SrcRange range, AnyExprV spread_expr)
+    : ASTExprUnary(ast_object_field, range, spread_expr)
+    , identifier(nullptr)
+    , spread_field(true) {}
 };
 
 template<>
@@ -1217,6 +1232,45 @@ struct Vertex<ast_try_catch_statement> final : ASTStatementVararg {
 };
 
 template<>
+// ast_become_statement is a Slice 2 state-machine transition inside a contract receiver
+// example: `become Closed;`
+struct Vertex<ast_become_statement> final : ASTStatementVararg {
+  auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  std::string_view get_state_name() const { return get_identifier()->name; }
+
+  Vertex(SrcRange range, V<ast_identifier> state_identifier)
+    : ASTStatementVararg(ast_become_statement, range, {state_identifier}) {}
+};
+
+template<>
+// ast_keep_state_statement is a Slice 2 state-machine tail marker inside a contract receiver
+// example: `keep_state;`
+struct Vertex<ast_keep_state_statement> final : ASTStatementVararg {
+  Vertex(SrcRange range)
+    : ASTStatementVararg(ast_keep_state_statement, range, {}) {}
+};
+
+template<>
+// ast_receiver_scope_marker is a synthetic Slice 2 wrapper emitted by `pipeline_lower_contracts`
+// around each receiver's lowered body. It carries no semantic effect at codegen — every later
+// pass treats the marker as transparent and recurses into its inner block. Its sole purpose is
+// to bind per-receiver analysis records inside `pipeline_check_query_id_propagation` (see
+// doc/tos-language-syntax-policy.md §3.2.1, §10.1, codex security review v2 closure).
+//
+// The marker is NOT user-writable. It is constructed only by `tol/pipe-lower-contract.cpp`.
+struct Vertex<ast_receiver_scope_marker> final : ASTStatementUnary {
+  std::string_view contract_name;          // owning contract identifier, for diagnostic anchoring
+  std::string_view message_struct_name;    // inbound message struct name, for diagnostic anchoring
+  SrcRange receiver_source_range;          // pre-lowering ast_receive_block range, for diagnostic anchoring
+
+  AnyV get_wrapped_block() const { return child; }
+
+  Vertex(SrcRange range, std::string_view contract_name, std::string_view message_struct_name, SrcRange receiver_source_range, V<ast_block_statement> wrapped_block)
+    : ASTStatementUnary(ast_receiver_scope_marker, range, wrapped_block)
+    , contract_name(contract_name), message_struct_name(message_struct_name), receiver_source_range(receiver_source_range) {}
+};
+
+template<>
 // ast_asm_body is a body of `asm` function — a set of strings, and optionally stack order manipulations
 // example: `fun skipMessageOp... asm "32 PUSHINT" "SDSKIPFIRST";`
 // user can specify "arg order"; example: `fun store(self: builder, op: int) asm (op self)` then [1, 0]
@@ -1321,6 +1375,7 @@ struct Vertex<ast_function_declaration> final : ASTOtherVararg {
   AnyTypeV receiver_type_node;            // for `fun builder.storeInt`, here is `builder`
   AnyTypeV return_type_node;              // if unspecified (nullptr), means "auto infer"
   V<ast_genericsT_list> genericsT_list;   // for non-generics it's nullptr
+  AnyExprV tvm_method_id_expr;             // specified via @method_id annotation
   int tvm_method_id;                      // specified via @method_id annotation
   int flags;                              // from enum in FunctionData
   FunctionInlineMode inline_mode;         // from annotations like `@inline` or auto-detected "in-place"
@@ -1328,13 +1383,15 @@ struct Vertex<ast_function_declaration> final : ASTOtherVararg {
   bool is_asm_function() const { return children.at(2)->kind == ast_asm_body; }
   bool is_code_function() const { return children.at(2)->kind == ast_block_statement; }
   bool is_builtin_function() const { return children.at(2)->kind == ast_empty_statement; }
+  bool has_tvm_method_id_expr() const { return tvm_method_id_expr != nullptr; }
+  AnyExprV get_tvm_method_id_expr() const { return tvm_method_id_expr; }
 
   Vertex* mutate() const { return const_cast<Vertex*>(this); }
   void assign_fun_ref(FunctionPtr fun_ref);
 
-  Vertex(SrcRange range, V<ast_identifier> name_identifier, V<ast_parameter_list> parameters, AnyV body, AnyTypeV receiver_type_node, AnyTypeV return_type_node, V<ast_genericsT_list> genericsT_list, int tvm_method_id, int flags, FunctionInlineMode inline_mode)
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, V<ast_parameter_list> parameters, AnyV body, AnyTypeV receiver_type_node, AnyTypeV return_type_node, V<ast_genericsT_list> genericsT_list, AnyExprV tvm_method_id_expr, int tvm_method_id, int flags, FunctionInlineMode inline_mode)
     : ASTOtherVararg(ast_function_declaration, range, {name_identifier, parameters, body})
-    , receiver_type_node(receiver_type_node), return_type_node(return_type_node), genericsT_list(genericsT_list), tvm_method_id(tvm_method_id), flags(flags), inline_mode(inline_mode) {}
+    , receiver_type_node(receiver_type_node), return_type_node(return_type_node), genericsT_list(genericsT_list), tvm_method_id_expr(tvm_method_id_expr), tvm_method_id(tvm_method_id), flags(flags), inline_mode(inline_mode) {}
 };
 
 template<>
@@ -1393,6 +1450,176 @@ struct Vertex<ast_type_alias_declaration> final : ASTOtherVararg {
 };
 
 template<>
+// ast_receive_block is a receiver inside a Slice 2 contract declaration
+// example: `receive(msg: MintRequest) { ... }`
+// example: `@disclaim_query_id receive(msg: BroadcastEvent) { ... }`
+// example: `@deploy receive(msg: Deploy) { ... }`
+// example: `receive(msg: UnknownOpcode) { ... }`
+//
+// `@disclaim_query_id` is a Slice 2 Stage 7 per-receiver annotation. When set, the lowering
+// pipeline injects a `disclaim_query_id()` call at the top of this receiver's scope marker so
+// pipeline_check_query_id_propagation skips reply-emission diagnostics for THIS receiver only.
+// See doc/tos-language-syntax-policy.md §3.2.1.
+//
+// `@deploy` (Slice 2 Stage 4) marks the bootstrap receiver: the synthesized onInternalMessage
+// dispatches it BEFORE loadData(), so the body must materialize storage via save(...). For
+// state-bearing contracts, the lowering injects `__state = @initial` into the deploy save().
+// See doc/tos-language-syntax-policy.md §3.6 / §4.1 v3.
+//
+// `is_unknown_opcode_catch_all` (Slice 2 Stage 4) marks the reserved `receive(msg: UnknownOpcode)`
+// catch-all body. It runs as the unknown-opcode last-resort branch when the contract has no
+// `@unknown_silent_drop` / `@unknown_throw(N)` annotation; the parameter is bound to `in.body`
+// (the raw, unparsed slice). See doc/tos-language-syntax-policy.md §3.2 v3.
+struct Vertex<ast_receive_block> final : ASTOtherVararg {
+  AnyTypeV message_type_node;
+  V<ast_identifier> state_identifier;  // nullptr unless `receive(msg: T) on State`
+  bool has_disclaim_query_id_annotation = false;
+  SrcRange disclaim_annotation_range;  // points at `@disclaim_query_id` for diagnostics
+  bool is_deploy = false;
+  SrcRange deploy_annotation_range;    // points at `@deploy` for diagnostics
+  bool is_unknown_opcode_catch_all = false;
+
+  auto get_param_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  std::string_view get_param_name() const { return children.at(0)->as<ast_identifier>()->name; }
+  auto get_body() const { return children.at(1)->as<ast_block_statement>(); }
+  bool has_state_clause() const { return state_identifier != nullptr; }
+  std::string_view get_state_name() const { return state_identifier->name; }
+
+  Vertex(SrcRange range, V<ast_identifier> param_identifier, AnyTypeV message_type_node, V<ast_identifier> state_identifier, V<ast_block_statement> body,
+         bool has_disclaim_query_id_annotation = false, SrcRange disclaim_annotation_range = SrcRange::undefined(),
+         bool is_deploy = false, SrcRange deploy_annotation_range = SrcRange::undefined(),
+         bool is_unknown_opcode_catch_all = false)
+    : ASTOtherVararg(ast_receive_block, range, {param_identifier, body})
+    , message_type_node(message_type_node), state_identifier(state_identifier)
+    , has_disclaim_query_id_annotation(has_disclaim_query_id_annotation)
+    , disclaim_annotation_range(disclaim_annotation_range)
+    , is_deploy(is_deploy)
+    , deploy_annotation_range(deploy_annotation_range)
+    , is_unknown_opcode_catch_all(is_unknown_opcode_catch_all) {}
+};
+
+template<>
+// ast_receive_external_block is a Slice 2 Stage 6 external-message receiver inside a contract.
+// example: `receive_external(msg: SignedExternal) { ... }`
+//
+// Per doc/tos-language-syntax-policy.md §3.8, externals do NOT have an InMessage envelope,
+// query_id, or @disclaim_query_id semantics. They lower to a synthesized `onExternalMessage`
+// entry that dispatches by 32-bit body opcode prefix. No `@deploy` (deploys come via internal),
+// no `on State` clause (state-machine guards are internal-only).
+struct Vertex<ast_receive_external_block> final : ASTOtherVararg {
+  AnyTypeV message_type_node;
+
+  auto get_param_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  std::string_view get_param_name() const { return children.at(0)->as<ast_identifier>()->name; }
+  auto get_body() const { return children.at(1)->as<ast_block_statement>(); }
+
+  Vertex(SrcRange range, V<ast_identifier> param_identifier, AnyTypeV message_type_node, V<ast_block_statement> body)
+    : ASTOtherVararg(ast_receive_external_block, range, {param_identifier, body})
+    , message_type_node(message_type_node) {}
+};
+
+template<>
+// ast_get_fun_block is a `get fun` declaration inside a Slice 2 contract block
+// example: `get fun balance(): coins { return storage.totalSupply; }`
+// the optional `@method_id(N)` annotation pins method_id; otherwise it is auto-derived
+// from `crc16(name) | 0x10000` (see doc/tos-language-syntax-policy.md §3.5)
+struct Vertex<ast_get_fun_block> final : ASTOtherVararg {
+  AnyTypeV return_type_node;          // mandatory return type
+  AnyExprV tvm_method_id_expr;        // nullptr unless `@method_id(...)` was specified
+  int extra_fun_flags;                // FunctionData::flagMarkedAsPure etc., propagated to the lowered fun
+  FunctionInlineMode inline_mode;     // from `@inline` / `@inline_ref` / `@noinline` annotations
+
+  auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  std::string_view get_name() const { return children.at(0)->as<ast_identifier>()->name; }
+  auto get_param_list() const { return children.at(1)->as<ast_parameter_list>(); }
+  auto get_body() const { return children.at(2)->as<ast_block_statement>(); }
+  bool has_tvm_method_id_expr() const { return tvm_method_id_expr != nullptr; }
+
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, V<ast_parameter_list> param_list, V<ast_block_statement> body, AnyTypeV return_type_node, AnyExprV tvm_method_id_expr, int extra_fun_flags, FunctionInlineMode inline_mode)
+    : ASTOtherVararg(ast_get_fun_block, range, {name_identifier, param_list, body})
+    , return_type_node(return_type_node), tvm_method_id_expr(tvm_method_id_expr)
+    , extra_fun_flags(extra_fun_flags), inline_mode(inline_mode) {}
+};
+
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): contract-level unknown-opcode mode.
+// `default_protocol_throw` is the synthesized fallback when no annotation and no UnknownOpcode
+//   receiver are present; the lowering throws OP_ERROR (0x00010001) — see common.tol.
+// `silent_drop` is the explicit `@unknown_silent_drop;` mode (matches wallet-v5 semantics).
+// `throw_code` is the explicit `@unknown_throw(N);` mode (matches jetton-minter 0xffff).
+// `catch_all_receiver` is the `receive(msg: UnknownOpcode)` reserved-receiver mode.
+enum class ContractUnknownMode {
+  default_protocol_throw,
+  silent_drop,
+  throw_code,
+  catch_all_receiver,
+};
+
+struct ContractImplicitProtocolFor {
+  std::string message_name;
+  std::string state_name;
+  SrcRange range;
+};
+
+template<>
+// ast_contract_declaration is a Slice 2 contract block before lowering
+// example: `contract Wallet { storage: WalletStorage; receive(msg: Transfer) { ... } }`
+struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
+  AnyTypeV storage_type_node;
+  std::vector<V<ast_identifier>> state_identifiers;
+  V<ast_identifier> initial_state_identifier;
+  int n_receive_blocks;               // children layout: [name, receive*, receive_external*, get_fun*]; receives come first
+  int n_receive_external_blocks;      // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8)
+  int on_bounced_policy_flags = 0;     // FunctionData::flagManualOnBounce / flagIgnoreOnBounce for synthesized onInternalMessage
+  // Slice 2 Stage 4: contract-level unknown-opcode mode. Parser sets this from
+  // `@unknown_silent_drop` / `@unknown_throw(N)` or from a `receive(msg: UnknownOpcode)` body.
+  // Default `default_protocol_throw` lowers to a `throw OP_ERROR` last branch.
+  // See doc/tos-language-syntax-policy.md §3.2 v3.
+  ContractUnknownMode unknown_mode = ContractUnknownMode::default_protocol_throw;
+  int64_t unknown_throw_code = 0;          // meaningful only when unknown_mode == throw_code
+  SrcRange unknown_annotation_range;       // for diagnostics; points at `@unknown_*` (or the catch-all receive)
+  bool implicit_protocol_default = false;  // contract-wide state-cross-product warning suppression
+  SrcRange implicit_protocol_default_range;
+  std::vector<ContractImplicitProtocolFor> implicit_protocol_for;
+
+  auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  int get_num_receives() const { return n_receive_blocks; }
+  auto get_receive(int i) const { return children.at(i + 1)->as<ast_receive_block>(); }
+  int get_num_externals() const { return n_receive_external_blocks; }
+  auto get_external(int i) const { return children.at(i + 1 + n_receive_blocks)->as<ast_receive_external_block>(); }
+  int get_num_get_funs() const { return size() - 1 - n_receive_blocks - n_receive_external_blocks; }
+  auto get_get_fun(int i) const { return children.at(i + 1 + n_receive_blocks + n_receive_external_blocks)->as<ast_get_fun_block>(); }
+  bool has_state_machine() const { return !state_identifiers.empty(); }
+  int get_num_states() const { return static_cast<int>(state_identifiers.size()); }
+  auto get_state(int i) const { return state_identifiers.at(i); }
+  auto get_initial_state_identifier() const { return initial_state_identifier; }
+
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyTypeV storage_type_node, std::vector<V<ast_identifier>>&& state_identifiers, V<ast_identifier> initial_state_identifier, std::vector<AnyV>&& receive_blocks, std::vector<AnyV>&& receive_external_blocks, std::vector<AnyV>&& get_fun_blocks,
+         int on_bounced_policy_flags = 0,
+         ContractUnknownMode unknown_mode = ContractUnknownMode::default_protocol_throw,
+         int64_t unknown_throw_code = 0,
+         SrcRange unknown_annotation_range = SrcRange::undefined(),
+         bool implicit_protocol_default = false,
+         SrcRange implicit_protocol_default_range = SrcRange::undefined(),
+         std::vector<ContractImplicitProtocolFor>&& implicit_protocol_for = {})
+    : ASTOtherVararg(ast_contract_declaration, range, [&] {
+        std::vector<AnyV> children;
+        children.reserve(1 + receive_blocks.size() + receive_external_blocks.size() + get_fun_blocks.size());
+        children.push_back(name_identifier);
+        children.insert(children.end(), receive_blocks.begin(), receive_blocks.end());
+        children.insert(children.end(), receive_external_blocks.begin(), receive_external_blocks.end());
+        children.insert(children.end(), get_fun_blocks.begin(), get_fun_blocks.end());
+        return children;
+      }())
+    , storage_type_node(storage_type_node), state_identifiers(std::move(state_identifiers)), initial_state_identifier(initial_state_identifier)
+    , n_receive_blocks(static_cast<int>(receive_blocks.size()))
+    , n_receive_external_blocks(static_cast<int>(receive_external_blocks.size()))
+    , on_bounced_policy_flags(on_bounced_policy_flags)
+    , unknown_mode(unknown_mode), unknown_throw_code(unknown_throw_code), unknown_annotation_range(unknown_annotation_range)
+    , implicit_protocol_default(implicit_protocol_default), implicit_protocol_default_range(implicit_protocol_default_range)
+    , implicit_protocol_for(std::move(implicit_protocol_for)) {}
+};
+
+template<>
 // ast_struct_field is one field at struct declaration
 // example: `struct Point { x: int, y: int }` is struct declaration, its body contains 2 fields
 struct Vertex<ast_struct_field> final : ASTOtherVararg {
@@ -1400,12 +1627,19 @@ struct Vertex<ast_struct_field> final : ASTOtherVararg {
   bool is_readonly;               // declared as `readonly field: int`
   AnyTypeV type_node;             // always exists, typing struct fields is mandatory
   AnyExprV default_value;         // nullptr if no default
+  // Slice 2 Stage 3 (doc/tos-language-syntax-policy.md §3.4): `@on(State1, State2)` annotation
+  // empty = no annotation (field readable in every state); non-empty = field is only readable
+  // inside receivers whose `on State` clause names one of the listed states.
+  std::vector<std::string_view> on_states;
+  SrcRange on_states_range;       // points at the `@on(...)` syntax for diagnostics; default-constructed if no annotation
 
   auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
+  bool has_on_states_annotation() const { return !on_states.empty(); }
 
-  Vertex(SrcRange range, V<ast_identifier> name_identifier, bool is_private, bool is_readonly, AnyExprV default_value, AnyTypeV type_node)
+  Vertex(SrcRange range, V<ast_identifier> name_identifier, bool is_private, bool is_readonly, AnyExprV default_value, AnyTypeV type_node, std::vector<std::string_view> on_states = {}, SrcRange on_states_range = SrcRange::undefined())
     : ASTOtherVararg(ast_struct_field, range, {name_identifier})
-    , is_private(is_private), is_readonly(is_readonly), type_node(type_node), default_value(default_value) {}
+    , is_private(is_private), is_readonly(is_readonly), type_node(type_node), default_value(default_value)
+    , on_states(std::move(on_states)), on_states_range(on_states_range) {}
 };
 
 template<>
@@ -1432,7 +1666,7 @@ struct Vertex<ast_struct_declaration> final : ASTOtherVararg {
 
   auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
   bool has_opcode() const { return children.at(1)->kind != ast_empty_expression; }
-  auto get_opcode() const { return children.at(1)->as<ast_int_const>(); }
+  AnyExprV get_opcode() const { return child_as_expr(1); }
   auto get_struct_body() const { return children.at(2)->as<ast_struct_body>(); }
 
   Vertex* mutate() const { return const_cast<Vertex*>(this); }
@@ -1525,6 +1759,9 @@ struct Vertex<ast_tol_file> final : ASTOtherVararg {
   const SrcFile* const file;
 
   const std::vector<AnyV>& get_toplevel_declarations() const { return children; }
+
+  Vertex* mutate() const { return const_cast<Vertex*>(this); }
+  void assign_new_children(std::vector<AnyV>&& children);
 
   Vertex(const SrcFile* file, SrcRange range, std::vector<AnyV> toplevel_declarations)
     : ASTOtherVararg(ast_tol_file, range, std::move(toplevel_declarations))

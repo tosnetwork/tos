@@ -1,0 +1,149 @@
+import "@stdlib/slice3-common"
+import "@stdlib/tvm-dicts"
+import "@stdlib/wallet"
+import "@stdlib/multisig"
+
+fun outMsgCell(): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(address("0:7777777777777777777777777777777777777777777777777777777777777777"))
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .endCell();
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(101)
+fun test_manifest_header(): int {
+    val manifest = multisigPatternManifestHeader();
+    assert(manifest.manifestVersion == SLICE3_PATTERN_MANIFEST_VERSION) throw 101;
+    assert(manifest.patternId == SLICE3_PATTERN_MULTISIG) throw 102;
+    assert(manifest.publicErrorBase == MULTISIG_PATTERN_ERROR_BASE) throw 103;
+    return 1;
+}
+
+@method_id(102)
+fun test_threshold_boundaries(): int {
+    multisigRequireValidThreshold(1, 1);
+    multisigRequireValidThreshold(2, 3);
+    multisigRequireThresholdReached(2, 2);
+
+    try {
+        multisigRequireValidThreshold(0, 3);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_BAD_THRESHOLD) throw 111;
+    }
+    try {
+        multisigRequireThresholdReached(1, 2);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_INSUFFICIENT_SIGNATURES) throw 112;
+    }
+    return 2;
+}
+
+@method_id(103)
+fun test_signer_set_and_duplicate(): int {
+    var signers = createEmptyDict();
+    signers = multisigAddSigner(signers, 0x11);
+    signers = multisigAddSigner(signers, 0x22);
+    assert(multisigHasSigner(signers, 0x11)) throw 121;
+    assert(multisigHasSigner(signers, 0x22)) throw 122;
+    assert(!multisigHasSigner(signers, 0x33)) throw 123;
+    multisigRequireSigner(signers, 0x11);
+
+    try {
+        multisigRequireSigner(signers, 0x33);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_NOT_SIGNER) throw 124;
+    }
+    try {
+        multisigAddSigner(signers, 0x11);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_DUPLICATE_SIGNER) throw 125;
+    }
+    return 3;
+}
+
+@method_id(104)
+fun test_approval_and_replay(): int {
+    var approvals = createEmptyDict();
+    approvals = multisigAddApproval(approvals, 0x11);
+    try {
+        multisigAddApproval(approvals, 0x11);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_DUPLICATE_SIGNER) throw 131;
+    }
+
+    var pending = createEmptyDict();
+    multisigRequireNewProposal(pending, 99);
+    pending = multisigAddPendingProposal(pending, 99);
+    assert(multisigHasPendingProposal(pending, 99)) throw 132;
+    try {
+        multisigRequireNewProposal(pending, 99);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_PROPOSAL_REPLAY) throw 133;
+    }
+    return 4;
+}
+
+@method_id(105)
+fun test_expiry_actions_and_error_mapping(): int {
+    multisigRequireNotExpired(101, 100);
+    try {
+        multisigRequireNotExpired(100, 100);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_EXPIRED) throw 141;
+    }
+    try {
+        multisigRequireNotExecuted(true);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_PROPOSAL_REPLAY) throw 142;
+    }
+
+    val action = walletV5BuildActionSendMsg(2, outMsgCell(), createEmptyCell());
+    assert(multisigValidateActions(action, true).hash() == action.hash()) throw 143;
+    try {
+        multisigValidateActions(walletV5BuildActionSendMsg(0, outMsgCell(), createEmptyCell()), true);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_INVALID_ACTIONS) throw 144;
+    }
+
+    val err = multisigErrorForFuncThrow(MULTISIG_FUNC_THROW_DUPLICATE_SIGNER, 0, 99);
+    assert(err.errorClass == ErrorClass.Protocol) throw 145;
+    assert(err.errorCode == MULTISIG_STDLIB_ERROR_DUPLICATE_SIGNER) throw 146;
+    return 5;
+}
+
+@method_id(106)
+fun test_record_approval_increments_count(): int {
+    var proposal = MultisigProposal {
+        queryId: 1,
+        validUntil: 100,
+        approvalCount: 0,
+        approvals: createEmptyDict(),
+        executed: false,
+        actions: null,
+    };
+    proposal.recordApproval(0x11);
+    proposal.recordApproval(0x22);
+    multisigRequireThresholdReached(proposal.approvalCount as int, 2);
+    try {
+        proposal.recordApproval(0x11);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_DUPLICATE_SIGNER) throw 161;
+        return proposal.approvalCount as int;
+    }
+    return 0;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+@testcase | 106 | | 2
+ */

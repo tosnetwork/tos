@@ -26,6 +26,10 @@ enum TokenType {
   tok_empty,
 
   tok_fun,
+  tok_contract,
+  tok_receive,
+  tok_receive_external,
+  tok_storage,
   tok_type,
   tok_enum,
   tok_struct,
@@ -54,6 +58,7 @@ enum TokenType {
 
   tok_identifier,
   tok_dot,
+  tok_ellipsis,
 
   tok_plus,
   tok_set_plus,

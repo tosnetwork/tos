@@ -1,0 +1,328 @@
+// Slice 3 NFT package foundation and wire-compatible TEP-62 helpers.
+tol 1.3
+
+import "@stdlib/slice3-common"
+
+const NFT_PATTERN_ERROR_BASE = 0x0500
+
+const NFT_OP_TRANSFER: uint32 = 0x5fcc3d14
+const NFT_OP_OWNERSHIP_ASSIGNED: uint32 = 0x05138d91
+const NFT_OP_EXCESSES: uint32 = 0xd53276db
+const NFT_OP_GET_STATIC_DATA: uint32 = 0x02fcb26a
+const NFT_OP_REPORT_STATIC_DATA: uint32 = 0x8b771735
+const NFT_OP_GET_ROYALTY_PARAMS: uint32 = 0x693d3950
+const NFT_OP_REPORT_ROYALTY_PARAMS: uint32 = 0xa8cb00ad
+
+const NFT_COLLECTION_OP_MINT: uint32 = 0x00000001
+const NFT_COLLECTION_OP_BATCH_MINT: uint32 = 0x00000002
+const NFT_COLLECTION_OP_CHANGE_OWNER: uint32 = 0x00000003
+const NFT_COLLECTION_OP_CHANGE_CONTENT: uint32 = 0x00000004
+
+const NFT_ITEM_FUNC_THROW_WRONG_WORKCHAIN = 333
+const NFT_ITEM_FUNC_THROW_UNAUTHORIZED = 401
+const NFT_ITEM_FUNC_THROW_NOT_ENOUGH_TOS = 402
+const NFT_ITEM_FUNC_THROW_UNKNOWN_OPCODE = 406
+const NFT_ITEM_FUNC_THROW_NO_FORWARD_PAYLOAD = 708
+
+const NFT_COLLECTION_FUNC_THROW_UNAUTHORIZED = 401
+const NFT_COLLECTION_FUNC_THROW_BAD_ITEM_INDEX = 402
+const NFT_COLLECTION_FUNC_THROW_BATCH_TOO_LARGE = 399
+const NFT_COLLECTION_FUNC_THROW_UNKNOWN_OPCODE = 0xffff
+
+const NFT_STDLIB_ERROR_WRONG_WORKCHAIN = 1333
+const NFT_STDLIB_ERROR_UNAUTHORIZED = 1401
+const NFT_STDLIB_ERROR_NOT_ENOUGH_TOS = 1402
+const NFT_STDLIB_ERROR_UNKNOWN_OPCODE = 1406
+const NFT_STDLIB_ERROR_NO_FORWARD_PAYLOAD = 1708
+const NFT_STDLIB_ERROR_BAD_ITEM_INDEX = 2402
+const NFT_STDLIB_ERROR_BATCH_TOO_LARGE = 2399
+
+struct (NFT_OP_TRANSFER) NftTransfer {
+    queryId: uint64;
+    newOwner: any_address;
+    responseDestination: any_address;
+    customPayload: cell?;
+    forwardAmount: coins;
+    forwardPayload: RemainingBitsAndRefs;
+}
+
+struct (NFT_OP_OWNERSHIP_ASSIGNED) NftOwnershipAssigned {
+    queryId: uint64;
+    prevOwner: any_address;
+    forwardPayload: RemainingBitsAndRefs;
+}
+
+struct (NFT_OP_EXCESSES) NftExcesses {
+    queryId: uint64;
+}
+
+struct (NFT_OP_GET_STATIC_DATA) NftGetStaticData {
+    queryId: uint64;
+}
+
+struct (NFT_OP_REPORT_STATIC_DATA) NftReportStaticData {
+    queryId: uint64;
+    index: uint256;
+    collectionAddress: any_address;
+}
+
+struct (NFT_OP_GET_ROYALTY_PARAMS) NftGetRoyaltyParams {
+    queryId: uint64;
+}
+
+struct NftRoyaltyParams {
+    royaltyFactor: uint16;
+    royaltyBase: uint16;
+    royaltyAddress: any_address;
+}
+
+struct (NFT_OP_REPORT_ROYALTY_PARAMS) NftReportRoyaltyParams {
+    queryId: uint64;
+    params: NftRoyaltyParams;
+}
+
+struct (NFT_COLLECTION_OP_MINT) NftMint {
+    queryId: uint64;
+    itemIndex: uint64;
+    amount: coins;
+    itemContent: cell;
+}
+
+fun nftPatternManifestHeader(): Slice3PatternManifestHeader {
+    return Slice3PatternManifestHeader {
+        manifestVersion: SLICE3_PATTERN_MANIFEST_VERSION,
+        patternId: SLICE3_PATTERN_NFT,
+        publicErrorBase: NFT_PATTERN_ERROR_BASE,
+        flags: 0
+    };
+}
+
+@pure
+fun nftSameAddressBits(a: address, b: any_address): bool {
+    return (a as slice).bitsEqual(b as slice);
+}
+
+fun nftForceBasechain(addr: any_address): void {
+    if (addr.getWorkchain() != BASECHAIN) {
+        throw NFT_ITEM_FUNC_THROW_WRONG_WORKCHAIN;
+    }
+}
+
+fun nftRequireOwner(sender: address, owner: any_address): void {
+    if (!nftSameAddressBits(sender, owner)) {
+        throw NFT_ITEM_FUNC_THROW_UNAUTHORIZED;
+    }
+}
+
+@pure
+fun nftItemDataCell(itemIndex: uint64, collectionAddress: address): cell {
+    return beginCell()
+        .storeUint(itemIndex, 64)
+        .storeAddress(collectionAddress)
+        .endCell();
+}
+
+@pure
+fun nftItemStateInit(itemIndex: uint64, collectionAddress: address, nftItemCode: cell): cell {
+    return beginCell()
+        .storeUint(0, 2)
+        .storeDict(nftItemCode)
+        .storeDict(nftItemDataCell(itemIndex, collectionAddress))
+        .storeUint(0, 1)
+        .endCell();
+}
+
+fun nftItemAddress(workchain: int8, stateInit: cell): address {
+    return address.fromWorkchainAndHash(workchain, stateInit.hash());
+}
+
+fun nftCollectionItemAddress(
+    workchain: int8,
+    itemIndex: uint64,
+    collectionAddress: address,
+    nftItemCode: cell
+): address {
+    return nftItemAddress(workchain, nftItemStateInit(itemIndex, collectionAddress, nftItemCode));
+}
+
+@pure
+fun nftMintItemContent(owner: any_address, individualContent: cell): cell {
+    return beginCell()
+        .storeAddressAny(owner)
+        .storeRef(individualContent)
+        .endCell();
+}
+
+@pure
+fun nftBuildMintBody(
+    queryId: uint64,
+    itemIndex: uint64,
+    amount: coins,
+    owner: any_address,
+    individualContent: cell
+): cell {
+    return beginCell()
+        .storeUint(NFT_COLLECTION_OP_MINT, 32)
+        .storeUint(queryId, 64)
+        .storeUint(itemIndex, 64)
+        .storeCoins(amount)
+        .storeRef(nftMintItemContent(owner, individualContent))
+        .endCell();
+}
+
+@pure
+fun nftBuildDeployItemMessage(itemAddress: address, amount: coins, stateInit: cell, itemContent: cell): cell {
+    return beginCell()
+        .storeUint(0x18, 6)
+        .storeAddress(itemAddress)
+        .storeCoins(amount)
+        .storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .storeRef(stateInit)
+        .storeRef(itemContent)
+        .endCell();
+}
+
+@pure
+fun nftBuildTransferBody(
+    queryId: uint64,
+    newOwner: any_address,
+    responseDestination: any_address,
+    customPayload: cell?,
+    forwardAmount: coins,
+    forwardPayload: RemainingBitsAndRefs
+): cell {
+    return beginCell()
+        .storeUint(NFT_OP_TRANSFER, 32)
+        .storeUint(queryId, 64)
+        .storeAddressAny(newOwner)
+        .storeAddressAny(responseDestination)
+        .storeMaybeRef(customPayload)
+        .storeCoins(forwardAmount)
+        .storeSlice(forwardPayload)
+        .endCell();
+}
+
+@pure
+fun nftBuildTransferMessage(
+    itemAddress: any_address,
+    value: coins,
+    queryId: uint64,
+    newOwner: any_address,
+    responseDestination: any_address,
+    customPayload: cell?,
+    forwardAmount: coins,
+    forwardPayload: RemainingBitsAndRefs
+): cell {
+    return beginCell()
+        .storeUint(0x18, 6)
+        .storeAddressAny(itemAddress)
+        .storeCoins(value)
+        .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeRef(nftBuildTransferBody(queryId, newOwner, responseDestination, customPayload, forwardAmount, forwardPayload))
+        .endCell();
+}
+
+@pure
+fun nftBuildOwnershipAssignedMessage(
+    newOwner: any_address,
+    value: coins,
+    queryId: uint64,
+    previousOwner: any_address,
+    forwardPayload: RemainingBitsAndRefs
+): cell {
+    val msgBody = beginCell()
+        .storeUint(NFT_OP_OWNERSHIP_ASSIGNED, 32)
+        .storeUint(queryId, 64)
+        .storeAddressAny(previousOwner)
+        .storeSlice(forwardPayload)
+        .endCell();
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddressAny(newOwner)
+        .storeCoins(value)
+        .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeRef(msgBody)
+        .endCell();
+}
+
+@pure
+fun nftBuildExcessesMessage(responseDestination: any_address, value: coins, queryId: uint64): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddressAny(responseDestination)
+        .storeCoins(value)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(NFT_OP_EXCESSES, 32)
+        .storeUint(queryId, 64)
+        .endCell();
+}
+
+@pure
+fun nftBuildStaticDataReportMessage(
+    toAddress: any_address,
+    queryId: uint64,
+    itemIndex: uint256,
+    collectionAddress: any_address
+): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddressAny(toAddress)
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(NFT_OP_REPORT_STATIC_DATA, 32)
+        .storeUint(queryId, 64)
+        .storeUint(itemIndex, 256)
+        .storeAddressAny(collectionAddress)
+        .endCell();
+}
+
+@pure
+fun nftBuildRoyaltyParamsReportMessage(toAddress: any_address, queryId: uint64, params: NftRoyaltyParams): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddressAny(toAddress)
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(NFT_OP_REPORT_ROYALTY_PARAMS, 32)
+        .storeUint(queryId, 64)
+        .storeUint(params.royaltyFactor, 16)
+        .storeUint(params.royaltyBase, 16)
+        .storeAddressAny(params.royaltyAddress)
+        .endCell();
+}
+
+@pure
+fun nftItemErrorForFuncThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    if (funcThrow == NFT_ITEM_FUNC_THROW_WRONG_WORKCHAIN) {
+        return slice3Error(queryId, originalOp, ErrorClass.Protocol, NFT_STDLIB_ERROR_WRONG_WORKCHAIN);
+    }
+    if (funcThrow == NFT_ITEM_FUNC_THROW_UNAUTHORIZED) {
+        return slice3Error(queryId, originalOp, ErrorClass.Authorization, NFT_STDLIB_ERROR_UNAUTHORIZED);
+    }
+    if (funcThrow == NFT_ITEM_FUNC_THROW_NOT_ENOUGH_TOS) {
+        return slice3Error(queryId, originalOp, ErrorClass.BackPressure, NFT_STDLIB_ERROR_NOT_ENOUGH_TOS);
+    }
+    if (funcThrow == NFT_ITEM_FUNC_THROW_NO_FORWARD_PAYLOAD) {
+        return slice3Error(queryId, originalOp, ErrorClass.Protocol, NFT_STDLIB_ERROR_NO_FORWARD_PAYLOAD);
+    }
+    return slice3Error(queryId, originalOp, ErrorClass.Protocol, NFT_STDLIB_ERROR_UNKNOWN_OPCODE);
+}
+
+@pure
+fun nftCollectionErrorForFuncThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    if (funcThrow == NFT_COLLECTION_FUNC_THROW_UNAUTHORIZED) {
+        return slice3Error(queryId, originalOp, ErrorClass.Authorization, NFT_STDLIB_ERROR_UNAUTHORIZED);
+    }
+    if (funcThrow == NFT_COLLECTION_FUNC_THROW_BAD_ITEM_INDEX) {
+        return slice3Error(queryId, originalOp, ErrorClass.Protocol, NFT_STDLIB_ERROR_BAD_ITEM_INDEX);
+    }
+    if (funcThrow == NFT_COLLECTION_FUNC_THROW_BATCH_TOO_LARGE) {
+        return slice3Error(queryId, originalOp, ErrorClass.BackPressure, NFT_STDLIB_ERROR_BATCH_TOO_LARGE);
+    }
+    return slice3Error(queryId, originalOp, ErrorClass.Protocol, NFT_STDLIB_ERROR_UNKNOWN_OPCODE);
+}
+
+@pure
+fun nftIsBouncedInternalFlags(flags: uint4): bool {
+    return (flags & 1) != 0;
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "pattern": "nft",
+  "contract": "Slice4NftBehaviour",
+  "source": "src/main.tol",
+  "network": "local",
+  "state_init": {
+    "code": "build/Slice4NftBehaviour.code.boc",
+    "data": "build/Slice4NftBehaviour.data.boc"
+  }
+}

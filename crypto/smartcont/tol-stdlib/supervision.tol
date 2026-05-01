@@ -1,0 +1,438 @@
+// Slice 6 monitor/link and supervision foundations.
+//
+// Supervision strategies intentionally do not claim OTP-style atomicity.
+// one_for_all and rest_for_one are best-effort recovery sequences: the
+// supervisor stores child order in its own state, emits one recovery message
+// per child, stops on an exhausted per-child budget, records partial progress,
+// and escalates instead of looping indefinitely.
+tol 1.3
+
+const SLICE6_MONITOR_THROW_INVALID_BUDGET = 0x1201
+const SLICE6_MONITOR_THROW_DIAGNOSTIC_TOO_LARGE = 0x1202
+const SLICE6_MONITOR_THROW_INVALID_NOTIFICATION = 0x1203
+
+const SLICE6_MONITOR_REGISTRATION_STORAGE_BITS: uint16 = 768
+const SLICE6_MONITOR_NOTIFICATION_FORWARDING_FEE_FLOOR: coins = 1000000
+const SLICE6_MONITOR_SIZE_SCAN_CELLS = 1024
+
+const SLICE6_SUPERVISION_THROW_INVALID_BUDGET = 0x1301
+const SLICE6_SUPERVISION_THROW_DUPLICATE_CHILD = 0x1302
+const SLICE6_SUPERVISION_THROW_CHILD_NOT_FOUND = 0x1303
+const SLICE6_SUPERVISION_THROW_INVALID_STRATEGY = 0x1304
+
+const SLICE6_RESTART_ONE_FOR_ONE: uint8 = 0
+const SLICE6_RESTART_ONE_FOR_ALL: uint8 = 1
+const SLICE6_RESTART_REST_FOR_ONE: uint8 = 2
+const SLICE6_RESTART_DYNAMIC: uint8 = 3
+
+const SLICE6_CHILD_ACTIVE: uint8 = 0
+const SLICE6_CHILD_RECOVERING: uint8 = 1
+const SLICE6_CHILD_FAILED: uint8 = 2
+const SLICE6_CHILD_CIRCUIT_OPEN: uint8 = 3
+
+const SLICE6_SUPERVISION_UINT32_MAX: uint32 = 0xffffffff
+
+struct Slice6MonitorBudget {
+    enabled: bool
+    maxRegistrations: uint16
+    maxDiagnosticBits: uint32
+    maxDiagnosticRefs: uint16
+    maxCellDepth: uint16
+    forwardingFeeFloor: coins
+}
+
+struct Slice6MonitorRegistration {
+    observed: address
+    observer: address
+    payer: address
+    queryId: uint64
+    link: bool
+}
+
+struct Slice6RecoveryBudget {
+    maxRestarts: uint16
+    restartWindowBlocks: uint32
+    cooldownBlocks: uint32
+    maxRecoveryGas: uint32
+    maxRecoveryValue: coins
+    escalationTarget: address
+}
+
+struct Slice6ChildSpec {
+    childId: uint64
+    child: address
+    registryOrder: uint16
+    restartStrategy: uint8
+    restartCount: uint16
+    windowStartedAt: uint32
+    cooldownUntil: uint32
+    state: uint8
+}
+
+struct Slice6SupervisorState {
+    maxChildren: uint16
+    childCount: uint16
+    finalFailure: bool
+    children: map<uint64, Slice6ChildSpec>
+}
+
+struct Slice6RestartOutcome {
+    restarted: bool
+    escalationStarted: bool
+    finalFailure: bool
+}
+
+struct Slice6RecoveryMessage {
+    childId: uint64
+    target: address
+    valueCoins: coins
+    bodyHash: uint256
+}
+
+struct Slice6PartialRecoveryRecord {
+    failedChildId: uint64
+    strategy: uint8
+    recoveredCount: uint16
+    failedAtChildId: uint64
+    failureCode: uint16
+    escalationTarget: address
+}
+
+struct (OP_MONITOR_DOWN) Slice6MonitorDownNotification {
+    queryId: uint64
+    observed: address
+    failureClass: uint8
+    failureCode: uint16
+    phase: uint8
+    originalMessageHash: uint256?
+    createdAt: uint64
+    diagnostic: cell?
+}
+
+fun slice6MonitorBudget(
+    maxRegistrations: uint16,
+    maxDiagnosticBits: uint32,
+    maxDiagnosticRefs: uint16,
+    maxCellDepth: uint16,
+    forwardingFeeFloor: coins = SLICE6_MONITOR_NOTIFICATION_FORWARDING_FEE_FLOOR,
+    enabled: bool = true
+): Slice6MonitorBudget {
+    return Slice6MonitorBudget {
+        enabled,
+        maxRegistrations,
+        maxDiagnosticBits,
+        maxDiagnosticRefs,
+        maxCellDepth,
+        forwardingFeeFloor,
+    };
+}
+
+fun Slice6MonitorBudget.requireEnabled(self): void {
+    if (
+        !self.enabled ||
+        self.maxRegistrations == 0 ||
+        self.maxDiagnosticBits == 0 ||
+        self.maxCellDepth == 0 ||
+        self.forwardingFeeFloor < SLICE6_MONITOR_NOTIFICATION_FORWARDING_FEE_FLOOR
+    ) {
+        throw SLICE6_MONITOR_THROW_INVALID_BUDGET;
+    }
+}
+
+fun slice6MonitorRegistration(
+    observed: address,
+    observer: address,
+    payer: address,
+    queryId: uint64,
+    budget: Slice6MonitorBudget
+): Slice6MonitorRegistration {
+    budget.requireEnabled();
+    return Slice6MonitorRegistration {
+        observed,
+        observer,
+        payer,
+        queryId,
+        link: false,
+    };
+}
+
+fun slice6LinkRegistration(
+    observed: address,
+    observer: address,
+    payer: address,
+    queryId: uint64,
+    budget: Slice6MonitorBudget
+): Slice6MonitorRegistration {
+    val reg = slice6MonitorRegistration(observed, observer, payer, queryId, budget);
+    return Slice6MonitorRegistration {
+        observed: reg.observed,
+        observer: reg.observer,
+        payer: reg.payer,
+        queryId: reg.queryId,
+        link: true,
+    };
+}
+
+fun Slice6MonitorBudget.requireDiagnosticWithinBudget(self, diagnostic: cell?): void {
+    if (diagnostic == null) {
+        return;
+    }
+    val (_, bits, refs, ok) = diagnostic!.calculateSize(SLICE6_MONITOR_SIZE_SCAN_CELLS);
+    if (!ok || bits > self.maxDiagnosticBits || refs > self.maxDiagnosticRefs || diagnostic!.depth() > self.maxCellDepth) {
+        throw SLICE6_MONITOR_THROW_DIAGNOSTIC_TOO_LARGE;
+    }
+}
+
+fun slice6BuildMonitorDownNotification(
+    registration: Slice6MonitorRegistration,
+    failureClass: uint8,
+    failureCode: uint16,
+    phase: uint8,
+    originalMessageHash: uint256?,
+    createdAt: uint64,
+    diagnostic: cell?,
+    budget: Slice6MonitorBudget
+): Slice6MonitorDownNotification {
+    budget.requireEnabled();
+    budget.requireDiagnosticWithinBudget(diagnostic);
+    if (failureClass > 255 || phase > 255) {
+        throw SLICE6_MONITOR_THROW_INVALID_NOTIFICATION;
+    }
+    return Slice6MonitorDownNotification {
+        queryId: registration.queryId,
+        observed: registration.observed,
+        failureClass,
+        failureCode,
+        phase,
+        originalMessageHash,
+        createdAt,
+        diagnostic,
+    };
+}
+
+fun slice6IsMonitorDownOpcode(op: uint32): bool {
+    return op == OP_MONITOR_DOWN;
+}
+
+fun Slice6MonitorRegistration.observerFailureAffectsObserved(self): bool {
+    return self.link;
+}
+
+fun slice6RecoveryBudget(
+    maxRestarts: uint16,
+    restartWindowBlocks: uint32,
+    cooldownBlocks: uint32,
+    maxRecoveryGas: uint32,
+    maxRecoveryValue: coins,
+    escalationTarget: address
+): Slice6RecoveryBudget {
+    if (
+        maxRestarts == 0 ||
+        restartWindowBlocks == 0 ||
+        cooldownBlocks == 0 ||
+        maxRecoveryGas == 0 ||
+        maxRecoveryValue == 0
+    ) {
+        throw SLICE6_SUPERVISION_THROW_INVALID_BUDGET;
+    }
+    return Slice6RecoveryBudget {
+        maxRestarts,
+        restartWindowBlocks,
+        cooldownBlocks,
+        maxRecoveryGas,
+        maxRecoveryValue,
+        escalationTarget,
+    };
+}
+
+fun slice6ChildSpec(
+    childId: uint64,
+    child: address,
+    registryOrder: uint16,
+    restartStrategy: uint8,
+    nowMcSeqno: uint32
+): Slice6ChildSpec {
+    if (restartStrategy > SLICE6_RESTART_DYNAMIC) {
+        throw SLICE6_SUPERVISION_THROW_INVALID_STRATEGY;
+    }
+    return Slice6ChildSpec {
+        childId,
+        child,
+        registryOrder,
+        restartStrategy,
+        restartCount: 0,
+        windowStartedAt: nowMcSeqno,
+        cooldownUntil: 0,
+        state: SLICE6_CHILD_ACTIVE,
+    };
+}
+
+fun slice6SupervisorState(maxChildren: uint16): Slice6SupervisorState {
+    if (maxChildren == 0) {
+        throw SLICE6_SUPERVISION_THROW_INVALID_BUDGET;
+    }
+    return Slice6SupervisorState {
+        maxChildren,
+        childCount: 0,
+        finalFailure: false,
+        children: createEmptyMap<uint64, Slice6ChildSpec>(),
+    };
+}
+
+fun Slice6SupervisorState.addChild(mutate self, child: Slice6ChildSpec): void {
+    if (self.childCount >= self.maxChildren) {
+        throw SLICE6_SUPERVISION_THROW_INVALID_BUDGET;
+    }
+    if (self.children.exists(child.childId)) {
+        throw SLICE6_SUPERVISION_THROW_DUPLICATE_CHILD;
+    }
+    self.children.set(child.childId, child);
+    self.childCount += 1;
+}
+
+fun Slice6SupervisorState.getChild(self, childId: uint64): Slice6ChildSpec {
+    val child = self.children.get(childId);
+    if (!child.isFound) {
+        throw SLICE6_SUPERVISION_THROW_CHILD_NOT_FOUND;
+    }
+    return child.loadValue();
+}
+
+fun Slice6ChildSpec.isCircuitBreakerTripped(self, nowMcSeqno: uint32): bool {
+    return self.state == SLICE6_CHILD_CIRCUIT_OPEN && nowMcSeqno < self.cooldownUntil;
+}
+
+fun slice6SupervisionAddBlocks(baseMcSeqno: uint32, deltaBlocks: uint32): uint32 {
+    if (baseMcSeqno > SLICE6_SUPERVISION_UINT32_MAX - deltaBlocks) {
+        throw SLICE6_SUPERVISION_THROW_INVALID_BUDGET;
+    }
+    return baseMcSeqno + deltaBlocks;
+}
+
+fun Slice6ChildSpec.resetWindowIfExpired(mutate self, budget: Slice6RecoveryBudget, nowMcSeqno: uint32): void {
+    if (nowMcSeqno >= slice6SupervisionAddBlocks(self.windowStartedAt, budget.restartWindowBlocks)) {
+        self.windowStartedAt = nowMcSeqno;
+        self.restartCount = 0;
+    }
+}
+
+fun Slice6ChildSpec.canRestart(
+    self,
+    budget: Slice6RecoveryBudget,
+    nowMcSeqno: uint32,
+    recoveryGas: uint32,
+    recoveryValue: coins
+): bool {
+    if (self.isCircuitBreakerTripped(nowMcSeqno)) {
+        return false;
+    }
+    if (recoveryGas > budget.maxRecoveryGas || recoveryValue > budget.maxRecoveryValue) {
+        return false;
+    }
+    if (nowMcSeqno < slice6SupervisionAddBlocks(self.windowStartedAt, budget.restartWindowBlocks)) {
+        return self.restartCount < budget.maxRestarts;
+    }
+    return true;
+}
+
+fun Slice6ChildSpec.recordRestart(
+    mutate self,
+    budget: Slice6RecoveryBudget,
+    nowMcSeqno: uint32,
+    recoveryGas: uint32,
+    recoveryValue: coins
+): bool {
+    self.resetWindowIfExpired(budget, nowMcSeqno);
+    if (!self.canRestart(budget, nowMcSeqno, recoveryGas, recoveryValue)) {
+        if (!self.isCircuitBreakerTripped(nowMcSeqno)) {
+            self.state = SLICE6_CHILD_CIRCUIT_OPEN;
+            self.cooldownUntil = slice6SupervisionAddBlocks(nowMcSeqno, budget.cooldownBlocks);
+        }
+        return false;
+    }
+    self.restartCount += 1;
+    self.state = SLICE6_CHILD_RECOVERING;
+    return true;
+}
+
+fun Slice6SupervisorState.recordChildRestart(
+    mutate self,
+    childId: uint64,
+    budget: Slice6RecoveryBudget,
+    nowMcSeqno: uint32,
+    recoveryGas: uint32,
+    recoveryValue: coins
+): bool {
+    return self.recordChildRestartOutcome(childId, budget, nowMcSeqno, recoveryGas, recoveryValue).restarted;
+}
+
+fun Slice6SupervisorState.recordChildRestartOutcome(
+    mutate self,
+    childId: uint64,
+    budget: Slice6RecoveryBudget,
+    nowMcSeqno: uint32,
+    recoveryGas: uint32,
+    recoveryValue: coins
+): Slice6RestartOutcome {
+    val wasFinalFailure = self.finalFailure;
+    var child = self.getChild(childId);
+    val restarted = child.recordRestart(budget, nowMcSeqno, recoveryGas, recoveryValue);
+    self.children.set(child.childId, child);
+    var escalationStarted = false;
+    if (!restarted && !wasFinalFailure) {
+        self.emitEscalation();
+        escalationStarted = true;
+    }
+    return Slice6RestartOutcome {
+        restarted,
+        escalationStarted,
+        finalFailure: self.finalFailure,
+    };
+}
+
+fun slice6BuildRecoveryMessage(child: Slice6ChildSpec, body: cell, valueCoins: coins): Slice6RecoveryMessage {
+    return Slice6RecoveryMessage {
+        childId: child.childId,
+        target: child.child,
+        valueCoins,
+        bodyHash: body.hash(),
+    };
+}
+
+fun slice6StrategyIncludesChild(strategy: uint8, failedOrder: uint16, candidateOrder: uint16): bool {
+    if (strategy == SLICE6_RESTART_ONE_FOR_ONE) {
+        return candidateOrder == failedOrder;
+    }
+    if (strategy == SLICE6_RESTART_ONE_FOR_ALL) {
+        return true;
+    }
+    if (strategy == SLICE6_RESTART_REST_FOR_ONE) {
+        return candidateOrder >= failedOrder;
+    }
+    if (strategy == SLICE6_RESTART_DYNAMIC) {
+        return candidateOrder == failedOrder;
+    }
+    throw SLICE6_SUPERVISION_THROW_INVALID_STRATEGY;
+}
+
+fun slice6RecordPartialRecovery(
+    failedChildId: uint64,
+    strategy: uint8,
+    recoveredCount: uint16,
+    failedAtChildId: uint64,
+    failureCode: uint16,
+    escalationTarget: address
+): Slice6PartialRecoveryRecord {
+    return Slice6PartialRecoveryRecord {
+        failedChildId,
+        strategy,
+        recoveredCount,
+        failedAtChildId,
+        failureCode,
+        escalationTarget,
+    };
+}
+
+fun Slice6SupervisorState.emitEscalation(mutate self): void {
+    self.finalFailure = true;
+}

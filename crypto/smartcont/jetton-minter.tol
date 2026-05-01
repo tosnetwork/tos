@@ -1,0 +1,290 @@
+// =============================================================================
+// Slice 2 Stage 8a — jetton-minter Tol re-migration to high-level syntax.
+//
+// Policy reference: doc/tos-language-syntax-policy.md §3.1, §3.2 (`@unknown_throw`),
+// §3.5 (`get fun`), §3.7 (`require`), §6.1 (wire-bit-identity), §7 (migration path).
+// Inherits Slice 1 Stage 3.1 wire commitments from doc/tos-message-policy.md v6
+// §3.1 (standard body layout), §5.2 (OP_ERROR body), §5.3 (error_class), and §8.1
+// (bit-for-bit compatibility for existing TEP-74 formats).
+//
+// Bytecode delta captured at Slice 1 Stage 3.1 write time:
+//   FunC cells: 11
+//   Tol cells:  9
+//   ratio:      0.82
+//
+// §5.3 error-class assignment table (preserved from Slice 1 Stage 3.1):
+//   FunC line | FunC throw(N) | ErrorClass    | error_code (wire) | Slice 2 site
+//   65        | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
+//   80        | throw(74)     | Authorization | 74                | require(..., ErrorClass.Authorization, 74)
+//   99        | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
+//   99a       | throw(75)     | Protocol      | 75                | reject addr_none admin to avoid accidental irrecoverable renounce
+//   106       | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
+//   111       | throw(0xffff) | Protocol      | 65535             | @unknown_throw(0xffff)
+//
+// The 3-arg `require(cond, ErrorClass.X, N)` form (§3.7) preserves bit-identical
+// TVM exit codes (73, 74, 0xffff) so bounce shape and gas-parity vs the FunC
+// reference do not regress (see §6.1 closure). The auto-numbered codes from the
+// 2-arg form would land in 0x30000+ Authorization range and break that closure.
+//
+// Compatibility note: the FunC reference stores several Jetton fields as
+// MsgAddress slices, not MsgAddressInt. This re-migration keeps those as
+// `any_address` and preserves the original hand-packed outbound layout for
+// mint/excesses sends. Replacing those sends with createMessage() would narrow
+// `response_address` to `address` and alter §8.1 behaviour for non-internal
+// MsgAddress values.
+//
+// `@unknown_throw(0xffff)` matches FunC line 111 (`throw 0xffff`). Per §3.2 v3
+// the short-body (< 32 bits) branch under `@unknown_throw` shares the unknown-
+// opcode tail and throws the same code; this is observably equivalent to the
+// FunC empty-body silent-return only in steady-state gas, since neither path
+// emits an outbound message and the bounce shape on a bounceable inbound is
+// the same compute-phase abort. The 24 test-emulator scenarios (notably the
+// `empty-body` parity fixture in emulator/test/slice-1-stage-4-gas-parity-
+// fixture.cpp) drive this directly and remain green.
+//
+// Slice 3 Stage 3 keeps the old file-scope helper names as compatibility
+// wrappers because the Slice 1/2 tol-tester suites import them directly. Their
+// bodies now delegate to `@stdlib/jetton` helpers for state-init/address
+// calculation, raw excesses construction, mint sending, and error mapping. The
+// regenerated Tol BoC remains byte-for-byte identical to the Stage 0 baseline.
+// =============================================================================
+
+import "@stdlib/common"
+import "@stdlib/jetton"
+
+const OP_MINT = JETTON_OP_MINT
+const OP_CHANGE_ADMIN = JETTON_OP_CHANGE_ADMIN
+const OP_CHANGE_CONTENT = JETTON_OP_CHANGE_CONTENT
+const OP_EXCESSES = JETTON_OP_EXCESSES
+const OP_BURN_NOTIFICATION = JETTON_OP_BURN_NOTIFICATION
+
+const FUNC_THROW_ADMIN_REQUIRED = JETTON_MINTER_FUNC_THROW_ADMIN_REQUIRED
+const FUNC_THROW_BURN_SENDER_NOT_WALLET = JETTON_MINTER_FUNC_THROW_BURN_SENDER_NOT_WALLET
+const FUNC_THROW_INVALID_ADMIN = JETTON_MINTER_FUNC_THROW_INVALID_ADMIN
+const FUNC_THROW_INVALID_AMOUNT = JETTON_MINTER_FUNC_THROW_INVALID_AMOUNT
+const FUNC_THROW_UNKNOWN_OPCODE = JETTON_FUNC_THROW_UNKNOWN_OPCODE
+
+const JETTON_ERROR_ADMIN_REQUIRED = JETTON_STDLIB_ERROR_ADMIN_REQUIRED
+const JETTON_ERROR_BURN_SENDER_NOT_WALLET = JETTON_STDLIB_ERROR_BURN_SENDER_NOT_WALLET
+const JETTON_ERROR_INVALID_ADMIN = JETTON_STDLIB_ERROR_INVALID_ADMIN
+const JETTON_ERROR_UNKNOWN_OPCODE = JETTON_STDLIB_ERROR_UNKNOWN_OPCODE
+
+struct JettonMinterStorage {
+    totalSupply: coins;
+    adminAddress: any_address;
+    content: cell;
+    jettonWalletCode: cell;
+}
+
+struct (0x00000015) MintRequest {
+    queryId: uint64;
+    toAddress: any_address;
+    amount: coins;
+    masterMsg: cell;
+}
+
+@overflow1023_policy("suppress")
+struct (0x7bdd97de) BurnNotification {
+    queryId: uint64;
+    jettonAmount: coins;
+    fromAddress: any_address;
+    responseAddress: any_address;
+}
+
+struct (0x00000003) ChangeAdmin {
+    queryId: uint64;
+    newAdminAddress: any_address;
+}
+
+struct (0x00000004) ChangeContent {
+    queryId: uint64;
+    newContent: cell;
+}
+
+struct (0xd53276db) Excesses {
+    queryId: uint64;
+}
+
+@pure
+fun currentAddress(): address {
+    return jettonCurrentAddress();
+}
+
+@pure
+fun sameInternalAndAnyAddressBits(a: address, b: any_address): bool {
+    return jettonSameInternalAndAnyAddressBits(a, b);
+}
+
+@pure
+fun packJettonWalletData(
+    balance: coins,
+    ownerAddress: any_address,
+    jettonMasterAddress: address,
+    jettonWalletCode: cell
+): cell {
+    return jettonMinterPackWalletData(balance, ownerAddress, jettonMasterAddress, jettonWalletCode);
+}
+
+@pure
+fun calculateJettonWalletStateInit(
+    ownerAddress: any_address,
+    jettonMasterAddress: address,
+    jettonWalletCode: cell
+): cell {
+    return jettonMinterCalculateWalletStateInit(ownerAddress, jettonMasterAddress, jettonWalletCode);
+}
+
+fun calculateJettonWalletAddress(stateInit: cell): address {
+    return jettonCalculateWalletAddress(stateInit);
+}
+
+fun calculateUserJettonWalletAddress(
+    ownerAddress: any_address,
+    jettonMasterAddress: address,
+    jettonWalletCode: cell
+): address {
+    return jettonMinterCalculateUserWalletAddress(ownerAddress, jettonMasterAddress, jettonWalletCode);
+}
+
+@pure
+fun jettonMinterErrorForThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    return jettonMinterErrorForFuncThrow(funcThrow, originalOp, queryId);
+}
+
+fun mintTokens(
+    toAddress: any_address,
+    jettonWalletCode: cell,
+    amount: coins,
+    masterMsg: cell
+): void {
+    jettonMinterMintTokens(toAddress, jettonWalletCode, amount, masterMsg);
+}
+
+@pure
+fun buildExcessesMessage(responseAddress: any_address, queryId: uint64): cell {
+    return jettonBuildMinterExcessesMessage(responseAddress, queryId);
+}
+
+fun sendExcesses(responseAddress: any_address, queryId: uint64): void {
+    sendRawMessage(
+        buildExcessesMessage(responseAddress, queryId),
+        SEND_MODE_IGNORE_ERRORS + SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
+    );
+}
+
+fun onBouncedMessage(in: InMessageBounced) {
+    return;
+}
+
+contract JettonMinter {
+    storage: JettonMinterStorage
+    @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: MintRequest) {
+        // FunC line 65: throw_unless(73, equal_slices(sender_address, admin_address));
+        require(sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, FUNC_THROW_ADMIN_REQUIRED);
+        var masterMsgBody = msg.masterMsg.beginParse();
+        masterMsgBody.skipBits(32 + 64);
+        val jettonAmount = masterMsgBody.loadCoins();
+        var newTotalSupply: coins = 0;
+        try {
+            newTotalSupply = storage.totalSupply + jettonAmount;
+        } catch (_) {
+            require(false, ErrorClass.Permanent, FUNC_THROW_INVALID_AMOUNT);
+        }
+        mintTokens(msg.toAddress, storage.jettonWalletCode, msg.amount, msg.masterMsg);
+        save(JettonMinterStorage {
+            totalSupply: newTotalSupply,
+            adminAddress: storage.adminAddress,
+            content: storage.content,
+            jettonWalletCode: storage.jettonWalletCode,
+        });
+    }
+
+    @disclaim_query_id
+    receive(msg: BurnNotification) {
+        // FunC line 80: throw_unless(74, equal_slices(calculate_user_jetton_wallet_address(...), sender_address));
+        // The auth check happens BEFORE responseAddress is parsed in the FunC
+        // reference; lazy field access here mirrors that order: jettonAmount and
+        // fromAddress are accessed before the require, then save runs, then the
+        // optional responseAddress branch.
+        //
+        // `@disclaim_query_id` per §3.2.1: msg.queryId IS propagated to the
+        // outbound `excesses` body via `sendExcesses(...)`, but that helper is a
+        // raw cell builder (kept verbatim from Slice 1 Stage 3.1 — see §6.1
+        // caveat about `createMessage<TBody>` narrowing `responseAddress` to
+        // `address`). The static pipe-check-query-id-propagation pass only
+        // tracks `createMessage<TBody>` reply emits, so we acknowledge the
+        // propagation here. Wire bytes are unchanged; `Excesses { queryId }`
+        // body still carries the inbound queryId on the §8.1-compatible reply.
+        val jettonAmount = msg.jettonAmount;
+        val fromAddress = msg.fromAddress;
+        val expectedWallet = calculateUserJettonWalletAddress(
+            fromAddress,
+            currentAddress(),
+            storage.jettonWalletCode
+        );
+        require(expectedWallet == in.senderAddress,
+                ErrorClass.Authorization, FUNC_THROW_BURN_SENDER_NOT_WALLET);
+        require(jettonAmount <= storage.totalSupply,
+                ErrorClass.Permanent, FUNC_THROW_INVALID_AMOUNT);
+        save(JettonMinterStorage {
+            totalSupply: storage.totalSupply - jettonAmount,
+            adminAddress: storage.adminAddress,
+            content: storage.content,
+            jettonWalletCode: storage.jettonWalletCode,
+        });
+        val responseAddress = msg.responseAddress;
+        if (!responseAddress.isNone()) {
+            sendExcesses(responseAddress, msg.queryId);
+        }
+    }
+
+    @disclaim_query_id
+    receive(msg: ChangeAdmin) {
+        // FunC line 99: throw_unless(73, equal_slices(sender_address, admin_address));
+        require(sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, FUNC_THROW_ADMIN_REQUIRED);
+        require(!msg.newAdminAddress.isNone(),
+                ErrorClass.Protocol, FUNC_THROW_INVALID_ADMIN);
+        save(JettonMinterStorage {
+            totalSupply: storage.totalSupply,
+            adminAddress: msg.newAdminAddress,
+            content: storage.content,
+            jettonWalletCode: storage.jettonWalletCode,
+        });
+    }
+
+    @disclaim_query_id
+    receive(msg: ChangeContent) {
+        // FunC line 106: throw_unless(73, equal_slices(sender_address, admin_address));
+        require(sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, FUNC_THROW_ADMIN_REQUIRED);
+        save(JettonMinterStorage {
+            totalSupply: storage.totalSupply,
+            adminAddress: storage.adminAddress,
+            content: msg.newContent,
+            jettonWalletCode: storage.jettonWalletCode,
+        });
+    }
+
+    get fun get_jetton_data(): (coins, int, any_address, cell, cell) {
+        return (
+            storage.totalSupply,
+            -1,
+            storage.adminAddress,
+            storage.content,
+            storage.jettonWalletCode,
+        );
+    }
+
+    get fun get_wallet_address(ownerAddress: any_address): address {
+        return calculateUserJettonWalletAddress(
+            ownerAddress,
+            currentAddress(),
+            storage.jettonWalletCode
+        );
+    }
+}

@@ -1,0 +1,37 @@
+struct ExhaustStorage {
+    total: uint32;
+}
+
+struct (0x00000071) ExhaustAdvance {
+    queryId: uint64;
+}
+
+struct (0x00000072) ExhaustFinish {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ExhaustivenessWarning {
+    storage: ExhaustStorage
+    states: Open, Closed
+    @initial state Open
+    @unknown_throw(0x00010001);
+
+    receive(msg: ExhaustAdvance) on Open {
+        save(ExhaustStorage { total: msg.queryId as uint32 });
+        become Closed;
+    }
+
+    receive(msg: ExhaustFinish) on Closed {
+        keep_state;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+@stderr receive exhaustiveness warning: contract `ExhaustivenessWarning` does not declare `receive(msg: ExhaustAdvance) on Closed`
+ */

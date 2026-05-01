@@ -1,0 +1,47 @@
+// Slice 5 auction example backed by @stdlib/auction.
+
+import "@stdlib/auction"
+
+struct Slice5AuctionExampleStorage {
+    config: Cell<Slice5AuctionConfig>
+    state: Cell<Slice5AuctionState>
+}
+
+contract Slice5AuctionExample {
+    storage: Slice5AuctionExampleStorage
+    @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: Slice5AuctionBid) {
+        val config = lazy Slice5AuctionConfig.fromCell(storage.config);
+        var state = lazy Slice5AuctionState.fromCell(storage.state);
+        state.receiveTrustedBid(config, msg, in.senderAddress);
+        save(Slice5AuctionExampleStorage { config: storage.config, state: state.toCell() });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5AuctionClose) {
+        val config = lazy Slice5AuctionConfig.fromCell(storage.config);
+        var state = lazy Slice5AuctionState.fromCell(storage.state);
+        state.requireSeller(config, in.senderAddress);
+        state.closeAndDrain(config, blockchain.now() as uint32);
+        save(Slice5AuctionExampleStorage { config: storage.config, state: state.toCell() });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5AuctionExpire) {
+        var state = lazy Slice5AuctionState.fromCell(storage.state);
+        state.expireQueued(blockchain.now() as uint32);
+        save(Slice5AuctionExampleStorage { config: storage.config, state: state.toCell() });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5AuctionSettle) {
+        val config = lazy Slice5AuctionConfig.fromCell(storage.config);
+        var state = lazy Slice5AuctionState.fromCell(storage.state);
+        state.requireSeller(config, in.senderAddress);
+        val payout = state.settle();
+        save(Slice5AuctionExampleStorage { config: storage.config, state: state.toCell() });
+        slice5AuctionEmitPayout(config.seller, payout);
+    }
+}

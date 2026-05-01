@@ -1,0 +1,53 @@
+import "@stdlib/oracle"
+import "../src/tos-report-bond-oracle"
+
+// Verifies that contract constants, helper functions, and struct types are accessible
+// when the source is imported into an external test (not just used inline).
+
+fun main(): int { return 0; }
+
+// T680: Error constants are accessible from outside the contract source.
+@method_id(680)
+fun test_error_constants_accessible(): int {
+    assert(BOND_ORACLE_THROW_UNAUTHORIZED == 4865) throw 6800;
+    assert(BOND_ORACLE_THROW_INSUFFICIENT_BOND == 4866) throw 6801;
+    assert(BOND_ORACLE_THROW_NO_ACTIVE_ROUND == 4867) throw 6802;
+    return 1;
+}
+
+// T681: bondOracleResolveKey helper is callable from an import context.
+@method_id(681)
+fun test_resolver_helper_importable(): int {
+    val addr1 = address("0:1111111111111111111111111111111111111111111111111111111111111111");
+    val addr2 = address("0:2222222222222222222222222222222222222222222222222222222222222222");
+    val addr3 = address("0:3333333333333333333333333333333333333333333333333333333333333333");
+    val key = bondOracleResolveKey(addr2, addr1, addr2, addr3);
+    assert(key == 2) throw 6810;
+    return key as int;
+}
+
+// T682: BondOracleReporterAddresses struct is instantiable from an import context.
+@method_id(682)
+fun test_reporter_addresses_struct_importable(): int {
+    val addr = address("0:1111111111111111111111111111111111111111111111111111111111111111");
+    val reg = BondOracleReporterAddresses { reporter1: addr, reporter2: addr, reporter3: addr };
+    assert(reg.reporter1 == addr) throw 6820;
+    return 1;
+}
+
+// T683: Opcode constants are accessible from outside the contract source.
+@method_id(683)
+fun test_opcode_constants_accessible(): int {
+    assert(BOND_ORACLE_OP_DEPLOY == 0x424f5200 as uint32) throw 6829;
+    assert(BOND_ORACLE_OP_START_ROUND == 0x424f5201 as uint32) throw 6830;
+    assert(BOND_ORACLE_OP_SUBMIT_REPORT == 0x424f5202 as uint32) throw 6831;
+    assert(BOND_ORACLE_OP_FINALIZE == 0x424f5203 as uint32) throw 6832;
+    return 1;
+}
+
+/**
+@testcase | 680 | | 1
+@testcase | 681 | | 2
+@testcase | 682 | | 1
+@testcase | 683 | | 1
+ */

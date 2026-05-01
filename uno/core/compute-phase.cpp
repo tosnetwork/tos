@@ -22,6 +22,8 @@
 #include "uno/core/compute-phase.h"
 
 #include <cstdint>
+#include <exception>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -29,6 +31,7 @@
 #include "td/utils/UInt.h"
 #include "td/utils/logging.h"
 #include "vm/cells/CellBuilder.h"
+#include "vm/excno.hpp"
 
 #include "uno/core/mine_uno.h"
 #include "uno/core/parallel-verify.h"
@@ -131,6 +134,7 @@ const char* verify_result_name(VerifyResult r) noexcept {
         case VerifyResult::ZeroValueMineUno:        return "zero-value-mine-uno";
         case VerifyResult::TimestampNotMonotonic:   return "timestamp-not-monotonic";
         case VerifyResult::DecodeError:             return "decode-error";
+        case VerifyResult::StateSerializationFailed: return "state-serialization-failed";
     }
     return "unknown";
 }
@@ -272,6 +276,68 @@ void populate_reject_cp(block::ComputePhase& cp,
     cp.vm_log = std::string("uno: reject ") + verify_result_name(vr);
 }
 
+bool populate_serialization_failure_cp(block::ComputePhase& cp,
+                                       uint64_t gas_limit,
+                                       const char* phase,
+                                       const char* reason) {
+    cp.skip_reason = block::ComputePhase::sk_bad_state;
+    populate_reject_cp(cp, VerifyResult::StateSerializationFailed, 0, gas_limit,
+                       /*accepted=*/false);
+    cp.vm_log = std::string("uno: state serialization failed during ") + phase +
+                ": " + reason;
+    return false;
+}
+
+bool populate_success_cp(block::ComputePhase& cp,
+                         UnoState& state,
+                         uint64_t gas_used,
+                         uint64_t gas_limit,
+                         const char* phase) {
+    td::Ref<vm::Cell> new_data;
+    td::Ref<vm::Cell> actions;
+    try {
+        new_data = state.serialize_to_cell();
+        if (new_data.is_null()) {
+            LOG(ERROR) << "uno-workchain: serialize_to_cell returned null during " << phase;
+            return populate_serialization_failure_cp(
+                cp, gas_limit, phase, "serialize_to_cell returned null");
+        }
+        actions = vm::CellBuilder{}.finalize();
+        if (actions.is_null()) {
+            LOG(ERROR) << "uno-workchain: failed to build empty action cell during " << phase;
+            return populate_serialization_failure_cp(
+                cp, gas_limit, phase, "empty action cell build returned null");
+        }
+    } catch (vm::VmError&) {
+        LOG(ERROR) << "uno-workchain: VM error while serializing state during " << phase;
+        return populate_serialization_failure_cp(
+            cp, gas_limit, phase, "vm::VmError");
+    } catch (const std::bad_alloc&) {
+        LOG(ERROR) << "uno-workchain: allocation failure while serializing state during " << phase;
+        return populate_serialization_failure_cp(
+            cp, gas_limit, phase, "std::bad_alloc");
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "uno-workchain: exception while serializing state during "
+                   << phase << ": " << e.what();
+        return populate_serialization_failure_cp(
+            cp, gas_limit, phase, e.what());
+    }
+
+    cp.new_data = std::move(new_data);
+    cp.actions  = std::move(actions);
+    cp.success    = true;
+    cp.accepted   = true;
+    cp.gas_used   = gas_used;
+    cp.gas_limit  = gas_limit;
+    cp.gas_credit = 0;
+    cp.gas_max    = gas_limit;
+    cp.exit_code  = 0;
+    cp.vm_steps   = 1;
+    cp.vm_init_state_hash.set_zero();
+    cp.vm_final_state_hash.set_zero();
+    return true;
+}
+
 // ---- MineUno dispatch -------------------------------------------------------
 
 bool run_mine_uno_compute_phase(
@@ -327,19 +393,7 @@ bool run_mine_uno_compute_phase(
         /*fee=*/0,
         /*n_outputs=*/1);
 
-    cp.new_data = state.serialize_to_cell();
-    cp.actions  = vm::CellBuilder{}.finalize();
-    cp.success    = true;
-    cp.accepted   = true;
-    cp.gas_used   = gas_used;
-    cp.gas_limit  = gas_limit;
-    cp.gas_credit = 0;
-    cp.gas_max    = gas_limit;
-    cp.exit_code  = 0;
-    cp.vm_steps   = 1;
-    cp.vm_init_state_hash.set_zero();
-    cp.vm_final_state_hash.set_zero();
-    return true;
+    return populate_success_cp(cp, state, gas_used, gas_limit, "MineUno");
 }
 
 }  // anonymous namespace
@@ -496,22 +550,7 @@ bool run_compute_phase(
     // snapshotted exactly once; compute-phase writes the same "live" root on
     // every tx. TOS's CellDb WriteBatch dedupes identical cells, so the per-
     // tx write overhead is a single ref + the delta cells only.
-    cp.new_data = state.serialize_to_cell();
-    cp.actions  = vm::CellBuilder{}.finalize();  // Uno emits no actions
-
-    // --- Step 5: ComputePhase bookkeeping ---
-    cp.success    = true;
-    cp.accepted   = true;
-    cp.gas_used   = gas_used;
-    cp.gas_limit  = gas_limit;
-    cp.gas_credit = 0;
-    cp.gas_max    = gas_limit;
-    cp.exit_code  = 0;
-    cp.vm_steps   = 1;
-    cp.vm_init_state_hash.set_zero();
-    cp.vm_final_state_hash.set_zero();
-
-    return true;
+    return populate_success_cp(cp, state, gas_used, gas_limit, "Transfer");
 }
 
 // =============================================================================

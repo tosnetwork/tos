@@ -1,0 +1,11 @@
+import "@stdlib/slice3-common"
+import "../src/main"
+
+@method_id(101)
+fun test_scaffold_pattern(): int {
+    return scaffoldPatternId();
+}
+
+/**
+@testcase | 101 | | 5
+ */

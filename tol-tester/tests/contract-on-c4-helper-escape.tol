@@ -1,0 +1,29 @@
+struct ContractC4HelperStorage {
+    always: uint32
+    @on(Open) secret: uint32
+}
+
+struct (0x00000099) ContractC4HelperPing {
+    queryId: uint64
+}
+
+fun hiddenDataRead(): cell {
+    return contract.getData();
+}
+
+contract ContractC4Helper {
+    storage: ContractC4HelperStorage
+    states: Open
+    @initial state Open
+    @unknown_throw(0xffff);
+
+    receive(msg: ContractC4HelperPing) on Open {
+        hiddenDataRead();
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr helper function `hiddenDataRead` reaches c4
+ */

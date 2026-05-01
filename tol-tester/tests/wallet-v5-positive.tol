@@ -1,0 +1,115 @@
+import "../../crypto/smartcont/wallet-v5"
+import "@stdlib/tvm-dicts"
+
+fun extensionAddr(): address {
+    return address("0:5555555555555555555555555555555555555555555555555555555555555555");
+}
+
+fun outMsgCell(): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(extensionAddr())
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .endCell();
+}
+
+fun noExtraActions(): RemainingBitsAndRefs {
+    return beginCell()
+        .storeMaybeRef(null)
+        .storeInt(0, 1)
+        .endCell()
+        .beginParse();
+}
+
+fun zeroSignature(): slice {
+    return beginCell()
+        .storeUint(0, 256)
+        .storeUint(0, 256)
+        .endCell()
+        .beginParse();
+}
+
+fun signedExternalBody(): slice {
+    return beginCell()
+        .storeUint(PREFIX_SIGNED_EXTERNAL, SIZE_MESSAGE_OPERATION_PREFIX)
+        .storeUint(1234, SIZE_GLOBAL_ID)
+        .storeUint(77, SIZE_WALLET_ID)
+        .storeUint(999999, SIZE_VALID_UNTIL)
+        .storeUint(12, SIZE_SEQNO)
+        .storeSlice(noExtraActions())
+        .storeSlice(zeroSignature())
+        .endCell()
+        .beginParse();
+}
+
+fun signedInternalBody(): slice {
+    return beginCell()
+        .storeUint(PREFIX_SIGNED_INTERNAL, SIZE_MESSAGE_OPERATION_PREFIX)
+        .storeUint(1234, SIZE_GLOBAL_ID)
+        .storeUint(77, SIZE_WALLET_ID)
+        .storeUint(999999, SIZE_VALID_UNTIL)
+        .storeUint(12, SIZE_SEQNO)
+        .storeSlice(noExtraActions())
+        .storeSlice(zeroSignature())
+        .endCell()
+        .beginParse();
+}
+
+@method_id(101)
+fun test_signed_request_header_shape(): int {
+    val header = parseSignedRequestHeader(signedExternalBody());
+    assert (header.opcode == PREFIX_SIGNED_EXTERNAL) throw 101;
+    assert (header.globalId == 1234) throw 102;
+    assert (header.walletId == 77) throw 103;
+    assert (header.validUntil == 999999) throw 104;
+    assert (header.seqno == 12) throw 105;
+    assert (header.actions.remainingBitsCount() == 2) throw 106;
+
+    val (signedSlice, signature) = splitSignedRequestBody(signedExternalBody());
+    assert (signature.remainingBitsCount() == SIZE_SIGNATURE) throw 107;
+    assert (signedSlice.remainingBitsCount() == SIZE_MESSAGE_OPERATION_PREFIX + SIZE_GLOBAL_ID + SIZE_WALLET_ID + SIZE_VALID_UNTIL + SIZE_SEQNO + 2) throw 108;
+    return 1;
+}
+
+@method_id(102)
+fun test_extension_action_body_shape(): int {
+    val body = buildExtensionActionBody(44, noExtraActions());
+    val msg = lazy ExtensionActionRequest.fromSlice(body.beginParse());
+    assert (msg.queryId == 44) throw 111;
+    assert (msg.actions.remainingBitsCount() == 2) throw 112;
+    assert (body.hash() == beginCell()
+        .storeUint(PREFIX_EXTENSION_ACTION, SIZE_MESSAGE_OPERATION_PREFIX)
+        .storeUint(44, SIZE_QUERY_ID)
+        .storeSlice(noExtraActions())
+        .endCell()
+        .hash()) throw 113;
+    return 2;
+}
+
+@method_id(103)
+fun test_c5_action_validation(): int {
+    val c5 = buildActionSendMsg(2, outMsgCell(), createEmptyCell());
+    assert (verifyC5Actions(c5, true).hash() == c5.hash()) throw 121;
+    assert (verifyC5Actions(buildActionSendMsg(0, outMsgCell(), createEmptyCell()), false).hash() != 0) throw 122;
+    return 3;
+}
+
+@method_id(104)
+fun test_signed_internal_header_shape(): int {
+    val header = parseSignedRequestHeader(signedInternalBody());
+    assert (header.opcode == PREFIX_SIGNED_INTERNAL) throw 131;
+    assert (header.globalId == 1234) throw 132;
+    assert (header.walletId == 77) throw 133;
+    assert (header.validUntil == 999999) throw 134;
+    assert (header.seqno == 12) throw 135;
+    assert (header.actions.remainingBitsCount() == 2) throw 136;
+    return 4;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+ */

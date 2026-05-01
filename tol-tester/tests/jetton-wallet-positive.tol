@@ -1,0 +1,186 @@
+import "../../crypto/smartcont/jetton-wallet"
+
+fun ownerAddr(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun destAddr(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun responseAddr(): address {
+    return address("0:3333333333333333333333333333333333333333333333333333333333333333");
+}
+
+fun masterAddr(): address {
+    return address("0:4444444444444444444444444444444444444444444444444444444444444444");
+}
+
+fun walletCode(): cell {
+    return beginCell().storeUint(0xc0ffee, 24).endCell();
+}
+
+fun inlineForwardPayload(): RemainingBitsAndRefs {
+    return beginCell().storeUint(0, 1).storeUint(0xaa, 8).endCell().beginParse();
+}
+
+@method_id(101)
+fun test_transfer_request_and_internal_message_shape(): int {
+    val noPayload: dict = null;
+    val body = beginCell()
+        .storeUint(OP_TRANSFER, 32)
+        .storeUint(11, 64)
+        .storeCoins(7000)
+        .storeAddress(destAddr())
+        .storeAddress(responseAddr())
+        .storeDict(noPayload)
+        .storeCoins(17)
+        .storeSlice(inlineForwardPayload())
+        .endCell();
+
+    val msg = lazy TransferRequest.fromSlice(body.beginParse());
+    assert (msg.queryId == 11) throw 101;
+    assert (msg.amount == 7000) throw 102;
+    assert (sameInternalAndAnyAddressBits(destAddr(), msg.destination)) throw 103;
+    assert (sameInternalAndAnyAddressBits(responseAddr(), msg.responseDestination)) throw 104;
+    assert (msg.forwardTosAmount == 17) throw 105;
+    assert (msg.forwardPayload.remainingBitsCount() == 9) throw 106;
+
+    val stateInit = calculateJettonWalletStateInit(
+        msg.destination,
+        masterAddr() as any_address,
+        walletCode()
+    );
+    val toWallet = calculateJettonWalletAddress(stateInit);
+    val outbound = buildInternalTransferMessage(
+        toWallet,
+        stateInit,
+        msg.queryId,
+        msg.amount,
+        ownerAddr() as any_address,
+        msg.responseDestination,
+        msg.forwardTosAmount,
+        msg.forwardPayload
+    );
+    val expectedBody = beginCell()
+        .storeUint(OP_INTERNAL_TRANSFER, 32)
+        .storeUint(11, 64)
+        .storeCoins(7000)
+        .storeAddress(ownerAddr())
+        .storeAddress(responseAddr())
+        .storeCoins(17)
+        .storeSlice(inlineForwardPayload())
+        .endCell();
+    val expected = beginCell()
+        .storeUint(0x18, 6)
+        .storeAddress(toWallet)
+        .storeCoins(0)
+        .storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .storeRef(stateInit)
+        .storeRef(expectedBody)
+        .endCell();
+    assert (outbound.hash() == expected.hash()) throw 107;
+    return 1;
+}
+
+@method_id(102)
+fun test_internal_transfer_reply_shapes(): int {
+    val body = beginCell()
+        .storeUint(OP_INTERNAL_TRANSFER, 32)
+        .storeUint(22, 64)
+        .storeCoins(8000)
+        .storeAddress(destAddr())
+        .storeAddress(responseAddr())
+        .storeCoins(19)
+        .storeSlice(inlineForwardPayload())
+        .endCell();
+
+    val msg = lazy InternalTransferRequest.fromSlice(body.beginParse());
+    assert (msg.queryId == 22) throw 111;
+    assert (msg.amount == 8000) throw 112;
+    assert (sameInternalAndAnyAddressBits(destAddr(), msg.fromAddress)) throw 113;
+    assert (sameInternalAndAnyAddressBits(responseAddr(), msg.responseAddress)) throw 114;
+
+    val notification = buildTransferNotificationMessage(
+        ownerAddr() as any_address,
+        msg.forwardTosAmount,
+        msg.queryId,
+        msg.amount,
+        msg.fromAddress,
+        msg.forwardPayload
+    );
+    val expectedNotificationBody = beginCell()
+        .storeUint(OP_TRANSFER_NOTIFICATION, 32)
+        .storeUint(22, 64)
+        .storeCoins(8000)
+        .storeAddress(destAddr())
+        .storeSlice(inlineForwardPayload())
+        .endCell();
+    val expectedNotification = beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(ownerAddr())
+        .storeCoins(19)
+        .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeRef(expectedNotificationBody)
+        .endCell();
+    assert (notification.hash() == expectedNotification.hash()) throw 115;
+
+    val excesses = buildWalletExcessesMessage(msg.responseAddress, 1234, msg.queryId);
+    val expectedExcesses = beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(responseAddr())
+        .storeCoins(1234)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(OP_EXCESSES, 32)
+        .storeUint(22, 64)
+        .endCell();
+    assert (excesses.hash() == expectedExcesses.hash()) throw 116;
+    return 2;
+}
+
+@method_id(103)
+fun test_burn_request_and_notification_shape(): int {
+    val body = beginCell()
+        .storeUint(OP_BURN, 32)
+        .storeUint(33, 64)
+        .storeCoins(9000)
+        .storeAddress(responseAddr())
+        .storeUint(0, 1)
+        .endCell();
+
+    val msg = lazy BurnRequest.fromSlice(body.beginParse());
+    assert (msg.queryId == 33) throw 121;
+    assert (msg.amount == 9000) throw 122;
+    assert (sameInternalAndAnyAddressBits(responseAddr(), msg.responseAddress)) throw 123;
+    assert (msg.customPayload.remainingBitsCount() == 1) throw 124;
+
+    val burn = buildBurnNotificationMessage(
+        masterAddr() as any_address,
+        msg.queryId,
+        msg.amount,
+        ownerAddr() as any_address,
+        msg.responseAddress
+    );
+    val expectedBurnBody = beginCell()
+        .storeUint(OP_BURN_NOTIFICATION, 32)
+        .storeUint(33, 64)
+        .storeCoins(9000)
+        .storeAddress(ownerAddr())
+        .storeAddress(responseAddr())
+        .endCell();
+    val expectedBurn = beginCell()
+        .storeUint(0x18, 6)
+        .storeAddress(masterAddr())
+        .storeCoins(0)
+        .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeRef(expectedBurnBody)
+        .endCell();
+    assert (burn.hash() == expectedBurn.hash()) throw 125;
+    return 3;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+ */

@@ -1,0 +1,6 @@
+{
+  "error_codes": [
+    {"name": "SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER", "code": 3073},
+    {"name": "SLICE5_GOVERNANCE_THROW_INVALID_ACTION", "code": 3078}
+  ]
+}

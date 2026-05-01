@@ -1,0 +1,40 @@
+struct ContractOnCrossFnStorage {
+    open: uint32;
+    @on(Settling) payoutsRemaining: uint32;
+}
+
+struct (0x00000061) ContractOnCrossFnOpen {
+    queryId: uint64;
+}
+
+struct (0x00000062) ContractOnCrossFnSettle {
+    queryId: uint64;
+}
+
+fun helper(x: int): int {
+    return x;
+}
+
+contract ContractOnCrossFn {
+    storage: ContractOnCrossFnStorage
+    states: Open, Settling
+    @initial state Open
+
+    receive(msg: ContractOnCrossFnOpen) on Open {
+        save(ContractOnCrossFnStorage { open: 1, payoutsRemaining: 0 });
+        become Settling;
+    }
+
+    receive(msg: ContractOnCrossFnSettle) on Settling {
+        val foo = storage.payoutsRemaining;
+        val laundered = helper(foo);
+        save(ContractOnCrossFnStorage { open: 1, payoutsRemaining: laundered });
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr forwarding `@on(Settling)` field across function boundary not yet supported
+@stderr doc/tos-language-syntax-policy.md §5
+ */

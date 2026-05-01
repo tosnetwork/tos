@@ -1,0 +1,22 @@
+struct ContractOnNonStateStorage {
+    open: uint32;
+    @on(Settling) payoutsRemaining: uint32;
+}
+
+struct (0x00000058) ContractOnNonStatePing {
+    queryId: uint64;
+}
+
+contract ContractOnNonState {
+    storage: ContractOnNonStateStorage
+
+    receive(msg: ContractOnNonStatePing) {
+        save(ContractOnNonStateStorage { open: 1, payoutsRemaining: 0 });
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr `@on(...)` is only permitted on storage struct fields of a state-bearing contract
+@stderr doc/tos-language-syntax-policy.md §3.4
+ */

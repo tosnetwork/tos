@@ -1,0 +1,94 @@
+// TosStreamChannel — production-intent two-party streaming payment channel.
+// Use cases: DEX margin settlement, pay-per-call API micropayments, subscription escrow.
+//
+// Protocol flow:
+//   deploy         → both parties fund the contract; partyA holds full balance
+//   off-chain      → parties exchange signed Slice5PaymentSignedState cells
+//   CooperativeClose → both sign; channel closes instantly; balanceB sent to partyB
+//   ChallengeClose → one party submits latest signed state; challenge window opens
+//   (optional)     → counterparty supersedes with higher-seqno state during window
+//   Settle         → after challenge window; balanceB sent to partyB
+//
+// Signed states use Ed25519 over Slice5PaymentSignedState.toCell().hash() per §2.1.
+tol 1.3
+
+import "@stdlib/payment-channel"
+
+struct TosStreamChannelStorage {
+    config: Cell<Slice5PaymentChannelConfig>
+    state: Cell<Slice5PaymentChannelState>
+    partyBAddress: address
+}
+
+contract TosStreamChannel {
+    storage: TosStreamChannelStorage
+    @unknown_throw(0xffff);
+
+    // Both parties co-sign the final state; channel closes immediately.
+    // Deployer must dispatch the balanceB payout to partyB after this call.
+    @disclaim_query_id
+    receive(msg: Slice5PaymentCooperativeClose) {
+        val config = lazy Slice5PaymentChannelConfig.fromCell(storage.config);
+        val signedState = lazy Slice5PaymentSignedState.fromCell(msg.signedState);
+        var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
+        val paidB = state.cooperativeClose(
+            config, signedState, msg.signatureA, msg.signatureB, blockchain.now() as uint32
+        );
+        save(TosStreamChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
+        slice5PaymentEmitPayout(storage.partyBAddress, paidB);
+    }
+
+    // One party initiates a unilateral close; counterparty may supersede with a
+    // higher-seqno state before challengeExpiresAt.
+    @disclaim_query_id
+    receive(msg: Slice5PaymentChallengeClose) {
+        val config = lazy Slice5PaymentChannelConfig.fromCell(storage.config);
+        val signedState = lazy Slice5PaymentSignedState.fromCell(msg.signedState);
+        var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
+        state.challengeClose(config, signedState, msg.signatureA, msg.signatureB, blockchain.now() as uint32);
+        save(TosStreamChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
+    }
+
+    // Finalizes the channel after the challenge window expires.
+    // Deployer must dispatch the balanceB payout to partyB after this call.
+    @disclaim_query_id
+    receive(msg: Slice5PaymentSettle) {
+        var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
+        val paidB = state.settle(blockchain.now() as uint32);
+        save(TosStreamChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
+        slice5PaymentEmitPayout(storage.partyBAddress, paidB);
+    }
+
+    // Returns the channel's unique ID (bound to partyA, partyB, and the deploy salt).
+    @method_id(0x2c01)
+    get fun getChannelId(): uint256 {
+        val config = lazy Slice5PaymentChannelConfig.fromCell(storage.config);
+        return config.channelId;
+    }
+
+    // Returns true if a challenge close has been initiated and the window is still open.
+    @method_id(0x2c02)
+    get fun isClosing(): bool {
+        val state = lazy Slice5PaymentChannelState.fromCell(storage.state);
+        return state.closing;
+    }
+
+    // Returns true if the channel is fully closed (cooperative or settled).
+    @method_id(0x2c03)
+    get fun isClosed(): bool {
+        val state = lazy Slice5PaymentChannelState.fromCell(storage.state);
+        return state.closed;
+    }
+}

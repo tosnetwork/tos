@@ -1,0 +1,36 @@
+struct ContractStateStorage {
+    total: uint32;
+}
+
+struct (0x00000031) ContractStateOpen {
+    queryId: uint64;
+    amount: uint32;
+}
+
+struct (0x00000032) ContractStateClose {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractState {
+    storage: ContractStateStorage
+    states: Open, Closed
+    @initial state Open
+
+    receive(msg: ContractStateOpen) on Open {
+        save(ContractStateStorage { total: msg.amount });
+        become Closed;
+    }
+
+    receive(msg: ContractStateClose) on Closed {
+        keep_state;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

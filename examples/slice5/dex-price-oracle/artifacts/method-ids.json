@@ -1,0 +1,6 @@
+{
+  "method_ids": [
+    {"name": "getLatestPrice", "id": 7424,  "hex": "0x1d00"},
+    {"name": "getLastRoundId", "id": 7425,  "hex": "0x1d01"}
+  ]
+}

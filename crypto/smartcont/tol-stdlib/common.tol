@@ -413,6 +413,30 @@ fun blockchain.logicalTime(): int
 fun blockchain.currentBlockLogicalTime(): int
     asm "BLOCKLT"
 
+/// Returns the previous-blocks info tuple's visible masterchain block ids.
+/// The first item is the latest masterchain block visible to the current
+/// transaction context; each item is `[workchain, shard, seqno, root_hash,
+/// file_hash]`.
+@pure
+fun blockchain.previousMasterchainBlocks(): array<tuple>
+    asm "PREVMCBLOCKS"
+
+/// Returns the latest masterchain seqno visible to this transaction context.
+/// This uses TVM `PREVMCBLOCKS`; it is not derived from Unix time and must be
+/// preferred for Slice 6 `*McSeqno` validity windows.
+@pure
+fun blockchain.currentMcSeqno(): uint32 {
+    val head = blockchain.previousMasterchainBlocks().first();
+    return (head.get(2) as int) as uint32;
+}
+
+/// Convenience alias for contracts that want the short name while still using
+/// the same trusted `PREVMCBLOCKS` source as `blockchain.currentMcSeqno()`.
+@pure
+fun currentMcSeqno(): uint32 {
+    return blockchain.currentMcSeqno();
+}
+
 /// Returns the value of the global configuration parameter with integer index `i` as a `cell` or `null` value.
 @pure
 fun blockchain.configParam(x: int): cell?
@@ -1940,6 +1964,109 @@ struct InMessageBounced {
     createdAt: uint32               // unixtime when a message was created (and bounced)
     bouncedBody: slice              // populated depending on `BounceMode` for `createMessage`
 }
+
+
+/**
+    Slice 1 application-message scaffolding.
+
+    Per `doc/tos-message-policy.md` v4 §3.1, §3.4, §4.4, §5.2, §5.3,
+    and §10.1. These types are defined and parse but are not yet
+    consumed by any contract — they become load-bearing in Slice 1
+    Stage 3 dogfood migration.
+*/
+
+// SLICE 1 SCAFFOLDING
+// doc/tos-message-policy.md §3.4 — synchronized constants. The
+// C++ side is in tol/extra-flags-constants.h and consumed by
+// transaction / validation gates. Update this Tol mirror in lockstep
+// with EXTRA_FLAGS_VALID_MASK in Slice 4 (bit 2) and Slice 6 (bit 3).
+const EXTRA_FLAGS_NEW_BOUNCE = 1
+const EXTRA_FLAGS_FULL_BOUNCE_BODY = 2
+const EXTRA_FLAGS_RICH_BOUNCE = 3
+const EXTRA_FLAGS_VALID_MASK = 3
+
+// SLICE 1 SCAFFOLDING
+// doc/tos-message-policy.md §5.2 — application-tier error reply.
+const OP_ERROR = 0x00010001
+
+// SLICE 6 SCAFFOLDING
+// doc/tos-supervision-policy.md §4 — one-way monitor notification.
+// This is a protocol-defined system opcode, not an OP_ERROR reply.
+const OP_MONITOR_DOWN: uint32 = 0x00000010
+
+// SLICE 1 SCAFFOLDING
+// doc/tos-message-policy.md §5.3 — transient/permanent error
+// classification. Values 0..5 are defined here; 6..15 are reserved
+// for future expansion of the protocol; 16..255 are application-
+// defined. Supervisors (actor.md §5.1) must distinguish at least
+// classes Transient (1) and Permanent (2) when deciding whether to
+// restart.
+enum ErrorClass: uint8 {
+    Ok = 0
+    Transient = 1
+    Permanent = 2
+    Authorization = 3
+    Protocol = 4
+    BackPressure = 5    // Reserved Slice 5+; not yet emitted
+}
+
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7): receiver-side
+// precondition guard. Lowers to `if (!cond) throw <code>` per §3.7. The
+// 2-argument call form is rewritten to the 3-argument form by the
+// `pipe-assign-require-codes` pass: each site gets a unique per-contract
+// per-ErrorClass code so two `require(cond, ErrorClass.Authorization)`
+// sites stay distinguishable in bounce diagnostics. The 3-argument form
+// is the explicit-code escape hatch and passes through unchanged.
+//
+// Implementation note: the 2-arg call form sets `errorCode = -1` as a
+// sentinel; the rewrite pass MUST replace every `-1` site before codegen.
+// If the pass somehow misses a site, the runtime throws -1, which is
+// trivially observable in test fixtures.
+fun require(cond: bool, errorClass: ErrorClass, errorCode: int = -1): void {
+    if (!cond) {
+        __throw(errorCode);
+    }
+}
+
+// SLICE 1 SCAFFOLDING
+// doc/tos-message-policy.md §3.1 — application-layer body envelope.
+// Body-only: the (opcode, query_id, payload) triple. Does NOT own
+// CommonMsgInfo* fields (created_at/lt/src/dest/value belong to
+// InMessage/CommonMsgInfo, owned by the message-builder primitives).
+// The opcode prefix is locked to 32 bits per §10.1; do not shorten
+// it via a struct opcode tag.
+struct Envelope {
+    opcode: uint32
+    queryId: uint64
+    payload: slice
+}
+
+// SLICE 1 SCAFFOLDING
+// doc/tos-message-policy.md §5.2 — OP_ERROR reply body.
+// `originalOp` sits between `queryId` and `errorClass` so receivers
+// can match by (expected_responder, query_id) per §4.4 without
+// keeping a per-query_id shadow correlation table for every
+// outbound opcode they issue (mirrors the v12 system-bounce body
+// which already exposes the original opcode at the start of
+// `originalBody` — see RichBounceBody above).
+struct Error {
+    queryId: uint64
+    originalOp: uint32
+    errorClass: ErrorClass
+    errorCode: uint16
+    diagnostic: cell?
+}
+
+// SLICE 1 SCAFFOLDING
+// doc/tos-message-policy.md §4.4 — reply binding requires
+// (expected_responder, query_id) as the minimum correlation key.
+// Helpers are intentionally deferred: the bodies land in Slice 1
+// Stage 2 alongside the pipe-check-query-id-propagation pass.
+//
+// Forward declarations (commented; not exported until Stage 2):
+//   fun expectReply(responder: address, queryId: uint64): void
+//   fun lookupOutstanding(responder: address, queryId: uint64): cell?
+
 
 /// When you use [createMessage] with "rich bounce mode", and a message is bounced,
 /// then `in.bouncedBody` inside `onBouncedMessage` has this format.

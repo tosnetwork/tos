@@ -1,0 +1,8 @@
+{
+  "opcodes": [
+    {"name": "NFT_COLLECTION_OP_MINT", "hex": "0x00000001"},
+    {"name": "NFT_OP_TRANSFER", "hex": "0x5fcc3d14"},
+    {"name": "NFT_OP_OWNERSHIP_ASSIGNED", "hex": "0x05138d91"},
+    {"name": "NFT_OP_REPORT_STATIC_DATA", "hex": "0x8b771735"}
+  ]
+}

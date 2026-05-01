@@ -1,0 +1,23 @@
+struct ContractStateInvalidBecomeStorage {
+    total: uint32;
+}
+
+struct (0x00000043) ContractStateInvalidBecomePing {
+    queryId: uint64;
+}
+
+contract ContractStateInvalidBecome {
+    storage: ContractStateInvalidBecomeStorage
+    states: Open
+    @initial state Open
+
+    receive(msg: ContractStateInvalidBecomePing) on Open {
+        become Closed;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr `become` target state `Closed` is not declared in `states:`
+@stderr doc/tos-language-syntax-policy.md §3.4
+ */

@@ -1,0 +1,285 @@
+import "@stdlib/oracle"
+import "../src/tos-report-bond-oracle"
+
+// Simulated on-chain addresses for reporter identity resolution.
+const REPORTER1_ADDR: address = address("0:1111111111111111111111111111111111111111111111111111111111111111")
+const REPORTER2_ADDR: address = address("0:2222222222222222222222222222222222222222222222222222222222222222")
+const REPORTER3_ADDR: address = address("0:3333333333333333333333333333333333333333333333333333333333333333")
+const ATTACKER_ADDR: address  = address("0:8888888888888888888888888888888888888888888888888888888888888888")
+const STARTER_ADDR: address   = address("0:7777777777777777777777777777777777777777777777777777777777777777")
+
+// Canonical reporter keys used by the oracle stdlib map (must match bondOracleResolveKey).
+fun key1(): uint256 { return 1; }
+fun key2(): uint256 { return 2; }
+fun key3(): uint256 { return 3; }
+
+// 3-of-3 reporter set where each reporter's Ed25519 key equals their canonical index.
+fun makeReporterSet(): Slice5OracleReporterSet {
+    var set = slice5OracleNewReporterSet();
+    set.addReporter(key1());
+    set.addReporter(key2());
+    set.addReporter(key3());
+    return set;
+}
+
+// 2-of-3 quorum, 60 s freshness, 200 unit max deviation.
+fun makeConfig(): Slice5OracleConfig {
+    return slice5OracleConfig(makeReporterSet(), 2, 60, 200, STARTER_ADDR);
+}
+
+fun startRound(roundId: uint64, now: uint32): Slice5OracleRound {
+    var state = slice5OracleInitialState(makeReporterSet());
+    return slice5OracleStartRound(mutate state, makeConfig(), roundId, now, STARTER_ADDR);
+}
+
+// Build a Slice5OracleReport as the contract would, with a resolved key and trusted now.
+fun makeReport(roundId: uint64, key: uint256, value: uint64, now: uint32): Slice5OracleReport {
+    return Slice5OracleReport { queryId: 1, roundId, reporterKey: key, value, now };
+}
+
+fun makeFinalize(roundId: uint64, now: uint32): Slice5OracleFinalize {
+    return Slice5OracleFinalize { queryId: 1, roundId, now };
+}
+
+fun main(): int { return 0; }
+
+// T601: Unknown address is rejected by bondOracleResolveKey.
+@method_id(601)
+fun test_unauthorized_sender(): int {
+    try {
+        bondOracleResolveKey(ATTACKER_ADDR, REPORTER1_ADDR, REPORTER2_ADDR, REPORTER3_ADDR);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// T602: REPORTER1_ADDR maps to canonical key 1.
+@method_id(602)
+fun test_reporter1_resolves_to_key1(): int {
+    return bondOracleResolveKey(REPORTER1_ADDR, REPORTER1_ADDR, REPORTER2_ADDR, REPORTER3_ADDR) as int;
+}
+
+// T603: REPORTER2_ADDR maps to canonical key 2.
+@method_id(603)
+fun test_reporter2_resolves_to_key2(): int {
+    return bondOracleResolveKey(REPORTER2_ADDR, REPORTER1_ADDR, REPORTER2_ADDR, REPORTER3_ADDR) as int;
+}
+
+// T604: REPORTER3_ADDR maps to canonical key 3.
+@method_id(604)
+fun test_reporter3_resolves_to_key3(): int {
+    return bondOracleResolveKey(REPORTER3_ADDR, REPORTER1_ADDR, REPORTER2_ADDR, REPORTER3_ADDR) as int;
+}
+
+// T605: Happy path — 2-of-3 quorum reached; median of (1000, 1100) = 1050.
+@method_id(605)
+fun test_two_reports_quorum_median(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key1(), 1000, 20));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key2(), 1100, 21));
+    val m = r.finalize(makeConfig(), makeFinalize(1, 22));
+    assert(r.finalized) throw 6050;
+    assert(m == 1050) throw 6051;
+    return m as int;
+}
+
+// T606: Report submitted after the freshness window is rejected with STALE_ROUND.
+// Round started at now=10, validUntil = 10+60 = 70; report at now=70 is stale.
+@method_id(606)
+fun test_stale_report_rejected(): int {
+    var r = startRound(1, 10);
+    try {
+        r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key1(), 1000, 70));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// T607: Duplicate report from the same reporter key is rejected with DUPLICATE_REPORTER.
+@method_id(607)
+fun test_duplicate_report_rejected(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key1(), 1000, 20));
+    try {
+        r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key1(), 1001, 21));
+    } catch (code) {
+        assert(r.reportCount == 1) throw 6070;
+        return code;
+    }
+    return 0;
+}
+
+// T608: Reporter key not in the reporter set is rejected with UNAUTHORIZED_REPORTER.
+@method_id(608)
+fun test_unauthorized_reporter_key(): int {
+    var r = startRound(1, 10);
+    try {
+        r.addReport(makeReporterSet(), makeConfig(), makeReport(1, 0x99 as uint256, 1000, 20));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// T609: Report deviating > maxDeviation (200) from the running median is rejected with OUTLIER.
+// After key1 reports 1000, key2's 1201 deviates 201 > 200.
+@method_id(609)
+fun test_outlier_rejected(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key1(), 1000, 20));
+    try {
+        r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key2(), 1201, 21));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// T610: Starting a round with a non-monotonic roundId is rejected with REPLAYED_ROUND.
+@method_id(610)
+fun test_replayed_round_id(): int {
+    var state = slice5OracleInitialState(makeReporterSet());
+    slice5OracleStartRound(mutate state, makeConfig(), 5, 10, STARTER_ADDR);
+    try {
+        slice5OracleStartRound(mutate state, makeConfig(), 5, 11, STARTER_ADDR);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// T611: Finalize with only 1 of 2 required reports throws INSUFFICIENT_QUORUM.
+@method_id(611)
+fun test_finalize_before_quorum(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key1(), 1000, 20));
+    try {
+        r.finalize(makeConfig(), makeFinalize(1, 21));
+    } catch (code) {
+        assert(!r.finalized) throw 6110;
+        return code;
+    }
+    return 0;
+}
+
+// T612: Finalizing an already-finalized round throws ROUND_FINALIZED.
+@method_id(612)
+fun test_duplicate_finalize(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key1(), 1000, 20));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key2(), 1100, 21));
+    r.finalize(makeConfig(), makeFinalize(1, 22));
+    try {
+        r.finalize(makeConfig(), makeFinalize(1, 23));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// T613: Unauthorized round starter is rejected by slice5OracleStartRound.
+// The contract passes in.senderAddress; this exercises the helper with a wrong address.
+@method_id(613)
+fun test_unauthorized_starter(): int {
+    var state = slice5OracleInitialState(makeReporterSet());
+    try {
+        slice5OracleStartRound(mutate state, makeConfig(), 1, 10, ATTACKER_ADDR);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// T614: Boundary — exactly at quorum count (2 reports) finalizes successfully.
+// median(1000, 1100) = 1050.
+@method_id(614)
+fun test_exactly_quorum_finalizes(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key1(), 1000, 20));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key2(), 1100, 21));
+    assert(r.reportCount == 2) throw 6140;
+    val m = r.finalize(makeConfig(), makeFinalize(1, 22));
+    assert(r.finalized) throw 6141;
+    return m as int;
+}
+
+// T615: Three reporters; median of [900, 1100, 1000] (sorted: [900, 1000, 1100]) = 1000.
+@method_id(615)
+fun test_three_reports_median(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key1(), 900, 20));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key2(), 1100, 21));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key3(), 1000, 22));
+    val m = r.finalize(makeConfig(), makeFinalize(1, 23));
+    return m as int;
+}
+
+// T616: Two-report median truncates: (1001 + 1002) / 2 = 1001 (not 1002).
+@method_id(616)
+fun test_two_report_median_truncates(): int {
+    var set = slice5OracleNewReporterSet();
+    set.addReporter(key1());
+    set.addReporter(key2());
+    val cfg = slice5OracleConfig(set, 2, 60, 1000, STARTER_ADDR);
+    var state = slice5OracleInitialState(set);
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10, STARTER_ADDR);
+    r.addReport(set, cfg, makeReport(1, key1(), 1001, 20));
+    r.addReport(set, cfg, makeReport(1, key2(), 1002, 21));
+    return r.finalize(cfg, makeFinalize(1, 22)) as int;
+}
+
+// T617: Report at exactly maxDeviation boundary (200 units from anchor) is accepted.
+@method_id(617)
+fun test_boundary_deviation_accepted(): int {
+    var r = startRound(1, 10);
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key1(), 1000, 20));
+    r.addReport(makeReporterSet(), makeConfig(), makeReport(1, key2(), 1200, 21));
+    assert(r.reportCount == 2) throw 6170;
+    return r.reportCount as int;
+}
+
+// T618: Receive-handler guard for insufficient bond — simulated inline because
+// tol-tester cannot inject in.valueCoins. Emulator coverage is in the .cpp fixture.
+@method_id(618)
+fun test_insufficient_bond_guard_inline(): int {
+    val valueCoins: int = 999999999;  // below BOND_ORACLE_MIN_BOND
+    if (valueCoins < BOND_ORACLE_MIN_BOND) {
+        return BOND_ORACLE_THROW_INSUFFICIENT_BOND;
+    }
+    return 0;
+}
+
+// T619: Receive-handler guard for no active round — simulated inline because
+// tol-tester cannot drive real receive handlers. Emulator coverage is in the .cpp fixture.
+@method_id(619)
+fun test_no_active_round_guard_inline(): int {
+    var state = slice5OracleInitialState(makeReporterSet());
+    if (state.current == null) {
+        return BOND_ORACLE_THROW_NO_ACTIVE_ROUND;
+    }
+    return 0;
+}
+
+/**
+@testcase | 601 | | 4865
+@testcase | 602 | | 1
+@testcase | 603 | | 2
+@testcase | 604 | | 3
+@testcase | 605 | | 1050
+@testcase | 606 | | 3332
+@testcase | 607 | | 3330
+@testcase | 608 | | 3329
+@testcase | 609 | | 3333
+@testcase | 610 | | 3334
+@testcase | 611 | | 3331
+@testcase | 612 | | 3336
+@testcase | 613 | | 3338
+@testcase | 614 | | 1050
+@testcase | 615 | | 1000
+@testcase | 616 | | 1001
+@testcase | 617 | | 2
+@testcase | 618 | | 4866
+@testcase | 619 | | 4867
+ */

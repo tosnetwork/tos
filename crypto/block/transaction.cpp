@@ -28,6 +28,7 @@
 #include "td/utils/bits.h"
 #include "td/utils/uint128.h"
 #include "tos/tos-shard.h"
+#include "tol/extra-flags-constants.h"
 #include <cstring>
 #include "vm/vm.h"
 
@@ -49,6 +50,7 @@
 namespace {
 constexpr tos::WorkchainId kEvmWorkchainId = 1;
 constexpr tos::WorkchainId kUnoWorkchainId = 2;
+constexpr int kDeploySuccessActivationVersion = 14;
 
 bool is_evm_workchain(tos::WorkchainId wc) {
   return wc == kEvmWorkchainId;
@@ -65,6 +67,19 @@ bool is_uno_workchain(tos::WorkchainId wc) {
 /// branch — see `prepare_compute_phase` §Uno Workchain dispatch).
 bool has_custom_compute_phase(tos::WorkchainId wc) {
   return is_evm_workchain(wc) || is_uno_workchain(wc);
+}
+
+bool extra_flags_within_valid_mask(const td::RefInt256& extra_flags) {
+  return extra_flags.not_null() &&
+         td::cmp(extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK), extra_flags) == 0;
+}
+
+bool compute_phase_can_activate_account(bool success, bool accepted, int global_version) {
+  // Consensus compatibility: before ConfigParam 8 version 14, account
+  // activation after StateInit followed legacy TON behavior and only
+  // required gas acceptance. From v14 onward, deployment activation
+  // requires the compute phase to commit successfully.
+  return global_version >= kDeploySuccessActivationVersion ? success : accepted;
 }
 
 /**
@@ -924,7 +939,7 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
       if (cfg->global_version >= 12) {
         ihr_fee = td::zero_refint();
         in_msg_extra_flags = tlb::t_Tomis.as_integer(in_msg_info.extra_flags);
-        if (in_msg_extra_flags.is_null()) {
+        if (!extra_flags_within_valid_mask(in_msg_extra_flags)) {
           return false;
         }
         new_bounce_format = in_msg_extra_flags->get_bit(0);
@@ -1823,7 +1838,7 @@ bool Transaction::run_precompiled_contract(const ComputePhaseConfig& cfg, precom
   LOG(INFO) << "Running precompiled smart contract " << impl.get_name() << ": exit_code=" << result.exit_code
             << " accepted=" << result.accepted << " success=" << cp.success << " gas_used=" << gas_usage
             << " time=" << time_tvm.real << "s cpu_time=" << time_tvm.cpu;
-  if (cp.accepted & use_msg_state) {
+  if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
   }
@@ -1960,10 +1975,11 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // commitment. Propagate to Transaction::new_data so compute_state()
     // packs it into the account's StateInit data cell, making it part of
     // the ShardState cell tree and thus the block state_hash.
-    if (cp.accepted && cp.new_data.not_null()) {
+    if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && cp.new_data.not_null()) {
       new_data = cp.new_data;
-      // Activate the account only when this EVM transaction is accepted.
-      // Rejected compute must not install an active marker account.
+      // From v14, activate the account only when this EVM transaction
+      // succeeds. Older global versions keep the legacy accepted-gas
+      // activation semantics for consensus compatibility.
       if (acc_status == Account::acc_uninit) {
         acc_status = Account::acc_active;
         was_activated = true;
@@ -2026,15 +2042,11 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // — making state delta part of the TOS block state_hash. Identical
     // mechanism as the wc=1 branch above.
     //
-    // Account activation (acc_uninit → acc_active) is gated on cp.success
-    // AND cp.new_data being present. Reject paths in run_mine_uno_compute_phase
-    // / run_compute_phase set cp.success = false and leave cp.new_data null;
-    // unconditionally activating + installing the marker code on those rejects
-    // would mean a malformed first MineUno still mutates account state from
-    // uninit → active with empty data, which is observably non-no-op even
-    // though no consensus state changed. Mirror EVM's behaviour: state-delta
-    // and activation only happen when the custom executor accepts the tx.
-    if (cp.success && cp.new_data.not_null()) {
+    // Account activation follows the same version-gated rule as the EVM and
+    // TVM paths: pre-v14 keeps legacy accepted-gas activation semantics for
+    // consensus compatibility; v14+ requires the custom executor to commit
+    // successfully. All paths still require a concrete serialized state root.
+    if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && cp.new_data.not_null()) {
       new_data = cp.new_data;
       // Activate the executor account if currently uninit (first message).
       if (acc_status == Account::acc_uninit) {
@@ -2200,7 +2212,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   cp.gas_used = std::min<long long>(gas.gas_consumed(), gas.gas_limit);
   cp.accepted = (gas.gas_credit == 0);
   cp.success = (cp.accepted && vm.committed());
-  if (cp.accepted & use_msg_state) {
+  if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
   }
@@ -2945,7 +2957,8 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
     }
     if (cfg.global_version >= 12) {
       td::RefInt256 extra_flags = tlb::t_Tomis.as_integer(info.extra_flags);
-      if (extra_flags.is_null() || td::cmp(extra_flags & td::make_refint(3), extra_flags) != 0) {
+      // Synchronized constant — see doc/tos-message-policy.md §3.4 and §10.1.
+      if (!extra_flags_within_valid_mask(extra_flags)) {
         LOG(DEBUG) << "invalid extra_flags in a proposed outbound message";
         return check_skip_invalid(45);
       }
@@ -3629,7 +3642,7 @@ bool Transaction::prepare_bounce_phase(const ActionPhaseConfig& cfg) {
               && cb.append_cellslice_bool(info.dest)  // dest:MsgAddressInt
               && msg_balance.store(cb)                // value:CurrencyCollection
               && block::tlb::t_Tomis.store_integer_ref(
-                     cb, in_msg_extra_flags & td::make_refint(3))  // extra_flags:(VarUInteger 16)
+                     cb, in_msg_extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK))  // extra_flags:(VarUInteger 16)
               && block::tlb::t_Tomis.store_long(cb, bp.fwd_fees)   // fwd_fee:Tomis
               && cb.store_long_bool(info.created_lt, 64)           // created_lt:uint64
               && cb.store_long_bool(info.created_at, 32)           // created_at:uint32

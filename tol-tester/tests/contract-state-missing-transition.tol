@@ -1,0 +1,23 @@
+struct ContractStateMissingStorage {
+    total: uint32;
+}
+
+struct (0x00000042) ContractStateMissingPing {
+    queryId: uint64;
+}
+
+contract ContractStateMissing {
+    storage: ContractStateMissingStorage
+    states: Open
+    @initial state Open
+
+    receive(msg: ContractStateMissingPing) on Open {
+        msg.queryId;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr state-bearing receiver must end every successful control-flow path with `become` or `keep_state`
+@stderr doc/tos-language-syntax-policy.md §3.4
+ */

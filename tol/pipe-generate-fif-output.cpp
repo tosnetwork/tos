@@ -28,6 +28,7 @@
 #include "ast.h"
 #include "compiler-state.h"
 #include "compiler-settings.h"
+#include "pipeline.h"
 #include "type-system.h"
 
 namespace tol {
@@ -235,9 +236,39 @@ void pipeline_generate_fif_output(std::ostream& os) {
   os << std::endl;
   os << "PROGRAM{\n";
 
+  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) — debug manifest
+  // for `require(...)` auto-numbered error codes. Two `require(cond, ErrorClass.X)`
+  // sites in the same contract receive distinct codes, and this side-table maps each
+  // code back to its source location so external tooling (e.g. `tonscan`,
+  // bounce-replay scripts) can recover which exact site fired.
+  {
+    const auto& manifest = get_require_site_manifest();
+    if (!manifest.empty()) {
+      os << "  // require_site_table\n";
+      os << "  // see doc/tos-language-syntax-policy.md §3.7\n";
+      for (const RequireSiteEntry& e : manifest) {
+        os << "  //   contract=" << (e.contract_name.empty() ? "<file-scope>" : e.contract_name)
+           << " function=" << e.function_name
+           << " ErrorClass." << e.error_class_name
+           << " (tag=" << e.error_class_tag << ")";
+        if (e.explicit_code) {
+          os << " explicit_code=" << e.explicit_code_value;
+        } else {
+          os << " site=" << e.site_index << " code=0x" << std::hex << e.derived_code << std::dec;
+        }
+        os << " at " << e.source_location << "\n";
+      }
+    }
+  }
+
+  // Per-contract method_id collision detection (Slice 2 §3.5). Reports errors
+  // for both auto-derived `get fun` IDs and `@method_id`-pinned IDs, grouped
+  // by originating contract; cross-contract sharing is intentionally allowed.
+  // Legacy file-scope `get fun` collisions still fire under the existing wording.
+  check_contract_method_id_collisions();
+
   bool has_main_procedure = false;
   int n_inlined_in_place = 0;
-  std::vector<FunctionPtr> all_contract_getters;
   for (FunctionPtr fun_ref : G.all_functions) {
     if (fun_ref->is_asm_function() || !fun_ref->does_need_codegen()) {
       if (G_settings.verbosity >= 2 && fun_ref->is_code_function()) {
@@ -247,7 +278,10 @@ void pipeline_generate_fif_output(std::ostream& os) {
       continue;
     }
 
-    if (fun_ref->is_entrypoint() && (fun_ref->name == "main" || fun_ref->name == "onInternalMessage")) {
+    if (fun_ref->is_entrypoint() && (fun_ref->name == "main" || fun_ref->name == "onInternalMessage" || fun_ref->name == "onExternalMessage")) {
+      // Slice 2 Stage 6: a contract that declares only `receive_external` blocks
+      // synthesizes only `onExternalMessage`; that still counts as a valid entrypoint
+      // (wallet-v5-style external-only contracts).
       has_main_procedure = true;
     }
 
@@ -256,15 +290,6 @@ void pipeline_generate_fif_output(std::ostream& os) {
       os << fun_ref->tvm_method_id << " DECLMETHOD " << CodeBlob::fift_name(fun_ref) << "\n";
     } else {
       os << "DECLPROC " << CodeBlob::fift_name(fun_ref) << "\n";
-    }
-
-    if (fun_ref->is_contract_getter()) {
-      for (FunctionPtr other : all_contract_getters) {
-        if (other->tvm_method_id == fun_ref->tvm_method_id) {
-          err("GET methods hash collision: `{}` and `{}` produce the same method_id={}. Consider renaming one of these functions.", other, fun_ref, fun_ref->tvm_method_id).fire(fun_ref->ident_anchor);
-        }
-      }
-      all_contract_getters.push_back(fun_ref);
     }
   }
 

@@ -1,0 +1,152 @@
+import "@stdlib/common"
+
+fun onInternalMessage(in: InMessage) {
+    return;
+}
+
+fun payloadHash(s: slice): int {
+    return beginCell().storeSlice(s).endCell().hash();
+}
+
+fun makePayload(seed: int): slice {
+    var b = beginCell();
+    b.storeUint(seed, 8);
+    b.storeUint((seed * 257 + 13) & 0xFFFF, 16);
+    if (seed % 3 == 0) {
+        b.storeRef(beginCell().storeUint(seed * 17 + 3, 32).endCell());
+    }
+    if (seed % 5 == 0) {
+        b.storeRef(beginCell().storeUint(seed * 257 + 11, 64).endCell());
+    }
+    return b.endCell().beginParse();
+}
+
+fun expectedPayloadRefs(seed: int): int {
+    var refs = 0;
+    if (seed % 3 == 0) {
+        refs += 1;
+    }
+    if (seed % 5 == 0) {
+        refs += 1;
+    }
+    return refs;
+}
+
+fun assertEnvelopeRoundtrip(seed: int): int {
+    val opcode = 0x10020000 + seed;
+    val queryId = 0x100000000 + seed * 17 + 1;
+    val payload = makePayload(seed);
+    val body = beginCell()
+        .storeUint(opcode, 32)
+        .storeUint(queryId, 64)
+        .storeSlice(payload)
+        .endCell()
+        .beginParse();
+
+    val parsed = Envelope.fromSlice(body);
+    assert (parsed.opcode == opcode) throw 101;
+    assert (parsed.queryId == queryId) throw 102;
+    assert (parsed.payload.remainingBitsCount() == 24) throw 103;
+    assert (parsed.payload.remainingRefsCount() == expectedPayloadRefs(seed)) throw 104;
+    assert (payloadHash(parsed.payload) == payloadHash(makePayload(seed))) throw 105;
+    return 1;
+}
+
+fun errorClassForSeed(seed: int): ErrorClass {
+    return match (seed % 6) {
+        0 => ErrorClass.Ok,
+        1 => ErrorClass.Transient,
+        2 => ErrorClass.Permanent,
+        3 => ErrorClass.Authorization,
+        4 => ErrorClass.Protocol,
+        else => ErrorClass.BackPressure,
+    };
+}
+
+fun assertErrorRoundtrip(seed: int): int {
+    val queryId = 0x200000000 + seed * 19 + 3;
+    val originalOp = 0x10030000 + seed;
+    val cls = errorClassForSeed(seed);
+    val diagnostic: cell? = seed % 2 == 0
+        ? null
+        : beginCell().storeUint(seed * 65537 + 9, 64).endCell();
+    val err = Error {
+        queryId,
+        originalOp,
+        errorClass: cls,
+        errorCode: 1024 + seed,
+        diagnostic,
+    };
+
+    var body = beginCell()
+        .storeUint(OP_ERROR, 32)
+        .storeAny(err)
+        .endCell()
+        .beginParse();
+    assert (body.loadUint(32) == OP_ERROR) throw 111;
+
+    val parsed = Error.fromSlice(body);
+    assert (parsed.queryId == queryId) throw 112;
+    assert (parsed.originalOp == originalOp) throw 113;
+    assert (parsed.errorClass == cls) throw 114;
+    assert (parsed.errorCode == 1024 + seed) throw 115;
+    if (diagnostic == null) {
+        assert (parsed.diagnostic == null) throw 116;
+    } else {
+        assert (parsed.diagnostic != null) throw 117;
+        assert (parsed.diagnostic!.hash() == diagnostic!.hash()) throw 118;
+    }
+    return 1;
+}
+
+fun parseEnvelopeHeader(body: slice): (int, int, slice) {
+    var s = body;
+    val opcode = s.loadUint(32);
+    val queryId = s.loadUint(64);
+    return (opcode, queryId, s);
+}
+
+fun malformedEnvelopeRejected(body: slice): int {
+    try {
+        val (opcode, queryId, payload) = parseEnvelopeHeader(body);
+        return (opcode + queryId + payload.remainingBitsCount()) & 0;
+    } catch {
+        return 1;
+    }
+}
+
+@method_id(101)
+fun test_envelope_deterministic_fuzz(): int {
+    var seed = 0;
+    var ok = 0;
+    repeat (64) {
+        ok += assertEnvelopeRoundtrip(seed);
+        seed += 1;
+    }
+    return ok;
+}
+
+@method_id(102)
+fun test_error_deterministic_fuzz(): int {
+    var seed = 0;
+    var ok = 0;
+    repeat (48) {
+        ok += assertErrorRoundtrip(seed);
+        seed += 1;
+    }
+    return ok;
+}
+
+@method_id(103)
+fun test_malformed_envelope_rejection(): int {
+    return malformedEnvelopeRejected(createEmptySlice())
+        + malformedEnvelopeRejected(beginCell().storeUint(0, 31).endCell().beginParse())
+        + malformedEnvelopeRejected(beginCell().storeUint(0x12345678, 32).endCell().beginParse())
+        + malformedEnvelopeRejected(beginCell().storeUint(0, 95).endCell().beginParse());
+}
+
+/**
+@testcase | 101 | | 64
+@testcase | 102 | | 48
+@testcase | 103 | | 4
+ */

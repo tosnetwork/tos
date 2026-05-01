@@ -1,0 +1,100 @@
+// Slice 5 governance example backed by @stdlib/governance.
+
+import "@stdlib/governance"
+
+const SLICE5_GOVERNANCE_EXAMPLE_PROPOSER_KEY: uint256 = 1
+const SLICE5_GOVERNANCE_EXAMPLE_THROW_UNAUTHORIZED_VOTER: int = 0x3501
+
+struct Slice5GovernanceExampleVoters {
+    voter1: address
+    voter2: address
+    voter3: address
+}
+
+struct Slice5GovernanceStorage {
+    proposerAddress: address
+    voters: Cell<Slice5GovernanceExampleVoters>
+    policy: Cell<Slice5GovernancePolicy>
+    proposal: Cell<Slice5GovernanceProposal>?
+}
+
+fun slice5GovernanceExampleResolveVoterKey(
+    sender: address,
+    voter1: address,
+    voter2: address,
+    voter3: address
+): uint256 {
+    if (sender == voter1) { return 1; }
+    if (sender == voter2) { return 2; }
+    if (sender == voter3) { return 3; }
+    throw SLICE5_GOVERNANCE_EXAMPLE_THROW_UNAUTHORIZED_VOTER;
+}
+
+contract Slice5GovernanceExample {
+    storage: Slice5GovernanceStorage
+    @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: Slice5GovernancePropose) {
+        if (in.senderAddress != storage.proposerAddress) {
+            throw SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER;
+        }
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        val action = lazy Slice5GovernanceAction.fromCell(msg.action);
+        val proposal = slice5GovernanceCreateProposal(
+            policy, msg.queryId, SLICE5_GOVERNANCE_EXAMPLE_PROPOSER_KEY, action, 0, msg.validUntil
+        );
+        save(Slice5GovernanceStorage {
+            proposerAddress: storage.proposerAddress,
+            voters: storage.voters,
+            policy: storage.policy,
+            proposal: proposal.toCell(),
+        });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5GovernanceVote) {
+        val voters = lazy Slice5GovernanceExampleVoters.fromCell(storage.voters);
+        val voterKey = slice5GovernanceExampleResolveVoterKey(
+            in.senderAddress, voters.voter1, voters.voter2, voters.voter3
+        );
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
+        proposal.vote(voterKey, msg.support, blockchain.now() as uint32);
+        save(Slice5GovernanceStorage {
+            proposerAddress: storage.proposerAddress,
+            voters: storage.voters,
+            policy: storage.policy,
+            proposal: proposal.toCell(),
+        });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5GovernanceExecute) {
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
+        proposal.execute(policy, blockchain.now() as uint32);
+        save(Slice5GovernanceStorage {
+            proposerAddress: storage.proposerAddress,
+            voters: storage.voters,
+            policy: storage.policy,
+            proposal: proposal.toCell(),
+        });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5GovernanceCancel) {
+        if (in.senderAddress != storage.proposerAddress) {
+            throw SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER;
+        }
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
+        proposal.cancel(policy, SLICE5_GOVERNANCE_EXAMPLE_PROPOSER_KEY, blockchain.now() as uint32);
+        save(Slice5GovernanceStorage {
+            proposerAddress: storage.proposerAddress,
+            voters: storage.voters,
+            policy: storage.policy,
+            proposal: proposal.toCell(),
+        });
+    }
+}

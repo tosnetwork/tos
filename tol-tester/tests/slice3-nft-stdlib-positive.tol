@@ -1,0 +1,251 @@
+import "@stdlib/slice3-common"
+import "@stdlib/nft"
+
+fun ownerAddr(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun newOwnerAddr(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun responseAddr(): address {
+    return address("0:3333333333333333333333333333333333333333333333333333333333333333");
+}
+
+fun collectionAddr(): address {
+    return address("0:4444444444444444444444444444444444444444444444444444444444444444");
+}
+
+fun itemCode(): cell {
+    return beginCell().storeUint(0xc0ffee, 24).endCell();
+}
+
+fun individualContent(): cell {
+    return beginCell().storeUint(0x01, 8).storeUint(0xabcdef, 24).endCell();
+}
+
+fun emptyForwardPayload(): RemainingBitsAndRefs {
+    return beginCell().storeUint(0, 1).endCell().beginParse();
+}
+
+fun refForwardPayload(): RemainingBitsAndRefs {
+    return beginCell().storeUint(1, 1).storeRef(individualContent()).endCell().beginParse();
+}
+
+fun manualItemData(itemIndex: uint64): cell {
+    return beginCell()
+        .storeUint(itemIndex, 64)
+        .storeAddress(collectionAddr())
+        .endCell();
+}
+
+fun manualStateInit(itemIndex: uint64): cell {
+    return beginCell()
+        .storeUint(0, 2)
+        .storeDict(itemCode())
+        .storeDict(manualItemData(itemIndex))
+        .storeUint(0, 1)
+        .endCell();
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(101)
+fun test_manifest_header(): int {
+    val manifest = nftPatternManifestHeader();
+    assert(manifest.manifestVersion == SLICE3_PATTERN_MANIFEST_VERSION) throw 101;
+    assert(manifest.patternId == SLICE3_PATTERN_NFT) throw 102;
+    assert(manifest.publicErrorBase == NFT_PATTERN_ERROR_BASE) throw 103;
+    return 1;
+}
+
+@method_id(102)
+fun test_item_state_init_and_linkage(): int {
+    val stateInit = nftItemStateInit(5, collectionAddr(), itemCode());
+    assert(stateInit.hash() == manualStateInit(5).hash()) throw 111;
+    assert(nftItemAddress(BASECHAIN, stateInit) == nftCollectionItemAddress(BASECHAIN, 5, collectionAddr(), itemCode())) throw 112;
+    return 2;
+}
+
+@method_id(103)
+fun test_mint_and_deploy_wire_shape(): int {
+    val mint = nftBuildMintBody(77, 5, 90000000, newOwnerAddr() as any_address, individualContent());
+    val expectedMint = beginCell()
+        .storeUint(NFT_COLLECTION_OP_MINT, 32)
+        .storeUint(77, 64)
+        .storeUint(5, 64)
+        .storeCoins(90000000)
+        .storeRef(beginCell().storeAddress(newOwnerAddr()).storeRef(individualContent()).endCell())
+        .endCell();
+    assert(mint.hash() == expectedMint.hash()) throw 121;
+
+    val stateInit = nftItemStateInit(5, collectionAddr(), itemCode());
+    val itemAddress = nftItemAddress(BASECHAIN, stateInit);
+    val itemContent = nftMintItemContent(newOwnerAddr() as any_address, individualContent());
+    val deploy = nftBuildDeployItemMessage(itemAddress, 90000000, stateInit, itemContent);
+    val expectedDeploy = beginCell()
+        .storeUint(0x18, 6)
+        .storeAddress(itemAddress)
+        .storeCoins(90000000)
+        .storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .storeRef(stateInit)
+        .storeRef(itemContent)
+        .endCell();
+    assert(deploy.hash() == expectedDeploy.hash()) throw 122;
+    return 3;
+}
+
+@method_id(104)
+fun test_transfer_wire_shape(): int {
+    val stateInit = nftItemStateInit(6, collectionAddr(), itemCode());
+    val itemAddress = nftItemAddress(BASECHAIN, stateInit);
+    val body = nftBuildTransferBody(
+        88,
+        newOwnerAddr() as any_address,
+        responseAddr() as any_address,
+        null,
+        123,
+        refForwardPayload()
+    );
+    val expectedBody = beginCell()
+        .storeUint(NFT_OP_TRANSFER, 32)
+        .storeUint(88, 64)
+        .storeAddress(newOwnerAddr())
+        .storeAddress(responseAddr())
+        .storeMaybeRef(null)
+        .storeCoins(123)
+        .storeSlice(refForwardPayload())
+        .endCell();
+    assert(body.hash() == expectedBody.hash()) throw 131;
+
+    val msg = nftBuildTransferMessage(
+        itemAddress as any_address,
+        10000000,
+        88,
+        newOwnerAddr() as any_address,
+        responseAddr() as any_address,
+        null,
+        123,
+        refForwardPayload()
+    );
+    val expectedMsg = beginCell()
+        .storeUint(0x18, 6)
+        .storeAddress(itemAddress)
+        .storeCoins(10000000)
+        .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeRef(expectedBody)
+        .endCell();
+    assert(msg.hash() == expectedMsg.hash()) throw 132;
+    return 4;
+}
+
+@method_id(105)
+fun test_reply_wire_shapes(): int {
+    val assigned = nftBuildOwnershipAssignedMessage(
+        newOwnerAddr() as any_address,
+        7,
+        89,
+        ownerAddr() as any_address,
+        emptyForwardPayload()
+    );
+    val expectedAssignedBody = beginCell()
+        .storeUint(NFT_OP_OWNERSHIP_ASSIGNED, 32)
+        .storeUint(89, 64)
+        .storeAddress(ownerAddr())
+        .storeSlice(emptyForwardPayload())
+        .endCell();
+    val expectedAssigned = beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(newOwnerAddr())
+        .storeCoins(7)
+        .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeRef(expectedAssignedBody)
+        .endCell();
+    assert(assigned.hash() == expectedAssigned.hash()) throw 141;
+
+    val excesses = nftBuildExcessesMessage(responseAddr() as any_address, 5, 90);
+    val expectedExcesses = beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(responseAddr())
+        .storeCoins(5)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(NFT_OP_EXCESSES, 32)
+        .storeUint(90, 64)
+        .endCell();
+    assert(excesses.hash() == expectedExcesses.hash()) throw 142;
+
+    val staticData = nftBuildStaticDataReportMessage(responseAddr() as any_address, 91, 5, collectionAddr() as any_address);
+    val expectedStaticData = beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(responseAddr())
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(NFT_OP_REPORT_STATIC_DATA, 32)
+        .storeUint(91, 64)
+        .storeUint(5, 256)
+        .storeAddress(collectionAddr())
+        .endCell();
+    assert(staticData.hash() == expectedStaticData.hash()) throw 143;
+
+    val royalty = nftBuildRoyaltyParamsReportMessage(
+        responseAddr() as any_address,
+        92,
+        NftRoyaltyParams {
+            royaltyFactor: 1,
+            royaltyBase: 10,
+            royaltyAddress: ownerAddr() as any_address,
+        }
+    );
+    val expectedRoyalty = beginCell()
+        .storeUint(0x10, 6)
+        .storeAddress(responseAddr())
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(NFT_OP_REPORT_ROYALTY_PARAMS, 32)
+        .storeUint(92, 64)
+        .storeUint(1, 16)
+        .storeUint(10, 16)
+        .storeAddress(ownerAddr())
+        .endCell();
+    assert(royalty.hash() == expectedRoyalty.hash()) throw 144;
+    return 5;
+}
+
+@method_id(106)
+fun test_authorization_and_error_mapping(): int {
+    try {
+        nftRequireOwner(responseAddr(), ownerAddr() as any_address);
+    } catch (code) {
+        assert(code == NFT_ITEM_FUNC_THROW_UNAUTHORIZED) throw 151;
+    }
+
+    val unauthorized = nftItemErrorForFuncThrow(NFT_ITEM_FUNC_THROW_UNAUTHORIZED, NFT_OP_TRANSFER, 93);
+    assert(unauthorized.errorClass == ErrorClass.Authorization) throw 152;
+    assert(unauthorized.errorCode == NFT_STDLIB_ERROR_UNAUTHORIZED) throw 153;
+
+    val unknown = nftCollectionErrorForFuncThrow(NFT_COLLECTION_FUNC_THROW_UNKNOWN_OPCODE, 0xdeadbeef, 94);
+    assert(unknown.errorClass == ErrorClass.Protocol) throw 154;
+    assert(unknown.errorCode == NFT_STDLIB_ERROR_UNKNOWN_OPCODE) throw 155;
+    return 6;
+}
+
+@method_id(107)
+fun test_bounce_flag_helper(): int {
+    assert(!nftIsBouncedInternalFlags(0)) throw 161;
+    assert(nftIsBouncedInternalFlags(1)) throw 162;
+    assert(nftIsBouncedInternalFlags(3)) throw 163;
+    return 7;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+@testcase | 106 | | 6
+@testcase | 107 | | 7
+ */

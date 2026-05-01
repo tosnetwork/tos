@@ -1,0 +1,35 @@
+import "@stdlib/common"
+
+struct ContractDeployGetAddressStorage {
+    ownAddress: address;
+}
+
+struct (0x00000085) ContractDeployGetAddressDeploy {
+    queryId: uint64;
+}
+
+struct (0x00000086) ContractDeployGetAddressPing {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractDeployGetAddressPositive {
+    storage: ContractDeployGetAddressStorage
+
+    @deploy
+    receive(msg: ContractDeployGetAddressDeploy) {
+        save(ContractDeployGetAddressStorage { ownAddress: contract.getAddress() });
+    }
+
+    receive(msg: ContractDeployGetAddressPing) {
+        msg.queryId;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

@@ -1,0 +1,38 @@
+struct ContractOnPositiveStorage {
+    open: uint32;
+    @on(Settling) payoutsRemaining: uint32;
+}
+
+struct (0x00000051) ContractOnPositiveOpen {
+    queryId: uint64;
+}
+
+struct (0x00000052) ContractOnPositiveSettle {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractOnPositive {
+    storage: ContractOnPositiveStorage
+    states: Open, Settling
+    @initial state Open
+
+    receive(msg: ContractOnPositiveOpen) on Open {
+        save(ContractOnPositiveStorage { open: 1, payoutsRemaining: 3 });
+        become Settling;
+    }
+
+    receive(msg: ContractOnPositiveSettle) on Settling {
+        val remaining = storage.payoutsRemaining;
+        save(ContractOnPositiveStorage { open: 1, payoutsRemaining: remaining - 1 });
+        keep_state;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

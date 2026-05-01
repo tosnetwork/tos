@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "schema": "slice-5-abi-freeze-record",
+  "status": "repo_side_release_candidate_complete_external_adoption_complete",
+  "date": "2026-05-01",
+  "hash_algorithm": "sha256(json.dumps(obj, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False))",
+  "schema_hash": {
+    "path": "doc/slice-5-abi-manifest-schema.json",
+    "sha256": "098b64d178d69255467260cdad14650ef8fb117e8101ab4004341edcd3db31e3"
+  },
+  "manifest_hashes": [
+    {
+      "pattern": "auction",
+      "path": "doc/slice5-abi-manifests/auction.json",
+      "sha256": "3e20838321529230ca973922567c2d85219e9d1cf943313e1f12b690a47c2a98"
+    },
+    {
+      "pattern": "governance",
+      "path": "doc/slice5-abi-manifests/governance.json",
+      "sha256": "2fef7e888082f714ee1e8b2be3a701c6c05061988b8b47a2db802ef221209b2f"
+    },
+    {
+      "pattern": "interop_smoke",
+      "path": "doc/slice5-abi-manifests/interop_smoke.json",
+      "sha256": "c9b89d7252ccd03ef9eb9afe3ba67206e4a51210e95042edc20a67048548b195"
+    },
+    {
+      "pattern": "oracle",
+      "path": "doc/slice5-abi-manifests/oracle.json",
+      "sha256": "34a2b7caa80b2ec7f4c11e80496c87d091114aab23268635f02c050545d81341"
+    },
+    {
+      "pattern": "payment-channel",
+      "path": "doc/slice5-abi-manifests/payment_channel.json",
+      "sha256": "0104c527b121951038d6757ad498baabd15d286094ec6a4971db7d7663205f21"
+    }
+  ],
+  "external_adoption_gate": {
+    "status": "complete",
+    "required": "3 external production contracts using second-wave stdlib packages",
+    "recorded_contracts": [
+      {
+        "name": "DexPriceOracle",
+        "pattern": "oracle",
+        "status": "production_intent_candidate_1_of_3",
+        "source": "examples/slice5/dex-price-oracle/src/dex-price-oracle.tol",
+        "tests": "examples/slice5/dex-price-oracle/tests/dex-price-oracle-positive.tol",
+        "abi_manifest": "doc/slice5-abi-manifests/dex_price_oracle.json",
+        "abi_manifest_sha256": "b1a2020920b038ca0d61df153798cf6f2ae99044ada20b07ea2c9c9c46c4d9ad",
+        "trial_report": "doc/slice-5-external-author-trials.md",
+        "remaining_external_contracts": 0
+      },
+      {
+        "name": "TosStreamChannel",
+        "pattern": "payment-channel",
+        "status": "production_intent_candidate_2_of_3",
+        "source": "examples/slice5/tos-stream-channel/src/tos-stream-channel.tol",
+        "tests": "examples/slice5/tos-stream-channel/tests/tos-stream-channel-positive.tol; examples/slice5/tos-stream-channel/tests/tos-stream-channel-import-positive.tol",
+        "abi_manifest": "doc/slice5-abi-manifests/tos_stream_channel.json",
+        "abi_manifest_sha256": "66300baaaccddb669d05acbfb0e96612207a268ae5412745825647cb19e9de26",
+        "trial_report": "doc/slice-5-external-author-trials.md",
+        "remaining_external_contracts": 0
+      },
+      {
+        "name": "TosCouncilFund",
+        "pattern": "governance",
+        "status": "production_intent_candidate_3_of_3",
+        "source": "examples/slice5/tos-council-fund/src/tos-council-fund.tol",
+        "tests": "examples/slice5/tos-council-fund/tests/tos-council-fund-positive.tol; examples/slice5/tos-council-fund/tests/tos-council-fund-import-positive.tol",
+        "abi_manifest": "doc/slice5-abi-manifests/tos_council_fund.json",
+        "abi_manifest_sha256": "231cc7d50534fd078596c799a150bd225e8b28b751e6035fa5e02a6cee27a3f1",
+        "trial_report": "doc/slice-5-external-author-trials.md",
+        "remaining_external_contracts": 0
+      },
+      {
+        "name": "TosEscrowedAuction",
+        "pattern": "auction",
+        "status": "production_intent_additional_candidate",
+        "source": "examples/slice5/tos-escrowed-auction/src/tos-escrowed-auction.tol",
+        "tests": "examples/slice5/tos-escrowed-auction/tests/tos-escrowed-auction-positive.tol; examples/slice5/tos-escrowed-auction/tests/tos-escrowed-auction-import-positive.tol",
+        "abi_manifest": "doc/slice5-abi-manifests/tos_escrowed_auction.json",
+        "abi_manifest_sha256": "9fb3e86caa56122848bcf5d95ee85a88f666c6683fecec7dad989010cb687eba",
+        "trial_report": "examples/slice5/tos-escrowed-auction/TRIAL-REPORT.md",
+        "remaining_external_contracts": 0
+      },
+      {
+        "name": "TosReportBondOracle",
+        "pattern": "oracle",
+        "status": "production_intent_additional_candidate",
+        "source": "examples/slice5/tos-report-bond-oracle/src/tos-report-bond-oracle.tol",
+        "tests": "examples/slice5/tos-report-bond-oracle/tests/tos-report-bond-oracle-positive.tol; examples/slice5/tos-report-bond-oracle/tests/tos-report-bond-oracle-import-positive.tol; emulator/test/tos-report-bond-oracle-fixture.cpp",
+        "abi_manifest": "doc/slice5-abi-manifests/tos_report_bond_oracle.json",
+        "abi_manifest_sha256": "20926dca3e68ac4a9d5f569c276fae220c935ae00015f53662934060139b0a10",
+        "trial_report": "examples/slice5/tos-report-bond-oracle/TRIAL-REPORT.md",
+        "remaining_external_contracts": 0
+      }
+    ]
+  }
+}

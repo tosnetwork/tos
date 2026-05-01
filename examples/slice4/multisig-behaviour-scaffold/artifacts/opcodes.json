@@ -1,0 +1,5 @@
+{
+  "opcodes": [
+    {"name": "MULTISIG_SUBMIT", "hex": "0x4d534947"}
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "schema": "slice-3-generated-replay-trace",
+  "pattern": "jetton",
+  "contract": "JettonAuthorTrial",
+  "cases": [
+    {
+      "name": "compile-and-positive-test",
+      "kind": "tol-tester",
+      "source": "tests/jetton-positive.tol",
+      "expected_exit_code": 0
+    }
+  ]
+}

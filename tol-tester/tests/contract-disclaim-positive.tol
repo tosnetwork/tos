@@ -1,0 +1,68 @@
+// Per doc/tos-language-syntax-policy.md §3.2.1 (Slice 2 Stage 7) — per-receiver
+// `@disclaim_query_id` scope. Receiver A is a fire-and-forget telemetry sink and
+// disclaims its inbound queryId; receiver B is a query/reply pair and propagates
+// the inbound queryId into its reply body. Both must compile cleanly with no
+// `pipe-check-query-id-propagation` warning.
+import "@stdlib/common"
+
+struct ContractDisclaimPositiveStorage {}
+
+struct (0xA1A10001) ContractDisclaimPositiveTelemetry {
+    queryId: uint64;
+    eventCode: uint32;
+}
+
+struct (0xA1A10002) ContractDisclaimPositivePing {
+    queryId: uint64;
+    nonce: uint32;
+}
+
+struct (0xA1A10003) ContractDisclaimPositivePong {
+    queryId: uint64;
+    nonce: uint32;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractDisclaimPositive {
+    storage: ContractDisclaimPositiveStorage
+
+    @disclaim_query_id
+    receive(msg: ContractDisclaimPositiveTelemetry) {
+        // Receiver A: fire-and-forget. Per §3.2.1 the @disclaim_query_id annotation
+        // lowers to a `disclaim_query_id()` call at the top of THIS receiver's scope,
+        // silencing the warning for this receiver only. The reply below uses
+        // queryId=0 deliberately; without the disclaimer the check pass would warn.
+        val reply = createMessage({
+            bounce: false,
+            dest: in.senderAddress,
+            value: 0,
+            body: ContractDisclaimPositivePong {
+                queryId: 0,
+                nonce: msg.eventCode,
+            },
+        });
+        reply.send(SEND_MODE_REGULAR);
+    }
+
+    receive(msg: ContractDisclaimPositivePing) {
+        // Receiver B: classic query/reply pair propagating the inbound queryId.
+        val reply = createMessage({
+            bounce: false,
+            dest: in.senderAddress,
+            value: 0,
+            body: ContractDisclaimPositivePong {
+                queryId: msg.queryId,
+                nonce: msg.nonce,
+            },
+        });
+        reply.send(SEND_MODE_REGULAR);
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

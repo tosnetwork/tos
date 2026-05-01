@@ -124,7 +124,8 @@ struct FunctionData final : Symbol {
     flagReallyUsed = 2048,      // calculated via dfs from used functions; declared but unused functions are not codegenerated
     flagCompileTimeVal = 4096,  // calculated only at compile-time for constant arguments: `tos("0.05")`, `"str".crc32()`, and others
     flagAllowAnyWidthT = 16384, // for built-in generic functions that <T> is not restricted to be 1-slot type
-    flagManualOnBounce = 32768, // for onInternalMessage, don't insert "if (isBounced) return"
+    flagManualOnBounce = 32768, // for onInternalMessage, don't insert generated bounced handling
+    flagIgnoreOnBounce = 65536, // for onInternalMessage, generate "if (isBounced) return"
   };
 
   int tvm_method_id = EMPTY_TVM_METHOD_ID;
@@ -217,6 +218,7 @@ struct FunctionData final : Symbol {
   bool is_compile_time_special_gen() const { return std::holds_alternative<FunctionBodyBuiltinGenerateOps*>(body); }
   bool is_variadic_width_T_allowed() const { return flags & flagAllowAnyWidthT; }
   bool is_manual_on_bounce() const { return flags & flagManualOnBounce; }
+  bool is_ignore_on_bounce() const { return flags & flagIgnoreOnBounce; }
 
   bool does_need_codegen() const;
 
@@ -306,20 +308,27 @@ struct StructFieldData final : Symbol {
   AnyTypeV type_node;
   TypePtr declared_type = nullptr;      // = resolved type_node
   AnyExprV default_value;               // nullptr if no default
+  // Slice 2 Stage 3 (doc/tos-language-syntax-policy.md §3.4): `@on(State1, State2)` field scoping.
+  // empty = field readable in every state. Mirror of Vertex<ast_struct_field>::on_states; copied
+  // out into the symbol so passes that only have a StructFieldPtr can still see the annotation.
+  // Diagnostic anchor: callers should fire on `ident_anchor` (the field's identifier vertex).
+  std::vector<std::string> on_states;
 
   bool has_default_value() const { return default_value != nullptr; }
+  bool has_on_states_annotation() const { return !on_states.empty(); }
 
   StructFieldData* mutate() const { return const_cast<StructFieldData*>(this); }
   void assign_resolved_type(TypePtr declared_type);
   void assign_default_value(AnyExprV default_value);
 
-  StructFieldData(std::string name, AnyV ident_anchor, int field_idx, bool is_private, bool is_readonly, AnyTypeV type_node, AnyExprV default_value)
+  StructFieldData(std::string name, AnyV ident_anchor, int field_idx, bool is_private, bool is_readonly, AnyTypeV type_node, AnyExprV default_value, std::vector<std::string> on_states = {})
     : Symbol(std::move(name), ident_anchor)
     , field_idx(field_idx)
     , is_private(is_private)
     , is_readonly(is_readonly)
     , type_node(type_node)
-    , default_value(default_value) {
+    , default_value(default_value)
+    , on_states(std::move(on_states)) {
   }
 };
 

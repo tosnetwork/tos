@@ -1,0 +1,11 @@
+{
+  "method_ids": [
+    {"name": "getHighestBid",    "method_id": 7681, "hex": "0x1e01"},
+    {"name": "getHighestBidder", "method_id": 7682, "hex": "0x1e02"},
+    {"name": "isClosed",        "method_id": 7683, "hex": "0x1e03"},
+    {"name": "isSettled",       "method_id": 7684, "hex": "0x1e04"},
+    {"name": "getSeller",       "method_id": 7685, "hex": "0x1e05"},
+    {"name": "getPendingPayout","method_id": 7686, "hex": "0x1e06"},
+    {"name": "getItemRef",      "method_id": 7687, "hex": "0x1e07"}
+  ]
+}

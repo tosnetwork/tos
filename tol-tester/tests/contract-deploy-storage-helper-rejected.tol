@@ -1,0 +1,27 @@
+struct ContractDeployHelperStorage {
+    owner: uint32
+}
+
+struct (0x00000098) ContractDeployHelperDeploy {
+    queryId: uint64
+}
+
+fun readDeployStorage(s: ContractDeployHelperStorage): uint32 {
+    return s.owner;
+}
+
+contract ContractDeployHelper {
+    storage: ContractDeployHelperStorage
+    @unknown_throw(0xffff);
+
+    @deploy
+    receive(msg: ContractDeployHelperDeploy) {
+        readDeployStorage(storage);
+        save(ContractDeployHelperStorage { owner: 1 });
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr undefined symbol `storage`
+ */

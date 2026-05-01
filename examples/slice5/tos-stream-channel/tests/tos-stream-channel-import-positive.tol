@@ -1,0 +1,24 @@
+import "@stdlib/payment-channel"
+import "../src/tos-stream-channel"
+
+fun main(): int {
+    return 0;
+}
+
+// Confirm constants and struct shapes are accessible when the contract source is imported.
+@method_id(321)
+fun test_imported_stdlib_opcodes(): int {
+    return SLICE5_PAYMENT_OP_COOPERATIVE_CLOSE as int;
+}
+
+// Confirm DexStreamChannelStorage struct is constructable from the import.
+@method_id(322)
+fun test_imported_channel_config_shape(): int {
+    val config = slice5PaymentConfig(0x01, 0x02, 0x03, 500, 60);
+    return config.challengeWindow as int;
+}
+
+/**
+@testcase | 321 | | 1346586625
+@testcase | 322 | | 60
+ */

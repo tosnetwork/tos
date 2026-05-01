@@ -32,6 +32,7 @@
 #include "td/utils/format.h"
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
+#include "tol/extra-flags-constants.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
 #include "vm/cells/MerkleUpdate.h"
@@ -62,6 +63,9 @@ namespace tos {
 namespace validator {
 using td::Ref;
 using namespace std::literals::string_literals;
+
+static bool extra_flags_within_valid_mask(const block::gen::CommonMsgInfo::Record_int_msg_info& info,
+                                          int global_version);
 
 /**
  * Converts the error context to a string representation to show it in case of validation error.
@@ -1788,7 +1792,7 @@ void ValidateQuery::got_neighbor_out_queue(int i, td::Result<Ref<MessageQueue>> 
     descr.set_queue_root(qinfo.out_queue->prefetch_ref(0));
     // The two full validate_ref calls below may need to be replaced
     // with incremental checks once output queues grow large; this
-    // is tracked as V-007 in docs/TODOS.md.
+    // is tracked as V-007 in doc/TODOS.md.
     if (debug_checks_) {
       REJECT_UNLESS_VOID(block::gen::t_OutMsgQueueInfo.validate_ref(1000000, outq_descr->root_cell()));
       REJECT_UNLESS_VOID(block::tlb::t_OutMsgQueueInfo.validate_ref(1000000, outq_descr->root_cell()));
@@ -1811,7 +1815,7 @@ void ValidateQuery::got_neighbor_out_queue(int i, td::Result<Ref<MessageQueue>> 
       // require masterchain blocks referred to in ProcessedUpto.
       // Skipping this loop when our output queue has no messages
       // for the neighbor shard is tracked as V-008 in
-      // docs/TODOS.md.
+      // doc/TODOS.md.
       for (const auto& entry : descr.processed_upto->list) {
         Ref<MasterchainStateQ> state;
         if (!request_aux_mc_state(entry.mc_seqno, state)) {
@@ -3842,6 +3846,10 @@ bool ValidateQuery::check_imported_message(Ref<vm::Cell> msg_env) {
     return reject_query("cannot unpack MsgEnvelope of an imported internal message with hash "s +
                         (env.msg.not_null() ? env.msg->get_hash().to_hex() : "(unknown)"));
   }
+  if (!extra_flags_within_valid_mask(info, global_version_)) {
+    return reject_query("imported internal message with hash "s + env.msg->get_hash().to_hex() +
+                        " has invalid reserved extra_flags");
+  }
   if (!tos::shard_contains(shard_, next_prefix)) {
     return reject_query("imported message with hash "s + env.msg->get_hash().to_hex() + " has next hop address " +
                         next_prefix.to_str() + "... not in this shard");
@@ -4067,6 +4075,10 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
     if (!tlb::unpack_cell_inexact(msg, info)) {
       return reject_query("InMsg with key "s + key.to_hex(256) +
                           " is not a msg_import_ext$000, but it does not refer to an inbound internal message");
+    }
+    if (!extra_flags_within_valid_mask(info, global_version_)) {
+      return reject_query("inbound internal message with hash "s + key.to_hex(256) +
+                          " has invalid reserved extra_flags");
     }
     // extract source, current, next hop and destination address prefixes
     dest_prefix = block::tlb::t_MsgAddressInt.get_prefix(info.dest);
@@ -5600,6 +5612,16 @@ static td::RefInt256 get_ihr_fee(const block::gen::CommonMsgInfo::Record_int_msg
   return global_version >= 12 ? td::zero_refint() : block::tlb::t_Tomis.as_integer(std::move(info.extra_flags));
 }
 
+static bool extra_flags_within_valid_mask(const block::gen::CommonMsgInfo::Record_int_msg_info& info,
+                                          int global_version) {
+  if (global_version < 12) {
+    return true;
+  }
+  auto extra_flags = block::tlb::t_Tomis.as_integer(info.extra_flags);
+  return extra_flags.not_null() &&
+         td::cmp(extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK), extra_flags) == 0;
+}
+
 /**
  * Checks the validity of a single transaction for a given account.
  * Performs transaction execution.
@@ -5940,7 +5962,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                       << " has at least one outbound message");
       }
       // Storage transaction re-execution is unimplemented and is
-      // tracked as V-001 in docs/TODOS.md.
+      // tracked as V-001 in doc/TODOS.md.
       return reject_query(PSTRING() << "unable to verify storage transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -5965,7 +5987,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                       << " must have exactly one outbound message");
       }
       // Merge prepare re-execution is unimplemented and is tracked
-      // as V-002 in docs/TODOS.md.
+      // as V-002 in doc/TODOS.md.
       return reject_query(PSTRING() << "unable to verify merge prepare transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -5978,7 +6000,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
       }
       need_credit_phase = true;
       // Merge install re-execution is unimplemented and is tracked
-      // as V-003 in docs/TODOS.md.
+      // as V-003 in doc/TODOS.md.
       return reject_query(PSTRING() << "unable to verify merge install transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -5994,7 +6016,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                       << " must have exactly one outbound message");
       }
       // Split prepare re-execution is unimplemented and is tracked
-      // as V-004 in docs/TODOS.md.
+      // as V-004 in doc/TODOS.md.
       return reject_query(PSTRING() << "unable to verify split prepare transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -6006,7 +6028,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                       << " has no inbound message");
       }
       // Split install re-execution is unimplemented and is tracked
-      // as V-005 in docs/TODOS.md.
+      // as V-005 in doc/TODOS.md.
       return reject_query(PSTRING() << "unable to verify split install transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -6689,7 +6711,7 @@ bool ValidateQuery::check_shard_libraries() {
   std::sort(lib_publishers2_.begin(), lib_publishers2_.end());
   if (lib_publishers_ != lib_publishers2_) {
     // A more diagnostic error message via element-by-element diff
-    // is tracked as V-006 in docs/TODOS.md.
+    // is tracked as V-006 in doc/TODOS.md.
     return reject_query("the set of public libraries and their publishing accounts has not been updated correctly");
   }
   return true;

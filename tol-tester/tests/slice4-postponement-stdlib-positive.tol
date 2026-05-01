@@ -1,0 +1,209 @@
+import "@stdlib/postponement"
+
+fun sender1(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun smallBody(v: int): cell {
+    return beginCell().storeUint(v, 16).endCell();
+}
+
+fun deepBody(): cell {
+    return beginCell()
+        .storeRef(beginCell()
+            .storeRef(beginCell().storeUint(7, 8).endCell())
+            .endCell())
+        .endCell();
+}
+
+fun testBudget(
+    maxItems: uint16 = 4,
+    maxBodyBits: uint32 = 256,
+    maxBodyRefs: uint16 = 4,
+    maxTotalBodyBits: uint32 = 1024,
+    maxTotalBodyRefs: uint16 = 16,
+    maxAgeSeconds: uint32 = 100,
+    maxDrainItems: uint16 = 4,
+    maxCellDepth: uint16 = 1023
+): PostponementBudget {
+    return slice4PostponementBudget(
+        maxItems,
+        maxBodyBits,
+        maxBodyRefs,
+        maxTotalBodyBits,
+        maxTotalBodyRefs,
+        maxAgeSeconds,
+        maxDrainItems,
+        maxCellDepth
+    );
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(101)
+fun test_enqueue_success(): int {
+    var queue = slice4NewPostponedQueue();
+    val nonce = queue.enqueueWithQueryId(testBudget(), sender1(), 0x10000001, 77, smallBody(1), 0, 0, 10);
+    val first = queue.peekFirst();
+    assert(nonce == 0) throw 101;
+    assert(queue.count == 1) throw 102;
+    assert(queue.totalBodyBits == 16) throw 103;
+    assert(first != null && first!.queryId()! == 77) throw 104;
+    assert(first!.expiresAt == 110) throw 105;
+    return queue.count;
+}
+
+@method_id(102)
+fun test_queue_full(): int {
+    var queue = slice4NewPostponedQueue();
+    val budget = testBudget(1);
+    queue.enqueueWithQueryId(budget, sender1(), 0x10000001, 1, smallBody(1), 0, 0, 10);
+    try {
+        queue.enqueueWithQueryId(budget, sender1(), 0x10000002, 2, smallBody(2), 0, 0, 10);
+    } catch (code) {
+        assert(queue.count == 1) throw 111;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(103)
+fun test_duplicate_query_id(): int {
+    var queue = slice4NewPostponedQueue();
+    val budget = testBudget();
+    queue.enqueueWithQueryId(budget, sender1(), 0x10000001, 7, smallBody(1), 0, 0, 10);
+    try {
+        queue.enqueueWithQueryId(budget, sender1(), 0x10000001, 7, smallBody(2), 0, 0, 10);
+    } catch (code) {
+        assert(queue.count == 1) throw 121;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(104)
+fun test_missing_idempotency_key(): int {
+    var queue = slice4NewPostponedQueue();
+    try {
+        queue.enqueue(testBudget(), sender1(), 0x10000003, null, null, smallBody(3), 0, 0, 10);
+    } catch (code) {
+        assert(queue.isEmpty()) throw 131;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(105)
+fun test_author_key_non_query(): int {
+    var queue = slice4NewPostponedQueue();
+    queue.enqueueWithAuthorKey(testBudget(), sender1(), 0x10000003, 0xabc, smallBody(3), 0, 0, 10);
+    try {
+        queue.enqueueWithAuthorKey(testBudget(), sender1(), 0x10000003, 0xabc, smallBody(4), 0, 0, 10);
+    } catch (code) {
+        assert(queue.count == 1) throw 141;
+        assert(queue.peekFirst()!.authorKey()! == 0xabc) throw 142;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(106)
+fun test_oversized_body(): int {
+    var queue = slice4NewPostponedQueue();
+    try {
+        queue.enqueueWithQueryId(testBudget(4, 8), sender1(), 0x10000004, 9, smallBody(9), 0, 0, 10);
+    } catch (code) {
+        assert(queue.isEmpty()) throw 151;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(107)
+fun test_cell_depth_budget(): int {
+    var queue = slice4NewPostponedQueue();
+    try {
+        queue.enqueueWithQueryId(testBudget(4, 256, 4, 1024, 16, 100, 4, 1), sender1(), 0x10000005, 10, deepBody(), 0, 0, 10);
+    } catch (code) {
+        assert(queue.isEmpty()) throw 161;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(108)
+fun test_expiry_cleanup(): int {
+    var queue = slice4NewPostponedQueue();
+    val budget = testBudget(4, 256, 4, 1024, 16, 5);
+    queue.enqueueWithQueryId(budget, sender1(), 0x10000006, 11, smallBody(11), 0, 0, 10);
+    assert(!queue.expireFirst(14)) throw 171;
+    assert(queue.count == 1) throw 172;
+    assert(queue.expireFirst(15)) throw 173;
+    assert(queue.isEmpty()) throw 174;
+    return 1;
+}
+
+global slice4DrainSum: int;
+
+@method_id(109)
+fun test_fifo_drain(): int {
+    var queue = slice4NewPostponedQueue();
+    val budget = testBudget();
+    slice4DrainSum = 0;
+    queue.enqueueWithQueryId(budget, sender1(), 1, 1, smallBody(1), 0, 0, 10);
+    queue.enqueueWithQueryId(budget, sender1(), 2, 2, smallBody(2), 0, 0, 10);
+    val touched = queue.drain(budget, 11, fun(item: PostponedItem): void {
+        slice4DrainSum = slice4DrainSum * 10 + item.opcode;
+    });
+    assert(touched == 2) throw 181;
+    assert(queue.isEmpty()) throw 182;
+    return slice4DrainSum;
+}
+
+@method_id(110)
+fun test_callback_throw_keeps_item(): int {
+    var queue = slice4NewPostponedQueue();
+    val budget = testBudget();
+    queue.enqueueWithQueryId(budget, sender1(), 0x10000007, 12, smallBody(12), 0, 0, 10);
+    try {
+        queue.drain(budget, 11, fun(item: PostponedItem): void {
+            assert(item.nonce == 0) throw 191;
+            throw 0x777;
+        });
+    } catch (code) {
+        assert(code == 0x777) throw 192;
+        assert(queue.count == 1) throw 193;
+        assert(queue.peekFirst()!.nonce == 0) throw 194;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(111)
+fun test_explicit_drop_path(): int {
+    var queue = slice4NewPostponedQueue();
+    val budget = testBudget();
+    val first = queue.enqueueWithQueryId(budget, sender1(), 0x10000008, 13, smallBody(13), 0, 0, 10);
+    val second = queue.enqueueWithQueryId(budget, sender1(), 0x10000009, 14, smallBody(14), 0, 0, 10);
+    val dropped = queue.dropNonce(first);
+    assert(dropped.queryId()! == 13) throw 201;
+    assert(queue.count == 1) throw 202;
+    assert(queue.peekFirst()!.nonce == second) throw 203;
+    return queue.dropNonce(second).queryId()!;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2307
+@testcase | 103 | | 2309
+@testcase | 104 | | 2310
+@testcase | 105 | | 2309
+@testcase | 106 | | 2308
+@testcase | 107 | | 2308
+@testcase | 108 | | 1
+@testcase | 109 | | 12
+@testcase | 110 | | 1911
+@testcase | 111 | | 14
+ */

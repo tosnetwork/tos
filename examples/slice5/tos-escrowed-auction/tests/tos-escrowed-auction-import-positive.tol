@@ -1,0 +1,45 @@
+// Import test: verifies that contract-level constants, types, and helpers
+// can be used by downstream consumers without triggering the contract entrypoint.
+// Tol imports are explicit: @stdlib/auction must be re-imported here even though
+// the contract source imports it internally.
+
+import "@stdlib/auction"
+import "../src/tos-escrowed-auction"
+
+fun main(): int {
+    return 0;
+}
+
+// T580: Verify the contract-level error codes are accessible from external files.
+@method_id(580)
+fun test_error_codes_accessible(): int {
+    // All three contract-level error codes must be resolvable at compile time.
+    assert(ESCROWED_AUCTION_THROW_UNAUTHORIZED_SELLER == 4353) throw 5800;
+    assert(ESCROWED_AUCTION_THROW_NOT_SETTLED == 4354) throw 5801;
+    assert(ESCROWED_AUCTION_THROW_NO_WINNER == 4356) throw 5803;
+    return 1;
+}
+
+// T581: Verify the storage struct fields are accessible from an importing file.
+// This confirms the struct is exported correctly (not internal-only).
+@method_id(581)
+fun test_storage_struct_accessible(): int {
+    // Create a stub storage cell using the struct definition.
+    val config = slice5AuctionConfig(
+        address("0:1111111111111111111111111111111111111111111111111111111111111111"),
+        500, 10, 100
+    );
+    val stub = TosEscrowedAuctionStorage {
+        config: config.toCell(),
+        state: slice5AuctionInitialState().toCell(),
+        itemRef: 0xdeadbeef,
+        pendingPayout: 0,
+        payoutDone: false,
+    };
+    return stub.itemRef == 0xdeadbeef ? 1 : 0;
+}
+
+/**
+@testcase | 580 | | 1
+@testcase | 581 | | 1
+ */

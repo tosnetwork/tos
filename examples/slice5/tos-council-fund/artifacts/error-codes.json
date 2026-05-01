@@ -1,0 +1,13 @@
+{
+  "error_codes": [
+    {"name": "COUNCIL_THROW_UNAUTHORIZED_VOTER",             "code": 4097},
+    {"name": "SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER","code": 3073},
+    {"name": "SLICE5_GOVERNANCE_THROW_DUPLICATE_VOTE",       "code": 3074},
+    {"name": "SLICE5_GOVERNANCE_THROW_NO_QUORUM",            "code": 3075},
+    {"name": "SLICE5_GOVERNANCE_THROW_NO_THRESHOLD",         "code": 3076},
+    {"name": "SLICE5_GOVERNANCE_THROW_EXPIRED",              "code": 3077},
+    {"name": "SLICE5_GOVERNANCE_THROW_INVALID_ACTION",       "code": 3078},
+    {"name": "SLICE5_GOVERNANCE_THROW_REPLAYED_EXECUTION",   "code": 3079},
+    {"name": "SLICE5_GOVERNANCE_THROW_CANCELED",             "code": 3081}
+  ]
+}

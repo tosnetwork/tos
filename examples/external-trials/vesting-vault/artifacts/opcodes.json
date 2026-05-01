@@ -1,0 +1,16 @@
+{
+  "contract": "VestingVault",
+  "slice": 6,
+  "messages": [
+    { "name": "VaultDeploy",        "opcode": "0x00000001", "dec": 1,   "role": "@deploy internal" },
+    { "name": "VaultFund",          "opcode": "0x00000002", "dec": 2,   "role": "owner → Pending state" },
+    { "name": "VaultClaim",         "opcode": "0x00000003", "dec": 3,   "role": "beneficiary → Active state" },
+    { "name": "VaultRevoke",        "opcode": "0x00000004", "dec": 4,   "role": "owner → Pending or Active state" },
+    { "name": "VaultRegisterGrant", "opcode": "0x00000005", "dec": 5,   "role": "owner → Active state" },
+    { "name": "VaultRevokeGrant",   "opcode": "0x00000006", "dec": 6,   "role": "owner → Active state" }
+  ],
+  "unknown_opcode_policy": "@unknown_throw(0xffff)",
+  "states": ["Pending", "Active", "Closed"],
+  "initial_state": "Pending",
+  "capability_selector": "0x56455301"
+}

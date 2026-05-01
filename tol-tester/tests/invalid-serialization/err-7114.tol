@@ -1,4 +1,4 @@
-type NotSerializableTensor = (int8, slice);
+type NotSerializableTensor = (int8, slice, int8);
 
 struct Demo {
     a: int8;
@@ -14,9 +14,8 @@ fun main() {
 @compilation_should_fail
 @stderr auto-serialization via fromSlice() is not available for type `Demo`
 @stderr because field `Demo.c` of type `NotSerializableTensor` can't be serialized
-@stderr because alias `NotSerializableTensor` expands to `(int8, slice)`
+@stderr because alias `NotSerializableTensor` expands to `(int8, slice, int8)`
 @stderr because element `tensor.1` of type `slice` can't be serialized
-@stderr because type `slice` can not be used for reading, it doesn't define binary width
-@stderr hint: replace `slice` with `address` if it's an address, actually
-@stderr hint: replace `slice` with `bits128` and similar if it represents fixed-width data without refs
+@stderr because type `slice` can only be used for reading at the final serialized position
+@stderr hint: move this `slice` field to the end
  */

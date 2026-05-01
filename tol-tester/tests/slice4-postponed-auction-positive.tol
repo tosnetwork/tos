@@ -1,0 +1,131 @@
+import "../../examples/slice4/postponed-auction"
+import "@stdlib/postponement"
+
+fun bidder1(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun bidder2(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun makeBid(queryId: uint64, bidder: address, amount: coins, now: uint32): Slice4AuctionBid {
+    return Slice4AuctionBid { queryId, bidder, amount, now };
+}
+
+@method_id(101)
+fun test_early_message_enqueue(): int {
+    var storage = slice4AuctionInitialStorage();
+    val count = storage.receiveBid(makeBid(1, bidder1(), 10, 10));
+    assert(count == 1) throw 1011;
+    assert(!storage.opened) throw 1012;
+    assert(storage.highestBid == 0) throw 1013;
+    assert(storage.queue.count == 1) throw 1014;
+    return storage.queue.count;
+}
+
+@method_id(102)
+fun test_state_transition_and_fifo_drain(): int {
+    var storage = slice4AuctionInitialStorage();
+    storage.receiveBid(makeBid(1, bidder1(), 10, 10));
+    storage.receiveBid(makeBid(2, bidder2(), 20, 11));
+    val touched = storage.openAndDrain(12);
+    assert(storage.opened) throw 1021;
+    assert(touched == 2) throw 1022;
+    assert(storage.queue.isEmpty()) throw 1023;
+    assert(storage.highestBid == 20) throw 1024;
+    assert(storage.lastDrainedQueryId == 2) throw 1025;
+    return (storage.drainedCount as int) * 1000 + (storage.lastDrainedQueryId as int);
+}
+
+@method_id(103)
+fun test_expiry_cleanup(): int {
+    var storage = slice4AuctionInitialStorage();
+    storage.receiveBid(makeBid(1, bidder1(), 10, 10));
+    assert(storage.expireQueued(69) == 0) throw 1031;
+    assert(storage.queue.count == 1) throw 1032;
+    val expired = storage.expireQueued(70);
+    assert(expired == 1) throw 1033;
+    assert(storage.queue.isEmpty()) throw 1034;
+    return expired;
+}
+
+@method_id(104)
+fun test_queue_full(): int {
+    var storage = slice4AuctionInitialStorage();
+    storage.receiveBid(makeBid(1, bidder1(), 10, 10));
+    storage.receiveBid(makeBid(2, bidder1(), 11, 10));
+    storage.receiveBid(makeBid(3, bidder1(), 12, 10));
+    storage.receiveBid(makeBid(4, bidder1(), 13, 10));
+    try {
+        storage.receiveBid(makeBid(5, bidder1(), 14, 10));
+    } catch (code) {
+        assert(storage.queue.count == 4) throw 1041;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(105)
+fun test_duplicate_query_id(): int {
+    var storage = slice4AuctionInitialStorage();
+    storage.receiveBid(makeBid(7, bidder1(), 10, 10));
+    try {
+        storage.receiveBid(makeBid(7, bidder1(), 12, 11));
+    } catch (code) {
+        assert(storage.queue.count == 1) throw 1051;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(106)
+fun test_malformed_body_rejection(): int {
+    var storage = slice4AuctionInitialStorage();
+    try {
+        storage.receiveRawBidBody(beginCell().storeUint(0x53413401, 32).storeUint(9, 64).endCell());
+    } catch (code) {
+        assert(code != 0) throw 1061;
+        assert(!storage.opened) throw 1062;
+        assert(storage.highestBid == 0) throw 1063;
+        assert(storage.queue.isEmpty()) throw 1064;
+        return 1;
+    }
+    return 0;
+}
+
+@method_id(107)
+fun test_open_bid_immediate(): int {
+    var storage = slice4AuctionInitialStorage();
+    storage.openAndDrain(10);
+    storage.receiveBid(makeBid(1, bidder1(), 55, 11));
+    assert(storage.queue.isEmpty()) throw 1071;
+    assert(storage.highestBid == 55) throw 1072;
+    return storage.highestBid;
+}
+
+@method_id(108)
+fun test_non_expired_low_bid_dropped_on_open(): int {
+    var storage = slice4AuctionInitialStorage();
+    storage.receiveBid(makeBid(1, bidder1(), 0, 10));
+    val touched = storage.openAndDrain(11);
+    assert(storage.opened) throw 1081;
+    assert(touched == 1) throw 1082;
+    assert(storage.queue.isEmpty()) throw 1083;
+    assert(storage.highestBid == 0) throw 1084;
+    assert(storage.drainedCount == 0) throw 1085;
+    storage.receiveBid(makeBid(2, bidder2(), 25, 12));
+    assert(storage.highestBid == 25) throw 1086;
+    return storage.highestBid;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2002
+@testcase | 103 | | 1
+@testcase | 104 | | 2307
+@testcase | 105 | | 2309
+@testcase | 106 | | 1
+@testcase | 107 | | 55
+@testcase | 108 | | 25
+ */

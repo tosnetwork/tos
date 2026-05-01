@@ -165,6 +165,9 @@ class ASTReplicator final {
     return createV<ast_match_arm>(v->range, v->pattern_kind, clone(v->pattern_type_node), clone(v->get_pattern_expr()), clone(v->get_body()));
   }
   static V<ast_object_field> clone(V<ast_object_field> v) {
+    if (v->is_spread()) {
+      return createV<ast_object_field>(v->range, clone(v->get_init_val()));
+    }
     return createV<ast_object_field>(v->range, clone(v->get_field_identifier()), clone(v->get_init_val()));
   }
   static V<ast_object_body> clone(V<ast_object_body> v) {
@@ -208,6 +211,10 @@ class ASTReplicator final {
   }
   static V<ast_try_catch_statement> clone(V<ast_try_catch_statement> v) {
     return createV<ast_try_catch_statement>(v->range, clone(v->get_try_body()), clone(v->get_catch_expr()), clone(v->get_catch_body()));
+  }
+  static V<ast_receiver_scope_marker> clone(V<ast_receiver_scope_marker> v) {
+    return createV<ast_receiver_scope_marker>(v->range, v->contract_name, v->message_struct_name, v->receiver_source_range,
+                                              clone(v->get_wrapped_block()->as<ast_block_statement>()));
   }
   static V<ast_asm_body> clone(V<ast_asm_body> v) {
     return createV<ast_asm_body>(v->range, v->arg_order, v->ret_order, clone(v->get_asm_commands()));
@@ -256,6 +263,7 @@ class ASTReplicator final {
       case ast_throw_statement:                 return clone(v->as<ast_throw_statement>());
       case ast_assert_statement:                return clone(v->as<ast_assert_statement>());
       case ast_try_catch_statement:             return clone(v->as<ast_try_catch_statement>());
+      case ast_receiver_scope_marker:           return clone(v->as<ast_receiver_scope_marker>());
       case ast_asm_body:                        return clone(v->as<ast_asm_body>());
       // other AST nodes that can be children of ast nodes of function/struct body
       case ast_identifier:                      return clone(v->as<ast_identifier>());
@@ -345,6 +353,7 @@ public:
       clone(v_orig->receiver_type_node),
       clone(v_orig->return_type_node),
       v_orig->genericsT_list ? clone(v_orig->genericsT_list) : nullptr,
+      v_orig->has_tvm_method_id_expr() ? clone(v_orig->get_tvm_method_id_expr()) : nullptr,
       v_orig->tvm_method_id,
       v_orig->flags,
       v_orig->inline_mode
@@ -383,6 +392,7 @@ public:
       clone(v_lambda->get_body()),
       nullptr,
       clone(v_lambda->return_type_node),
+      nullptr,
       nullptr,
       FunctionData::EMPTY_TVM_METHOD_ID,
       FunctionData::flagIsLambda,

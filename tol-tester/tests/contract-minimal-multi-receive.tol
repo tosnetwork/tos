@@ -1,0 +1,51 @@
+struct ContractMultiStorage {}
+
+struct (0x00000015) ContractMultiPing {
+    queryId: uint64;
+    amount: uint32;
+}
+
+struct (0x00000016) ContractMultiPong {
+    queryId: uint64;
+    amount: uint32;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractMulti {
+    storage: ContractMultiStorage
+
+    receive(msg: ContractMultiPing) {
+        msg.amount;
+    }
+
+    receive(msg: ContractMultiPong) {
+        msg.amount;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+
+@fif_codegen
+"""
+  onInternalMessage() PROC:<{
+...
+    32 PLDU
+...
+    21 EQINT
+...
+      x{00000015} SDBEGINSQ
+...
+    22 EQINT
+...
+      x{00000016} SDBEGINSQ
+...
+  }>
+"""
+
+@fif_codegen_avoid 64 PLDU
+ */

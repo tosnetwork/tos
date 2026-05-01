@@ -1,0 +1,43 @@
+// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §4.1 v3): a non-state-bearing
+// contract with a single `@deploy` receiver. The synthesized `onInternalMessage` runs the
+// deploy body BEFORE `loadData()` so c4 can be empty at first arrival; the body materializes
+// storage explicitly via `save(...)`. The compile must succeed with no warning.
+
+struct ContractDeployPositiveStorage {
+    owner: uint32;
+}
+
+struct (0x00000001) ContractDeployPositiveDeploy {
+    queryId: uint64;
+    initialOwner: uint32;
+}
+
+struct (0x00000002) ContractDeployPositivePing {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ContractDeployPositive {
+    storage: ContractDeployPositiveStorage
+
+    @deploy
+    receive(msg: ContractDeployPositiveDeploy) {
+        // c4 is uninitialized here; `storage` is NOT in scope. The receiver constructs
+        // initial storage explicitly and writes c4. After this returns, c4 holds the
+        // materialized ContractDeployPositiveStorage.
+        save(ContractDeployPositiveStorage { owner: msg.initialOwner });
+    }
+
+    receive(msg: ContractDeployPositivePing) {
+        // Normal receiver — runs after loadData() has materialized storage.
+        msg.queryId;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+ */

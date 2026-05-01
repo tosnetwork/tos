@@ -1,0 +1,174 @@
+// Slice 6 Tol author-facing time helpers.
+tol 1.3
+
+import "@stdlib/schedule"
+import "@stdlib/delivery"
+
+const SLICE6_TIME_THROW_INVALID_BUDGET = 0x1101
+const SLICE6_TIME_THROW_BODY_TOO_LARGE = 0x1102
+const SLICE6_TIME_THROW_HORIZON = 0x1103
+const SLICE6_TIME_THROW_PAST_SEQNO = 0x1104
+
+struct Slice6TimerBudget {
+    enabled: bool
+    maxScheduledEntries: uint16
+    maxBodyBits: uint32
+    maxBodyRefs: uint16
+    maxFutureHorizonBlocks: uint32
+    maxCellDepth: uint16
+}
+
+struct Slice6WallClockBudget {
+    enabled: bool
+    maxFutureHorizonSeconds: uint32
+}
+
+@pure
+fun slice6TimerBudget(
+    maxScheduledEntries: uint16,
+    maxBodyBits: uint32,
+    maxBodyRefs: uint16,
+    maxFutureHorizonBlocks: uint32,
+    maxCellDepth: uint16,
+    enabled: bool = true
+): Slice6TimerBudget {
+    return Slice6TimerBudget {
+        enabled,
+        maxScheduledEntries,
+        maxBodyBits,
+        maxBodyRefs,
+        maxFutureHorizonBlocks,
+        maxCellDepth,
+    };
+}
+
+@pure
+fun slice6WallClockBudget(
+    maxFutureHorizonSeconds: uint32,
+    enabled: bool = true
+): Slice6WallClockBudget {
+    return Slice6WallClockBudget {
+        enabled,
+        maxFutureHorizonSeconds,
+    };
+}
+
+fun Slice6TimerBudget.requireEnabled(self): void {
+    if (
+        !self.enabled ||
+        self.maxScheduledEntries == 0 ||
+        self.maxBodyBits == 0 ||
+        self.maxFutureHorizonBlocks == 0 ||
+        self.maxCellDepth == 0
+    ) {
+        throw SLICE6_TIME_THROW_INVALID_BUDGET;
+    }
+}
+
+fun Slice6WallClockBudget.requireEnabled(self): void {
+    if (!self.enabled || self.maxFutureHorizonSeconds == 0) {
+        throw SLICE6_TIME_THROW_INVALID_BUDGET;
+    }
+}
+
+fun Slice6WallClockBudget.requireDurationWithinBudget(self, durationSeconds: uint32): void {
+    self.requireEnabled();
+    if (durationSeconds > self.maxFutureHorizonSeconds) {
+        throw SLICE6_TIME_THROW_HORIZON;
+    }
+}
+
+fun Slice6TimerBudget.requireBodyWithinBudget(self, body: cell): void {
+    val (_, bits, refs, ok) = body.calculateSize(SLICE6_DELIVERY_SIZE_SCAN_CELLS);
+    if (!ok || bits > self.maxBodyBits || refs > self.maxBodyRefs || body.depth() > self.maxCellDepth) {
+        throw SLICE6_TIME_THROW_BODY_TOO_LARGE;
+    }
+}
+
+fun Slice6TimerBudget.requireHorizon(
+    self,
+    trustedCurrentMcSeqno: uint32,
+    notBeforeMcSeqno: uint32,
+    expireAfterBlocks: uint32
+): void {
+    self.requireEnabled();
+    if (expireAfterBlocks == 0) {
+        throw SLICE6_TIME_THROW_INVALID_BUDGET;
+    }
+    if (notBeforeMcSeqno < trustedCurrentMcSeqno) {
+        throw SLICE6_TIME_THROW_PAST_SEQNO;
+    }
+    if (notBeforeMcSeqno > SLICE6_SCHEDULE_UINT32_MAX - expireAfterBlocks) {
+        throw SLICE6_TIME_THROW_HORIZON;
+    }
+    val deliverByMcSeqno = slice6ScheduleDeliverBy(notBeforeMcSeqno, expireAfterBlocks);
+    val span = deliverByMcSeqno - trustedCurrentMcSeqno;
+    if (span > self.maxFutureHorizonBlocks) {
+        throw SLICE6_TIME_THROW_HORIZON;
+    }
+}
+
+fun slice6TimeAddBlocks(baseMcSeqno: uint32, deltaBlocks: uint32): uint32 {
+    if (baseMcSeqno > SLICE6_SCHEDULE_UINT32_MAX - deltaBlocks) {
+        throw SLICE6_SCHEDULE_THROW_DELIVER_BY_OVERFLOW;
+    }
+    return baseMcSeqno + deltaBlocks;
+}
+
+fun sendAtMcSeqno(
+    budget: Slice6TimerBudget,
+    target: address,
+    body: cell,
+    trustedCurrentMcSeqno: uint32,
+    notBeforeMcSeqno: uint32,
+    expireAfterBlocks: uint32,
+    valueCoins: coins,
+    sendMode: uint16,
+    cancelAuthority: address,
+    deadLetter: address? = null
+): Slice6ScheduledActionV1 {
+    budget.requireEnabled();
+    budget.requireBodyWithinBudget(body);
+    budget.requireHorizon(trustedCurrentMcSeqno, notBeforeMcSeqno, expireAfterBlocks);
+    return slice6ScheduledAction(
+        target,
+        body,
+        valueCoins,
+        sendMode,
+        notBeforeMcSeqno,
+        expireAfterBlocks,
+        cancelAuthority,
+        deadLetter
+    );
+}
+
+fun sendAfterBlocks(
+    budget: Slice6TimerBudget,
+    target: address,
+    body: cell,
+    trustedCurrentMcSeqno: uint32,
+    delayBlocks: uint32,
+    expireAfterBlocks: uint32,
+    valueCoins: coins,
+    sendMode: uint16,
+    cancelAuthority: address,
+    deadLetter: address? = null
+): Slice6ScheduledActionV1 {
+    val notBeforeMcSeqno = slice6TimeAddBlocks(trustedCurrentMcSeqno, delayBlocks);
+    return sendAtMcSeqno(
+        budget,
+        target,
+        body,
+        trustedCurrentMcSeqno,
+        notBeforeMcSeqno,
+        expireAfterBlocks,
+        valueCoins,
+        sendMode,
+        cancelAuthority,
+        deadLetter
+    );
+}
+
+fun cancelScheduled(mutate entry: Slice6ScheduledEntryV1, caller: address): uint8 {
+    return entry.cancel(caller);
+}

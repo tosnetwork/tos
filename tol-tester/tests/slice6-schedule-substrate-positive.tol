@@ -1,0 +1,219 @@
+import "@stdlib/schedule"
+
+fun schedSrc(): address {
+    return address("0:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+}
+
+fun schedTarget(): address {
+    return address("0:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+}
+
+fun schedCancel(): address {
+    return address("0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+}
+
+fun schedDeadLetter(): address {
+    return address("0:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
+}
+
+fun schedBody(v: uint32 = 1): cell {
+    return beginCell().storeUint(v, 32).endCell();
+}
+
+fun makeSchedAction(
+    notBefore: uint32,
+    expireAfter: uint32,
+    cancelAuthority: address,
+    deadLetter: address?,
+    bodyMarker: uint32
+): Slice6ScheduledActionV1 {
+    return slice6ScheduledAction(
+        schedTarget(),
+        schedBody(bodyMarker),
+        1000,
+        0,
+        notBefore,
+        expireAfter,
+        cancelAuthority,
+        deadLetter
+    );
+}
+
+fun schedAction(): Slice6ScheduledActionV1 {
+    return makeSchedAction(100, 20, schedCancel(), schedDeadLetter(), 1);
+}
+
+fun schedActionAt(notBefore: uint32, expireAfter: uint32): Slice6ScheduledActionV1 {
+    return makeSchedAction(notBefore, expireAfter, schedCancel(), schedDeadLetter(), 1);
+}
+
+fun schedActionWithAuth(
+    cancelAuthority: address,
+    deadLetter: address?,
+    bodyMarker: uint32 = 1
+): Slice6ScheduledActionV1 {
+    return makeSchedAction(100, 20, cancelAuthority, deadLetter, bodyMarker);
+}
+
+fun schedEntry(action: Slice6ScheduledActionV1, escrowCoveredUntil: uint32): Slice6ScheduledEntryV1 {
+    val handle = slice6ScheduledHandle(77, 0x1234, 0, schedSrc(), action);
+    return slice6ScheduledEntry(handle, action, escrowCoveredUntil);
+}
+
+fun schedDefaultEntry(): Slice6ScheduledEntryV1 {
+    return schedEntry(schedAction(), 120);
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(631)
+fun test_deliver_by_arithmetic(): int {
+    return slice6ScheduleDeliverBy(100, 20);
+}
+
+@method_id(632)
+fun test_deliver_by_overflow_rejected(): int {
+    try {
+        slice6ScheduleDeliverBy(0xfffffff0, 0x20);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(633)
+fun test_due_and_expired_predicates(): int {
+    val action = schedActionAt(100, 20);
+    assert(!action.isDue(99)) throw 6331;
+    assert(action.isDue(100)) throw 6332;
+    assert(!action.isExpired(119)) throw 6333;
+    assert(action.isExpired(120)) throw 6334;
+    return 1;
+}
+
+@method_id(634)
+fun test_scheduled_handle_is_stable(): int {
+    val action = schedAction();
+    val a = slice6ScheduledHandle(77, 0x1234, 0, schedSrc(), action);
+    val b = slice6ScheduledHandle(77, 0x1234, 0, schedSrc(), action);
+    assert(a == b) throw 6341;
+    assert(a != 0) throw 6342;
+    return 1;
+}
+
+@method_id(635)
+fun test_scheduled_handle_changes_with_body_hash(): int {
+    val a = slice6ScheduledHandle(77, 0x1234, 0, schedSrc(), schedActionWithAuth(schedCancel(), schedDeadLetter(), 1));
+    val b = slice6ScheduledHandle(77, 0x1234, 0, schedSrc(), schedActionWithAuth(schedCancel(), schedDeadLetter(), 2));
+    assert(a != b) throw 6351;
+    return 1;
+}
+
+@method_id(636)
+fun test_cancel_by_authority(): int {
+    var entry = schedDefaultEntry();
+    val result = entry.cancel(schedCancel());
+    assert(result == SLICE6_SCHEDULE_CANCEL_OK) throw 6361;
+    assert(entry.canceled && !entry.pending) throw 6362;
+    return result;
+}
+
+@method_id(637)
+fun test_cancel_by_non_authority_rejected(): int {
+    var entry = schedDefaultEntry();
+    val result = entry.cancel(schedDeadLetter());
+    assert(result == SLICE6_SCHEDULE_CANCEL_NOT_AUTHORIZED) throw 6371;
+    assert(entry.pending && !entry.canceled) throw 6372;
+    return result;
+}
+
+@method_id(638)
+fun test_dead_letter_does_not_inherit_cancel_authority(): int {
+    var entry = schedEntry(schedActionWithAuth(schedCancel(), schedDeadLetter()), 120);
+    val result = entry.cancel(schedDeadLetter());
+    assert(result == SLICE6_SCHEDULE_CANCEL_NOT_AUTHORIZED) throw 6381;
+    return result;
+}
+
+@method_id(639)
+fun test_dead_letter_can_cancel_when_explicit_authority(): int {
+    var entry = schedEntry(schedActionWithAuth(schedDeadLetter(), schedDeadLetter()), 120);
+    return entry.cancel(schedDeadLetter());
+}
+
+@method_id(640)
+fun test_delivered_handle_cancel_fails_without_side_effects(): int {
+    var entry = schedDefaultEntry();
+    entry.markDelivered();
+    val result = entry.cancel(schedCancel());
+    assert(result == SLICE6_SCHEDULE_CANCEL_ALREADY_DELIVERED) throw 6401;
+    assert(entry.delivered && !entry.canceled) throw 6402;
+    return result;
+}
+
+@method_id(641)
+fun test_expired_handle_cancel_fails_without_side_effects(): int {
+    var entry = schedDefaultEntry();
+    entry.markExpired();
+    val result = entry.cancel(schedCancel());
+    assert(result == SLICE6_SCHEDULE_CANCEL_ALREADY_EXPIRED) throw 6411;
+    assert(entry.expired && !entry.canceled) throw 6412;
+    return result;
+}
+
+@method_id(642)
+fun test_force_expiry_on_escrow_depletion(): int {
+    var entry = schedEntry(schedActionAt(100, 20), 110);
+    assert(!entry.forceExpireIfEscrowDepleted(110)) throw 6421;
+    assert(entry.forceExpireIfEscrowDepleted(111)) throw 6422;
+    assert(entry.expired && !entry.pending) throw 6423;
+    return 1;
+}
+
+@method_id(643)
+fun test_cancel_already_canceled(): int {
+    var entry = schedDefaultEntry();
+    assert(entry.cancel(schedCancel()) == SLICE6_SCHEDULE_CANCEL_OK) throw 6431;
+    val result = entry.cancel(schedCancel());
+    assert(result == SLICE6_SCHEDULE_CANCEL_ALREADY_CANCELED) throw 6432;
+    assert(entry.canceled && !entry.pending) throw 6433;
+    return result;
+}
+
+@method_id(644)
+fun test_schedule_rejects_unsafe_send_mode(): int {
+    try {
+        _ = slice6ScheduledAction(
+            schedTarget(),
+            schedBody(44),
+            1000,
+            SEND_MODE_CARRY_ALL_BALANCE,
+            100,
+            20,
+            schedCancel(),
+            schedDeadLetter()
+        );
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+/**
+@testcase | 631 | | 120
+@testcase | 632 | | 4098
+@testcase | 633 | | 1
+@testcase | 634 | | 1
+@testcase | 635 | | 1
+@testcase | 636 | | 0
+@testcase | 637 | | 2
+@testcase | 638 | | 2
+@testcase | 639 | | 0
+@testcase | 640 | | 3
+@testcase | 641 | | 4
+@testcase | 642 | | 1
+@testcase | 643 | | 5
+@testcase | 644 | | 4097
+ */

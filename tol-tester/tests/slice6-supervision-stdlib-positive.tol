@@ -1,0 +1,206 @@
+import "@stdlib/supervision"
+
+fun supChild1(): address {
+    return address("0:1010101010101010101010101010101010101010101010101010101010101010");
+}
+
+fun supChild2(): address {
+    return address("0:2020202020202020202020202020202020202020202020202020202020202020");
+}
+
+fun supEscalation(): address {
+    return address("0:3030303030303030303030303030303030303030303030303030303030303030");
+}
+
+fun supBudget(
+    maxRestarts: uint16 = 2,
+    window: uint32 = 10,
+    cooldown: uint32 = 5,
+    maxGas: uint32 = 1000,
+    maxValue: coins = 100
+): Slice6RecoveryBudget {
+    return slice6RecoveryBudget(maxRestarts, window, cooldown, maxGas, maxValue, supEscalation());
+}
+
+fun supBody(): cell {
+    return beginCell().storeUint(0x55, 8).endCell();
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(681)
+fun test_child_spec_and_supervisor_registry(): int {
+    var supervisor = slice6SupervisorState(2);
+    supervisor.addChild(slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100));
+    supervisor.addChild(slice6ChildSpec(2, supChild2(), 1, SLICE6_RESTART_REST_FOR_ONE, 100));
+    assert(supervisor.childCount == 2) throw 6811;
+    return supervisor.getChild(2).restartStrategy;
+}
+
+@method_id(682)
+fun test_duplicate_child_rejected(): int {
+    var supervisor = slice6SupervisorState(2);
+    supervisor.addChild(slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100));
+    try {
+        supervisor.addChild(slice6ChildSpec(1, supChild2(), 1, SLICE6_RESTART_ONE_FOR_ALL, 100));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(683)
+fun test_one_for_one_restart_records_budget(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    val ok = child.recordRestart(supBudget(), 101, 500, 10);
+    assert(ok) throw 6831;
+    assert(child.restartCount == 1) throw 6832;
+    assert(child.state == SLICE6_CHILD_RECOVERING) throw 6833;
+    return child.restartCount;
+}
+
+@method_id(684)
+fun test_restart_storm_trips_circuit_breaker(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    val budget = supBudget(1);
+    assert(child.recordRestart(budget, 101, 500, 10)) throw 6841;
+    assert(!child.recordRestart(budget, 102, 500, 10)) throw 6842;
+    assert(child.isCircuitBreakerTripped(103)) throw 6843;
+    return child.state;
+}
+
+@method_id(685)
+fun test_restart_window_resets(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    val budget = supBudget(1, 10);
+    assert(child.recordRestart(budget, 101, 500, 10)) throw 6851;
+    assert(child.recordRestart(budget, 111, 500, 10)) throw 6852;
+    return child.restartCount;
+}
+
+@method_id(686)
+fun test_gas_budget_exhaustion_stops_recovery(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    val ok = child.recordRestart(supBudget(2, 10, 5, 100), 101, 101, 10);
+    assert(!ok) throw 6861;
+    assert(child.state == SLICE6_CHILD_CIRCUIT_OPEN) throw 6862;
+    return child.state;
+}
+
+@method_id(687)
+fun test_value_budget_exhaustion_stops_recovery(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    val ok = child.recordRestart(supBudget(2, 10, 5, 1000, 10), 101, 100, 11);
+    assert(!ok) throw 6871;
+    return child.state;
+}
+
+@method_id(688)
+fun test_rest_for_one_registry_ordering(): int {
+    assert(!slice6StrategyIncludesChild(SLICE6_RESTART_REST_FOR_ONE, 2, 1)) throw 6881;
+    assert(slice6StrategyIncludesChild(SLICE6_RESTART_REST_FOR_ONE, 2, 2)) throw 6882;
+    assert(slice6StrategyIncludesChild(SLICE6_RESTART_REST_FOR_ONE, 2, 3)) throw 6883;
+    return 1;
+}
+
+@method_id(689)
+fun test_one_for_all_partial_recovery_record(): int {
+    val record = slice6RecordPartialRecovery(1, SLICE6_RESTART_ONE_FOR_ALL, 2, 3, 500, supEscalation());
+    assert(record.recoveredCount == 2) throw 6891;
+    assert(record.failedAtChildId == 3) throw 6892;
+    return record.strategy;
+}
+
+@method_id(690)
+fun test_build_recovery_message(): int {
+    val child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    val msg = slice6BuildRecoveryMessage(child, supBody(), 10);
+    assert(msg.target == supChild1()) throw 6901;
+    assert(msg.bodyHash == supBody().hash()) throw 6902;
+    return msg.childId;
+}
+
+@method_id(691)
+fun test_emit_escalation_sets_final_failure(): int {
+    var supervisor = slice6SupervisorState(1);
+    supervisor.emitEscalation();
+    return supervisor.finalFailure ? 1 : 0;
+}
+
+@method_id(692)
+fun test_restart_window_overflow_rejected(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 0xfffffffe);
+    try {
+        child.recordRestart(supBudget(2, 10), 0xffffffff, 500, 10);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(693)
+fun test_supervisor_record_child_restart_auto_escalates(): int {
+    var supervisor = slice6SupervisorState(1);
+    supervisor.addChild(slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100));
+    val ok = supervisor.recordChildRestart(1, supBudget(1, 10, 5, 100, 10), 101, 101, 10);
+    assert(!ok) throw 6931;
+    assert(supervisor.finalFailure) throw 6932;
+    return supervisor.getChild(1).state;
+}
+
+@method_id(694)
+fun test_circuit_breaker_cooldown_not_extended_while_open(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    val budget = supBudget(1, 10, 5);
+    assert(child.recordRestart(budget, 101, 500, 10)) throw 6941;
+    assert(!child.recordRestart(budget, 102, 500, 10)) throw 6942;
+    val firstCooldown = child.cooldownUntil!;
+    assert(!child.recordRestart(budget, 103, 500, 10)) throw 6943;
+    assert(child.cooldownUntil! == firstCooldown) throw 6944;
+    return child.cooldownUntil!;
+}
+
+@method_id(695)
+fun test_supervisor_restart_outcome_escalates_once(): int {
+    var supervisor = slice6SupervisorState(1);
+    supervisor.addChild(slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100));
+    val first = supervisor.recordChildRestartOutcome(1, supBudget(1, 10, 5, 100, 10), 101, 101, 10);
+    val second = supervisor.recordChildRestartOutcome(1, supBudget(1, 10, 5, 100, 10), 102, 101, 10);
+    assert(!first.restarted) throw 6951;
+    assert(first.escalationStarted) throw 6952;
+    assert(!second.restarted) throw 6953;
+    assert(!second.escalationStarted) throw 6954;
+    assert(second.finalFailure) throw 6955;
+    return 10;
+}
+
+@method_id(696)
+fun test_budget_exhaustion_opens_circuit_without_consuming_restart(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    val ok = child.recordRestart(supBudget(2, 10, 5, 100), 101, 101, 10);
+    assert(!ok) throw 6961;
+    assert(child.restartCount == 0) throw 6962;
+    assert(child.state == SLICE6_CHILD_CIRCUIT_OPEN) throw 6963;
+    return child.restartCount;
+}
+
+/**
+@testcase | 681 | | 2
+@testcase | 682 | | 4866
+@testcase | 683 | | 1
+@testcase | 684 | | 3
+@testcase | 685 | | 1
+@testcase | 686 | | 3
+@testcase | 687 | | 3
+@testcase | 688 | | 1
+@testcase | 689 | | 1
+@testcase | 690 | | 1
+@testcase | 691 | | 1
+@testcase | 692 | | 4865
+@testcase | 693 | | 3
+@testcase | 694 | | 107
+@testcase | 695 | | 10
+@testcase | 696 | | 0
+ */

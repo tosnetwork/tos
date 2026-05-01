@@ -1,0 +1,26 @@
+struct ExhaustBadMessageStorage {
+    total: uint32;
+}
+
+struct (0x00000083) ExhaustBadMessageAdvance {
+    queryId: uint64;
+}
+
+contract ExhaustivenessSuppressBadMessage {
+    storage: ExhaustBadMessageStorage
+    states: Open, Closed
+    @initial state Open
+    @unknown_throw(0x00010001);
+    @implicit_protocol_for(MissingMessage, Closed);
+
+    receive(msg: ExhaustBadMessageAdvance) on Open {
+        save(ExhaustBadMessageStorage { total: msg.queryId as uint32 });
+        become Closed;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr references message type `MissingMessage`
+@stderr doc/tos-language-syntax-policy.md §5
+ */

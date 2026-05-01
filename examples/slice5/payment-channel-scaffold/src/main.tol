@@ -1,0 +1,9 @@
+import "@stdlib/payment-channel"
+
+fun scaffoldPatternId(): int {
+    return slice5PaymentManifestHeader().patternId;
+}
+
+fun main(): int {
+    return scaffoldPatternId();
+}

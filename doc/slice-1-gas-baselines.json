@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "captured_at_utc": "2026-05-01",
+  "threshold_percent": 10,
+  "func_vs_tol_ratio_threshold": 1.15,
+  "scope": "Slice 1 Stage 4 dual baselines (Tol-side regression + FunC-vs-Tol parity)",
+  "note": "Schema v2 adds the FunC-vs-Tol parity baseline (recommended in doc/slice-1-gas-gap.md §4) alongside the v1 Tol-side regression gate. The Tol-side baseline (`baseline_gas`) is the focused tol-tester run total, gated by `threshold_percent`. The dual baselines (`tol_gas_baseline`, `func_gas_baseline`) are the per-contract sums of `Answer.gas_used` across the recv_internal scenarios in emulator/test/slice-1-stage-4-gas-parity-fixture.cpp; gated by `func_vs_tol_ratio_threshold` (default 1.15 per §10.1). Per-contract `func_vs_tol_ratio_threshold` overrides the default; wallet-v5 uses 1.35 because its bytecode-cell ratio is 1.10 (the only reference contract that grew during migration, per doc/tos-message-envelope-migration.md) and the fixed DECLMETHOD dispatcher overhead amplifies the bytecode delta on short fast-paths into a runtime gas delta closer to 1.30.",
+  "contracts": [
+    {
+      "name": "jetton-minter",
+      "tol_tester_pattern": "jetton-minter",
+      "expected_tests": 3,
+      "baseline_gas": 17122,
+      "func_gas_baseline": 3468,
+      "tol_gas_baseline": 2810
+    },
+    {
+      "name": "jetton-wallet",
+      "tol_tester_pattern": "jetton-wallet",
+      "expected_tests": 3,
+      "baseline_gas": 33791,
+      "func_gas_baseline": 4923,
+      "tol_gas_baseline": 2380
+    },
+    {
+      "name": "wallet-v5",
+      "tol_tester_pattern": "wallet-v5",
+      "expected_tests": 3,
+      "baseline_gas": 49907,
+      "func_gas_baseline": 1870,
+      "tol_gas_baseline": 2452,
+      "func_vs_tol_ratio_threshold": 1.35
+    }
+  ]
+}

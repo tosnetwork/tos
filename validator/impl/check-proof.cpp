@@ -62,7 +62,7 @@ bool CheckProof::fatal_error(std::string err_msg, int err_code) {
 void CheckProof::finish_query() {
   if (skip_check_signatures_) {
     // Structural-invariant checks for the skip-signatures path are
-    // tracked as V-016 in docs/TODOS.md.
+    // tracked as V-016 in doc/TODOS.md.
   } else if (is_proof()) {
     ValidatorInvariants::check_post_check_proof(handle_);
   } else {
@@ -218,7 +218,7 @@ bool CheckProof::init_parse(bool is_aux) {
   if (!is_aux) {
     // BlockExtra is only unpacked for key blocks today; relaxing
     // this guard to all blocks is tracked as V-015 in
-    // docs/TODOS.md.
+    // doc/TODOS.md.
     if (is_key_block_ && !tlb::unpack_cell(std::move(blk.extra), extra)) {
       return fatal_error("cannot unpack extra header of block "s + blk_id.to_str());
     }

@@ -8,3 +8,6 @@ Unified wallet bytecode loading on auto-generated contract code, removed legacy 
 
 3. Build and compatibility cleanup:
 Adjusted build and compatibility details needed by the wallet changes, including compiler compatibility fixes and test expectation updates.
+
+4. Slice 1 actor-layer envelope discipline (on the `actor-layer` branch):
+Published the external Slice 1 RFC at [`doc/slice-1-rfc.md`](./doc/slice-1-rfc.md). Slice 1 ships zero wire-format changes — TL-B schema, opcode assignments, and the v12 bounce body are all unchanged — and introduces an opt-in Tol-stdlib `Envelope` / `Error` / `OP_ERROR` discipline plus three reference migrations (`jetton-minter`, `jetton-wallet`, `wallet-v5`), each within the §10.1 ≤ 15% bytecode budget. No FunC contract needs to be redeployed; the migration is opt-in per contract.

@@ -15,6 +15,7 @@
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include "pack-unpack-serializers.h"
+#include "extra-flags-constants.h"
 #include "generics-helpers.h"
 #include "type-system.h"
 
@@ -318,7 +319,8 @@ std::vector<var_idx_t> generate_createMessage(FunctionPtr called_f, CodeBlob& co
     Op& if_RichBounce = code.add_if_else(origin, ir_eq_RichBounce);
     {
       code.push_set_cur(if_RichBounce.block0);
-      ctx.storeCoins(code.create_int(origin, 3, "(extra-flags-3)"));
+      // extra_flags = EXTRA_FLAGS_RICH_BOUNCE; synchronized with EXTRA_FLAGS_VALID_MASK -- see extra-flags-constants.h
+      ctx.storeCoins(code.create_int(origin, EXTRA_FLAGS_RICH_BOUNCE, "(extra-flags-RichBounce)"));
       code.close_pop_cur(origin);
     }
     {
@@ -328,7 +330,8 @@ std::vector<var_idx_t> generate_createMessage(FunctionPtr called_f, CodeBlob& co
       Op& if_RichBounceRoot = code.add_if_else(origin, ir_eq_RichBounceRoot);
       {
         code.push_set_cur(if_RichBounceRoot.block0);
-        ctx.storeCoins(code.create_int(origin, 1, "(extra-flags-1)"));
+        // extra_flags = EXTRA_FLAGS_NEW_BOUNCE; synchronized with EXTRA_FLAGS_VALID_MASK -- see extra-flags-constants.h
+        ctx.storeCoins(code.create_int(origin, EXTRA_FLAGS_NEW_BOUNCE, "(extra-flags-NewBounce)"));
         code.close_pop_cur(origin);
       }
       {

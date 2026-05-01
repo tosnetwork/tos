@@ -1,0 +1,527 @@
+// =============================================================================
+// Slice 2 Stage 8c — wallet-v5 Tol re-migration to high-level syntax.
+//
+// Policy reference: doc/tos-language-syntax-policy.md §3.1, §3.2
+// (`@unknown_silent_drop`), §3.8 (`receive_external`), §4.1 (wallet-v5-style
+// non-standard internal dispatch caveat), §6.1 (wire-bit-identity), and §7
+// (migration path). Inherits Slice 1 Stage 3.3 wire commitments from
+// doc/tos-message-policy.md v6 §3.1 (standard body layout), §5.2 (OP_ERROR
+// body), §5.3 (error_class), and §8.1 (bit-for-bit compatibility for existing
+// wallet-vN formats). Per §9.3, wallet external messages are not governed by
+// the Slice 1 internal-message envelope.
+//
+// Bytecode delta captured at write time:
+//   FunC cells: 20
+//   Tol cells:  22
+//   ratio:      1.10
+//
+// §5.3 error-class assignment table:
+//   FunC line | FunC throw(N) | ErrorClass    | error_code | Slice 2 site
+//   75        | throw(147)    | Protocol      | 1147
+//   76        | throw(147)    | Protocol      | 1147
+//   77        | throw(137)    | Protocol      | 1137
+//   81        | throw(147)    | Protocol      | 1147
+//   82        | throw(147)    | Protocol      | 1147
+//   102       | throw(145)    | Protocol      | 1145
+//   110       | throw(139)    | Permanent     | 1139
+//   113       | throw(140)    | Permanent     | 1140
+//   115       | throw(144)    | Permanent     | 1144
+//   124       | throw(146)    | Authorization | 1146
+//   128       | throw(143)    | Permanent     | 1143
+//   134       | throw(142)    | Permanent     | 1142
+//   142       | throw(141)    | Protocol      | 1141
+//   161       | throw(148)    | Protocol      | 1148
+//   176       | throw(135)    | Authorization | 1135
+//   181       | throw(132)    | Authorization | 1132
+//   182       | throw(133)    | Permanent     | 1133
+//   183       | throw(134)    | Protocol      | 1134
+//   184       | throw(136)    | Permanent     | 1136
+//   205       | throw(138)    | Protocol      | 1138       | receive_external(UnknownOpcode)
+//
+// Compatibility note: wallet-v5 is mostly external-message driven, so this
+// migration keeps the signed external/internal body format, extension action
+// format, C5 action list validation, and storage layout hand-packed exactly as
+// the FunC reference. The only Slice 1 envelope-shaped internal body here is
+// `extension_action query_id actions...`; the query_id is explicitly disclaimed
+// because the reference wallet performs state/action effects rather than a
+// request/reply emission. Bounced internal messages are handled manually so the
+// body-level dispatch remains aligned with the FunC `recv_internal` entry point.
+//
+// Signed internal/external request structs below are prefix carriers only. The
+// signature covers a variable-length prefix and the final 512 bits are the
+// signature, so receiver bodies keep calling `processSignedRequest(in.body /
+// inMsgBody, ...)` against the raw slice instead of unpacking a Tol struct.
+//
+// Slice 3 Stage 5 keeps these file-scope helper names as compatibility wrappers
+// for existing wallet-v5 tests while delegating signed-body parsing, C5 action
+// validation, extension-action body building, storage packing, and error mapping
+// to `@stdlib/wallet`. The receive paths still consume the raw signed body
+// slices directly, so wallet-v5 external wire bytes are not routed through the
+// internal Envelope/query_id model.
+// =============================================================================
+
+import "@stdlib/common"
+import "@stdlib/tvm-dicts"
+import "@stdlib/gas-payments"
+import "@stdlib/exotic-cells"
+import "@stdlib/wallet"
+
+const ERROR_SIGNATURE_DISABLED = 132
+const ERROR_INVALID_SEQNO = 133
+const ERROR_INVALID_WALLET_ID = 134
+const ERROR_INVALID_SIGNATURE = 135
+const ERROR_EXPIRED = 136
+const ERROR_EXTERNAL_SEND_MESSAGE_MUST_HAVE_IGNORE_ERRORS_SEND_MODE = 137
+const ERROR_INVALID_MESSAGE_OPERATION = 138
+const ERROR_ADD_EXTENSION = 139
+const ERROR_REMOVE_EXTENSION = 140
+const ERROR_UNSUPPORTED_ACTION = 141
+const ERROR_DISABLE_SIGNATURE_WHEN_EXTENSIONS_IS_EMPTY = 142
+const ERROR_THIS_SIGNATURE_MODE_ALREADY_SET = 143
+const ERROR_REMOVE_LAST_EXTENSION_WHEN_SIGNATURE_DISABLED = 144
+const ERROR_EXTENSION_WRONG_WORKCHAIN = 145
+const ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE = 146
+const ERROR_INVALID_C5 = 147
+const ERROR_INVALID_GLOBAL_ID = 148
+
+const SIZE_BOOL = 1
+const SIZE_SEQNO = 32
+const SIZE_WALLET_ID = 32
+const SIZE_PUBLIC_KEY = 256
+const SIZE_VALID_UNTIL = 32
+const SIZE_MESSAGE_FLAGS = 4
+const SIZE_SIGNATURE = 512
+const SIZE_MESSAGE_OPERATION_PREFIX = 32
+const SIZE_ADDRESS_HASH = 256
+const SIZE_QUERY_ID = 64
+const SIZE_GLOBAL_ID = 32
+
+const PREFIX_SIGNED_EXTERNAL: uint32 = 0x7369676e
+const PREFIX_SIGNED_INTERNAL: uint32 = 0x73696e74
+const PREFIX_EXTENSION_ACTION: uint32 = 0x6578746e
+const PREFIX_ACTION_SEND_MSG = 0x0ec3c86d
+const PREFIX_ADD_EXTENSION = 0x02
+const PREFIX_REMOVE_EXTENSION = 0x03
+const PREFIX_SET_SIGNATURE_ALLOWED = 0x04
+
+const WALLET_V5_ERROR_SIGNATURE_DISABLED = 1132
+const WALLET_V5_ERROR_INVALID_SEQNO = 1133
+const WALLET_V5_ERROR_INVALID_WALLET_ID = 1134
+const WALLET_V5_ERROR_INVALID_SIGNATURE = 1135
+const WALLET_V5_ERROR_EXPIRED = 1136
+const WALLET_V5_ERROR_EXTERNAL_SEND_MODE = 1137
+const WALLET_V5_ERROR_INVALID_MESSAGE_OPERATION = 1138
+const WALLET_V5_ERROR_ADD_EXTENSION = 1139
+const WALLET_V5_ERROR_REMOVE_EXTENSION = 1140
+const WALLET_V5_ERROR_UNSUPPORTED_ACTION = 1141
+const WALLET_V5_ERROR_DISABLE_SIGNATURE_WITHOUT_EXTENSIONS = 1142
+const WALLET_V5_ERROR_SIGNATURE_MODE_ALREADY_SET = 1143
+const WALLET_V5_ERROR_REMOVE_LAST_EXTENSION_SIGNATURE_DISABLED = 1144
+const WALLET_V5_ERROR_EXTENSION_WRONG_WORKCHAIN = 1145
+const WALLET_V5_ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE = 1146
+const WALLET_V5_ERROR_INVALID_C5 = 1147
+const WALLET_V5_ERROR_INVALID_GLOBAL_ID = 1148
+
+struct WalletV5Storage {
+    isSignatureAllowed: bool;
+    seqno: uint32;
+    walletId: uint32;
+    publicKey: uint256;
+    extensions: dict;
+}
+
+struct (PREFIX_EXTENSION_ACTION) ExtensionActionRequest {
+    queryId: uint64;
+    actions: RemainingBitsAndRefs;
+}
+
+struct (PREFIX_SIGNED_INTERNAL) SignedInternalRequest {
+    signedBody: RemainingBitsAndRefs;
+}
+
+struct (PREFIX_SIGNED_EXTERNAL) SignedExternalRequest {
+    signedBody: RemainingBitsAndRefs;
+}
+
+struct SignedRequestHeader {
+    opcode: uint32;
+    globalId: uint32;
+    walletId: uint32;
+    validUntil: uint32;
+    seqno: uint32;
+    actions: RemainingBitsAndRefs;
+}
+
+fun slice.tryStripPrefix(mutate self, prefix: int, prefixLen: int): bool
+    builtin;
+
+fun getGlobalId(): int
+    asm "GLOBALID";
+
+fun setC5Actions(actionList: cell): void
+    asm "c5 POP";
+
+fun slice.enforceAndRemoveActionSendMsgPrefix(mutate self): self
+    asm "x{0ec3c86d} SDBEGINS";
+
+@pure
+fun slice.countTrailingZeroes(self): int
+    asm "SDCNTTRAIL0";
+
+@inline
+fun currentData(): cell {
+    return contract.getData();
+}
+
+@pure
+fun packWalletV5Data(
+    isSignatureAllowed: bool,
+    seqno: int,
+    walletId: int,
+    publicKey: int,
+    extensions: dict
+): cell {
+    return walletV5PackData(isSignatureAllowed, seqno, walletId, publicKey, extensions);
+}
+
+@pure
+fun walletV5ErrorForThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    return walletV5ErrorForFuncThrow(funcThrow, originalOp, queryId);
+}
+
+@pure
+fun splitSignedRequestBody(body: slice): (slice, slice) {
+    return walletV5SplitSignedRequestBody(body);
+}
+
+@pure
+fun parseSignedRequestHeader(body: slice): SignedRequestHeader {
+    val header = walletV5ParseSignedRequestHeader(body);
+    return SignedRequestHeader {
+        opcode: header.opcode,
+        globalId: header.globalId,
+        walletId: header.walletId,
+        validUntil: header.validUntil,
+        seqno: header.seqno,
+        actions: header.actions,
+    };
+}
+
+@pure
+fun buildExtensionActionBody(queryId: uint64, actions: RemainingBitsAndRefs): cell {
+    return walletV5BuildExtensionActionBody(queryId, actions);
+}
+
+@pure
+fun buildActionSendMsg(mode: int, outMsg: cell, next: cell): cell {
+    return walletV5BuildActionSendMsg(mode, outMsg, next);
+}
+
+fun verifyC5Actions(c5: cell, isExternal: bool): cell {
+    return walletV5VerifyC5Actions(c5, isExternal);
+}
+
+fun validateActions(cs: slice, isExternal: bool, isExtension: bool): void {
+    val c5Actions = cs.loadMaybeRef();
+    if (c5Actions != null) {
+        verifyC5Actions(c5Actions!, isExternal);
+    }
+    if (cs.loadInt(1) == 0) {
+        return;
+    }
+
+    var simulatedLoaded = false;
+    var simulatedSignatureAllowed = 0;
+    var simulatedExtensions: dict = null;
+
+    while (true) {
+        val isAddExtension = cs.tryStripPrefix(PREFIX_ADD_EXTENSION, 8);
+        var isRemoveExtension = false;
+        if (!isAddExtension) {
+            isRemoveExtension = cs.tryStripPrefix(PREFIX_REMOVE_EXTENSION, 8);
+        }
+
+        if (isAddExtension || isRemoveExtension) {
+            if (!simulatedLoaded) {
+                var dataSlice = currentData().beginParse();
+                simulatedSignatureAllowed = dataSlice.loadInt(SIZE_BOOL);
+                var dataTail = dataSlice.skipBits(SIZE_SEQNO + SIZE_WALLET_ID + SIZE_PUBLIC_KEY);
+                simulatedExtensions = dataTail.preloadDict();
+                simulatedLoaded = true;
+            }
+            val extensionAddress = cs.loadAddressAny();
+            val (addressWc, addressHash) = extensionAddress.getWorkchainAndHash();
+            val (myAddressWc, _) = contract.getAddress().getWorkchainAndHash();
+            if (myAddressWc != addressWc) {
+                throw ERROR_EXTENSION_WRONG_WORKCHAIN;
+            }
+
+            if (isAddExtension) {
+                val isSuccess = simulatedExtensions.uDictSetBuilderIfNotExists(
+                    SIZE_ADDRESS_HASH,
+                    addressHash,
+                    beginCell().storeInt(-1, 1)
+                );
+                if (!isSuccess) {
+                    throw ERROR_ADD_EXTENSION;
+                }
+            } else {
+                val isSuccess = simulatedExtensions.uDictDelete(SIZE_ADDRESS_HASH, addressHash);
+                if (!isSuccess) {
+                    throw ERROR_REMOVE_EXTENSION;
+                }
+                if (simulatedExtensions == null && !simulatedSignatureAllowed) {
+                    throw ERROR_REMOVE_LAST_EXTENSION_WHEN_SIGNATURE_DISABLED;
+                }
+            }
+        } else {
+            if (cs.tryStripPrefix(PREFIX_SET_SIGNATURE_ALLOWED, 8)) {
+                if (!isExtension) {
+                    throw ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE;
+                }
+                if (!simulatedLoaded) {
+                    var dataSlice = currentData().beginParse();
+                    simulatedSignatureAllowed = dataSlice.loadInt(SIZE_BOOL);
+                    var dataTail = dataSlice.skipBits(SIZE_SEQNO + SIZE_WALLET_ID + SIZE_PUBLIC_KEY);
+                    simulatedExtensions = dataTail.preloadDict();
+                    simulatedLoaded = true;
+                }
+                val allowSignature = cs.loadInt(1);
+                if (simulatedSignatureAllowed == allowSignature) {
+                    throw ERROR_THIS_SIGNATURE_MODE_ALREADY_SET;
+                }
+                if (!allowSignature && simulatedExtensions == null) {
+                    throw ERROR_DISABLE_SIGNATURE_WHEN_EXTENSIONS_IS_EMPTY;
+                }
+                simulatedSignatureAllowed = allowSignature;
+            } else {
+                throw ERROR_UNSUPPORTED_ACTION;
+            }
+        }
+
+        if (!cs.remainingRefsCount()) {
+            return;
+        }
+        cs = cs.preloadRef().beginParse();
+    }
+}
+
+fun processActions(cs: slice, isExternal: bool, isExtension: bool): void {
+    val c5Actions = cs.loadMaybeRef();
+    if (c5Actions != null) {
+        setC5Actions(verifyC5Actions(c5Actions!, isExternal));
+    }
+    if (cs.loadInt(1) == 0) {
+        return;
+    }
+
+    while (true) {
+        val isAddExtension = cs.tryStripPrefix(PREFIX_ADD_EXTENSION, 8);
+        var isRemoveExtension = false;
+        if (!isAddExtension) {
+            isRemoveExtension = cs.tryStripPrefix(PREFIX_REMOVE_EXTENSION, 8);
+        }
+
+        if (isAddExtension || isRemoveExtension) {
+            val extensionAddress = cs.loadAddressAny();
+            val (addressWc, addressHash) = extensionAddress.getWorkchainAndHash();
+            val (myAddressWc, _) = contract.getAddress().getWorkchainAndHash();
+            if (myAddressWc != addressWc) {
+                throw ERROR_EXTENSION_WRONG_WORKCHAIN;
+            }
+
+            var dataSlice = currentData().beginParse();
+            val dataSliceBeforeExtensions = dataSlice.loadBits(SIZE_BOOL + SIZE_SEQNO + SIZE_WALLET_ID + SIZE_PUBLIC_KEY);
+            var extensions = dataSlice.preloadDict();
+
+            if (isAddExtension) {
+                val isSuccess = extensions.uDictSetBuilderIfNotExists(
+                    SIZE_ADDRESS_HASH,
+                    addressHash,
+                    beginCell().storeInt(-1, 1)
+                );
+                if (!isSuccess) {
+                    throw ERROR_ADD_EXTENSION;
+                }
+            } else {
+                val isSuccess = extensions.uDictDelete(SIZE_ADDRESS_HASH, addressHash);
+                if (!isSuccess) {
+                    throw ERROR_REMOVE_EXTENSION;
+                }
+                val isSignatureAllowed = dataSliceBeforeExtensions.preloadInt(SIZE_BOOL);
+                if (extensions == null && !isSignatureAllowed) {
+                    throw ERROR_REMOVE_LAST_EXTENSION_WHEN_SIGNATURE_DISABLED;
+                }
+            }
+
+            contract.setData(
+                beginCell()
+                    .storeSlice(dataSliceBeforeExtensions)
+                    .storeDict(extensions)
+                    .endCell()
+            );
+        } else {
+            if (cs.tryStripPrefix(PREFIX_SET_SIGNATURE_ALLOWED, 8)) {
+                if (!isExtension) {
+                    throw ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE;
+                }
+                val allowSignature = cs.loadInt(1);
+                var dataSlice = currentData().beginParse();
+                val isSignatureAllowed = dataSlice.loadInt(SIZE_BOOL);
+                if (isSignatureAllowed == allowSignature) {
+                    throw ERROR_THIS_SIGNATURE_MODE_ALREADY_SET;
+                }
+
+                val dataTail = dataSlice;
+                if (!allowSignature) {
+                    val isExtensionsNotEmpty = dataSlice
+                        .skipBits(SIZE_SEQNO + SIZE_WALLET_ID + SIZE_PUBLIC_KEY)
+                        .preloadInt(1);
+                    if (!isExtensionsNotEmpty) {
+                        throw ERROR_DISABLE_SIGNATURE_WHEN_EXTENSIONS_IS_EMPTY;
+                    }
+                }
+
+                contract.setData(
+                    beginCell()
+                        .storeInt(allowSignature, SIZE_BOOL)
+                        .storeSlice(dataTail)
+                        .endCell()
+                );
+            } else {
+                throw ERROR_UNSUPPORTED_ACTION;
+            }
+        }
+
+        if (!cs.remainingRefsCount()) {
+            return;
+        }
+        cs = cs.preloadRef().beginParse();
+    }
+}
+
+fun processSignedRequest(inMsgBody: slice, isExternal: bool): void {
+    val (signedSlice, signature) = splitSignedRequestBody(inMsgBody);
+    var cs = signedSlice;
+    cs.skipBits(SIZE_MESSAGE_OPERATION_PREFIX);
+
+    val msgGlobalId = cs.loadInt(SIZE_GLOBAL_ID);
+    if (msgGlobalId != getGlobalId()) {
+        throw ERROR_INVALID_GLOBAL_ID;
+    }
+
+    val walletId = cs.loadUint(SIZE_WALLET_ID);
+    val validUntil = cs.loadUint(SIZE_VALID_UNTIL);
+    val seqno = cs.loadUint(SIZE_SEQNO);
+
+    var dataSlice = currentData().beginParse();
+    val isSignatureAllowed = dataSlice.loadInt(SIZE_BOOL);
+    var storedSeqno = dataSlice.loadUint(SIZE_SEQNO);
+    val dataTail = dataSlice;
+    val storedWalletId = dataSlice.loadUint(SIZE_WALLET_ID);
+    val publicKey = dataSlice.loadUint(SIZE_PUBLIC_KEY);
+    val isExtensionsNotEmpty = dataSlice.preloadInt(1);
+
+    val isSignatureValid = isSignatureValid(signedSlice.hash(), signature, publicKey);
+    if (!isSignatureValid) {
+        if (isExternal) {
+            throw ERROR_INVALID_SIGNATURE;
+        }
+        return;
+    }
+    if (!isSignatureAllowed && isExtensionsNotEmpty) {
+        throw ERROR_SIGNATURE_DISABLED;
+    }
+    if (seqno != storedSeqno) {
+        throw ERROR_INVALID_SEQNO;
+    }
+    if (walletId != storedWalletId) {
+        throw ERROR_INVALID_WALLET_ID;
+    }
+    if (validUntil <= blockchain.now()) {
+        throw ERROR_EXPIRED;
+    }
+
+    if (isExternal) {
+        acceptExternalMessage();
+    }
+
+    validateActions(cs, isExternal, false);
+
+    storedSeqno += 1;
+    contract.setData(
+        beginCell()
+            .storeInt(true as int, SIZE_BOOL)
+            .storeUint(storedSeqno, SIZE_SEQNO)
+            .storeSlice(dataTail)
+            .endCell()
+    );
+
+    // Commit only after the action chain has been validated without state
+    // mutation. The following processActions pass should not compute-throw; the
+    // commit then closes the replay window before action-phase execution.
+    commitContractDataAndActions();
+
+    processActions(cs, isExternal, false);
+}
+
+@on_bounced_policy("manual")
+contract WalletV5 {
+    storage: WalletV5Storage
+    @unknown_silent_drop;
+
+    @disclaim_query_id
+    receive(msg: ExtensionActionRequest) {
+        val (senderAddressWc, senderAddressHash) = in.senderAddress.getWorkchainAndHash();
+        val (myAddressWc, _) = contract.getAddress().getWorkchainAndHash();
+        if (myAddressWc != senderAddressWc) {
+            return;
+        }
+
+        val extensions = currentData()
+            .beginParse()
+            .skipBits(SIZE_BOOL + SIZE_SEQNO + SIZE_WALLET_ID + SIZE_PUBLIC_KEY)
+            .preloadDict();
+        val (_, extensionFound) = extensions.uDictGet(SIZE_ADDRESS_HASH, senderAddressHash);
+        if (!extensionFound) {
+            return;
+        }
+
+        processActions(msg.actions, false, true);
+    }
+
+    receive(msg: SignedInternalRequest) {
+        if (in.body.remainingBitsCount() < SIZE_MESSAGE_OPERATION_PREFIX + SIZE_GLOBAL_ID + SIZE_WALLET_ID + SIZE_VALID_UNTIL + SIZE_SEQNO + SIZE_SIGNATURE) {
+            return;
+        }
+        processSignedRequest(in.body, false);
+    }
+
+    receive_external(msg: SignedExternalRequest) {
+        processSignedRequest(inMsgBody, true);
+    }
+
+    receive_external(msg: UnknownOpcode) {
+        throw ERROR_INVALID_MESSAGE_OPERATION;
+    }
+
+    get fun is_signature_allowed(): int {
+        return storage.isSignatureAllowed as int;
+    }
+
+    get fun seqno(): int {
+        return storage.seqno;
+    }
+
+    get fun get_subwallet_id(): int {
+        return storage.walletId;
+    }
+
+    get fun get_public_key(): int {
+        return storage.publicKey;
+    }
+
+    get fun get_extensions(): dict {
+        return storage.extensions;
+    }
+}

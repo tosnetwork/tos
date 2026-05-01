@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "schema": "slice-3-generated-replay-trace",
+  "pattern": "oracle",
+  "contract": "OracleScaffold",
+  "cases": [
+    {
+      "name": "compile-and-positive-test",
+      "kind": "tol-tester",
+      "source": "tests/oracle-positive.tol",
+      "expected_exit_code": 0
+    }
+  ]
+}

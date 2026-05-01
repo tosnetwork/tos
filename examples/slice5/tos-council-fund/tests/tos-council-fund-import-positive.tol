@@ -1,0 +1,23 @@
+import "@stdlib/governance"
+import "../src/tos-council-fund"
+
+fun main(): int {
+    return 0;
+}
+
+// Governance PROPOSE opcode is accessible through the stdlib import chain.
+@method_id(421)
+fun test_governance_op_propose_const(): int {
+    return SLICE5_GOVERNANCE_OP_PROPOSE as int;
+}
+
+// Contract-level custom error code is accessible when importing the contract source.
+@method_id(422)
+fun test_council_unauthorized_voter_code(): int {
+    return COUNCIL_THROW_UNAUTHORIZED_VOTER;
+}
+
+/**
+@testcase | 421 | | 1196381697
+@testcase | 422 | | 4097
+ */

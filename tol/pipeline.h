@@ -27,8 +27,50 @@
 
 #include "fwd-declarations.h"
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace tol {
+
+// Per-contract origin lookup for method_id collision detection.
+// pipe-lower-contract.cpp populates this; pipe-generate-fif-output.cpp consumes it.
+// Returns "" for legacy file-scope `get fun` (no contract origin).
+// See doc/tos-language-syntax-policy.md §3.5: cross-contract auto-derived ID
+// sharing is NOT a collision; collisions are reported only within a contract.
+std::string_view contract_origin_of_getter(FunctionPtr fun_ref);
+
+// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) — per-contract
+// origin lookup for ANY synthesized function (onInternalMessage,
+// onExternalMessage, getters, helpers). Returns "" for hand-written
+// top-level `fun`s. Consumed by `pipe-assign-require-codes.cpp` to bucket
+// `require(...)` sites per (contract, ErrorClass).
+std::string_view contract_origin_of_synthesized_function(FunctionPtr fun_ref);
+
+// Slice 2 Stage 6 manifest accessor. The `pipe-assign-require-codes.cpp`
+// pass populates this; `pipe-generate-fif-output.cpp` reads it to emit a
+// `;; require_site_table` Fif comment so external dev tooling can
+// recover the source location of a fired throw code.
+struct RequireSiteEntry {
+  std::string contract_name;
+  std::string function_name;
+  std::string error_class_name;
+  int error_class_tag;
+  int site_index;
+  int derived_code;
+  std::string source_location;
+  bool explicit_code;
+  int explicit_code_value;
+};
+const std::vector<RequireSiteEntry>& get_require_site_manifest();
+
+// Per-contract method_id collision detector that runs at pre-emission time
+// (called from pipe-generate-fif-output.cpp). Walks all contract getters,
+// groups by their origin contract, and fires a compile error on the second
+// offender's source range when two get-methods in the same contract end up
+// with the same tvm_method_id (auto-derived OR @method_id-pinned).
+// See doc/tos-language-syntax-policy.md §3.5 / §10.1.
+void check_contract_method_id_collisions();
+
 
 void pipeline_discover_and_parse_sources(const std::string& stdlib_filename, const std::string& entrypoint_filename);
 
@@ -47,6 +89,14 @@ void pipeline_mini_borrow_checker_for_mutate();
 void pipeline_optimize_boolean_expressions();
 void pipeline_detect_inline_in_place();
 void pipeline_check_serialized_fields();
+void pipeline_check_state_reachability();
+void pipeline_check_field_scoping();
+void pipeline_check_receive_exhaustiveness();
+void pipeline_lower_contracts();
+void pipeline_assign_require_codes();
+void pipeline_check_query_id_propagation();
+void pipeline_check_slice3_reply_correlation();
+void pipeline_check_postponement();
 void pipeline_lazy_load_insertions();
 void pipeline_transform_onInternalMessage();
 void pipeline_convert_ast_to_legacy_Expr_Op();

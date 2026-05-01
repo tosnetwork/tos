@@ -1,0 +1,17 @@
+struct InlineAddressState {
+    a1: address;
+    a2: address;
+    a3: address;
+    a4: address;
+}
+
+fun main(state: InlineAddressState) {
+    state.toCell();
+}
+
+/**
+@compilation_should_fail
+@stderr struct `InlineAddressState` can exceed 1023 bits in serialization
+@stderr `address` serializes to 267 bits
+@stderr The compiler will not automatically move fields into refs because
+ */

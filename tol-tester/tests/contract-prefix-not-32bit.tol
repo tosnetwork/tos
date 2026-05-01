@@ -1,0 +1,18 @@
+struct ContractBadPrefixStorage {}
+
+struct (0x15) ContractBadPrefixPing {
+    queryId: uint64;
+}
+
+contract ContractBadPrefix {
+    storage: ContractBadPrefixStorage
+
+    receive(msg: ContractBadPrefixPing) {
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr must declare exactly a 32-bit opcode prefix
+@stderr doc/tos-language-syntax-policy.md §3.2
+ */

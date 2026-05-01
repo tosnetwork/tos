@@ -32,7 +32,7 @@ class ManagerFacadeImpl : public ManagerFacade {
     params.validator_set = validator_set_;
     params.collator_opts = opts_->get_collator_options();
     // Routing through CollationManager when the accelerator is
-    // enabled is tracked as V-022 in docs/TODOS.md.
+    // enabled is tracked as V-022 in doc/TODOS.md.
     auto [task, promise] = td::actor::StartedTask<BlockCandidate>::make_bridge();
     run_collate_query(std::move(params), manager_, std::move(cancellation_token), std::move(promise));
     auto candidate = co_await std::move(task);
@@ -204,7 +204,7 @@ class BridgeImpl final : public IValidatorGroup {
   virtual void get_validator_group_info_for_litequery(
       td::Promise<tl_object_ptr<lite_api::liteServer_nonfinal_validatorGroupInfo>> promise) override {
     // Implementing this lite-server hook is tracked as V-023 in
-    // docs/TODOS.md.
+    // doc/TODOS.md.
     promise.set_error(td::Status::Error("Not implemented"));
   }
 

@@ -1,0 +1,675 @@
+{
+  "version": 1,
+  "schema": "slice-3-reference-baselines",
+  "captured_at_utc": "2026-04-30",
+  "status": "stage-0-approved",
+  "scope": "Slice 3 Stage 0 baseline capture for the three Slice 2 reference contracts before domain-stdlib rewrites",
+  "policy": "doc/tos-slice-3-policy.md",
+  "contract_source_base_commit": "92c592b7d56fac8a0473ea42bf46a5cacb554471",
+  "branch": "actor-layer",
+  "stdlib_vertical_order": [
+    "jetton",
+    "nft",
+    "wallet",
+    "multisig"
+  ],
+  "sources": {
+    "gas_totals": "doc/slice-1-gas-baselines.json",
+    "scenario_gas": "doc/slice-1-gas-gap.md#7.5",
+    "bytecode_cell_counts": "doc/tos-message-envelope-migration.md#0",
+    "boc_artifacts": "build/slice1-gas-parity/*-{func,tol}.boc regenerated with `cmake --build /home/tomi/tos/build --target slice1_gas_parity_contracts -j 32`",
+    "method_id_rule": "crc16(name) | 0x10000, implemented in tol/pipe-register-symbols.cpp"
+  },
+  "contracts": [
+    {
+      "name": "jetton-minter",
+      "tol_file": "crypto/smartcont/jetton-minter.tol",
+      "last_contract_commit": "38856e950bd65242a55648064aa709c34a0a0d2a",
+      "contract_name": "JettonMinter",
+      "storage_struct": "JettonMinterStorage",
+      "unknown_opcode_mode": "@unknown_throw(0xffff)",
+      "focused_tol_tests": {
+        "pattern": "jetton-minter",
+        "expected_tests": 3,
+        "baseline_gas": 17122
+      },
+      "bytecode": {
+        "func_cells": 11,
+        "tol_cells": 9,
+        "tol_over_func_cell_ratio": 0.82,
+        "func_boc_bytes": 509,
+        "tol_boc_bytes": 494,
+        "func_boc_sha256": "86c39a4617dd924ea246fd0d30668e5704351a04156c40c67a6450da88ae16c2",
+        "tol_boc_sha256": "9de1902d24881d9ac35fa88347c27cf9929f96dbc0a2b2b90d0150c4049f6e85"
+      },
+      "func_vs_tol_gas": {
+        "func_gas_baseline": 3468,
+        "tol_gas_baseline": 2810,
+        "ratio": 0.810,
+        "threshold": 1.15,
+        "scenarios": [
+          {
+            "name": "empty-body",
+            "func_gas": 507,
+            "tol_gas": 451,
+            "ratio": 0.890
+          },
+          {
+            "name": "unknown-opcode",
+            "func_gas": 1593,
+            "tol_gas": 1207,
+            "ratio": 0.758
+          },
+          {
+            "name": "mint-auth-fail",
+            "func_gas": 1368,
+            "tol_gas": 1152,
+            "ratio": 0.842
+          }
+        ]
+      },
+      "receive_opcodes": [
+        {
+          "name": "MintRequest",
+          "const": "OP_MINT",
+          "hex": "0x00000015",
+          "decimal": 21,
+          "query_id_field": "queryId"
+        },
+        {
+          "name": "BurnNotification",
+          "const": "OP_BURN_NOTIFICATION",
+          "hex": "0x7bdd97de",
+          "decimal": 2078119902,
+          "query_id_field": "queryId"
+        },
+        {
+          "name": "ChangeAdmin",
+          "const": "OP_CHANGE_ADMIN",
+          "hex": "0x00000003",
+          "decimal": 3,
+          "query_id_field": "queryId"
+        },
+        {
+          "name": "ChangeContent",
+          "const": "OP_CHANGE_CONTENT",
+          "hex": "0x00000004",
+          "decimal": 4,
+          "query_id_field": "queryId"
+        }
+      ],
+      "outbound_opcodes": [
+        {
+          "name": "Excesses",
+          "const": "OP_EXCESSES",
+          "hex": "0xd53276db",
+          "decimal": 3576854235,
+          "query_id_field": "queryId"
+        }
+      ],
+      "get_methods": [
+        {
+          "name": "get_jetton_data",
+          "method_id": 106029,
+          "hex": "0x19e2d",
+          "derivation": "crc16(name) | 0x10000"
+        },
+        {
+          "name": "get_wallet_address",
+          "method_id": 103289,
+          "hex": "0x19379",
+          "derivation": "crc16(name) | 0x10000"
+        }
+      ],
+      "legacy_throw_codes": [
+        {
+          "name": "FUNC_THROW_ADMIN_REQUIRED",
+          "code": 73
+        },
+        {
+          "name": "FUNC_THROW_BURN_SENDER_NOT_WALLET",
+          "code": 74
+        },
+        {
+          "name": "FUNC_THROW_UNKNOWN_OPCODE",
+          "code": 65535
+        }
+      ],
+      "structured_error_codes": [
+        {
+          "name": "JETTON_ERROR_ADMIN_REQUIRED",
+          "code": 1097,
+          "error_class": "Authorization"
+        },
+        {
+          "name": "JETTON_ERROR_BURN_SENDER_NOT_WALLET",
+          "code": 1098,
+          "error_class": "Protocol"
+        },
+        {
+          "name": "JETTON_ERROR_UNKNOWN_OPCODE",
+          "code": 65535,
+          "error_class": "Protocol"
+        }
+      ],
+      "external_body_baseline": null
+    },
+    {
+      "name": "jetton-wallet",
+      "tol_file": "crypto/smartcont/jetton-wallet.tol",
+      "last_contract_commit": "bd851ebb4a9043dde0774e3d3cfd0433e4e5a89e",
+      "contract_name": "JettonWallet",
+      "storage_struct": "JettonWalletStorage",
+      "unknown_opcode_mode": "@unknown_throw(0xffff)",
+      "focused_tol_tests": {
+        "pattern": "jetton-wallet",
+        "expected_tests": 3,
+        "baseline_gas": 33791
+      },
+      "bytecode": {
+        "func_cells": 17,
+        "tol_cells": 10,
+        "tol_over_func_cell_ratio": 0.59,
+        "func_boc_bytes": 819,
+        "tol_boc_bytes": 740,
+        "func_boc_sha256": "8261ef2f1dc066fe103d100f2d274ee8a1b7eced3425f6ee5829068ee5277625",
+        "tol_boc_sha256": "7448e96820d6656b57e9c7e27411197e624f48efe4b9dcf4fae1efb13d86b798"
+      },
+      "func_vs_tol_gas": {
+        "func_gas_baseline": 4923,
+        "tol_gas_baseline": 2380,
+        "ratio": 0.483,
+        "threshold": 1.15,
+        "scenarios": [
+          {
+            "name": "empty-body",
+            "func_gas": 597,
+            "tol_gas": 459,
+            "ratio": 0.769
+          },
+          {
+            "name": "unknown-opcode",
+            "func_gas": 1589,
+            "tol_gas": 827,
+            "ratio": 0.520
+          },
+          {
+            "name": "transfer-auth-fail",
+            "func_gas": 2737,
+            "tol_gas": 1094,
+            "ratio": 0.400
+          }
+        ]
+      },
+      "receive_opcodes": [
+        {
+          "name": "TransferRequest",
+          "const": "OP_TRANSFER",
+          "hex": "0x0f8a7ea5",
+          "decimal": 260734629,
+          "query_id_field": "queryId"
+        },
+        {
+          "name": "InternalTransferRequest",
+          "const": "OP_INTERNAL_TRANSFER",
+          "hex": "0x178d4519",
+          "decimal": 395134233,
+          "query_id_field": "queryId"
+        },
+        {
+          "name": "BurnRequest",
+          "const": "OP_BURN",
+          "hex": "0x595f07bc",
+          "decimal": 1499400124,
+          "query_id_field": "queryId"
+        }
+      ],
+      "outbound_opcodes": [
+        {
+          "name": "TransferNotification",
+          "const": "OP_TRANSFER_NOTIFICATION",
+          "hex": "0x7362d09c",
+          "decimal": 1935855772,
+          "query_id_field": "queryId"
+        },
+        {
+          "name": "WalletExcesses",
+          "const": "OP_EXCESSES",
+          "hex": "0xd53276db",
+          "decimal": 3576854235,
+          "query_id_field": "queryId"
+        },
+        {
+          "name": "BurnNotification",
+          "const": "OP_BURN_NOTIFICATION",
+          "hex": "0x7bdd97de",
+          "decimal": 2078119902,
+          "query_id_field": "queryId"
+        }
+      ],
+      "accepted_bounced_original_opcodes": [
+        "OP_INTERNAL_TRANSFER",
+        "OP_BURN_NOTIFICATION"
+      ],
+      "get_methods": [
+        {
+          "name": "get_wallet_data",
+          "method_id": 97026,
+          "hex": "0x17b02",
+          "derivation": "crc16(name) | 0x10000"
+        }
+      ],
+      "legacy_throw_codes": [
+        {
+          "name": "FUNC_THROW_WRONG_WORKCHAIN",
+          "code": 333
+        },
+        {
+          "name": "FUNC_THROW_OWNER_REQUIRED",
+          "code": 705
+        },
+        {
+          "name": "FUNC_THROW_INSUFFICIENT_BALANCE",
+          "code": 706
+        },
+        {
+          "name": "FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE",
+          "code": 707
+        },
+        {
+          "name": "FUNC_THROW_MALFORMED_FORWARD_PAYLOAD",
+          "code": 708
+        },
+        {
+          "name": "FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE",
+          "code": 709
+        },
+        {
+          "name": "FUNC_THROW_UNKNOWN_OPCODE",
+          "code": 65535
+        }
+      ],
+      "structured_error_codes": [
+        {
+          "name": "JETTON_WALLET_ERROR_WRONG_WORKCHAIN",
+          "code": 1333,
+          "error_class": "Protocol"
+        },
+        {
+          "name": "JETTON_WALLET_ERROR_OWNER_REQUIRED",
+          "code": 1705,
+          "error_class": "Authorization"
+        },
+        {
+          "name": "JETTON_WALLET_ERROR_INSUFFICIENT_BALANCE",
+          "code": 1706,
+          "error_class": "Permanent"
+        },
+        {
+          "name": "JETTON_WALLET_ERROR_INVALID_TRANSFER_SENDER",
+          "code": 1707,
+          "error_class": "Authorization"
+        },
+        {
+          "name": "JETTON_WALLET_ERROR_MALFORMED_FORWARD_PAYLOAD",
+          "code": 1708,
+          "error_class": "Protocol"
+        },
+        {
+          "name": "JETTON_WALLET_ERROR_INSUFFICIENT_TRANSFER_VALUE",
+          "code": 1709,
+          "error_class": "Permanent"
+        },
+        {
+          "name": "JETTON_WALLET_ERROR_INSUFFICIENT_BURN_VALUE",
+          "code": 1710,
+          "error_class": "Permanent"
+        },
+        {
+          "name": "JETTON_WALLET_ERROR_UNEXPECTED_BOUNCE",
+          "code": 1711,
+          "error_class": "Protocol"
+        },
+        {
+          "name": "JETTON_WALLET_ERROR_UNKNOWN_OPCODE",
+          "code": 65535,
+          "error_class": "Protocol"
+        }
+      ],
+      "external_body_baseline": null
+    },
+    {
+      "name": "wallet-v5",
+      "tol_file": "crypto/smartcont/wallet-v5.tol",
+      "last_contract_commit": "621e7c5141bfc4f9077771043a761b691a27acd3",
+      "contract_name": "WalletV5",
+      "storage_struct": "WalletV5Storage",
+      "unknown_opcode_mode": "@unknown_silent_drop",
+      "on_bounced_policy": "manual",
+      "focused_tol_tests": {
+        "pattern": "wallet-v5",
+        "expected_tests": 3,
+        "baseline_gas": 49907
+      },
+      "bytecode": {
+        "func_cells": 20,
+        "tol_cells": 22,
+        "tol_over_func_cell_ratio": 1.10,
+        "func_boc_bytes": 670,
+        "tol_boc_bytes": 815,
+        "func_boc_sha256": "037bc5f95e71a6969bbc3ccd9273e3f2f62ceeefbc2f2e83504e5015e2dff311",
+        "tol_boc_sha256": "9e8aa8c3e12150389381647bb836ee084ea561f69b33a06c407717a1495c9b03"
+      },
+      "func_vs_tol_gas": {
+        "func_gas_baseline": 1870,
+        "tol_gas_baseline": 2452,
+        "ratio": 1.311,
+        "threshold": 1.35,
+        "scenarios": [
+          {
+            "name": "empty-body",
+            "func_gas": 546,
+            "tol_gas": 715,
+            "ratio": 1.310
+          },
+          {
+            "name": "unknown-opcode",
+            "func_gas": 778,
+            "tol_gas": 1022,
+            "ratio": 1.314
+          },
+          {
+            "name": "short-body",
+            "func_gas": 546,
+            "tol_gas": 715,
+            "ratio": 1.310
+          }
+        ]
+      },
+      "receive_opcodes": [
+        {
+          "name": "ExtensionActionRequest",
+          "const": "PREFIX_EXTENSION_ACTION",
+          "hex": "0x6578746e",
+          "decimal": 1702392942,
+          "query_id_field": "queryId"
+        },
+        {
+          "name": "SignedInternalRequest",
+          "const": "PREFIX_SIGNED_INTERNAL",
+          "hex": "0x73696e74",
+          "decimal": 1936289396,
+          "query_id_field": null
+        }
+      ],
+      "receive_external_opcodes": [
+        {
+          "name": "SignedExternalRequest",
+          "const": "PREFIX_SIGNED_EXTERNAL",
+          "hex": "0x7369676e",
+          "decimal": 1936287598,
+          "query_id_field": null
+        },
+        {
+          "name": "UnknownOpcode",
+          "legacy_throw_code": 138
+        }
+      ],
+      "wallet_action_opcodes": [
+        {
+          "name": "send_msg",
+          "const": "PREFIX_ACTION_SEND_MSG",
+          "hex": "0x0ec3c86d",
+          "decimal": 247711853,
+          "width_bits": 32
+        },
+        {
+          "name": "add_extension",
+          "const": "PREFIX_ADD_EXTENSION",
+          "hex": "0x02",
+          "decimal": 2,
+          "width_bits": 8
+        },
+        {
+          "name": "remove_extension",
+          "const": "PREFIX_REMOVE_EXTENSION",
+          "hex": "0x03",
+          "decimal": 3,
+          "width_bits": 8
+        },
+        {
+          "name": "set_signature_allowed",
+          "const": "PREFIX_SET_SIGNATURE_ALLOWED",
+          "hex": "0x04",
+          "decimal": 4,
+          "width_bits": 8
+        }
+      ],
+      "get_methods": [
+        {
+          "name": "is_signature_allowed",
+          "method_id": 88459,
+          "hex": "0x1598b",
+          "derivation": "crc16(name) | 0x10000"
+        },
+        {
+          "name": "seqno",
+          "method_id": 85143,
+          "hex": "0x14c97",
+          "derivation": "crc16(name) | 0x10000"
+        },
+        {
+          "name": "get_subwallet_id",
+          "method_id": 81467,
+          "hex": "0x13e3b",
+          "derivation": "crc16(name) | 0x10000"
+        },
+        {
+          "name": "get_public_key",
+          "method_id": 78748,
+          "hex": "0x1339c",
+          "derivation": "crc16(name) | 0x10000"
+        },
+        {
+          "name": "get_extensions",
+          "method_id": 117729,
+          "hex": "0x1cbe1",
+          "derivation": "crc16(name) | 0x10000"
+        }
+      ],
+      "legacy_throw_codes": [
+        {
+          "name": "ERROR_SIGNATURE_DISABLED",
+          "code": 132
+        },
+        {
+          "name": "ERROR_INVALID_SEQNO",
+          "code": 133
+        },
+        {
+          "name": "ERROR_INVALID_WALLET_ID",
+          "code": 134
+        },
+        {
+          "name": "ERROR_INVALID_SIGNATURE",
+          "code": 135
+        },
+        {
+          "name": "ERROR_EXPIRED",
+          "code": 136
+        },
+        {
+          "name": "ERROR_EXTERNAL_SEND_MESSAGE_MUST_HAVE_IGNORE_ERRORS_SEND_MODE",
+          "code": 137
+        },
+        {
+          "name": "ERROR_INVALID_MESSAGE_OPERATION",
+          "code": 138
+        },
+        {
+          "name": "ERROR_ADD_EXTENSION",
+          "code": 139
+        },
+        {
+          "name": "ERROR_REMOVE_EXTENSION",
+          "code": 140
+        },
+        {
+          "name": "ERROR_UNSUPPORTED_ACTION",
+          "code": 141
+        },
+        {
+          "name": "ERROR_DISABLE_SIGNATURE_WHEN_EXTENSIONS_IS_EMPTY",
+          "code": 142
+        },
+        {
+          "name": "ERROR_THIS_SIGNATURE_MODE_ALREADY_SET",
+          "code": 143
+        },
+        {
+          "name": "ERROR_REMOVE_LAST_EXTENSION_WHEN_SIGNATURE_DISABLED",
+          "code": 144
+        },
+        {
+          "name": "ERROR_EXTENSION_WRONG_WORKCHAIN",
+          "code": 145
+        },
+        {
+          "name": "ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE",
+          "code": 146
+        },
+        {
+          "name": "ERROR_INVALID_C5",
+          "code": 147
+        },
+        {
+          "name": "ERROR_INVALID_GLOBAL_ID",
+          "code": 148
+        }
+      ],
+      "structured_error_codes": [
+        {
+          "name": "WALLET_V5_ERROR_SIGNATURE_DISABLED",
+          "code": 1132,
+          "error_class": "Authorization"
+        },
+        {
+          "name": "WALLET_V5_ERROR_INVALID_SEQNO",
+          "code": 1133,
+          "error_class": "Permanent"
+        },
+        {
+          "name": "WALLET_V5_ERROR_INVALID_WALLET_ID",
+          "code": 1134,
+          "error_class": "Protocol"
+        },
+        {
+          "name": "WALLET_V5_ERROR_INVALID_SIGNATURE",
+          "code": 1135,
+          "error_class": "Authorization"
+        },
+        {
+          "name": "WALLET_V5_ERROR_EXPIRED",
+          "code": 1136,
+          "error_class": "Permanent"
+        },
+        {
+          "name": "WALLET_V5_ERROR_EXTERNAL_SEND_MODE",
+          "code": 1137,
+          "error_class": "Protocol"
+        },
+        {
+          "name": "WALLET_V5_ERROR_INVALID_MESSAGE_OPERATION",
+          "code": 1138,
+          "error_class": "Protocol"
+        },
+        {
+          "name": "WALLET_V5_ERROR_ADD_EXTENSION",
+          "code": 1139,
+          "error_class": "Permanent"
+        },
+        {
+          "name": "WALLET_V5_ERROR_REMOVE_EXTENSION",
+          "code": 1140,
+          "error_class": "Permanent"
+        },
+        {
+          "name": "WALLET_V5_ERROR_UNSUPPORTED_ACTION",
+          "code": 1141,
+          "error_class": "Protocol"
+        },
+        {
+          "name": "WALLET_V5_ERROR_DISABLE_SIGNATURE_WITHOUT_EXTENSIONS",
+          "code": 1142,
+          "error_class": "Permanent"
+        },
+        {
+          "name": "WALLET_V5_ERROR_SIGNATURE_MODE_ALREADY_SET",
+          "code": 1143,
+          "error_class": "Permanent"
+        },
+        {
+          "name": "WALLET_V5_ERROR_REMOVE_LAST_EXTENSION_SIGNATURE_DISABLED",
+          "code": 1144,
+          "error_class": "Permanent"
+        },
+        {
+          "name": "WALLET_V5_ERROR_EXTENSION_WRONG_WORKCHAIN",
+          "code": 1145,
+          "error_class": "Protocol"
+        },
+        {
+          "name": "WALLET_V5_ERROR_ONLY_EXTENSION_CAN_CHANGE_SIGNATURE_MODE",
+          "code": 1146,
+          "error_class": "Authorization"
+        },
+        {
+          "name": "WALLET_V5_ERROR_INVALID_C5",
+          "code": 1147,
+          "error_class": "Protocol"
+        },
+        {
+          "name": "WALLET_V5_ERROR_INVALID_GLOBAL_ID",
+          "code": 1148,
+          "error_class": "Protocol"
+        }
+      ],
+      "external_body_baseline": {
+        "scope": "wallet-v5 receive_external bodies are outside the Slice 1 internal Envelope commitment and must be proven by dedicated fixtures",
+        "signed_external_prefix": {
+          "const": "PREFIX_SIGNED_EXTERNAL",
+          "hex": "0x7369676e",
+          "width_bits": 32
+        },
+        "signed_request_header": [
+          {
+            "field": "opcode",
+            "width_bits": 32
+          },
+          {
+            "field": "globalId",
+            "width_bits": 32
+          },
+          {
+            "field": "walletId",
+            "width_bits": 32
+          },
+          {
+            "field": "validUntil",
+            "width_bits": 32
+          },
+          {
+            "field": "seqno",
+            "width_bits": 32
+          },
+          {
+            "field": "actions",
+            "width_bits": "remaining bits and refs"
+          }
+        ],
+        "signature_width_bits": 512,
+        "short_body_behavior": "shorter than 32 opcode bits returns without internal query_id preflight"
+      }
+    }
+  ]
+}

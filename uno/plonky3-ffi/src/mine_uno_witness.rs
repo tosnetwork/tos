@@ -6,9 +6,8 @@
 //! - `encode` / `decode` for the FFI wire format
 //! - `public_inputs` / `public_inputs_bytes` producing the 12-element
 //!   Goldilocks PI vector
-//! - `generate_trace` producing the AIR trace matrix (proxy cols fully
-//!   populated; Poseidon2 sub-AIR cells left zero — Phase 3b will fill
-//!   them via `Poseidon2Air::generate_trace_rows`)
+//! - `generate_trace` producing the AIR trace matrix (row selectors,
+//!   Poseidon2-w16 rows, witness proxies, and carry proxies all populated)
 //! - Off-circuit helpers [`compute_pow_hash`], [`poseidon2_mine_pow_hash`],
 //!   and [`uno_mine_v1_tag_block`] mirroring the sponge layout the AIR
 //!   will enforce in-circuit

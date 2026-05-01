@@ -758,6 +758,9 @@ class CheckInferredTypesVisitor final : public ASTVisitorFunctionBody {
   void visit(V<ast_object_field> v) override {
     parent::visit(v->get_init_val());
 
+    if (v->is_spread()) {
+      return;
+    }
     if (!v->field_ref->declared_type->can_rhs_be_assigned(v->get_init_val()->inferred_type)) {
       err_type_mismatch("can not assign {src} to field of type {dst}", v->get_init_val()->inferred_type, v->field_ref->declared_type).collect(v->get_init_val(), cur_f);
     }
@@ -910,6 +913,20 @@ public:
     }
   }
 
+  void start_visiting_function_metadata(V<ast_function_declaration> v_func) {
+    if (v_func->has_tvm_method_id_expr()) {
+      parent::visit(v_func->get_tvm_method_id_expr());
+    }
+  }
+
+  // given struct field `a: int = 2 + 3` check types within its default_value
+  void start_visiting_struct_opcode(StructPtr struct_ref) {
+    auto v_struct = struct_ref->ast_root->as<ast_struct_declaration>();
+    if (v_struct->has_opcode()) {
+      parent::visit(v_struct->get_opcode());
+    }
+  }
+
   // given struct field `a: int = 2 + 3` check types within its default_value
   void start_visiting_field_default(StructFieldPtr field_ref) {
     parent::visit(field_ref->default_value);
@@ -942,7 +959,14 @@ void pipeline_check_inferred_types() {
   for (GlobalConstPtr const_ref : get_all_declared_constants()) {
     visitor.start_visiting_constant(const_ref);
   }
+  for (FunctionPtr fun_ref : get_all_not_builtin_functions()) {
+    if (!fun_ref->is_generic_function()) {
+      visitor.start_visiting_function_metadata(fun_ref->ast_root->as<ast_function_declaration>());
+    }
+  }
   for (StructPtr struct_ref : get_all_declared_structs()) {
+    visitor.start_visiting_struct_opcode(struct_ref);
+
     for (StructFieldPtr field_ref : struct_ref->fields) {
       if (field_ref->has_default_value() && !struct_ref->is_generic_struct()) {
         visitor.start_visiting_field_default(field_ref);

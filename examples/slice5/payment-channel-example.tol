@@ -1,0 +1,53 @@
+// Slice 5 payment-channel example backed by @stdlib/payment-channel.
+
+import "@stdlib/payment-channel"
+
+struct Slice5PaymentChannelStorage {
+    config: Cell<Slice5PaymentChannelConfig>
+    state: Cell<Slice5PaymentChannelState>
+    partyBAddress: address
+}
+
+contract Slice5PaymentChannelExample {
+    storage: Slice5PaymentChannelStorage
+    @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: Slice5PaymentCooperativeClose) {
+        val config = lazy Slice5PaymentChannelConfig.fromCell(storage.config);
+        val signedState = lazy Slice5PaymentSignedState.fromCell(msg.signedState);
+        var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
+        val paidB = state.cooperativeClose(config, signedState, msg.signatureA, msg.signatureB, blockchain.now() as uint32);
+        save(Slice5PaymentChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
+        slice5PaymentEmitPayout(storage.partyBAddress, paidB);
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5PaymentChallengeClose) {
+        val config = lazy Slice5PaymentChannelConfig.fromCell(storage.config);
+        val signedState = lazy Slice5PaymentSignedState.fromCell(msg.signedState);
+        var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
+        state.challengeClose(config, signedState, msg.signatureA, msg.signatureB, blockchain.now() as uint32);
+        save(Slice5PaymentChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5PaymentSettle) {
+        var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
+        val paidB = state.settle(blockchain.now() as uint32);
+        save(Slice5PaymentChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
+        slice5PaymentEmitPayout(storage.partyBAddress, paidB);
+    }
+}

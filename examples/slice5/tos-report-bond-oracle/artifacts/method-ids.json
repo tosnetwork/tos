@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "contract": "TosReportBondOracle",
+  "methods": [
+    {
+      "name": "getLatestPrice",
+      "method_id": "0x4b01",
+      "decimal": 19201,
+      "returns": "uint64"
+    },
+    {
+      "name": "getLastRoundId",
+      "method_id": "0x4b02",
+      "decimal": 19202,
+      "returns": "uint64"
+    },
+    {
+      "name": "getBond",
+      "method_id": "0x4b03",
+      "decimal": 19203,
+      "arguments": ["uint256 reporterKey"],
+      "returns": "uint64"
+    },
+    {
+      "name": "isRoundOpen",
+      "method_id": "0x4b04",
+      "decimal": 19204,
+      "returns": "bool"
+    }
+  ]
+}

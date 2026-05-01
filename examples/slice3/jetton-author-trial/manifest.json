@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "schema": "slice-3-generated-project",
+  "pattern": "jetton",
+  "contract": "JettonAuthorTrial",
+  "stdlib_import": "@stdlib/jetton",
+  "source": "src/main.tol",
+  "tests": [
+    "tests/jetton-positive.tol"
+  ],
+  "replay_fixtures": [
+    "replay/jetton-replay.json"
+  ],
+  "observability": {
+    "opcodes": "artifacts/opcodes.json",
+    "method_ids": "artifacts/method-ids.json",
+    "error_codes": "artifacts/error-codes.json",
+    "replay_trace": "artifacts/replay-trace.json"
+  },
+  "behaviour_conformance": [
+    {
+      "behaviour": "jetton_wallet",
+      "manifest": "../../../doc/slice4-behaviours/jetton_wallet.json",
+      "mode": "generated"
+    },
+    {
+      "behaviour": "request_server",
+      "manifest": "../../../doc/slice4-behaviours/request_server.json",
+      "mode": "raw"
+    }
+  ]
+}

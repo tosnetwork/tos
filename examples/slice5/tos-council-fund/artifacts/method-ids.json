@@ -1,0 +1,6 @@
+{
+  "method_ids": [
+    {"name": "getProposalVoteCount", "method_id": 15617, "hex": "0x3d01"},
+    {"name": "hasActiveProposal",    "method_id": 15618, "hex": "0x3d02"}
+  ]
+}

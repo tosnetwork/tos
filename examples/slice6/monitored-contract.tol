@@ -1,0 +1,25 @@
+import "@stdlib/supervision"
+
+fun monitoredObserved(): address {
+    return address("0:6666666666666666666666666666666666666666666666666666666666666666");
+}
+
+fun monitoredObserver(): address {
+    return address("0:7777777777777777777777777777777777777777777777777777777777777777");
+}
+
+fun monitoredBudget(): Slice6MonitorBudget {
+    return slice6MonitorBudget(8, 512, 1, 8);
+}
+
+fun monitoredRegistration(): Slice6MonitorRegistration {
+    return slice6MonitorRegistration(monitoredObserved(), monitoredObserver(), monitoredObserver(), 10, monitoredBudget());
+}
+
+fun monitoredDownNotification(): Slice6MonitorDownNotification {
+    return slice6BuildMonitorDownNotification(monitoredRegistration(), 2, 17, 1, null, 1000, null, monitoredBudget());
+}
+
+fun main(): int {
+    return monitoredDownNotification().failureCode;
+}

@@ -583,6 +583,10 @@ public:
       for (StructFieldPtr field_ref : struct_ref->fields) {   // in the declared order
         AnyExprV v_init_val = field_ref->default_value;
         for (int i = 0; i < v_body->get_num_fields(); ++i) {
+          if (v_body->get_field(i)->is_spread()) {
+            err("object spread is not supported in constant struct expressions").fire(v_body->get_field(i));
+            continue;
+          }
           if (v_body->get_field(i)->get_field_name() == field_ref->name) {
             v_init_val = v_body->get_field(i)->get_init_val();
             break;

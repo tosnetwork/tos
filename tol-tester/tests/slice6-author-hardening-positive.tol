@@ -1,0 +1,74 @@
+import "@stdlib/time"
+import "@stdlib/safe-payments"
+
+struct AuthorHardeningRecord {
+    first: int
+    second: int
+    third: int
+}
+
+@pure
+fun authorHardeningDefaultValue(): int {
+    return 17;
+}
+
+fun authorHardeningDefaultParam(value: int = authorHardeningDefaultValue()): int {
+    return value;
+}
+
+@pure
+fun authorHardeningTimerBudget(): Slice6TimerBudget {
+    return slice6TimerBudget(4, 128, 1, 100, 8);
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(851)
+fun test_object_spread_override(): int {
+    val original = AuthorHardeningRecord { first: 1, second: 2, third: 3 };
+    val updated = AuthorHardeningRecord { ...original, second: 42 };
+    assert(updated.first == 1) throw 8511;
+    assert(updated.second == 42) throw 8512;
+    assert(updated.third == 3) throw 8513;
+    return updated.second;
+}
+
+@method_id(852)
+fun test_object_spread_with_type_hint(): int {
+    val original = AuthorHardeningRecord { first: 7, second: 8, third: 9 };
+    val updated: AuthorHardeningRecord = { ...original, third: 99 };
+    return updated.first + updated.third;
+}
+
+@method_id(853)
+fun test_default_parameter_can_call_pure_helper(): int {
+    return authorHardeningDefaultParam();
+}
+
+@method_id(854)
+fun test_pure_helper_can_call_slice6_constructor(): int {
+    return authorHardeningTimerBudget().maxScheduledEntries as int;
+}
+
+@method_id(855)
+fun test_safe_payment_default_mode(): int {
+    return SLICE6_SAFE_PAYMENT_DEFAULT_MODE;
+}
+
+@method_id(856)
+fun test_object_spread_identity(): int {
+    val original = AuthorHardeningRecord { first: 5, second: 6, third: 7 };
+    val copied = AuthorHardeningRecord { ...original };
+    return copied.first + copied.second + copied.third;
+}
+
+/**
+@testcase | 851 | | 42
+@testcase | 852 | | 106
+@testcase | 853 | | 17
+@testcase | 854 | | 4
+@testcase | 855 | | 16
+@testcase | 856 | | 18
+ */

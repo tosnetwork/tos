@@ -1,0 +1,7 @@
+{
+  "opcodes": [
+    {"name": "SLICE5_PAYMENT_OP_COOPERATIVE_CLOSE", "hex": "0x50434801"},
+    {"name": "SLICE5_PAYMENT_OP_CHALLENGE_CLOSE", "hex": "0x50434802"},
+    {"name": "SLICE5_PAYMENT_OP_SETTLE", "hex": "0x50434803"}
+  ]
+}

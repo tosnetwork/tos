@@ -1,0 +1,32 @@
+import "../../crypto/smartcont/jetton-minter"
+
+@method_id(101)
+fun test_unknown_opcode_error(): int {
+    val err = jettonMinterErrorForThrow(FUNC_THROW_UNKNOWN_OPCODE, 0xabcdef01, 13);
+    assert (err.queryId == 13) throw 101;
+    assert (err.originalOp == 0xabcdef01) throw 102;
+    assert (err.errorClass == ErrorClass.Protocol) throw 103;
+    return err.errorCode;
+}
+
+@method_id(102)
+fun test_error_body_shape_without_opcode(): int {
+    val err = jettonMinterErrorForThrow(FUNC_THROW_UNKNOWN_OPCODE, 0xabcdef01, 14);
+    var body = beginCell()
+        .storeUint(OP_ERROR, 32)
+        .storeAny(err)
+        .endCell()
+        .beginParse();
+    assert (body.loadUint(32) == OP_ERROR) throw 111;
+    assert (body.loadUint(64) == 14) throw 112;
+    assert (body.loadUint(32) == 0xabcdef01) throw 113;
+    assert (body.loadUint(8) == ErrorClass.Protocol as int) throw 114;
+    assert (body.loadUint(16) == JETTON_ERROR_UNKNOWN_OPCODE) throw 115;
+    assert (!body.loadBool()) throw 116;
+    return 65535;
+}
+
+/**
+@testcase | 101 | | 65535
+@testcase | 102 | | 65535
+ */

@@ -1,0 +1,17 @@
+{
+  "name": "VestingVault",
+  "version": "0.1.0",
+  "author": "external-trial-developer",
+  "slice": 6,
+  "source": "src/vesting-vault.tol",
+  "tests": "tests/vesting-vault-positive.tol",
+  "stdlib_imports": ["@stdlib/common", "@stdlib/time", "@stdlib/capability", "@stdlib/safe-payments"],
+  "states": ["Pending", "Active", "Closed"],
+  "initial_state": "Pending",
+  "test_count": 14,
+  "test_pass_count": 14,
+  "compiler_warnings": 9,
+  "warning_type": "receive exhaustiveness (unhandled state×opcode pairs, expected for partial state machine)",
+  "verdict": "production-candidate after repo hardening",
+  "trial_report": "TRIAL-REPORT.md"
+}

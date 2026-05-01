@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "schema": "slice-4-behaviour-manifest",
+  "behaviour": "slice5_governance",
+  "stage": "slice5-stage3",
+  "mode": "warning",
+  "callbacks": [
+    {
+      "name": "receive_propose",
+      "kind": "receive",
+      "required": true
+    },
+    {
+      "name": "receive_vote",
+      "kind": "receive",
+      "required": true
+    },
+    {
+      "name": "receive_execute",
+      "kind": "receive",
+      "required": true
+    }
+  ],
+  "messages": [
+    {
+      "name": "Slice5GovernancePropose",
+      "opcode": "0x474f5601",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    },
+    {
+      "name": "Slice5GovernanceVote",
+      "opcode": "0x474f5602",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    },
+    {
+      "name": "Slice5GovernanceExecute",
+      "opcode": "0x474f5603",
+      "query_id": "required",
+      "missing_query_id": "not_applicable"
+    }
+  ],
+  "states": [
+    "NoProposal",
+    "Voting",
+    "Executed",
+    "Canceled"
+  ],
+  "postponement": {
+    "enabled": false,
+    "queue_field": null,
+    "deferrable": [],
+    "budgets": {
+      "max_items": 0,
+      "max_body_bits": 0,
+      "max_body_refs": 0,
+      "max_total_body_bits": 0,
+      "max_total_body_refs": 0,
+      "max_age_seconds": 0,
+      "max_drain_items": 0,
+      "max_cell_depth": 0
+    }
+  },
+  "errors": [
+    {
+      "name": "SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER",
+      "code": 3073,
+      "class": "Authorization"
+    },
+    {
+      "name": "SLICE5_GOVERNANCE_THROW_INVALID_ACTION",
+      "code": 3078,
+      "class": "Protocol"
+    }
+  ],
+  "wire_compatibility_exceptions": []
+}
