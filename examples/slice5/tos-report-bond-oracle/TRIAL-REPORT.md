@@ -28,7 +28,8 @@ follow-up hardening commit. Prior production candidates now use
 `blockchain.now()` and sender-derived identity, payment-channel payout emission is
 explicit, `TosReportBondOracle` is integrated into `test-emulator`, and
 `scripts/check-slice-5-release-package.py` rejects production candidates that
-trust `msg.now` or `msg.reporterKey`.
+trust `msg.now`, `msg.reporterKey`, or raw regular-mode value
+dispatch.
 
 ---
 
@@ -252,7 +253,11 @@ caller). Reporters could fail to receive their refunds without any on-chain sign
    (one message → one send per transaction).
 3. Document the required minimum contract balance and add a getter for it.
 
-This is a design tradeoff documented in the ABI manifest but not enforced in code.
+**Post-trial disposition:** closed. `@stdlib/oracle` now exposes
+`slice5OracleEmitBondRefund(...)`, defaulting to
+`SEND_MODE_BOUNCE_ON_ACTION_FAIL`. `TosReportBondOracle` uses it for every bond
+refund, and `check-slice-5-release-package.py` rejects production candidates that
+dispatch value with raw regular-mode sends.
 
 ---
 
@@ -269,8 +274,10 @@ stored as `uint64` (nanoTON), limiting the representable bond to ~18,446 TON.
 types are supported. A type error from using `coins` would appear at compile time, not
 at write time — but it is not discoverable without running the compiler.
 
-**Fix:** Document valid `map` value types in the author guide, or add `coins` to the
-supported type list if it works.
+**Post-trial disposition:** closed. `map<uint256, coins>` is covered by the
+compiler test suite (`maps-tests.tol` method 146) and documented in the Slice 5
+author guide. `TosReportBondOracle` may still use `uint64` nanoTON deliberately
+because it wants an explicit ~18,446 TON maximum.
 
 ---
 
@@ -306,6 +313,11 @@ val trustedReport = Slice5OracleReport {
 `slice5AuctionTrustedBid(msg, sender)`, or deprecate the `now` field in
 `Slice5OracleReport` in favor of a `slice5OracleReportWithNow` constructor that always
 uses `blockchain.now()`.
+
+**Post-trial disposition:** closed. `slice5OracleTrustedReport(...)`,
+`Slice5OracleRound.addTrustedReport(...)`, `slice5OracleTrustedFinalize(...)`, and
+`Slice5OracleRound.finalizeTrusted(...)` are present, and production candidates are
+gated by the release checker against trusting `msg.now` or `msg.reporterKey`.
 
 ---
 
@@ -405,10 +417,10 @@ the storage initialization constant needs filling in.
    the receive-handler guards inline because tol-tester cannot inject message value.
    Comments in those tests explain why the emulator fixture is the authoritative test.
 
-5. **`save()` followed by `send()` pattern undocumented** — The author guide says to
-   dispatch payout after saving state, but no example shows code after `save()`. It is
-   not documented whether `save()` is a final-statement-only call or whether it may be
-   followed by other operations.
+5. **`save()` followed by `send()` pattern undocumented** — closed. The Slice 5
+   author guide now states that `save(...)` may be followed by payout/refund actions
+   and records the production order: validate → save finalized state → emit
+   helper-backed outbound actions.
 
 ---
 
@@ -447,6 +459,6 @@ the storage initialization constant needs filling in.
 | F-B003 TosCouncilFund msg.now | HIGH | Fix to blockchain.now() in vote/execute/cancel |
 | F-B004 TosStreamChannel no payout dispatch | HIGH | Add explicit sends or getter + manifest exception |
 | F-B005 Emulator CMake workflow | MEDIUM | Document CMake integration steps; add reporter set hash tool |
-| F-B006 Multi-send gas budget | MEDIUM | Document or switch to per-reporter ClaimBond flow |
-| F-B007 coins map value type | MEDIUM | Document valid map value types |
-| F-B008 stdlib addReport uses report.now | LOW | Add slice5OracleTrustedReport() helper |
+| F-B006 Multi-send gas budget | MEDIUM | Closed: bond refunds use `slice5OracleEmitBondRefund(...)` with bounce-on-action-fail; release checker rejects raw `SEND_MODE_REGULAR` sends |
+| F-B007 coins map value type | MEDIUM | Closed: `map<uint256, coins>` has compiler coverage and docs; bounded `uint64` remains an intentional contract choice |
+| F-B008 stdlib addReport uses report.now | LOW | Closed: trusted report/finalize helpers exist and release checker rejects caller-controlled time/identity in production candidates |

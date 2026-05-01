@@ -69,6 +69,11 @@ Before shipping a Slice 5 contract:
   transaction, record the maximum action count and gas budget. The
   `TosReportBondOracle` candidate emits at most three refund sends after
   finalization state is saved.
-- Do not rely on undocumented `map<uint256, coins>` storage behavior for
-  externally audited examples. Prefer explicit integer units in maps
-  until the ABI/storage guide covers that shape.
+- Confirm payout/refund sends use pattern helpers or
+  `SEND_MODE_BOUNCE_ON_ACTION_FAIL`; audited production candidates must
+  not emit value with raw regular-mode `.send(SEND_MODE_REGULAR)` or
+  `.send(0)`.
+- `map<uint256, coins>` is a supported Tol map value shape and is covered
+  by the compiler test suite. If a contract instead stores nanoTON in a
+  bounded integer such as `uint64`, confirm the maximum representable
+  amount is documented.

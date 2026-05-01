@@ -14,8 +14,9 @@
 //   Reporters lock BOND_ORACLE_MIN_BOND (1 TON) when submitting each report.
 //   If round.addReport() throws (stale, duplicate, outlier, unauthorized), the
 //   transaction reverts and the message bounces — no bond is recorded.
-//   After successful finalization, one bond refund send() is dispatched per reporter
-//   that submitted in the round. Storage is cleared before the sends.
+//   After successful finalization, one bond refund action is emitted per reporter
+//   that submitted in the round. Storage is cleared before the sends, and
+//   action-phase failure bounces the transaction instead of silently losing refunds.
 //
 // Known limitation: bond amounts are stored as uint64 (nanoTON) in a map.
 // Maximum representable bond is ~18,446 TON. Larger bonds require a different approach.
@@ -97,11 +98,7 @@ fun bondOracleRefundBond(bonds: map<uint256, uint64>, reporterKey: uint256, to: 
     if (result.isFound) {
         val amount = result.loadValue();
         if (amount > 0) {
-            createMessage({
-                bounce: BounceMode.NoBounce,
-                dest: to,
-                value: amount as coins,
-            }).send(SEND_MODE_REGULAR);
+            slice5OracleEmitBondRefund(to, amount as coins);
         }
     }
 }

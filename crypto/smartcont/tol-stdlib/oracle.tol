@@ -295,3 +295,15 @@ fun Slice5OracleRound.finalize(mutate self, config: Slice5OracleConfig, msg: Sli
 fun Slice5OracleRound.finalizeTrusted(mutate self, config: Slice5OracleConfig, msg: Slice5OracleFinalize, now: uint32): uint64 {
     return self.finalize(config, slice5OracleTrustedFinalize(msg, now));
 }
+
+fun slice5OracleBondRefundMessage(to: address, amount: coins): OutMessage {
+    return createMessage({
+        bounce: BounceMode.NoBounce,
+        dest: to,
+        value: amount,
+    });
+}
+
+fun slice5OracleEmitBondRefund(to: address, amount: coins, mode: int = SEND_MODE_BOUNCE_ON_ACTION_FAIL): void {
+    slice5OracleBondRefundMessage(to, amount).send(mode);
+}

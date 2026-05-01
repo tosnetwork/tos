@@ -107,6 +107,10 @@ def validate_receive_context_contract(name: str, source_path: Path) -> None:
         "msg.reporterKey" not in source,
         f"{source_path}: production candidate must not trust caller-controlled msg.reporterKey",
     )
+    require(
+        re.search(r"\.send\s*\(\s*(?:SEND_MODE_REGULAR|0)\s*\)", source) is None,
+        f"{source_path}: production candidate must not dispatch value with regular send mode; use pattern-specific payout helpers or SEND_MODE_BOUNCE_ON_ACTION_FAIL",
+    )
     if name == "tos-stream-channel":
         require(
             "slice5PaymentEmitPayout" in source,
@@ -116,6 +120,10 @@ def validate_receive_context_contract(name: str, source_path: Path) -> None:
         require(
             "in.valueCoins" in source and "in.senderAddress" in source and "blockchain.now()" in source,
             f"{source_path}: bond oracle must bind bond, reporter identity, and freshness to TVM context",
+        )
+        require(
+            "slice5OracleEmitBondRefund" in source,
+            f"{source_path}: bond oracle must use the oracle bond-refund helper so refund action failures are not silent",
         )
 
 

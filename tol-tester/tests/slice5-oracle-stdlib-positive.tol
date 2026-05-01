@@ -190,6 +190,12 @@ fun test_two_report_median_truncates(): int {
     return r.finalize(cfg, finalize(1, 22)) as int;
 }
 
+@method_id(413)
+fun test_bond_refund_message_helper(): int {
+    val msg = slice5OracleBondRefundMessage(starter(), tos("1"));
+    return msg.hash() != 0 ? 1 : 0;
+}
+
 /**
 @testcase | 401 | | 3329
 @testcase | 402 | | 3330
@@ -203,4 +209,5 @@ fun test_two_report_median_truncates(): int {
 @testcase | 410 | | 3338
 @testcase | 411 | | 30
 @testcase | 412 | | 1000
+@testcase | 413 | | 1
  */

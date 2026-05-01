@@ -91,10 +91,22 @@ Compatibility rules:
   report map deterministically, so larger fixed-at-deploy reporter sets
   do not require a contract fork.
 - Bonded oracle variants should store bond amounts in an explicitly
-  bounded integer unit such as nanoTON `uint64` until `map<uint256,
-  coins>` storage and tooling are documented. If finalization emits one
-  refund per reporter, document the maximum sends per transaction and
-  cover it in the gas budget.
+  bounded unit and document the maximum value. `map<uint256, coins>` is
+  supported by the Tol map serializer (`maps-tests.tol` covers it);
+  using `uint64` nanoTON remains acceptable when the contract wants a
+  smaller explicit maximum.
+- Bonded oracle receive handlers that require deposits should gate on
+  `in.valueCoins` before mutating state, for example
+  `(in.valueCoins as int) >= MIN_BOND`. Refund paths should use
+  `slice5OracleEmitBondRefund(...)`, which defaults to
+  `SEND_MODE_BOUNCE_ON_ACTION_FAIL`, instead of raw
+  `.send(SEND_MODE_REGULAR)`.
+- `save(...)` is not a final-statement-only primitive. It writes the
+  updated c4 cell, and a receiver may emit outbound actions afterwards.
+  The production pattern is: compute and validate → save finalized
+  state → emit payout/refund actions with a pattern helper. If an action
+  failure must roll back the state change, use a helper whose default
+  mode includes `SEND_MODE_BOUNCE_ON_ACTION_FAIL`.
 - Large numeric constants may use `_` separators in decimal, hex, and
   binary literals for readability, for example `1_000_000_000`,
   `0x3b_9a_ca_00`, and `0b0011_1011`. Separators must be between

@@ -941,7 +941,11 @@ recorded; a fifth bonded-oracle candidate, `TosReportBondOracle`, is
 now also recorded and emulator-gated. Follow-up compiler hardening has
 closed the post-trial usability surprises around readable large numeric
 literals and the discoverability of the TVM 1023-bit cell limit for
-multi-address structs.
+multi-address structs. Later production-trial hardening added the
+oracle bond-refund payout helper with bounce-on-action-fail semantics,
+release-checker rejection of raw regular-mode sends in Slice 5
+production candidates, and compiler coverage/documentation for
+`map<uint256, coins>`.
 
 **Stage plan.**
 
@@ -998,6 +1002,9 @@ multi-address structs.
      `Slice5OracleConfig.roundStarter`, reporter aggregation supports
      bounded fixed-at-deploy sets up to 255 reporters, and imported
      contract blocks no longer emit duplicate test entrypoints.
+   - ✅ Bonded-oracle hardening: `slice5OracleEmitBondRefund(...)`
+     emits refunds with bounce-on-action-fail by default; the bonded
+     oracle candidate uses it after saving finalized state.
    - ✅ Add tests for unauthorized reporter, duplicate reporter,
      insufficient quorum, stale round, outlier handling, replayed round
      id, and unknown opcode.
@@ -1020,6 +1027,8 @@ multi-address structs.
      maps.
    - ✅ Add contract-author docs, audit checklists, and
      `scripts/check-slice-5-release-package.py`.
+   - ✅ Extend release checks to reject caller-controlled time/identity
+     and raw regular-mode value sends in production-intent candidates.
 
 8. ✅ **Stage 7 — ABI freeze sign-off and external adoption.**
 
