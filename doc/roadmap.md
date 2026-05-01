@@ -1074,51 +1074,203 @@ authorization plane, not reusable public bearer secrets.
 
 2. ⏳ **Stage 1 — delivery failure and BackPressure foundation.**
 
-   Define canonical delivery failure records, dead-letter routing,
-   queue-pressure buckets, and the activation condition for
-   `ErrorClass.BackPressure`.
+   - ⏳ Add `delivery_id_input_v1#d601` TL-B schema (scaffold/doc type;
+     not yet wired into block processor).
+   - ⏳ Add Tol stdlib types (`DeliveryFailureClass`, `DeliveryIdInputV1`,
+     `BackPressureAdvice`, `DeadLetterRecord`) in
+     `crypto/smartcont/tol-stdlib/delivery.tol`.
+   - ⏳ Add named constants: `DELIVERY_FAILURE_CLASS_*`,
+     `DEAD_LETTER_SINK_MAX_RECORDS`, `DEAD_LETTER_RETENTION_BLOCKS`,
+     `BACK_PRESSURE_ADVICE_TAG = 0xb601`,
+     `DELIVERY_ID_INPUT_TAG = 0xd601`.
+   - ⏳ Keep `ErrorClass.BackPressure` reserved behind explicit gate
+     constant `BACK_PRESSURE_ACTIVATION_GATE = false`.
+   - ⏳ Add emulator conformance fixtures
+     (`slice-6-stage1-delivery-fixtures.cpp`):
+     deterministic `delivery_id`; different `origin_action_index` →
+     different id; `BackPressureAdvice` roundtrip; dead-letter record
+     fits bounds; legacy contracts unchanged.
+   - ⏳ Add tol-tester cases: `slice6-delivery-id-positive.tol`,
+     `slice6-backpressure-advice-positive.tol`,
+     `slice6-delivery-failure-class-positive.tol`.
+   - ⏳ Register fixture in `emulator/test/CMakeLists.txt`.
+   - ⏳ Update roadmap. Commit + push:
+     *Slice 6 Stage 1 delivery failure foundation*
+
+   Exit criterion: `delivery_id_input_v1` schema is fully specified;
+   dead-letter sink bounds and cost model are defined; BackPressure
+   payload is defined; legacy contracts unchanged.
 
 3. ⏳ **Stage 2 — scheduled-message protocol substrate.**
 
-   Add version-gated scheduled delivery, escrow/rent accounting,
-   cancellation, expiry, and emulator/conformance fixtures.
+   - ⏳ Add `ScheduledActionV1` struct
+     (`not_before_mc_seqno`, `expire_after_blocks`, `cancel_authority`,
+     `dead_letter?`); `deliver_by_mc_seqno` is computed, not stored.
+   - ⏳ Add helpers: `computeDeliverBy` (with overflow detection),
+     `isScheduledMessageDue`, `isScheduledMessageExpired`,
+     `computeScheduledHandle`.
+   - ⏳ Add cancellation helpers: `verifyCancelAuthority`;
+     `CANCEL_RESULT_*` constants.
+   - ⏳ Handle deleted/frozen/missing `cancel_authority`: no automatic
+     inheritance by `dead_letter` unless explicitly declared.
+   - ⏳ Handle force-expiry on escrow depletion.
+   - ⏳ Add emulator fixtures (`slice-6-stage2-schedule-fixtures.cpp`):
+     overflow detection; `deliver_by` arithmetic; due/expired predicates;
+     cancel by non-authority → NOT_AUTHORIZED; orphaned/delivered/expired
+     handle cancel → no side effects; deleted sender does not auto-cancel.
+   - ⏳ Add tol-tester cases: `slice6-schedule-shape-positive.tol`,
+     `slice6-schedule-overflow-negative.tol`,
+     `slice6-cancel-auth-positive.tol`,
+     `slice6-cancel-auth-negative.tol`.
+   - ⏳ Update roadmap. Commit + push:
+     *Slice 6 Stage 2 scheduled message substrate*
+
+   Exit criterion: a contract can model, schedule, and cancel a
+   bounded future internal message under emulator and tol-tester.
 
 4. ⏳ **Stage 3 — Tol and stdlib time surface.**
 
-   Add `@stdlib/time` helpers, compiler checks for timer budgets, and
-   generated replay/emulator traces. Production contracts must use
-   trusted chain time, not caller-controlled `msg.now`.
+   - ⏳ Add `crypto/smartcont/tol-stdlib/time.tol`:
+     `sendAfterBlocks(...)`, `sendAtMcSeqno(...)`,
+     `cancelScheduled(handle)`, `blockchain_now_mc_seqno()`.
+   - ⏳ Create `scripts/check-slice-6-release-package.py` with initial
+     rules: reject `msg.now` scheduling; require explicit timer budgets
+     in manifests when `sendAfterBlocks`/`sendAtMcSeqno` are used.
+   - ⏳ Add manifest schema extension for scheduled-message declarations.
+   - ⏳ Add tol-tester cases: `slice6-time-stdlib-sendafter-positive.tol`,
+     `slice6-time-stdlib-seqno-positive.tol`,
+     `slice6-time-no-msg-now-negative.tol`.
+   - ⏳ Add emulator fixture: trusted blockchain time vs caller-provided
+     time.
+   - ⏳ Update roadmap. Commit + push:
+     *Slice 6 Stage 3 Tol time stdlib*
+
+   Exit criterion: contract authors use `blockchain_now_mc_seqno()` and
+   stdlib scheduling helpers; `msg.now` scheduling is detected and
+   rejected by release checker.
 
 5. ⏳ **Stage 4 — monitors and links.**
 
-   Define one-way monitor notifications and bidirectional link
-   registration. Baseline notifications use `OP_MONITOR_DOWN`;
-   `extra_flags` bit 3 remains reserved and invalid unless a later
-   amendment fully specifies a validator-visible link tag and updates
-   the protocol mask, stdlib constants, and conformance fixtures
-   together.
+   - ⏳ Add `OP_MONITOR_DOWN = 0x00000010` to `common.tol` constants
+     alongside `OP_ERROR`.
+   - ⏳ Add initial `crypto/smartcont/tol-stdlib/supervision.tol` with
+     `MonitorRegistration`, `MonitorDownNotification`,
+     `buildMonitorDownNotification(...)`, `isMonitorDownOpcode(...)`.
+   - ⏳ Link registration (heavier, explicit state entry, bounded).
+   - ⏳ Add funding bounds constants:
+     `MONITOR_REGISTRATION_STORAGE_BITS`,
+     `MONITOR_NOTIFICATION_FORWARDING_FEE_FLOOR`.
+   - ⏳ `extra_flags` bit 3 remains reserved and invalid; do not activate.
+   - ⏳ Add emulator fixtures (`slice-6-stage4-monitor-fixtures.cpp`):
+     `OP_MONITOR_DOWN` ≠ `OP_ERROR`; `MonitorDownNotification`
+     roundtrip with/without diagnostic; bit 3 still rejected; observer
+     failure does not affect observed actor.
+   - ⏳ Add tol-tester cases: `slice6-monitor-registration-positive.tol`,
+     `slice6-monitor-down-notification-positive.tol`,
+     `slice6-monitor-down-opcode-check-positive.tol`.
+   - ⏳ Update roadmap. Commit + push:
+     *Slice 6 Stage 4 monitors and links*
+
+   Exit criterion: a monitor receives a bounded DOWN-style notification;
+   `extra_flags` bit 3 stays invalid; `OP_MONITOR_DOWN` dispatch works
+   in Tol.
 
 6. ⏳ **Stage 5 — supervision stdlib and restart intensity.**
 
-   Add child specs, restart strategies, recovery messages, cooldowns,
-   gas/value budgets, escalation, and circuit breakers.
+   - ⏳ Extend `supervision.tol`: `ChildSpec`, `SupervisorState`,
+     `RestartStrategy` enum (ONE_FOR_ONE/ALL/REST/DYNAMIC),
+     `RecoveryRecord`.
+   - ⏳ Implement `isCircuitBreakerTripped`, `checkRestartBudget`,
+     `buildRecoveryMessage`, `recordPartialRecovery`, `emitEscalation`.
+   - ⏳ Document in header: `one_for_all` and `rest_for_one` are
+     best-effort non-atomic; each child recovery is a separate
+     transaction; partial failure stops the sequence after per-child
+     retry budget is exhausted.
+   - ⏳ Child registry baseline: supervisor contract state.
+   - ⏳ Add behaviour manifest: `doc/slice6-behaviours/supervised_actor.json`.
+   - ⏳ Add emulator fixtures: `one_for_one` recovery; restart storm stops;
+     `one_for_all` partial-recovery escalation; `rest_for_one` registry
+     ordering; gas/value budget exhaustion stops recovery.
+   - ⏳ Add tol-tester cases: `slice6-supervision-childspec-positive.tol`,
+     `slice6-supervision-restart-intensity-positive.tol`,
+     `slice6-supervision-circuit-breaker-positive.tol`,
+     `slice6-supervision-one-for-one-positive.tol`,
+     `slice6-supervision-partial-recovery-positive.tol`.
+   - ⏳ Update roadmap. Commit + push:
+     *Slice 6 Stage 5 supervision stdlib*
+
+   Exit criterion: a supervised example recovers one failed child and
+   stops under a restart storm without message amplification.
 
 7. ⏳ **Stage 6 — capability handles.**
 
-   Start with contract/std-lib public grants and manifests. Protocol
-   admission control remains gated on public review of sender binding,
-   signature binding, revocation, replay, and wallet/RPC discovery.
+   - ⏳ Add `crypto/smartcont/tol-stdlib/capability.tol`:
+     `CapabilityConstraintsV1`, `computeConstraintsHash`,
+     `CapabilityGrantV1`, `computeGrantId`, `GrantRegistry`,
+     `RevocationSet`, `EpochMap`.
+   - ⏳ Implement verification helpers: `verifySenderBound`,
+     `verifySingleUseNonce`, `isGrantExpired`, `isGrantRevoked`,
+     `verifySelectorsMatch`, `requireCapability`.
+   - ⏳ Bounded revocation storage; Stage 6 baseline rejects writes
+     that exceed budget unless caller compacts first.
+   - ⏳ Reject reusable public bearer secrets (release checker rule).
+   - ⏳ Add manifest schema for capability grants.
+   - ⏳ Add emulator fixtures: sender-bound success/failure; replay same
+     target; expired grant; revoked grant; selector mismatch;
+     `constraints_hash` mismatch; revocation storage full.
+   - ⏳ Add tol-tester cases: `slice6-capability-grant-positive.tol`,
+     `slice6-capability-sender-bound-positive.tol`,
+     `slice6-capability-expired-negative.tol`,
+     `slice6-capability-revoked-negative.tol`,
+     `slice6-capability-replay-negative.tol`,
+     `slice6-capability-constraints-hash-negative.tol`.
+   - ⏳ Add `examples/slice6/capability-example.tol`.
+   - ⏳ Update roadmap. Commit + push:
+     *Slice 6 Stage 6 capability handles*
+
+   Exit criterion: one official example uses sender-bound or
+   signature-bound capability grants; replay and revocation tests pass;
+   release checker rejects reusable bearer tokens.
 
 8. ⏳ **Stage 7 — observability and release package.**
 
-   Add bounded crash/failure trace artifacts, audit checklists, release
-   checker coverage, and compatibility matrices.
+   - ⏳ Finalize `scripts/check-slice-6-release-package.py`: validates
+     all Slice 6 stdlib exports, no `msg.now` scheduling, no unbounded
+     queues, `extra_flags` bit 3 not set, no reusable bearer tokens,
+     budget declarations present.
+   - ⏳ Add `examples/slice6/`: `scheduled-transfer.tol`,
+     `monitored-contract.tol`, `supervised-child.tol` + `supervisor.tol`,
+     `capability-example.tol`.
+   - ⏳ Add `doc/slice6-failure-trace-schema.json`.
+   - ⏳ Add `doc/slice-6-audit-checklist.md` (scheduler, monitor/link,
+     supervision, capability checklists).
+   - ⏳ Add `doc/slice-6-compatibility-matrix.md`.
+   - ⏳ Add `doc/slice-6-release-notes.md`.
+   - ⏳ Update roadmap. Commit + push:
+     *Slice 6 Stage 7 release package*
+
+   Exit criterion: operators can inspect supervised failures and
+   scheduled messages without replaying raw chain history; release
+   checker validates all Stage 1–6 invariants.
 
 9. ⏳ **Stage 8 — system-contract dogfood and production gate.**
 
-   Use supervision, scheduled messages, and structured failures in at
-   least one official system contract or workchain-local service, with
-   activation and rollback plans recorded.
+   - ⏳ Apply scheduled messages + supervision + structured failures to
+     at least one official system contract or create a minimal
+     `crypto/smartcont/slice6-dogfood.tol` supervised service contract.
+   - ⏳ Add emulator/conformance end-to-end tests for the dogfood contract.
+   - ⏳ Run full verification suite.
+   - ⏳ Add `doc/slice-6-activation-plan.md`: activation height (TBD —
+     pending production deployment), capability flags, rollback plan.
+   - ⏳ Update roadmap: ✅ repo-side complete; ⏳ production activation
+     pending.
+   - ⏳ Commit + push:
+     *Slice 6 Stage 8 system contract dogfood*
+
+   Exit criterion: Slice 6 success criterion in §9 is met repo-side
+   (supervision, scheduled messages, structured errors used by one
+   official system contract); production activation is a separate
+   deployment step recorded in `doc/slice-6-activation-plan.md`.
 
 ## 7. Out of scope at each phase
 
