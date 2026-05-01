@@ -1420,42 +1420,44 @@ rollout remain deployment-gated rather than coding-gated.
 
 ## 11. Known unscheduled work and cross-Slice blockers
 
-This section makes the gaps in §6 explicit so they are not silently
-forgotten between slices. Every entry below is something the
-implementation cannot rely on existing — either no slice owns it,
-or the slice that nominally owns it is missing prerequisite design
-work.
+This section started as the gap tracker for work that the Slice 1–6
+plan did not yet own. On `actor-layer`, the implementation blockers have
+now been driven into concrete slice work and closed. The section remains
+as a historical ledger plus a short list of deployment-gated follow-up
+work so old blockers are not silently forgotten or reopened by accident.
 
 This section is updated as items move from "unscheduled" to
 "scheduled in Slice N"; do not delete entries when they land —
 move them to a "Closed" subsection at the bottom of §11 with a
 pointer to the slice and PR that resolved them.
 
-### 11.1 `actor.md` sections not yet scheduled in any slice
+The active non-coding gates after Slice 6 are: third-party security
+review of the `actor-layer` PR, production activation planning, and
+public testnet/mainnet rollout. TOS is not yet live, so activation height
+and production BackPressure emission are deployment gates rather than
+remaining compiler / stdlib implementation tasks.
 
-The Slice 1–6 plan in §6 covers `actor.md` §5.1, §5.2, §5.3, §5.4,
-§5.5, §5.6, §5.9, and §6.5. The remaining seven directions are
-unscheduled at the time of writing:
+### 11.1 `actor.md` sections originally not scheduled in any slice
+
+The original Slice 1–6 plan in §6 covered `actor.md` §5.1, §5.2, §5.3,
+§5.4, §5.5, §5.6, §5.9, and §6.5, leaving seven directions explicitly
+tracked here. Their current status is:
 
 | `actor.md` § | Content | Downstream impact | Recommended placement |
 |---|---|---|---|
-| §5.7 | Cross-shard delivery SLA + dead-letter handling | Blocks `error_class = 5` (back-pressure) emission (`policy.md` §5.3), protocol-level delivery-failure semantics, and Slice 6 supervision failure taxonomy. It no longer blocks Slice 4's contract-level bounded postponement because Slice 4 uses explicit expiry/drop semantics and keeps `ErrorClass.BackPressure` reserved. | Promoted into Slice 6 Stage 0 via `doc/tos-delivery-sla-policy.md`; implementation begins only after review closure. |
-| §5.8 | Actor-level observability | Operational debuggability blocker once supervised contracts exist; off-chain indexer surface usable independently of on-chain protocol work | Off-chain part: pulled forward to Slice 3 (alongside `tol new` scaffolding). On-chain hooks: bundled into Slice 6. |
-| §6.1 | Release handling and upgrade discipline | TOS already has `SETCODE`-style behaviour replacement; the missing part is operational discipline (compatibility windows, rollback, state-migration proofs). Becomes load-bearing the moment Slice 6 ships supervision-driven restarts. | Pre-design during Slice 4–5; production rollout adjacent to Slice 6. |
-| §6.2 | Application boundaries / lifecycle (validator subsystem, workchain, system-contract package) | Without this, every multi-subsystem upgrade is hand-coordinated. Compounds with §6.1. | Same window as §6.1. |
-| §6.3 | Monitors versus links (one-way observation vs bidirectional failure) | Slice 6 supervision needs this distinction before any `supervisor` field or link flag can be meaningful. | Promoted into Slice 6 Stage 0 via `doc/tos-supervision-policy.md`. |
-| §6.4 | Restart intensity / circuit breakers | Supervision without restart-intensity limits is a message-amplification attack surface. | Promoted into Slice 6 Stage 0 via `doc/tos-supervision-policy.md`. |
-| §6.6 | Crash reports / `sys`-style diagnostics | "Let it crash" is unsafe without classified, bounded crash reports. | Promoted into Slice 6 Stage 0 via `doc/tos-supervision-policy.md`. |
+| §5.7 | Cross-shard delivery SLA + dead-letter handling | Previously blocked `error_class = 5` (BackPressure) emission, protocol-level delivery-failure semantics, and Slice 6 supervision failure taxonomy. Repo-side delivery failure records, dead-letter bounds, and BackPressure advice are now implemented; production emission remains activation-gated. | Closed into Slice 6. Production activation is tracked by `doc/slice-6-activation-plan.md`. |
+| §5.8 | Actor-level observability | Operational debuggability blocker once supervised contracts exist; off-chain indexer surface usable independently of on-chain protocol work. | Off-chain part landed in Slice 3 scaffolding/replay artifacts; on-chain failure traces landed in Slice 6. |
+| §6.1 | Release handling and upgrade discipline | TOS already has `SETCODE`-style behaviour replacement; the remaining part is operational discipline: compatibility windows, rollback, state-migration proofs, and activation sign-off. | Deployment / release-management gate, not a remaining actor-layer coding task. |
+| §6.2 | Application boundaries / lifecycle (validator subsystem, workchain, system-contract package) | Multi-subsystem upgrades still require explicit release coordination. This compounds with §6.1 but does not block the repo-side actor-layer implementation. | Deployment / release-management gate, paired with §6.1. |
+| §6.3 | Monitors versus links (one-way observation vs bidirectional failure) | Slice 6 supervision needed this distinction before monitor/link APIs could be meaningful. | Closed into Slice 6 via `doc/tos-supervision-policy.md` and the monitor/supervision stdlib/tests. |
+| §6.4 | Restart intensity / circuit breakers | Supervision without restart-intensity limits is a message-amplification attack surface. | Closed into Slice 6 supervision stdlib and release checks. |
+| §6.6 | Crash reports / `sys`-style diagnostics | "Let it crash" is unsafe without classified, bounded crash reports. | Closed into Slice 6 bounded failure traces and release-package artifacts. |
 
-`§6.3 / §6.4 / §6.6` are now folded into §6's Slice 6 row. The table
-keeps the historical blocker record until Stage 0 review closes and the
-items move to §11.5.
+### 11.2 Per-Slice blocker ledger
 
-### 11.2 Per-Slice blockers
-
-Each downstream slice has at least one blocker that is not yet
-resolved. None invalidates the §6 sequencing; all must be cleared
-before the corresponding slice can start.
+The entries below are retained to show how the original blockers were
+closed. They are no longer start gates for downstream implementation on
+`actor-layer`.
 
 **Slice 2** — Q2 syntax (`contract` / `receive(...)` / opcode-bearing structs)
 
@@ -1519,35 +1521,34 @@ before the corresponding slice can start.
 - *ABI design:* Cross-language ABI between FunC and Tol has a frozen
   manifest schema, package manifests, and a mixed FunC/Tol interop
   fixture checked by `scripts/check-slice-5-abi-manifests.py`.
-- *Cross-cut:* `error_class = 5` back-pressure is reserved by
-  `policy.md` §5.3 but blocked on §5.7 (see §11.1).
+- *Cross-cut:* `error_class = 5` BackPressure is still not assumed live
+  on production networks. The repo-side Slice 6 delivery-SLA foundation
+  now provides the design and helper surface; production emission remains
+  gated by activation policy.
 
 **Slice 6** — `actor.md` §5.1 + §5.2 + §5.4 + §5.7 + §6.3 + §6.4 + §6.6
 
-Three independently-blocked sub-features:
+Slice 6 is repo-side complete on `actor-layer`. Stage 0 review closed,
+Stages 1–8 landed, and the later external-author hardening closed the
+major authoring gaps found by VestingVault and the Slice 5 production
+trials.
 
-- *§5.1 supervision:* `actor.md` §5.1 lists the prerequisites —
-  explicit budgets, restart-intensity limits, supervisor-message
-  funding rules, anti-restart-storm. Restart-intensity is §6.4
-  (unscheduled, see §11.1). Supervisor-message funding overlaps
-  with §7 of `policy.md` (bounce budgeting) but is a distinct
-  resource model.
-- *§5.2 time primitive:* Maximum outstanding timers, rent for
-  scheduled messages, cancellation race semantics, MEV-sensitive
-  expiry, DoS limits — none designed. `policy.md` does not
-  reserve any wire-format bit for scheduled messages.
-- *§5.4 capability addressing:* `actor.md` calls this "the most
-  research-heavy item in the list". `doc/tos-capability-policy.md`
-  opens the public RFC and rejects reusable public bearer secrets as
-  the Slice 6 baseline. **The RFC must still be reviewed before any
-  protocol-level admission-control implementation work.**
-
-Each sub-feature needs its own policy document
-(`doc/tos-supervision-policy.md`, `doc/tos-time-policy.md`,
-`doc/tos-capability-policy.md`). Draft v0.2 documents now exist, plus
-`doc/tos-delivery-sla-policy.md` and the umbrella
-`doc/tos-slice-6-policy.md`; none are approved until Stage 0 review
-closes.
+- *§5.1 supervision:* Explicit budgets, restart-intensity windows,
+  circuit breakers, recovery budgets, monitor notifications, and bounded
+  escalation/dead-letter paths are implemented in the Slice 6 stdlib and
+  emulator/tol-tester fixtures.
+- *§5.2 time primitive:* The design chose masterchain seqno for trusted
+  scheduled delivery. Scheduler helpers use mc-seqno budgets; ordinary
+  wall-clock application durations use `Slice6WallClockBudget` so
+  caller-controlled `msg.now` does not masquerade as trusted scheduler
+  time.
+- *§5.4 capability addressing:* The public-grant baseline is implemented
+  with canonical constraint hashing, sender/selector binding,
+  single-use nonce consumption, bounded revocation storage, and release
+  checks against reusable bearer-token patterns.
+- *Production caveat:* TOS is not live yet. Validator-level activation,
+  production BackPressure emission, and real workchain rollout remain
+  deployment gates recorded in `doc/slice-6-activation-plan.md`.
 
 ### 11.3 Governance and approval state (Slice 1)
 
@@ -1566,48 +1567,53 @@ closes.
   `doc/tos-language-syntax-policy.md`; Slice 3 is approved at
   `doc/tos-slice-3-policy.md`; Slice 4 is complete under
   `doc/tos-postponement-policy.md` and `doc/tos-slice-4-policy.md`.
-  Slice 6 policy documents now exist as Draft v0.2 Stage 0 review
-  inputs: `doc/tos-slice-6-policy.md`,
+  Slice 5 is complete under `doc/tos-slice-5-policy.md` and
+  `doc/slice-5-func-tol-abi.md`. Slice 6 policy documents are approved
+  implementation inputs and have been implemented repo-side:
+  `doc/tos-slice-6-policy.md`,
   `doc/tos-delivery-sla-policy.md`, `doc/tos-time-policy.md`,
   `doc/tos-supervision-policy.md`, and
-  `doc/tos-capability-policy.md`. They are not approved implementation
-  inputs until Stage 0 review closes. Each follows the same
-  single-signer model unless the ownership split happens before
-  approval.
+  `doc/tos-capability-policy.md`. Each follows the same single-signer
+  model unless the ownership split happens before a future amendment.
 
-### 11.4 Cross-Slice priority of unscheduled work
+### 11.4 Cross-Slice priority of remaining follow-up
 
-Sorted by how many later slices each item blocks:
+Sorted by how directly each item affects production readiness:
 
-1. 🟡 **`actor.md` §5.7 design RFC** — no longer blocks Slice 4's bounded
-   contract-level postponement, but still blocks protocol-level delivery
-   failure semantics, Slice 5 back-pressure `error_class = 5`, and
-   Slice 6 failure taxonomy for supervision. Draft v0.2 is now open at
-   `doc/tos-delivery-sla-policy.md`.
-2. ✅ **Slice 2 syntax policy doc** — closed 2026-04-30 by
+1. 🟡 **Third-party security review of `actor-layer`** — required before
+   treating the branch as production-ready. Review should focus on
+   compiler lowering/static checks, bounded-resource assumptions,
+   capability/supervision/scheduler semantics, and wire compatibility.
+2. 🟡 **Production activation plan execution** — TOS is not live yet.
+   Activation height, validator feature flags, rollback procedure, and
+   production BackPressure emission remain deployment gates, not coding
+   blockers.
+3. 🟡 **Public testnet / mainnet burn-in** — required to move from
+   repo-side production candidate to production-proven status.
+4. ✅ **`actor.md` §5.7 delivery-SLA RFC and implementation** — closed by
+   Slice 6 Stage 0–1 and later release checks. Production BackPressure
+   emission remains covered by item 2.
+5. ✅ **`actor.md` §5.4 capability public RFC and implementation** —
+   closed by Slice 6 Stage 0 and Stage 6, with follow-up authoring
+   hardening from the external trials.
+6. ✅ **Slice 2 syntax policy doc** — closed 2026-04-30 by
    `doc/tos-language-syntax-policy.md` Draft v3 and the Stage 1
    implementation commit `081f05d3c`; see §6 Slice 2 status and
    §11.5.
-3. ✅ **Slice 3 Stage 1 replay harness** — closed 2026-04-30. The
+7. ✅ **Slice 3 Stage 1 replay harness** — closed 2026-04-30. The
    deterministic replay/property substrate is checked in and CI-wired;
    stdlib pattern implementation can start.
-4. 🟡 **`actor.md` §5.4 capability public RFC** — Slice 6 long-pole.
-   Draft v0.2 is now open at `doc/tos-capability-policy.md`. It still
-   needs protocol/security review before implementation.
-5. ✅ **§6.3 / §6.4 / §6.6 promotion into Slice 6 scope** —
+8. ✅ **§6.3 / §6.4 / §6.6 promotion into Slice 6 scope** —
    closed by the Slice 6 Stage 0 RFC update; these are now explicit
    Slice 6 design inputs.
-6. ✅ **`actor.md` §5.8 off-chain observability placement** —
+9. ✅ **`actor.md` §5.8 off-chain observability placement** —
    pulled into Slice 3 Stage 6 in `doc/tos-slice-3-policy.md` as
    generated manifests, opcode maps, method-id maps, error-code maps,
    and replay traces.
 
-Item 1 remains the next protocol-design dependency, but it is now in
-RFC review rather than unscheduled. Slice 4 avoids blocking on it by
-keeping back-pressure emission out of scope, but §5.7 still needs
-review closure before any protocol-level delivery failure semantics or
-`ErrorClass.BackPressure` activation. Items 2, 3, 5, and 6 are closed.
-Item 4 is in RFC review.
+Items 4–9 are closed implementation/design blockers. Items 1–3 are
+release-quality gates: they can block a production launch, but they do
+not imply missing Slice 1–6 coding work on `actor-layer`.
 
 (The earlier four-signer approval item from this list was
 removed when policy v6 made single-signer the rule; see §11.3.)
@@ -1762,8 +1768,29 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   separators in decimal/hex/binary numeric literals and gives explicit
   ABI-safe diagnostics when several inline `address` fields push a
   struct over the TVM 1023-bit cell limit.
+- ✅ **Slice 6 full repo-side implementation** — closed 2026-05-01.
+  Stages 0–8 landed on `actor-layer`: delivery failure records,
+  bounded dead-letter semantics, scheduled-message substrate,
+  `@stdlib/time`, monitor/link notification helpers, supervision,
+  capability handles, release-package artifacts, and system-contract
+  dogfood. Follow-up hardening from external trials split scheduler
+  mc-seqno budgets from wall-clock duration budgets, hardened safe
+  payment examples, fixed state-qualified same-opcode contract lowering,
+  and added release-checker coverage for the new authoring guardrails.
+  Real validator activation remains a deployment step because TOS is not
+  live.
 
 ## 12. Revision notes
+
+### r53 (§11 roadmap status cleanup)
+
+- Reworded §11 from an active unscheduled-work list into a historical
+  blocker ledger plus current production-readiness gates.
+- Marked Slice 6 policy/design blockers as repo-side closed and moved the
+  remaining work into third-party security review, activation planning,
+  and public network burn-in.
+- Added an explicit §11.5 closed entry for the full Slice 6 repo-side
+  implementation and its post-trial hardening.
 
 ### r52 (Slice 5 authoring residue hardening)
 
