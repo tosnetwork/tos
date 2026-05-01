@@ -3583,7 +3583,7 @@ auto to_any_promise(td::Promise<td::Unit>&& promise) {
 
 td::Status ToslibClient::do_request(const toslib_api::raw_sendMessage& request,
                                     td::Promise<object_ptr<toslib_api::ok>>&& promise) {
-  // Codex SDK-FFI audit (S1.7): R10.1 / R9.2 introduced
+  // Security SDK-FFI audit (S1.7): R10.1 / R9.2 introduced
   // `deserialize_safe_boc_root` to keep attacker-supplied BoCs out of
   // noexcept consumers, but this raw-message path was not migrated.
   // `block::gen::t_Message_Any.print_ref` walks the cell and bare-loads
@@ -3635,7 +3635,7 @@ td::Result<td::Bits256> get_ext_in_msg_hash_norm(td::Ref<vm::Cell> ext_in_msg_ce
 
 td::Status ToslibClient::do_request(const toslib_api::raw_sendMessageReturnHash& request,
                                     td::Promise<object_ptr<toslib_api::raw_extMessageInfo>>&& promise) {
-  // Codex SDK-FFI audit (S1.7): same hardening as raw_sendMessage above.
+  // Security SDK-FFI audit (S1.7): same hardening as raw_sendMessage above.
   // `get_ext_in_msg_hash_norm` calls `tlb::type_unpack_cell` which walks
   // the body cell and throws on special.
   TRY_RESULT(body, deserialize_safe_boc_root(request.body_, "body"));
@@ -5369,7 +5369,7 @@ void ToslibClient::finish_dns_resolve(std::string name, td::Bits256 category, td
       TRY_STATUS_PROMISE(promise, td::Status::Error("next resolver error: domain split not at a component boundary "));
     }
 
-    // Codex audit (round 12, finding #2): the previous code unconditionally
+    // Security audit (round 12, finding #2): the previous code unconditionally
     // called `data.get<EntryDataNextResolver>()` based on `partially_resolved`
     // being true, but a malicious DNS resolver can mark a record partial
     // while returning a different variant (Text/AdnlAddress/SmcAddress/etc.).

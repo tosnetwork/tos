@@ -70,7 +70,7 @@ class FFIAwaitable {
   void await_suspend(Continuation continuation) {
     uintptr_t expected = 0;
     if (!continuation_.compare_exchange_strong(expected, continuation.value)) {
-      // Codex SDK-FFI audit (S5.3): the previous CHECK aborted the host
+      // Security SDK-FFI audit (S5.3): the previous CHECK aborted the host
       // on duplicate suspend (i.e. when another continuation was already
       // registered but the awaitable was not yet resolved). A buggy or
       // hostile FFI binding can trigger this. Treat duplicate-pre-resolve

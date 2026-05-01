@@ -1954,7 +1954,7 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
     // For eth_call, gas price should be 0 (no balance needed for simulation).
     txn.max_fee_per_gas = 0;
     txn.max_priority_fee_per_gas = 0;
-    // Codex round 1 (H-02): clamp caller-supplied gas to the read-only cap.
+    // Security hardening round 1 (H-02): clamp caller-supplied gas to the read-only cap.
     txn.gas_limit = clamp_read_only_rpc_gas(txn.gas_limit);
 
     uint8_t rand_seed[32] = {};
@@ -2026,7 +2026,7 @@ static RpcResult handle_estimate_gas(const std::string& params, const std::strin
     if (txn.gas_limit == 10'000'000) {
         txn.gas_limit = 30'000'000;
     }
-    // Codex round 1 (H-02): clamp caller-supplied gas to the read-only cap.
+    // Security hardening round 1 (H-02): clamp caller-supplied gas to the read-only cap.
     txn.gas_limit = clamp_read_only_rpc_gas(txn.gas_limit);
 
     uint8_t rand_seed[32] = {};
@@ -2639,7 +2639,7 @@ static RpcResult handle_eth_subscribe(const std::string& params, const std::stri
     }
 
     uint64_t sub_id = global_subscription_manager().subscribe(type, filter);
-    // Codex round 6 (R6-H-11): subscribe() returns 0 when the global
+    // Security hardening round 6 (R6-H-11): subscribe() returns 0 when the global
     // active-subscription cap is reached. Surface that as an RPC error
     // rather than handing the caller a useless "0" id.
     if (sub_id == 0) {
@@ -2797,7 +2797,7 @@ static RpcResult handle_fee_history(const std::string& params, const std::string
     // When absent, geth/erigon omit the `reward` field entirely; we keep
     // emitting it but with one zero per block for backward compat.
     //
-    // Codex round 5 (H-07): bound the percentile array length. The
+    // Security hardening round 5 (H-07): bound the percentile array length. The
     // response emits `block_count * reward_count` entries; with
     // block_count capped at 1024 and reward_count uncapped, a single
     // request near the 1 MiB params limit could fan out to a multi-MB
@@ -3299,7 +3299,7 @@ static RpcResult handle_new_filter(const std::string& params, const std::string&
         return *error;
     }
 
-    // Codex round 5 (H-08) + round 6 (R6-H-10): apply the same
+    // Security hardening round 5 (H-08) + round 6 (R6-H-10): apply the same
     // `kMaxGetLogsBlockRange` cap that `eth_getLogs` enforces. Without
     // this, a caller can stash a filter with a 10M-block range and
     // force every `eth_getFilterLogs` / `eth_getFilterChanges` poll to
@@ -3379,7 +3379,7 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
         return {make_result(id, "[]"), false};
     }
 
-    // Codex round 7 (R7-H-14): cap each poll's scan window so a long-
+    // Security hardening round 7 (R7-H-14): cap each poll's scan window so a long-
     // running open-ended filter cannot rescan an unbounded historical
     // range under the global filter mutex. The admission cap from R6 only
     // bounds (head_at_creation - from_block); without a per-poll cap, a
@@ -3402,7 +3402,7 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
             arr += format_log_json(logs[i]);
         }
     } else if (f.type == FilterType::Blocks) {
-        // Return block hashes for new blocks. Codex round 7 (R7-H-14):
+        // Return block hashes for new blocks. Security hardening round 7 (R7-H-14):
         // cap the per-poll scan window so a long-deferred poll cannot
         // emit thousands of entries under the global filter mutex.
         uint64_t scan_to = current_block;
@@ -5381,7 +5381,7 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
     txn.max_fee_per_gas = 0;
     txn.max_priority_fee_per_gas = 0;
     if (txn.gas_limit == 10'000'000) txn.gas_limit = 30'000'000;
-    // Codex round 1 (H-02): clamp caller-supplied gas to the read-only cap.
+    // Security hardening round 1 (H-02): clamp caller-supplied gas to the read-only cap.
     // This handler additionally holds the global EVM state mutex while
     // executing, so an oversized gas budget can stall every other RPC.
     txn.gas_limit = clamp_read_only_rpc_gas(txn.gas_limit);
@@ -5487,7 +5487,7 @@ static RpcResult handle_get_filter_logs(const std::string& params, const std::st
     if (f.query_from_block > to_block) {
         return {make_result(id, "[]"), false};
     }
-    // Codex round 7 (R7-H-14): hard-cap the per-call scan window. Unlike
+    // Security hardening round 7 (R7-H-14): hard-cap the per-call scan window. Unlike
     // `eth_getFilterChanges`, this handler is allowed to return the
     // full historical match set — but a long-running open-ended filter
     // could still rescan an unbounded `from..head` range every call.

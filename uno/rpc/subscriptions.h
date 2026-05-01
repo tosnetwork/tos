@@ -34,7 +34,7 @@ namespace uno_workchain {
 /// Matches the EVM subscription manager's cap.
 constexpr size_t kMaxPendingEventsPerUnoSub = 10'000;
 
-/// Codex round 6 (R6-H-11): hard cap on the total number of active
+/// Security hardening round 6 (R6-H-11): hard cap on the total number of active
 /// Uno subscriptions across all callers, mirroring the EVM cap. Without
 /// this, public RPC clients can accumulate subscription IDs without
 /// bound — every notify_* call iterates the full subscription map and

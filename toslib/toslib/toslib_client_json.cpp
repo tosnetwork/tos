@@ -39,14 +39,14 @@ void toslib_client_json_destroy(void *client) {
 }
 
 void toslib_client_json_send(void *client, const char *request) {
-  // Codex SDK-FFI audit (S4.1): null-handle no-op (matches the
+  // Security SDK-FFI audit (S4.1): null-handle no-op (matches the
   // "send/cancel/destroy null no-op" convention from emulator FFI).
   if (client == nullptr) return;
   static_cast<toslib::ClientJson *>(client)->send(td::Slice(request == nullptr ? "" : request));
 }
 
 const char *toslib_client_json_receive(void *client, double timeout) {
-  // Codex SDK-FFI audit (S4.1): null-handle returns nullptr (the same
+  // Security SDK-FFI audit (S4.1): null-handle returns nullptr (the same
   // shape returned for empty receives below).
   if (client == nullptr) return nullptr;
   auto slice = static_cast<toslib::ClientJson *>(client)->receive(timeout);
@@ -58,7 +58,7 @@ const char *toslib_client_json_receive(void *client, double timeout) {
 }
 
 const char *toslib_client_json_execute(void *client, const char *request) {
-  // Codex SDK-FFI audit (S4.1): execute is static; only the request
+  // Security SDK-FFI audit (S4.1): execute is static; only the request
   // string can be null. The ternary below already handles that. No
   // guard needed for `client` (unused by the static call).
   (void)client;
@@ -71,7 +71,7 @@ const char *toslib_client_json_execute(void *client, const char *request) {
 }
 
 void toslib_client_json_cancel_requests(void *client) {
-  // Codex SDK-FFI audit (S4.1): null-handle no-op.
+  // Security SDK-FFI audit (S4.1): null-handle no-op.
   if (client == nullptr) return;
   static_cast<toslib::ClientJson *>(client)->cancel_requests();
 }

@@ -70,7 +70,7 @@ td::Result<td::uint32> HighloadWallet::get_wallet_id() const {
       return 0;
     }
     auto cs = vm::load_cell_slice(state_.data);
-    // Codex audit (round 13, finding #3): see WalletV3 equivalent.
+    // Security audit (round 13, finding #3): see WalletV3 equivalent.
     if (!cs.have(64)) {
       return td::Status::Error("HighloadWallet::get_wallet_id: data slice too short");
     }

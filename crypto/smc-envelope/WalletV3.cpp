@@ -66,7 +66,7 @@ td::Result<td::uint32> WalletV3::get_wallet_id() const {
       return 0;
     }
     auto cs = vm::load_cell_slice(state_.data);
-    // Codex audit (round 13, finding #3): explicit size check before
+    // Security audit (round 13, finding #3): explicit size check before
     // skip/fetch. Previous code ignored skip_first failure and
     // unchecked fetch_ulong which returns -1 on EOF (cast to uint32 is
     // 0xFFFFFFFF). Hostile or truncated state produced bogus wallet ids.
@@ -84,7 +84,7 @@ td::Result<td::Ed25519::PublicKey> WalletV3::get_public_key() const {
       return td::Status::Error("data is null");
     }
     auto cs = vm::load_cell_slice(state_.data);
-    // Codex audit (round 13, finding #3): require enough bits for the
+    // Security audit (round 13, finding #3): require enough bits for the
     // 64-bit prefix + 256-bit public key BEFORE skip/fetch.
     if (!cs.have(64 + 256)) {
       return td::Status::Error("WalletV3::get_public_key: data slice too short");

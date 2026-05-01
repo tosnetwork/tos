@@ -96,7 +96,7 @@ td::Result<td::Ed25519::PublicKey> TestWallet::get_public_key_or_throw() const {
     return td::Status::Error("data is null");
   }
   //FIXME use get method
-  // Codex audit (round 15, finding #4): same hardening as the round-13
+  // Security audit (round 15, finding #4): same hardening as the round-13
   // wallet helpers — require the seqno + 256-bit pubkey bits before
   // skip/fetch, and check fetch_bytes return.
   auto cs = vm::load_cell_slice(state_.data);

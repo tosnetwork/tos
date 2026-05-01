@@ -23,7 +23,7 @@
 #include "MultisigWallet.h"
 #include "SmartContractCode.h"
 
-// Codex audit (round 13, finding #4): the public methods of MultisigWallet
+// Security audit (round 13, finding #4): the public methods of MultisigWallet
 // (processed, get_query_state, get_public_keys, check_query_signatures,
 // get_n_k, get_unsigned_messaged) return plain values and ignore
 // `Answer.success`, then unchecked `pop_smallint_range / pop_int /
@@ -83,7 +83,7 @@ td::Ref<MultisigWallet> MultisigWallet::create(td::Ref<vm::Cell> data) {
 }
 
 int MultisigWallet::processed(td::uint64 query_id) const try {
-  // Codex SDK-FFI audit (S2.2): defensive layer. The full Result<T>
+  // Security SDK-FFI audit (S2.2): defensive layer. The full Result<T>
   // migration (R13.4) is still deferred — public signature remains plain
   // value — but stack pops can throw on a malformed get-method result
   // from a hostile contract / lite-server. Catch at the boundary and
@@ -96,7 +96,7 @@ int MultisigWallet::processed(td::uint64 query_id) const try {
 }
 
 MultisigWallet::QueryState MultisigWallet::get_query_state(td::uint64 query_id) const try {
-  // Codex SDK-FFI audit (S2.2): defensive layer; on any failure return a
+  // Security SDK-FFI audit (S2.2): defensive layer; on any failure return a
   // QueryState::Unknown sentinel rather than aborting the host.
   auto ans = run_get_method("get_query_state", {td::make_refint(query_id)});
   QueryState res;
@@ -128,7 +128,7 @@ MultisigWallet::QueryState MultisigWallet::get_query_state(td::uint64 query_id) 
 }
 
 std::vector<td::SecureString> MultisigWallet::get_public_keys() const try {
-  // Codex SDK-FFI audit (S2.2): defensive layer; empty vector on failure.
+  // Security SDK-FFI audit (S2.2): defensive layer; empty vector on failure.
   auto ans = run_get_method("get_public_keys");
   if (!ans.success) return {};
   auto dict_root = ans.stack.write().pop_cell();
@@ -147,7 +147,7 @@ std::vector<td::SecureString> MultisigWallet::get_public_keys() const try {
 
 td::Ref<vm::Cell> MultisigWallet::create_init_data(td::uint32 wallet_id, std::vector<td::SecureString> public_keys,
                                                    int k) const try {
-  // Codex SDK-FFI audit (S2.2): defensive layer. Replace the previous
+  // Security SDK-FFI audit (S2.2): defensive layer. Replace the previous
   // CHECK(res.code == 0) abort with a null-cell return on get-method
   // failure or pop exception.
   vm::Dictionary pk(8);
@@ -182,7 +182,7 @@ td::Ref<vm::Cell> MultisigWallet::create_init_data_fast(td::uint32 wallet_id, st
 }
 
 td::Ref<vm::Cell> MultisigWallet::merge_queries(td::Ref<vm::Cell> a, td::Ref<vm::Cell> b) const try {
-  // Codex SDK-FFI audit (S3.2): defensive layer (S2.2 pattern). Hostile
+  // Security SDK-FFI audit (S3.2): defensive layer (S2.2 pattern). Hostile
   // contract / lite-server result no longer aborts the embedding host.
   auto res = run_get_method("merge_queries", {a, b});
   if (!res.success) return {};
@@ -202,7 +202,7 @@ MultisigWallet::Mask MultisigWallet::to_mask(td::RefInt256 mask) const {
 }
 
 std::pair<int, MultisigWallet::Mask> MultisigWallet::check_query_signatures(td::Ref<vm::Cell> a) const try {
-  // Codex SDK-FFI audit (S3.2): defensive layer; (-1, empty mask) on failure.
+  // Security SDK-FFI audit (S3.2): defensive layer; (-1, empty mask) on failure.
   auto ans = run_get_method("check_query_signatures", {a});
   if (!ans.success) return std::make_pair(-1, Mask{});
 
@@ -214,7 +214,7 @@ std::pair<int, MultisigWallet::Mask> MultisigWallet::check_query_signatures(td::
 }
 
 std::pair<int, int> MultisigWallet::get_n_k() const try {
-  // Codex SDK-FFI audit (S3.2): defensive layer; (0, 0) on failure.
+  // Security SDK-FFI audit (S3.2): defensive layer; (0, 0) on failure.
   auto ans = run_get_method("get_n_k");
   if (!ans.success) return std::make_pair(0, 0);
   auto k = ans.stack.write().pop_smallint_range(128);
@@ -225,7 +225,7 @@ std::pair<int, int> MultisigWallet::get_n_k() const try {
 }
 
 std::vector<MultisigWallet::Message> MultisigWallet::get_unsigned_messaged(int id) const try {
-  // Codex SDK-FFI audit (S3.2): defensive layer; empty vector on any
+  // Security SDK-FFI audit (S3.2): defensive layer; empty vector on any
   // get-method failure or stack/dict exception.
   SmartContract::Answer ans;
   if (id == -1) {

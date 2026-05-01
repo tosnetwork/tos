@@ -9,8 +9,8 @@ authorized owner before Slice 2 implementation begins, under the
 single-signer governance model of
 [`doc/tos-message-policy.md`](tos-message-policy.md) §12.1.
 
-v3 supersedes the v2 closure claim after the second codex
-security review found three partial closures and one broken
+v3 supersedes the v2 closure claim after the second security
+review found three partial closures and one broken
 closure in v2. The four §3 lock decisions from v1 stand; v3
 adds the missing deployment/state-machine interaction rules,
 external-message scope boundary, hidden-state save semantics,
@@ -469,7 +469,7 @@ Both forms are **tail position only**:
   immediately. Subsequent statements in the same control-flow
   arm are unreachable code and a compile error. This rules out
   `become Closed; read storage.payoutsRemaining;` and the
-  `@on`-scope-violation class of bugs codex flagged.
+  `@on`-scope-violation class of bugs the security review flagged.
 - `become` accepts only a **static identifier** that names a
   declared state. Runtime-target forms like
   `become if (cond) Settling else Closed;` are a compile
@@ -1372,10 +1372,10 @@ Concrete deltas from v2 to v3:
   `become` inside `@deploy`, external-domain unknown handling, and
   the expanded taint set.
 
-### Draft v2 (2026-04-30, post-codex-security-review)
+### Draft v2 (2026-04-30, post-security-review)
 
 Addressed the four BLOCKER and nine HIGH findings from the v1
-codex security review (`/tmp/codex_output.md`), but did not fully
+security review, but did not fully
 close all of them; v3 supersedes the closure claim above. The §3
 first-principles decisions stand; v2 added the lowering-order
 specificity, deployment-path soundness attempt, unknown-opcode

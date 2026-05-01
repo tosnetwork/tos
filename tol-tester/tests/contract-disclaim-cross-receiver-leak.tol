@@ -4,7 +4,7 @@
 // Pre-Stage-7 behavior used a single function-level `disclaimed` boolean per
 // `onInternalMessage`, so receiver A's `@disclaim_query_id` would (incorrectly)
 // silence the propagation warning for receiver B in the same contract. v3
-// closure: this is a HIGH defect (codex security review v2 §3.2.1).
+// closure: this is a HIGH defect (security review v2 §3.2.1).
 //
 // Stage 7 wires `pipe-check-query-id-propagation` to per-receiver scope records
 // keyed off `ast_receiver_scope_marker` emitted by the lowering pass. After

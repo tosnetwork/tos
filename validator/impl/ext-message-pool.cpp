@@ -86,7 +86,7 @@ constexpr uint64_t kWc2IngressBurst  = 20;
 constexpr uint64_t kWc2IngressPerSec = 5;
 WcExtMsgRateLimiter g_wc2_ingress_limiter{kWc2IngressBurst, kWc2IngressPerSec};
 
-// Codex audit (round 16, finding #1): Transfers also run a Plonky3 STARK
+// Security audit (round 16, finding #1): Transfers also run a Plonky3 STARK
 // verify on the collator side (uno/core/parallel-verify.cpp:250 →
 // transfer_air verify), comparable in cost to MineUno. The round-15 #3
 // fix made Transfer bypass the MineUno bucket entirely, leaving
@@ -493,7 +493,7 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
     // STARK verification, and the EVM RPC layer already has a dedicated
     // limiter; an additional gate would burden the legitimate path more
     // than the (cheaper) attack.
-    // Codex audit (round 15, finding #3): the round-2 single-bucket
+    // Security audit (round 15, finding #3): the round-2 single-bucket
     // limiter on wc=2 conflated cheap Transfer admission with expensive
     // MineUno STARK-verify, letting either path starve the other. Peek
     // the body's first byte to discriminate (UNO wire-format §1: byte 0
@@ -504,7 +504,7 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
     // body byte, so re-walk the cell tree here. Failure to peek (e.g.
     // body decode error) defaults to consuming the bucket — fail-closed.
     if (wc == 2) {
-      // Codex audit (round 15 #3 + round 16 #1): wc=2 has TWO expensive
+      // Security audit (round 15 #3 + round 16 #1): wc=2 has TWO expensive
       // body kinds at the collator: MineUno (STARK proof verify) and
       // Transfer (Plonky3 transfer_air verify). Discriminate by body
       // byte 0 (UNO wire-format §1: 0x01 → Transfer, 0x02 → MineUno)

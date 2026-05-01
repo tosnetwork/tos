@@ -13,7 +13,7 @@
 #include "tvm-emulator.hpp"
 
 td::Result<td::Ref<vm::Cell>> boc_b64_to_cell(const char *boc) {
-  // Codex SDK-FFI audit (S2.1): `td::Slice(const char*)` CHECKs non-null
+  // Security SDK-FFI audit (S2.1): `td::Slice(const char*)` CHECKs non-null
   // (Slice.h:176) and aborts the host process on null. Many emulator
   // FFI exports forward attacker-controlled `const char*` here; convert
   // null into a structured error at this single chokepoint.
@@ -74,7 +74,7 @@ const char *external_not_accepted_response(std::string &&vm_log, int vm_exit_cod
 #define ERROR_RESPONSE(error) return error_response(error)
 
 td::Result<block::Config> decode_config(const char *config_boc) try {
-  // Codex audit (round 14, finding #1): all downstream callers of
+  // Security audit (round 14, finding #1): all downstream callers of
   // `decode_config` (`transaction_emulator_create`, `emulator_config_create`,
   // `transaction_emulator_set_config`) check the returned Result, so
   // converting any thrown VmError from `vm::load_cell_slice` /
@@ -131,7 +131,7 @@ void *emulator_config_create(const char *config_params_boc) {
 
 const char *transaction_emulator_emulate_transaction(void *transaction_emulator, const char *shard_account_boc,
                                                      const char *message_boc) try {
-  // Codex audit (round 13, finding #1): every `vm::load_cell_slice(X)`
+  // Security audit (round 13, finding #1): every `vm::load_cell_slice(X)`
   // below throws on PrunedBranch / Library / Merkle*, and the
   // shard_account / message BoCs are FFI-callee-supplied. Wrap the entire
   // function in a function-try-block so a malformed BoC returns a
@@ -265,7 +265,7 @@ const char *transaction_emulator_emulate_transaction(void *transaction_emulator,
 
 const char *transaction_emulator_emulate_tick_tock_transaction(void *transaction_emulator,
                                                                const char *shard_account_boc, bool is_tock) try {
-  // Codex audit (round 13, finding #1): same hardening as
+  // Security audit (round 13, finding #1): same hardening as
   // transaction_emulator_emulate_transaction.
   if (transaction_emulator == nullptr) {
     ERROR_RESPONSE("transaction_emulator_emulate_tick_tock_transaction: null handle");
@@ -354,7 +354,7 @@ const char *transaction_emulator_emulate_tick_tock_transaction(void *transaction
 }
 
 bool transaction_emulator_set_unixtime(void *transaction_emulator, uint32_t unixtime) {
-  // Codex audit (round 15, finding #2): null-handle guard. Caller may have
+  // Security audit (round 15, finding #2): null-handle guard. Caller may have
   // received nullptr from `transaction_emulator_create` (bad config) and
   // bare-deref here would crash the host. The Emscripten wrapper already
   // checks at create time, but other FFI clients may not.
@@ -367,7 +367,7 @@ bool transaction_emulator_set_unixtime(void *transaction_emulator, uint32_t unix
 }
 
 bool transaction_emulator_set_lt(void *transaction_emulator, uint64_t lt) {
-  // Codex audit (round 16, finding #3): null-handle guard.
+  // Security audit (round 16, finding #3): null-handle guard.
   if (transaction_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
@@ -377,9 +377,9 @@ bool transaction_emulator_set_lt(void *transaction_emulator, uint64_t lt) {
 }
 
 bool transaction_emulator_set_rand_seed(void *transaction_emulator, const char *rand_seed_hex) {
-  // Codex audit (round 16, finding #3): null-handle guard.
+  // Security audit (round 16, finding #3): null-handle guard.
   if (transaction_emulator == nullptr) return false;
-  // Codex SDK-FFI audit (S3.1): td::Slice(const char*) CHECKs non-null;
+  // Security SDK-FFI audit (S3.1): td::Slice(const char*) CHECKs non-null;
   // S2.1 fixed BoC strings via boc_b64_to_cell, but raw rand_seed_hex /
   // extra_currencies strings still need explicit guards.
   if (rand_seed_hex == nullptr) return false;
@@ -429,7 +429,7 @@ bool transaction_emulator_set_config(void *transaction_emulator, const char *con
 void config_deleter(block::Config *ptr) {
   // We do not delete the config object, since ownership management is delegated to the caller.
   //
-  // Codex SDK-FFI audit (S1.2): UAF contract WARNING. The caller-owned
+  // Security SDK-FFI audit (S1.2): UAF contract WARNING. The caller-owned
   // block::Config* must outlive every TransactionEmulator/TvmEmulator
   // that was handed it via *_set_config_object. The emulator stores a
   // shared_ptr with this no-op deleter, so destroying the config while
@@ -441,7 +441,7 @@ void config_deleter(block::Config *ptr) {
 }
 
 bool transaction_emulator_set_config_object(void *transaction_emulator, void *config) {
-  // Codex SDK-FFI audit (S1.2): see config_deleter doc — caller MUST
+  // Security SDK-FFI audit (S1.2): see config_deleter doc — caller MUST
   // keep `config` alive until the emulator is destroyed.
   if (transaction_emulator == nullptr || config == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
@@ -454,7 +454,7 @@ bool transaction_emulator_set_config_object(void *transaction_emulator, void *co
 }
 
 bool transaction_emulator_set_libs(void *transaction_emulator, const char *shardchain_libs_boc) try {
-  // Codex SDK-FFI audit (S5.1): `vm::Dictionary(libs_cell, 256)` validates
+  // Security SDK-FFI audit (S5.1): `vm::Dictionary(libs_cell, 256)` validates
   // the dictionary at construction (crypto/vm/dict.cpp:123) and throws on
   // structurally invalid libs cells. Without a function-try-block the
   // throw escapes the C ABI and terminates the embedding host.
@@ -492,7 +492,7 @@ bool transaction_emulator_set_debug_enabled(void *transaction_emulator, bool deb
 }
 
 bool transaction_emulator_set_prev_blocks_info(void *transaction_emulator, const char *info_boc) try {
-  // Codex audit (round 14, finding #1): `vm::StackEntry::deserialize`
+  // Security audit (round 14, finding #1): `vm::StackEntry::deserialize`
   // walks the caller-supplied cell and bare-loads it; a special root
   // throws across the C ABI. Wrap in function-try-block.
   if (transaction_emulator == nullptr) return false;
@@ -555,8 +555,8 @@ void *tvm_emulator_create(const char *code, const char *data, int vm_log_verbosi
 }
 
 bool tvm_emulator_set_libraries(void *tvm_emulator, const char *libs_boc) try {
-  // Codex audit (round 16, finding #3): null-handle guard.
-  // Codex SDK-FFI audit (S5.1): see TransactionEmulator equivalent —
+  // Security audit (round 16, finding #3): null-handle guard.
+  // Security SDK-FFI audit (S5.1): see TransactionEmulator equivalent —
   // vm::Dictionary throws on structurally invalid libs cells.
   if (tvm_emulator == nullptr) return false;
   vm::Dictionary libs{256};
@@ -584,14 +584,14 @@ bool tvm_emulator_set_libraries(void *tvm_emulator, const char *libs_boc) try {
 
 bool tvm_emulator_set_c7(void *tvm_emulator, const char *address, uint32_t unixtime, uint64_t balance,
                          const char *rand_seed_hex, const char *config_boc) try {
-  // Codex audit (round 15, finding #1): R14.1 hardened decode_config but
+  // Security audit (round 15, finding #1): R14.1 hardened decode_config but
   // this entry point still rolled its own ad-hoc decode + unpack without
   // the function-try-block. Reuse decode_config so a malformed/special
   // config BoC produces a structured rejection rather than throwing
   // across the C ABI.
-  // Codex audit (round 15, finding #2): null-handle guard.
+  // Security audit (round 15, finding #2): null-handle guard.
   if (tvm_emulator == nullptr) return false;
-  // Codex SDK-FFI audit (S2.1): `td::Slice(const char*)` CHECKs non-null;
+  // Security SDK-FFI audit (S2.1): `td::Slice(const char*)` CHECKs non-null;
   // null `address` or `rand_seed_hex` would abort the host. Reject early.
   if (address == nullptr || rand_seed_hex == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
@@ -635,7 +635,7 @@ bool tvm_emulator_set_c7(void *tvm_emulator, const char *address, uint32_t unixt
 
 bool tvm_emulator_set_extra_currencies(void *tvm_emulator, const char *extra_currencies) {
   if (tvm_emulator == nullptr) return false;
-  // Codex SDK-FFI audit (S3.1): td::Slice(const char*) CHECKs non-null.
+  // Security SDK-FFI audit (S3.1): td::Slice(const char*) CHECKs non-null.
   if (extra_currencies == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
   vm::Dictionary dict{32};
@@ -674,7 +674,7 @@ bool tvm_emulator_set_extra_currencies(void *tvm_emulator, const char *extra_cur
       }
 
       vm::CellBuilder cb;
-      // Codex audit (round 15, finding #5): VarUInteger 32 caps at 2^248-1.
+      // Security audit (round 15, finding #5): VarUInteger 32 caps at 2^248-1.
       // Previously the store_integer_value return was ignored — oversized
       // amounts silently produced an under-encoded entry that downstream
       // parsers would reject or misinterpret. Reject explicitly.
@@ -705,7 +705,7 @@ bool tvm_emulator_set_config_object(void *tvm_emulator, void *config) {
 }
 
 bool tvm_emulator_set_prev_blocks_info(void *tvm_emulator, const char *info_boc) try {
-  // Codex audit (round 14, finding #1): see TransactionEmulator equivalent.
+  // Security audit (round 14, finding #1): see TransactionEmulator equivalent.
   if (tvm_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
 
@@ -751,11 +751,11 @@ bool tvm_emulator_set_debug_enabled(void *tvm_emulator, bool debug_enabled) {
 }
 
 const char *tvm_emulator_run_get_method(void *tvm_emulator, int method_id, const char *stack_boc) try {
-  // Codex audit (round 12, finding #3): bare `load_cell_slice` throws on
+  // Security audit (round 12, finding #3): bare `load_cell_slice` throws on
   // PrunedBranch / Library / Merkle*. The stack BoC is FFI-callee-supplied,
   // so anyone embedding the emulator could terminate the host process.
   // Wrap in a function-try-block and use the special-aware loader.
-  // Codex audit (round 16, finding #3): null-handle guard.
+  // Security audit (round 16, finding #3): null-handle guard.
   if (tvm_emulator == nullptr) {
     ERROR_RESPONSE("tvm_emulator_run_get_method: null handle");
   }
@@ -817,14 +817,14 @@ struct TvmEulatorEmulateRunMethodResponse {
 };
 
 TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *params_boc, int64_t gas_limit) try {
-  // Codex audit (round 12, finding #3): the previous version called
+  // Security audit (round 12, finding #3): the previous version called
   // `fetch_ref()` four times without checking ref counts and then
   // bare-loaded each ref with `load_cell_slice` (throws on special
   // cells). FFI input is callee-controlled, so a malformed BoC could
   // either deref a null Ref<Cell> or throw out of this entry point and
   // crash the embedding host. Wrap in function-try-block, validate ref
   // counts, and use the special-aware loader.
-  // Codex SDK-FFI audit (S2.1): null params_boc with non-zero len would
+  // Security SDK-FFI audit (S2.1): null params_boc with non-zero len would
   // construct an invalid Slice and read garbage; len==0 with non-null
   // ptr is also nonsensical. Reject both shapes early.
   if (params_boc == nullptr || len == 0) {
@@ -854,7 +854,7 @@ TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *
   if (c7_special) return {nullptr, nullptr};
   auto libs = vm::Dictionary(params.fetch_ref(), 256);
 
-  // Codex audit (round 14, finding #3): method_id is fetched from
+  // Security audit (round 14, finding #3): method_id is fetched from
   // attacker-controlled bytes; without `have(32)` the underlying
   // `fetch_long(32)` returns an EOF sentinel that gets cast to int and
   // executed as a method id. Reject early on truncated request.
@@ -872,7 +872,7 @@ TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *
   if (!vm::Stack::deserialize_to(c7_cs, c7)) {
     return {nullptr, nullptr};
   }
-  // Codex audit (round 13, finding #2): the previous version called
+  // Security audit (round 13, finding #2): the previous version called
   // `c7->fetch(0).as_tuple()` without checking that c7 actually has any
   // elements, and without verifying the top entry is a tuple. An attacker
   // supplying valid stack BoC bytes that decode to an empty C7 (depth=0)
@@ -885,7 +885,7 @@ TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *
     return {nullptr, nullptr};
   }
 
-  // Codex audit (round 17, finding #2): the round-12 function-try-block
+  // Security audit (round 17, finding #2): the round-12 function-try-block
   // does not run the explicit `delete emulator` on exception, leaking
   // the heap allocation. Use unique_ptr for RAII cleanup.
   auto emulator = std::make_unique<emulator::TvmEmulator>(code, data);
@@ -943,12 +943,12 @@ void run_method_detailed_result_destroy(void *detailed_result) {
 }
 
 const char *tvm_emulator_send_external_message(void *tvm_emulator, const char *message_body_boc) try {
-  // Codex audit (round 14, finding #2): SmartContract::send_external_message
+  // Security audit (round 14, finding #2): SmartContract::send_external_message
   // bare-loads the body cell — a special root throws across the C ABI
   // and terminates the embedding host. Wrap in function-try-block AND
   // reject special roots before the call. Also defensively handle any
   // throw from the cell_to_boc_b64 .move_as_ok() chain below.
-  // Codex audit (round 16, finding #3): null-handle guard.
+  // Security audit (round 16, finding #3): null-handle guard.
   if (tvm_emulator == nullptr) {
     ERROR_RESPONSE("tvm_emulator_send_external_message: null handle");
   }
@@ -997,9 +997,9 @@ const char *tvm_emulator_send_external_message(void *tvm_emulator, const char *m
 }
 
 const char *tvm_emulator_send_internal_message(void *tvm_emulator, const char *message_body_boc, uint64_t amount) try {
-  // Codex audit (round 14, finding #2): same hardening as
+  // Security audit (round 14, finding #2): same hardening as
   // tvm_emulator_send_external_message above.
-  // Codex audit (round 16, finding #3): null-handle guard.
+  // Security audit (round 16, finding #3): null-handle guard.
   if (tvm_emulator == nullptr) {
     ERROR_RESPONSE("tvm_emulator_send_internal_message: null handle");
   }

@@ -220,7 +220,7 @@ td::Ref<vm::Cell> Data::init_state() {
 }  // namespace pchan
 
 td::Result<PaymentChannel::Info> PaymentChannel::get_info() const try {
-  // Codex audit (round 12, finding #4): the previous code ignored both
+  // Security audit (round 12, finding #4): the previous code ignored both
   // `extract_std_address` results (so a malformed pchan-code account
   // would silently default to (0, 0)) and bare-loaded `data_rec.state`
   // / `data_rec.config` ref slices (which throw on PrunedBranch /

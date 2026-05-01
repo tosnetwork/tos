@@ -248,7 +248,7 @@ bool peek_first_byte(const vm::CellSlice& cs, uint8_t& out) noexcept {
 // Transfer reject-path shape exactly (same field assignments in the same
 // order), so dashboards / JSON-RPC consumers see identical cp records.
 //
-// Codex round 1 (M-01): the `accepted` flag must be **false** for every
+// Security hardening round 1 (M-01): the `accepted` flag must be **false** for every
 // failure that lands here BEFORE successful body decode (DecodeError,
 // UnknownTxKind, empty body). Marking such failures as `accepted=true`
 // with `gas_used=0` mirrors the EVM bug closed under audit #2 — it
@@ -353,7 +353,7 @@ bool run_mine_uno_compute_phase(
             RejectReason::DecodeError);
         LOG(WARNING) << "uno-workchain(mine): decode failed: " << err_ptr->reason;
         cp.skip_reason = block::ComputePhase::sk_bad_state;
-        // Codex round 1 (M-01): pre-decode failure → cp.accepted=false.
+        // Security hardening round 1 (M-01): pre-decode failure → cp.accepted=false.
         populate_reject_cp(cp, VerifyResult::DecodeError, 0, gas_limit,
                            /*accepted=*/false);
         cp.vm_log = std::string("uno-mine: ") + err_ptr->reason;
@@ -369,7 +369,7 @@ bool run_mine_uno_compute_phase(
         auto h = canonical_mine_uno_hash(tx);
         LOG(INFO) << "uno-workchain(mine): reject tx=" << h.to_hex()
                   << " reason=" << verify_result_name(vr);
-        // Codex round 1 (M-01): post-decode verify failure → still
+        // Security hardening round 1 (M-01): post-decode verify failure → still
         // cp.accepted=true so the verifier cycles are billed.
         populate_reject_cp(cp, vr, gas_used, gas_limit, /*accepted=*/true);
         return true;
@@ -428,7 +428,7 @@ bool run_compute_phase(
             RejectReason::DecodeError);
         LOG(WARNING) << "uno-workchain: empty / sub-byte body; cannot dispatch";
         cp.skip_reason = block::ComputePhase::sk_bad_state;
-        // Codex round 1 (M-01): pre-decode failure → cp.accepted=false.
+        // Security hardening round 1 (M-01): pre-decode failure → cp.accepted=false.
         populate_reject_cp(cp, VerifyResult::DecodeError, 0, gas_limit,
                            /*accepted=*/false);
         cp.vm_log = "uno: empty body";
@@ -443,7 +443,7 @@ bool run_compute_phase(
         LOG(WARNING) << "uno-workchain: unknown tx discriminator byte 0x"
                      << std::hex << static_cast<int>(disc);
         cp.skip_reason = block::ComputePhase::sk_bad_state;
-        // Codex round 1 (M-01): pre-decode failure → cp.accepted=false.
+        // Security hardening round 1 (M-01): pre-decode failure → cp.accepted=false.
         populate_reject_cp(cp, VerifyResult::UnknownTxKind, 0, gas_limit,
                            /*accepted=*/false);
         cp.vm_log = "uno: unknown tx kind";
@@ -458,7 +458,7 @@ bool run_compute_phase(
             RejectReason::DecodeError);
         LOG(WARNING) << "uno-workchain: decode failed: " << err_ptr->reason;
         cp.skip_reason = block::ComputePhase::sk_bad_state;
-        // Codex round 1 (M-01): pre-decode failure → cp.accepted=false so
+        // Security hardening round 1 (M-01): pre-decode failure → cp.accepted=false so
         // a malformed Transfer body cannot be admitted as a free
         // zero-gas transaction. Mirror the EVM audit #2 fix.
         cp.success = false;

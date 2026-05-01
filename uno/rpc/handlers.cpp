@@ -845,7 +845,7 @@ std::optional<RpcResult> handle_subscribe(const std::string& params,
     }
     uint64_t sub_id = global_uno_subscription_manager().subscribe(t);
     if (sub_id == 0) {
-        // Codex round 6 (R6-H-11): subscribe() returns 0 when the global
+        // Security hardening round 6 (R6-H-11): subscribe() returns 0 when the global
         // active-subscription cap is hit.
         return RpcResult{make_error(id, kErrInvalidParams,
                                     "too many subscriptions"), true};

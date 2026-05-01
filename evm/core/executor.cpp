@@ -187,7 +187,7 @@ static ExecutionResult run_evm(
     // mutation occurs (nonce stays, balance stays, gas is not burned).
     // Skip entirely for read-only calls (eth_call / eth_estimateGas).
     if (commit_state) {
-        // Codex round 1 (H-01): chain-id binding. `eth_sendRawTransaction`
+        // Security hardening round 1 (H-01): chain-id binding. `eth_sendRawTransaction`
         // already rejects wrong chain_id at the RPC layer, but consensus
         // also accepts ext_in_msgs via `sendBoc` / liteServer that bypass
         // the RPC. Without this check a foreign-chain tx (signed for
@@ -203,7 +203,7 @@ static ExecutionResult run_evm(
             return result;
         }
 
-        // Codex round 1 (H-01): consensus has no blob mempool — type-3
+        // Security hardening round 1 (H-01): consensus has no blob mempool — type-3
         // (EIP-4844) txs cannot be admitted at this layer. The RPC
         // gateway rejects them too, but a raw-BOC ingress path could
         // otherwise smuggle a blob tx into compute, where the executor
@@ -214,7 +214,7 @@ static ExecutionResult run_evm(
             return result;
         }
 
-        // Codex round 2 (H-03): the RPC `eth_sendRawTransaction` admission
+        // Security hardening round 2 (H-03): the RPC `eth_sendRawTransaction` admission
         // path runs Silkworm's `pre_validate_common_base()` /
         // `pre_validate_common_forks()` against every accepted tx, but
         // raw-BOC ingress (`sendBoc` / liteServer-sendMessage → wc=1

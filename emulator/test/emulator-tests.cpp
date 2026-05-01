@@ -577,7 +577,7 @@ TEST(Emulator, ffi_null_guards) {
 
   run_method_detailed_result_destroy(nullptr);
 
-  // Codex SDK-FFI audit (S4.2): cover the S3.1 raw-string null guards.
+  // Security SDK-FFI audit (S4.2): cover the S3.1 raw-string null guards.
   // td::Slice(const char*) CHECKs non-null; without these guards the
   // following calls would abort the test process instead of returning
   // false. Use a freshly-created handle so the test is not coupled to

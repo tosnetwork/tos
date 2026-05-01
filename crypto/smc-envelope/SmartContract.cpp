@@ -241,7 +241,7 @@ td::Ref<vm::Tuple> prepare_vm_c7(SmartContract::Args args, td::Ref<vm::Cell> cod
 }
 
 std::shared_ptr<const block::Config> try_fetch_config_from_c7(td::Ref<vm::Tuple> c7) try {
-  // Codex SDK-FFI audit (S1.5): SDK callers can hand attacker-controlled
+  // Security SDK-FFI audit (S1.5): SDK callers can hand attacker-controlled
   // C7 tuples; the previous code bare-loaded the config-address cell
   // (throws on PrunedBranch / Library / Merkle*) and silently downgraded
   // a malformed config-address to zero, so the caller's get-method ran
@@ -263,7 +263,7 @@ std::shared_ptr<const block::Config> try_fetch_config_from_c7(td::Ref<vm::Tuple>
   auto config_addr_cell = config_dict->lookup_ref(td::BitArray<32>::zero());
   tos::StdSmcAddress config_addr;
   if (config_addr_cell.is_null()) {
-    // Codex SDK-FFI audit (S2.3): the previous code silently substituted
+    // Security SDK-FFI audit (S2.3): the previous code silently substituted
     // StdSmcAddress::zero() for a missing config param 0. A C7 dictionary
     // without param 0 is malformed; rejecting matches the special/wrong-
     // sized rejects below so the get-method is never executed under an

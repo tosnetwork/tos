@@ -2158,7 +2158,7 @@ void TestNode::got_account_state(tos::BlockIdExt ref_blk, tos::BlockIdExt blk, t
         out << "account frozen (no StateInit to save into file)" << std::endl;
         return;
     }
-    // Codex SDK-FFI audit (S1.9): a malicious lite-server can return
+    // Security SDK-FFI audit (S1.9): a malicious lite-server can return
     // an account "active" tag with a malformed StateInit payload. The
     // CHECK pair would abort the CLI; convert to structured error
     // returns so the user sees a diagnostic instead.
@@ -2290,7 +2290,7 @@ void TestNode::run_smc_method(int mode, tos::BlockIdExt ref_blk, tos::BlockIdExt
                                                      << " frozen (cannot run any methods)"));
         return;
     }
-    // Codex SDK-FFI audit (S1.9): see equivalent above.
+    // Security SDK-FFI audit (S1.9): see equivalent above.
     if (store.state.write().fetch_ulong(1) != 1) {
       promise.set_error(td::Status::Error("active account state has unexpected tag"));
       return;

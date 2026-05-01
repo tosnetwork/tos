@@ -267,7 +267,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     // store appends per call. Bail early when this (block, tx_hash) is
     // already stored. Cheap (one hash-map lookup).
     //
-    // Codex round 1 (M-02): the dedup key MUST include block context
+    // Security hardening round 1 (M-02): the dedup key MUST include block context
     // (here: `block_number`). A bare-`tx_hash` key would silently keep
     // the first receipt observed even when the same Ethereum tx later
     // lands in a different accepted block (reorg / fork-import path) —

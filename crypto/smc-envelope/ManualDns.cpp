@@ -114,7 +114,7 @@ td::Result<td::Ref<vm::Cell>> DnsInterface::EntryData::as_cell() const {
 }
 
 td::Result<DnsInterface::EntryData> DnsInterface::EntryData::from_cellslice(vm::CellSlice& cs) try {
-  // Codex audit (round 12, finding #1): every `tlb::unpack(cs, dns)`
+  // Security audit (round 12, finding #1): every `tlb::unpack(cs, dns)`
   // return value used to be ignored before dereferencing the record's
   // fields. A malicious DNS contract / lite-server returning a malformed
   // dnsresolve stack cell could either return garbage downstream or
@@ -270,7 +270,7 @@ td::Result<td::uint32> ManualDns::get_wallet_id_or_throw() const {
     return 0;
   }
   //FIXME use get method
-  // Codex audit (round 14, finding #4): mirror the round-13 wallet
+  // Security audit (round 14, finding #4): mirror the round-13 wallet
   // helpers — `fetch_ulong(32)` on truncated state returns an EOF
   // sentinel that gets cast to uint32 (0xFFFFFFFF) and propagates
   // through `prepare(...)` into a wallet-id-tagged DNS update query.

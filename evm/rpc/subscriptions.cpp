@@ -17,7 +17,7 @@ SubscriptionManager& global_subscription_manager() {
 uint64_t SubscriptionManager::subscribe(SubscriptionType type,
                                          const LogSubscriptionFilter& filter) {
     std::lock_guard<std::mutex> lock(mutex_);
-    // Codex round 6 (R6-H-11): refuse new subscriptions when the global
+    // Security hardening round 6 (R6-H-11): refuse new subscriptions when the global
     // cap is reached. Returning 0 propagates as "too many subscriptions"
     // through the RPC handler. Existing subscriptions are unaffected.
     if (subscriptions_.size() >= kMaxActiveSubscriptions) {

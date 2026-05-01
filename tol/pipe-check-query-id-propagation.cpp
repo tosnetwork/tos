@@ -25,7 +25,7 @@
 /*
  *   This pipe enforces the §4.4 query_id propagation rule from
  *   doc/tos-message-policy.md (v6) AND the per-receiver scope rule
- *   from doc/tos-language-syntax-policy.md §3.2.1 (v3, codex security
+ *   from doc/tos-language-syntax-policy.md §3.2.1 (v3, security
  *   review v2 closure):
  *
  *     - Every handler that returns a reply propagates the inbound
@@ -551,7 +551,7 @@ public:
 };
 
 void pipeline_check_query_id_propagation() {
-  // Slice 2 §10.1 hardening (codex security review v2 closure):
+  // Slice 2 §10.1 hardening (security review v2 closure):
   // pipeline_lower_contracts() MUST run BEFORE this pass so that every
   // `contract` declaration has been replaced with the synthesized
   // `onInternalMessage` and per-receiver `ast_receiver_scope_marker`s.

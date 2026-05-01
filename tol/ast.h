@@ -1255,7 +1255,7 @@ template<>
 // around each receiver's lowered body. It carries no semantic effect at codegen — every later
 // pass treats the marker as transparent and recurses into its inner block. Its sole purpose is
 // to bind per-receiver analysis records inside `pipeline_check_query_id_propagation` (see
-// doc/tos-language-syntax-policy.md §3.2.1, §10.1, codex security review v2 closure).
+// doc/tos-language-syntax-policy.md §3.2.1, §10.1, security review v2 closure).
 //
 // The marker is NOT user-writable. It is constructed only by `tol/pipe-lower-contract.cpp`.
 struct Vertex<ast_receiver_scope_marker> final : ASTStatementUnary {

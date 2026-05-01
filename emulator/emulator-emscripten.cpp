@@ -21,7 +21,7 @@ struct TransactionEmulationParams {
 };
 
 td::Result<TransactionEmulationParams> decode_transaction_emulation_params(const char* json) {
-  // Codex SDK-FFI audit (S1.4): JS/WASM caller may pass nullptr;
+  // Security SDK-FFI audit (S1.4): JS/WASM caller may pass nullptr;
   // `std::string(nullptr)` is undefined behavior. Reject up front.
   if (json == nullptr) {
     return td::Status::Error("decode_transaction_emulation_params: null params");
@@ -30,7 +30,7 @@ td::Result<TransactionEmulationParams> decode_transaction_emulation_params(const
 
   std::string json_str(json);
   TRY_RESULT(input_json, td::json_decode(td::MutableSlice(json_str)));
-  // Codex SDK-FFI audit (S6.1): JsonValue::get_object() CHECKs the
+  // Security SDK-FFI audit (S6.1): JsonValue::get_object() CHECKs the
   // discriminant. Syntactically valid non-object JSON (e.g. `[]`,
   // `null`, `"x"`) would abort the WASM module. Convert to a structured
   // decode error.
@@ -93,7 +93,7 @@ struct GetMethodParams {
 };
 
 td::Result<GetMethodParams> decode_get_method_params(const char* json) {
-  // Codex SDK-FFI audit (S1.4): same null-param guard.
+  // Security SDK-FFI audit (S1.4): same null-param guard.
   if (json == nullptr) {
     return td::Status::Error("decode_get_method_params: null params");
   }
@@ -101,7 +101,7 @@ td::Result<GetMethodParams> decode_get_method_params(const char* json) {
 
   std::string json_str(json);
   TRY_RESULT(input_json, td::json_decode(td::MutableSlice(json_str)));
-  // Codex SDK-FFI audit (S6.1): same JSON-root-type check as
+  // Security SDK-FFI audit (S6.1): same JSON-root-type check as
   // decode_transaction_emulation_params.
   if (input_json.type() != td::JsonValue::Type::Object) {
     return td::Status::Error("decode_get_method_params: params must be a JSON object");
@@ -239,7 +239,7 @@ const char* emulate_with_emulator(void* em, const char* libs, const char* accoun
       !transaction_emulator_set_unixtime(em, decoded_params.utime) ||
       !transaction_emulator_set_ignore_chksig(em, decoded_params.ignore_chksig) ||
       !transaction_emulator_set_debug_enabled(em, decoded_params.debug_enabled) || !rand_seed_set || !prev_blocks_set) {
-    // Codex audit (round 16, finding #2): the caller (`emulate()` below)
+    // Security audit (round 16, finding #2): the caller (`emulate()` below)
     // owns `em` and unconditionally destroys it on return. Destroying it
     // here too caused a double-free under setter failure. Leave the
     // handle alone — caller-owned cleanup is sufficient.
@@ -270,7 +270,7 @@ const char* emulate_with_emulator(void* em, const char* libs, const char* accoun
 const char* emulate(const char* config, const char* libs, int verbosity, const char* account, const char* message,
                     const char* params) {
   auto em = transaction_emulator_create(config, verbosity);
-  // Codex audit (round 15, finding #2): transaction_emulator_create returns
+  // Security audit (round 15, finding #2): transaction_emulator_create returns
   // nullptr on bad config; the previous code passed nullptr through to
   // setters that immediately deref the handle. Fail-fast with a structured
   // JSON error.
@@ -295,7 +295,7 @@ const char* run_get_method(const char* params, const char* stack, const char* co
   auto decoded_params = decoded_params_res.move_as_ok();
 
   auto tvm = tvm_emulator_create(decoded_params.code.c_str(), decoded_params.data.c_str(), decoded_params.verbosity);
-  // Codex audit (round 15, finding #2): same null-handle guard as emulate().
+  // Security audit (round 15, finding #2): same null-handle guard as emulate().
   if (tvm == nullptr) {
     return strdup(R"({"fail":true,"message":"tvm_emulator_create returned null"})");
   }

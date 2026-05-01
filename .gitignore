@@ -36,4 +36,3 @@ build/
 
 # Claude Code agent workspaces (transient per-session state)
 .claude/
-.codex

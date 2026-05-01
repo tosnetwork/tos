@@ -614,7 +614,7 @@ three Slice 1 reference contracts.
 8. ✅ **Stage 7 — per-receiver `disclaim_query_id` rewrite.**
    Completed 2026-04-30 in commit `2e01919ee` (worktree
    contribution) merged to `actor-layer` as `c6bb72fc2`.
-   Closes the codex security review v2 HIGH defect on §3.2.1.
+   Closes the security review v2 HIGH defect on §3.2.1.
    Introduces the synthetic `ast_receiver_scope_marker` AST kind
    emitted by `tol/pipe-lower-contract.cpp` around each lowered
    receive-branch body; rewrites

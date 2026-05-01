@@ -89,7 +89,7 @@ td::Result<td::uint32> Wallet::get_seqno_or_throw() const {
     return 0;
   }
   //FIXME use get method
-  // Codex audit (round 13, finding #3): require ≥32 bits before fetch.
+  // Security audit (round 13, finding #3): require ≥32 bits before fetch.
   auto cs = vm::load_cell_slice(state_.data);
   if (!cs.have(32)) {
     return td::Status::Error("Wallet::get_seqno: data slice too short");
@@ -107,7 +107,7 @@ td::Result<td::Ed25519::PublicKey> Wallet::get_public_key_or_throw() const {
   }
   //FIXME use get method
   auto cs = vm::load_cell_slice(state_.data);
-  // Codex audit (round 13, finding #3): require seqno + 256-bit pubkey
+  // Security audit (round 13, finding #3): require seqno + 256-bit pubkey
   // bits before skip/fetch; check fetch_bytes return.
   if (!cs.have(32 + 256)) {
     return td::Status::Error("Wallet::get_public_key: data slice too short");
