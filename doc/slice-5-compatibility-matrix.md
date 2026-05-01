@@ -18,4 +18,4 @@ Slice 5 is not production-complete until three external production
 contracts adopt the second-wave stdlib and are recorded in
 `doc/slice-5-abi-freeze-record.json`. Current external adoption status:
 1/3 production-intent candidates recorded; the first oracle candidate
-has a second-round trial request after repo-side hardening.
+passed its second-round trial after repo-side hardening.

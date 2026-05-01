@@ -11,7 +11,7 @@ Repo-side release-candidate checklist:
 - [x] `scripts/check-slice-5-abi-manifests.py` is green.
 - [x] `scripts/check-slice-5-release-package.py` is green.
 - [x] First external trial findings are closed in repo-side code/docs and
-  a second-round oracle trial request is recorded.
+  the second-round oracle trial is recorded as passed.
 - [ ] Three external production contracts using the second-wave stdlib
   are recorded with evidence. Current status: 1/3 production-intent
   candidates (`DexPriceOracle`).

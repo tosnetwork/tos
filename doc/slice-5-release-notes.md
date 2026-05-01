@@ -13,8 +13,10 @@ This repo-side release candidate contains:
 - Generated examples under `examples/slice5/`.
 - ABI freeze hashes in `doc/slice-5-abi-freeze-record.json`.
 - External author trial record for `DexPriceOracle`, the first
-  production-intent adoption candidate, with a second-round trial
-  request covering the closed findings.
+  production-intent adoption candidate. The second-round oracle trial
+  passed and added golden coverage for 5-reporter median finalization,
+  running-median outlier anchoring, even-median truncation, and imported
+  contract tests.
 
 External adoption remains a Slice 5 release gate: Stage 7 records the
 repo-side ABI freeze and explicitly leaves the three external production

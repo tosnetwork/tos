@@ -17,7 +17,10 @@ Before shipping a Slice 5 contract:
   is the intended starter address.
 - Confirm oracle reporter sets stay within the stdlib's bounded
   255-reporter map-aggregation limit.
-- Confirm FunC/Tol reimplementations use the same truncating
-  two-value median convention.
+- Confirm oracle deployments that rely on `maxDeviation` for data
+  quality use quorum `>= 3`, or explicitly accept that quorum `2`
+  anchors the second report on the first report.
+- Confirm FunC/Tol reimplementations use the same truncating median
+  convention for every even accepted report count.
 - Confirm payment-channel signatures verify the signed-state cell hash
   and that seqno replay and premature settlement tests exist.

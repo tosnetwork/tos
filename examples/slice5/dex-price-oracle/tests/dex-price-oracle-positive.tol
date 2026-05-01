@@ -211,6 +211,57 @@ fun test_duplicate_finalize(): int {
     return 0;
 }
 
+// Goal 3: 5-reporter set, 3-of-5 quorum, deterministic median.
+// Reports: 900, 1100, 1000 → sorted [900, 1000, 1100] → median = 1000.
+@method_id(215)
+fun test_five_reporter_three_of_five_quorum(): int {
+    var set = slice5OracleNewReporterSet();
+    set.addReporter(reporter1());
+    set.addReporter(reporter2());
+    set.addReporter(reporter3());
+    set.addReporter(0x04);
+    set.addReporter(0x05);
+    val cfg = slice5OracleConfig(set, 3, 60, 2000, roundStarter());
+    var state = slice5OracleInitialState(set);
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10, roundStarter());
+    r.addReport(set, cfg, makeReport(1, reporter1(), 900, 20));
+    r.addReport(set, cfg, makeReport(1, reporter2(), 1100, 21));
+    r.addReport(set, cfg, makeReport(1, reporter3(), 1000, 22));
+    return r.finalize(cfg, makeFinalize(1, 23)) as int;
+}
+
+// Goal 4: Running median anchor allows a third report that the old value1 anchor would reject.
+// maxDeviation=100; reports: 1000, 1100, 1150.
+//   Old code: anchor=value1=1000, |1150-1000|=150 > 100 → outlier (rejected).
+//   New code: anchor=median(1000,1100)=1050, |1150-1050|=100 ≤ 100 → accepted.
+// Median of [1000, 1100, 1150] = 1100.
+@method_id(216)
+fun test_running_median_anchor_accepts_third_report(): int {
+    val cfg = slice5OracleConfig(makeReporterSet(), 3, 60, 100, roundStarter());
+    var state = slice5OracleInitialState(makeReporterSet());
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10, roundStarter());
+    r.addReport(makeReporterSet(), cfg, makeReport(1, reporter1(), 1000, 20));
+    r.addReport(makeReporterSet(), cfg, makeReport(1, reporter2(), 1100, 21));
+    r.addReport(makeReporterSet(), cfg, makeReport(1, reporter3(), 1150, 22));
+    assert(r.reportCount == 3) throw 2160;
+    return r.finalize(cfg, makeFinalize(1, 23)) as int;
+}
+
+// Goal 5: Two-report median uses truncating integer division.
+// (1001 + 1002) / 2 = 2003 / 2 = 1001 (truncated, not 1002).
+@method_id(217)
+fun test_two_report_median_truncates(): int {
+    var set = slice5OracleNewReporterSet();
+    set.addReporter(reporter1());
+    set.addReporter(reporter2());
+    val cfg = slice5OracleConfig(set, 2, 60, 1000, roundStarter());
+    var state = slice5OracleInitialState(set);
+    var r = slice5OracleStartRound(mutate state, cfg, 1, 10, roundStarter());
+    r.addReport(set, cfg, makeReport(1, reporter1(), 1001, 20));
+    r.addReport(set, cfg, makeReport(1, reporter2(), 1002, 21));
+    return r.finalize(cfg, makeFinalize(1, 22)) as int;
+}
+
 /**
 @testcase | 201 | | 1050
 @testcase | 202 | | 1000
@@ -225,4 +276,7 @@ fun test_duplicate_finalize(): int {
 @testcase | 211 | | 3842
 @testcase | 213 | | 3338
 @testcase | 214 | | 3336
+@testcase | 215 | | 1000
+@testcase | 216 | | 1100
+@testcase | 217 | | 1001
  */

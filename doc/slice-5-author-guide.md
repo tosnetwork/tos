@@ -40,8 +40,14 @@ Compatibility rules:
   reporters. Median and outlier-anchor calculations iterate over the
   report map deterministically, so larger fixed-at-deploy reporter sets
   do not require a contract fork.
-- The two-value oracle median uses integer truncation:
-  `(value1 + value2) / 2`.
+- Oracle `maxDeviation` outlier protection needs quorum `>= 3` when it
+  is intended to resist a compromised first reporter. With quorum `2`,
+  the second accepted report can only be checked against the single
+  first report because no majority anchor exists yet; use quorum `2`
+  only when that trust tradeoff is acceptable.
+- Oracle median for an even number of accepted reports uses integer
+  truncation of the average of the two middle sorted values. For the
+  two-value case this is `(value1 + value2) / 2`.
 
 Testing note: importing a `.tol` file that contains a `contract` block
 into a tol-tester unit is supported for constants, types, and helper

@@ -1416,10 +1416,19 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   are in tree, and the external adoption gate remains explicitly
   pending: two additional external production contracts using
   second-wave stdlib after the DexPriceOracle oracle candidate. The
-  first DexPriceOracle trial findings are closed and a second-round
-  oracle trial prompt is recorded.
+  first DexPriceOracle trial findings are closed and the second-round
+  oracle trial passed, keeping DexPriceOracle as candidate 1/3.
 
 ## 12. Revision notes
+
+### r33 (Slice 5 external oracle trial round 2)
+
+- Recorded the second `DexPriceOracle` external oracle trial as passed:
+  5-reporter median finalization, running-median outlier anchoring,
+  even-median truncation, and imported contract tests are covered.
+- Tightened oracle docs around the quorum `2` security boundary:
+  `maxDeviation` only provides first-report-compromise resistance when
+  deployments use quorum `>= 3`.
 
 ### r32 (Slice 5 external oracle trial hardening)
 

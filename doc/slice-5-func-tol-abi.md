@@ -126,9 +126,19 @@ For any type not listed here, the ABI manifest must use the
 mark the field as a wire-compatibility exception. Ad hoc aliases such as
 `u32` are not ABI type names.
 
-Oracle median helpers use truncating integer division for the two-report
-case: `(value1 + value2) / 2`. FunC reimplementations must use the same
+Oracle median helpers sort accepted report values. For an odd accepted
+report count, the median is the middle sorted value. For an even
+accepted report count, the median is the integer-truncated average of
+the two middle sorted values; the two-report case is
+`(value1 + value2) / 2`. FunC reimplementations must use the same
 round-toward-zero convention to match Tol-visible results.
+
+Oracle outlier protection uses the running median of already accepted
+reports as the anchor. This gives a majority-style anchor only after at
+least two prior reports exist, so deployments that rely on
+`maxDeviation` to resist a compromised first reporter must use quorum
+`>= 3`. Quorum `2` is ABI-valid but the second report is necessarily
+checked against the first report as the only available anchor.
 
 Oracle round-start authorization is ABI-visible through
 `Slice5OracleConfig.roundStarter`. Tol contracts pass the actual
