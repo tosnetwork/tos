@@ -6,33 +6,33 @@
   "hash_algorithm": "sha256(json.dumps(obj, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False))",
   "schema_hash": {
     "path": "doc/slice-5-abi-manifest-schema.json",
-    "sha256": "0d1b91d7072d4e695fe04eb710e3b9e0432c264d0cf9c9dfb44934411d9f169d"
+    "sha256": "098b64d178d69255467260cdad14650ef8fb117e8101ab4004341edcd3db31e3"
   },
   "manifest_hashes": [
     {
       "pattern": "auction",
       "path": "doc/slice5-abi-manifests/auction.json",
-      "sha256": "b4ef52e46c4414a331cfb7f1b14b8954afd8c765da2df43a81951078d8404c49"
+      "sha256": "3e20838321529230ca973922567c2d85219e9d1cf943313e1f12b690a47c2a98"
     },
     {
       "pattern": "governance",
       "path": "doc/slice5-abi-manifests/governance.json",
-      "sha256": "bda949ebe57b88b67ff225a9307641919518b6536c951bfe7bf1ceaa3b4ae385"
+      "sha256": "2fef7e888082f714ee1e8b2be3a701c6c05061988b8b47a2db802ef221209b2f"
     },
     {
       "pattern": "interop_smoke",
       "path": "doc/slice5-abi-manifests/interop_smoke.json",
-      "sha256": "51f9e38bc1ca77e4356a474628d7331727bd55f4b4a4858d5d300862d14f3741"
+      "sha256": "c9b89d7252ccd03ef9eb9afe3ba67206e4a51210e95042edc20a67048548b195"
     },
     {
       "pattern": "oracle",
       "path": "doc/slice5-abi-manifests/oracle.json",
-      "sha256": "389af0cf5951a0be6c80ee1ef77e97ed91f6ebda80a8a3355062c52267e7b87b"
+      "sha256": "34a2b7caa80b2ec7f4c11e80496c87d091114aab23268635f02c050545d81341"
     },
     {
       "pattern": "payment-channel",
       "path": "doc/slice5-abi-manifests/payment_channel.json",
-      "sha256": "06dd9be3ded9b917578a7395d24f326dcd0a44cd8fd5f01a703c08fe6545620a"
+      "sha256": "0104c527b121951038d6757ad498baabd15d286094ec6a4971db7d7663205f21"
     }
   ],
   "external_adoption_gate": {
@@ -46,7 +46,7 @@
         "source": "examples/slice5/dex-price-oracle/src/dex-price-oracle.tol",
         "tests": "examples/slice5/dex-price-oracle/tests/dex-price-oracle-positive.tol",
         "abi_manifest": "doc/slice5-abi-manifests/dex_price_oracle.json",
-        "abi_manifest_sha256": "21ffcd2aba2d93f7c15c1c9329c8692756fe27a8e7556e364b2c905224ff4896",
+        "abi_manifest_sha256": "31eca65313856fe5f64d2303d0b9dc66a595cab6cb96d7392ba63320013bd126",
         "trial_report": "doc/slice-5-external-author-trials.md",
         "remaining_external_contracts": 0
       },
@@ -57,7 +57,7 @@
         "source": "examples/slice5/tos-stream-channel/src/tos-stream-channel.tol",
         "tests": "examples/slice5/tos-stream-channel/tests/tos-stream-channel-positive.tol; examples/slice5/tos-stream-channel/tests/tos-stream-channel-import-positive.tol",
         "abi_manifest": "doc/slice5-abi-manifests/tos_stream_channel.json",
-        "abi_manifest_sha256": "1278a97d54b7a2283955c8ff905badf46fc1c59a94e196c11cda5511a8ea4bd5",
+        "abi_manifest_sha256": "802ad295c4d21576efef89a70c6b8d67c0b732f403af63f9d3b9b093924800c8",
         "trial_report": "doc/slice-5-external-author-trials.md",
         "remaining_external_contracts": 0
       },
@@ -68,7 +68,7 @@
         "source": "examples/slice5/tos-council-fund/src/tos-council-fund.tol",
         "tests": "examples/slice5/tos-council-fund/tests/tos-council-fund-positive.tol; examples/slice5/tos-council-fund/tests/tos-council-fund-import-positive.tol",
         "abi_manifest": "doc/slice5-abi-manifests/tos_council_fund.json",
-        "abi_manifest_sha256": "f3831fe2e0664814ef1fc95ed9d3af5da525f845a64e4a915e242911af66e9e7",
+        "abi_manifest_sha256": "7bb1005b327af3a7c896964bc97841edfe0987982d573e60f4433ec4b0120019",
         "trial_report": "doc/slice-5-external-author-trials.md",
         "remaining_external_contracts": 0
       },
@@ -79,7 +79,7 @@
         "source": "examples/slice5/tos-escrowed-auction/src/tos-escrowed-auction.tol",
         "tests": "examples/slice5/tos-escrowed-auction/tests/tos-escrowed-auction-positive.tol; examples/slice5/tos-escrowed-auction/tests/tos-escrowed-auction-import-positive.tol",
         "abi_manifest": "doc/slice5-abi-manifests/tos_escrowed_auction.json",
-        "abi_manifest_sha256": "b55a42901ae3ab145c431d7ccad9364de2950b3cc08c3d20c0722fa46f834894",
+        "abi_manifest_sha256": "9fb3e86caa56122848bcf5d95ee85a88f666c6683fecec7dad989010cb687eba",
         "trial_report": "examples/slice5/tos-escrowed-auction/TRIAL-REPORT.md",
         "remaining_external_contracts": 0
       }

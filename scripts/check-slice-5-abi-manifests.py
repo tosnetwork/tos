@@ -45,7 +45,8 @@ MESSAGE_KEYS = {
 }
 GETTER_KEYS = {"name", "method_id", "id_source", "arguments", "returns"}
 CELL_TYPE_KEYS = {"name", "encoding", "fields", "fixtures"}
-FIELD_KEYS = {"name", "type", "bits", "refs"}
+FIELD_REQUIRED_KEYS = {"name", "type", "bits", "refs"}
+FIELD_KEYS = FIELD_REQUIRED_KEYS | {"caller_controlled"}
 STACK_ITEM_KEYS = {"name", "type"}
 FIXTURE_REF_REQUIRED_KEYS = {"name", "kind", "path"}
 FIXTURE_REF_KEYS = FIXTURE_REF_REQUIRED_KEYS | {"wire_reuse_of"}
@@ -134,13 +135,21 @@ def validate_bits_refs(value: object, context: str) -> None:
     require(value is None or (isinstance(value, int) and value >= 0), f"{context}: must be null or non-negative int")
 
 
-def validate_field(path: Path, field: dict, custom_types: set[str], context: str) -> None:
+def validate_field(path: Path, field: dict, custom_types: set[str], context: str, *, inbound_message: bool = False) -> None:
     require(isinstance(field, dict), f"{path}: {context}: field must be object")
-    require_keys(path, field, FIELD_KEYS, context)
+    missing = sorted(FIELD_REQUIRED_KEYS - set(field))
+    extra = sorted(set(field) - FIELD_KEYS)
+    require(not missing, f"{path}: {context} missing keys: {', '.join(missing)}")
+    require(not extra, f"{path}: {context} unexpected keys: {', '.join(extra)}")
     require_ident(field["name"], f"{path}: {context}.name")
     validate_abi_type(field["type"], custom_types, f"{path}: {context}.type")
     validate_bits_refs(field["bits"], f"{path}: {context}.bits")
     validate_bits_refs(field["refs"], f"{path}: {context}.refs")
+    if "caller_controlled" in field:
+        require(isinstance(field["caller_controlled"], bool), f"{path}: {context}.caller_controlled must be bool")
+    if inbound_message:
+        require("caller_controlled" in field, f"{path}: {context}: inbound message fields must declare caller_controlled")
+        require(field["caller_controlled"] is True, f"{path}: {context}: inbound message fields must set caller_controlled true")
 
 
 def validate_stack_item(path: Path, item: dict, custom_types: set[str], context: str) -> None:
@@ -262,8 +271,9 @@ def validate_manifest(path: Path) -> tuple[dict, list[dict]]:
             require(msg["signing_input"] in ("cell_hash", "raw_bits"), f"{path}: {prefix}: ed25519 requires signing_input cell_hash/raw_bits")
             require(msg["fixtures"], f"{path}: {prefix}: ed25519 signed bodies require fixtures")
         require(isinstance(msg["fields"], list), f"{path}: {prefix}.fields must be array")
+        inbound_message = msg["direction"] in ("internal_in", "external_in")
         for j, field in enumerate(msg["fields"]):
-            validate_field(path, field, custom_types, f"{prefix}.fields[{j}]")
+            validate_field(path, field, custom_types, f"{prefix}.fields[{j}]", inbound_message=inbound_message)
         require(isinstance(msg["fixtures"], list), f"{path}: {prefix}.fixtures must be array")
         if msg["body_encoding"] in ("manual_cell", "raw_slice"):
             require(msg["fixtures"], f"{path}: {prefix}: {msg['body_encoding']} requires at least one fixture")

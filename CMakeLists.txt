@@ -857,6 +857,7 @@ set(SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC ${SLICE1_GAS_PARITY_DIR}/jetton-wal
 set(SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC  ${SLICE1_GAS_PARITY_DIR}/jetton-wallet-tol.boc)
 set(SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC     ${SLICE1_GAS_PARITY_DIR}/wallet-v5-func.boc)
 set(SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC      ${SLICE1_GAS_PARITY_DIR}/wallet-v5-tol.boc)
+set(SLICE5_RECEIVE_CONTEXT_TOL_BOC            ${SLICE1_GAS_PARITY_DIR}/slice5-receive-context-tol.boc)
 
 slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/jetton-minter.tol
                   ${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC})
@@ -864,6 +865,8 @@ slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/jetton-wallet.tol
                   ${SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC})
 slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5.tol
                   ${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC})
+slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/emulator/test/slice-5-receive-context.tol
+                  ${SLICE5_RECEIVE_CONTEXT_TOL_BOC})
 
 slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter
@@ -891,6 +894,11 @@ add_custom_target(slice1_gas_parity_contracts ALL
         ${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC}
 )
 
+add_custom_target(slice5_receive_context_contract
+    DEPENDS
+        ${SLICE5_RECEIVE_CONTEXT_TOL_BOC}
+)
+
 add_executable(test-emulator
         test/test-td-main.cpp
         emulator/test/emulator-tests.cpp
@@ -906,9 +914,11 @@ add_executable(test-emulator
         # slice1_gas_parity_contracts target above).
         emulator/test/slice-1-stage-4-gas-parity-fixture.cpp
         # Slice 3 Stage 1 deterministic replay harness (doc/tos-slice-3-policy.md).
-        emulator/test/slice-3-replay-fixture.cpp)
+        emulator/test/slice-3-replay-fixture.cpp
+        # Slice 5 receive-context harness for production receive handlers.
+        emulator/test/slice-5-receive-context-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
-add_dependencies(test-emulator slice1_gas_parity_contracts)
+add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract)
 target_compile_definitions(test-emulator PRIVATE
     SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}"
     SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC}"
@@ -916,6 +926,7 @@ target_compile_definitions(test-emulator PRIVATE
     SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC="${SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC}"
     SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC="${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}"
     SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC="${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC}"
+    SLICE5_RECEIVE_CONTEXT_TOL_BOC="${SLICE5_RECEIVE_CONTEXT_TOL_BOC}"
 )
 
 get_directory_property(HAS_PARENT PARENT_DIRECTORY)

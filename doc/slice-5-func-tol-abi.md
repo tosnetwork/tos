@@ -82,6 +82,21 @@ indicator: the 64-bit `queryId` immediately follows the opcode.
 Messages with `query_id = "absent"` must not reserve hidden bits for a
 future query id.
 
+### 2.3 Caller-controlled field rule
+
+Every field in an inbound `internal_in` or `external_in` message body is
+caller-controlled wire data. The ABI manifest must mark those fields
+with `caller_controlled: true`; the validator rejects inbound message
+fields that omit the flag or set it to `false`.
+
+`caller_controlled` is a trust annotation, not a serialization field. It
+does not alter the message bits. It tells reviewers and tools that
+authorization and time-sensitive logic must bind trusted context from
+TVM state, such as `in.senderAddress`, `in.valueCoins`, or
+`blockchain.now()`, rather than treating fields like `bidder`,
+`reporterKey`, `proposerKey`, `voterKey`, or `now` as authenticated by
+the wire format itself.
+
 ## 3. Getter ABI rule
 
 Every public getter used by a Slice 5 package must declare:

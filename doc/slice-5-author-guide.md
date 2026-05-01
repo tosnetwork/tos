@@ -101,3 +101,11 @@ imports are explicit rather than transitive: if a test imports a
 contract source that itself imports `@stdlib/payment-channel`, the test
 must still import `@stdlib/payment-channel` before using those stdlib
 symbols directly.
+
+Use tol-tester for helper logic and imported-contract smoke tests. Use
+the SmartContract emulator for production receive-handler tests that
+depend on message context: `SmartContract::Args.set_sender_address(...)`
+injects `in.senderAddress`, and `set_now(...)` injects
+`blockchain.now()`. `emulator/test/slice-5-receive-context-fixture.cpp`
+is the minimal template for exercising real lowered `receive` handlers
+with forged body fields and trusted VM context side by side.

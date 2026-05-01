@@ -1,0 +1,83 @@
+tol 1.3
+
+import "@stdlib/common"
+
+const SLICE5_CONTEXT_THROW_UNAUTHORIZED: int = 0x1201
+const SLICE5_CONTEXT_THROW_TOO_EARLY: int = 0x1202
+
+struct Slice5ReceiveContextStorage {
+    seller: address
+    lastSender: address
+    lastNow: uint32
+    closed: bool
+    closesAt: uint32
+}
+
+struct (0x51500001) Slice5ContextBid {
+    queryId: uint64
+    bidder: address
+    amount: coins
+    now: uint32
+}
+
+struct (0x51500002) Slice5ContextClose {
+    queryId: uint64
+    now: uint32
+}
+
+fun slice5ContextBidder(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+contract Slice5ReceiveContext {
+    storage: Slice5ReceiveContextStorage
+    @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: Slice5ContextBid) {
+        save(Slice5ReceiveContextStorage {
+            seller: storage.seller,
+            lastSender: in.senderAddress,
+            lastNow: blockchain.now() as uint32,
+            closed: storage.closed,
+            closesAt: storage.closesAt,
+        });
+    }
+
+    @disclaim_query_id
+    receive(msg: Slice5ContextClose) {
+        if (in.senderAddress != storage.seller) {
+            throw SLICE5_CONTEXT_THROW_UNAUTHORIZED;
+        }
+        if ((blockchain.now() as uint32) < storage.closesAt) {
+            throw SLICE5_CONTEXT_THROW_TOO_EARLY;
+        }
+        save(Slice5ReceiveContextStorage {
+            seller: storage.seller,
+            lastSender: in.senderAddress,
+            lastNow: blockchain.now() as uint32,
+            closed: true,
+            closesAt: storage.closesAt,
+        });
+    }
+
+    @method_id(0x5101)
+    get fun lastSenderIsFixtureBidder(): bool {
+        return storage.lastSender == slice5ContextBidder();
+    }
+
+    @method_id(0x5102)
+    get fun lastSenderIsSeller(): bool {
+        return storage.lastSender == storage.seller;
+    }
+
+    @method_id(0x5103)
+    get fun getLastNow(): uint32 {
+        return storage.lastNow;
+    }
+
+    @method_id(0x5104)
+    get fun isClosed(): bool {
+        return storage.closed;
+    }
+}

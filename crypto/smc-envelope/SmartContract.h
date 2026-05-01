@@ -68,6 +68,7 @@ class SmartContract : public td::CntObject {
     bool debug_enabled{false};
 
     td::optional<block::StdAddress> address;
+    td::optional<block::StdAddress> sender_address;
     td::optional<td::int32> global_id;
     td::optional<std::shared_ptr<const block::Config>> config;
     td::optional<vm::Dictionary> libraries;
@@ -128,6 +129,10 @@ class SmartContract : public td::CntObject {
     }
     Args&& set_address(block::StdAddress address) {
       this->address = address;
+      return std::move(*this);
+    }
+    Args&& set_sender_address(block::StdAddress sender_address) {
+      this->sender_address = sender_address;
       return std::move(*this);
     }
     Args&& set_global_id(td::int32 global_id) {

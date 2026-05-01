@@ -25,9 +25,15 @@ has since closed the high-impact items in code/docs:
   adds a payout message/emission helper and raises the default queued-bid
   budget to 16.
 
-F-006 remains a test-infrastructure limitation: tol-tester still cannot
-directly inject `in.senderAddress` / `blockchain.now()` into production
-receive handlers. F-008 remains an ABI-manifest follow-up.
+Post-trial hardening closed F-006 at the emulator layer:
+`SmartContract::Args.set_sender_address(...)` now injects
+`in.senderAddress`, `set_now(...)` injects `blockchain.now()`, and
+`emulator/test/slice-5-receive-context-fixture.cpp` exercises real
+lowered `receive` handlers with forged body fields and trusted VM
+context. The tol-tester cases remain useful helper-level simulations.
+F-008 is also closed: Slice 5 ABI manifests now mark every inbound
+message field as `caller_controlled: true`, enforced by
+`check-slice-5-abi-manifests.py`.
 
 ---
 
@@ -79,8 +85,8 @@ git diff --check
 
 **Skipped verification:**
 
-- **Replay fixtures** — not created. The auction pattern requires TVM time context (`blockchain.now()`) inside every receive handler. Deterministic off-chain replay needs a time-injection mechanism that is not provided by the current toolchain. See F-006.
-- **Emulator integration tests** — not run. The tol-tester's unit mode cannot call production receive handlers that reference `in.senderAddress` or `blockchain.now()`. Tests T510–T512 and T530–T540 use inline simulation instead. See F-006.
+- **Replay fixtures** — not created during the external trial. Post-trial hardening added emulator receive-context coverage with injected `in.senderAddress` and `blockchain.now()`. See F-006.
+- **Emulator integration tests** — not run during the external trial. Post-trial hardening added `Slice5ReceiveContext` emulator coverage for production receive handlers with injected `in.senderAddress` and `blockchain.now()`. Tests T510–T512 and T530–T540 remain helper-level simulations. See F-006.
 
 ---
 
@@ -193,6 +199,7 @@ git diff --check
 - **Why this matters in production:** The properties least testable are the properties most likely to be wrong. A test that simulates the guard with inline `if (addr != config.seller)` does not prove the handler actually throws — it only proves the arithmetic is correct.
 - **Workaround used:** Inline simulation tests with prominent comments: *"exercised via inline logic since the contract entry point cannot be called from tol-tester."*
 - **Recommended fix:** The tol-tester should support a message-injection mode that provides a configurable `in.senderAddress` and a simulated `blockchain.now()` for receive handler tests. Until then, add emulator integration tests to the Slice 5 release checklist as a mandatory gate for contracts that use `in.senderAddress` in security-critical paths.
+- **Post-trial disposition:** Closed through the SmartContract emulator API rather than tol-tester's get-method runner. `set_sender_address(...)` and `set_now(...)` now populate c7 `INMSG_*` / `NOW` context, and `Slice5ReceiveContext` proves real lowered receive handlers can reject forged body fields while accepting trusted VM context.
 
 ---
 
@@ -213,6 +220,7 @@ git diff --check
 - **Area:** docs / ABI
 - **Description:** Every Slice 5 message struct with a `now: uint32` field appears in the ABI manifest as a normal `uint32` field. Nothing in the manifest schema expresses that this field is caller-controlled and must be ignored in production (replaced with `blockchain.now()`). The `wire_compatibility_exceptions` field had to be repurposed to document this.
 - **Recommended fix:** Add an `is_caller_controlled: true` flag to the ABI manifest field schema. Enforce its presence on `now` fields via the manifest validator (`check-slice-5-abi-manifests.py`).
+- **Post-trial disposition:** Closed as `caller_controlled: true`. The Slice 5 ABI schema admits the field, the validator requires it for every inbound message field, and all checked-in Slice 5 ABI manifests now carry the annotation.
 
 ---
 

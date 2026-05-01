@@ -480,6 +480,10 @@
             "null"
           ],
           "minimum": 0
+        },
+        "caller_controlled": {
+          "type": "boolean",
+          "description": "For inbound message fields, true means the value is supplied by the caller-controlled message body and must not be treated as authenticated context."
         }
       },
       "additionalProperties": false

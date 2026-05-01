@@ -7,6 +7,13 @@ Before shipping a Slice 5 contract:
   project coverage.
 - Confirm ABI manifests list all messages, get methods, public errors,
   signed cells, and manual/raw fixtures.
+- Confirm every inbound message field in Slice 5 ABI manifests has
+  `caller_controlled: true`; this is a trust annotation and does not
+  change wire encoding.
+- For receive handlers that depend on sender identity or chain time,
+  add SmartContract emulator coverage with injected
+  `set_sender_address(...)` and `set_now(...)`, not only tol-tester
+  helper simulations.
 - Confirm no new helper emits active `ErrorClass.BackPressure`.
 - Confirm auction bid receive handlers override caller-provided
   `msg.bidder` with `in.senderAddress` by using

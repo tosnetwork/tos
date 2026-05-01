@@ -1421,9 +1421,24 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   payment-channel Round 3 trial records TosStreamChannel as candidate
   2/3, the governance Round 4 trial records TosCouncilFund as candidate
   3/3, and the auction trial records TosEscrowedAuction as an
-  additional auction candidate.
+  additional auction candidate. Post-trial hardening closed the
+  real-context receive-handler test gap and added manifest-level
+  `caller_controlled` annotations for every inbound Slice 5 ABI field.
 
 ## 12. Revision notes
+
+### r37 (Slice 5 real-context hardening)
+
+- Closed the remaining real-context test gap from the
+  `TosEscrowedAuction` trial: `SmartContract::Args` now supports
+  `set_sender_address(...)`, and the emulator c7 `INMSG_*` tuple uses
+  the injected sender, amount, and time.
+- Added `emulator/test/slice-5-receive-context-fixture.cpp`, which runs
+  actual lowered `receive` handlers and proves forged body fields do not
+  replace trusted `in.senderAddress` / `blockchain.now()` context.
+- Added ABI manifest `caller_controlled` annotations. The Slice 5 schema
+  and validator require every inbound message field to set
+  `caller_controlled: true`, and the ABI freeze hashes were refreshed.
 
 ### r36 (Slice 5 external auction trial)
 

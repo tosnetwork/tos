@@ -19,25 +19,29 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "roundId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "pairId",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "now",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": []
@@ -56,37 +60,43 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "roundId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "pairId",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "reporterKey",
           "type": "uint256",
           "bits": 256,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "priceNano",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "now",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": []
@@ -99,7 +109,10 @@
       "id_source": "explicit",
       "arguments": [],
       "returns": [
-        {"name": "priceNano", "type": "uint64"}
+        {
+          "name": "priceNano",
+          "type": "uint64"
+        }
       ]
     },
     {
@@ -108,7 +121,10 @@
       "id_source": "explicit",
       "arguments": [],
       "returns": [
-        {"name": "roundId", "type": "uint64"}
+        {
+          "name": "roundId",
+          "type": "uint64"
+        }
       ]
     }
   ],
@@ -117,12 +133,42 @@
       "name": "Slice5OracleConfig",
       "encoding": "tol_auto_struct",
       "fields": [
-        {"name": "reporterSetHash", "type": "uint256", "bits": 256, "refs": 0},
-        {"name": "reporterCount", "type": "uint16", "bits": 16, "refs": 0},
-        {"name": "quorum", "type": "uint16", "bits": 16, "refs": 0},
-        {"name": "freshnessSeconds", "type": "uint32", "bits": 32, "refs": 0},
-        {"name": "maxDeviation", "type": "uint64", "bits": 64, "refs": 0},
-        {"name": "roundStarter", "type": "address", "bits": 267, "refs": 0}
+        {
+          "name": "reporterSetHash",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0
+        },
+        {
+          "name": "reporterCount",
+          "type": "uint16",
+          "bits": 16,
+          "refs": 0
+        },
+        {
+          "name": "quorum",
+          "type": "uint16",
+          "bits": 16,
+          "refs": 0
+        },
+        {
+          "name": "freshnessSeconds",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0
+        },
+        {
+          "name": "maxDeviation",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "roundStarter",
+          "type": "address",
+          "bits": 267,
+          "refs": 0
+        }
       ],
       "fixtures": []
     }

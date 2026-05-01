@@ -15,10 +15,34 @@
       "signature_algorithm": "none",
       "signing_input": "none",
       "fields": [
-        {"name": "queryId",     "type": "uint64",  "bits": 64,   "refs": 0},
-        {"name": "proposerKey", "type": "uint256",  "bits": 256,  "refs": 0},
-        {"name": "validUntil",  "type": "uint32",   "bits": 32,   "refs": 0},
-        {"name": "action",      "type": "cell",     "bits": null, "refs": 1}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "proposerKey",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "validUntil",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "action",
+          "type": "cell",
+          "bits": null,
+          "refs": 1,
+          "caller_controlled": true
+        }
       ],
       "fixtures": []
     },
@@ -32,10 +56,34 @@
       "signature_algorithm": "none",
       "signing_input": "none",
       "fields": [
-        {"name": "queryId",   "type": "uint64",  "bits": 64,  "refs": 0},
-        {"name": "voterKey",  "type": "uint256",  "bits": 256, "refs": 0},
-        {"name": "support",   "type": "bool",    "bits": 1,   "refs": 0},
-        {"name": "now",       "type": "uint32",  "bits": 32,  "refs": 0}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "voterKey",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "support",
+          "type": "bool",
+          "bits": 1,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
       ],
       "fixtures": []
     },
@@ -49,8 +97,20 @@
       "signature_algorithm": "none",
       "signing_input": "none",
       "fields": [
-        {"name": "queryId", "type": "uint64", "bits": 64, "refs": 0},
-        {"name": "now",     "type": "uint32", "bits": 32, "refs": 0}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
       ],
       "fixtures": []
     },
@@ -64,9 +124,27 @@
       "signature_algorithm": "none",
       "signing_input": "none",
       "fields": [
-        {"name": "queryId",     "type": "uint64",  "bits": 64,  "refs": 0},
-        {"name": "proposerKey", "type": "uint256",  "bits": 256, "refs": 0},
-        {"name": "now",         "type": "uint32",   "bits": 32,  "refs": 0}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "proposerKey",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
       ],
       "fixtures": []
     }
@@ -78,8 +156,14 @@
       "id_source": "explicit",
       "arguments": [],
       "returns": [
-        {"name": "votesFor",     "type": "int"},
-        {"name": "votesAgainst", "type": "int"}
+        {
+          "name": "votesFor",
+          "type": "int"
+        },
+        {
+          "name": "votesAgainst",
+          "type": "int"
+        }
       ]
     },
     {
@@ -88,7 +172,10 @@
       "id_source": "explicit",
       "arguments": [],
       "returns": [
-        {"name": "active", "type": "bool"}
+        {
+          "name": "active",
+          "type": "bool"
+        }
       ]
     }
   ],
@@ -97,11 +184,36 @@
       "name": "Slice5GovernanceAction",
       "encoding": "tol_auto_struct",
       "fields": [
-        {"name": "actionType",   "type": "uint8",   "bits": 8,    "refs": 0},
-        {"name": "target",       "type": "address",  "bits": null, "refs": 0},
-        {"name": "value",        "type": "coins",    "bits": null, "refs": 0},
-        {"name": "mode",         "type": "int32",    "bits": 32,   "refs": 0},
-        {"name": "expectedHash", "type": "uint256",  "bits": 256,  "refs": 0}
+        {
+          "name": "actionType",
+          "type": "uint8",
+          "bits": 8,
+          "refs": 0
+        },
+        {
+          "name": "target",
+          "type": "address",
+          "bits": null,
+          "refs": 0
+        },
+        {
+          "name": "value",
+          "type": "coins",
+          "bits": null,
+          "refs": 0
+        },
+        {
+          "name": "mode",
+          "type": "int32",
+          "bits": 32,
+          "refs": 0
+        },
+        {
+          "name": "expectedHash",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0
+        }
       ],
       "fixtures": []
     }

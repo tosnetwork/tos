@@ -19,31 +19,36 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "signedState",
           "type": "cell",
           "bits": null,
-          "refs": 1
+          "refs": 1,
+          "caller_controlled": true
         },
         {
           "name": "signatureA",
           "type": "cell",
           "bits": 512,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "signatureB",
           "type": "cell",
           "bits": 512,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "now",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": [
@@ -68,31 +73,36 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "signedState",
           "type": "cell",
           "bits": null,
-          "refs": 1
+          "refs": 1,
+          "caller_controlled": true
         },
         {
           "name": "signatureA",
           "type": "cell",
           "bits": 512,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "signatureB",
           "type": "cell",
           "bits": 512,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "now",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": [
@@ -117,13 +127,15 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "now",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": []

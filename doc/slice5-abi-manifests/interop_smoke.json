@@ -19,19 +19,22 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "recipient",
           "type": "address",
           "bits": null,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "amount",
           "type": "coins",
           "bits": null,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": [

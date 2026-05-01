@@ -15,10 +15,34 @@
       "signature_algorithm": "none",
       "signing_input": "none",
       "fields": [
-        {"name": "queryId", "type": "uint64",  "bits": 64,   "refs": 0},
-        {"name": "bidder",  "type": "address", "bits": null, "refs": 0},
-        {"name": "amount",  "type": "coins",   "bits": null, "refs": 0},
-        {"name": "now",     "type": "uint32",  "bits": 32,   "refs": 0}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "bits": null,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "amount",
+          "type": "coins",
+          "bits": null,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
       ],
       "fixtures": []
     },
@@ -32,8 +56,20 @@
       "signature_algorithm": "none",
       "signing_input": "none",
       "fields": [
-        {"name": "queryId", "type": "uint64", "bits": 64, "refs": 0},
-        {"name": "now",     "type": "uint32", "bits": 32, "refs": 0}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
       ],
       "fixtures": []
     },
@@ -47,8 +83,20 @@
       "signature_algorithm": "none",
       "signing_input": "none",
       "fields": [
-        {"name": "queryId", "type": "uint64", "bits": 64, "refs": 0},
-        {"name": "now",     "type": "uint32", "bits": 32, "refs": 0}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
       ],
       "fixtures": []
     },
@@ -62,8 +110,20 @@
       "signature_algorithm": "none",
       "signing_input": "none",
       "fields": [
-        {"name": "queryId", "type": "uint64", "bits": 64, "refs": 0},
-        {"name": "now",     "type": "uint32", "bits": 32, "refs": 0}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
       ],
       "fixtures": []
     }
@@ -74,49 +134,84 @@
       "method_id": 7681,
       "id_source": "explicit",
       "arguments": [],
-      "returns": [{"name": "highestBid", "type": "coins"}]
+      "returns": [
+        {
+          "name": "highestBid",
+          "type": "coins"
+        }
+      ]
     },
     {
       "name": "getHighestBidder",
       "method_id": 7682,
       "id_source": "explicit",
       "arguments": [],
-      "returns": [{"name": "highestBidder", "type": "address"}]
+      "returns": [
+        {
+          "name": "highestBidder",
+          "type": "address"
+        }
+      ]
     },
     {
       "name": "isClosed",
       "method_id": 7683,
       "id_source": "explicit",
       "arguments": [],
-      "returns": [{"name": "closed", "type": "bool"}]
+      "returns": [
+        {
+          "name": "closed",
+          "type": "bool"
+        }
+      ]
     },
     {
       "name": "isSettled",
       "method_id": 7684,
       "id_source": "explicit",
       "arguments": [],
-      "returns": [{"name": "settled", "type": "bool"}]
+      "returns": [
+        {
+          "name": "settled",
+          "type": "bool"
+        }
+      ]
     },
     {
       "name": "getSeller",
       "method_id": 7685,
       "id_source": "explicit",
       "arguments": [],
-      "returns": [{"name": "seller", "type": "address"}]
+      "returns": [
+        {
+          "name": "seller",
+          "type": "address"
+        }
+      ]
     },
     {
       "name": "getPendingPayout",
       "method_id": 7686,
       "id_source": "explicit",
       "arguments": [],
-      "returns": [{"name": "pendingPayout", "type": "coins"}]
+      "returns": [
+        {
+          "name": "pendingPayout",
+          "type": "coins"
+        }
+      ]
     },
     {
       "name": "getItemRef",
       "method_id": 7687,
       "id_source": "explicit",
       "arguments": [],
-      "returns": [{"name": "itemRef", "type": "uint256"}]
+      "returns": [
+        {
+          "name": "itemRef",
+          "type": "uint256"
+        }
+      ]
     }
   ],
   "cell_types": [
@@ -124,11 +219,36 @@
       "name": "TosEscrowedAuctionStorage",
       "encoding": "tol_auto_struct",
       "fields": [
-        {"name": "config",         "type": "cell",    "bits": null, "refs": 1},
-        {"name": "state",          "type": "cell",    "bits": null, "refs": 1},
-        {"name": "itemRef",        "type": "uint256", "bits": 256,  "refs": 0},
-        {"name": "pendingPayout",  "type": "coins",   "bits": null, "refs": 0},
-        {"name": "payoutDone",     "type": "bool",    "bits": 1,    "refs": 0}
+        {
+          "name": "config",
+          "type": "cell",
+          "bits": null,
+          "refs": 1
+        },
+        {
+          "name": "state",
+          "type": "cell",
+          "bits": null,
+          "refs": 1
+        },
+        {
+          "name": "itemRef",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0
+        },
+        {
+          "name": "pendingPayout",
+          "type": "coins",
+          "bits": null,
+          "refs": 0
+        },
+        {
+          "name": "payoutDone",
+          "type": "bool",
+          "bits": 1,
+          "refs": 0
+        }
       ],
       "fixtures": []
     }

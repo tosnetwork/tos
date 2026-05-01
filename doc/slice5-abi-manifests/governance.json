@@ -19,25 +19,29 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "proposerKey",
           "type": "uint256",
           "bits": 256,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "validUntil",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "action",
           "type": "cell",
           "bits": null,
-          "refs": 1
+          "refs": 1,
+          "caller_controlled": true
         }
       ],
       "fixtures": []
@@ -56,25 +60,29 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "voterKey",
           "type": "uint256",
           "bits": 256,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "support",
           "type": "bool",
           "bits": 1,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "now",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": []
@@ -93,13 +101,15 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "now",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": []
@@ -118,19 +128,22 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "proposerKey",
           "type": "uint256",
           "bits": 256,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "now",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": []

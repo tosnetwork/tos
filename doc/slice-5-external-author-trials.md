@@ -201,17 +201,21 @@ The trial found nine issues:
   `slice5AuctionEmitPayout(...)` were added, and the author guide/audit
   checklist now require explicit payout dispatch or documented off-chain
   settlement.
-- Production receive handlers cannot yet be exercised directly in
+- Production receive handlers could not be exercised directly in
   tol-tester with injected `in.senderAddress` and `blockchain.now()`.
-  Disposition: recorded as a remaining test-infrastructure limitation;
-  the trial contract keeps inline simulation tests for these properties.
+  Disposition: repo-side hardening added
+  `SmartContract::Args.set_sender_address(...)` and a Slice 5
+  receive-context emulator fixture so real lowered `receive` handlers
+  can be tested with trusted sender/time context.
 - `slice5AuctionDefaultBudget()` was too tight for popular pre-open
   auctions. Disposition: the default budget now allows 16 postponed
   items and the docs point high-traffic auctions at
   `slice5AuctionConfigWithBudget(...)`.
-- ABI manifests do not have a first-class `caller_controlled` field
-  annotation for values like `now`. Disposition: documented as an ABI
-  manifest follow-up; current manifests keep compatibility notes.
+- ABI manifests did not have a first-class `caller_controlled` field
+  annotation for values like `now`. Disposition: the Slice 5 ABI schema
+  and validator now accept `caller_controlled`, require it to be `true`
+  for every inbound message field, and all Slice 5 ABI manifests record
+  the annotation.
 - `Slice5AuctionExpire` access model was undocumented. Disposition: the
   author guide and audit checklist now state that expire may be called
   by any sender as cooperative cleanup.

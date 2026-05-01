@@ -19,31 +19,36 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "roundId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "reporterKey",
           "type": "uint256",
           "bits": 256,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "value",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "now",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": []
@@ -62,19 +67,22 @@
           "name": "queryId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "roundId",
           "type": "uint64",
           "bits": 64,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         },
         {
           "name": "now",
           "type": "uint32",
           "bits": 32,
-          "refs": 0
+          "refs": 0,
+          "caller_controlled": true
         }
       ],
       "fixtures": []

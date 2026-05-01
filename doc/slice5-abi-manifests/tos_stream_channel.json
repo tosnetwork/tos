@@ -15,11 +15,41 @@
       "signature_algorithm": "ed25519",
       "signing_input": "cell_hash",
       "fields": [
-        {"name": "queryId",      "type": "uint64",  "bits": 64,   "refs": 0},
-        {"name": "signedState",  "type": "cell",    "bits": null, "refs": 1},
-        {"name": "signatureA",   "type": "cell",    "bits": 512,  "refs": 0},
-        {"name": "signatureB",   "type": "cell",    "bits": 512,  "refs": 0},
-        {"name": "now",          "type": "uint32",  "bits": 32,   "refs": 0}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "signedState",
+          "type": "cell",
+          "bits": null,
+          "refs": 1,
+          "caller_controlled": true
+        },
+        {
+          "name": "signatureA",
+          "type": "cell",
+          "bits": 512,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "signatureB",
+          "type": "cell",
+          "bits": 512,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
       ],
       "fixtures": [
         {
@@ -40,11 +70,41 @@
       "signature_algorithm": "ed25519",
       "signing_input": "cell_hash",
       "fields": [
-        {"name": "queryId",      "type": "uint64",  "bits": 64,   "refs": 0},
-        {"name": "signedState",  "type": "cell",    "bits": null, "refs": 1},
-        {"name": "signatureA",   "type": "cell",    "bits": 512,  "refs": 0},
-        {"name": "signatureB",   "type": "cell",    "bits": 512,  "refs": 0},
-        {"name": "now",          "type": "uint32",  "bits": 32,   "refs": 0}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "signedState",
+          "type": "cell",
+          "bits": null,
+          "refs": 1,
+          "caller_controlled": true
+        },
+        {
+          "name": "signatureA",
+          "type": "cell",
+          "bits": 512,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "signatureB",
+          "type": "cell",
+          "bits": 512,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
       ],
       "fixtures": [
         {
@@ -65,8 +125,20 @@
       "signature_algorithm": "none",
       "signing_input": "none",
       "fields": [
-        {"name": "queryId", "type": "uint64", "bits": 64, "refs": 0},
-        {"name": "now",     "type": "uint32", "bits": 32, "refs": 0}
+        {
+          "name": "queryId",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0,
+          "caller_controlled": true
+        },
+        {
+          "name": "now",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0,
+          "caller_controlled": true
+        }
       ],
       "fixtures": []
     }
@@ -77,21 +149,36 @@
       "method_id": 11265,
       "id_source": "explicit",
       "arguments": [],
-      "returns": [{"name": "channelId", "type": "uint256"}]
+      "returns": [
+        {
+          "name": "channelId",
+          "type": "uint256"
+        }
+      ]
     },
     {
       "name": "isClosing",
       "method_id": 11266,
       "id_source": "explicit",
       "arguments": [],
-      "returns": [{"name": "closing", "type": "bool"}]
+      "returns": [
+        {
+          "name": "closing",
+          "type": "bool"
+        }
+      ]
     },
     {
       "name": "isClosed",
       "method_id": 11267,
       "id_source": "explicit",
       "arguments": [],
-      "returns": [{"name": "closed", "type": "bool"}]
+      "returns": [
+        {
+          "name": "closed",
+          "type": "bool"
+        }
+      ]
     }
   ],
   "cell_types": [
@@ -99,11 +186,36 @@
       "name": "Slice5PaymentSignedState",
       "encoding": "tol_auto_struct",
       "fields": [
-        {"name": "channelId",  "type": "uint256", "bits": 256,  "refs": 0},
-        {"name": "seqno",      "type": "uint64",  "bits": 64,   "refs": 0},
-        {"name": "balanceA",   "type": "coins",   "bits": null, "refs": 0},
-        {"name": "balanceB",   "type": "coins",   "bits": null, "refs": 0},
-        {"name": "validUntil", "type": "uint32",  "bits": 32,   "refs": 0}
+        {
+          "name": "channelId",
+          "type": "uint256",
+          "bits": 256,
+          "refs": 0
+        },
+        {
+          "name": "seqno",
+          "type": "uint64",
+          "bits": 64,
+          "refs": 0
+        },
+        {
+          "name": "balanceA",
+          "type": "coins",
+          "bits": null,
+          "refs": 0
+        },
+        {
+          "name": "balanceB",
+          "type": "coins",
+          "bits": null,
+          "refs": 0
+        },
+        {
+          "name": "validUntil",
+          "type": "uint32",
+          "bits": 32,
+          "refs": 0
+        }
       ],
       "fixtures": [
         {

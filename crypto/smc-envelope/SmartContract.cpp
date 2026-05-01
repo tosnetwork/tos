@@ -54,22 +54,39 @@ unsigned SmartContract::Answer::output_actions_count(td::Ref<vm::Cell> list) try
 }
 namespace {
 
-td::Ref<vm::Cell> build_internal_message(td::RefInt256 amount, td::Ref<vm::CellSlice> body, SmartContract::Args args) {
+void store_std_address(vm::CellBuilder& cb, const block::StdAddress& address) {
+  td::BigInt256 addr;
+  addr.import_bits(address.addr.as_bitslice());
+  cb.store_ones(1).store_zeroes(2).store_long(address.workchain, 8).store_int256(addr, 256);
+}
+
+td::Ref<vm::CellSlice> build_std_address_slice(const td::optional<block::StdAddress>& address) {
   vm::CellBuilder cb;
-  if (args.address) {
-    td::BigInt256 dest_addr;
-    dest_addr.import_bits((*args.address).addr.as_bitslice());
-    cb.store_ones(1).store_zeroes(2).store_long((*args.address).workchain, 8).store_int256(dest_addr, 256);
+  if (address) {
+    store_std_address(cb, address.value());
   }
-  auto address = cb.finalize();
+  return cb.as_cellslice_ref();
+}
+
+td::Ref<vm::CellSlice> build_std_address_slice(const block::StdAddress& address) {
+  vm::CellBuilder cb;
+  store_std_address(cb, address);
+  return cb.as_cellslice_ref();
+}
+
+td::Ref<vm::Cell> build_internal_message(td::RefInt256 amount, td::Ref<vm::CellSlice> body, SmartContract::Args args) {
+  auto address = build_std_address_slice(args.address);
 
   vm::CellBuilder b;
   b.store_long(0b0110, 4);  // 0 ihr_disabled:Bool bounce:Bool bounced:Bool
-  // use -1:00..00 as src:MsgAddressInt
-  // addr_std$10 anycast:(Maybe Anycast)  workchain_id:int8 address:bits256  = MsgAddressInt;
-  b.store_long(0b100, 3);
-  b.store_ones(8);
-  b.store_zeroes(256);
+  if (args.sender_address) {
+    store_std_address(b, args.sender_address.value());
+  } else {
+    // Preserve the historical emulator default: -1:00..00 as src:MsgAddressInt.
+    b.store_long(0b100, 3);
+    b.store_ones(8);
+    b.store_zeroes(256);
+  }
   b.append_cellslice(address);  // dest:MsgAddressInt
   unsigned len = (((unsigned)amount->bit_size(false) + 7) >> 3);
   b.store_long_bool(len, 4) && b.store_int256_bool(*amount, len * 8, false);  // tomis:Tomis
@@ -86,13 +103,7 @@ td::Ref<vm::Cell> build_internal_message(td::RefInt256 amount, td::Ref<vm::CellS
 }
 
 td::Ref<vm::Cell> build_external_message(td::RefInt256 amount, td::Ref<vm::CellSlice> body, SmartContract::Args args) {
-  vm::CellBuilder cb;
-  if (args.address) {
-    td::BigInt256 dest_addr;
-    dest_addr.import_bits((*args.address).addr.as_bitslice());
-    cb.store_ones(1).store_zeroes(2).store_long((*args.address).workchain, 8).store_int256(dest_addr, 256);
-  }
-  auto address = cb.finalize();
+  auto address = build_std_address_slice(args.address);
 
   vm::CellBuilder b;
   b.store_long(0b1000, 4);      // ext_in_msg_info$10 src:MsgAddressExt
@@ -131,6 +142,26 @@ td::Ref<vm::Stack> prepare_vm_stack(td::RefInt256 amount, td::Ref<vm::CellSlice>
   return stack_ref;
 }
 
+td::Ref<vm::Tuple> prepare_emulator_in_msg_params_tuple(const SmartContract::Args& args) {
+  std::vector<vm::StackEntry> in_msg_params(10);
+  in_msg_params[0] = td::zero_refint();  // bounce
+  in_msg_params[1] = td::zero_refint();  // bounced
+  if (args.sender_address) {
+    in_msg_params[2] = build_std_address_slice(args.sender_address.value());
+  } else {
+    static td::Ref<vm::CellSlice> addr_none = vm::CellBuilder{}.store_zeroes(2).as_cellslice_ref();
+    in_msg_params[2] = addr_none;
+  }
+  in_msg_params[3] = td::zero_refint();  // fwd_fee
+  in_msg_params[4] = td::zero_refint();  // created_lt
+  in_msg_params[5] = td::make_refint(args.now ? args.now.value() : 0);
+  in_msg_params[6] = td::make_refint(args.amount);
+  in_msg_params[7] = td::make_refint(args.amount);
+  in_msg_params[8] = vm::StackEntry::maybe(args.extra_currencies);
+  in_msg_params[9] = vm::StackEntry{};  // state_init
+  return td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(in_msg_params));
+}
+
 td::Ref<vm::Tuple> prepare_vm_c7(SmartContract::Args args, td::Ref<vm::Cell> code) {
   td::BitArray<256> rand_seed;
   if (args.rand_seed) {
@@ -146,13 +177,7 @@ td::Ref<vm::Tuple> prepare_vm_c7(SmartContract::Args args, td::Ref<vm::Cell> cod
     now = args.now.unwrap();
   }
 
-  vm::CellBuilder cb;
-  if (args.address) {
-    td::BigInt256 dest_addr;
-    dest_addr.import_bits((*args.address).addr.as_bitslice());
-    cb.store_ones(1).store_zeroes(2).store_long((*args.address).workchain, 8).store_int256(dest_addr, 256);
-  }
-  auto address = cb.finalize();
+  auto address = build_std_address_slice(args.address);
   auto config = td::Ref<vm::Cell>();
 
   if (args.config) {
@@ -169,7 +194,7 @@ td::Ref<vm::Tuple> prepare_vm_c7(SmartContract::Args args, td::Ref<vm::Cell> cod
       std::move(rand_seed_int),     //   rand_seed:Integer
       block::CurrencyCollection(args.balance, args.extra_currencies)
           .as_vm_tuple(),                //   balance_remaining:[Integer (Maybe Cell)]
-      vm::load_cell_slice_ref(address),  //   myself:MsgAddressInt
+      std::move(address),                //   myself:MsgAddressInt
       vm::StackEntry::maybe(config)      //   vm::StackEntry::maybe(td::Ref<vm::Cell>())
   };
 
@@ -208,7 +233,7 @@ td::Ref<vm::Tuple> prepare_vm_c7(SmartContract::Args args, td::Ref<vm::Cell> cod
     tuple.push_back(precompiled ? td::make_refint(precompiled.value().gas_usage) : vm::StackEntry());
   }
   if (global_version >= 11) {
-    tuple.push_back(block::transaction::Transaction::prepare_in_msg_params_tuple(nullptr, {}, {}));
+    tuple.push_back(prepare_emulator_in_msg_params_tuple(args));
   }
   auto tuple_ref = td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(tuple));
   //LOG(DEBUG) << "SmartContractInfo initialized with " << vm::StackEntry(tuple).to_string();

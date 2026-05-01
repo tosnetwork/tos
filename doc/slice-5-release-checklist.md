@@ -10,6 +10,10 @@ Repo-side release-candidate checklist:
   pointers, and behaviour pointers.
 - [x] `scripts/check-slice-5-abi-manifests.py` is green.
 - [x] `scripts/check-slice-5-release-package.py` is green.
+- [x] Receive-handler emulator coverage exists for security-critical
+  `in.senderAddress` / `blockchain.now()` context injection.
+- [x] ABI manifests annotate inbound wire fields with
+  `caller_controlled: true`.
 - [x] First external trial findings are closed in repo-side code/docs and
   the second-round oracle trial is recorded as passed.
 - [x] At least three external production contracts using the second-wave
