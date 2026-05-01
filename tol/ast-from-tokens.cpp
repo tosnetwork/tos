@@ -136,24 +136,43 @@ static AnyExprV maybe_replace_eq_null_with_isNull_check(V<ast_binary_operator> v
   return createV<ast_is_type_operator>(v->range, v_nullable, rhs_null_type, v->tok == tok_neq);
 }
 
+static std::string strip_numeric_separators(std::string_view text) {
+  std::string result;
+  result.reserve(text.size());
+  for (char c : text) {
+    if (c != '_') {
+      result += c;
+    }
+  }
+  return result;
+}
+
 // parse `123` / `0xFF` / `0b10001` to td::RefInt256
 static td::RefInt256 parse_tok_int_const(std::string_view text, SrcRange cur_range) {
   bool bin = text.size() >= 2 && text[0] == '0' && text[1] == 'b';
   if (!bin) {
     // this function parses decimal and hex numbers
-    td::RefInt256 intval = td::string_to_int256(static_cast<std::string>(text));
+    td::RefInt256 intval = td::string_to_int256(strip_numeric_separators(text));
     if (intval.is_null() || !intval->signed_fits_bits(257)) {
       err("invalid integer constant").fire(cur_range);
     }
     return intval;
   }
   // parse a binary number; to make it simpler, don't allow too long numbers, it's impractical
-  if (text.size() < 3 || text.size() > 64 + 2) {
-    err("invalid binary integer").fire(cur_range);
-  }
   uint64_t result = 0;
+  int n_digits = 0;
   for (char c : text.substr(2)) { // skip "0b"
+    if (c == '_') {
+      continue;
+    }
+    ++n_digits;
+    if (n_digits > 64) {
+      err("invalid binary integer").fire(cur_range);
+    }
     result = (result << 1) | static_cast<uint64_t>(c - '0');
+  }
+  if (n_digits == 0) {
+    err("invalid binary integer").fire(cur_range);
   }
   return td::make_refint(result);
 }

@@ -257,6 +257,35 @@ struct ChunkAnnotation final : ChunkLexerBase {
 
 // A number, may be a hex one.
 struct ChunkNumber final : ChunkLexerBase {
+  static bool is_dec_digit(char c) {
+    return c >= '0' && c <= '9';
+  }
+
+  static bool is_hex_digit(char c) {
+    return (c >= '0' && c <= '9') || ((c | 0x20) >= 'a' && (c | 0x20) <= 'f');
+  }
+
+  static bool is_bin_digit(char c) {
+    return c == '0' || c == '1';
+  }
+
+  static void skip_digits_with_separators(Lexer* lex, bool (*is_digit)(char)) {
+    bool seen_digit = false;
+    while (!lex->is_eof()) {
+      char c = lex->char_at();
+      if (is_digit(c)) {
+        seen_digit = true;
+        lex->skip_chars(1);
+        continue;
+      }
+      if (seen_digit && c == '_' && is_digit(lex->char_at(1))) {
+        lex->skip_chars(1);
+        continue;
+      }
+      break;
+    }
+  }
+
   static bool parse_hex_or_bin(Lexer* lex, bool bin) {
     const char* str_begin = lex->c_str();
     lex->skip_chars(2);     // 0x / 0b
@@ -264,16 +293,7 @@ struct ChunkNumber final : ChunkLexerBase {
       return false;
     }
 
-    while (!lex->is_eof()) {
-      char c = lex->char_at();
-      bool ok = bin
-        ? c == '0' || c == '1'
-        : (c >= '0' && c <= '9') || ((c | 0x20) >= 'a' && (c | 0x20) <= 'f');
-      if (!ok) {
-        break;
-      }
-      lex->skip_chars(1);
-    }
+    skip_digits_with_separators(lex, bin ? is_bin_digit : is_hex_digit);
 
     std::string_view str_val(str_begin, lex->c_str() - str_begin);
     lex->add_token(tok_int_const, str_val);
@@ -291,13 +311,7 @@ struct ChunkNumber final : ChunkLexerBase {
     }
 
     const char* str_begin = lex->c_str();
-    while (!lex->is_eof()) {
-      char c = lex->char_at();
-      if (c < '0' || c > '9') {
-        break;
-      }
-      lex->skip_chars(1);
-    }
+    skip_digits_with_separators(lex, is_dec_digit);
 
     std::string_view str_val(str_begin, lex->c_str() - str_begin);
     lex->add_token(tok_int_const, str_val);

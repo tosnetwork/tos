@@ -95,6 +95,10 @@ Compatibility rules:
   coins>` storage and tooling are documented. If finalization emits one
   refund per reporter, document the maximum sends per transaction and
   cover it in the gas budget.
+- Large numeric constants may use `_` separators in decimal, hex, and
+  binary literals for readability, for example `1_000_000_000`,
+  `0x3b_9a_ca_00`, and `0b0011_1011`. Separators must be between
+  digits, not immediately after `0x` or `0b`.
 - Oracle `maxDeviation` outlier protection needs quorum `>= 3` when it
   is intended to resist a compromised first reporter. With quorum `2`,
   the second accepted report can only be checked against the single
