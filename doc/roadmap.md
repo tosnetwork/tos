@@ -1039,8 +1039,8 @@ multi-address structs.
 reports) form the Slice 6 design surface.
 
 **Status.** 🟡 Stage 0 design RFC opened, 2026-05-01; first design
-review findings addressed in Draft v0.2. No implementation is approved
-yet. The Stage 0 input documents are
+review findings addressed in Draft v0.2 and re-review approved. No
+implementation has landed yet. The Stage 0 input documents are
 [`doc/tos-slice-6-policy.md`](tos-slice-6-policy.md),
 [`doc/tos-delivery-sla-policy.md`](tos-delivery-sla-policy.md),
 [`doc/tos-time-policy.md`](tos-time-policy.md),
@@ -1067,8 +1067,9 @@ authorization plane, not reusable public bearer secrets.
      queue-pressure buckets, masterchain-seqno time base, cancellation
      authority edge cases, monitor notification opcode, supervision
      non-atomicity, and capability constraint hashing.
-   - ⏳ Security re-review and closure.
-   - ⏳ Exit criterion: Stage 0 review accepts the dependency order,
+   - ✅ Security re-review and closure recorded in
+     `doc/slice-6-stage0-review.md`.
+   - ✅ Exit criterion: Stage 0 review accepts the dependency order,
      resource model, global-version gates, and non-goals.
 
 2. ⏳ **Stage 1 — delivery failure and BackPressure foundation.**
@@ -1522,6 +1523,15 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r42 (Slice 6 Stage 0 approved)
+
+- Recorded the Slice 6 Stage 0 re-review result in
+  `doc/slice-6-stage0-review.md`: all 18 first-review findings are
+  closed and the updated verdict is `APPROVE`.
+- Marked Slice 6 Stage 0 review closure in the roadmap. Stage 1
+  implementation planning is unblocked, but no Stage 1 implementation
+  has landed yet.
 
 ### r41 (Slice 6 Stage 0 review fixes)
 
