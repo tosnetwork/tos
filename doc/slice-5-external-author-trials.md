@@ -173,7 +173,7 @@ The external author built an escrowed English auction for on-chain
 assets using `@stdlib/auction`. The trial verified normal bids,
 postponed pre-open bids, close/drain/settle, low-bid rejection,
 stale-close and duplicate-settle rejection, unknown opcode handling,
-imported contract tests, and production-level workarounds for bidder
+imported contract tests, and the hardened production paths for bidder
 identity and timestamp integrity.
 
 The trial found nine issues:
@@ -273,9 +273,12 @@ The new bonded oracle also produced three implementation lessons:
   Disposition: docs and audit checklist call out the maximum-send budget;
   this candidate emits at most three refunds after finalized state is
   saved.
-- `map<uint256, coins>` storage is not yet documented as an audited
-  pattern. Disposition: the candidate stores nanoTON bonds as `uint64`
-  and records that exception in its ABI manifest.
+- `map<uint256, coins>` storage lacked visible guidance during the
+  trial. Disposition: the Slice 5 author guide now records it as
+  supported by the Tol map serializer and compiler coverage; the
+  candidate continues to store nanoTON bonds as `uint64` intentionally
+  to cap the maximum bond amount and records that bounded-unit choice
+  in its ABI manifest.
 
 This records a fifth production-intent candidate and the second oracle
 candidate. The release gate was already complete; this trial hardens the

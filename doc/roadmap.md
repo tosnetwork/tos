@@ -1765,6 +1765,20 @@ removed when policy v6 made single-signer the rule; see §11.3.)
 
 ## 12. Revision notes
 
+### r52 (Slice 5 authoring residue hardening)
+
+- Added `scripts/tol-method-id.py`, a dependency-free helper that
+  computes Tol's auto-derived public getter id (`crc16(name) | 0x10000`)
+  for ABI manifests and `artifacts/method-ids.json`.
+- Closed the remaining Slice 5 documentation friction from the external
+  trials: the author guide now documents tol-tester `@testcase` /
+  `@compilation_should_fail` rows, `*-import-positive.tol` smoke-test
+  conventions, ABI `bits` / `refs` `null` rules for variable encodings
+  such as `coins`, `caller_controlled: true`, `map<uint256, coins>`, and
+  `in.valueCoins` minimum-value gates.
+- Strengthened `scripts/check-slice-5-release-package.py` so the release
+  gate validates the method-id helper and the authoring guidance above.
+
 ### r51 (Slice 6 external-author hardening)
 
 - Split Slice 6 time budgets into scheduler `Slice6TimerBudget` for

@@ -89,6 +89,17 @@ def run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = No
         raise SystemExit(f"command failed with exit code {res.returncode}: {' '.join(cmd)}")
 
 
+def run_capture(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
+    res = subprocess.run(cmd, cwd=cwd, env=env, text=True, capture_output=True)
+    if res.returncode != 0:
+        if res.stdout:
+            print(res.stdout, end="")
+        if res.stderr:
+            print(res.stderr, end="", file=sys.stderr)
+        raise SystemExit(f"command failed with exit code {res.returncode}: {' '.join(cmd)}")
+    return res.stdout
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise SystemExit(message)
@@ -204,6 +215,33 @@ def validate_emulator_tests(root: Path, project: Path, name: str, manifest: dict
         require(entry.get("note"), f"{prefix}: integration note missing")
 
 
+def validate_authoring_docs(root: Path) -> None:
+    guide = (root / "doc" / "slice-5-author-guide.md").read_text(encoding="utf-8")
+    abi_validator = (root / "doc" / "slice-5-abi-validator.md").read_text(encoding="utf-8")
+    required_guide_needles = (
+        "scripts/tol-method-id.py",
+        "bits` / `refs`",
+        "`coins` is `VarUInteger 16`",
+        "`caller_controlled: true`",
+        "`@testcase | method_id | input | output`",
+        "`@compilation_should_fail`",
+        "`*-import-positive.tol`",
+        "`map<uint256, coins>`",
+        "`(in.valueCoins as int) >= MIN_BOND`",
+    )
+    for needle in required_guide_needles:
+        require(needle in guide, f"doc/slice-5-author-guide.md: missing authoring guidance for {needle}")
+    for needle in ("scripts/tol-method-id.py", "`crc16(name) | 0x10000`", "`coins` is encoded as `VarUInteger 16`"):
+        require(needle in abi_validator, f"doc/slice-5-abi-validator.md: missing ABI guidance for {needle}")
+
+
+def validate_method_id_tool(root: Path) -> None:
+    script = root / "scripts" / "tol-method-id.py"
+    require(script.exists() and os.access(script, os.X_OK), f"{script}: method-id helper missing or not executable")
+    output = run_capture([sys.executable, str(script), "balance"])
+    require("balance 104128 0x196c0" in output, f"{script}: unexpected balance method-id output: {output!r}")
+
+
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -215,6 +253,8 @@ def main() -> int:
     for doc in REQUIRED_DOCS:
         path = root / doc
         require(path.exists() and path.stat().st_size > 0, f"{doc}: required Slice 5 doc missing or empty")
+    validate_authoring_docs(root)
+    validate_method_id_tool(root)
 
     run([sys.executable, str(root / "scripts" / "check-slice-5-abi-manifests.py")])
 

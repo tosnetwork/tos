@@ -124,6 +124,23 @@ Compatibility rules:
   truncation of the average of the two middle sorted values. For the
   two-value case this is `(value1 + value2) / 2`.
 
+ABI and artifact rules:
+
+- Use `scripts/tol-method-id.py <getterName>` to compute the
+  auto-derived public getter id (`crc16(name) | 0x10000`) for
+  `artifacts/method-ids.json` and ABI manifests. Explicit
+  `@method_id(N)` getters should record `N` directly. Public Slice 5
+  getter ids must be `>= 1`; `0` and negative ids are TVM entrypoints.
+- In ABI manifest field entries, `bits` / `refs` are integers only when
+  the serialized shape has a fixed count. Use `null` for variable-size
+  encodings such as `coins`, `address`, `any_address`, `cell`,
+  `slice`, `builder`, `dict`, and `remaining_bits_and_refs`.
+  `coins` is `VarUInteger 16` on the wire, so its `bits` value is
+  `null`, not a fixed integer.
+- Every inbound message field must declare `caller_controlled: true`.
+  This is a trust annotation for reviewers and tools; it does not alter
+  wire bits.
+
 Testing note: importing a `.tol` file that contains a `contract` block
 into a tol-tester unit is supported for constants, types, and helper
 logic. The compiler lowers only the entrypoint file's contract block, so
@@ -132,6 +149,22 @@ imports are explicit rather than transitive: if a test imports a
 contract source that itself imports `@stdlib/payment-channel`, the test
 must still import `@stdlib/payment-channel` before using those stdlib
 symbols directly.
+
+Tol-tester file conventions:
+
+- Positive tests use `@testcase | method_id | input | output` rows
+  inside a block comment. `method_id` is the public method id to invoke.
+  `input` is a space-separated Fift stack fragment; numbers, hex cells
+  (`x{...}`), builder cells (`cell{...}`), arithmetic expressions, and
+  `null` are supported. Leave `input` empty when the method takes no
+  arguments.
+- Negative tests use `@compilation_should_fail` plus one or more
+  ordered `@stderr <substring>` rows. The test passes only if
+  compilation fails and the substrings appear in stderr in order.
+- `*-import-positive.tol` files are smoke tests for the public import
+  surface. They should import the production source plus any stdlib
+  dependencies used directly by the test, then expose a few constants,
+  structs, or helper calls through `@method_id` functions.
 
 Use tol-tester for helper logic and imported-contract smoke tests. Use
 the SmartContract emulator for production receive-handler tests that

@@ -113,7 +113,7 @@ git diff --check
 | T525 | Duplicate settle rejected | `2822` (ALREADY_SETTLED) | `2822` | Replay protection |
 | T526 | Duplicate close rejected | `2821` (ALREADY_CLOSED) | `2821` | Replay protection |
 | T527 | Exact immediate bid replay rejected without state change | `2817` (LOW_BID) | `2817` | Replay protection |
-| T530 | Forged `msg.bidder` accepted by raw stdlib — documents vulnerability | `1` (forged wins) | `1` | **Security gap documented** |
+| T530 | Raw helper accepts caller-provided bidder — production wrapper must override | `1` (forged wins) | `1` | Raw-helper boundary documented; release checker gates production wrappers |
 | T531 | Contract bidder override: real sender (`in.senderAddress`) wins | `1` (safe) | `1` | Authorization |
 | T540 | `msg.now` spoofing to force early close — safe vs. vulnerable paths | `1` (safe path rejected) | `1` | **Time integrity** |
 | T550 | Bid at exactly `closesAt` boundary rejected | `2821` (ALREADY_CLOSED) | `2821` | Boundary value |
@@ -231,12 +231,12 @@ git diff --check
 
 ---
 
-### F-009 — `Slice5AuctionExpire` access model is undocumented
+### F-009 — `Slice5AuctionExpire` access model was undocumented during the trial
 
 - **Severity:** NIT
 - **Area:** docs
-- **Description:** The `Slice5AuctionExpire` handler can be called by any sender. This is correct by design (any party can cooperatively drain the queue), but it is not documented. A first-reading author will assume it needs seller authorization and either restrict it (incorrect) or leave it open with no justification in code comments.
-- **Recommended fix:** Add one sentence to the author guide: *"Expire may be called by any sender; it is a cooperative cleanup mechanism for stale postponed bids, not a privileged operation."*
+- **Description:** The `Slice5AuctionExpire` handler can be called by any sender. This is correct by design (any party can cooperatively drain the queue), but the original trial could not find that rule in the guide. A first-reading author would assume it needs seller authorization and either restrict it (incorrect) or leave it open with no justification in code comments.
+- **Post-trial disposition:** closed. The author guide states that `Slice5AuctionExpire` may remain open to any sender because it is a cooperative cleanup mechanism for stale postponed bids, not a privileged operation.
 
 ---
 
@@ -248,9 +248,9 @@ git diff --check
 | Does `msg.bidder` need to be overridden with `in.senderAddress`? | Author guide, audit checklist, compatibility matrix, example source | Closed: the author guide, audit checklist, trusted bid helper, and release checker now require sender-derived bidder identity. |
 | What error code does a full postponement queue produce? | Expected `SLICE5_AUCTION_THROW_QUEUE_FULL (0x0b03)` based on auction stdlib constants | Current answer: `2819`. The original trial observed `2307`; post-trial hardening now catches the postponement-layer code and rethrows the auction-level code. |
 | How do I dispatch funds after `settle()`? | Author guide auction section | Closed: use `slice5AuctionEmitPayout(config.seller, winningBid)` after saving settled state; this contract and the reference example now use that pattern. |
-| What do import-positive test files look like? | No tol-tester documentation for the `*-import-positive.tol` convention | Studied `tos-council-fund-import-positive.tol` as template |
-| How does the tol-tester parse `@testcase` table rows? | Searched docs folder | Read `tol-tester.py` source directly |
-| What value does the `bits` field take for `coins` in ABI manifests? | Manifest schema | `null` — learned by studying existing manifests, not from schema documentation |
+| What do import-positive test files look like? | No tol-tester documentation for the `*-import-positive.tol` convention | Closed: Slice 5 author guide documents `*-import-positive.tol` as public import-surface smoke tests. |
+| How does the tol-tester parse `@testcase` table rows? | Searched docs folder | Closed: Slice 5 author guide documents positive `@testcase` and negative `@compilation_should_fail` / `@stderr` rows. |
+| What value does the `bits` field take for `coins` in ABI manifests? | Manifest schema | Closed: Slice 5 author guide and ABI validator doc state that `coins` is `VarUInteger 16`, so `bits: null`. |
 
 ---
 
@@ -259,11 +259,11 @@ git diff --check
 1. **`slice5AuctionConfigWithBudget` was not mentioned in the author guide** — closed. The guide now calls out high-traffic auctions and explicit storage/gas budget tradeoffs.
 2. **`blockchain.now()` was not mentioned anywhere in policy docs or author guide** — closed for Slice 5. The guide now requires trusted VM time for production receive handlers and the release checker rejects `msg.now` trust.
 3. **Test T552 failed on the first trial run** with `2307` instead of `2819` — required tracing `postponeBid -> queue.enqueueWithQueryId -> PostponedQueue.requireBudget -> SLICE4_POSTPONEMENT_THROW_QUEUE_FULL` through two stdlib files. Post-trial hardening now rethrows `2819`.
-4. **ABI manifest `method_id` values** — derived by reading existing artifact `method-ids.json` files and doing hex arithmetic; no generator utility.
-5. **ABI manifest `bits: null` for variable-length types** — inferred from existing manifests; the schema does not document which types require `null` vs. an integer.
+4. **ABI manifest `method_id` values** — closed. `scripts/tol-method-id.py` computes the compiler's auto-derived getter id (`crc16(name) | 0x10000`), and the release checker validates the helper.
+5. **ABI manifest `bits: null` for variable-length types** — closed. The author guide and ABI validator doc now list when `bits` / `refs` are integers vs. `null`, including `coins`.
 6. **No `tol new --pattern auction` in the tested build** — historical trial friction. The Slice 5 release checker now validates the generated auction scaffold.
 7. **Error code table had to be assembled manually** from two separate stdlib files (`auction.tol` and `postponement.tol`) — mitigated by checked-in generated artifacts and the release-package validator.
-8. **Import test must re-import stdlib dependencies** — this is documented correctly in the author guide but the error message on a missing re-import is a generic symbol-not-found, not a "you forgot to re-import the transitive dependency" hint.
+8. **Import test must re-import stdlib dependencies** — closed for docs. The author guide documents explicit non-transitive imports and the `*-import-positive.tol` convention. A more tailored compiler diagnostic would be a future DX improvement, not a production blocker.
 
 ---
 

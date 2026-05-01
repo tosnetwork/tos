@@ -211,8 +211,8 @@ comments say "Deployer must dispatch the balanceB payout to partyB after this ca
 there is no getter exposing `balanceB` or `partyB`, so the deployer has no way to read
 these values without parsing raw contract storage.
 
-This is not documented as an off-chain settlement policy in the ABI manifest
-(`tos_stream_channel.json` has `"wire_compatibility_exceptions": []`).
+At the time of the trial the ABI manifest lacked any off-chain settlement policy
+entry (`tos_stream_channel.json` had `"wire_compatibility_exceptions": []`).
 
 **Fix:** Either (a) use `slice5AuctionEmitPayout`-style explicit send after saving
 state, or (b) add getters for `balanceB` and `config.partyB` and document the off-chain
@@ -353,10 +353,9 @@ receive(msg: BondOracleSubmitReport) {
 This is the first Slice 5 production-intent contract to gate state mutation on the
 incoming message value. The emulator fixture verifies this with `set_amount()`.
 
-**Finding during build:** There is no documented idiom for comparing `in.valueCoins`
-(type `coins`) to an integer constant. The cast `(in.valueCoins as int) < CONSTANT`
-works but is not shown anywhere in the existing docs or examples. The author guide
-should add an example of a minimum-value check.
+**Post-trial disposition:** closed. The Slice 5 author guide now documents the
+minimum-value gate idiom, including `(in.valueCoins as int) >= MIN_BOND`, and the
+release checker validates that this guidance remains present.
 
 ### 2. Reporter identity from `in.senderAddress` with no `reporterKey` wire field
 
@@ -416,11 +415,12 @@ the normal emulator gate.
 
 ## API Friction Log
 
-1. **`coins` vs `int` comparison** — `(in.valueCoins as int) < BOND_ORACLE_MIN_BOND`
-   works but is not documented. The author guide shows no minimum-value check pattern.
+1. **`coins` vs `int` comparison** — closed. `(in.valueCoins as int) < BOND_ORACLE_MIN_BOND`
+   works and the author guide now shows the production minimum-value check pattern.
 
-2. **`map<uint256, coins>` validity unknown** — Used `uint64` (nanoTON) instead,
-   capping the bond at ~18,446 TON. The valid map value types are not listed.
+2. **`map<uint256, coins>` validity unknown** — closed. `map<uint256, coins>` is
+   compiler-tested and documented as supported. This contract still uses `uint64`
+   nanoTON intentionally to cap bonds at ~18,446 TON.
 
 3. **Emulator storage initialization** — closed. The fixture sends the real deploy body
    and lets the Tol contract build `TosReportBondStorage`, avoiding manual nested-cell
