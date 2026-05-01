@@ -1,0 +1,155 @@
+// TosEscrowedAuction — production-intent English auction with enforced seller authorization.
+// Use cases: NFT sales, on-chain asset auctions, sealed-bid goods sales.
+//
+// Security model:
+//   1. msg.bidder is IGNORED. The canonical bidder is in.senderAddress.
+//      This contract uses receiveTrustedBid(), which substitutes the sender.
+//   2. msg.now is IGNORED for all time-sensitive operations. blockchain.now() is used instead.
+//      receiveTrustedBid(), close, and expire use chain time, not caller-provided time.
+//   3. Only the seller (matched via in.senderAddress) may call Close or Settle.
+//
+// Payout note: settle() marks the auction as settled and returns the winning bid amount.
+// The production integrator is responsible for emitting the actual fund-transfer action.
+// This contract documents the obligation explicitly and records the pending payout in storage.
+tol 1.3
+
+import "@stdlib/auction"
+
+// Error codes. Base 0x1100 (all >= 1024 per Slice 5 policy).
+const ESCROWED_AUCTION_THROW_UNAUTHORIZED_SELLER: int = 0x1101  // 4353
+const ESCROWED_AUCTION_THROW_NOT_SETTLED: int          = 0x1102  // 4354
+const ESCROWED_AUCTION_THROW_PAYOUT_ALREADY_DONE: int = 0x1103  // 4355
+const ESCROWED_AUCTION_THROW_NO_WINNER: int            = 0x1104  // 4356
+
+struct TosEscrowedAuctionStorage {
+    config: Cell<Slice5AuctionConfig>
+    state: Cell<Slice5AuctionState>
+    itemRef: uint256        // off-chain item identifier (e.g. NFT address hash)
+    pendingPayout: coins    // set when settled; deployer sends funds after reading this
+    payoutDone: bool        // set by the deployer's off-chain payout flow (not trustless)
+}
+
+contract TosEscrowedAuction {
+    storage: TosEscrowedAuctionStorage
+    @unknown_throw(0xffff);
+
+    // Any sender may place a bid.
+    // Security: msg.bidder is overridden with in.senderAddress.
+    // Security: msg.now is overridden with blockchain.now().
+    @disclaim_query_id
+    receive(msg: Slice5AuctionBid) {
+        val config = lazy Slice5AuctionConfig.fromCell(storage.config);
+        var state = lazy Slice5AuctionState.fromCell(storage.state);
+        state.receiveTrustedBid(config, msg, in.senderAddress);
+        save(TosEscrowedAuctionStorage {
+            config: storage.config,
+            state: state.toCell(),
+            itemRef: storage.itemRef,
+            pendingPayout: storage.pendingPayout,
+            payoutDone: storage.payoutDone,
+        });
+    }
+
+    // Only the seller may close the auction after its deadline.
+    // Security: in.senderAddress is checked against config.seller.
+    // Security: blockchain.now() is used instead of msg.now.
+    @disclaim_query_id
+    receive(msg: Slice5AuctionClose) {
+        val config = lazy Slice5AuctionConfig.fromCell(storage.config);
+        if (in.senderAddress != config.seller) {
+            throw ESCROWED_AUCTION_THROW_UNAUTHORIZED_SELLER;
+        }
+        var state = lazy Slice5AuctionState.fromCell(storage.state);
+        state.closeAndDrain(config, blockchain.now() as uint32);
+        save(TosEscrowedAuctionStorage {
+            config: storage.config,
+            state: state.toCell(),
+            itemRef: storage.itemRef,
+            pendingPayout: storage.pendingPayout,
+            payoutDone: storage.payoutDone,
+        });
+    }
+
+    // Any sender may expire early (queue drain of stale postponed bids).
+    // Security: blockchain.now() is used; no seller identity check needed for expiry.
+    @disclaim_query_id
+    receive(msg: Slice5AuctionExpire) {
+        var state = lazy Slice5AuctionState.fromCell(storage.state);
+        state.expireQueued(blockchain.now() as uint32);
+        save(TosEscrowedAuctionStorage {
+            config: storage.config,
+            state: state.toCell(),
+            itemRef: storage.itemRef,
+            pendingPayout: storage.pendingPayout,
+            payoutDone: storage.payoutDone,
+        });
+    }
+
+    // Only the seller may settle and record the pending payout.
+    // Payout dispatch is the integrator's responsibility (this contract has no address to send to).
+    // Security: in.senderAddress is checked against config.seller.
+    @disclaim_query_id
+    receive(msg: Slice5AuctionSettle) {
+        val config = lazy Slice5AuctionConfig.fromCell(storage.config);
+        if (in.senderAddress != config.seller) {
+            throw ESCROWED_AUCTION_THROW_UNAUTHORIZED_SELLER;
+        }
+        var state = lazy Slice5AuctionState.fromCell(storage.state);
+        val winningBid = state.settle();
+        save(TosEscrowedAuctionStorage {
+            config: storage.config,
+            state: state.toCell(),
+            itemRef: storage.itemRef,
+            pendingPayout: winningBid,
+            payoutDone: false,
+        });
+    }
+
+    // Returns the current highest bid (0 if no valid bid yet).
+    @method_id(0x1e01)
+    get fun getHighestBid(): coins {
+        val state = lazy Slice5AuctionState.fromCell(storage.state);
+        return state.highestBid;
+    }
+
+    // Returns the address of the current highest bidder (null address if no valid bid).
+    @method_id(0x1e02)
+    get fun getHighestBidder(): address {
+        val state = lazy Slice5AuctionState.fromCell(storage.state);
+        return state.highestBidder;
+    }
+
+    // Returns true if the auction has been closed (draining is complete; settle may follow).
+    @method_id(0x1e03)
+    get fun isClosed(): bool {
+        val state = lazy Slice5AuctionState.fromCell(storage.state);
+        return state.closed;
+    }
+
+    // Returns true if the auction has been settled (pendingPayout is set).
+    @method_id(0x1e04)
+    get fun isSettled(): bool {
+        val state = lazy Slice5AuctionState.fromCell(storage.state);
+        return state.settled;
+    }
+
+    // Returns the seller address from the auction config.
+    @method_id(0x1e05)
+    get fun getSeller(): address {
+        val config = lazy Slice5AuctionConfig.fromCell(storage.config);
+        return config.seller;
+    }
+
+    // Returns the pending payout amount (non-zero only after settle()).
+    // Deployer must read this and dispatch the fund transfer off-chain.
+    @method_id(0x1e06)
+    get fun getPendingPayout(): coins {
+        return storage.pendingPayout;
+    }
+
+    // Returns the off-chain item reference stored at deploy time.
+    @method_id(0x1e07)
+    get fun getItemRef(): uint256 {
+        return storage.itemRef;
+    }
+}

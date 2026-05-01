@@ -8,6 +8,20 @@ Before shipping a Slice 5 contract:
 - Confirm ABI manifests list all messages, get methods, public errors,
   signed cells, and manual/raw fixtures.
 - Confirm no new helper emits active `ErrorClass.BackPressure`.
+- Confirm auction bid receive handlers override caller-provided
+  `msg.bidder` with `in.senderAddress` by using
+  `receiveTrustedBid(...)` / `slice5AuctionTrustedBid(...)`.
+- Confirm auction receive handlers use `blockchain.now()` for bid,
+  close, and expire time checks; `msg.now` is caller-controlled wire
+  data and must not drive production time-sensitive decisions.
+- Confirm auction close and settle handlers check seller identity before
+  calling stdlib close/settle helpers. Expire may be open to any sender
+  because it only cooperatively removes stale postponed bids.
+- Confirm auction payout dispatch is explicit after settled state is
+  saved, or the contract documents an off-chain settlement process.
+- Confirm auction deployments either accept the default bounded
+  postponement budget or use `slice5AuctionConfigWithBudget(...)` with
+  a documented storage/gas budget.
 - Confirm governance actions cannot update code/data unless an explicit
   manifest exception and expected hash are present.
 - Confirm governance receive handlers bind `in.senderAddress` to the

@@ -108,7 +108,7 @@ external adoption release gate is complete.
 
 ## TosCouncilFund Round 4 Result
 
-- **Date:** 2026-04-30
+- **Date:** 2026-05-01
 - **Pattern:** `@stdlib/governance`
 - **Contract:** `examples/slice5/tos-council-fund/src/tos-council-fund.tol`
 - **Status:** accepted as external production-intent candidate 3 of 3.
@@ -155,3 +155,67 @@ The trial found four issues:
 This records the third and final external production-intent adoption
 candidate. The Slice 5 external adoption release gate is now complete
 (3 of 3 candidates accepted).
+
+## TosEscrowedAuction Trial Result
+
+- **Date:** 2026-05-01
+- **Pattern:** `@stdlib/auction`
+- **Contract:** `examples/slice5/tos-escrowed-auction/src/tos-escrowed-auction.tol`
+- **Status:** accepted with fixes as an additional production-intent
+  auction candidate.
+- **Tests:** `tos-escrowed-auction-positive.tol` passed 24 cases;
+  `tos-escrowed-auction-import-positive.tol` passed 2 cases before
+  repo-side hardening.
+- **Full report:**
+  `examples/slice5/tos-escrowed-auction/TRIAL-REPORT.md`.
+
+The external author built an escrowed English auction for on-chain
+assets using `@stdlib/auction`. The trial verified normal bids,
+postponed pre-open bids, close/drain/settle, low-bid rejection,
+stale-close and duplicate-settle rejection, unknown opcode handling,
+imported contract tests, and production-level workarounds for bidder
+identity and timestamp integrity.
+
+The trial found nine issues:
+
+- `Slice5AuctionBid.bidder` was caller-controlled and accepted by the
+  raw helper. Disposition: `@stdlib/auction` now provides
+  `slice5AuctionTrustedBid(...)`,
+  `slice5AuctionTrustedBidAt(...)`, `receiveTrustedBid(...)`, and
+  `receiveTrustedBidAt(...)`. The reference auction example now uses
+  `receiveTrustedBid(config, msg, in.senderAddress)`.
+- `msg.now` was caller-controlled and the auction example passed it to
+  time-sensitive helpers. Disposition: trusted bid helpers bind time to
+  `blockchain.now()`, and the reference example uses `blockchain.now()`
+  for close and expire.
+- The auction example did not enforce seller identity on close/settle.
+  Disposition: `Slice5AuctionState.requireSeller(...)` and
+  `SLICE5_AUCTION_THROW_UNAUTHORIZED_SELLER` were added; the reference
+  example checks seller identity before close/settle.
+- `SLICE5_AUCTION_THROW_QUEUE_FULL` was a dead constant because the
+  postponement layer threw `SLICE4_POSTPONEMENT_THROW_QUEUE_FULL`.
+  Disposition: `postponeBid` now rethrows queue-full as the auction
+  error code.
+- Auction settlement had no fund-dispatch helper or scaffolded flow.
+  Disposition: `slice5AuctionPayoutMessage(...)` and
+  `slice5AuctionEmitPayout(...)` were added, and the author guide/audit
+  checklist now require explicit payout dispatch or documented off-chain
+  settlement.
+- Production receive handlers cannot yet be exercised directly in
+  tol-tester with injected `in.senderAddress` and `blockchain.now()`.
+  Disposition: recorded as a remaining test-infrastructure limitation;
+  the trial contract keeps inline simulation tests for these properties.
+- `slice5AuctionDefaultBudget()` was too tight for popular pre-open
+  auctions. Disposition: the default budget now allows 16 postponed
+  items and the docs point high-traffic auctions at
+  `slice5AuctionConfigWithBudget(...)`.
+- ABI manifests do not have a first-class `caller_controlled` field
+  annotation for values like `now`. Disposition: documented as an ABI
+  manifest follow-up; current manifests keep compatibility notes.
+- `Slice5AuctionExpire` access model was undocumented. Disposition: the
+  author guide and audit checklist now state that expire may be called
+  by any sender as cooperative cleanup.
+
+This records an additional external production-intent adoption
+candidate. The Slice 5 external adoption release gate was already
+complete at 3/3; this trial extends coverage to the auction pattern.

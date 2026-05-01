@@ -27,6 +27,26 @@ Compatibility rules:
 - Keep opcode-bearing messages at 32-bit opcodes with `queryId`
   immediately after the opcode when request/reply correlation applies.
 - Do not emit `ErrorClass.BackPressure` from new Slice 5 code.
+- Auction bid receive handlers must bind the bidder to
+  `in.senderAddress`. Use `state.receiveTrustedBid(config, msg,
+  in.senderAddress)` or build with `slice5AuctionTrustedBid(...)`;
+  `msg.bidder` is the wire field and is not authentication by itself.
+- Auction time-sensitive handlers must use `blockchain.now()`, not
+  `msg.now`. The `now` field remains in the wire ABI for compatibility
+  and deterministic fixtures, but production receive handlers should
+  discard it.
+- Auction close and settle handlers must verify the seller with
+  `state.requireSeller(config, in.senderAddress)` before state changes.
+  `Slice5AuctionExpire` may remain open to any sender; it is a
+  cooperative cleanup mechanism for stale postponed bids.
+- Auction settlement records or returns the winning bid amount but does
+  not by itself prove that funds have reached the seller. Either call
+  `slice5AuctionEmitPayout(config.seller, amount)` after saving the
+  settled state, or explicitly document an off-chain payout process.
+- `slice5AuctionDefaultBudget()` is intentionally bounded for ordinary
+  auctions. Use `slice5AuctionConfigWithBudget(...)` for high-traffic
+  pre-open auctions and record the storage/gas tradeoff in the manifest
+  or audit notes.
 - Payment-channel signed states use Ed25519 over
   `Slice5PaymentSignedState.toCell().hash()`, not raw source bytes.
 - Payment-channel `cooperativeClose` and `settle` helpers return the

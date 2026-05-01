@@ -15,6 +15,7 @@ const SLICE5_AUCTION_THROW_ALREADY_CLOSED = 0x0b05
 const SLICE5_AUCTION_THROW_ALREADY_SETTLED = 0x0b06
 const SLICE5_AUCTION_THROW_NOT_CLOSED = 0x0b07
 const SLICE5_AUCTION_THROW_MALFORMED_ACTION = 0x0b08
+const SLICE5_AUCTION_THROW_UNAUTHORIZED_SELLER = 0x0b09
 
 const SLICE5_AUCTION_OP_BID: uint32 = 0x41554301
 const SLICE5_AUCTION_OP_CLOSE: uint32 = 0x41554302
@@ -77,13 +78,13 @@ fun slice5AuctionManifestHeader(): Slice3PatternManifestHeader {
 
 fun slice5AuctionDefaultBudget(): PostponementBudget {
     return slice4PostponementBudget(
-        4,
+        16,
         512,
         4,
-        2048,
-        16,
+        8192,
+        64,
         120,
-        4,
+        16,
         1023
     );
 }
@@ -140,17 +141,37 @@ fun Slice5AuctionState.applyBid(mutate self, config: Slice5AuctionConfig, bid: S
     self.highestBidder = bid.bidder;
 }
 
+fun slice5AuctionTrustedBidAt(msg: Slice5AuctionBid, sender: address, now: uint32): Slice5AuctionBid {
+    return Slice5AuctionBid {
+        queryId: msg.queryId,
+        bidder: sender,
+        amount: msg.amount,
+        now,
+    };
+}
+
+fun slice5AuctionTrustedBid(msg: Slice5AuctionBid, sender: address): Slice5AuctionBid {
+    return slice5AuctionTrustedBidAt(msg, sender, blockchain.now() as uint32);
+}
+
 fun Slice5AuctionState.postponeBid(mutate self, config: Slice5AuctionConfig, bid: Slice5AuctionBid): uint16 {
-    self.queue.enqueueWithQueryId(
-        config.budget,
-        bid.bidder,
-        SLICE5_AUCTION_OP_BID,
-        bid.queryId,
-        bid.toCell(),
-        bid.amount,
-        0,
-        bid.now
-    );
+    try {
+        self.queue.enqueueWithQueryId(
+            config.budget,
+            bid.bidder,
+            SLICE5_AUCTION_OP_BID,
+            bid.queryId,
+            bid.toCell(),
+            bid.amount,
+            0,
+            bid.now
+        );
+    } catch (code) {
+        if (code == SLICE4_POSTPONEMENT_THROW_QUEUE_FULL) {
+            throw SLICE5_AUCTION_THROW_QUEUE_FULL;
+        }
+        throw code;
+    }
     return self.queue.count;
 }
 
@@ -161,6 +182,14 @@ fun Slice5AuctionState.receiveBid(mutate self, config: Slice5AuctionConfig, bid:
     }
     self.applyBid(config, bid);
     return self.queue.count;
+}
+
+fun Slice5AuctionState.receiveTrustedBidAt(mutate self, config: Slice5AuctionConfig, msg: Slice5AuctionBid, sender: address, now: uint32): uint16 {
+    return self.receiveBid(config, slice5AuctionTrustedBidAt(msg, sender, now));
+}
+
+fun Slice5AuctionState.receiveTrustedBid(mutate self, config: Slice5AuctionConfig, msg: Slice5AuctionBid, sender: address): uint16 {
+    return self.receiveBid(config, slice5AuctionTrustedBid(msg, sender));
 }
 
 fun Slice5AuctionState.receiveRawBidBody(mutate self, config: Slice5AuctionConfig, body: cell): void {
@@ -234,6 +263,24 @@ fun Slice5AuctionState.settle(mutate self): coins {
     }
     self.settled = true;
     return self.highestBid;
+}
+
+fun Slice5AuctionState.requireSeller(self, config: Slice5AuctionConfig, sender: address): void {
+    if (sender != config.seller) {
+        throw SLICE5_AUCTION_THROW_UNAUTHORIZED_SELLER;
+    }
+}
+
+fun slice5AuctionPayoutMessage(to: address, amount: coins): OutMessage {
+    return createMessage({
+        bounce: BounceMode.NoBounce,
+        dest: to,
+        value: amount,
+    });
+}
+
+fun slice5AuctionEmitPayout(to: address, amount: coins, mode: int = SEND_MODE_REGULAR): void {
+    slice5AuctionPayoutMessage(to, amount).send(mode);
 }
 
 fun Slice5AuctionState.excessForRejectedBid(self, bid: Slice5AuctionBid): coins {

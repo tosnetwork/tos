@@ -132,15 +132,49 @@
       "class": "Transient"
     },
     {
+      "name": "SLICE5_AUCTION_THROW_QUEUE_FULL",
+      "code": 2819,
+      "class": "Protocol"
+    },
+    {
       "name": "SLICE5_AUCTION_THROW_STALE_CLOSE",
       "code": 2820,
       "class": "ApplicationSpecific"
     },
     {
+      "name": "SLICE5_AUCTION_THROW_ALREADY_CLOSED",
+      "code": 2821,
+      "class": "Protocol"
+    },
+    {
       "name": "SLICE5_AUCTION_THROW_ALREADY_SETTLED",
       "code": 2822,
       "class": "ApplicationSpecific"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_NOT_CLOSED",
+      "code": 2823,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_MALFORMED_ACTION",
+      "code": 2824,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_AUCTION_THROW_UNAUTHORIZED_SELLER",
+      "code": 2825,
+      "class": "Authorization"
     }
   ],
-  "wire_compatibility_exceptions": []
+  "wire_compatibility_exceptions": [
+    {
+      "exception": "Slice5AuctionBid.bidder is caller-controlled wire data",
+      "reason": "Production handlers must bind bidder identity to in.senderAddress via receiveTrustedBid() or slice5AuctionTrustedBid(); the wire field remains for ABI compatibility."
+    },
+    {
+      "exception": "Slice5Auction*.now fields are caller-controlled wire data",
+      "reason": "Production handlers must use blockchain.now() for time-sensitive decisions; the wire fields remain for compatibility and deterministic fixtures."
+    }
+  ]
 }

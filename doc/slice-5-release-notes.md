@@ -3,7 +3,10 @@
 This repo-side release candidate contains:
 
 - ABI manifest validator and golden fixture comparison.
-- `@stdlib/auction` with bounded postponement reuse.
+- `@stdlib/auction` with bounded postponement reuse. Post-trial
+  hardening adds trusted bidder/time binding helpers, seller guard
+  helpers, auction-level queue-full rethrowing, and a payout emission
+  helper.
 - `@stdlib/governance` with policy-typed action validation.
 - `@stdlib/oracle` with fixed-at-deploy reporter sets and median rounds.
   Post-trial hardening moves round-start authorization into the stdlib
@@ -26,6 +29,12 @@ This repo-side release candidate contains:
   trial added coverage for sender-bound voter/proposer authorization,
   quorum and threshold boundaries, replay/cancel/expiry paths, and
   invalid action rejection.
+- External author trial record for `TosEscrowedAuction`, an additional
+  production-intent adoption candidate using `@stdlib/auction`. The
+  trial added coverage for sender-bound bidder identity, chain-time
+  auction decisions, seller-only close/settle, queue-full monitoring,
+  pending payout accounting, and imported contract tests.
 
 External adoption is now complete: Stage 7 records the repo-side ABI
-freeze and all three required external production-intent contracts.
+freeze, the three required external production-intent contracts, and the
+additional auction candidate.

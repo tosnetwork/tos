@@ -15,7 +15,7 @@ contract Slice5AuctionExample {
     receive(msg: Slice5AuctionBid) {
         val config = lazy Slice5AuctionConfig.fromCell(storage.config);
         var state = lazy Slice5AuctionState.fromCell(storage.state);
-        state.receiveBid(config, msg);
+        state.receiveTrustedBid(config, msg, in.senderAddress);
         save(Slice5AuctionExampleStorage { config: storage.config, state: state.toCell() });
     }
 
@@ -23,20 +23,23 @@ contract Slice5AuctionExample {
     receive(msg: Slice5AuctionClose) {
         val config = lazy Slice5AuctionConfig.fromCell(storage.config);
         var state = lazy Slice5AuctionState.fromCell(storage.state);
-        state.closeAndDrain(config, msg.now);
+        state.requireSeller(config, in.senderAddress);
+        state.closeAndDrain(config, blockchain.now() as uint32);
         save(Slice5AuctionExampleStorage { config: storage.config, state: state.toCell() });
     }
 
     @disclaim_query_id
     receive(msg: Slice5AuctionExpire) {
         var state = lazy Slice5AuctionState.fromCell(storage.state);
-        state.expireQueued(msg.now);
+        state.expireQueued(blockchain.now() as uint32);
         save(Slice5AuctionExampleStorage { config: storage.config, state: state.toCell() });
     }
 
     @disclaim_query_id
     receive(msg: Slice5AuctionSettle) {
+        val config = lazy Slice5AuctionConfig.fromCell(storage.config);
         var state = lazy Slice5AuctionState.fromCell(storage.state);
+        state.requireSeller(config, in.senderAddress);
         state.settle();
         save(Slice5AuctionExampleStorage { config: storage.config, state: state.toCell() });
     }

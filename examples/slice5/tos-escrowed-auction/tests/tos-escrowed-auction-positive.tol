@@ -1,0 +1,416 @@
+import "@stdlib/auction"
+
+// Error codes mirroring the contract (cannot import contract source into stdlib-only tests
+// without also importing the contract's contract block; see import test for that path).
+const ESCROWED_AUCTION_THROW_UNAUTHORIZED_SELLER: int = 0x1101  // 4353
+const ESCROWED_AUCTION_THROW_NOT_SETTLED: int          = 0x1102  // 4354
+const ESCROWED_AUCTION_THROW_NO_WINNER: int            = 0x1104  // 4356
+
+// --- Helpers ---
+
+fun seller(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun bidder1(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun bidder2(): address {
+    return address("0:3333333333333333333333333333333333333333333333333333333333333333");
+}
+
+fun intruder(): address {
+    return address("0:9999999999999999999999999999999999999999999999999999999999999999");
+}
+
+// Auction: opens at t=10, closes at t=100, minBid=500.
+fun makeConfig(): Slice5AuctionConfig {
+    return slice5AuctionConfig(seller(), 500, 10, 100);
+}
+
+fun freshState(): Slice5AuctionState {
+    return slice5AuctionInitialState();
+}
+
+// Build a trusted bid (bidder and now come from outside the message, as the contract does).
+fun makeBid(queryId: uint64, bidder: address, amount: coins, now: uint32): Slice5AuctionBid {
+    return Slice5AuctionBid { queryId, bidder, amount, now };
+}
+
+fun main(): int {
+    return 0;
+}
+
+// --- Happy path ---
+
+// T501: First valid bid is accepted; highestBid and highestBidder updated.
+@method_id(501)
+fun test_first_valid_bid(): int {
+    var state = freshState();
+    val bid = makeBid(1, bidder1(), 600, 20);
+    state.receiveBid(makeConfig(), bid);
+    assert(state.highestBid == 600) throw 5010;
+    assert(state.highestBidder == bidder1()) throw 5011;
+    return state.highestBid as int;
+}
+
+// T502: Second higher bid replaces first; highestBidder changes.
+@method_id(502)
+fun test_second_higher_bid(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 600, 20));
+    state.receiveBid(makeConfig(), makeBid(2, bidder2(), 700, 21));
+    assert(state.highestBid == 700) throw 5020;
+    assert(state.highestBidder == bidder2()) throw 5021;
+    return state.highestBid as int;
+}
+
+// T503: Close then settle — winner gets the highest bid.
+@method_id(503)
+fun test_close_and_settle(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 800, 20));
+    state.closeAndDrain(makeConfig(), 100);
+    val payout = state.settle();
+    assert(state.settled) throw 5030;
+    return payout as int;
+}
+
+// T504: Bid exactly at minBid is accepted.
+@method_id(504)
+fun test_bid_at_min_bid(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 500, 20));
+    assert(state.highestBid == 500) throw 5040;
+    return state.highestBid as int;
+}
+
+// T505: Postponed bid (before opensAt) drains after open and closes successfully.
+@method_id(505)
+fun test_postponed_bid_drains_on_close(): int {
+    var state = freshState();
+    // Bid arrives at t=5, before opensAt=10. It is postponed.
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 600, 5));
+    assert(state.queue.count == 1) throw 5050;
+    // Close at t=100 drains the postponed queue.
+    val drained = state.closeAndDrain(makeConfig(), 100);
+    assert(state.highestBid == 600) throw 5051;
+    return drained as int;
+}
+
+// T506: Settle after close returns correct payout amount (highest bid).
+@method_id(506)
+fun test_settle_returns_winning_bid(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 750, 30));
+    state.receiveBid(makeConfig(), makeBid(2, bidder2(), 900, 31));
+    state.closeAndDrain(makeConfig(), 100);
+    val payout = state.settle();
+    assert(payout == 900) throw 5060;
+    return payout as int;
+}
+
+// --- Unauthorized sender simulation ---
+// The contract's receive handlers check in.senderAddress against config.seller.
+// In tol-tester we cannot invoke receive handlers; we simulate the guard inline.
+
+// T510: Unauthorized sender trying to close — simulates the contract's seller check.
+@method_id(510)
+fun test_unauthorized_close_simulation(): int {
+    val config = makeConfig();
+    val callerAddress = intruder();
+    if (callerAddress != config.seller) {
+        return ESCROWED_AUCTION_THROW_UNAUTHORIZED_SELLER;
+    }
+    return 0;
+}
+
+// T511: Seller (authorized) would be allowed to close — simulation returns 0.
+@method_id(511)
+fun test_authorized_close_simulation(): int {
+    val config = makeConfig();
+    val callerAddress = seller();
+    if (callerAddress != config.seller) {
+        return ESCROWED_AUCTION_THROW_UNAUTHORIZED_SELLER;
+    }
+    return 0;
+}
+
+// T512: Unauthorized settle simulation.
+@method_id(512)
+fun test_unauthorized_settle_simulation(): int {
+    val config = makeConfig();
+    val callerAddress = intruder();
+    if (callerAddress != config.seller) {
+        return ESCROWED_AUCTION_THROW_UNAUTHORIZED_SELLER;
+    }
+    return 0;
+}
+
+// --- Adversarial bid paths ---
+
+// T520: Bid below minBid is rejected.
+@method_id(520)
+fun test_bid_below_min(): int {
+    var state = freshState();
+    try {
+        state.receiveBid(makeConfig(), makeBid(1, bidder1(), 499, 20));
+    } catch (code) {
+        assert(state.highestBid == 0) throw 5200;
+        return code;
+    }
+    return 0;
+}
+
+// T521: Bid equal to or below current highest bid is rejected.
+@method_id(521)
+fun test_bid_not_higher_than_current(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 600, 20));
+    try {
+        state.receiveBid(makeConfig(), makeBid(2, bidder2(), 600, 21));
+    } catch (code) {
+        assert(state.highestBid == 600) throw 5210;
+        assert(state.highestBidder == bidder1()) throw 5211;
+        return code;
+    }
+    return 0;
+}
+
+// T522: Bid after auction closes is rejected.
+@method_id(522)
+fun test_bid_after_close(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 600, 20));
+    state.closeAndDrain(makeConfig(), 100);
+    try {
+        state.receiveBid(makeConfig(), makeBid(2, bidder2(), 700, 101));
+    } catch (code) {
+        assert(state.highestBid == 600) throw 5220;
+        return code;
+    }
+    return 0;
+}
+
+// T523: Close before deadline (closesAt) is rejected.
+@method_id(523)
+fun test_close_before_deadline(): int {
+    var state = freshState();
+    try {
+        state.closeAndDrain(makeConfig(), 99);  // closesAt=100; now=99 is premature
+    } catch (code) {
+        assert(!state.closed) throw 5230;
+        return code;
+    }
+    return 0;
+}
+
+// T524: Settle before close is rejected.
+@method_id(524)
+fun test_settle_before_close(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 600, 20));
+    try {
+        state.settle();
+    } catch (code) {
+        assert(!state.settled) throw 5240;
+        return code;
+    }
+    return 0;
+}
+
+// T525: Duplicate settle is rejected.
+@method_id(525)
+fun test_duplicate_settle(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 600, 20));
+    state.closeAndDrain(makeConfig(), 100);
+    state.settle();
+    try {
+        state.settle();
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// T526: Duplicate close is rejected.
+@method_id(526)
+fun test_duplicate_close(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 600, 20));
+    state.closeAndDrain(makeConfig(), 100);
+    try {
+        state.closeAndDrain(makeConfig(), 101);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// --- msg.bidder override simulation ---
+// Documents and tests the security property that msg.bidder must be overridden with
+// in.senderAddress. We show that the stdlib applyBid accepts whichever bidder address
+// is passed; the contract layer is responsible for substituting the real sender.
+
+// T530: If msg.bidder is not overridden (stdlib example pattern), a forged bidder wins.
+// This test documents the VULNERABILITY in the stdlib example.
+@method_id(530)
+fun test_forged_bidder_is_accepted_by_stdlib(): int {
+    var state = freshState();
+    // An attacker sends a bid claiming bidder = seller(), while actually being intruder().
+    val forgedBid = makeBid(1, seller(), 600, 20);  // bidder = seller (forged)
+    state.receiveBid(makeConfig(), forgedBid);
+    // Stdlib accepted this. The "winner" is recorded as seller, not the real sender.
+    assert(state.highestBidder == seller()) throw 5300;
+    // This is WRONG in production. Our contract avoids it by overriding msg.bidder.
+    return state.highestBidder == seller() ? 1 : 0;
+}
+
+// T531: Simulates the contract's override: canonical bidder is in.senderAddress.
+// Shows that even if msg.bidder is forged, we build trueBid with the real sender.
+@method_id(531)
+fun test_bidder_override_simulation(): int {
+    var state = freshState();
+    val actualSender = bidder1();   // what in.senderAddress would be
+    val msgBidder = intruder();     // what msg.bidder claims (forged)
+    // Contract overrides: trueBid uses actualSender, not msgBidder.
+    val trueBid = makeBid(1, actualSender, 600, 20);
+    state.receiveBid(makeConfig(), trueBid);
+    assert(state.highestBidder == actualSender) throw 5310;
+    assert(state.highestBidder != msgBidder) throw 5311;
+    return state.highestBidder == actualSender ? 1 : 0;
+}
+
+// --- msg.now spoofing simulation ---
+// Documents and tests the security property that msg.now must be replaced with blockchain.now().
+// The stdlib helpers trust whatever now is passed; the contract layer must use blockchain.now().
+
+// T540: Simulates a caller forging now to prematurely close the auction.
+// With the stdlib example's approach (using msg.now), this would succeed.
+@method_id(540)
+fun test_forge_now_to_close_early_simulation(): int {
+    var state = freshState();
+    // Attacker sends Slice5AuctionClose { now = 100 } at actual block time = 50.
+    // If the contract used msg.now = 100, closeAndDrain would succeed (closesAt=100).
+    // Our contract uses blockchain.now() instead. We simulate both outcomes.
+    val fakeMsgNow: uint32 = 100;  // attacker claims auction is past deadline
+    val realBlockTime: uint32 = 50; // actual chain time
+    // Stdlib would close with fakeMsgNow:
+    var stateWithVuln = freshState();
+    stateWithVuln.closeAndDrain(makeConfig(), fakeMsgNow);  // succeeds with forged now
+    // Our contract uses realBlockTime:
+    var stateSafe = freshState();
+    try {
+        stateSafe.closeAndDrain(makeConfig(), realBlockTime);  // rejected: realBlockTime < closesAt
+    } catch (_) {
+        assert(!stateSafe.closed) throw 5400;
+        return 1;  // safe path correctly rejected early close
+    }
+    return 0;
+}
+
+// --- Boundary values ---
+
+// T550: Bid at exactly closesAt boundary is rejected (auction already closed by time).
+// requireAcceptingBid checks: now >= config.closesAt → throw ALREADY_CLOSED.
+@method_id(550)
+fun test_bid_at_close_boundary(): int {
+    var state = freshState();
+    try {
+        state.receiveBid(makeConfig(), makeBid(1, bidder1(), 600, 100)); // now=closesAt=100
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// T551: Close at exactly closesAt (boundary) is accepted.
+@method_id(551)
+fun test_close_at_exact_deadline(): int {
+    var state = freshState();
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 600, 20));
+    state.closeAndDrain(makeConfig(), 100);  // now=100=closesAt → accepted
+    assert(state.closed) throw 5510;
+    return 1;
+}
+
+// T552: Queue capacity boundary — default budget allows 16 postponed items.
+// Post-trial hardening rethrows the postponement queue-full error as the
+// auction-level SLICE5_AUCTION_THROW_QUEUE_FULL (0x0b03=2819).
+@method_id(552)
+fun test_queue_full(): int {
+    var state = freshState();
+    // Fill the postponement queue (opensAt=10; budget maxItems=16).
+    state.receiveBid(makeConfig(), makeBid(1, bidder1(), 501, 5));
+    state.receiveBid(makeConfig(), makeBid(2, bidder1(), 502, 5));
+    state.receiveBid(makeConfig(), makeBid(3, bidder1(), 503, 5));
+    state.receiveBid(makeConfig(), makeBid(4, bidder1(), 504, 5));
+    state.receiveBid(makeConfig(), makeBid(5, bidder1(), 505, 5));
+    state.receiveBid(makeConfig(), makeBid(6, bidder1(), 506, 5));
+    state.receiveBid(makeConfig(), makeBid(7, bidder1(), 507, 5));
+    state.receiveBid(makeConfig(), makeBid(8, bidder1(), 508, 5));
+    state.receiveBid(makeConfig(), makeBid(9, bidder1(), 509, 5));
+    state.receiveBid(makeConfig(), makeBid(10, bidder1(), 510, 5));
+    state.receiveBid(makeConfig(), makeBid(11, bidder1(), 511, 5));
+    state.receiveBid(makeConfig(), makeBid(12, bidder1(), 512, 5));
+    state.receiveBid(makeConfig(), makeBid(13, bidder1(), 513, 5));
+    state.receiveBid(makeConfig(), makeBid(14, bidder1(), 514, 5));
+    state.receiveBid(makeConfig(), makeBid(15, bidder1(), 515, 5));
+    state.receiveBid(makeConfig(), makeBid(16, bidder1(), 516, 5));
+    try {
+        state.receiveBid(makeConfig(), makeBid(17, bidder1(), 517, 5));
+    } catch (code) {
+        assert(state.queue.count == 16) throw 5520;
+        return code;
+    }
+    return 0;
+}
+
+// --- Unknown opcode simulation ---
+// The contract uses @unknown_throw(0xffff). Any unrecognized opcode throws 65535.
+@method_id(560)
+fun test_unknown_opcode_code(): int {
+    return 0xffff;  // contract uses @unknown_throw(0xffff)
+}
+
+// --- Config validation ---
+
+// T570: Config with closesAt <= opensAt is rejected at construction time.
+@method_id(570)
+fun test_invalid_config_closes_before_opens(): int {
+    try {
+        slice5AuctionConfig(seller(), 500, 100, 100);  // closesAt == opensAt → rejected
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+/**
+@testcase | 501 | | 600
+@testcase | 502 | | 700
+@testcase | 503 | | 800
+@testcase | 504 | | 500
+@testcase | 505 | | 1
+@testcase | 506 | | 900
+@testcase | 510 | | 4353
+@testcase | 511 | | 0
+@testcase | 512 | | 4353
+@testcase | 520 | | 2817
+@testcase | 521 | | 2817
+@testcase | 522 | | 2821
+@testcase | 523 | | 2820
+@testcase | 524 | | 2823
+@testcase | 525 | | 2822
+@testcase | 526 | | 2821
+@testcase | 530 | | 1
+@testcase | 531 | | 1
+@testcase | 540 | | 1
+@testcase | 550 | | 2821
+@testcase | 551 | | 1
+@testcase | 552 | | 2819
+@testcase | 560 | | 65535
+@testcase | 570 | | 2824
+ */

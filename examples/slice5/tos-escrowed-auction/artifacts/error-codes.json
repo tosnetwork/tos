@@ -1,0 +1,16 @@
+{
+  "error_codes": [
+    {"name": "ESCROWED_AUCTION_THROW_UNAUTHORIZED_SELLER",   "code": 4353},
+    {"name": "ESCROWED_AUCTION_THROW_NOT_SETTLED",           "code": 4354},
+    {"name": "ESCROWED_AUCTION_THROW_PAYOUT_ALREADY_DONE",  "code": 4355},
+    {"name": "ESCROWED_AUCTION_THROW_NO_WINNER",             "code": 4356},
+    {"name": "SLICE5_AUCTION_THROW_LOW_BID",                 "code": 2817},
+    {"name": "SLICE5_AUCTION_THROW_TOO_EARLY",               "code": 2818},
+    {"name": "SLICE5_AUCTION_THROW_QUEUE_FULL",              "code": 2819},
+    {"name": "SLICE5_AUCTION_THROW_STALE_CLOSE",             "code": 2820},
+    {"name": "SLICE5_AUCTION_THROW_ALREADY_CLOSED",          "code": 2821},
+    {"name": "SLICE5_AUCTION_THROW_ALREADY_SETTLED",         "code": 2822},
+    {"name": "SLICE5_AUCTION_THROW_NOT_CLOSED",              "code": 2823},
+    {"name": "SLICE5_AUCTION_THROW_MALFORMED_ACTION",        "code": 2824}
+  ]
+}

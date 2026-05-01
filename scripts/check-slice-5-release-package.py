@@ -35,6 +35,12 @@ EXTERNAL_CANDIDATES = (
         "src/tos-council-fund.tol",
         "tos-council-fund",
     ),
+    (
+        "tos-escrowed-auction",
+        "examples/slice5/tos-escrowed-auction",
+        "src/tos-escrowed-auction.tol",
+        "tos-escrowed-auction",
+    ),
 )
 
 REQUIRED_DOCS = (

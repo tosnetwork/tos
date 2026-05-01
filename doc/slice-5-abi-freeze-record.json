@@ -12,7 +12,7 @@
     {
       "pattern": "auction",
       "path": "doc/slice5-abi-manifests/auction.json",
-      "sha256": "278c5f6818369b2f0156a0172916b572bbfdf752e71a36459bc4aefa133984b3"
+      "sha256": "b4ef52e46c4414a331cfb7f1b14b8954afd8c765da2df43a81951078d8404c49"
     },
     {
       "pattern": "governance",
@@ -70,6 +70,17 @@
         "abi_manifest": "doc/slice5-abi-manifests/tos_council_fund.json",
         "abi_manifest_sha256": "f3831fe2e0664814ef1fc95ed9d3af5da525f845a64e4a915e242911af66e9e7",
         "trial_report": "doc/slice-5-external-author-trials.md",
+        "remaining_external_contracts": 0
+      },
+      {
+        "name": "TosEscrowedAuction",
+        "pattern": "auction",
+        "status": "production_intent_additional_candidate",
+        "source": "examples/slice5/tos-escrowed-auction/src/tos-escrowed-auction.tol",
+        "tests": "examples/slice5/tos-escrowed-auction/tests/tos-escrowed-auction-positive.tol; examples/slice5/tos-escrowed-auction/tests/tos-escrowed-auction-import-positive.tol",
+        "abi_manifest": "doc/slice5-abi-manifests/tos_escrowed_auction.json",
+        "abi_manifest_sha256": "b55a42901ae3ab145c431d7ccad9364de2950b3cc08c3d20c0722fa46f834894",
+        "trial_report": "examples/slice5/tos-escrowed-auction/TRIAL-REPORT.md",
         "remaining_external_contracts": 0
       }
     ]

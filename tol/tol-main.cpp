@@ -660,7 +660,7 @@ static std::string scaffold_opcode_map(const std::string& pattern) {
 
 static std::string scaffold_error_code_map(const std::string& pattern) {
   if (pattern == "auction") {
-    return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_AUCTION_THROW_LOW_BID\", \"code\": 2817},\n    {\"name\": \"SLICE5_AUCTION_THROW_STALE_CLOSE\", \"code\": 2820}\n  ]\n}\n";
+    return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_AUCTION_THROW_LOW_BID\", \"code\": 2817},\n    {\"name\": \"SLICE5_AUCTION_THROW_QUEUE_FULL\", \"code\": 2819},\n    {\"name\": \"SLICE5_AUCTION_THROW_STALE_CLOSE\", \"code\": 2820},\n    {\"name\": \"SLICE5_AUCTION_THROW_UNAUTHORIZED_SELLER\", \"code\": 2825}\n  ]\n}\n";
   }
   if (pattern == "governance") {
     return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER\", \"code\": 3073},\n    {\"name\": \"SLICE5_GOVERNANCE_THROW_INVALID_ACTION\", \"code\": 3078}\n  ]\n}\n";

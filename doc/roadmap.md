@@ -920,8 +920,8 @@ Auction, DAO/governance, oracle, and payment-channel templates,
 each one preceded by a short design note. Cross-language ABI is
 frozen at the end of this slice.
 
-**Status.** ✅ Repo-side release candidate complete, external adoption
-pending, 2026-04-30. The implementation
+**Status.** ✅ Repo-side release candidate complete; external adoption
+gate complete with four production-intent candidates, 2026-05-01. The implementation
 input candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
 [`doc/slice-5-func-tol-abi.md`](slice-5-func-tol-abi.md), and
 [`doc/slice-5-abi-manifest-schema.json`](slice-5-abi-manifest-schema.json).
@@ -935,10 +935,9 @@ monotonic sequence checks, cooperative/challenge close helpers, and
 settlement guards. Stage 6 has extended `tol new --pattern`, generated
 Slice 5 examples, and added the release-candidate checker/docs. Stage 7
 has recorded repo-side ABI freeze hashes and compatibility artifacts;
-the remaining release gate is three external production contracts using
-the second-wave stdlib; one production-intent candidate is recorded and
-the first oracle trial findings have been closed for a second-round
-trial.
+the external adoption gate is complete with `DexPriceOracle`,
+`TosStreamChannel`, `TosCouncilFund`, and `TosEscrowedAuction`
+recorded.
 
 **Stage plan.**
 
@@ -1415,14 +1414,30 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   `doc/slice-5-abi-freeze-record.json`, compatibility/release checklists
   are in tree, and the external adoption gate remains explicitly
   complete: the DexPriceOracle oracle candidate, TosStreamChannel
-  payment-channel candidate, and TosCouncilFund governance candidate are
-  all recorded in the ABI freeze record. The first DexPriceOracle trial
+  payment-channel candidate, TosCouncilFund governance candidate, and
+  TosEscrowedAuction auction candidate are all recorded in the ABI
+  freeze record. The first DexPriceOracle trial
   findings are closed, the second-round oracle trial passed, the
   payment-channel Round 3 trial records TosStreamChannel as candidate
-  2/3, and the governance Round 4 trial records TosCouncilFund as
-  candidate 3/3.
+  2/3, the governance Round 4 trial records TosCouncilFund as candidate
+  3/3, and the auction trial records TosEscrowedAuction as an
+  additional auction candidate.
 
 ## 12. Revision notes
+
+### r36 (Slice 5 external auction trial)
+
+- Recorded `TosEscrowedAuction`, a production-intent escrowed English
+  auction, as an additional external adoption candidate for the auction
+  pattern.
+- Hardened `@stdlib/auction`: trusted bidder/time helpers bind
+  `bidder` to `in.senderAddress` and time to `blockchain.now()`,
+  queue-full now rethrows as the auction-level error code, seller guard
+  and payout emission helpers are available, and the default postponed
+  bid budget now supports 16 queued bids.
+- Updated the auction example, author guide, audit checklist,
+  compatibility matrix, release notes, and ABI freeze record to capture
+  the new trial findings and dispositions.
 
 ### r35 (Slice 5 external governance trial round 4)
 
