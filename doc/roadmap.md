@@ -1033,10 +1033,82 @@ multi-address structs.
 
 ### Slice 6 — Year 3 protocol-heavy items
 
-`actor.md` §5.1 (supervision) and §5.2 (time primitive) become
-implementable once Slices 1–4 are in production. §5.4 (capability
-addressing) remains research-only until a public design document
-is approved.
+`actor.md` §5.1 (supervision), §5.2 (time primitive), §5.4
+(capability addressing), §5.7 (delivery SLA / dead letters), §6.3
+(monitors versus links), §6.4 (restart intensity), and §6.6 (crash
+reports) form the Slice 6 design surface.
+
+**Status.** 🟡 Stage 0 design RFC opened, 2026-05-01. No implementation
+is approved yet. The Stage 0 input documents are
+[`doc/tos-slice-6-policy.md`](tos-slice-6-policy.md),
+[`doc/tos-delivery-sla-policy.md`](tos-delivery-sla-policy.md),
+[`doc/tos-time-policy.md`](tos-time-policy.md),
+[`doc/tos-supervision-policy.md`](tos-supervision-policy.md), and
+[`doc/tos-capability-policy.md`](tos-capability-policy.md).
+
+The first-principles ordering is resource semantics first, syntax last:
+delivery failure and dead-letter semantics before timers; timers before
+supervision retry; monitors/links before supervisor strategies; restart
+intensity before recovery loops; capability handles as a public-grant
+authorization plane, not reusable public bearer secrets.
+
+**Stage plan.**
+
+1. 🟡 **Stage 0 — RFC and security-review lock.**
+
+   - ✅ Draft the Slice 6 umbrella RFC.
+   - ✅ Draft delivery-SLA/dead-letter RFC.
+   - ✅ Draft scheduled-message/time RFC.
+   - ✅ Draft supervision/monitor/link/restart-intensity RFC.
+   - ✅ Draft capability-handle RFC.
+   - ⏳ Security review and closure.
+   - ⏳ Exit criterion: Stage 0 review accepts the dependency order,
+     resource model, global-version gates, and non-goals.
+
+2. ⏳ **Stage 1 — delivery failure and BackPressure foundation.**
+
+   Define canonical delivery failure records, dead-letter routing,
+   queue-pressure buckets, and the activation condition for
+   `ErrorClass.BackPressure`.
+
+3. ⏳ **Stage 2 — scheduled-message protocol substrate.**
+
+   Add version-gated scheduled delivery, escrow/rent accounting,
+   cancellation, expiry, and emulator/conformance fixtures.
+
+4. ⏳ **Stage 3 — Tol and stdlib time surface.**
+
+   Add `@stdlib/time` helpers, compiler checks for timer budgets, and
+   generated replay/emulator traces. Production contracts must use
+   trusted chain time, not caller-controlled `msg.now`.
+
+5. ⏳ **Stage 4 — monitors and links.**
+
+   Define one-way monitor notifications and bidirectional link tags.
+   Activate `extra_flags` bit 3 only if the protocol mask, stdlib
+   constants, and conformance fixtures land together.
+
+6. ⏳ **Stage 5 — supervision stdlib and restart intensity.**
+
+   Add child specs, restart strategies, recovery messages, cooldowns,
+   gas/value budgets, escalation, and circuit breakers.
+
+7. ⏳ **Stage 6 — capability handles.**
+
+   Start with contract/std-lib public grants and manifests. Protocol
+   admission control remains gated on public review of sender binding,
+   signature binding, revocation, replay, and wallet/RPC discovery.
+
+8. ⏳ **Stage 7 — observability and release package.**
+
+   Add bounded crash/failure trace artifacts, audit checklists, release
+   checker coverage, and compatibility matrices.
+
+9. ⏳ **Stage 8 — system-contract dogfood and production gate.**
+
+   Use supervision, scheduled messages, and structured failures in at
+   least one official system contract or workchain-local service, with
+   activation and rollback plans recorded.
 
 ## 7. Out of scope at each phase
 
@@ -1118,17 +1190,17 @@ unscheduled at the time of writing:
 
 | `actor.md` § | Content | Downstream impact | Recommended placement |
 |---|---|---|---|
-| §5.7 | Cross-shard delivery SLA + dead-letter handling | Blocks `error_class = 5` (back-pressure) emission (`policy.md` §5.3), protocol-level delivery-failure semantics, and Slice 6 supervision failure taxonomy. It no longer blocks Slice 4's contract-level bounded postponement because Slice 4 uses explicit expiry/drop semantics and keeps `ErrorClass.BackPressure` reserved. | Pre-design RFC before any back-pressure or supervision implementation; protocol implementation slot adjacent to Slice 5 / before Slice 6. |
+| §5.7 | Cross-shard delivery SLA + dead-letter handling | Blocks `error_class = 5` (back-pressure) emission (`policy.md` §5.3), protocol-level delivery-failure semantics, and Slice 6 supervision failure taxonomy. It no longer blocks Slice 4's contract-level bounded postponement because Slice 4 uses explicit expiry/drop semantics and keeps `ErrorClass.BackPressure` reserved. | Promoted into Slice 6 Stage 0 via `doc/tos-delivery-sla-policy.md`; implementation begins only after review closure. |
 | §5.8 | Actor-level observability | Operational debuggability blocker once supervised contracts exist; off-chain indexer surface usable independently of on-chain protocol work | Off-chain part: pulled forward to Slice 3 (alongside `tol new` scaffolding). On-chain hooks: bundled into Slice 6. |
 | §6.1 | Release handling and upgrade discipline | TOS already has `SETCODE`-style behaviour replacement; the missing part is operational discipline (compatibility windows, rollback, state-migration proofs). Becomes load-bearing the moment Slice 6 ships supervision-driven restarts. | Pre-design during Slice 4–5; production rollout adjacent to Slice 6. |
 | §6.2 | Application boundaries / lifecycle (validator subsystem, workchain, system-contract package) | Without this, every multi-subsystem upgrade is hand-coordinated. Compounds with §6.1. | Same window as §6.1. |
-| §6.3 | Monitors versus links (one-way observation vs bidirectional failure) | Slice 6's nominal scope only lists §5.1; without §6.3 the supervision design has only a single coarse `supervisor` field. | **Promote into Slice 6 scope explicitly** — current §6 row reads `§5.1 + §5.2 + §5.4` but needs to read `§5.1 + §5.2 + §5.4 + §6.3 + §6.4 + §6.6`. |
-| §6.4 | Restart intensity / circuit breakers | Same — supervision without restart-intensity limits is a message-amplification attack surface. | Promote into Slice 6 scope. |
-| §6.6 | Crash reports / `sys`-style diagnostics | "Let it crash" is unsafe without classified, bounded crash reports. | Promote into Slice 6 scope. |
+| §6.3 | Monitors versus links (one-way observation vs bidirectional failure) | Slice 6 supervision needs this distinction before any `supervisor` field or link flag can be meaningful. | Promoted into Slice 6 Stage 0 via `doc/tos-supervision-policy.md`. |
+| §6.4 | Restart intensity / circuit breakers | Supervision without restart-intensity limits is a message-amplification attack surface. | Promoted into Slice 6 Stage 0 via `doc/tos-supervision-policy.md`. |
+| §6.6 | Crash reports / `sys`-style diagnostics | "Let it crash" is unsafe without classified, bounded crash reports. | Promoted into Slice 6 Stage 0 via `doc/tos-supervision-policy.md`. |
 
-`§6.3 / §6.4 / §6.6` should be folded into §6's Slice 6 row in a
-later revision rather than continuing to live in this gap table.
-The table here is the holding pen until that update lands.
+`§6.3 / §6.4 / §6.6` are now folded into §6's Slice 6 row. The table
+keeps the historical blocker record until Stage 0 review closes and the
+items move to §11.5.
 
 ### 11.2 Per-Slice blockers
 
@@ -1201,7 +1273,7 @@ before the corresponding slice can start.
 - *Cross-cut:* `error_class = 5` back-pressure is reserved by
   `policy.md` §5.3 but blocked on §5.7 (see §11.1).
 
-**Slice 6** — `actor.md` §5.1 + §5.2 + §5.4
+**Slice 6** — `actor.md` §5.1 + §5.2 + §5.4 + §5.7 + §6.3 + §6.4 + §6.6
 
 Three independently-blocked sub-features:
 
@@ -1216,14 +1288,17 @@ Three independently-blocked sub-features:
   expiry, DoS limits — none designed. `policy.md` does not
   reserve any wire-format bit for scheduled messages.
 - *§5.4 capability addressing:* `actor.md` calls this "the most
-  research-heavy item in the list". The basic shape (handle is
-  private bearer secret vs signature/MAC vs public on-chain
-  grant vs stateful registry) is undecided. **A public RFC must
-  be approved before any implementation work.**
+  research-heavy item in the list". `doc/tos-capability-policy.md`
+  opens the public RFC and rejects reusable public bearer secrets as
+  the Slice 6 baseline. **The RFC must still be reviewed before any
+  protocol-level admission-control implementation work.**
 
 Each sub-feature needs its own policy document
 (`doc/tos-supervision-policy.md`, `doc/tos-time-policy.md`,
-`doc/tos-capability-policy.md`); none exist.
+`doc/tos-capability-policy.md`). Draft v0.1 documents now exist, plus
+`doc/tos-delivery-sla-policy.md` and the umbrella
+`doc/tos-slice-6-policy.md`; none are approved until Stage 0 review
+closes.
 
 ### 11.3 Governance and approval state (Slice 1)
 
@@ -1242,19 +1317,24 @@ Each sub-feature needs its own policy document
   `doc/tos-language-syntax-policy.md`; Slice 3 is approved at
   `doc/tos-slice-3-policy.md`; Slice 4 is complete under
   `doc/tos-postponement-policy.md` and `doc/tos-slice-4-policy.md`.
-  Slice 6 policy documents do not exist; see §11.2 for the names and
-  scope of each missing document. Each will follow the same
-  single-signer model unless the ownership split has happened by the
-  time it is drafted.
+  Slice 6 policy documents now exist as Draft v0.1 Stage 0 review
+  inputs: `doc/tos-slice-6-policy.md`,
+  `doc/tos-delivery-sla-policy.md`, `doc/tos-time-policy.md`,
+  `doc/tos-supervision-policy.md`, and
+  `doc/tos-capability-policy.md`. They are not approved implementation
+  inputs until Stage 0 review closes. Each follows the same
+  single-signer model unless the ownership split happens before
+  approval.
 
 ### 11.4 Cross-Slice priority of unscheduled work
 
 Sorted by how many later slices each item blocks:
 
-1. **`actor.md` §5.7 design RFC** — no longer blocks Slice 4's bounded
+1. 🟡 **`actor.md` §5.7 design RFC** — no longer blocks Slice 4's bounded
    contract-level postponement, but still blocks protocol-level delivery
    failure semantics, Slice 5 back-pressure `error_class = 5`, and
-   Slice 6 failure taxonomy for supervision.
+   Slice 6 failure taxonomy for supervision. Draft v0.1 is now open at
+   `doc/tos-delivery-sla-policy.md`.
 2. ✅ **Slice 2 syntax policy doc** — closed 2026-04-30 by
    `doc/tos-language-syntax-policy.md` Draft v3 and the Stage 1
    implementation commit `081f05d3c`; see §6 Slice 2 status and
@@ -1262,24 +1342,23 @@ Sorted by how many later slices each item blocks:
 3. ✅ **Slice 3 Stage 1 replay harness** — closed 2026-04-30. The
    deterministic replay/property substrate is checked in and CI-wired;
    stdlib pattern implementation can start.
-4. **`actor.md` §5.4 capability public RFC** — Slice 6 long-pole.
-   Needs protocol architect time, not engineering capacity. The
-   earlier this enters RFC review, the lower the schedule risk
-   for Slice 6.
-5. **§6.3 / §6.4 / §6.6 promotion into Slice 6 scope** —
-   editorial change to §6 of this document; should land in the
-   next revision after this section is approved.
+4. 🟡 **`actor.md` §5.4 capability public RFC** — Slice 6 long-pole.
+   Draft v0.1 is now open at `doc/tos-capability-policy.md`. It still
+   needs protocol/security review before implementation.
+5. ✅ **§6.3 / §6.4 / §6.6 promotion into Slice 6 scope** —
+   closed by the Slice 6 Stage 0 RFC update; these are now explicit
+   Slice 6 design inputs.
 6. ✅ **`actor.md` §5.8 off-chain observability placement** —
    pulled into Slice 3 Stage 6 in `doc/tos-slice-3-policy.md` as
    generated manifests, opcode maps, method-id maps, error-code maps,
    and replay traces.
 
-Item 1 remains the next protocol-design dependency. Slice 4 avoids
-blocking on it by keeping back-pressure emission out of scope, but §5.7
-still needs a design RFC before any protocol-level delivery
-failure semantics or `ErrorClass.BackPressure` activation. Items 2, 3,
-and 6 are closed. Items 4–5 should be in motion before Slice 6 design
-starts.
+Item 1 remains the next protocol-design dependency, but it is now in
+RFC review rather than unscheduled. Slice 4 avoids blocking on it by
+keeping back-pressure emission out of scope, but §5.7 still needs
+review closure before any protocol-level delivery failure semantics or
+`ErrorClass.BackPressure` activation. Items 2, 3, 5, and 6 are closed.
+Item 4 is in RFC review.
 
 (The earlier four-signer approval item from this list was
 removed when policy v6 made single-signer the rule; see §11.3.)
@@ -1436,6 +1515,18 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r40 (Slice 6 Stage 0 RFC opened)
+
+- Added `doc/tos-slice-6-policy.md` as the umbrella Slice 6 Stage 0
+  design RFC.
+- Added companion RFCs for delivery SLA/dead letters, scheduled
+  messages, supervision/monitors/restart intensity, and capability
+  handles.
+- Promoted `actor.md` sections 5.7, 6.3, 6.4, and 6.6 into explicit
+  Slice 6 scope, so supervision cannot proceed without delivery-failure
+  taxonomy, monitor/link separation, restart-storm protection, and
+  bounded crash reports.
 
 ### r39 (Tol usability hardening from Slice 5 external trials)
 

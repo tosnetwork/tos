@@ -505,7 +505,7 @@ distinction:
 | `2` | Permanent — uncaught exception, malformed body, code-rejected | No |
 | `3` | Authorization — caller not permitted | Maybe, after re-auth |
 | `4` | Protocol — opcode unknown, body malformed at envelope level | No |
-| `5` | Reserved for back-pressure / rate-limit (TBD; activation requires the cross-shard delivery SLA work in `actor.md` §5.7, which `roadmap.md` does not yet schedule). Not emitted in Slice 1. | Yes, with backoff |
+| `5` | Reserved for back-pressure / rate-limit (TBD; activation requires the cross-shard delivery SLA work in `actor.md` §5.7, now opened as Slice 6 Stage 0 design in `doc/tos-delivery-sla-policy.md`). Not emitted in Slice 1. | Yes, with backoff |
 | `6`–`15` | Reserved for future expansion | n/a |
 | `16`–`255` | Application-specific | Application-defined |
 
@@ -1018,7 +1018,8 @@ clause to be the canonical list that `roadmap.md` references.
 - **§5.3 row 5** — "Reserved for back-pressure / rate-limit
   (Slice 5+; not yet emitted)" replaced with "TBD; activation
   requires the cross-shard delivery SLA work in `actor.md`
-  §5.7, which `roadmap.md` does not yet schedule".
+  §5.7"; Slice 6 Stage 0 later opened that design in
+  `doc/tos-delivery-sla-policy.md`.
 - **§10.1 contract-migration clause** — relabelled from
   "Migration of at least two reference contracts" to "Migration
   of all three reference contracts" to match the audit-driven
