@@ -74,10 +74,13 @@ def check_required_surface() -> None:
 
     for needle in [
         "Slice6TimerBudget",
+        "Slice6WallClockBudget",
         "sendAfterBlocks",
         "sendAtMcSeqno",
         "cancelScheduled",
         "trustedCurrentMcSeqno",
+        "slice6WallClockBudget",
+        "requireDurationWithinBudget",
     ]:
         if needle not in time:
             fail(f"time stdlib missing {needle}")
@@ -200,6 +203,11 @@ def strip_line_comment(line: str) -> str:
     return line.split("//", 1)[0]
 
 
+def strip_tol_comments(text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return "\n".join(strip_line_comment(line) for line in text.splitlines())
+
+
 def check_no_caller_controlled_now_scheduling() -> None:
     schedule_call = re.compile(r"\b(sendAfterBlocks|sendAtMcSeqno|slice6ScheduledAction|slice6ScheduledHandle)\b")
     mc_sensitive = re.compile(
@@ -264,6 +272,21 @@ def check_no_reusable_public_bearer_capability() -> None:
                 fail(f"{rel}:{lineno}: reusable public bearer capability token is forbidden")
 
 
+def check_external_trial_unit_boundaries() -> None:
+    vesting = ROOT / "examples" / "external-trials" / "vesting-vault" / "src" / "vesting-vault.tol"
+    if vesting.exists():
+        source = strip_tol_comments(vesting.read_text(encoding="utf-8"))
+        for needle in ["Slice6WallClockBudget", "slice6WallClockBudget", "VAULT_MAX_VEST_HORIZON_SECONDS"]:
+            if needle not in source:
+                fail(f"{vesting.relative_to(ROOT)} must use explicit wall-clock duration budget {needle}")
+        for needle in ["@implicit_protocol_default", "@disclaim_query_id"]:
+            if needle not in source:
+                fail(f"{vesting.relative_to(ROOT)} must document sparse-state/default query-id behaviour with {needle}")
+        for forbidden in ["VAULT_MAX_TIMER", "timerBudget", "maxFutureHorizonBlocks"]:
+            if forbidden in source:
+                fail(f"{vesting.relative_to(ROOT)} mixes wall-clock vesting with scheduler timer budget field {forbidden}")
+
+
 def main() -> None:
     check_required_surface()
     check_release_artifacts()
@@ -271,6 +294,7 @@ def main() -> None:
     check_safe_payment_defaults()
     check_extra_flags_bit3_still_reserved()
     check_no_reusable_public_bearer_capability()
+    check_external_trial_unit_boundaries()
     print("Validated Slice 6 release-package guardrails: delivery, schedule, time, supervision, capability, safe payments, no caller-controlled time scheduling")
 
 

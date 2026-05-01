@@ -1,0 +1,30 @@
+struct ContractStateDuplicateStateStorage {
+    total: uint32;
+}
+
+struct (0x00000097) ContractStateDuplicateStatePing {
+    queryId: uint64;
+    value: uint32;
+}
+
+contract ContractStateDuplicateState {
+    storage: ContractStateDuplicateStateStorage
+    states: Open, Closed
+    @initial state Open
+
+    receive(msg: ContractStateDuplicateStatePing) on Open {
+        save(ContractStateDuplicateStateStorage { total: msg.value });
+        become Closed;
+    }
+
+    receive(msg: ContractStateDuplicateStatePing) on Open {
+        save(ContractStateDuplicateStateStorage { total: storage.total + msg.value });
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr duplicate contract receive opcode
+@stderr for state `Open`
+ */

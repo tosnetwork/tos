@@ -21,9 +21,11 @@ has since closed the high-impact items in code/docs:
   `SLICE5_AUCTION_THROW_QUEUE_FULL` (`0x0b03`), so monitoring can use
   the auction-level error.
 - F-005 / F-007 / F-009: payout, budget, and expire-access obligations
-  are documented in the author guide and audit checklist; the stdlib
-  adds a payout message/emission helper and raises the default queued-bid
-  budget to 16.
+  are closed in code and docs. This contract now saves settled state and
+  emits the seller payout through `slice5AuctionEmitPayout(...)`; the
+  release checker requires that direct-payout pattern. The stdlib also
+  raises the default queued-bid budget to 16 and documents open
+  `Slice5AuctionExpire` as cooperative cleanup.
 
 Post-trial hardening closed F-006 at the emulator layer:
 `SmartContract::Args.set_sender_address(...)` now injects
@@ -45,7 +47,7 @@ message field as `caller_controlled: true`, enforced by
 | **Intended production use** | English auction for on-chain assets (NFTs, token lots, governance items). Bidders compete with increasing bids; the seller collects the winning bid at settlement. Real-world targets: in-game item sales, DAO treasury asset auctions, NFT primary sales. |
 | **Stdlib package(s) used** | `@stdlib/auction` (backed by `@stdlib/postponement`) |
 | **Files created** | `examples/slice5/tos-escrowed-auction/src/tos-escrowed-auction.tol` (152 lines), `tests/tos-escrowed-auction-positive.tol` (26 cases), `tests/tos-escrowed-auction-import-positive.tol` (2 cases), `manifest.json`, `artifacts/opcodes.json`, `artifacts/method-ids.json`, `artifacts/error-codes.json`, `doc/slice5-abi-manifests/tos_escrowed_auction.json` |
-| **Would deploy with real funds?** | **No, not as written without the three production fixes documented in §4.** The contract itself is sound, but the security model requires explicit author attention to three stdlib gaps that the ecosystem does not surface via compiler warnings, documentation, or example code. |
+| **Would deploy with real funds?** | **Yes, after repo-side hardening.** Bidder identity and time are bound to trusted VM context, seller-only close/settle is enforced, settlement emits the seller payout directly with bounce-on-action-fail semantics, and the release checker gates these properties. |
 
 ---
 
@@ -189,10 +191,10 @@ git diff --check
 
 - **Severity:** MEDIUM
 - **Area:** stdlib / docs
-- **Description:** `settle()` returns the winning bid amount as `coins` but provides no mechanism to send the funds. The production contract must manually record the amount in storage, and fund dispatch is entirely the integrator's responsibility — triggered by reading a getter off-chain and issuing a separate transaction. The author guide mentions this in one sentence for payment channels but has no equivalent for auctions.
+- **Description:** In the original trial, `settle()` returned the winning bid amount as `coins` but provided no mechanism to send the funds. The production contract had to record the amount in storage, and fund dispatch was entirely the integrator's responsibility — triggered by reading a getter off-chain and issuing a separate transaction.
 - **Why this matters in production:** There is no enforcement that payout ever happens. The auction can reach `settled = true` with funds permanently locked in the contract if the integrator omits the dispatch step. A team unfamiliar with TOS's async action model will implement this incorrectly or incompletely.
-- **Workaround used:** Added `pendingPayout: coins` and `payoutDone: bool` fields to storage; added `getPendingPayout()` getter; documented the off-chain integration obligation in code comments.
-- **Post-trial disposition:** closed. `@stdlib/auction` exposes `slice5AuctionEmitPayout(...)`; the standalone auction reference example saves the settled state and then emits the seller payout through that helper. The release checker gates this default path.
+- **Workaround used:** Historical only. The first artifact added `pendingPayout: coins` and `payoutDone: bool` fields plus a `getPendingPayout()` getter.
+- **Post-trial disposition:** closed. `@stdlib/auction` exposes `slice5AuctionEmitPayout(...)`; the standalone auction reference example and this production-intent external candidate now save the settled state and then emit the seller payout through that helper. The release checker requires the direct-payout path for the external auction candidate.
 
 ---
 
@@ -242,10 +244,10 @@ git diff --check
 
 | Gap | What I searched for | What finally answered it |
 |-----|---------------------|--------------------------|
-| Is `blockchain.now()` available as a replacement for `msg.now`? | Searched "now", "unix_time", "timestamp" in author guide, audit checklist, compatibility matrix | Direct source inspection of `tol-stdlib/common.tol:403` — not mentioned in any policy or guide document |
-| Does `msg.bidder` need to be overridden with `in.senderAddress`? | Author guide, audit checklist, compatibility matrix, example source | Nothing warns about this. Had to construct test T530 to prove the gap experimentally |
+| Is `blockchain.now()` available as a replacement for `msg.now`? | Searched "now", "unix_time", "timestamp" in author guide, audit checklist, compatibility matrix | Closed: the author guide and release checker now require trusted VM time for production receive handlers. |
+| Does `msg.bidder` need to be overridden with `in.senderAddress`? | Author guide, audit checklist, compatibility matrix, example source | Closed: the author guide, audit checklist, trusted bid helper, and release checker now require sender-derived bidder identity. |
 | What error code does a full postponement queue produce? | Expected `SLICE5_AUCTION_THROW_QUEUE_FULL (0x0b03)` based on auction stdlib constants | Current answer: `2819`. The original trial observed `2307`; post-trial hardening now catches the postponement-layer code and rethrows the auction-level code. |
-| How do I dispatch funds after `settle()`? | Author guide auction section | Not documented for auction. Cross-referenced payment-channel guide; reverse-engineered the pattern |
+| How do I dispatch funds after `settle()`? | Author guide auction section | Closed: use `slice5AuctionEmitPayout(config.seller, winningBid)` after saving settled state; this contract and the reference example now use that pattern. |
 | What do import-positive test files look like? | No tol-tester documentation for the `*-import-positive.tol` convention | Studied `tos-council-fund-import-positive.tol` as template |
 | How does the tol-tester parse `@testcase` table rows? | Searched docs folder | Read `tol-tester.py` source directly |
 | What value does the `bits` field take for `coins` in ABI manifests? | Manifest schema | `null` — learned by studying existing manifests, not from schema documentation |
@@ -254,13 +256,13 @@ git diff --check
 
 ## 6. API Friction Log
 
-1. **`slice5AuctionConfigWithBudget` is not mentioned in the author guide** — found by searching `auction.tol` directly when the default budget proved too small.
-2. **`blockchain.now()` is not mentioned anywhere in policy docs or author guide** — found via `grep -n "now" common.tol`.
+1. **`slice5AuctionConfigWithBudget` was not mentioned in the author guide** — closed. The guide now calls out high-traffic auctions and explicit storage/gas budget tradeoffs.
+2. **`blockchain.now()` was not mentioned anywhere in policy docs or author guide** — closed for Slice 5. The guide now requires trusted VM time for production receive handlers and the release checker rejects `msg.now` trust.
 3. **Test T552 failed on the first trial run** with `2307` instead of `2819` — required tracing `postponeBid -> queue.enqueueWithQueryId -> PostponedQueue.requireBudget -> SLICE4_POSTPONEMENT_THROW_QUEUE_FULL` through two stdlib files. Post-trial hardening now rethrows `2819`.
 4. **ABI manifest `method_id` values** — derived by reading existing artifact `method-ids.json` files and doing hex arithmetic; no generator utility.
 5. **ABI manifest `bits: null` for variable-length types** — inferred from existing manifests; the schema does not document which types require `null` vs. an integer.
-6. **No `tol new --pattern auction` in the tested build** — the author guide documents the subcommand; the binary was not available. Worked from examples directly.
-7. **Error code table had to be assembled manually** from two separate stdlib files (`auction.tol` and `postponement.tol`) — there is no `tol abi-errors <contract>` command.
+6. **No `tol new --pattern auction` in the tested build** — historical trial friction. The Slice 5 release checker now validates the generated auction scaffold.
+7. **Error code table had to be assembled manually** from two separate stdlib files (`auction.tol` and `postponement.tol`) — mitigated by checked-in generated artifacts and the release-package validator.
 8. **Import test must re-import stdlib dependencies** — this is documented correctly in the author guide but the error message on a missing re-import is a generic symbol-not-found, not a "you forgot to re-import the transitive dependency" hint.
 
 ---
@@ -271,7 +273,7 @@ git diff --check
 |----------|--------|-------|
 | **Authorization** | FIXED for production/reference paths | Seller checks use `in.senderAddress`; bidder identity uses `receiveTrustedBid(...)`. The Slice 5 release checker rejects production/reference sources that trust `msg.bidder`. |
 | **Replay protection** | HANDLED by auction semantics | Duplicate close/settle throw `ALREADY_CLOSED`/`ALREADY_SETTLED` (T525, T526). Exact immediate bid replay is rejected as `LOW_BID` without state change (T527). Postponed duplicate query IDs are rejected by the Slice 4 queue index. A new higher amount with a reused queryId is treated as a new economic bid, not idempotent replay. |
-| **Value transfer / payout correctness** | FIXED for reference path | `settle()` returns the highest bid amount. The standalone reference example now saves settled state and emits seller payout with `slice5AuctionEmitPayout(...)`; this trial contract intentionally keeps an off-chain pending-payout path. |
+| **Value transfer / payout correctness** | FIXED | `settle()` returns the highest bid amount. The standalone reference example and this external candidate now save settled state and emit seller payout with `slice5AuctionEmitPayout(...)`; the release checker gates the external candidate path. |
 | **Duplicate messages** | HANDLED | Duplicate close/settle throw `ALREADY_CLOSED`/`ALREADY_SETTLED`. Duplicate bids are handled by bid-value comparison, not by `queryId` deduplication. |
 | **Malformed messages** | HANDLED | Auto-deserialization via `lazy T.fromSlice` throws on malformed input at the Tol runtime layer. |
 | **Expiry / staleness** | FIXED | `msg.now` is caller-controlled and untrustworthy. Production/reference contracts use `blockchain.now()` for all time checks, and the release checker rejects regression. |
@@ -284,24 +286,19 @@ git diff --check
 
 ## 8. Final Assessment
 
-### Verdict: ACCEPTED WITH FIXES
+### Verdict: PRODUCTION-CANDIDATE AFTER HARDENING
 
 The Tol compiler, `tol-tester`, stdlib, ABI manifest infrastructure, and release package checker all work correctly for this use case. Compilation is clean across all three source files, all 28 test cases pass, and all validator scripts pass.
 
-The contract is not production-deployable as-is due to two external integration obligations:
-
-1. **Off-chain payout dispatch** — the contract records the winning bid in `pendingPayout` but does not send the funds. The deploying team must read `getPendingPayout()` and issue a separate transfer transaction.
-2. **Error code monitoring** — subscribe to `2819` for auction queue-full alerts; `2307` remains the lower-level Slice 4 postponement code for direct postponement users.
-
-Both obligations are documented in contract comments and the ABI manifest.
+The original off-chain payout obligation has been removed. Settlement now records the final state and emits the seller payout in the same receive path. Operators should subscribe to `2819` for auction queue-full alerts; `2307` remains the lower-level Slice 4 postponement code for direct postponement users.
 
 ---
 
 ### Top 3 changes that would most improve Tol for production authors
 
-**1. Remove caller-provided `now` from all Slice 5 message structs; inject `blockchain.now()` at stdlib helper entry points.**
+**1. Make trusted time/identity the default production path.**
 
-This is the highest-impact single change. The current design is a silent security hole: the example code and the secure code look identical at the call site (`state.receiveBid(config, msg)` vs. `state.receiveBid(config, trueBid)`), but only the latter is safe. No compiler warning, linter, or documentation makes the distinction visible before a test like T540 demonstrates the exploit. Fixing this in the stdlib eliminates an entire class of timestamp-manipulation vulnerabilities across all Slice 5 packages simultaneously.
+Closed for production/reference code. Wire fields remain for compatibility, but trusted helper APIs and release checks make `in.senderAddress` / `blockchain.now()` the enforced production path.
 
 **2. Provide a `slice5AuctionTrustedBid(msg, sender)` constructor that substitutes `bidder = sender` and `now = blockchain.now()`.**
 

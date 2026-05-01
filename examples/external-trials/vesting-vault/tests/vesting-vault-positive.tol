@@ -9,7 +9,7 @@
 //   802 — vested amount increases linearly after cliff
 //   803 — vested amount caps at totalAmount after full vest period
 //   804 — claimable is vested minus already claimed
-//   805 — timer budget fields are correct
+//   805 — wall-clock budget fields are correct
 // Authorization failures:
 //   806 — capability wrong-sender rejected
 // Replay / duplicate handling:
@@ -161,15 +161,13 @@ fun test_claimable_minus_claimed(): int {
     return claimable as int;
 }
 
-// ── 805: timer budget fields match constants ──────────────────────────────
+// ── 805: wall-clock budget fields match constants ─────────────────────────
 @method_id(805)
-fun test_timer_budget_fields(): int {
-    val budget = vaultTimerBudget();
-    assert(budget.maxScheduledEntries == VAULT_MAX_TIMER_ENTRIES)   throw 8051;
-    assert(budget.maxBodyBits == VAULT_MAX_TIMER_BODY_BITS)         throw 8052;
-    assert(budget.maxFutureHorizonBlocks == VAULT_MAX_TIMER_HORIZON) throw 8053;
+fun test_wall_clock_budget_fields(): int {
+    val budget = vaultWallClockBudget();
+    assert(budget.maxFutureHorizonSeconds == VAULT_MAX_VEST_HORIZON_SECONDS) throw 8051;
     assert(budget.enabled) throw 8054;
-    return budget.maxScheduledEntries as int;
+    return 1;
 }
 
 // ── 806: capability with wrong sender is rejected ─────────────────────────
@@ -228,10 +226,9 @@ fun test_cap_revoked_handle_rejected(): int {
 // ── 810: horizon rejects vest period exceeding max ────────────────────────
 @method_id(810)
 fun test_horizon_rejects_too_long_vest(): int {
-    val fundedAt: uint32 = 1000;
-    val tooLongPeriod: uint32 = VAULT_MAX_TIMER_HORIZON + 1;
+    val tooLongPeriod: uint32 = VAULT_MAX_VEST_HORIZON_SECONDS + 1;
     try {
-        vaultValidateVestPeriod(fundedAt, tooLongPeriod);
+        vaultValidateVestPeriod(tooLongPeriod);
     } catch (code) {
         return code;
     }
@@ -241,8 +238,7 @@ fun test_horizon_rejects_too_long_vest(): int {
 // ── 811: horizon accepts vest period at max boundary ──────────────────────
 @method_id(811)
 fun test_horizon_accepts_max_boundary(): int {
-    val fundedAt: uint32 = 1000;
-    vaultValidateVestPeriod(fundedAt, VAULT_MAX_TIMER_HORIZON);
+    vaultValidateVestPeriod(VAULT_MAX_VEST_HORIZON_SECONDS);
     return 1;  // must not throw
 }
 
@@ -306,7 +302,7 @@ fun test_partial_claim_leaves_remainder(): int {
 @testcase | 802 | | 500000000
 @testcase | 803 | | 1000000000
 @testcase | 804 | | 400000000
-@testcase | 805 | | 4
+@testcase | 805 | | 1
 @testcase | 806 | | 5124
 @testcase | 807 | | 5127
 @testcase | 808 | | 5123

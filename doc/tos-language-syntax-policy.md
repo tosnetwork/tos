@@ -845,6 +845,30 @@ if (op == op_of(BidRequest)) {
 }
 ```
 
+If a state-bearing contract declares the **same message struct** in
+several states, the opcode is emitted once and the state tag selects
+the concrete handler inside that branch:
+
+```tol
+if (op == op_of(RevokeRequest)) {
+    if (storage.__state == VaultState.Pending) {
+        val msg = lazy RevokeRequest.fromSlice(in.body);
+        // Pending handler
+        return;
+    }
+    if (storage.__state == VaultState.Active) {
+        val msg = lazy RevokeRequest.fromSlice(in.body);
+        // Active handler
+        return;
+    }
+    throw <ErrorClass.Protocol code>;  // known opcode, wrong state
+}
+```
+
+This overload is legal only for the same resolved message struct with
+distinct `on State` clauses. A duplicate `(opcode, state)` handler, or
+a duplicate opcode not disambiguated by state, is a compile error.
+
 ### 4.2 `save(struct_literal)` lowers to
 
 `saveData(struct_literal)` per existing Slice 1 stdlib. State

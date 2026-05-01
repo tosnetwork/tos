@@ -12,6 +12,6 @@
   "test_pass_count": 14,
   "compiler_warnings": 9,
   "warning_type": "receive exhaustiveness (unhandled state×opcode pairs, expected for partial state machine)",
-  "verdict": "Would ship with mitigations",
+  "verdict": "production-candidate after repo hardening",
   "trial_report": "TRIAL-REPORT.md"
 }

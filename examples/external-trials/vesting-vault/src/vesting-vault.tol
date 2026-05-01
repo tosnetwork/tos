@@ -7,7 +7,7 @@
 // signed by the owner.  The owner can revoke the vault at any time.
 //
 // Stdlib exercised:
-//   @stdlib/time      — horizon validation of vest periods via Slice6TimerBudget
+//   @stdlib/time      — wall-clock duration budgets for vesting bounds
 //   @stdlib/capability — gated claim authority with nonce replay prevention
 //   @stdlib/safe-payments — excess refund, payout send-mode, rent guardrails
 //
@@ -50,14 +50,10 @@ const VAULT_CLAIM_SELECTOR: uint32 = 0x56455301
 const VAULT_MIN_CLAIM_GAS: coins = 50000000    // 0.05 TOS
 const VAULT_MIN_RETAINED_BALANCE: coins = 100000000    // 0.1 TOS
 
-// Timer budget parameters (vest period capped at 3 years ≈ 94608000 seconds).
-// FRICTION: @stdlib/time thinks in mc-seqno blocks.  We supply unix seconds.
-// The mathematical bound is valid regardless of the unit; the naming is wrong.
-const VAULT_MAX_TIMER_ENTRIES:  uint16 = 4
-const VAULT_MAX_TIMER_BODY_BITS: uint32 = 512
-const VAULT_MAX_TIMER_BODY_REFS: uint16 = 2
-const VAULT_MAX_TIMER_HORIZON:  uint32 = 94608000
-const VAULT_MAX_TIMER_DEPTH:    uint16 = 4
+// Wall-clock vesting budget parameters (vest period capped at 3 years).
+// This is deliberately separate from Slice6TimerBudget, whose horizon fields are
+// masterchain-seqno blocks for scheduled-message APIs.
+const VAULT_MAX_VEST_HORIZON_SECONDS: uint32 = 94608000
 
 // Capability registry sizing.
 const VAULT_MAX_ACTIVE_GRANTS:    uint16 = 16
@@ -75,7 +71,7 @@ struct VestingVaultStorage {
     claimedAmount: coins;        // coins already sent to beneficiary
     fundedAt: uint32;            // unix timestamp at VaultFund acceptance
     capRegistry: Cell<Slice6CapabilityRegistry>;
-    timerBudget: Cell<Slice6TimerBudget>;
+    wallClockBudget: Cell<Slice6WallClockBudget>;
 }
 
 // ── Message types ─────────────────────────────────────────────────────────────
@@ -155,26 +151,16 @@ fun vaultClaimableAmount(
     return vested - claimedAmount;
 }
 
-// Build the contract's standard timer budget.
+// Build the contract's wall-clock vesting duration budget.
 @pure
-fun vaultTimerBudget(): Slice6TimerBudget {
-    return slice6TimerBudget(
-        VAULT_MAX_TIMER_ENTRIES,
-        VAULT_MAX_TIMER_BODY_BITS,
-        VAULT_MAX_TIMER_BODY_REFS,
-        VAULT_MAX_TIMER_HORIZON,
-        VAULT_MAX_TIMER_DEPTH
-    );
+fun vaultWallClockBudget(): Slice6WallClockBudget {
+    return slice6WallClockBudget(VAULT_MAX_VEST_HORIZON_SECONDS);
 }
 
 // Validate that vestPeriodSeconds is within the supported horizon.
-// Throws SLICE6_TIME_THROW_HORIZON if the period exceeds VAULT_MAX_TIMER_HORIZON.
-fun vaultValidateVestPeriod(fundedAt: uint32, vestPeriodSeconds: uint32): void {
-    val budget = vaultTimerBudget();
-    budget.requireEnabled();
-    if (vestPeriodSeconds > budget.maxFutureHorizonBlocks) {
-        throw SLICE6_TIME_THROW_HORIZON;
-    }
+// Throws SLICE6_TIME_THROW_HORIZON if the period exceeds the wall-clock budget.
+fun vaultValidateVestPeriod(vestPeriodSeconds: uint32): void {
+    vaultWallClockBudget().requireDurationWithinBudget(vestPeriodSeconds);
 }
 
 fun vaultPaymentBody(queryId: uint64): cell {
@@ -191,10 +177,12 @@ contract VestingVault {
     states: Pending, Active, Closed
     @initial state Pending
     @unknown_throw(0xffff);
+    @implicit_protocol_default;
 
     // ── Deploy (runs before loadData; storage not in scope) ───────────────────
     @deploy
     receive(msg: VaultDeploy) {
+        disclaim_query_id();
         require(msg.vestPeriodSeconds > 0,                    ErrorClass.Permanent, VAULT_ERR_BAD_PARAMS);
         require(msg.cliffSeconds < msg.vestPeriodSeconds,     ErrorClass.Permanent, VAULT_ERR_BAD_PARAMS);
         require(msg.totalAmount > 0,                          ErrorClass.Permanent, VAULT_ERR_BAD_PARAMS);
@@ -211,22 +199,24 @@ contract VestingVault {
                                    VAULT_MAX_REVOKED_HANDLES,
                                    VAULT_MAX_EPOCH_ENTRIES
                                ).toCell(),
-            timerBudget:       vaultTimerBudget().toCell(),
+            wallClockBudget:   vaultWallClockBudget().toCell(),
         });
     }
 
     // ── Fund: owner attaches totalAmount coins → vault becomes Active ─────────
+    @disclaim_query_id
     receive(msg: VaultFund) on Pending {
         require(in.senderAddress == storage.owner,           ErrorClass.Authorization, VAULT_ERR_NOT_OWNER);
         require(in.valueCoins >= storage.totalAmount,        ErrorClass.Permanent,    VAULT_ERR_FUND_SHORTAGE);
         val now32 = blockchain.now() as uint32;
-        vaultValidateVestPeriod(now32, storage.vestPeriodSeconds);
+        vaultValidateVestPeriod(storage.vestPeriodSeconds);
         slice6RefundExcessWithBody(in.senderAddress, in.valueCoins, storage.totalAmount, vaultPaymentBody(msg.queryId));
         save({ ...storage, claimedAmount: 0, fundedAt: now32 });
         become Active;
     }
 
     // ── Claim: beneficiary presents capability grant ───────────────────────────
+    @disclaim_query_id
     receive(msg: VaultClaim) on Active {
         require(in.valueCoins >= VAULT_MIN_CLAIM_GAS,        ErrorClass.Permanent, VAULT_ERR_FUND_SHORTAGE);
         val nowTs = blockchain.now() as uint32;
@@ -269,6 +259,7 @@ contract VestingVault {
     }
 
     // ── Revoke (Pending): owner cancels before funding ─────────────────────────
+    @disclaim_query_id
     receive(msg: VaultRevoke) on Pending {
         require(in.senderAddress == storage.owner,           ErrorClass.Authorization, VAULT_ERR_NOT_OWNER);
         save(storage);
@@ -276,6 +267,7 @@ contract VestingVault {
     }
 
     // ── Revoke (Active): owner claws back unvested coins ──────────────────────
+    @disclaim_query_id
     receive(msg: VaultRevoke) on Active {
         require(in.senderAddress == storage.owner,           ErrorClass.Authorization, VAULT_ERR_NOT_OWNER);
         val remaining = storage.totalAmount - storage.claimedAmount;
@@ -286,6 +278,7 @@ contract VestingVault {
     }
 
     // ── RegisterGrant: owner pre-authorises a beneficiary delegation ──────────
+    @disclaim_query_id
     receive(msg: VaultRegisterGrant) on Active {
         require(in.senderAddress == storage.owner,           ErrorClass.Authorization, VAULT_ERR_NOT_OWNER);
         val grant = Slice6CapabilityGrantV1.fromSlice(msg.grantCell.beginParse());
@@ -296,6 +289,7 @@ contract VestingVault {
     }
 
     // ── RevokeGrant: owner invalidates a specific handle ─────────────────────
+    @disclaim_query_id
     receive(msg: VaultRevokeGrant) on Active {
         require(in.senderAddress == storage.owner,           ErrorClass.Authorization, VAULT_ERR_NOT_OWNER);
         var reg = storage.capRegistry.load();

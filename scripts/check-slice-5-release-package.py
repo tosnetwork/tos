@@ -141,6 +141,15 @@ def validate_receive_context_contract(name: str, source_path: Path) -> None:
             "slice5AuctionEmitPayout" in source,
             f"{source_path}: auction reference example must emit seller payout through the stdlib helper",
         )
+    if name == "tos-escrowed-auction":
+        require(
+            "slice5AuctionEmitPayout(config.seller,winningBid)" in re.sub(r"\s+", "", source),
+            f"{source_path}: production auction candidate must save settlement and emit seller payout through the stdlib helper",
+        )
+        require(
+            "off-chain payout" not in source.lower() and "deployer sends funds" not in source.lower(),
+            f"{source_path}: production auction candidate must not rely on off-chain payout dispatch",
+        )
     if name == "payment-channel-example":
         require(
             "slice5PaymentEmitPayout" in source,

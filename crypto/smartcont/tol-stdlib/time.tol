@@ -18,6 +18,11 @@ struct Slice6TimerBudget {
     maxCellDepth: uint16
 }
 
+struct Slice6WallClockBudget {
+    enabled: bool
+    maxFutureHorizonSeconds: uint32
+}
+
 @pure
 fun slice6TimerBudget(
     maxScheduledEntries: uint16,
@@ -37,6 +42,17 @@ fun slice6TimerBudget(
     };
 }
 
+@pure
+fun slice6WallClockBudget(
+    maxFutureHorizonSeconds: uint32,
+    enabled: bool = true
+): Slice6WallClockBudget {
+    return Slice6WallClockBudget {
+        enabled,
+        maxFutureHorizonSeconds,
+    };
+}
+
 fun Slice6TimerBudget.requireEnabled(self): void {
     if (
         !self.enabled ||
@@ -46,6 +62,19 @@ fun Slice6TimerBudget.requireEnabled(self): void {
         self.maxCellDepth == 0
     ) {
         throw SLICE6_TIME_THROW_INVALID_BUDGET;
+    }
+}
+
+fun Slice6WallClockBudget.requireEnabled(self): void {
+    if (!self.enabled || self.maxFutureHorizonSeconds == 0) {
+        throw SLICE6_TIME_THROW_INVALID_BUDGET;
+    }
+}
+
+fun Slice6WallClockBudget.requireDurationWithinBudget(self, durationSeconds: uint32): void {
+    self.requireEnabled();
+    if (durationSeconds > self.maxFutureHorizonSeconds) {
+        throw SLICE6_TIME_THROW_HORIZON;
     }
 }
 

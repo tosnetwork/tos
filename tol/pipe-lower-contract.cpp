@@ -238,7 +238,7 @@ static void check_receive_opcode_prefix(V<ast_receive_block> receive, StructPtr 
   if (prefix_len != 32) {
     err("contract receive message type `{}` must declare exactly a 32-bit opcode prefix; actual prefix length is {}. See doc/tos-language-syntax-policy.md §3.2.",
         message_struct->name, prefix_len)
-      .collect(receive->message_type_node);
+      .fire(receive->message_type_node);
   }
 }
 
@@ -249,7 +249,7 @@ static void check_receive_external_opcode_prefix(V<ast_receive_external_block> r
   if (prefix_len != 32) {
     err("contract receive_external message type `{}` must declare exactly a 32-bit opcode prefix; actual prefix length is {}. See doc/tos-language-syntax-policy.md §3.8.",
         message_struct->name, prefix_len)
-      .collect(receive->message_type_node);
+      .fire(receive->message_type_node);
   }
 }
 
@@ -480,6 +480,13 @@ static AnyV make_state_guard(SrcRange range, V<ast_receive_block> receive, const
   return createV<ast_if_statement>(range, false, cond, if_body, else_body);
 }
 
+static AnyExprV make_state_equals_cond(SrcRange range, V<ast_receive_block> receive, const StateLoweringContext& state_ctx) {
+  return createV<ast_binary_operator>(
+      range, range, "==", tok_eq,
+      make_call(range, make_ref(range, state_ctx.load_state_name)),
+      make_enum_member(range, state_ctx.enum_name, receive->get_state_name()));
+}
+
 static std::vector<AnyV> lower_state_statement(AnyV item, const StateLoweringContext& state_ctx);
 
 static V<ast_block_statement> lower_state_block(V<ast_block_statement> block, const StateLoweringContext& state_ctx) {
@@ -533,15 +540,10 @@ static std::vector<AnyV> lower_state_statement(AnyV item, const StateLoweringCon
   }
 }
 
-static AnyV make_receive_branch(
+static AnyV make_receive_scope_marker(
     V<ast_contract_declaration> contract, V<ast_receive_block> receive, StructPtr message_struct,
-    const StateLoweringContext& state_ctx, bool load_storage_in_branch) {
+    const StateLoweringContext& state_ctx, bool load_storage_in_branch, bool include_state_guard) {
   SrcRange range = receive->range;
-  AnyExprV cond = createV<ast_binary_operator>(
-      range, range, "==", tok_eq, make_ref(range, "op"), make_int(range, message_struct->opcode.pack_prefix));
-
-  // Per-receiver scope contents: the msg-decode binding, the optional state-guard,
-  // any `@disclaim_query_id` lowering injected at the top, and the user's receiver body.
   std::vector<AnyV> scope_items;
   scope_items.reserve(4 + receive->get_body()->get_items().size());
   if (load_storage_in_branch) {
@@ -556,7 +558,9 @@ static AnyV make_receive_branch(
     scope_items.push_back(make_call(disclaim_range, make_ref(disclaim_range, "disclaim_query_id")));
   }
   if (state_ctx.enabled) {
-    scope_items.push_back(make_state_guard(range, receive, state_ctx));
+    if (include_state_guard) {
+      scope_items.push_back(make_state_guard(range, receive, state_ctx));
+    }
     for (AnyV item : receive->get_body()->get_items()) {
       std::vector<AnyV> lowered = lower_state_statement(item, state_ctx);
       scope_items.insert(scope_items.end(), lowered.begin(), lowered.end());
@@ -568,16 +572,51 @@ static AnyV make_receive_branch(
     scope_items.push_back(make_return_void(range));
   }
 
+  auto scope_block = createV<ast_block_statement>(range, std::move(scope_items));
+  return createV<ast_receiver_scope_marker>(
+      range, contract->get_identifier()->name, message_struct->name, receive->range, scope_block);
+}
+
+static AnyV make_receive_branch(
+    V<ast_contract_declaration> contract, V<ast_receive_block> receive, StructPtr message_struct,
+    const StateLoweringContext& state_ctx, bool load_storage_in_branch) {
+  SrcRange range = receive->range;
+  AnyExprV cond = createV<ast_binary_operator>(
+      range, range, "==", tok_eq, make_ref(range, "op"), make_int(range, message_struct->opcode.pack_prefix));
+
   // Wrap the receiver scope in an ast_receiver_scope_marker. This binds
   // pipeline_check_query_id_propagation's per-scope analysis records — receiver A's
   // `@disclaim_query_id` cannot silence receiver B's reply. See
   // doc/tos-language-syntax-policy.md §3.2.1, §10.1.
-  auto scope_block = createV<ast_block_statement>(range, std::move(scope_items));
-  AnyV scope_marker = createV<ast_receiver_scope_marker>(
-      range, contract->get_identifier()->name, message_struct->name, receive->range, scope_block);
+  AnyV scope_marker = make_receive_scope_marker(contract, receive, message_struct, state_ctx, load_storage_in_branch, true);
 
   std::vector<AnyV> if_body_items;
   if_body_items.push_back(scope_marker);
+  auto if_body = createV<ast_block_statement>(range, std::move(if_body_items));
+  auto else_body = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
+  return createV<ast_if_statement>(range, false, cond, if_body, else_body);
+}
+
+static AnyV make_receive_state_group_branch(
+    V<ast_contract_declaration> contract, const std::vector<int>& group_indices, const std::vector<StructPtr>& message_structs,
+    const StateLoweringContext& state_ctx, bool load_storage_in_branch) {
+  V<ast_receive_block> first_receive = contract->get_receive(group_indices.front());
+  StructPtr message_struct = message_structs[group_indices.front()];
+  SrcRange range = first_receive->range;
+  AnyExprV cond = createV<ast_binary_operator>(
+      range, range, "==", tok_eq, make_ref(range, "op"), make_int(range, message_struct->opcode.pack_prefix));
+
+  std::vector<AnyV> if_body_items;
+  for (int index : group_indices) {
+    V<ast_receive_block> receive = contract->get_receive(index);
+    AnyExprV state_cond = make_state_equals_cond(receive->range, receive, state_ctx);
+    std::vector<AnyV> state_body_items{
+        make_receive_scope_marker(contract, receive, message_structs[index], state_ctx, load_storage_in_branch, false)};
+    auto state_body = createV<ast_block_statement>(receive->range, std::move(state_body_items));
+    auto state_else = createV<ast_block_statement>(SrcRange::empty_at_end(receive->range), std::vector<AnyV>{});
+    if_body_items.push_back(createV<ast_if_statement>(receive->range, false, state_cond, state_body, state_else));
+  }
+  if_body_items.push_back(make_throw(range, 1024));
   auto if_body = createV<ast_block_statement>(range, std::move(if_body_items));
   auto else_body = createV<ast_block_statement>(SrcRange::empty_at_end(range), std::vector<AnyV>{});
   return createV<ast_if_statement>(range, false, cond, if_body, else_body);
@@ -839,12 +878,43 @@ static V<ast_function_declaration> make_on_internal_function(
   }
 
   // 5. dispatch table for declared (non-deploy, non-unknown) receivers.
+  //
+  // A state-bearing contract may intentionally declare the same wire message in
+  // multiple states:
+  //
+  //   receive(msg: Close) on Open { ... }
+  //   receive(msg: Close) on Settled { ... }
+  //
+  // In that case the opcode branch must not throw when the first state's guard
+  // misses; it must select by state inside the already-matched opcode. The
+  // validation in lower_contract() only permits this shape for same-struct,
+  // state-qualified overloads, so grouping by opcode here is unambiguous.
+  std::vector<bool> emitted_opcode(contract->get_num_receives(), false);
   for (int i = 0; i < contract->get_num_receives(); ++i) {
     V<ast_receive_block> receive = contract->get_receive(i);
     if (receive->is_deploy || receive->is_unknown_opcode_catch_all) {
       continue;
     }
-    items.push_back(make_receive_branch(contract, receive, message_structs[i], state_ctx, !load_storage_before_dispatch));
+    if (emitted_opcode[i]) {
+      continue;
+    }
+    std::vector<int> group_indices;
+    int64_t opcode = message_structs[i]->opcode.pack_prefix;
+    for (int j = i; j < contract->get_num_receives(); ++j) {
+      V<ast_receive_block> candidate = contract->get_receive(j);
+      if (candidate->is_deploy || candidate->is_unknown_opcode_catch_all || emitted_opcode[j]) {
+        continue;
+      }
+      if (message_structs[j]->opcode.prefix_len == 32 && message_structs[j]->opcode.pack_prefix == opcode) {
+        group_indices.push_back(j);
+        emitted_opcode[j] = true;
+      }
+    }
+    if (group_indices.size() == 1) {
+      items.push_back(make_receive_branch(contract, receive, message_structs[i], state_ctx, !load_storage_before_dispatch));
+    } else {
+      items.push_back(make_receive_state_group_branch(contract, group_indices, message_structs, state_ctx, !load_storage_before_dispatch));
+    }
   }
 
   // 6. trailing UnknownMode tail.
@@ -1010,6 +1080,8 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
   std::vector<StructPtr> message_structs;
   message_structs.reserve(contract->get_num_receives());
   std::unordered_map<int64_t, V<ast_receive_block>> seen_opcodes;
+  std::unordered_map<int64_t, StructPtr> seen_opcode_structs;
+  std::unordered_map<std::string, V<ast_receive_block>> seen_opcode_states;
   for (int i = 0; i < contract->get_num_receives(); ++i) {
     V<ast_receive_block> receive = contract->get_receive(i);
     // Slice 2 Stage 4 (§3.2 v3): the reserved `UnknownOpcode` pseudo-type has no wire encoding
@@ -1024,9 +1096,26 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     if (message_struct->opcode.prefix_len == 32) {
       auto [it, inserted] = seen_opcodes.emplace(message_struct->opcode.pack_prefix, receive);
       if (!inserted) {
-        err("duplicate contract receive opcode `{}`; first receiver with this opcode was declared at {}",
-            std::to_string(message_struct->opcode.pack_prefix), it->second->range.stringify_start_location(false))
-          .collect(receive->message_type_node);
+        bool allowed_state_overload = state_ctx.enabled && receive->has_state_clause() && it->second->has_state_clause()
+            && seen_opcode_structs[message_struct->opcode.pack_prefix] == message_struct;
+        if (!allowed_state_overload) {
+          err("duplicate contract receive opcode `{}`; first receiver with this opcode was declared at {}",
+              std::to_string(message_struct->opcode.pack_prefix), it->second->range.stringify_start_location(false))
+            .collect(receive->message_type_node);
+        }
+      } else {
+        seen_opcode_structs.emplace(message_struct->opcode.pack_prefix, message_struct);
+      }
+      if (state_ctx.enabled && receive->has_state_clause()) {
+        std::string key = std::to_string(message_struct->opcode.pack_prefix);
+        key.push_back(':');
+        key.append(receive->get_state_name());
+        auto [state_it, state_inserted] = seen_opcode_states.emplace(std::move(key), receive);
+        if (!state_inserted) {
+          err("duplicate contract receive opcode `{}` for state `{}`; first receiver with this opcode/state pair was declared at {}",
+              std::to_string(message_struct->opcode.pack_prefix), receive->get_state_name(), state_it->second->range.stringify_start_location(false))
+            .collect(receive->message_type_node);
+        }
       }
     }
     message_structs.push_back(message_struct);

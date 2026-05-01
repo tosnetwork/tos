@@ -953,7 +953,11 @@ Slice 5 release checker. The remaining bonded-oracle emulator workflow
 gap is also closed: external-candidate manifests with emulator fixtures
 are validated against CMake wiring, and the bonded oracle fixture relies
 on the Tol deploy path to compute nested reporter-set hashes instead of
-manual C++ storage constants.
+manual C++ storage constants. The external auction candidate has also
+been hardened from an off-chain pending-payout artifact into a direct
+settlement path: it saves settled state and emits the seller payout via
+`slice5AuctionEmitPayout(...)`, with the release checker gating that
+pattern.
 
 **Stage plan.**
 
@@ -1086,7 +1090,12 @@ field: value })` object-spread lowering, the trusted
 TVM `PREVMCBLOCKS`, `@stdlib/safe-payments`, pure Slice 6 budget
 construction, call-site evaluated default parameters, and release
 checker coverage for Unix-time-to-masterchain-seqno misuse and unsafe
-`SEND_MODE_REGULAR` value dispatch in Slice 6 examples. Protocol
+`SEND_MODE_REGULAR` value dispatch in Slice 6 examples. A follow-up
+hardening pass split wall-clock application duration budgets from
+masterchain-seqno scheduler budgets via `Slice6WallClockBudget`, and
+the VestingVault external trial now uses that explicit seconds-based
+budget instead of reusing `Slice6TimerBudget.maxFutureHorizonBlocks`.
+Protocol
 activation of validator scheduled delivery and production BackPressure
 emission remains gated to later Slice 6 stages. The Stage 0 input
 documents are
@@ -1334,12 +1343,15 @@ authorization plane, not reusable public bearer secrets.
    - ✅ Post-trial author hardening: close VestingVault findings around
      storage spread saves, trusted masterchain seqno, safe payout/refund
      helpers, retained-balance guards, pure stdlib constructors, default
-     parameter helper calls, and release-checker guardrails.
+     parameter helper calls, wall-clock duration budgets, and
+     release-checker guardrails.
    - ✅ Post-trial ergonomics hardening: add
      `@implicit_protocol_default;` plus validated
      `@implicit_protocol_for(Message, State)` suppressions for sparse
-     state machines, and lock `contract.getAddress()` support inside
-     `@deploy` with compiler tests and author documentation.
+     state machines; allow same-struct, state-qualified receive opcode
+     overloads while still rejecting duplicate `(opcode, state)` handlers;
+     and lock `contract.getAddress()` support inside `@deploy` with
+     compiler tests and author documentation.
    - ✅ Update roadmap: repo-side complete; production activation
      pending.
    - ✅ Commit + push:
@@ -1755,12 +1767,26 @@ removed when policy v6 made single-signer the rule; see §11.3.)
 
 ### r51 (Slice 6 external-author hardening)
 
+- Split Slice 6 time budgets into scheduler `Slice6TimerBudget` for
+  masterchain-seqno scheduled messages and `Slice6WallClockBudget` for
+  ordinary application durations measured in seconds; updated
+  VestingVault to use the wall-clock budget and added release-checker
+  coverage against unit regression.
+- Hardened the TosEscrowedAuction external candidate from an off-chain
+  pending-payout artifact into a direct payout path gated by the Slice 5
+  release checker.
+- Fixed the Tol contract lowering gap exposed by VestingVault: the same
+  wire message may now have different `receive(... ) on State` handlers in
+  different states, lowering to opcode-plus-state dispatch; duplicate
+  handlers for the same `(opcode, state)` pair remain compile errors.
+
 - Closed the VestingVault external trial's critical authoring gaps:
   object-literal spread now lowers end-to-end, `blockchain.currentMcSeqno()`
   exposes trusted `PREVMCBLOCKS` masterchain seqno, `@stdlib/safe-payments`
   provides safe payout/refund/retained-balance helpers, and Slice 6 release
-  checks reject Unix-time-to-mc-seqno misuse plus unsafe
-  `SEND_MODE_REGULAR` value dispatch in production examples.
+  checks reject Unix-time-to-mc-seqno misuse, unsafe `SEND_MODE_REGULAR`
+  value dispatch, and regression away from explicit sparse-state/query-id
+  declarations in production examples.
 - Relaxed function parameter defaults so they can call global helper
   functions at call-site evaluation time while still rejecting defaults that
   capture the callee's own parameters. Struct field defaults remain constant.

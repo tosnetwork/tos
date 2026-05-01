@@ -20,7 +20,10 @@ Rules for production contracts:
   base. Use `blockchain.currentMcSeqno()` / `currentMcSeqno()`, which read
   TVM `PREVMCBLOCKS`; never use `blockchain.now()` or caller-provided
   `msg.now` for `*McSeqno` capability or scheduler fields. Unix time is
-  still appropriate for ordinary wall-clock business logic.
+  still appropriate for ordinary wall-clock business logic. Use
+  `Slice6WallClockBudget` / `slice6WallClockBudget(...)` for bounded
+  application durations measured in seconds; do not reuse
+  `Slice6TimerBudget.maxFutureHorizonBlocks` for wall-clock periods.
 - Declare a finite timer, monitor, supervisor, dead-letter, and
   capability budget before storing entries.
 - Use `save({ ...storage, changedField: value })` for storage updates and

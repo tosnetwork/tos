@@ -13,7 +13,7 @@ A **token vesting vault** that holds TOS coins and releases them to a beneficiar
 This is a real DeFi primitive. Team token vesting, investor unlocks, DAO contributor grants — all use this pattern. The interesting Slice 6 aspects are:
 
 - **State machine**: `Pending → Active → Closed` with separate receive paths per state.
-- **`@stdlib/time`**: `Slice6TimerBudget.requireHorizon` used to validate that the vest period is within a sane bound (≤ 3 years).
+- **`@stdlib/time`**: `Slice6WallClockBudget.requireDurationWithinBudget` used to validate that the vest period is within a sane wall-clock bound (≤ 3 years), without mixing seconds into masterchain-seqno scheduler fields.
 - **`@stdlib/capability`**: `Slice6CapabilityRegistry.requireCapability` gates every claim. Single-use nonces prevent replay; handle revocation lets the owner invalidate a compromised grant.
 
 ## Post-trial hardening applied
@@ -29,6 +29,17 @@ The trial findings were converted into repo guardrails:
   retained-balance helpers. The vault refunds funding excess, uses
   bounce-on-action-fail payout defaults, and checks retained balance before
   sending claim/revoke payouts.
+- `@stdlib/time` now separates scheduler block budgets from wall-clock
+  application duration budgets. The vault uses `Slice6WallClockBudget`
+  for vesting seconds, and the Slice 6 release checker rejects regressing
+  this external trial back to `Slice6TimerBudget.maxFutureHorizonBlocks`.
+- State-qualified receives can now reuse the same wire message across
+  different states. The compiler lowers them as one opcode branch with an
+  inner state dispatch, while still rejecting duplicate handlers for the
+  same `(opcode, state)` pair.
+- The vault declares `@implicit_protocol_default;` and per-receiver
+  `@disclaim_query_id` markers, so standalone `tol --check-only` is clean
+  and the sparse state matrix is intentional rather than accidental.
 - `slice6TimerBudget(...)` is marked `@pure`, and parameter defaults may now
   call helper functions at call-site evaluation time.
 - `scripts/check-slice-6-release-package.py` now scans Slice 6 examples and
@@ -41,7 +52,7 @@ The trial findings were converted into repo guardrails:
 
 ```
 examples/external-trials/vesting-vault/
-├── src/vesting-vault.tol            — contract source (~430 lines)
+├── src/vesting-vault.tol            — contract source (332 lines)
 ├── tests/vesting-vault-positive.tol — test file (14 test cases)
 ├── manifest.json
 ├── artifacts/
@@ -71,13 +82,20 @@ cd /home/tomi/tos/tol-tester && \
 ```
 Result: **14/14 cases pass, gas 132954.**
 
-### 3. Release package check
+### 3. Standalone contract check
+```
+/home/tomi/tos/build/tol/tol --check-only \
+  examples/external-trials/vesting-vault/src/vesting-vault.tol
+```
+Result: clean; zero errors and zero warnings.
+
+### 4. Release package check
 ```
 python3 /home/tomi/tos/scripts/check-slice-6-release-package.py
 ```
 Result: `Validated Slice 6 release-package guardrails: delivery, schedule, time, supervision, capability, safe payments, no caller-controlled time scheduling`
 
-### 4. Whitespace check
+### 5. Whitespace check
 ```
 cd /home/tomi/tos && git diff --check
 ```
@@ -93,7 +111,7 @@ Result: clean (no output).
 | 802 | vested_linear_after_cliff              | Happy path: linear vesting math                      | PASS   |
 | 803 | vested_caps_at_total                   | Happy path: full vest cap                            | PASS   |
 | 804 | claimable_minus_claimed                | Happy path: progressive claim accounting             | PASS   |
-| 805 | timer_budget_fields                    | `@stdlib/time` budget instantiation                  | PASS   |
+| 805 | wall_clock_budget_fields               | `@stdlib/time` wall-clock budget construction        | PASS   |
 | 806 | cap_wrong_sender_rejected              | Authorization failure                                | PASS   |
 | 807 | cap_nonce_replay_rejected              | Replay / duplicate handling                          | PASS   |
 | 808 | cap_expired_rejected                   | Malformed input (time-expired grant)                 | PASS   |
@@ -116,11 +134,13 @@ Result: clean (no output).
 | `@pure` helper could not call `slice6TimerBudget(...)` | Pure fixture/config helpers had to drop `@pure`. | **Closed.** `slice6TimerBudget(...)` is now marked `@pure`; the hardening tests cover a pure helper that calls it. |
 | Function default parameters rejected helper calls | Test fixtures needed no-arg wrapper boilerplate. | **Closed.** Parameter defaults may call global helpers at call-site evaluation time. Defaults still cannot capture the function's own parameters. |
 | No trusted masterchain seqno surface | Authors used `blockchain.now()` as a semantic proxy for `*McSeqno` fields. | **Closed.** `blockchain.currentMcSeqno()` / `currentMcSeqno()` use TVM `PREVMCBLOCKS`; release checks reject `blockchain.now()` flowing into Slice 6 mc-seqno APIs. |
+| Seconds were bounded with scheduler block budget fields | `Slice6TimerBudget.maxFutureHorizonBlocks` was reused for a vesting period measured in seconds, creating a silent unit confusion risk. | **Closed.** `Slice6WallClockBudget` now represents bounded application durations in seconds; VestingVault uses it, and the Slice 6 release checker rejects regression to scheduler block fields. |
+| Same message type could not be used in multiple states | A realistic state machine needs `VaultRevoke` in both `Pending` and `Active`; ordinary duplicate-opcode rejection made the standalone contract fail. | **Closed.** The compiler now permits same-struct, state-qualified opcode overloads and lowers them to opcode-plus-state dispatch. Duplicate handlers for the same state still fail. |
 | Funding excess locked in `VaultFund` | Overpayment stayed in the vault forever. | **Closed.** `@stdlib/safe-payments` provides `slice6RefundExcess*`; the vault refunds excess funding. |
 | Claim/revoke payouts used `SEND_MODE_REGULAR` | Action-phase payout failure could silently lose value. | **Closed.** Safe payment helpers default to `SEND_MODE_BOUNCE_ON_ACTION_FAIL`; Slice 5 payout helpers now use the same safer default. |
 | No minimum retained-balance guard | Repeated partial claims could starve rent. | **Closed.** `slice6RequireMinimumBalanceAfterPayout` and `slice6ReserveMinimumBalance` are documented and used before payouts. |
 | `Cell<T>`, nested parsing, and trusted time docs required source-grepping | Authors had to infer patterns from stdlib source. | **Closed.** The Slice 6 author guide now documents typed cells, lazy parsing boundaries, and trusted time access. |
-| Exhaustiveness warning suppression is O(states × messages) | Correct warnings are noisy for intentionally invalid state/opcode pairs. | **Closed.** `@implicit_protocol_for(Message, State)` handles precise pairs; `@implicit_protocol_default;` handles intentional sparse matrices. |
+| Exhaustiveness warning suppression is O(states × messages) | Correct warnings are noisy for intentionally invalid state/opcode pairs. | **Closed.** `@implicit_protocol_for(Message, State)` handles precise pairs; `@implicit_protocol_default;` handles intentional sparse matrices; VestingVault uses the default marker and now checks cleanly standalone. |
 | `contract.getAddress()` in `@deploy` is not available | Deploy handlers cannot self-reference without explicit input. | **Closed.** `contract.getAddress()` is explicitly supported in `@deploy` because it lowers to `MYADDR` and does not read c4; `contract-deploy-get-address-positive.tol` locks the behavior. |
 
 ---

@@ -28,6 +28,10 @@ fun timeBudget(
     return slice6TimerBudget(4, maxBodyBits, 1, maxFutureHorizonBlocks, 1023, enabled);
 }
 
+fun wallClockBudget(maxFutureHorizonSeconds: uint32 = 1000, enabled: bool = true): Slice6WallClockBudget {
+    return slice6WallClockBudget(maxFutureHorizonSeconds, enabled);
+}
+
 fun main(): int {
     return 0;
 }
@@ -114,6 +118,32 @@ fun test_cancel_scheduled_helper_rejects_wrong_caller(): int {
     return result;
 }
 
+@method_id(660)
+fun test_wall_clock_budget_accepts_seconds_boundary(): int {
+    wallClockBudget().requireDurationWithinBudget(1000);
+    return wallClockBudget().maxFutureHorizonSeconds as int;
+}
+
+@method_id(661)
+fun test_wall_clock_budget_rejects_seconds_horizon(): int {
+    try {
+        wallClockBudget().requireDurationWithinBudget(1001);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(662)
+fun test_wall_clock_budget_rejects_disabled(): int {
+    try {
+        wallClockBudget(1000, false).requireDurationWithinBudget(1);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 651 | | 20
 @testcase | 652 | | 110
@@ -124,4 +154,7 @@ fun test_cancel_scheduled_helper_rejects_wrong_caller(): int {
 @testcase | 657 | | 4356
 @testcase | 658 | | 0
 @testcase | 659 | | 2
+@testcase | 660 | | 1000
+@testcase | 661 | | 4355
+@testcase | 662 | | 4353
  */

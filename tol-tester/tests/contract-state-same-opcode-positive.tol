@@ -1,0 +1,33 @@
+struct ContractStateSameOpcodeStorage {
+    total: uint32;
+}
+
+struct (0x00000096) ContractStateSameOpcodePing {
+    queryId: uint64;
+    value: uint32;
+}
+
+contract ContractStateSameOpcode {
+    storage: ContractStateSameOpcodeStorage
+    states: Open, Closed
+    @initial state Open
+
+    receive(msg: ContractStateSameOpcodePing) on Open {
+        save(ContractStateSameOpcodeStorage { total: msg.value });
+        become Closed;
+    }
+
+    receive(msg: ContractStateSameOpcodePing) on Closed {
+        save(ContractStateSameOpcodeStorage { total: storage.total + msg.value });
+        keep_state;
+    }
+}
+
+@method_id(1)
+fun test_same_opcode_across_states_compiles(): int {
+    return 1;
+}
+
+/**
+@testcase | 1 | | 1
+ */
