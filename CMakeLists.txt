@@ -104,6 +104,14 @@ option(TOS_INSERT_GDB_HOOKS "Insert GDB hooks" OFF)
 
 option(TOS_USE_LLD "Use LLD for linking" OFF)
 
+# Detect Threads before activating -fuse-ld=lld so that CMake's internal
+# FindThreads compiler probe links against the default system linker. The
+# result is cached; subsequent find_package(Threads) calls (e.g. from the
+# rocksdb subdirectory) reuse the cache and skip the probe entirely.
+set(CMAKE_THREAD_PREFER_PTHREAD ON)
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 if (TOS_USE_LLD)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=lld")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=lld")
@@ -363,9 +371,6 @@ endif()
 
 include(CheckCXXCompilerFlag)
 
-set(CMAKE_THREAD_PREFER_PTHREAD ON)
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 
 if (MINGW)

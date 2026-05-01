@@ -83,7 +83,11 @@ class CellStateRollbackSnapshot {
             }
             account_root_ = cell_state_->serialize_to_cell();
             block_hashes_root_ = cell_state_->serialize_block_hashes_to_cell();
-            captured_ = account_root_.not_null() && block_hashes_root_.not_null();
+            // block_hashes_root_ may be null when canonical_ is empty (fresh
+            // state or test fixture with no block history).
+            // load_block_hashes_from_cell(null) is well-defined and clears the
+            // map, so null is a valid restore target.
+            captured_ = account_root_.not_null();
             return captured_;
         } catch (vm::VmError&) {
             LOG(ERROR) << "evm-workchain: rollback snapshot capture failed with vm::VmError";

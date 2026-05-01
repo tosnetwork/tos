@@ -70,7 +70,7 @@ RUN apt-get update && \
 RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - && \
     echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | tee /etc/apt/sources.list.d/llvm.list && \
     apt-get update && \
-    apt-get install -y clang-21 && \
+    apt-get install -y clang-21 lld-21 && \
     rm -rf /var/lib/apt/lists/*
 
 ENV CC=/usr/bin/clang-21
