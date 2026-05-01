@@ -23,7 +23,7 @@ contract Slice5GovernanceExample {
     receive(msg: Slice5GovernanceVote) {
         val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
         var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
-        proposal.vote(msg.voterKey, msg.support, msg.now);
+        proposal.vote(msg.voterKey, msg.support, blockchain.now() as uint32);
         save(Slice5GovernanceStorage { policy: storage.policy, proposal: proposal.toCell() });
         policy.proposerKey;
     }
@@ -32,7 +32,7 @@ contract Slice5GovernanceExample {
     receive(msg: Slice5GovernanceExecute) {
         val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
         var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
-        proposal.execute(policy, msg.now);
+        proposal.execute(policy, blockchain.now() as uint32);
         save(Slice5GovernanceStorage { policy: storage.policy, proposal: proposal.toCell() });
     }
 
@@ -40,7 +40,7 @@ contract Slice5GovernanceExample {
     receive(msg: Slice5GovernanceCancel) {
         val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
         var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
-        proposal.cancel(policy, msg.proposerKey, msg.now);
+        proposal.cancel(policy, msg.proposerKey, blockchain.now() as uint32);
         save(Slice5GovernanceStorage { policy: storage.policy, proposal: proposal.toCell() });
     }
 }

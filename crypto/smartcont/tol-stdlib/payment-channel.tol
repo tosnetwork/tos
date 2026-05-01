@@ -264,3 +264,15 @@ fun Slice5PaymentChannelState.settle(mutate self, now: uint32): coins {
     self.closed = true;
     return self.balanceB;
 }
+
+fun slice5PaymentPayoutMessage(to: address, amount: coins): OutMessage {
+    return createMessage({
+        bounce: BounceMode.NoBounce,
+        dest: to,
+        value: amount,
+    });
+}
+
+fun slice5PaymentEmitPayout(to: address, amount: coins, mode: int = SEND_MODE_REGULAR): void {
+    slice5PaymentPayoutMessage(to, amount).send(mode);
+}

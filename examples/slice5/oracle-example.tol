@@ -17,7 +17,7 @@ contract Slice5OracleExample {
         val config = lazy Slice5OracleConfig.fromCell(storage.config);
         val reporterSet = lazy Slice5OracleReporterSet.fromCell(storage.reporterSet);
         var round = lazy Slice5OracleRound.fromCell(storage.round);
-        round.addReport(reporterSet, config, msg);
+        round.addTrustedReport(reporterSet, config, msg, msg.reporterKey, blockchain.now() as uint32);
         save(Slice5OracleStorage { config: storage.config, reporterSet: storage.reporterSet, round: round.toCell() });
     }
 
@@ -25,7 +25,7 @@ contract Slice5OracleExample {
     receive(msg: Slice5OracleFinalize) {
         val config = lazy Slice5OracleConfig.fromCell(storage.config);
         var round = lazy Slice5OracleRound.fromCell(storage.round);
-        round.finalize(config, msg);
+        round.finalizeTrusted(config, msg, blockchain.now() as uint32);
         save(Slice5OracleStorage { config: storage.config, reporterSet: storage.reporterSet, round: round.toCell() });
     }
 }

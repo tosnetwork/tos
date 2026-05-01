@@ -263,5 +263,14 @@
       "class": "Protocol"
     }
   ],
-  "wire_compatibility_exceptions": []
+  "wire_compatibility_exceptions": [
+    {
+      "exception": "Slice5PaymentCooperativeClose.now, Slice5PaymentChallengeClose.now, and Slice5PaymentSettle.now remain wire fields but are ignored by production receive handlers",
+      "reason": "The production contract uses blockchain.now() for signed-state freshness, challenge-window start, and settlement-window checks. The caller-controlled wire field is retained only for ABI compatibility with the external trial body shape."
+    },
+    {
+      "exception": "TosStreamChannel dispatches balanceB payout after saving closed state",
+      "reason": "The stdlib state helpers still return balanceB and do not send by themselves. This production candidate stores partyBAddress in contract storage and calls slice5PaymentEmitPayout after save() in cooperativeClose and settle."
+    }
+  ]
 }

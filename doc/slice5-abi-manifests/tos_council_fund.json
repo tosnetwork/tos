@@ -265,5 +265,14 @@
       "class": "Permanent"
     }
   ],
-  "wire_compatibility_exceptions": []
+  "wire_compatibility_exceptions": [
+    {
+      "exception": "Slice5GovernanceVote.now, Slice5GovernanceExecute.now, and Slice5GovernanceCancel.now remain wire fields but are ignored by production receive handlers",
+      "reason": "The production contract uses blockchain.now() for vote, execute, and cancel expiry checks. The caller-controlled wire field is retained only for ABI compatibility."
+    },
+    {
+      "exception": "Slice5GovernancePropose.proposerKey, Slice5GovernanceVote.voterKey, and Slice5GovernanceCancel.proposerKey are not treated as sender authorization",
+      "reason": "TosCouncilFund derives proposer/voter authorization from in.senderAddress and uses fixed canonical keys internally. Caller-controlled key fields are retained only for stdlib ABI compatibility."
+    }
+  ]
 }

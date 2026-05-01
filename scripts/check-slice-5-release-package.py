@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +41,12 @@ EXTERNAL_CANDIDATES = (
         "examples/slice5/tos-escrowed-auction",
         "src/tos-escrowed-auction.tol",
         "tos-escrowed-auction",
+    ),
+    (
+        "tos-report-bond-oracle",
+        "examples/slice5/tos-report-bond-oracle",
+        "src/tos-report-bond-oracle.tol",
+        "tos-report-bond-oracle",
     ),
 )
 
@@ -86,6 +93,30 @@ def load_json(path: Path) -> dict:
             return json.load(f)
     except json.JSONDecodeError as e:
         raise SystemExit(f"{path}: invalid JSON: {e}") from e
+
+
+def strip_tol_comments(text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return re.sub(r"//.*", "", text)
+
+
+def validate_receive_context_contract(name: str, source_path: Path) -> None:
+    source = strip_tol_comments(source_path.read_text(encoding="utf-8"))
+    require("msg.now" not in source, f"{source_path}: production candidate must not trust caller-controlled msg.now")
+    require(
+        "msg.reporterKey" not in source,
+        f"{source_path}: production candidate must not trust caller-controlled msg.reporterKey",
+    )
+    if name == "tos-stream-channel":
+        require(
+            "slice5PaymentEmitPayout" in source,
+            f"{source_path}: payment-channel candidate must dispatch or explicitly replace payout emission",
+        )
+    if name == "tos-report-bond-oracle":
+        require(
+            "in.valueCoins" in source and "in.senderAddress" in source and "blockchain.now()" in source,
+            f"{source_path}: bond oracle must bind bond, reporter identity, and freshness to TVM context",
+        )
 
 
 def validate_generated_manifest(root: Path, manifest_path: Path) -> None:
@@ -143,7 +174,9 @@ def main() -> int:
     for name, relative_dir, source_relative, test_filter in EXTERNAL_CANDIDATES:
         project = root / relative_dir
         require(project.is_dir(), f"{project}: external candidate missing")
-        run([str(tol), "--check-only", str(project / source_relative)])
+        source = project / source_relative
+        validate_receive_context_contract(name, source)
+        run([str(tol), "--check-only", str(source)])
         run([sys.executable, str(tester), "tests", test_filter], cwd=project, env=env)
         manifest = load_json(project / "manifest.json")
         require(manifest.get("abi_manifest"), f"{project}: external candidate ABI manifest missing")

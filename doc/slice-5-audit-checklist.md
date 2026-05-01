@@ -45,6 +45,10 @@ Before shipping a Slice 5 contract:
 - Confirm oracle round-start receive handlers pass `in.senderAddress` to
   `slice5OracleStartRound` and that `Slice5OracleConfig.roundStarter`
   is the intended starter address.
+- Confirm oracle report receive handlers do not trust wire
+  `reporterKey` or `now` fields. Derive reporter identity from
+  `in.senderAddress` and pass `blockchain.now()` to report/finalize
+  helpers.
 - Confirm oracle reporter sets stay within the stdlib's bounded
   255-reporter map-aggregation limit.
 - Confirm oracle deployments that rely on `maxDeviation` for data
@@ -61,3 +65,10 @@ Before shipping a Slice 5 contract:
 - Confirm payment-channel payout dispatch is explicit: helper calls save
   closed state before sending funds, or the contract documents why
   payout is settled off-chain.
+- For bonded oracle/payment flows that emit multiple sends in one
+  transaction, record the maximum action count and gas budget. The
+  `TosReportBondOracle` candidate emits at most three refund sends after
+  finalization state is saved.
+- Do not rely on undocumented `map<uint256, coins>` storage behavior for
+  externally audited examples. Prefer explicit integer units in maps
+  until the ABI/storage guide covers that shape.

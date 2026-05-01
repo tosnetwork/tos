@@ -236,11 +236,44 @@ fun Slice5OracleRound.addReport(mutate self, reporterSet: Slice5OracleReporterSe
     return self.reportCount;
 }
 
+fun slice5OracleTrustedReport(
+    msg: Slice5OracleReport,
+    reporterKey: uint256,
+    now: uint32
+): Slice5OracleReport {
+    return Slice5OracleReport {
+        queryId: msg.queryId,
+        roundId: msg.roundId,
+        reporterKey,
+        value: msg.value,
+        now,
+    };
+}
+
+fun Slice5OracleRound.addTrustedReport(
+    mutate self,
+    reporterSet: Slice5OracleReporterSet,
+    config: Slice5OracleConfig,
+    msg: Slice5OracleReport,
+    reporterKey: uint256,
+    now: uint32
+): uint16 {
+    return self.addReport(reporterSet, config, slice5OracleTrustedReport(msg, reporterKey, now));
+}
+
 fun Slice5OracleRound.median(self, config: Slice5OracleConfig): uint64 {
     if (self.reportCount < config.quorum) {
         throw SLICE5_ORACLE_THROW_INSUFFICIENT_QUORUM;
     }
     return self.medianOfReports();
+}
+
+fun slice5OracleTrustedFinalize(msg: Slice5OracleFinalize, now: uint32): Slice5OracleFinalize {
+    return Slice5OracleFinalize {
+        queryId: msg.queryId,
+        roundId: msg.roundId,
+        now,
+    };
 }
 
 fun Slice5OracleRound.finalize(mutate self, config: Slice5OracleConfig, msg: Slice5OracleFinalize): uint64 {
@@ -257,4 +290,8 @@ fun Slice5OracleRound.finalize(mutate self, config: Slice5OracleConfig, msg: Sli
     self.finalized = true;
     self.medianValue = m;
     return m;
+}
+
+fun Slice5OracleRound.finalizeTrusted(mutate self, config: Slice5OracleConfig, msg: Slice5OracleFinalize, now: uint32): uint64 {
+    return self.finalize(config, slice5OracleTrustedFinalize(msg, now));
 }

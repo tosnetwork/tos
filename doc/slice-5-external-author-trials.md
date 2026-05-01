@@ -223,3 +223,61 @@ The trial found nine issues:
 This records an additional external production-intent adoption
 candidate. The Slice 5 external adoption release gate was already
 complete at 3/3; this trial extends coverage to the auction pattern.
+
+## TosReportBondOracle Trial Result
+
+- **Date:** 2026-05-01
+- **Pattern:** `@stdlib/oracle`
+- **Contract:** `examples/slice5/tos-report-bond-oracle/src/tos-report-bond-oracle.tol`
+- **Status:** accepted as an additional production-intent bonded-oracle
+  candidate.
+- **Tests:** `tos-report-bond-oracle-positive.tol` passed 19 cases;
+  `tos-report-bond-oracle-import-positive.tol` passed 4 cases; the
+  integrated emulator fixture brings `test-emulator` to 33 passed cases.
+- **Full report:**
+  `examples/slice5/tos-report-bond-oracle/TRIAL-REPORT.md`.
+
+The external author built a bond-backed oracle where each reporter locks
+1 TON per accepted report. The contract deliberately omits `reporterKey`
+and `now` from the report wire body, derives reporter identity from
+`in.senderAddress`, gates submission with `in.valueCoins`, and uses
+`blockchain.now()` for all freshness checks.
+
+The trial exposed pre-existing production-candidate defects:
+
+- `TosStreamChannel` used caller-controlled `msg.now` for cooperative
+  close, challenge close, and settle. Disposition: the contract now uses
+  `blockchain.now()` and the release checker rejects production
+  candidates that access `msg.now`.
+- `DexPriceOracle` trusted caller-controlled `msg.reporterKey` and
+  `msg.now`. Disposition: the contract now stores reporter addresses,
+  derives the canonical reporter key from `in.senderAddress`, uses
+  `blockchain.now()`, and records ABI compatibility exceptions for the
+  retained wire fields.
+- `TosCouncilFund` used caller-controlled `msg.now` in vote, execute,
+  and cancel. Disposition: those handlers now pass `blockchain.now()` to
+  the governance helpers.
+- `TosStreamChannel` recorded closed state but did not dispatch payout.
+  Disposition: `@stdlib/payment-channel` now provides
+  `slice5PaymentPayoutMessage(...)` and
+  `slice5PaymentEmitPayout(...)`; the production candidate saves closed
+  state first and then emits the `balanceB` payout.
+
+The new bonded oracle also produced three implementation lessons:
+
+- Emulator fixtures need to be CMake-integrated to count. Disposition:
+  `TosReportBondOracle` now has an `@deploy` path and
+  `emulator/test/tos-report-bond-oracle-fixture.cpp` runs through the
+  shared `test-emulator` target.
+- Multiple refund sends are a gas/action-count budget surface.
+  Disposition: docs and audit checklist call out the maximum-send budget;
+  this candidate emits at most three refunds after finalized state is
+  saved.
+- `map<uint256, coins>` storage is not yet documented as an audited
+  pattern. Disposition: the candidate stores nanoTON bonds as `uint64`
+  and records that exception in its ABI manifest.
+
+This records a fifth production-intent candidate and the second oracle
+candidate. The release gate was already complete; this trial hardens the
+production-candidate acceptance bar by making trusted receive context a
+release-checker invariant.

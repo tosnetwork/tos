@@ -171,6 +171,31 @@
         }
       ],
       "fixtures": []
+    },
+    {
+      "name": "DexPriceOracleReporterAddresses",
+      "encoding": "tol_auto_struct",
+      "fields": [
+        {
+          "name": "reporter1",
+          "type": "address",
+          "bits": null,
+          "refs": 0
+        },
+        {
+          "name": "reporter2",
+          "type": "address",
+          "bits": null,
+          "refs": 0
+        },
+        {
+          "name": "reporter3",
+          "type": "address",
+          "bits": null,
+          "refs": 0
+        }
+      ],
+      "fixtures": []
     }
   ],
   "errors": [
@@ -183,6 +208,11 @@
       "name": "DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND",
       "code": 3842,
       "class": "Transient"
+    },
+    {
+      "name": "DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_REPORTER_ADDRESS",
+      "code": 3843,
+      "class": "Authorization"
     },
     {
       "name": "SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER",
@@ -225,5 +255,14 @@
       "class": "Authorization"
     }
   ],
-  "wire_compatibility_exceptions": []
+  "wire_compatibility_exceptions": [
+    {
+      "exception": "DexPriceStartRound.now and DexPriceReport.now remain wire fields but are ignored by production receive handlers",
+      "reason": "The production contract uses blockchain.now() for round start, report freshness, and auto-finalize. The caller-controlled wire field is retained only for ABI compatibility with the first external trial."
+    },
+    {
+      "exception": "DexPriceReport.reporterKey remains a wire field but is ignored by production receive handlers",
+      "reason": "Reporter identity is derived from in.senderAddress through DexPriceOracleReporterAddresses. The caller-controlled reporterKey field is retained only for ABI compatibility."
+    }
+  ]
 }

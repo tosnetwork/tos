@@ -17,6 +17,7 @@ import "@stdlib/payment-channel"
 struct TosStreamChannelStorage {
     config: Cell<Slice5PaymentChannelConfig>
     state: Cell<Slice5PaymentChannelState>
+    partyBAddress: address
 }
 
 contract TosStreamChannel {
@@ -30,8 +31,15 @@ contract TosStreamChannel {
         val config = lazy Slice5PaymentChannelConfig.fromCell(storage.config);
         val signedState = lazy Slice5PaymentSignedState.fromCell(msg.signedState);
         var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
-        state.cooperativeClose(config, signedState, msg.signatureA, msg.signatureB, msg.now);
-        save(TosStreamChannelStorage { config: storage.config, state: state.toCell() });
+        val paidB = state.cooperativeClose(
+            config, signedState, msg.signatureA, msg.signatureB, blockchain.now() as uint32
+        );
+        save(TosStreamChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
+        slice5PaymentEmitPayout(storage.partyBAddress, paidB);
     }
 
     // One party initiates a unilateral close; counterparty may supersede with a
@@ -41,8 +49,12 @@ contract TosStreamChannel {
         val config = lazy Slice5PaymentChannelConfig.fromCell(storage.config);
         val signedState = lazy Slice5PaymentSignedState.fromCell(msg.signedState);
         var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
-        state.challengeClose(config, signedState, msg.signatureA, msg.signatureB, msg.now);
-        save(TosStreamChannelStorage { config: storage.config, state: state.toCell() });
+        state.challengeClose(config, signedState, msg.signatureA, msg.signatureB, blockchain.now() as uint32);
+        save(TosStreamChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
     }
 
     // Finalizes the channel after the challenge window expires.
@@ -50,8 +62,13 @@ contract TosStreamChannel {
     @disclaim_query_id
     receive(msg: Slice5PaymentSettle) {
         var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
-        state.settle(msg.now);
-        save(TosStreamChannelStorage { config: storage.config, state: state.toCell() });
+        val paidB = state.settle(blockchain.now() as uint32);
+        save(TosStreamChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
+        slice5PaymentEmitPayout(storage.partyBAddress, paidB);
     }
 
     // Returns the channel's unique ID (bound to partyA, partyB, and the deploy salt).

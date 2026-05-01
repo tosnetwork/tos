@@ -52,8 +52,9 @@ Compatibility rules:
 - Payment-channel `cooperativeClose` and `settle` helpers return the
   `balanceB` payout amount after updating helper state. They do not
   send funds by themselves; production receive handlers must save the
-  closed state first and then dispatch the payout to `config.partyB`, or
-  explicitly document an off-chain settlement policy.
+  closed state first and then call `slice5PaymentEmitPayout(...)` to a
+  contract-stored payout address, or explicitly document an off-chain
+  settlement policy.
 - Payment-channel `cooperativeCloseVerified` and
   `challengeCloseVerified` skip Ed25519 verification but still enforce
   channel binding, balance conservation, expiry, closed-state, and
@@ -80,10 +81,20 @@ Compatibility rules:
 - Oracle round starts are ordinary contract messages, not protocol
   wakeups. `Slice5OracleConfig.roundStarter` is enforced by
   `slice5OracleStartRound`; pass `in.senderAddress` to the helper.
+- Oracle report identity is a contract responsibility. If a wire body
+  carries `reporterKey`, treat it as caller-controlled metadata and
+  override it with a key derived from `in.senderAddress`, or use
+  `Slice5OracleRound.addTrustedReport(...)` with an already trusted key
+  and `blockchain.now()`.
 - Slice 5 oracle helpers support bounded reporter sets up to 255
   reporters. Median and outlier-anchor calculations iterate over the
   report map deterministically, so larger fixed-at-deploy reporter sets
   do not require a contract fork.
+- Bonded oracle variants should store bond amounts in an explicitly
+  bounded integer unit such as nanoTON `uint64` until `map<uint256,
+  coins>` storage and tooling are documented. If finalization emits one
+  refund per reporter, document the maximum sends per transaction and
+  cover it in the gas budget.
 - Oracle `maxDeviation` outlier protection needs quorum `>= 3` when it
   is intended to resist a compromised first reporter. With quorum `2`,
   the second accepted report can only be checked against the single
@@ -108,4 +119,7 @@ depend on message context: `SmartContract::Args.set_sender_address(...)`
 injects `in.senderAddress`, and `set_now(...)` injects
 `blockchain.now()`. `emulator/test/slice-5-receive-context-fixture.cpp`
 is the minimal template for exercising real lowered `receive` handlers
-with forged body fields and trusted VM context side by side.
+with forged body fields and trusted VM context side by side. The
+`TosReportBondOracle` fixture is the fuller template for a real external
+candidate with `@deploy`, `set_amount(...)`, sender-derived identity,
+and chain-time freshness checks.

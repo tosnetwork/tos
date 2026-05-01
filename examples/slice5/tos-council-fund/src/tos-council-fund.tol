@@ -85,7 +85,7 @@ contract TosCouncilFund {
         );
         val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
         var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
-        proposal.vote(voterKey, msg.support, msg.now);
+        proposal.vote(voterKey, msg.support, blockchain.now() as uint32);
         save(TosCouncilFundStorage {
             proposerAddress: storage.proposerAddress,
             voters: storage.voters,
@@ -101,7 +101,7 @@ contract TosCouncilFund {
     receive(msg: Slice5GovernanceExecute) {
         val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
         var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
-        proposal.execute(policy, msg.now);
+        proposal.execute(policy, blockchain.now() as uint32);
         save(TosCouncilFundStorage {
             proposerAddress: storage.proposerAddress,
             voters: storage.voters,
@@ -118,7 +118,7 @@ contract TosCouncilFund {
         }
         val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
         var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
-        proposal.cancel(policy, COUNCIL_PROPOSER_KEY, msg.now);
+        proposal.cancel(policy, COUNCIL_PROPOSER_KEY, blockchain.now() as uint32);
         save(TosCouncilFundStorage {
             proposerAddress: storage.proposerAddress,
             voters: storage.voters,

@@ -34,7 +34,12 @@ This repo-side release candidate contains:
   trial added coverage for sender-bound bidder identity, chain-time
   auction decisions, seller-only close/settle, queue-full monitoring,
   pending payout accounting, and imported contract tests.
+- External author trial record for `TosReportBondOracle`, an additional
+  production-intent oracle candidate. The trial added coverage for
+  bonded report submission, sender-derived reporter identity, chain-time
+  freshness, multi-send refund dispatch, and receive-handler emulator
+  integration.
 
 External adoption is now complete: Stage 7 records the repo-side ABI
 freeze, the three required external production-intent contracts, and the
-additional auction candidate.
+additional auction and bonded-oracle candidates.

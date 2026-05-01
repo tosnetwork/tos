@@ -15,10 +15,18 @@ const DEX_PRICE_ORACLE_PAIR_TOS_USDC: uint32 = 1
 // Error codes. Base 0x0f00 (3840); all >= 1024 per Slice 5 policy.
 const DEX_PRICE_ORACLE_THROW_WRONG_PAIR: int      = 0x0f01  // 3841
 const DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND: int = 0x0f02  // 3842
+const DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_REPORTER_ADDRESS: int = 0x0f03  // 3843
+
+struct DexPriceOracleReporterAddresses {
+    reporter1: address
+    reporter2: address
+    reporter3: address
+}
 
 struct DexPriceOracleStorage {
     config: Cell<Slice5OracleConfig>
     oracleState: Cell<Slice5OracleState>
+    reporterAddresses: Cell<DexPriceOracleReporterAddresses>
     pairId: uint32
 }
 
@@ -33,9 +41,24 @@ struct (DEX_PRICE_ORACLE_OP_PRICE_REPORT) DexPriceReport {
     queryId: uint64
     roundId: uint64
     pairId: uint32
+    // Wire-compatibility field only. Receive handlers derive reporter identity
+    // from in.senderAddress and never trust this caller-controlled value.
     reporterKey: uint256
     priceNano: uint64
+    // Wire-compatibility field only. Receive handlers use blockchain.now().
     now: uint32
+}
+
+fun dexPriceOracleResolveReporterKey(
+    sender: address,
+    reporter1: address,
+    reporter2: address,
+    reporter3: address
+): uint256 {
+    if (sender == reporter1) { return 1; }
+    if (sender == reporter2) { return 2; }
+    if (sender == reporter3) { return 3; }
+    throw DEX_PRICE_ORACLE_THROW_UNAUTHORIZED_REPORTER_ADDRESS;
 }
 
 contract DexPriceOracle {
@@ -50,10 +73,11 @@ contract DexPriceOracle {
         }
         val config = lazy Slice5OracleConfig.fromCell(storage.config);
         var state = lazy Slice5OracleState.fromCell(storage.oracleState);
-        slice5OracleStartRound(mutate state, config, msg.roundId, msg.now, in.senderAddress);
+        slice5OracleStartRound(mutate state, config, msg.roundId, blockchain.now() as uint32, in.senderAddress);
         save(DexPriceOracleStorage {
             config: storage.config,
             oracleState: state.toCell(),
+            reporterAddresses: storage.reporterAddresses,
             pairId: storage.pairId,
         });
     }
@@ -70,19 +94,24 @@ contract DexPriceOracle {
             throw DEX_PRICE_ORACLE_THROW_NO_ACTIVE_ROUND;
         }
         var round = lazy Slice5OracleRound.fromCell(state.current!);
-        val oracleReport = Slice5OracleReport {
+        val addrs = lazy DexPriceOracleReporterAddresses.fromCell(storage.reporterAddresses);
+        val reporterKey = dexPriceOracleResolveReporterKey(
+            in.senderAddress, addrs.reporter1, addrs.reporter2, addrs.reporter3
+        );
+        val now = blockchain.now() as uint32;
+        val trustedReport = Slice5OracleReport {
             queryId: msg.queryId,
             roundId: msg.roundId,
-            reporterKey: msg.reporterKey,
+            reporterKey,
             value: msg.priceNano,
-            now: msg.now,
+            now,
         };
-        round.addReport(state.reporterSet, config, oracleReport);
+        round.addReport(state.reporterSet, config, trustedReport);
         if (round.reportCount >= config.quorum && !round.finalized) {
             val finalizeMsg = Slice5OracleFinalize {
                 queryId: msg.queryId,
                 roundId: msg.roundId,
-                now: msg.now,
+                now,
             };
             round.finalize(config, finalizeMsg);
         }
@@ -90,6 +119,7 @@ contract DexPriceOracle {
         save(DexPriceOracleStorage {
             config: storage.config,
             oracleState: state.toCell(),
+            reporterAddresses: storage.reporterAddresses,
             pairId: storage.pairId,
         });
     }

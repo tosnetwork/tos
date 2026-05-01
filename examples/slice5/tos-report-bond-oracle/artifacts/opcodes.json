@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "contract": "TosReportBondOracle",
+  "opcodes": [
+    {
+      "name": "BOND_ORACLE_OP_DEPLOY",
+      "value": "0x424f5200",
+      "decimal": 1112801792,
+      "message": "BondOracleDeploy",
+      "direction": "internal_in"
+    },
+    {
+      "name": "BOND_ORACLE_OP_START_ROUND",
+      "value": "0x424f5201",
+      "decimal": 1112801793,
+      "message": "BondOracleStartRound",
+      "direction": "internal_in"
+    },
+    {
+      "name": "BOND_ORACLE_OP_SUBMIT_REPORT",
+      "value": "0x424f5202",
+      "decimal": 1112801794,
+      "message": "BondOracleSubmitReport",
+      "direction": "internal_in"
+    },
+    {
+      "name": "BOND_ORACLE_OP_FINALIZE",
+      "value": "0x424f5203",
+      "decimal": 1112801795,
+      "message": "BondOracleFinalize",
+      "direction": "internal_in"
+    }
+  ]
+}

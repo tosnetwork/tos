@@ -937,7 +937,8 @@ Slice 5 examples, and added the release-candidate checker/docs. Stage 7
 has recorded repo-side ABI freeze hashes and compatibility artifacts;
 the external adoption gate is complete with `DexPriceOracle`,
 `TosStreamChannel`, `TosCouncilFund`, and `TosEscrowedAuction`
-recorded.
+recorded; a fifth bonded-oracle candidate, `TosReportBondOracle`, is
+now also recorded and emulator-gated.
 
 **Stage plan.**
 
@@ -1021,11 +1022,11 @@ recorded.
 
    - ✅ Freeze the ABI manifest schema.
    - ✅ Record canonical ABI manifest hashes for second-wave packages.
-   - ⬜ Record at least three external production contracts using the
+   - ✅ Record at least three external production contracts using the
      second-wave stdlib, or explicitly mark Slice 5 as
      release-candidate-only until those deployments exist. Current
-     status: 1/3 production-intent candidates recorded; round-2
-     external oracle trial requested.
+     status: 5 production-intent candidates recorded; the external
+     adoption gate is complete.
 
 ### Slice 6 — Year 3 protocol-heavy items
 
@@ -1188,12 +1189,12 @@ before the corresponding slice can start.
 
 **Slice 5** — Second-wave stdlib + cross-language ABI freeze
 
-- *Status:* Stage 0 draft exists. Slice 3 and Slice 4 prerequisites are
-  complete; the next blocker is security review of the Slice 5 policy
-  and ABI boundary.
-- *ABI design:* Cross-language ABI between FunC and Tol now has a draft
-  boundary document and manifest schema. Stage 1 must prove it with a
-  mixed FunC/Tol interop fixture before template implementation begins.
+- *Status:* Complete on `actor-layer`. Stages 0–7 have landed, the
+  external adoption gate is complete, and five production-intent
+  candidates are recorded.
+- *ABI design:* Cross-language ABI between FunC and Tol has a frozen
+  manifest schema, package manifests, and a mixed FunC/Tol interop
+  fixture checked by `scripts/check-slice-5-abi-manifests.py`.
 - *Cross-cut:* `error_class = 5` back-pressure is reserved by
   `policy.md` §5.3 but blocked on §5.7 (see §11.1).
 
@@ -1421,11 +1422,30 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   payment-channel Round 3 trial records TosStreamChannel as candidate
   2/3, the governance Round 4 trial records TosCouncilFund as candidate
   3/3, and the auction trial records TosEscrowedAuction as an
-  additional auction candidate. Post-trial hardening closed the
-  real-context receive-handler test gap and added manifest-level
-  `caller_controlled` annotations for every inbound Slice 5 ABI field.
+  additional auction candidate. The TosReportBondOracle trial records a
+  fifth production-intent candidate and a second oracle candidate.
+  Post-trial hardening closed the real-context receive-handler test gap,
+  added manifest-level `caller_controlled` annotations for every inbound
+  Slice 5 ABI field, and now enforces trusted receive context in the
+  release checker.
 
 ## 12. Revision notes
+
+### r38 (Slice 5 bonded-oracle trial hardening)
+
+- Recorded `TosReportBondOracle`, a production-intent bond-backed
+  oracle, as an additional external adoption candidate for the oracle
+  pattern.
+- Hardened prior production candidates against caller-controlled context:
+  `DexPriceOracle` now derives reporter identity from `in.senderAddress`
+  and uses `blockchain.now()`, `TosCouncilFund` uses `blockchain.now()`
+  for vote/execute/cancel, and `TosStreamChannel` uses
+  `blockchain.now()` for close/settle paths.
+- Added `slice5OracleTrustedReport(...)` / trusted finalize adapters and
+  payment-channel payout emission helpers, integrated
+  `TosReportBondOracle` into `test-emulator`, and extended
+  `scripts/check-slice-5-release-package.py` to reject production
+  candidates that trust `msg.now` or `msg.reporterKey`.
 
 ### r37 (Slice 5 real-context hardening)
 

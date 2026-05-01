@@ -1,0 +1,263 @@
+// TosReportBondOracle — production-intent bond-backed price oracle.
+// Use cases: trusted price feeds where reporters have skin in the game;
+//            DEX/AMM reference prices with slashable deposits.
+//
+// Security model:
+//   1. in.senderAddress is the only reporter identity signal.
+//      The wire message has NO reporterKey field; there is nothing for a caller to forge.
+//   2. blockchain.now() is used for all time checks.
+//      Wire messages have NO now field; there is nothing for a caller to spoof.
+//   3. in.valueCoins >= BOND_ORACLE_MIN_BOND must hold before any state mutation.
+//   4. Bond refunds are dispatched AFTER saving finalized state.
+//
+// Bond model:
+//   Reporters lock BOND_ORACLE_MIN_BOND (1 TON) when submitting each report.
+//   If round.addReport() throws (stale, duplicate, outlier, unauthorized), the
+//   transaction reverts and the message bounces — no bond is recorded.
+//   After successful finalization, one bond refund send() is dispatched per reporter
+//   that submitted in the round. Storage is cleared before the sends.
+//
+// Known limitation: bond amounts are stored as uint64 (nanoTON) in a map.
+// Maximum representable bond is ~18,446 TON. Larger bonds require a different approach.
+tol 1.3
+
+import "@stdlib/oracle"
+
+const BOND_ORACLE_OP_DEPLOY: uint32        = 0x424f5200  // "BOR\00"
+const BOND_ORACLE_OP_START_ROUND: uint32   = 0x424f5201  // "BOR\01"
+const BOND_ORACLE_OP_SUBMIT_REPORT: uint32 = 0x424f5202  // "BOR\02"
+const BOND_ORACLE_OP_FINALIZE: uint32      = 0x424f5203  // "BOR\03"
+
+// All codes >= 1024 per Slice 5 policy. Base 0x1300 (4864).
+const BOND_ORACLE_THROW_UNAUTHORIZED: int      = 0x1301  // 4865
+const BOND_ORACLE_THROW_INSUFFICIENT_BOND: int = 0x1302  // 4866
+const BOND_ORACLE_THROW_NO_ACTIVE_ROUND: int   = 0x1303  // 4867
+
+// 1 TON minimum bond per reporter per round.
+const BOND_ORACLE_MIN_BOND: int = 1000000000
+
+// Authorized reporter on-chain addresses.
+// Stored behind a Cell ref so that three inline address fields
+// (~801 bits) plus the rest of TosReportBondStorage stay under the 1023-bit cell limit.
+struct BondOracleReporterAddresses {
+    reporter1: address
+    reporter2: address
+    reporter3: address
+}
+
+struct (BOND_ORACLE_OP_DEPLOY) BondOracleDeploy {
+    reporterAddresses: Cell<BondOracleReporterAddresses>
+    roundStarter: address
+    quorum: uint16
+    freshnessSeconds: uint32
+    maxDeviation: uint64
+}
+
+// Start-round message. No `now` field; blockchain.now() is used in the handler.
+struct (BOND_ORACLE_OP_START_ROUND) BondOracleStartRound {
+    queryId: uint64
+    roundId: uint64
+}
+
+// Submit-report message. No `reporterKey` or `now` field; both are derived from TVM context.
+struct (BOND_ORACLE_OP_SUBMIT_REPORT) BondOracleSubmitReport {
+    queryId: uint64
+    roundId: uint64
+    value: uint64
+}
+
+// Finalize message. No `now` field; blockchain.now() is used in the handler.
+struct (BOND_ORACLE_OP_FINALIZE) BondOracleFinalize {
+    queryId: uint64
+    roundId: uint64
+}
+
+struct TosReportBondStorage {
+    config: Cell<Slice5OracleConfig>
+    oracleState: Cell<Slice5OracleState>
+    reporterAddresses: Cell<BondOracleReporterAddresses>
+    // reporter key (1/2/3) → bond locked in nanoTON for the current round
+    bonds: map<uint256, uint64>
+}
+
+// Resolves the canonical reporter key (1/2/3) from an on-chain sender address.
+// Throws BOND_ORACLE_THROW_UNAUTHORIZED if sender is not a known reporter.
+// Exposed as a standalone helper so unit tests can verify the mapping directly.
+fun bondOracleResolveKey(sender: address, r1: address, r2: address, r3: address): uint256 {
+    if (sender == r1) { return 1; }
+    if (sender == r2) { return 2; }
+    if (sender == r3) { return 3; }
+    throw BOND_ORACLE_THROW_UNAUTHORIZED;
+}
+
+// Dispatches a bond refund for key `reporterKey` to address `to` if a bond entry exists.
+// No-op if no bond was recorded (reporter did not submit in this round).
+fun bondOracleRefundBond(bonds: map<uint256, uint64>, reporterKey: uint256, to: address): void {
+    val result = bonds.get(reporterKey);
+    if (result.isFound) {
+        val amount = result.loadValue();
+        if (amount > 0) {
+            createMessage({
+                bounce: BounceMode.NoBounce,
+                dest: to,
+                value: amount as coins,
+            }).send(SEND_MODE_REGULAR);
+        }
+    }
+}
+
+contract TosReportBondOracle {
+    storage: TosReportBondStorage
+    @unknown_throw(0xffff);
+
+    @deploy
+    receive(msg: BondOracleDeploy) {
+        var reporterSet = slice5OracleNewReporterSet();
+        reporterSet.addReporter(1);
+        reporterSet.addReporter(2);
+        reporterSet.addReporter(3);
+        val config = slice5OracleConfig(
+            reporterSet, msg.quorum, msg.freshnessSeconds, msg.maxDeviation, msg.roundStarter
+        );
+        val state = slice5OracleInitialState(reporterSet);
+        save(TosReportBondStorage {
+            config: config.toCell(),
+            oracleState: state.toCell(),
+            reporterAddresses: msg.reporterAddresses,
+            bonds: createEmptyMap<uint256, uint64>(),
+        });
+    }
+
+    // Only config.roundStarter (verified via in.senderAddress) may start a new round.
+    // blockchain.now() is the authoritative round timestamp — no `now` wire field exists.
+    @disclaim_query_id
+    receive(msg: BondOracleStartRound) {
+        val config = lazy Slice5OracleConfig.fromCell(storage.config);
+        var state = lazy Slice5OracleState.fromCell(storage.oracleState);
+        val now = blockchain.now() as uint32;
+        slice5OracleStartRound(mutate state, config, msg.roundId, now, in.senderAddress);
+        save(TosReportBondStorage {
+            config: storage.config,
+            oracleState: state.toCell(),
+            reporterAddresses: storage.reporterAddresses,
+            bonds: createEmptyMap<uint256, uint64>(),
+        });
+    }
+
+    // Reporters submit price values. in.senderAddress determines reporter identity.
+    // in.valueCoins must be >= BOND_ORACLE_MIN_BOND. blockchain.now() guards freshness.
+    // There is no `reporterKey` or `now` field in the wire message — nothing to forge.
+    @disclaim_query_id
+    receive(msg: BondOracleSubmitReport) {
+        // Bond check first: fail fast before loading oracle state.
+        if ((in.valueCoins as int) < BOND_ORACLE_MIN_BOND) {
+            throw BOND_ORACLE_THROW_INSUFFICIENT_BOND;
+        }
+        // Resolve canonical reporter key from in.senderAddress; throws UNAUTHORIZED for unknowns.
+        val addrs = lazy BondOracleReporterAddresses.fromCell(storage.reporterAddresses);
+        val reporterKey = bondOracleResolveKey(
+            in.senderAddress, addrs.reporter1, addrs.reporter2, addrs.reporter3
+        );
+        val config = lazy Slice5OracleConfig.fromCell(storage.config);
+        var state = lazy Slice5OracleState.fromCell(storage.oracleState);
+        if (state.current == null) {
+            throw BOND_ORACLE_THROW_NO_ACTIVE_ROUND;
+        }
+        var round = lazy Slice5OracleRound.fromCell(state.current!);
+        // Build a fully trusted Slice5OracleReport:
+        //   reporterKey = resolved from in.senderAddress, not a wire field
+        //   now        = blockchain.now(), not a wire field
+        val wireReport = Slice5OracleReport {
+            queryId: msg.queryId,
+            roundId: msg.roundId,
+            reporterKey,
+            value: msg.value,
+            now: blockchain.now() as uint32,
+        };
+        // addReport throws on: unauthorized reporter key, duplicate, outlier, stale, replay.
+        // Any throw here causes the transaction to revert; the bond is not locked and the
+        // message bounces back to the sender (minus gas fees).
+        round.addTrustedReport(state.reporterSet, config, wireReport, reporterKey, blockchain.now() as uint32);
+        // Record bond AFTER addReport succeeds — guarantees bond is only stored for accepted reports.
+        var bonds = storage.bonds;
+        bonds.addIfNotExists(reporterKey, in.valueCoins as uint64);
+        state.current = round.toCell();
+        save(TosReportBondStorage {
+            config: storage.config,
+            oracleState: state.toCell(),
+            reporterAddresses: storage.reporterAddresses,
+            bonds,
+        });
+    }
+
+    // Anyone may call Finalize once quorum is reached and the round is open.
+    // blockchain.now() is used; no `now` wire field exists. Bond refunds are dispatched
+    // AFTER the finalized state is saved so that storage reflects settlement before any sends.
+    @disclaim_query_id
+    receive(msg: BondOracleFinalize) {
+        val config = lazy Slice5OracleConfig.fromCell(storage.config);
+        var state = lazy Slice5OracleState.fromCell(storage.oracleState);
+        if (state.current == null) {
+            throw BOND_ORACLE_THROW_NO_ACTIVE_ROUND;
+        }
+        var round = lazy Slice5OracleRound.fromCell(state.current!);
+        val now = blockchain.now() as uint32;
+        // Build trusted finalize struct using blockchain.now() — no `now` wire field.
+        val wireFinalize = Slice5OracleFinalize {
+            queryId: msg.queryId,
+            roundId: msg.roundId,
+            now,
+        };
+        round.finalizeTrusted(config, wireFinalize, now);
+        state.current = round.toCell();
+        // Capture bond snapshot and reporter addresses before save.
+        val bondsSnapshot = storage.bonds;
+        val addrs = lazy BondOracleReporterAddresses.fromCell(storage.reporterAddresses);
+        // Save finalized state and clear bond map BEFORE dispatching refunds.
+        save(TosReportBondStorage {
+            config: storage.config,
+            oracleState: state.toCell(),
+            reporterAddresses: storage.reporterAddresses,
+            bonds: createEmptyMap<uint256, uint64>(),
+        });
+        // Dispatch bond refunds after state is committed.
+        bondOracleRefundBond(bondsSnapshot, 1, addrs.reporter1);
+        bondOracleRefundBond(bondsSnapshot, 2, addrs.reporter2);
+        bondOracleRefundBond(bondsSnapshot, 3, addrs.reporter3);
+    }
+
+    // Returns the latest finalized round's median price. Returns 0 if no round is finalized.
+    @method_id(0x4b01)
+    get fun getLatestPrice(): uint64 {
+        val state = lazy Slice5OracleState.fromCell(storage.oracleState);
+        if (state.current == null) { return 0; }
+        val round = lazy Slice5OracleRound.fromCell(state.current!);
+        if (!round.finalized) { return 0; }
+        return round.medianValue!;
+    }
+
+    // Returns the most recently started roundId (monotonically increasing; 0 before first round).
+    @method_id(0x4b02)
+    get fun getLastRoundId(): uint64 {
+        val state = lazy Slice5OracleState.fromCell(storage.oracleState);
+        return state.lastRoundId;
+    }
+
+    // Returns the locked bond (nanoTON) for the given reporter key in the current round.
+    // Returns 0 if no bond is held for this reporter.
+    @method_id(0x4b03)
+    get fun getBond(reporterKey: uint256): uint64 {
+        val result = storage.bonds.get(reporterKey);
+        if (!result.isFound) { return 0; }
+        return result.loadValue();
+    }
+
+    // Returns true if the current round is open (started but not yet finalized).
+    @method_id(0x4b04)
+    get fun isRoundOpen(): bool {
+        val state = lazy Slice5OracleState.fromCell(storage.oracleState);
+        if (state.current == null) { return false; }
+        val round = lazy Slice5OracleRound.fromCell(state.current!);
+        return !round.finalized;
+    }
+}
