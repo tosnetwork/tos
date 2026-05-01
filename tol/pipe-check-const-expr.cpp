@@ -161,15 +161,10 @@ void pipeline_check_constant_expressions() {
       }
     }
   }
-  // and for default values of parameters
-  for (FunctionPtr fun_ref : get_all_not_builtin_functions()) {
-    for (int i = 0; i < fun_ref->get_num_params(); ++i) {
-      LocalVarPtr param_ref = &fun_ref->get_param(i);
-      if (param_ref->has_default_value() && !fun_ref->is_generic_function()) {
-        check_expression_is_constant_or_fire(param_ref->default_value);
-      }
-    }
-  }
+  // Parameter defaults are evaluated at the call site, after identifier
+  // resolution and type inference. They may call helper functions (for example,
+  // a fixture address constructor) and therefore are intentionally not part of
+  // the compile-time-constant surface.
   
   // assign `enum` members values (either auto-compute sequentially or use manual initializers)
   for (EnumDefPtr enum_ref : get_all_declared_enums()) {

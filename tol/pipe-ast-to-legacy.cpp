@@ -1509,6 +1509,87 @@ static std::vector<var_idx_t> process_square_brackets(V<ast_square_brackets> v, 
   return transition_to_target_type(std::move(rvect), code, target_type, v);
 }
 
+static V<ast_object_field> find_object_spread_field(V<ast_object_literal> v) {
+  for (int i = 0; i < v->get_body()->get_num_fields(); ++i) {
+    auto v_field = v->get_body()->get_field(i);
+    if (v_field->is_spread()) {
+      return v_field;
+    }
+  }
+  return nullptr;
+}
+
+static bool object_literal_has_spread(V<ast_object_literal> v) {
+  return find_object_spread_field(v) != nullptr;
+}
+
+static V<ast_object_field> find_explicit_object_field(V<ast_object_literal> v, StructFieldPtr field_ref) {
+  for (int i = 0; i < v->get_body()->get_num_fields(); ++i) {
+    auto v_field = v->get_body()->get_field(i);
+    if (!v_field->is_spread() && v_field->get_field_name() == field_ref->name) {
+      return v_field;
+    }
+  }
+  return nullptr;
+}
+
+static std::vector<var_idx_t> process_object_literal_with_spread(V<ast_object_literal> v, CodeBlob& code, TypePtr target_type, LValContext* lval_ctx) {
+  // Evaluate the base struct once, then explicit overrides in source order,
+  // then assemble the resulting object in declaration order.
+  V<ast_object_field> spread_field = find_object_spread_field(v);
+  tol_assert(spread_field);
+  std::vector spread_rvect = pre_compile_expr(spread_field->get_init_val(), code, TypeDataStruct::create(v->struct_ref));
+
+  std::vector<AnyExprV> explicit_items;
+  std::vector<TypePtr> explicit_target_types;
+  explicit_items.reserve(v->get_body()->get_num_fields());
+  explicit_target_types.reserve(v->get_body()->get_num_fields());
+  for (int i = 0; i < v->get_body()->get_num_fields(); ++i) {
+    auto v_field = v->get_body()->get_field(i);
+    if (v_field->is_spread()) {
+      continue;
+    }
+    explicit_items.push_back(v_field->get_init_val());
+    explicit_target_types.push_back(v_field->field_ref->declared_type);
+  }
+  std::vector explicit_rvect = pre_compile_tensor(code, explicit_items, lval_ctx, explicit_target_types);
+
+  std::vector rvect = code.create_tmp_var(TypeDataStruct::create(v->struct_ref), v, "(object)");
+  int stack_offset = 0;
+  for (StructFieldPtr field_ref : v->struct_ref->fields) {
+    int stack_width = field_ref->declared_type->get_width_on_stack();
+    if (!stack_width) {
+      continue;
+    }
+    std::vector field_rvect(rvect.begin() + stack_offset, rvect.begin() + stack_offset + stack_width);
+    std::vector spread_field_rvect(spread_rvect.begin() + stack_offset, spread_rvect.begin() + stack_offset + stack_width);
+    stack_offset += stack_width;
+
+    V<ast_object_field> explicit_field = find_explicit_object_field(v, field_ref);
+    if (!explicit_field) {
+      code.add_let(v, std::move(field_rvect), std::move(spread_field_rvect));
+      continue;
+    }
+
+    int explicit_offset = 0;
+    for (int i = 0; i < v->get_body()->get_num_fields(); ++i) {
+      auto v_field = v->get_body()->get_field(i);
+      if (v_field->is_spread()) {
+        continue;
+      }
+      int item_width = v_field->field_ref->declared_type->get_width_on_stack();
+      if (v_field == explicit_field) {
+        std::vector explicit_field_rvect(explicit_rvect.begin() + explicit_offset, explicit_rvect.begin() + explicit_offset + item_width);
+        code.add_let(v, std::move(field_rvect), std::move(explicit_field_rvect));
+        break;
+      }
+      explicit_offset += item_width;
+    }
+  }
+
+  return transition_to_target_type(std::move(rvect), code, target_type, v);
+}
+
 static std::vector<var_idx_t> process_object_literal_shuffled(V<ast_object_literal> v, CodeBlob& code, TypePtr target_type, LValContext* lval_ctx) {
   // creating an object like `Point { y: getY(), x: getX() }`, where fields order doesn't match declaration;
   // as opposed to a non-shuffled version `{x:..., y:...}`, we should at first evaluate fields as they created,
@@ -1561,6 +1642,10 @@ static std::vector<var_idx_t> process_object_literal(V<ast_object_literal> v, Co
   // an object (an instance of a struct) is actually a tensor at low-level
   // for example, `struct User { id: int; name: slice; }` occupies 2 slots
   // fields of a tensor are placed in order of declaration (in a literal they might be shuffled)
+  if (object_literal_has_spread(v)) {
+    return process_object_literal_with_spread(v, code, target_type, lval_ctx);
+  }
+
   bool are_fields_shuffled = false;
   for (int i = 1; i < v->get_body()->get_num_fields(); ++i) {
     StructFieldPtr field_ref = v->struct_ref->find_field(v->get_body()->get_field(i)->get_field_name());

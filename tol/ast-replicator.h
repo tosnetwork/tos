@@ -165,6 +165,9 @@ class ASTReplicator final {
     return createV<ast_match_arm>(v->range, v->pattern_kind, clone(v->pattern_type_node), clone(v->get_pattern_expr()), clone(v->get_body()));
   }
   static V<ast_object_field> clone(V<ast_object_field> v) {
+    if (v->is_spread()) {
+      return createV<ast_object_field>(v->range, clone(v->get_init_val()));
+    }
     return createV<ast_object_field>(v->range, clone(v->get_field_identifier()), clone(v->get_init_val()));
   }
   static V<ast_object_body> clone(V<ast_object_body> v) {

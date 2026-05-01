@@ -1,0 +1,319 @@
+// vesting-vault-positive.tol — External developer trial: Slice 6 VestingVault.
+//
+// Tests pure helper functions from the vesting-vault contract.  All tests run
+// as get-method calls; no emulator required.  Real receive-handler integration
+// tests would need the slice-*-fixtures.cpp emulator harness.
+//
+// Happy paths:
+//   801 — vested amount is zero before cliff
+//   802 — vested amount increases linearly after cliff
+//   803 — vested amount caps at totalAmount after full vest period
+//   804 — claimable is vested minus already claimed
+//   805 — timer budget fields are correct
+// Authorization failures:
+//   806 — capability wrong-sender rejected
+// Replay / duplicate handling:
+//   807 — capability nonce replay rejected after first use
+// Malformed / invalid inputs:
+//   808 — capability expired grant rejected
+//   809 — capability revoked handle rejected
+// Value / budget boundary:
+//   810 — horizon check rejects vest period exceeding max
+//   811 — horizon check accepts vest period at max boundary
+// Integration edge cases:
+//   812 — capability registry storage-full rejection
+//   813 — capability wrong-selector rejected
+//   814 — partial claim leaves remainder
+
+import "../../examples/external-trials/vesting-vault/src/vesting-vault"
+import "@stdlib/capability"
+import "@stdlib/time"
+
+// ── Test fixtures ─────────────────────────────────────────────────────────────
+
+fun tvOwner(): address {
+    return address("0:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+}
+
+fun tvBeneficiary(): address {
+    return address("0:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+}
+
+fun tvOtherSender(): address {
+    return address("0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+}
+
+fun tvCounterparty(): address {
+    return address("0:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
+}
+
+fun tvTarget(): address {
+    return address("0:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+}
+
+// Capability constraint helper: validFrom=10, expiresAt=10000
+// (masterchain-seqno test coordinates).
+fun tvConstraints(selector: uint32 = VAULT_CLAIM_SELECTOR): Slice6CapabilityConstraintsV1 {
+    return slice6CapabilityConstraints(
+        selector,
+        1000000000,    // maxValue: 1 TOS
+        10,            // validFromMcSeqno
+        10000,         // expiresAtMcSeqno
+        1,             // maxUses: single-use
+        null,          // no required counterparty
+        null,          // no required workchain
+        0xdead1234,    // replayDomain
+        0              // delegatedDepth
+    );
+}
+
+fun tvGrant(selector: uint32 = VAULT_CLAIM_SELECTOR): Slice6CapabilityGrantV1 {
+    return slice6CapabilityGrant(
+        tvOwner(),
+        tvTarget(),
+        tvBeneficiary(),
+        null,
+        selector,
+        tvConstraints(selector),
+        10,     // validFromMcSeqno
+        10000,  // expiresAtMcSeqno
+        99,     // nonce
+        0       // revocationEpoch
+    );
+}
+
+fun tvContextFull(sender: address, now: uint64): Slice6CapabilityUseContext {
+    return slice6CapabilityUseContext(
+        sender,
+        tvTarget(),
+        VAULT_CLAIM_SELECTOR,
+        100000000,    // valueCoins: 0.1 TOS
+        null,
+        now,
+        0
+    );
+}
+
+fun tvContext(): Slice6CapabilityUseContext {
+    return tvContextFull(tvBeneficiary(), 100);
+}
+
+fun tvRegistry(): Slice6CapabilityRegistry {
+    var reg = slice6CapabilityRegistry(VAULT_MAX_ACTIVE_GRANTS, VAULT_MAX_REVOKED_HANDLES, VAULT_MAX_EPOCH_ENTRIES);
+    reg.registerGrant(tvGrant());
+    return reg;
+}
+
+fun main(): int {
+    return 0;
+}
+
+// ── 801: vested amount before cliff = 0 ──────────────────────────────────────
+@method_id(801)
+fun test_vested_before_cliff_is_zero(): int {
+    val total: coins = 1000000000;  // 1 TOS
+    val fundedAt: uint32 = 1000;
+    val cliffSeconds: uint32 = 200;
+    val vestPeriodSeconds: uint32 = 1000;
+    // now = 1100 < fundedAt + cliff = 1200
+    val vested = vaultVestedAmount(fundedAt, cliffSeconds, vestPeriodSeconds, total, 1100);
+    assert(vested == 0) throw 8011;
+    return 0;
+}
+
+// ── 802: vested amount increases linearly after cliff ─────────────────────────
+@method_id(802)
+fun test_vested_linear_after_cliff(): int {
+    val total: coins = 1000000000;
+    val fundedAt: uint32 = 1000;
+    val cliffSeconds: uint32 = 200;
+    val vestPeriodSeconds: uint32 = 1000;
+    // elapsed = 500, vested = 500/1000 * 1000000000 = 500000000
+    val vested = vaultVestedAmount(fundedAt, cliffSeconds, vestPeriodSeconds, total, 1500);
+    assert(vested == 500000000) throw 8021;
+    return vested as int;
+}
+
+// ── 803: vested amount caps at totalAmount ─────────────────────────────────
+@method_id(803)
+fun test_vested_caps_at_total(): int {
+    val total: coins = 1000000000;
+    val fundedAt: uint32 = 1000;
+    val cliffSeconds: uint32 = 200;
+    val vestPeriodSeconds: uint32 = 1000;
+    // now = 3000, elapsed = 2000 >= vestPeriod = 1000 → fully vested
+    val vested = vaultVestedAmount(fundedAt, cliffSeconds, vestPeriodSeconds, total, 3000);
+    assert(vested == total) throw 8031;
+    return vested as int;
+}
+
+// ── 804: claimable = vested - already claimed ─────────────────────────────
+@method_id(804)
+fun test_claimable_minus_claimed(): int {
+    val total: coins = 1000000000;
+    val claimed: coins = 200000000;
+    val fundedAt: uint32 = 1000;
+    val cliff: uint32 = 0;
+    val vest: uint32 = 1000;
+    // elapsed = 600, vested = 600000000, claimable = 600000000 - 200000000 = 400000000
+    val claimable = vaultClaimableAmount(fundedAt, cliff, vest, total, claimed, 1600);
+    assert(claimable == 400000000) throw 8041;
+    return claimable as int;
+}
+
+// ── 805: timer budget fields match constants ──────────────────────────────
+@method_id(805)
+fun test_timer_budget_fields(): int {
+    val budget = vaultTimerBudget();
+    assert(budget.maxScheduledEntries == VAULT_MAX_TIMER_ENTRIES)   throw 8051;
+    assert(budget.maxBodyBits == VAULT_MAX_TIMER_BODY_BITS)         throw 8052;
+    assert(budget.maxFutureHorizonBlocks == VAULT_MAX_TIMER_HORIZON) throw 8053;
+    assert(budget.enabled) throw 8054;
+    return budget.maxScheduledEntries as int;
+}
+
+// ── 806: capability with wrong sender is rejected ─────────────────────────
+@method_id(806)
+fun test_cap_wrong_sender_rejected(): int {
+    var reg = tvRegistry();
+    val wrongCtx = tvContextFull(tvOtherSender(), 100);
+    try {
+        reg.requireCapability(tvGrant(), tvConstraints(), wrongCtx);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// ── 807: capability nonce replay is rejected ──────────────────────────────
+@method_id(807)
+fun test_cap_nonce_replay_rejected(): int {
+    var reg = tvRegistry();
+    reg.requireCapability(tvGrant(), tvConstraints(), tvContext());
+    try {
+        reg.requireCapability(tvGrant(), tvConstraints(), tvContext());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// ── 808: expired capability is rejected ───────────────────────────────────
+@method_id(808)
+fun test_cap_expired_rejected(): int {
+    var reg = tvRegistry();
+    val expiredCtx = tvContextFull(tvBeneficiary(), 20000);  // now > expiresAt=10000
+    try {
+        reg.requireCapability(tvGrant(), tvConstraints(), expiredCtx);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// ── 809: revoked handle is rejected ───────────────────────────────────────
+@method_id(809)
+fun test_cap_revoked_handle_rejected(): int {
+    var reg = tvRegistry();
+    reg.revokeHandle(tvGrant().handleId(), 10000);
+    val ctx = tvContextFull(tvBeneficiary(), 100);  // now=100 < revokedUntil=10000
+    try {
+        reg.requireCapability(tvGrant(), tvConstraints(), ctx, true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// ── 810: horizon rejects vest period exceeding max ────────────────────────
+@method_id(810)
+fun test_horizon_rejects_too_long_vest(): int {
+    val fundedAt: uint32 = 1000;
+    val tooLongPeriod: uint32 = VAULT_MAX_TIMER_HORIZON + 1;
+    try {
+        vaultValidateVestPeriod(fundedAt, tooLongPeriod);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// ── 811: horizon accepts vest period at max boundary ──────────────────────
+@method_id(811)
+fun test_horizon_accepts_max_boundary(): int {
+    val fundedAt: uint32 = 1000;
+    vaultValidateVestPeriod(fundedAt, VAULT_MAX_TIMER_HORIZON);
+    return 1;  // must not throw
+}
+
+// ── 812: capability storage full is rejected ──────────────────────────────
+@method_id(812)
+fun test_cap_storage_full_rejected(): int {
+    var reg = slice6CapabilityRegistry(1, 1, 1);
+    reg.registerGrant(tvGrant());
+    val grant2 = slice6CapabilityGrant(
+        tvOwner(), tvTarget(), tvBeneficiary(), null,
+        VAULT_CLAIM_SELECTOR, tvConstraints(), 10, 10000, 100, 0
+    );
+    try {
+        reg.registerGrant(grant2);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// ── 813: wrong selector is rejected ───────────────────────────────────────
+@method_id(813)
+fun test_cap_wrong_selector_rejected(): int {
+    var reg = tvRegistry();
+    val wrongSel: uint32 = 0x99990001;
+    val wrongGrant = tvGrant(wrongSel);
+    val wrongConstraints = tvConstraints(wrongSel);
+    var regWrong = slice6CapabilityRegistry(VAULT_MAX_ACTIVE_GRANTS, VAULT_MAX_REVOKED_HANDLES, VAULT_MAX_EPOCH_ENTRIES);
+    regWrong.registerGrant(wrongGrant);
+    // Context uses VAULT_CLAIM_SELECTOR, grant uses wrongSel → mismatch
+    try {
+        regWrong.requireCapability(wrongGrant, wrongConstraints, tvContext());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// ── 814: partial claim leaves positive remainder ──────────────────────────
+@method_id(814)
+fun test_partial_claim_leaves_remainder(): int {
+    val total: coins = 1000000000;
+    val claimed: coins = 0;
+    val fundedAt: uint32 = 1000;
+    val cliff: uint32 = 0;
+    val vest: uint32 = 1000;
+    // Claim at elapsed=300: claimable = 300000000
+    val claimable = vaultClaimableAmount(fundedAt, cliff, vest, total, claimed, 1300);
+    assert(claimable == 300000000) throw 8141;
+    // After claim: claimedAmount = 300000000, remainder = 700000000
+    val remainder = vaultClaimableAmount(fundedAt, cliff, vest, total, claimable, 1300);
+    assert(remainder == 0) throw 8142;
+    // But advance time: at elapsed=700, total vested = 700000000, claimable = 400000000
+    val claimable2 = vaultClaimableAmount(fundedAt, cliff, vest, total, claimable, 1700);
+    assert(claimable2 == 400000000) throw 8143;
+    return claimable2 as int;
+}
+
+/**
+@testcase | 801 | | 0
+@testcase | 802 | | 500000000
+@testcase | 803 | | 1000000000
+@testcase | 804 | | 400000000
+@testcase | 805 | | 4
+@testcase | 806 | | 5124
+@testcase | 807 | | 5127
+@testcase | 808 | | 5123
+@testcase | 809 | | 5128
+@testcase | 810 | | 4355
+@testcase | 811 | | 1
+@testcase | 812 | | 5129
+@testcase | 813 | | 5126
+@testcase | 814 | | 400000000
+ */

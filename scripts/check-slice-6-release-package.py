@@ -46,11 +46,13 @@ def read(path: str) -> str:
 
 
 def check_required_surface() -> None:
+    common = read("crypto/smartcont/tol-stdlib/common.tol")
     delivery = read("crypto/smartcont/tol-stdlib/delivery.tol")
     schedule = read("crypto/smartcont/tol-stdlib/schedule.tol")
     time = read("crypto/smartcont/tol-stdlib/time.tol")
     supervision = read("crypto/smartcont/tol-stdlib/supervision.tol")
     capability = read("crypto/smartcont/tol-stdlib/capability.tol")
+    safe_payments = read("crypto/smartcont/tol-stdlib/safe-payments.tol")
     dogfood = read("crypto/smartcont/slice6-dogfood.tol")
 
     for needle in [
@@ -79,6 +81,10 @@ def check_required_surface() -> None:
     ]:
         if needle not in time:
             fail(f"time stdlib missing {needle}")
+
+    for needle in ["previousMasterchainBlocks", "currentMcSeqno", "PREVMCBLOCKS"]:
+        if needle not in common:
+            fail(f"common stdlib missing trusted masterchain seqno surface {needle}")
 
     for needle in [
         "Slice6MonitorRegistration",
@@ -110,6 +116,16 @@ def check_required_surface() -> None:
     ]:
         if needle not in capability:
             fail(f"capability stdlib missing {needle}")
+
+    for needle in [
+        "slice6SendCoins",
+        "slice6SendCoinsWithBody",
+        "slice6RefundExcess",
+        "slice6RequireMinimumBalanceAfterPayout",
+        "SEND_MODE_BOUNCE_ON_ACTION_FAIL",
+    ]:
+        if needle not in safe_payments:
+            fail(f"safe-payments stdlib missing {needle}")
 
     for needle in [
         "Slice6DogfoodFailureRecord",
@@ -167,22 +183,66 @@ def iter_slice6_tol_sources() -> list[Path]:
         ROOT / "crypto/smartcont/tol-stdlib/time.tol",
         ROOT / "crypto/smartcont/tol-stdlib/supervision.tol",
         ROOT / "crypto/smartcont/tol-stdlib/capability.tol",
+        ROOT / "crypto/smartcont/tol-stdlib/safe-payments.tol",
         ROOT / "crypto/smartcont/slice6-dogfood.tol",
     ]
     paths.extend(sorted((ROOT / "tol-tester/tests").glob("slice6-*.tol")))
     examples = ROOT / "examples/slice6"
     if examples.exists():
         paths.extend(sorted(examples.rglob("*.tol")))
+    external_trials = ROOT / "examples/external-trials"
+    if external_trials.exists():
+        paths.extend(sorted(external_trials.rglob("*.tol")))
     return paths
+
+
+def strip_line_comment(line: str) -> str:
+    return line.split("//", 1)[0]
 
 
 def check_no_caller_controlled_now_scheduling() -> None:
     schedule_call = re.compile(r"\b(sendAfterBlocks|sendAtMcSeqno|slice6ScheduledAction|slice6ScheduledHandle)\b")
+    mc_sensitive = re.compile(
+        r"\b(sendAfterBlocks|sendAtMcSeqno|slice6ScheduledAction|slice6ScheduledHandle|"
+        r"slice6CapabilityUseContext|slice6CapabilityConstraints|slice6CapabilityGrant|"
+        r"requireHorizon|revokeHandle)\b|McSeqno|currentMcSeqno|trustedCurrentMcSeqno"
+    )
+    now_assignment = re.compile(r"\b(?:val|var)\s+([A-Za-z_][A-Za-z0-9_]*)\b[^=]*=\s*blockchain\.now\s*\(")
     for path in iter_slice6_tol_sources():
         rel = path.relative_to(ROOT)
+        now_tainted: set[str] = set()
+        active_sensitive_call: str | None = None
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if "msg.now" in line and schedule_call.search(line):
+            code = strip_line_comment(line)
+            if "msg.now" in code and schedule_call.search(code):
                 fail(f"{rel}:{lineno}: caller-controlled msg.now used in scheduling helper call")
+            m = now_assignment.search(code)
+            if m:
+                now_tainted.add(m.group(1))
+            if mc_sensitive.search(code):
+                active_sensitive_call = code
+            if active_sensitive_call and "blockchain.now" in code:
+                fail(f"{rel}:{lineno}: blockchain.now() must not feed Slice 6 masterchain-seqno APIs; use blockchain.currentMcSeqno() or a protocol-provided seqno")
+            if "blockchain.now" in code and mc_sensitive.search(code):
+                fail(f"{rel}:{lineno}: blockchain.now() used directly in a masterchain-seqno context")
+            if mc_sensitive.search(code):
+                for name in now_tainted:
+                    if re.search(rf"\b{re.escape(name)}\b", code):
+                        fail(f"{rel}:{lineno}: value `{name}` derived from blockchain.now() flows into a masterchain-seqno context")
+            if active_sensitive_call and ";" in code:
+                active_sensitive_call = None
+
+
+def check_safe_payment_defaults() -> None:
+    risky_mode = re.compile(r"\bSEND_MODE_REGULAR\b")
+    for path in iter_slice6_tol_sources():
+        rel = path.relative_to(ROOT)
+        if not (str(rel).startswith("examples/slice6/") or str(rel).startswith("examples/external-trials/")):
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            code = strip_line_comment(line)
+            if risky_mode.search(code):
+                fail(f"{rel}:{lineno}: production Slice 6 examples must not use SEND_MODE_REGULAR for value dispatch; use @stdlib/safe-payments helpers or SEND_MODE_BOUNCE_ON_ACTION_FAIL")
 
 
 def check_extra_flags_bit3_still_reserved() -> None:
@@ -208,9 +268,10 @@ def main() -> None:
     check_required_surface()
     check_release_artifacts()
     check_no_caller_controlled_now_scheduling()
+    check_safe_payment_defaults()
     check_extra_flags_bit3_still_reserved()
     check_no_reusable_public_bearer_capability()
-    print("Validated Slice 6 release-package guardrails: delivery, schedule, time, supervision, capability, no msg.now scheduling")
+    print("Validated Slice 6 release-package guardrails: delivery, schedule, time, supervision, capability, safe payments, no caller-controlled time scheduling")
 
 
 if __name__ == "__main__":

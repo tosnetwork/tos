@@ -220,8 +220,10 @@ Expected work:
 - add tests showing that external callers cannot spoof `now`;
 - extend scaffold/replay artifacts with timer traces.
 
-Exit criterion: authors use `blockchain.now()` and stdlib scheduling
-helpers rather than caller-controlled `msg.now` fields.
+Exit criterion: authors use `blockchain.currentMcSeqno()` or
+protocol-provided masterchain seqno context with stdlib scheduling
+helpers rather than caller-controlled `msg.now` fields or Unix
+timestamps.
 
 ### Stage 4 - monitors and links
 

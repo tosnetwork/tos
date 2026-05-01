@@ -279,7 +279,7 @@ fun slice5AuctionPayoutMessage(to: address, amount: coins): OutMessage {
     });
 }
 
-fun slice5AuctionEmitPayout(to: address, amount: coins, mode: int = SEND_MODE_REGULAR): void {
+fun slice5AuctionEmitPayout(to: address, amount: coins, mode: int = SEND_MODE_BOUNCE_ON_ACTION_FAIL): void {
     slice5AuctionPayoutMessage(to, amount).send(mode);
 }
 

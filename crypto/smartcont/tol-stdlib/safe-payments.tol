@@ -1,0 +1,81 @@
+// Slice 6 author-facing value-dispatch guardrails.
+tol 1.3
+
+import "@stdlib/gas-payments"
+
+const SLICE6_SAFE_PAYMENT_THROW_INSUFFICIENT_BALANCE = 0x1501
+const SLICE6_SAFE_PAYMENT_THROW_EXCESS_UNDERFLOW = 0x1502
+
+const SLICE6_SAFE_PAYMENT_DEFAULT_MODE = SEND_MODE_BOUNCE_ON_ACTION_FAIL
+const SLICE6_SAFE_RESERVE_MODE = RESERVE_MODE_AT_MOST + RESERVE_MODE_BOUNCE_ON_ACTION_FAIL
+
+/// Builds a plain internal value transfer. Action-phase failure bounces by
+/// default when sent through `slice6SendCoins`.
+@pure
+fun slice6PaymentMessage(to: address, amount: coins): OutMessage {
+    return createMessage({
+        bounce: BounceMode.NoBounce,
+        dest: to,
+        value: amount,
+    });
+}
+
+/// Builds an internal value transfer with an explicit body cell.
+@pure
+fun slice6PaymentMessageWithBody(to: address, amount: coins, body: cell): OutMessage {
+    return createMessage({
+        bounce: BounceMode.NoBounce,
+        dest: to,
+        value: amount,
+        body,
+    });
+}
+
+/// Sends coins with the Slice 6 safe default: bounce the transaction if the
+/// action phase cannot deliver the payment.
+fun slice6SendCoins(to: address, amount: coins, mode: int = SLICE6_SAFE_PAYMENT_DEFAULT_MODE): void {
+    slice6PaymentMessage(to, amount).send(mode);
+}
+
+/// Sends coins plus a small body with the same safe default.
+fun slice6SendCoinsWithBody(to: address, amount: coins, body: cell, mode: int = SLICE6_SAFE_PAYMENT_DEFAULT_MODE): void {
+    slice6PaymentMessageWithBody(to, amount, body).send(mode);
+}
+
+/// Throws if `payout + minimumRetainedBalance + current storage debt` exceeds
+/// the contract's original balance at compute start. Use before sending a
+/// partial payout from long-lived contracts.
+fun slice6RequireMinimumBalanceAfterPayout(payout: coins, minimumRetainedBalance: coins): void {
+    val required = payout + minimumRetainedBalance + contract.getStorageDuePayment();
+    if (contract.getOriginalBalance() < required) {
+        throw SLICE6_SAFE_PAYMENT_THROW_INSUFFICIENT_BALANCE;
+    }
+}
+
+/// Emits a RAWRESERVE action that keeps at least `minimumRetainedBalance` plus
+/// currently due storage debt when enough balance is available.
+fun slice6ReserveMinimumBalance(minimumRetainedBalance: coins): void {
+    reserveToscoinsOnBalance(minimumRetainedBalance + contract.getStorageDuePayment(), SLICE6_SAFE_RESERVE_MODE);
+}
+
+/// Refunds `attached - required` if positive. This is the standard guardrail
+/// for funding messages that accept `in.valueCoins >= required`.
+fun slice6RefundExcess(to: address, attached: coins, required: coins): void {
+    if (attached < required) {
+        throw SLICE6_SAFE_PAYMENT_THROW_EXCESS_UNDERFLOW;
+    }
+    if (attached > required) {
+        slice6SendCoins(to, attached - required);
+    }
+}
+
+/// Refunds `attached - required` with a correlation body, typically carrying an
+/// opcode/query_id pair chosen by the contract.
+fun slice6RefundExcessWithBody(to: address, attached: coins, required: coins, body: cell): void {
+    if (attached < required) {
+        throw SLICE6_SAFE_PAYMENT_THROW_EXCESS_UNDERFLOW;
+    }
+    if (attached > required) {
+        slice6SendCoinsWithBody(to, attached - required, body);
+    }
+}

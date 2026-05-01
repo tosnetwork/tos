@@ -757,6 +757,13 @@ static V<ast_block_statement> parse_block_statement(Lexer& lex, bool in_contract
 
 static V<ast_object_field> parse_object_field(Lexer& lex) {
   SrcRange range = lex.range_start();
+  if (lex.tok() == tok_ellipsis) {
+    lex.next();
+    AnyExprV spread_expr = parse_expr(lex);
+    range.end(spread_expr->range);
+    return createV<ast_object_field>(range, spread_expr);
+  }
+
   auto v_ident = parse_identifier(lex, "field name");
   range.end(v_ident->range);
 

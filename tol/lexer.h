@@ -58,6 +58,7 @@ enum TokenType {
 
   tok_identifier,
   tok_dot,
+  tok_ellipsis,
 
   tok_plus,
   tok_set_plus,

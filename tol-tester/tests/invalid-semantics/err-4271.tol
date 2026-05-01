@@ -1,5 +1,5 @@
-fun main() {
-    fun(x: int, y: () -> void = fun() {}) {  }
+struct DefaultCallback {
+    y: () -> void = fun() {}
 }
 
 /**

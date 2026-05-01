@@ -7,6 +7,7 @@ Slice 6 adds the repo-side foundation for protocol-heavy actor features:
 - monitor/link notification helpers using `OP_MONITOR_DOWN`;
 - restart-intensity and non-atomic supervision stdlib helpers;
 - public capability grants with canonical constraint hashing;
+- safe payment/refund helpers for author-facing value dispatch;
 - bounded failure trace schema and release-package checker coverage.
 
 Production protocol activation remains separate for validator scheduled
@@ -21,6 +22,7 @@ python3 scripts/check-slice-6-release-package.py
 ```
 
 The checker validates required stdlib surfaces, release documents,
-example budget declarations, no `msg.now` scheduling helper calls, no
-`extra_flags` bit-3 activation, and no reusable public bearer capability
-token pattern.
+example budget declarations, no caller-controlled or Unix-time scheduling
+into masterchain-seqno APIs, no unsafe `SEND_MODE_REGULAR` value dispatch
+in Slice 6 production examples, no `extra_flags` bit-3 activation, and no
+reusable public bearer capability token pattern.

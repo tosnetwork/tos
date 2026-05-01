@@ -40,10 +40,11 @@ less wall-clock precision, but it makes the ordering rule objective:
 delivery is valid only after the named masterchain block has appeared.
 
 Contract-local caller-provided `msg.now` is never a trusted scheduling
-source. Tol and stdlib helpers must use `blockchain.now()` or the
-protocol-provided scheduling context for ordinary deadline checks, and
-must use masterchain-seqno scheduling helpers for native scheduled
-messages.
+source. Tol and stdlib helpers use `blockchain.currentMcSeqno()` (TVM
+`PREVMCBLOCKS`) or the protocol-provided scheduling context for
+masterchain-seqno validity windows. `blockchain.now()` remains valid for
+ordinary Unix-time business logic, but it must not feed any `*McSeqno`
+field.
 
 ## 3. Scheduled action shape
 
@@ -173,7 +174,8 @@ orphaned handle, `cancelScheduled(orphaned_handle)` behaves the same as
 - Emulator fixtures prove delivery no earlier than `not_before_mc_seqno`.
 - Cancellation race ordering is deterministic.
 - Expired scheduled messages produce bounded delivery failure records.
-- Tol examples use `blockchain.now()` and scheduled helpers rather than
-  accepting `now` as a wire field.
+- Tol examples use `blockchain.currentMcSeqno()` / protocol scheduling
+  context for masterchain-seqno fields, and use `blockchain.now()` only for
+  ordinary Unix-time business logic.
 - Handle derivation, orphaned-handle cancellation, already-delivered
   cancellation, and expired-handle cancellation are covered by tests.

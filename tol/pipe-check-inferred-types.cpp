@@ -758,6 +758,9 @@ class CheckInferredTypesVisitor final : public ASTVisitorFunctionBody {
   void visit(V<ast_object_field> v) override {
     parent::visit(v->get_init_val());
 
+    if (v->is_spread()) {
+      return;
+    }
     if (!v->field_ref->declared_type->can_rhs_be_assigned(v->get_init_val()->inferred_type)) {
       err_type_mismatch("can not assign {src} to field of type {dst}", v->get_init_val()->inferred_type, v->field_ref->declared_type).collect(v->get_init_val(), cur_f);
     }

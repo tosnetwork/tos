@@ -550,6 +550,7 @@ struct TolLanguageGrammar {
     register_token("^", 1, tok_bitwise_xor);
     register_token("~", 1, tok_bitwise_not);
     register_token(".", 1, tok_dot);
+    register_token("...", 3, tok_ellipsis);
     register_token("==", 2, tok_eq);
     register_token("!=", 2, tok_neq);
     register_token("<=", 2, tok_leq);

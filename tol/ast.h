@@ -1006,13 +1006,15 @@ template<>
 struct Vertex<ast_object_field> final : ASTExprUnary {
 private:
   V<ast_identifier> identifier;
+  bool spread_field = false;
 
 public:
   StructFieldPtr field_ref = nullptr;   // assigned at type inferring
 
   AnyExprV get_init_val() const { return child; }
-  std::string_view get_field_name() const { return identifier->name; }
-  V<ast_identifier> get_field_identifier() const { return identifier; }
+  bool is_spread() const { return spread_field; }
+  std::string_view get_field_name() const { tol_assert(!spread_field); return identifier->name; }
+  V<ast_identifier> get_field_identifier() const { tol_assert(!spread_field); return identifier; }
 
   Vertex* mutate() const { return const_cast<Vertex*>(this); }
   void assign_field_ref(StructFieldPtr field_ref);
@@ -1020,6 +1022,11 @@ public:
   Vertex(SrcRange range, V<ast_identifier> name_identifier, AnyExprV init_val)
     : ASTExprUnary(ast_object_field, range, init_val)
     , identifier(name_identifier) {}
+
+  Vertex(SrcRange range, AnyExprV spread_expr)
+    : ASTExprUnary(ast_object_field, range, spread_expr)
+    , identifier(nullptr)
+    , spread_field(true) {}
 };
 
 template<>

@@ -18,6 +18,7 @@ struct Slice6TimerBudget {
     maxCellDepth: uint16
 }
 
+@pure
 fun slice6TimerBudget(
     maxScheduledEntries: uint16,
     maxBodyBits: uint32,

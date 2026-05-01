@@ -427,6 +427,9 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     AnyExprV body_init = nullptr;
     for (int i = 0, n = v_options_body->get_num_fields(); i < n; ++i) {
       auto v_field = v_options_body->get_field(i);
+      if (v_field->is_spread()) {
+        continue;
+      }
       if (v_field->get_field_name() == "body") {
         body_init = v_field->get_init_val();
         break;
@@ -476,6 +479,9 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     auto v_body_obj = v_body_lit->get_body();
     for (int i = 0, n = v_body_obj->get_num_fields(); i < n; ++i) {
       auto v_field = v_body_obj->get_field(i);
+      if (v_field->is_spread()) {
+        continue;
+      }
       if (v_field->get_field_name() != "queryId") {
         continue;
       }

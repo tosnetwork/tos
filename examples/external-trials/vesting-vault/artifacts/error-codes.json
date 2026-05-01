@@ -1,0 +1,23 @@
+{
+  "contract": "VestingVault",
+  "application_errors": [
+    { "name": "VAULT_ERR_NOT_OWNER",        "code": 8193, "hex": "0x2001", "class": "Authorization", "site": "Fund, Revoke, RegisterGrant, RevokeGrant receivers" },
+    { "name": "VAULT_ERR_NOT_BENEFICIARY",  "code": 8194, "hex": "0x2002", "class": "Authorization", "site": "reserved for future use" },
+    { "name": "VAULT_ERR_CLIFF_NOT_PASSED", "code": 8195, "hex": "0x2003", "class": "Permanent",     "site": "Claim receiver (cliff guard)" },
+    { "name": "VAULT_ERR_NOTHING_TO_CLAIM", "code": 8196, "hex": "0x2004", "class": "Permanent",     "site": "Claim receiver (zero claimable)" },
+    { "name": "VAULT_ERR_FUND_SHORTAGE",    "code": 8197, "hex": "0x2005", "class": "Permanent",     "site": "Fund receiver (value < totalAmount) + Claim receiver (gas < MIN_CLAIM_GAS)" },
+    { "name": "VAULT_ERR_BAD_PARAMS",       "code": 8198, "hex": "0x2006", "class": "Permanent",     "site": "Deploy receiver (invalid params)" },
+    { "name": "VAULT_ERR_CAP_FULL",         "code": 8199, "hex": "0x2007", "class": "Permanent",     "site": "reserved for registry-full path" }
+  ],
+  "stdlib_errors_forwarded": [
+    { "name": "SLICE6_CAPABILITY_THROW_SENDER_MISMATCH",         "code": 5124, "hex": "0x1404" },
+    { "name": "SLICE6_CAPABILITY_THROW_EXPIRED",                 "code": 5123, "hex": "0x1403" },
+    { "name": "SLICE6_CAPABILITY_THROW_REPLAY",                  "code": 5127, "hex": "0x1407" },
+    { "name": "SLICE6_CAPABILITY_THROW_REVOKED",                 "code": 5128, "hex": "0x1408" },
+    { "name": "SLICE6_CAPABILITY_THROW_STORAGE_FULL",            "code": 5129, "hex": "0x1409" },
+    { "name": "SLICE6_CAPABILITY_THROW_SELECTOR_MISMATCH",       "code": 5126, "hex": "0x1406" },
+    { "name": "SLICE6_TIME_THROW_HORIZON",                       "code": 4355, "hex": "0x1103" }
+  ],
+  "unknown_opcode": { "code": 65535, "hex": "0xffff", "policy": "@unknown_throw" },
+  "wrong_state_protocol": { "code": 1024, "note": "synthesized by compiler for unhandled (state, opcode) pairs" }
+}

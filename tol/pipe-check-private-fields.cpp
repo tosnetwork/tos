@@ -65,6 +65,9 @@ class CheckPrivateFieldsUsageVisitor final : public ASTVisitorFunctionBody {
 
     for (int i = 0; i < v->get_body()->get_num_fields(); ++i) {
       auto v_field = v->get_body()->get_field(i);
+      if (v_field->is_spread()) {
+        continue;
+      }
       StructFieldPtr field_ref = v_field->field_ref;
       if (field_ref->is_private && !is_private_field_usage_allowed(cur_f, v->struct_ref)) {
         err_private_field_used_outside_method(v->struct_ref, field_ref).collect(v_field, cur_f);

@@ -261,6 +261,9 @@ class ASTStringifier final : public ASTVisitor {
         }
         return "(else)";
       case ast_object_field:
+        if (v->as<ast_object_field>()->is_spread()) {
+          return "...";
+        }
         return static_cast<std::string>(v->as<ast_object_field>()->get_field_name());
       case ast_object_literal:
         return "↓" + std::to_string(v->as<ast_object_literal>()->get_body()->get_num_fields());

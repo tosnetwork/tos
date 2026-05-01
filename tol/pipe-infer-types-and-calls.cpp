@@ -1529,9 +1529,37 @@ class InferTypesAndCallsAndFieldsVisitor final {
     // if it's a generic struct, we need to deduce Ts by field values, like for a function call
     GenericSubstitutionsDeducing deducingTs(struct_ref);
 
-    uint64_t occurred_mask = 0;
+    std::vector<bool> occurred_fields(struct_ref->get_num_fields(), false);
+    bool has_spread = false;
+    bool seen_explicit_field = false;
     for (int i = 0; i < v->get_body()->get_num_fields(); ++i) {
       auto field_i = v->get_body()->get_field(i);
+      if (field_i->is_spread()) {
+        if (seen_explicit_field) {
+          err("object spread must appear before explicit field overrides").fire(field_i, cur_f);
+        }
+        if (has_spread) {
+          err("object literal supports one spread source; merge values before constructing the literal").fire(field_i, cur_f);
+        }
+        has_spread = true;
+        TypePtr spread_hint = TypeDataStruct::create(struct_ref);
+        flow = infer_any_expr(field_i->get_init_val(), std::move(flow), false, spread_hint).out_flow;
+        const TypeDataStruct* spread_struct = field_i->get_init_val()->inferred_type->unwrap_alias()->try_as<TypeDataStruct>();
+        if (!spread_struct) {
+          err("object spread source must have struct type, got `{}`", field_i->get_init_val()->inferred_type).fire(field_i->get_init_val(), cur_f);
+          continue;
+        }
+        if (struct_ref->is_generic_struct() && spread_struct->struct_ref->name == struct_ref->name) {
+          struct_ref = spread_struct->struct_ref;
+          occurred_fields.assign(struct_ref->get_num_fields(), false);
+        }
+        if (spread_struct->struct_ref != struct_ref) {
+          err("object spread source type `{}` does not match target struct `{}`", spread_struct->struct_ref, struct_ref).fire(field_i->get_init_val(), cur_f);
+        }
+        assign_inferred_type(field_i, field_i->get_init_val());
+        continue;
+      }
+      seen_explicit_field = true;
       std::string_view field_name = field_i->get_field_name();
       StructFieldPtr field_ref = struct_ref->find_field(field_name);
       if (!field_ref) {
@@ -1539,10 +1567,10 @@ class InferTypesAndCallsAndFieldsVisitor final {
       }
       field_i->mutate()->assign_field_ref(field_ref);
 
-      if (occurred_mask & (1ULL << field_ref->field_idx)) {
+      if (occurred_fields.at(field_ref->field_idx)) {
         err("duplicate field initialization").fire(field_i->get_field_identifier(), cur_f);
       }
-      occurred_mask |= 1ULL << field_ref->field_idx;
+      occurred_fields.at(field_ref->field_idx) = true;
 
       AnyExprV val_i = field_i->get_init_val();
       TypePtr field_type = field_ref->declared_type;
@@ -1570,15 +1598,18 @@ class InferTypesAndCallsAndFieldsVisitor final {
       // re-assign field_ref (it was earlier assigned into a field of a generic struct)
       for (int i = 0; i < v->get_body()->get_num_fields(); ++i) {
         auto field_i = v->get_body()->get_field(i);
+        if (field_i->is_spread()) {
+          continue;
+        }
         field_i->mutate()->assign_field_ref(struct_ref->find_field(field_i->get_field_name()));
       }
     }
 
     // check that all fields are present (do it after potential generic instantiation, when types are known)
     for (StructFieldPtr field_ref : struct_ref->fields) {
-      if (!(occurred_mask & (1ULL << field_ref->field_idx))) {
+      if (!occurred_fields.at(field_ref->field_idx)) {
         bool allow_missing = field_ref->has_default_value() || field_ref->declared_type == TypeDataVoid::create();
-        if (!allow_missing) {
+        if (!allow_missing && !has_spread) {
           err("field `{}` missed in initialization of struct `{}`", field_ref, struct_ref).fire(SrcRange::empty_at_end(v->range), cur_f);
         }
       }

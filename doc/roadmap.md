@@ -1057,7 +1057,13 @@ stateful grant registries, single-use nonce consumption, revocation
 epochs, bounded revoked-handle storage, failure-trace schema, Slice 6
 examples, author guide, audit checklist, compatibility matrix, release
 notes, activation/rollback plan, and a repo-side supervised dogfood
-service. Protocol
+service. Post-external-author hardening added `save({ ...storage,
+field: value })` object-spread lowering, the trusted
+`blockchain.currentMcSeqno()` / `currentMcSeqno()` stdlib surface over
+TVM `PREVMCBLOCKS`, `@stdlib/safe-payments`, pure Slice 6 budget
+construction, call-site evaluated default parameters, and release
+checker coverage for Unix-time-to-masterchain-seqno misuse and unsafe
+`SEND_MODE_REGULAR` value dispatch in Slice 6 examples. Protocol
 activation of validator scheduled delivery and production BackPressure
 emission remains gated to later Slice 6 stages. The Stage 0 input
 documents are
@@ -1302,6 +1308,10 @@ authorization plane, not reusable public bearer secrets.
    - ✅ Run full practical verification suite.
    - ✅ Add `doc/slice-6-activation-plan.md`: activation height (TBD —
      pending production deployment), capability flags, rollback plan.
+   - ✅ Post-trial author hardening: close VestingVault findings around
+     storage spread saves, trusted masterchain seqno, safe payout/refund
+     helpers, retained-balance guards, pure stdlib constructors, default
+     parameter helper calls, and release-checker guardrails.
    - ✅ Update roadmap: repo-side complete; production activation
      pending.
    - ✅ Commit + push:
@@ -1362,11 +1372,11 @@ without protocol support, are the historical failure mode of
 multi-layer systems. The 26-week first slice exists to avoid that
 mode. Every later slice depends on it.
 
-The right next action is Slice 6 Stage 0 security re-review: approve or
-revise the delivery-SLA, time, supervision, and capability RFCs before
-any protocol implementation starts. `ErrorClass.BackPressure`,
-scheduled messages, monitor/link notifications, and supervision recovery
-remain implementation-gated until Stage 0 review closes.
+The right next action is production-candidate scale external author
+trialing and activation planning on top of the repo-side Slice 6
+implementation. TOS is not yet live, so validator-level activation
+height, production BackPressure emission, and real scheduled-delivery
+rollout remain deployment-gated rather than coding-gated.
 
 ## 11. Known unscheduled work and cross-Slice blockers
 
@@ -1714,6 +1724,21 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r51 (Slice 6 external-author hardening)
+
+- Closed the VestingVault external trial's critical authoring gaps:
+  object-literal spread now lowers end-to-end, `blockchain.currentMcSeqno()`
+  exposes trusted `PREVMCBLOCKS` masterchain seqno, `@stdlib/safe-payments`
+  provides safe payout/refund/retained-balance helpers, and Slice 6 release
+  checks reject Unix-time-to-mc-seqno misuse plus unsafe
+  `SEND_MODE_REGULAR` value dispatch in production examples.
+- Relaxed function parameter defaults so they can call global helper
+  functions at call-site evaluation time while still rejecting defaults that
+  capture the callee's own parameters. Struct field defaults remain constant.
+- Added the VestingVault external trial artifacts and hardening tests for
+  spread saves, pure Slice 6 budget construction, default helper calls, and
+  safe payment defaults.
 
 ### r50 (Slice 6 Stage 8 system contract dogfood)
 

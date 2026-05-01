@@ -413,6 +413,30 @@ fun blockchain.logicalTime(): int
 fun blockchain.currentBlockLogicalTime(): int
     asm "BLOCKLT"
 
+/// Returns the previous-blocks info tuple's visible masterchain block ids.
+/// The first item is the latest masterchain block visible to the current
+/// transaction context; each item is `[workchain, shard, seqno, root_hash,
+/// file_hash]`.
+@pure
+fun blockchain.previousMasterchainBlocks(): array<tuple>
+    asm "PREVMCBLOCKS"
+
+/// Returns the latest masterchain seqno visible to this transaction context.
+/// This uses TVM `PREVMCBLOCKS`; it is not derived from Unix time and must be
+/// preferred for Slice 6 `*McSeqno` validity windows.
+@pure
+fun blockchain.currentMcSeqno(): uint32 {
+    val head = blockchain.previousMasterchainBlocks().first();
+    return (head.get(2) as int) as uint32;
+}
+
+/// Convenience alias for contracts that want the short name while still using
+/// the same trusted `PREVMCBLOCKS` source as `blockchain.currentMcSeqno()`.
+@pure
+fun currentMcSeqno(): uint32 {
+    return blockchain.currentMcSeqno();
+}
+
 /// Returns the value of the global configuration parameter with integer index `i` as a `cell` or `null` value.
 @pure
 fun blockchain.configParam(x: int): cell?
