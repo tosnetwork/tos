@@ -1,0 +1,105 @@
+import "@stdlib/supervision"
+
+fun observedAddr(): address {
+    return address("0:0101010101010101010101010101010101010101010101010101010101010101");
+}
+
+fun observerAddr(): address {
+    return address("0:0202020202020202020202020202020202020202020202020202020202020202");
+}
+
+fun payerAddr(): address {
+    return address("0:0303030303030303030303030303030303030303030303030303030303030303");
+}
+
+fun monitorBudget(
+    maxDiagnosticBits: uint32 = 256,
+    maxDiagnosticRefs: uint16 = 1,
+    enabled: bool = true
+): Slice6MonitorBudget {
+    return slice6MonitorBudget(4, maxDiagnosticBits, maxDiagnosticRefs, 1023, SLICE6_MONITOR_NOTIFICATION_FORWARDING_FEE_FLOOR, enabled);
+}
+
+fun monitorReg(): Slice6MonitorRegistration {
+    return slice6MonitorRegistration(observedAddr(), observerAddr(), payerAddr(), 77, monitorBudget());
+}
+
+fun monitorDiagnostic(bits: uint16 = 32): cell {
+    if (bits == 64) {
+        return beginCell().storeUint(1, 32).storeUint(2, 32).endCell();
+    }
+    return beginCell().storeUint(1, 32).endCell();
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(671)
+fun test_monitor_opcode_reserved_and_not_op_error(): int {
+    assert(OP_MONITOR_DOWN == 0x00000010) throw 6711;
+    assert(OP_MONITOR_DOWN != OP_ERROR) throw 6712;
+    assert(slice6IsMonitorDownOpcode(OP_MONITOR_DOWN)) throw 6713;
+    return OP_MONITOR_DOWN;
+}
+
+@method_id(672)
+fun test_monitor_registration_is_one_way(): int {
+    val reg = monitorReg();
+    assert(!reg.link) throw 6721;
+    assert(!reg.observerFailureAffectsObserved()) throw 6722;
+    return reg.queryId;
+}
+
+@method_id(673)
+fun test_link_registration_is_explicit(): int {
+    val reg = slice6LinkRegistration(observedAddr(), observerAddr(), payerAddr(), 88, monitorBudget());
+    assert(reg.link) throw 6731;
+    assert(reg.observerFailureAffectsObserved()) throw 6732;
+    return reg.queryId;
+}
+
+@method_id(674)
+fun test_monitor_down_roundtrip_without_diagnostic(): int {
+    val note = slice6BuildMonitorDownNotification(monitorReg(), 2, 99, 1, null, 1000, null, monitorBudget());
+    val parsed = Slice6MonitorDownNotification.fromCell(note.toCell());
+    assert(parsed.queryId == 77) throw 6741;
+    assert(parsed.failureCode == 99) throw 6742;
+    return parsed.failureClass;
+}
+
+@method_id(675)
+fun test_monitor_down_roundtrip_with_diagnostic(): int {
+    val note = slice6BuildMonitorDownNotification(monitorReg(), 1, 7, 2, 0xabc, 1000, monitorDiagnostic(), monitorBudget());
+    val parsed = Slice6MonitorDownNotification.fromCell(note.toCell());
+    assert(parsed.originalMessageHash! == 0xabc) throw 6751;
+    assert(parsed.diagnostic != null) throw 6752;
+    return parsed.phase;
+}
+
+@method_id(676)
+fun test_monitor_down_rejects_oversized_diagnostic(): int {
+    try {
+        slice6BuildMonitorDownNotification(monitorReg(), 1, 7, 2, null, 1000, monitorDiagnostic(64), monitorBudget(16));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(677)
+fun test_extra_flags_bit3_still_reserved(): int {
+    assert(EXTRA_FLAGS_VALID_MASK == 3) throw 6771;
+    assert((8 & EXTRA_FLAGS_VALID_MASK) != 8) throw 6772;
+    return EXTRA_FLAGS_VALID_MASK;
+}
+
+/**
+@testcase | 671 | | 16
+@testcase | 672 | | 77
+@testcase | 673 | | 88
+@testcase | 674 | | 2
+@testcase | 675 | | 2
+@testcase | 676 | | 4610
+@testcase | 677 | | 3
+ */

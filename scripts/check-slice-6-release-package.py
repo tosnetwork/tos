@@ -32,6 +32,7 @@ def check_required_surface() -> None:
     delivery = read("crypto/smartcont/tol-stdlib/delivery.tol")
     schedule = read("crypto/smartcont/tol-stdlib/schedule.tol")
     time = read("crypto/smartcont/tol-stdlib/time.tol")
+    supervision = read("crypto/smartcont/tol-stdlib/supervision.tol")
 
     for needle in [
         "BACK_PRESSURE_ACTIVATION_GATE = false",
@@ -60,6 +61,16 @@ def check_required_surface() -> None:
         if needle not in time:
             fail(f"time stdlib missing {needle}")
 
+    for needle in [
+        "Slice6MonitorRegistration",
+        "Slice6MonitorDownNotification",
+        "slice6BuildMonitorDownNotification",
+        "slice6IsMonitorDownOpcode",
+        "observerFailureAffectsObserved",
+    ]:
+        if needle not in supervision:
+            fail(f"supervision stdlib missing {needle}")
+
     schema = json.loads(read("doc/slice-6-timer-manifest-schema.json"))
     timer_props = schema["properties"]["slice6"]["properties"]["timers"]["items"]["properties"]
     for required in [
@@ -78,6 +89,7 @@ def iter_slice6_tol_sources() -> list[Path]:
         ROOT / "crypto/smartcont/tol-stdlib/delivery.tol",
         ROOT / "crypto/smartcont/tol-stdlib/schedule.tol",
         ROOT / "crypto/smartcont/tol-stdlib/time.tol",
+        ROOT / "crypto/smartcont/tol-stdlib/supervision.tol",
     ]
     paths.extend(sorted((ROOT / "tol-tester/tests").glob("slice6-*.tol")))
     examples = ROOT / "examples/slice6"
@@ -109,7 +121,7 @@ def main() -> None:
     check_required_surface()
     check_no_caller_controlled_now_scheduling()
     check_extra_flags_bit3_still_reserved()
-    print("Validated Slice 6 release-package guardrails: delivery, schedule, time, no msg.now scheduling")
+    print("Validated Slice 6 release-package guardrails: delivery, schedule, time, supervision, no msg.now scheduling")
 
 
 if __name__ == "__main__":

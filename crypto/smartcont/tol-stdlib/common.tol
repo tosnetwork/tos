@@ -1966,6 +1966,11 @@ const EXTRA_FLAGS_VALID_MASK = 3
 // doc/tos-message-policy.md §5.2 — application-tier error reply.
 const OP_ERROR = 0x00010001
 
+// SLICE 6 SCAFFOLDING
+// doc/tos-supervision-policy.md §4 — one-way monitor notification.
+// This is a protocol-defined system opcode, not an OP_ERROR reply.
+const OP_MONITOR_DOWN: uint32 = 0x00000010
+
 // SLICE 1 SCAFFOLDING
 // doc/tos-message-policy.md §5.3 — transient/permanent error
 // classification. Values 0..5 are defined here; 6..15 are reserved

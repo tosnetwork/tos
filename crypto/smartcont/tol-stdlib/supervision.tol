@@ -1,0 +1,147 @@
+// Slice 6 monitor/link and supervision foundations.
+tol 1.3
+
+const SLICE6_MONITOR_THROW_INVALID_BUDGET = 0x1201
+const SLICE6_MONITOR_THROW_DIAGNOSTIC_TOO_LARGE = 0x1202
+const SLICE6_MONITOR_THROW_INVALID_NOTIFICATION = 0x1203
+
+const SLICE6_MONITOR_REGISTRATION_STORAGE_BITS: uint16 = 768
+const SLICE6_MONITOR_NOTIFICATION_FORWARDING_FEE_FLOOR: coins = 1000000
+const SLICE6_MONITOR_SIZE_SCAN_CELLS = 1024
+
+struct Slice6MonitorBudget {
+    enabled: bool
+    maxRegistrations: uint16
+    maxDiagnosticBits: uint32
+    maxDiagnosticRefs: uint16
+    maxCellDepth: uint16
+    forwardingFeeFloor: coins
+}
+
+struct Slice6MonitorRegistration {
+    observed: address
+    observer: address
+    payer: address
+    queryId: uint64
+    link: bool
+}
+
+struct (OP_MONITOR_DOWN) Slice6MonitorDownNotification {
+    queryId: uint64
+    observed: address
+    failureClass: uint8
+    failureCode: uint16
+    phase: uint8
+    originalMessageHash: uint256?
+    createdAt: uint64
+    diagnostic: cell?
+}
+
+fun slice6MonitorBudget(
+    maxRegistrations: uint16,
+    maxDiagnosticBits: uint32,
+    maxDiagnosticRefs: uint16,
+    maxCellDepth: uint16,
+    forwardingFeeFloor: coins = SLICE6_MONITOR_NOTIFICATION_FORWARDING_FEE_FLOOR,
+    enabled: bool = true
+): Slice6MonitorBudget {
+    return Slice6MonitorBudget {
+        enabled,
+        maxRegistrations,
+        maxDiagnosticBits,
+        maxDiagnosticRefs,
+        maxCellDepth,
+        forwardingFeeFloor,
+    };
+}
+
+fun Slice6MonitorBudget.requireEnabled(self): void {
+    if (
+        !self.enabled ||
+        self.maxRegistrations == 0 ||
+        self.maxDiagnosticBits == 0 ||
+        self.maxCellDepth == 0 ||
+        self.forwardingFeeFloor < SLICE6_MONITOR_NOTIFICATION_FORWARDING_FEE_FLOOR
+    ) {
+        throw SLICE6_MONITOR_THROW_INVALID_BUDGET;
+    }
+}
+
+fun slice6MonitorRegistration(
+    observed: address,
+    observer: address,
+    payer: address,
+    queryId: uint64,
+    budget: Slice6MonitorBudget
+): Slice6MonitorRegistration {
+    budget.requireEnabled();
+    return Slice6MonitorRegistration {
+        observed,
+        observer,
+        payer,
+        queryId,
+        link: false,
+    };
+}
+
+fun slice6LinkRegistration(
+    observed: address,
+    observer: address,
+    payer: address,
+    queryId: uint64,
+    budget: Slice6MonitorBudget
+): Slice6MonitorRegistration {
+    val reg = slice6MonitorRegistration(observed, observer, payer, queryId, budget);
+    return Slice6MonitorRegistration {
+        observed: reg.observed,
+        observer: reg.observer,
+        payer: reg.payer,
+        queryId: reg.queryId,
+        link: true,
+    };
+}
+
+fun Slice6MonitorBudget.requireDiagnosticWithinBudget(self, diagnostic: cell?): void {
+    if (diagnostic == null) {
+        return;
+    }
+    val (_, bits, refs, ok) = diagnostic!.calculateSize(SLICE6_MONITOR_SIZE_SCAN_CELLS);
+    if (!ok || bits > self.maxDiagnosticBits || refs > self.maxDiagnosticRefs || diagnostic!.depth() > self.maxCellDepth) {
+        throw SLICE6_MONITOR_THROW_DIAGNOSTIC_TOO_LARGE;
+    }
+}
+
+fun slice6BuildMonitorDownNotification(
+    registration: Slice6MonitorRegistration,
+    failureClass: uint8,
+    failureCode: uint16,
+    phase: uint8,
+    originalMessageHash: uint256?,
+    createdAt: uint64,
+    diagnostic: cell?,
+    budget: Slice6MonitorBudget
+): Slice6MonitorDownNotification {
+    budget.requireEnabled();
+    budget.requireDiagnosticWithinBudget(diagnostic);
+    if (failureClass > 255 || phase > 255) {
+        throw SLICE6_MONITOR_THROW_INVALID_NOTIFICATION;
+    }
+    return Slice6MonitorDownNotification {
+        queryId: registration.queryId,
+        observed: registration.observed,
+        failureClass,
+        failureCode,
+        phase,
+        originalMessageHash,
+        createdAt,
+        diagnostic,
+    };
+}
+
+fun slice6IsMonitorDownOpcode(op: uint32): bool {
+    return op == OP_MONITOR_DOWN;
+}
+
+fun Slice6MonitorRegistration.observerFailureAffectsObserved(self): bool {
+    return self.link;
+}

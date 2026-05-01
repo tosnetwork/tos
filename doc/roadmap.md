@@ -1038,17 +1038,19 @@ multi-address structs.
 (monitors versus links), §6.4 (restart intensity), and §6.6 (crash
 reports) form the Slice 6 design surface.
 
-**Status.** 🟡 Stages 1–3 are complete as of 2026-05-01; Stage 4
-monitors/links are next. Stage 0 design review findings were addressed
-in Draft v0.2 and re-review approved. The implementation layer now
-includes `@stdlib/delivery`, `@stdlib/schedule`, and `@stdlib/time`:
+**Status.** 🟡 Stages 1–4 are complete as of 2026-05-01; Stage 5
+supervision restart intensity is next. Stage 0 design review findings
+were addressed in Draft v0.2 and re-review approved. The implementation layer now
+includes `@stdlib/delivery`, `@stdlib/schedule`, `@stdlib/time`, and
+the monitor/link foundation in `@stdlib/supervision`:
 canonical delivery-id input helpers, BackPressureAdvice validation,
 queue-pressure bucket classification, bounded dead-letter sink storage,
 scheduled-action shapes, masterchain-seqno `deliver_by` predicates,
 scheduled handles, cancel-authority checks, escrow force-expiry helpers,
 author-facing timer budgets, and release-checker guardrails against
-caller-controlled `msg.now` scheduling. Protocol activation of validator
-scheduled delivery, monitor notifications, and production BackPressure
+caller-controlled `msg.now` scheduling, `OP_MONITOR_DOWN` notification
+construction, and explicit monitor/link registration. Protocol
+activation of validator scheduled delivery and production BackPressure
 emission remains gated to later Slice 6 stages. The Stage 0 input
 documents are
 [`doc/tos-slice-6-policy.md`](tos-slice-6-policy.md),
@@ -1165,27 +1167,28 @@ authorization plane, not reusable public bearer secrets.
    and stdlib scheduling helpers; `msg.now` scheduling is detected and
    rejected by release checker.
 
-5. ⏳ **Stage 4 — monitors and links.**
+5. ✅ **Stage 4 — monitors and links.**
 
-   - ⏳ Add `OP_MONITOR_DOWN = 0x00000010` to `common.tol` constants
+   - ✅ Add `OP_MONITOR_DOWN = 0x00000010` to `common.tol` constants
      alongside `OP_ERROR`.
-   - ⏳ Add initial `crypto/smartcont/tol-stdlib/supervision.tol` with
-     `MonitorRegistration`, `MonitorDownNotification`,
-     `buildMonitorDownNotification(...)`, `isMonitorDownOpcode(...)`.
-   - ⏳ Link registration (heavier, explicit state entry, bounded).
-   - ⏳ Add funding bounds constants:
+   - ✅ Add initial `crypto/smartcont/tol-stdlib/supervision.tol` with
+     `Slice6MonitorRegistration`, `Slice6MonitorDownNotification`,
+     `slice6BuildMonitorDownNotification(...)`, and
+     `slice6IsMonitorDownOpcode(...)`.
+   - ✅ Link registration is explicit (`link: true`) and distinct from a
+     one-way monitor (`link: false`).
+   - ✅ Add funding/bounds constants:
      `MONITOR_REGISTRATION_STORAGE_BITS`,
      `MONITOR_NOTIFICATION_FORWARDING_FEE_FLOOR`.
-   - ⏳ `extra_flags` bit 3 remains reserved and invalid; do not activate.
-   - ⏳ Add emulator fixtures (`slice-6-stage4-monitor-fixtures.cpp`):
+   - ✅ `extra_flags` bit 3 remains reserved and invalid; not activated.
+   - ✅ Add emulator fixtures (`slice-6-stage4-monitor-fixtures.cpp`):
      `OP_MONITOR_DOWN` ≠ `OP_ERROR`; `MonitorDownNotification`
      roundtrip with/without diagnostic; bit 3 still rejected; observer
      failure does not affect observed actor.
-   - ⏳ Add tol-tester cases: `slice6-monitor-registration-positive.tol`,
-     `slice6-monitor-down-notification-positive.tol`,
-     `slice6-monitor-down-opcode-check-positive.tol`.
-   - ⏳ Update roadmap. Commit + push:
-     *Slice 6 Stage 4 monitors and links*
+   - ✅ Add tol-tester coverage in `slice6-monitor-stdlib-positive.tol`
+     for opcode separation, one-way monitors, explicit links, bounded
+     DOWN notifications, diagnostic budget rejection, and bit-3
+     reservation.
 
    Exit criterion: a monitor receives a bounded DOWN-style notification;
    `extra_flags` bit 3 stays invalid; `OP_MONITOR_DOWN` dispatch works
@@ -1691,6 +1694,17 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r46 (Slice 6 Stage 4 monitors and links)
+
+- Added `OP_MONITOR_DOWN = 0x00000010` to the Tol stdlib and introduced
+  `@stdlib/supervision` monitor/link foundations.
+- Added bounded DOWN notification builders, explicit one-way monitor vs
+  link registration helpers, diagnostic budget checks, and release-checker
+  validation for the Stage 4 surface.
+- Added Tol and emulator fixtures proving opcode separation from
+  `OP_ERROR`, notification roundtrip, observer-failure isolation, and
+  continued `extra_flags` bit-3 reservation.
 
 ### r45 (Slice 6 Stage 3 Tol time stdlib)
 

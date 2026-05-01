@@ -927,6 +927,8 @@ add_executable(test-emulator
         emulator/test/slice-6-stage1-delivery-fixtures.cpp
         # Slice 6 Stage 2 scheduled-message predicate fixtures.
         emulator/test/slice-6-stage2-schedule-fixtures.cpp
+        # Slice 6 Stage 4 monitor/link predicate fixtures.
+        emulator/test/slice-6-stage4-monitor-fixtures.cpp
         # Slice 5 receive-context harness for production receive handlers.
         emulator/test/slice-5-receive-context-fixture.cpp
         emulator/test/tos-report-bond-oracle-fixture.cpp)
