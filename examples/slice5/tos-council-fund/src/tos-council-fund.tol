@@ -1,0 +1,145 @@
+// TosCouncilFund — governance-controlled treasury backed by @stdlib/governance.
+// Use cases: council-voted grant disbursements, multi-sig DAO fund releases,
+//            on-chain budget approvals requiring quorum before transfer.
+//
+// Security note: @stdlib/governance voterKey is an unchecked field in Slice5GovernanceVote.
+// Any sender can set msg.voterKey to any value without validation at the stdlib level.
+// This contract ignores msg.voterKey entirely and derives the canonical voter key from
+// in.senderAddress. Unauthorized senders throw COUNCIL_THROW_UNAUTHORIZED_VOTER (0x1001)
+// before the stdlib vote() function is ever reached.
+//
+// Execute handler records approval in contract state but does NOT dispatch the approved
+// funds — dispatching funds is an explicit integration step. The off-chain operator reads
+// the executed proposal state via getters and sends the funds in a follow-up transaction.
+tol 1.3
+
+import "@stdlib/governance"
+
+// Contract-specific error base: 0x1000 (4096). All codes >= 1024 per Slice 5 policy.
+const COUNCIL_THROW_UNAUTHORIZED_VOTER: int = 4097  // 0x1001
+
+// Canonical proposer key stored in the stdlib policy. Real authorization uses proposerAddress.
+const COUNCIL_PROPOSER_KEY: uint256 = 1
+
+// Three authorized voter addresses packed into a ref to keep TosCouncilFundStorage under 1023 bits.
+// (Four address fields inline would total ~1068 bits, exceeding the TVM cell limit.)
+struct TosCouncilVoters {
+    voter1: address
+    voter2: address
+    voter3: address
+}
+
+struct TosCouncilFundStorage {
+    proposerAddress: address
+    voters: Cell<TosCouncilVoters>
+    policy: Cell<Slice5GovernancePolicy>
+    proposal: Cell<Slice5GovernanceProposal>?
+}
+
+// Derives the canonical voter key (1/2/3) from the message sender address.
+// Throws COUNCIL_THROW_UNAUTHORIZED_VOTER if addr is not one of the three authorized voters.
+// Exposed as a standalone helper so tests can verify the mapping directly.
+fun councilResolveVoterKey(
+    addr: address,
+    voter1: address,
+    voter2: address,
+    voter3: address
+): uint256 {
+    if (addr == voter1) { return 1; }
+    if (addr == voter2) { return 2; }
+    if (addr == voter3) { return 3; }
+    throw COUNCIL_THROW_UNAUTHORIZED_VOTER;
+}
+
+contract TosCouncilFund {
+    storage: TosCouncilFundStorage
+    @unknown_throw(0xffff);
+
+    // Only proposerAddress may submit a fund disbursement proposal.
+    // The stdlib proposerKey check uses COUNCIL_PROPOSER_KEY (1); real auth is senderAddress.
+    @disclaim_query_id
+    receive(msg: Slice5GovernancePropose) {
+        if (in.senderAddress != storage.proposerAddress) {
+            throw SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER;
+        }
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        val action = lazy Slice5GovernanceAction.fromCell(msg.action);
+        val proposal = slice5GovernanceCreateProposal(
+            policy, msg.queryId, COUNCIL_PROPOSER_KEY, action, 0, msg.validUntil
+        );
+        save(TosCouncilFundStorage {
+            proposerAddress: storage.proposerAddress,
+            voters: storage.voters,
+            policy: storage.policy,
+            proposal: proposal.toCell(),
+        });
+    }
+
+    // Voter authorization: canonical voterKey is derived from in.senderAddress.
+    // msg.voterKey is intentionally ignored — it is an unchecked field at the stdlib level.
+    @disclaim_query_id
+    receive(msg: Slice5GovernanceVote) {
+        val voters = lazy TosCouncilVoters.fromCell(storage.voters);
+        val voterKey = councilResolveVoterKey(
+            in.senderAddress, voters.voter1, voters.voter2, voters.voter3
+        );
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
+        proposal.vote(voterKey, msg.support, msg.now);
+        save(TosCouncilFundStorage {
+            proposerAddress: storage.proposerAddress,
+            voters: storage.voters,
+            policy: storage.policy,
+            proposal: proposal.toCell(),
+        });
+    }
+
+    // Marks the proposal as executed after quorum and threshold are met.
+    // Integration note: fund dispatch is not performed here. The off-chain operator
+    // must read the approved action via getters and send a separate fund transfer.
+    @disclaim_query_id
+    receive(msg: Slice5GovernanceExecute) {
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
+        proposal.execute(policy, msg.now);
+        save(TosCouncilFundStorage {
+            proposerAddress: storage.proposerAddress,
+            voters: storage.voters,
+            policy: storage.policy,
+            proposal: proposal.toCell(),
+        });
+    }
+
+    // Only proposerAddress may cancel an active proposal.
+    @disclaim_query_id
+    receive(msg: Slice5GovernanceCancel) {
+        if (in.senderAddress != storage.proposerAddress) {
+            throw SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER;
+        }
+        val policy = lazy Slice5GovernancePolicy.fromCell(storage.policy);
+        var proposal = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
+        proposal.cancel(policy, COUNCIL_PROPOSER_KEY, msg.now);
+        save(TosCouncilFundStorage {
+            proposerAddress: storage.proposerAddress,
+            voters: storage.voters,
+            policy: storage.policy,
+            proposal: proposal.toCell(),
+        });
+    }
+
+    // Returns (votesFor, votesAgainst) for the active proposal; (0, 0) if no proposal.
+    @method_id(0x3d01)
+    get fun getProposalVoteCount(): (int, int) {
+        if (storage.proposal == null) {
+            return (0, 0);
+        }
+        val p = lazy Slice5GovernanceProposal.fromCell(storage.proposal!);
+        return (p.votesFor as int, p.votesAgainst as int);
+    }
+
+    // Returns true if a proposal has been submitted.
+    @method_id(0x3d02)
+    get fun hasActiveProposal(): bool {
+        return storage.proposal != null;
+    }
+}

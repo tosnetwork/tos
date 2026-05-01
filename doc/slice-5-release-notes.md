@@ -21,8 +21,11 @@ This repo-side release candidate contains:
   production-intent adoption candidate, using `@stdlib/payment-channel`.
   The trial added coverage for cooperative/challenge close, challenge
   supersede, seqno rollback rejection, and imported contract tests.
+- External author trial record for `TosCouncilFund`, the third
+  production-intent adoption candidate, using `@stdlib/governance`. The
+  trial added coverage for sender-bound voter/proposer authorization,
+  quorum and threshold boundaries, replay/cancel/expiry paths, and
+  invalid action rejection.
 
-External adoption remains a Slice 5 release gate: Stage 7 records the
-repo-side ABI freeze and explicitly leaves the three external production
-contract requirement pending until one additional production contract
-are recorded.
+External adoption is now complete: Stage 7 records the repo-side ABI
+freeze and all three required external production-intent contracts.

@@ -1,0 +1,8 @@
+{
+  "opcodes": [
+    {"name": "SLICE5_GOVERNANCE_OP_PROPOSE", "hex": "0x474f5601"},
+    {"name": "SLICE5_GOVERNANCE_OP_VOTE",    "hex": "0x474f5602"},
+    {"name": "SLICE5_GOVERNANCE_OP_EXECUTE", "hex": "0x474f5603"},
+    {"name": "SLICE5_GOVERNANCE_OP_CANCEL",  "hex": "0x474f5604"}
+  ]
+}

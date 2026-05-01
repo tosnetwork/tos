@@ -43,6 +43,18 @@ Compatibility rules:
   `challengeClose`.
 - Governance action lists are policy-typed. `SetCode`, `SetData`,
   reserve, and library actions are rejected by default.
+- Governance `proposerKey` and `voterKey` are protocol keys, not sender
+  authentication. Production receive handlers must bind
+  `in.senderAddress` to the canonical proposer/voter key before calling
+  the stdlib helper; do not trust `msg.proposerKey` or `msg.voterKey`
+  as authorization by themselves.
+- Governance execute helpers approve and return policy-validated actions;
+  they do not dispatch treasury funds by themselves. Production
+  contracts must make payout dispatch explicit after the executed state
+  is saved, or document an off-chain disbursement process.
+- Large governance address sets should be stored behind refs. Several
+  inline `address` fields can exceed the 1023-bit TVM cell limit; use a
+  nested `Cell<T>` for voter lists or other multi-address state.
 - Oracle examples use fixed-at-deploy reporter sets; each round records
   the reporter-set hash snapshot.
 - Oracle round starts are ordinary contract messages, not protocol

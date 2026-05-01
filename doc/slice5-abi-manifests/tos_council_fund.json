@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "schema": "slice-5-abi-manifest",
+  "contract": "TosCouncilFund",
+  "language": "tol",
+  "stage": "slice5-stage5",
+  "messages": [
+    {
+      "name": "Slice5GovernancePropose",
+      "direction": "internal_in",
+      "opcode": "0x474f5601",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {"name": "queryId",     "type": "uint64",  "bits": 64,   "refs": 0},
+        {"name": "proposerKey", "type": "uint256",  "bits": 256,  "refs": 0},
+        {"name": "validUntil",  "type": "uint32",   "bits": 32,   "refs": 0},
+        {"name": "action",      "type": "cell",     "bits": null, "refs": 1}
+      ],
+      "fixtures": []
+    },
+    {
+      "name": "Slice5GovernanceVote",
+      "direction": "internal_in",
+      "opcode": "0x474f5602",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {"name": "queryId",   "type": "uint64",  "bits": 64,  "refs": 0},
+        {"name": "voterKey",  "type": "uint256",  "bits": 256, "refs": 0},
+        {"name": "support",   "type": "bool",    "bits": 1,   "refs": 0},
+        {"name": "now",       "type": "uint32",  "bits": 32,  "refs": 0}
+      ],
+      "fixtures": []
+    },
+    {
+      "name": "Slice5GovernanceExecute",
+      "direction": "internal_in",
+      "opcode": "0x474f5603",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {"name": "queryId", "type": "uint64", "bits": 64, "refs": 0},
+        {"name": "now",     "type": "uint32", "bits": 32, "refs": 0}
+      ],
+      "fixtures": []
+    },
+    {
+      "name": "Slice5GovernanceCancel",
+      "direction": "internal_in",
+      "opcode": "0x474f5604",
+      "query_id": "required_after_opcode",
+      "query_id_presence": "not_applicable",
+      "body_encoding": "tol_auto_struct",
+      "signature_algorithm": "none",
+      "signing_input": "none",
+      "fields": [
+        {"name": "queryId",     "type": "uint64",  "bits": 64,  "refs": 0},
+        {"name": "proposerKey", "type": "uint256",  "bits": 256, "refs": 0},
+        {"name": "now",         "type": "uint32",   "bits": 32,  "refs": 0}
+      ],
+      "fixtures": []
+    }
+  ],
+  "get_methods": [
+    {
+      "name": "getProposalVoteCount",
+      "method_id": 15617,
+      "id_source": "explicit",
+      "arguments": [],
+      "returns": [
+        {"name": "votesFor",     "type": "int"},
+        {"name": "votesAgainst", "type": "int"}
+      ]
+    },
+    {
+      "name": "hasActiveProposal",
+      "method_id": 15618,
+      "id_source": "explicit",
+      "arguments": [],
+      "returns": [
+        {"name": "active", "type": "bool"}
+      ]
+    }
+  ],
+  "cell_types": [
+    {
+      "name": "Slice5GovernanceAction",
+      "encoding": "tol_auto_struct",
+      "fields": [
+        {"name": "actionType",   "type": "uint8",   "bits": 8,    "refs": 0},
+        {"name": "target",       "type": "address",  "bits": null, "refs": 0},
+        {"name": "value",        "type": "coins",    "bits": null, "refs": 0},
+        {"name": "mode",         "type": "int32",    "bits": 32,   "refs": 0},
+        {"name": "expectedHash", "type": "uint256",  "bits": 256,  "refs": 0}
+      ],
+      "fixtures": []
+    }
+  ],
+  "errors": [
+    {
+      "name": "COUNCIL_THROW_UNAUTHORIZED_VOTER",
+      "code": 4097,
+      "class": "Authorization"
+    },
+    {
+      "name": "SLICE5_GOVERNANCE_THROW_UNAUTHORIZED_PROPOSER",
+      "code": 3073,
+      "class": "Authorization"
+    },
+    {
+      "name": "SLICE5_GOVERNANCE_THROW_DUPLICATE_VOTE",
+      "code": 3074,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_GOVERNANCE_THROW_NO_QUORUM",
+      "code": 3075,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_GOVERNANCE_THROW_NO_THRESHOLD",
+      "code": 3076,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_GOVERNANCE_THROW_EXPIRED",
+      "code": 3077,
+      "class": "Permanent"
+    },
+    {
+      "name": "SLICE5_GOVERNANCE_THROW_INVALID_ACTION",
+      "code": 3078,
+      "class": "Protocol"
+    },
+    {
+      "name": "SLICE5_GOVERNANCE_THROW_REPLAYED_EXECUTION",
+      "code": 3079,
+      "class": "Permanent"
+    },
+    {
+      "name": "SLICE5_GOVERNANCE_THROW_CANCELED",
+      "code": 3081,
+      "class": "Permanent"
+    }
+  ],
+  "wire_compatibility_exceptions": []
+}

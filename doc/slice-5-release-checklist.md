@@ -12,9 +12,9 @@ Repo-side release-candidate checklist:
 - [x] `scripts/check-slice-5-release-package.py` is green.
 - [x] First external trial findings are closed in repo-side code/docs and
   the second-round oracle trial is recorded as passed.
-- [ ] Three external production contracts using the second-wave stdlib
-  are recorded with evidence. Current status: 2/3 production-intent
-  candidates (`DexPriceOracle`, `TosStreamChannel`).
+- [x] Three external production contracts using the second-wave stdlib
+  are recorded with evidence. Current status: 3/3 production-intent
+  candidates (`DexPriceOracle`, `TosStreamChannel`, `TosCouncilFund`).
 
 Release status: repo-side release-candidate complete; external adoption
-pending.
+gate complete.

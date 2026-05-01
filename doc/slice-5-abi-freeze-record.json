@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema": "slice-5-abi-freeze-record",
-  "status": "repo_side_release_candidate_complete_external_adoption_pending",
+  "status": "repo_side_release_candidate_complete_external_adoption_complete",
   "date": "2026-05-01",
   "hash_algorithm": "sha256(json.dumps(obj, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False))",
   "schema_hash": {
@@ -36,7 +36,7 @@
     }
   ],
   "external_adoption_gate": {
-    "status": "pending",
+    "status": "complete",
     "required": "3 external production contracts using second-wave stdlib packages",
     "recorded_contracts": [
       {
@@ -48,7 +48,7 @@
         "abi_manifest": "doc/slice5-abi-manifests/dex_price_oracle.json",
         "abi_manifest_sha256": "21ffcd2aba2d93f7c15c1c9329c8692756fe27a8e7556e364b2c905224ff4896",
         "trial_report": "doc/slice-5-external-author-trials.md",
-        "remaining_external_contracts": 1
+        "remaining_external_contracts": 0
       },
       {
         "name": "TosStreamChannel",
@@ -59,7 +59,18 @@
         "abi_manifest": "doc/slice5-abi-manifests/tos_stream_channel.json",
         "abi_manifest_sha256": "1278a97d54b7a2283955c8ff905badf46fc1c59a94e196c11cda5511a8ea4bd5",
         "trial_report": "doc/slice-5-external-author-trials.md",
-        "remaining_external_contracts": 1
+        "remaining_external_contracts": 0
+      },
+      {
+        "name": "TosCouncilFund",
+        "pattern": "governance",
+        "status": "production_intent_candidate_3_of_3",
+        "source": "examples/slice5/tos-council-fund/src/tos-council-fund.tol",
+        "tests": "examples/slice5/tos-council-fund/tests/tos-council-fund-positive.tol; examples/slice5/tos-council-fund/tests/tos-council-fund-import-positive.tol",
+        "abi_manifest": "doc/slice5-abi-manifests/tos_council_fund.json",
+        "abi_manifest_sha256": "f3831fe2e0664814ef1fc95ed9d3af5da525f845a64e4a915e242911af66e9e7",
+        "trial_report": "doc/slice-5-external-author-trials.md",
+        "remaining_external_contracts": 0
       }
     ]
   }

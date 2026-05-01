@@ -2,7 +2,7 @@
 
 ## DexPriceOracle
 
-- **Date:** 2026-04-30
+- **Date:** 2026-05-01
 - **Pattern:** `@stdlib/oracle`
 - **Contract:** `examples/slice5/dex-price-oracle/src/dex-price-oracle.tol`
 - **Status:** accepted as external production-intent candidate 1 of 3
@@ -105,3 +105,53 @@ The trial found four friction points:
 This records the second external production-intent adoption candidate.
 Slice 5 still needs one more external production contract before the
 external adoption release gate is complete.
+
+## TosCouncilFund Round 4 Result
+
+- **Date:** 2026-04-30
+- **Pattern:** `@stdlib/governance`
+- **Contract:** `examples/slice5/tos-council-fund/src/tos-council-fund.tol`
+- **Status:** accepted as external production-intent candidate 3 of 3.
+- **Tests:** `tos-council-fund-positive.tol` passed 12 cases;
+  `tos-council-fund-import-positive.tol` passed 2 cases; combined gas
+  `78747`.
+
+The external author built a three-voter governance-controlled treasury
+for council-voted grant disbursements and on-chain budget approvals. The
+trial verified: unauthorized voter rejection before stdlib is reached,
+canonical voter-key derivation from sender address, unauthorized proposer
+rejection, duplicate vote prevention, quorum boundary, threshold boundary,
+execute-success (returns approved action value), expiry, cancel-then-vote
+rejection, execute replay, SET_CODE disallowed, and action value limit.
+
+The trial found four issues:
+
+- `@stdlib/governance` voterKey in `Slice5GovernanceVote` is an
+  unchecked message field — any sender can supply any voterKey without
+  validation at the stdlib level. Disposition: documented as a mandatory
+  contract-level obligation in the author guide and audit checklist.
+  TosCouncilFund ignores `msg.voterKey` entirely; it derives the
+  canonical key from `in.senderAddress` via `councilResolveVoterKey`,
+  which throws `COUNCIL_THROW_UNAUTHORIZED_VOTER` (0x1001) for any
+  sender not in the stored voter set.
+- Four inline `address` fields in a single struct exceed the 1023-bit
+  TVM cell limit (estimated 1068 bits). Disposition: the author guide
+  now explicitly warns that three or more inline `address` fields fill a
+  cell; contract authors must pack excess addresses into a nested
+  `Cell<T>` ref. TosCouncilFund splits voter addresses into
+  `TosCouncilVoters` stored as `Cell<TosCouncilVoters>`.
+- Execute handler does not dispatch approved funds; fund dispatch is
+  outside the stdlib helper pattern. Disposition: documented as an
+  explicit integration step consistent with the payment-channel settle
+  disposition. Production operators must read the executed proposal state
+  and dispatch funds in a follow-up transaction.
+- Governance stdlib has no built-in proposer-address enforcement; the
+  stdlib uses `proposerKey: uint256` with no link to the message sender.
+  Disposition: documented as a mandatory contract-level obligation.
+  TosCouncilFund checks `in.senderAddress == storage.proposerAddress`
+  before delegating to `slice5GovernanceCreateProposal`; the canonical
+  key (1) is an internal sentinel only.
+
+This records the third and final external production-intent adoption
+candidate. The Slice 5 external adoption release gate is now complete
+(3 of 3 candidates accepted).

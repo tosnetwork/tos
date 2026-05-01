@@ -1414,13 +1414,25 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   package manifest hashes are recorded in
   `doc/slice-5-abi-freeze-record.json`, compatibility/release checklists
   are in tree, and the external adoption gate remains explicitly
-  pending: one additional external production contract using second-wave
-  stdlib after the DexPriceOracle oracle candidate and TosStreamChannel
-  payment-channel candidate. The first DexPriceOracle trial findings are
-  closed, the second-round oracle trial passed, and the payment-channel
-  Round 3 trial records TosStreamChannel as candidate 2/3.
+  complete: the DexPriceOracle oracle candidate, TosStreamChannel
+  payment-channel candidate, and TosCouncilFund governance candidate are
+  all recorded in the ABI freeze record. The first DexPriceOracle trial
+  findings are closed, the second-round oracle trial passed, the
+  payment-channel Round 3 trial records TosStreamChannel as candidate
+  2/3, and the governance Round 4 trial records TosCouncilFund as
+  candidate 3/3.
 
 ## 12. Revision notes
+
+### r35 (Slice 5 external governance trial round 4)
+
+- Recorded `TosCouncilFund`, a production-intent governance-controlled
+  treasury, as external adoption candidate 3/3.
+- Marked the Slice 5 external adoption release gate complete in the
+  release checklist, compatibility matrix, and ABI freeze record.
+- Documented governance sender-binding obligations for proposer/voter
+  keys, explicit fund dispatch after execution, and ref-backed storage
+  for multi-address state near the TVM 1023-bit cell limit.
 
 ### r34 (Slice 5 external payment-channel trial round 3)
 

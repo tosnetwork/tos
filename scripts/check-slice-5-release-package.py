@@ -29,6 +29,12 @@ EXTERNAL_CANDIDATES = (
         "src/tos-stream-channel.tol",
         "tos-stream-channel",
     ),
+    (
+        "tos-council-fund",
+        "examples/slice5/tos-council-fund",
+        "src/tos-council-fund.tol",
+        "tos-council-fund",
+    ),
 )
 
 REQUIRED_DOCS = (
@@ -141,6 +147,7 @@ def main() -> int:
         validate_generated_manifest(root, project / "manifest.json")
         external.append(name)
 
+    require(len(external) >= 3, "Slice 5 external adoption gate requires 3 recorded candidates")
     print(
         f"Validated Slice 5 release candidate: {', '.join(validated)} generated examples, "
         f"{len(external)} external candidate(s), ABI manifests, docs, and artifacts"

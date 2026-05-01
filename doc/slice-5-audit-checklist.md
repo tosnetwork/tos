@@ -10,6 +10,15 @@ Before shipping a Slice 5 contract:
 - Confirm no new helper emits active `ErrorClass.BackPressure`.
 - Confirm governance actions cannot update code/data unless an explicit
   manifest exception and expected hash are present.
+- Confirm governance receive handlers bind `in.senderAddress` to the
+  canonical proposer/voter key before calling stdlib helpers; message
+  fields `proposerKey` and `voterKey` are not authorization by
+  themselves.
+- Confirm governance treasury payout dispatch is explicit after
+  execution state is saved, or the contract documents an off-chain
+  disbursement process.
+- Confirm governance storage with several addresses uses refs where
+  needed to stay under the 1023-bit TVM cell limit.
 - Confirm oracle reporter lifecycle is fixed-at-deploy or otherwise
   documented by a later policy revision.
 - Confirm oracle round-start receive handlers pass `in.senderAddress` to

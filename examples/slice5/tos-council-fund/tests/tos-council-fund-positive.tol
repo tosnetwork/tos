@@ -1,0 +1,208 @@
+import "@stdlib/governance"
+import "../src/tos-council-fund"
+
+// Simulated participant addresses (not real deploy addresses).
+const PROPOSER_ADDR: address = address("0:1111111111111111111111111111111111111111111111111111111111111111")
+const VOTER1_ADDR: address   = address("0:2222222222222222222222222222222222222222222222222222222222222222")
+const VOTER2_ADDR: address   = address("0:3333333333333333333333333333333333333333333333333333333333333333")
+const VOTER3_ADDR: address   = address("0:4444444444444444444444444444444444444444444444444444444444444444")
+const OUTSIDER_ADDR: address = address("0:5555555555555555555555555555555555555555555555555555555555555555")
+const TARGET_ADDR: address   = address("0:6666666666666666666666666666666666666666666666666666666666666666")
+
+// Policy: 3 voters, quorum=2, threshold=2, SEND only to TARGET_ADDR ≤ 1000 nanoTOS.
+fun councilPolicy(): Slice5GovernancePolicy {
+    return slice5GovernancePolicy(
+        COUNCIL_PROPOSER_KEY, 3, 2, 2, TARGET_ADDR, 1000, SEND_MODE_REGULAR as int32
+    );
+}
+
+fun councilAction(value: coins = 500): Slice5GovernanceAction {
+    return slice5GovernanceSendAction(TARGET_ADDR, value, SEND_MODE_REGULAR as int32);
+}
+
+// Creates a default proposal with validUntil=100 and initial now=0.
+fun councilProposal(): Slice5GovernanceProposal {
+    return slice5GovernanceCreateProposal(
+        councilPolicy(), 1, COUNCIL_PROPOSER_KEY, councilAction(), 0, 100
+    );
+}
+
+fun main(): int {
+    return 0;
+}
+
+// Unauthorized voter: a sender not in the voter allowlist throws COUNCIL_THROW_UNAUTHORIZED_VOTER.
+// This confirms the contract-level guard fires before any stdlib voter state is touched.
+@method_id(401)
+fun test_unauthorized_voter(): int {
+    try {
+        councilResolveVoterKey(OUTSIDER_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Voter 1 resolves to canonical key 1 from in.senderAddress.
+@method_id(402)
+fun test_authorized_voter_key(): int {
+    return councilResolveVoterKey(VOTER1_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR) as int;
+}
+
+// Unauthorized proposer: stdlib rejects a proposerKey that does not match policy.proposerKey.
+@method_id(403)
+fun test_unauthorized_proposer(): int {
+    try {
+        slice5GovernanceCreateProposal(councilPolicy(), 1, 9999, councilAction(), 0, 100);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Duplicate vote: the same voter key cannot vote twice on the same proposal.
+@method_id(404)
+fun test_duplicate_vote(): int {
+    var p = councilProposal();
+    val key1 = councilResolveVoterKey(VOTER1_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+    p.vote(key1, true, 20);
+    try {
+        p.vote(key1, true, 21);
+    } catch (code) {
+        assert(p.votesFor == 1) throw 4041;
+        return code;
+    }
+    return 0;
+}
+
+// Quorum not met: executing with only 1 of 2 required votes throws NO_QUORUM.
+@method_id(405)
+fun test_quorum_not_met(): int {
+    var p = councilProposal();
+    val key1 = councilResolveVoterKey(VOTER1_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+    p.vote(key1, true, 20);
+    try {
+        p.execute(councilPolicy(), 21);
+    } catch (code) {
+        assert(!p.executed) throw 4051;
+        return code;
+    }
+    return 0;
+}
+
+// Threshold not met: 1-for + 1-against meets quorum but not threshold (2 yes required).
+@method_id(406)
+fun test_threshold_not_met(): int {
+    var p = councilProposal();
+    val key1 = councilResolveVoterKey(VOTER1_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+    val key2 = councilResolveVoterKey(VOTER2_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+    p.vote(key1, true, 20);
+    p.vote(key2, false, 21);
+    try {
+        p.execute(councilPolicy(), 22);
+    } catch (code) {
+        assert(!p.executed) throw 4061;
+        return code;
+    }
+    return 0;
+}
+
+// Execute success: 2-of-3 approve; executed action carries approved value (500).
+@method_id(407)
+fun test_execute_success(): int {
+    var p = councilProposal();
+    val key1 = councilResolveVoterKey(VOTER1_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+    val key2 = councilResolveVoterKey(VOTER2_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+    p.vote(key1, true, 20);
+    p.vote(key2, true, 21);
+    val action = p.execute(councilPolicy(), 22);
+    assert(p.executed) throw 4071;
+    assert(action.target == TARGET_ADDR) throw 4072;
+    return action.value as int;
+}
+
+// Expired proposal: voting after validUntil throws EXPIRED.
+@method_id(408)
+fun test_expired_proposal(): int {
+    var p = councilProposal();  // validUntil=100
+    try {
+        val key1 = councilResolveVoterKey(VOTER1_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+        p.vote(key1, true, 100);  // validUntil <= now → EXPIRED
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Cancel then vote: proposer cancels the proposal; subsequent vote throws CANCELED.
+@method_id(409)
+fun test_cancel_then_vote(): int {
+    var p = councilProposal();
+    p.cancel(councilPolicy(), COUNCIL_PROPOSER_KEY, 10);
+    assert(p.canceled) throw 4091;
+    try {
+        val key1 = councilResolveVoterKey(VOTER1_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+        p.vote(key1, true, 11);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Execute replay: executing an already-executed proposal throws REPLAYED_EXECUTION.
+@method_id(410)
+fun test_execute_replay(): int {
+    var p = councilProposal();
+    val key1 = councilResolveVoterKey(VOTER1_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+    val key2 = councilResolveVoterKey(VOTER2_ADDR, VOTER1_ADDR, VOTER2_ADDR, VOTER3_ADDR);
+    p.vote(key1, true, 20);
+    p.vote(key2, true, 21);
+    p.execute(councilPolicy(), 22);
+    try {
+        p.execute(councilPolicy(), 23);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// SetCode action disallowed: the policy's validateAction only permits SEND; SET_CODE throws INVALID_ACTION.
+@method_id(411)
+fun test_setcode_action_disallowed(): int {
+    try {
+        slice5GovernanceCreateProposal(
+            councilPolicy(), 1, COUNCIL_PROPOSER_KEY, slice5GovernanceCodeAction(0xdeadbeef), 0, 100
+        );
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+// Action value limit: value > maxValue (1001 > 1000) throws INVALID_ACTION.
+@method_id(412)
+fun test_action_value_limit(): int {
+    try {
+        slice5GovernanceCreateProposal(
+            councilPolicy(), 1, COUNCIL_PROPOSER_KEY, councilAction(1001), 0, 100
+        );
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+/**
+@testcase | 401 | | 4097
+@testcase | 402 | | 1
+@testcase | 403 | | 3073
+@testcase | 404 | | 3074
+@testcase | 405 | | 3075
+@testcase | 406 | | 3076
+@testcase | 407 | | 500
+@testcase | 408 | | 3077
+@testcase | 409 | | 3081
+@testcase | 410 | | 3079
+@testcase | 411 | | 3078
+@testcase | 412 | | 3078
+ */
