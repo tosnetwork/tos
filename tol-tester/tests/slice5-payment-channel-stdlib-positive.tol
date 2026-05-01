@@ -138,6 +138,17 @@ fun test_hash_to_sign_nonzero(): int {
     return 1;
 }
 
+@method_id(510)
+fun test_challenge_window_not_extended_on_resubmit(): int {
+    var state = pcState();
+    val expiry = state.challengeCloseVerified(pcConfig(), pcSigned(1, 700, 300), 20);
+    assert(expiry == 50) throw 5101;
+    val expiry2 = state.challengeCloseVerified(pcConfig(), pcSigned(2, 600, 400), 30);
+    assert(expiry2 == 50) throw 5102;
+    assert(state.latestSeqno == 2) throw 5103;
+    return state.challengeExpiresAt as int;
+}
+
 /**
 @testcase | 501 | | 3585
 @testcase | 502 | | 3586
@@ -148,4 +159,5 @@ fun test_hash_to_sign_nonzero(): int {
 @testcase | 507 | | 3590
 @testcase | 508 | | 3591
 @testcase | 509 | | 1
+@testcase | 510 | | 50
  */

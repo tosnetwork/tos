@@ -235,9 +235,11 @@ fun Slice5PaymentChannelState.challengeClose(
 ): uint32 {
     signedState.requireSignatures(config, signatureA, signatureB);
     self.applyVerifiedState(config, signedState, now);
-    self.closing = true;
+    if (!self.closing) {
+        self.closing = true;
+        self.challengeExpiresAt = now + config.challengeWindow;
+    }
     self.challengeSeqno = signedState.seqno;
-    self.challengeExpiresAt = now + config.challengeWindow;
     return self.challengeExpiresAt;
 }
 
@@ -248,9 +250,11 @@ fun Slice5PaymentChannelState.challengeCloseVerified(
     now: uint32
 ): uint32 {
     self.applyVerifiedState(config, signedState, now);
-    self.closing = true;
+    if (!self.closing) {
+        self.closing = true;
+        self.challengeExpiresAt = now + config.challengeWindow;
+    }
     self.challengeSeqno = signedState.seqno;
-    self.challengeExpiresAt = now + config.challengeWindow;
     return self.challengeExpiresAt;
 }
 

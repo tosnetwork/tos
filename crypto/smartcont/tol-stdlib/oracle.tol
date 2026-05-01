@@ -14,6 +14,7 @@ const SLICE5_ORACLE_THROW_OUTLIER = 0x0d05
 const SLICE5_ORACLE_THROW_REPLAYED_ROUND = 0x0d06
 const SLICE5_ORACLE_THROW_BAD_CONFIG = 0x0d07
 const SLICE5_ORACLE_THROW_ROUND_FINALIZED = 0x0d08
+const SLICE5_ORACLE_THROW_ACTIVE_ROUND = 0x0d09
 const SLICE5_ORACLE_THROW_UNAUTHORIZED_STARTER = 0x0d0a
 
 const SLICE5_ORACLE_OP_REPORT: uint32 = 0x4f524301
@@ -144,6 +145,12 @@ fun slice5OracleStartRound(
     if (roundId <= state.lastRoundId) {
         throw SLICE5_ORACLE_THROW_REPLAYED_ROUND;
     }
+    if (state.current != null) {
+        val prev = lazy Slice5OracleRound.fromCell(state.current!);
+        if (!prev.finalized && prev.validUntil > now) {
+            throw SLICE5_ORACLE_THROW_ACTIVE_ROUND;
+        }
+    }
     val round = Slice5OracleRound {
         roundId,
         startedAt: now,
@@ -225,6 +232,9 @@ fun Slice5OracleRound.addReport(mutate self, reporterSet: Slice5OracleReporterSe
     self.requireOpen(report.now);
     if (report.roundId != self.roundId || self.reporterSetHash != config.reporterSetHash) {
         throw SLICE5_ORACLE_THROW_REPLAYED_ROUND;
+    }
+    if (reporterSet.snapshotHash() != self.reporterSetHash) {
+        throw SLICE5_ORACLE_THROW_UNAUTHORIZED_REPORTER;
     }
     reporterSet.requireReporter(report.reporterKey);
     self.checkOutlier(config, report.value);

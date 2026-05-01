@@ -134,6 +134,12 @@ fun multisigAddApproval(approvals: dict, publicKey: uint256): dict {
     return next;
 }
 
+fun MultisigProposal.recordApproval(mutate self, publicKey: uint256): uint16 {
+    self.approvals = multisigAddApproval(self.approvals, publicKey);
+    self.approvalCount += 1;
+    return self.approvalCount;
+}
+
 @pure
 fun multisigProposalKey(queryId: uint64): uint64 {
     return queryId;

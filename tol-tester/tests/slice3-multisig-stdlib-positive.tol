@@ -117,10 +117,33 @@ fun test_expiry_actions_and_error_mapping(): int {
     return 5;
 }
 
+@method_id(106)
+fun test_record_approval_increments_count(): int {
+    var proposal = MultisigProposal {
+        queryId: 1,
+        validUntil: 100,
+        approvalCount: 0,
+        approvals: createEmptyDict(),
+        executed: false,
+        actions: null,
+    };
+    proposal.recordApproval(0x11);
+    proposal.recordApproval(0x22);
+    multisigRequireThresholdReached(proposal.approvalCount as int, 2);
+    try {
+        proposal.recordApproval(0x11);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_DUPLICATE_SIGNER) throw 161;
+        return proposal.approvalCount as int;
+    }
+    return 0;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
 @testcase | 103 | | 3
 @testcase | 104 | | 4
 @testcase | 105 | | 5
+@testcase | 106 | | 2
  */

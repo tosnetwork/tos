@@ -45,8 +45,8 @@ struct PostponedItem {
     value: Cell<PostponedItemValue>
     createdAt: uint32
     expiresAt: uint32
-    bodyBits: uint16
-    bodyRefs: uint8
+    bodyBits: uint32
+    bodyRefs: uint16
     bodyDepth: uint16
 }
 

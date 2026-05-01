@@ -196,6 +196,42 @@ fun test_bond_refund_message_helper(): int {
     return msg.hash() != 0 ? 1 : 0;
 }
 
+@method_id(414)
+fun test_start_round_rejects_active_predecessor(): int {
+    var state = slice5OracleInitialState(reporterSet());
+    slice5OracleStartRound(mutate state, config(), 1, 10, starter());
+    try {
+        slice5OracleStartRound(mutate state, config(), 2, 11, starter());
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(415)
+fun test_add_report_wrong_reporter_set_rejected(): int {
+    var r = round();
+    var altSet = slice5OracleNewReporterSet();
+    altSet.addReporter(101);
+    altSet.addReporter(202);
+    altSet.addReporter(303);
+    altSet.addReporter(404);
+    try {
+        r.addReport(altSet, config(), report(1, 404, 10, 20));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(416)
+fun test_start_round_allowed_after_stale(): int {
+    var state = slice5OracleInitialState(reporterSet());
+    slice5OracleStartRound(mutate state, config(), 1, 10, starter());
+    val r = slice5OracleStartRound(mutate state, config(), 2, 71, starter());
+    return r.roundId as int;
+}
+
 /**
 @testcase | 401 | | 3329
 @testcase | 402 | | 3330
@@ -210,4 +246,7 @@ fun test_bond_refund_message_helper(): int {
 @testcase | 411 | | 30
 @testcase | 412 | | 1000
 @testcase | 413 | | 1
+@testcase | 414 | | 3337
+@testcase | 415 | | 3329
+@testcase | 416 | | 2
  */
