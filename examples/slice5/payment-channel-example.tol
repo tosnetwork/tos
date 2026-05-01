@@ -5,6 +5,7 @@ import "@stdlib/payment-channel"
 struct Slice5PaymentChannelStorage {
     config: Cell<Slice5PaymentChannelConfig>
     state: Cell<Slice5PaymentChannelState>
+    partyBAddress: address
 }
 
 contract Slice5PaymentChannelExample {
@@ -16,8 +17,13 @@ contract Slice5PaymentChannelExample {
         val config = lazy Slice5PaymentChannelConfig.fromCell(storage.config);
         val signedState = lazy Slice5PaymentSignedState.fromCell(msg.signedState);
         var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
-        state.cooperativeClose(config, signedState, msg.signatureA, msg.signatureB, blockchain.now() as uint32);
-        save(Slice5PaymentChannelStorage { config: storage.config, state: state.toCell() });
+        val paidB = state.cooperativeClose(config, signedState, msg.signatureA, msg.signatureB, blockchain.now() as uint32);
+        save(Slice5PaymentChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
+        slice5PaymentEmitPayout(storage.partyBAddress, paidB);
     }
 
     @disclaim_query_id
@@ -26,13 +32,22 @@ contract Slice5PaymentChannelExample {
         val signedState = lazy Slice5PaymentSignedState.fromCell(msg.signedState);
         var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
         state.challengeClose(config, signedState, msg.signatureA, msg.signatureB, blockchain.now() as uint32);
-        save(Slice5PaymentChannelStorage { config: storage.config, state: state.toCell() });
+        save(Slice5PaymentChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
     }
 
     @disclaim_query_id
     receive(msg: Slice5PaymentSettle) {
         var state = lazy Slice5PaymentChannelState.fromCell(storage.state);
-        state.settle(blockchain.now() as uint32);
-        save(Slice5PaymentChannelStorage { config: storage.config, state: state.toCell() });
+        val paidB = state.settle(blockchain.now() as uint32);
+        save(Slice5PaymentChannelStorage {
+            config: storage.config,
+            state: state.toCell(),
+            partyBAddress: storage.partyBAddress,
+        });
+        slice5PaymentEmitPayout(storage.partyBAddress, paidB);
     }
 }

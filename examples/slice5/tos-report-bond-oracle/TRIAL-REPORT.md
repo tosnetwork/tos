@@ -19,9 +19,10 @@ emulator fixture to verify all three.
 
 During the pre-work phase (reading existing production-intent examples before
 building), **three pre-existing CRITICAL/HIGH issues were found in already-shipped
-contracts**: `TosStreamChannel` and `DexPriceOracle` use caller-controlled `msg.now`
-for time-sensitive operations; `DexPriceOracle` uses caller-controlled `msg.reporterKey`
-for reporter identity. These are documented as F-B001 and F-B002 below.
+contracts**: `TosStreamChannel` and `DexPriceOracle` used caller-controlled `msg.now`
+for time-sensitive operations; `DexPriceOracle` used caller-controlled `msg.reporterKey`
+for reporter identity. They are preserved below as historical findings and are now
+closed by the repo-side hardening passes.
 
 **Repo-side disposition:** all findings from this report are closed in the
 follow-up hardening commit. Prior production candidates now use
@@ -29,7 +30,9 @@ follow-up hardening commit. Prior production candidates now use
 explicit, `TosReportBondOracle` is integrated into `test-emulator`, and
 `scripts/check-slice-5-release-package.py` rejects production candidates that
 trust `msg.now`, `msg.reporterKey`, or raw regular-mode value
-dispatch.
+dispatch. The same release checker now also compiles and validates the standalone
+Slice 5 reference examples, including safe governance/oracle identity derivation and
+explicit auction/payment-channel payout helpers.
 
 ---
 
@@ -94,10 +97,9 @@ drained or locked.
 decisions. These messages should carry `blockchain.now()` as documentation only, or the
 field should be annotated `wire_compatibility_exception: used_for_testing_only`.
 
-**Disposition requested:** Fix `TosStreamChannel` to use `blockchain.now()` and add a
-`wire_compatibility_exception` to `tos_stream_channel.json` for the `now` field. The
-existing `TosStreamChannelPositive.tol` tests that pass `msg.now` directly will need
-updating. Add emulator coverage for all three handlers.
+**Post-trial disposition:** closed. `TosStreamChannel` now passes
+`blockchain.now() as uint32` to cooperative close, challenge close, and settle. The
+Slice 5 release checker rejects production candidates that trust `msg.now`.
 
 ---
 
@@ -140,6 +142,12 @@ registry (as `TosCouncilFund` does for voters). The contract must maintain a
 the `BondOracleSubmitReport` wire message has NO `reporterKey` or `now` field, making
 it structurally impossible for callers to forge either value.
 
+**Post-trial disposition:** closed. `DexPriceOracle` derives reporter identity from
+`in.senderAddress`, uses `blockchain.now()`, and now routes through
+`addTrustedReport(...)` / `finalizeTrusted(...)`. The Slice 5 release checker rejects
+production oracle paths that trust `msg.reporterKey`, trust `msg.now`, or call raw
+`addReport(...)` / `finalize(...)`.
+
 ---
 
 ### F-B003 — HIGH: `TosCouncilFund` uses `msg.now` in vote, execute, and cancel handlers
@@ -171,6 +179,11 @@ the voter's perspective.
 parameter in `Slice5GovernancePropose` is caller-controlled (the proposer chooses the
 deadline), which is acceptable by design — but the `now` parameter passed to lifecycle
 helpers must be the chain time, not `msg.now`.
+
+**Post-trial disposition:** closed. `TosCouncilFund` now uses `blockchain.now() as
+uint32` for vote, execute, and cancel; it derives voter/proposer authority from
+`in.senderAddress`. The standalone governance reference example was moved to the same
+pattern and is now checked by the release package gate.
 
 ---
 
@@ -204,6 +217,11 @@ This is not documented as an off-chain settlement policy in the ABI manifest
 **Fix:** Either (a) use `slice5AuctionEmitPayout`-style explicit send after saving
 state, or (b) add getters for `balanceB` and `config.partyB` and document the off-chain
 settlement policy in `wire_compatibility_exceptions`.
+
+**Post-trial disposition:** closed. `TosStreamChannel` stores `partyBAddress`, captures
+the returned `balanceB`, saves the closed state, and then calls
+`slice5PaymentEmitPayout(...)`. The standalone payment-channel reference example now
+does the same and is checked by the release package gate.
 
 ---
 
@@ -454,10 +472,10 @@ the storage initialization constant needs filling in.
 
 | Finding | Severity | Recommendation |
 |---|---|---|
-| F-B001 TosStreamChannel msg.now | CRITICAL | Fix to blockchain.now(); update tests; add emulator |
-| F-B002 DexPriceOracle msg.reporterKey + msg.now | HIGH | Add address registry; remove wire now/reporterKey fields |
-| F-B003 TosCouncilFund msg.now | HIGH | Fix to blockchain.now() in vote/execute/cancel |
-| F-B004 TosStreamChannel no payout dispatch | HIGH | Add explicit sends or getter + manifest exception |
+| F-B001 TosStreamChannel msg.now | CRITICAL | Closed: production source uses `blockchain.now()` and release checker rejects `msg.now` trust |
+| F-B002 DexPriceOracle msg.reporterKey + msg.now | HIGH | Closed: address-derived reporter identity plus trusted oracle helpers; release checker rejects raw oracle receive paths |
+| F-B003 TosCouncilFund msg.now | HIGH | Closed: vote/execute/cancel use `blockchain.now()` and sender-derived authority |
+| F-B004 TosStreamChannel no payout dispatch | HIGH | Closed: payment-channel payout helper dispatches after saved closed state; reference example is gated |
 | F-B005 Emulator CMake workflow | MEDIUM | Document CMake integration steps; add reporter set hash tool |
 | F-B006 Multi-send gas budget | MEDIUM | Closed: bond refunds use `slice5OracleEmitBondRefund(...)` with bounce-on-action-fail; release checker rejects raw `SEND_MODE_REGULAR` sends |
 | F-B007 coins map value type | MEDIUM | Closed: `map<uint256, coins>` has compiler coverage and docs; bounded `uint64` remains an intentional contract choice |

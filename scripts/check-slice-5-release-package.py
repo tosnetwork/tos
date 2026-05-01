@@ -50,6 +50,13 @@ EXTERNAL_CANDIDATES = (
     ),
 )
 
+REFERENCE_EXAMPLES = (
+    ("auction-example", "examples/slice5/auction-example.tol"),
+    ("governance-example", "examples/slice5/governance-example.tol"),
+    ("oracle-example", "examples/slice5/oracle-example.tol"),
+    ("payment-channel-example", "examples/slice5/payment-channel-example.tol"),
+)
+
 REQUIRED_DOCS = (
     "doc/slice-5-author-guide.md",
     "doc/slice-5-audit-checklist.md",
@@ -102,19 +109,52 @@ def strip_tol_comments(text: str) -> str:
 
 def validate_receive_context_contract(name: str, source_path: Path) -> None:
     source = strip_tol_comments(source_path.read_text(encoding="utf-8"))
-    require("msg.now" not in source, f"{source_path}: production candidate must not trust caller-controlled msg.now")
-    require(
-        "msg.reporterKey" not in source,
-        f"{source_path}: production candidate must not trust caller-controlled msg.reporterKey",
+    forbidden_context = (
+        ("msg.now", "caller-controlled msg.now"),
+        ("msg.reporterKey", "caller-controlled msg.reporterKey"),
+        ("msg.voterKey", "caller-controlled msg.voterKey"),
+        ("msg.proposerKey", "caller-controlled msg.proposerKey"),
+        ("msg.bidder", "caller-controlled msg.bidder"),
     )
+    for marker, reason in forbidden_context:
+        require(marker not in source, f"{source_path}: production/reference source must not trust {reason}")
     require(
         re.search(r"\.send\s*\(\s*(?:SEND_MODE_REGULAR|0)\s*\)", source) is None,
-        f"{source_path}: production candidate must not dispatch value with regular send mode; use pattern-specific payout helpers or SEND_MODE_BOUNCE_ON_ACTION_FAIL",
+        f"{source_path}: production/reference source must not dispatch value with regular send mode; use pattern-specific payout helpers or SEND_MODE_BOUNCE_ON_ACTION_FAIL",
     )
+    if "oracle" in name:
+        require(
+            re.search(r"\.addReport\s*\(", source) is None,
+            f"{source_path}: oracle production path must use addTrustedReport after deriving reporter identity from context",
+        )
+        require(
+            re.search(r"\.finalize\s*\(", source) is None,
+            f"{source_path}: oracle production path must use finalizeTrusted with trusted chain time",
+        )
     if name == "tos-stream-channel":
         require(
             "slice5PaymentEmitPayout" in source,
             f"{source_path}: payment-channel candidate must dispatch or explicitly replace payout emission",
+        )
+    if name == "auction-example":
+        require(
+            "slice5AuctionEmitPayout" in source,
+            f"{source_path}: auction reference example must emit seller payout through the stdlib helper",
+        )
+    if name == "payment-channel-example":
+        require(
+            "slice5PaymentEmitPayout" in source,
+            f"{source_path}: payment-channel reference example must emit partyB payout through the stdlib helper",
+        )
+    if name == "governance-example":
+        require(
+            "slice5GovernanceExampleResolveVoterKey" in source and "in.senderAddress" in source,
+            f"{source_path}: governance reference example must derive voter/proposer authority from senderAddress",
+        )
+    if name == "oracle-example":
+        require(
+            "slice5OracleExampleResolveReporterKey" in source and "in.senderAddress" in source,
+            f"{source_path}: oracle reference example must derive reporter identity from senderAddress",
         )
     if name == "tos-report-bond-oracle":
         require(
@@ -177,6 +217,12 @@ def main() -> int:
             load_json(project / relative)
         validate_generated_manifest(root, project / "manifest.json")
         validated.append(pattern)
+
+    for name, relative in REFERENCE_EXAMPLES:
+        source = root / relative
+        require(source.exists(), f"{source}: Slice 5 reference example missing")
+        validate_receive_context_contract(name, source)
+        run([str(tol), "--check-only", str(source)])
 
     external = []
     for name, relative_dir, source_relative, test_filter in EXTERNAL_CANDIDATES:

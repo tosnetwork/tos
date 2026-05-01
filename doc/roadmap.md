@@ -945,7 +945,11 @@ multi-address structs. Later production-trial hardening added the
 oracle bond-refund payout helper with bounce-on-action-fail semantics,
 release-checker rejection of raw regular-mode sends in Slice 5
 production candidates, and compiler coverage/documentation for
-`map<uint256, coins>`.
+`map<uint256, coins>`. A later hardening pass moved the standalone Slice
+5 reference examples onto the same production guardrails: sender-derived
+auction/governance/oracle identity, trusted-chain-time oracle finalization,
+and explicit auction/payment-channel payout helpers, all enforced by the
+Slice 5 release checker.
 
 **Stage plan.**
 
@@ -1029,6 +1033,9 @@ production candidates, and compiler coverage/documentation for
      `scripts/check-slice-5-release-package.py`.
    - ✅ Extend release checks to reject caller-controlled time/identity
      and raw regular-mode value sends in production-intent candidates.
+   - ✅ Extend release checks to cover standalone Slice 5 reference
+     examples, including safe oracle/governance identity derivation and
+     explicit auction/payment-channel payout dispatch.
 
 8. ✅ **Stage 7 — ABI freeze sign-off and external adoption.**
 

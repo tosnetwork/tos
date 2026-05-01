@@ -40,9 +40,10 @@ Compatibility rules:
   `Slice5AuctionExpire` may remain open to any sender; it is a
   cooperative cleanup mechanism for stale postponed bids.
 - Auction settlement records or returns the winning bid amount but does
-  not by itself prove that funds have reached the seller. Either call
-  `slice5AuctionEmitPayout(config.seller, amount)` after saving the
-  settled state, or explicitly document an off-chain payout process.
+  not by itself prove that funds have reached the seller. The reference
+  example saves the settled state and then calls
+  `slice5AuctionEmitPayout(config.seller, amount)`. Contracts that use
+  an off-chain payout process must document that exception explicitly.
 - `slice5AuctionDefaultBudget()` is intentionally bounded for ordinary
   auctions. Use `slice5AuctionConfigWithBudget(...)` for high-traffic
   pre-open auctions and record the storage/gas tradeoff in the manifest
@@ -51,10 +52,10 @@ Compatibility rules:
   `Slice5PaymentSignedState.toCell().hash()`, not raw source bytes.
 - Payment-channel `cooperativeClose` and `settle` helpers return the
   `balanceB` payout amount after updating helper state. They do not
-  send funds by themselves; production receive handlers must save the
-  closed state first and then call `slice5PaymentEmitPayout(...)` to a
-  contract-stored payout address, or explicitly document an off-chain
-  settlement policy.
+  send funds by themselves; the reference example saves the closed
+  state first and then calls `slice5PaymentEmitPayout(...)` to a
+  contract-stored payout address. Contracts that settle off-chain must
+  document that exception explicitly.
 - Payment-channel `cooperativeCloseVerified` and
   `challengeCloseVerified` skip Ed25519 verification but still enforce
   channel binding, balance conservation, expiry, closed-state, and
@@ -68,7 +69,8 @@ Compatibility rules:
   authentication. Production receive handlers must bind
   `in.senderAddress` to the canonical proposer/voter key before calling
   the stdlib helper; do not trust `msg.proposerKey` or `msg.voterKey`
-  as authorization by themselves.
+  as authorization by themselves. The reference example demonstrates
+  this with contract-stored proposer/voter addresses.
 - Governance execute helpers approve and return policy-validated actions;
   they do not dispatch treasury funds by themselves. Production
   contracts must make payout dispatch explicit after the executed state
@@ -85,7 +87,9 @@ Compatibility rules:
   carries `reporterKey`, treat it as caller-controlled metadata and
   override it with a key derived from `in.senderAddress`, or use
   `Slice5OracleRound.addTrustedReport(...)` with an already trusted key
-  and `blockchain.now()`.
+  and `blockchain.now()`. The reference example derives the key from
+  contract-stored reporter addresses and never passes `msg.reporterKey`
+  to the stdlib.
 - Slice 5 oracle helpers support bounded reporter sets up to 255
   reporters. Median and outlier-anchor calculations iterate over the
   report map deterministically, so larger fixed-at-deploy reporter sets

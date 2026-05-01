@@ -143,7 +143,7 @@ git diff --check
   };
   state.receiveBid(config, trueBid);
   ```
-- **Recommended fix:** Provide a `slice5AuctionTrustedBid(msg: Slice5AuctionBid, sender: address): Slice5AuctionBid` constructor that substitutes `bidder` and `now` and document it as the canonical call path. Add to the auction section of the author guide: *"Override `msg.bidder` with `in.senderAddress` before calling any bid helper. The stdlib `bidder` field is provided for the data schema; it is not authenticated."* Add to the audit checklist: *"Confirm bid receive handlers override `msg.bidder` with `in.senderAddress`."*
+- **Post-trial disposition:** closed. `@stdlib/auction` exposes trusted bid helpers, the standalone auction reference example uses `receiveTrustedBid(...)`, and the Slice 5 release checker rejects production/reference examples that trust `msg.bidder`.
 
 ---
 
@@ -153,8 +153,7 @@ git diff --check
 - **Area:** security model / stdlib / docs
 - **Description:** Every Slice 5 auction message struct carries `now: uint32` as a caller-supplied field. The stdlib's `closeAndDrain`, `receiveBid`, `settle`, and `expireQueued` all trust this value for every time-sensitive check. A malicious sender can supply `now = 9999999` to close the auction before its deadline, or `now = 0` to force postponement of a bid that should be accepted immediately. `blockchain.now()` is available in Tol (`crypto/smartcont/tol-stdlib/common.tol:403`) and costs nothing to use.
 - **Why this matters in production:** Timestamp manipulation is the most exploited DeFi vulnerability class. An auction closed early allows a seller's colluder to be the highest bidder at an artificially low price. The pattern affects all four Slice 5 stdlib packages (auction, oracle, governance, payment-channel); all of them pass `msg.now` directly to time-sensitive helpers.
-- **Workaround used:** Pass `blockchain.now() as uint32` to all stdlib helpers that accept a `now` parameter. The `msg.now` wire field is accepted (for ABI compatibility) but discarded entirely at the contract layer. Test T540 demonstrates both the vulnerable (stdlib example) path and the safe (production) path side by side.
-- **Recommended fix:** Remove `now: uint32` from all Slice 5 message structs and let stdlib helpers call `blockchain.now()` internally. If off-chain simulation requires time injection, add a `@test_only` overriding path with compiler enforcement. Add to the audit checklist: *"Confirm no Slice 5 receive handler passes `msg.now` to any stdlib time-sensitive function."*
+- **Post-trial disposition:** closed for production/reference paths. The wire fields remain for ABI compatibility, but production/reference examples use `blockchain.now() as uint32`, and the Slice 5 release checker rejects `msg.now` trust in production-intent sources.
 
 ---
 
@@ -165,7 +164,7 @@ git diff --check
 - **Description:** `Slice5AuctionExample.receive(msg: Slice5AuctionClose)` and `receive(msg: Slice5AuctionSettle)` do not check `in.senderAddress`. Any sender can close or settle the auction. `Slice5AuctionExample` is the primary reference an author studies before writing their own contract.
 - **Why this matters in production:** Without seller-identity enforcement, any third party can trigger the auction outcome. A griefing attacker can close immediately at `closesAt` before the seller is ready. More critically, `settle()` writes the final state — if called by a non-seller before the seller's intended post-inspection window, the outcome is irrevocable.
 - **Workaround used:** Added `if (in.senderAddress != config.seller) throw ESCROWED_AUCTION_THROW_UNAUTHORIZED_SELLER;` at the top of both Close and Settle handlers. Tests T510–T512 verify this guard.
-- **Recommended fix:** Update `Slice5AuctionExample` to include the seller check with an explanatory comment. Add to the audit checklist: *"Confirm Close and Settle receive handlers verify `in.senderAddress == config.seller` before calling stdlib close/settle helpers."*
+- **Post-trial disposition:** closed. The standalone auction reference example checks seller identity before close/settle, and the author guide/audit checklist require that pattern.
 
 ---
 
@@ -176,7 +175,7 @@ git diff --check
 - **Description:** When the postponement queue is full, the actual error thrown is `SLICE4_POSTPONEMENT_THROW_QUEUE_FULL` (value `0x0903 = 2307`) from deep inside the postponement layer. `SLICE5_AUCTION_THROW_QUEUE_FULL` (value `0x0b03 = 2819`) is defined in the auction stdlib but is never reached by any code path — it is a dead constant. Discovered when test T552 was initially written expecting `2819` and failed with `2307`.
 - **Why this matters in production:** On-chain error monitoring, off-chain indexers, and client SDK error matchers will subscribe to `0x0b03` for queue-full events and never receive one. Queue-full events are silently emitted as `0x0903`, a postponement-layer code not listed in the auction ABI manifest.
 - **Workaround used:** Updated T552 to expect `2307`. Documented the discrepancy in the ABI manifest under `wire_compatibility_exceptions` and in `artifacts/error-codes.json`.
-- **Recommended fix:** Either (a) catch and re-throw `SLICE5_AUCTION_THROW_QUEUE_FULL` in `postponeBid` when the underlying queue throws queue-full, making the auction-level constant meaningful; or (b) remove `SLICE5_AUCTION_THROW_QUEUE_FULL` from `auction.tol` and document `SLICE4_POSTPONEMENT_THROW_QUEUE_FULL` directly in the auction ABI manifest.
+- **Post-trial disposition:** closed. `postponeBid` now catches `SLICE4_POSTPONEMENT_THROW_QUEUE_FULL` and rethrows `SLICE5_AUCTION_THROW_QUEUE_FULL`, making the auction-level error code observable.
 
 ---
 
@@ -187,7 +186,7 @@ git diff --check
 - **Description:** `settle()` returns the winning bid amount as `coins` but provides no mechanism to send the funds. The production contract must manually record the amount in storage, and fund dispatch is entirely the integrator's responsibility — triggered by reading a getter off-chain and issuing a separate transaction. The author guide mentions this in one sentence for payment channels but has no equivalent for auctions.
 - **Why this matters in production:** There is no enforcement that payout ever happens. The auction can reach `settled = true` with funds permanently locked in the contract if the integrator omits the dispatch step. A team unfamiliar with TOS's async action model will implement this incorrectly or incompletely.
 - **Workaround used:** Added `pendingPayout: coins` and `payoutDone: bool` fields to storage; added `getPendingPayout()` getter; documented the off-chain integration obligation in code comments.
-- **Recommended fix:** Provide a `slice5AuctionEmitPayout(state, to: address)` helper that builds and sends the fund-transfer message via `sendRawMessage`. Add a complete settlement flow example to the author guide showing the close → settle → dispatch sequence.
+- **Post-trial disposition:** closed. `@stdlib/auction` exposes `slice5AuctionEmitPayout(...)`; the standalone auction reference example saves the settled state and then emits the seller payout through that helper. The release checker gates this default path.
 
 ---
 
@@ -266,10 +265,10 @@ git diff --check
 |----------|--------|-------|
 | **Authorization** | PARTIAL | Seller checks use `in.senderAddress` — correct and enforced. Bidder identity requires manual override of `msg.bidder`; no compiler or stdlib enforcement exists. |
 | **Replay protection** | PARTIAL | `settle()` and `closeAndDrain()` are state-guarded against double-call (tests T525, T526). No `queryId` deduplication for bid messages — two bids from the same sender with identical `queryId` but different amounts are both accepted or rejected on bid-value comparison alone. |
-| **Value transfer / payout correctness** | PARTIAL | `settle()` correctly records the highest bid amount. Actual fund dispatch is not implemented in-contract (documented limitation). `pendingPayout` getter exposes the amount for off-chain dispatch. |
+| **Value transfer / payout correctness** | FIXED for reference path | `settle()` returns the highest bid amount. The standalone reference example now saves settled state and emits seller payout with `slice5AuctionEmitPayout(...)`; this trial contract intentionally keeps an off-chain pending-payout path. |
 | **Duplicate messages** | HANDLED | Duplicate close/settle throw `ALREADY_CLOSED`/`ALREADY_SETTLED`. Duplicate bids are handled by bid-value comparison, not by `queryId` deduplication. |
 | **Malformed messages** | HANDLED | Auto-deserialization via `lazy T.fromSlice` throws on malformed input at the Tol runtime layer. |
-| **Expiry / staleness** | FIXED (workaround) | `msg.now` is caller-controlled and untrustworthy. Production contract uses `blockchain.now()` for all time checks. The stdlib example does not apply this fix. |
+| **Expiry / staleness** | FIXED | `msg.now` is caller-controlled and untrustworthy. Production/reference contracts use `blockchain.now()` for all time checks, and the release checker rejects regression. |
 | **Unknown opcodes** | HANDLED | `@unknown_throw(0xffff)` covers all unrecognized internal opcodes. |
 | **Storage bounds** | NOT TESTED | Postponement queue stores full bid bodies in `c4`. Large bodies (near `maxBodyBits: 512` per the default budget) fill storage faster. No test exercises the body-size budget boundary. |
 | **Bounce / failure behavior** | NOT TESTED | `@disclaim_query_id` on all handlers disables automatic query-id propagation. Default TVM bounce applies when the contract throws. No explicit `@bounce_only` handler is declared. |
@@ -300,11 +299,11 @@ This is the highest-impact single change. The current design is a silent securit
 
 **2. Provide a `slice5AuctionTrustedBid(msg, sender)` constructor that substitutes `bidder = sender` and `now = blockchain.now()`.**
 
-The stdlib currently makes the insecure call (`state.receiveBid(config, msg)`) easier to write than the secure one. Inverting that — making the secure, identity-bound constructor the obvious API — eliminates F-001 and F-002 from the default author path without requiring any language changes. The stdlib example should use this constructor exclusively.
+Closed. The trusted bid helpers exist and are used by the standalone auction reference example.
 
 **3. Provide a `slice5AuctionEmitPayout(state, to)` action builder that constructs and sends the winning-bid fund transfer.**
 
-The settlement flow has a mandatory integration step (fund dispatch) that has no example, no helper, and no enforcement. Any team that follows the example to the letter will deploy a contract that marks auctions as settled but never pays anyone. A one-liner helper that emits the correct `sendRawMessage` action, plus a complete example in the author guide showing the close → settle → dispatch sequence, closes the most common integration mistake before it reaches production.
+Closed. The payout helper exists, defaults to bounce-on-action-fail semantics, and is used by the standalone auction reference example after state is saved.
 
 ---
 
@@ -312,6 +311,4 @@ The settlement flow has a mandatory integration step (fund dispatch) that has no
 
 **Yes, for the auction pattern.**
 
-The compatibility matrix currently records "Auction: External adoption: Pending." This trial demonstrates that the `@stdlib/auction` pattern is usable for production purposes with the three documented workarounds. The trial also surfaced three security findings (F-001, F-002, F-003) that are absent from all existing auction examples and documentation, and one error-code correctness issue (F-004) that would cause production monitoring to fail silently.
-
-The contract should be recorded as an external adoption candidate after the three HIGH/BLOCKER findings are addressed in the stdlib documentation and audit checklist. The contract itself already applies all three fixes correctly.
+The compatibility matrix now records this contract as an external production-intent adoption candidate. The three security findings and the queue-full error-code issue have been addressed in the stdlib, reference examples, docs, and release checker guardrails.

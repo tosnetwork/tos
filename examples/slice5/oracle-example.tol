@@ -2,10 +2,31 @@
 
 import "@stdlib/oracle"
 
+const SLICE5_ORACLE_EXAMPLE_THROW_UNAUTHORIZED_REPORTER_ADDRESS: int = 0x3601
+
+struct Slice5OracleExampleReporterAddresses {
+    reporter1: address
+    reporter2: address
+    reporter3: address
+}
+
 struct Slice5OracleStorage {
     config: Cell<Slice5OracleConfig>
     reporterSet: Cell<Slice5OracleReporterSet>
     round: Cell<Slice5OracleRound>
+    reporterAddresses: Cell<Slice5OracleExampleReporterAddresses>
+}
+
+fun slice5OracleExampleResolveReporterKey(
+    sender: address,
+    reporter1: address,
+    reporter2: address,
+    reporter3: address
+): uint256 {
+    if (sender == reporter1) { return 1; }
+    if (sender == reporter2) { return 2; }
+    if (sender == reporter3) { return 3; }
+    throw SLICE5_ORACLE_EXAMPLE_THROW_UNAUTHORIZED_REPORTER_ADDRESS;
 }
 
 contract Slice5OracleExample {
@@ -17,8 +38,17 @@ contract Slice5OracleExample {
         val config = lazy Slice5OracleConfig.fromCell(storage.config);
         val reporterSet = lazy Slice5OracleReporterSet.fromCell(storage.reporterSet);
         var round = lazy Slice5OracleRound.fromCell(storage.round);
-        round.addTrustedReport(reporterSet, config, msg, msg.reporterKey, blockchain.now() as uint32);
-        save(Slice5OracleStorage { config: storage.config, reporterSet: storage.reporterSet, round: round.toCell() });
+        val addrs = lazy Slice5OracleExampleReporterAddresses.fromCell(storage.reporterAddresses);
+        val reporterKey = slice5OracleExampleResolveReporterKey(
+            in.senderAddress, addrs.reporter1, addrs.reporter2, addrs.reporter3
+        );
+        round.addTrustedReport(reporterSet, config, msg, reporterKey, blockchain.now() as uint32);
+        save(Slice5OracleStorage {
+            config: storage.config,
+            reporterSet: storage.reporterSet,
+            round: round.toCell(),
+            reporterAddresses: storage.reporterAddresses,
+        });
     }
 
     @disclaim_query_id
@@ -26,6 +56,11 @@ contract Slice5OracleExample {
         val config = lazy Slice5OracleConfig.fromCell(storage.config);
         var round = lazy Slice5OracleRound.fromCell(storage.round);
         round.finalizeTrusted(config, msg, blockchain.now() as uint32);
-        save(Slice5OracleStorage { config: storage.config, reporterSet: storage.reporterSet, round: round.toCell() });
+        save(Slice5OracleStorage {
+            config: storage.config,
+            reporterSet: storage.reporterSet,
+            round: round.toCell(),
+            reporterAddresses: storage.reporterAddresses,
+        });
     }
 }

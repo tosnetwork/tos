@@ -99,21 +99,21 @@ contract DexPriceOracle {
             in.senderAddress, addrs.reporter1, addrs.reporter2, addrs.reporter3
         );
         val now = blockchain.now() as uint32;
-        val trustedReport = Slice5OracleReport {
+        val wireReport = Slice5OracleReport {
             queryId: msg.queryId,
             roundId: msg.roundId,
             reporterKey,
             value: msg.priceNano,
             now,
         };
-        round.addReport(state.reporterSet, config, trustedReport);
+        round.addTrustedReport(state.reporterSet, config, wireReport, reporterKey, now);
         if (round.reportCount >= config.quorum && !round.finalized) {
-            val finalizeMsg = Slice5OracleFinalize {
+            val wireFinalize = Slice5OracleFinalize {
                 queryId: msg.queryId,
                 roundId: msg.roundId,
                 now,
             };
-            round.finalize(config, finalizeMsg);
+            round.finalizeTrusted(config, wireFinalize, now);
         }
         state.current = round.toCell();
         save(DexPriceOracleStorage {

@@ -4,7 +4,8 @@ Before shipping a Slice 5 contract:
 
 - Run `python3 scripts/check-slice-5-abi-manifests.py`.
 - Run `python3 scripts/check-slice-5-release-package.py` for generated
-  project coverage.
+  project coverage, reference-example guardrails, and external
+  production-candidate guardrails.
 - Confirm ABI manifests list all messages, get methods, public errors,
   signed cells, and manual/raw fixtures.
 - Confirm every inbound message field in Slice 5 ABI manifests has
@@ -25,7 +26,8 @@ Before shipping a Slice 5 contract:
   calling stdlib close/settle helpers. Expire may be open to any sender
   because it only cooperatively removes stale postponed bids.
 - Confirm auction payout dispatch is explicit after settled state is
-  saved, or the contract documents an off-chain settlement process.
+  saved through `slice5AuctionEmitPayout(...)`, or the contract
+  documents an off-chain settlement process.
 - Confirm auction deployments either accept the default bounded
   postponement budget or use `slice5AuctionConfigWithBudget(...)` with
   a documented storage/gas budget.
@@ -34,7 +36,8 @@ Before shipping a Slice 5 contract:
 - Confirm governance receive handlers bind `in.senderAddress` to the
   canonical proposer/voter key before calling stdlib helpers; message
   fields `proposerKey` and `voterKey` are not authorization by
-  themselves.
+  themselves. The release checker rejects production/reference examples
+  that trust these fields directly.
 - Confirm governance treasury payout dispatch is explicit after
   execution state is saved, or the contract documents an off-chain
   disbursement process.
@@ -48,7 +51,9 @@ Before shipping a Slice 5 contract:
 - Confirm oracle report receive handlers do not trust wire
   `reporterKey` or `now` fields. Derive reporter identity from
   `in.senderAddress` and pass `blockchain.now()` to report/finalize
-  helpers.
+  helpers. The release checker rejects production/reference examples
+  that call raw oracle `addReport(...)` / `finalize(...)` instead of
+  the trusted helper path.
 - Confirm oracle reporter sets stay within the stdlib's bounded
   255-reporter map-aggregation limit.
 - Confirm oracle deployments that rely on `maxDeviation` for data

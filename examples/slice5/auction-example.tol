@@ -40,7 +40,8 @@ contract Slice5AuctionExample {
         val config = lazy Slice5AuctionConfig.fromCell(storage.config);
         var state = lazy Slice5AuctionState.fromCell(storage.state);
         state.requireSeller(config, in.senderAddress);
-        state.settle();
+        val payout = state.settle();
         save(Slice5AuctionExampleStorage { config: storage.config, state: state.toCell() });
+        slice5AuctionEmitPayout(config.seller, payout);
     }
 }
