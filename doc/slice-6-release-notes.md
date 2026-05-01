@@ -30,4 +30,5 @@ in Slice 6 production examples, no `extra_flags` bit-3 activation, and no
 reusable public bearer capability token pattern. It also asserts the
 security-hardening surfaces for capability grants, supervision cooldowns,
 bounded dead-letter records, quiet `calculateSize` checks, and
-version-gated `cp.success` deployment activation gates remain present.
+version-gated `cp.success` deployment activation gates remain present on
+precompiled, TVM, EVM, and Uno activation paths.

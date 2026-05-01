@@ -45,11 +45,14 @@
 //!   PI[11]     = remaining_post         (u64; = remaining_pre - value_nano)
 //! ```
 //!
-//! Note: `target` is intentionally NOT in the PI. Target is a function of
-//! `epoch` via the halving table + retargeting schedule, and the chain
-//! already holds it in `UnoShardState::mine_target`. Including it in PI
-//! would be redundant (and would let a malicious prover attempt to bait
-//! the verifier with an inconsistent target).
+//! Note: `target` and `chain_id` are intentionally NOT in the PI. The STARK
+//! proves hash correctness and output commitment well-formedness; consensus
+//! admission binds that proof to the current chain state by checking
+//! `tx.chain_id == UnoConfig.chain_id` and `pow_hash < UnoShardState::mine_target`.
+//! A proof produced under a dev target is therefore just a proof of a concrete
+//! nonce/hash pair; it still has to satisfy the stricter on-chain target at
+//! submission time. Keeping target out of PI avoids a second, potentially
+//! inconsistent target source.
 //!
 //! Off-circuit chain checks (in `compute-phase.cpp`):
 //!

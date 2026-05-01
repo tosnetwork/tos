@@ -234,7 +234,6 @@ static bool statement_references_storage(AnyV statement) {
              expr_references_storage(statement->as<ast_assert_statement>()->get_thrown_code());
     case ast_try_catch_statement:
       return block_references_storage(statement->as<ast_try_catch_statement>()->get_try_body()) ||
-             expr_references_storage(statement->as<ast_try_catch_statement>()->get_catch_expr()) ||
              block_references_storage(statement->as<ast_try_catch_statement>()->get_catch_body());
     case ast_assign:
       return expr_references_storage(statement->as<ast_assign>()->get_lhs()) ||
@@ -510,7 +509,6 @@ static std::vector<std::string> collect_taint_from_statement(AnyV statement, Fie
       std::vector<std::string> result = collect_taint_from_block(try_catch->get_try_body(), ctx);
       auto try_taint = ctx.tainted_locals;
       ctx.tainted_locals = before;
-      append_unique_states(result, compute_taint_of_expr(try_catch->get_catch_expr(), ctx));
       append_unique_states(result, collect_taint_from_block(try_catch->get_catch_body(), ctx));
       auto catch_taint = ctx.tainted_locals;
       ctx.tainted_locals = merge_tainted_locals(std::move(before), try_taint, catch_taint);
@@ -768,6 +766,7 @@ static void check_call_arguments(V<ast_function_call> call, FieldScopingContext&
           "`{}(...)`. See doc/tos-language-syntax-policy.md §5.",
           format_state_list(taint), callee_for_diag)
         .collect(arg_expr);
+      continue;
     }
     check_expr(arg_expr, ctx);
   }
@@ -970,11 +969,14 @@ static void check_statement(AnyV statement, FieldScopingContext& ctx) {
       check_expr(statement->as<ast_assert_statement>()->get_cond(), ctx);
       return check_expr(statement->as<ast_assert_statement>()->get_thrown_code(), ctx);
     case ast_try_catch_statement: {
+      auto try_catch = statement->as<ast_try_catch_statement>();
       auto before = ctx.tainted_locals;
-      check_block(statement->as<ast_try_catch_statement>()->get_try_body(), ctx);
+      check_block(try_catch->get_try_body(), ctx);
       auto try_taint = ctx.tainted_locals;
       ctx.tainted_locals = before;
-      check_block(statement->as<ast_try_catch_statement>()->get_catch_body(), ctx);
+      // `catch (...)` contains newly-bound exception variables, not value
+      // expressions. Storage/taint checks belong to the catch body.
+      check_block(try_catch->get_catch_body(), ctx);
       auto catch_taint = ctx.tainted_locals;
       ctx.tainted_locals = merge_tainted_locals(std::move(before), try_taint, catch_taint);
       return;

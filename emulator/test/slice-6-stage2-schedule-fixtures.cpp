@@ -27,6 +27,10 @@ td::uint32 deliver_by(td::uint32 not_before, td::uint32 expire_after) {
   return not_before + expire_after;
 }
 
+bool valid_schedule_window(td::uint32 not_before, td::uint32 expire_after) {
+  return expire_after != 0 && not_before <= kUint32Max - expire_after;
+}
+
 bool is_due(td::uint32 now, td::uint32 not_before) {
   return now >= not_before;
 }
@@ -73,6 +77,13 @@ struct ScheduledState {
 TEST(Slice6Stage2ScheduleFixtures, DeliverByArithmeticAndOverflowBoundary) {
   CHECK(deliver_by(100, 20) == 120);
   CHECK(deliver_by(kUint32Max - 1, 1) == kUint32Max);
+}
+
+TEST(Slice6Stage2ScheduleFixtures, DeliverByOverflowRejected) {
+  CHECK(valid_schedule_window(100, 20));
+  CHECK(!valid_schedule_window(100, 0));
+  CHECK(!valid_schedule_window(kUint32Max, 1));
+  CHECK(!valid_schedule_window(kUint32Max - 1, 2));
 }
 
 TEST(Slice6Stage2ScheduleFixtures, DueAndExpiryPredicatesUseMasterchainSeqno) {

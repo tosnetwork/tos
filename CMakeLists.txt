@@ -935,6 +935,8 @@ add_executable(test-emulator
         emulator/test/slice-6-stage6-capability-fixtures.cpp
         # Slice 6 Stage 8 system-service dogfood predicate fixtures.
         emulator/test/slice-6-stage8-dogfood-fixtures.cpp
+        # Slice 6 PR #6 deploy activation version-gate fixture.
+        emulator/test/slice-6-deploy-activation-version-fixture.cpp
         # Slice 5 receive-context harness for production receive handlers.
         emulator/test/slice-5-receive-context-fixture.cpp
         emulator/test/tos-report-bond-oracle-fixture.cpp)

@@ -2042,15 +2042,11 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // — making state delta part of the TOS block state_hash. Identical
     // mechanism as the wc=1 branch above.
     //
-    // Account activation (acc_uninit → acc_active) is gated on cp.success
-    // AND cp.new_data being present. Reject paths in run_mine_uno_compute_phase
-    // / run_compute_phase set cp.success = false and leave cp.new_data null;
-    // unconditionally activating + installing the marker code on those rejects
-    // would mean a malformed first MineUno still mutates account state from
-    // uninit → active with empty data, which is observably non-no-op even
-    // though no consensus state changed. Mirror EVM's behaviour: state-delta
-    // and activation only happen when the custom executor accepts the tx.
-    if (cp.success && cp.new_data.not_null()) {
+    // Account activation follows the same version-gated rule as the EVM and
+    // TVM paths: pre-v14 keeps legacy accepted-gas activation semantics for
+    // consensus compatibility; v14+ requires the custom executor to commit
+    // successfully. All paths still require a concrete serialized state root.
+    if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && cp.new_data.not_null()) {
       new_data = cp.new_data;
       // Activate the executor account if currently uninit (first message).
       if (acc_status == Account::acc_uninit) {

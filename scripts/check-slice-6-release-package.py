@@ -246,6 +246,9 @@ def check_no_caller_controlled_now_scheduling() -> None:
         active_sensitive_call: str | None = None
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             code = strip_line_comment(line)
+            if re.match(r"\s*fun\b", code):
+                now_tainted.clear()
+                active_sensitive_call = None
             if "msg.now" in code and schedule_call.search(code):
                 fail(f"{rel}:{lineno}: caller-controlled msg.now used in scheduling helper call")
             m = now_assignment.search(code)
@@ -318,12 +321,26 @@ def check_runtime_activation_is_version_gated() -> None:
         "kDeploySuccessActivationVersion = 14",
         "compute_phase_can_activate_account",
         "global_version >= kDeploySuccessActivationVersion ? success : accepted",
-        "compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state",
-        "compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && cp.new_data.not_null()",
     ]
     for needle in required:
         if needle not in transaction:
             fail(f"transaction.cpp missing version-gated deploy activation surface: {needle}")
+    use_msg_gate = "compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state"
+    state_root_gate = "compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && cp.new_data.not_null()"
+    if transaction.count(use_msg_gate) < 2:
+        fail("transaction.cpp must version-gate both precompiled and TVM StateInit activation paths")
+    if transaction.count(state_root_gate) < 2:
+        fail("transaction.cpp must version-gate both EVM and Uno custom-executor activation paths")
+    forbidden = [
+        "if (cp.success && use_msg_state)",
+        "if (cp.accepted && use_msg_state)",
+        "if (cp.accepted & use_msg_state)",
+        "if (cp.success && cp.new_data.not_null())",
+        "if (cp.accepted && cp.new_data.not_null())",
+    ]
+    for needle in forbidden:
+        if needle in transaction:
+            fail(f"transaction.cpp contains an unversioned deploy activation gate: {needle}")
 
 
 def check_extra_flags_bit3_still_reserved() -> None:

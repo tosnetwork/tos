@@ -1790,6 +1790,21 @@ removed when policy v6 made single-signer the rule; see §11.3.)
 
 ## 12. Revision notes
 
+### r57 (PR #6 fourth-round hardening)
+
+- Closed the fourth-round custom-workchain findings: Uno activation now uses
+  the same ConfigParam 8 v14 deploy gate as EVM/TVM; Uno hydration failures
+  are not accepted as zero-gas transactions; MineUno and Transfer success
+  paths fail closed if state serialization does not produce a cell; and
+  `mine_epoch` uses saturating advancement at the uint32 boundary.
+- Hardened EVM compute-phase serialization by catching VM/allocation/std
+  exceptions around rollback capture, state-cell serialization, block-hash
+  canonization, and `cp.new_data` encoding. The release checker now requires
+  both EVM and Uno custom-executor activation sites to use the version gate.
+- Reconciled stale MineUno AIR comments with the implemented Poseidon2
+  Phase 3b constraints and added emulator/Tol regression coverage for the
+  deploy activation gate and try/catch catch-expression field scoping.
+
 ### r56 (PR #6 consensus activation gate)
 
 - Restored consensus compatibility for deploy activation: precompiled,

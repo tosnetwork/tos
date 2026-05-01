@@ -1,4 +1,4 @@
-//! MineUno AIR — Phase 3a shell (+ Phase 3b Poseidon2 sub-AIR wiring TODO).
+//! MineUno AIR — soundness-complete Poseidon2-bound MineUno proof.
 //!
 //! The MineUno STARK proves (cryptographically) that the prover knows a
 //! witness `(nonce, recipient, rseed, value)` such that
@@ -14,19 +14,16 @@
 //! = remaining_pre - value`, `remaining_pre = chain_state.mine_remaining`,
 //! `epoch = chain_state.mine_epoch`.
 //!
-//! # Current scope (Phase 3a — this file)
+//! # Enforced in this file
 //!
 //! - `BaseAir` + `Air<AB>` impls with width/PI metadata correct
 //! - Row-selector one-hot constraints (4 active rows, 4 padding rows)
 //! - Witness-proxy "constant-across-rows" transition constraints
 //! - Row-0 public-input bindings for epoch, value, output_cm, pow_hash,
 //!   remaining_pre, remaining_post
-//!
-//! # Deferred to Phase 3b
-//!
-//! - Poseidon2-w16 sub-AIR evaluation (`eval_poseidon2_16`) wired to the
-//!   shared column block
-//! - Per-row rate-slot input pinning:
+//! - Poseidon2-w16 sub-AIR evaluation (`eval_poseidon2_16`) on the shared
+//!   column block for every row
+//! - Per-row rate/capacity input pinning:
 //!   - row 0 (cm perm 1): inputs = [d_fe0, d_fe1, pk_d_fe0..3, ivk_cm_fe0..1]
 //!   - row 1 (cm perm 2): inputs = carry + [ivk_cm_fe2..3, value, rcm_fe0..3]
 //!   - row 2 (pow perm 1): inputs = [epoch, nonce_fe0..3, output_cm_fe0..2]
@@ -34,17 +31,13 @@
 //! - Per-row output-digest binding:
 //!   - row 1 post[0..4] = output_cm_fe0..3
 //!   - row 3 post[0..4] = pow_hash_fe0..3
-//! - Capacity-slot tag-block pinning (uno-cm-v1 for rows 0-1, uno-mine-v1
-//!   for rows 2-3)
+//! - Capacity-slot tag-block pinning (`uno-cm-v1` for rows 0-1,
+//!   `uno-mine-v1` for rows 2-3)
 //!
-//! # Why Phase 3a alone is not soundness-complete
-//!
-//! Without the Phase 3b Poseidon2 wiring, a malicious prover could fabricate
-//! arbitrary `output_cm` and `pow_hash` values in the witness-proxy columns,
-//! satisfy all Phase 3a constraints (PI binding + proxy consistency), and
-//! produce a proof that passes verification. The cryptographic soundness of
-//! MineUno relies on the Poseidon2 sub-AIR enforcing that these values are
-//! correctly derived from the private witness. Phase 3b closes this gap.
+//! The old Phase 3a-only shell was not soundness-complete because a malicious
+//! prover could fabricate arbitrary digest proxies. The current AIR closes
+//! that gap by forcing the public `output_cm` and `pow_hash` limbs to equal the
+//! actual Poseidon2 outputs of the private witness and carried sponge state.
 
 use core::borrow::Borrow;
 

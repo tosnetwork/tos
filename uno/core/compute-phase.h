@@ -166,6 +166,7 @@ enum class VerifyResult : int {
     TimestampNotMonotonic       = 50,  // gen_utime < state.last_solve_ts() (consensus rule; same-second is OK after audit #7)
     // catch-all (decode / codec)
     DecodeError                 = 90,
+    StateSerializationFailed    = 91,
 };
 
 const char* verify_result_name(VerifyResult r) noexcept;
