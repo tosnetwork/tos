@@ -1038,8 +1038,8 @@ multi-address structs.
 (monitors versus links), §6.4 (restart intensity), and §6.6 (crash
 reports) form the Slice 6 design surface.
 
-**Status.** 🟡 Stages 1–6 are complete as of 2026-05-01; Stage 7
-observability and release packaging are next. Stage 0 design review findings were
+**Status.** 🟡 Stages 1–7 are complete as of 2026-05-01; Stage 8
+system-contract dogfood and production-gate planning are next. Stage 0 design review findings were
 addressed in Draft v0.2 and re-review approved. The implementation layer now
 includes `@stdlib/delivery`, `@stdlib/schedule`, `@stdlib/time`, and
 the monitor/link/supervision foundations in `@stdlib/supervision`:
@@ -1054,7 +1054,9 @@ restart-intensity windows, circuit breakers, recovery-message builders,
 partial-recovery escalation records, public capability grants,
 canonical capability-constraints hashing, sender-bound validation,
 stateful grant registries, single-use nonce consumption, revocation
-epochs, and bounded revoked-handle storage. Protocol
+epochs, bounded revoked-handle storage, failure-trace schema, Slice 6
+examples, author guide, audit checklist, compatibility matrix, and
+release notes. Protocol
 activation of validator scheduled delivery and production BackPressure
 emission remains gated to later Slice 6 stages. The Stage 0 input
 documents are
@@ -1264,21 +1266,24 @@ authorization plane, not reusable public bearer secrets.
    signature-bound capability grants; replay and revocation tests pass;
    release checker rejects reusable bearer tokens.
 
-8. ⏳ **Stage 7 — observability and release package.**
+8. ✅ **Stage 7 — observability and release package.**
 
-   - ⏳ Finalize `scripts/check-slice-6-release-package.py`: validates
-     all Slice 6 stdlib exports, no `msg.now` scheduling, no unbounded
-     queues, `extra_flags` bit 3 not set, no reusable bearer tokens,
-     budget declarations present.
-   - ⏳ Add `examples/slice6/`: `scheduled-transfer.tol`,
+   - ✅ Finalize `scripts/check-slice-6-release-package.py`: validates
+     all Slice 6 stdlib exports, release documents, failure trace
+     schema, example budget declarations, no `msg.now` scheduling, no
+     raw example queues, `extra_flags` bit 3 not set, and no reusable
+     bearer-token patterns.
+   - ✅ Add `examples/slice6/`: `scheduled-transfer.tol`,
      `monitored-contract.tol`, `supervised-child.tol` + `supervisor.tol`,
      `capability-example.tol`.
-   - ⏳ Add `doc/slice6-failure-trace-schema.json`.
-   - ⏳ Add `doc/slice-6-audit-checklist.md` (scheduler, monitor/link,
-     supervision, capability checklists).
-   - ⏳ Add `doc/slice-6-compatibility-matrix.md`.
-   - ⏳ Add `doc/slice-6-release-notes.md`.
-   - ⏳ Update roadmap. Commit + push:
+   - ✅ Add `doc/slice6-failure-trace-schema.json`.
+   - ✅ Add `doc/slice-6-author-guide.md`.
+   - ✅ Add `doc/slice-6-audit-checklist.md` (scheduler,
+     delivery/dead-letter, monitor/link, supervision, capability
+     checklists).
+   - ✅ Add `doc/slice-6-compatibility-matrix.md`.
+   - ✅ Add `doc/slice-6-release-notes.md`.
+   - ✅ Update roadmap. Commit + push:
      *Slice 6 Stage 7 release package*
 
    Exit criterion: operators can inspect supervised failures and
@@ -1707,6 +1712,18 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r49 (Slice 6 Stage 7 release package)
+
+- Added Slice 6 release-package artifacts: author guide, audit
+  checklist, compatibility matrix, release notes, and bounded
+  failure-trace JSON schema.
+- Added compile-ready Slice 6 examples for scheduled transfer, monitor
+  notification, supervised child/supervisor, and capability grants.
+- Extended the Slice 6 release checker to require release artifacts,
+  validate example budget declarations, reject raw example queues, keep
+  `extra_flags` bit 3 reserved, and reject reusable public bearer
+  capability-token patterns.
 
 ### r48 (Slice 6 Stage 6 capability handles)
 

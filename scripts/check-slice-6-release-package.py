@@ -15,6 +15,22 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 
+REQUIRED_DOCS = [
+    "doc/slice6-failure-trace-schema.json",
+    "doc/slice-6-author-guide.md",
+    "doc/slice-6-audit-checklist.md",
+    "doc/slice-6-compatibility-matrix.md",
+    "doc/slice-6-release-notes.md",
+]
+
+REQUIRED_EXAMPLES = {
+    "examples/slice6/scheduled-transfer.tol": ["slice6TimerBudget", "sendAfterBlocks"],
+    "examples/slice6/monitored-contract.tol": ["slice6MonitorBudget", "slice6BuildMonitorDownNotification"],
+    "examples/slice6/supervised-child.tol": ["slice6ChildSpec"],
+    "examples/slice6/supervisor.tol": ["slice6RecoveryBudget", "recordRestart"],
+    "examples/slice6/capability-example.tol": ["slice6CapabilityConstraints", "slice6CapabilityGrant"],
+}
+
 
 def fail(message: str) -> None:
     print(f"ERROR: {message}", file=sys.stderr)
@@ -112,6 +128,25 @@ def check_required_surface() -> None:
             fail(f"capability manifest schema missing {required}")
 
 
+def check_release_artifacts() -> None:
+    for path in REQUIRED_DOCS:
+        read(path)
+
+    trace_schema = json.loads(read("doc/slice6-failure-trace-schema.json"))
+    trace_required = set(trace_schema["required"])
+    for required in ["version", "trace_id", "created_at_mc_seqno", "source", "resource_bounds"]:
+        if required not in trace_required:
+            fail(f"failure trace schema missing required field {required}")
+
+    for path, needles in REQUIRED_EXAMPLES.items():
+        text = read(path)
+        for needle in needles:
+            if needle not in text:
+                fail(f"{path} missing expected example surface {needle}")
+        if "createEmptyMap" in text:
+            fail(f"{path} declares raw map storage instead of stdlib-bounded state")
+
+
 def iter_slice6_tol_sources() -> list[Path]:
     paths = [
         ROOT / "crypto/smartcont/tol-stdlib/delivery.tol",
@@ -157,6 +192,7 @@ def check_no_reusable_public_bearer_capability() -> None:
 
 def main() -> None:
     check_required_surface()
+    check_release_artifacts()
     check_no_caller_controlled_now_scheduling()
     check_extra_flags_bit3_still_reserved()
     check_no_reusable_public_bearer_capability()

@@ -1,0 +1,13 @@
+import "@stdlib/supervision"
+
+fun supervisedChildAddress(): address {
+    return address("0:8888888888888888888888888888888888888888888888888888888888888888");
+}
+
+fun supervisedChildSpec(): Slice6ChildSpec {
+    return slice6ChildSpec(1, supervisedChildAddress(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+}
+
+fun main(): int {
+    return supervisedChildSpec().state;
+}

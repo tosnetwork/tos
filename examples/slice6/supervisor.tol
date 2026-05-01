@@ -1,0 +1,25 @@
+import "@stdlib/supervision"
+
+fun supervisorChildAddress(): address {
+    return address("0:9999999999999999999999999999999999999999999999999999999999999999");
+}
+
+fun supervisorEscalationAddress(): address {
+    return address("0:abababababababababababababababababababababababababababababababab");
+}
+
+fun supervisorBudget(): Slice6RecoveryBudget {
+    return slice6RecoveryBudget(2, 20, 10, 1000, 1000000000, supervisorEscalationAddress());
+}
+
+fun supervisorStateAfterOneRestart(): Slice6SupervisorState {
+    var state = slice6SupervisorState(4);
+    var child = slice6ChildSpec(1, supervisorChildAddress(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    child.recordRestart(supervisorBudget(), 101, 500, 10);
+    state.addChild(child);
+    return state;
+}
+
+fun main(): int {
+    return supervisorStateAfterOneRestart().childCount;
+}

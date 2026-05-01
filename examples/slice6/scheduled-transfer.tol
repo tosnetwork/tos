@@ -1,0 +1,36 @@
+import "@stdlib/time"
+import "@stdlib/schedule"
+
+fun scheduledTransferTarget(): address {
+    return address("0:4444444444444444444444444444444444444444444444444444444444444444");
+}
+
+fun scheduledTransferAuthority(): address {
+    return address("0:5555555555555555555555555555555555555555555555555555555555555555");
+}
+
+fun scheduledTransferBody(): cell {
+    return beginCell().storeUint(0x53434801, 32).storeUint(1, 64).endCell();
+}
+
+fun scheduledTransferBudget(): Slice6TimerBudget {
+    return slice6TimerBudget(4, 512, 1, 1000, 8);
+}
+
+fun scheduledTransferAction(): Slice6ScheduledActionV1 {
+    return sendAfterBlocks(
+        scheduledTransferBudget(),
+        scheduledTransferTarget(),
+        scheduledTransferBody(),
+        100,
+        20,
+        200,
+        1000000000,
+        0,
+        scheduledTransferAuthority()
+    );
+}
+
+fun main(): int {
+    return scheduledTransferAction().notBeforeMcSeqno;
+}
