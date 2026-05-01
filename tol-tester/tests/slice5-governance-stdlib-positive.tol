@@ -95,7 +95,14 @@ fun test_expired_proposal(): int {
 @method_id(307)
 fun test_malformed_action_list(): int {
     try {
-        slice5GovernanceCreateProposal(policy(), 77, 1001, slice5GovernanceCodeAction(123), 10, 100);
+        val codeAction = Slice5GovernanceAction {
+            actionType: SLICE5_GOVERNANCE_ACTION_SET_CODE as uint8,
+            target: target(),
+            value: 0,
+            mode: 0 as int32,
+            expectedHash: null,
+        };
+        slice5GovernanceCreateProposal(policy(), 77, 1001, codeAction, 10, 100);
     } catch (code) {
         return code;
     }

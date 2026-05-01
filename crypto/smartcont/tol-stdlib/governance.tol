@@ -132,16 +132,6 @@ fun slice5GovernanceSendAction(target: address, value: coins, mode: int32): Slic
     };
 }
 
-fun slice5GovernanceCodeAction(expectedHash: uint256): Slice5GovernanceAction {
-    return Slice5GovernanceAction {
-        actionType: SLICE5_GOVERNANCE_ACTION_SET_CODE,
-        target: slice5GovernanceNullAddress(),
-        value: 0,
-        mode: 0,
-        expectedHash,
-    };
-}
-
 fun Slice5GovernancePolicy.validateAction(self, action: Slice5GovernanceAction): void {
     if (action.actionType != SLICE5_GOVERNANCE_ACTION_SEND) {
         throw SLICE5_GOVERNANCE_THROW_INVALID_ACTION;
