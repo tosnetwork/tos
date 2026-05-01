@@ -624,12 +624,13 @@ account uninit. The deterministic Slice 2 behaviour is:
   If the inbound message is bounceable and value covers the bounce
   forwarding fee, the normal TVM bounce rules apply
   (`tos-message-policy.md` §6.2).
-- Account activation/funding follows TVM, not Tol syntax. On
-  current `crypto/block/transaction.cpp`, an accepted compute with
-  `StateInit` can still transition the account to active even when
-  the receiver body did not materialise valid storage. Deployment
-  tooling MUST either send a valid `@deploy` first message or
-  pre-populate StateInit data exactly as the legacy contract did.
+- Account activation/funding follows TVM, not Tol syntax. Before
+  ConfigParam 8 global version 14, accepted compute with `StateInit`
+  can still transition the account to active even when the receiver body
+  did not materialise valid storage. From global version 14, deployment
+  activation requires compute success. Deployment tooling MUST either
+  send a valid `@deploy` first message or pre-populate StateInit data
+  exactly as the legacy contract did.
 
 **Constraints on `@deploy`.**
 

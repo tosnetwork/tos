@@ -50,6 +50,7 @@
 namespace {
 constexpr tos::WorkchainId kEvmWorkchainId = 1;
 constexpr tos::WorkchainId kUnoWorkchainId = 2;
+constexpr int kDeploySuccessActivationVersion = 14;
 
 bool is_evm_workchain(tos::WorkchainId wc) {
   return wc == kEvmWorkchainId;
@@ -71,6 +72,14 @@ bool has_custom_compute_phase(tos::WorkchainId wc) {
 bool extra_flags_within_valid_mask(const td::RefInt256& extra_flags) {
   return extra_flags.not_null() &&
          td::cmp(extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK), extra_flags) == 0;
+}
+
+bool compute_phase_can_activate_account(bool success, bool accepted, int global_version) {
+  // Consensus compatibility: before ConfigParam 8 version 14, account
+  // activation after StateInit followed legacy TON behavior and only
+  // required gas acceptance. From v14 onward, deployment activation
+  // requires the compute phase to commit successfully.
+  return global_version >= kDeploySuccessActivationVersion ? success : accepted;
 }
 
 /**
@@ -1829,7 +1838,7 @@ bool Transaction::run_precompiled_contract(const ComputePhaseConfig& cfg, precom
   LOG(INFO) << "Running precompiled smart contract " << impl.get_name() << ": exit_code=" << result.exit_code
             << " accepted=" << result.accepted << " success=" << cp.success << " gas_used=" << gas_usage
             << " time=" << time_tvm.real << "s cpu_time=" << time_tvm.cpu;
-  if (cp.success && use_msg_state) {
+  if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
   }
@@ -1966,10 +1975,11 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // commitment. Propagate to Transaction::new_data so compute_state()
     // packs it into the account's StateInit data cell, making it part of
     // the ShardState cell tree and thus the block state_hash.
-    if (cp.success && cp.new_data.not_null()) {
+    if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && cp.new_data.not_null()) {
       new_data = cp.new_data;
-      // Activate the account only when this EVM transaction succeeds.
-      // Reverted/rejected compute must not install an active marker account.
+      // From v14, activate the account only when this EVM transaction
+      // succeeds. Older global versions keep the legacy accepted-gas
+      // activation semantics for consensus compatibility.
       if (acc_status == Account::acc_uninit) {
         acc_status = Account::acc_active;
         was_activated = true;
@@ -2206,7 +2216,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   cp.gas_used = std::min<long long>(gas.gas_consumed(), gas.gas_limit);
   cp.accepted = (gas.gas_credit == 0);
   cp.success = (cp.accepted && vm.committed());
-  if (cp.success && use_msg_state) {
+  if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
   }

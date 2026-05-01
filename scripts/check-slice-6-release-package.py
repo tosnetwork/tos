@@ -312,16 +312,18 @@ def check_calculate_size_has_quiet_ok_guard() -> None:
                 fail(f"{rel}:{idx + 1}: calculateSize result must check the quiet ok flag before trusting bits/refs")
 
 
-def check_runtime_activation_uses_success_gate() -> None:
+def check_runtime_activation_is_version_gated() -> None:
     transaction = read("crypto/block/transaction.cpp")
-    accepted_activation_patterns = [
-        r"cp\.accepted\s*&&\s*cp\.new_data\.not_null\(\)\s*&&\s*use_msg_state",
-        r"cp\.accepted\s*&&\s*use_msg_state",
-        r"cp\.accepted\s*&\s*use_msg_state",
+    required = [
+        "kDeploySuccessActivationVersion = 14",
+        "compute_phase_can_activate_account",
+        "global_version >= kDeploySuccessActivationVersion ? success : accepted",
+        "compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state",
+        "compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && cp.new_data.not_null()",
     ]
-    for pattern in accepted_activation_patterns:
-        if re.search(pattern, transaction):
-            fail("transaction.cpp contains an account-activation gate based on cp.accepted; activation must use cp.success")
+    for needle in required:
+        if needle not in transaction:
+            fail(f"transaction.cpp missing version-gated deploy activation surface: {needle}")
 
 
 def check_extra_flags_bit3_still_reserved() -> None:
@@ -365,7 +367,7 @@ def main() -> None:
     check_safe_payment_defaults()
     check_slice6_stdlib_no_regular_send_mode()
     check_calculate_size_has_quiet_ok_guard()
-    check_runtime_activation_uses_success_gate()
+    check_runtime_activation_is_version_gated()
     check_extra_flags_bit3_still_reserved()
     check_no_reusable_public_bearer_capability()
     check_external_trial_unit_boundaries()

@@ -1790,6 +1790,14 @@ removed when policy v6 made single-signer the rule; see §11.3.)
 
 ## 12. Revision notes
 
+### r56 (PR #6 consensus activation gate)
+
+- Restored consensus compatibility for deploy activation: precompiled,
+  EVM, and TVM compute phases keep legacy accepted-gas activation before
+  ConfigParam 8 global version 14, and require `cp.success` only from
+  version 14 onward. The Slice 6 release checker now requires this
+  version gate instead of rejecting all `cp.accepted` activation paths.
+
 ### r55 (PR #6 third-round hardening)
 
 - Closed the third-round PR #6 findings by bounding capability
@@ -1801,7 +1809,7 @@ removed when policy v6 made single-signer the rule; see §11.3.)
 - Hardened Tol field-scoping analysis so call arguments are walked
   recursively, mutable taint merges across `if`/`try` branches, braced
   expression taint propagates, and c4 control-register aliases are
-  rejected. Added release-checker guards for activation gates,
+  rejected. Added release-checker guards for version-gated activation gates,
   `calculateSize` ok checks, and stdlib `SEND_MODE_REGULAR` use.
 
 ### r54 (PR #6 second-round hardening)
