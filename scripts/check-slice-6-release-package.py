@@ -67,6 +67,13 @@ def check_required_surface() -> None:
         "slice6BuildMonitorDownNotification",
         "slice6IsMonitorDownOpcode",
         "observerFailureAffectsObserved",
+        "Slice6ChildSpec",
+        "Slice6SupervisorState",
+        "Slice6RecoveryBudget",
+        "recordRestart",
+        "slice6StrategyIncludesChild",
+        "slice6RecordPartialRecovery",
+        "emitEscalation",
     ]:
         if needle not in supervision:
             fail(f"supervision stdlib missing {needle}")

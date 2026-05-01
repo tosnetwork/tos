@@ -1038,18 +1038,20 @@ multi-address structs.
 (monitors versus links), §6.4 (restart intensity), and §6.6 (crash
 reports) form the Slice 6 design surface.
 
-**Status.** 🟡 Stages 1–4 are complete as of 2026-05-01; Stage 5
-supervision restart intensity is next. Stage 0 design review findings
-were addressed in Draft v0.2 and re-review approved. The implementation layer now
+**Status.** 🟡 Stages 1–5 are complete as of 2026-05-01; Stage 6
+capability handles are next. Stage 0 design review findings were
+addressed in Draft v0.2 and re-review approved. The implementation layer now
 includes `@stdlib/delivery`, `@stdlib/schedule`, `@stdlib/time`, and
-the monitor/link foundation in `@stdlib/supervision`:
+the monitor/link/supervision foundations in `@stdlib/supervision`:
 canonical delivery-id input helpers, BackPressureAdvice validation,
 queue-pressure bucket classification, bounded dead-letter sink storage,
 scheduled-action shapes, masterchain-seqno `deliver_by` predicates,
 scheduled handles, cancel-authority checks, escrow force-expiry helpers,
 author-facing timer budgets, and release-checker guardrails against
 caller-controlled `msg.now` scheduling, `OP_MONITOR_DOWN` notification
-construction, and explicit monitor/link registration. Protocol
+construction, explicit monitor/link registration, child registry state,
+restart-intensity windows, circuit breakers, recovery-message builders,
+and partial-recovery escalation records. Protocol
 activation of validator scheduled delivery and production BackPressure
 emission remains gated to later Slice 6 stages. The Stage 0 input
 documents are
@@ -1194,28 +1196,32 @@ authorization plane, not reusable public bearer secrets.
    `extra_flags` bit 3 stays invalid; `OP_MONITOR_DOWN` dispatch works
    in Tol.
 
-6. ⏳ **Stage 5 — supervision stdlib and restart intensity.**
+6. ✅ **Stage 5 — supervision stdlib and restart intensity.**
 
-   - ⏳ Extend `supervision.tol`: `ChildSpec`, `SupervisorState`,
-     `RestartStrategy` enum (ONE_FOR_ONE/ALL/REST/DYNAMIC),
-     `RecoveryRecord`.
-   - ⏳ Implement `isCircuitBreakerTripped`, `checkRestartBudget`,
-     `buildRecoveryMessage`, `recordPartialRecovery`, `emitEscalation`.
-   - ⏳ Document in header: `one_for_all` and `rest_for_one` are
-     best-effort non-atomic; each child recovery is a separate
-     transaction; partial failure stops the sequence after per-child
-     retry budget is exhausted.
-   - ⏳ Child registry baseline: supervisor contract state.
-   - ⏳ Add behaviour manifest: `doc/slice6-behaviours/supervised_actor.json`.
-   - ⏳ Add emulator fixtures: `one_for_one` recovery; restart storm stops;
-     `one_for_all` partial-recovery escalation; `rest_for_one` registry
-     ordering; gas/value budget exhaustion stops recovery.
-   - ⏳ Add tol-tester cases: `slice6-supervision-childspec-positive.tol`,
-     `slice6-supervision-restart-intensity-positive.tol`,
-     `slice6-supervision-circuit-breaker-positive.tol`,
-     `slice6-supervision-one-for-one-positive.tol`,
-     `slice6-supervision-partial-recovery-positive.tol`.
-   - ⏳ Update roadmap. Commit + push:
+   - ✅ Extend `supervision.tol`: `Slice6ChildSpec`,
+     `Slice6SupervisorState`, `Slice6RecoveryBudget`,
+     `Slice6RecoveryMessage`, and `Slice6PartialRecoveryRecord`.
+   - ✅ Implement `isCircuitBreakerTripped`, restart-window reset and
+     budget checks through `recordRestart`, `slice6BuildRecoveryMessage`,
+     `slice6RecordPartialRecovery`, `slice6StrategyIncludesChild`, and
+     `emitEscalation`.
+   - ✅ Document in the stdlib header: `one_for_all` and `rest_for_one`
+     are best-effort non-atomic; each child recovery is a separate
+     transaction; partial failure stops after the per-child budget is
+     exhausted and escalates.
+   - ✅ Child registry baseline: supervisor contract state.
+   - ✅ Extend the Slice 6 release checker to require the Stage 5
+     supervision surface.
+   - ✅ Add emulator fixtures: `one_for_one` recovery; restart storm
+     stops; `one_for_all` partial-recovery escalation; `rest_for_one`
+     registry ordering; gas/value budget exhaustion stops recovery.
+   - ✅ Add tol-tester coverage in
+     `slice6-supervision-stdlib-positive.tol` for child registry,
+     duplicate child rejection, restart intensity, circuit breaker,
+     restart-window reset, gas/value budget exhaustion, strategy
+     inclusion, partial-recovery records, recovery-message body hashing,
+     and final-failure escalation.
+   - ✅ Update roadmap. Commit + push:
      *Slice 6 Stage 5 supervision stdlib*
 
    Exit criterion: a supervised example recovers one failed child and
@@ -1694,6 +1700,18 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r47 (Slice 6 Stage 5 supervision stdlib)
+
+- Extended `@stdlib/supervision` beyond monitors/links with child specs,
+  supervisor state, restart budgets, recovery-message builders, and
+  partial-recovery escalation records.
+- Locked the non-atomic supervision semantics in code comments and tests:
+  `one_for_all` and `rest_for_one` are best-effort ordered recovery
+  sequences, not atomic group recovery.
+- Added Tol and emulator fixtures for restart-intensity windows, circuit
+  breakers, explicit registry ordering, gas/value budget exhaustion, and
+  final-failure escalation.
 
 ### r46 (Slice 6 Stage 4 monitors and links)
 
