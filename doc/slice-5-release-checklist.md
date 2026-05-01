@@ -13,8 +13,8 @@ Repo-side release-candidate checklist:
 - [x] First external trial findings are closed in repo-side code/docs and
   the second-round oracle trial is recorded as passed.
 - [ ] Three external production contracts using the second-wave stdlib
-  are recorded with evidence. Current status: 1/3 production-intent
-  candidates (`DexPriceOracle`).
+  are recorded with evidence. Current status: 2/3 production-intent
+  candidates (`DexPriceOracle`, `TosStreamChannel`).
 
 Release status: repo-side release-candidate complete; external adoption
 pending.

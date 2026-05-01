@@ -23,6 +23,12 @@ EXTERNAL_CANDIDATES = (
         "src/dex-price-oracle.tol",
         "dex-price-oracle",
     ),
+    (
+        "tos-stream-channel",
+        "examples/slice5/tos-stream-channel",
+        "src/tos-stream-channel.tol",
+        "tos-stream-channel",
+    ),
 )
 
 REQUIRED_DOCS = (

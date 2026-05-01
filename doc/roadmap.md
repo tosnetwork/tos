@@ -1414,12 +1414,26 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   package manifest hashes are recorded in
   `doc/slice-5-abi-freeze-record.json`, compatibility/release checklists
   are in tree, and the external adoption gate remains explicitly
-  pending: two additional external production contracts using
-  second-wave stdlib after the DexPriceOracle oracle candidate. The
-  first DexPriceOracle trial findings are closed and the second-round
-  oracle trial passed, keeping DexPriceOracle as candidate 1/3.
+  pending: one additional external production contract using second-wave
+  stdlib after the DexPriceOracle oracle candidate and TosStreamChannel
+  payment-channel candidate. The first DexPriceOracle trial findings are
+  closed, the second-round oracle trial passed, and the payment-channel
+  Round 3 trial records TosStreamChannel as candidate 2/3.
 
 ## 12. Revision notes
+
+### r34 (Slice 5 external payment-channel trial round 3)
+
+- Recorded `TosStreamChannel`, a production-intent two-party streaming
+  payment channel, as external adoption candidate 2/3.
+- Added `cooperativeCloseVerified` to `@stdlib/payment-channel` for
+  deterministic testing/trusted adapters while preserving channel,
+  balance, expiry, closed-state, and seqno checks.
+- Added ABI fixture-reference `wire_reuse_of` support so contracts that
+  reuse exact stdlib wire bodies can reference canonical checked
+  fixtures without copy-only JSON artifacts.
+- Documented payment-channel payout dispatch, verified-helper scope, and
+  explicit non-transitive Tol imports.
 
 ### r33 (Slice 5 external oracle trial round 2)
 

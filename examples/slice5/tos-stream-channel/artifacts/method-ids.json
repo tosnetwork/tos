@@ -1,0 +1,7 @@
+{
+  "method_ids": [
+    {"name": "getChannelId", "id": 11265, "hex": "0x2c01"},
+    {"name": "isClosing",    "id": 11266, "hex": "0x2c02"},
+    {"name": "isClosed",     "id": 11267, "hex": "0x2c03"}
+  ]
+}

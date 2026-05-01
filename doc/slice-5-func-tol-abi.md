@@ -201,6 +201,15 @@ The fixture must fail if:
   cell hash in the other;
 - getter stack order changes.
 
+Production contracts may reuse a stdlib golden fixture when their ABI
+manifest intentionally reuses the exact same message wire body. The
+fixture reference must include `wire_reuse_of: "<StdlibContract>"`; the
+validator then accepts the referenced fixture's original `contract`
+field only when it matches that stdlib contract and still validates the
+message name, body encoding, canonical body hex, and SHA-256. This
+prevents per-contract fixture copies that differ only by contract name
+without weakening wire-identity checks.
+
 ## 8. Versioning rule
 
 Slice 5 starts with ABI manifest `version = 1`. Within version 1:

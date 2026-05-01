@@ -2,11 +2,11 @@
   "version": 1,
   "schema": "slice-5-abi-freeze-record",
   "status": "repo_side_release_candidate_complete_external_adoption_pending",
-  "date": "2026-04-30",
+  "date": "2026-05-01",
   "hash_algorithm": "sha256(json.dumps(obj, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False))",
   "schema_hash": {
     "path": "doc/slice-5-abi-manifest-schema.json",
-    "sha256": "4b0d73247abc7f41bd2b84c870e568abfc1301e3b492147ce9db8ab4dea1e579"
+    "sha256": "0d1b91d7072d4e695fe04eb710e3b9e0432c264d0cf9c9dfb44934411d9f169d"
   },
   "manifest_hashes": [
     {
@@ -48,7 +48,18 @@
         "abi_manifest": "doc/slice5-abi-manifests/dex_price_oracle.json",
         "abi_manifest_sha256": "21ffcd2aba2d93f7c15c1c9329c8692756fe27a8e7556e364b2c905224ff4896",
         "trial_report": "doc/slice-5-external-author-trials.md",
-        "remaining_external_contracts": 2
+        "remaining_external_contracts": 1
+      },
+      {
+        "name": "TosStreamChannel",
+        "pattern": "payment-channel",
+        "status": "production_intent_candidate_2_of_3",
+        "source": "examples/slice5/tos-stream-channel/src/tos-stream-channel.tol",
+        "tests": "examples/slice5/tos-stream-channel/tests/tos-stream-channel-positive.tol; examples/slice5/tos-stream-channel/tests/tos-stream-channel-import-positive.tol",
+        "abi_manifest": "doc/slice5-abi-manifests/tos_stream_channel.json",
+        "abi_manifest_sha256": "1278a97d54b7a2283955c8ff905badf46fc1c59a94e196c11cda5511a8ea4bd5",
+        "trial_report": "doc/slice-5-external-author-trials.md",
+        "remaining_external_contracts": 1
       }
     ]
   }

@@ -65,16 +65,43 @@ than stdlib logic bugs:
   audit checklist now state the cross-language rule for every even
   accepted report count, not only the two-value example.
 
-## Round 2 Trial Request
+## TosStreamChannel Round 3 Result
 
-The second trial should re-run `DexPriceOracle` against the updated
-`@stdlib/oracle` surface and explicitly verify:
+- **Date:** 2026-05-01
+- **Pattern:** `@stdlib/payment-channel`
+- **Contract:** `examples/slice5/tos-stream-channel/src/tos-stream-channel.tol`
+- **Status:** accepted as external production-intent candidate 2 of 3.
+- **Tests:** `tos-stream-channel-positive.tol` passed 12 cases;
+  `tos-stream-channel-import-positive.tol` passed 2 cases; combined gas
+  `74033`.
 
-- unauthorized round starters fail with
-  `SLICE5_ORACLE_THROW_UNAUTHORIZED_STARTER`;
-- 5-7 reporter fixed-at-deploy sets can finalize a deterministic median;
-- a compromised first reporter no longer anchors all later outlier
-  checks;
-- two-value medians still use the documented truncating convention;
-- tests can import `src/dex-price-oracle.tol` without a generated
-  entrypoint collision.
+The external author built a two-party streaming payment channel for DEX
+margin settlement, pay-per-call API micropayments, and subscription
+escrow. The trial verified Ed25519-over-cell-hash signing material,
+channel-id binding, monotonic seqno and replay rejection,
+cooperative/challenge close state transitions, challenge supersede,
+premature settlement rejection, duplicate close rejection, and malformed
+balance rejection.
+
+The trial found four friction points:
+
+- Payout dispatch is outside the helper. Disposition: documented as an
+  explicit integration step; helpers return `balanceB` after state
+  update and production handlers must save closed state before sending
+  funds, or document off-chain settlement.
+- `cooperativeClose` lacked a signature-bypassed test helper while
+  `challengeCloseVerified` already existed. Disposition:
+  `cooperativeCloseVerified` now mirrors the challenge helper and
+  bypasses only Ed25519 verification, not channel binding, expiry,
+  balance, closed-state, or seqno checks.
+- Tol imports are not transitive. Disposition: documented as expected
+  Tol behavior; tests importing contract sources must explicitly import
+  any stdlib symbols they use directly.
+- Contract-specific golden fixture copies were ceremony when reusing
+  the exact stdlib wire body. Disposition: ABI fixture references now
+  support `wire_reuse_of`, so `TosStreamChannel` can point at the
+  checked payment-channel fixtures without duplicate JSON copies.
+
+This records the second external production-intent adoption candidate.
+Slice 5 still needs one more external production contract before the
+external adoption release gate is complete.

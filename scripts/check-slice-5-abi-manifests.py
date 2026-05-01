@@ -47,7 +47,8 @@ GETTER_KEYS = {"name", "method_id", "id_source", "arguments", "returns"}
 CELL_TYPE_KEYS = {"name", "encoding", "fields", "fixtures"}
 FIELD_KEYS = {"name", "type", "bits", "refs"}
 STACK_ITEM_KEYS = {"name", "type"}
-FIXTURE_REF_KEYS = {"name", "kind", "path"}
+FIXTURE_REF_REQUIRED_KEYS = {"name", "kind", "path"}
+FIXTURE_REF_KEYS = FIXTURE_REF_REQUIRED_KEYS | {"wire_reuse_of"}
 ERROR_KEYS = {"name", "code", "class"}
 EXCEPTION_KEYS = {"exception", "reason"}
 
@@ -151,16 +152,21 @@ def validate_stack_item(path: Path, item: dict, custom_types: set[str], context:
 
 def validate_fixture_ref(path: Path, fixture: dict, context: str) -> Path:
     require(isinstance(fixture, dict), f"{path}: {context}: fixture ref must be object")
-    require_keys(path, fixture, FIXTURE_REF_KEYS, context)
+    missing = sorted(FIXTURE_REF_REQUIRED_KEYS - set(fixture))
+    extra = sorted(set(fixture) - FIXTURE_REF_KEYS)
+    require(not missing, f"{path}: {context} missing keys: {', '.join(missing)}")
+    require(not extra, f"{path}: {context} unexpected keys: {', '.join(extra)}")
     require_nonempty_string(fixture["name"], f"{path}: {context}.name")
     require(fixture["kind"] in ("func", "tol", "cross_language", "golden_cell"), f"{path}: {context}.kind invalid")
     require_nonempty_string(fixture["path"], f"{path}: {context}.path")
+    if "wire_reuse_of" in fixture:
+        require_ident(fixture["wire_reuse_of"], f"{path}: {context}.wire_reuse_of")
     fixture_path = ROOT / fixture["path"]
     require(fixture_path.exists(), f"{path}: {context}.path missing: {fixture_path}")
     return fixture_path
 
 
-def validate_fixture_file(path: Path, manifest_path: Path, manifest: dict, message_name: str) -> dict:
+def validate_fixture_file(path: Path, manifest_path: Path, manifest: dict, message_name: str, wire_reuse_of: str | None = None) -> dict:
     data = load_json(path)
     required = {
         "version",
@@ -176,7 +182,11 @@ def validate_fixture_file(path: Path, manifest_path: Path, manifest: dict, messa
     require_keys(path, data, required, "fixture")
     require(data["version"] == 1, f"{path}: fixture version must be 1")
     require(data["schema"] == "slice-5-abi-fixture", f"{path}: bad fixture schema")
-    require(data["contract"] == manifest["contract"], f"{path}: contract must match {manifest_path}")
+    if data["contract"] != manifest["contract"]:
+        require(
+            wire_reuse_of is not None and data["contract"] == wire_reuse_of,
+            f"{path}: contract must match {manifest_path} or the fixture ref's wire_reuse_of contract",
+        )
     require(data["message"] == message_name, f"{path}: message must match manifest fixture ref")
     require(data["producer_language"] in ("func", "tol", "golden"), f"{path}: bad producer_language")
     require(data["body_encoding"] in ("tol_auto_struct", "manual_cell", "raw_slice", "tlb_reference"), f"{path}: bad body_encoding")
@@ -259,7 +269,7 @@ def validate_manifest(path: Path) -> tuple[dict, list[dict]]:
             require(msg["fixtures"], f"{path}: {prefix}: {msg['body_encoding']} requires at least one fixture")
         for j, fixture in enumerate(msg["fixtures"]):
             fixture_path = validate_fixture_ref(path, fixture, f"{prefix}.fixtures[{j}]")
-            loaded_fixtures.append(validate_fixture_file(fixture_path, path, data, msg["name"]))
+            loaded_fixtures.append(validate_fixture_file(fixture_path, path, data, msg["name"], fixture.get("wire_reuse_of")))
 
     require(isinstance(data["get_methods"], list), f"{path}: get_methods must be array")
     for i, getter in enumerate(data["get_methods"]):

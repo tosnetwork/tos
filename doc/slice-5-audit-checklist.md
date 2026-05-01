@@ -24,3 +24,10 @@ Before shipping a Slice 5 contract:
   convention for every even accepted report count.
 - Confirm payment-channel signatures verify the signed-state cell hash
   and that seqno replay and premature settlement tests exist.
+- Confirm payment-channel receive handlers do not expose
+  `cooperativeCloseVerified` or `challengeCloseVerified` to untrusted
+  messages unless signature verification has already happened in a
+  trusted adapter.
+- Confirm payment-channel payout dispatch is explicit: helper calls save
+  closed state before sending funds, or the contract documents why
+  payout is settled off-chain.

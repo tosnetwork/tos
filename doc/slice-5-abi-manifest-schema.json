@@ -522,6 +522,10 @@
         },
         "path": {
           "type": "string"
+        },
+        "wire_reuse_of": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         }
       },
       "additionalProperties": false

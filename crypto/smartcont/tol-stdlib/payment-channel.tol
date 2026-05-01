@@ -213,6 +213,18 @@ fun Slice5PaymentChannelState.cooperativeClose(
     return self.balanceB;
 }
 
+fun Slice5PaymentChannelState.cooperativeCloseVerified(
+    mutate self,
+    config: Slice5PaymentChannelConfig,
+    signedState: Slice5PaymentSignedState,
+    now: uint32
+): coins {
+    self.applyVerifiedState(config, signedState, now);
+    self.closed = true;
+    self.cooperativeClosed = true;
+    return self.balanceB;
+}
+
 fun Slice5PaymentChannelState.challengeClose(
     mutate self,
     config: Slice5PaymentChannelConfig,

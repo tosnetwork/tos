@@ -17,8 +17,12 @@ This repo-side release candidate contains:
   passed and added golden coverage for 5-reporter median finalization,
   running-median outlier anchoring, even-median truncation, and imported
   contract tests.
+- External author trial record for `TosStreamChannel`, the second
+  production-intent adoption candidate, using `@stdlib/payment-channel`.
+  The trial added coverage for cooperative/challenge close, challenge
+  supersede, seqno rollback rejection, and imported contract tests.
 
 External adoption remains a Slice 5 release gate: Stage 7 records the
 repo-side ABI freeze and explicitly leaves the three external production
-contract requirement pending until two additional production contracts
+contract requirement pending until one additional production contract
 are recorded.

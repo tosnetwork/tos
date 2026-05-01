@@ -1,0 +1,11 @@
+{
+  "error_codes": [
+    {"name": "SLICE5_PAYMENT_THROW_SIGNATURE_FAILURE",    "code": 3585},
+    {"name": "SLICE5_PAYMENT_THROW_SEQNO_REPLAY",         "code": 3586},
+    {"name": "SLICE5_PAYMENT_THROW_WRONG_CHANNEL",        "code": 3587},
+    {"name": "SLICE5_PAYMENT_THROW_STALE_CHALLENGE",      "code": 3588},
+    {"name": "SLICE5_PAYMENT_THROW_PREMATURE_SETTLEMENT", "code": 3589},
+    {"name": "SLICE5_PAYMENT_THROW_DUPLICATE_CLOSE",      "code": 3590},
+    {"name": "SLICE5_PAYMENT_THROW_MALFORMED_STATE",      "code": 3591}
+  ]
+}

@@ -29,6 +29,18 @@ Compatibility rules:
 - Do not emit `ErrorClass.BackPressure` from new Slice 5 code.
 - Payment-channel signed states use Ed25519 over
   `Slice5PaymentSignedState.toCell().hash()`, not raw source bytes.
+- Payment-channel `cooperativeClose` and `settle` helpers return the
+  `balanceB` payout amount after updating helper state. They do not
+  send funds by themselves; production receive handlers must save the
+  closed state first and then dispatch the payout to `config.partyB`, or
+  explicitly document an off-chain settlement policy.
+- Payment-channel `cooperativeCloseVerified` and
+  `challengeCloseVerified` skip Ed25519 verification but still enforce
+  channel binding, balance conservation, expiry, closed-state, and
+  seqno checks. Use them only in deterministic tests or in a trusted
+  adapter that already verified both signatures over the state cell
+  hash; untrusted receive handlers should call `cooperativeClose` or
+  `challengeClose`.
 - Governance action lists are policy-typed. `SetCode`, `SetData`,
   reserve, and library actions are rejected by default.
 - Oracle examples use fixed-at-deploy reporter sets; each round records
@@ -52,4 +64,8 @@ Compatibility rules:
 Testing note: importing a `.tol` file that contains a `contract` block
 into a tol-tester unit is supported for constants, types, and helper
 logic. The compiler lowers only the entrypoint file's contract block, so
-imported contract entrypoints do not collide with the test runner.
+imported contract entrypoints do not collide with the test runner. Tol
+imports are explicit rather than transitive: if a test imports a
+contract source that itself imports `@stdlib/payment-channel`, the test
+must still import `@stdlib/payment-channel` before using those stdlib
+symbols directly.
