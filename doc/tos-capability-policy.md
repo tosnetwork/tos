@@ -2,7 +2,8 @@
 
 ## 0. Status and scope
 
-**Status.** Draft v0.1, 2026-05-01. Companion RFC for Slice 6 Stage 0.
+**Status.** Draft v0.2, 2026-05-01. Companion RFC for Slice 6 Stage 0
+after the first design-review fix pass.
 
 This document opens the public design required by `actor.md` section
 5.4. It does not approve protocol-level capability admission control.
@@ -32,6 +33,7 @@ Therefore reusable public bearer handles are rejected for Slice 6.
 The initial capability handle is a public grant:
 
 ```
+version: uint8 = 1
 issuer: address
 target: address
 grantee: address?
@@ -44,8 +46,8 @@ nonce: uint64
 revocation_epoch: uint64
 ```
 
-The handle id is `hash(grant_cell)`. The handle id is not secret. A call
-is authorized only when the target verifies one of:
+The handle id is `cell_hash(CapabilityGrantV1)`. The handle id is not
+secret. A call is authorized only when the target verifies one of:
 
 - `in.senderAddress == grantee`;
 - a signature from `grantee_pubkey` over the call context;
@@ -66,9 +68,44 @@ Constraints may include:
 - replay domain;
 - delegated depth.
 
-Constraints must be hashed in the grant and exposed in manifests. A
-wallet or SDK must not display an opaque capability as "safe" unless it
-can decode the constraint vocabulary.
+Constraints are encoded canonically before hashing:
+
+```
+capability_constraints_v1#c601
+  selector:uint32
+  max_value:(Maybe Grams)
+  valid_from_mc_seqno:uint32
+  expires_at_mc_seqno:uint32
+  max_uses:(Maybe uint32)
+  required_counterparty:(Maybe MsgAddressInt)
+  required_workchain:(Maybe int32)
+  replay_domain:uint256
+  delegated_depth:uint8
+  argument_bounds:(HashmapE 16 CapabilityArgumentBound)
+= CapabilityConstraintsV1;
+```
+
+`constraints_hash = cell_hash(CapabilityConstraintsV1)`. `selector` is
+part of the hashed constraints even though it is also copied into the
+grant header for cheap dispatch. If the two values differ, the grant is
+invalid. Future constraint encodings must use a new `version` and a
+different constructor tag; wallets must display the version they decode.
+
+A conforming wallet or SDK must decode and display at least:
+
+- target;
+- selector / allowed opcode;
+- max value;
+- validity window;
+- max uses;
+- grantee or signer;
+- required counterparty;
+- delegated depth.
+
+If any of those fields are present but undecodable, the wallet must show
+the grant as unknown/high-risk and must not summarize it as a safe
+bounded permission. Opaque extension fields may exist only under a
+manifest-declared extension id.
 
 ## 5. Revocation
 
@@ -81,6 +118,19 @@ Every non-single-use grant needs a revocation path:
 
 The design may choose one or more paths, but it must document storage
 cost and lookup cost. Revocation cannot be an off-chain promise only.
+
+Revocation storage is bounded by manifest and config:
+
+- max revoked handle ids per target;
+- max epoch map entries per issuer/grantee pair;
+- rent payer for each entry;
+- expiry or compaction rule for old entries;
+- full-set behavior.
+
+The Stage 6 baseline rejects a revocation write that would exceed its
+declared budget unless the caller pays to compact expired entries first.
+It must not silently drop the oldest unexpired revocation, because that
+would reactivate a previously revoked grant.
 
 ## 6. Relationship to account permissions
 
@@ -139,6 +189,8 @@ The design must explicitly handle:
 - Replay and revocation tests exist.
 - Wallet/RPC capability discovery can report whether a contract uses the
   standard capability surface.
+- Canonical `CapabilityConstraintsV1` hashing, wallet display minimums,
+  revocation storage bounds, and full-set behavior are specified and
+  tested.
 - Security review accepts or explicitly defers protocol-level admission
   control.
-

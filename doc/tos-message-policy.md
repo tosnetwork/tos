@@ -199,6 +199,11 @@ five contiguous ranges:
 `OP_ERROR = 0x00010001` (§5.2) is reserved by this policy from
 the **application-defined** range.
 
+`OP_MONITOR_DOWN = 0x00000010` is reserved from the protocol-defined
+system range for Slice 6 monitor/link failure notifications. It is not
+an `OP_ERROR` reply; it is a one-way observer notification defined by
+`doc/tos-supervision-policy.md`.
+
 **Enforcement scope.** Restrictions in this section apply only to
 **new opcode allocations made through the Slice 1 `Envelope`
 library**. The protocol does **not** reject sends with arbitrary
@@ -288,8 +293,11 @@ future use:
   whichever post-Slice-1 slice takes on the schema bump (TBD;
   not Slice 1, not Slice 2, not Slice 3 per `roadmap.md` §6).
 - Bit 3 — reserved for the supervision-link tag of `actor.md`
-  §5.1. Activation requires the supervision protocol to be in
-  production, which `roadmap.md` §6 schedules in Slice 6.
+  §5.1. Slice 6 Stage 0 keeps the bit reserved but invalid by default:
+  the baseline monitor/link design uses explicit registration state and
+  `OP_MONITOR_DOWN`. Bit 3 becomes legal only if a later supervision
+  amendment specifies the exact link-tag semantics and validator
+  behavior.
 
 **Current v12 enforcement.** Today TVM v12 rejects any `extra_flags`
 bit beyond `0..1`. The outbound mask in `crypto/block/transaction.cpp`
@@ -297,8 +305,7 @@ is `extra_flags & 3` at both sites cited below. Bits 2 and 3 are
 reserved by this policy but **currently invalid to set** — sending
 an internal message with `extra_flags & 12 != 0` triggers
 `check_skip_invalid(45)`. They become legal only when the
-corresponding slice (Slice 4 for bit 2, Slice 6 for bit 3) widens
-the mask in lockstep.
+corresponding approved protocol amendment widens the mask in lockstep.
 
 **Synchronized constants.** The `extra_flags` mask is hard-coded
 in three locations today:
@@ -315,13 +322,12 @@ Slice 1 must lift the magic literals into named stdlib constants
 and the composite `EXTRA_FLAGS_RICH_BOUNCE = 3` defined in §10.1)
 and label all three sites as synchronized constants. When the
 future slice that activates bit 2 (the inline-error-class slice
-described in §5.4) or Slice 6 (which activates bit 3 alongside
-the supervision protocol) lands, the same change must land in
-lockstep at:
+described in §5.4) or a Slice 6 supervision amendment that activates bit
+3 lands, the same change must land in lockstep at:
 
 1. Both `& td::make_refint(3)` masks in `crypto/block/transaction.cpp`
-   — widen to `& 7` when bit 2 activates, or `& 15` when bit 3 also
-   activates in Slice 6.
+   — widen to `& 7` when bit 2 activates, or `& 15` only when bit 2 and
+   bit 3 are both approved and activated.
 2. The Tol-stdlib `EXTRA_FLAGS_VALID_MASK` constant introduced in
    Slice 1 alongside the named bit constants.
 3. The Slice-1 conformance fixtures that assert

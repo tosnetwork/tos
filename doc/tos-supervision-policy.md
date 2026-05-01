@@ -2,7 +2,8 @@
 
 ## 0. Status and scope
 
-**Status.** Draft v0.1, 2026-05-01. Companion RFC for Slice 6 Stage 0.
+**Status.** Draft v0.2, 2026-05-01. Companion RFC for Slice 6 Stage 0
+after the first design-review fix pass.
 
 This document defines the on-chain supervision model for `actor.md`
 sections 5.1, 6.3, 6.4, and 6.6. It depends on the delivery-SLA and
@@ -47,17 +48,24 @@ actor does not fail because the observer fails.
 
 A **link** is a declared failure relationship. Failure may escalate or
 trigger supervisor strategy. Link registration is more expensive than a
-monitor and may require `extra_flags` bit 3 activation.
+monitor.
 
 A **supervisor relationship** is a link plus a child spec, restart
 policy, budget, and recovery target.
+
+Stage 4 does **not** activate `extra_flags` bit 3 by default. The
+initial link/monitor surface uses explicit registration state and the
+notification opcode below. `extra_flags` bit 3 remains reserved for a
+future fast-path link tag only if a later amendment specifies the exact
+bit semantics, validator behavior, mask widening, stdlib constants, and
+conformance fixture changes in `doc/tos-message-policy.md` section 3.4.
 
 ## 4. Notification body
 
 Minimum failure notification fields:
 
 ```
-op: uint32
+op: uint32 = OP_MONITOR_DOWN
 query_id: uint64
 observed: address
 failure_class: uint8
@@ -68,6 +76,18 @@ created_at: uint64
 diagnostic: Cell?
 ```
 
+`OP_MONITOR_DOWN` is allocated from the protocol-defined system opcode
+range in `doc/tos-message-policy.md` section 3.2. The Stage 0 draft
+allocation is:
+
+```
+OP_MONITOR_DOWN = 0x00000010
+```
+
+The notification is not encoded as `OP_ERROR`. `failure_class` uses the
+same numeric values as `ErrorClass` where possible, while
+`failure_code` is the protocol/supervision reason code. This keeps
+ordinary request/reply errors separate from observer notifications.
 Diagnostics are optional and gas-charged. The notification must remain
 useful without them.
 
@@ -99,6 +119,20 @@ Supported strategies:
 On-chain restart is not state mutation by validators. It is a supervisor
 message such as "reinitialize", "replace code", "deploy replacement", or
 "mark failed", chosen by contract code and manifests.
+
+Unlike OTP, `one_for_all` and `rest_for_one` are **best-effort
+non-atomic recovery sequences** on TOS. Each child recovery is a separate
+transaction and may fail independently, especially across shards. The
+supervisor's child registry is stored in supervisor contract state for
+the Stage 5 baseline; a later child-registry contract requires a separate
+manifest and gas/rent budget. `rest_for_one` ordering is the explicit
+order of that registry, not address sort order.
+
+If partial recovery fails, the supervisor must stop the sequence once
+the failed recovery exhausts its per-child retry budget, record which
+children were recovered, and emit the configured escalation/dead-letter
+record. It must not continue blindly through the remaining children
+after an unrecoverable intermediate failure.
 
 ## 7. Restart intensity and circuit breakers
 
@@ -148,5 +182,7 @@ Expected manifest checks:
 - A supervisor example recovers one failed child and stops under a
   restart storm.
 - `extra_flags` mask widening, if used, lands with conformance fixtures.
+- If `extra_flags` bit 3 is not used, `doc/tos-message-policy.md`
+  remains in the reserved-but-invalid state and monitor/link tests use
+  `OP_MONITOR_DOWN`.
 - Existing Slice 1-5 contracts remain valid and unchanged.
-

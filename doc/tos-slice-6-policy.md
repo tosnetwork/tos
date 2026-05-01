@@ -5,9 +5,10 @@ capability handles.
 
 ## 0. Status, scope, and references
 
-**Status.** Draft v0.1, 2026-05-01. This opens Slice 6 Stage 0 design
-review. It is not an implementation approval and must pass security
-review before Stage 1 code starts.
+**Status.** Draft v0.2, 2026-05-01. This is the Slice 6 Stage 0 design
+review input after the first review-fix pass. It is not an
+implementation approval and must pass security re-review before Stage 1
+code starts.
 
 Slice 6 is the first protocol-heavy actor-layer slice after the Slice
 1-5 contract-language and stdlib substrate. It promotes the remaining
@@ -109,7 +110,9 @@ vocabulary.
    signature-bound, stateful, single-use, or otherwise non-replayable.
 10. **Activation is versioned.** Any protocol mask widening, new action
     kind, scheduler state, dead-letter behavior, or supervision flag is
-    gated by `ConfigParam 8` / global-version capability and by explicit
+    gated by `ConfigParam 8` / global-version capability, the
+    synchronized-constant procedure in `doc/tos-message-policy.md`
+    section 3.4 where `extra_flags` are involved, and explicit
     conformance fixtures.
 
 ## 3. Non-goals
@@ -184,7 +187,12 @@ Expected work:
 - add conformance fixtures for old contracts remaining unchanged.
 
 Exit criterion: delivery failure can be represented and audited, but no
-scheduled messages or supervisors depend on it yet.
+scheduled messages or supervisors depend on it yet. The
+`delivery_id_input_v1` schema is fully specified; dead-letter sink
+retention bounds are defined and costed; queue-pressure buckets and
+their delivery channel are specified; `BackPressure` retry-advice
+payload semantics are fully specified or explicitly deferred behind a
+named gate condition.
 
 ### Stage 2 - scheduled-message protocol substrate
 
@@ -205,7 +213,7 @@ internal message under emulator and conformance tests.
 
 Expected work:
 
-- add `@stdlib/time` helpers for `sendAfter`, `sendAt`, and
+- add `@stdlib/time` helpers for `sendAfterBlocks`, `sendAtMcSeqno`, and
   `cancelScheduled`;
 - add Tol compiler checks for explicit timer budgets and manifest-backed
   scheduled-message declarations;
@@ -220,7 +228,10 @@ helpers rather than caller-controlled `msg.now` fields.
 Expected work:
 
 - define one-way monitor and bidirectional link registration;
-- activate `extra_flags` bit 3 only if the link tag is fully specified;
+- use `OP_MONITOR_DOWN` for the baseline notification path;
+- keep `extra_flags` bit 3 reserved and invalid unless a separate
+  amendment fully specifies the link tag and updates
+  `doc/tos-message-policy.md` section 3.4;
 - define monitor notification delivery and funding;
 - define behavior for frozen, deleted, and rent-expired observed
   accounts.
@@ -297,16 +308,25 @@ system contract.
 - Global-version activation includes old/new compatibility fixtures.
 - Existing Slice 1-5 conformance and gas gates stay green.
 
-## 7. Open questions for Stage 0 review
+## 7. Stage 0 review decisions
 
-1. Should scheduled delivery be keyed by masterchain time, masterchain
-   seqno, logical time, or a pair of `not_before` and `expire_after`?
-2. Should the dead-letter sink be system-wide, workchain-local, or
-   sender-selected with a system default?
-3. Is `extra_flags` bit 3 sufficient for link tagging, or does
-   supervision need a new body constructor instead?
-4. Can queue-pressure metrics be exposed without leaking exploitable
-   cross-shard congestion information?
-5. Should capability handles remain contract/stdlib-level in Slice 6,
-   with protocol admission control deferred to a later slice?
-
+1. **Scheduled delivery time base.** Use masterchain seqno, not
+   validator-provided timestamp. The wire/storage fields are
+   `not_before_mc_seqno` and `expire_after_blocks`; `deliver_by_mc_seqno`
+   is computed.
+2. **Dead-letter sink scope.** Use a workchain-local system sink with
+   bounded, sender-funded retention. Sender-declared dead-letter
+   addresses are application recovery paths, not substitutes for the
+   bounded system sink.
+3. **Monitor/link encoding.** Use `OP_MONITOR_DOWN` plus explicit
+   registration state for the Stage 4 baseline. `extra_flags` bit 3
+   stays reserved and invalid until a later amendment justifies a
+   validator-visible fast-path link tag.
+4. **Queue-pressure exposure.** Expose only bucketed pressure advice via
+   funded `BackPressureAdvice`; exact queue lengths and exact shard queue
+   ids remain hidden. Production activation requires a separate
+   information-leak review.
+5. **Capability handles.** Keep the Slice 6 baseline at contract/stdlib
+   public grants with sender/signature/state/single-use binding.
+   Protocol admission control is deferred until this model passes
+   security, wallet, and RPC review.

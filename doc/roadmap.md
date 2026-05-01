@@ -1038,8 +1038,9 @@ multi-address structs.
 (monitors versus links), §6.4 (restart intensity), and §6.6 (crash
 reports) form the Slice 6 design surface.
 
-**Status.** 🟡 Stage 0 design RFC opened, 2026-05-01. No implementation
-is approved yet. The Stage 0 input documents are
+**Status.** 🟡 Stage 0 design RFC opened, 2026-05-01; first design
+review findings addressed in Draft v0.2. No implementation is approved
+yet. The Stage 0 input documents are
 [`doc/tos-slice-6-policy.md`](tos-slice-6-policy.md),
 [`doc/tos-delivery-sla-policy.md`](tos-delivery-sla-policy.md),
 [`doc/tos-time-policy.md`](tos-time-policy.md),
@@ -1061,7 +1062,12 @@ authorization plane, not reusable public bearer secrets.
    - ✅ Draft scheduled-message/time RFC.
    - ✅ Draft supervision/monitor/link/restart-intensity RFC.
    - ✅ Draft capability-handle RFC.
-   - ⏳ Security review and closure.
+   - ✅ Address first Stage 0 design-review findings: canonical
+     `delivery_id`, BackPressure retry advice, dead-letter retention,
+     queue-pressure buckets, masterchain-seqno time base, cancellation
+     authority edge cases, monitor notification opcode, supervision
+     non-atomicity, and capability constraint hashing.
+   - ⏳ Security re-review and closure.
    - ⏳ Exit criterion: Stage 0 review accepts the dependency order,
      resource model, global-version gates, and non-goals.
 
@@ -1084,9 +1090,12 @@ authorization plane, not reusable public bearer secrets.
 
 5. ⏳ **Stage 4 — monitors and links.**
 
-   Define one-way monitor notifications and bidirectional link tags.
-   Activate `extra_flags` bit 3 only if the protocol mask, stdlib
-   constants, and conformance fixtures land together.
+   Define one-way monitor notifications and bidirectional link
+   registration. Baseline notifications use `OP_MONITOR_DOWN`;
+   `extra_flags` bit 3 remains reserved and invalid unless a later
+   amendment fully specifies a validator-visible link tag and updates
+   the protocol mask, stdlib constants, and conformance fixtures
+   together.
 
 6. ⏳ **Stage 5 — supervision stdlib and restart intensity.**
 
@@ -1161,13 +1170,11 @@ without protocol support, are the historical failure mode of
 multi-layer systems. The 26-week first slice exists to avoid that
 mode. Every later slice depends on it.
 
-The right next action is Slice 5 Stage 0 security review: approve or
-revise the second-wave stdlib target boundaries and the FunC<->Tol ABI
-freeze plan before adding auction, DAO/governance, oracle, or
-payment-channel templates. The `actor.md` §5.7 delivery-SLA RFC should
-run in parallel because it still blocks protocol-level back-pressure and
-later supervision semantics, but Slice 4's contract-level bounded
-postponement is complete without that dependency.
+The right next action is Slice 6 Stage 0 security re-review: approve or
+revise the delivery-SLA, time, supervision, and capability RFCs before
+any protocol implementation starts. `ErrorClass.BackPressure`,
+scheduled messages, monitor/link notifications, and supervision recovery
+remain implementation-gated until Stage 0 review closes.
 
 ## 11. Known unscheduled work and cross-Slice blockers
 
@@ -1295,7 +1302,7 @@ Three independently-blocked sub-features:
 
 Each sub-feature needs its own policy document
 (`doc/tos-supervision-policy.md`, `doc/tos-time-policy.md`,
-`doc/tos-capability-policy.md`). Draft v0.1 documents now exist, plus
+`doc/tos-capability-policy.md`). Draft v0.2 documents now exist, plus
 `doc/tos-delivery-sla-policy.md` and the umbrella
 `doc/tos-slice-6-policy.md`; none are approved until Stage 0 review
 closes.
@@ -1317,7 +1324,7 @@ closes.
   `doc/tos-language-syntax-policy.md`; Slice 3 is approved at
   `doc/tos-slice-3-policy.md`; Slice 4 is complete under
   `doc/tos-postponement-policy.md` and `doc/tos-slice-4-policy.md`.
-  Slice 6 policy documents now exist as Draft v0.1 Stage 0 review
+  Slice 6 policy documents now exist as Draft v0.2 Stage 0 review
   inputs: `doc/tos-slice-6-policy.md`,
   `doc/tos-delivery-sla-policy.md`, `doc/tos-time-policy.md`,
   `doc/tos-supervision-policy.md`, and
@@ -1333,7 +1340,7 @@ Sorted by how many later slices each item blocks:
 1. 🟡 **`actor.md` §5.7 design RFC** — no longer blocks Slice 4's bounded
    contract-level postponement, but still blocks protocol-level delivery
    failure semantics, Slice 5 back-pressure `error_class = 5`, and
-   Slice 6 failure taxonomy for supervision. Draft v0.1 is now open at
+   Slice 6 failure taxonomy for supervision. Draft v0.2 is now open at
    `doc/tos-delivery-sla-policy.md`.
 2. ✅ **Slice 2 syntax policy doc** — closed 2026-04-30 by
    `doc/tos-language-syntax-policy.md` Draft v3 and the Stage 1
@@ -1343,7 +1350,7 @@ Sorted by how many later slices each item blocks:
    deterministic replay/property substrate is checked in and CI-wired;
    stdlib pattern implementation can start.
 4. 🟡 **`actor.md` §5.4 capability public RFC** — Slice 6 long-pole.
-   Draft v0.1 is now open at `doc/tos-capability-policy.md`. It still
+   Draft v0.2 is now open at `doc/tos-capability-policy.md`. It still
    needs protocol/security review before implementation.
 5. ✅ **§6.3 / §6.4 / §6.6 promotion into Slice 6 scope** —
    closed by the Slice 6 Stage 0 RFC update; these are now explicit
@@ -1515,6 +1522,20 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r41 (Slice 6 Stage 0 review fixes)
+
+- Closed the first Slice 6 Stage 0 design-review blockers by making
+  `delivery_id_input_v1` consensus-normative, defining bounded
+  `BackPressureAdvice`, and specifying sender-funded dead-letter sink
+  retention/full-sink behavior.
+- Chose masterchain seqno as the scheduled-message time base, aligned
+  `expire_after_blocks` with computed `deliver_by_mc_seqno`, and
+  specified deleted-cancel-authority and stale-handle behavior.
+- Allocated `OP_MONITOR_DOWN`, kept `extra_flags` bit 3 reserved but
+  invalid for the baseline, documented non-atomic supervision recovery
+  strategies, and specified canonical capability-constraint hashing plus
+  revocation storage bounds.
 
 ### r40 (Slice 6 Stage 0 RFC opened)
 

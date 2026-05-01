@@ -2,7 +2,8 @@
 
 ## 0. Status and scope
 
-**Status.** Draft v0.1, 2026-05-01. Companion RFC for Slice 6 Stage 0.
+**Status.** Draft v0.2, 2026-05-01. Companion RFC for Slice 6 Stage 0
+after the first design-review fix pass.
 
 This document defines the delivery-failure substrate required before
 scheduled messages, supervision, monitor notifications, or active
@@ -28,40 +29,93 @@ taxonomy without overloading application errors:
 | Class | Meaning | Retry |
 |---|---|---|
 | `Transient` | temporary import delay, temporary shard queue pressure | yes, with backoff |
-| `Permanent` | destination deleted without bounce path, invalid address, permanently frozen target | no |
+| `Permanent` | invalid address, code rejected, or another delivery failure that cannot be retried by changing timing | no |
+| `Undeliverable` | destination deleted, permanently frozen, or otherwise unavailable after the delivery window | no, unless application has an alternate target |
 | `Protocol` | malformed envelope or protocol-level rejection | no |
 | `BackPressure` | delivery accepted but current queue/resource pressure says sender should slow down | yes, with explicit backoff |
 
-`BackPressure` remains reserved until this RFC is approved and the
-implementation can prove that senders receive bounded retry advice
-instead of a vague "try again later" signal.
+`Undeliverable` is represented as `ErrorClass.Permanent` plus a
+delivery-failure reason code until a future schema bump adds a distinct
+application-visible enum value. The name is kept here because
+`actor.md` section 5.7 uses it for the protocol condition.
+
+`BackPressure` remains reserved until senders receive this bounded retry
+advice payload, either in a bounce/dead-letter diagnostic cell or in the
+corresponding delivery-failure record:
+
+```
+back_pressure_advice_v1#b601
+  delivery_id:uint256
+  bucket:uint8              // 0 normal, 1 delayed, 2 congested, 3 rejecting
+  scope:uint8               // 0 workchain-pair, 1 shard-route bucket
+  min_retry_after_blocks:uint32
+  advice_valid_until:uint32 // masterchain seqno
+  route_hash:uint256        // hash of the coarse route bucket, not raw queue id
+= BackPressureAdvice;
+```
+
+`min_retry_after_blocks` is mandatory and nonzero for buckets
+`congested` and `rejecting`. A sender that retries earlier must not
+receive stronger delivery guarantees than a fresh message.
 
 ## 3. Delivery identity
 
 Every tracked delivery attempt needs a stable identity:
 
 ```
-delivery_id = hash(src, dest, created_lt, value, body_hash, mode, extra_flags)
+delivery_id = cell_hash(delivery_id_input_v1)
 ```
 
-The exact hash input is an implementation detail for Stage 1, but it
-must include enough data to distinguish two equal bodies sent in the
-same block and must not require parsing application payloads.
+The hash input is consensus-normative, not an implementation detail:
+
+```
+delivery_id_input_v1#d601
+  origin_tx_lt:uint64
+  origin_tx_hash:uint256
+  origin_action_index:uint16
+  attempt_kind:uint8        // 0 immediate, 1 scheduled, 2 retry,
+                            // 3 monitor notification, 4 supervisor recovery
+  attempt_seq:uint16        // initial attempt is 0
+  src:MsgAddressInt
+  dest:MsgAddressInt
+  value:CurrencyCollection
+  send_mode:uint16
+  extra_flags:uint16
+  state_init_hash:(Maybe uint256)
+  body_hash:uint256
+  not_before_mc_seqno:uint32
+  expire_after_blocks:uint32
+= DeliveryIdInputV1;
+```
+
+`origin_tx_lt` and `origin_tx_hash` identify the transaction that
+created the delivery attempt. For a scheduled message, this is the
+scheduling transaction, not the later delivery transaction. `value` is
+the recipient-visible `CurrencyCollection` after send-mode resolution
+and before forwarding, scheduler-rent, dead-letter, or diagnostic fees
+are deducted. `body_hash` is the TVM cell hash of the exact body cell
+that would be delivered; no application payload parsing is required.
+`state_init_hash` is `null` when no StateInit is attached.
 
 ## 4. Deadline model
 
 The protocol should define two windows:
 
 - `not_before`: earliest point at which delivery is valid. Ordinary
-  messages have `not_before = created_at`.
-- `deliver_by`: latest point at which the delivery attempt may remain
+  messages have `not_before_mc_seqno` equal to the masterchain seqno
+  that contains the origin transaction.
+- `deliver_by`: computed latest point at which the delivery attempt may remain
   pending before a failure record is produced.
 
 For ordinary messages, `deliver_by` is derived from config defaults and
 possibly sender-provided mode bits once those are defined. For scheduled
-messages, `deliver_by` is derived from `not_before + fairness_window`.
+messages, the wire/storage field is `expire_after_blocks`, and
+`deliver_by_mc_seqno = not_before_mc_seqno + expire_after_blocks`.
+Overflow is invalid at scheduling time.
 
 No contract should be promised exact delivery at a specific timestamp.
+Slice 6 uses masterchain seqno, not validator-provided timestamp, as the
+scheduler time base; see `doc/tos-time-policy.md` section 2.
 
 ## 5. Dead-letter routing
 
@@ -77,6 +131,27 @@ The system sink is for auditability and bounded retention, not for
 application recovery. Application recovery requires an explicit bounce or
 dead-letter handler.
 
+The workchain-local system dead-letter sink is the Slice 6 concrete
+form of the "system-level dead-letter actor" named in `actor.md`
+section 5.7. It is scoped per workchain so retention, rent, and full-sink
+behavior can be configured without coupling all workchains to one global
+queue.
+
+The system sink is workchain-local and bounded by config:
+
+- `max_dead_letter_records`;
+- `dead_letter_retention_blocks`;
+- `max_dead_letter_record_bits`;
+- `max_dead_letter_record_refs`.
+
+Every persistent sink record is paid from sender escrow. If escrow is
+insufficient, no persistent system-sink record is created; validators may
+include only a non-persistent block-local counter for observability. If
+the sink is full, the protocol first removes expired records. If no slot
+is available after expiry cleanup, the new persistent record is dropped
+and the sink's bounded `dropped_count` is incremented. The protocol must
+not evict an unexpired paid record to store a new attacker-funded record.
+
 ## 6. Funding rules
 
 The original sender funds:
@@ -90,18 +165,40 @@ If escrow is insufficient, the protocol emits the smallest possible
 system-level audit record and drops optional diagnostics. It must not
 mint a free failure message.
 
+If escrow is depleted before `deliver_by_mc_seqno`, the delivery attempt
+is force-expired on the next scheduler/dead-letter sweep. It may produce
+only the records/messages still covered by remaining escrow; otherwise it
+is accounted through the bounded non-persistent dropped counter described
+in section 5.
+
 ## 7. Queue-pressure metrics
 
 Queue-pressure exposure is useful only if it cannot become a congestion
 oracle for attackers. Stage 1 may expose coarse, bucketed values:
 
-- `normal`
-- `delayed`
-- `congested`
-- `rejecting`
+- `normal`: route delay is below `pressure_delayed_blocks`.
+- `delayed`: route delay is at least `pressure_delayed_blocks`.
+- `congested`: route delay is at least `pressure_congested_blocks` or
+  the coarse route bucket is above `pressure_congested_fill_ratio`.
+- `rejecting`: the route bucket is above `pressure_rejecting_fill_ratio`
+  and new delivery attempts for that bucket are rejected or converted to
+  a funded delivery-failure record.
 
-It must not expose precise queue length or per-shard scheduling internals
-until an information-leak review approves them.
+The metric is computed over a coarse route bucket:
+`(src_workchain, dest_workchain, route_bucket_id)`, where
+`route_bucket_id` is a config-sized hash bucket, not an exact shard
+queue id. The delivery channel is `BackPressureAdvice` in a funded
+bounce/dead-letter diagnostic or delivery-failure record. `rejecting`
+must never silently drop a funded attempt: it either rejects
+synchronously before accepting escrow, or emits a funded delivery-failure
+record after acceptance.
+
+The information exposed is limited to the bucket enum and the minimum
+retry delay. Precise queue length, exact shard id, and validator-local
+scheduler internals remain hidden until a separate information-leak
+review approves stronger observability. Even bucketed dead-letter timing
+can leak coarse cross-shard latency; Stage 1 security review must treat
+that timing side channel explicitly before production activation.
 
 ## 8. Interaction with existing bounces
 
@@ -115,7 +212,10 @@ apply.
 - A conformance fixture proves old contracts are unchanged when they do
   not request delivery-SLA handling.
 - A delivery failure record is canonical and bounded.
-- `ErrorClass.BackPressure` has a precise activation condition or stays
-  reserved.
+- `delivery_id_input_v1` is implemented exactly as specified in section
+  3, including stable scheduled-message ids.
+- `ErrorClass.BackPressure` emits only with `BackPressureAdvice` from
+  section 2, or stays reserved behind an explicit gate.
 - Dead-letter routing has a named payer and bounded retention.
-
+- Queue-pressure bucket thresholds, route-bucket granularity, and
+  information-leak review are recorded before production activation.
