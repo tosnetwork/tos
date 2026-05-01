@@ -76,6 +76,12 @@ struct Slice6SupervisorState {
     children: map<uint64, Slice6ChildSpec>
 }
 
+struct Slice6RestartOutcome {
+    restarted: bool
+    escalationStarted: bool
+    finalFailure: bool
+}
+
 struct Slice6RecoveryMessage {
     childId: uint64
     target: address
@@ -357,13 +363,31 @@ fun Slice6SupervisorState.recordChildRestart(
     recoveryGas: uint32,
     recoveryValue: coins
 ): bool {
+    return self.recordChildRestartOutcome(childId, budget, nowMcSeqno, recoveryGas, recoveryValue).restarted;
+}
+
+fun Slice6SupervisorState.recordChildRestartOutcome(
+    mutate self,
+    childId: uint64,
+    budget: Slice6RecoveryBudget,
+    nowMcSeqno: uint32,
+    recoveryGas: uint32,
+    recoveryValue: coins
+): Slice6RestartOutcome {
+    val wasFinalFailure = self.finalFailure;
     var child = self.getChild(childId);
     val restarted = child.recordRestart(budget, nowMcSeqno, recoveryGas, recoveryValue);
     self.children.set(child.childId, child);
-    if (!restarted) {
+    var escalationStarted = false;
+    if (!restarted && !wasFinalFailure) {
         self.emitEscalation();
+        escalationStarted = true;
     }
-    return restarted;
+    return Slice6RestartOutcome {
+        restarted,
+        escalationStarted,
+        finalFailure: self.finalFailure,
+    };
 }
 
 fun slice6BuildRecoveryMessage(child: Slice6ChildSpec, body: cell, valueCoins: coins): Slice6RecoveryMessage {

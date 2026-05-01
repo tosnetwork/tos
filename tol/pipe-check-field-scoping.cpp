@@ -96,6 +96,35 @@ static bool state_in_list(const std::vector<std::string>& list, const std::strin
   return false;
 }
 
+static void append_unique_states(std::vector<std::string>& dst, const std::vector<std::string>& src) {
+  std::unordered_set<std::string> seen(dst.begin(), dst.end());
+  for (const std::string& s : src) {
+    if (seen.insert(s).second) {
+      dst.push_back(s);
+    }
+  }
+}
+
+static std::unordered_map<std::string, std::vector<std::string>> merge_tainted_locals(
+    std::unordered_map<std::string, std::vector<std::string>> base,
+    const std::unordered_map<std::string, std::vector<std::string>>& lhs,
+    const std::unordered_map<std::string, std::vector<std::string>>& rhs) {
+  for (const auto& [name, taint] : lhs) {
+    append_unique_states(base[name], taint);
+  }
+  for (const auto& [name, taint] : rhs) {
+    append_unique_states(base[name], taint);
+  }
+  for (auto it = base.begin(); it != base.end();) {
+    if (it->second.empty()) {
+      it = base.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  return base;
+}
+
 // ---------- AST shape helpers ----------
 
 static bool is_storage_reference(AnyExprV expr) {
@@ -112,6 +141,9 @@ static bool is_contract_reference(AnyExprV expr) {
   return false;
 }
 
+static bool statement_references_storage(AnyV statement);
+static bool block_references_storage(V<ast_block_statement> block);
+
 static bool expr_references_storage(AnyExprV expr) {
   if (is_storage_reference(expr)) {
     return true;
@@ -119,8 +151,28 @@ static bool expr_references_storage(AnyExprV expr) {
   switch (expr->kind) {
     case ast_dot_access:
       return expr_references_storage(expr->as<ast_dot_access>()->get_obj());
+    case ast_braced_expression:
+      return block_references_storage(expr->as<ast_braced_expression>()->get_block_statement());
+    case ast_braced_yield_result:
+      return expr_references_storage(expr->as<ast_braced_yield_result>()->get_expr());
+    case ast_tensor:
+      for (AnyExprV item : expr->as<ast_tensor>()->get_items()) {
+        if (expr_references_storage(item)) {
+          return true;
+        }
+      }
+      return false;
+    case ast_square_brackets:
+      for (AnyExprV item : expr->as<ast_square_brackets>()->get_items()) {
+        if (expr_references_storage(item)) {
+          return true;
+        }
+      }
+      return false;
     case ast_argument:
       return expr_references_storage(expr->as<ast_argument>()->get_expr());
+    case ast_artificial_aux_vertex:
+      return expr_references_storage(expr->as<ast_artificial_aux_vertex>()->get_wrapped_expr());
     case ast_cast_as_operator:
       return expr_references_storage(expr->as<ast_cast_as_operator>()->get_expr());
     case ast_not_null_operator:
@@ -132,6 +184,68 @@ static bool expr_references_storage(AnyExprV expr) {
     case ast_binary_operator:
       return expr_references_storage(expr->as<ast_binary_operator>()->get_lhs()) ||
              expr_references_storage(expr->as<ast_binary_operator>()->get_rhs());
+    case ast_ternary_operator:
+      return expr_references_storage(expr->as<ast_ternary_operator>()->get_cond()) ||
+             expr_references_storage(expr->as<ast_ternary_operator>()->get_when_true()) ||
+             expr_references_storage(expr->as<ast_ternary_operator>()->get_when_false());
+    case ast_null_coalesce_operator:
+      return expr_references_storage(expr->as<ast_null_coalesce_operator>()->get_lhs()) ||
+             expr_references_storage(expr->as<ast_null_coalesce_operator>()->get_rhs());
+    default:
+      return false;
+  }
+}
+
+static bool block_references_storage(V<ast_block_statement> block) {
+  for (AnyV item : block->get_items()) {
+    if (statement_references_storage(item)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool statement_references_storage(AnyV statement) {
+  switch (statement->kind) {
+    case ast_block_statement:
+      return block_references_storage(statement->as<ast_block_statement>());
+    case ast_return_statement:
+      return expr_references_storage(statement->as<ast_return_statement>()->get_return_value());
+    case ast_if_statement:
+      return expr_references_storage(statement->as<ast_if_statement>()->get_cond()) ||
+             block_references_storage(statement->as<ast_if_statement>()->get_if_body()) ||
+             block_references_storage(statement->as<ast_if_statement>()->get_else_body());
+    case ast_repeat_statement:
+      return expr_references_storage(statement->as<ast_repeat_statement>()->get_cond()) ||
+             block_references_storage(statement->as<ast_repeat_statement>()->get_body());
+    case ast_while_statement:
+      return expr_references_storage(statement->as<ast_while_statement>()->get_cond()) ||
+             block_references_storage(statement->as<ast_while_statement>()->get_body());
+    case ast_do_while_statement:
+      return block_references_storage(statement->as<ast_do_while_statement>()->get_body()) ||
+             expr_references_storage(statement->as<ast_do_while_statement>()->get_cond());
+    case ast_throw_statement: {
+      auto t = statement->as<ast_throw_statement>();
+      return expr_references_storage(t->get_thrown_code()) ||
+             (t->has_thrown_arg() && expr_references_storage(t->get_thrown_arg()));
+    }
+    case ast_assert_statement:
+      return expr_references_storage(statement->as<ast_assert_statement>()->get_cond()) ||
+             expr_references_storage(statement->as<ast_assert_statement>()->get_thrown_code());
+    case ast_try_catch_statement:
+      return block_references_storage(statement->as<ast_try_catch_statement>()->get_try_body()) ||
+             expr_references_storage(statement->as<ast_try_catch_statement>()->get_catch_expr()) ||
+             block_references_storage(statement->as<ast_try_catch_statement>()->get_catch_body());
+    case ast_assign:
+      return expr_references_storage(statement->as<ast_assign>()->get_lhs()) ||
+             expr_references_storage(statement->as<ast_assign>()->get_rhs());
+    case ast_set_assign:
+      return expr_references_storage(statement->as<ast_set_assign>()->get_lhs()) ||
+             expr_references_storage(statement->as<ast_set_assign>()->get_rhs());
+    case ast_become_statement:
+    case ast_keep_state_statement:
+    case ast_empty_statement:
+      return false;
     default:
       return false;
   }
@@ -146,6 +260,7 @@ static bool is_storage_field_dot(V<ast_dot_access> dot) {
 // ---------- forward decls ----------
 
 static std::vector<std::string> compute_taint_of_expr(AnyExprV expr, FieldScopingContext& ctx);
+static void propagate_taint_through_binding(AnyExprV lhs_expr, AnyExprV rhs_expr, FieldScopingContext& ctx);
 static void check_expr(AnyExprV expr, FieldScopingContext& ctx);
 static void check_statement(AnyV statement, FieldScopingContext& ctx);
 static void check_block(V<ast_block_statement> block, FieldScopingContext& ctx);
@@ -156,7 +271,10 @@ static bool asm_command_mentions_c4(std::string_view command) {
   return command.find("c4") != std::string_view::npos ||
          command.find("C4") != std::string_view::npos ||
          command.find("PUSHROOT") != std::string_view::npos ||
-         command.find("POPROOT") != std::string_view::npos;
+         command.find("POPROOT") != std::string_view::npos ||
+         command.find("PUSHCTRX") != std::string_view::npos ||
+         command.find("POPCTRX") != std::string_view::npos ||
+         command.find("SETCONTCTRMANY") != std::string_view::npos;
 }
 
 static bool asm_function_uses_c4_register(FunctionPtr fun_ref) {
@@ -356,6 +474,100 @@ static std::vector<std::string> check_storage_field_access(V<ast_dot_access> dot
 
 // ---------- taint inference ----------
 
+static std::vector<std::string> collect_taint_from_statement(AnyV statement, FieldScopingContext& ctx);
+
+static std::vector<std::string> collect_taint_from_block(V<ast_block_statement> block, FieldScopingContext& ctx) {
+  auto saved = ctx.tainted_locals;
+  std::vector<std::string> result;
+  for (AnyV item : block->get_items()) {
+    append_unique_states(result, collect_taint_from_statement(item, ctx));
+  }
+  ctx.tainted_locals = std::move(saved);
+  return result;
+}
+
+static std::vector<std::string> collect_taint_from_statement(AnyV statement, FieldScopingContext& ctx) {
+  switch (statement->kind) {
+    case ast_block_statement:
+      return collect_taint_from_block(statement->as<ast_block_statement>(), ctx);
+    case ast_return_statement:
+      return compute_taint_of_expr(statement->as<ast_return_statement>()->get_return_value(), ctx);
+    case ast_if_statement: {
+      auto if_stmt = statement->as<ast_if_statement>();
+      std::vector<std::string> result = compute_taint_of_expr(if_stmt->get_cond(), ctx);
+      auto before = ctx.tainted_locals;
+      append_unique_states(result, collect_taint_from_block(if_stmt->get_if_body(), ctx));
+      auto if_taint = ctx.tainted_locals;
+      ctx.tainted_locals = before;
+      append_unique_states(result, collect_taint_from_block(if_stmt->get_else_body(), ctx));
+      auto else_taint = ctx.tainted_locals;
+      ctx.tainted_locals = merge_tainted_locals(std::move(before), if_taint, else_taint);
+      return result;
+    }
+    case ast_try_catch_statement: {
+      auto try_catch = statement->as<ast_try_catch_statement>();
+      auto before = ctx.tainted_locals;
+      std::vector<std::string> result = collect_taint_from_block(try_catch->get_try_body(), ctx);
+      auto try_taint = ctx.tainted_locals;
+      ctx.tainted_locals = before;
+      append_unique_states(result, compute_taint_of_expr(try_catch->get_catch_expr(), ctx));
+      append_unique_states(result, collect_taint_from_block(try_catch->get_catch_body(), ctx));
+      auto catch_taint = ctx.tainted_locals;
+      ctx.tainted_locals = merge_tainted_locals(std::move(before), try_taint, catch_taint);
+      return result;
+    }
+    case ast_repeat_statement: {
+      std::vector<std::string> result = compute_taint_of_expr(statement->as<ast_repeat_statement>()->get_cond(), ctx);
+      append_unique_states(result, collect_taint_from_block(statement->as<ast_repeat_statement>()->get_body(), ctx));
+      return result;
+    }
+    case ast_while_statement: {
+      std::vector<std::string> result = compute_taint_of_expr(statement->as<ast_while_statement>()->get_cond(), ctx);
+      append_unique_states(result, collect_taint_from_block(statement->as<ast_while_statement>()->get_body(), ctx));
+      return result;
+    }
+    case ast_do_while_statement: {
+      std::vector<std::string> result = collect_taint_from_block(statement->as<ast_do_while_statement>()->get_body(), ctx);
+      append_unique_states(result, compute_taint_of_expr(statement->as<ast_do_while_statement>()->get_cond(), ctx));
+      return result;
+    }
+    case ast_throw_statement: {
+      auto t = statement->as<ast_throw_statement>();
+      std::vector<std::string> result = compute_taint_of_expr(t->get_thrown_code(), ctx);
+      if (t->has_thrown_arg()) {
+        append_unique_states(result, compute_taint_of_expr(t->get_thrown_arg(), ctx));
+      }
+      return result;
+    }
+    case ast_assert_statement: {
+      std::vector<std::string> result = compute_taint_of_expr(statement->as<ast_assert_statement>()->get_cond(), ctx);
+      append_unique_states(result, compute_taint_of_expr(statement->as<ast_assert_statement>()->get_thrown_code(), ctx));
+      return result;
+    }
+    case ast_assign: {
+      auto a = statement->as<ast_assign>();
+      std::vector<std::string> result = compute_taint_of_expr(a->get_rhs(), ctx);
+      propagate_taint_through_binding(a->get_lhs(), a->get_rhs(), ctx);
+      return result;
+    }
+    case ast_set_assign: {
+      auto a = statement->as<ast_set_assign>();
+      std::vector<std::string> result = compute_taint_of_expr(a->get_lhs(), ctx);
+      append_unique_states(result, compute_taint_of_expr(a->get_rhs(), ctx));
+      if (auto ref = a->get_lhs()->try_as<ast_reference>()) {
+        append_unique_states(ctx.tainted_locals[static_cast<std::string>(ref->get_name())], result);
+      }
+      return result;
+    }
+    case ast_become_statement:
+    case ast_keep_state_statement:
+    case ast_empty_statement:
+      return {};
+    default:
+      return compute_taint_of_expr(reinterpret_cast<AnyExprV>(statement), ctx);
+  }
+}
+
 // Compute the @on() state-set carried by an expression. Empty vector = untainted.
 // This walks expressions that *produce* the value being assigned to a binding.
 // Used both at val-decls and to flag tainted-arg-to-call.
@@ -410,6 +622,8 @@ static std::vector<std::string> compute_taint_of_expr(AnyExprV expr, FieldScopin
       }
       return result;
     }
+    case ast_braced_expression:
+      return collect_taint_from_block(expr->as<ast_braced_expression>()->get_block_statement(), ctx);
     case ast_argument:
       return compute_taint_of_expr(expr->as<ast_argument>()->get_expr(), ctx);
     case ast_artificial_aux_vertex:
@@ -555,6 +769,7 @@ static void check_call_arguments(V<ast_function_call> call, FieldScopingContext&
           format_state_list(taint), callee_for_diag)
         .collect(arg_expr);
     }
+    check_expr(arg_expr, ctx);
   }
 }
 
@@ -725,15 +940,13 @@ static void check_statement(AnyV statement, FieldScopingContext& ctx) {
     case ast_if_statement: {
       auto if_stmt = statement->as<ast_if_statement>();
       check_expr(if_stmt->get_cond(), ctx);
-      // Stage 3 conservative: do not branch-merge tainted_locals; just visit each arm with
-      // the entry state. This is sound because any binding introduced inside an arm goes out
-      // of scope at arm-end, and §3.4 mandates `become`/`keep_state` tail-position so any
-      // post-`become` continuation is unreachable anyway. We still must restore on exit.
-      auto saved = ctx.tainted_locals;
+      auto before = ctx.tainted_locals;
       check_block(if_stmt->get_if_body(), ctx);
-      ctx.tainted_locals = saved;
+      auto if_taint = ctx.tainted_locals;
+      ctx.tainted_locals = before;
       check_block(if_stmt->get_else_body(), ctx);
-      ctx.tainted_locals = std::move(saved);
+      auto else_taint = ctx.tainted_locals;
+      ctx.tainted_locals = merge_tainted_locals(std::move(before), if_taint, else_taint);
       return;
     }
     case ast_repeat_statement:
@@ -757,11 +970,13 @@ static void check_statement(AnyV statement, FieldScopingContext& ctx) {
       check_expr(statement->as<ast_assert_statement>()->get_cond(), ctx);
       return check_expr(statement->as<ast_assert_statement>()->get_thrown_code(), ctx);
     case ast_try_catch_statement: {
-      auto saved = ctx.tainted_locals;
+      auto before = ctx.tainted_locals;
       check_block(statement->as<ast_try_catch_statement>()->get_try_body(), ctx);
-      ctx.tainted_locals = saved;
+      auto try_taint = ctx.tainted_locals;
+      ctx.tainted_locals = before;
       check_block(statement->as<ast_try_catch_statement>()->get_catch_body(), ctx);
-      ctx.tainted_locals = std::move(saved);
+      auto catch_taint = ctx.tainted_locals;
+      ctx.tainted_locals = merge_tainted_locals(std::move(before), try_taint, catch_taint);
       return;
     }
     case ast_become_statement:

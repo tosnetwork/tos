@@ -150,6 +150,14 @@ When intensity is exceeded, the supervisor must stop retrying and emit a
 bounded escalation/dead-letter record. Infinite restart loops are a
 protocol bug.
 
+The stdlib `recordChildRestartOutcome(...)` result distinguishes the
+first escalation transition from later "already failed" restart attempts.
+Contracts that send an escalation message must gate that send on
+`escalationStarted`; a plain `false` restart result only says the child
+was not restarted. Gas or value budget exhaustion may open the circuit on
+the first attempt without consuming a restart-count slot, because the
+funding budget is a prerequisite to any recovery attempt.
+
 ## 8. Tol and stdlib surface
 
 Expected stdlib:

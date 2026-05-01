@@ -162,6 +162,30 @@ fun test_circuit_breaker_cooldown_not_extended_while_open(): int {
     return child.cooldownUntil!;
 }
 
+@method_id(695)
+fun test_supervisor_restart_outcome_escalates_once(): int {
+    var supervisor = slice6SupervisorState(1);
+    supervisor.addChild(slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100));
+    val first = supervisor.recordChildRestartOutcome(1, supBudget(1, 10, 5, 100, 10), 101, 101, 10);
+    val second = supervisor.recordChildRestartOutcome(1, supBudget(1, 10, 5, 100, 10), 102, 101, 10);
+    assert(!first.restarted) throw 6951;
+    assert(first.escalationStarted) throw 6952;
+    assert(!second.restarted) throw 6953;
+    assert(!second.escalationStarted) throw 6954;
+    assert(second.finalFailure) throw 6955;
+    return 10;
+}
+
+@method_id(696)
+fun test_budget_exhaustion_opens_circuit_without_consuming_restart(): int {
+    var child = slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
+    val ok = child.recordRestart(supBudget(2, 10, 5, 100), 101, 101, 10);
+    assert(!ok) throw 6961;
+    assert(child.restartCount == 0) throw 6962;
+    assert(child.state == SLICE6_CHILD_CIRCUIT_OPEN) throw 6963;
+    return child.restartCount;
+}
+
 /**
 @testcase | 681 | | 2
 @testcase | 682 | | 4866
@@ -177,4 +201,6 @@ fun test_circuit_breaker_cooldown_not_extended_while_open(): int {
 @testcase | 692 | | 4865
 @testcase | 693 | | 3
 @testcase | 694 | | 107
+@testcase | 695 | | 10
+@testcase | 696 | | 0
  */

@@ -1780,10 +1780,29 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   monotonic revocation epochs, bounded dead-letter size accounting,
   stable supervision cooldowns, wallet action prevalidation before
   seqno/state commit, jetton supply overflow/underflow guards, and
-  compiler checks for deploy/c4 escape paths. Real validator activation
-  remains a deployment step because TOS is not live.
+  compiler checks for deploy/c4 escape paths. Third-round hardening
+  bounded capability argument maps, added wildcard issuer epoch
+  revocation, prechecked dead-letter diagnostic depth, made supervisor
+  escalation transition-aware, and tightened recursive field-scope
+  analysis through call arguments, branches, and c4 control-register
+  aliases. Real validator activation remains a deployment step because
+  TOS is not live.
 
 ## 12. Revision notes
+
+### r55 (PR #6 third-round hardening)
+
+- Closed the third-round PR #6 findings by bounding capability
+  `argumentBounds`, documenting explicit replay domains and dual-bound
+  grant semantics, applying wildcard issuer epoch revocation, rejecting
+  zero dead-letter escrow budgets, prechecking diagnostic depth before
+  size traversal, and adding transition-aware supervision restart
+  outcomes.
+- Hardened Tol field-scoping analysis so call arguments are walked
+  recursively, mutable taint merges across `if`/`try` branches, braced
+  expression taint propagates, and c4 control-register aliases are
+  rejected. Added release-checker guards for activation gates,
+  `calculateSize` ok checks, and stdlib `SEND_MODE_REGULAR` use.
 
 ### r54 (PR #6 second-round hardening)
 

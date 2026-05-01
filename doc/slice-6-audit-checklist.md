@@ -19,6 +19,11 @@
   `minRecordEscrowCoins`; a boolean "funded" flag is not sufficient.
 - Record insertion rejects cells whose measured bit/ref counts exceed
   the storage field width before narrowing to `uint16` / `uint8`.
+- Diagnostic cells are depth-prechecked before `calculateSize`, so an
+  attacker cannot force an expensive traversal of a cell tree that could
+  never fit the configured record-depth budget.
+- `minRecordEscrowCoins` is nonzero; a direct struct literal cannot
+  disable the escrow floor.
 - Full-sink behavior rejects or counts drops; it never creates a free
   unbounded record.
 - Production BackPressure emission remains runtime-gated until the
@@ -45,6 +50,12 @@
   cooldown indefinitely.
 - Supervisor-level restart helpers set final-failure escalation when a
   child restart cannot be funded or exceeds the restart window.
+- Contracts that dispatch escalation messages use
+  `recordChildRestartOutcome(...)` and gate the dispatch on
+  `escalationStarted`, not merely on `recordChildRestart(...) == false`.
+- Gas/value budget exhaustion may open the circuit before consuming a
+  restart-count slot; this is an intentional funding guard and should be
+  tested separately from restart-storm exhaustion.
 - `emitEscalation` / `finalFailure` is a state flag; the contract still
   sends any escalation or dead-letter message explicitly.
 
@@ -60,16 +71,25 @@
 - A grant is sender-bound, signature-bound, stateful, or single-use.
 - Pubkey-bound grants use `requireCapabilityWithSignature(...)`; plain
   `requireCapability(...)` is not accepted as a signature check.
+- Dual-bound grants (`grantee` and `granteePubkey`) are sender-checked by
+  the plain path and sender+signature checked only by the signature path.
 - Reusable public bearer tokens are rejected.
 - Revoked-handle, epoch, consumed-nonce, and handle-use maps have finite
   bounds and full-set behavior is reject-until-compacted.
+- Argument-bound maps have a fixed small bound and the hashed
+  constraints include `argumentBoundCount`.
 - `maxUses` is enforced by registry state, not only displayed in the
   hashed constraints.
 - Revocation is monotonic: zero means permanent, and repeated revocation
   may extend but not shorten the revocation horizon.
 - Minimum revocation epochs are monotonic and cannot be lowered.
+- A wildcard issuer epoch (`grantee = null`) revokes address-bound grants
+  too, so compromised issuer batches do not require one entry per
+  grantee.
 - Replay domain, delegation depth, and argument bounds are populated in
   `Slice6CapabilityUseContext` and enforced at runtime.
+- `replayDomain = 0` is intentionally unrestricted; production contracts
+  use a deployment-specific replay domain.
 
 ## Value Dispatch
 

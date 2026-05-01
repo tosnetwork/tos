@@ -28,6 +28,7 @@ const SLICE6_CAPABILITY_THROW_ARGUMENT_BOUND = 0x1414
 
 const SLICE6_CAPABILITY_VERSION: uint8 = 1
 const SLICE6_CAPABILITY_CONSTRAINTS_TAG: uint16 = 0xc601
+const SLICE6_CAPABILITY_MAX_ARGUMENT_BOUNDS: uint8 = 16
 
 struct Slice6CapabilityArgumentBound {
     minValue: uint64
@@ -45,6 +46,7 @@ struct Slice6CapabilityConstraintsV1 {
     requiredWorkchain: int32?
     replayDomain: uint256
     delegatedDepth: uint8
+    argumentBoundCount: uint8
     argumentBounds: map<uint16, Slice6CapabilityArgumentBound>
 }
 
@@ -147,6 +149,7 @@ fun slice6CapabilityConstraints(
         requiredWorkchain,
         replayDomain,
         delegatedDepth,
+        argumentBoundCount: 0,
         argumentBounds: slice6CapabilityEmptyArgumentBounds(),
     };
 }
@@ -156,6 +159,12 @@ fun Slice6CapabilityConstraintsV1.setArgumentBound(
     argumentIndex: uint16,
     bound: Slice6CapabilityArgumentBound
 ): void {
+    if (!self.argumentBounds.exists(argumentIndex)) {
+        if (self.argumentBoundCount >= SLICE6_CAPABILITY_MAX_ARGUMENT_BOUNDS) {
+            throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
+        }
+        self.argumentBoundCount += 1;
+    }
     self.argumentBounds.set(argumentIndex, bound);
 }
 
@@ -222,8 +231,8 @@ fun slice6CapabilityUseContext(
     counterparty: address?,
     currentMcSeqno: uint64,
     workchain: int32,
-    replayDomain: uint256 = 0,
-    delegationDepth: uint8 = 0
+    replayDomain: uint256,
+    delegationDepth: uint8
 ): Slice6CapabilityUseContext {
     return Slice6CapabilityUseContext {
         sender,
@@ -340,8 +349,15 @@ fun Slice6CapabilityGrantV1.requireContext(
     if (context.delegationDepth > constraints.delegatedDepth) {
         throw SLICE6_CAPABILITY_THROW_DELEGATION_DEPTH_EXCEEDED;
     }
+    if (constraints.argumentBoundCount > SLICE6_CAPABILITY_MAX_ARGUMENT_BOUNDS) {
+        throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
+    }
+    var seenArgumentBounds: uint8 = 0;
     var boundEntry = constraints.argumentBounds.findFirst();
     while (boundEntry.isFound) {
+        if (seenArgumentBounds >= SLICE6_CAPABILITY_MAX_ARGUMENT_BOUNDS) {
+            throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
+        }
         val argumentValue = context.argumentValues.get(boundEntry.getKey());
         if (!argumentValue.isFound) {
             throw SLICE6_CAPABILITY_THROW_ARGUMENT_BOUND;
@@ -351,7 +367,11 @@ fun Slice6CapabilityGrantV1.requireContext(
         if (value < bound.minValue || value > bound.maxValue) {
             throw SLICE6_CAPABILITY_THROW_ARGUMENT_BOUND;
         }
+        seenArgumentBounds += 1;
         boundEntry = constraints.argumentBounds.iterateNext(boundEntry);
+    }
+    if (seenArgumentBounds != constraints.argumentBoundCount) {
+        throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
     }
     if (parties.grantee != null && context.sender != parties.grantee!) {
         throw SLICE6_CAPABILITY_THROW_SENDER_MISMATCH;
@@ -535,7 +555,7 @@ fun Slice6CapabilityRegistry.setMinEpoch(
     if (existing.isFound && minEpoch < existing.loadValue()) {
         throw SLICE6_CAPABILITY_THROW_INVALID_EPOCH;
     }
-    if (!self.minEpochs.exists(key)) {
+    if (!existing.isFound) {
         if (self.epochEntryCount >= self.maxEpochEntries) {
             throw SLICE6_CAPABILITY_THROW_STORAGE_FULL;
         }
@@ -551,6 +571,13 @@ fun Slice6CapabilityRegistry.requireNotEpochRevoked(self, grant: Slice6Capabilit
     val minEpoch = self.minEpochs.get(key);
     if (minEpoch.isFound && proof.revocationEpoch < minEpoch.loadValue()) {
         throw SLICE6_CAPABILITY_THROW_REVOKED;
+    }
+    if (parties.grantee != null) {
+        val wildcardKey = slice6CapabilityEpochKey(parties.issuer, null);
+        val wildcardMinEpoch = self.minEpochs.get(wildcardKey);
+        if (wildcardMinEpoch.isFound && proof.revocationEpoch < wildcardMinEpoch.loadValue()) {
+            throw SLICE6_CAPABILITY_THROW_REVOKED;
+        }
     }
 }
 

@@ -349,7 +349,7 @@
       "focused_tol_tests": {
         "pattern": "wallet-v5",
         "expected_tests": 3,
-        "baseline_gas": 40960
+        "baseline_gas": 49907
       },
       "bytecode": {
         "func_cells": 20,

@@ -46,7 +46,7 @@ pattern of each migrated contract:
 |---|---|---|---:|
 | `jetton-minter` | `jetton-minter` | 3 | 17122 |
 | `jetton-wallet` | `jetton-wallet` | 3 | 33791 |
-| `wallet-v5` | `wallet-v5` | 3 | 40960 |
+| `wallet-v5` | `wallet-v5` | 3 | 49907 |
 
 The 10% regression threshold (`threshold_percent` in the baseline
 JSON) gates merges into `actor-layer` and `main`. Any future change

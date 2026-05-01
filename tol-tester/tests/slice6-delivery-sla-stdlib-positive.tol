@@ -240,6 +240,29 @@ fun test_dead_letter_zero_ref_budget_rejected(): int {
     return 0;
 }
 
+@method_id(618)
+fun test_dead_letter_diagnostic_depth_prechecked(): int {
+    var sink = slice6NewDeadLetterSink();
+    val diagnostic = beginCell().storeRef(beginCell().storeUint(1, 1).endCell()).endCell();
+    try {
+        sink.addRecord(slice6Budget(2, 5, 900, 4, 1), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), diagnostic, 1, 10);
+    } catch (code) {
+        assert(sink.count == 0) throw 6181;
+        return code;
+    }
+    return 0;
+}
+
+@method_id(619)
+fun test_dead_letter_zero_escrow_budget_rejected(): int {
+    try {
+        slice6DeadLetterBudget(2, 5, 900, 4, 1023, 0).requireEnabled();
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 601 | | 1
 @testcase | 602 | | 1
@@ -258,4 +281,6 @@ fun test_dead_letter_zero_ref_budget_rejected(): int {
 @testcase | 615 | | 3843
 @testcase | 616 | | 3848
 @testcase | 617 | | 3841
+@testcase | 618 | | 3844
+@testcase | 619 | | 3841
  */

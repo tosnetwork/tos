@@ -351,6 +351,53 @@ fun test_pubkey_bound_signature_path_checks_signature(): int {
     return 0;
 }
 
+@method_id(726)
+fun test_argument_bound_count_cap_rejected(): int {
+    var constraints = capConstraints();
+    constraints.setArgumentBound(0, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(1, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(2, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(3, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(4, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(5, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(6, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(7, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(8, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(9, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(10, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(11, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(12, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(13, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(14, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(15, slice6CapabilityArgumentBound(0, 10));
+    try {
+        constraints.setArgumentBound(16, slice6CapabilityArgumentBound(0, 10));
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(727)
+fun test_argument_bound_replacement_does_not_increment_count(): int {
+    var constraints = capConstraints();
+    constraints.setArgumentBound(7, slice6CapabilityArgumentBound(0, 10));
+    constraints.setArgumentBound(7, slice6CapabilityArgumentBound(2, 8));
+    return constraints.argumentBoundCount;
+}
+
+@method_id(728)
+fun test_wildcard_epoch_revokes_address_bound_grant(): int {
+    var reg = capRegistry();
+    reg.setMinEpoch(capIssuer(), null, 3);
+    try {
+        reg.requireCapability(capGrant(), capConstraints(), capCtxDefault(), true, false);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 701 | | 50689
 @testcase | 702 | | 1
@@ -377,4 +424,7 @@ fun test_pubkey_bound_signature_path_checks_signature(): int {
 @testcase | 723 | | 5140
 @testcase | 724 | | 1
 @testcase | 725 | | 5135
+@testcase | 726 | | 5122
+@testcase | 727 | | 1
+@testcase | 728 | | 5128
  */

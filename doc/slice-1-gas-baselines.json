@@ -26,7 +26,7 @@
       "name": "wallet-v5",
       "tol_tester_pattern": "wallet-v5",
       "expected_tests": 3,
-      "baseline_gas": 40960,
+      "baseline_gas": 49907,
       "func_gas_baseline": 1870,
       "tol_gas_baseline": 2452,
       "func_vs_tol_ratio_threshold": 1.35

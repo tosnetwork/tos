@@ -28,5 +28,6 @@ example budget declarations, no caller-controlled or Unix-time scheduling
 into masterchain-seqno APIs, no unsafe `SEND_MODE_REGULAR` value dispatch
 in Slice 6 production examples, no `extra_flags` bit-3 activation, and no
 reusable public bearer capability token pattern. It also asserts the
-second-round hardening surfaces for capability grants, supervision
-cooldowns, and bounded dead-letter records remain present.
+security-hardening surfaces for capability grants, supervision cooldowns,
+bounded dead-letter records, quiet `calculateSize` checks, and
+`cp.success` deployment activation gates remain present.

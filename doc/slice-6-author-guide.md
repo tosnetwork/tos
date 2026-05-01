@@ -58,20 +58,34 @@ Rules for production contracts:
 - Populate `Slice6CapabilityUseContext` with the target's replay
   domain, the current delegation depth, and any argument values covered
   by `argumentBounds`. These fields are checked at runtime, not merely
-  displayed in the wallet hash.
+  displayed in the wallet hash. `replayDomain = 0` is the unrestricted
+  domain and should be used only for intentionally portable grants;
+  production deployments should use a deployment-specific domain such as
+  a contract-address hash or manifest constant.
+- Keep capability argument bounds small. `@stdlib/capability` caps
+  `argumentBounds` at `SLICE6_CAPABILITY_MAX_ARGUMENT_BOUNDS` and
+  records `argumentBoundCount` in the hashed constraints so a grant
+  cannot hide thousands of bounds behind one capability check.
 - Use `requireCapabilityWithSignature(...)` for pubkey-bound grants.
   Plain `requireCapability(...)` rejects `grantee == null` /
   `granteePubkey != null` grants so an author cannot accidentally create
-  an any-sender pubkey capability without verifying a signature.
+  an any-sender pubkey capability without verifying a signature. A grant
+  with both `grantee` and `granteePubkey` has AND semantics only when
+  the contract calls the signature path; the plain path enforces the
+  sender address but does not verify the pubkey signature.
 - Treat `revokeHandle(handle, 0)` as permanent revocation. Repeating a
   revocation may only extend the revocation horizon; it must not shorten
   or undo an earlier revocation. `setMinEpoch(...)` is also monotonic:
-  lowering the minimum epoch is rejected.
+  lowering the minimum epoch is rejected. `setMinEpoch(issuer, null, N)`
+  is a wildcard issuer epoch and revokes address-bound grants as well as
+  pubkey-bound grants whose `revocationEpoch < N`.
 - Treat `one_for_all` and `rest_for_one` as best-effort non-atomic
   recovery sequences. Each child recovery is a separate transaction.
-  Prefer `Slice6SupervisorState.recordChildRestart(...)` over calling
-  `Slice6ChildSpec.recordRestart(...)` directly, so exhausted recovery
-  budgets automatically mark the supervisor's final-failure escalation.
+  Prefer `Slice6SupervisorState.recordChildRestartOutcome(...)` when an
+  outgoing escalation dispatch depends on the restart result. It reports
+  `escalationStarted` only on the false -> true transition of
+  `finalFailure`, preventing duplicate dispatch after the circuit is
+  already open. `recordChildRestart(...)` remains as a bool wrapper.
   `emitEscalation()` marks `finalFailure`; it does not send an outgoing
   message. Callers must dispatch their escalation or dead-letter action
   explicitly after observing the flag.

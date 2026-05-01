@@ -326,7 +326,8 @@ fun Slice6DeadLetterBudget.requireEnabled(self): void {
         self.retentionBlocks == 0 ||
         self.maxRecordBits == 0 ||
         self.maxRecordRefs == 0 ||
-        self.maxCellDepth == 0
+        self.maxCellDepth == 0 ||
+        self.minRecordEscrowCoins == 0
     ) {
         throw SLICE6_DELIVERY_THROW_INVALID_BUDGET;
     }
@@ -456,6 +457,11 @@ fun Slice6DeadLetterSink.addRecord(
     }
     if (nowMcSeqno > SLICE6_DELIVERY_UINT32_MAX - budget.retentionBlocks) {
         throw SLICE6_DELIVERY_THROW_INVALID_INPUT;
+    }
+    // The value cell wraps the diagnostic in a record body, so a diagnostic
+    // already at or above the record depth budget cannot fit.
+    if (diagnostic != null && diagnostic!.depth() >= budget.maxCellDepth) {
+        throw SLICE6_DELIVERY_THROW_RECORD_TOO_LARGE;
     }
 
     val nonce = self.nextNonce;

@@ -97,9 +97,11 @@ def check_required_surface() -> None:
         "observerFailureAffectsObserved",
         "Slice6ChildSpec",
         "Slice6SupervisorState",
+        "Slice6RestartOutcome",
         "Slice6RecoveryBudget",
         "recordRestart",
         "recordChildRestart",
+        "recordChildRestartOutcome",
         "slice6StrategyIncludesChild",
         "slice6RecordPartialRecovery",
         "emitEscalation",
@@ -119,6 +121,8 @@ def check_required_surface() -> None:
         "maxTrackedUses",
         "requireUseConsumable",
         "consumeUse",
+        "SLICE6_CAPABILITY_MAX_ARGUMENT_BOUNDS",
+        "argumentBoundCount",
         "revokeHandle",
         "setMinEpoch",
         "SLICE6_CAPABILITY_THROW_INVALID_EPOCH",
@@ -273,6 +277,53 @@ def check_safe_payment_defaults() -> None:
                 fail(f"{rel}:{lineno}: production Slice 6 examples must not use SEND_MODE_REGULAR for value dispatch; use @stdlib/safe-payments helpers or SEND_MODE_BOUNCE_ON_ACTION_FAIL")
 
 
+def check_slice6_stdlib_no_regular_send_mode() -> None:
+    risky_mode = re.compile(r"\bSEND_MODE_REGULAR\b")
+    stdlib_paths = [
+        ROOT / "crypto/smartcont/tol-stdlib/delivery.tol",
+        ROOT / "crypto/smartcont/tol-stdlib/schedule.tol",
+        ROOT / "crypto/smartcont/tol-stdlib/time.tol",
+        ROOT / "crypto/smartcont/tol-stdlib/supervision.tol",
+        ROOT / "crypto/smartcont/tol-stdlib/capability.tol",
+        ROOT / "crypto/smartcont/tol-stdlib/safe-payments.tol",
+    ]
+    for path in stdlib_paths:
+        rel = path.relative_to(ROOT)
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            code = strip_line_comment(line)
+            if risky_mode.search(code):
+                fail(f"{rel}:{lineno}: Slice 6 stdlib must not default to SEND_MODE_REGULAR for value dispatch")
+
+
+def check_calculate_size_has_quiet_ok_guard() -> None:
+    guarded_paths = [
+        ROOT / "crypto/smartcont/tol-stdlib/delivery.tol",
+        ROOT / "crypto/smartcont/tol-stdlib/time.tol",
+        ROOT / "crypto/smartcont/tol-stdlib/supervision.tol",
+    ]
+    for path in guarded_paths:
+        rel = path.relative_to(ROOT)
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for idx, line in enumerate(lines):
+            if ".calculateSize(" not in strip_line_comment(line):
+                continue
+            window = "\n".join(strip_line_comment(item) for item in lines[idx : min(idx + 8, len(lines))])
+            if "ok" not in window or ("!ok" not in window and "== false" not in window):
+                fail(f"{rel}:{idx + 1}: calculateSize result must check the quiet ok flag before trusting bits/refs")
+
+
+def check_runtime_activation_uses_success_gate() -> None:
+    transaction = read("crypto/block/transaction.cpp")
+    accepted_activation_patterns = [
+        r"cp\.accepted\s*&&\s*cp\.new_data\.not_null\(\)\s*&&\s*use_msg_state",
+        r"cp\.accepted\s*&&\s*use_msg_state",
+        r"cp\.accepted\s*&\s*use_msg_state",
+    ]
+    for pattern in accepted_activation_patterns:
+        if re.search(pattern, transaction):
+            fail("transaction.cpp contains an account-activation gate based on cp.accepted; activation must use cp.success")
+
+
 def check_extra_flags_bit3_still_reserved() -> None:
     message_policy = read("doc/tos-message-policy.md")
     if "bit 3" not in message_policy or "reserved" not in message_policy:
@@ -312,6 +363,9 @@ def main() -> None:
     check_release_artifacts()
     check_no_caller_controlled_now_scheduling()
     check_safe_payment_defaults()
+    check_slice6_stdlib_no_regular_send_mode()
+    check_calculate_size_has_quiet_ok_guard()
+    check_runtime_activation_uses_success_gate()
     check_extra_flags_bit3_still_reserved()
     check_no_reusable_public_bearer_capability()
     check_external_trial_unit_boundaries()

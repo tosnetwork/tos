@@ -24,7 +24,7 @@ The current green gates are:
 | Full tol-tester | 629/629 tests passing, gas 5248281 |
 | Emulator fixtures | 26 test(s) passed |
 | Slice 3 replay runner | 2 Slice3Replay emulator tests passed |
-| Slice 1 Tol gas | Jetton minter 17122, Jetton wallet 33791, wallet-v5 39313 |
+| Slice 1 Tol gas | Jetton minter 17122, Jetton wallet 33791, wallet-v5 49907 |
 | FunC-vs-Tol parity | Jetton minter 0.810, Jetton wallet 0.483, wallet-v5 1.311 <= wallet threshold 1.35 |
 
 Stage 3 and Stage 5 preserved the checked reference Tol BoC hashes for

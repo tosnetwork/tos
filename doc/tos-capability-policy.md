@@ -58,8 +58,9 @@ The stdlib default is fail-closed: `requireCapability(...)` accepts
 sender-bound grants, but rejects pubkey-bound grants unless the caller
 uses `requireCapabilityWithSignature(...)` or has otherwise taken the
 signature-checked path. A grant with both `grantee` and `grantee_pubkey`
-may be sender-bound and additionally signature-audited; a grant with
-neither is invalid.
+is address-bound under the plain path and address+signature-bound under
+the signature path. It does not mean OR semantics. A grant with neither
+is invalid.
 
 ## 4. Constraints
 
@@ -88,6 +89,7 @@ capability_constraints_v1#c601
   required_workchain:(Maybe int32)
   replay_domain:uint256
   delegated_depth:uint8
+  argument_bound_count:uint8
   argument_bounds:(HashmapE 16 CapabilityArgumentBound)
 = CapabilityConstraintsV1;
 ```
@@ -100,6 +102,16 @@ different constructor tag; wallets must display the version they decode.
 The runtime context must also supply the replay domain, current
 delegation depth, and argument values referenced by `argument_bounds`;
 these fields are checked by the stdlib and are not display-only metadata.
+`argument_bound_count` is part of the hashed constraints and must equal
+the number of map entries. Slice 6 caps the map at
+`SLICE6_CAPABILITY_MAX_ARGUMENT_BOUNDS = 16` so capability checking stays
+bounded by construction.
+
+`replay_domain = 0` means unrestricted replay domain, not "current
+deployment". Stdlib context construction requires the caller to pass a
+domain explicitly. Production contracts should use a deployment-specific
+domain, for example a contract-address hash or manifest-defined constant,
+when cross-workchain or multi-deployment replay would be unsafe.
 
 A conforming wallet or SDK must decode and display at least:
 
@@ -149,6 +161,10 @@ would reactivate a previously revoked grant.
 Revocation updates are monotonic: a handle revocation may extend its
 expiry or become permanent (`expires_at_mc_seqno = 0`), but may not be
 shortened; a minimum epoch may be raised, but may not be lowered.
+The issuer wildcard epoch key `(issuer, grantee = null)` is a blanket
+revocation floor: it applies to address-bound grants as well as
+pubkey-bound grants. Per-grantee epoch keys may raise the floor further
+for a specific grantee, but cannot bypass the wildcard floor.
 
 ## 6. Relationship to account permissions
 

@@ -72,9 +72,34 @@ fun test_validate_actions_rejects_before_state_mutation(): int {
     return 0;
 }
 
+@method_id(105)
+fun test_validate_and_process_reject_same_unsupported_action(): int {
+    contract.setData(packWalletV5Data(true, 1, 2, 3, null));
+    val actions = beginCell()
+        .storeMaybeRef(null)
+        .storeInt(-1, 1)
+        .storeUint(0xff, 8)
+        .storeInt(0, 1)
+        .endCell();
+    var validateCode = 0;
+    try {
+        validateActions(actions.beginParse(), false, true);
+    } catch (code) {
+        validateCode = code;
+    }
+    var processCode = 0;
+    try {
+        processActions(actions.beginParse(), false, true);
+    } catch (code) {
+        processCode = code;
+    }
+    return validateCode + processCode;
+}
+
 /**
 @testcase | 101 | | 137
 @testcase | 102 | | 146
 @testcase | 103 | | 1148
 @testcase | 104 | | 146
+@testcase | 105 | | 282
  */

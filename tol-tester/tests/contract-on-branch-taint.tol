@@ -1,0 +1,33 @@
+struct ContractOnBranchTaintStorage {
+    always: uint32;
+    @on(Secret) secret: uint32;
+}
+
+struct (0x0000009c) ContractOnBranchTaintPing {
+    queryId: uint64;
+}
+
+fun consumeBranchTaint(x: uint32): uint32 {
+    return x;
+}
+
+contract ContractOnBranchTaint {
+    storage: ContractOnBranchTaintStorage
+    states: Secret
+    @initial state Secret
+    @unknown_throw(0xffff);
+
+    receive(msg: ContractOnBranchTaintPing) on Secret {
+        var x: uint32 = 0;
+        if (true) {
+            x = storage.secret;
+        }
+        consumeBranchTaint(x);
+        keep_state;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr forwarding `@on(Secret)` field across function boundary
+ */

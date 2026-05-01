@@ -598,7 +598,8 @@ to TVM `MYADDR` and does not read c4. The deploy-time ban is on
 storage reads and direct c4 escape hatches such as
 `contract.getData()` / `contract.loadData()`, helper functions
 that reach those APIs, or raw c4 aliases such as `PUSHROOT` /
-`POPROOT`, not on address introspection.
+`POPROOT` / `PUSHCTRX` / `POPCTRX` / `SETCONTCTRMANY`, not on
+address introspection.
 
 For a state-bearing contract, a successful `@deploy save(...)`
 automatically writes the hidden `__state` field to the single
@@ -956,6 +957,8 @@ running in the policy-mandated band between
      `contract.getData()` such as `currentData()`, asm functions
      whose body mentions the c4 register, raw `c4 PUSH` / `c4 POP`
      intrinsics, Fift c4 aliases such as `PUSHROOT` / `POPROOT`,
+     control-register aliases such as `PUSHCTRX` / `POPCTRX` /
+     `SETCONTCTRMANY`,
      non-asm helper functions whose reachable body reads c4,
      `T.fromCell` applied to c4-derived cells, or any
      `@stdlib/tvm-lowlevel` helper
@@ -1355,9 +1358,11 @@ Concrete deltas from v2 to v3:
   internal `Envelope` / query-id propagation rule, and wallet-v5 exact
   external wire parity remains Slice 3 migration work.
 - **§5.** Field-scope taint now covers function-call passthrough,
+  recursive argument-expression walking, branch-merged mutable aliases,
   tuple/tensor destructuring, pattern matching, `contract.getData`
   / `currentData` wrappers, `T.fromCell` on c4-derived cells, and
-  raw c4 intrinsics including `PUSHROOT` / `POPROOT` aliases.
+  raw c4 intrinsics including `PUSHROOT` / `POPROOT` /
+  `PUSHCTRX` / `POPCTRX` / `SETCONTCTRMANY` aliases.
 - **§6.1.** The four `tos-message-policy.md` §8.1 commitments are
   included verbatim and explicitly scoped to internal-message
   compatibility.
