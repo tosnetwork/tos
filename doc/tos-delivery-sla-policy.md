@@ -66,25 +66,40 @@ Every tracked delivery attempt needs a stable identity:
 delivery_id = cell_hash(delivery_id_input_v1)
 ```
 
-The hash input is consensus-normative, not an implementation detail:
+The hash input is consensus-normative, not an implementation detail. It
+is explicitly ref-packed because the full field list cannot fit in one
+1023-bit TVM cell once two `MsgAddressInt` values,
+`CurrencyCollection`, and several `uint256` hashes are present:
 
 ```
-delivery_id_input_v1#d601
+delivery_origin_v1$_
   origin_tx_lt:uint64
   origin_tx_hash:uint256
   origin_action_index:uint16
   attempt_kind:uint8        // 0 immediate, 1 scheduled, 2 retry,
                             // 3 monitor notification, 4 supervisor recovery
   attempt_seq:uint16        // initial attempt is 0
+= DeliveryOriginV1;
+
+delivery_route_v1$_
   src:MsgAddressInt
   dest:MsgAddressInt
-  value:CurrencyCollection
   send_mode:uint16
   extra_flags:uint16
+= DeliveryRouteV1;
+
+delivery_payload_v1$_
+  value:CurrencyCollection
   state_init_hash:(Maybe uint256)
   body_hash:uint256
   not_before_mc_seqno:uint32
   expire_after_blocks:uint32
+= DeliveryPayloadV1;
+
+delivery_id_input_v1#d601
+  origin:^DeliveryOriginV1
+  route:^DeliveryRouteV1
+  payload:^DeliveryPayloadV1
 = DeliveryIdInputV1;
 ```
 
@@ -212,8 +227,8 @@ apply.
 - A conformance fixture proves old contracts are unchanged when they do
   not request delivery-SLA handling.
 - A delivery failure record is canonical and bounded.
-- `delivery_id_input_v1` is implemented exactly as specified in section
-  3, including stable scheduled-message ids.
+- `delivery_id_input_v1` is implemented exactly as the ref-packed shape
+  specified in section 3, including stable scheduled-message ids.
 - `ErrorClass.BackPressure` emits only with `BackPressureAdvice` from
   section 2, or stays reserved behind an explicit gate.
 - Dead-letter routing has a named payer and bounded retention.

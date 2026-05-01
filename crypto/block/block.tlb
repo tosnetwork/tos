@@ -977,3 +977,63 @@ chan_op_cmd#912838d1 msg:ChanSignedMsg = ChanOp;
 
 
 chan_data$_ config:^ChanConfig state:^ChanState = ChanData;
+
+//
+// SLICE 6 — DELIVERY SLA AND DEAD-LETTER TYPES
+// doc/tos-delivery-sla-policy.md v0.2
+//
+// These types are protocol scaffold types. They are consensus-normative
+// in layout for Slice 6 fixtures, but are not yet wired into the block
+// processor. Validator integration is planned for later Slice 6 stages.
+//
+
+// Ref-packed delivery identity hash input. The original Stage 0 field list
+// cannot fit in a single 1023-bit TVM cell once two MsgAddressInt fields,
+// CurrencyCollection, and multiple uint256 hashes are present, so the
+// canonical input is split into typed refs.
+delivery_origin_v1$_
+  origin_tx_lt:uint64
+  origin_tx_hash:uint256
+  origin_action_index:uint16
+  attempt_kind:uint8
+  attempt_seq:uint16
+  = DeliveryOriginV1;
+
+delivery_route_v1$_
+  src:MsgAddressInt
+  dest:MsgAddressInt
+  send_mode:uint16
+  extra_flags:uint16
+  = DeliveryRouteV1;
+
+delivery_payload_v1$_
+  value:CurrencyCollection
+  state_init_hash:(Maybe uint256)
+  body_hash:uint256
+  not_before_mc_seqno:uint32
+  expire_after_blocks:uint32
+  = DeliveryPayloadV1;
+
+// delivery_id = cell_hash(delivery_id_input_v1).
+// origin_tx_lt / origin_tx_hash identify the transaction that created the
+// attempt. For a scheduled message, this is the scheduling transaction, not
+// the delivery transaction.
+delivery_id_input_v1#d601
+  origin:^DeliveryOriginV1
+  route:^DeliveryRouteV1
+  payload:^DeliveryPayloadV1
+  = DeliveryIdInputV1;
+
+// Back-pressure advice payload. RESERVED: not emitted until production
+// delivery-SLA activation is explicitly approved.
+// bucket: 0=normal, 1=delayed, 2=congested, 3=rejecting
+// scope: 0=workchain-pair, 1=shard-route bucket
+// min_retry_after_blocks is mandatory nonzero for congested and rejecting.
+back_pressure_advice_v1#b601
+  delivery_id:uint256
+  bucket:uint8
+  scope:uint8
+  min_retry_after_blocks:uint32
+  advice_valid_until:uint32
+  route_hash:uint256
+  = BackPressureAdvice;

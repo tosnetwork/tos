@@ -923,6 +923,8 @@ add_executable(test-emulator
         emulator/test/slice-1-stage-4-gas-parity-fixture.cpp
         # Slice 3 Stage 1 deterministic replay harness (doc/tos-slice-3-policy.md).
         emulator/test/slice-3-replay-fixture.cpp
+        # Slice 6 Stage 1 delivery-SLA canonical cell-shape fixtures.
+        emulator/test/slice-6-stage1-delivery-fixtures.cpp
         # Slice 5 receive-context harness for production receive handlers.
         emulator/test/slice-5-receive-context-fixture.cpp
         emulator/test/tos-report-bond-oracle-fixture.cpp)

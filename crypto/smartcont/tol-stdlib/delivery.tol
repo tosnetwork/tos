@@ -1,0 +1,471 @@
+// Slice 6 delivery-SLA and bounded dead-letter helpers.
+tol 1.3
+
+const SLICE6_DELIVERY_THROW_INVALID_BUDGET = 0x0f01
+const SLICE6_DELIVERY_THROW_INVALID_ADVICE = 0x0f02
+const SLICE6_DELIVERY_THROW_INVALID_INPUT = 0x0f03
+const SLICE6_DELIVERY_THROW_RECORD_TOO_LARGE = 0x0f04
+const SLICE6_DELIVERY_THROW_NOT_FOUND = 0x0f05
+const SLICE6_DELIVERY_THROW_CELL_DEPTH = 0x0f06
+const SLICE6_DELIVERY_THROW_INVALID_PRESSURE_CONFIG = 0x0f07
+
+const SLICE6_DELIVERY_ID_INPUT_V1_TAG: uint16 = 0xd601
+const SLICE6_BACK_PRESSURE_ADVICE_V1_TAG: uint16 = 0xb601
+
+const SLICE6_ATTEMPT_IMMEDIATE: uint8 = 0
+const SLICE6_ATTEMPT_SCHEDULED: uint8 = 1
+const SLICE6_ATTEMPT_RETRY: uint8 = 2
+const SLICE6_ATTEMPT_MONITOR_NOTIFICATION: uint8 = 3
+const SLICE6_ATTEMPT_SUPERVISOR_RECOVERY: uint8 = 4
+
+const SLICE6_PRESSURE_BUCKET_NORMAL: uint8 = 0
+const SLICE6_PRESSURE_BUCKET_DELAYED: uint8 = 1
+const SLICE6_PRESSURE_BUCKET_CONGESTED: uint8 = 2
+const SLICE6_PRESSURE_BUCKET_REJECTING: uint8 = 3
+
+const SLICE6_PRESSURE_SCOPE_WORKCHAIN_PAIR: uint8 = 0
+const SLICE6_PRESSURE_SCOPE_SHARD_ROUTE: uint8 = 1
+
+const SLICE6_DELIVERY_SIZE_SCAN_CELLS = 1024
+const SLICE6_EXTRA_FLAGS_VALID_MASK: uint16 = 3
+
+// Compatibility names used by the Stage 1 docs/tests.
+const BACK_PRESSURE_ACTIVATION_GATE = false
+const DELIVERY_FAILURE_CLASS_TRANSIENT = 1
+const DELIVERY_FAILURE_CLASS_PERMANENT = 2
+const DELIVERY_FAILURE_CLASS_UNDELIVERABLE = 3
+const DELIVERY_FAILURE_CLASS_PROTOCOL = 4
+const DELIVERY_FAILURE_CLASS_BACK_PRESSURE = 5
+const BACK_PRESSURE_ADVICE_TAG = SLICE6_BACK_PRESSURE_ADVICE_V1_TAG
+const DELIVERY_ID_INPUT_TAG = SLICE6_DELIVERY_ID_INPUT_V1_TAG
+const DEAD_LETTER_SINK_MAX_RECORDS = 1024
+const DEAD_LETTER_RETENTION_BLOCKS = 43200
+const BACK_PRESSURE_BUCKET_NORMAL = SLICE6_PRESSURE_BUCKET_NORMAL
+const BACK_PRESSURE_BUCKET_DELAYED = SLICE6_PRESSURE_BUCKET_DELAYED
+const BACK_PRESSURE_BUCKET_CONGESTED = SLICE6_PRESSURE_BUCKET_CONGESTED
+const BACK_PRESSURE_BUCKET_REJECTING = SLICE6_PRESSURE_BUCKET_REJECTING
+
+struct Slice6DeliveryOriginV1 {
+    originTxLt: uint64
+    originTxHash: uint256
+    originActionIndex: uint16
+    attemptKind: uint8
+    attemptSeq: uint16
+}
+
+struct Slice6DeliveryRouteV1 {
+    src: address
+    dest: address
+    sendMode: uint16
+    extraFlags: uint16
+}
+
+struct Slice6CurrencyCollectionV1 {
+    valueCoins: coins
+    extraCurrenciesHash: uint256?
+}
+
+struct Slice6DeliveryPayloadV1 {
+    value: Cell<Slice6CurrencyCollectionV1>
+    stateInitHash: uint256?
+    bodyHash: uint256
+    notBeforeMcSeqno: uint32
+    expireAfterBlocks: uint32
+}
+
+struct Slice6DeliveryIdInputV1 {
+    tag: uint16
+    origin: Cell<Slice6DeliveryOriginV1>
+    route: Cell<Slice6DeliveryRouteV1>
+    payload: Cell<Slice6DeliveryPayloadV1>
+}
+
+struct Slice6BackPressureAdviceV1 {
+    tag: uint16
+    deliveryId: uint256
+    bucket: uint8
+    scope: uint8
+    minRetryAfterBlocks: uint32
+    adviceValidUntil: uint32
+    routeHash: uint256
+}
+
+struct Slice6DeadLetterBudget {
+    enabled: bool
+    maxRecords: uint16
+    retentionBlocks: uint32
+    maxRecordBits: uint16
+    maxRecordRefs: uint8
+    maxCellDepth: uint16
+}
+
+struct Slice6DeadLetterRecordValue {
+    deliveryId: uint256
+    failureClass: uint8
+    failureCode: uint16
+    phase: uint8
+    routeHash: uint256
+    diagnostic: cell?
+}
+
+struct Slice6DeadLetterRecord {
+    nonce: uint64
+    createdAtMcSeqno: uint32
+    expiresAtMcSeqno: uint32
+    value: Cell<Slice6DeadLetterRecordValue>
+    recordBits: uint16
+    recordRefs: uint8
+    recordDepth: uint16
+}
+
+struct Slice6DeadLetterSink {
+    nextNonce: uint64
+    count: uint16
+    droppedCount: uint64
+    lastMeasuredCellDepth: uint16
+    records: map<uint64, Slice6DeadLetterRecord>
+}
+
+fun slice6CurrencyCollection(
+    valueCoins: coins,
+    extraCurrenciesHash: uint256? = null
+): Slice6CurrencyCollectionV1 {
+    return Slice6CurrencyCollectionV1 { valueCoins, extraCurrenciesHash };
+}
+
+fun slice6DeliveryOrigin(
+    originTxLt: uint64,
+    originTxHash: uint256,
+    originActionIndex: uint16,
+    attemptKind: uint8,
+    attemptSeq: uint16
+): Slice6DeliveryOriginV1 {
+    return Slice6DeliveryOriginV1 {
+        originTxLt,
+        originTxHash,
+        originActionIndex,
+        attemptKind,
+        attemptSeq,
+    };
+}
+
+fun slice6DeliveryRoute(
+    src: address,
+    dest: address,
+    sendMode: uint16,
+    extraFlags: uint16
+): Slice6DeliveryRouteV1 {
+    return Slice6DeliveryRouteV1 { src, dest, sendMode, extraFlags };
+}
+
+fun slice6DeliveryPayload(
+    value: Slice6CurrencyCollectionV1,
+    stateInitHash: uint256?,
+    bodyHash: uint256,
+    notBeforeMcSeqno: uint32,
+    expireAfterBlocks: uint32
+): Slice6DeliveryPayloadV1 {
+    return Slice6DeliveryPayloadV1 {
+        value: value.toCell(),
+        stateInitHash,
+        bodyHash,
+        notBeforeMcSeqno,
+        expireAfterBlocks,
+    };
+}
+
+fun slice6DeliveryIdInput(
+    origin: Slice6DeliveryOriginV1,
+    route: Slice6DeliveryRouteV1,
+    payload: Slice6DeliveryPayloadV1
+): Slice6DeliveryIdInputV1 {
+    val input = Slice6DeliveryIdInputV1 {
+        tag: SLICE6_DELIVERY_ID_INPUT_V1_TAG,
+        origin: origin.toCell(),
+        route: route.toCell(),
+        payload: payload.toCell(),
+    };
+    input.requireValid();
+    return input;
+}
+
+fun Slice6DeliveryIdInputV1.requireValid(self): void {
+    val origin = self.origin.load();
+    val route = self.route.load();
+    if (
+        self.tag != SLICE6_DELIVERY_ID_INPUT_V1_TAG ||
+        origin.attemptKind > SLICE6_ATTEMPT_SUPERVISOR_RECOVERY ||
+        route.extraFlags > SLICE6_EXTRA_FLAGS_VALID_MASK
+    ) {
+        throw SLICE6_DELIVERY_THROW_INVALID_INPUT;
+    }
+}
+
+fun Slice6DeliveryIdInputV1.deliveryId(self): uint256 {
+    self.requireValid();
+    return self.toCell().hash();
+}
+
+fun computeDeliveryId(input: Slice6DeliveryIdInputV1): uint256 {
+    return input.deliveryId();
+}
+
+fun slice6RouteHash(srcWorkchain: int32, destWorkchain: int32, routeBucketId: uint32): uint256 {
+    return beginCell()
+        .storeInt(srcWorkchain, 32)
+        .storeInt(destWorkchain, 32)
+        .storeUint(routeBucketId, 32)
+        .endCell()
+        .hash();
+}
+
+fun slice6BackPressureAdvice(
+    deliveryId: uint256,
+    bucket: uint8,
+    scope: uint8,
+    minRetryAfterBlocks: uint32,
+    adviceValidUntil: uint32,
+    routeHash: uint256
+): Slice6BackPressureAdviceV1 {
+    val advice = Slice6BackPressureAdviceV1 {
+        tag: SLICE6_BACK_PRESSURE_ADVICE_V1_TAG,
+        deliveryId,
+        bucket,
+        scope,
+        minRetryAfterBlocks,
+        adviceValidUntil,
+        routeHash,
+    };
+    advice.requireValid();
+    return advice;
+}
+
+fun Slice6BackPressureAdviceV1.requireValid(self): void {
+    if (
+        self.tag != SLICE6_BACK_PRESSURE_ADVICE_V1_TAG ||
+        self.bucket > SLICE6_PRESSURE_BUCKET_REJECTING ||
+        self.scope > SLICE6_PRESSURE_SCOPE_SHARD_ROUTE
+    ) {
+        throw SLICE6_DELIVERY_THROW_INVALID_ADVICE;
+    }
+    if (
+        (self.bucket == SLICE6_PRESSURE_BUCKET_CONGESTED ||
+            self.bucket == SLICE6_PRESSURE_BUCKET_REJECTING) &&
+        self.minRetryAfterBlocks == 0
+    ) {
+        throw SLICE6_DELIVERY_THROW_INVALID_ADVICE;
+    }
+}
+
+fun slice6PressureBucket(
+    routeDelayBlocks: uint32,
+    routeFillRatioBps: uint16,
+    delayedAfterBlocks: uint32,
+    congestedAfterBlocks: uint32,
+    congestedFillRatioBps: uint16,
+    rejectingFillRatioBps: uint16
+): uint8 {
+    if (
+        delayedAfterBlocks == 0 ||
+        congestedAfterBlocks < delayedAfterBlocks ||
+        congestedFillRatioBps == 0 ||
+        rejectingFillRatioBps < congestedFillRatioBps ||
+        rejectingFillRatioBps > 10000
+    ) {
+        throw SLICE6_DELIVERY_THROW_INVALID_PRESSURE_CONFIG;
+    }
+    if (routeFillRatioBps >= rejectingFillRatioBps) {
+        return SLICE6_PRESSURE_BUCKET_REJECTING;
+    }
+    if (routeDelayBlocks >= congestedAfterBlocks || routeFillRatioBps >= congestedFillRatioBps) {
+        return SLICE6_PRESSURE_BUCKET_CONGESTED;
+    }
+    if (routeDelayBlocks >= delayedAfterBlocks) {
+        return SLICE6_PRESSURE_BUCKET_DELAYED;
+    }
+    return SLICE6_PRESSURE_BUCKET_NORMAL;
+}
+
+fun slice6DeadLetterBudget(
+    maxRecords: uint16,
+    retentionBlocks: uint32,
+    maxRecordBits: uint16,
+    maxRecordRefs: uint8,
+    maxCellDepth: uint16,
+    enabled: bool = true
+): Slice6DeadLetterBudget {
+    return Slice6DeadLetterBudget {
+        enabled,
+        maxRecords,
+        retentionBlocks,
+        maxRecordBits,
+        maxRecordRefs,
+        maxCellDepth,
+    };
+}
+
+fun Slice6DeadLetterBudget.requireEnabled(self): void {
+    if (!self.enabled) {
+        throw SLICE6_DELIVERY_THROW_INVALID_BUDGET;
+    }
+    if (
+        self.maxRecords == 0 ||
+        self.retentionBlocks == 0 ||
+        self.maxRecordBits == 0 ||
+        self.maxCellDepth == 0
+    ) {
+        throw SLICE6_DELIVERY_THROW_INVALID_BUDGET;
+    }
+}
+
+fun slice6NewDeadLetterSink(): Slice6DeadLetterSink {
+    return Slice6DeadLetterSink {
+        nextNonce: 0,
+        count: 0,
+        droppedCount: 0,
+        lastMeasuredCellDepth: 0,
+        records: createEmptyMap<uint64, Slice6DeadLetterRecord>(),
+    };
+}
+
+fun slice6BuildDeadLetterRecord(
+    nonce: uint64,
+    deliveryId: uint256,
+    failureClass: uint8,
+    failureCode: uint16,
+    phase: uint8,
+    routeHash: uint256,
+    diagnostic: cell?,
+    createdAtMcSeqno: uint32,
+    expiresAtMcSeqno: uint32
+): Slice6DeadLetterRecord {
+    val value = Slice6DeadLetterRecordValue {
+        deliveryId,
+        failureClass,
+        failureCode,
+        phase,
+        routeHash,
+        diagnostic,
+    }.toCell();
+    val (_, bits, refs, ok) = value.calculateSize(SLICE6_DELIVERY_SIZE_SCAN_CELLS);
+    if (!ok) {
+        throw SLICE6_DELIVERY_THROW_RECORD_TOO_LARGE;
+    }
+    return Slice6DeadLetterRecord {
+        nonce,
+        createdAtMcSeqno,
+        expiresAtMcSeqno,
+        value,
+        recordBits: bits as uint16,
+        recordRefs: refs as uint8,
+        recordDepth: value.depth(),
+    };
+}
+
+fun Slice6DeadLetterRecord.deliveryId(self): uint256 {
+    return self.value.load().deliveryId;
+}
+
+fun Slice6DeadLetterRecord.failureCode(self): uint16 {
+    return self.value.load().failureCode;
+}
+
+fun Slice6DeadLetterRecord.isExpired(self, nowMcSeqno: uint32): bool {
+    return self.expiresAtMcSeqno <= nowMcSeqno;
+}
+
+fun Slice6DeadLetterSink.isEmpty(self): bool {
+    return self.count == 0;
+}
+
+fun Slice6DeadLetterSink.requireCandidateDepth(self, budget: Slice6DeadLetterBudget): uint16 {
+    val depth = self.toCell().depth();
+    if (depth > budget.maxCellDepth) {
+        throw SLICE6_DELIVERY_THROW_CELL_DEPTH;
+    }
+    return depth;
+}
+
+fun Slice6DeadLetterSink.peekFirst(self): Slice6DeadLetterRecord? {
+    val entry = self.records.findFirst();
+    return entry.isFound ? entry.loadValue() : null;
+}
+
+fun Slice6DeadLetterSink.dropNonce(mutate self, nonce: uint64): Slice6DeadLetterRecord {
+    val deleted = self.records.deleteAndGetDeleted(nonce);
+    if (!deleted.isFound) {
+        throw SLICE6_DELIVERY_THROW_NOT_FOUND;
+    }
+    val record = deleted.loadValue();
+    self.count -= 1;
+    return record;
+}
+
+fun Slice6DeadLetterSink.expireFirst(mutate self, nowMcSeqno: uint32): bool {
+    val record = self.peekFirst();
+    if (record == null || !record!.isExpired(nowMcSeqno)) {
+        return false;
+    }
+    self.dropNonce(record!.nonce);
+    return true;
+}
+
+fun Slice6DeadLetterSink.cleanupExpired(mutate self, nowMcSeqno: uint32): uint16 {
+    var removed: uint16 = 0;
+    while (self.expireFirst(nowMcSeqno)) {
+        removed += 1;
+    }
+    return removed;
+}
+
+fun Slice6DeadLetterSink.addRecord(
+    mutate self,
+    budget: Slice6DeadLetterBudget,
+    deliveryId: uint256,
+    failureClass: uint8,
+    failureCode: uint16,
+    phase: uint8,
+    routeHash: uint256,
+    diagnostic: cell?,
+    escrowFunded: bool,
+    nowMcSeqno: uint32
+): bool {
+    budget.requireEnabled();
+    if (!escrowFunded) {
+        self.droppedCount += 1;
+        return false;
+    }
+    self.cleanupExpired(nowMcSeqno);
+    if (self.count >= budget.maxRecords) {
+        self.droppedCount += 1;
+        return false;
+    }
+
+    val nonce = self.nextNonce;
+    val record = slice6BuildDeadLetterRecord(
+        nonce,
+        deliveryId,
+        failureClass,
+        failureCode,
+        phase,
+        routeHash,
+        diagnostic,
+        nowMcSeqno,
+        nowMcSeqno + budget.retentionBlocks
+    );
+    if (
+        record.recordBits > budget.maxRecordBits ||
+        record.recordRefs > budget.maxRecordRefs ||
+        record.recordDepth > budget.maxCellDepth
+    ) {
+        throw SLICE6_DELIVERY_THROW_RECORD_TOO_LARGE;
+    }
+
+    var next = self;
+    next.records.set(nonce, record);
+    next.nextNonce += 1;
+    next.count += 1;
+    next.lastMeasuredCellDepth = next.requireCandidateDepth(budget);
+    self = next;
+    return true;
+}

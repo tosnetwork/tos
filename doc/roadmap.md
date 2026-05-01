@@ -1038,9 +1038,15 @@ multi-address structs.
 (monitors versus links), §6.4 (restart intensity), and §6.6 (crash
 reports) form the Slice 6 design surface.
 
-**Status.** 🟡 Stage 0 design RFC opened, 2026-05-01; first design
-review findings addressed in Draft v0.2 and re-review approved. No
-implementation has landed yet. The Stage 0 input documents are
+**Status.** 🟡 Stage 1 delivery-failure foundation is complete as of
+2026-05-01; Stage 2 scheduled-message substrate is next. Stage 0 design
+review findings were addressed in Draft v0.2 and re-review approved.
+The first implementation layer adds
+`@stdlib/delivery` with canonical delivery-id input helpers,
+BackPressureAdvice validation, queue-pressure bucket classification, and
+bounded dead-letter sink storage. Protocol activation of scheduled
+delivery, monitor notifications, and production BackPressure emission
+remains gated to later Slice 6 stages. The Stage 0 input documents are
 [`doc/tos-slice-6-policy.md`](tos-slice-6-policy.md),
 [`doc/tos-delivery-sla-policy.md`](tos-delivery-sla-policy.md),
 [`doc/tos-time-policy.md`](tos-time-policy.md),
@@ -1072,30 +1078,35 @@ authorization plane, not reusable public bearer secrets.
    - ✅ Exit criterion: Stage 0 review accepts the dependency order,
      resource model, global-version gates, and non-goals.
 
-2. ⏳ **Stage 1 — delivery failure and BackPressure foundation.**
+2. ✅ **Stage 1 — delivery failure and BackPressure foundation.**
 
-   - ⏳ Add `delivery_id_input_v1#d601` TL-B schema (scaffold/doc type;
-     not yet wired into block processor).
-   - ⏳ Add Tol stdlib types (`DeliveryFailureClass`, `DeliveryIdInputV1`,
-     `BackPressureAdvice`, `DeadLetterRecord`) in
-     `crypto/smartcont/tol-stdlib/delivery.tol`.
-   - ⏳ Add named constants: `DELIVERY_FAILURE_CLASS_*`,
-     `DEAD_LETTER_SINK_MAX_RECORDS`, `DEAD_LETTER_RETENTION_BLOCKS`,
-     `BACK_PRESSURE_ADVICE_TAG = 0xb601`,
-     `DELIVERY_ID_INPUT_TAG = 0xd601`.
-   - ⏳ Keep `ErrorClass.BackPressure` reserved behind explicit gate
-     constant `BACK_PRESSURE_ACTIVATION_GATE = false`.
-   - ⏳ Add emulator conformance fixtures
-     (`slice-6-stage1-delivery-fixtures.cpp`):
-     deterministic `delivery_id`; different `origin_action_index` →
-     different id; `BackPressureAdvice` roundtrip; dead-letter record
-     fits bounds; legacy contracts unchanged.
-   - ⏳ Add tol-tester cases: `slice6-delivery-id-positive.tol`,
-     `slice6-backpressure-advice-positive.tol`,
-     `slice6-delivery-failure-class-positive.tol`.
-   - ⏳ Register fixture in `emulator/test/CMakeLists.txt`.
-   - ⏳ Update roadmap. Commit + push:
-     *Slice 6 Stage 1 delivery failure foundation*
+   - ✅ Add ref-packed `delivery_id_input_v1#d601` TL-B schema scaffold
+     to `crypto/block/block.tlb`. The Stage 0 inline field list was
+     corrected because two `MsgAddressInt` values, `CurrencyCollection`,
+     and several `uint256` hashes exceed the TVM 1023-bit root-cell
+     limit.
+   - ✅ Add Tol stdlib types and helpers in
+     `crypto/smartcont/tol-stdlib/delivery.tol`: canonical
+     delivery-id input refs, BackPressureAdvice validation,
+     route-pressure bucket classification, and bounded dead-letter sink
+     storage.
+   - ✅ Add named constants for failure classes, dead-letter defaults,
+     `BACK_PRESSURE_ADVICE_TAG = 0xb601`, `DELIVERY_ID_INPUT_TAG =
+     0xd601`, and `BACK_PRESSURE_ACTIVATION_GATE = false`.
+   - ✅ Keep `ErrorClass.BackPressure` reserved for production emission;
+     Stage 1 validates advice payloads but does not emit them from the
+     protocol delivery path.
+   - ✅ Add emulator conformance fixtures
+     (`slice-6-stage1-delivery-fixtures.cpp`) for deterministic
+     `delivery_id`, action-index hash separation, BackPressureAdvice
+     roundtrip, ref-packed cell bounds, and unchanged `extra_flags` bit-3
+     reservation.
+   - ✅ Add tol-tester coverage in
+     `slice6-delivery-sla-stdlib-positive.tol` for stable delivery IDs,
+     reserved `extra_flags` rejection, retry-advice validation,
+     pressure-bucket thresholds, sender-funded dead-letter retention,
+     full-sink/no-free-record behavior, and expired cleanup.
+   - ✅ Register the emulator fixture in `test-emulator`.
 
    Exit criterion: `delivery_id_input_v1` schema is fully specified;
    dead-letter sink bounds and cost model are defined; BackPressure
@@ -1675,6 +1686,19 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r43 (Slice 6 Stage 1 delivery failure foundation)
+
+- Added the Stage 1 delivery-SLA foundation: `@stdlib/delivery`,
+  ref-packed `delivery_id_input_v1#d601` / `back_pressure_advice_v1#b601`
+  schema scaffolding, bounded dead-letter sink helpers, and focused
+  tol-tester coverage.
+- Registered emulator fixtures for stable delivery IDs, action-index
+  hash separation, BackPressureAdvice roundtrip, ref-packed cell bounds,
+  and the unchanged `extra_flags` bit-3 reservation.
+- Corrected the Stage 0 delivery-id field list to an explicit ref-packed
+  shape after implementation exposed that the inline form would exceed
+  the TVM 1023-bit root-cell limit.
 
 ### r42 (Slice 6 Stage 0 approved)
 
