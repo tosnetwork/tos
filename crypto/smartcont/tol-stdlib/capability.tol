@@ -376,7 +376,7 @@ fun Slice6CapabilityGrantV1.requireContext(
     if (parties.grantee != null && context.sender != parties.grantee!) {
         throw SLICE6_CAPABILITY_THROW_SENDER_MISMATCH;
     }
-    if (parties.grantee == null && proof.granteePubkey != null && !signatureBoundChecked) {
+    if (proof.granteePubkey != null && !signatureBoundChecked) {
         throw SLICE6_CAPABILITY_THROW_SIGNATURE_REQUIRED;
     }
 }
