@@ -2294,6 +2294,9 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
   SrcRange unknown_annotation_range = SrcRange::undefined();
   bool unknown_set_explicitly = false;
   std::string_view unknown_set_label;     // for diagnostics ("@unknown_silent_drop", etc.)
+  bool implicit_protocol_default = false;
+  SrcRange implicit_protocol_default_range = SrcRange::undefined();
+  std::vector<ContractImplicitProtocolFor> implicit_protocol_for;
 
   while (lex.tok() != tok_clbrace) {
     if (lex.tok() == tok_semicolon) {
@@ -2424,6 +2427,53 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
         }
         continue;
       }
+      // Slice 6 hardening: large state machines need a scalable way to document
+      // intentionally implicit Protocol paths for known-opcode/wrong-state pairs.
+      if (lex.cur_str() == "@implicit_protocol_default") {
+        if (!pending_member_annotations.empty()) {
+          err("`@implicit_protocol_default` cannot follow other annotations").fire(lex.cur_range());
+        }
+        SrcRange annotation_range = lex.cur_range();
+        lex.next();
+        if (implicit_protocol_default) {
+          err("contract block already declares `@implicit_protocol_default`; duplicate state-cross-product suppressions are not allowed; see doc/tos-language-syntax-policy.md §5")
+            .fire(annotation_range);
+        }
+        if (lex.tok() == tok_oppar) {
+          err("`@implicit_protocol_default` takes no arguments; write `@implicit_protocol_default;`; see doc/tos-language-syntax-policy.md §5")
+            .fire(annotation_range);
+        }
+        implicit_protocol_default = true;
+        implicit_protocol_default_range = annotation_range;
+        if (lex.tok() == tok_semicolon) {
+          lex.next();
+        }
+        continue;
+      }
+      if (lex.cur_str() == "@implicit_protocol_for") {
+        if (!pending_member_annotations.empty()) {
+          err("`@implicit_protocol_for` cannot follow other annotations").fire(lex.cur_range());
+        }
+        SrcRange annotation_range = lex.cur_range();
+        lex.next();
+        if (lex.tok() != tok_oppar) {
+          err("`@implicit_protocol_for` requires `(MessageType, StateName)`; see doc/tos-language-syntax-policy.md §5")
+            .fire(annotation_range);
+        }
+        lex.next();
+        auto message_identifier = parse_identifier(lex, "message type in `@implicit_protocol_for(MessageType, StateName)`");
+        lex.expect(tok_comma, "`,` between message type and state name");
+        auto state_identifier = parse_identifier(lex, "state name in `@implicit_protocol_for(MessageType, StateName)`");
+        lex.expect(tok_clpar, "`)` after `@implicit_protocol_for(MessageType, StateName)`");
+        implicit_protocol_for.push_back(ContractImplicitProtocolFor{
+            std::string(message_identifier->name),
+            std::string(state_identifier->name),
+            annotation_range});
+        if (lex.tok() == tok_semicolon) {
+          lex.next();
+        }
+        continue;
+      }
       // Otherwise queue this annotation; it must be followed by a member it applies to
       // (e.g. `@method_id(N) get fun adminAddress(): address {...}` per §3.5)
       pending_member_annotations.push_back(parse_annotation(lex));
@@ -2491,7 +2541,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
     if (lex.tok() == tok_identifier && is_deferred_contract_member_name(lex.cur_str())) {
       err("`{}` is {}", lex.cur_str(), slice2_deferred_msg()).fire(lex.cur_range());
     }
-    err("contract blocks may contain only `storage:`, `states:`, `@initial state`, `receive(...)`, `receive_external(...)`, and `get fun` declarations; see doc/tos-language-syntax-policy.md §3.1 / §3.5 / §3.8").fire(lex.cur_range());
+    err("contract blocks may contain only `storage:`, `states:`, `@initial state`, `@implicit_protocol_default`, `@implicit_protocol_for(...)`, `receive(...)`, `receive_external(...)`, and `get fun` declarations; see doc/tos-language-syntax-policy.md §3.1 / §3.5 / §3.8").fire(lex.cur_range());
   }
 
   if (!pending_member_annotations.empty()) {
@@ -2548,7 +2598,8 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
   range.end(lex.cur_range());
   lex.next();
   return createV<ast_contract_declaration>(range, v_ident, storage_type, std::move(state_identifiers), initial_state_identifier, std::move(receive_blocks), std::move(receive_external_blocks), std::move(get_fun_blocks),
-                                           on_bounced_policy_flags, unknown_mode, unknown_throw_code, unknown_annotation_range);
+                                           on_bounced_policy_flags, unknown_mode, unknown_throw_code, unknown_annotation_range,
+                                           implicit_protocol_default, implicit_protocol_default_range, std::move(implicit_protocol_for));
 }
 
 static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>& declarations) {

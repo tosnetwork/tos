@@ -486,7 +486,10 @@ Both forms are **tail position only**:
    not declared, the compiler synthesizes an
    `ErrorClass.Protocol` reply and emits a warning (not error;
    warnings are silenced by `@implicit_protocol_for(Type, State)`
-   on the contract declaration).
+   on the contract declaration, or contract-wide by
+   `@implicit_protocol_default;` when the author intentionally
+   accepts the synthesized Protocol path for every missing
+   known-opcode/wrong-state pair).
 2. **Reachability.** Each declared state must be reachable via
    `become` from `@initial` or another reachable state. An
    unreachable state is a compile error.
@@ -586,6 +589,12 @@ receiver body the identifier `storage` is **not in scope**;
 references to `storage.X` are a compile error. The receiver
 must construct the initial storage via `save(struct_literal)`
 and then return.
+
+`contract.getAddress()` is allowed inside `@deploy`: it lowers
+to TVM `MYADDR` and does not read c4. The deploy-time ban is on
+storage reads and direct c4 escape hatches such as
+`contract.getData()` / `contract.loadData()`, not on address
+introspection.
 
 For a state-bearing contract, a successful `@deploy save(...)`
 automatically writes the hidden `__state` field to the single
@@ -871,7 +880,8 @@ running in the policy-mandated band between
 1. **`pipe-check-receive-exhaustiveness.cpp`.** For each
    `contract` block, builds the (state × opcode) coverage map
    and emits a warning for every unhandled cell. Silenced
-   per-contract by `@implicit_protocol_for(Type, State)`.
+   per-pair by `@implicit_protocol_for(Type, State)` or
+   contract-wide by `@implicit_protocol_default;`.
 2. **`pipe-check-state-reachability.cpp`.** Builds the
    `become` graph from the `@initial` state. Unreachable
    states = compile error.
@@ -1113,10 +1123,11 @@ compatibility commitments above.
    `(cond, class, code)` reads naturally; `(cond, code, class)`
    matches the existing `throw N` convention. Pick before
    parser work.
-3. **`@implicit_protocol_for(Type, State)` syntax.** Is the
-   silencer per-pair, per-state, per-Type, or contract-wide
-   `@implicit_protocol_default`? Gather data from Slice 3
-   migration of state-bearing contracts before locking.
+3. **State-machine implicit Protocol silencing.** Resolved after
+   Slice 6 external-author trials: `@implicit_protocol_for(Type,
+   State)` is the precise per-pair form, while
+   `@implicit_protocol_default;` is the scalable contract-wide
+   form for large intentional state-machine sparse matrices.
 4. **`@bounce_only` receiver lowering target.** Branches into
    `onBouncedMessage` directly, or shares dispatch with the
    inbound path under a flag? The latter is simpler; the

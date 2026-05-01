@@ -1554,6 +1554,12 @@ enum class ContractUnknownMode {
   catch_all_receiver,
 };
 
+struct ContractImplicitProtocolFor {
+  std::string message_name;
+  std::string state_name;
+  SrcRange range;
+};
+
 template<>
 // ast_contract_declaration is a Slice 2 contract block before lowering
 // example: `contract Wallet { storage: WalletStorage; receive(msg: Transfer) { ... } }`
@@ -1571,6 +1577,9 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
   ContractUnknownMode unknown_mode = ContractUnknownMode::default_protocol_throw;
   int64_t unknown_throw_code = 0;          // meaningful only when unknown_mode == throw_code
   SrcRange unknown_annotation_range;       // for diagnostics; points at `@unknown_*` (or the catch-all receive)
+  bool implicit_protocol_default = false;  // contract-wide state-cross-product warning suppression
+  SrcRange implicit_protocol_default_range;
+  std::vector<ContractImplicitProtocolFor> implicit_protocol_for;
 
   auto get_identifier() const { return children.at(0)->as<ast_identifier>(); }
   int get_num_receives() const { return n_receive_blocks; }
@@ -1588,7 +1597,10 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
          int on_bounced_policy_flags = 0,
          ContractUnknownMode unknown_mode = ContractUnknownMode::default_protocol_throw,
          int64_t unknown_throw_code = 0,
-         SrcRange unknown_annotation_range = SrcRange::undefined())
+         SrcRange unknown_annotation_range = SrcRange::undefined(),
+         bool implicit_protocol_default = false,
+         SrcRange implicit_protocol_default_range = SrcRange::undefined(),
+         std::vector<ContractImplicitProtocolFor>&& implicit_protocol_for = {})
     : ASTOtherVararg(ast_contract_declaration, range, [&] {
         std::vector<AnyV> children;
         children.reserve(1 + receive_blocks.size() + receive_external_blocks.size() + get_fun_blocks.size());
@@ -1602,7 +1614,9 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
     , n_receive_blocks(static_cast<int>(receive_blocks.size()))
     , n_receive_external_blocks(static_cast<int>(receive_external_blocks.size()))
     , on_bounced_policy_flags(on_bounced_policy_flags)
-    , unknown_mode(unknown_mode), unknown_throw_code(unknown_throw_code), unknown_annotation_range(unknown_annotation_range) {}
+    , unknown_mode(unknown_mode), unknown_throw_code(unknown_throw_code), unknown_annotation_range(unknown_annotation_range)
+    , implicit_protocol_default(implicit_protocol_default), implicit_protocol_default_range(implicit_protocol_default_range)
+    , implicit_protocol_for(std::move(implicit_protocol_for)) {}
 };
 
 template<>

@@ -1312,6 +1312,11 @@ authorization plane, not reusable public bearer secrets.
      storage spread saves, trusted masterchain seqno, safe payout/refund
      helpers, retained-balance guards, pure stdlib constructors, default
      parameter helper calls, and release-checker guardrails.
+   - ✅ Post-trial ergonomics hardening: add
+     `@implicit_protocol_default;` plus validated
+     `@implicit_protocol_for(Message, State)` suppressions for sparse
+     state machines, and lock `contract.getAddress()` support inside
+     `@deploy` with compiler tests and author documentation.
    - ✅ Update roadmap: repo-side complete; production activation
      pending.
    - ✅ Commit + push:

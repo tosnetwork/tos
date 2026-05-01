@@ -120,8 +120,8 @@ Result: clean (no output).
 | Claim/revoke payouts used `SEND_MODE_REGULAR` | Action-phase payout failure could silently lose value. | **Closed.** Safe payment helpers default to `SEND_MODE_BOUNCE_ON_ACTION_FAIL`; Slice 5 payout helpers now use the same safer default. |
 | No minimum retained-balance guard | Repeated partial claims could starve rent. | **Closed.** `slice6RequireMinimumBalanceAfterPayout` and `slice6ReserveMinimumBalance` are documented and used before payouts. |
 | `Cell<T>`, nested parsing, and trusted time docs required source-grepping | Authors had to infer patterns from stdlib source. | **Closed.** The Slice 6 author guide now documents typed cells, lazy parsing boundaries, and trusted time access. |
-| Exhaustiveness warning suppression is O(states × messages) | Correct warnings are noisy for intentionally invalid state/opcode pairs. | **Open ergonomic issue.** Semantics are safe; only warning-suppression ergonomics remain for a later language pass. |
-| `contract.getAddress()` in `@deploy` is not available | Deploy handlers cannot self-reference without explicit input. | **Open/documented boundary.** This follows the current pre-storage deploy model and was not changed by this hardening pass. |
+| Exhaustiveness warning suppression is O(states × messages) | Correct warnings are noisy for intentionally invalid state/opcode pairs. | **Closed.** `@implicit_protocol_for(Message, State)` handles precise pairs; `@implicit_protocol_default;` handles intentional sparse matrices. |
+| `contract.getAddress()` in `@deploy` is not available | Deploy handlers cannot self-reference without explicit input. | **Closed.** `contract.getAddress()` is explicitly supported in `@deploy` because it lowers to `MYADDR` and does not read c4; `contract-deploy-get-address-positive.tol` locks the behavior. |
 
 ---
 
@@ -141,14 +141,14 @@ Result: clean (no output).
 
 ## Remaining ergonomics below production ideal
 
-1. **Exhaustiveness warning verbosity.** A 6-message × 3-state contract emits 9 warnings for intentionally unhandled pairs. The warnings are correct, but suppression still requires one `@implicit_protocol_for` annotation per pair.
+1. **Exhaustiveness warning verbosity.** **Closed.** `@implicit_protocol_for(Message, State)` now suppresses one intentional known-opcode/wrong-state path, and `@implicit_protocol_default;` suppresses the whole sparse matrix for contracts that intentionally rely on the synthesized Protocol path.
 
-2. **Deploy-time self-address ergonomics.** `contract.getAddress()` is still unavailable inside `@deploy` receivers under the current pre-storage deploy model. Authors must pass or derive the target address explicitly.
+2. **Deploy-time self-address ergonomics.** **Closed.** `contract.getAddress()` is supported inside `@deploy`; only storage/c4 reads remain banned before `loadData()`.
 
 ---
 
 ## Final verdict
 
-**Post-hardening status: production-candidate with two ergonomic follow-ups.**
+**Post-hardening status: production-candidate.**
 
-The contract compiles, all 14 VestingVault tests pass, and the original critical/high findings are closed in code or release checks. The remaining items are warning-suppression ergonomics and deploy-time self-address ergonomics; neither blocks the tested vesting-vault pattern.
+The contract compiles, all 14 VestingVault tests pass, and the original critical/high findings are closed in code, compiler checks, tests, or release checks.

@@ -1,0 +1,26 @@
+struct ExhaustBadStateStorage {
+    total: uint32;
+}
+
+struct (0x00000084) ExhaustBadStateAdvance {
+    queryId: uint64;
+}
+
+contract ExhaustivenessSuppressBadState {
+    storage: ExhaustBadStateStorage
+    states: Open, Closed
+    @initial state Open
+    @unknown_throw(0x00010001);
+    @implicit_protocol_for(ExhaustBadStateAdvance, MissingState);
+
+    receive(msg: ExhaustBadStateAdvance) on Open {
+        save(ExhaustBadStateStorage { total: msg.queryId as uint32 });
+        become Closed;
+    }
+}
+
+/**
+@compilation_should_fail
+@stderr references state `MissingState`
+@stderr doc/tos-language-syntax-policy.md §5
+ */

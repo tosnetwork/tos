@@ -26,6 +26,14 @@ Rules for production contracts:
 - Use `save({ ...storage, changedField: value })` for storage updates and
   `save(storage)` for pure state transitions. Spread preserves unchanged
   fields while evaluating the base storage value once.
+- In `@deploy`, `storage` is intentionally unavailable because c4 may be
+  empty, but `contract.getAddress()` is safe and supported: it reads TVM
+  `MYADDR`, not contract data.
+- For sparse state machines, use `@implicit_protocol_for(Message, State)`
+  for one intentionally implicit known-opcode/wrong-state path, or
+  `@implicit_protocol_default;` when every missing pair should use the
+  synthesized Protocol path. Keep an explicit `@unknown_*` policy for
+  unknown opcodes; it is a separate axis.
 - Use `slice6RefundExcess*` when accepting `in.valueCoins >= required`,
   and use `slice6SendCoins*` / `slice6RequireMinimumBalanceAfterPayout`
   for payouts instead of raw `SEND_MODE_REGULAR`.

@@ -1,0 +1,30 @@
+struct ExhaustPairStorage {
+    total: uint32;
+}
+
+struct (0x00000082) ExhaustPairAdvance {
+    queryId: uint64;
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+contract ExhaustivenessSuppressPair {
+    storage: ExhaustPairStorage
+    states: Open, Closed
+    @initial state Open
+    @unknown_throw(0x00010001);
+    @implicit_protocol_for(ExhaustPairAdvance, Closed);
+
+    receive(msg: ExhaustPairAdvance) on Open {
+        save(ExhaustPairStorage { total: msg.queryId as uint32 });
+        become Closed;
+    }
+}
+
+/**
+@testcase | 101 | | 0
+@stderr_avoid receive exhaustiveness warning
+ */
