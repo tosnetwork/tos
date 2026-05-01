@@ -921,7 +921,7 @@ each one preceded by a short design note. Cross-language ABI is
 frozen at the end of this slice.
 
 **Status.** ✅ Repo-side release candidate complete; external adoption
-gate complete with four production-intent candidates, 2026-05-01. The implementation
+gate complete with five production-intent candidates, 2026-05-01. The implementation
 input candidates are [`doc/tos-slice-5-policy.md`](tos-slice-5-policy.md),
 [`doc/slice-5-func-tol-abi.md`](slice-5-func-tol-abi.md), and
 [`doc/slice-5-abi-manifest-schema.json`](slice-5-abi-manifest-schema.json).
@@ -938,7 +938,10 @@ has recorded repo-side ABI freeze hashes and compatibility artifacts;
 the external adoption gate is complete with `DexPriceOracle`,
 `TosStreamChannel`, `TosCouncilFund`, and `TosEscrowedAuction`
 recorded; a fifth bonded-oracle candidate, `TosReportBondOracle`, is
-now also recorded and emulator-gated.
+now also recorded and emulator-gated. Follow-up compiler hardening has
+closed the post-trial usability surprises around readable large numeric
+literals and the discoverability of the TVM 1023-bit cell limit for
+multi-address structs.
 
 **Stage plan.**
 
@@ -1427,9 +1430,23 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   Post-trial hardening closed the real-context receive-handler test gap,
   added manifest-level `caller_controlled` annotations for every inbound
   Slice 5 ABI field, and now enforces trusted receive context in the
-  release checker.
+  release checker. Follow-up Tol compiler hardening now supports `_`
+  separators in decimal/hex/binary numeric literals and gives explicit
+  ABI-safe diagnostics when several inline `address` fields push a
+  struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r39 (Tol usability hardening from Slice 5 external trials)
+
+- Added Tol numeric literal separators for decimal, hex, and binary
+  constants, with regression coverage for valid large constants and
+  invalid prefix-adjacent separators.
+- Improved the 1023-bit serialization diagnostic to call out that
+  `address` serializes to 267 bits and that the compiler will not
+  auto-move fields into refs because doing so would change the wire ABI.
+- Updated the Slice 5 author guide so external authors can discover the
+  numeric-separator rule instead of inferring it from compiler behavior.
 
 ### r38 (Slice 5 bonded-oracle trial hardening)
 
