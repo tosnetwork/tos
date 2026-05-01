@@ -1038,15 +1038,17 @@ multi-address structs.
 (monitors versus links), §6.4 (restart intensity), and §6.6 (crash
 reports) form the Slice 6 design surface.
 
-**Status.** 🟡 Stage 1 delivery-failure foundation is complete as of
-2026-05-01; Stage 2 scheduled-message substrate is next. Stage 0 design
-review findings were addressed in Draft v0.2 and re-review approved.
-The first implementation layer adds
-`@stdlib/delivery` with canonical delivery-id input helpers,
-BackPressureAdvice validation, queue-pressure bucket classification, and
-bounded dead-letter sink storage. Protocol activation of scheduled
-delivery, monitor notifications, and production BackPressure emission
-remains gated to later Slice 6 stages. The Stage 0 input documents are
+**Status.** 🟡 Stages 1–2 are complete as of 2026-05-01; Stage 3 Tol
+time stdlib is next. Stage 0 design review findings were addressed in
+Draft v0.2 and re-review approved. The implementation layer now includes
+`@stdlib/delivery` and `@stdlib/schedule`: canonical delivery-id input
+helpers, BackPressureAdvice validation, queue-pressure bucket
+classification, bounded dead-letter sink storage, scheduled-action
+shapes, masterchain-seqno `deliver_by` predicates, scheduled handles,
+cancel-authority checks, and escrow force-expiry helpers. Protocol
+activation of validator scheduled delivery, monitor notifications, and
+production BackPressure emission remains gated to later Slice 6 stages.
+The Stage 0 input documents are
 [`doc/tos-slice-6-policy.md`](tos-slice-6-policy.md),
 [`doc/tos-delivery-sla-policy.md`](tos-delivery-sla-policy.md),
 [`doc/tos-time-policy.md`](tos-time-policy.md),
@@ -1112,29 +1114,29 @@ authorization plane, not reusable public bearer secrets.
    dead-letter sink bounds and cost model are defined; BackPressure
    payload is defined; legacy contracts unchanged.
 
-3. ⏳ **Stage 2 — scheduled-message protocol substrate.**
+3. ✅ **Stage 2 — scheduled-message protocol substrate.**
 
-   - ⏳ Add `ScheduledActionV1` struct
+   - ✅ Add `ScheduledActionV1` scaffold to `crypto/block/block.tlb` and
+     `Slice6ScheduledActionV1` in `@stdlib/schedule`
      (`not_before_mc_seqno`, `expire_after_blocks`, `cancel_authority`,
      `dead_letter?`); `deliver_by_mc_seqno` is computed, not stored.
-   - ⏳ Add helpers: `computeDeliverBy` (with overflow detection),
-     `isScheduledMessageDue`, `isScheduledMessageExpired`,
-     `computeScheduledHandle`.
-   - ⏳ Add cancellation helpers: `verifyCancelAuthority`;
-     `CANCEL_RESULT_*` constants.
-   - ⏳ Handle deleted/frozen/missing `cancel_authority`: no automatic
+   - ✅ Add helpers: `slice6ScheduleDeliverBy` with overflow detection,
+     due/expired predicates, and `slice6ScheduledHandle` using
+     `delivery_id` with `attempt_kind = 1`.
+   - ✅ Add cancellation helpers and `SLICE6_SCHEDULE_CANCEL_*`
+     constants.
+   - ✅ Handle deleted/frozen/missing `cancel_authority`: no automatic
      inheritance by `dead_letter` unless explicitly declared.
-   - ⏳ Handle force-expiry on escrow depletion.
-   - ⏳ Add emulator fixtures (`slice-6-stage2-schedule-fixtures.cpp`):
+   - ✅ Handle force-expiry on escrow depletion.
+   - ✅ Add emulator fixtures (`slice-6-stage2-schedule-fixtures.cpp`):
      overflow detection; `deliver_by` arithmetic; due/expired predicates;
      cancel by non-authority → NOT_AUTHORIZED; orphaned/delivered/expired
      handle cancel → no side effects; deleted sender does not auto-cancel.
-   - ⏳ Add tol-tester cases: `slice6-schedule-shape-positive.tol`,
-     `slice6-schedule-overflow-negative.tol`,
-     `slice6-cancel-auth-positive.tol`,
-     `slice6-cancel-auth-negative.tol`.
-   - ⏳ Update roadmap. Commit + push:
-     *Slice 6 Stage 2 scheduled message substrate*
+   - ✅ Add tol-tester coverage in
+     `slice6-schedule-substrate-positive.tol` for `deliver_by`
+     overflow, due/expired checks, scheduled handle stability, body-hash
+     separation, cancellation race states, explicit dead-letter
+     delegation, and escrow force-expiry.
 
    Exit criterion: a contract can model, schedule, and cancel a
    bounded future internal message under emulator and tol-tester.
@@ -1686,6 +1688,18 @@ removed when policy v6 made single-signer the rule; see §11.3.)
   struct over the TVM 1023-bit cell limit.
 
 ## 12. Revision notes
+
+### r44 (Slice 6 Stage 2 scheduled message substrate)
+
+- Added `@stdlib/schedule` with `Slice6ScheduledActionV1`,
+  `Slice6ScheduledEntryV1`, masterchain-seqno `deliver_by` arithmetic,
+  scheduled handle derivation through the Stage 1 delivery-id helper,
+  cancel-authority checks, and escrow force-expiry helpers.
+- Added `scheduled_action_v1#d602` scaffold shape to
+  `crypto/block/block.tlb` and aligned `doc/tos-time-policy.md`.
+- Added focused tol-tester and emulator fixtures for due/expired
+  predicates, overflow rejection, cancellation races, explicit
+  dead-letter cancellation delegation, and escrow depletion.
 
 ### r43 (Slice 6 Stage 1 delivery failure foundation)
 

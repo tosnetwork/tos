@@ -1037,3 +1037,16 @@ back_pressure_advice_v1#b601
   advice_valid_until:uint32
   route_hash:uint256
   = BackPressureAdvice;
+
+// Scheduled action scaffold. Stage 2 defines the consensus shape and
+// predicate fixtures; validator queue integration remains version-gated.
+scheduled_action_v1#d602
+  target:MsgAddressInt
+  body:^Cell
+  value:CurrencyCollection
+  send_mode:uint16
+  not_before_mc_seqno:uint32
+  expire_after_blocks:uint32
+  cancel_authority:MsgAddressInt
+  dead_letter:(Maybe MsgAddressInt)
+  = ScheduledActionV1;

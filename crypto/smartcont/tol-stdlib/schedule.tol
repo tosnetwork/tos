@@ -1,0 +1,190 @@
+// Slice 6 scheduled-message substrate helpers.
+tol 1.3
+
+import "@stdlib/delivery"
+
+const SLICE6_SCHEDULE_THROW_INVALID_ACTION = 0x1001
+const SLICE6_SCHEDULE_THROW_DELIVER_BY_OVERFLOW = 0x1002
+
+const SLICE6_SCHEDULE_CANCEL_OK: uint8 = 0
+const SLICE6_SCHEDULE_CANCEL_UNKNOWN: uint8 = 1
+const SLICE6_SCHEDULE_CANCEL_NOT_AUTHORIZED: uint8 = 2
+const SLICE6_SCHEDULE_CANCEL_ALREADY_DELIVERED: uint8 = 3
+const SLICE6_SCHEDULE_CANCEL_ALREADY_EXPIRED: uint8 = 4
+const SLICE6_SCHEDULE_CANCEL_ALREADY_CANCELED: uint8 = 5
+
+const SLICE6_SCHEDULE_UINT32_MAX = 0xffffffff
+
+struct Slice6ScheduledActionV1 {
+    target: address
+    body: cell
+    valueCoins: coins
+    sendMode: uint16
+    notBeforeMcSeqno: uint32
+    expireAfterBlocks: uint32
+    cancelAuthority: address
+    deadLetter: address?
+}
+
+struct Slice6ScheduledEntryV1 {
+    handle: uint256
+    action: Cell<Slice6ScheduledActionV1>
+    escrowCoveredUntilMcSeqno: uint32
+    pending: bool
+    delivered: bool
+    expired: bool
+    canceled: bool
+}
+
+fun slice6ScheduledAction(
+    target: address,
+    body: cell,
+    valueCoins: coins,
+    sendMode: uint16,
+    notBeforeMcSeqno: uint32,
+    expireAfterBlocks: uint32,
+    cancelAuthority: address,
+    deadLetter: address? = null
+): Slice6ScheduledActionV1 {
+    if (expireAfterBlocks == 0) {
+        throw SLICE6_SCHEDULE_THROW_INVALID_ACTION;
+    }
+    slice6ScheduleDeliverBy(notBeforeMcSeqno, expireAfterBlocks);
+    return Slice6ScheduledActionV1 {
+        target,
+        body,
+        valueCoins,
+        sendMode,
+        notBeforeMcSeqno,
+        expireAfterBlocks,
+        cancelAuthority,
+        deadLetter,
+    };
+}
+
+fun slice6ScheduleDeliverBy(notBeforeMcSeqno: uint32, expireAfterBlocks: uint32): uint32 {
+    if (expireAfterBlocks == 0 || notBeforeMcSeqno > SLICE6_SCHEDULE_UINT32_MAX - expireAfterBlocks) {
+        throw SLICE6_SCHEDULE_THROW_DELIVER_BY_OVERFLOW;
+    }
+    return notBeforeMcSeqno + expireAfterBlocks;
+}
+
+fun Slice6ScheduledActionV1.deliverByMcSeqno(self): uint32 {
+    return slice6ScheduleDeliverBy(self.notBeforeMcSeqno, self.expireAfterBlocks);
+}
+
+fun Slice6ScheduledActionV1.isDue(self, currentMcSeqno: uint32): bool {
+    return currentMcSeqno >= self.notBeforeMcSeqno;
+}
+
+fun Slice6ScheduledActionV1.isExpired(self, currentMcSeqno: uint32): bool {
+    return currentMcSeqno >= self.deliverByMcSeqno();
+}
+
+fun slice6ScheduledHandle(
+    originTxLt: uint64,
+    originTxHash: uint256,
+    originActionIndex: uint16,
+    src: address,
+    action: Slice6ScheduledActionV1,
+    stateInitHash: uint256? = null
+): uint256 {
+    return slice6DeliveryIdInput(
+        slice6DeliveryOrigin(
+            originTxLt,
+            originTxHash,
+            originActionIndex,
+            SLICE6_ATTEMPT_SCHEDULED,
+            0
+        ),
+        slice6DeliveryRoute(src, action.target, action.sendMode, 0),
+        slice6DeliveryPayload(
+            slice6CurrencyCollection(action.valueCoins),
+            stateInitHash,
+            action.body.hash(),
+            action.notBeforeMcSeqno,
+            action.expireAfterBlocks
+        )
+    ).deliveryId();
+}
+
+fun slice6ScheduledEntry(
+    handle: uint256,
+    action: Slice6ScheduledActionV1,
+    escrowCoveredUntilMcSeqno: uint32
+): Slice6ScheduledEntryV1 {
+    return Slice6ScheduledEntryV1 {
+        handle,
+        action: action.toCell(),
+        escrowCoveredUntilMcSeqno,
+        pending: true,
+        delivered: false,
+        expired: false,
+        canceled: false,
+    };
+}
+
+fun Slice6ScheduledEntryV1.actionValue(self): Slice6ScheduledActionV1 {
+    return self.action.load();
+}
+
+fun Slice6ScheduledEntryV1.isPending(self): bool {
+    return self.pending && !self.delivered && !self.expired && !self.canceled;
+}
+
+fun Slice6ScheduledEntryV1.cancelResult(self, caller: address): uint8 {
+    if (self.delivered) {
+        return SLICE6_SCHEDULE_CANCEL_ALREADY_DELIVERED;
+    }
+    if (self.expired) {
+        return SLICE6_SCHEDULE_CANCEL_ALREADY_EXPIRED;
+    }
+    if (self.canceled) {
+        return SLICE6_SCHEDULE_CANCEL_ALREADY_CANCELED;
+    }
+    if (!self.pending) {
+        return SLICE6_SCHEDULE_CANCEL_UNKNOWN;
+    }
+    if (caller != self.actionValue().cancelAuthority) {
+        return SLICE6_SCHEDULE_CANCEL_NOT_AUTHORIZED;
+    }
+    return SLICE6_SCHEDULE_CANCEL_OK;
+}
+
+fun Slice6ScheduledEntryV1.cancel(mutate self, caller: address): uint8 {
+    val result = self.cancelResult(caller);
+    if (result == SLICE6_SCHEDULE_CANCEL_OK) {
+        self.pending = false;
+        self.canceled = true;
+    }
+    return result;
+}
+
+fun Slice6ScheduledEntryV1.markDelivered(mutate self): void {
+    if (!self.isPending()) {
+        throw SLICE6_SCHEDULE_THROW_INVALID_ACTION;
+    }
+    self.pending = false;
+    self.delivered = true;
+}
+
+fun Slice6ScheduledEntryV1.markExpired(mutate self): void {
+    if (!self.isPending()) {
+        throw SLICE6_SCHEDULE_THROW_INVALID_ACTION;
+    }
+    self.pending = false;
+    self.expired = true;
+}
+
+fun Slice6ScheduledEntryV1.requiresForceExpiry(self, currentMcSeqno: uint32): bool {
+    return self.isPending() && currentMcSeqno > self.escrowCoveredUntilMcSeqno;
+}
+
+fun Slice6ScheduledEntryV1.forceExpireIfEscrowDepleted(mutate self, currentMcSeqno: uint32): bool {
+    if (!self.requiresForceExpiry(currentMcSeqno)) {
+        return false;
+    }
+    self.pending = false;
+    self.expired = true;
+    return true;
+}

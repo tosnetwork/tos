@@ -49,21 +49,23 @@ messages.
 
 Minimum fields:
 
-```
-target: address
-body: Cell
-value: coins
-send_mode: uint8
+```tlb
+scheduled_action_v1#d602
+target: MsgAddressInt
+body: ^Cell
+value: CurrencyCollection
+send_mode: uint16
 not_before_mc_seqno: uint32
 expire_after_blocks: uint32
-cancel_authority: address
-dead_letter: address?
+cancel_authority: MsgAddressInt
+dead_letter: (Maybe MsgAddressInt)
+= ScheduledActionV1;
 ```
 
-The implementation may pack these differently, but the semantics must
-be visible in tests and manifests. `deliver_by_mc_seqno` is not a wire
-field; it is computed as `not_before_mc_seqno + expire_after_blocks`.
-Overflow is invalid at scheduling time.
+`deliver_by_mc_seqno` is not a wire field; it is computed as
+`not_before_mc_seqno + expire_after_blocks`. Overflow is invalid at
+scheduling time. Stage 2 adds the scaffold type and predicate fixtures;
+validator queue integration remains version-gated.
 
 ## 4. Funding and rent
 
