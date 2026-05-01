@@ -30,8 +30,10 @@ The current green gates are:
 Stage 3 and Stage 5 preserved the checked reference Tol BoC hashes for
 Jetton and wallet-v5 after stdlib wrapper migration. PR #6 later
 recaptured the Jetton minter Tol baseline after adding the explicit
-`addr_none` admin rejection; this is a reference-contract safety
-change, not a TL-B constructor, TVM opcode, or wire-format change.
+`addr_none` admin rejection, and recaptured wallet-v5 after making
+signed-internal seqno advancement survive action-phase failure; these
+are reference-contract safety changes, not TL-B constructor, TVM opcode,
+or wire-format changes.
 
 ## Escape Hatches
 
@@ -40,7 +42,8 @@ change, not a TL-B constructor, TVM opcode, or wire-format change.
 - Use `@unknown_throw(...)`, `@unknown_silent_drop`, or
   `receive(msg: UnknownOpcode)` to make unknown-opcode policy visible.
 - Use `@disclaim_query_id` only when a receiver intentionally does not
-  reply with the inbound `queryId`.
+  reply with the inbound `queryId`, or when a raw legacy send propagates
+  it in a way the compiler cannot prove and the exception is documented.
 - Use explicit `require(cond, ErrorClass.X, code)` when an ABI requires
   a pinned error code.
 - Use `@method_id(N)` when an existing get-method ABI is already fixed.

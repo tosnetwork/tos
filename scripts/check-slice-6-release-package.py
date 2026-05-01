@@ -28,7 +28,7 @@ REQUIRED_EXAMPLES = {
     "examples/slice6/scheduled-transfer.tol": ["slice6TimerBudget", "sendAfterBlocks"],
     "examples/slice6/monitored-contract.tol": ["slice6MonitorBudget", "slice6BuildMonitorDownNotification"],
     "examples/slice6/supervised-child.tol": ["slice6ChildSpec"],
-    "examples/slice6/supervisor.tol": ["slice6RecoveryBudget", "recordRestart"],
+    "examples/slice6/supervisor.tol": ["slice6RecoveryBudget", "recordChildRestart"],
     "examples/slice6/capability-example.tol": ["slice6CapabilityConstraints", "slice6CapabilityGrant"],
 }
 
@@ -99,6 +99,7 @@ def check_required_surface() -> None:
         "Slice6SupervisorState",
         "Slice6RecoveryBudget",
         "recordRestart",
+        "recordChildRestart",
         "slice6StrategyIncludesChild",
         "slice6RecordPartialRecovery",
         "emitEscalation",
@@ -134,7 +135,7 @@ def check_required_surface() -> None:
         "Slice6DogfoodFailureRecord",
         "sendAfterBlocks",
         "slice6BuildMonitorDownNotification",
-        "recordRestart",
+        "recordChildRestart",
         "addRecord",
         "SLICE6_ATTEMPT_SUPERVISOR_RECOVERY",
     ]:

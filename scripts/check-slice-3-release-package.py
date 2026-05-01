@@ -21,6 +21,11 @@ REQUIRED_DOCS = (
     "doc/slice-3-external-author-trial.md",
 )
 
+JETTON_REFERENCE_SOURCES = (
+    "crypto/smartcont/jetton-minter.tol",
+    "crypto/smartcont/jetton-wallet.tol",
+)
+
 
 def parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[1]
@@ -55,6 +60,48 @@ def validate_json(path: Path) -> None:
         raise SystemExit(f"{path}: invalid JSON: {e}") from e
 
 
+def strip_line_comment(line: str) -> str:
+    in_string = False
+    escaped = False
+    for idx, ch in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\" and in_string:
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if not in_string and ch == "/" and idx + 1 < len(line) and line[idx + 1] == "/":
+            return line[:idx]
+    return line
+
+
+def strip_tol_comments(text: str) -> str:
+    return "\n".join(strip_line_comment(line) for line in text.splitlines())
+
+
+def validate_jetton_wire_compatibility(root: Path) -> None:
+    """Guard the TEP-74 reference against accidental createMessage narrowing.
+
+    The Jetton minter/wallet deliberately keep MsgAddress-bearing paths as raw
+    builders because `createMessage<TBody>` would normalize destination/body
+    shapes and can narrow `any_address` fields such as `addr_none`.
+    """
+    manifest = root / "crypto" / "smartcont" / "tol-stdlib" / "manifests" / "jetton.json"
+    manifest_text = manifest.read_text(encoding="utf-8")
+    require("raw builders are preserved instead of createMessage()" in manifest_text,
+            f"{manifest}: missing raw-builder wire-compatibility exception")
+    for rel in JETTON_REFERENCE_SOURCES:
+        path = root / rel
+        source = strip_tol_comments(path.read_text(encoding="utf-8"))
+        require("createMessage(" not in source,
+                f"{path}: Jetton reference must not use createMessage(); keep raw any_address-preserving builders")
+        require("sendRawMessage(" in source,
+                f"{path}: expected raw message builder/send path is missing")
+
+
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -67,6 +114,8 @@ def main() -> int:
         path = root / doc
         require(path.exists(), f"{path}: required release package doc missing")
         require(path.stat().st_size > 0, f"{path}: release package doc is empty")
+
+    validate_jetton_wire_compatibility(root)
 
     env = os.environ.copy()
     env["TOL_EXECUTABLE"] = str(tol)

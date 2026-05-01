@@ -154,6 +154,16 @@ fun test_require_horizon_rejects_zero_expiry(): int {
     return 0;
 }
 
+@method_id(664)
+fun test_require_horizon_uses_schedule_overflow_code(): int {
+    try {
+        timeBudget(128, 0xffffffff).requireHorizon(0xfffffff0, 0xfffffff0, 0x20);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 651 | | 20
 @testcase | 652 | | 110
@@ -168,4 +178,5 @@ fun test_require_horizon_rejects_zero_expiry(): int {
 @testcase | 661 | | 4355
 @testcase | 662 | | 4353
 @testcase | 663 | | 4353
+@testcase | 664 | | 4098
  */

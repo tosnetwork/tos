@@ -334,9 +334,12 @@ per-`onInternalMessage`. Concretely:
   `@__receiver_scope(T)`) the check pass keys off.
 - The check pass keeps a separate analysis record for each
   receiver scope: inbound query-id source, local aliases,
-  `disclaim_query_id()` calls, and reply-emission sites. At
-  scope exit it diagnoses only that receiver's record. The
-  legacy top-level `onInternalMessage` path remains one scope.
+  `disclaim_query_id()` calls, typed reply-emission sites, and
+  raw `sendRawMessage(...)` sites. Raw sends are treated as
+  unprovable query-id replies unless the receiver explicitly
+  disclaims and documents the legacy wire-compatibility reason. At
+  scope exit it diagnoses only that receiver's record. The legacy
+  top-level `onInternalMessage` path remains one scope.
 - One receiver's `@disclaim_query_id` MUST NOT silence
   warnings emitted from a sibling receiver in the same
   contract.
@@ -949,9 +952,10 @@ running in the policy-mandated band between
      bodies inside a `contract` block MAY NOT call any of:
      `storage.toCell()`, `(storage as Cell)`,
      `contract.getData()`, local wrappers around
-     `contract.getData()` such as `currentData()`, raw
-     `c4 PUSH` / `c4 POP` intrinsics, `T.fromCell` applied to
-     c4-derived cells, or any `@stdlib/tvm-lowlevel` helper
+     `contract.getData()` such as `currentData()`, asm functions
+     whose body mentions the c4 register, raw `c4 PUSH` / `c4 POP`
+     intrinsics, `T.fromCell` applied to c4-derived cells, or any
+     `@stdlib/tvm-lowlevel` helper
      that reaches into c4 directly. Authors who need raw c4
      access for a one-shot migration drop out of the `contract`
      block and use the Slice 1 `onInternalMessage` form (§6.3

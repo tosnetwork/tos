@@ -67,8 +67,11 @@
  *             `val body = in.body; body.loadUint(32); val q = body.loadUint(64)`
  *         - disclaimed: did the scope call `disclaim_query_id()`?
  *         - saw_reply_emit: every `createMessage({...body: ...})`
- *           site, paired with whether the body literal sources
- *           `queryId` from `<msg>.queryId` or the manual local
+ *           site and every raw `sendRawMessage(...)` site, paired
+ *           with whether the body literal sources `queryId` from
+ *           `<msg>.queryId` or the manual local. Raw sends are
+ *           deliberately unprovable and therefore require either a
+ *           typed wrapper or an explicit `disclaim_query_id()`.
  *
  *       initial scope (function level) covers a legacy
  *       `onInternalMessage` body (no marker present). When entering
@@ -383,6 +386,7 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
 
   // Detect:
   //   - explicit `disclaim_query_id()` call
+  //   - raw `sendRawMessage(...)` reply emits (unprovable)
   //   - `createMessage({ body: <BodyStruct> { queryId: ..., ... } })` reply emits
   void visit(V<ast_function_call> v) override {
     parent::visit(v);
@@ -401,6 +405,11 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     // Per §3.2.1 the disclaim flag is per-scope: only the topmost scope is set.
     if (fun_ref->name == "disclaim_query_id") {
       s.disclaimed = true;
+      return;
+    }
+
+    if (fun_ref->name == "sendRawMessage") {
+      s.saw_reply_emit.push_back({v, /*propagated=*/false});
       return;
     }
 

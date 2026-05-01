@@ -347,6 +347,23 @@ fun Slice6ChildSpec.recordRestart(
     return true;
 }
 
+fun Slice6SupervisorState.recordChildRestart(
+    mutate self,
+    childId: uint64,
+    budget: Slice6RecoveryBudget,
+    nowMcSeqno: uint32,
+    recoveryGas: uint32,
+    recoveryValue: coins
+): bool {
+    var child = self.getChild(childId);
+    val restarted = child.recordRestart(budget, nowMcSeqno, recoveryGas, recoveryValue);
+    self.children.set(child.childId, child);
+    if (!restarted) {
+        self.emitEscalation();
+    }
+    return restarted;
+}
+
 fun slice6BuildRecoveryMessage(child: Slice6ChildSpec, body: cell, valueCoins: coins): Slice6RecoveryMessage {
     return Slice6RecoveryMessage {
         childId: child.childId,

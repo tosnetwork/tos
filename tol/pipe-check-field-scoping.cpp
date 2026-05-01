@@ -49,6 +49,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 namespace tol {
@@ -125,10 +126,62 @@ static void check_block(V<ast_block_statement> block, FieldScopingContext& ctx);
 
 // ---------- escape-hatch detection ----------
 
+static bool asm_command_mentions_c4(std::string_view command) {
+  return command.find("c4") != std::string_view::npos || command.find("C4") != std::string_view::npos;
+}
+
+static bool asm_function_uses_c4_register(FunctionPtr fun_ref) {
+  if (!fun_ref || !fun_ref->ast_root) {
+    return false;
+  }
+  auto v_fun = fun_ref->ast_root->try_as<ast_function_declaration>();
+  if (!v_fun) {
+    return false;
+  }
+  auto v_asm = v_fun->get_body()->try_as<ast_asm_body>();
+  if (!v_asm) {
+    return false;
+  }
+  for (AnyV command : v_asm->get_asm_commands()) {
+    if (auto v_str = command->try_as<ast_string_const>()) {
+      if (asm_command_mentions_c4(v_str->str_val)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+static FunctionPtr resolve_called_function(V<ast_function_call> fc) {
+  if (fc->fun_maybe) {
+    return fc->fun_maybe;
+  }
+  AnyExprV callee = fc->get_callee();
+  if (auto ref = callee->try_as<ast_reference>()) {
+    if (FunctionPtr fun_ref = ref->sym ? ref->sym->try_as<FunctionPtr>() : nullptr) {
+      return fun_ref;
+    }
+    const Symbol* sym = G.symtable.lookup(ref->get_name());
+    return sym ? sym->try_as<FunctionPtr>() : nullptr;
+  }
+  if (auto dot = callee->try_as<ast_dot_access>()) {
+    if (dot->is_target_fun_ref()) {
+      return std::get<FunctionPtr>(dot->target);
+    }
+  }
+  return nullptr;
+}
+
 // `storage.toCell()` / `storage.toSlice()` / `(storage as Cell)` / `contract.getData()`
 // are explicit c4 serialisation escapes; §5 forbids them inside state-bearing contract receivers.
 static bool detect_c4_serialisation_escape(AnyExprV expr, FieldScopingContext& ctx) {
   if (auto fc = expr->try_as<ast_function_call>()) {
+    FunctionPtr called_fun = resolve_called_function(fc);
+    if (asm_function_uses_c4_register(called_fun)) {
+      err("c4 serialization escapes `@on` scoping; asm function `{}` uses c4 and is not permitted inside a state-bearing receiver. "
+          "See doc/tos-language-syntax-policy.md §5.", called_fun->name)
+        .collect(expr);
+    }
     AnyExprV callee = fc->get_callee();
     if (auto dot = callee->try_as<ast_dot_access>()) {
       std::string_view method = dot->get_field_name();

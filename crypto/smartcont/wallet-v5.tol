@@ -370,9 +370,10 @@ fun processSignedRequest(inMsgBody: slice, isExternal: bool): void {
             .endCell()
     );
 
-    if (isExternal) {
-        commitContractDataAndActions();
-    }
+    // Commit the seqno before action processing for both external and signed
+    // internal requests. Otherwise an action-phase failure could roll back the
+    // internal signed seqno and leave the signed body replayable until validUntil.
+    commitContractDataAndActions();
 
     processActions(cs, isExternal, false);
 }

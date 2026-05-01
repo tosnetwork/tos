@@ -1,0 +1,28 @@
+const CONTRACT_PREFIX_CONST_OP: uint32 = 0xC0DEC001;
+
+struct ContractPrefixConstStorage {
+    value: uint32
+}
+
+struct (CONTRACT_PREFIX_CONST_OP) ContractPrefixConstPing {
+    queryId: uint64
+    value: uint32
+}
+
+contract ContractPrefixConst {
+    storage: ContractPrefixConstStorage
+    @unknown_throw(0xffff);
+
+    receive(msg: ContractPrefixConstPing) {
+        save(ContractPrefixConstStorage { value: msg.value });
+    }
+}
+
+@method_id(101)
+fun test_contract_prefix_const_compiles(): int {
+    return CONTRACT_PREFIX_CONST_OP as int;
+}
+
+/**
+@testcase | 101 | | 3235823617
+ */

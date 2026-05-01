@@ -50,7 +50,7 @@ fun test_dogfood_monitor_down_notification(): int {
 fun test_dogfood_funded_child_down_records_dead_letter(): int {
     val config = dogConfig();
     var state = slice6DogfoodInitialState(config);
-    val record = state.handleChildDown(config, dogHash(3), 101, true);
+    val record = state.handleChildDown(config, dogHash(3), 101, 1);
     assert(record.deadLetterNonce! == 0) throw 7251;
     assert(state.deadLetters.load().count == 1) throw 7252;
     assert(!state.finalFailure) throw 7253;
@@ -61,7 +61,7 @@ fun test_dogfood_funded_child_down_records_dead_letter(): int {
 fun test_dogfood_unfunded_child_down_does_not_create_free_record(): int {
     val config = dogConfig();
     var state = slice6DogfoodInitialState(config);
-    val record = state.handleChildDown(config, dogHash(4), 101, false);
+    val record = state.handleChildDown(config, dogHash(4), 101, 0);
     assert(record.deadLetterNonce == null) throw 7261;
     assert(state.deadLetters.load().count == 0) throw 7262;
     return state.deadLetters.load().droppedCount;
@@ -71,8 +71,8 @@ fun test_dogfood_unfunded_child_down_does_not_create_free_record(): int {
 fun test_dogfood_restart_storm_escalates(): int {
     val config = dogConfig(1);
     var state = slice6DogfoodInitialState(config);
-    state.handleChildDown(config, dogHash(5), 101, true);
-    state.handleChildDown(config, dogHash(6), 102, true);
+    state.handleChildDown(config, dogHash(5), 101, 1);
+    state.handleChildDown(config, dogHash(6), 102, 1);
     assert(state.finalFailure) throw 7271;
     return state.supervisor.load().getChild(1).state;
 }
@@ -81,7 +81,7 @@ fun test_dogfood_restart_storm_escalates(): int {
 fun test_dogfood_failure_record_hash_is_structured(): int {
     val config = dogConfig();
     var state = slice6DogfoodInitialState(config);
-    val record = state.handleChildDown(config, dogHash(7), 101, true);
+    val record = state.handleChildDown(config, dogHash(7), 101, 1);
     assert(record.monitorDownHash == state.lastMonitorDownHash) throw 7281;
     assert(record.toCell().hash() == state.lastFailureRecordHash) throw 7282;
     return (record.recoveryMessageHash != 0) as int;

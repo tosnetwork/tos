@@ -118,6 +118,9 @@ Every non-single-use grant needs a revocation path:
 
 The design may choose one or more paths, but it must document storage
 cost and lookup cost. Revocation cannot be an off-chain promise only.
+The stdlib full check is named `requireHandleAndEpochNotRevoked` to make
+clear that it checks handle-id revocation and revocation epoch only; it is
+not a standalone grant authorization check.
 
 Revocation storage is bounded by manifest and config:
 

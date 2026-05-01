@@ -15,8 +15,8 @@ fun supervisorBudget(): Slice6RecoveryBudget {
 fun supervisorStateAfterOneRestart(): Slice6SupervisorState {
     var state = slice6SupervisorState(4);
     var child = slice6ChildSpec(1, supervisorChildAddress(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100);
-    child.recordRestart(supervisorBudget(), 101, 500, 10);
     state.addChild(child);
+    state.recordChildRestart(1, supervisorBudget(), 101, 500, 10);
     return state;
 }
 

@@ -491,7 +491,7 @@ fun Slice6CapabilityRegistry.requireNotEpochRevoked(self, grant: Slice6Capabilit
     }
 }
 
-fun Slice6CapabilityRegistry.requireNotRevoked(
+fun Slice6CapabilityRegistry.requireHandleAndEpochNotRevoked(
     self,
     grant: Slice6CapabilityGrantV1,
     currentMcSeqno: uint64
@@ -514,7 +514,7 @@ fun Slice6CapabilityRegistry.requireCapability(
     if (requireRegisteredGrant) {
         self.requireRegistered(grant);
     }
-    self.requireNotRevoked(grant, context.currentMcSeqno);
+    self.requireHandleAndEpochNotRevoked(grant, context.currentMcSeqno);
     self.requireUseConsumable(grant, constraints);
     if (consumeSingleUseNonce) {
         self.requireNonceConsumable(grant);

@@ -26,6 +26,9 @@ Rules for production contracts:
   `Slice6TimerBudget.maxFutureHorizonBlocks` for wall-clock periods.
 - Declare a finite timer, monitor, supervisor, dead-letter, and
   capability budget before storing entries.
+- Dead-letter records must be funded with a concrete escrow coin amount.
+  The stdlib rejects records below `Slice6DeadLetterBudget.minRecordEscrowCoins`;
+  do not pass a caller-supplied boolean as a substitute for paid storage.
 - Use `save({ ...storage, changedField: value })` for storage updates and
   `save(storage)` for pure state transitions. Spread preserves unchanged
   fields while evaluating the base storage value once.
@@ -55,6 +58,9 @@ Rules for production contracts:
   or undo an earlier revocation.
 - Treat `one_for_all` and `rest_for_one` as best-effort non-atomic
   recovery sequences. Each child recovery is a separate transaction.
+  Prefer `Slice6SupervisorState.recordChildRestart(...)` over calling
+  `Slice6ChildSpec.recordRestart(...)` directly, so exhausted recovery
+  budgets automatically mark the supervisor's final-failure escalation.
 
 `Cell<T>` is a typed cell reference. `T.toCell()` produces a `Cell<T>`,
 `cell.beginParse()` plus `T.fromSlice(...)` parses an untyped cell, and

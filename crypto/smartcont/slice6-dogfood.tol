@@ -197,18 +197,14 @@ fun Slice6DogfoodState.handleChildDown(
     config: Slice6DogfoodConfig,
     originalMessageHash: uint256,
     nowMcSeqno: uint32,
-    escrowFunded: bool
+    recordEscrowCoins: coins
 ): Slice6DogfoodFailureRecord {
     val addrs = config.addressesValue();
     val budgets = config.budgetsValue();
     val note = slice6DogfoodMonitorDown(config, originalMessageHash, nowMcSeqno);
     var supervisor = self.supervisor.load();
-    var child = supervisor.getChild(1);
-    val restarted = child.recordRestart(budgets.recovery.load(), nowMcSeqno, 500, 10);
-    supervisor.children.set(child.childId, child);
-    if (!restarted) {
-        supervisor.emitEscalation();
-    }
+    val restarted = supervisor.recordChildRestart(1, budgets.recovery.load(), nowMcSeqno, 500, 10);
+    val child = supervisor.getChild(1);
     self.supervisor = supervisor.toCell();
     self.finalFailure = supervisor.finalFailure;
 
@@ -223,7 +219,7 @@ fun Slice6DogfoodState.handleChildDown(
         SLICE6_DOGFOOD_PHASE_RECOVERY,
         slice6RouteHash(0, 0, 0),
         null,
-        escrowFunded,
+        recordEscrowCoins,
         nowMcSeqno
     );
     self.deadLetters = sink.toCell();

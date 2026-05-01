@@ -58,6 +58,12 @@ back_pressure_advice_v1#b601
 `congested` and `rejecting`. A sender that retries earlier must not
 receive stronger delivery guarantees than a fresh message.
 
+The Stage 1 stdlib keeps production construction behind a runtime gate:
+`slice6BackPressureAdvice(...)` throws while `BACK_PRESSURE_ACTIVATION_GATE`
+is false. Tests may still validate the struct shape by constructing
+`Slice6BackPressureAdviceV1` and calling `requireValid()`, but production
+helpers must not emit it until the activation review flips the gate.
+
 ## 3. Delivery identity
 
 Every tracked delivery attempt needs a stable identity:
@@ -159,13 +165,16 @@ The system sink is workchain-local and bounded by config:
 - `max_dead_letter_record_bits`;
 - `max_dead_letter_record_refs`.
 
-Every persistent sink record is paid from sender escrow. If escrow is
-insufficient, no persistent system-sink record is created; validators may
-include only a non-persistent block-local counter for observability. If
-the sink is full, the protocol first removes expired records. If no slot
-is available after expiry cleanup, the new persistent record is dropped
-and the sink's bounded `dropped_count` is incremented. The protocol must
-not evict an unexpired paid record to store a new attacker-funded record.
+Every persistent sink record is paid from sender escrow. The stdlib
+insertion API takes the concrete escrow coin amount and rejects records
+below `min_record_escrow_coins`; a boolean "funded" flag is not a valid
+storage-cost proof. If escrow is insufficient, no persistent system-sink
+record is created; validators may include only a non-persistent block-local
+counter for observability. If the sink is full, the protocol first removes
+expired records. If no slot is available after expiry cleanup, the new
+persistent record is dropped and the sink's bounded `dropped_count` is
+incremented. The protocol must not evict an unexpired paid record to store
+a new attacker-funded record.
 
 ## 6. Funding rules
 

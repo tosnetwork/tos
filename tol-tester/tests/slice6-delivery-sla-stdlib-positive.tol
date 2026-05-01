@@ -78,28 +78,32 @@ fun test_delivery_id_rejects_reserved_extra_flags(): int {
 
 @method_id(604)
 fun test_backpressure_advice_valid(): int {
-    val advice = slice6BackPressureAdvice(
-        slice6Input().deliveryId(),
-        SLICE6_PRESSURE_BUCKET_CONGESTED,
-        SLICE6_PRESSURE_SCOPE_SHARD_ROUTE,
-        3,
-        120,
-        slice6Route()
-    );
+    val advice = Slice6BackPressureAdviceV1 {
+        tag: SLICE6_BACK_PRESSURE_ADVICE_V1_TAG,
+        deliveryId: slice6Input().deliveryId(),
+        bucket: SLICE6_PRESSURE_BUCKET_CONGESTED,
+        scope: SLICE6_PRESSURE_SCOPE_SHARD_ROUTE,
+        minRetryAfterBlocks: 3,
+        adviceValidUntil: 120,
+        routeHash: slice6Route(),
+    };
+    advice.requireValid();
     return advice.bucket;
 }
 
 @method_id(605)
 fun test_backpressure_rejects_zero_retry_for_congested(): int {
     try {
-        slice6BackPressureAdvice(
-            slice6Input().deliveryId(),
-            SLICE6_PRESSURE_BUCKET_CONGESTED,
-            SLICE6_PRESSURE_SCOPE_SHARD_ROUTE,
-            0,
-            120,
-            slice6Route()
-        );
+        val advice = Slice6BackPressureAdviceV1 {
+            tag: SLICE6_BACK_PRESSURE_ADVICE_V1_TAG,
+            deliveryId: slice6Input().deliveryId(),
+            bucket: SLICE6_PRESSURE_BUCKET_CONGESTED,
+            scope: SLICE6_PRESSURE_SCOPE_SHARD_ROUTE,
+            minRetryAfterBlocks: 0,
+            adviceValidUntil: 120,
+            routeHash: slice6Route(),
+        };
+        advice.requireValid();
     } catch (code) {
         return code;
     }
@@ -118,7 +122,7 @@ fun test_pressure_bucket_thresholds(): int {
 @method_id(607)
 fun test_dead_letter_add_funded_record(): int {
     var sink = slice6NewDeadLetterSink();
-    val added = sink.addRecord(slice6Budget(), slice6Input().deliveryId(), 1, 77, 2, slice6Route(), null, true, 10);
+    val added = sink.addRecord(slice6Budget(), slice6Input().deliveryId(), 1, 77, 2, slice6Route(), null, 1, 10);
     assert(added) throw 6071;
     assert(sink.count == 1) throw 6072;
     assert(sink.peekFirst()!.failureCode() == 77) throw 6073;
@@ -129,8 +133,8 @@ fun test_dead_letter_add_funded_record(): int {
 fun test_dead_letter_full_drops_new_record_without_eviction(): int {
     var sink = slice6NewDeadLetterSink();
     val budget = slice6Budget(1);
-    assert(sink.addRecord(budget, slice6Input(0).deliveryId(), 1, 1, 2, slice6Route(), null, true, 10)) throw 6081;
-    assert(!sink.addRecord(budget, slice6Input(1).deliveryId(), 1, 2, 2, slice6Route(), null, true, 11)) throw 6082;
+    assert(sink.addRecord(budget, slice6Input(0).deliveryId(), 1, 1, 2, slice6Route(), null, 1, 10)) throw 6081;
+    assert(!sink.addRecord(budget, slice6Input(1).deliveryId(), 1, 2, 2, slice6Route(), null, 1, 11)) throw 6082;
     assert(sink.count == 1) throw 6083;
     assert(sink.peekFirst()!.failureCode() == 1) throw 6084;
     return sink.count * 10 + sink.droppedCount;
@@ -140,8 +144,8 @@ fun test_dead_letter_full_drops_new_record_without_eviction(): int {
 fun test_dead_letter_expired_cleanup_before_full_drop(): int {
     var sink = slice6NewDeadLetterSink();
     val budget = slice6Budget(1, 5);
-    assert(sink.addRecord(budget, slice6Input(0).deliveryId(), 1, 1, 2, slice6Route(), null, true, 10)) throw 6091;
-    assert(sink.addRecord(budget, slice6Input(1).deliveryId(), 1, 2, 2, slice6Route(), null, true, 15)) throw 6092;
+    assert(sink.addRecord(budget, slice6Input(0).deliveryId(), 1, 1, 2, slice6Route(), null, 1, 10)) throw 6091;
+    assert(sink.addRecord(budget, slice6Input(1).deliveryId(), 1, 2, 2, slice6Route(), null, 1, 15)) throw 6092;
     assert(sink.count == 1) throw 6093;
     assert(sink.peekFirst()!.nonce == 1) throw 6094;
     return sink.count * 10 + sink.peekFirst()!.nonce;
@@ -150,7 +154,7 @@ fun test_dead_letter_expired_cleanup_before_full_drop(): int {
 @method_id(610)
 fun test_dead_letter_no_free_persistent_record_without_escrow(): int {
     var sink = slice6NewDeadLetterSink();
-    val added = sink.addRecord(slice6Budget(), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), null, false, 10);
+    val added = sink.addRecord(slice6Budget(), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), null, 0, 10);
     assert(!added) throw 6101;
     assert(sink.count == 0) throw 6102;
     return sink.droppedCount;
@@ -161,7 +165,7 @@ fun test_dead_letter_oversized_record_rejected(): int {
     var sink = slice6NewDeadLetterSink();
     val diagnostic = beginCell().storeUint(0, 256).storeUint(0, 256).endCell();
     try {
-        sink.addRecord(slice6Budget(2, 5, 900, 0), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), diagnostic, true, 10);
+        sink.addRecord(slice6Budget(2, 5, 900, 0), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), diagnostic, 1, 10);
     } catch (code) {
         assert(sink.count == 0) throw 6111;
         return code;
@@ -173,8 +177,8 @@ fun test_dead_letter_oversized_record_rejected(): int {
 fun test_dead_letter_expire_first(): int {
     var sink = slice6NewDeadLetterSink();
     val budget = slice6Budget(2, 5);
-    sink.addRecord(budget, slice6Input(0).deliveryId(), 1, 1, 2, slice6Route(), null, true, 10);
-    sink.addRecord(budget, slice6Input(1).deliveryId(), 1, 2, 2, slice6Route(), null, true, 11);
+    sink.addRecord(budget, slice6Input(0).deliveryId(), 1, 1, 2, slice6Route(), null, 1, 10);
+    sink.addRecord(budget, slice6Input(1).deliveryId(), 1, 2, 2, slice6Route(), null, 1, 11);
     assert(!sink.expireFirst(14)) throw 6121;
     assert(sink.expireFirst(15)) throw 6122;
     assert(sink.count == 1) throw 6123;
@@ -202,7 +206,24 @@ fun test_backpressure_activation_gate_reserved(): int {
 fun test_dead_letter_retention_overflow_rejected(): int {
     var sink = slice6NewDeadLetterSink();
     try {
-        sink.addRecord(slice6Budget(2, 5), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), null, true, 0xfffffffe);
+        sink.addRecord(slice6Budget(2, 5), slice6Input().deliveryId(), 1, 1, 2, slice6Route(), null, 1, 0xfffffffe);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+@method_id(616)
+fun test_backpressure_constructor_is_runtime_gated(): int {
+    try {
+        slice6BackPressureAdvice(
+            slice6Input().deliveryId(),
+            SLICE6_PRESSURE_BUCKET_CONGESTED,
+            SLICE6_PRESSURE_SCOPE_SHARD_ROUTE,
+            3,
+            120,
+            slice6Route()
+        );
     } catch (code) {
         return code;
     }
@@ -225,4 +246,5 @@ fun test_dead_letter_retention_overflow_rejected(): int {
 @testcase | 613 | | 3847
 @testcase | 614 | | 5
 @testcase | 615 | | 3843
+@testcase | 616 | | 3848
  */

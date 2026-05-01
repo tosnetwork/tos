@@ -8,6 +8,7 @@ const SLICE6_DELIVERY_THROW_RECORD_TOO_LARGE = 0x0f04
 const SLICE6_DELIVERY_THROW_NOT_FOUND = 0x0f05
 const SLICE6_DELIVERY_THROW_CELL_DEPTH = 0x0f06
 const SLICE6_DELIVERY_THROW_INVALID_PRESSURE_CONFIG = 0x0f07
+const SLICE6_DELIVERY_THROW_BACK_PRESSURE_RESERVED = 0x0f08
 
 const SLICE6_DELIVERY_ID_INPUT_V1_TAG: uint16 = 0xd601
 const SLICE6_BACK_PRESSURE_ADVICE_V1_TAG: uint16 = 0xb601
@@ -29,6 +30,7 @@ const SLICE6_PRESSURE_SCOPE_SHARD_ROUTE: uint8 = 1
 const SLICE6_DELIVERY_SIZE_SCAN_CELLS = 1024
 const SLICE6_EXTRA_FLAGS_VALID_MASK: uint16 = 3
 const SLICE6_DELIVERY_UINT32_MAX: uint32 = 0xffffffff
+const SLICE6_DEAD_LETTER_MIN_RECORD_ESCROW: coins = 1
 
 // Compatibility names used by the Stage 1 docs/tests.
 const BACK_PRESSURE_ACTIVATION_GATE = false
@@ -98,6 +100,7 @@ struct Slice6DeadLetterBudget {
     maxRecordBits: uint16
     maxRecordRefs: uint8
     maxCellDepth: uint16
+    minRecordEscrowCoins: coins
 }
 
 struct Slice6DeadLetterRecordValue {
@@ -228,6 +231,7 @@ fun slice6BackPressureAdvice(
     adviceValidUntil: uint32,
     routeHash: uint256
 ): Slice6BackPressureAdviceV1 {
+    slice6RequireBackPressureActivation();
     val advice = Slice6BackPressureAdviceV1 {
         tag: SLICE6_BACK_PRESSURE_ADVICE_V1_TAG,
         deliveryId,
@@ -239,6 +243,12 @@ fun slice6BackPressureAdvice(
     };
     advice.requireValid();
     return advice;
+}
+
+fun slice6RequireBackPressureActivation(): void {
+    if (!BACK_PRESSURE_ACTIVATION_GATE) {
+        throw SLICE6_DELIVERY_THROW_BACK_PRESSURE_RESERVED;
+    }
 }
 
 fun Slice6BackPressureAdviceV1.requireValid(self): void {
@@ -293,6 +303,7 @@ fun slice6DeadLetterBudget(
     maxRecordBits: uint16,
     maxRecordRefs: uint8,
     maxCellDepth: uint16,
+    minRecordEscrowCoins: coins = SLICE6_DEAD_LETTER_MIN_RECORD_ESCROW,
     enabled: bool = true
 ): Slice6DeadLetterBudget {
     return Slice6DeadLetterBudget {
@@ -302,6 +313,7 @@ fun slice6DeadLetterBudget(
         maxRecordBits,
         maxRecordRefs,
         maxCellDepth,
+        minRecordEscrowCoins,
     };
 }
 
@@ -428,11 +440,11 @@ fun Slice6DeadLetterSink.addRecord(
     phase: uint8,
     routeHash: uint256,
     diagnostic: cell?,
-    escrowFunded: bool,
+    recordEscrowCoins: coins,
     nowMcSeqno: uint32
 ): bool {
     budget.requireEnabled();
-    if (!escrowFunded) {
+    if (recordEscrowCoins < budget.minRecordEscrowCoins) {
         self.droppedCount += 1;
         return false;
     }

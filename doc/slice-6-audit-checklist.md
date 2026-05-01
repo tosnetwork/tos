@@ -15,10 +15,12 @@
 
 - Every persistent delivery-failure record has a payer.
 - Dead-letter storage has finite record, bit, ref, and retention bounds.
+- Record insertion uses a concrete escrow coin amount and checks
+  `minRecordEscrowCoins`; a boolean "funded" flag is not sufficient.
 - Full-sink behavior rejects or counts drops; it never creates a free
   unbounded record.
-- Production BackPressure emission remains gated until the activation
-  review is complete.
+- Production BackPressure emission remains runtime-gated until the
+  activation review is complete.
 
 ## Monitors and Links
 
@@ -37,6 +39,8 @@
 - Partial recovery records include recovered child count and escalation
   target.
 - Restart storms open a circuit breaker instead of amplifying messages.
+- Supervisor-level restart helpers set final-failure escalation when a
+  child restart cannot be funded or exceeds the restart window.
 
 ## Capability
 

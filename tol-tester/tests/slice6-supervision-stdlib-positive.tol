@@ -140,6 +140,16 @@ fun test_restart_window_overflow_rejected(): int {
     return 0;
 }
 
+@method_id(693)
+fun test_supervisor_record_child_restart_auto_escalates(): int {
+    var supervisor = slice6SupervisorState(1);
+    supervisor.addChild(slice6ChildSpec(1, supChild1(), 0, SLICE6_RESTART_ONE_FOR_ONE, 100));
+    val ok = supervisor.recordChildRestart(1, supBudget(1, 10, 5, 100, 10), 101, 101, 10);
+    assert(!ok) throw 6931;
+    assert(supervisor.finalFailure) throw 6932;
+    return supervisor.getChild(1).state;
+}
+
 /**
 @testcase | 681 | | 2
 @testcase | 682 | | 4866
@@ -153,4 +163,5 @@ fun test_restart_window_overflow_rejected(): int {
 @testcase | 690 | | 1
 @testcase | 691 | | 1
 @testcase | 692 | | 4865
+@testcase | 693 | | 3
  */

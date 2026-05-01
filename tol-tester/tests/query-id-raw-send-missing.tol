@@ -1,0 +1,35 @@
+import "@stdlib/common"
+
+struct (0x50006000) RawReplyRequest {
+    queryId: uint64
+    amount: uint64
+}
+
+@method_id(101)
+fun dummy(): int {
+    return 0;
+}
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy RawReplyRequest.fromSlice(in.body);
+    val body = beginCell()
+        .storeUint(0x50006001, 32)
+        .storeUint(0, 64)
+        .storeUint(msg.amount, 64)
+        .endCell();
+    sendRawMessage(
+        beginCell()
+            .storeUint(0x18, 6)
+            .storeAddress(in.senderAddress)
+            .storeCoins(0)
+            .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+            .storeSlice(body.beginParse())
+            .endCell(),
+        SEND_MODE_REGULAR
+    );
+}
+
+/**
+@testcase | 101 | | 0
+@stderr reply does not propagate inbound `queryId`
+ */

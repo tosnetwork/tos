@@ -184,10 +184,11 @@ fun sendExcesses(responseAddress: any_address, queryId: uint64): void {
 }
 ```
 
-If the compiler cannot prove that a raw send propagates the inbound
-`query_id`, either refactor the reply body into a typed struct or call
-`disclaim_query_id()` in the inbound branch and document why the
-legacy send is still wire-compatible.
+The compiler treats `sendRawMessage(...)` as a possible reply emit but
+cannot prove the body-level `query_id` propagation through arbitrary raw
+builders. Either refactor the reply body into a typed struct or call
+`disclaim_query_id()` in the inbound branch and document why the legacy
+send is still wire-compatible.
 
 For high-value state-mutating admin operations such as Jetton minting,
 `query_id` remains a correlation field, not an automatic idempotency
@@ -261,6 +262,9 @@ TEP-style migration:
 - signed external messages are outside the Slice 1 internal-message
   envelope and must remain unchanged;
 - signed internal wallet requests retain the wallet-vN body shape;
+- signed internal wallet requests must commit the advanced seqno before
+  action processing, so an action-phase failure cannot leave the same
+  signed internal body replayable until `valid_until`;
 - C5 action-list validation is a wallet behavior, not an Envelope
   behavior, so keep low-level parsing if that is what FunC did;
 - use `@on_bounced_policy("manual")` when FunC's `recv_internal`
