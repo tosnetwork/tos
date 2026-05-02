@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
       - name: Setup MSYS2 and Install Packages
         uses: msys2/setup-msys2@v2
         with:
@@ -38,7 +38,7 @@ jobs:
           ./build-ucrt64.sh -a
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@master
+        uses: actions/upload-artifact@v4
         with:
           name: tos-msys2-ucrt64
           path: artifacts

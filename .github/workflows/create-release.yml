@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Download Linux arm64 artifacts
         uses: dawidd6/action-download-artifact@v6
@@ -136,7 +136,7 @@ jobs:
           r="${r//'%'/'%25'}"
           r="${r//$'\n'/'%0A'}"
           r="${r//$'\r'/'%0D'}"
-          echo "::set-output name=CHANGELOG_BODY::$r"
+          echo "CHANGELOG_BODY=$r" >> $GITHUB_OUTPUT
 
       - name: Get next tag
         id: tag
@@ -158,16 +158,13 @@ jobs:
 
       - name: Create release
         id: create_release
-        uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.tag.outputs.TAG }}
-          release_name: TOS ${{ steps.tag.outputs.TAG }}
-          body: |
-            ${{ steps.read_release.outputs.CHANGELOG_BODY }}
-          draft: false
-          prerelease: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ steps.tag.outputs.TAG }} \
+            --title "TOS ${{ steps.tag.outputs.TAG }}" \
+            --notes "${{ steps.read_release.outputs.CHANGELOG_BODY }}" \
+            --verify-tag
 
       # upload
 

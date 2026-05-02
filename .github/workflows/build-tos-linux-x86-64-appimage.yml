@@ -19,7 +19,7 @@ jobs:
 
     steps:
     - name: Check out repository
-      uses: actions/checkout@v6
+      uses: actions/checkout@v4
     - name: Date Stamp
       shell: bash
       id: date-stamp
@@ -91,7 +91,7 @@ jobs:
         cp ./artifacts/libemulator.so appimages/artifacts/
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@master
+      uses: actions/upload-artifact@v4
       with:
         name: tos-x86_64-linux
         path: appimages/artifacts
