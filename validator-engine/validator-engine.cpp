@@ -2330,9 +2330,8 @@ void ValidatorEngine::start_validator() {
                                                           !state_serializer_disabled_flag_);
   load_collator_options();
 
-  validator_manager_ =
-      tos::validator::ValidatorManagerFactory::create(validator_options_, db_root_, keyring_.get(), adnl_.get(),
-                                                      rldp_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
+  validator_manager_ = tos::validator::ValidatorManagerFactory::create(
+      validator_options_, db_root_, keyring_.get(), adnl_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
 
   evm_workchain::init_evm_workchain(db_root_);
 
