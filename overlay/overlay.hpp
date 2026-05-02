@@ -355,6 +355,8 @@ class OverlayImpl : public Overlay {
     del_peer(peer_id);
   }
 
+  td::actor::Task<> ban_peer(adnl::AdnlNodeIdShort peer_id, td::Timestamp unban_at);
+
   // Check signature signed by `key`. If invalid, signatures from `message_from` will be rejected for 5 seconds
   td::Status check_signature_from_peer(PublicKey key, td::Slice message, td::Slice signature,
                                        adnl::AdnlNodeIdShort message_from = adnl::AdnlNodeIdShort::zero());
@@ -522,6 +524,7 @@ class OverlayImpl : public Overlay {
   BroadcastsLimiter unauthorized_broadcasts_limiter_;
 
   std::set<adnl::AdnlNodeIdShort> reject_signatures_from_;
+  std::set<adnl::AdnlNodeIdShort> banned_peers_;
   td::RateLimiterWindow receive_peers_rate_limiter_;
   td::RateLimiterWindow process_pending_peers_rate_limiter_{60.0, 60};
   std::set<adnl::AdnlNodeIdShort> processing_pending_peers_;
