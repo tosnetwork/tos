@@ -900,7 +900,7 @@ impl WireKind {
                 WireKind::Bare(names.iter().map(String::as_str).collect())
             }
             Some(_) => WireKind::Boxed(names.iter().map(String::as_str).collect()),
-            None => unimplemented!(),
+            None => panic!("WireKind::from_names_and_hint called with an empty names slice"),
         }
     }
 
@@ -911,19 +911,19 @@ impl WireKind {
     fn become_container_for(&mut self, include_determiner: bool, contained: Self) {
         let ty_loc = match self {
             WireKind::Bare(ref mut t) | WireKind::Boxed(ref mut t) => t,
-            _ => unimplemented!(),
+            _ => panic!("become_container_for: self must be Bare or Boxed, got {:?}", self),
         };
         let contained = if include_determiner {
             match contained {
                 WireKind::Bare(ty) | WireKind::Boxed(ty) => ty.tokens,
                 WireKind::TypeParameter(t) => quote!(#t), //quote!(crate::tos::Boxed, #t),
-                _ => unimplemented!(),
+                _ => panic!("become_container_for: contained must be Bare, Boxed, or TypeParameter when include_determiner=true"),
             }
         } else {
             match contained {
                 WireKind::Bare(t) | WireKind::Boxed(t) => t.tokens,
                 WireKind::TypeParameter(t) => quote!(#t),
-                _ => unimplemented!(),
+                _ => panic!("become_container_for: contained must be Bare, Boxed, or TypeParameter when include_determiner=false"),
             }
         };
         *ty_loc = ty_loc.transformed(|ty| quote!(#ty<#contained>));
@@ -1057,7 +1057,16 @@ impl TypeIR {
     }
 
     fn repeated() -> Self {
-        unimplemented!()
+        // TODO: Type::Repeated (TL repetition groups) is not used by any current TL schema.
+        // A proper implementation would generate a Vec-typed field for the repeated fields.
+        // For now, produce a bare "vector" type as a placeholder.
+        TypeIR {
+            wire_kind: WireKind::Bare(["vector"].iter().collect()),
+            needs_box: false,
+            needs_determiner: true,
+            with_option: false,
+            contained: None,
+        }
     }
 
     fn with_container(self, mut container: TypeIR) -> Self {

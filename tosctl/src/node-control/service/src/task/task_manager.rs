@@ -193,25 +193,25 @@ mod tests {
             self.app_config.clone()
         }
         fn master_wallet(&self) -> Arc<dyn Wallet> {
-            unimplemented!()
+            panic!("NoopRuntimeConfig::master_wallet() should not be called in tests")
         }
         fn pools(&self) -> Arc<HashMap<String, Arc<dyn NominatorWrapper>>> {
-            unimplemented!()
+            Arc::new(HashMap::new())
         }
         fn wallets(&self) -> Arc<HashMap<String, Arc<dyn Wallet>>> {
-            unimplemented!()
+            Arc::new(HashMap::new())
         }
         fn rpc_client(&self) -> Arc<ClientJsonRpc> {
-            unimplemented!()
+            panic!("NoopRuntimeConfig::rpc_client() should not be called in tests")
         }
         fn chain_provider(&self) -> Arc<dyn ChainProvider> {
-            unimplemented!()
+            panic!("NoopRuntimeConfig::chain_provider() should not be called in tests")
         }
         fn vault(&self) -> Option<Arc<SecretVault>> {
-            unimplemented!()
+            None
         }
         fn update_config(&self, _f: Box<dyn FnOnce(&mut AppConfig) + Send>) -> anyhow::Result<()> {
-            unimplemented!()
+            anyhow::bail!("NoopRuntimeConfig::update_config() is not supported")
         }
         fn save_to_file(&self) {}
     }

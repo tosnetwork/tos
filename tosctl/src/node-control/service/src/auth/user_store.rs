@@ -339,14 +339,14 @@ mod tests {
             _: u64,
             _: chain_block::Cell,
         ) -> anyhow::Result<chain_block::Cell> {
-            unimplemented!()
+            anyhow::bail!("NoopWallet does not support message()")
         }
         async fn deploy_message(
             &self,
             _: u64,
             _: chain_block::Cell,
         ) -> anyhow::Result<chain_block::Cell> {
-            unimplemented!()
+            anyhow::bail!("NoopWallet does not support deploy_message()")
         }
         async fn build_message(
             &self,
@@ -358,7 +358,7 @@ mod tests {
             _: Option<chain_block::StateInit>,
             _: Option<chain_block::StateInit>,
         ) -> anyhow::Result<chain_block::Cell> {
-            unimplemented!()
+            anyhow::bail!("NoopWallet does not support build_message()")
         }
     }
 

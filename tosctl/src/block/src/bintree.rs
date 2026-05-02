@@ -380,8 +380,60 @@ impl<X: Default + Serializable + Deserializable, Y: Augmentable> BinTreeAug<X, Y
         })
     }
 
-    pub fn set_extra(&mut self, _key: SliceData, _aug: &Y) -> bool {
-        unimplemented!()
+    /// Updates the augmentation value at the leaf identified by `key`.
+    /// Returns `true` if the leaf was found and updated, `false` otherwise.
+    pub fn set_extra(&mut self, key: SliceData, aug: &Y) -> bool {
+        let original = self.data.clone();
+        match Self::internal_set_extra(&original, key, aug) {
+            Ok(Some(new_data)) => {
+                match SliceData::load_builder(new_data) {
+                    Ok(d) => {
+                        self.data = d;
+                        self.extra = aug.clone();
+                        true
+                    }
+                    Err(_) => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn internal_set_extra(
+        original: &SliceData,
+        mut key: SliceData,
+        aug: &Y,
+    ) -> Result<Option<BuilderData>> {
+        let mut slice = original.clone();
+        if slice.get_next_bit()? {
+            // bta_fork$1: left:^(BinTreeAug X Y) right:^(BinTreeAug X Y) extra:Y
+            if slice.remaining_references() < 2 {
+                return Ok(None);
+            }
+            if let Some(x) = key.get_next_bit_opt() {
+                let child_cell = original.reference(x)?;
+                let child_slice = SliceData::load_cell(child_cell)?;
+                if let Some(updated_child) = Self::internal_set_extra(&child_slice, key, aug)? {
+                    let mut cell = original.as_builder()?;
+                    cell.replace_reference_cell(x, updated_child.into_cell()?);
+                    // Recalculate fork augmentation
+                    let mut fork_aug = Y::construct_from(&mut slice)?;
+                    fork_aug.calc(aug)?;
+                    fork_aug.write_to(&mut cell)?;
+                    return Ok(Some(cell));
+                }
+            }
+            Ok(None)
+        } else if key.is_empty_bitstring() {
+            // bta_leaf$0: leaf:X extra:Y — rebuild with new aug
+            let value = X::construct_from(&mut slice)?;
+            let mut builder = false.write_to_new_cell()?;
+            value.write_to(&mut builder)?;
+            aug.write_to(&mut builder)?;
+            Ok(Some(builder))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Returns item augment

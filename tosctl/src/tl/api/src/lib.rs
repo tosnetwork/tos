@@ -321,19 +321,23 @@ impl Clone for TLObject {
 
 impl Default for TLObject {
     fn default() -> Self {
-        unimplemented!()
+        crate::tos::Ok::default().into_tl_object()
     }
 }
 
 impl PartialEq for TLObject {
-    fn eq(&self, _other: &Self) -> bool {
-        unimplemented!()
+    fn eq(&self, other: &Self) -> bool {
+        // TLObject equality is approximated by comparing the TL constructor IDs.
+        // Two TLObjects with the same constructor may differ in field values, but
+        // a proper deep comparison would require downcasting to the concrete type.
+        self.0.bare_object().constructor() == other.0.bare_object().constructor()
     }
 }
 
 impl Hash for TLObject {
-    fn hash<H: Hasher>(&self, _state: &mut H) {
-        unimplemented!()
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Hash by constructor ID, consistent with the PartialEq implementation above.
+        self.0.bare_object().constructor().hash(state);
     }
 }
 

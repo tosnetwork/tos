@@ -125,7 +125,11 @@ impl ShardHashes {
     where
         F: FnMut(ShardIdent, ShardDescr, Option<ShardDescr>) -> Result<Option<ShardDescr>>,
     {
-        unimplemented!()
+        // TODO: Mutable shard-pair iteration requires in-place BinTreeAug traversal with
+        // ShardDescr writeback through InRefValue wrappers. No callers exist yet.
+        fail!(BlockError::InvalidOperation(
+            "iterate_shards_with_siblings_mut is not yet implemented".to_string()
+        ))
     }
     pub fn find_shard(&self, shard: &ShardIdent) -> Result<Option<McShardRecord>> {
         if let Some(InRefValue(bintree)) = self.get(&shard.workchain_id())? {

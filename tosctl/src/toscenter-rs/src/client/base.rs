@@ -93,7 +93,12 @@ impl BaseApiClient {
                     builder
                 }
             }
-            _ => unimplemented!(),
+            _ => {
+                return Err(ToscenterError::HttpClientError {
+                    code: 405,
+                    message: format!("HTTP method {} is not supported", method),
+                })
+            }
         };
 
         debug!("Request after processing: {:?}", request_builder);

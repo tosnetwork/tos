@@ -168,11 +168,11 @@ impl RuntimeConfigStore {
                 _value: u64,
                 _payload: Cell,
             ) -> anyhow::Result<Cell> {
-                unimplemented!()
+                anyhow::bail!("NoopWallet does not support message()")
             }
 
             async fn deploy_message(&self, _value: u64, _payload: Cell) -> anyhow::Result<Cell> {
-                unimplemented!()
+                anyhow::bail!("NoopWallet does not support deploy_message()")
             }
 
             async fn build_message(
@@ -185,7 +185,7 @@ impl RuntimeConfigStore {
                 _state_init_external: Option<StateInit>,
                 _state_init_internal: Option<StateInit>,
             ) -> anyhow::Result<Cell> {
-                unimplemented!()
+                anyhow::bail!("NoopWallet does not support build_message()")
             }
         }
         let master_wallet = Arc::new(NoopWallet);
