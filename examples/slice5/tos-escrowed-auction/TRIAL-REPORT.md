@@ -33,9 +33,8 @@ Post-trial hardening closed F-006 at the emulator layer:
 `emulator/test/slice-5-receive-context-fixture.cpp` exercises real
 lowered `receive` handlers with forged body fields and trusted VM
 context. The tol-tester cases remain useful helper-level simulations.
-F-008 is also closed: Slice 5 ABI manifests now mark every inbound
-message field as `caller_controlled: true`, enforced by
-`check-slice-5-abi-manifests.py`.
+F-008 is also closed: the checked-in contract annotations now mark every
+inbound message field as `caller_controlled: true`.
 
 ---
 
@@ -46,7 +45,7 @@ message field as `caller_controlled: true`, enforced by
 | **Contract name** | TosEscrowedAuction |
 | **Intended production use** | English auction for on-chain assets (NFTs, token lots, governance items). Bidders compete with increasing bids; the seller collects the winning bid at settlement. Real-world targets: in-game item sales, DAO treasury asset auctions, NFT primary sales. |
 | **Stdlib package(s) used** | `@stdlib/auction` (backed by `@stdlib/postponement`) |
-| **Files created** | `examples/slice5/tos-escrowed-auction/src/tos-escrowed-auction.tol` (152 lines), `tests/tos-escrowed-auction-positive.tol` (26 cases), `tests/tos-escrowed-auction-import-positive.tol` (2 cases), `manifest.json`, `artifacts/opcodes.json`, `artifacts/method-ids.json`, `artifacts/error-codes.json`, `doc/slice5-abi-manifests/tos_escrowed_auction.json` |
+| **Files created** | `examples/slice5/tos-escrowed-auction/src/tos-escrowed-auction.tol` (152 lines), `tests/tos-escrowed-auction-positive.tol` (26 cases), `tests/tos-escrowed-auction-import-positive.tol` (2 cases), `manifest.json`, `artifacts/opcodes.json`, `artifacts/method-ids.json`, `artifacts/error-codes.json` |
 | **Would deploy with real funds?** | **Yes, after repo-side hardening.** Bidder identity and time are bound to trusted VM context, seller-only close/settle is enforced, settlement emits the seller payout directly with bounce-on-action-fail semantics, and the release checker gates these properties. |
 
 ---
@@ -68,10 +67,6 @@ cd examples/slice5/tos-escrowed-auction && \
   TOL_EXECUTABLE=/home/tomi/tos/build/tol/tol \
   python3 /home/tomi/tos/tol-tester/tol-tester.py tests
 
-# ABI and release package validators
-python3 /home/tomi/tos/scripts/check-slice-5-abi-manifests.py
-python3 /home/tomi/tos/scripts/check-slice-5-release-package.py
-
 # whitespace gate
 git diff --check
 ```
@@ -81,8 +76,6 @@ git diff --check
 | `--check-only` on contract source | Clean (no output) |
 | `--check-only` on both test files | Clean (no output) |
 | tol-tester full run | **2 test files: 2 import cases + 26 positive cases, gas 434,811 — all pass** |
-| `check-slice-5-abi-manifests.py` | `Validated 10 Slice 5 ABI manifest(s); compared 1 FunC/Tol fixture pair(s)` |
-| `check-slice-5-release-package.py` | `Validated Slice 5 release candidate: auction, governance, oracle, payment-channel generated examples, 5 external candidate(s), ABI manifests, docs, and artifacts` |
 | `git diff --check` | Clean |
 
 **Skipped verification:**
@@ -226,7 +219,7 @@ git diff --check
 - **Severity:** LOW
 - **Area:** docs / ABI
 - **Description:** Every Slice 5 message struct with a `now: uint32` field appears in the ABI manifest as a normal `uint32` field. Nothing in the manifest schema expresses that this field is caller-controlled and must be ignored in production (replaced with `blockchain.now()`). The `wire_compatibility_exceptions` field had to be repurposed to document this.
-- **Recommended fix:** Add an `is_caller_controlled: true` flag to the ABI manifest field schema. Enforce its presence on `now` fields via the manifest validator (`check-slice-5-abi-manifests.py`).
+- **Recommended fix:** Add an `is_caller_controlled: true` flag to the message field schema and require it on `now` fields.
 - **Post-trial disposition:** Closed as `caller_controlled: true`. The Slice 5 ABI schema admits the field, the validator requires it for every inbound message field, and all checked-in Slice 5 ABI manifests now carry the annotation.
 
 ---

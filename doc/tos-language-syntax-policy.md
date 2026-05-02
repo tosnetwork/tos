@@ -3,9 +3,9 @@
 ## 0. Status, scope, and references
 
 **Status.** Draft v3 (2026-04-30, post-v2-security-review).
-This document is the policy input for Slice 2 of
-[`doc/roadmap.md`](roadmap.md). It must be approved by the §11
-authorized owner before Slice 2 implementation begins, under the
+This document records the policy input for the Tol contract syntax
+now specified by [`doc/tol.tex`](tol.tex). It must be approved by the §11
+authorized owner before implementation begins, under the
 single-signer governance model of
 [`doc/tos-message-policy.md`](tos-message-policy.md) §12.1.
 
@@ -39,9 +39,7 @@ deferred. The full out-of-scope list is in §8.
   compiles ONTO this substrate.
 - [`doc/actor.md`](actor.md) §5.5 — design rationale for
   language-level state machines and `become`.
-- [`doc/tol.md`](tol.md) Q2 — execution path's high-level goals.
-- [`doc/roadmap.md`](roadmap.md) Slice 2 (week 27–52)
-  — sequencing context.
+- [`doc/tol.tex`](tol.tex) — current Tol language specification.
 - [`crypto/smartcont/jetton-minter.tol`](../crypto/smartcont/jetton-minter.tol),
   [`crypto/smartcont/jetton-wallet.tol`](../crypto/smartcont/jetton-wallet.tol),
   [`crypto/smartcont/wallet-v5.tol`](../crypto/smartcont/wallet-v5.tol)
@@ -1075,18 +1073,19 @@ directly.
 plan expected Slice 3 to re-migrate the three Slice 1 reference
 contracts (`jetton-minter.tol`, `jetton-wallet.tol`, `wallet-v5.tol`)
 to Slice 2 syntax. Slice 2 Stage 8 actually completed that syntax
-re-migration on `actor-layer`; see `doc/roadmap.md` §6 Slice 2.
+re-migration on `actor-layer`; the current syntax surface is specified
+in `doc/tol.tex`.
 
 Slice 3 therefore no longer owns "migration to Slice 2 syntax". Slice
 3 owns the next dogfood step: rewriting those already-Slice-2 reference
-contracts to use the Slice 3 domain stdlib where doing so preserves
-wire bytes and stays within the `doc/tos-slice-3-policy.md` budget.
+contracts to use the domain stdlib where doing so preserves wire bytes
+and stays within the compatibility budget described here and in
+`doc/tol.tex`.
 
 The Slice 3 stdlib migration MUST verify:
 - All Slice 1 conformance fixtures
   (`emulator/test/slice-1-*-fixtures.cpp`) keep passing unchanged.
-- The FunC↔Tol gas parity gate
-  (`scripts/check-slice-1-gas.py` schema v2) keeps passing with each
+- The FunC↔Tol gas parity fixture set keeps passing with each
   stdlib-migrated contract.
 - Internal-message wire bodies remain bit-identical where covered by
   `tos-message-policy.md` §8.1.
@@ -1268,7 +1267,7 @@ clearly the policy describes them.
   `@unknown_throw(0xffff)` minter-style case, and a
   `receive_external` skeleton with external-domain unknown
   handling.
-- Updated `tol.md` Q2 reflecting the locked surface.
+- Updated `doc/tol.tex` reflecting the locked surface.
 
 ### 10.2 Not in Slice 2
 
@@ -1490,8 +1489,8 @@ above.
 
 ### Draft v1 (2026-04-30)
 
-Initial draft. Authored as Stage 0 input for `doc/roadmap.md`
-Slice 2 (week 27–52). The §3 decisions on dispatch form,
+Initial draft. Authored as Stage 0 input for the contract-syntax
+work. The §3 decisions on dispatch form,
 storage shape, state-machine layout, transition discipline,
 init handling, and opcode-binding are locked from
 first-principles analysis: (a) eliminate one of the five

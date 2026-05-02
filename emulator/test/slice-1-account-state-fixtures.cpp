@@ -31,9 +31,8 @@
 //     - §6.4 "Scheduled and in-flight messages": the future scheduled-
 //       message feature is pre-locked to the same rules.
 //
-//   * doc/roadmap.md Stage 1 exit criterion -- conformance fixtures
-//     for normal delivery, frozen recipient (no StateInit), and frozen
-//     recipient (mismatched StateInit) cases.
+//   * Stage 1 conformance fixtures for normal delivery, frozen recipient
+//     (no StateInit), and frozen recipient (mismatched StateInit) cases.
 //
 //   * Enforcement points cited in the §6.2 conditional-bounce predicate:
 //     - crypto/block/transaction.cpp:921    (bounce_enabled = info.bounce)

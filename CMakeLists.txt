@@ -813,7 +813,7 @@ target_link_libraries(test-http PRIVATE toshttp)
 # contracts (.fc and .tol) into .boc files so the runtime fixture in
 # emulator/test/slice-1-stage-4-gas-parity-fixture.cpp can read them via
 # td::read_file rather than shelling out to func/tol/fift at test time.
-# Closes the §4 closure spec in doc/slice-1-gas-gap.md.
+# Supports the retained gas-parity fixture set.
 set(SLICE1_GAS_PARITY_DIR ${CMAKE_CURRENT_BINARY_DIR}/slice1-gas-parity)
 file(MAKE_DIRECTORY ${SLICE1_GAS_PARITY_DIR})
 
@@ -915,18 +915,17 @@ add_custom_target(tos_report_bond_oracle_contract
 add_executable(test-emulator
         test/test-td-main.cpp
         emulator/test/emulator-tests.cpp
-        # Slice 1 conformance fixtures (doc/roadmap.md Stage 1 exit criterion +
-        # doc/tos-message-policy.md v6 §3.4 / §6.2 / §10.1).
+        # Slice 1 conformance fixtures (doc/tos-message-policy.md v6
+        # §3.4 / §6.2 / §10.1).
         emulator/test/slice-1-account-state-fixtures.cpp
         emulator/test/slice-1-failure-phase-fixtures.cpp
         emulator/test/slice-1-extra-flags-fixtures.cpp
         emulator/test/slice-1-boc-envelope-fuzz-fixture.cpp
         emulator/test/slice-1-stage-2-roundtrip-fixture.cpp
-        # Slice 1 Stage 4 gas-parity harness (closes doc/slice-1-gas-gap.md
-        # §4; reads the .boc files materialized by the
-        # slice1_gas_parity_contracts target above).
+        # Slice 1 Stage 4 gas-parity harness; reads the .boc files
+        # materialized by the slice1_gas_parity_contracts target above.
         emulator/test/slice-1-stage-4-gas-parity-fixture.cpp
-        # Slice 3 Stage 1 deterministic replay harness (doc/tos-slice-3-policy.md).
+        # Slice 3 Stage 1 deterministic replay harness.
         emulator/test/slice-3-replay-fixture.cpp
         # Slice 6 Stage 1 delivery-SLA canonical cell-shape fixtures.
         emulator/test/slice-6-stage1-delivery-fixtures.cpp

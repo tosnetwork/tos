@@ -18,9 +18,9 @@
 // =============================================================================
 // Slice 1 Stage 2 conformance fixture — end-to-end Envelope round-trip.
 //
-// Discharges the Stage 2 exit criterion in `doc/roadmap.md`:
-//   "A Tol contract written against the new envelope compiles, deploys to a
-//    local test net, and round-trips the conformance fixtures."
+// Discharges the Stage 2 envelope round-trip criterion: a Tol contract written
+// against the envelope substrate compiles, deploys to a local test net, and
+// round-trips the conformance fixtures.
 //
 // References:
 //   - doc/tos-message-policy.md v6 (Approved 2026-04-29) §3.1, §3.2, §4.4.

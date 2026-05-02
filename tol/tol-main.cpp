@@ -458,7 +458,6 @@ static std::string scaffold_manifest_template(const std::string& pattern, const 
   "pattern": "{{PATTERN}}",
   "contract": "{{NAME}}",
   "stdlib_import": "@stdlib/{{PATTERN}}",
-  "abi_manifest": "{{ABI_MANIFEST}}",
   "source": "src/main.tol",
   "tests": [
     "tests/{{PATTERN}}-positive.tol"
@@ -471,44 +470,9 @@ static std::string scaffold_manifest_template(const std::string& pattern, const 
     "method_ids": "artifacts/method-ids.json",
     "error_codes": "artifacts/error-codes.json",
     "replay_trace": "artifacts/replay-trace.json"
-  }{{BEHAVIOUR_CONFORMANCE}}
+  }
 }
 )JSON";
-}
-
-static std::string scaffold_behaviour_conformance(const std::string& pattern) {
-  std::string behaviour = "request_server";
-  std::string mode = "raw";
-  if (pattern == "jetton") {
-    behaviour = "jetton_wallet";
-    mode = "generated";
-  } else if (pattern == "nft") {
-    behaviour = "nft_item";
-    mode = "generated";
-  } else if (pattern == "multisig") {
-    behaviour = "multisig";
-    mode = "generated";
-  } else if (pattern == "auction") {
-    behaviour = "slice5_auction";
-    mode = "generated";
-  } else if (pattern == "governance") {
-    behaviour = "slice5_governance";
-    mode = "generated";
-  } else if (pattern == "oracle") {
-    behaviour = "slice5_oracle";
-    mode = "generated";
-  } else if (pattern == "payment-channel") {
-    behaviour = "slice5_payment_channel";
-    mode = "generated";
-  }
-  return std::string(",\n") +
-         "  \"behaviour_conformance\": [\n" +
-         "    {\n" +
-         "      \"behaviour\": \"" + behaviour + "\",\n" +
-         "      \"manifest\": \"doc/slice4-behaviours/" + behaviour + ".json\",\n" +
-         "      \"mode\": \"" + mode + "\"\n" +
-         "    }\n" +
-         "  ]";
 }
 
 static std::string scaffold_replay_template(const std::string& pattern, const std::string& name) {
@@ -566,14 +530,6 @@ static int scaffold_pattern_id(const std::string& pattern) {
   if (pattern == "oracle") return 8;
   if (pattern == "payment-channel") return 9;
   return 5;
-}
-
-static std::string scaffold_abi_manifest_path(const std::string& pattern) {
-  if (pattern == "auction") return "doc/slice5-abi-manifests/auction.json";
-  if (pattern == "governance") return "doc/slice5-abi-manifests/governance.json";
-  if (pattern == "oracle") return "doc/slice5-abi-manifests/oracle.json";
-  if (pattern == "payment-channel") return "doc/slice5-abi-manifests/payment_channel.json";
-  return "doc/slice5-abi-manifests/interop_smoke.json";
 }
 
 static std::string scaffold_opcode_map(const std::string& pattern) {
@@ -686,9 +642,7 @@ static bool materialize_scaffold(const std::string& output_dir, const std::strin
     content = replace_all(std::move(content), "{{PATTERN}}", pattern);
     content = replace_all(std::move(content), "{{NAME}}", name);
     content = replace_all(std::move(content), "{{PATTERN_ID}}", std::to_string(scaffold_pattern_id(pattern)));
-    content = replace_all(std::move(content), "{{BEHAVIOUR_CONFORMANCE}}", scaffold_behaviour_conformance(pattern));
     content = replace_all(std::move(content), "{{PROJECT_SCHEMA}}", is_slice5_new_pattern(pattern) ? "slice-5-generated-project" : "slice-3-generated-project");
-    content = replace_all(std::move(content), "{{ABI_MANIFEST}}", scaffold_abi_manifest_path(pattern));
     return content;
   };
 

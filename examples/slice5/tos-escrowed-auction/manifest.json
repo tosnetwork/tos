@@ -4,7 +4,6 @@
   "pattern": "auction",
   "contract": "TosEscrowedAuction",
   "stdlib_import": "@stdlib/auction",
-  "abi_manifest": "doc/slice5-abi-manifests/tos_escrowed_auction.json",
   "source": "src/tos-escrowed-auction.tol",
   "tests": [
     "tests/tos-escrowed-auction-import-positive.tol",
@@ -15,12 +14,5 @@
     "opcodes": "artifacts/opcodes.json",
     "method_ids": "artifacts/method-ids.json",
     "error_codes": "artifacts/error-codes.json"
-  },
-  "behaviour_conformance": [
-    {
-      "behaviour": "slice5_auction",
-      "manifest": "doc/slice4-behaviours/slice5_auction.json",
-      "mode": "generated"
-    }
-  ]
+  }
 }

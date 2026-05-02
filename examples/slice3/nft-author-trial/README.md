@@ -25,5 +25,4 @@ tol-tester tests nft-positive
 - `deploy/deploy.json` - deployment skeleton
 - `artifacts/*.json` - opcode, method-id, error-code, and replay observability maps
 
-See `doc/slice-3-external-author-trial.md` for the under-one-hour
-checklist and current human-trial status.
+This project is retained as the under-one-hour author-trial scaffold.

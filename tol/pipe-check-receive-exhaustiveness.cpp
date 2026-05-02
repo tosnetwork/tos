@@ -62,7 +62,7 @@ static void warn_implicit_unknown_policy(V<ast_contract_declaration> contract) {
   }
   err("contract `{}` has no visible unknown-opcode policy; opcodes outside the declared receive map use the implicit Protocol throw. "
       "Declare `@unknown_throw(...)`, `@unknown_silent_drop`, or `receive(msg: UnknownOpcode)` to make Slice 3 receive exhaustiveness explicit. "
-      "See doc/tos-slice-3-policy.md Stage 7 / doc/tos-language-syntax-policy.md §5.",
+      "See doc/tos-language-syntax-policy.md §5 / doc/tol.tex.",
       contract->get_identifier()->name)
     .warning(contract->get_identifier());
 }
@@ -117,7 +117,7 @@ static void check_state_cross_product(V<ast_contract_declaration> contract) {
       err("receive exhaustiveness warning: contract `{}` does not declare `receive(msg: {}) on {}`; "
           "the known opcode is accepted by the dispatch table but reaches the synthesized state guard and throws 1024 in that state. "
           "Add an explicit receiver, `@implicit_protocol_for({}, {});`, or `@implicit_protocol_default;` to document the implicit Protocol path. "
-          "See doc/tos-slice-3-policy.md Stage 7 / doc/tos-language-syntax-policy.md §5.",
+          "See doc/tos-language-syntax-policy.md §5 / doc/tol.tex.",
           contract->get_identifier()->name, coverage.message_name, state_name, coverage.message_name, state_name)
         .warning(coverage.first_receive);
     }

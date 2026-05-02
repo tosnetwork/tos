@@ -20,7 +20,7 @@ References:
 - `doc/actor.md` section 6.5, behaviour patterns for Tol contracts.
 - `doc/tos-message-policy.md` section 5.3, `ErrorClass`.
 - `doc/tos-language-syntax-policy.md`, Slice 2 contract/state syntax.
-- `doc/tos-slice-3-policy.md`, Slice 3 stdlib and manifest substrate.
+- `doc/tol.tex`, current Tol language and stdlib surface.
 
 ## 1. First principles
 

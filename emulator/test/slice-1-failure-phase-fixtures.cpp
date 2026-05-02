@@ -14,9 +14,8 @@
 //       `new_bounce_body`, semantics of `bounced_by_phase ∈ {0, 1, 2}`,
 //       and the `exit_code` partition for skipped compute (`-1, -2, -3,
 //       -4`).
-//   - doc/roadmap.md Stage 1 exit criterion — "conformance fixtures
-//       covering the §6.2 inbound-handling table" (the failure-phase rows
-//       are this file's scope).
+//   - The Stage 1 conformance fixture set covers the §6.2 inbound-handling
+//       table; the failure-phase rows are this file's scope.
 //   - crypto/block/transaction.cpp `prepare_bounce_phase()` lines
 //       3553-3581 — emission site of the v12 `new_bounce_body#fffffffe`
 //       header, the three `bounced_by_phase` branches, and the

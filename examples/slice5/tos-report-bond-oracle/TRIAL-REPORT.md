@@ -28,11 +28,11 @@ closed by the repo-side hardening passes.
 follow-up hardening commit. Prior production candidates now use
 `blockchain.now()` and sender-derived identity, payment-channel payout emission is
 explicit, `TosReportBondOracle` is integrated into `test-emulator`, and
-`scripts/check-slice-5-release-package.py` rejects production candidates that
-trust `msg.now`, `msg.reporterKey`, or raw regular-mode value
-dispatch. The same release checker now also compiles and validates the standalone
-Slice 5 reference examples, including safe governance/oracle identity derivation and
-explicit auction/payment-channel payout helpers.
+the production candidate checks reject contracts that trust `msg.now`,
+`msg.reporterKey`, or raw regular-mode value dispatch. The same checks also
+compile and validate the standalone Slice 5 reference examples, including safe
+governance/oracle identity derivation and explicit auction/payment-channel
+payout helpers.
 
 ---
 
@@ -49,7 +49,6 @@ examples/slice5/tos-report-bond-oracle/
   artifacts/opcodes.json
   artifacts/method-ids.json
   artifacts/error-codes.json
-doc/slice5-abi-manifests/tos_report_bond_oracle.json
 emulator/test/tos-report-bond-oracle-fixture.cpp (integrated SmartContract fixture)
 ```
 
@@ -269,8 +268,8 @@ caller). Reporters could fail to receive their refunds without any on-chain sign
 **Post-trial disposition:** closed. `@stdlib/oracle` now exposes
 `slice5OracleEmitBondRefund(...)`, defaulting to
 `SEND_MODE_BOUNCE_ON_ACTION_FAIL`. `TosReportBondOracle` uses it for every bond
-refund, and `check-slice-5-release-package.py` rejects production candidates that
-dispatch value with raw regular-mode sends.
+refund, and production candidate checks reject contracts that dispatch value
+with raw regular-mode sends.
 
 ---
 

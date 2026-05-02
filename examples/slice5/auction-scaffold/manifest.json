@@ -4,7 +4,6 @@
   "pattern": "auction",
   "contract": "AuctionScaffold",
   "stdlib_import": "@stdlib/auction",
-  "abi_manifest": "doc/slice5-abi-manifests/auction.json",
   "source": "src/main.tol",
   "tests": [
     "tests/auction-positive.tol"
@@ -17,12 +16,5 @@
     "method_ids": "artifacts/method-ids.json",
     "error_codes": "artifacts/error-codes.json",
     "replay_trace": "artifacts/replay-trace.json"
-  },
-  "behaviour_conformance": [
-    {
-      "behaviour": "slice5_auction",
-      "manifest": "doc/slice4-behaviours/slice5_auction.json",
-      "mode": "generated"
-    }
-  ]
+  }
 }

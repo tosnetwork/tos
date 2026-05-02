@@ -42,9 +42,9 @@ The trial findings were converted into repo guardrails:
   and the sparse state matrix is intentional rather than accidental.
 - `slice6TimerBudget(...)` is marked `@pure`, and parameter defaults may now
   call helper functions at call-site evaluation time.
-- `scripts/check-slice-6-release-package.py` now scans Slice 6 examples and
-  external trials for Unix-time-to-mc-seqno misuse and unsafe
-  `SEND_MODE_REGULAR` value dispatch.
+- Release-package guardrails now scan Slice 6 examples and external trials
+  for Unix-time-to-mc-seqno misuse and unsafe `SEND_MODE_REGULAR` value
+  dispatch.
 
 ---
 
@@ -89,13 +89,7 @@ Result: **14/14 cases pass, gas 132954.**
 ```
 Result: clean; zero errors and zero warnings.
 
-### 4. Release package check
-```
-python3 /home/tomi/tos/scripts/check-slice-6-release-package.py
-```
-Result: `Validated Slice 6 release-package guardrails: delivery, schedule, time, supervision, capability, safe payments, no caller-controlled time scheduling`
-
-### 5. Whitespace check
+### 4. Whitespace check
 ```
 cd /home/tomi/tos && git diff --check
 ```

@@ -2,8 +2,8 @@
 
 ## 0. Status, scope, and references
 
-**Status.** **Approved 2026-04-29** (single authorized owner; see §12). v6 (single-signer governance). This document is the policy input for Slice 1 of
-[`doc/roadmap.md`](roadmap.md). It must be approved by the
+**Status.** **Approved 2026-04-29** (single authorized owner; see §12). v6 (single-signer governance). This document is the message and lifecycle
+policy input for the actor-layer implementation. It must be approved by the
 authorized owner of record before Slice 1 implementation begins.
 The authorized owner combines the four functional roles —
 Protocol architect, TVM lead, Tol compiler lead, and contract-team
@@ -16,7 +16,7 @@ appended; see §12 for the mechanics.
 lifecycle decisions that the protocol, TVM, and Tol teams must
 agree on before they begin implementing
 [`doc/actor.md`](actor.md) §5.3 + §5.6 and
-[`doc/tol.md`](tol.md) Q1.
+the Tol surface specified by [`doc/tol.tex`](tol.tex).
 
 **Out of scope.** Higher-level language syntax (`contract`,
 `receive(...)`, `message` keywords) is out of scope here; that is
@@ -40,8 +40,7 @@ later policy documents.
 
 ## 1. Why this policy exists
 
-`doc/roadmap.md` §3 states the rationale: without a single
-agreed-upon policy, the three implementing subsystems (protocol,
+Without a single agreed-upon policy, the three implementing subsystems (protocol,
 TVM, Tol) will independently invent slightly inconsistent
 assumptions about message envelope, error classification,
 account lifecycle, and query correlation. The integration phase of
@@ -292,7 +291,7 @@ future use:
   requires a new bounce-body constructor and a global-version
   bump, so it is **not** automatically Slice 4 — it lands in
   whichever post-Slice-1 slice takes on the schema bump (TBD;
-  not Slice 1, not Slice 2, not Slice 3 per `roadmap.md` §6).
+  not Slice 1, not Slice 2, and not the domain-stdlib work).
 - Bit 3 — reserved for the supervision-link tag of `actor.md`
   §5.1. Slice 6 Stage 0 keeps the bit reserved but invalid by default:
   the baseline monitor/link design uses explicit registration state and
@@ -833,9 +832,8 @@ of how clearly the policy describes them.
   including the four `bounced_by_phase` cases (skip / compute /
   action) and an `extra_flags=0b0100` rejection case.
 - Migration of all three reference contracts in the order below.
-  This list is the canonical migration order; `roadmap.md` Stage 3
-  references this section instead of restating the order, so the
-  two documents stay aligned.
+  This list is the canonical migration order for the message-policy
+  work.
   1. **jetton-minter** (smallest, paired with jetton-wallet,
      ~45 LOC touched).
   2. **jetton-wallet** (~80 LOC, exercises the bounce-handler
@@ -850,7 +848,7 @@ of how clearly the policy describes them.
 - Activation of `extra_flags & 4` to carry an inline error class
   in the bounce body. Deferred to whichever future slice ships
   the §5.4 bounce-body schema bump (TBD; not Slice 1, not Slice 2,
-  not Slice 3 per `roadmap.md` §6).
+  and not the domain-stdlib work).
 - Activation of `extra_flags & 8` for supervision links.
   Deferred to Slice 6.
 - Scheduled-message protocol primitive (`actor.md` §5.2).
@@ -1001,23 +999,20 @@ on `actor-layer` (`d92d4fa12`, `156e92247`, `9541d022e`,
 approval. (Superseded by v6's single-signer governance model on
 the same day; the approval itself stands.)
 
-### Draft v5 (post-roadmap-alignment)
+### Draft v5 (post-scope-alignment)
 
-A four-document consistency review against `doc/actor.md`,
-`doc/tol.md`, and `doc/roadmap.md` flagged that v4 used Slice
-labels (`Slice 4`, `Slice 5+`, `Slice 6`) that did not match
-`roadmap.md` §6's actual scope assignments
-(Slice 4 = `actor.md` §5.9 + §6.5; Slice 5 = second-wave
-stdlib; Slice 6 = §5.1 + §5.2). v5 replaces the labels with
-content-based placeholders and aligns the contract migration
-clause to be the canonical list that `roadmap.md` references.
+A consistency review against `doc/actor.md` and the Tol language
+surface flagged that v4 used Slice labels (`Slice 4`, `Slice 5+`,
+`Slice 6`) as if they directly named wire-format work. v5 replaces
+the labels with content-based placeholders and aligns the contract
+migration clause to be the canonical list for message-policy work.
 
 - **§3.4** — Bit 2 / bit 3 reservation rewritten. v4 said
   bit 2 is "allocated for Slice 4 or later"; that is misleading
-  because Slice 4's roadmap content is `actor.md` §5.9 + §6.5,
-  not a wire-format slice. v5 says bit 2 lands in "whichever
+  because bounded postponement and behaviour-pattern work are not a
+  wire-format slice. v5 says bit 2 lands in "whichever
   post-Slice-1 slice takes on the §5.4 schema bump (TBD; not
-  Slice 1, not Slice 2, not Slice 3 per `roadmap.md` §6)".
+  Slice 1, not Slice 2, and not the domain-stdlib work)".
   Bit 3 is correctly tied to Slice 6 because supervision lands
   in Slice 6.
 - **§3.4 synchronized-constants block** — same correction in
@@ -1032,14 +1027,12 @@ clause to be the canonical list that `roadmap.md` references.
   "Migration of at least two reference contracts" to "Migration
   of all three reference contracts" to match the audit-driven
   three-contract list (jetton-minter → jetton-wallet → wallet-v5).
-  Added a note that this is the canonical list and `roadmap.md`
-  Stage 3 references this section by anchor instead of restating
-  the order.
+  Added a note that this is the canonical list for message-policy
+  migration.
 - **§10.2** — Bit-2 deferral language tightened to match §3.4.
 
 Wire format unchanged; TL-B schema unchanged; §8.1 compatibility
-commitments preserved. v5 is purely a labelling correction
-against `roadmap.md` §6.
+commitments preserved. v5 is purely a labelling correction.
 
 ### Draft v4 (post-second-review)
 
@@ -1226,5 +1219,4 @@ of v1.
 
 ### Draft v1
 
-Initial draft. Authored as Stage 0 input for `doc/roadmap.md`
-Slice 1.
+Initial draft. Authored as Stage 0 input for the message-policy work.

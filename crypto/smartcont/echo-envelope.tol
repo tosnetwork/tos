@@ -20,10 +20,9 @@
 //                                    `(expected_responder, query_id)`
 //                                    can match the response.
 //
-// This is the smallest contract that exercises the Stage 2 exit criterion
-// in doc/roadmap.md ("a Tol contract written against the new envelope
-// compiles, deploys to a local test net, and round-trips the conformance
-// fixtures"). The corresponding emulator fixture is
+// This is the smallest contract that exercises the Tol envelope round-trip
+// conformance path: it compiles, deploys to a local test net, and round-trips
+// the conformance fixtures. The corresponding emulator fixture is
 // `emulator/test/slice-1-stage-2-roundtrip-fixture.cpp`, which asserts the
 // outbound reply body's `query_id` equals the inbound envelope's `query_id`
 // verbatim, and that an inbound text-comment body is handled gracefully

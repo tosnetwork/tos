@@ -8,7 +8,6 @@
     "compiled_boc": "build/slice1-gas-parity/jetton-minter-tol.boc",
     "storage_builder": "jetton-minter-third-admin"
   },
-  "source_baseline": "doc/slice-3-reference-baselines.json",
   "runner": {
     "emulator_filter": "Slice3Replay",
     "tol_tester_patterns": [

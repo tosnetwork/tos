@@ -19,9 +19,8 @@
 // Slice 3 Stage 1 deterministic replay harness.
 //
 // The fixture data lives in
-// emulator/test/slice-3-replay-fixtures/jetton-minter-stage1.json and is
-// schema-checked by scripts/check-slice-3-replay-fixtures.py. This C++ file is
-// the emulator side of the approved hybrid substrate: it executes the checked-in
+// emulator/test/slice-3-replay-fixtures/jetton-minter-stage1.json. This C++ file
+// is the emulator side of the approved hybrid substrate: it executes the checked-in
 // replay cases against the compiled Slice 2 jetton-minter Tol BoC that the
 // existing slice1_gas_parity_contracts target already materializes.
 //

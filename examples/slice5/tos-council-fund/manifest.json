@@ -4,7 +4,6 @@
   "pattern": "governance",
   "contract": "TosCouncilFund",
   "stdlib_import": "@stdlib/governance",
-  "abi_manifest": "doc/slice5-abi-manifests/tos_council_fund.json",
   "source": "src/tos-council-fund.tol",
   "tests": [
     "tests/tos-council-fund-import-positive.tol",
@@ -15,12 +14,5 @@
     "opcodes": "artifacts/opcodes.json",
     "method_ids": "artifacts/method-ids.json",
     "error_codes": "artifacts/error-codes.json"
-  },
-  "behaviour_conformance": [
-    {
-      "behaviour": "slice5_governance",
-      "manifest": "doc/slice4-behaviours/slice5_governance.json",
-      "mode": "generated"
-    }
-  ]
+  }
 }

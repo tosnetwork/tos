@@ -33,9 +33,8 @@
 //     - §10.1: the canonical Slice-1 in-scope items include "an
 //       `extra_flags=0b0100` rejection case".
 //
-//   * doc/roadmap.md Stage 1 exit criterion -- conformance fixtures
-//     including an `extra_flags=0b0100` rejection case to validate the §3.4
-//     synchronized-constants invariant.
+//   * Stage 1 conformance fixtures include an `extra_flags=0b0100`
+//     rejection case to validate the §3.4 synchronized-constants invariant.
 //
 // The named constants pulled in via tol/extra-flags-constants.h are:
 //   EXTRA_FLAGS_NEW_BOUNCE       (1, bit 0)
@@ -153,9 +152,8 @@ TEST(Slice1ExtraFlagsFixtures, F3_1_accepted_boundary) {
 //       message with `extra_flags & 12 != 0` triggers
 //       `check_skip_invalid(45)`."
 //
-// doc/roadmap.md Stage 1 exit criterion explicitly calls out
-// "an inbound message with `extra_flags = 0b0100` rejected by the `& 3`
-// mask".
+// The Stage 1 fixture set explicitly calls out an inbound message with
+// `extra_flags = 0b0100` rejected by the `& 3` mask.
 //
 // Each value in {4, 8, 12} sets at least one bit beyond the current valid
 // mask:
@@ -170,7 +168,7 @@ TEST(Slice1ExtraFlagsFixtures, F3_1_accepted_boundary) {
 TEST(Slice1ExtraFlagsFixtures, F3_2_rejected_boundary) {
   using namespace tos_slice1_fixtures;
 
-  // 0b0100 -- the canonical Stage 1 case named in roadmap.md and §10.1.
+  // 0b0100 -- the canonical Stage 1 case named in §10.1.
   CHECK(!gate_accepts(0b0100));
   CHECK(!gate_accepts(4));
 

@@ -49,7 +49,7 @@ protected:
       err("direct access to `Slice3PendingReplyTable.entries` bypasses `(expected_responder, query_id)` reply binding "
           "and duplicate-reply consumption. Use `Slice3PendingReplyTable.reserve(...)`, `.consume(...)`, or `.ignoreDuplicate(...)` "
           "so Slice 3 manifest-backed reply APIs delete or mark a reply before user-visible side effects. "
-          "See doc/tos-message-policy.md §4.4 / doc/tos-slice-3-policy.md Stage 7.")
+          "See doc/tos-message-policy.md §4.4 / doc/tos-language-syntax-policy.md §5.")
         .collect(v, cur_f);
     }
     parent::visit(v);
@@ -61,7 +61,7 @@ protected:
         !is_allowed_slice3_pending_reply_helper(cur_f)) {
       err("raw Slice 3 reply-key construction is warning-only for legacy code; manifest-backed stdlib reply APIs must use "
           "`Slice3PendingReplyTable.reserve(...)` / `.consume(...)` so the key includes `(expected_responder, query_id)` "
-          "and optional `expected_reply_opcode`. See doc/tos-message-policy.md §4.4 / doc/tos-slice-3-policy.md Stage 7.")
+          "and optional `expected_reply_opcode`. See doc/tos-message-policy.md §4.4 / doc/tos-language-syntax-policy.md §5.")
         .warning(v, cur_f);
     }
     parent::visit(v);

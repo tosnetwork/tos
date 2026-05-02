@@ -17,8 +17,7 @@
 
 // =============================================================================
 // Slice 1 Stage 4 gas-parity harness — FunC vs Tol black-box parity at
-// `recv_internal` granularity, closing the §4 closure spec in
-// `doc/slice-1-gas-gap.md`.
+// `recv_internal` granularity.
 //
 // What this fixture asserts.
 //   For each migrated reference contract (jetton-minter, jetton-wallet,
@@ -32,13 +31,11 @@
 //   unreliable as phase-specific signals — `gas_used` is reliable for both
 //   successful compute and compute-phase throw).
 //
-//   The §10.1 ≤ 1.15 ratio gate (`func_vs_tol_ratio_threshold` in
-//   `doc/slice-1-gas-baselines.json`) is enforced per scenario. Tol-side
-//   gas higher than FunC by more than 15% is a slice-acceptance blocker
-//   per `tos-message-policy.md` §10.1.
+//   The §10.1 ≤ 1.15 ratio gate is enforced per scenario. Tol-side gas
+//   higher than FunC by more than 15% is a slice-acceptance blocker per
+//   `tos-message-policy.md` §10.1.
 //
 // References:
-//   - doc/slice-1-gas-gap.md §4 — closure spec this fixture implements.
 //   - doc/tos-message-policy.md §8.1 — bit-identical wire commitment that
 //     makes the inbound bytes the same for both sides.
 //   - doc/tos-message-policy.md §10.1 — ≤ 15% bytecode budget the ratio
@@ -141,9 +138,8 @@ namespace {
 
 // §10.1 ≤ 15% policy budget — Tol may be at most 15% slower than FunC
 // per scenario by default. Mirrors `func_vs_tol_ratio_threshold` in
-// `doc/slice-1-gas-baselines.json` v2; if you change one you MUST change
-// the other (the JSON is the canonical baseline, the constant here is
-// the runtime check).
+// the retained gas-parity baseline; update the per-contract thresholds below
+// when changing the policy budget.
 //
 // Per-contract overrides: wallet-v5's bytecode-cell ratio is FunC 20 /
 // Tol 22 = 1.10 per `doc/tos-message-envelope-migration.md` (the only
@@ -154,8 +150,7 @@ namespace {
 // runtime gas delta closer to 1.30 — so wallet-v5 ratifies a
 // per-contract threshold of 1.35 to cover those fast-paths without
 // silently muting the more substantive scenarios. Recorded explicitly
-// in `doc/slice-1-gas-baselines.json` so the gate script and this
-// fixture agree on the policy.
+// in this fixture so the policy is explicit at the runtime check site.
 constexpr double kFuncVsTolRatioThresholdDefault = 1.15;
 constexpr double kFuncVsTolRatioThresholdWalletV5 = 1.35;
 
