@@ -94,8 +94,9 @@ wc_master setworkchain
 
 // EVM workchain (wc=1) — same as add-std-workchain-v2 but vm_version=0x45564D ("EVM")
 // instead of -1, which selects the evmone executor in Transaction::prepare_compute_phase.
+// vm_mode stores the EVM chain_id (0x544F53 = "TOS", matching evm_workchain::kEvmChainId).
 {{ <b x{{a7}} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{{e000}} s,
-  3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, 0x45564D 32 i, 0 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
+  3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, 0x45564D 32 i, 0x544F53 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
   dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
   <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
   workchain-dict !
