@@ -2481,10 +2481,17 @@ td::actor::Task<> Collator::do_collate_inner() {
     co_return td::Status::Error("cannot generate special transactions");
   }
   if (after_merge_) {
-    // 3. merge prepare / merge install
-    LOG(DEBUG) << "create merge prepare/install transactions (NOT IMPLEMENTED YET)";
-    // Implementing merge prepare/install for large smart contracts
-    // is tracked as V-011 in doc/TODOS.md.
+    // 3. merge prepare / merge install for large smart contracts
+    // tr_merge_prepare / tr_merge_install transactions are globally
+    // disabled: Transaction::serialize() has no case for these types
+    // (falls through to default:return false), and validate-query
+    // unconditionally rejects them.  Emitting them here would produce
+    // a block that every validator rejects.  This hook point exists so
+    // that the logic can be added once V-002, V-003, and the missing
+    // Transaction::serialize cases are implemented.
+    // See V-011 in doc/TODOS.md.
+    LOG(DEBUG) << "skipping merge prepare/install for large smart contracts"
+               << " (globally disabled; see V-011/V-002/V-003 in doc/TODOS.md)";
   }
   // 4. import inbound internal messages, process or transit
   LOG(INFO) << "process inbound internal messages";
@@ -2497,10 +2504,17 @@ td::actor::Task<> Collator::do_collate_inner() {
   timer_guard = WorkTimerGuard(work_timer_);
   auto post_ext_token = perf_log_.start_action("post_ext_processing");
   if (before_split_) {
-    // 7. split prepare / split install
-    LOG(DEBUG) << "create split prepare/install transactions (NOT IMPLEMENTED YET)";
-    // Implementing split prepare/install for large smart contracts
-    // is tracked as V-012 in doc/TODOS.md.
+    // 7. split prepare / split install for large smart contracts
+    // tr_split_prepare / tr_split_install transactions are globally
+    // disabled: Transaction::serialize() has no case for these types
+    // (falls through to default:return false), and validate-query
+    // unconditionally rejects them.  Emitting them here would produce
+    // a block that every validator rejects.  This hook point exists so
+    // that the logic can be added once V-004, V-005, and the missing
+    // Transaction::serialize cases are implemented.
+    // See V-012 in doc/TODOS.md.
+    LOG(DEBUG) << "skipping split prepare/install for large smart contracts"
+               << " (globally disabled; see V-012/V-004/V-005 in doc/TODOS.md)";
   }
   // 8. tock transactions
   LOG(INFO) << "create tock transactions";

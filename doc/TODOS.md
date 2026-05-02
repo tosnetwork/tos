@@ -31,7 +31,7 @@ Each entry has:
 
 ### V-001: storage transaction verification not implemented
 
-- Status: open
+- Status: resolved
 - Category: validate-query
 - Source: validator/impl/validate-query.cpp:5941 (commit ad9b48a72)
 - Origin: upstream-TON
@@ -47,6 +47,13 @@ Each entry has:
 - Suggested resolution: implement `Transaction::tr_storage`
   re-execution against the previous shard state and compare the
   resulting account state against the recorded post-state hash.
+- Resolution: implemented in `crypto/block/transaction.cpp`
+  (`Transaction::serialize` case `tr_storage`) and
+  `validator/impl/validate-query.cpp` (`check_one_transaction`
+  `trans_storage` branch). The storage-only re-execution path runs
+  `prepare_storage_phase` then `serialize`/compare, skipping the
+  compute/credit/action/bounce phases that do not exist for this
+  transaction type.
 
 ### V-002: merge prepare transaction verification not implemented
 
@@ -190,33 +197,56 @@ Each entry has:
 
 - Status: open
 - Category: collator
-- Source: validator/impl/collator.cpp:2486 (commit ad9b48a72)
+- Source: validator/impl/collator.cpp (after_merge_ hook in do_collate_inner)
 - Origin: upstream-TON
 - Original comment:
   > // TODO: implement merge prepare/install transactions for
   > //       "large" smart contracts
 - Context: When `after_merge_` is true the collator currently
-  logs "NOT IMPLEMENTED YET" and skips merge-prepare/install
-  transaction creation. Counterpart of V-002/V-003.
-- Suggested resolution: design merge protocol for accounts whose
-  state exceeds a single-shard transaction storage budget and
-  emit the corresponding tr_merge_prepare / tr_merge_install
-  transactions.
+  skips merge-prepare/install transaction creation because
+  `tr_merge_prepare` / `tr_merge_install` are globally disabled:
+  `Transaction::serialize()` has no case for these types (falls
+  through to `default:return false`) and validate-query
+  unconditionally rejects them (validate-query.cpp ~line 5874).
+  The collator hook point is in place; the empty body is correct
+  given these constraints.  Counterpart of V-002/V-003.
+- Blocked by: V-002 (merge-prepare validator), V-003 (merge-install
+  validator), and missing `Transaction::serialize` cases for
+  `tr_merge_prepare` / `tr_merge_install`.
+- Suggested resolution: add serialize cases for tr_merge_prepare and
+  tr_merge_install in transaction.cpp; implement validator re-execution
+  in validate-query (V-002/V-003); then fill in the collator hook to
+  emit tr_merge_prepare for every account whose state exceeds the
+  single-transaction storage budget and tr_merge_install from the
+  sibling shard's prepare message.
 
 ### V-012: implement split prepare/install for large smart contracts
 
 - Status: open
 - Category: collator
-- Source: validator/impl/collator.cpp:2502 (commit ad9b48a72)
+- Source: validator/impl/collator.cpp (before_split_ hook in do_collate_inner)
 - Origin: upstream-TON
 - Original comment:
   > // TODO: implement split prepare/install transactions for
   > //       "large" smart contracts
 - Context: When `before_split_` is true the collator currently
-  logs "NOT IMPLEMENTED YET" and skips split-prepare/install.
-  Counterpart of V-004/V-005.
-- Suggested resolution: design split protocol for accounts whose
-  state exceeds a single-shard transaction storage budget.
+  skips split-prepare/install transaction creation because
+  `tr_split_prepare` / `tr_split_install` are globally disabled:
+  `Transaction::serialize()` has no case for these types (falls
+  through to `default:return false`) and validate-query
+  unconditionally rejects them (validate-query.cpp ~line 5874).
+  The collator hook point is in place; the empty body is correct
+  given these constraints.  Counterpart of V-004/V-005.
+- Blocked by: V-004 (split-prepare validator), V-005 (split-install
+  validator), and missing `Transaction::serialize` cases for
+  `tr_split_prepare` / `tr_split_install`.
+- Suggested resolution: add serialize cases for tr_split_prepare and
+  tr_split_install in transaction.cpp; implement validator re-execution
+  in validate-query (V-004/V-005); then fill in the collator hook to
+  emit tr_split_prepare for every account whose state exceeds the
+  single-transaction storage budget (keeping the account in the shard
+  whose prefix matches the account-id) and tr_split_install on the
+  receiving shard.
 
 ### V-013: ihr_delivered flag is hard-coded false
 
@@ -300,7 +330,7 @@ Each entry has:
 
 ### V-018: report misbehavior on parent-slot inversion
 
-- Status: open
+- Status: resolved
 - Category: consensus
 - Source: validator/consensus/simplex/consensus.cpp:177 (commit ad9b48a72)
 - Origin: upstream-TON
@@ -309,12 +339,14 @@ Each entry has:
 - Context: When a candidate's parent slot is greater than or
   equal to its own slot, the consensus actor silently drops the
   candidate without producing a `MisbehaviorReport`.
-- Suggested resolution: emit a `MisbehaviorProof` for the leader
-  before returning.
+- Resolution: added `SlotInversionCandidate` misbehavior type in
+  `validator/consensus/simplex/misbehavior.h`; consensus.cpp now
+  constructs the proof from the serialized (signed) candidate and
+  emits `MisbehaviorReport` before returning.
 
 ### V-019: report misbehavior on conflicting pending block
 
-- Status: open
+- Status: resolved
 - Category: consensus
 - Source: validator/consensus/simplex/consensus.cpp:183 (commit ad9b48a72)
 - Origin: upstream-TON
@@ -323,12 +355,14 @@ Each entry has:
 - Context: When a slot already has a pending block but a
   different candidate arrives, the second candidate is dropped
   without a misbehavior report.
-- Suggested resolution: emit a `MisbehaviorProof` proving the
-  leader's double proposal.
+- Resolution: added `ConflictingCandidates` misbehavior type in
+  `validator/consensus/simplex/misbehavior.h`; consensus.cpp now
+  serializes both the existing pending candidate and the new
+  conflicting candidate into the proof and emits `MisbehaviorReport`.
 
 ### V-020: report misbehavior on rejected candidate
 
-- Status: open
+- Status: resolved
 - Category: consensus
 - Source: validator/consensus/simplex/consensus.cpp:237 (commit ad9b48a72)
 - Origin: upstream-TON
@@ -337,8 +371,10 @@ Each entry has:
 - Context: When `validation_result` is a `CandidateReject`, the
   candidate's leader is logged but no `MisbehaviorReport` is
   emitted.
-- Suggested resolution: include the validation rejection reason
-  in the misbehavior payload.
+- Resolution: added `RejectedCandidate` misbehavior type in
+  `validator/consensus/simplex/misbehavior.h`; consensus.cpp now
+  constructs the proof from the serialized candidate and the
+  rejection reason string and emits `MisbehaviorReport`.
 
 ### V-021: relocate PrecheckCandidateBroadcast handler to the right actor
 
