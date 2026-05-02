@@ -10,6 +10,7 @@
 #include "td/actor/coro_utils.h"
 
 #include "bus.h"
+#include "misbehavior.h"
 
 namespace tos::validator::consensus::simplex {
 
@@ -174,15 +175,23 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     const auto& candidate = event->candidate;
 
     if (candidate->parent_id.has_value() && candidate->parent_id->slot >= candidate->id.slot) {
-      // Emitting a MisbehaviorProof here is tracked as V-018 in
-      // doc/TODOS.md.
+      // V-018: parent slot >= own slot — leader signed an invalid chain pointer.
+      // The serialized candidate (which carries the leader's signature over the
+      // slot and parent fields) is sufficient proof.
+      auto proof = SlotInversionCandidate::create(candidate->serialize());
+      owning_bus().publish<MisbehaviorReport>(candidate->leader, proof);
       return;
     }
 
     if (slot->state->pending_block.has_value()) {
       if (slot->state->pending_block.value()->id != candidate->id) {
-        // Emitting a MisbehaviorProof here is tracked as V-019 in
-        // doc/TODOS.md.
+        // V-019: a different candidate for the same slot already arrived — the
+        // leader signed two distinct blocks for this slot (double proposal).
+        // Both serialized candidates carry the leader's signature and together
+        // constitute the equivocation proof.
+        auto proof = ConflictingCandidates::create(
+            slot->state->pending_block.value()->serialize(), candidate->serialize());
+        owning_bus().publish<MisbehaviorReport>(candidate->leader, proof);
       }
       return;
     }
@@ -234,10 +243,13 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     auto validation_result = co_await owning_bus().publish<ValidationRequest>(parent.state, candidate);
 
     if (validation_result.has<CandidateReject>()) {
-      LOG(WARNING) << "Candidate " << candidate->id
-                   << " is rejected: " << validation_result.get<CandidateReject>().reason;
-      // Emitting a MisbehaviorProof here is tracked as V-020 in
-      // doc/TODOS.md.
+      const auto& reject = validation_result.get<CandidateReject>();
+      LOG(WARNING) << "Candidate " << candidate->id << " is rejected: " << reject.reason;
+      // V-020: the candidate was rejected by the local validator. Emit a proof
+      // carrying the serialized (signed) candidate and the rejection reason so
+      // that a future masterchain reporter can verify the leader's culpability.
+      auto proof = RejectedCandidate::create(candidate->serialize(), reject.reason);
+      owning_bus().publish<MisbehaviorReport>(candidate->leader, proof);
       co_return td::Unit{};
     }
     co_await std::move(store_candidate);
