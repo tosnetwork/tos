@@ -333,9 +333,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       }
       PeerValidatorId peer{peer_idx};
 
-      auto maybe_response = co_await owning_bus()
-                                .publish<OutgoingOverlayRequest>(peer, td::Timestamp::in(timeout), std::move(request))
-                                .wrap();
+      auto maybe_response =
+          co_await owning_bus()
+              .publish<OutgoingOverlayRequest>(peer, td::Timestamp::in(timeout), std::move(request),
+                                              bus.config.max_block_size + bus.config.max_collated_data_size + (1 << 20))
+              .wrap();
 
       if (maybe_response.is_ok()) {
         auto response = maybe_response.move_as_ok();

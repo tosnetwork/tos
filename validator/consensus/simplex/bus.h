@@ -93,11 +93,33 @@ struct SaveCertificate {
   std::string contents_to_string() const;
 };
 
+// Litequery: snapshot of the current round for the lite server.
+struct QueryValidatorGroupInfo {
+  struct CandidateWeight {
+    CandidateId id;
+    ValidatorWeight notarize_weight;  // "approved" in liteServer terms
+    ValidatorWeight finalize_weight;  // "signed" in liteServer terms
+    // Present when the candidate data was locally observed.
+    std::optional<CandidateRef> candidate;
+  };
+
+  struct Result {
+    td::uint32 current_slot;
+    ParentId last_finalized_block;
+    std::vector<CandidateWeight> candidates;
+  };
+
+  using ReturnType = Result;
+
+  std::string contents_to_string() const;
+};
+
 class Bus : public consensus::Bus {
  public:
   using Parent = consensus::Bus;
   using Events = td::TypeList<BroadcastVote, NotarizationObserved, FinalizationObserved, LeaderWindowObserved,
-                              WaitForParent, ResolveCandidate, StoreCandidate, ResolveState, SaveCertificate>;
+                              WaitForParent, ResolveCandidate, StoreCandidate, ResolveState, SaveCertificate,
+                              QueryValidatorGroupInfo>;
 
   Bus() = default;
 

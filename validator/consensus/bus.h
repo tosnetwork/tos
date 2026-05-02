@@ -110,6 +110,7 @@ struct OutgoingOverlayRequest {
   PeerValidatorId destination;
   td::Timestamp timeout;
   ProtocolMessage request;
+  td::uint32 max_response_size;
 
   std::string contents_to_string() const;
   static std::string response_to_string(const ReturnType&);
@@ -220,6 +221,10 @@ struct PrivateOverlay {
 };
 
 struct TraceCollector {
+  static void register_in(td::actor::Runtime&);
+};
+
+struct MisbehaviorReporter {
   static void register_in(td::actor::Runtime&);
 };
 

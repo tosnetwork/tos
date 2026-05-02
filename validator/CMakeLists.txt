@@ -113,6 +113,7 @@ set(VALIDATOR_SOURCE
   consensus/bridge.cpp
   consensus/bus.cpp
   consensus/chain-state.cpp
+  consensus/misbehavior-reporter.cpp
   consensus/private-overlay.cpp
   consensus/trace-collector.cpp
   consensus/stats.cpp

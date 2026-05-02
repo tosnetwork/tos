@@ -15,6 +15,7 @@
 
 #include "bus.h"
 #include "stats.h"
+#include "validator/consensus/simplex/misbehavior.h"
 
 namespace tos::validator::consensus {
 
@@ -36,6 +37,8 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     overlays_ = bus.overlays;
     local_id_ = bus.local_id;
     adnl_sender_ = bus.adnl_sender;
+    params_ = bus.config.noncritical_params;
+    slots_per_leader_window_ = bus.config.slots_per_leader_window;
 
     std::vector<adnl::AdnlNodeIdShort> overlay_nodes;
     std::vector<td::Bits256> overlay_nodes_tl;
@@ -102,12 +105,9 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
   td::actor::Task<ProtocolMessage> process(BusHandle, std::shared_ptr<OutgoingOverlayRequest> message) {
     auto [awaiter, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
     auto dst = message->destination.get_using(*owning_bus()).adnl_id;
-    // Per-request response-size override from the caller is tracked
-    // as V-024 in doc/TODOS.md.
     td::actor::send_closure(
         overlays_, &overlay::Overlays::send_query_via, dst, local_id_.adnl_id, overlay_id_, "", std::move(promise),
-        message->timeout, std::move(message->request.data),
-        owning_bus()->config.max_block_size + owning_bus()->config.max_collated_data_size + (1 << 20), adnl_sender_);
+        message->timeout, std::move(message->request.data), message->max_response_size, adnl_sender_);
     auto response = co_await std::move(awaiter);
     if (fetch_tl_object<tl::requestError>(response, true).is_ok()) {
       co_return td::Status::Error("Peer returned an error");
@@ -120,6 +120,49 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     td::BufferSlice extra = create_serialize_tl_object<tos_api::consensus_broadcastExtra>(event->candidate->id.slot);
     td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_fec_with_extra, local_id_.adnl_id,
                             overlay_id_, local_id_.short_id, 0, event->candidate->serialize(), std::move(extra));
+  }
+
+  template <>
+  void handle(BusHandle, std::shared_ptr<const NoncriticalParamsUpdated> event) {
+    params_ = event->params;
+  }
+
+  template <>
+  void handle(BusHandle, std::shared_ptr<const FinalizeBlock> event) {
+    td::uint32 slot = event->candidate->id.slot;
+    first_nonfinalized_slot_ = slot + 1;
+    // Purge dedup entries for slots that are now finalized and
+    // cannot appear again in any future broadcast precheck.
+    seen_broadcasts_.erase(seen_broadcasts_.begin(), seen_broadcasts_.lower_bound(first_nonfinalized_slot_));
+  }
+
+  // V-021: PrecheckCandidateBroadcast handler relocated from
+  // simplex::PoolImpl to this actor, which owns broadcast-deduplication
+  // state and is the natural home for broadcast-level validity checks.
+  template <>
+  td::actor::Task<> process(BusHandle, std::shared_ptr<PrecheckCandidateBroadcast> query) {
+    if (query->slot < first_nonfinalized_slot_) {
+      co_return td::Status::Error("Slot is already finalized");
+    }
+    // Use first_nonfinalized_slot_ as a conservative lower bound for
+    // the current slot: now_ >= first_nonfinalized_slot_ always holds,
+    // so this check only admits slightly more broadcasts than the pool
+    // would — never fewer.
+    if (query->slot > first_nonfinalized_slot_ + params_.max_leader_window_desync * slots_per_leader_window_) {
+      co_return td::Status::Error("Slot is too far in the future");
+    }
+    if (query->signature_checked) {
+      auto [it, inserted] = seen_broadcasts_.emplace(query->slot, query->broadcast_id);
+      if (!inserted && it->second != query->broadcast_id) {
+        co_return td::Status::Error("Duplicate broadcast");
+      }
+    } else {
+      auto it = seen_broadcasts_.find(query->slot);
+      if (it != seen_broadcasts_.end() && it->second != query->broadcast_id) {
+        co_return td::Status::Error("Duplicate broadcast");
+      }
+    }
+    co_return td::Unit{};
   }
 
  private:
@@ -201,13 +244,17 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
 
     auto& bus = *owning_bus();
     auto peer = peer_it->second;
+    // Clone raw bytes before the deserialize call so they remain available
+    // for the MisbehaviorReport if parsing fails (V-025).
+    auto raw_bytes = data.clone();
     auto maybe_candidate = Candidate::deserialize(std::move(data), bus, peer.idx, parsed_extra->slot_);
 
     if (maybe_candidate.is_error()) {
-      // Producing a MisbehaviorProof from collected signed
-      // broadcast parts is tracked as V-025 in doc/TODOS.md.
-      LOG(WARNING) << "MISBEHAVIOR: Failed to deserialize block candidate broadcast: "
-                   << maybe_candidate.move_as_error();
+      auto error_str = maybe_candidate.move_as_error().to_string();
+      LOG(WARNING) << "MISBEHAVIOR: Failed to deserialize block candidate broadcast from "
+                   << src << ": " << error_str;
+      auto proof = simplex::MalformedBroadcast::create(std::move(raw_bytes), peer.idx, std::move(error_str));
+      owning_bus().publish<MisbehaviorReport>(peer.idx, proof);
       return;
     }
     owning_bus().publish<CandidateReceived>(maybe_candidate.move_as_ok());
@@ -272,6 +319,12 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
   PeerValidator local_id_;
   std::map<adnl::AdnlNodeIdShort, PeerValidator> adnl_id_to_peer_;
   std::map<PublicKeyHash, PeerValidator> short_id_to_peer_;
+
+  // Broadcast deduplication state (V-021).
+  NewConsensusConfig::NoncriticalParams params_;
+  td::uint32 slots_per_leader_window_ = 1;
+  td::uint32 first_nonfinalized_slot_ = 0;
+  std::map<td::uint32, td::Bits256> seen_broadcasts_;
 };
 
 }  // namespace

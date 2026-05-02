@@ -478,6 +478,16 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   }
 
   template <>
+  void handle(BusHandle, std::shared_ptr<const CandidateReceived> event) {
+    // Track candidate data for QueryValidatorGroupInfo.  Only non-empty
+    // candidates carry a block id and hash data that is useful for the
+    // lite-server response; skip empty candidates.
+    if (!event->candidate->is_empty()) {
+      received_candidates_.emplace(event->candidate->id, event->candidate);
+    }
+  }
+
+  template <>
   td::actor::Task<std::optional<MisbehaviorRef>> process(BusHandle, std::shared_ptr<WaitForParent> request) {
     const auto &candidate = request->candidate;
     CHECK(!candidate->parent_id.has_value() || candidate->parent_id->slot < candidate->id.slot);
@@ -493,6 +503,49 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       requests_.pop_back();
     }
     co_return co_await std::move(bridge);
+  }
+
+  template <>
+  td::actor::Task<QueryValidatorGroupInfo::Result> process(BusHandle,
+                                                           std::shared_ptr<QueryValidatorGroupInfo>) {
+    QueryValidatorGroupInfo::Result result;
+    result.current_slot = now_;
+    result.last_finalized_block = last_finalized_block_;
+
+    // Collect per-candidate notarize/finalize weights for the current active slot.
+    auto slot = state_->slot_at(now_);
+    if (slot.has_value()) {
+      for (const auto &[id, weight] : slot->state->notarize_weight) {
+        QueryValidatorGroupInfo::CandidateWeight cw;
+        cw.id = id;
+        cw.notarize_weight = weight;
+        // finalize_weight may not exist for this id; default to 0 if absent.
+        auto fin_it = slot->state->finalize_weight.find(id);
+        cw.finalize_weight = (fin_it != slot->state->finalize_weight.end()) ? fin_it->second : 0;
+        // Attach the CandidateRef if we observed this candidate locally.
+        auto cand_it = received_candidates_.find(id);
+        if (cand_it != received_candidates_.end()) {
+          cw.candidate = cand_it->second;
+        }
+        result.candidates.push_back(std::move(cw));
+      }
+      // Also collect candidates that have finalize votes but no notarize votes.
+      for (const auto &[id, weight] : slot->state->finalize_weight) {
+        if (!slot->state->notarize_weight.count(id)) {
+          QueryValidatorGroupInfo::CandidateWeight cw;
+          cw.id = id;
+          cw.notarize_weight = 0;
+          cw.finalize_weight = weight;
+          auto cand_it = received_candidates_.find(id);
+          if (cand_it != received_candidates_.end()) {
+            cw.candidate = cand_it->second;
+          }
+          result.candidates.push_back(std::move(cw));
+        }
+      }
+    }
+
+    co_return result;
   }
 
   void alarm() override {
@@ -540,30 +593,6 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
     standstill_resolution_notification_.set_value({});
     reschedule_standstill_resolution();
-  }
-
-  // Relocating this handler to the broadcast/overlay actor is
-  // tracked as V-021 in doc/TODOS.md.
-  template <>
-  td::actor::Task<> process(BusHandle, std::shared_ptr<PrecheckCandidateBroadcast> query) {
-    if (query->slot < first_nonfinalized_slot_) {
-      co_return td::Status::Error("Slot is already finalized");
-    }
-    if (query->slot > now_ + params_.max_leader_window_desync * slots_per_leader_window_) {
-      co_return td::Status::Error("Slot is too far in the future");
-    }
-    if (query->signature_checked) {
-      auto [it, inserted] = seen_broadcasts_.emplace(query->slot, query->broadcast_id);
-      if (!inserted && it->second != query->broadcast_id) {
-        co_return td::Status::Error("Duplicate broadcast");
-      }
-    } else {
-      auto it = seen_broadcasts_.find(query->slot);
-      if (it != seen_broadcasts_.end() && it->second != query->broadcast_id) {
-        co_return td::Status::Error("Duplicate broadcast");
-      }
-    }
-    co_return td::Unit{};
   }
 
  private:
@@ -947,6 +976,10 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
     state_->notify_finalized(id.slot);
 
+    // Drop candidate refs that can no longer be in the active window.
+    received_candidates_.erase(received_candidates_.begin(),
+                               received_candidates_.lower_bound(CandidateId{first_nonfinalized_slot_, {}}));
+
     if (!suppress_certificate_broadcast_) {
       reschedule_standstill_resolution();
     }
@@ -994,7 +1027,9 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
   std::vector<Request> requests_;
 
-  std::map<td::uint32, td::Bits256> seen_broadcasts_;
+  // Candidates observed via CandidateReceived, keyed by CandidateId.
+  // Used by QueryValidatorGroupInfo to return block-level metadata.
+  std::map<CandidateId, CandidateRef> received_candidates_;
 };
 
 }  // namespace

@@ -6,6 +6,7 @@
 
 #include "td/db/RocksDb.h"
 #include "td/utils/port/path.h"
+#include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
 #include "validator/consensus/simplex/bus.h"
 #include "validator/fabric.h"
@@ -88,6 +89,22 @@ class ManagerFacadeImpl : public ManagerFacade {
     td::actor::send_closure(manager_, &ValidatorManager::send_block_candidate_broadcast, id,
                             validator_set_->get_catchain_seqno(), validator_set_->get_validator_set_hash(),
                             std::move(data), mode);
+  }
+
+  td::actor::Task<> send_misbehavior_report(td::BufferSlice data) override {
+    // Forward the evidence to the manager's external-message ingress so it is
+    // included in the next masterchain block.  A missing last-mc-state causes
+    // the manager to return ErrorCode::notready; treat that as a transient
+    // error and silently drop — the evidence is also written to the node log
+    // by MisbehaviorReporter before this call.
+    auto result = co_await td::actor::ask(manager_, &ValidatorManager::new_external_message_broadcast,
+                                          std::move(data), /*priority=*/0,
+                                          /*source_peer=*/td::optional<PublicKeyHash>{})
+                      .wrap();
+    if (result.is_error() && result.error().code() != ErrorCode::notready) {
+      LOG(WARNING) << "MisbehaviorReporter: failed to deliver report to manager: " << result.error();
+    }
+    co_return td::Unit{};
   }
 
   void update_collator_options(td::Ref<ValidatorManagerOptions> opts) {
@@ -203,9 +220,11 @@ class BridgeImpl final : public IValidatorGroup {
 
   virtual void get_validator_group_info_for_litequery(
       td::Promise<tl_object_ptr<lite_api::liteServer_nonfinal_validatorGroupInfo>> promise) override {
-    // Implementing this lite-server hook is tracked as V-023 in
-    // doc/TODOS.md.
-    promise.set_error(td::Status::Error("Not implemented"));
+    if (!bus_) {
+      promise.set_error(td::Status::Error(ErrorCode::notready, "not started"));
+      return;
+    }
+    get_validator_group_info_for_litequery_impl(std::move(promise)).start().detach();
   }
 
   virtual void notify_mc_finalized(BlockIdExt block) override {
@@ -283,6 +302,7 @@ class BridgeImpl final : public IValidatorGroup {
     BlockValidator::register_in(runtime);
     PrivateOverlay::register_in(runtime);
     TraceCollector::register_in(runtime);
+    MisbehaviorReporter::register_in(runtime);
 
     simplex::CandidateResolver::register_in(runtime);
     simplex::Consensus::register_in(runtime);
@@ -295,6 +315,85 @@ class BridgeImpl final : public IValidatorGroup {
   }
 
  private:
+  td::actor::Task<> get_validator_group_info_for_litequery_impl(
+      td::Promise<tl_object_ptr<lite_api::liteServer_nonfinal_validatorGroupInfo>> promise) {
+    if (!bus_) {
+      promise.set_error(td::Status::Error(ErrorCode::notready, "not started"));
+      co_return td::Unit{};
+    }
+
+    // Step 1: query the Pool for per-candidate weights and the last finalized CandidateId.
+    auto pool_result = co_await bus_.publish<simplex::QueryValidatorGroupInfo>().wrap();
+    if (pool_result.is_error()) {
+      promise.set_error(pool_result.move_as_error());
+      co_return td::Unit{};
+    }
+    auto info = pool_result.move_as_ok();
+
+    // Step 2: resolve the current chain state to obtain prev block ids and next seqno.
+    auto state_result =
+        co_await bus_.publish<simplex::ResolveState>(info.last_finalized_block).wrap();
+    if (state_result.is_error()) {
+      promise.set_error(state_result.move_as_error());
+      co_return td::Unit{};
+    }
+    auto chain_state = state_result.move_as_ok().state;
+
+    // Step 3: build the TL response.
+    auto& bus = *bus_;
+
+    BlockId next_block_id{params_.shard, chain_state->next_seqno()};
+    auto result = create_tl_object<lite_api::liteServer_nonfinal_validatorGroupInfo>();
+    result->next_block_id_ = create_tl_lite_block_id_simple(next_block_id);
+
+    for (const BlockIdExt& prev : chain_state->block_ids()) {
+      result->prev_.push_back(create_tl_lite_block_id(prev));
+    }
+    result->cc_seqno_ = static_cast<std::int32_t>(params_.validator_set->get_catchain_seqno());
+
+    for (const auto& cw : info.candidates) {
+      auto candidate_info = create_tl_object<lite_api::liteServer_nonfinal_candidateInfo>();
+      auto candidate_id = create_tl_object<lite_api::liteServer_nonfinal_candidateId>();
+
+      if (cw.candidate.has_value()) {
+        // Full candidate: extract block id, creator, and collated data hash.
+        const Candidate& c = **cw.candidate;
+        const auto hash_data = c.hash_data();
+        auto block_id_ext = std::get<CandidateHashData::FullCandidate>(hash_data.candidate).id;
+        candidate_id->block_id_ = create_tl_lite_block_id(block_id_ext);
+        candidate_id->collated_data_hash_ =
+            std::get<CandidateHashData::FullCandidate>(hash_data.candidate).collated_file_hash;
+        if (c.leader.value() < bus.validator_set.size()) {
+          candidate_id->creator_ = bus.validator_set[c.leader.value()].key.ed25519_value().raw();
+        }
+      } else {
+        // Candidate data not yet available locally: fill in seqno from chain
+        // state and leave root_hash / file_hash as zeros.
+        auto block_id_tl = create_tl_object<lite_api::tosNode_blockIdExt>();
+        block_id_tl->workchain_ = next_block_id.workchain;
+        block_id_tl->shard_ = static_cast<std::int64_t>(next_block_id.shard);
+        block_id_tl->seqno_ = static_cast<std::int32_t>(next_block_id.seqno);
+        block_id_tl->root_hash_.set_zero();
+        block_id_tl->file_hash_.set_zero();
+        candidate_id->block_id_ = std::move(block_id_tl);
+        candidate_id->collated_data_hash_.set_zero();
+        candidate_id->creator_.set_zero();
+      }
+
+      bool available = cw.candidate.has_value();
+      candidate_info->id_ = std::move(candidate_id);
+      candidate_info->available_ = available;
+      candidate_info->approved_weight_ = static_cast<std::int64_t>(cw.notarize_weight);
+      candidate_info->signed_weight_ = static_cast<std::int64_t>(cw.finalize_weight);
+      candidate_info->total_weight_ = static_cast<std::int64_t>(bus.total_weight);
+
+      result->candidates_.push_back(std::move(candidate_info));
+    }
+
+    promise.set_value(std::move(result));
+    co_return td::Unit{};
+  }
+
   td::actor::Task<> destroy_inner() {
     if (bus_) {
       LOG(INFO) << "Destroying validator group";
@@ -337,7 +436,7 @@ class BridgeImpl final : public IValidatorGroup {
   BridgeCreationParams params_;
   td::actor::ActorOwn<ManagerFacadeImpl> manager_facade_;
 
-  BusHandle bus_;
+  simplex::BusHandle bus_;
   td::optional<td::actor::StartedTask<>> stop_waiter_;
 
   std::shared_ptr<Start> start_event_;

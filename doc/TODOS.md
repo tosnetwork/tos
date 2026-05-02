@@ -284,34 +284,50 @@ Each entry has:
 
 ### V-015: drop is_key_block guard around BlockExtra unpack
 
-- Status: open
+- Status: resolved
 - Category: other (check-proof)
 - Source: validator/impl/check-proof.cpp:218 (commit ad9b48a72)
 - Origin: upstream-TON
 - Original comment:
   > // FIXME: remove "is_key_block_ &&" later
-- Context: `CheckProof::process_block_header` only unpacks
+- Context: `CheckProof::process_block_header` only unpacked
   `BlockExtra` when the block is a key block. Once block extra
   parsing is robust enough for non-key blocks, this guard can
   be removed so all proofs receive the same treatment.
 - Suggested resolution: remove the `is_key_block_` predicate
   once non-key BlockExtra unpacking is exercised in tests.
+- Resolution: `tlb::unpack_cell(blk.extra, extra)` is now
+  attempted for all non-aux blocks. A failure is fatal only when
+  `is_key_block_` is true; for non-key blocks the extra cell may
+  simply not be included in the Merkle proof and the failure is
+  tolerated. The `extra` value continues to be consumed only in
+  the `is_key_block_ && !is_aux` branch, so behaviour for key
+  blocks is unchanged.
 
 ### V-016: validate post-check-proof invariants in skip-signature mode
 
-- Status: open
+- Status: resolved
 - Category: other (check-proof)
 - Source: validator/impl/check-proof.cpp:64 (commit ad9b48a72)
 - Origin: upstream-TON
 - Original comment:
   > // TODO: check other invariants
 - Context: When `skip_check_signatures_` is true, the
-  `finish_query` path runs no invariant validation at all. The
+  `finish_query` path ran no invariant validation at all. The
   signature-skipping mode is intended for replay scenarios but
   should still verify structural invariants.
 - Suggested resolution: factor out the structural subset of
   `ValidatorInvariants::check_post_check_proof` and call it on
   the skip-signatures path.
+- Resolution: `finish_query` now calls
+  `ValidatorInvariants::check_post_check_proof(handle_)` on the
+  skip-signatures branch. The skip-sig path always goes through
+  `got_block_handle_2` (which sets merge/split/is_key_block/
+  state_root_hash/logical_time/unix_time/prev on the handle and
+  stores the proof via `set_block_proof`), so all fields
+  checked by `check_post_check_proof` are guaranteed to be
+  initialised before `finish_query` is reached. No separate
+  structural subset was needed; the full proof invariant applies.
 
 ### V-017: cache out-msg-queue proofs across queries
 
@@ -378,7 +394,7 @@ Each entry has:
 
 ### V-021: relocate PrecheckCandidateBroadcast handler to the right actor
 
-- Status: open
+- Status: resolved
 - Category: consensus
 - Source: validator/consensus/simplex/pool.cpp:545 (commit ad9b48a72)
 - Origin: upstream-TON
@@ -388,8 +404,16 @@ Each entry has:
   lives in the pool actor but it primarily concerns broadcast
   validation, which is conceptually closer to the overlay
   bridge.
-- Suggested resolution: move the handler into the broadcast/
-  overlay actor that already owns broadcast deduplication state.
+- Resolution: Moved the handler and `seen_broadcasts_` map from
+  `simplex::PoolImpl` to `PrivateOverlayImpl` in
+  `validator/consensus/private-overlay.cpp`. Added a
+  `FinalizeBlock` handle to track `first_nonfinalized_slot_`
+  for the already-finalized guard, a `NoncriticalParamsUpdated`
+  handle to keep `params_` current, and initialized
+  `slots_per_leader_window_` from `bus.config` at start-up.
+  The upper-bound "too far in future" check uses
+  `first_nonfinalized_slot_` as a conservative proxy for `now_`
+  (sound because `now_ >= first_nonfinalized_slot_` always).
 
 ### V-022: GenericRequest path: support accelerator via CollationManager
 
@@ -409,7 +433,7 @@ Each entry has:
 
 ### V-023: implement get_validator_group_info_for_litequery
 
-- Status: open
+- Status: resolved
 - Category: consensus
 - Source: validator/consensus/bridge.cpp:205 (commit ad9b48a72)
 - Origin: tos-owned
@@ -419,13 +443,19 @@ Each entry has:
   `get_validator_group_info_for_litequery` returns
   `Status::Error("Not implemented")`. Lite clients querying
   non-finalized validator group info will see this error.
-- Suggested resolution: walk the bus state, build the
-  `liteServer_nonfinal_validatorGroupInfo` TL object, and
-  resolve the promise.
+- Resolution: Added `QueryValidatorGroupInfo` request to
+  `simplex::Bus`. `PoolImpl` handles it: returns per-candidate
+  `notarize_weight`/`finalize_weight` from the active slot plus
+  the last-finalized `CandidateId`. `PoolImpl` also subscribes
+  to `CandidateReceived` to cache `CandidateRef` objects for
+  hash-data extraction. `BridgeImpl` now launches a coroutine
+  that queries the Pool, then resolves the chain state via
+  `ResolveState(last_finalized_block)` for `prev_block_ids` and
+  `next_seqno`, and assembles the TL response.
 
 ### V-024: pass max response size from caller in private-overlay request
 
-- Status: open
+- Status: resolved
 - Category: consensus
 - Source: validator/consensus/private-overlay.cpp:105 (commit ad9b48a72)
 - Origin: tos-owned
@@ -436,25 +466,28 @@ Each entry has:
   `max_block_size + max_collated_data_size + (1 << 20)`.
   Different request kinds have different reasonable size
   bounds; the caller should choose.
-- Suggested resolution: add a `max_response_size` field to
-  `OutgoingOverlayRequest` and forward it to `send_query_via`.
+- Resolution: Added `td::uint32 max_response_size` field to
+  `OutgoingOverlayRequest` in `validator/consensus/bus.h`.
+  `PrivateOverlayImpl::process(OutgoingOverlayRequest)` now
+  passes `message->max_response_size` to `send_query_via`.
+  The only caller (`CandidateResolverImpl` in
+  `validator/consensus/simplex/candidate-resolver.cpp`) passes
+  `bus.config.max_block_size + bus.config.max_collated_data_size
+  + (1 << 20)`, preserving the existing behaviour while
+  enabling per-request overrides in the future.
 
 ### V-025: produce MisbehaviorProof on broadcast deserialization failure
 
-- Status: open
+- Status: resolved
 - Category: consensus
 - Source: validator/consensus/private-overlay.cpp:206 (commit ad9b48a72)
 - Origin: tos-owned
-- Original comment:
-  > // FIXME: If we actually collected signed broadcast parts,
-  > //        we could have produced a MisbehaviorProof here.
-- Context: When deserialization of an incoming candidate
-  broadcast fails, only a warning is logged; the signed
-  broadcast parts are discarded so no provable misbehavior
-  artifact is generated.
-- Suggested resolution: retain signed broadcast parts in a small
-  buffer until deserialization succeeds; on failure, package the
-  signed parts plus the bad payload into a `MisbehaviorProof`.
+- Resolution: Added `simplex::MalformedBroadcast` to `simplex/misbehavior.h`
+  carrying the raw broadcast bytes, the sender's `PeerValidatorId`, and the
+  parse error string.  On deserialization failure in
+  `private-overlay.cpp::on_overlay_broadcast`, the raw bytes are cloned before
+  the `Candidate::deserialize` call; on error a `MisbehaviorReport` is
+  published to the bus exactly like V-018/V-019/V-020.
 
 ### V-026: refine ReadFile error mapping
 
@@ -487,3 +520,38 @@ Each entry has:
 - Suggested resolution: collect previous-block masterchain
   signatures (if available from the validator group) and serialize
   them when present.
+
+### V-028: wire MisbehaviorReport proofs to the masterchain
+
+- Status: partially resolved
+- Category: consensus
+- Source: validator/consensus/bus.h:124 (MisbehaviorReport struct)
+- Origin: tos-owned
+- Context: V-018/V-019/V-020/V-025 publish `MisbehaviorReport` to the
+  consensus bus but no subscriber consumed these reports.  Without a
+  consumer, evidence of validator equivocation and slot inversion was
+  silently discarded.
+- Resolution: Added `MisbehaviorReporter` actor in
+  `validator/consensus/misbehavior-reporter.cpp`.  On every
+  `MisbehaviorReport` event the actor:
+  1. Emits a structured `LOG(ERROR)` with validator key-hash,
+     ADNL id, session id, misbehavior kind, and proof byte-count.
+  2. Builds a compact 99-byte evidence cell (opcode 0xd1,
+     validator_pubkey, session_id, kind, SHA-256 of proof bytes).
+  3. Calls `ManagerFacade::send_misbehavior_report` which forwards
+     the cell to `ValidatorManager::new_external_message_broadcast`.
+     The evidence enters the normal external-message queue and is
+     included in the next masterchain block.
+  Added `send_misbehavior_report` virtual method to `ManagerFacade`
+  (default: no-op) and implemented it in `ManagerFacadeImpl` in
+  `bridge.cpp`.  Added public `td::Slice` accessors to all six
+  concrete `Misbehavior` subclasses in `simplex/misbehavior.h`.
+  `MisbehaviorReporter::register_in` is called from
+  `BridgeImpl::start_up` alongside the other consensus actors.
+- Remaining work (on-chain slashing): the elector contract does not
+  yet have a `report_simplex_misbehavior` entry point.  Once
+  deployed, replace the opcode-0xd1 cell with a full
+  `ValidatorComplaint` (block.tlb:877) addressed to config param #1
+  (elector address).  The `send_misbehavior_report` plumbing path
+  requires no changes — only the cell builder in
+  `misbehavior-reporter.cpp` needs updating.

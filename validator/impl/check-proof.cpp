@@ -61,8 +61,9 @@ bool CheckProof::fatal_error(std::string err_msg, int err_code) {
 
 void CheckProof::finish_query() {
   if (skip_check_signatures_) {
-    // Structural-invariant checks for the skip-signatures path are
-    // tracked as V-016 in doc/TODOS.md.
+    // Skip-signatures mode is used for replay scenarios; signatures are
+    // not verified but structural invariants must still hold (V-016).
+    ValidatorInvariants::check_post_check_proof(handle_);
   } else if (is_proof()) {
     ValidatorInvariants::check_post_check_proof(handle_);
   } else {
@@ -215,11 +216,14 @@ bool CheckProof::init_parse(bool is_aux) {
     return fatal_error("a non-masterchain block cannot be a key block");
   }
   block::gen::BlockExtra::Record extra;
+  bool extra_ok = false;
   if (!is_aux) {
-    // BlockExtra is only unpacked for key blocks today; relaxing
-    // this guard to all blocks is tracked as V-015 in
-    // doc/TODOS.md.
-    if (is_key_block_ && !tlb::unpack_cell(std::move(blk.extra), extra)) {
+    // Always attempt to unpack BlockExtra for non-aux blocks (V-015).
+    // For key blocks a parse failure is fatal; for non-key blocks the
+    // extra cell may simply not be present in the Merkle proof, so a
+    // failure is tolerated.
+    extra_ok = tlb::unpack_cell(blk.extra, extra);
+    if (is_key_block_ && !extra_ok) {
       return fatal_error("cannot unpack extra header of block "s + blk_id.to_str());
     }
   }

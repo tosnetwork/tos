@@ -31,6 +31,15 @@ class ManagerFacade : public td::actor::Actor {
 
   virtual void send_block_candidate_broadcast(BlockIdExt id, td::BufferSlice data, int mode) {
   }
+
+  // Forward a serialized misbehavior evidence message to the validator
+  // manager as an external message.  The data must be a valid TL-B
+  // external-message cell targeting the elector contract on the masterchain.
+  // When the elector's on-chain slash handler is not yet deployed the
+  // implementation may log the evidence and drop the message without error.
+  virtual td::actor::Task<> send_misbehavior_report(td::BufferSlice data) {
+    co_return td::Unit{};
+  }
 };
 
 }  // namespace tos::validator::consensus
