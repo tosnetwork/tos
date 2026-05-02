@@ -11,7 +11,7 @@
  */
 mod common;
 use common::*;
-// use tos_assembler::CompileError;
+use tos_assembler::CompileError;
 use chain_block::{ExceptionCode, SliceData};
 use tos_vm::{
     boolean, int,

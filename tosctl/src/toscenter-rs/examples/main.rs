@@ -1,4 +1,4 @@
-use toncenter::client::{ApiClientV2, ApiKey, Network};
+use toscenter_rs::client::{ApiClientV2, ApiKey, Network};
 
 #[tokio::main]
 async fn main() {

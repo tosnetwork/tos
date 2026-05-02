@@ -22,6 +22,7 @@ pretty_assertions = '1.4'
 rand = '0.8'
 serde = { features = [ 'derive' ], version = '1.0' }
 serde_json = '1.0'
+tos_assembler = { path = '../assembler' }
 
 [features]
 ci_run = [  ]

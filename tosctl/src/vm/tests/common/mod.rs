@@ -14,7 +14,7 @@
 pub mod test_framework;
 use std::sync::LazyLock;
 pub use test_framework::*;
-// use tos_assembler::CompileError;
+pub use tos_assembler::{compile_code, compile_code_to_builder, compile_code_to_cell, CompileError};
 use chain_block::{
     Account, BuilderData, Cell, ConfigParamEnum, CurrencyCollection, Deserializable, ExceptionCode,
     MerkleProof, MsgAddressInt, Serializable, ShardAccount, ShardStateUnsplit, SliceData,

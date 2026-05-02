@@ -4815,6 +4815,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tos_assembler",
  "tos_vm",
 ]
 
@@ -4853,6 +4854,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tl_api",
+ "tos_assembler",
 ]
 
 [[package]]
