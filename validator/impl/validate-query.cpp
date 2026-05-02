@@ -5961,10 +5961,9 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
         return reject_query(PSTRING() << "storage transaction " << lt << " of account " << addr.to_hex()
                                       << " has at least one outbound message");
       }
-      // Storage transaction re-execution is unimplemented and is
-      // tracked as V-001 in doc/TODOS.md.
-      return reject_query(PSTRING() << "unable to verify storage transaction " << lt << " of account "
-                                    << addr.to_hex());
+      // V-001: storage transaction re-execution — fall through to the
+      // shared re-execution path below (storage phase only, no
+      // compute/credit/action phases).
       break;
     }
     case block::gen::TransactionDescr::trans_tick_tock: {
@@ -6054,48 +6053,58 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                     << addr.to_hex());
     }
   }
-  if (trs->bounce_enabled) {
+  if (trans_type == block::transaction::Transaction::tr_storage) {
+    // Storage transactions have only a storage phase; there is no
+    // compute, credit, action, or bounce phase to re-execute.
     if (!trs->prepare_storage_phase(vq_.storage_phase_cfg_, true)) {
-      return reject_query(PSTRING() << "cannot re-create storage phase of transaction " << lt << " for smart contract "
-                                    << addr.to_hex());
-    }
-    if (need_credit_phase && !trs->prepare_credit_phase()) {
-      return reject_query(PSTRING() << "cannot create re-credit phase of transaction " << lt << " for smart contract "
-                                    << addr.to_hex());
+      return reject_query(PSTRING() << "cannot re-create storage phase of storage transaction " << lt
+                                    << " for smart contract " << addr.to_hex());
     }
   } else {
-    if (need_credit_phase && !trs->prepare_credit_phase()) {
-      return reject_query(PSTRING() << "cannot re-create credit phase of transaction " << lt << " for smart contract "
+    if (trs->bounce_enabled) {
+      if (!trs->prepare_storage_phase(vq_.storage_phase_cfg_, true)) {
+        return reject_query(PSTRING() << "cannot re-create storage phase of transaction " << lt
+                                      << " for smart contract " << addr.to_hex());
+      }
+      if (need_credit_phase && !trs->prepare_credit_phase()) {
+        return reject_query(PSTRING() << "cannot create re-credit phase of transaction " << lt
+                                      << " for smart contract " << addr.to_hex());
+      }
+    } else {
+      if (need_credit_phase && !trs->prepare_credit_phase()) {
+        return reject_query(PSTRING() << "cannot re-create credit phase of transaction " << lt
+                                      << " for smart contract " << addr.to_hex());
+      }
+      if (!trs->prepare_storage_phase(vq_.storage_phase_cfg_, true, need_credit_phase)) {
+        return reject_query(PSTRING() << "cannot re-create storage phase of transaction " << lt
+                                      << " for smart contract " << addr.to_hex());
+      }
+    }
+    if (!trs->prepare_compute_phase(vq_.compute_phase_cfg_)) {
+      return reject_query(PSTRING() << "cannot re-create compute phase of transaction " << lt
+                                    << " for smart contract " << addr.to_hex());
+    }
+    if (!trs->compute_phase->accepted) {
+      if (external) {
+        return reject_query(PSTRING() << "inbound external message claimed to be processed by ordinary transaction "
+                                      << lt << " of account " << addr.to_hex()
+                                      << " was in fact rejected (such transaction cannot appear in valid blocks)");
+      } else if (trs->compute_phase->skip_reason == block::ComputePhase::sk_none) {
+        return reject_query(PSTRING() << "inbound internal message processed by ordinary transaction " << lt
+                                      << " of account " << addr.to_hex()
+                                      << " was not processed without any reason");
+      }
+    }
+    if (trs->compute_phase->success && !trs->prepare_action_phase(vq_.action_phase_cfg_)) {
+      return reject_query(PSTRING() << "cannot re-create action phase of transaction " << lt << " for smart contract "
                                     << addr.to_hex());
     }
-    if (!trs->prepare_storage_phase(vq_.storage_phase_cfg_, true, need_credit_phase)) {
-      return reject_query(PSTRING() << "cannot re-create storage phase of transaction " << lt << " for smart contract "
-                                    << addr.to_hex());
+    if (trs->bounce_enabled &&
+        (!trs->compute_phase->success || trs->action_phase->state_exceeds_limits || trs->action_phase->bounce) &&
+        !trs->prepare_bounce_phase(vq_.action_phase_cfg_)) {
+      return reject_query(PSTRING() << "cannot re-create bounce phase of  transaction " << lt
+                                    << " for smart contract " << addr.to_hex());
     }
-  }
-  if (!trs->prepare_compute_phase(vq_.compute_phase_cfg_)) {
-    return reject_query(PSTRING() << "cannot re-create compute phase of transaction " << lt << " for smart contract "
-                                  << addr.to_hex());
-  }
-  if (!trs->compute_phase->accepted) {
-    if (external) {
-      return reject_query(PSTRING() << "inbound external message claimed to be processed by ordinary transaction " << lt
-                                    << " of account " << addr.to_hex()
-                                    << " was in fact rejected (such transaction cannot appear in valid blocks)");
-    } else if (trs->compute_phase->skip_reason == block::ComputePhase::sk_none) {
-      return reject_query(PSTRING() << "inbound internal message processed by ordinary transaction " << lt
-                                    << " of account " << addr.to_hex() << " was not processed without any reason");
-    }
-  }
-  if (trs->compute_phase->success && !trs->prepare_action_phase(vq_.action_phase_cfg_)) {
-    return reject_query(PSTRING() << "cannot re-create action phase of transaction " << lt << " for smart contract "
-                                  << addr.to_hex());
-  }
-  if (trs->bounce_enabled &&
-      (!trs->compute_phase->success || trs->action_phase->state_exceeds_limits || trs->action_phase->bounce) &&
-      !trs->prepare_bounce_phase(vq_.action_phase_cfg_)) {
-    return reject_query(PSTRING() << "cannot re-create bounce phase of  transaction " << lt << " for smart contract "
-                                  << addr.to_hex());
   }
   if (!trs->serialize(vq_.serialize_cfg_)) {
     return reject_query(PSTRING() << "cannot re-create the serialization of  transaction " << lt

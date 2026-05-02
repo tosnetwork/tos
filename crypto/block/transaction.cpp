@@ -3980,6 +3980,14 @@ bool Transaction::serialize(const SerializeConfig& cfg) {
                   && cb.store_ref_bool(cb2.finalize()) && cb.finalize_to(root));
       break;
     }
+    case tr_storage: {
+      // trans_storage$0001 storage_ph:TrStoragePhase
+      FAIL_UNLESS(storage_phase);
+      FAIL_UNLESS(cb2.store_long_bool(1, 4)  // trans_storage$0001
+                  && serialize_storage_phase(cb2)  // storage_ph:TrStoragePhase
+                  && cb.store_ref_bool(cb2.finalize()) && cb.finalize_to(root));
+      break;
+    }
     default:
       return false;
   }
