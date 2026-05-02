@@ -187,6 +187,11 @@ void OverlayImpl::receive_query(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api
     promise.set_error(td::Status::Error(ErrorCode::protoviolation, "overlay is not public"));
     return;
   }
+  if (banned_peers_.contains(src)) {
+    VLOG(OVERLAY_NOTICE) << this << ": received query from banned peer " << src;
+    promise.set_error(td::Status::Error(ErrorCode::protoviolation, "peer is banned"));
+    return;
+  }
 
   auto R = fetch_tl_object<tos_api::Function>(data.clone(), true);
 
@@ -284,6 +289,10 @@ void OverlayImpl::receive_message(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_a
                                   td::BufferSlice data) {
   if (!check_src_peer(src, extra ? extra->certificate_.get() : nullptr)) {
     VLOG(OVERLAY_WARNING) << this << ": received message in private overlay from unknown source " << src;
+    return;
+  }
+  if (banned_peers_.contains(src)) {
+    VLOG(OVERLAY_NOTICE) << this << ": received message from banned peer " << src;
     return;
   }
 
@@ -798,6 +807,16 @@ bool OverlayImpl::has_valid_broadcast_certificate(const PublicKeyHash &source, s
          BroadcastCheckResult::Forbidden;
 }
 
+td::actor::Task<> OverlayImpl::ban_peer(adnl::AdnlNodeIdShort peer_id, td::Timestamp unban_at) {
+  if (!banned_peers_.insert(peer_id).second) {
+    co_return td::Unit{};
+  }
+  VLOG(OVERLAY_NOTICE) << this << ": ban peer " << peer_id << " for " << unban_at.in() << " s";
+  co_await td::actor::coro_sleep(unban_at);
+  banned_peers_.erase(peer_id);
+  co_return td::Unit{};
+}
+
 td::Status OverlayImpl::check_signature_from_peer(PublicKey key, td::Slice message, td::Slice signature,
                                                   adnl::AdnlNodeIdShort message_from) {
   if (reject_signatures_from_.contains(message_from)) {
@@ -814,6 +833,7 @@ td::Status OverlayImpl::check_signature_from_peer(PublicKey key, td::Slice messa
       co_return td::Unit{};
     };
     task(this, message_from).start().detach_silent();
+    ban_peer(message_from, td::Timestamp::in(REJECT_SIGNATURES_DURATION)).start().detach_silent();
   }
   return S;
 }
