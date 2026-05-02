@@ -155,15 +155,20 @@ Under Path B, every subsequent `cmake -S tos -B tos/build` invocation must be pr
 CMAKE_PREFIX_PATH="$HOME/.local" cmake -S . -B build ...
 ```
 
-That env var tells CMake to add `$HOME/.local/{include,lib}` to the `find_path` / `find_library` search roots — without it the Uno build silently falls back to `UNO_MLKEM_STUB=1` and every runtime ML-KEM call aborts.
+That env var tells CMake to add `$HOME/.local/{include,lib}` to the `find_path` / `find_library` search roots — without it the configure step will abort with a `FATAL_ERROR`.
 
-If you forget the env var, `uno/CMakeLists.txt` will print:
-
-```
--- uno_workchain: liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1 (runtime abort).
-```
-
-This is the signal that you are building a Uno tree whose ML-KEM paths cannot actually run.
+> **Warning:** If you omit `CMAKE_PREFIX_PATH` (or liboqs is otherwise not found), CMake will **abort configuration** with:
+> ```
+> CMake Error: uno_workchain: liboqs is required for production validator builds but was
+> not found. Install liboqs-dev or build from source (see uno/crypto/LIBOQS_VERSION.md)
+> and re-configure with -DLIBOQS_INCLUDE_DIR=<prefix>/include
+> -DLIBOQS_LIBRARY=<prefix>/lib/liboqs.a.
+> If you are knowingly building a non-production binary that does not need real ML-KEM
+> (e.g. an early skeleton-build CI job), pass -DTOS_DEV_STUBS=ON to fall back to a
+> runtime-abort stub instead.
+> ```
+> Fix the liboqs path (see above) before re-running CMake. A build that silently omits
+> real ML-KEM is not possible without an explicit `-DTOS_DEV_STUBS=ON` opt-in.
 
 ### Installing the Rust toolchain (required even for a pure C++ build of Uno)
 
@@ -221,7 +226,7 @@ Look for these lines in the configure output to confirm the Uno wiring is live:
 -- uno_workchain: using vendored avatar BLAKE3 at /.../third-party/avatar-crypto
 ```
 
-If instead you see `liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1`, stop and fix the liboqs path before building — a stubbed ML-KEM will produce an otherwise-clean build whose runtime aborts on every Uno tx.
+If liboqs is not found, CMake will abort with a `FATAL_ERROR` — configure will not succeed without it. Fix the liboqs path and re-run CMake.
 
 ## C++ Build
 
@@ -679,9 +684,11 @@ The Rust FFI crate was not linked into `uno_workchain`. Causes:
 - `third-party/corrosion/` missing or broken → configure output will show `Corrosion not found`. Re-clone the submodule or re-vendor per `third-party/corrosion/README.uno.md`.
 - Rust toolchain not installed → `cmake` configure succeeds but `ninja` fails at the cargo-build step. Install rustup.
 
-### `uno_workchain: liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1`
+### CMake FATAL_ERROR: `liboqs is required for production validator builds but was not found`
 
 liboqs is not installed or CMake cannot find it. Either install to `/usr/local` (sudo) or install to `$HOME/.local` and pass `CMAKE_PREFIX_PATH="$HOME/.local"` at configure time. See the Uno Workchain prerequisites above.
+
+CMake will refuse to proceed without liboqs — the configure step aborts immediately. There is no silent fallback. If you are intentionally building a non-production binary without real ML-KEM (e.g. a skeleton CI job), pass `-DTOS_DEV_STUBS=ON` explicitly; see the warning in `uno/CMakeLists.txt` for the runtime consequences.
 
 ### Test binary aborts with "FFI symbol `uno_poseidon2_goldilocks_permute_t8` not linked"
 
