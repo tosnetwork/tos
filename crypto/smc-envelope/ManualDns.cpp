@@ -253,7 +253,7 @@ td::optional<td::int32> ManualDns::guess_revision(const vm::Cell::Hash& code_has
 }
 td::optional<td::int32> ManualDns::guess_revision(const block::StdAddress& address,
                                                   const td::Ed25519::PublicKey& public_key, td::uint32 wallet_id) {
-  for (auto i : {-1, 1}) {
+  for (auto i : tos::SmartContractCode::get_revisions(tos::SmartContractCode::ManualDns)) {
     auto dns = tos::ManualDns::create(public_key, wallet_id, i);
     if (dns->get_address() == address) {
       return i;

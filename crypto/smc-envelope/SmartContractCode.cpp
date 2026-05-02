@@ -85,7 +85,7 @@ td::Span<int> SmartContractCode::get_revisions(Type type) {
       return res;
     }
     case Type::ManualDns: {
-      static int res[] = {-1, 1};
+      static int res[] = {-1};
       return res;
     }
     case Type::PaymentChannel: {
