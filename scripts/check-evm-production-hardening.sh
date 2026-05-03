@@ -72,6 +72,15 @@ if ! command -v rg >/dev/null 2>&1; then
     }
 fi
 
+# Verify rg has PCRE2 support. Without it, every `rg -P` pattern silently
+# passes (rg exits non-zero with no stdout; the pipeline exits non-zero; the
+# `if` condition is false). Ubuntu 22.04's APT ripgrep 13.0.0 is built
+# without PCRE2 — install from cargo or use the ubuntu-24.04 builder image.
+if ! printf 'test\n' | rg -qP 'test' 2>/dev/null; then
+    echo "check-evm-production-hardening: rg is missing PCRE2 support; all -P checks would silently pass. Install ripgrep with PCRE2 (e.g. cargo install ripgrep --features pcre2)." >&2
+    exit 1
+fi
+
 root="${1:-.}"
 core="$root/evm/core"
 create_state="$root/crypto/block/create-state.cpp"

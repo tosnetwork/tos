@@ -926,7 +926,7 @@ void CellDbIn::gc_cont(BlockIdExt block_id, td::Result<BlockHandle> R) {
     handle->set_deleted_state_boc();
     td::actor::send_closure(root_db_, &RootDb::store_block_handle, handle,
                             [SelfId = actor_id(this), block_id](td::Result<td::Unit> R2) {
-                              R2.ensure();
+                              R2.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: store_block_handle after GC delete-BOC mark must succeed; failure indicates local DB corruption.
                               td::actor::send_closure(SelfId, &CellDbIn::gc_cont2, block_id);
                             });
   } else {
