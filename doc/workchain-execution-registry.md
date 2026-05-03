@@ -157,6 +157,13 @@ TRY_RESULT(result, plan.executor->run_compute(input, context));
 
 The descriptor, not the source file, decides which engine is active.
 
+The registry applies to ordinary workchains described by `ConfigParam 12`.
+Masterchain execution (`wc=-1`) is not represented in `ConfigParam 12` and
+remains TVM by protocol. Keeping a direct masterchain TVM path in
+`transaction.cpp` is not a violation of this design; the masterchain is not a
+governance-configured execution domain in the same sense as basechain, EVM, Uno,
+or future workchains.
+
 ## Descriptor Surface
 
 TOS already has a protocol hook for this: `ConfigParam 12` workchain
@@ -183,6 +190,14 @@ for `wc=0`. The registry must use `-1`, not `0`, to dispatch TVM. Using `0`
 would leave `wc=0` without a registered engine and fail every TVM transaction
 at startup preflight.
 
+For EVM, `vm_mode = 0` is a legacy sentinel and is not a valid production
+descriptor. Production EVM descriptors must be built with
+`evm_workchain::build_evm_workchain_descr()` so `vm_mode` carries the actual
+chain id. The Fift helper `add-evm-workchain` in `crypto/fift/lib/Workchain.fif`
+currently emits `vm_mode = 0`; that helper is suitable only as a legacy/devnet
+stub until it is updated, and a registry-based EVM engine must reject it through
+`validate_and_resolve_config`.
+
 `workchain_id` remains part of the descriptor key and address namespace. It is
 not the engine selector by itself.
 
@@ -193,12 +208,14 @@ ConfigParam are validated only after the engine family is selected. Current
 consensus-critical parameters, they should live in a dedicated ConfigParam
 keyed by workchain id, or in a deliberate TL-B schema upgrade.
 
-Implementation note: the registry normalizer must preserve all selector fields
-from the canonical `WorkchainDescr` cell. In particular, the current
+Implementation requirement: the registry normalizer must preserve all selector
+fields from the canonical `WorkchainDescr` cell. The current
 `block::WorkchainInfo` helper exposes `vm_version` and `vm_mode` for
-`wfmt_basic`, but an implementation must also retain `workchain_type_id` for
-`wfmt_ext`. If the existing helper drops that field, extend the helper or parse
-the descriptor cell directly before registry lookup.
+`wfmt_basic`, but it does not expose `workchain_type_id` for `wfmt_ext`. Phase 1
+must either extend `block::WorkchainInfo` with `workchain_type_id` populated from
+`wfmt_ext`, or parse the raw descriptor cell directly before registry lookup.
+Until that exists, every extended-format workchain would normalize to
+`{Extended, 0}` and extended engines would collide or fail closed.
 
 The registry key is therefore `(format, selector)`, not `workchain_id` and not
 `vm_version` alone. This avoids collisions between descriptor formats that reuse
@@ -352,6 +369,12 @@ block-transition config snapshot and reuse the resulting
 same workchain. Calling `resolve()` per-transaction would re-parse and revalidate
 engine config on every message, which is not the intended performance contract.
 
+If an implementation caches `ResolvedWorkchainExecution` outside a single block
+transition object, the cache key must include the workchain id and an identity
+for the exact config snapshot, such as the config root hash or block id that
+owns it. A cache keyed only by workchain id would reuse stale engine config
+across key blocks or config-update blocks and is forbidden.
+
 ## Engine Interface
 
 The long-term interface should avoid passing a mutable `block::ComputePhase&`
@@ -380,13 +403,22 @@ struct WorkchainComputeContext {
 
 struct WorkchainComputeInput {
   tos::StdSmcAddress account_addr;
-  td::Ref<vm::Cell> current_code;
+  td::Ref<vm::Cell> current_code;  // may be null for acc_uninit
   td::Ref<vm::Cell> current_data;
   block::CurrencyCollection account_balance;  // needed for EVM value transfer
   td::Ref<vm::Cell> inbound_message;          // full message cell, not just body
   tos::LogicalTime msg_lt;    // LT of the inbound message; TVM needs it for outbound LT ordering
   uint64_t gas_limit;
 };
+
+// `current_code` is the account code visible immediately before workchain
+// compute. It may be null for an uninitialized account. The host must not
+// pre-populate it from AccountExecutionPolicy.activation_code before calling
+// run_compute; activation_code is applied only after the engine commits.
+// Engines must document whether they accept null code. EVM and Uno v1 ignore
+// the code cell and use their state cell; TVM treats null code as the ordinary
+// "no executable code" case unless existing message-state rules provide code
+// before compute.
 
 struct WorkchainComputeOutput {
   // Invariants (must hold for all engines):
@@ -396,8 +428,9 @@ struct WorkchainComputeOutput {
   // `committed` is the host-chain state-commit decision: if true, host code
   // may apply new_data/new_code and run the action phase if action_list is set.
   // `engine_success` is the engine-visible outcome for receipts/status.
-  // The two are intentionally separate: an EVM revert has committed=true
-  // (nonce/gas/receipt state still commits) and engine_success=false.
+  // The two are intentionally separate: in the target EVM semantics, a revert
+  // has committed=true (nonce/gas/receipt state still commits) and
+  // engine_success=false.
   // For TVM: committed = accepted && TVM committed; engine_success = committed.
   // For Uno: committed = engine_success for valid state transitions.
   bool completed;
@@ -455,6 +488,15 @@ distinction. In particular, a reverted EVM transaction is an engine-level
 failure but not necessarily a host state-commit failure. Any temporary adapter
 that collapses those two booleans back into a single `cp.success` must document
 which meaning it chooses and must be covered by EVM revert-state tests.
+
+Compatibility note: Phase 1 and Phase 2 must remain byte-compatible with the
+current chain behavior. Today, at global version 14 and later, EVM reverts set
+`cp.success=false`, and `transaction.cpp::compute_phase_can_activate_account`
+therefore does not commit `cp.new_data` for first activation. Correcting EVM
+reverts so that nonce/gas state commits even when `engine_success=false` is a
+consensus-visible semantic change. That fix must be gated by a new global
+version or explicit EVM descriptor/config upgrade, not folded silently into the
+registry refactor.
 
 ## Account Execution Policy
 
@@ -739,6 +781,13 @@ Introduce:
 - `WorkchainExecutionRegistry`
 - `WorkchainEngine`
 
+Phase 1 prerequisite: the descriptor normalizer must preserve
+`wfmt_ext.workchain_type_id`. The preferred implementation is to extend
+`block::WorkchainInfo` with `uint32_t workchain_type_id = 0` and populate it in
+`WorkchainInfo::unpack()` when `format` is `wfmt_ext`; alternatively, parse the
+raw descriptor cell directly in the normalizer. Do not introduce registry lookup
+for extended-format descriptors while this value is being dropped.
+
 Register EVM and Uno through adapters that call the current handlers. Keep the
 old EVM/Uno dispatcher headers temporarily.
 
@@ -762,6 +811,15 @@ Replace hardcoded workchain-id branches with:
 
 At this phase, `workchain_id` is still part of context, but not the dispatch
 selector.
+
+EVM-specific Phase 2 requirement: `validate_and_resolve_config` must extract
+the EVM chain id from the on-chain descriptor's `vm_mode` and store it in
+`EvmEngineConfig`. Consensus compute must read the chain id from
+`WorkchainComputeContext.engine_config`, not from `evm_chain_config()` or
+`current_evm_chain_id()`, because those are process-local singleton paths.
+The singleton path may remain for non-consensus RPC, metrics, or transitional
+test helpers, but not for CHAINID, EIP-155 replay protection, transaction
+hashing, block execution, or receipt construction.
 
 ### Phase 3 - Move descriptor validation to startup and config updates
 
@@ -805,12 +863,17 @@ failed its main goal.
 Required tests:
 
 - descriptor parsing and normalization for TVM, EVM, and Uno
+- extended-format descriptor parsing preserves `workchain_type_id` and does not
+  normalize every `wfmt_ext` descriptor to `{Extended, 0}`
 - registry lookup by `(format, selector)`
 - unknown engine key fails closed
 - required workchain with missing local engine fails preflight
 - EVM and Uno singleton executor policies preserve current behavior
 - EVM v1 registry refactor does not change singleton state layout, receipt/log
   ordering, or revert-state commitment
+- EVM chain id used by consensus compute comes from descriptor `vm_mode` through
+  `EvmEngineConfig`, not from `evm_chain_config()` or `current_evm_chain_id()`
+- EVM descriptors with legacy `vm_mode = 0` fail engine config validation
 - descriptor-driven dispatch produces the same compute result as current
   hardcoded dispatch
 - collator and validator paths use the same resolved engine
@@ -818,6 +881,8 @@ Required tests:
   transition validation and any required migration rule pass
 - descriptor lookup uses the block's authoritative config snapshot, not latest
   masterchain state
+- resolved engine caches cannot be reused across config snapshots when
+  ConfigParam 12 or engine-specific ConfigParams change
 - changing consensus semantics without changing descriptor/config/global
   version is forbidden by tests or review gates
 - changing `(format, selector)` for an active workchain is rejected unless an
@@ -829,12 +894,17 @@ Required tests:
 - admission and mempool tests prove RPC prechecks are conservative and
   consensus compute re-resolves descriptors from the authoritative block
   snapshot
-- EVM revert tests prove `committed` and `engine_success` are distinct:
-  reverted transactions still commit required EVM host state while reporting
-  failure in receipts/status
+- EVM revert tests prove `committed` and `engine_success` are distinct while
+  Phase 1-2 adapters preserve current `cp.success`/activation behavior; any
+  future fix that commits revert nonce/gas state must be separately
+  global-version or descriptor gated
 - any future EVM shard-local or account-native topology fails activation unless
   an explicit descriptor/config migration rule is present and tested for state,
   ordering, receipts/logs, and cross-shard access
+- uninitialized account tests cover null `current_code` and prove
+  `activation_code` is not applied before `run_compute`
+- masterchain transactions continue through the protocol-defined TVM path
+  outside ConfigParam 12 registry dispatch
 - no RPC handler is required for consensus execution
 
 Negative tests are as important as positive tests:
@@ -882,8 +952,11 @@ ConfigParam keyed by workchain id.
 
 The long-term end state is:
 
-- `transaction.cpp` is engine-agnostic.
+- `transaction.cpp` has no hardcoded engine branches for ConfigParam 12
+  workchains.
 - `ConfigParam 12` determines the execution format for each active workchain.
+- masterchain (`wc=-1`) remains the protocol-defined TVM path outside
+  `ConfigParam 12`.
 - engine modules register capabilities with a local registry.
 - unsupported active workchains fail closed at node capability boundaries.
 - EVM and Uno remain first-class consensus workchains, not sidecars.
