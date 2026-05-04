@@ -188,6 +188,32 @@ td::Ref<vm::Cell> make_marker_cell(std::uint8_t value) {
   return cb.finalize();
 }
 
+tos::StdSmcAddress singleton_executor_address() {
+  tos::StdSmcAddress addr;
+  addr.set_zero();
+  addr.data()[31] = 1;
+  return addr;
+}
+
+td::Ref<vm::Cell> build_external_message(tos::WorkchainId workchain_id,
+                                         const tos::StdSmcAddress& dest,
+                                         td::Ref<vm::Cell> body) {
+  vm::CellBuilder cb;
+  bool ok = cb.store_long_bool(0b10, 2)       // ext_in_msg_info$10
+            && cb.store_long_bool(0b00, 2)    // src:addr_none$00
+            && cb.store_long_bool(0b100, 3)   // dest:addr_std$10, anycast=0
+            && cb.store_long_bool(workchain_id, 8)
+            && cb.store_bits_bool(dest)
+            && cb.store_long_bool(0, 4)       // import_fee:Grams = 0
+            && cb.store_long_bool(0, 1)       // init:Nothing
+            && cb.store_long_bool(1, 1)       // body in ref
+            && cb.store_ref_bool(std::move(body));
+  CHECK(ok);
+  auto cell = cb.finalize();
+  CHECK(block::gen::t_Message_Any.validate_ref(cell));
+  return cell;
+}
+
 // Mock EVM engine for tests that need to inject a fake compute function.
 // Wraps a lambda with the same signature as the old EvmComputeHandler but
 // without the chain_id parameter (chain_id is extracted from the engine config
@@ -312,7 +338,10 @@ struct MockUnoEngineConfig final : public block::WorkchainEngineConfig {
 
 class MockUnoEngine final : public block::WorkchainEngine {
  public:
-  explicit MockUnoEngine(MockUnoComputeFn fn) : fn_(std::move(fn)) {}
+  explicit MockUnoEngine(MockUnoComputeFn fn,
+                         bool may_activate_uninitialized_account = true)
+      : fn_(std::move(fn))
+      , may_activate_uninitialized_account_(may_activate_uninitialized_account) {}
 
   block::WorkchainEngineKey engine_key() const override {
     return block::uno_workchain_engine_key();
@@ -344,7 +373,7 @@ class MockUnoEngine final : public block::WorkchainEngine {
     policy.singleton_address = addr;
     policy.accepts_external_inbound = true;
     policy.accepts_internal_inbound = true;
-    policy.may_activate_uninitialized_account = true;
+    policy.may_activate_uninitialized_account = may_activate_uninitialized_account_;
     // Build the 0x55 'U' marker cell inline (same as UnoNativeEngine).
     vm::CellBuilder cb;
     cb.store_long(0x55, 8);
@@ -394,6 +423,7 @@ class MockUnoEngine final : public block::WorkchainEngine {
 
  private:
   MockUnoComputeFn fn_;
+  bool may_activate_uninitialized_account_;
 };
 
 }  // namespace
@@ -735,4 +765,193 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoAcceptNullCurrentCodeBeforeActivation)
 
   auto uno = registry.resolve(make_basic_descriptor(2, kUnoVmVersion, 0), config).move_as_ok();
   run_with_null_code(uno);
+}
+
+TEST(WorkchainExecutionRegistry, CustomComputeGasFeesAreCopiedIntoTransactionComputePhase) {
+  auto config = make_empty_config();
+  block::WorkchainSet workchains;
+  workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
+
+  block::WorkchainExecutionRegistry registry;
+  registry.register_engine(std::make_unique<MockUnoEngine>(
+      [](block::ComputePhase& cp,
+         td::Ref<vm::Cell> state_data,
+         vm::CellSlice& /*in_msg_body*/,
+         uint64_t /*gas_limit*/,
+         uint64_t /*block_seqno*/,
+         uint64_t /*timestamp*/,
+         const uint8_t /*rand_seed*/[32]) {
+        CHECK(state_data.is_null());
+        cp.accepted = true;
+        cp.success = true;
+        cp.gas_used = 11;
+        cp.gas_fees = td::make_refint(42);
+        cp.new_data = make_marker_cell(0xB1);
+        return true;
+      }));
+
+  auto addr = singleton_executor_address();
+  block::Account account(2, addr.bits());
+  account.status = block::Account::acc_nonexist;
+  account.orig_status = block::Account::acc_nonexist;
+  account.balance = block::CurrencyCollection::zero();
+
+  auto msg = build_external_message(2, addr, make_marker_cell(0x01));
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_ord, 1, 100, msg);
+
+  block::ActionPhaseConfig action_cfg;
+  action_cfg.workchains = &workchains;
+  CHECK(tx.unpack_input_msg(false, &action_cfg));
+
+  block::ComputePhaseConfig compute_cfg;
+  compute_cfg.gas_limit = 100;
+  compute_cfg.block_transition_config = &config;
+  compute_cfg.workchain_descriptors = &workchains;
+  compute_cfg.workchain_execution_registry = &registry;
+  compute_cfg.global_version = 14;
+
+  CHECK(tx.prepare_compute_phase(compute_cfg));
+  CHECK(tx.compute_phase != nullptr);
+  CHECK(tx.compute_phase->gas_fees.not_null());
+  CHECK(td::cmp(tx.compute_phase->gas_fees, td::make_refint(42)) == 0);
+}
+
+TEST(WorkchainExecutionRegistry, RejectsNegativeCustomComputeGasFees) {
+  auto config = make_empty_config();
+  block::WorkchainSet workchains;
+  workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
+
+  block::WorkchainExecutionRegistry registry;
+  registry.register_engine(std::make_unique<MockUnoEngine>(
+      [](block::ComputePhase& cp,
+         td::Ref<vm::Cell> state_data,
+         vm::CellSlice& /*in_msg_body*/,
+         uint64_t /*gas_limit*/,
+         uint64_t /*block_seqno*/,
+         uint64_t /*timestamp*/,
+         const uint8_t /*rand_seed*/[32]) {
+        CHECK(state_data.is_null());
+        cp.accepted = true;
+        cp.success = true;
+        cp.gas_used = 11;
+        cp.gas_fees = td::make_refint(-1);
+        cp.new_data = make_marker_cell(0xB2);
+        return true;
+      }));
+
+  auto addr = singleton_executor_address();
+  block::Account account(2, addr.bits());
+  account.status = block::Account::acc_nonexist;
+  account.orig_status = block::Account::acc_nonexist;
+  account.balance = block::CurrencyCollection::zero();
+
+  auto msg = build_external_message(2, addr, make_marker_cell(0x01));
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_ord, 1, 100, msg);
+
+  block::ActionPhaseConfig action_cfg;
+  action_cfg.workchains = &workchains;
+  CHECK(tx.unpack_input_msg(false, &action_cfg));
+
+  block::ComputePhaseConfig compute_cfg;
+  compute_cfg.gas_limit = 100;
+  compute_cfg.block_transition_config = &config;
+  compute_cfg.workchain_descriptors = &workchains;
+  compute_cfg.workchain_execution_registry = &registry;
+  compute_cfg.global_version = 14;
+
+  CHECK(!tx.prepare_compute_phase(compute_cfg));
+  CHECK(tx.compute_phase == nullptr);
+}
+
+TEST(WorkchainExecutionRegistry, RejectsCustomComputeGasUsedAboveLimit) {
+  auto config = make_empty_config();
+  block::WorkchainSet workchains;
+  workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
+
+  block::WorkchainExecutionRegistry registry;
+  registry.register_engine(std::make_unique<MockUnoEngine>(
+      [](block::ComputePhase& cp,
+         td::Ref<vm::Cell> state_data,
+         vm::CellSlice& /*in_msg_body*/,
+         uint64_t gas_limit,
+         uint64_t /*block_seqno*/,
+         uint64_t /*timestamp*/,
+         const uint8_t /*rand_seed*/[32]) {
+        CHECK(state_data.is_null());
+        cp.accepted = true;
+        cp.success = true;
+        cp.gas_used = gas_limit + 1;
+        cp.gas_fees = td::zero_refint();
+        cp.new_data = make_marker_cell(0xB3);
+        return true;
+      }));
+
+  auto addr = singleton_executor_address();
+  block::Account account(2, addr.bits());
+  account.status = block::Account::acc_nonexist;
+  account.orig_status = block::Account::acc_nonexist;
+  account.balance = block::CurrencyCollection::zero();
+
+  auto msg = build_external_message(2, addr, make_marker_cell(0x01));
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_ord, 1, 100, msg);
+
+  block::ActionPhaseConfig action_cfg;
+  action_cfg.workchains = &workchains;
+  CHECK(tx.unpack_input_msg(false, &action_cfg));
+
+  block::ComputePhaseConfig compute_cfg;
+  compute_cfg.gas_limit = 100;
+  compute_cfg.block_transition_config = &config;
+  compute_cfg.workchain_descriptors = &workchains;
+  compute_cfg.workchain_execution_registry = &registry;
+  compute_cfg.global_version = 14;
+
+  CHECK(!tx.prepare_compute_phase(compute_cfg));
+  CHECK(tx.compute_phase == nullptr);
+}
+
+TEST(WorkchainExecutionRegistry, CustomPolicyCanForbidUninitializedActivation) {
+  auto config = make_empty_config();
+  block::WorkchainSet workchains;
+  workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
+
+  bool compute_called = false;
+  block::WorkchainExecutionRegistry registry;
+  registry.register_engine(std::make_unique<MockUnoEngine>(
+      [&](block::ComputePhase& /*cp*/,
+          td::Ref<vm::Cell> /*state_data*/,
+          vm::CellSlice& /*in_msg_body*/,
+          uint64_t /*gas_limit*/,
+          uint64_t /*block_seqno*/,
+          uint64_t /*timestamp*/,
+          const uint8_t /*rand_seed*/[32]) {
+        compute_called = true;
+        return false;
+      },
+      false));
+
+  auto addr = singleton_executor_address();
+  block::Account account(2, addr.bits());
+  account.status = block::Account::acc_nonexist;
+  account.orig_status = block::Account::acc_nonexist;
+  account.balance = block::CurrencyCollection::zero();
+
+  auto msg = build_external_message(2, addr, make_marker_cell(0x01));
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_ord, 1, 100, msg);
+
+  block::ActionPhaseConfig action_cfg;
+  action_cfg.workchains = &workchains;
+  CHECK(tx.unpack_input_msg(false, &action_cfg));
+
+  block::ComputePhaseConfig compute_cfg;
+  compute_cfg.gas_limit = 100;
+  compute_cfg.block_transition_config = &config;
+  compute_cfg.workchain_descriptors = &workchains;
+  compute_cfg.workchain_execution_registry = &registry;
+  compute_cfg.global_version = 14;
+
+  CHECK(tx.prepare_compute_phase(compute_cfg));
+  CHECK(tx.compute_phase != nullptr);
+  CHECK(tx.compute_phase->skip_reason == block::ComputePhase::sk_no_state);
+  CHECK(!compute_called);
 }

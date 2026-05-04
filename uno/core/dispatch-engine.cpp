@@ -115,6 +115,7 @@ class UnoNativeEngine final : public block::WorkchainEngine {
             block::WorkchainComputeOutput out;
             out.completed = true;
             out.skip_reason = block::ComputePhase::sk_bad_state;
+            out.gas_fees = td::zero_refint();
             return out;
         }
         block::ComputePhase cp{};

@@ -131,12 +131,14 @@ void apply_custom_compute_output(block::ComputePhase& cp,
   cp.vm_init_state_hash = output.vm_init_state_hash;
   cp.vm_final_state_hash = output.vm_final_state_hash;
   cp.gas_used = output.gas_used;
+  cp.gas_fees = output.gas_fees;
   cp.new_data = output.new_data;
   cp.actions = output.action_list;
   cp.vm_log = output.vm_log;
 }
 
-td::Status validate_custom_compute_output(const block::WorkchainComputeOutput& output) {
+td::Status validate_custom_compute_output(const block::WorkchainComputeOutput& output,
+                                          td::uint64 gas_limit) {
   if (!output.completed && (output.accepted || output.committed)) {
     return td::Status::Error("custom workchain output violates !completed -> !accepted, !committed");
   }
@@ -145,6 +147,16 @@ td::Status validate_custom_compute_output(const block::WorkchainComputeOutput& o
   }
   if (output.gas_fees.is_null()) {
     return td::Status::Error("custom workchain output returned null gas_fees");
+  }
+  if (td::sgn(output.gas_fees) < 0) {
+    return td::Status::Error("custom workchain output returned negative gas_fees");
+  }
+  if (!output.completed && td::sgn(output.gas_fees) != 0) {
+    return td::Status::Error("custom workchain output violates !completed -> gas_fees=0");
+  }
+  if (output.gas_used > gas_limit) {
+    return td::Status::Error(PSTRING() << "custom workchain output used " << output.gas_used
+                                       << " gas above limit " << gas_limit);
   }
   return td::Status::OK();
 }
@@ -2011,6 +2023,11 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       cp.skip_reason = ComputePhase::sk_bad_state;
       return true;
     }
+    if (acc_status == Account::acc_uninit &&
+        !custom_plan.policy.may_activate_uninitialized_account) {
+      cp.skip_reason = ComputePhase::sk_no_state;
+      return true;
+    }
     if (in_msg_body.is_null()) {
       cp.skip_reason = ComputePhase::sk_bad_state;
       return true;
@@ -2048,7 +2065,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       return false;
     }
     auto output = output_res.move_as_ok();
-    auto output_status = validate_custom_compute_output(output);
+    auto output_status = validate_custom_compute_output(output, cp.gas_limit);
     if (output_status.is_error()) {
       LOG(ERROR) << "descriptor-selected workchain compute returned invalid output: "
                  << output_status.move_as_error();
