@@ -77,6 +77,7 @@ UnoConfigView current_uno_config_view() noexcept;
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
+#include "block/workchain-execution-dispatch.h"
 #include "td/utils/logging.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cellslice.h"
@@ -1696,6 +1697,8 @@ void init_uno_workchain(const std::string& db_root) {
                 *g_live,
                 block_seqno, timestamp, rand_seed);
         });
+    uno_workchain_dispatch::register_uno_workchain_engine(
+        block::default_workchain_execution_registry());
 
     // Step 5. Bind A6 RPC setter-DI. Every handler in uno/rpc/handlers.cpp
     // consults an atomic<fn*> that defaults to nullptr ("unavailable"). These

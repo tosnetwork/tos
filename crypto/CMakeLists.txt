@@ -205,6 +205,8 @@ set(BLOCK_SOURCE
   block/account-storage-stat.h
   block/account-storage-stat.cpp
   block/precompiled-smc/PrecompiledSmartContract.cpp
+  block/workchain-execution-dispatch.cpp
+  block/workchain-execution-dispatch.h
   block/evm-workchain-dispatch.cpp
   block/evm-workchain-dispatch.h
   block/uno-workchain-dispatch.cpp

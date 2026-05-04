@@ -12,6 +12,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/evm-workchain-dispatch.h"
+#include "block/workchain-execution-dispatch.h"
 #include "evm/core/cell-codec.h"
 #include "evm/rpc/cache-codec.h"
 #include "evm/rpc/cache-db.h"
@@ -954,6 +955,8 @@ void init_evm_workchain(const std::string& db_root) {
             }
             return ok;
         });
+    evm_workchain_dispatch::register_evm_workchain_engine(
+        block::default_workchain_execution_registry());
 
     LOG(WARNING) << "evm-workchain: handler registered";
 }

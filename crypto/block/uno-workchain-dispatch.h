@@ -22,6 +22,7 @@
 
 namespace block {
 struct ComputePhase;
+class WorkchainExecutionRegistry;
 }
 
 namespace uno_workchain_dispatch {
@@ -76,5 +77,12 @@ bool invoke_uno_compute(
 /// Returns the same Ref<vm::Cell> on every call (cached singleton). All
 /// validators produce the same cell hash, which CellDb will deduplicate.
 td::Ref<vm::Cell> get_uno_code_marker_cell();
+
+/// Register the Uno descriptor/policy engine with a WorkchainExecutionRegistry.
+///
+/// This is the Phase 1 compatibility registration: compute still flows through
+/// the legacy UnoComputeHandler until transaction.cpp is moved to the generic
+/// WorkchainEngine::run_compute path.
+void register_uno_workchain_engine(block::WorkchainExecutionRegistry& registry);
 
 }  // namespace uno_workchain_dispatch

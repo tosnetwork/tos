@@ -23,6 +23,7 @@
 #include "block/transaction.h"
 #include "block/evm-workchain-dispatch.h"
 #include "block/uno-workchain-dispatch.h"
+#include "block/workchain-execution-dispatch.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
 #include "td/utils/bits.h"
@@ -50,6 +51,9 @@
 namespace {
 constexpr tos::WorkchainId kEvmWorkchainId = 1;
 constexpr tos::WorkchainId kUnoWorkchainId = 2;
+constexpr std::int32_t kEvmVmVersion = 0x45564D;   // "EVM"
+constexpr std::int32_t kUnoVmVersion = 0x554E4F31;  // "UNO1"
+constexpr std::int32_t kTvmVmVersion = -1;
 constexpr int kDeploySuccessActivationVersion = 14;
 
 bool is_evm_workchain(tos::WorkchainId wc) {
@@ -60,13 +64,128 @@ bool is_uno_workchain(tos::WorkchainId wc) {
   return wc == kUnoWorkchainId;
 }
 
-/// wc=1 (EVM) and wc=2 (UNO) are gas-metered by their own compute-phase
-/// dispatchers, not TVM. They must bypass the legacy "zero balance →
-/// skip compute" TVM gate so an ext_in_msg to an `acc_uninit` executor
-/// account can still be dispatched (the account activates inside the
-/// branch — see `prepare_compute_phase` §Uno Workchain dispatch).
+enum class CustomComputeKind {
+  None,
+  Evm,
+  Uno
+};
+
+struct CustomComputePlan {
+  CustomComputeKind kind{CustomComputeKind::None};
+  block::AccountExecutionPolicy policy;
+  bool descriptor_backed{false};
+
+  bool has_custom_compute() const {
+    return kind != CustomComputeKind::None;
+  }
+};
+
+tos::StdSmcAddress singleton_executor_address() {
+  tos::StdSmcAddress addr;
+  addr.set_zero();
+  addr.data()[31] = 1;
+  return addr;
+}
+
+CustomComputeKind legacy_custom_compute_kind(tos::WorkchainId wc) {
+  if (is_evm_workchain(wc)) {
+    return CustomComputeKind::Evm;
+  }
+  if (is_uno_workchain(wc)) {
+    return CustomComputeKind::Uno;
+  }
+  return CustomComputeKind::None;
+}
+
 bool has_custom_compute_phase(tos::WorkchainId wc) {
-  return is_evm_workchain(wc) || is_uno_workchain(wc);
+  return legacy_custom_compute_kind(wc) != CustomComputeKind::None;
+}
+
+CustomComputeKind custom_compute_kind_from_key(const block::WorkchainEngineKey& key) {
+  if (key.format != block::WorkchainFormat::Basic) {
+    return CustomComputeKind::None;
+  }
+  if (key.selector == kEvmVmVersion) {
+    return CustomComputeKind::Evm;
+  }
+  if (key.selector == kUnoVmVersion) {
+    return CustomComputeKind::Uno;
+  }
+  return CustomComputeKind::None;
+}
+
+bool is_tvm_engine_key(const block::WorkchainEngineKey& key) {
+  return key.format == block::WorkchainFormat::Basic && key.selector == kTvmVmVersion;
+}
+
+block::AccountExecutionPolicy legacy_custom_policy(CustomComputeKind kind) {
+  block::AccountExecutionPolicy policy;
+  if (kind == CustomComputeKind::None) {
+    return policy;
+  }
+  policy.kind = block::AccountExecutionPolicyKind::SingletonExecutor;
+  policy.singleton_address = singleton_executor_address();
+  policy.accepts_external_inbound = true;
+  policy.accepts_internal_inbound = true;
+  policy.may_activate_uninitialized_account = true;
+  if (kind == CustomComputeKind::Evm) {
+    policy.activation_code = evm_workchain_dispatch::get_evm_code_marker_cell();
+  } else if (kind == CustomComputeKind::Uno) {
+    policy.activation_code = uno_workchain_dispatch::get_uno_code_marker_cell();
+  }
+  return policy;
+}
+
+td::Result<CustomComputePlan> resolve_custom_compute_plan(const block::ComputePhaseConfig& cfg,
+                                                          tos::WorkchainId workchain_id) {
+  if (cfg.workchain_descriptors != nullptr) {
+    auto it = cfg.workchain_descriptors->find(workchain_id);
+    if (it == cfg.workchain_descriptors->end() || it->second.is_null()) {
+      return CustomComputePlan{};
+    }
+
+    TRY_RESULT(descriptor, block::normalize_workchain_descriptor(*it->second));
+    auto key = block::workchain_engine_key_from_descriptor(descriptor);
+    auto kind = custom_compute_kind_from_key(key);
+    if (kind == CustomComputeKind::None) {
+      if (is_tvm_engine_key(key)) {
+        return CustomComputePlan{};
+      }
+      return td::Status::Error(PSTRING() << "unsupported workchain execution engine "
+                                         << block::workchain_engine_key_to_string(key)
+                                         << " for workchain " << workchain_id);
+    }
+
+    if (cfg.block_transition_config == nullptr || cfg.workchain_execution_registry == nullptr) {
+      return td::Status::Error(PSTRING() << "missing workchain execution registry context for workchain "
+                                         << workchain_id);
+    }
+
+    TRY_RESULT(resolved,
+               cfg.workchain_execution_registry->resolve(descriptor, *cfg.block_transition_config));
+    CustomComputePlan plan;
+    plan.kind = kind;
+    plan.descriptor_backed = true;
+    plan.policy = resolved.executor->account_policy(resolved.descriptor, *resolved.engine_config);
+    return plan;
+  }
+
+  CustomComputePlan plan;
+  plan.kind = legacy_custom_compute_kind(workchain_id);
+  plan.policy = legacy_custom_policy(plan.kind);
+  return plan;
+}
+
+bool account_allowed_by_policy(const block::AccountExecutionPolicy& policy, const tos::StdSmcAddress& addr) {
+  if (policy.kind == block::AccountExecutionPolicyKind::SingletonExecutor) {
+    return policy.singleton_address.has_value() &&
+           std::memcmp(addr.data(), policy.singleton_address.value().data(), 32) == 0;
+  }
+  return true;
+}
+
+bool inbound_allowed_by_policy(const block::AccountExecutionPolicy& policy, bool external) {
+  return external ? policy.accepts_external_inbound : policy.accepts_internal_inbound;
 }
 
 bool extra_flags_within_valid_mask(const td::RefInt256& extra_flags) {
@@ -1476,12 +1595,11 @@ td::uint64 Transaction::gas_bought_for(const ComputePhaseConfig& cfg, td::RefInt
  *
  * @returns True if the gas limits were successfully computed, false otherwise.
  */
-bool Transaction::compute_gas_limits(ComputePhase& cp, const ComputePhaseConfig& cfg) {
-  if (has_custom_compute_phase(account.workchain) && trans_type == tr_ord) {
-    // wc=1 (EVM) and wc=2 (UNO) transactions meter gas inside their own
-    // compute-phase dispatchers. Keep basechain gas admission out of the
-    // way — the TVM path buys gas from account balance, which would
-    // reject UNO's balance=0 executor account here.
+bool Transaction::compute_gas_limits(ComputePhase& cp, const ComputePhaseConfig& cfg, bool custom_ord) {
+  if (custom_ord) {
+    // Custom workchains meter gas inside their own compute-phase dispatchers.
+    // Keep basechain gas admission out of the way: the TVM path buys gas from
+    // account balance, which would reject a zero-balance executor account here.
     cp.gas_max = cfg.gas_limit;
     cp.gas_limit = cfg.gas_limit;
     cp.gas_credit = 0;
@@ -1897,7 +2015,15 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   // ...
   compute_phase = std::make_unique<ComputePhase>();
   ComputePhase& cp = *(compute_phase.get());
-  const bool custom_ord = has_custom_compute_phase(account.workchain) && trans_type == tr_ord;
+  auto custom_plan_res = resolve_custom_compute_plan(cfg, account.workchain);
+  if (custom_plan_res.is_error()) {
+    LOG(ERROR) << "cannot resolve workchain execution for compute phase: "
+               << custom_plan_res.move_as_error();
+    compute_phase.reset();
+    return false;
+  }
+  auto custom_plan = custom_plan_res.move_as_ok();
+  const bool custom_ord = custom_plan.has_custom_compute() && trans_type == tr_ord;
   if (cfg.global_version >= 9) {
     original_balance = balance;
     if (msg_balance_remaining.is_valid()) {
@@ -1907,14 +2033,14 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     original_balance -= total_fees;
   }
   if (!custom_ord && td::sgn(balance.tomis) <= 0) {
-    // no gas — TVM only. wc=1 (EVM) / wc=2 (UNO) have their own gas models
-    // and route below regardless of TOS balance, so an ext_in_msg can bring
-    // an `acc_uninit` executor account up from zero balance.
+    // no gas — TVM only. Descriptor-selected custom engines have their own
+    // gas models and route below regardless of TOS balance, so an ext_in_msg
+    // can bring an `acc_uninit` executor account up from zero balance.
     cp.skip_reason = ComputePhase::sk_no_gas;
     return true;
   }
   // Compute gas limits
-  if (!compute_gas_limits(cp, cfg)) {
+  if (!compute_gas_limits(cp, cfg, custom_ord)) {
     compute_phase.reset();
     return false;
   }
@@ -1925,26 +2051,24 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   }
 
   // --- EVM Workchain dispatch ---
-  // If the account belongs to the EVM workchain and a handler is registered,
-  // route to the EVM executor instead of TVM.
-  if (evm_workchain_dispatch::has_evm_compute_handler() &&
-      account.workchain == 1 /* evm_workchain::kWorkchainId — avoid header dep */) {
-    // Mirror the wc=2 executor-address gate. The EVM workchain hosts a single
-    // outer account at
-    // `evm_workchain::kEvmExecutorAddressBytes` (0x00…01) which carries
-    // the entire EVM world state. Reject ext_in_msgs to other wc=1
-    // addresses so a caller cannot drive arbitrary wc=1 accounts into
-    // the EVM compute phase. Bytes hardcoded to keep the no-header-dep
-    // convention noted on the workchain literal above.
-    {
-      static constexpr unsigned char kEvmExecutorAddr[32] = {
-          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
-          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1,
-      };
-      if (std::memcmp(account.addr.data(), kEvmExecutorAddr, 32) != 0) {
-        cp.skip_reason = ComputePhase::sk_bad_state;
-        return true;
-      }
+  // If ConfigParam 12 selects the EVM engine and a handler is registered, route
+  // to the EVM executor instead of TVM. Legacy tests without config context use
+  // the old wc=1 compatibility plan.
+  if (custom_plan.kind == CustomComputeKind::Evm &&
+      !evm_workchain_dispatch::has_evm_compute_handler() &&
+      custom_plan.descriptor_backed) {
+    LOG(ERROR) << "descriptor-selected EVM workchain has no registered compute handler";
+    compute_phase.reset();
+    return false;
+  }
+  if (custom_plan.kind == CustomComputeKind::Evm && evm_workchain_dispatch::has_evm_compute_handler()) {
+    // The active engine declares which account shapes may enter custom compute.
+    // EVM v1 still uses the singleton executor at 0x00...01, but the address
+    // is no longer selected by the generic transaction engine.
+    if (!inbound_allowed_by_policy(custom_plan.policy, in_msg_extern) ||
+        !account_allowed_by_policy(custom_plan.policy, account.addr)) {
+      cp.skip_reason = ComputePhase::sk_bad_state;
+      return true;
     }
     if (in_msg_body.is_null()) {
       cp.skip_reason = ComputePhase::sk_bad_state;
@@ -1988,7 +2112,9 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       // used by the wc=1 ShardAccount wrapper in evm-cell-state.cpp, so all
       // EVM accounts share one code cell hash and CellDb deduplicates it.
       if (new_code.is_null()) {
-        new_code = evm_workchain_dispatch::get_evm_code_marker_cell();
+        new_code = custom_plan.policy.activation_code.not_null()
+                       ? custom_plan.policy.activation_code
+                       : evm_workchain_dispatch::get_evm_code_marker_cell();
       }
     }
 
@@ -1997,26 +2123,23 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   // --- End EVM Workchain dispatch ---
 
   // --- Uno Workchain dispatch ---
-  // If the account belongs to the Uno workchain (wc=2) and a handler is
-  // registered, route to the shielded-pool compute phase instead of TVM.
-  // Mirrors the wc=1 branch above. See doc/uno-workchain.md §8.2.
-  if (uno_workchain_dispatch::has_uno_compute_handler() &&
-      account.workchain == 2 /* uno_workchain::kWorkchainId — avoid header dep */) {
-    // Defense-in-depth: even though
-    // ExtMessagePool::check_message rejects non-executor wc=2 ingress,
-    // the dispatch layer must also refuse so collator-injected msgs and
-    // non-RPC code paths can't drive arbitrary wc=2 accounts into the
-    // UNO compute phase. Skip with sk_bad_state (same as null body).
-    // Bytes hardcoded to keep the no-header-dep convention noted above.
-    {
-      static constexpr unsigned char kUnoExecutorAddr[32] = {
-          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
-          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1,
-      };
-      if (std::memcmp(account.addr.data(), kUnoExecutorAddr, 32) != 0) {
-        cp.skip_reason = ComputePhase::sk_bad_state;
-        return true;
-      }
+  // If ConfigParam 12 selects the Uno engine and a handler is registered, route
+  // to the shielded-pool compute phase instead of TVM. Legacy tests without
+  // config context use the old wc=2 compatibility plan.
+  if (custom_plan.kind == CustomComputeKind::Uno &&
+      !uno_workchain_dispatch::has_uno_compute_handler() &&
+      custom_plan.descriptor_backed) {
+    LOG(ERROR) << "descriptor-selected Uno workchain has no registered compute handler";
+    compute_phase.reset();
+    return false;
+  }
+  if (custom_plan.kind == CustomComputeKind::Uno && uno_workchain_dispatch::has_uno_compute_handler()) {
+    // Defense-in-depth: admission rejects non-executor wc=2 ingress, and the
+    // generic policy gate enforces the same rule in consensus execution.
+    if (!inbound_allowed_by_policy(custom_plan.policy, in_msg_extern) ||
+        !account_allowed_by_policy(custom_plan.policy, account.addr)) {
+      cp.skip_reason = ComputePhase::sk_bad_state;
+      return true;
     }
     if (in_msg_body.is_null()) {
       cp.skip_reason = ComputePhase::sk_bad_state;
@@ -2058,7 +2181,9 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       // account (and wc=2 only has one executor account anyway). CellDb dedup
       // means every validator reuses the same ref.
       if (new_code.is_null()) {
-        new_code = uno_workchain_dispatch::get_uno_code_marker_cell();
+        new_code = custom_plan.policy.activation_code.not_null()
+                       ? custom_plan.policy.activation_code
+                       : uno_workchain_dispatch::get_uno_code_marker_cell();
       }
     }
 
@@ -4471,6 +4596,9 @@ td::Status FetchConfigParams::fetch_config_params(
     storage_phase_cfg->enable_due_payment = config.get_global_version() >= 4;
     storage_phase_cfg->global_version = config.get_global_version();
     compute_phase_cfg->block_rand_seed = *rand_seed;
+    compute_phase_cfg->block_transition_config = &config;
+    compute_phase_cfg->workchain_descriptors = &config.get_workchain_list();
+    compute_phase_cfg->workchain_execution_registry = &block::default_workchain_execution_registry();
     compute_phase_cfg->max_vm_data_depth = size_limits.max_vm_data_depth;
     compute_phase_cfg->global_config = config.get_root_cell();
     compute_phase_cfg->global_version = config.get_global_version();

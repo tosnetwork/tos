@@ -28,6 +28,7 @@
 #include "evm/core/workchain.h"
 #include "block/output-queue-merger.h"
 #include "block/validator-set.h"
+#include "block/workchain-execution-dispatch.h"
 #include "common/errorlog.h"
 #include "td/utils/format.h"
 #include "tos/tos-io.hpp"
@@ -1100,6 +1101,9 @@ bool ValidateQuery::fetch_config_params() {
     storage_phase_cfg_.enable_due_payment = config_->get_global_version() >= 4;
     storage_phase_cfg_.global_version = config_->get_global_version();
     compute_phase_cfg_.block_rand_seed = rand_seed_;
+    compute_phase_cfg_.block_transition_config = config_.get();
+    compute_phase_cfg_.workchain_descriptors = &config_->get_workchain_list();
+    compute_phase_cfg_.workchain_execution_registry = &block::default_workchain_execution_registry();
     compute_phase_cfg_.libraries = std::make_unique<vm::Dictionary>(config_->get_libraries_root(), 256);
     compute_phase_cfg_.max_vm_data_depth = size_limits.max_vm_data_depth;
     compute_phase_cfg_.global_config = config_->get_root_cell();

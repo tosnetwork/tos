@@ -19,6 +19,7 @@
 
 namespace block {
 struct ComputePhase;
+class WorkchainExecutionRegistry;
 }
 
 namespace evm_workchain_dispatch {
@@ -84,5 +85,12 @@ bool invoke_evm_compute(
 /// validators produce the same cell hash, which CellDb will deduplicate
 /// across every EVM account.
 td::Ref<vm::Cell> get_evm_code_marker_cell();
+
+/// Register the EVM descriptor/policy engine with a WorkchainExecutionRegistry.
+///
+/// This is the Phase 1 compatibility registration: compute still flows through
+/// the legacy EvmComputeHandler until transaction.cpp is moved to the generic
+/// WorkchainEngine::run_compute path.
+void register_evm_workchain_engine(block::WorkchainExecutionRegistry& registry);
 
 }  // namespace evm_workchain_dispatch
