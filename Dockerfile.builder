@@ -12,10 +12,24 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG LIBOQS_COMMIT=3cb781fd4737c900ad755ee0bb9e1949d0f68955
 RUN apt-get update && \
     apt-get install -y build-essential git cmake ninja-build pkg-config \
-    autoconf automake libtool libjemalloc-dev ccache gperf ripgrep wget curl \
+    autoconf automake libtool libjemalloc-dev ccache gperf wget curl \
     lsb-release software-properties-common gnupg python3 python3-dev \
     libgmp-dev libssl-dev && \
     rm -rf /var/lib/apt/lists/*
+
+# Ubuntu 22.04 apt ripgrep is built without PCRE2; install the musl release
+# binary which bundles PCRE2 statically. Pin version + SHA256 for reproducibility.
+RUN set -eux; \
+    RG_VERSION=14.1.1; \
+    RG_SHA256=4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e; \
+    curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+        -o /tmp/rg.tar.gz && \
+    echo "${RG_SHA256}  /tmp/rg.tar.gz" | sha256sum -c - && \
+    tar -xz -f /tmp/rg.tar.gz -C /tmp && \
+    mv "/tmp/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg" /usr/local/bin/rg && \
+    chmod +x /usr/local/bin/rg && \
+    rm -rf /tmp/rg.tar.gz "/tmp/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl" && \
+    rg --pcre2-version
 
 # Install Clang 21 (pinned — no runtime download needed by CI)
 RUN wget -q https://apt.llvm.org/llvm.sh && \
