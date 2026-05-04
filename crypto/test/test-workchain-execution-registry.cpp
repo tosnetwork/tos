@@ -188,6 +188,11 @@ td::Ref<vm::Cell> make_marker_cell(std::uint8_t value) {
   return cb.finalize();
 }
 
+td::Ref<vm::Cell> make_empty_action_list() {
+  vm::CellBuilder cb;
+  return cb.finalize();
+}
+
 tos::StdSmcAddress singleton_executor_address() {
   tos::StdSmcAddress addr;
   addr.set_zero();
@@ -555,6 +560,16 @@ TEST(WorkchainExecutionRegistry, RejectsActiveExecutionDescriptorTransitionsWith
   CHECK(block::validate_workchain_execution_descriptor_transitions(
       old_workchains, new_workchains).is_error());
 
+  new_workchains[7] = make_basic_workchain_info(7, kEvmVmVersion, 0x544F53);
+  new_workchains[7].unique_write().zerostate_root_hash.data()[31] = 1;
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_error());
+
+  new_workchains[7] = make_basic_workchain_info(7, kEvmVmVersion, 0x544F53);
+  new_workchains[7].unique_write().zerostate_file_hash.data()[31] = 1;
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_error());
+
   old_workchains[7].unique_write().active = false;
   new_workchains[7] = make_basic_workchain_info(7, kUnoVmVersion, 0);
   CHECK(block::validate_workchain_execution_descriptor_transitions(
@@ -680,6 +695,7 @@ TEST(WorkchainExecutionRegistry, EvmComputeUsesDescriptorChainIdNotDefaultSingle
         cp.gas_used = 1;
         cp.gas_fees = td::make_refint(1);
         cp.new_data = make_marker_cell(0xCD);
+        cp.actions = make_empty_action_list();
         return true;
       }));
 
@@ -722,6 +738,7 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoAcceptNullCurrentCodeBeforeActivation)
         cp.gas_used = 1;
         cp.gas_fees = td::make_refint(1);
         cp.new_data = make_marker_cell(0xE1);
+        cp.actions = make_empty_action_list();
         return true;
       }));
   registry.register_engine(std::make_unique<MockUnoEngine>(
@@ -738,6 +755,7 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoAcceptNullCurrentCodeBeforeActivation)
         cp.gas_used = 1;
         cp.gas_fees = td::make_refint(1);
         cp.new_data = make_marker_cell(0xA1);
+        cp.actions = make_empty_action_list();
         return true;
       }));
 
@@ -793,6 +811,7 @@ TEST(WorkchainExecutionRegistry, CustomComputeGasFeesAreCopiedIntoTransactionCom
         cp.gas_used = 11;
         cp.gas_fees = td::make_refint(42);
         cp.new_data = make_marker_cell(0xB1);
+        cp.actions = make_empty_action_list();
         return true;
       }));
 
@@ -822,6 +841,53 @@ TEST(WorkchainExecutionRegistry, CustomComputeGasFeesAreCopiedIntoTransactionCom
   CHECK(td::cmp(tx.compute_phase->gas_fees, td::make_refint(42)) == 0);
 }
 
+TEST(WorkchainExecutionRegistry, RejectsSuccessfulCustomComputeWithoutActionList) {
+  auto config = make_empty_config();
+  block::WorkchainSet workchains;
+  workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
+
+  block::WorkchainExecutionRegistry registry;
+  registry.register_engine(std::make_unique<MockUnoEngine>(
+      [](block::ComputePhase& cp,
+         td::Ref<vm::Cell> state_data,
+         vm::CellSlice& /*in_msg_body*/,
+         uint64_t /*gas_limit*/,
+         uint64_t /*block_seqno*/,
+         uint64_t /*timestamp*/,
+         const uint8_t /*rand_seed*/[32]) {
+        CHECK(state_data.is_null());
+        cp.accepted = true;
+        cp.success = true;
+        cp.gas_used = 11;
+        cp.gas_fees = td::make_refint(42);
+        cp.new_data = make_marker_cell(0xB4);
+        return true;
+      }));
+
+  auto addr = singleton_executor_address();
+  block::Account account(2, addr.bits());
+  account.status = block::Account::acc_nonexist;
+  account.orig_status = block::Account::acc_nonexist;
+  account.balance = block::CurrencyCollection::zero();
+
+  auto msg = build_external_message(2, addr, make_marker_cell(0x01));
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_ord, 1, 100, msg);
+
+  block::ActionPhaseConfig action_cfg;
+  action_cfg.workchains = &workchains;
+  CHECK(tx.unpack_input_msg(false, &action_cfg));
+
+  block::ComputePhaseConfig compute_cfg;
+  compute_cfg.gas_limit = 100;
+  compute_cfg.block_transition_config = &config;
+  compute_cfg.workchain_descriptors = &workchains;
+  compute_cfg.workchain_execution_registry = &registry;
+  compute_cfg.global_version = 14;
+
+  CHECK(!tx.prepare_compute_phase(compute_cfg));
+  CHECK(tx.compute_phase == nullptr);
+}
+
 TEST(WorkchainExecutionRegistry, RejectsNegativeCustomComputeGasFees) {
   auto config = make_empty_config();
   block::WorkchainSet workchains;
@@ -842,6 +908,7 @@ TEST(WorkchainExecutionRegistry, RejectsNegativeCustomComputeGasFees) {
         cp.gas_used = 11;
         cp.gas_fees = td::make_refint(-1);
         cp.new_data = make_marker_cell(0xB2);
+        cp.actions = make_empty_action_list();
         return true;
       }));
 
@@ -889,6 +956,7 @@ TEST(WorkchainExecutionRegistry, RejectsCustomComputeGasUsedAboveLimit) {
         cp.gas_used = gas_limit + 1;
         cp.gas_fees = td::zero_refint();
         cp.new_data = make_marker_cell(0xB3);
+        cp.actions = make_empty_action_list();
         return true;
       }));
 

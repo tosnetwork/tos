@@ -148,6 +148,12 @@ td::Status validate_custom_compute_output(const block::WorkchainComputeOutput& o
   if (!output.completed && (output.accepted || output.committed)) {
     return td::Status::Error("custom workchain output violates !completed -> !accepted, !committed");
   }
+  if (output.engine_success && !output.completed) {
+    return td::Status::Error("custom workchain output violates engine_success -> completed");
+  }
+  if (output.engine_success && !output.accepted) {
+    return td::Status::Error("custom workchain output violates engine_success -> accepted");
+  }
   if (output.committed && !output.accepted) {
     return td::Status::Error("custom workchain output violates committed -> accepted");
   }
@@ -163,6 +169,9 @@ td::Status validate_custom_compute_output(const block::WorkchainComputeOutput& o
   if (output.gas_used > gas_limit) {
     return td::Status::Error(PSTRING() << "custom workchain output used " << output.gas_used
                                        << " gas above limit " << gas_limit);
+  }
+  if (output.engine_success && output.action_list.is_null()) {
+    return td::Status::Error("custom workchain output violates engine_success -> action_list");
   }
   return td::Status::OK();
 }

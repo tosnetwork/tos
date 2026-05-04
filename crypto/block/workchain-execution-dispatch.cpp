@@ -156,6 +156,11 @@ td::Status validate_workchain_execution_descriptor_transitions(
                                          << " changes zerostate_root_hash"
                                          << " without an explicit migration rule");
     }
+    if (old_descriptor.zerostate_file_hash != new_descriptor.zerostate_file_hash) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes zerostate_file_hash"
+                                         << " without an explicit migration rule");
+    }
   }
   return td::Status::OK();
 }
