@@ -152,6 +152,13 @@ td::Status validate_workchain_execution_descriptor_transitions(
                                          << new_descriptor.vm_mode
                                          << " without an explicit migration rule");
     }
+    if (old_descriptor.min_addr_len != new_descriptor.min_addr_len ||
+        old_descriptor.max_addr_len != new_descriptor.max_addr_len ||
+        old_descriptor.addr_len_step != new_descriptor.addr_len_step) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes address-length shape"
+                                         << " without an explicit migration rule");
+    }
     // Zerostate hash changes for active workchains are state forks unless a
     // future migration rule explicitly defines otherwise.
     if (old_descriptor.zerostate_root_hash != new_descriptor.zerostate_root_hash) {

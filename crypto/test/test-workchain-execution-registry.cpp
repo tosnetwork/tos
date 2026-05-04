@@ -158,6 +158,29 @@ td::Ref<block::WorkchainInfo> make_basic_workchain_info(
   return info;
 }
 
+td::Ref<block::WorkchainInfo> make_extended_workchain_info(
+    tos::WorkchainId workchain_id, std::uint32_t workchain_type_id) {
+  td::Ref<block::WorkchainInfo> info{true};
+  auto& w = info.unique_write();
+  w.workchain = workchain_id;
+  w.enabled_since = 1;
+  w.monitor_min_split = 0;
+  w.min_split = 0;
+  w.max_split = 0;
+  w.basic = false;
+  w.active = true;
+  w.accept_msgs = true;
+  w.flags = 0;
+  w.version = 0;
+  w.vm_version = 0;
+  w.vm_mode = 0;
+  w.workchain_type_id = workchain_type_id;
+  w.min_addr_len = 64;
+  w.max_addr_len = 256;
+  w.addr_len_step = 8;
+  return info;
+}
+
 td::Ref<vm::Cell> build_extended_workchain_descr(std::uint32_t workchain_type_id) {
   vm::CellBuilder cb;
   cb.store_long(0xa6, 8);      // workchain#a6
@@ -601,6 +624,27 @@ TEST(WorkchainExecutionRegistry, RejectsExecutionDescriptorTransitionsWithoutMig
   new_workchains[7].unique_write().active = false;
   CHECK(block::validate_workchain_execution_descriptor_transitions(
       old_workchains, new_workchains).is_ok());
+
+  old_workchains.clear();
+  new_workchains.clear();
+  old_workchains.emplace(8, make_extended_workchain_info(8, kDummyExtendedType));
+  new_workchains.emplace(8, make_extended_workchain_info(8, kDummyExtendedType));
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_ok());
+
+  new_workchains[8].unique_write().min_addr_len = 128;
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_error());
+
+  new_workchains[8] = make_extended_workchain_info(8, kDummyExtendedType);
+  new_workchains[8].unique_write().max_addr_len = 512;
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_error());
+
+  new_workchains[8] = make_extended_workchain_info(8, kDummyExtendedType);
+  new_workchains[8].unique_write().addr_len_step = 16;
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_error());
 }
 
 TEST(WorkchainExecutionRegistry, EvmAndUnoDescriptorEnginesValidateConfig) {
