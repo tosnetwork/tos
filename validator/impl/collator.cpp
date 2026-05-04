@@ -2279,9 +2279,9 @@ bool Collator::fetch_config_params() {
     return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
   }
   if (resolved_execution.ok().has_value()) {
-    auto key = block::workchain_engine_key_from_descriptor(resolved_execution.ok()->descriptor);
-    custom_workchain = !block::workchain_engine_key_is_tvm(key);
-    is_evm_custom_workchain = block::workchain_engine_key_is_evm(key);
+    const auto& execution = *resolved_execution.ok();
+    custom_workchain = block::resolved_workchain_execution_is_custom(execution);
+    is_evm_custom_workchain = block::resolved_workchain_execution_is_evm(execution);
   }
 
   if (custom_workchain) {

@@ -236,6 +236,14 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
   return td::Status::OK();
 }
 
+bool resolved_workchain_execution_is_custom(const ResolvedWorkchainExecution& execution) {
+  return !workchain_engine_key_is_tvm(workchain_engine_key_from_descriptor(execution.descriptor));
+}
+
+bool resolved_workchain_execution_is_evm(const ResolvedWorkchainExecution& execution) {
+  return workchain_engine_key_is_evm(workchain_engine_key_from_descriptor(execution.descriptor));
+}
+
 td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& registry) {
   td::uint32 flags = 0;
   if (registry.has_engine(evm_workchain_engine_key())) {

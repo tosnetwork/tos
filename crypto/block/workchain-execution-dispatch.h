@@ -192,6 +192,9 @@ struct ResolvedWorkchainExecution {
   std::shared_ptr<const WorkchainEngineConfig> engine_config;
 };
 
+bool resolved_workchain_execution_is_custom(const ResolvedWorkchainExecution& execution);
+bool resolved_workchain_execution_is_evm(const ResolvedWorkchainExecution& execution);
+
 struct LocalWorkchainRoleSet {
   bool require_all_active{false};
   std::set<tos::WorkchainId> required_workchains;

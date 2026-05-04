@@ -339,6 +339,8 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoDescriptorEnginesValidateConfig) {
   auto evm_res = registry.resolve(evm, config);
   CHECK(evm_res.is_ok());
   auto evm_execution = evm_res.move_as_ok();
+  CHECK(block::resolved_workchain_execution_is_custom(evm_execution));
+  CHECK(block::resolved_workchain_execution_is_evm(evm_execution));
   auto evm_policy = evm_execution.executor->account_policy(
       evm_execution.descriptor, *evm_execution.engine_config);
   CHECK(evm_policy.kind == block::AccountExecutionPolicyKind::SingletonExecutor);
@@ -349,6 +351,8 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoDescriptorEnginesValidateConfig) {
   auto uno_res = registry.resolve(uno, config);
   CHECK(uno_res.is_ok());
   auto uno_execution = uno_res.move_as_ok();
+  CHECK(block::resolved_workchain_execution_is_custom(uno_execution));
+  CHECK(!block::resolved_workchain_execution_is_evm(uno_execution));
   auto uno_policy = uno_execution.executor->account_policy(
       uno_execution.descriptor, *uno_execution.engine_config);
   CHECK(uno_policy.kind == block::AccountExecutionPolicyKind::SingletonExecutor);
