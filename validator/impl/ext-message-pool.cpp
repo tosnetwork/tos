@@ -517,6 +517,10 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
   auto execution = execution_res.move_as_ok();
   if (execution.has_value() &&
       !block::workchain_engine_key_is_tvm(block::workchain_engine_key_from_descriptor(execution->descriptor))) {
+    if (!execution->descriptor.accept_msgs) {
+      co_return td::Status::Error(PSTRING() << "configured workchain " << wc
+                                            << " does not accept external messages");
+    }
     auto special_scan = reject_special_cells_for_custom_compute(
         message->root_cell(), last_masterchain_state_->get_ext_msg_limits());
     if (special_scan.is_error()) {

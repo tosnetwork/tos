@@ -115,15 +115,18 @@ WorkchainEngineKey workchain_engine_key_from_descriptor(const WorkchainExecution
 td::Status validate_workchain_execution_descriptor_transitions(
     const WorkchainSet& old_workchains, const WorkchainSet& new_workchains) {
   for (const auto& [workchain_id, old_info] : old_workchains) {
-    if (old_info.is_null() || !old_info->active) {
+    if (old_info.is_null()) {
       continue;
     }
     auto new_it = new_workchains.find(workchain_id);
-    if (new_it == new_workchains.end() || new_it->second.is_null() || !new_it->second->active) {
-      continue;
+    if (new_it == new_workchains.end() || new_it->second.is_null()) {
+      return td::Status::Error(PSTRING() << "workchain " << workchain_id
+                                         << " removes its execution descriptor"
+                                         << " without an explicit migration rule");
     }
+    const auto& new_info = new_it->second;
     TRY_RESULT(old_descriptor, normalize_workchain_descriptor(*old_info));
-    TRY_RESULT(new_descriptor, normalize_workchain_descriptor(*new_it->second));
+    TRY_RESULT(new_descriptor, normalize_workchain_descriptor(*new_info));
     auto old_key = workchain_engine_key_from_descriptor(old_descriptor);
     auto new_key = workchain_engine_key_from_descriptor(new_descriptor);
     if (!(old_key == new_key)) {

@@ -2040,6 +2040,10 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       compute_phase.reset();
       return false;
     }
+    if (in_msg_extern && !custom_plan.descriptor.accept_msgs) {
+      cp.skip_reason = ComputePhase::sk_bad_state;
+      return true;
+    }
     if (!inbound_allowed_by_policy(custom_plan.policy, in_msg_extern) ||
         !account_allowed_by_policy(custom_plan.policy, account.addr)) {
       cp.skip_reason = ComputePhase::sk_bad_state;
