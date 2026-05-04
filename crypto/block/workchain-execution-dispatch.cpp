@@ -90,6 +90,47 @@ WorkchainEngineKey workchain_engine_key_from_descriptor(const WorkchainExecution
   return WorkchainEngineKey{descriptor.format, static_cast<std::int64_t>(descriptor.workchain_type_id)};
 }
 
+td::Status validate_workchain_execution_descriptor_transitions(
+    const WorkchainSet& old_workchains, const WorkchainSet& new_workchains) {
+  for (const auto& [workchain_id, old_info] : old_workchains) {
+    if (old_info.is_null() || !old_info->active) {
+      continue;
+    }
+    auto new_it = new_workchains.find(workchain_id);
+    if (new_it == new_workchains.end() || new_it->second.is_null() || !new_it->second->active) {
+      continue;
+    }
+    TRY_RESULT(old_descriptor, normalize_workchain_descriptor(*old_info));
+    TRY_RESULT(new_descriptor, normalize_workchain_descriptor(*new_it->second));
+    auto old_key = workchain_engine_key_from_descriptor(old_descriptor);
+    auto new_key = workchain_engine_key_from_descriptor(new_descriptor);
+    if (!(old_key == new_key)) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes execution key from "
+                                         << workchain_engine_key_to_string(old_key)
+                                         << " to "
+                                         << workchain_engine_key_to_string(new_key)
+                                         << " without an explicit migration rule");
+    }
+    if (old_descriptor.version != new_descriptor.version) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes WorkchainDescr version from "
+                                         << old_descriptor.version << " to "
+                                         << new_descriptor.version
+                                         << " without an explicit migration rule");
+    }
+    if (old_descriptor.format == WorkchainFormat::Basic &&
+        old_descriptor.vm_mode != new_descriptor.vm_mode) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes vm_mode from "
+                                         << old_descriptor.vm_mode << " to "
+                                         << new_descriptor.vm_mode
+                                         << " without an explicit migration rule");
+    }
+  }
+  return td::Status::OK();
+}
+
 void WorkchainExecutionRegistry::register_engine(std::unique_ptr<WorkchainEngine> engine) {
   CHECK(engine != nullptr);
   auto key = engine->engine_key();

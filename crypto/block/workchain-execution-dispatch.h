@@ -76,6 +76,8 @@ struct WorkchainExecutionDescriptor {
 
 td::Result<WorkchainExecutionDescriptor> normalize_workchain_descriptor(const WorkchainInfo& info);
 WorkchainEngineKey workchain_engine_key_from_descriptor(const WorkchainExecutionDescriptor& descriptor);
+td::Status validate_workchain_execution_descriptor_transitions(
+    const WorkchainSet& old_workchains, const WorkchainSet& new_workchains);
 
 struct WorkchainEngineConfig {
   virtual ~WorkchainEngineConfig() = default;
@@ -116,7 +118,7 @@ struct WorkchainComputeContext {
 
   WorkchainExecutionDescriptor descriptor;
   std::shared_ptr<const WorkchainEngineConfig> engine_config;
-  std::shared_ptr<const block::Config> block_transition_config;
+  const block::Config* block_transition_config{nullptr};
 };
 
 struct WorkchainComputeInput {

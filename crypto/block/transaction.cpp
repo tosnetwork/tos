@@ -136,6 +136,19 @@ void apply_custom_compute_output(block::ComputePhase& cp,
   cp.vm_log = output.vm_log;
 }
 
+td::Status validate_custom_compute_output(const block::WorkchainComputeOutput& output) {
+  if (!output.completed && (output.accepted || output.committed)) {
+    return td::Status::Error("custom workchain output violates !completed -> !accepted, !committed");
+  }
+  if (output.committed && !output.accepted) {
+    return td::Status::Error("custom workchain output violates committed -> accepted");
+  }
+  if (output.gas_fees.is_null()) {
+    return td::Status::Error("custom workchain output returned null gas_fees");
+  }
+  return td::Status::OK();
+}
+
 bool extra_flags_within_valid_mask(const td::RefInt256& extra_flags) {
   return extra_flags.not_null() &&
          td::cmp(extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK), extra_flags) == 0;
@@ -2025,6 +2038,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
                 context.parent_block_hash.size());
     context.descriptor = custom_plan.descriptor;
     context.engine_config = custom_plan.engine_config;
+    context.block_transition_config = cfg.block_transition_config;
 
     auto output_res = custom_plan.executor->run_compute(input, context);
     if (output_res.is_error()) {
@@ -2034,6 +2048,13 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       return false;
     }
     auto output = output_res.move_as_ok();
+    auto output_status = validate_custom_compute_output(output);
+    if (output_status.is_error()) {
+      LOG(ERROR) << "descriptor-selected workchain compute returned invalid output: "
+                 << output_status.move_as_error();
+      compute_phase.reset();
+      return false;
+    }
     apply_custom_compute_output(cp, output);
 
     if (output.committed) {

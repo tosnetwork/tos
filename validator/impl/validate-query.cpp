@@ -2285,6 +2285,12 @@ bool ValidateQuery::check_shard_layout() {
   }
   auto ccvc = new_config_->get_catchain_validators_config();
   const auto& wc_set = new_config_->get_workchain_list();
+  auto execution_transition_status = block::validate_workchain_execution_descriptor_transitions(
+      config_->get_workchain_list(), wc_set);
+  if (execution_transition_status.is_error()) {
+    return reject_query(execution_transition_status.move_as_error_prefix(
+        "invalid workchain execution descriptor transition: ").to_string());
+  }
   REJECT_UNLESS_MSG(ccvc.shard_cc_lifetime != 0, "shard_cc_lifetime in the new config is zero");
   REJECT_UNLESS_MSG(ccvc.mc_cc_lifetime != 0, "mc_cc_lifetime in the new config is zero");
   update_shard_cc_ = is_key_block_ || (now_ / ccvc.shard_cc_lifetime > prev_now_ / ccvc.shard_cc_lifetime);

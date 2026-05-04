@@ -426,7 +426,7 @@ struct WorkchainComputeContext {
 
   WorkchainExecutionDescriptor descriptor;  // value copy; all fields are cheaply copyable
   std::shared_ptr<const WorkchainEngineConfig> engine_config;  // resolved once per config snapshot
-  std::shared_ptr<const block::Config> block_transition_config;  // immutable snapshot; never null
+  const block::Config* block_transition_config;  // immutable block-transition snapshot; never null
 };
 
 struct WorkchainComputeInput {
@@ -792,62 +792,86 @@ Minimum side-effect identity:
 This preserves the current safety direction of EVM cache handling while making
 it engine-generic.
 
+## Implementation Progress
+
+Legend:
+
+- ✅ Complete for the current pre-mainnet registry baseline.
+- 🟡 Partially complete; the safe core exists, but broader integration or
+  operator/capability plumbing remains.
+- ⬜ Not started or intentionally deferred to a future workchain/topology
+  upgrade.
+
+Last updated: 2026-05-04.
+
+| Area | Status | Current state | Remaining work |
+|---|---:|---|---|
+| Phase 0 - target behavior | ✅ | Target behavior is pinned in this document, including the pre-mainnet no-compatibility policy. | Keep future changes reflected here before coding. |
+| Phase 1 - registry and adapters | ✅ | `crypto/block/workchain-execution-dispatch.*` exists; TVM/EVM/Uno engines register through the registry; `WorkchainInfo` preserves `wfmt_ext.workchain_type_id`. | Keep per-engine dispatch headers narrow until Phase 4 is fully retired. |
+| Phase 2 - descriptor-driven compute | ✅ | `transaction.cpp` resolves custom workchain execution from ConfigParam 12 through `ComputePhaseConfig`; EVM chain id comes from descriptor `vm_mode`; EVM/Uno singleton executor addresses are engine policy. | Add more regression tests around config transitions and new-engine extensibility. |
+| RPC/admission registry use | ✅ | `eth_sendRawTransaction`, `uno_sendMineUno`, and `uno_sendTransfer` resolve the active workchain from ConfigParam 12 before building external messages. | Future RPC namespaces can move behind engine runtime-service registration. |
+| Custom workchain gas/fee boundary | ✅ | Registry compute path preserves engine-returned `gas_fees`; host TVM gas pricing no longer overwrites custom-engine fees. | Engine-specific fee tests should be expanded when EVM/Uno fee models stabilize. |
+| Phase 3 - startup/config-update preflight | 🟡 | `validate_required_workchains` and `LocalWorkchainRoleSet` exist; collator/validator block paths require the local shard workchain; validator-engine now preflights each observed top masterchain state using local shard roles; active execution descriptor key/version/`vm_mode` changes are rejected without a migration rule. | Add validator capability advertisement / assignment rules. |
+| Phase 4 - dispatch bridge retirement | 🟡 | `evm-workchain-dispatch.*` and `uno-workchain-dispatch.*` are now narrow registration/handler bridges; `transaction.cpp` no longer selects EVM/Uno by workchain id. | Move remaining bridge surface into engine modules when link boundaries allow it. |
+| Phase 5 - future engines | ⬜ | The design supports adding a future engine without editing generic transaction dispatch. | Prove this with the next engine or a dedicated dummy-engine integration test. |
+| EVM v2 shard-local/account-native topology | ⬜ | Explicitly out of scope for the registry baseline. | Requires a separate consensus migration with state layout, ordering, logs/receipts, and cross-shard rules. |
+
 ## Migration Plan
 
-### Phase 0 - Document and pin target behavior
+### Phase 0 - Document and pin target behavior ✅
 
 Add tests around the intended descriptor-driven behavior before refactoring:
 
-- EVM dispatch is selected by `ConfigParam 12` descriptor key
+- ✅ EVM dispatch is selected by `ConfigParam 12` descriptor key
   `{Basic, 0x0045564d}`, not by a bare `wc=1` branch.
-- Uno dispatch is selected by `{Basic, 0x554e4f31}`, not by a bare `wc=2`
+- ✅ Uno dispatch is selected by `{Basic, 0x554e4f31}`, not by a bare `wc=2`
   branch.
-- non-executor account targets are rejected consistently.
-- missing handler does not fall through into a successful custom execution.
+- ✅ non-executor account targets are rejected consistently.
+- ✅ missing handler does not fall through into a successful custom execution.
 
-### Phase 1 - Add generic registry and engine adapters
+### Phase 1 - Add generic registry and engine adapters ✅
 
 Introduce:
 
-- `crypto/block/workchain-execution-dispatch.h`
-- `crypto/block/workchain-execution-dispatch.cpp`
-- `WorkchainExecutionRegistry`
-- `WorkchainEngine`
+- ✅ `crypto/block/workchain-execution-dispatch.h`
+- ✅ `crypto/block/workchain-execution-dispatch.cpp`
+- ✅ `WorkchainExecutionRegistry`
+- ✅ `WorkchainEngine`
 
-Phase 1 prerequisite: the descriptor normalizer must preserve
+✅ Phase 1 prerequisite: the descriptor normalizer must preserve
 `wfmt_ext.workchain_type_id`. The preferred implementation is to extend
 `block::WorkchainInfo` with `uint32_t workchain_type_id = 0` and populate it in
 `WorkchainInfo::unpack()` when `format` is `wfmt_ext`; alternatively, parse the
 raw descriptor cell directly in the normalizer. Do not introduce registry lookup
 for extended-format descriptors while this value is being dropped.
 
-Register EVM and Uno as `WorkchainEngine` implementations. It is acceptable for
+✅ Register EVM and Uno as `WorkchainEngine` implementations. It is acceptable for
 those engine implementations to call existing internal handlers, but
 transaction dispatch must see only `WorkchainEngine::run_compute`; it must not
 contain EVM/Uno-specific workchain-id or selector branches. Any adapter is a
 private engine-module implementation detail, not a compatibility contract, and
 must not reintroduce workchain-id fallback dispatch.
 
-### Phase 2 - Resolve from `WorkchainDescr`
+### Phase 2 - Resolve from `WorkchainDescr` ✅
 
-Thread the active workchain descriptor into compute-phase configuration, likely
+✅ Thread the active workchain descriptor into compute-phase configuration, likely
 through `ComputePhaseConfig`.
 
 Replace hardcoded workchain-id branches with:
 
-1. read the descriptor for `account.workchain` from the authoritative config
+1. ✅ read the descriptor for `account.workchain` from the authoritative config
    snapshot for the current block transition;
-2. resolve engine by `(format, selector)` against that same config snapshot;
-3. validate `vm_mode`, `version`, and engine-specific parameters from that
+2. ✅ resolve engine by `(format, selector)` against that same config snapshot;
+3. ✅ validate `vm_mode`, `version`, and engine-specific parameters from that
    snapshot and cache the immutable resolved engine config;
-4. ask engine for account policy using the descriptor plus resolved engine
+4. ✅ ask engine for account policy using the descriptor plus resolved engine
    config;
-5. invoke engine through `WorkchainEngine::run_compute`.
+5. ✅ invoke engine through `WorkchainEngine::run_compute`.
 
 At this phase, `workchain_id` is still part of context, but not the dispatch
 selector.
 
-EVM-specific Phase 2 requirement: `validate_and_resolve_config` must extract
+✅ EVM-specific Phase 2 requirement: `validate_and_resolve_config` must extract
 the EVM chain id from the on-chain descriptor's `vm_mode` and store it in
 `EvmEngineConfig`. Consensus compute must read the chain id from
 `WorkchainComputeContext.engine_config`, not from `evm_chain_config()` or
@@ -856,42 +880,46 @@ The singleton path may remain for tests, genesis tooling, or non-consensus
 metrics, but not for CHAINID, EIP-155 replay protection, transaction hashing,
 block execution, receipt construction, or `eth_sendRawTransaction` admission.
 
-### Phase 3 - Move descriptor validation to startup and config updates
+### Phase 3 - Move descriptor validation to startup and config updates 🟡
 
-When `validator-engine` loads or observes masterchain config, it validates that
+✅ When `validator-engine` loads or observes masterchain config, it validates that
 all workchains required by this node's local roles can be executed by this
 binary. "Required" means the node is assigned or configured to collate,
 validate, or serve trusted execution-dependent RPC for that workchain; it does
 not mean every active workchain in the network.
 
-Nodes that are not compiled with a required engine fail closed before they
+✅ Nodes that are not compiled with a required engine fail closed before they
 attempt to validate or collate the corresponding shard.
 
-Capability coordination for active workchains lands in this phase: validator
+✅ Active workchains cannot change execution key, descriptor version, or
+`vm_mode` without an explicit migration rule. The current pre-mainnet baseline
+has no descriptor migration rule, so such config updates are rejected.
+
+⬜ Capability coordination for active workchains lands in this phase: validator
 assignment must not place incapable validators on shards that require an engine
 they do not support.
 
-### Phase 4 - Retire or shrink per-engine dispatch headers
+### Phase 4 - Retire or shrink per-engine dispatch headers 🟡
 
 Remove or shrink:
 
-- `crypto/block/evm-workchain-dispatch.*`
-- `crypto/block/uno-workchain-dispatch.*`
+- 🟡 `crypto/block/evm-workchain-dispatch.*`
+- 🟡 `crypto/block/uno-workchain-dispatch.*`
 
-Engine modules should register directly with the generic registry. Any
+🟡 Engine modules should register directly with the generic registry. Any
 remaining `evm-workchain-dispatch.*` or `uno-workchain-dispatch.*` surface
 should be a narrow registration/handler bridge, not something
 `transaction.cpp` uses for engine selection.
 
-### Phase 5 - Extend to future engines
+### Phase 5 - Extend to future engines ⬜
 
 The next non-TVM engine should not touch `transaction.cpp`. It should add:
 
-- its engine module
-- descriptor builder/validator
-- registry registration
-- tests
-- optional RPC/runtime services
+- ⬜ its engine module
+- ⬜ descriptor builder/validator
+- ⬜ registry registration
+- ⬜ tests
+- ⬜ optional RPC/runtime services
 
 If `transaction.cpp` must be edited for a new engine, this architecture has
 failed its main goal.
@@ -900,56 +928,56 @@ failed its main goal.
 
 Required tests:
 
-- descriptor parsing and normalization for TVM, EVM, and Uno
-- extended-format descriptor parsing preserves `workchain_type_id` and does not
+- ✅ descriptor parsing and normalization for TVM, EVM, and Uno
+- ✅ extended-format descriptor parsing preserves `workchain_type_id` and does not
   normalize every `wfmt_ext` descriptor to `{Extended, 0}`
-- registry lookup by `(format, selector)`
-- unknown engine key fails closed
-- required workchain with missing local engine fails preflight
-- EVM and Uno singleton executor policies are enforced by engine policy
-- EVM v1 registry refactor does not change singleton state layout, receipt/log
+- ✅ registry lookup by `(format, selector)`
+- ✅ unknown engine key fails closed
+- ✅ required workchain with missing local engine fails preflight
+- ✅ EVM and Uno singleton executor policies are enforced by engine policy
+- 🟡 EVM v1 registry refactor does not change singleton state layout, receipt/log
   ordering, or the target revert-state commitment semantics
-- EVM chain id used by consensus compute comes from descriptor `vm_mode` through
+- ✅ EVM chain id used by consensus compute comes from descriptor `vm_mode` through
   `EvmEngineConfig`, not from `evm_chain_config()` or `current_evm_chain_id()`
-- EVM descriptors with legacy `vm_mode = 0` fail engine config validation
-- descriptor-driven dispatch produces deterministic compute results without
+- ✅ EVM descriptors with legacy `vm_mode = 0` fail engine config validation
+- ✅ descriptor-driven dispatch produces deterministic compute results without
   falling back to hardcoded workchain-id dispatch
-- collator and validator paths use the same resolved engine
-- config update that changes an engine descriptor is rejected unless descriptor
+- 🟡 collator and validator paths use the same resolved engine
+- ✅ config update that changes an active engine descriptor is rejected unless descriptor
   transition validation and any required migration rule pass
-- descriptor lookup uses the block's authoritative config snapshot, not latest
+- ✅ descriptor lookup uses the block's authoritative config snapshot, not latest
   masterchain state
-- resolved engine caches cannot be reused across config snapshots when
+- 🟡 resolved engine caches cannot be reused across config snapshots when
   ConfigParam 12 or engine-specific ConfigParams change
-- changing consensus semantics without changing descriptor/config/global
+- 🟡 changing consensus semantics without changing descriptor/config/global
   version is forbidden by tests or review gates
-- changing `(format, selector)` for an active workchain is rejected unless an
+- ✅ changing `(format, selector)` for an active workchain is rejected unless an
   explicit migration rule is present
-- validator assignment/capability tests prove incapable validators are not
+- ⬜ validator assignment/capability tests prove incapable validators are not
   assigned to shards requiring unsupported engines
-- side-effect staging keys include accepted block identity and cannot publish
+- 🟡 side-effect staging keys include accepted block identity and cannot publish
   losing-candidate receipts/logs/filters
-- admission and mempool tests prove RPC prechecks are conservative and
+- 🟡 admission and mempool tests prove RPC prechecks are conservative and
   consensus compute re-resolves descriptors from the authoritative block
   snapshot
-- EVM revert tests prove `committed` and `engine_success` are distinct and that
+- 🟡 EVM revert tests prove `committed` and `engine_success` are distinct and that
   revert nonce/gas/receipt state commits under the pre-mainnet target
   semantics
-- any future EVM shard-local or account-native topology fails activation unless
+- ⬜ any future EVM shard-local or account-native topology fails activation unless
   an explicit descriptor/config migration rule is present and tested for state,
   ordering, receipts/logs, and cross-shard access
-- uninitialized account tests cover null `current_code` and prove
+- 🟡 uninitialized account tests cover null `current_code` and prove
   `activation_code` is not applied before `run_compute`
-- masterchain transactions continue through the protocol-defined TVM path
+- ✅ masterchain transactions continue through the protocol-defined TVM path
   outside ConfigParam 12 registry dispatch
-- no RPC handler is required for consensus execution
+- ✅ no RPC handler is required for consensus execution
 
 Negative tests are as important as positive tests:
 
-- no silent TVM fallback for configured EVM/Uno workchains
-- no local environment variable can override consensus-critical descriptor
+- ✅ no silent TVM fallback for configured EVM/Uno workchains
+- ✅ no local environment variable can override consensus-critical descriptor
   fields
-- no process-global mutable engine state can change compute output between
+- 🟡 no process-global mutable engine state can change compute output between
   replay and live validation
 
 ## Design Constraints

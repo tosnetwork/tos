@@ -694,6 +694,9 @@ endif()
 add_executable(test-cells test/test-td-main.cpp ${CELLS_TEST_SOURCE})
 target_link_libraries(test-cells PRIVATE tos_crypto)
 
+add_executable(test-workchain-execution-registry test/test-td-main.cpp ${WORKCHAIN_EXECUTION_REGISTRY_TEST_SOURCE})
+target_link_libraries(test-workchain-execution-registry PRIVATE tos_block)
+
 add_executable(test-fift test/test-td-main.cpp ${FIFT_TEST_SOURCE})
 target_link_libraries(test-fift PRIVATE fift-lib)
 
@@ -983,6 +986,7 @@ tos_test(test-bigint)
 tos_test(test-vm ${TEST_OPTIONS})
 tos_test(test-fift ${TEST_OPTIONS})
 tos_test(test-cells ${TEST_OPTIONS})
+tos_test(test-workchain-execution-registry)
 tos_test(test-smartcont)
 tos_test(test-net)
 tos_test(test-tdactor)

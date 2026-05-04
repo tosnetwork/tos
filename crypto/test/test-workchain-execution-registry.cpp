@@ -1,0 +1,259 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+*/
+#include "block/block-auto.h"
+#include "block/evm-workchain-dispatch.h"
+#include "block/mc-config.h"
+#include "block/uno-workchain-dispatch.h"
+#include "block/workchain-execution-dispatch.h"
+#include "td/utils/tests.h"
+#include "vm/cells/CellBuilder.h"
+#include "vm/cellslice.h"
+
+#include <cstdint>
+#include <memory>
+
+namespace {
+
+constexpr std::int32_t kEvmVmVersion = 0x45564D;
+constexpr std::int32_t kUnoVmVersion = 0x554E4F31;
+constexpr std::int32_t kDummyVmVersion = 0x44554D59;  // "DUMY"
+constexpr std::uint32_t kDummyExtendedType = 0x00ABCDEF;
+
+struct DummyEngineConfig final : public block::WorkchainEngineConfig {
+};
+
+class DummyEngine final : public block::WorkchainEngine {
+ public:
+  explicit DummyEngine(block::WorkchainEngineKey key, bool reject_config = false)
+      : key_(key), reject_config_(reject_config) {
+  }
+
+  block::WorkchainEngineKey engine_key() const override {
+    return key_;
+  }
+
+  td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+      const block::WorkchainExecutionDescriptor& descriptor,
+      const block::Config& /*block_transition_config*/) const override {
+    if (block::workchain_engine_key_from_descriptor(descriptor) != key_) {
+      return td::Status::Error("dummy engine received the wrong descriptor key");
+    }
+    if (reject_config_) {
+      return td::Status::Error("dummy engine rejected descriptor config");
+    }
+    std::shared_ptr<const block::WorkchainEngineConfig> result = std::make_shared<DummyEngineConfig>();
+    return result;
+  }
+
+  block::AccountExecutionPolicy account_policy(
+      const block::WorkchainExecutionDescriptor& /*descriptor*/,
+      const block::WorkchainEngineConfig& /*engine_config*/) const override {
+    return {};
+  }
+
+  td::Result<block::WorkchainComputeOutput> run_compute(
+      const block::WorkchainComputeInput& /*input*/,
+      const block::WorkchainComputeContext& /*context*/) const override {
+    return td::Status::Error("dummy engine is not executable");
+  }
+
+ private:
+  block::WorkchainEngineKey key_;
+  bool reject_config_{false};
+};
+
+block::WorkchainExecutionDescriptor make_basic_descriptor(
+    tos::WorkchainId workchain_id, std::int32_t vm_version, std::uint64_t vm_mode) {
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = workchain_id;
+  descriptor.active = true;
+  descriptor.accept_msgs = true;
+  descriptor.format = block::WorkchainFormat::Basic;
+  descriptor.vm_version = vm_version;
+  descriptor.vm_mode = vm_mode;
+  descriptor.min_addr_len = descriptor.max_addr_len = 256;
+  return descriptor;
+}
+
+td::Ref<block::WorkchainInfo> make_basic_workchain_info(
+    tos::WorkchainId workchain_id, std::int32_t vm_version, std::uint64_t vm_mode) {
+  td::Ref<block::WorkchainInfo> info{true};
+  auto& w = info.unique_write();
+  w.workchain = workchain_id;
+  w.enabled_since = 1;
+  w.monitor_min_split = 0;
+  w.min_split = 0;
+  w.max_split = 0;
+  w.basic = true;
+  w.active = true;
+  w.accept_msgs = true;
+  w.flags = 0;
+  w.version = 0;
+  w.vm_version = vm_version;
+  w.vm_mode = vm_mode;
+  w.workchain_type_id = 0;
+  w.min_addr_len = w.max_addr_len = 256;
+  w.addr_len_step = 0;
+  return info;
+}
+
+td::Ref<vm::Cell> build_extended_workchain_descr(std::uint32_t workchain_type_id) {
+  vm::CellBuilder cb;
+  cb.store_long(0xa6, 8);      // workchain#a6
+  cb.store_long(1, 32);        // enabled_since
+  cb.store_long(0, 8);         // monitor_min_split
+  cb.store_long(0, 8);         // min_split
+  cb.store_long(0, 8);         // max_split
+  cb.store_long(0x6000, 16);   // basic=false, active=true, accept_msgs=true, flags=0
+  cb.store_zeroes(512);        // zerostate hashes
+  cb.store_long(0, 32);        // version
+  cb.store_long(0, 4);         // wfmt_ext#0
+  cb.store_long(64, 12);       // min_addr_len
+  cb.store_long(256, 12);      // max_addr_len
+  cb.store_long(8, 12);        // addr_len_step
+  cb.store_long(workchain_type_id, 32);
+  auto cell = cb.finalize();
+  CHECK(block::gen::t_WorkchainDescr.validate_ref(cell));
+  return cell;
+}
+
+block::Config make_empty_config() {
+  return block::Config{0};
+}
+
+}  // namespace
+
+TEST(WorkchainExecutionRegistry, NormalizesBasicAndExtendedSelectors) {
+  auto basic_info = make_basic_workchain_info(7, kDummyVmVersion, 123);
+  auto basic_descriptor = block::normalize_workchain_descriptor(*basic_info).move_as_ok();
+  CHECK(basic_descriptor.format == block::WorkchainFormat::Basic);
+  CHECK(basic_descriptor.vm_version == kDummyVmVersion);
+  CHECK(basic_descriptor.vm_mode == 123);
+  CHECK(basic_descriptor.workchain_type_id == 0);
+  auto basic_key = block::workchain_engine_key_from_descriptor(basic_descriptor);
+  CHECK(basic_key.format == block::WorkchainFormat::Basic);
+  CHECK(basic_key.selector == kDummyVmVersion);
+
+  auto ext_cell = build_extended_workchain_descr(kDummyExtendedType);
+  auto ext_cs = vm::load_cell_slice(ext_cell);
+  td::Ref<block::WorkchainInfo> ext_info{true};
+  CHECK(ext_info.unique_write().unpack(8, ext_cs));
+  auto ext_descriptor = block::normalize_workchain_descriptor(*ext_info).move_as_ok();
+  CHECK(ext_descriptor.format == block::WorkchainFormat::Extended);
+  CHECK(ext_descriptor.vm_version == 0);
+  CHECK(ext_descriptor.vm_mode == 0);
+  CHECK(ext_descriptor.workchain_type_id == kDummyExtendedType);
+  CHECK(ext_descriptor.min_addr_len == 64);
+  CHECK(ext_descriptor.max_addr_len == 256);
+  CHECK(ext_descriptor.addr_len_step == 8);
+  auto ext_key = block::workchain_engine_key_from_descriptor(ext_descriptor);
+  CHECK(ext_key.format == block::WorkchainFormat::Extended);
+  CHECK(ext_key.selector == kDummyExtendedType);
+}
+
+TEST(WorkchainExecutionRegistry, ResolveFailsClosedForMissingAndRejectedEngines) {
+  auto config = make_empty_config();
+  auto descriptor = make_basic_descriptor(7, kDummyVmVersion, 0);
+
+  block::WorkchainExecutionRegistry registry;
+  auto missing = registry.resolve(descriptor, config);
+  CHECK(missing.is_error());
+
+  registry.register_engine_if_absent(std::make_unique<DummyEngine>(
+      block::WorkchainEngineKey{block::WorkchainFormat::Basic, kDummyVmVersion}, true));
+  auto rejected = registry.resolve(descriptor, config);
+  CHECK(rejected.is_error());
+}
+
+TEST(WorkchainExecutionRegistry, RegisterIfAbsentAndPreflightRequiredWorkchains) {
+  auto config = make_empty_config();
+  block::WorkchainSet workchains;
+  workchains.emplace(7, make_basic_workchain_info(7, kDummyVmVersion, 0));
+
+  block::LocalWorkchainRoleSet roles;
+  roles.required_workchains.insert(7);
+
+  block::WorkchainExecutionRegistry registry;
+  CHECK(registry.validate_required_workchains(workchains, config, roles).is_error());
+
+  CHECK(registry.register_engine_if_absent(std::make_unique<DummyEngine>(
+      block::WorkchainEngineKey{block::WorkchainFormat::Basic, kDummyVmVersion})));
+  CHECK(!registry.register_engine_if_absent(std::make_unique<DummyEngine>(
+      block::WorkchainEngineKey{block::WorkchainFormat::Basic, kDummyVmVersion})));
+  CHECK(registry.validate_required_workchains(workchains, config, roles).is_ok());
+}
+
+TEST(WorkchainExecutionRegistry, RejectsActiveExecutionDescriptorTransitionsWithoutMigration) {
+  block::WorkchainSet old_workchains;
+  block::WorkchainSet new_workchains;
+
+  old_workchains.emplace(7, make_basic_workchain_info(7, kEvmVmVersion, 0x544F53));
+  new_workchains.emplace(7, make_basic_workchain_info(7, kEvmVmVersion, 0x544F53));
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_ok());
+
+  new_workchains[7] = make_basic_workchain_info(7, kUnoVmVersion, 0);
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_error());
+
+  new_workchains[7] = make_basic_workchain_info(7, kEvmVmVersion, 0x544F54);
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_error());
+
+  new_workchains[7] = make_basic_workchain_info(7, kEvmVmVersion, 0x544F53);
+  new_workchains[7].unique_write().version = 1;
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_error());
+
+  old_workchains[7].unique_write().active = false;
+  new_workchains[7] = make_basic_workchain_info(7, kUnoVmVersion, 0);
+  CHECK(block::validate_workchain_execution_descriptor_transitions(
+      old_workchains, new_workchains).is_ok());
+}
+
+TEST(WorkchainExecutionRegistry, EvmAndUnoDescriptorEnginesValidateConfig) {
+  auto config = make_empty_config();
+  block::WorkchainExecutionRegistry registry;
+  evm_workchain_dispatch::register_evm_workchain_engine(registry);
+  uno_workchain_dispatch::register_uno_workchain_engine(registry);
+
+  auto legacy_evm = make_basic_descriptor(1, kEvmVmVersion, 0);
+  CHECK(registry.resolve(legacy_evm, config).is_error());
+
+  auto evm = make_basic_descriptor(1, kEvmVmVersion, 0x544F53);
+  auto evm_res = registry.resolve(evm, config);
+  CHECK(evm_res.is_ok());
+  auto evm_execution = evm_res.move_as_ok();
+  auto evm_policy = evm_execution.executor->account_policy(
+      evm_execution.descriptor, *evm_execution.engine_config);
+  CHECK(evm_policy.kind == block::AccountExecutionPolicyKind::SingletonExecutor);
+  CHECK(evm_policy.singleton_address.has_value());
+  CHECK(evm_policy.activation_code.not_null());
+
+  auto uno = make_basic_descriptor(2, kUnoVmVersion, 0);
+  auto uno_res = registry.resolve(uno, config);
+  CHECK(uno_res.is_ok());
+  auto uno_execution = uno_res.move_as_ok();
+  auto uno_policy = uno_execution.executor->account_policy(
+      uno_execution.descriptor, *uno_execution.engine_config);
+  CHECK(uno_policy.kind == block::AccountExecutionPolicyKind::SingletonExecutor);
+  CHECK(uno_policy.singleton_address.has_value());
+  CHECK(uno_policy.activation_code.not_null());
+
+  auto bad_uno = make_basic_descriptor(2, kUnoVmVersion, 1);
+  CHECK(registry.resolve(bad_uno, config).is_error());
+}
