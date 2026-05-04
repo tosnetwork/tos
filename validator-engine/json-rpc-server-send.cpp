@@ -84,6 +84,9 @@ td::Result<ResolvedEvmRpcWorkchain> resolve_evm_rpc_workchain_from_masterchain_s
       continue;
     }
     TRY_RESULT(resolved, block::default_workchain_execution_registry().resolve(descriptor, config));
+    if (!resolved.descriptor.accept_msgs) {
+      return td::Status::Error("active EVM workchain does not accept external messages");
+    }
     auto policy = resolved.executor->account_policy(resolved.descriptor, *resolved.engine_config);
     if (!policy.accepts_external_inbound) {
       return td::Status::Error("active EVM workchain does not accept external inbound messages");
