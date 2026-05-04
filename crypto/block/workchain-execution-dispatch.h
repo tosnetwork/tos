@@ -49,6 +49,9 @@ struct WorkchainEngineKey {
 };
 
 std::string workchain_engine_key_to_string(const WorkchainEngineKey& key);
+WorkchainEngineKey tvm_workchain_engine_key();
+WorkchainEngineKey evm_workchain_engine_key();
+WorkchainEngineKey uno_workchain_engine_key();
 bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key);
 bool workchain_engine_key_is_evm(const WorkchainEngineKey& key);
 bool workchain_engine_key_is_uno(const WorkchainEngineKey& key);

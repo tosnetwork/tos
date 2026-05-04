@@ -221,9 +221,15 @@ TEST(WorkchainExecutionRegistry, NormalizesBasicAndExtendedSelectors) {
   CHECK(!block::workchain_engine_key_is_evm(ext_key));
   CHECK(!block::workchain_engine_key_is_uno(ext_key));
 
-  CHECK(block::workchain_engine_key_is_tvm({block::WorkchainFormat::Basic, -1}));
-  CHECK(block::workchain_engine_key_is_evm({block::WorkchainFormat::Basic, kEvmVmVersion}));
-  CHECK(block::workchain_engine_key_is_uno({block::WorkchainFormat::Basic, kUnoVmVersion}));
+  CHECK(block::tvm_workchain_engine_key() ==
+        (block::WorkchainEngineKey{block::WorkchainFormat::Basic, -1}));
+  CHECK(block::evm_workchain_engine_key() ==
+        (block::WorkchainEngineKey{block::WorkchainFormat::Basic, kEvmVmVersion}));
+  CHECK(block::uno_workchain_engine_key() ==
+        (block::WorkchainEngineKey{block::WorkchainFormat::Basic, kUnoVmVersion}));
+  CHECK(block::workchain_engine_key_is_tvm(block::tvm_workchain_engine_key()));
+  CHECK(block::workchain_engine_key_is_evm(block::evm_workchain_engine_key()));
+  CHECK(block::workchain_engine_key_is_uno(block::uno_workchain_engine_key()));
 }
 
 TEST(WorkchainExecutionRegistry, ResolveFailsClosedForMissingAndRejectedEngines) {

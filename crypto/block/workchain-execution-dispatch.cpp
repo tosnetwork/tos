@@ -21,13 +21,13 @@ struct TvmEngineConfig final : public WorkchainEngineConfig {
 class TvmDescriptorEngine final : public WorkchainEngine {
  public:
   WorkchainEngineKey engine_key() const override {
-    return {WorkchainFormat::Basic, kTvmVmVersion};
+    return tvm_workchain_engine_key();
   }
 
   td::Result<std::shared_ptr<const WorkchainEngineConfig>> validate_and_resolve_config(
       const WorkchainExecutionDescriptor& descriptor,
       const block::Config& /*block_transition_config*/) const override {
-    if (descriptor.format != WorkchainFormat::Basic || descriptor.vm_version != kTvmVmVersion) {
+    if (!workchain_engine_key_is_tvm(workchain_engine_key_from_descriptor(descriptor))) {
       return td::Status::Error("TVM engine received non-TVM descriptor");
     }
     if (descriptor.vm_mode != 0) {
@@ -57,15 +57,27 @@ std::string workchain_engine_key_to_string(const WorkchainEngineKey& key) {
 }
 
 bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key) {
-  return key.format == WorkchainFormat::Basic && key.selector == kTvmVmVersion;
+  return key == tvm_workchain_engine_key();
 }
 
 bool workchain_engine_key_is_evm(const WorkchainEngineKey& key) {
-  return key.format == WorkchainFormat::Basic && key.selector == kEvmVmVersion;
+  return key == evm_workchain_engine_key();
 }
 
 bool workchain_engine_key_is_uno(const WorkchainEngineKey& key) {
-  return key.format == WorkchainFormat::Basic && key.selector == kUnoVmVersion;
+  return key == uno_workchain_engine_key();
+}
+
+WorkchainEngineKey tvm_workchain_engine_key() {
+  return {WorkchainFormat::Basic, kTvmVmVersion};
+}
+
+WorkchainEngineKey evm_workchain_engine_key() {
+  return {WorkchainFormat::Basic, kEvmVmVersion};
+}
+
+WorkchainEngineKey uno_workchain_engine_key() {
+  return {WorkchainFormat::Basic, kUnoVmVersion};
 }
 
 td::Result<WorkchainExecutionDescriptor> normalize_workchain_descriptor(const WorkchainInfo& info) {
@@ -226,10 +238,10 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
 
 td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& registry) {
   td::uint32 flags = 0;
-  if (registry.has_engine(WorkchainEngineKey{WorkchainFormat::Basic, kEvmVmVersion})) {
+  if (registry.has_engine(evm_workchain_engine_key())) {
     flags |= kTosNodeCapabilityWorkchainEvm;
   }
-  if (registry.has_engine(WorkchainEngineKey{WorkchainFormat::Basic, kUnoVmVersion})) {
+  if (registry.has_engine(uno_workchain_engine_key())) {
     flags |= kTosNodeCapabilityWorkchainUno;
   }
   return flags;

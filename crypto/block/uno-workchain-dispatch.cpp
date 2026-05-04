@@ -13,8 +13,6 @@ namespace uno_workchain_dispatch {
 
 namespace {
 
-constexpr std::int32_t kUnoVmVersion = 0x554E4F31;  // "UNO1"
-
 tos::StdSmcAddress singleton_executor_address() {
     tos::StdSmcAddress addr;
     addr.set_zero();
@@ -54,14 +52,14 @@ block::WorkchainComputeOutput output_from_compute_phase(
 class UnoDescriptorEngine final : public block::WorkchainEngine {
  public:
     block::WorkchainEngineKey engine_key() const override {
-        return {block::WorkchainFormat::Basic, kUnoVmVersion};
+        return block::uno_workchain_engine_key();
     }
 
     td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
         const block::WorkchainExecutionDescriptor& descriptor,
         const block::Config& /*block_transition_config*/) const override {
-        if (descriptor.format != block::WorkchainFormat::Basic ||
-            descriptor.vm_version != kUnoVmVersion) {
+        if (!block::workchain_engine_key_is_uno(
+                block::workchain_engine_key_from_descriptor(descriptor))) {
             return td::Status::Error("Uno engine received non-Uno descriptor");
         }
         if (descriptor.vm_mode != 0) {

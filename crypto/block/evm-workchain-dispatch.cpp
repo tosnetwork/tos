@@ -13,7 +13,6 @@ namespace evm_workchain_dispatch {
 
 namespace {
 
-constexpr std::int32_t kEvmVmVersion = 0x45564D;  // "EVM"
 constexpr std::uint64_t kLegacyVmMode = 0;
 
 tos::StdSmcAddress singleton_executor_address() {
@@ -56,14 +55,14 @@ block::WorkchainComputeOutput output_from_compute_phase(
 class EvmDescriptorEngine final : public block::WorkchainEngine {
  public:
     block::WorkchainEngineKey engine_key() const override {
-        return {block::WorkchainFormat::Basic, kEvmVmVersion};
+        return block::evm_workchain_engine_key();
     }
 
     td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
         const block::WorkchainExecutionDescriptor& descriptor,
         const block::Config& /*block_transition_config*/) const override {
-        if (descriptor.format != block::WorkchainFormat::Basic ||
-            descriptor.vm_version != kEvmVmVersion) {
+        if (!block::workchain_engine_key_is_evm(
+                block::workchain_engine_key_from_descriptor(descriptor))) {
             return td::Status::Error("EVM engine received non-EVM descriptor");
         }
         if (descriptor.vm_mode == kLegacyVmMode) {
