@@ -812,7 +812,7 @@ Last updated: 2026-05-04.
 | RPC/admission registry use | ✅ | `eth_sendRawTransaction`, `uno_sendMineUno`, and `uno_sendTransfer` resolve the active workchain from ConfigParam 12 before building external messages. | Future RPC namespaces can move behind engine runtime-service registration. |
 | Custom workchain gas/fee boundary | ✅ | Registry compute path preserves engine-returned `gas_fees`; host TVM gas pricing no longer overwrites custom-engine fees. | Engine-specific fee tests should be expanded when EVM/Uno fee models stabilize. |
 | Phase 3 - startup/config-update preflight | 🟡 | `validate_required_workchains` and `LocalWorkchainRoleSet` exist; collator/validator block paths require the local shard workchain; validator-engine now preflights each observed top masterchain state using local shard roles; active execution descriptor key/version/`vm_mode` changes are rejected without a migration rule; full-node `tosNode.capabilities.flags` advertises registered EVM/Uno execution engines. | Add validator assignment/election rules that consume engine capabilities. |
-| Phase 4 - dispatch bridge retirement | 🟡 | `evm-workchain-dispatch.*` and `uno-workchain-dispatch.*` are now narrow registration/handler bridges; `transaction.cpp` no longer selects EVM/Uno by workchain id; TVM/EVM/Uno canonical engine keys and predicates are centralized in the registry helper. | Move remaining bridge surface into engine modules when link boundaries allow it. |
+| Phase 4 - dispatch bridge retirement | ✅ | `evm-workchain-dispatch.*` stripped to `get_evm_code_marker_cell()` only; `uno-workchain-dispatch.*` deleted entirely; `EvmNativeEngine` lives in `evm/core/dispatch-engine.*`, `UnoNativeEngine` in `uno/core/dispatch-engine.*`; both call compute functions directly with no `g_handler` indirection; `evm/core/init.cpp` and `uno/core/init.cpp` each make a single `register_*_workchain_engine()` call. | None. |
 | Phase 5 - future engines | 🟡 | The registry tests include a dummy engine that registers, resolves, and participates in required-workchain preflight without editing generic transaction dispatch. | A production future engine still needs its own module, descriptor builder/validator, and optional runtime services. |
 | EVM v2 shard-local/account-native topology | ⬜ | Explicitly out of scope for the registry baseline. | Requires a separate consensus migration with state layout, ordering, logs/receipts, and cross-shard rules. |
 
@@ -904,17 +904,18 @@ task: validator election and shard assignment must consume advertised or
 on-chain engine capabilities and avoid placing incapable validators on shards
 that require an engine they do not support.
 
-### Phase 4 - Retire or shrink per-engine dispatch headers 🟡
+### Phase 4 - Retire or shrink per-engine dispatch headers ✅
 
 Remove or shrink:
 
-- 🟡 `crypto/block/evm-workchain-dispatch.*`
-- 🟡 `crypto/block/uno-workchain-dispatch.*`
+- ✅ `crypto/block/evm-workchain-dispatch.*` — stripped to `get_evm_code_marker_cell()` only
+- ✅ `crypto/block/uno-workchain-dispatch.*` — deleted entirely
 
-🟡 Engine modules should register directly with the generic registry. Any
-remaining `evm-workchain-dispatch.*` or `uno-workchain-dispatch.*` surface
-should be a narrow registration/handler bridge, not something
-`transaction.cpp` uses for engine selection.
+✅ `EvmNativeEngine` moved to `evm/core/dispatch-engine.*`; `UnoNativeEngine`
+moved to `uno/core/dispatch-engine.*`. Both call their engine's compute
+functions directly. `evm/core/init.cpp` and `uno/core/init.cpp` each make a
+single `register_*_workchain_engine()` call. No `g_handler` indirection
+remains.
 
 ### Phase 5 - Extend to future engines 🟡
 
