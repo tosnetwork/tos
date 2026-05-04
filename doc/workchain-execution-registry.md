@@ -811,9 +811,9 @@ Last updated: 2026-05-04.
 | Phase 2 - descriptor-driven compute | ✅ | `transaction.cpp` resolves custom workchain execution from ConfigParam 12 through `ComputePhaseConfig`; EVM chain id comes from descriptor `vm_mode`; EVM/Uno singleton executor addresses are engine policy. | Add more regression tests around config transitions and new-engine extensibility. |
 | RPC/admission registry use | ✅ | `eth_sendRawTransaction`, `uno_sendMineUno`, and `uno_sendTransfer` resolve the active workchain from ConfigParam 12 before building external messages. | Future RPC namespaces can move behind engine runtime-service registration. |
 | Custom workchain gas/fee boundary | ✅ | Registry compute path preserves engine-returned `gas_fees`; host TVM gas pricing no longer overwrites custom-engine fees. | Engine-specific fee tests should be expanded when EVM/Uno fee models stabilize. |
-| Phase 3 - startup/config-update preflight | 🟡 | `validate_required_workchains` and `LocalWorkchainRoleSet` exist; collator/validator block paths require the local shard workchain; validator-engine now preflights each observed top masterchain state using local shard roles; active execution descriptor key/version/`vm_mode` changes are rejected without a migration rule. | Add validator capability advertisement / assignment rules. |
+| Phase 3 - startup/config-update preflight | 🟡 | `validate_required_workchains` and `LocalWorkchainRoleSet` exist; collator/validator block paths require the local shard workchain; validator-engine now preflights each observed top masterchain state using local shard roles; active execution descriptor key/version/`vm_mode` changes are rejected without a migration rule; full-node `tosNode.capabilities.flags` advertises registered EVM/Uno execution engines. | Add validator assignment/election rules that consume engine capabilities. |
 | Phase 4 - dispatch bridge retirement | 🟡 | `evm-workchain-dispatch.*` and `uno-workchain-dispatch.*` are now narrow registration/handler bridges; `transaction.cpp` no longer selects EVM/Uno by workchain id. | Move remaining bridge surface into engine modules when link boundaries allow it. |
-| Phase 5 - future engines | ⬜ | The design supports adding a future engine without editing generic transaction dispatch. | Prove this with the next engine or a dedicated dummy-engine integration test. |
+| Phase 5 - future engines | 🟡 | The registry tests include a dummy engine that registers, resolves, and participates in required-workchain preflight without editing generic transaction dispatch. | A production future engine still needs its own module, descriptor builder/validator, and optional runtime services. |
 | EVM v2 shard-local/account-native topology | ⬜ | Explicitly out of scope for the registry baseline. | Requires a separate consensus migration with state layout, ordering, logs/receipts, and cross-shard rules. |
 
 ## Migration Plan
@@ -895,9 +895,14 @@ attempt to validate or collate the corresponding shard.
 `vm_mode` without an explicit migration rule. The current pre-mainnet baseline
 has no descriptor migration rule, so such config updates are rejected.
 
-⬜ Capability coordination for active workchains lands in this phase: validator
-assignment must not place incapable validators on shards that require an engine
-they do not support.
+✅ Full-node `tosNode.capabilities.flags` advertises locally registered
+descriptor-selected EVM and Uno execution engines. This is an operator/network
+capability surface only; it is not consensus state.
+
+⬜ Assignment coordination for active workchains remains a separate consensus
+task: validator election and shard assignment must consume advertised or
+on-chain engine capabilities and avoid placing incapable validators on shards
+that require an engine they do not support.
 
 ### Phase 4 - Retire or shrink per-engine dispatch headers 🟡
 
@@ -911,14 +916,14 @@ remaining `evm-workchain-dispatch.*` or `uno-workchain-dispatch.*` surface
 should be a narrow registration/handler bridge, not something
 `transaction.cpp` uses for engine selection.
 
-### Phase 5 - Extend to future engines ⬜
+### Phase 5 - Extend to future engines 🟡
 
 The next non-TVM engine should not touch `transaction.cpp`. It should add:
 
-- ⬜ its engine module
+- 🟡 its engine module
 - ⬜ descriptor builder/validator
-- ⬜ registry registration
-- ⬜ tests
+- ✅ registry registration
+- ✅ tests
 - ⬜ optional RPC/runtime services
 
 If `transaction.cpp` must be edited for a new engine, this architecture has
@@ -953,14 +958,14 @@ Required tests:
   version is forbidden by tests or review gates
 - ✅ changing `(format, selector)` for an active workchain is rejected unless an
   explicit migration rule is present
-- ⬜ validator assignment/capability tests prove incapable validators are not
+- 🟡 validator capability advertisement is covered; assignment tests still need to prove incapable validators are not
   assigned to shards requiring unsupported engines
 - 🟡 side-effect staging keys include accepted block identity and cannot publish
   losing-candidate receipts/logs/filters
 - 🟡 admission and mempool tests prove RPC prechecks are conservative and
   consensus compute re-resolves descriptors from the authoritative block
   snapshot
-- 🟡 EVM revert tests prove `committed` and `engine_success` are distinct and that
+- ✅ EVM revert tests prove `committed` and `engine_success` are distinct and that
   revert nonce/gas/receipt state commits under the pre-mainnet target
   semantics
 - ⬜ any future EVM shard-local or account-native topology fails activation unless

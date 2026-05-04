@@ -51,6 +51,12 @@ struct WorkchainEngineKey {
 std::string workchain_engine_key_to_string(const WorkchainEngineKey& key);
 bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key);
 
+// Network-advertised local engine capability bits for tosNode.capabilities.flags.
+// These are node capabilities, not consensus state. They let peers/operators
+// see which descriptor-selected engines this binary has registered.
+static constexpr td::uint32 kTosNodeCapabilityWorkchainEvm = 1u << 0;
+static constexpr td::uint32 kTosNodeCapabilityWorkchainUno = 1u << 1;
+
 struct WorkchainExecutionDescriptor {
   tos::WorkchainId workchain_id{tos::workchainInvalid};
   std::uint32_t enabled_since{0};
@@ -214,6 +220,8 @@ class WorkchainExecutionRegistry {
  private:
   std::map<WorkchainEngineKey, std::unique_ptr<WorkchainEngine>> engines_;
 };
+
+td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& registry);
 
 // Transitional Phase 1 owner used by startup registration and legacy
 // transaction dispatch. Long-term block execution should inject a registry

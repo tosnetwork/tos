@@ -12,6 +12,8 @@ namespace block {
 namespace {
 
 constexpr std::int32_t kTvmVmVersion = -1;
+constexpr std::int32_t kEvmVmVersion = 0x45564D;    // "EVM"
+constexpr std::int32_t kUnoVmVersion = 0x554E4F31;  // "UNO1"
 
 struct TvmEngineConfig final : public WorkchainEngineConfig {
 };
@@ -212,6 +214,17 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
     (void)resolved;
   }
   return td::Status::OK();
+}
+
+td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& registry) {
+  td::uint32 flags = 0;
+  if (registry.has_engine(WorkchainEngineKey{WorkchainFormat::Basic, kEvmVmVersion})) {
+    flags |= kTosNodeCapabilityWorkchainEvm;
+  }
+  if (registry.has_engine(WorkchainEngineKey{WorkchainFormat::Basic, kUnoVmVersion})) {
+    flags |= kTosNodeCapabilityWorkchainUno;
+  }
+  return flags;
 }
 
 WorkchainExecutionRegistry& default_workchain_execution_registry() {

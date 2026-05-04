@@ -17,6 +17,7 @@
 #include "block/block-auto.h"
 #include "block/evm-workchain-dispatch.h"
 #include "block/mc-config.h"
+#include "block/transaction.h"
 #include "block/uno-workchain-dispatch.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
@@ -135,6 +136,12 @@ block::Config make_empty_config() {
   return block::Config{0};
 }
 
+td::Ref<vm::Cell> make_marker_cell(std::uint8_t value) {
+  vm::CellBuilder cb;
+  cb.store_long(value, 8);
+  return cb.finalize();
+}
+
 }  // namespace
 
 TEST(WorkchainExecutionRegistry, NormalizesBasicAndExtendedSelectors) {
@@ -228,8 +235,19 @@ TEST(WorkchainExecutionRegistry, RejectsActiveExecutionDescriptorTransitionsWith
 TEST(WorkchainExecutionRegistry, EvmAndUnoDescriptorEnginesValidateConfig) {
   auto config = make_empty_config();
   block::WorkchainExecutionRegistry registry;
+  CHECK(block::workchain_execution_capability_flags(registry) == 0);
+
   evm_workchain_dispatch::register_evm_workchain_engine(registry);
+  CHECK((block::workchain_execution_capability_flags(registry) &
+         block::kTosNodeCapabilityWorkchainEvm) != 0);
+  CHECK((block::workchain_execution_capability_flags(registry) &
+         block::kTosNodeCapabilityWorkchainUno) == 0);
+
   uno_workchain_dispatch::register_uno_workchain_engine(registry);
+  CHECK((block::workchain_execution_capability_flags(registry) &
+         block::kTosNodeCapabilityWorkchainEvm) != 0);
+  CHECK((block::workchain_execution_capability_flags(registry) &
+         block::kTosNodeCapabilityWorkchainUno) != 0);
 
   auto legacy_evm = make_basic_descriptor(1, kEvmVmVersion, 0);
   CHECK(registry.resolve(legacy_evm, config).is_error());
@@ -256,4 +274,53 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoDescriptorEnginesValidateConfig) {
 
   auto bad_uno = make_basic_descriptor(2, kUnoVmVersion, 1);
   CHECK(registry.resolve(bad_uno, config).is_error());
+}
+
+TEST(WorkchainExecutionRegistry, EvmRevertCommitsHostStateButReportsEngineFailure) {
+  auto config = make_empty_config();
+  block::WorkchainExecutionRegistry registry;
+  evm_workchain_dispatch::register_evm_workchain_engine(registry);
+
+  evm_workchain_dispatch::set_evm_compute_handler(
+      [](block::ComputePhase& cp,
+         td::Ref<vm::Cell> /*account_data*/,
+         vm::CellSlice& /*in_msg_body*/,
+         uint64_t gas_limit,
+         uint64_t chain_id,
+         uint64_t /*block_seqno*/,
+         uint64_t /*timestamp*/,
+         const uint8_t /*rand_seed*/[32],
+         const uint8_t /*parent_block_hash*/[32]) {
+        CHECK(chain_id == 0x544F53);
+        cp.accepted = true;
+        cp.success = false;
+        cp.gas_used = 21;
+        cp.gas_limit = gas_limit;
+        cp.gas_fees = td::make_refint(7);
+        cp.exit_code = 1;
+        cp.new_data = make_marker_cell(0xEE);
+        return true;
+      });
+
+  auto descriptor = make_basic_descriptor(1, kEvmVmVersion, 0x544F53);
+  auto resolved = registry.resolve(descriptor, config).move_as_ok();
+
+  block::WorkchainComputeInput input;
+  input.inbound_body = vm::load_cell_slice_ref(make_marker_cell(0x01));
+  input.gas_limit = 100;
+
+  block::WorkchainComputeContext context;
+  context.workchain_id = 1;
+  context.descriptor = resolved.descriptor;
+  context.engine_config = resolved.engine_config;
+  context.block_transition_config = &config;
+
+  auto output = resolved.executor->run_compute(input, context).move_as_ok();
+  CHECK(output.completed);
+  CHECK(output.accepted);
+  CHECK(output.committed);
+  CHECK(!output.engine_success);
+  CHECK(output.gas_fees.not_null());
+  CHECK(td::cmp(output.gas_fees, td::make_refint(7)) == 0);
+  CHECK(output.new_data.not_null());
 }
