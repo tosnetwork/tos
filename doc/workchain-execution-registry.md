@@ -1,7 +1,7 @@
 # Workchain Execution Registry and Config-Driven Dispatch
 
-Status: design proposal
-Date: 2026-05-03
+Status: implemented architecture baseline
+Date: 2026-05-04
 
 Deployment assumption: TOS has not launched mainnet. The migration therefore
 does not need to preserve byte-compatibility with pre-mainnet devnet behavior,
@@ -19,15 +19,15 @@ The product direction is correct: a workchain is an execution domain with its
 own state transition rules, while the masterchain provides shared consensus,
 configuration, validator rotation, and global time.
 
-The current implementation is intentionally direct: `crypto/block/transaction.cpp`
-checks concrete workchain ids and calls the EVM or Uno dispatcher. This was a
-reasonable integration path for the first two non-TVM workchains, but it should
-not be the long-term architecture. The transaction engine should not know that
-`wc=1` means EVM or that `wc=2` means Uno. That mapping is chain configuration,
-not C++ control flow.
+The original implementation was intentionally direct:
+`crypto/block/transaction.cpp` checked concrete workchain ids and called the
+EVM or Uno dispatcher. That was a reasonable integration path for the first two
+non-TVM workchains, but it is not the long-term architecture. The transaction
+engine must not know that `wc=1` means EVM or that `wc=2` means Uno. That
+mapping is chain configuration, not C++ control flow.
 
-This document defines the target architecture: a config-driven workchain
-execution registry.
+This document defines the architecture now used by the implementation baseline:
+a config-driven workchain execution registry.
 
 ## Pre-Mainnet Compatibility Policy
 
@@ -54,20 +54,19 @@ Implementation rules:
 
 The current consensus execution path has these properties:
 
-- `Transaction::prepare_compute_phase()` routes `account.workchain == 1` to
-  `evm_workchain_dispatch::invoke_evm_compute(...)`.
-- The same method routes `account.workchain == 2` to
-  `uno_workchain_dispatch::invoke_uno_compute(...)`.
-- Both custom workchains use a singleton executor account at
-  `0x0000...0001`.
-- EVM and Uno register handlers at validator startup from their own modules.
+- `Transaction::prepare_compute_phase()` resolves `account.workchain` through
+  the active `ConfigParam 12` descriptor and the local
+  `WorkchainExecutionRegistry`.
+- EVM and Uno register `WorkchainEngine` implementations at validator startup
+  from their own modules.
+- EVM v1 and Uno v1 declare a singleton executor account at `0x0000...0001`
+  through engine policy, not through generic transaction dispatch.
 - State changes still commit into TOS cells through `cp.new_data`, so this is
   not a sidecar architecture.
 
-The important limitation is not the existence of a dispatch hook. Dispatch is
-necessary. The limitation is that dispatch is keyed by hardcoded workchain ids
-inside the generic transaction engine instead of being derived from
-masterchain configuration.
+The important property is that dispatch is now keyed by the descriptor
+`(format, selector)` and validated engine config, not by hardcoded workchain ids
+inside the generic transaction engine.
 
 ## First Principles
 
@@ -100,11 +99,10 @@ or future network. Conversely, a future `wc=3` may use an engine that does not
 exist today. Dispatch should be based on the workchain descriptor's execution
 format, not on a switch over known ids.
 
-Engine modules may still reject descriptors for ids that are part of their
-cryptographic domain separation. For example, Uno can require `workchain_id=2`
-for the public network if that id is committed into addresses, transcripts, or
-genesis allocation semantics. That rule belongs to Uno descriptor validation,
-not to generic transaction dispatch.
+Engine modules may still reject descriptors for ids only if that id is truly
+part of their cryptographic domain separation, such as being committed into
+addresses, transcripts, or genesis allocation semantics. Such a rule belongs to
+engine descriptor validation, not to generic transaction dispatch.
 
 ### 3. Unknown engine is a node capability failure, not a transaction reject
 
@@ -406,19 +404,19 @@ across key blocks or config-update blocks and is forbidden.
 
 ## Engine Interface
 
-The long-term interface should avoid passing a mutable `block::ComputePhase&`
-directly into workchain modules. Engines should return a compute result, and
-host code should translate that result into the existing transaction structure.
-
-Initial migration can keep a temporary adapter around `ComputePhase` while the
-generic interface is being wired, but the target interface should look like
-this:
+The generic transaction engine does not pass a mutable
+`block::ComputePhase&` directly into its dispatch logic. It calls the resolved
+engine through `WorkchainEngine::run_compute`, receives a compute result, and
+translates that result into the existing transaction structure. EVM and Uno may
+still bridge to their internal historical handlers behind the engine boundary,
+but that bridge is private to the engine module and is not a transaction
+dispatch rule.
 
 ```cpp
 struct WorkchainComputeContext {
   tos::WorkchainId workchain_id;
   tos::ShardIdFull shard;
-  tos::BlockSeqno block_seqno;
+  uint64_t block_seqno;
   tos::LogicalTime block_lt;   // start LT of this block; TVM needs it to assign trans_lt
   uint64_t now;
 
@@ -437,6 +435,7 @@ struct WorkchainComputeInput {
   td::Ref<vm::Cell> current_data;
   block::CurrencyCollection account_balance;  // needed for EVM value transfer
   td::Ref<vm::Cell> inbound_message;          // full message cell, not just body
+  td::Ref<vm::CellSlice> inbound_body;         // decoded body slice for engines that need it
   tos::LogicalTime msg_lt;    // LT of the inbound message; TVM needs it for outbound LT ordering
   uint64_t gas_limit;
 };
@@ -463,11 +462,20 @@ struct WorkchainComputeOutput {
   // engine_success=false.
   // For TVM: committed = accepted && TVM committed; engine_success = committed.
   // For Uno: committed = engine_success for valid state transitions.
+  int skip_reason;
   bool completed;
   bool accepted;
   bool committed;
   bool engine_success;
+  bool msg_state_used;
+  bool account_activated;
+  bool out_of_gas;
+  int mode;
   int32_t exit_code;
+  int32_t exit_arg;
+  int vm_steps;
+  tos::Bits256 vm_init_state_hash;
+  tos::Bits256 vm_final_state_hash;
 
   uint64_t gas_used;
   td::RefInt256 gas_fees;   // always non-null; zero when !completed
@@ -797,7 +805,7 @@ Add tests around the intended descriptor-driven behavior before refactoring:
 - non-executor account targets are rejected consistently.
 - missing handler does not fall through into a successful custom execution.
 
-### Phase 1 - Add generic registry with temporary adapters
+### Phase 1 - Add generic registry and engine adapters
 
 Introduce:
 
@@ -813,10 +821,12 @@ Phase 1 prerequisite: the descriptor normalizer must preserve
 raw descriptor cell directly in the normalizer. Do not introduce registry lookup
 for extended-format descriptors while this value is being dropped.
 
-Register EVM and Uno through adapters that call the current handlers while the
-generic `run_compute` path is being wired. These adapters are a temporary
-implementation detail, not a compatibility contract, and must not reintroduce
-workchain-id fallback dispatch.
+Register EVM and Uno as `WorkchainEngine` implementations. It is acceptable for
+those engine implementations to call existing internal handlers, but
+transaction dispatch must see only `WorkchainEngine::run_compute`; it must not
+contain EVM/Uno-specific workchain-id or selector branches. Any adapter is a
+private engine-module implementation detail, not a compatibility contract, and
+must not reintroduce workchain-id fallback dispatch.
 
 ### Phase 2 - Resolve from `WorkchainDescr`
 
@@ -832,7 +842,7 @@ Replace hardcoded workchain-id branches with:
    snapshot and cache the immutable resolved engine config;
 4. ask engine for account policy using the descriptor plus resolved engine
    config;
-5. invoke engine through the generic interface.
+5. invoke engine through `WorkchainEngine::run_compute`.
 
 At this phase, `workchain_id` is still part of context, but not the dispatch
 selector.
@@ -842,9 +852,9 @@ the EVM chain id from the on-chain descriptor's `vm_mode` and store it in
 `EvmEngineConfig`. Consensus compute must read the chain id from
 `WorkchainComputeContext.engine_config`, not from `evm_chain_config()` or
 `current_evm_chain_id()`, because those are process-local singleton paths.
-The singleton path may remain for non-consensus RPC, metrics, or transitional
-test helpers, but not for CHAINID, EIP-155 replay protection, transaction
-hashing, block execution, or receipt construction.
+The singleton path may remain for tests, genesis tooling, or non-consensus
+metrics, but not for CHAINID, EIP-155 replay protection, transaction hashing,
+block execution, receipt construction, or `eth_sendRawTransaction` admission.
 
 ### Phase 3 - Move descriptor validation to startup and config updates
 
@@ -861,14 +871,17 @@ Capability coordination for active workchains lands in this phase: validator
 assignment must not place incapable validators on shards that require an engine
 they do not support.
 
-### Phase 4 - Retire per-engine dispatch headers
+### Phase 4 - Retire or shrink per-engine dispatch headers
 
 Remove or shrink:
 
 - `crypto/block/evm-workchain-dispatch.*`
 - `crypto/block/uno-workchain-dispatch.*`
 
-Engine modules should register directly with the generic registry.
+Engine modules should register directly with the generic registry. Any
+remaining `evm-workchain-dispatch.*` or `uno-workchain-dispatch.*` surface
+should be a narrow registration/handler bridge, not something
+`transaction.cpp` uses for engine selection.
 
 ### Phase 5 - Extend to future engines
 
@@ -899,8 +912,8 @@ Required tests:
 - EVM chain id used by consensus compute comes from descriptor `vm_mode` through
   `EvmEngineConfig`, not from `evm_chain_config()` or `current_evm_chain_id()`
 - EVM descriptors with legacy `vm_mode = 0` fail engine config validation
-- descriptor-driven dispatch produces the same compute result as current
-  hardcoded dispatch
+- descriptor-driven dispatch produces deterministic compute results without
+  falling back to hardcoded workchain-id dispatch
 - collator and validator paths use the same resolved engine
 - config update that changes an engine descriptor is rejected unless descriptor
   transition validation and any required migration rule pass
@@ -919,10 +932,9 @@ Required tests:
 - admission and mempool tests prove RPC prechecks are conservative and
   consensus compute re-resolves descriptors from the authoritative block
   snapshot
-- EVM revert tests prove `committed` and `engine_success` are distinct while
-  Phase 1-2 adapters preserve current `cp.success`/activation behavior; any
-  future fix that commits revert nonce/gas state must be separately
-  global-version or descriptor gated
+- EVM revert tests prove `committed` and `engine_success` are distinct and that
+  revert nonce/gas/receipt state commits under the pre-mainnet target
+  semantics
 - any future EVM shard-local or account-native topology fails activation unless
   an explicit descriptor/config migration rule is present and tested for state,
   ordering, receipts/logs, and cross-shard access

@@ -21,8 +21,6 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "block/transaction.h"
-#include "block/evm-workchain-dispatch.h"
-#include "block/uno-workchain-dispatch.h"
 #include "block/workchain-execution-dispatch.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
@@ -49,38 +47,18 @@
   FAIL_UNLESS_ERRCODE_MSG(condition, err, PSTRING() << "Transaction check falied: " << #condition)
 
 namespace {
-constexpr std::int32_t kEvmVmVersion = 0x45564D;   // "EVM"
-constexpr std::int32_t kUnoVmVersion = 0x554E4F31;  // "UNO1"
 constexpr int kDeploySuccessActivationVersion = 14;
 
-enum class CustomComputeKind {
-  None,
-  Evm,
-  Uno
-};
-
 struct CustomComputePlan {
-  CustomComputeKind kind{CustomComputeKind::None};
+  const block::WorkchainEngine* executor{nullptr};
+  block::WorkchainExecutionDescriptor descriptor;
+  std::shared_ptr<const block::WorkchainEngineConfig> engine_config;
   block::AccountExecutionPolicy policy;
-  std::uint64_t evm_chain_id{0};
 
   bool has_custom_compute() const {
-    return kind != CustomComputeKind::None;
+    return executor != nullptr;
   }
 };
-
-CustomComputeKind custom_compute_kind_from_key(const block::WorkchainEngineKey& key) {
-  if (key.format != block::WorkchainFormat::Basic) {
-    return CustomComputeKind::None;
-  }
-  if (key.selector == kEvmVmVersion) {
-    return CustomComputeKind::Evm;
-  }
-  if (key.selector == kUnoVmVersion) {
-    return CustomComputeKind::Uno;
-  }
-  return CustomComputeKind::None;
-}
 
 bool has_custom_compute_phase(const block::WorkchainSet* workchains, tos::WorkchainId workchain_id) {
   if (workchain_id == tos::masterchainId || workchain_id == tos::basechainId ||
@@ -115,21 +93,14 @@ td::Result<CustomComputePlan> resolve_custom_compute_plan(const block::ComputePh
     return CustomComputePlan{};
   }
   auto key = block::workchain_engine_key_from_descriptor(resolved->descriptor);
-  auto kind = custom_compute_kind_from_key(key);
-  if (kind == CustomComputeKind::None) {
-    if (block::workchain_engine_key_is_tvm(key)) {
-      return CustomComputePlan{};
-    }
-    return td::Status::Error(PSTRING() << "unsupported workchain execution engine "
-                                       << block::workchain_engine_key_to_string(key)
-                                       << " for workchain " << workchain_id);
+  if (block::workchain_engine_key_is_tvm(key)) {
+    return CustomComputePlan{};
   }
   CustomComputePlan plan;
-  plan.kind = kind;
+  plan.executor = resolved->executor;
   plan.policy = resolved->executor->account_policy(resolved->descriptor, *resolved->engine_config);
-  if (kind == CustomComputeKind::Evm) {
-    plan.evm_chain_id = resolved->descriptor.vm_mode;
-  }
+  plan.descriptor = std::move(resolved->descriptor);
+  plan.engine_config = std::move(resolved->engine_config);
   return plan;
 }
 
@@ -143,6 +114,26 @@ bool account_allowed_by_policy(const block::AccountExecutionPolicy& policy, cons
 
 bool inbound_allowed_by_policy(const block::AccountExecutionPolicy& policy, bool external) {
   return external ? policy.accepts_external_inbound : policy.accepts_internal_inbound;
+}
+
+void apply_custom_compute_output(block::ComputePhase& cp,
+                                 const block::WorkchainComputeOutput& output) {
+  cp.skip_reason = output.skip_reason;
+  cp.success = output.engine_success;
+  cp.msg_state_used = output.msg_state_used;
+  cp.account_activated = output.account_activated;
+  cp.out_of_gas = output.out_of_gas;
+  cp.accepted = output.accepted;
+  cp.mode = output.mode;
+  cp.exit_code = output.exit_code;
+  cp.exit_arg = output.exit_arg;
+  cp.vm_steps = output.vm_steps;
+  cp.vm_init_state_hash = output.vm_init_state_hash;
+  cp.vm_final_state_hash = output.vm_final_state_hash;
+  cp.gas_used = output.gas_used;
+  cp.new_data = output.new_data;
+  cp.actions = output.action_list;
+  cp.vm_log = output.vm_log;
 }
 
 bool extra_flags_within_valid_mask(const td::RefInt256& extra_flags) {
@@ -2001,19 +1992,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     return true;
   }
 
-  // --- EVM Workchain dispatch ---
-  // If ConfigParam 12 selects the EVM engine and a handler is registered, route
-  // to the EVM executor instead of TVM.
-  if (custom_plan.kind == CustomComputeKind::Evm &&
-      !evm_workchain_dispatch::has_evm_compute_handler()) {
-    LOG(ERROR) << "descriptor-selected EVM workchain has no registered compute handler";
-    compute_phase.reset();
-    return false;
-  }
-  if (custom_plan.kind == CustomComputeKind::Evm && evm_workchain_dispatch::has_evm_compute_handler()) {
-    // The active engine declares which account shapes may enter custom compute.
-    // EVM v1 still uses the singleton executor at 0x00...01, but the address
-    // is no longer selected by the generic transaction engine.
+  if (custom_plan.has_custom_compute()) {
     if (!inbound_allowed_by_policy(custom_plan.policy, in_msg_extern) ||
         !account_allowed_by_policy(custom_plan.policy, account.addr)) {
       cp.skip_reason = ComputePhase::sk_bad_state;
@@ -2023,115 +2002,59 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       cp.skip_reason = ComputePhase::sk_bad_state;
       return true;
     }
-    vm::CellSlice body_cs{*in_msg_body};
-    // `new_data` here is the account's pre-state cell — initialized from
-    // `_account.data` in Transaction's ctor (line 881) and only later
-    // overwritten by `cp.new_data` once compute completes. Passing it as
-    // `account_data` is what makes the EVM compute deterministic across
-    // collator/validator/restart roles: the handler decodes this cell into
-    // a fresh local CellEvmState and never touches g_evm_state.
-    bool ok = evm_workchain_dispatch::invoke_evm_compute(
-        cp, new_data, body_cs, cp.gas_limit,
-        custom_plan.evm_chain_id,                         // chain_id from WorkchainDescr.vm_mode
-        cfg.evm_block_seqno,                              // block.number — wc=1 shard seqno
-        static_cast<td::uint64>(account.now_),            // timestamp (block gen_utime)
-        cfg.block_rand_seed.as_array().data(),            // rand_seed
-        cfg.evm_parent_block_hash.data());                // EIP-2935 parent_hash
-    if (!ok) {
+
+    block::WorkchainComputeInput input;
+    input.account_addr = account.addr;
+    input.current_code = new_code;
+    input.current_data = new_data;
+    input.account_balance = balance;
+    input.inbound_message = in_msg;
+    input.inbound_body = in_msg_body;
+    input.msg_lt = start_lt;
+    input.gas_limit = cp.gas_limit;
+
+    block::WorkchainComputeContext context;
+    context.workchain_id = account.workchain;
+    context.block_seqno = cfg.evm_block_seqno;
+    context.block_lt = start_lt;
+    context.now = static_cast<td::uint64>(account.now_);
+    context.global_version = cfg.global_version;
+    std::memcpy(context.rand_seed.data(), cfg.block_rand_seed.as_array().data(),
+                context.rand_seed.size());
+    std::memcpy(context.parent_block_hash.data(), cfg.evm_parent_block_hash.data(),
+                context.parent_block_hash.size());
+    context.descriptor = custom_plan.descriptor;
+    context.engine_config = custom_plan.engine_config;
+
+    auto output_res = custom_plan.executor->run_compute(input, context);
+    if (output_res.is_error()) {
+      LOG(ERROR) << "descriptor-selected workchain compute failed: "
+                 << output_res.move_as_error();
       compute_phase.reset();
       return false;
     }
-    // Gas fee accounting for EVM execution
+    auto output = output_res.move_as_ok();
+    apply_custom_compute_output(cp, output);
     cp.gas_fees = cfg.compute_gas_price(cp.gas_used);
 
-    // Embed TOS-native EVM state commitment in TOS account state.
-    // cp.new_data contains a cell with the 32-byte TOS-native EVM state
-    // commitment. Propagate to Transaction::new_data so compute_state()
-    // packs it into the account's StateInit data cell, making it part of
-    // the ShardState cell tree and thus the block state_hash.
-    if (cp.accepted && cp.new_data.not_null()) {
-      new_data = cp.new_data;
-      // EVM commit semantics intentionally differ from TVM: a revert is an
-      // engine-level failure, but nonce/gas/receipt state still commits.
-      if (acc_status == Account::acc_uninit) {
+    if (output.committed) {
+      if (cp.new_data.not_null()) {
+        new_data = cp.new_data;
+      }
+      if (output.new_code.not_null()) {
+        new_code = output.new_code;
+      } else if (new_code.is_null() && custom_plan.policy.activation_code.not_null()) {
+        new_code = custom_plan.policy.activation_code;
+      }
+      if (acc_status == Account::acc_uninit &&
+          (cp.new_data.not_null() || new_code.not_null())) {
         acc_status = Account::acc_active;
         was_activated = true;
-      }
-      // Set a minimal code cell if none exists. The same canonical marker is
-      // used by the wc=1 ShardAccount wrapper in evm-cell-state.cpp, so all
-      // EVM accounts share one code cell hash and CellDb deduplicates it.
-      if (new_code.is_null()) {
-        new_code = custom_plan.policy.activation_code.not_null()
-                       ? custom_plan.policy.activation_code
-                       : evm_workchain_dispatch::get_evm_code_marker_cell();
       }
     }
 
     return true;
   }
-  // --- End EVM Workchain dispatch ---
-
-  // --- Uno Workchain dispatch ---
-  // If ConfigParam 12 selects the Uno engine and a handler is registered, route
-  // to the shielded-pool compute phase instead of TVM.
-  if (custom_plan.kind == CustomComputeKind::Uno &&
-      !uno_workchain_dispatch::has_uno_compute_handler()) {
-    LOG(ERROR) << "descriptor-selected Uno workchain has no registered compute handler";
-    compute_phase.reset();
-    return false;
-  }
-  if (custom_plan.kind == CustomComputeKind::Uno && uno_workchain_dispatch::has_uno_compute_handler()) {
-    // Defense-in-depth: admission rejects non-executor wc=2 ingress, and the
-    // generic policy gate enforces the same rule in consensus execution.
-    if (!inbound_allowed_by_policy(custom_plan.policy, in_msg_extern) ||
-        !account_allowed_by_policy(custom_plan.policy, account.addr)) {
-      cp.skip_reason = ComputePhase::sk_bad_state;
-      return true;
-    }
-    if (in_msg_body.is_null()) {
-      cp.skip_reason = ComputePhase::sk_bad_state;
-      return true;
-    }
-    vm::CellSlice body_cs{*in_msg_body};
-    bool ok = uno_workchain_dispatch::invoke_uno_compute(
-        cp, new_data, body_cs, cp.gas_limit,
-        cfg.evm_block_seqno,                              // reuse block_seqno carrier
-        static_cast<td::uint64>(account.now_),            // timestamp (block gen_utime)
-        cfg.block_rand_seed.as_array().data());           // rand_seed (unused; Uno is deterministic)
-    if (!ok) {
-      compute_phase.reset();
-      return false;
-    }
-    // Gas fee accounting for the Uno compute phase. Uno's gas_used is a
-    // deterministic function of tx structure (§8.4); the same per-byte rate
-    // used elsewhere applies.
-    cp.gas_fees = cfg.compute_gas_price(cp.gas_used);
-
-    // Propagate the serialized UnoShardState root into Transaction::new_data
-    // so compute_state() packs it into the executor account's StateInit.data
-    // — making state delta part of the TOS block state_hash. Uno commits only
-    // successful engine transitions; rejected proofs do not update state.
-    if (cp.success && cp.new_data.not_null()) {
-      new_data = cp.new_data;
-      // Activate the executor account if currently uninit (first message).
-      if (acc_status == Account::acc_uninit) {
-        acc_status = Account::acc_active;
-        was_activated = true;
-      }
-      // Install the canonical 0x55 'U' code-marker cell if this account has no
-      // code yet — same pattern as EVM, single cell hash across every wc=2
-      // account (and wc=2 only has one executor account anyway). CellDb dedup
-      // means every validator reuses the same ref.
-      if (new_code.is_null()) {
-        new_code = custom_plan.policy.activation_code.not_null()
-                       ? custom_plan.policy.activation_code
-                       : uno_workchain_dispatch::get_uno_code_marker_cell();
-      }
-    }
-
-    return true;
-  }
-  // --- End Uno Workchain dispatch ---
 
   if (in_msg_state.not_null()) {
     LOG(DEBUG) << "HASH(in_msg_state) = " << in_msg_state->get_hash().bits().to_hex(256)

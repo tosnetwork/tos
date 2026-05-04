@@ -36,11 +36,11 @@ namespace evm_workchain_dispatch {
 ///   in_msg_body  — body cell slice containing the RLP payload
 ///   gas_limit    — max gas for this execution
 ///   chain_id     — consensus EVM chain id from WorkchainDescr.vm_mode;
-///                  zero keeps legacy process-local fallback for tests
+///                  zero is invalid for descriptor-selected consensus compute
 ///   block_seqno  — host-chain block sequence number (for block.number)
 ///   timestamp    — host-chain block Unix timestamp
 ///   rand_seed    — 256-bit block random seed
-///   parent_block_hash — wc=1 parent block's root_hash (32 bytes), used
+///   parent_block_hash — EVM workchain parent block root_hash (32 bytes), used
 ///                       for the EIP-2935 historical-block-hash ring
 ///                       buffer write so contracts get the real parent
 ///                       hash instead of zero. All-zero on block 0 and
@@ -81,9 +81,9 @@ bool invoke_evm_compute(
 /// Canonical "EVM activated account" code marker cell.
 ///
 /// A single-byte cell containing 0x45 ('E'). Used as the StateInit.code cell
-/// for every wc=1 ShardAccount in Phase A of the cell-native mirror — bytecode
-/// itself lives in EvmAccountData.code_hash, so the outer code cell only needs
-/// to satisfy the "account_active" requirement.
+/// for descriptor-selected EVM singleton executor accounts. Bytecode itself
+/// lives in EvmAccountData.code_hash, so the outer code cell only needs to
+/// satisfy the "account_active" requirement.
 ///
 /// Returns the same Ref<vm::Cell> on every call (cached singleton). All
 /// validators produce the same cell hash, which CellDb will deduplicate
@@ -91,10 +91,6 @@ bool invoke_evm_compute(
 td::Ref<vm::Cell> get_evm_code_marker_cell();
 
 /// Register the EVM descriptor/policy engine with a WorkchainExecutionRegistry.
-///
-/// This is the Phase 1 compatibility registration: compute still flows through
-/// the legacy EvmComputeHandler until transaction.cpp is moved to the generic
-/// WorkchainEngine::run_compute path.
 void register_evm_workchain_engine(block::WorkchainExecutionRegistry& registry);
 
 }  // namespace evm_workchain_dispatch

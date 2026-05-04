@@ -36,12 +36,12 @@ namespace {
 
 constexpr std::int32_t kUnoVmVersion = 0x554E4F31;  // "UNO1"
 
-// The wc=2 short-circuit in `check_message`
-// previously admitted ANY structurally-valid wc=2 ext_in_msg without rate
+// The pre-registry Uno short-circuit in `check_message`
+// previously admitted ANY structurally-valid Uno ext_in_msg without rate
 // limiting. The MineUno limiter in `uno/rpc/handlers.cpp` only fires on the
 // `uno_sendMineUno` JSON-RPC path; raw `sendBoc` and `liteServer_sendMessage`
 // reach `mine_uno::verify` (~50ms STARK verify each) with no throttle. Add a
-// process-global token bucket here that gates ALL wc=2 ext-message ingress
+// process-global token bucket here that gates ALL Uno ext-message ingress
 // regardless of how the message arrives.
 //
 // Bucket shape mirrors `g_send_mine_uno_limiter` (5/s sustained, 20 burst)
@@ -50,7 +50,7 @@ constexpr std::int32_t kUnoVmVersion = 0x554E4F31;  // "UNO1"
 // expensive collator-side verify, so a flood is rejected with a cheap
 // `co_return td::Status::Error` before any STARK work.
 //
-// We deliberately rate-limit ALL wc=2 ext-msg ingress (Transfer + MineUno)
+// We deliberately rate-limit ALL Uno ext-msg ingress (Transfer + MineUno)
 // from a single bucket here rather than discriminating by body byte 0:
 //   - The CellSlice walk to peek the body byte from a `vm::Cell` ref adds
 //     parsing complexity inside an actor task.
@@ -105,8 +105,8 @@ constexpr uint64_t kWc2TransferBurst  = 20;
 constexpr uint64_t kWc2TransferPerSec = 5;
 WcExtMsgRateLimiter g_wc2_transfer_limiter{kWc2TransferBurst, kWc2TransferPerSec};
 
-// Per-peer wc=2 ingress bucket. Process-global limiters above prevent
-// total wc=2 throughput from exceeding the configured rate, but on
+// Per-peer Uno ingress bucket. Process-global limiters above prevent
+// total Uno throughput from exceeding the configured rate, but on
 // their own they let a single noisy peer drain the entire shared
 // budget and starve every honest user. The per-peer bucket below is
 // consumed BEFORE the global bucket: if any one peer exceeds its own
@@ -122,7 +122,7 @@ WcExtMsgRateLimiter g_wc2_transfer_limiter{kWc2TransferBurst, kWc2TransferPerSec
 // Storage: the map is bounded at kMaxTrackedPeers; on insert when
 // full, the oldest-touched entry is evicted. Lookup is O(n) on
 // eviction but expected n is very small (only peers actively sending
-// wc=2 messages stay tracked).
+// Uno messages stay tracked).
 constexpr uint64_t kWc2PerPeerBurst   = 10;
 constexpr uint64_t kWc2PerPeerPerSec  = 2;
 constexpr size_t   kMaxTrackedPeers   = 4096;
@@ -539,9 +539,9 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
           "configured workchain engine uses an admission policy not supported by the external message pool");
     }
 
-    // Rate-limit wc=2 ingress to bound
+    // Rate-limit Uno ingress to bound
     // forged-MineUno DoS via raw sendBoc / liteServer_sendMessage paths.
-    // wc=1 (EVM) is left unchanged here — its compute phase does not run
+    // EVM is left unchanged here — its compute phase does not run
     // STARK verification, and the EVM RPC layer already has a dedicated
     // limiter; an additional gate would burden the legitimate path more
     // than the (cheaper) attack.
@@ -556,7 +556,7 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
     // body byte, so re-walk the cell tree here. Failure to peek (e.g.
     // body decode error) defaults to consuming the bucket — fail-closed.
     if (is_uno_execution(*execution)) {
-      // Security audit (round 15 #3 + round 16 #1): wc=2 has TWO expensive
+      // Security audit (round 15 #3 + round 16 #1): Uno has TWO expensive
       // body kinds at the collator: MineUno (STARK proof verify) and
       // Transfer (Plonky3 transfer_air verify). Discriminate by body
       // byte 0 (UNO wire-format §1: 0x01 → Transfer, 0x02 → MineUno)
@@ -619,17 +619,17 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
       // the per-peer step is skipped and the global bucket alone gates.
       if (source_peer) {
         if (!g_wc2_per_peer_limiter.try_consume(source_peer.value())) {
-          co_return td::Status::Error("wc=2 ext-msg per-peer rate-limited");
+          co_return td::Status::Error("Uno ext-msg per-peer rate-limited");
         }
       }
       if (kind == kTransfer) {
         if (!g_wc2_transfer_limiter.try_consume()) {
-          co_return td::Status::Error("wc=2 transfer ingress rate-limited");
+          co_return td::Status::Error("Uno transfer ingress rate-limited");
         }
       } else {
         // MineUno or unknown — fail-closed onto the MineUno bucket.
         if (!g_wc2_ingress_limiter.try_consume()) {
-          co_return td::Status::Error("wc=2 ext-msg ingress rate-limited");
+          co_return td::Status::Error("Uno ext-msg ingress rate-limited");
         }
       }
     }

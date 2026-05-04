@@ -28,7 +28,6 @@
 #include "collator-impl.h"
 #include "external-message.hpp"
 
-#include <unordered_set>
 #include <vector>
 
 namespace tos {
@@ -128,69 +127,10 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
     return td::Status::Error(PSLICE() << "Can't parse destination address");
   }
 
-  // The wc=1 / wc=2 fast path in ExtMessagePool::check_message skips
-  // TVM preflight, so a special body ref (PrunedBranch / Library /
-  // MerkleProof / MerkleUpdate) flows directly to compute-phase unpack
-  // which uses bare load_cell_slice_ref and throws — crashing the
-  // daemon. Reject special cells anywhere in the message tree at
-  // admission FOR THESE WORKCHAINS ONLY. Other workchains (TVM) may
-  // legitimately carry MerkleProof bodies (transaction.cpp:989 allows
-  // depth ≤2) and the TVM preflight catches errors structurally.
-  //
-  // The walk uses a visited set keyed by cell hash + a hard total-cell
-  // budget so a DAG with repeated refs cannot trigger exponential
-  // re-traversal.
-  if (wc == 1 || wc == 2) {
-    // Use the cell pointer for visited-set key — Ref<Cell> shared
-    // ownership means two refs to the same logical cell point to the
-    // same vm::Cell instance, so pointer equality is correct.
-    std::unordered_set<const vm::Cell*> visited;
-    std::vector<td::Ref<vm::Cell>> stack{ext_msg};
-    // Derive the scan budget from configured max_size. The previous fixed
-    // 4096-cell budget was below worst-case ext_in_msg envelopes for wc=2
-    // (UNO chunk trees can approach ~2048 cells today plus future headroom)
-    // and wc=1 (large BoCs can approach tens of thousands of cells in the
-    // worst case). Use the configured ext-msg `max_size` (default 2 MiB)
-    // with the canonical
-    // ~64 bytes/cell ratio; clamp at a hard floor (4096) and a generous
-    // ceiling (65536) to keep the visited-set bounded under any operator
-    // mis-config.
-    const size_t cells_from_size = static_cast<size_t>(limits.max_size) / 64u;
-    const size_t kMaxScannedCells =
-        std::min(static_cast<size_t>(65536), std::max(static_cast<size_t>(4096), cells_from_size));
-    size_t popped = 0;
-    while (!stack.empty()) {
-      auto c = std::move(stack.back());
-      stack.pop_back();
-      if (c.is_null()) continue;
-      if (!visited.insert(c.get()).second) continue;
-      if (++popped > kMaxScannedCells) {
-        return td::Status::Error("external message tree too large for special-cell scan");
-      }
-      // The previous implementation built a `CellSlice{NoVmOrd{}, c}` and
-      // then called `cs2.is_special()`.
-      // `NoVmOrd` returns an empty/invalid slice for special cells, and
-      // `is_special()` dereferences the cell pointer — for some malformed
-      // / pruned inputs that path can throw or read garbage. Use the
-      // standard special-aware loader, which both returns a valid slice
-      // for ordinary cells and reports `special` cleanly. Wrap in try
-      // so any other VmError from cell traversal is converted to a
-      // structured reject.
-      bool special = false;
-      vm::CellSlice cs2;
-      try {
-        cs2 = vm::load_cell_slice_special(c, special);
-      } catch (...) {
-        return td::Status::Error("external message tree contains an unloadable cell");
-      }
-      if (special) {
-        return td::Status::Error("external message tree contains a special cell");
-      }
-      for (unsigned i = 0, n = cs2.size_refs(); i < n; ++i) {
-        stack.push_back(cs2.prefetch_ref(i));
-      }
-    }
-  }
+  // Engine-specific admission checks require ConfigParam 12 and therefore run
+  // in ExtMessagePool::check_message, after this structural parse has produced
+  // the destination workchain and address. This layer intentionally does not
+  // hardcode EVM/Uno workchain ids.
 
   TRY_RESULT(hash_norm, get_ext_in_msg_hash_norm(ext_msg));
   return Ref<ExtMessageQ>{true, std::move(data), std::move(ext_msg), dest_prefix, wc, addr, hash, hash_norm};

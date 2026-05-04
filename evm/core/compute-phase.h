@@ -58,7 +58,7 @@ namespace evm_workchain {
 /// @param block_seqno  Host-chain block sequence number → block.number.
 /// @param timestamp    Host-chain block Unix timestamp.
 /// @param rand_seed    Host-chain 256-bit block random seed.
-/// @param parent_block_hash wc=1 parent block's root_hash fallback, threaded in
+/// @param parent_block_hash EVM workchain parent block root_hash, threaded in
 ///                          by the host for the first block before cp.new_data
 ///                          carries canonical EVM block-hash history.
 ///                          May be all-zero on block 0 / non-EVM contexts.

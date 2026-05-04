@@ -22,6 +22,7 @@
 #include "tos/tos-shard.h"
 #include "tos/tos-types.h"
 #include "vm/cells/Cell.h"
+#include "vm/cells/CellSlice.h"
 
 namespace block {
 
@@ -105,7 +106,7 @@ struct AccountExecutionPolicy {
 struct WorkchainComputeContext {
   tos::WorkchainId workchain_id{tos::workchainInvalid};
   tos::ShardIdFull shard;
-  tos::BlockSeqno block_seqno{0};
+  std::uint64_t block_seqno{0};
   tos::LogicalTime block_lt{0};
   std::uint64_t now{0};
 
@@ -124,16 +125,26 @@ struct WorkchainComputeInput {
   td::Ref<vm::Cell> current_data;
   block::CurrencyCollection account_balance;
   td::Ref<vm::Cell> inbound_message;
+  td::Ref<vm::CellSlice> inbound_body;
   tos::LogicalTime msg_lt{0};
   std::uint64_t gas_limit{0};
 };
 
 struct WorkchainComputeOutput {
+  int skip_reason{0};
   bool completed{false};
   bool accepted{false};
   bool committed{false};
   bool engine_success{false};
+  bool msg_state_used{false};
+  bool account_activated{false};
+  bool out_of_gas{false};
+  int mode{0};
   std::int32_t exit_code{0};
+  std::int32_t exit_arg{0};
+  int vm_steps{0};
+  tos::Bits256 vm_init_state_hash;
+  tos::Bits256 vm_final_state_hash;
 
   std::uint64_t gas_used{0};
   td::RefInt256 gas_fees;

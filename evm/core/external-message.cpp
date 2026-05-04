@@ -34,7 +34,14 @@ td::Bits256 eth_addr_to_internal(const evmc::address& addr) {
 
 td::Ref<vm::Cell> build_evm_external_message(
     const uint8_t* raw_rlp, size_t rlp_size,
-    const evmc::address& /*sender_addr*/) {
+    const evmc::address& sender_addr) {
+    return build_evm_external_message(raw_rlp, rlp_size, sender_addr, kWorkchainId);
+}
+
+td::Ref<vm::Cell> build_evm_external_message(
+    const uint8_t* raw_rlp, size_t rlp_size,
+    const evmc::address& /*sender_addr*/,
+    tos::WorkchainId workchain_id) {
 
     if (!raw_rlp || rlp_size == 0) return {};
 
@@ -65,12 +72,12 @@ td::Ref<vm::Cell> build_evm_external_message(
     cb.store_long(0b100, 3);  // addr_std$10 + anycast=0
 
     // workchain_id: int8
-    cb.store_long(kWorkchainId, 8);
+    cb.store_long(workchain_id, 8);
 
     // address: bits256 — fixed executor account. Every EVM ext-message
-    // routes to the same wc=1 account whose StateInit.data carries the
-    // entire EVM world state. sender_addr is unused at the outer TLB
-    // layer; it is recovered from the RLP body at compute time.
+    // routes to the singleton account declared by the EVM engine policy.
+    // sender_addr is unused at the outer TLB layer; it is recovered from the
+    // RLP body at compute time.
     cb.store_bytes(reinterpret_cast<const char*>(kEvmExecutorAddressBytes), 32);
 
     // import_fee: Grams = 0  (VarUInteger 16: 4-bit length = 0)

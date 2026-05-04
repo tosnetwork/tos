@@ -35,6 +35,7 @@
 #include "validator/impl/config.hpp"
 #include <array>
 #include <limits>
+#include <optional>
 
 // EVM workchain headers for eth_sendRawTransaction
 #include "evm/core/transaction.h"
@@ -51,7 +52,12 @@ static constexpr size_t kMaxBocSize = 64 * 1024;  // 64 KiB
 
 namespace {
 
-td::Result<uint64_t> resolve_evm_chain_id_from_masterchain_state(
+struct ResolvedEvmRpcWorkchain {
+  tos::WorkchainId workchain_id{tos::workchainInvalid};
+  uint64_t chain_id{0};
+};
+
+td::Result<ResolvedEvmRpcWorkchain> resolve_evm_rpc_workchain_from_masterchain_state(
     const td::Ref<validator::MasterchainState>& state) {
   if (state.is_null()) {
     return td::Status::Error("masterchain state is not ready");
@@ -66,20 +72,26 @@ td::Result<uint64_t> resolve_evm_chain_id_from_masterchain_state(
     return td::Status::Error("masterchain config holder does not expose block::Config");
   }
   const block::Config& config = *holder_q->get_config();
-  auto resolved_res = block::default_workchain_execution_registry().resolve_workchain(
-      config.get_workchain_list(), evm_workchain::kWorkchainId, config);
-  if (resolved_res.is_error()) {
-    return resolved_res.move_as_error();
+  std::optional<ResolvedEvmRpcWorkchain> found;
+  for (const auto& [workchain_id, info] : config.get_workchain_list()) {
+    if (info.is_null() || !info->active) {
+      continue;
+    }
+    TRY_RESULT(descriptor, block::normalize_workchain_descriptor(*info));
+    auto key = block::workchain_engine_key_from_descriptor(descriptor);
+    if (key.format != block::WorkchainFormat::Basic || key.selector != evm_workchain::kVmVersion) {
+      continue;
+    }
+    TRY_RESULT(resolved, block::default_workchain_execution_registry().resolve(descriptor, config));
+    if (found.has_value()) {
+      return td::Status::Error("multiple active EVM workchains are configured; eth_sendRawTransaction is ambiguous");
+    }
+    found = ResolvedEvmRpcWorkchain{workchain_id, resolved.descriptor.vm_mode};
   }
-  auto resolved = resolved_res.move_as_ok();
-  if (!resolved.has_value()) {
+  if (!found.has_value()) {
     return td::Status::Error("EVM workchain is not active in ConfigParam 12");
   }
-  auto key = block::workchain_engine_key_from_descriptor(resolved->descriptor);
-  if (key.format != block::WorkchainFormat::Basic || key.selector != evm_workchain::kVmVersion) {
-    return td::Status::Error("configured workchain is not an EVM execution engine");
-  }
-  return resolved->descriptor.vm_mode;
+  return found.value();
 }
 
 }  // namespace
@@ -1634,24 +1646,26 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
                   -32000, PSTRING() << "cannot fetch masterchain state: " << R.move_as_error(), req_id));
               return;
             }
-            auto chain_id_res = resolve_evm_chain_id_from_masterchain_state(R.move_as_ok());
-            if (chain_id_res.is_error()) {
+            auto evm_wc_res = resolve_evm_rpc_workchain_from_masterchain_state(R.move_as_ok());
+            if (evm_wc_res.is_error()) {
               promise.set_value(make_eth_json_error(
-                  -32000, PSTRING() << "cannot resolve EVM chain id from ConfigParam 12: "
-                                    << chain_id_res.move_as_error(),
+                  -32000, PSTRING() << "cannot resolve EVM workchain from ConfigParam 12: "
+                                    << evm_wc_res.move_as_error(),
                   req_id));
               return;
             }
+            auto evm_wc = evm_wc_res.move_as_ok();
             td::actor::send_closure_later(
                 self, &JsonRpcServer::handle_eth_sendRawTransaction_with_chain_id,
                 std::move(raw_bytes), std::move(decoded), std::move(req_id),
-                chain_id_res.move_as_ok(), std::move(promise));
+                evm_wc.workchain_id, evm_wc.chain_id, std::move(promise));
           }));
 }
 
 void JsonRpcServer::handle_eth_sendRawTransaction_with_chain_id(
     std::string raw_bytes, evm_workchain::DecodedTransaction decoded,
-    std::string req_id, uint64_t chain_id, td::Promise<HttpReturn> promise) {
+    std::string req_id, tos::WorkchainId workchain_id, uint64_t chain_id,
+    td::Promise<HttpReturn> promise) {
 
   // Reject txs that target a foreign chainId. Ethereum mainnet rejects
   // these at eth_sendRawTransaction with a clear error, and accepting
@@ -1765,7 +1779,7 @@ void JsonRpcServer::handle_eth_sendRawTransaction_with_chain_id(
   try {
     ext_msg = evm_workchain::build_evm_external_message(
         reinterpret_cast<const uint8_t*>(raw_bytes.data()), raw_bytes.size(),
-        decoded.sender);
+        decoded.sender, workchain_id);
   } catch (const std::exception& e) {
     promise.set_value(make_eth_json_error(-32000,
         PSTRING() << "Failed to build external message cell: " << e.what(),

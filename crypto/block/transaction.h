@@ -139,8 +139,8 @@ struct ComputePhaseConfig {
   bool disable_anycast{false};
 
   // Custom workchain shard block sequence number being produced/validated.
-  // For EVM this is used as `block.number` inside silkworm; Uno also receives
-  // it through the compatibility dispatcher. Zero for TVM contexts.
+  // For EVM this is used as `block.number` inside silkworm; other custom
+  // engines receive it through WorkchainComputeContext. Zero for TVM contexts.
   td::uint64 evm_block_seqno = 0;
 
   // EVM parent block root_hash, used for EIP-2935 historical-block-hash ring

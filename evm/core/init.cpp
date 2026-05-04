@@ -743,7 +743,8 @@ void init_evm_workchain(const std::string& db_root) {
     }
 #endif
 
-    LOG(WARNING) << "evm-workchain: initialising (workchain_id=1, chain_id="
+    LOG(WARNING) << "evm-workchain: initialising (default_workchain_id=" << kWorkchainId
+                 << ", chain_id="
                  << current_evm_chain_id() << ")";
 
     // Cell-native state. The dictionary starts empty here; the canonical
