@@ -17,14 +17,15 @@
 
       * uno_sendMineUno   — accepts a hex-encoded MineUno BoC blob, runs
         `decode_mine_uno_bytes()` for syntactic validation, wraps the
-        decoded root cell as an `ext_in_msg` targeting the wc=2 executor
+        decoded root cell as an `ext_in_msg` targeting the descriptor-selected
+        Uno executor
         account, and submits it through `liteServer_sendMessage` exactly
         like `eth_sendRawTransaction`. Returns the canonical_mine_uno_hash
         hex on successful submission.
 
-    The wc=2 ext_in_msg layout mirrors EVM's `build_evm_external_message`
+    The Uno ext_in_msg layout mirrors EVM's `build_evm_external_message`
     (see evm/core/external-message.cpp) with three differences:
-      * workchain_id  = 2  (not 1)
+      * workchain_id  = resolved from ConfigParam 12's active Uno descriptor
       * dest address  = kUnoExecutorAddressBytes (not kEvmExecutorAddress)
       * body          = the raw MineUno root cell deserialised from the
                          caller-supplied BoC (not a chunked RLP chain).
@@ -36,9 +37,12 @@
 */
 #include "json-rpc-server-internal.h"
 
+#include "block/mc-config.h"
+#include "block/workchain-execution-dispatch.h"
 #include "uno/core/mine_uno.h"
 #include "uno/core/workchain.h"
 #include "uno/rpc/handlers.h"
+#include "validator/impl/config.hpp"
 
 #include "auto/tl/lite_api.h"
 #include "http/http-server.h"
@@ -52,6 +56,7 @@
 #include <array>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -64,15 +69,61 @@ namespace tos {
 
 namespace {
 
-// Build the wc=2 ext_in_msg cell that wraps `body_root` for submission
-// to the Uno executor. Mirrors `build_evm_external_message()`; differs
-// only in workchain_id (= 2) and dest address (= kUnoExecutorAddressBytes).
+struct ResolvedUnoRpcWorkchain {
+  tos::WorkchainId workchain_id{tos::workchainInvalid};
+};
+
+bool fits_addr_std_workchain_id(tos::WorkchainId workchain_id) {
+  return workchain_id >= -128 && workchain_id <= 127;
+}
+
+td::Result<ResolvedUnoRpcWorkchain> resolve_uno_rpc_workchain_from_masterchain_state(
+    const td::Ref<validator::MasterchainState>& state) {
+  if (state.is_null()) {
+    return td::Status::Error("masterchain state is not ready");
+  }
+  TRY_RESULT(holder, state->get_config_holder());
+  auto* holder_q = dynamic_cast<const validator::ConfigHolderQ*>(holder.get());
+  if (holder_q == nullptr || holder_q->get_config() == nullptr) {
+    return td::Status::Error("masterchain config holder does not expose block::Config");
+  }
+  const block::Config& config = *holder_q->get_config();
+  std::optional<ResolvedUnoRpcWorkchain> found;
+  for (const auto& [workchain_id, info] : config.get_workchain_list()) {
+    if (info.is_null() || !info->active) {
+      continue;
+    }
+    TRY_RESULT(descriptor, block::normalize_workchain_descriptor(*info));
+    auto key = block::workchain_engine_key_from_descriptor(descriptor);
+    if (key.format != block::WorkchainFormat::Basic || key.selector != uno_workchain::kVmVersion) {
+      continue;
+    }
+    TRY_RESULT(resolved, block::default_workchain_execution_registry().resolve(descriptor, config));
+    (void)resolved;
+    if (found.has_value()) {
+      return td::Status::Error("multiple active Uno workchains are configured; Uno JSON-RPC submission is ambiguous");
+    }
+    found = ResolvedUnoRpcWorkchain{workchain_id};
+  }
+  if (!found.has_value()) {
+    return td::Status::Error("Uno workchain is not active in ConfigParam 12");
+  }
+  return found.value();
+}
+
+// Build the Uno ext_in_msg cell that wraps `body_root` for submission to the
+// descriptor-selected Uno executor. Mirrors `build_evm_external_message()`;
+// differs only in workchain_id and dest address.
 // Used by both `handle_uno_sendMineUno` and `handle_uno_sendTransfer`,
 // which only differ in how they decode and admission-check the body
 // before reaching this shared envelope step.
-td::Result<td::Ref<vm::Cell>> build_uno_ext_in_msg(td::Ref<vm::Cell> body_root) {
+td::Result<td::Ref<vm::Cell>> build_uno_ext_in_msg(td::Ref<vm::Cell> body_root,
+                                                   tos::WorkchainId workchain_id) {
   if (body_root.is_null()) {
     return td::Status::Error("uno ext_in_msg: null body root cell");
+  }
+  if (!fits_addr_std_workchain_id(workchain_id)) {
+    return td::Status::Error("uno ext_in_msg: workchain id does not fit addr_std int8");
   }
   vm::CellBuilder cb;
   // CommonMsgInfo: ext_in_msg_info$10
@@ -81,8 +132,8 @@ td::Result<td::Ref<vm::Cell>> build_uno_ext_in_msg(td::Ref<vm::Cell> body_root) 
   cb.store_long(0b00, 2);
   // dest: addr_std$10, anycast=Nothing$0
   cb.store_long(0b100, 3);
-  // workchain_id: int8 = 2
-  cb.store_long(uno_workchain::kWorkchainId, 8);
+  // workchain_id: int8, selected by ConfigParam 12 Uno descriptor
+  cb.store_long(workchain_id, 8);
   // address: bits256 = kUnoExecutorAddressBytes (0x00…01)
   cb.store_bytes(reinterpret_cast<const char*>(uno_workchain::kUnoExecutorAddressBytes), 32);
   // import_fee: Grams = 0 (VarUInteger 16; 4-bit length = 0)
@@ -173,6 +224,99 @@ build_jsonrpc_error(int code, const std::string& message,
 
 }  // namespace
 
+void JsonRpcServer::handle_uno_submit_ext_message(tos::WorkchainId workchain_id,
+                                                   td::Ref<vm::Cell> body_root,
+                                                   std::string req_id,
+                                                   std::string result_json,
+                                                   std::string method_name,
+                                                   td::Promise<HttpReturn> promise) {
+  td::Ref<vm::Cell> ext_msg;
+  try {
+    auto ext_r = build_uno_ext_in_msg(std::move(body_root), workchain_id);
+    if (ext_r.is_error()) {
+      promise.set_value(make_eth_json_error(
+          -32603,
+          PSTRING() << method_name << ": failed to build ext_in_msg cell: "
+                    << ext_r.error(),
+          req_id, opts_.cors_origin));
+      return;
+    }
+    ext_msg = ext_r.move_as_ok();
+  } catch (const std::exception& e) {
+    promise.set_value(make_eth_json_error(
+        -32603,
+        PSTRING() << method_name << ": build ext_in_msg threw: " << e.what(),
+        req_id, opts_.cors_origin));
+    return;
+  } catch (...) {
+    promise.set_value(make_eth_json_error(
+        -32603,
+        PSTRING() << method_name << ": build ext_in_msg threw",
+        req_id, opts_.cors_origin));
+    return;
+  }
+  if (ext_msg.is_null()) {
+    promise.set_value(make_eth_json_error(
+        -32603, PSTRING() << method_name << ": null ext_in_msg cell",
+        req_id, opts_.cors_origin));
+    return;
+  }
+
+  td::Result<td::BufferSlice> boc_r;
+  try {
+    boc_r = vm::std_boc_serialize(ext_msg);
+  } catch (const std::exception& e) {
+    promise.set_value(make_eth_json_error(
+        -32603,
+        PSTRING() << method_name << ": BoC serialize threw: " << e.what(),
+        req_id, opts_.cors_origin));
+    return;
+  } catch (...) {
+    promise.set_value(make_eth_json_error(
+        -32603, PSTRING() << method_name << ": BoC serialize threw",
+        req_id, opts_.cors_origin));
+    return;
+  }
+  if (boc_r.is_error()) {
+    promise.set_value(make_eth_json_error(
+        -32603,
+        PSTRING() << method_name << ": BoC serialize failed: " << boc_r.error(),
+        req_id, opts_.cors_origin));
+    return;
+  }
+  auto boc = boc_r.move_as_ok();
+
+  auto inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_sendMessage>(std::move(boc)),
+      true);
+  auto query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)),
+      true);
+
+  send_liteserver_query(
+      std::move(query),
+      [req_id = std::move(req_id),
+       result_json = std::move(result_json),
+       method_name = std::move(method_name),
+       cors = opts_.cors_origin,
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          std::string err_msg = method_name + ": submission failed: " +
+                                R.error().message().str();
+          promise.set_value(build_jsonrpc_error(-32603, err_msg, req_id, cors));
+          return;
+        }
+        std::string body;
+        body.reserve(64 + result_json.size());
+        body += "{\"jsonrpc\":\"2.0\",\"id\":";
+        body += req_id.empty() ? std::string("null") : req_id;
+        body += ",\"result\":";
+        body += result_json;
+        body += "}";
+        promise.set_value(build_raw_json_response(body, cors));
+      });
+}
+
 // ---------------------------------------------------------------------------
 // uno_getMineState
 //
@@ -197,17 +341,17 @@ handle_uno_get_mine_state(std::string req_id,
         req_id, cors_origin);
   }
   if (!snap->hydrated) {
-    // LiveUnoState has not yet been hydrated from a persisted wc=2
+    // LiveUnoState has not yet been hydrated from a persisted Uno
     // ShardState cell, so the (epoch, target, remaining) fields are
     // construction defaults — they may lag the real chain state.
     // Refusing here is fail-closed: tosctl-uno mine receives an explicit
     // error and aborts, instead of building a proof against a stale
     // snapshot that would later be rejected as EpochRaceDetected.
-    // Hydration fires automatically on the first wc=2 compute-phase tx
+    // Hydration fires automatically on the first Uno compute-phase tx
     // after restart; clients should retry shortly.
     return build_jsonrpc_error(
         -32011,
-        "uno mine state not yet hydrated (no wc=2 tx since startup) — retry shortly",
+        "uno mine state not yet hydrated (no Uno tx since startup) — retry shortly",
         req_id, cors_origin);
   }
 
@@ -237,10 +381,10 @@ handle_uno_get_mine_state(std::string req_id,
 //   1. Decode hex → bytes.
 //   2. Run `decode_mine_uno_bytes()` for syntactic / structural validation.
 //   3. Re-deserialise the BoC root cell for use as message body.
-//   4. Build a wc=2 ext_in_msg wrapping it, serialise to BoC.
+//   4. Resolve the active Uno workchain and build an ext_in_msg wrapping it.
 //   5. Wrap in `liteServer_sendMessage(body)` and dispatch via
 //      `send_liteserver_query`. The collator side's ExtMessagePool picks
-//      it up and feeds it into the next wc=2 block's compute phase.
+//      it up and feeds it into the next Uno block's compute phase.
 // ---------------------------------------------------------------------------
 
 void JsonRpcServer::handle_uno_sendMineUno(td::JsonValue& params_val,
@@ -341,113 +485,38 @@ void JsonRpcServer::handle_uno_sendMineUno(td::JsonValue& params_val,
     return;
   }
 
-  // --- 4. Build the wc=2 ext_in_msg cell. TLB mirrors
-  //        `build_evm_external_message()` exactly; only the destination
-  //        workchain_id and executor address differ. ---
-  td::Ref<vm::Cell> ext_msg;
-  try {
-    vm::CellBuilder cb;
-    // CommonMsgInfo: ext_in_msg_info$10
-    cb.store_long(0b10, 2);
-    // src: addr_none$00
-    cb.store_long(0b00, 2);
-    // dest: addr_std$10, anycast=Nothing$0
-    cb.store_long(0b100, 3);
-    // workchain_id: int8 = 2
-    cb.store_long(uno_workchain::kWorkchainId, 8);
-    // address: bits256 = kUnoExecutorAddressBytes (0x00…01)
-    cb.store_bytes(
-        reinterpret_cast<const char*>(uno_workchain::kUnoExecutorAddressBytes),
-        32);
-    // import_fee: Grams = 0 (VarUInteger 16; 4-bit length = 0)
-    cb.store_long(0, 4);
-    // init: Maybe (Either StateInit ^StateInit) = nothing$0
-    cb.store_long(0, 1);
-    // body: Either X ^X = right$1 (body as reference)
-    cb.store_long(1, 1);
-    cb.store_ref(root_cell);
-    ext_msg = cb.finalize();
-  } catch (const std::exception& e) {
-    promise.set_value(make_eth_json_error(
-        -32603,
-        PSTRING() << "uno_sendMineUno: failed to build ext_in_msg cell: "
-                  << e.what(),
-        req_id, opts_.cors_origin));
-    return;
-  } catch (...) {
-    promise.set_value(make_eth_json_error(
-        -32603, "uno_sendMineUno: failed to build ext_in_msg cell",
-        req_id, opts_.cors_origin));
-    return;
-  }
-  if (ext_msg.is_null()) {
-    promise.set_value(make_eth_json_error(
-        -32603, "uno_sendMineUno: null ext_in_msg cell",
-        req_id, opts_.cors_origin));
-    return;
-  }
-
-  // --- 5. Serialise ext_in_msg to BoC ---
-  td::Result<td::BufferSlice> boc_r;
-  try {
-    boc_r = vm::std_boc_serialize(ext_msg);
-  } catch (const std::exception& e) {
-    promise.set_value(make_eth_json_error(
-        -32603,
-        PSTRING() << "uno_sendMineUno: BoC serialize threw: " << e.what(),
-        req_id, opts_.cors_origin));
-    return;
-  } catch (...) {
-    promise.set_value(make_eth_json_error(
-        -32603, "uno_sendMineUno: BoC serialize threw", req_id,
-        opts_.cors_origin));
-    return;
-  }
-  if (boc_r.is_error()) {
-    promise.set_value(make_eth_json_error(
-        -32603,
-        PSTRING() << "uno_sendMineUno: BoC serialize failed: " << boc_r.error(),
-        req_id, opts_.cors_origin));
-    return;
-  }
-  auto boc = boc_r.move_as_ok();
-
-  // --- 6. Submit via liteServer_sendMessage (same pipe as eth_sendRawTransaction) ---
-  auto inner = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_sendMessage>(std::move(boc)),
-      true);
-  auto query = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)),
-      true);
-
-  // Echo the canonical mine-uno hash as the RPC result on success.
-  std::string tx_hash_quoted = "\"" + tx_hash_hex + "\"";
-
-  send_liteserver_query(
-      std::move(query),
-      [req_id = std::move(req_id),
-       tx_hash_quoted = std::move(tx_hash_quoted),
-       cors = opts_.cors_origin,
-       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
-        if (R.is_error()) {
-          std::string err_msg = std::string("uno_sendMineUno: submission failed: ") +
-                                R.error().message().str();
-          promise.set_value(build_jsonrpc_error(
-              -32603, err_msg, req_id, cors));
-          return;
-        }
-        // Response (liteServer_sendMsgStatus) is ignored — EVM path does the
-        // same. The collator side has already accepted the message into its
-        // ExtMessagePool; surface the canonical hash so wallets can poll.
-        std::string body;
-        body.reserve(64);
-        body += "{\"jsonrpc\":\"2.0\",\"id\":";
-        body += req_id.empty() ? std::string("null") : req_id;
-        body += ",\"result\":";
-        body += tx_hash_quoted;
-        body += "}";
-        promise.set_value(build_raw_json_response(body, cors));
-      });
+  std::string result_json = "\"" + tx_hash_hex + "\"";
+  td::actor::send_closure(
+      validator_manager_, &validator::ValidatorManagerInterface::get_top_masterchain_state,
+      td::PromiseCreator::lambda(
+          [self = actor_id(this), root_cell = std::move(root_cell),
+           req_id = std::move(req_id), result_json = std::move(result_json),
+           cors = opts_.cors_origin, promise = std::move(promise)](
+              td::Result<td::Ref<validator::MasterchainState>> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_eth_json_error(
+                  -32603,
+                  PSTRING() << "uno_sendMineUno: cannot fetch masterchain state: "
+                            << R.move_as_error(),
+                  req_id, cors));
+              return;
+            }
+            auto wc_res = resolve_uno_rpc_workchain_from_masterchain_state(R.move_as_ok());
+            if (wc_res.is_error()) {
+              promise.set_value(make_eth_json_error(
+                  -32603,
+                  PSTRING() << "uno_sendMineUno: cannot resolve Uno workchain from ConfigParam 12: "
+                            << wc_res.move_as_error(),
+                  req_id, cors));
+              return;
+            }
+            auto wc = wc_res.move_as_ok();
+            td::actor::send_closure_later(
+                self, &JsonRpcServer::handle_uno_submit_ext_message,
+                wc.workchain_id, std::move(root_cell), std::move(req_id),
+                std::move(result_json), std::string("uno_sendMineUno"),
+                std::move(promise));
+          }));
 }
 
 // ---------------------------------------------------------------------------
@@ -464,7 +533,7 @@ void JsonRpcServer::handle_uno_sendMineUno(td::JsonValue& params_val,
 //      `init_uno_workchain`). On rejection, surface the structured
 //      reason to the client without touching the validator.
 //   3. Re-deserialise the BoC into a root cell.
-//   4. Wrap into a wc=2 `ext_in_msg` and submit through
+//   4. Resolve the active Uno workchain, wrap into an `ext_in_msg`, and submit through
 //      `liteServer_sendMessage` — same actor-context pipe as
 //      `uno_sendMineUno` and `eth_sendRawTransaction`.
 //   5. Return the admission-derived `tx_hash` so wallets can poll status.
@@ -589,96 +658,39 @@ void JsonRpcServer::handle_uno_sendTransfer(td::JsonValue& params_val,
     return;
   }
 
-  // --- 4. Build wc=2 ext_in_msg and serialise. ---
-  td::Ref<vm::Cell> ext_msg;
-  try {
-    auto ext_r = build_uno_ext_in_msg(std::move(root_cell));
-    if (ext_r.is_error()) {
-      promise.set_value(make_eth_json_error(
-          -32603,
-          PSTRING() << "uno_sendTransfer: failed to build ext_in_msg cell: "
-                    << ext_r.error(),
-          req_id, opts_.cors_origin));
-      return;
-    }
-    ext_msg = ext_r.move_as_ok();
-  } catch (const std::exception& e) {
-    promise.set_value(make_eth_json_error(
-        -32603,
-        PSTRING() << "uno_sendTransfer: build ext_in_msg threw: " << e.what(),
-        req_id, opts_.cors_origin));
-    return;
-  } catch (...) {
-    promise.set_value(make_eth_json_error(
-        -32603, "uno_sendTransfer: build ext_in_msg threw",
-        req_id, opts_.cors_origin));
-    return;
-  }
-  if (ext_msg.is_null()) {
-    promise.set_value(make_eth_json_error(
-        -32603, "uno_sendTransfer: null ext_in_msg cell",
-        req_id, opts_.cors_origin));
-    return;
-  }
-
-  td::Result<td::BufferSlice> boc_r;
-  try {
-    boc_r = vm::std_boc_serialize(ext_msg);
-  } catch (const std::exception& e) {
-    promise.set_value(make_eth_json_error(
-        -32603,
-        PSTRING() << "uno_sendTransfer: BoC serialize threw: " << e.what(),
-        req_id, opts_.cors_origin));
-    return;
-  } catch (...) {
-    promise.set_value(make_eth_json_error(
-        -32603, "uno_sendTransfer: BoC serialize threw",
-        req_id, opts_.cors_origin));
-    return;
-  }
-  if (boc_r.is_error()) {
-    promise.set_value(make_eth_json_error(
-        -32603,
-        PSTRING() << "uno_sendTransfer: BoC serialize failed: " << boc_r.error(),
-        req_id, opts_.cors_origin));
-    return;
-  }
-  auto boc = boc_r.move_as_ok();
-
-  // --- 5. Submit via liteServer_sendMessage (actor-context pipe). ---
-  auto inner = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_sendMessage>(std::move(boc)),
-      true);
-  auto query = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)),
-      true);
-
   std::string tx_hash_hex = encode_hex_lower(ar.tx_hash.data(), 32);
-  std::string tx_hash_json_quoted = "\"" + tx_hash_hex + "\"";
-
-  send_liteserver_query(
-      std::move(query),
-      [req_id = std::move(req_id),
-       tx_hash_quoted = std::move(tx_hash_json_quoted),
-       cors = opts_.cors_origin,
-       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
-        if (R.is_error()) {
-          std::string err_msg = std::string("uno_sendTransfer: submission failed: ") +
-                                R.error().message().str();
-          promise.set_value(build_jsonrpc_error(-32603, err_msg, req_id, cors));
-          return;
-        }
-        // The collator side has accepted the message. Echo the canonical
-        // tx_hash from admission so wallets can poll status.
-        std::string body;
-        body.reserve(96);
-        body += "{\"jsonrpc\":\"2.0\",\"id\":";
-        body += req_id.empty() ? std::string("null") : req_id;
-        body += ",\"result\":{\"tx_hash\":";
-        body += tx_hash_quoted;
-        body += "}}";
-        promise.set_value(build_raw_json_response(body, cors));
-      });
+  std::string result_json = "{\"tx_hash\":\"" + tx_hash_hex + "\"}";
+  td::actor::send_closure(
+      validator_manager_, &validator::ValidatorManagerInterface::get_top_masterchain_state,
+      td::PromiseCreator::lambda(
+          [self = actor_id(this), root_cell = std::move(root_cell),
+           req_id = std::move(req_id), result_json = std::move(result_json),
+           cors = opts_.cors_origin, promise = std::move(promise)](
+              td::Result<td::Ref<validator::MasterchainState>> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_eth_json_error(
+                  -32603,
+                  PSTRING() << "uno_sendTransfer: cannot fetch masterchain state: "
+                            << R.move_as_error(),
+                  req_id, cors));
+              return;
+            }
+            auto wc_res = resolve_uno_rpc_workchain_from_masterchain_state(R.move_as_ok());
+            if (wc_res.is_error()) {
+              promise.set_value(make_eth_json_error(
+                  -32603,
+                  PSTRING() << "uno_sendTransfer: cannot resolve Uno workchain from ConfigParam 12: "
+                            << wc_res.move_as_error(),
+                  req_id, cors));
+              return;
+            }
+            auto wc = wc_res.move_as_ok();
+            td::actor::send_closure_later(
+                self, &JsonRpcServer::handle_uno_submit_ext_message,
+                wc.workchain_id, std::move(root_cell), std::move(req_id),
+                std::move(result_json), std::string("uno_sendTransfer"),
+                std::move(promise));
+          }));
 }
 
 }  // namespace tos

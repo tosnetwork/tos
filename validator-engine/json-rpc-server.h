@@ -333,7 +333,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
       std::string raw_bytes, evm_workchain::DecodedTransaction decoded,
       std::string req_id, tos::WorkchainId workchain_id, uint64_t chain_id,
       td::Promise<HttpReturn> promise);
-  // --- Uno workchain (wc=2) JSON-RPC methods that need access to the
+  // --- Uno workchain JSON-RPC methods that need access to the
   //     server-side liteserver_query pipe. Read-only `uno_*` methods live
   //     in `uno/rpc/handlers.cpp` and are dispatched via
   //     `uno_workchain::handle_uno_rpc`. The two below are intercepted
@@ -342,6 +342,12 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                                td::Promise<HttpReturn> promise);
   void handle_uno_sendTransfer(td::JsonValue &params_val, std::string req_id,
                                 td::Promise<HttpReturn> promise);
+  void handle_uno_submit_ext_message(tos::WorkchainId workchain_id,
+                                      td::Ref<vm::Cell> body_root,
+                                      std::string req_id,
+                                      std::string result_json,
+                                      std::string method_name,
+                                      td::Promise<HttpReturn> promise);
   void handle_getConfigParam(td::JsonObject &params, std::string req_id,
                              td::Promise<HttpReturn> promise);
   void handle_getAddressInformation(td::JsonObject &params, std::string req_id,

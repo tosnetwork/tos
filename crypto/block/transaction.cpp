@@ -2035,7 +2035,6 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     }
     auto output = output_res.move_as_ok();
     apply_custom_compute_output(cp, output);
-    cp.gas_fees = cfg.compute_gas_price(cp.gas_used);
 
     if (output.committed) {
       if (cp.new_data.not_null()) {

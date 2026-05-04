@@ -24,6 +24,14 @@
 
 namespace evm_workchain {
 
+namespace {
+
+bool fits_addr_std_workchain_id(tos::WorkchainId workchain_id) {
+    return workchain_id >= -128 && workchain_id <= 127;
+}
+
+}  // namespace
+
 td::Bits256 eth_addr_to_internal(const evmc::address& addr) {
     td::Bits256 result;
     result.set_zero();
@@ -44,6 +52,7 @@ td::Ref<vm::Cell> build_evm_external_message(
     tos::WorkchainId workchain_id) {
 
     if (!raw_rlp || rlp_size == 0) return {};
+    if (!fits_addr_std_workchain_id(workchain_id)) return {};
 
     // --- Build body cell ---
     //

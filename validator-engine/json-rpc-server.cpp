@@ -982,9 +982,10 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     return;
   }
 
-  // uno_sendMineUno / uno_sendTransfer: route to async handlers (each
-  // submits a wc=2 ext_in_msg through the same liteServer_sendMessage
-  // pipe as eth_sendRawTransaction). Intercepted BEFORE the
+  // uno_sendMineUno / uno_sendTransfer: route to async handlers. Each resolves
+  // the active Uno workchain from ConfigParam 12 and submits an ext_in_msg
+  // through the same liteServer_sendMessage pipe as eth_sendRawTransaction.
+  // Intercepted BEFORE the
   // `is_uno_rpc_method` registry below — that registry covers read-only
   // uno_* methods that don't need access to `send_liteserver_query`.
   // The registry also hosts a `handle_send_transfer` impl that the test
@@ -1034,7 +1035,7 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     return;
   }
 
-  // Uno workchain (wc=2) JSON-RPC: same array-params convention as eth_*.
+  // Uno workchain JSON-RPC: same array-params convention as eth_*.
   if (params_val.type() == td::JsonValue::Type::Array &&
       uno_workchain::is_uno_rpc_method(method)) {
     td::JsonBuilder jb;
@@ -1461,18 +1462,19 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
       promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
     }
   }
-  // --- Uno Workchain (wc=2): validator-engine-side uno_* methods ---
-  // These two methods need access to JsonRpcServer-private state
+  // --- Uno Workchain: validator-engine-side uno_* methods ---
+  // These methods need access to JsonRpcServer-private state
   // (`send_liteserver_query` / mine-state accessor) so they can't live
   // in the generic uno_workchain::handle_uno_rpc registry below.
   else if (method == "uno_getMineState") {
     promise.set_value(
         handle_uno_get_mine_state(std::move(req_id), opts_.cors_origin));
   }
-  else if (method == "uno_sendMineUno") {
+  else if (method == "uno_sendMineUno" || method == "uno_sendTransfer") {
     // Object-params path: re-pack the field values into a JSON array
     // and hand off to the same async handler used by the array-params
     // fast-path in process_single_object_request.
+    const std::string method_name = method;
     td::JsonBuilder jb;
     {
       auto arr = jb.enter_array();
@@ -1485,14 +1487,18 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     auto parsed = td::json_decode(td::MutableSlice(params_str));
     if (parsed.is_error()) {
       promise.set_value(make_eth_json_error(-32602,
-          PSTRING() << "uno_sendMineUno: malformed params: " << parsed.error(),
+          PSTRING() << method_name << ": malformed params: " << parsed.error(),
           req_id));
       return;
     }
     auto val = parsed.move_as_ok();
-    handle_uno_sendMineUno(val, std::move(req_id), std::move(promise));
+    if (method_name == "uno_sendMineUno") {
+      handle_uno_sendMineUno(val, std::move(req_id), std::move(promise));
+    } else {
+      handle_uno_sendTransfer(val, std::move(req_id), std::move(promise));
+    }
   }
-  // --- Uno Workchain (wc=2): uno_* JSON-RPC methods ---
+  // --- Uno Workchain: uno_* JSON-RPC methods ---
   else if (uno_workchain::is_uno_rpc_method(method)) {
     std::string params_str = "[]";
     if (params.field_count() > 0) {
@@ -1792,9 +1798,9 @@ bool JsonRpcServer::is_write_method(const std::string &method) {
       "grantAccountDelegation", "revokeAccountDelegation",
       "grantAccountSession", "revokeAccountSession",
       "grantAccountAgent", "revokeAccountAgent",
-      // EVM workchain (wc=1).
+      // EVM workchain.
       "eth_sendRawTransaction",
-      // Uno workchain (wc=2): both the synchronous Transfer admission path
+      // Uno workchain: both the synchronous Transfer admission path
       // and the asynchronous MineUno submission path emit external messages.
       "uno_sendTransfer",
       "uno_sendMineUno",
