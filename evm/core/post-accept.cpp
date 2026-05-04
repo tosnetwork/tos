@@ -1391,7 +1391,8 @@ std::optional<EvmBlockSideEffects> replay_side_effects_for_message(
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32],
-    const uint8_t parent_block_hash[32]) noexcept {
+    const uint8_t parent_block_hash[32],
+    uint64_t chain_id) noexcept {
     auto body = read_ext_in_msg_body_slice(msg);
     if (!body) return std::nullopt;
 
@@ -1404,7 +1405,8 @@ std::optional<EvmBlockSideEffects> replay_side_effects_for_message(
         block_seqno,
         timestamp,
         rand_seed,
-        parent_block_hash);
+        parent_block_hash,
+        chain_id);
     if (!ok || !cp.accepted || cp.evm_side_effects == nullptr ||
         cp.new_data.is_null()) {
         return std::nullopt;
@@ -1440,11 +1442,12 @@ size_t apply_stashed_side_effects_for_messages(
     uint64_t accepted_timestamp,
     const uint8_t rand_seed[32],
     const uint8_t parent_block_hash[32],
+    uint64_t chain_id,
     const std::vector<td::Ref<vm::Cell>>& msgs) noexcept {
     std::vector<uint64_t> gas_limits;
     return apply_stashed_side_effects_for_messages(
         accepted_block_seqno, accepted_timestamp, rand_seed, parent_block_hash,
-        msgs, gas_limits, td::Ref<vm::Cell>{});
+        chain_id, msgs, gas_limits, td::Ref<vm::Cell>{});
 }
 
 size_t apply_stashed_side_effects_for_messages(
@@ -1452,6 +1455,7 @@ size_t apply_stashed_side_effects_for_messages(
     uint64_t accepted_timestamp,
     const uint8_t rand_seed[32],
     const uint8_t parent_block_hash[32],
+    uint64_t chain_id,
     const std::vector<td::Ref<vm::Cell>>& msgs,
     const std::vector<uint64_t>& gas_limits,
     const td::Ref<vm::Cell>& initial_account_data) noexcept {
@@ -1484,7 +1488,7 @@ size_t apply_stashed_side_effects_for_messages(
             auto replayed_fx = replay_side_effects_for_message(
                 replay_account_data, msgs[replay_cursor], gas_limit,
                 accepted_block_seqno, accepted_timestamp,
-                rand_seed, parent_block_hash);
+                rand_seed, parent_block_hash, chain_id);
             if (!replayed_fx) {
                 replay_available = false;
                 g_replay_failures.fetch_add(1, std::memory_order_relaxed);

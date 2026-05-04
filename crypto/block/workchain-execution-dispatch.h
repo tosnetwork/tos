@@ -48,6 +48,7 @@ struct WorkchainEngineKey {
 };
 
 std::string workchain_engine_key_to_string(const WorkchainEngineKey& key);
+bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key);
 
 struct WorkchainExecutionDescriptor {
   tos::WorkchainId workchain_id{tos::workchainInvalid};
@@ -184,6 +185,14 @@ class WorkchainExecutionRegistry {
 
   td::Result<ResolvedWorkchainExecution> resolve(const WorkchainExecutionDescriptor& descriptor,
                                                  const block::Config& block_transition_config) const;
+
+  td::Result<std::optional<ResolvedWorkchainExecution>> resolve_workchain(
+      const block::WorkchainSet& workchains, tos::WorkchainId workchain_id,
+      const block::Config& block_transition_config) const;
+
+  td::Result<std::optional<AccountExecutionPolicy>> resolve_account_policy(
+      const block::WorkchainSet& workchains, tos::WorkchainId workchain_id,
+      const block::Config& block_transition_config) const;
 
   td::Status validate_required_workchains(const block::WorkchainSet& workchains,
                                           const block::Config& block_transition_config,

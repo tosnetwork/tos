@@ -99,12 +99,13 @@ bool invoke_evm_compute(
     td::Ref<vm::Cell> account_data,
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
+    uint64_t chain_id,
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32],
     const uint8_t parent_block_hash[32]) {
     return g_handler(cp, std::move(account_data), in_msg_body, gas_limit,
-                     block_seqno, timestamp, rand_seed, parent_block_hash);
+                     chain_id, block_seqno, timestamp, rand_seed, parent_block_hash);
 }
 
 void register_evm_workchain_engine(block::WorkchainExecutionRegistry& registry) {

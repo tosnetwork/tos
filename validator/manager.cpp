@@ -20,21 +20,25 @@
 #include <algorithm>
 #include <fstream>
 #include <limits>
+#include <optional>
 
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api_json.h"
 #include "block/block.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "block/workchain-execution-dispatch.h"
 #include "common/delay.h"
 #include "common/stats.h"
 #include "evm/core/post-accept-bridge.h"
+#include "evm/core/workchain.h"
 #include "db/celldb.hpp"
 #include "db/fileref.hpp"
 #include "downloaders/wait-block-data.hpp"
 #include "downloaders/wait-block-state-merge.hpp"
 #include "downloaders/wait-block-state.hpp"
 #include "impl/applied-ext-message-cleanup.hpp"
+#include "impl/config.hpp"
 #include "interfaces/validator-full-id.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/coro_utils.h"
@@ -95,6 +99,48 @@ uint64_t extract_evm_compute_gas_limit(td::Ref<vm::Cell> trans_ref) noexcept {
   } catch (...) {
     return 0;
   }
+}
+
+struct EvmPostAcceptExecution {
+  block::AccountExecutionPolicy policy;
+  std::uint64_t chain_id{0};
+};
+
+td::Result<std::optional<EvmPostAcceptExecution>> resolve_evm_post_accept_execution(
+    const td::Ref<MasterchainState>& state, WorkchainId workchain) {
+  if (state.is_null()) {
+    return td::Status::Error("masterchain state is not ready");
+  }
+  auto holder_res = state->get_config_holder();
+  if (holder_res.is_error()) {
+    return holder_res.move_as_error();
+  }
+  auto holder = holder_res.move_as_ok();
+  auto* holder_q = dynamic_cast<const ConfigHolderQ*>(holder.get());
+  if (holder_q == nullptr || holder_q->get_config() == nullptr) {
+    return td::Status::Error("masterchain config holder does not expose block::Config");
+  }
+  const block::Config& config = *holder_q->get_config();
+  auto resolved_res = block::default_workchain_execution_registry().resolve_workchain(
+      config.get_workchain_list(), workchain, config);
+  if (resolved_res.is_error()) {
+    return resolved_res.move_as_error();
+  }
+  auto resolved = resolved_res.move_as_ok();
+  if (!resolved.has_value()) {
+    return std::optional<EvmPostAcceptExecution>{};
+  }
+  auto key = block::workchain_engine_key_from_descriptor(resolved->descriptor);
+  if (key.format != block::WorkchainFormat::Basic || key.selector != evm_workchain::kVmVersion) {
+    return std::optional<EvmPostAcceptExecution>{};
+  }
+  auto policy = resolved->executor->account_policy(resolved->descriptor, *resolved->engine_config);
+  if (policy.kind != block::AccountExecutionPolicyKind::SingletonExecutor ||
+      !policy.singleton_address.has_value()) {
+    return td::Status::Error("EVM post-accept side effects require a singleton executor policy");
+  }
+  return std::optional<EvmPostAcceptExecution>{
+      EvmPostAcceptExecution{std::move(policy), resolved->descriptor.vm_mode}};
 }
 
 }  // namespace
@@ -1182,16 +1228,25 @@ void ValidatorManagerImpl::complete_external_messages(std::vector<ExtMessage::Ha
 }
 
 void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle, td::Ref<BlockData> block) {
-  // Drive deferred publication of EVM RPC side-effects for every wc=1
+  // Drive deferred publication of EVM RPC side-effects for every EVM
   // ext-msg in this canonically-applied block. Compute is pure and
   // stashes captured effects under the EVM tx_hash; nothing reaches the
   // RPC cache / subscriptions until BFT accepts the block (this hook).
-  // Walk the executor account's transaction dictionary in LT order and hand
-  // those ext_in_msgs to the bridge. Transaction order matters for Ethereum
-  // tx_index, cumulative_gas_used, logs bloom, transactionsRoot, and
-  // receiptsRoot.
-  if (block.not_null() && block->block_id().is_valid() &&
-      block->block_id().id.workchain == 1) {
+  // Resolve the engine and singleton executor address from ConfigParam 12
+  // instead of assuming a concrete workchain id. Transaction order matters
+  // for Ethereum tx_index, cumulative_gas_used, logs bloom,
+  // transactionsRoot, and receiptsRoot.
+  std::optional<EvmPostAcceptExecution> evm_execution;
+  if (block.not_null() && block->block_id().is_valid()) {
+    auto execution_res = resolve_evm_post_accept_execution(last_masterchain_state_, block->block_id().id.workchain);
+    if (execution_res.is_error()) {
+      LOG(WARNING) << "evm post-accept: cannot resolve workchain execution for block "
+                   << block->block_id().to_str() << ": " << execution_res.move_as_error();
+    } else {
+      evm_execution = execution_res.move_as_ok();
+    }
+  }
+  if (block.not_null() && block->block_id().is_valid() && evm_execution.has_value()) {
     try {
       block::gen::Block::Record blk;
       block::gen::BlockInfo::Record info;
@@ -1211,9 +1266,7 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
 
         std::vector<td::Ref<vm::Cell>> evm_msgs;
         std::vector<uint64_t> evm_gas_limits;
-        td::Bits256 evm_addr;
-        evm_addr.set_zero();
-        evm_addr.data()[31] = 1;
+        td::Bits256 evm_addr = evm_execution->policy.singleton_address.value();
         vm::AugmentedDictionary account_blocks_dict{vm::load_cell_slice_ref(extra.account_blocks), 256,
                                                     block::tlb::aug_ShardAccountBlocks};
         auto ab_csr = account_blocks_dict.lookup(evm_addr);
@@ -1242,11 +1295,13 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
         }
 
         if (!evm_msgs.empty()) {
+          const std::uint64_t evm_chain_id = evm_execution->chain_id;
           if (handle && accepted_seqno > 0) {
             auto prev_block_id = handle->one_prev(true);
             auto rand_seed = extra.rand_seed;
             auto P = td::PromiseCreator::lambda(
                 [accepted_seqno, timestamp = info.gen_utime, rand_seed, parent_hash,
+                 evm_chain_id,
                  evm_msgs = std::move(evm_msgs),
                  evm_gas_limits = std::move(evm_gas_limits)](
                     td::Result<td::Ref<ShardState>> R) mutable {
@@ -1269,19 +1324,19 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
                   if (have_replay_state) {
                     evm_workchain::apply_stashed_side_effects_for_messages(
                         accepted_seqno, timestamp, rand_seed.as_array().data(),
-                        parent_hash.data(), evm_msgs, evm_gas_limits,
+                        parent_hash.data(), evm_chain_id, evm_msgs, evm_gas_limits,
                         initial_account_data);
                   } else {
                     evm_workchain::apply_stashed_side_effects_for_messages(
                         accepted_seqno, timestamp, rand_seed.as_array().data(),
-                        parent_hash.data(), evm_msgs);
+                        parent_hash.data(), evm_chain_id, evm_msgs);
                   }
                 });
             get_shard_state_from_db_short(prev_block_id, std::move(P));
           } else {
             evm_workchain::apply_stashed_side_effects_for_messages(
                 accepted_seqno, info.gen_utime, extra.rand_seed.as_array().data(),
-                parent_hash.data(), evm_msgs);
+                parent_hash.data(), evm_chain_id, evm_msgs);
           }
         }
       }

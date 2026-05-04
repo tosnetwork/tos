@@ -3,6 +3,14 @@
 Status: design proposal
 Date: 2026-05-03
 
+Deployment assumption: TOS has not launched mainnet. The migration therefore
+does not need to preserve byte-compatibility with pre-mainnet devnet behavior,
+old zerostates, old testnet descriptors, process-local defaults, or hardcoded
+`wc=1` / `wc=2` dispatch behavior. Where the existing implementation conflicts
+with the clean workchain abstraction or intended EVM semantics, this document
+chooses the target semantics directly instead of adding a legacy
+global-version gate.
+
 ## Purpose
 
 TOS currently supports multiple execution domains under one masterchain-rooted
@@ -20,6 +28,27 @@ not C++ control flow.
 
 This document defines the target architecture: a config-driven workchain
 execution registry.
+
+## Pre-Mainnet Compatibility Policy
+
+Because the project has not launched mainnet, this design is allowed to break
+pre-mainnet development behavior in order to reach the clean architecture
+directly.
+
+Implementation rules:
+
+- Do not add consensus code solely to preserve pre-registry devnet behavior.
+- Do not add fallback dispatch from workchain id to engine id when ConfigParam
+  12 or the registry context is missing; fail closed instead.
+- Do not source consensus-critical EVM parameters from process-local defaults
+  when the descriptor should provide them.
+- Do not preserve old EVM revert behavior if it conflicts with the intended
+  state model. EVM reverts should commit nonce/gas/receipt state while exposing
+  engine failure through receipt/status semantics.
+- Use global-version gates for future post-mainnet upgrades. Before mainnet,
+  prefer clean genesis/config regeneration over compatibility shims.
+- Legacy helpers may remain only for tests, tooling, or explicitly
+  non-consensus paths, and must be labelled as such.
 
 ## Current Shape
 
@@ -104,12 +133,12 @@ and consensus context, then produce a deterministic compute result. Any new
 state committed by the engine must still enter the ordinary TOS account and
 shard state tree.
 
-An engine must also be byte-compatible across validators for a fixed descriptor.
+An engine must also be deterministic across validators for a fixed descriptor.
 A binary update must not change consensus output for the same
 `WorkchainDescr`, global version, input state, message, and context. Any EVM
-hardfork rule, Uno proof rule, state layout, fee rule, bug-compatibility change,
-or validation rule change that can affect compute output must be gated by
-on-chain descriptor/config fields or by an existing consensus global version.
+hardfork rule, Uno proof rule, state layout, fee rule, bug fix, or validation
+rule change that can affect compute output must be represented by on-chain
+descriptor/config fields or by an existing consensus global version.
 
 ### 5. The generic transaction engine owns the transaction envelope
 
@@ -381,8 +410,9 @@ The long-term interface should avoid passing a mutable `block::ComputePhase&`
 directly into workchain modules. Engines should return a compute result, and
 host code should translate that result into the existing transaction structure.
 
-Initial migration can keep a compatibility adapter around `ComputePhase`, but
-the target interface should look like this:
+Initial migration can keep a temporary adapter around `ComputePhase` while the
+generic interface is being wired, but the target interface should look like
+this:
 
 ```cpp
 struct WorkchainComputeContext {
@@ -482,21 +512,13 @@ The exact names can change during implementation. The important boundary is
 that engines receive a normalized context and return a result. They should not
 reach back into global mutable chain state during compute.
 
-During the compatibility phase, mapping this output back into the existing
-`block::ComputePhase` must preserve the `committed` / `engine_success`
-distinction. In particular, a reverted EVM transaction is an engine-level
-failure but not necessarily a host state-commit failure. Any temporary adapter
-that collapses those two booleans back into a single `cp.success` must document
-which meaning it chooses and must be covered by EVM revert-state tests.
-
-Compatibility note: Phase 1 and Phase 2 must remain byte-compatible with the
-current chain behavior. Today, at global version 14 and later, EVM reverts set
-`cp.success=false`, and `transaction.cpp::compute_phase_can_activate_account`
-therefore does not commit `cp.new_data` for first activation. Correcting EVM
-reverts so that nonce/gas state commits even when `engine_success=false` is a
-consensus-visible semantic change. That fix must be gated by a new global
-version or explicit EVM descriptor/config upgrade, not folded silently into the
-registry refactor.
+Mapping this output back into the existing `block::ComputePhase` must preserve
+the `committed` / `engine_success` distinction. In particular, a reverted EVM
+transaction is an engine-level failure but not a host state-commit failure:
+nonce/gas/receipt state still commits while the EVM receipt status remains
+failed. Because TOS is pre-mainnet, the registry migration should implement
+this target semantic directly instead of preserving the older
+`cp.success=false => do not commit cp.new_data` behavior.
 
 ## Account Execution Policy
 
@@ -560,14 +582,15 @@ implementation.
 This proposal fixes the dispatch abstraction. It does not, by itself, migrate
 the EVM workchain away from the current singleton executor account model.
 
-For EVM v1, the expected behavior after Phases 1-4 is intentionally
-byte-compatible:
+For EVM v1, the expected behavior after Phases 1-4 intentionally keeps the
+same state topology while adopting the target descriptor-driven semantics:
 
-- `wc=1` still uses the EVM engine selected from `ConfigParam 12`;
+- the EVM workchain uses the EVM engine selected from `ConfigParam 12`;
 - the EVM engine still declares `SingletonExecutor(0x0000...0001)`;
 - the current EVM state layout remains committed under that executor account;
 - EVM receipts, logs, nonce changes, gas accounting, and revert semantics must
-  match the pre-registry implementation.
+  follow the descriptor-selected EVM engine, including committing nonce/gas
+  state on EVM revert.
 
 That is not a failure of the registry design. It is the correct separation of
 concerns. The registry removes hardcoded engine selection from generic
@@ -692,7 +715,7 @@ ConfigParam read from the block-transition config snapshot:
 - EVM validates chain id, supported hardfork schedule, precompile profile, and
   any descriptor version constraints.
 - Uno validates workchain id if required by domain separation, scheme ids,
-  proof limits, and config compatibility.
+  proof limits, and config constraints.
 
 Generic validation owns only generic shape:
 
@@ -763,16 +786,18 @@ it engine-generic.
 
 ## Migration Plan
 
-### Phase 0 - Document and pin behavior
+### Phase 0 - Document and pin target behavior
 
-Add tests around the current behavior before refactoring:
+Add tests around the intended descriptor-driven behavior before refactoring:
 
-- `wc=1` dispatches only to EVM.
-- `wc=2` dispatches only to Uno.
+- EVM dispatch is selected by `ConfigParam 12` descriptor key
+  `{Basic, 0x0045564d}`, not by a bare `wc=1` branch.
+- Uno dispatch is selected by `{Basic, 0x554e4f31}`, not by a bare `wc=2`
+  branch.
 - non-executor account targets are rejected consistently.
 - missing handler does not fall through into a successful custom execution.
 
-### Phase 1 - Add generic registry with compatibility adapters
+### Phase 1 - Add generic registry with temporary adapters
 
 Introduce:
 
@@ -788,10 +813,10 @@ Phase 1 prerequisite: the descriptor normalizer must preserve
 raw descriptor cell directly in the normalizer. Do not introduce registry lookup
 for extended-format descriptors while this value is being dropped.
 
-Register EVM and Uno through adapters that call the current handlers. Keep the
-old EVM/Uno dispatcher headers temporarily.
-
-At the end of Phase 1, behavior should be byte-identical.
+Register EVM and Uno through adapters that call the current handlers while the
+generic `run_compute` path is being wired. These adapters are a temporary
+implementation detail, not a compatibility contract, and must not reintroduce
+workchain-id fallback dispatch.
 
 ### Phase 2 - Resolve from `WorkchainDescr`
 
@@ -868,9 +893,9 @@ Required tests:
 - registry lookup by `(format, selector)`
 - unknown engine key fails closed
 - required workchain with missing local engine fails preflight
-- EVM and Uno singleton executor policies preserve current behavior
+- EVM and Uno singleton executor policies are enforced by engine policy
 - EVM v1 registry refactor does not change singleton state layout, receipt/log
-  ordering, or revert-state commitment
+  ordering, or the target revert-state commitment semantics
 - EVM chain id used by consensus compute comes from descriptor `vm_mode` through
   `EvmEngineConfig`, not from `evm_chain_config()` or `current_evm_chain_id()`
 - EVM descriptors with legacy `vm_mode = 0` fail engine config validation

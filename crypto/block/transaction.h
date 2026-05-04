@@ -138,17 +138,15 @@ struct ComputePhaseConfig {
   bool allow_external_unfreeze{false};
   bool disable_anycast{false};
 
-  // EVM workchain (wc=1): the wc=1 shard block sequence number being
-  // produced/validated. Used as `block.number` inside silkworm so EVM
-  // contracts and receipts see a monotonic, deterministic value identical
-  // across collator and validate-query passes. Zero for non-EVM contexts.
+  // Custom workchain shard block sequence number being produced/validated.
+  // For EVM this is used as `block.number` inside silkworm; Uno also receives
+  // it through the compatibility dispatcher. Zero for TVM contexts.
   td::uint64 evm_block_seqno = 0;
 
-  // EVM workchain (wc=1): the wc=1 parent block's root_hash, used for
-  // EIP-2935 historical-block-hash ring buffer writes inside the snapshot
-  // compute phase. Zero on non-EVM contexts and at block 0. Threaded in
-  // here (rather than being read out of g_evm_state's block ring) to keep
-  // compute pure under the audit fix that closed compute-phase non-purity.
+  // EVM parent block root_hash, used for EIP-2935 historical-block-hash ring
+  // buffer writes inside the snapshot compute phase. Zero on non-EVM contexts
+  // and at block 0. Threaded in here rather than being read out of mutable
+  // process state.
   td::Bits256 evm_parent_block_hash = td::Bits256::zero();
 
   // Config-driven workchain dispatch context. These pointers are scoped to

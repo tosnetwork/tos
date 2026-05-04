@@ -296,11 +296,9 @@ void ValidateQuery::start_up() {
                                 << " different from current shard " << shard_.to_str());
     return;
   }
-  if (workchain() != tos::masterchainId && workchain() != tos::basechainId &&
-      workchain() != evm_workchain::kWorkchainId && workchain() != 2 /* uno_workchain::kWorkchainId */) {
-    soft_reject_query("can validate block candidates only for masterchain (-1), base workchain (0), EVM workchain (1), and UNO workchain (2)");
-    return;
-  }
+  // Concrete non-TVM workchain ids are validated after the referenced
+  // masterchain ConfigParam 12 snapshot is loaded, through
+  // WorkchainExecutionRegistry.
   if (!shard_.is_valid_ext()) {
     reject_query("requested to validate a block for an invalid shard");
     return;
@@ -1124,23 +1122,40 @@ bool ValidateQuery::fetch_config_params() {
     compute_phase_cfg_.precompiled_contracts = config_->get_precompiled_contracts_config();
     compute_phase_cfg_.allow_external_unfreeze = compute_phase_cfg_.global_version >= 8;
     compute_phase_cfg_.disable_anycast = config_->get_global_version() >= 10;
+    if (!is_masterchain()) {
+      block::LocalWorkchainRoleSet local_roles;
+      local_roles.required_workchains.insert(workchain());
+      auto status = block::default_workchain_execution_registry().validate_required_workchains(
+          config_->get_workchain_list(), *config_, local_roles);
+      if (status.is_error()) {
+        return fatal_error(status.move_as_error_prefix("cannot execute configured workchain: "));
+      }
+    }
 
-    // EVM workchain (wc=1): single-executor design. No mirror dict is
-    // allocated; the validator's re-execution runs the same compute
-    // dispatch and deterministically produces identical cp.new_data cell
-    // hashes, so the announced ShardState new_hash matches by construction.
-    if (workchain() == evm_workchain::kWorkchainId) {
+    bool custom_workchain = false;
+    bool is_evm_custom_workchain = false;
+    auto resolved_execution = block::default_workchain_execution_registry().resolve_workchain(
+        config_->get_workchain_list(), workchain(), *config_);
+    if (resolved_execution.is_error()) {
+      return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
+    }
+    if (resolved_execution.ok().has_value()) {
+      auto key = block::workchain_engine_key_from_descriptor(resolved_execution.ok()->descriptor);
+      custom_workchain = !block::workchain_engine_key_is_tvm(key);
+      is_evm_custom_workchain =
+          key.format == block::WorkchainFormat::Basic && key.selector == evm_workchain::kVmVersion;
+    }
+
+    if (custom_workchain) {
       compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(id_.id.seqno);
-      // Mirror collator.cpp: thread wc=1 parent block root_hash so the
+      // Mirror collator.cpp: thread the EVM parent block root_hash so the
       // EIP-2935 system call uses the actual parent hash. The validator
       // must agree with the collator on this value or cp.new_data
-      // diverges (parent_hash is written into a state slot).
-      if (!prev_blocks.empty()) {
+      // diverges. Non-EVM custom engines use the shared block_seqno carrier
+      // and leave this hash zeroed.
+      if (is_evm_custom_workchain && !prev_blocks.empty()) {
         compute_phase_cfg_.evm_parent_block_hash = prev_blocks[0].root_hash;
       }
-      // No g_evm_state hydration here — see matching comment in
-      // collator.cpp. Snapshot compute pulls pre-state from the per-tx
-      // account_data cell directly.
     } else {
       compute_phase_cfg_.evm_block_seqno = 0;
     }
@@ -1263,24 +1278,10 @@ bool ValidateQuery::check_this_shard_mc_info() {
   if (!wc_info_->active) {
     return reject_query(PSTRING() << "cannot create new block for disabled workchain " << workchain());
   }
-  if (!wc_info_->basic) {
-    return reject_query(PSTRING() << "cannot create new block for non-basic workchain " << workchain());
-  }
-  if (evm_workchain::is_evm_workchain(workchain())) {
-    if (wc_info_->vm_version != evm_workchain::kVmVersion) {
-      return reject_query(PSTRING()
-                          << "cannot validate EVM workchain block: ConfigParam 12 vm_version=0x"
-                          << td::format::as_hex(wc_info_->vm_version)
-                          << " does not match expected 0x"
-                          << td::format::as_hex(evm_workchain::kVmVersion));
-    }
-    if (wc_info_->vm_mode != evm_workchain::current_evm_chain_id()) {
-      return reject_query(PSTRING()
-                          << "cannot validate EVM workchain block: ConfigParam 12 vm_mode/chain_id=0x"
-                          << td::format::as_hex(wc_info_->vm_mode)
-                          << " does not match runtime chain_id=0x"
-                          << td::format::as_hex(evm_workchain::current_evm_chain_id()));
-    }
+  auto execution_res = block::default_workchain_execution_registry().resolve_workchain(
+      config_->get_workchain_list(), workchain(), *config_);
+  if (execution_res.is_error()) {
+    return reject_query(execution_res.move_as_error_prefix("cannot validate configured workchain: ").to_string());
   }
   if (wc_info_->enabled_since && wc_info_->enabled_since > config_->utime) {
     return reject_query(PSTRING() << "cannot create new block for workchain " << workchain()

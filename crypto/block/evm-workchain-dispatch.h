@@ -35,6 +35,8 @@ namespace evm_workchain_dispatch {
 ///                  read/write of any process-global mutable state).
 ///   in_msg_body  — body cell slice containing the RLP payload
 ///   gas_limit    — max gas for this execution
+///   chain_id     — consensus EVM chain id from WorkchainDescr.vm_mode;
+///                  zero keeps legacy process-local fallback for tests
 ///   block_seqno  — host-chain block sequence number (for block.number)
 ///   timestamp    — host-chain block Unix timestamp
 ///   rand_seed    — 256-bit block random seed
@@ -50,6 +52,7 @@ using EvmComputeHandler = std::function<bool(
     td::Ref<vm::Cell> account_data,
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
+    uint64_t chain_id,
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32],
@@ -69,6 +72,7 @@ bool invoke_evm_compute(
     td::Ref<vm::Cell> account_data,
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
+    uint64_t chain_id,
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32],

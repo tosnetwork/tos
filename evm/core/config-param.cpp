@@ -60,8 +60,8 @@ td::Ref<vm::Cell> build_evm_workchain_descr(
     //
     // Audit #5 follow-up: vm_mode is the on-chain EVM chain id. It is part
     // of ConfigParam 12, hence part of the masterchain config proof, and
-    // collator/validator code rejects wc=1 if it differs from the runtime
-    // chain id.
+    // collator/validator/RPC admission read it back from the descriptor
+    // instead of from process-local runtime defaults.
     // Matches Fift: x{1} s, -1 32 i, 0 64 u,
     cb.store_long(0x1, 4);          // wfmt_basic tag (4 bits, matches x{1} in Fift)
     cb.store_long(kVmVersion, 32);  // vm_version = 0x45564D ("EVM"), signed int32

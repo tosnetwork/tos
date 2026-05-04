@@ -210,6 +210,7 @@ size_t apply_stashed_side_effects_for_messages(
     uint64_t accepted_timestamp,
     const uint8_t rand_seed[32],
     const uint8_t parent_block_hash[32],
+    uint64_t chain_id,
     const std::vector<td::Ref<vm::Cell>>& msgs) noexcept;
 
 /// Variant used by the validator manager when the previous canonical shard
@@ -221,6 +222,7 @@ size_t apply_stashed_side_effects_for_messages(
     uint64_t accepted_timestamp,
     const uint8_t rand_seed[32],
     const uint8_t parent_block_hash[32],
+    uint64_t chain_id,
     const std::vector<td::Ref<vm::Cell>>& msgs,
     const std::vector<uint64_t>& gas_limits,
     const td::Ref<vm::Cell>& initial_account_data) noexcept;

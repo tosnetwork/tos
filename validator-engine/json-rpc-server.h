@@ -28,6 +28,7 @@
 #include "td/utils/Time.h"
 #include "validator/validator.h"
 #include "block/block.h"
+#include "evm/core/transaction.h"
 #include "evm/rpc/handlers.h"
 
 #include <list>
@@ -328,6 +329,9 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                       td::Promise<HttpReturn> promise);
   void handle_eth_sendRawTransaction(td::JsonValue &params_val, std::string req_id,
                                       td::Promise<HttpReturn> promise);
+  void handle_eth_sendRawTransaction_with_chain_id(
+      std::string raw_bytes, evm_workchain::DecodedTransaction decoded,
+      std::string req_id, uint64_t chain_id, td::Promise<HttpReturn> promise);
   // --- Uno workchain (wc=2) JSON-RPC methods that need access to the
   //     server-side liteserver_query pipe. Read-only `uno_*` methods live
   //     in `uno/rpc/handlers.cpp` and are dispatched via

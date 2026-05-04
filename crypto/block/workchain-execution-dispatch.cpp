@@ -9,10 +9,53 @@
 
 namespace block {
 
+namespace {
+
+constexpr std::int32_t kTvmVmVersion = -1;
+
+struct TvmEngineConfig final : public WorkchainEngineConfig {
+};
+
+class TvmDescriptorEngine final : public WorkchainEngine {
+ public:
+  WorkchainEngineKey engine_key() const override {
+    return {WorkchainFormat::Basic, kTvmVmVersion};
+  }
+
+  td::Result<std::shared_ptr<const WorkchainEngineConfig>> validate_and_resolve_config(
+      const WorkchainExecutionDescriptor& descriptor,
+      const block::Config& /*block_transition_config*/) const override {
+    if (descriptor.format != WorkchainFormat::Basic || descriptor.vm_version != kTvmVmVersion) {
+      return td::Status::Error("TVM engine received non-TVM descriptor");
+    }
+    if (descriptor.vm_mode != 0) {
+      return td::Status::Error("TVM descriptor requires vm_mode=0");
+    }
+    std::shared_ptr<const WorkchainEngineConfig> result = std::make_shared<TvmEngineConfig>();
+    return result;
+  }
+
+  AccountExecutionPolicy account_policy(const WorkchainExecutionDescriptor& /*descriptor*/,
+                                        const WorkchainEngineConfig& /*engine_config*/) const override {
+    return AccountExecutionPolicy{};
+  }
+
+  td::Result<WorkchainComputeOutput> run_compute(const WorkchainComputeInput& /*input*/,
+                                                 const WorkchainComputeContext& /*context*/) const override {
+    return td::Status::Error("TVM uses the native transaction.cpp compute path");
+  }
+};
+
+}  // namespace
+
 std::string workchain_engine_key_to_string(const WorkchainEngineKey& key) {
   std::ostringstream os;
   os << (key.format == WorkchainFormat::Basic ? "Basic" : "Extended") << ":" << key.selector;
   return os.str();
+}
+
+bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key) {
+  return key.format == WorkchainFormat::Basic && key.selector == kTvmVmVersion;
 }
 
 td::Result<WorkchainExecutionDescriptor> normalize_workchain_descriptor(const WorkchainInfo& info) {
@@ -90,6 +133,32 @@ td::Result<ResolvedWorkchainExecution> WorkchainExecutionRegistry::resolve(
   return resolved;
 }
 
+td::Result<std::optional<ResolvedWorkchainExecution>> WorkchainExecutionRegistry::resolve_workchain(
+    const block::WorkchainSet& workchains, tos::WorkchainId workchain_id,
+    const block::Config& block_transition_config) const {
+  if (workchain_id == tos::masterchainId) {
+    return std::optional<ResolvedWorkchainExecution>{};
+  }
+  auto it = workchains.find(workchain_id);
+  if (it == workchains.end() || it->second.is_null() || !it->second->active) {
+    return std::optional<ResolvedWorkchainExecution>{};
+  }
+  TRY_RESULT(descriptor, normalize_workchain_descriptor(*it->second));
+  TRY_RESULT(resolved, resolve(descriptor, block_transition_config));
+  return std::optional<ResolvedWorkchainExecution>{std::move(resolved)};
+}
+
+td::Result<std::optional<AccountExecutionPolicy>> WorkchainExecutionRegistry::resolve_account_policy(
+    const block::WorkchainSet& workchains, tos::WorkchainId workchain_id,
+    const block::Config& block_transition_config) const {
+  TRY_RESULT(resolved, resolve_workchain(workchains, workchain_id, block_transition_config));
+  if (!resolved.has_value()) {
+    return std::optional<AccountExecutionPolicy>{};
+  }
+  return std::optional<AccountExecutionPolicy>{
+      resolved->executor->account_policy(resolved->descriptor, *resolved->engine_config)};
+}
+
 td::Status WorkchainExecutionRegistry::validate_required_workchains(
     const block::WorkchainSet& workchains, const block::Config& block_transition_config,
     const LocalWorkchainRoleSet& local_roles) const {
@@ -106,6 +175,11 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
 
 WorkchainExecutionRegistry& default_workchain_execution_registry() {
   static WorkchainExecutionRegistry registry;
+  static bool tvm_registered = [] {
+    registry.register_engine_if_absent(std::make_unique<TvmDescriptorEngine>());
+    return true;
+  }();
+  (void)tvm_registered;
   return registry;
 }
 

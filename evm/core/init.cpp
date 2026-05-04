@@ -224,12 +224,10 @@ void seed_test_accounts(EvmState& state) {
 // =============================================================================
 // CANCUN PRE-FORK PREP (Category E, doc/evm-workchain-known-divergences.md)
 //
-// These helpers prepare the production runtime for a future flip of
-// `cancun_time = 0` in evm-block-context.cpp::evm_chain_config(). They are
-// **safe to call at every Shanghai-era node startup** — none of them changes
-// consensus or state semantics until Cancun is actually activated. Once
-// Cancun activates, silkworm's MergeRuleSet::initialize() invokes the
-// EIP-4788 system call per block; the predeploy must be in state by then.
+// These helpers prepare the production runtime for the EVM chain config
+// profile selected by the active workchain descriptor. They are safe to call
+// at every node startup; once Cancun/Pectra rules are active, the relevant
+// predeploys must already be present in state.
 //
 // Added in clearly-marked section to coordinate with parallel work on
 // genesis-alloc helpers (Agent K) — DO NOT collapse into init_evm_workchain
@@ -931,13 +929,14 @@ void init_evm_workchain(const std::string& db_root) {
            td::Ref<vm::Cell> account_data,
            vm::CellSlice& in_msg_body,
            uint64_t gas_limit,
+           uint64_t chain_id,
            uint64_t block_seqno,
            uint64_t timestamp,
            const uint8_t rand_seed[32],
            const uint8_t parent_block_hash[32]) -> bool {
             bool ok = run_evm_compute_phase_snapshot(
                 cp, std::move(account_data), in_msg_body, gas_limit,
-                block_seqno, timestamp, rand_seed, parent_block_hash);
+                block_seqno, timestamp, rand_seed, parent_block_hash, chain_id);
             // Stash captured side effects under the EVM tx_hash; the
             // validator manager publishes them post-BFT-accept via
             // `take_side_effects` + `apply_block_side_effects` from
