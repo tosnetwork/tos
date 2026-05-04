@@ -982,7 +982,7 @@ Negative tests are as important as positive tests:
 - ✅ no silent TVM fallback for configured EVM/Uno workchains
 - ✅ no local environment variable can override consensus-critical descriptor
   fields
-- 🟡 no process-global mutable engine state can change compute output between
+- ✅ no process-global mutable engine state can change compute output between
   replay and live validation
 
 ## Design Constraints

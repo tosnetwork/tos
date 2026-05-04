@@ -20,6 +20,7 @@
 #include "block/transaction.h"
 #include "block/uno-workchain-dispatch.h"
 #include "block/workchain-execution-dispatch.h"
+#include "evm/core/workchain.h"
 #include "td/utils/tests.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cellslice.h"
@@ -399,4 +400,53 @@ TEST(WorkchainExecutionRegistry, EvmRevertCommitsHostStateButReportsEngineFailur
   CHECK(output.gas_fees.not_null());
   CHECK(td::cmp(output.gas_fees, td::make_refint(7)) == 0);
   CHECK(output.new_data.not_null());
+}
+
+TEST(WorkchainExecutionRegistry, EvmComputeUsesDescriptorChainIdNotDefaultSingleton) {
+  auto config = make_empty_config();
+
+  constexpr std::uint64_t kDescriptorChainId = 0x22222222;
+  CHECK(kDescriptorChainId != evm_workchain::kEvmChainId);
+
+  block::WorkchainExecutionRegistry registry;
+  evm_workchain_dispatch::register_evm_workchain_engine(registry);
+
+  std::uint64_t observed_chain_id = 0;
+  evm_workchain_dispatch::set_evm_compute_handler(
+      [&](block::ComputePhase& cp,
+          td::Ref<vm::Cell> /*account_data*/,
+          vm::CellSlice& /*in_msg_body*/,
+          uint64_t /*gas_limit*/,
+          uint64_t chain_id,
+          uint64_t /*block_seqno*/,
+          uint64_t /*timestamp*/,
+          const uint8_t /*rand_seed*/[32],
+          const uint8_t /*parent_block_hash*/[32]) {
+        observed_chain_id = chain_id;
+        cp.accepted = true;
+        cp.success = true;
+        cp.gas_used = 1;
+        cp.gas_fees = td::make_refint(1);
+        cp.new_data = make_marker_cell(0xCD);
+        return true;
+      });
+
+  auto descriptor = make_basic_descriptor(1, kEvmVmVersion, kDescriptorChainId);
+  auto resolved = registry.resolve(descriptor, config).move_as_ok();
+
+  block::WorkchainComputeInput input;
+  input.inbound_body = vm::load_cell_slice_ref(make_marker_cell(0x01));
+  input.gas_limit = 100;
+
+  block::WorkchainComputeContext context;
+  context.workchain_id = 1;
+  context.descriptor = resolved.descriptor;
+  context.engine_config = resolved.engine_config;
+  context.block_transition_config = &config;
+
+  auto output = resolved.executor->run_compute(input, context).move_as_ok();
+  CHECK(output.completed);
+  CHECK(output.committed);
+  CHECK(output.engine_success);
+  CHECK(observed_chain_id == kDescriptorChainId);
 }
