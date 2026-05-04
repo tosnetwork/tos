@@ -695,7 +695,7 @@ add_executable(test-cells test/test-td-main.cpp ${CELLS_TEST_SOURCE})
 target_link_libraries(test-cells PRIVATE tos_crypto)
 
 add_executable(test-workchain-execution-registry test/test-td-main.cpp ${WORKCHAIN_EXECUTION_REGISTRY_TEST_SOURCE})
-target_link_libraries(test-workchain-execution-registry PRIVATE tos_block)
+target_link_libraries(test-workchain-execution-registry PRIVATE tos_block evm_workchain uno_workchain)
 
 add_executable(test-fift test/test-td-main.cpp ${FIFT_TEST_SOURCE})
 target_link_libraries(test-fift PRIVATE fift-lib)

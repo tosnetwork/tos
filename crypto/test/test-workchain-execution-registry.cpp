@@ -18,14 +18,16 @@
 #include "block/evm-workchain-dispatch.h"
 #include "block/mc-config.h"
 #include "block/transaction.h"
-#include "block/uno-workchain-dispatch.h"
 #include "block/workchain-execution-dispatch.h"
+#include "uno/core/dispatch-engine.h"
+#include "evm/core/dispatch-engine.h"
 #include "evm/core/workchain.h"
 #include "td/utils/tests.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cellslice.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 namespace {
@@ -186,6 +188,215 @@ td::Ref<vm::Cell> make_marker_cell(std::uint8_t value) {
   return cb.finalize();
 }
 
+// Mock EVM engine for tests that need to inject a fake compute function.
+// Wraps a lambda with the same signature as the old EvmComputeHandler but
+// without the chain_id parameter (chain_id is extracted from the engine config
+// and passed in separately so tests can assert on it).
+using MockEvmComputeFn = std::function<bool(
+    block::ComputePhase& cp,
+    td::Ref<vm::Cell> account_data,
+    vm::CellSlice& in_msg_body,
+    uint64_t gas_limit,
+    uint64_t chain_id,
+    uint64_t block_seqno,
+    uint64_t timestamp,
+    const uint8_t rand_seed[32],
+    const uint8_t parent_block_hash[32])>;
+
+struct MockEvmEngineConfig final : public block::WorkchainEngineConfig {
+  std::uint64_t chain_id{0};
+};
+
+class MockEvmEngine final : public block::WorkchainEngine {
+ public:
+  explicit MockEvmEngine(MockEvmComputeFn fn) : fn_(std::move(fn)) {}
+
+  block::WorkchainEngineKey engine_key() const override {
+    return block::evm_workchain_engine_key();
+  }
+
+  td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+      const block::WorkchainExecutionDescriptor& descriptor,
+      const block::Config& /*block_transition_config*/) const override {
+    if (!block::workchain_engine_key_is_evm(
+            block::workchain_engine_key_from_descriptor(descriptor))) {
+      return td::Status::Error("MockEvmEngine received non-EVM descriptor");
+    }
+    if (descriptor.vm_mode == 0) {
+      return td::Status::Error("MockEvmEngine: legacy vm_mode=0; expected chain id");
+    }
+    auto cfg = std::make_shared<MockEvmEngineConfig>();
+    cfg->chain_id = descriptor.vm_mode;
+    std::shared_ptr<const block::WorkchainEngineConfig> result = cfg;
+    return result;
+  }
+
+  block::AccountExecutionPolicy account_policy(
+      const block::WorkchainExecutionDescriptor& /*descriptor*/,
+      const block::WorkchainEngineConfig& /*engine_config*/) const override {
+    block::AccountExecutionPolicy policy;
+    policy.kind = block::AccountExecutionPolicyKind::SingletonExecutor;
+    tos::StdSmcAddress addr;
+    addr.set_zero();
+    addr.data()[31] = 1;
+    policy.singleton_address = addr;
+    policy.accepts_external_inbound = true;
+    policy.accepts_internal_inbound = true;
+    policy.may_activate_uninitialized_account = true;
+    policy.activation_code = evm_workchain_dispatch::get_evm_code_marker_cell();
+    return policy;
+  }
+
+  td::Result<block::WorkchainComputeOutput> run_compute(
+      const block::WorkchainComputeInput& input,
+      const block::WorkchainComputeContext& context) const override {
+    auto* cfg = dynamic_cast<const MockEvmEngineConfig*>(context.engine_config.get());
+    if (cfg == nullptr || cfg->chain_id == 0) {
+      return td::Status::Error("MockEvmEngine missing resolved chain id");
+    }
+    if (input.inbound_body.is_null()) {
+      block::WorkchainComputeOutput out;
+      out.completed = true;
+      out.skip_reason = block::ComputePhase::sk_bad_state;
+      return out;
+    }
+    block::ComputePhase cp{};
+    vm::CellSlice body_cs{*input.inbound_body};
+    bool ok = fn_(cp, input.current_data, body_cs, input.gas_limit,
+                  cfg->chain_id, context.block_seqno, context.now,
+                  context.rand_seed.data(), context.parent_block_hash.data());
+    if (!ok) {
+      return td::Status::Error("MockEvmEngine compute fn failed");
+    }
+    block::WorkchainComputeOutput out;
+    out.skip_reason = cp.skip_reason;
+    out.completed = true;
+    out.accepted = cp.accepted;
+    out.committed = cp.accepted && cp.new_data.not_null();
+    out.engine_success = cp.success;
+    out.msg_state_used = cp.msg_state_used;
+    out.account_activated = cp.account_activated;
+    out.out_of_gas = cp.out_of_gas;
+    out.mode = cp.mode;
+    out.exit_code = cp.exit_code;
+    out.exit_arg = cp.exit_arg;
+    out.vm_steps = cp.vm_steps;
+    out.vm_init_state_hash = cp.vm_init_state_hash;
+    out.vm_final_state_hash = cp.vm_final_state_hash;
+    out.gas_used = cp.gas_used;
+    out.gas_fees = cp.gas_fees.not_null() ? cp.gas_fees : td::zero_refint();
+    out.new_data = cp.new_data;
+    out.action_list = cp.actions;
+    out.vm_log = cp.vm_log;
+    return out;
+  }
+
+ private:
+  MockEvmComputeFn fn_;
+};
+
+// Mock Uno engine for tests that need to inject a fake compute function.
+// Phase 4: replaces the old uno_workchain_dispatch::set_uno_compute_handler
+// pattern; tests that need a mock compute handler register a MockUnoEngine
+// directly with a local WorkchainExecutionRegistry.
+using MockUnoComputeFn = std::function<bool(
+    block::ComputePhase& cp,
+    td::Ref<vm::Cell> state_data,
+    vm::CellSlice& in_msg_body,
+    uint64_t gas_limit,
+    uint64_t block_seqno,
+    uint64_t timestamp,
+    const uint8_t rand_seed[32])>;
+
+struct MockUnoEngineConfig final : public block::WorkchainEngineConfig {
+};
+
+class MockUnoEngine final : public block::WorkchainEngine {
+ public:
+  explicit MockUnoEngine(MockUnoComputeFn fn) : fn_(std::move(fn)) {}
+
+  block::WorkchainEngineKey engine_key() const override {
+    return block::uno_workchain_engine_key();
+  }
+
+  td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+      const block::WorkchainExecutionDescriptor& descriptor,
+      const block::Config& /*block_transition_config*/) const override {
+    if (!block::workchain_engine_key_is_uno(
+            block::workchain_engine_key_from_descriptor(descriptor))) {
+      return td::Status::Error("MockUnoEngine received non-Uno descriptor");
+    }
+    if (descriptor.vm_mode != 0) {
+      return td::Status::Error("MockUnoEngine: Uno v1 requires vm_mode=0");
+    }
+    std::shared_ptr<const block::WorkchainEngineConfig> result =
+        std::make_shared<MockUnoEngineConfig>();
+    return result;
+  }
+
+  block::AccountExecutionPolicy account_policy(
+      const block::WorkchainExecutionDescriptor& /*descriptor*/,
+      const block::WorkchainEngineConfig& /*engine_config*/) const override {
+    block::AccountExecutionPolicy policy;
+    policy.kind = block::AccountExecutionPolicyKind::SingletonExecutor;
+    tos::StdSmcAddress addr;
+    addr.set_zero();
+    addr.data()[31] = 1;
+    policy.singleton_address = addr;
+    policy.accepts_external_inbound = true;
+    policy.accepts_internal_inbound = true;
+    policy.may_activate_uninitialized_account = true;
+    // Build the 0x55 'U' marker cell inline (same as UnoNativeEngine).
+    vm::CellBuilder cb;
+    cb.store_long(0x55, 8);
+    policy.activation_code = cb.finalize();
+    return policy;
+  }
+
+  td::Result<block::WorkchainComputeOutput> run_compute(
+      const block::WorkchainComputeInput& input,
+      const block::WorkchainComputeContext& context) const override {
+    if (input.inbound_body.is_null()) {
+      block::WorkchainComputeOutput out;
+      out.completed = true;
+      out.skip_reason = block::ComputePhase::sk_bad_state;
+      return out;
+    }
+    block::ComputePhase cp{};
+    vm::CellSlice body_cs{*input.inbound_body};
+    bool ok = fn_(cp, input.current_data, body_cs, input.gas_limit,
+                  context.block_seqno, context.now,
+                  context.rand_seed.data());
+    if (!ok) {
+      return td::Status::Error("MockUnoEngine compute fn failed");
+    }
+    block::WorkchainComputeOutput out;
+    out.skip_reason = cp.skip_reason;
+    out.completed = true;
+    out.accepted = cp.accepted;
+    out.committed = cp.accepted && cp.new_data.not_null();
+    out.engine_success = cp.success;
+    out.msg_state_used = cp.msg_state_used;
+    out.account_activated = cp.account_activated;
+    out.out_of_gas = cp.out_of_gas;
+    out.mode = cp.mode;
+    out.exit_code = cp.exit_code;
+    out.exit_arg = cp.exit_arg;
+    out.vm_steps = cp.vm_steps;
+    out.vm_init_state_hash = cp.vm_init_state_hash;
+    out.vm_final_state_hash = cp.vm_final_state_hash;
+    out.gas_used = cp.gas_used;
+    out.gas_fees = cp.gas_fees.not_null() ? cp.gas_fees : td::zero_refint();
+    out.new_data = cp.new_data;
+    out.action_list = cp.actions;
+    out.vm_log = cp.vm_log;
+    return out;
+  }
+
+ private:
+  MockUnoComputeFn fn_;
+};
+
 }  // namespace
 
 TEST(WorkchainExecutionRegistry, NormalizesBasicAndExtendedSelectors) {
@@ -320,13 +531,13 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoDescriptorEnginesValidateConfig) {
   block::WorkchainExecutionRegistry registry;
   CHECK(block::workchain_execution_capability_flags(registry) == 0);
 
-  evm_workchain_dispatch::register_evm_workchain_engine(registry);
+  evm_workchain::register_evm_workchain_engine(registry);
   CHECK((block::workchain_execution_capability_flags(registry) &
          block::kTosNodeCapabilityWorkchainEvm) != 0);
   CHECK((block::workchain_execution_capability_flags(registry) &
          block::kTosNodeCapabilityWorkchainUno) == 0);
 
-  uno_workchain_dispatch::register_uno_workchain_engine(registry);
+  uno_workchain::register_uno_workchain_engine(registry);
   CHECK((block::workchain_execution_capability_flags(registry) &
          block::kTosNodeCapabilityWorkchainEvm) != 0);
   CHECK((block::workchain_execution_capability_flags(registry) &
@@ -366,9 +577,7 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoDescriptorEnginesValidateConfig) {
 TEST(WorkchainExecutionRegistry, EvmRevertCommitsHostStateButReportsEngineFailure) {
   auto config = make_empty_config();
   block::WorkchainExecutionRegistry registry;
-  evm_workchain_dispatch::register_evm_workchain_engine(registry);
-
-  evm_workchain_dispatch::set_evm_compute_handler(
+  registry.register_engine(std::make_unique<MockEvmEngine>(
       [](block::ComputePhase& cp,
          td::Ref<vm::Cell> /*account_data*/,
          vm::CellSlice& /*in_msg_body*/,
@@ -387,7 +596,7 @@ TEST(WorkchainExecutionRegistry, EvmRevertCommitsHostStateButReportsEngineFailur
         cp.exit_code = 1;
         cp.new_data = make_marker_cell(0xEE);
         return true;
-      });
+      }));
 
   auto descriptor = make_basic_descriptor(1, kEvmVmVersion, 0x544F53);
   auto resolved = registry.resolve(descriptor, config).move_as_ok();
@@ -418,11 +627,9 @@ TEST(WorkchainExecutionRegistry, EvmComputeUsesDescriptorChainIdNotDefaultSingle
   constexpr std::uint64_t kDescriptorChainId = 0x22222222;
   CHECK(kDescriptorChainId != evm_workchain::kEvmChainId);
 
-  block::WorkchainExecutionRegistry registry;
-  evm_workchain_dispatch::register_evm_workchain_engine(registry);
-
   std::uint64_t observed_chain_id = 0;
-  evm_workchain_dispatch::set_evm_compute_handler(
+  block::WorkchainExecutionRegistry registry;
+  registry.register_engine(std::make_unique<MockEvmEngine>(
       [&](block::ComputePhase& cp,
           td::Ref<vm::Cell> /*account_data*/,
           vm::CellSlice& /*in_msg_body*/,
@@ -439,7 +646,7 @@ TEST(WorkchainExecutionRegistry, EvmComputeUsesDescriptorChainIdNotDefaultSingle
         cp.gas_fees = td::make_refint(1);
         cp.new_data = make_marker_cell(0xCD);
         return true;
-      });
+      }));
 
   auto descriptor = make_basic_descriptor(1, kEvmVmVersion, kDescriptorChainId);
   auto resolved = registry.resolve(descriptor, config).move_as_ok();
@@ -464,10 +671,7 @@ TEST(WorkchainExecutionRegistry, EvmComputeUsesDescriptorChainIdNotDefaultSingle
 TEST(WorkchainExecutionRegistry, EvmAndUnoAcceptNullCurrentCodeBeforeActivation) {
   auto config = make_empty_config();
   block::WorkchainExecutionRegistry registry;
-  evm_workchain_dispatch::register_evm_workchain_engine(registry);
-  uno_workchain_dispatch::register_uno_workchain_engine(registry);
-
-  evm_workchain_dispatch::set_evm_compute_handler(
+  registry.register_engine(std::make_unique<MockEvmEngine>(
       [](block::ComputePhase& cp,
          td::Ref<vm::Cell> account_data,
          vm::CellSlice& /*in_msg_body*/,
@@ -484,9 +688,8 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoAcceptNullCurrentCodeBeforeActivation)
         cp.gas_fees = td::make_refint(1);
         cp.new_data = make_marker_cell(0xE1);
         return true;
-      });
-
-  uno_workchain_dispatch::set_uno_compute_handler(
+      }));
+  registry.register_engine(std::make_unique<MockUnoEngine>(
       [](block::ComputePhase& cp,
          td::Ref<vm::Cell> state_data,
          vm::CellSlice& /*in_msg_body*/,
@@ -501,7 +704,7 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoAcceptNullCurrentCodeBeforeActivation)
         cp.gas_fees = td::make_refint(1);
         cp.new_data = make_marker_cell(0xA1);
         return true;
-      });
+      }));
 
   auto run_with_null_code = [&](const block::ResolvedWorkchainExecution& resolved) {
     auto policy = resolved.executor->account_policy(resolved.descriptor, *resolved.engine_config);

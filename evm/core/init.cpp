@@ -11,9 +11,9 @@
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
-#include "block/evm-workchain-dispatch.h"
 #include "block/workchain-execution-dispatch.h"
 #include "evm/core/cell-codec.h"
+#include "evm/core/dispatch-engine.h"
 #include "evm/rpc/cache-codec.h"
 #include "evm/rpc/cache-db.h"
 #include "evm/core/compute-phase.h"
@@ -925,37 +925,7 @@ void init_evm_workchain(const std::string& db_root) {
         }
     }
 
-    evm_workchain_dispatch::set_evm_compute_handler(
-        [](block::ComputePhase& cp,
-           td::Ref<vm::Cell> account_data,
-           vm::CellSlice& in_msg_body,
-           uint64_t gas_limit,
-           uint64_t chain_id,
-           uint64_t block_seqno,
-           uint64_t timestamp,
-           const uint8_t rand_seed[32],
-           const uint8_t parent_block_hash[32]) -> bool {
-            bool ok = run_evm_compute_phase_snapshot(
-                cp, std::move(account_data), in_msg_body, gas_limit,
-                block_seqno, timestamp, rand_seed, parent_block_hash, chain_id);
-            // Stash captured side effects under the EVM tx_hash; the
-            // validator manager publishes them post-BFT-accept via
-            // `take_side_effects` + `apply_block_side_effects` from
-            // `cleanup_applied_external_messages`. Applying at compute
-            // time would pollute the RPC cache with records from
-            // candidates that lost BFT.
-            if (cp.evm_side_effects) {
-                auto tx_hash = cp.evm_side_effects->tx_hash;
-                // Audit #4 (2026-04-26): key by accepted-block context plus
-                // tx_hash so rejected candidates with the same tx cannot
-                // publish stale receipt/log/block records post-accept.
-                stash_side_effects(block_seqno, timestamp, rand_seed,
-                                   parent_block_hash, tx_hash,
-                                   *cp.evm_side_effects);
-            }
-            return ok;
-        });
-    evm_workchain_dispatch::register_evm_workchain_engine(
+    register_evm_workchain_engine(
         block::default_workchain_execution_registry());
 
     LOG(WARNING) << "evm-workchain: handler registered";

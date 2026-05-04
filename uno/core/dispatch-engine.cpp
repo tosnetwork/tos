@@ -1,15 +1,22 @@
 /*
-    Uno Workchain dispatch — callback registry implementation.
-    Mirrors evm-workchain-dispatch.cpp. Source: TOS-specific integration point.
+    Uno Workchain — native engine implementation.
+
+    Phase 4 refactoring: `UnoNativeEngine` lives here in uno/core/ so it can
+    call `uno_run_compute_phase()` directly, eliminating the function-pointer
+    indirection that the old `uno_workchain_dispatch` callback bridge required.
+
+    Source: TOS-specific integration point.
 */
-#include "uno-workchain-dispatch.h"
+#include "uno/core/dispatch-engine.h"
+#include "uno/core/init.h"
 
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/Status.h"
 #include "vm/cells/CellBuilder.h"
+#include "vm/cellslice.h"
 
-namespace uno_workchain_dispatch {
+namespace uno_workchain {
 
 namespace {
 
@@ -18,6 +25,24 @@ tos::StdSmcAddress singleton_executor_address() {
     addr.set_zero();
     addr.data()[31] = 1;
     return addr;
+}
+
+/// Canonical "Uno activated account" code marker cell.
+///
+/// A single-byte cell containing 0x55 ('U'). Used as StateInit.code for the
+/// descriptor-selected Uno singleton executor account. The UnoShardState
+/// itself lives in StateInit.data; the outer code cell only needs to satisfy
+/// the "account_active" requirement.
+///
+/// Returns the same Ref<vm::Cell> on every call (cached singleton). All
+/// validators produce the same cell hash, which CellDb will deduplicate.
+td::Ref<vm::Cell> get_uno_code_marker_cell() {
+    static const td::Ref<vm::Cell> kMarker = []() {
+        vm::CellBuilder cb;
+        cb.store_long(0x55, 8);  // 'U' — Uno activated account marker
+        return cb.finalize();
+    }();
+    return kMarker;
 }
 
 struct UnoEngineConfig final : public block::WorkchainEngineConfig {
@@ -49,7 +74,7 @@ block::WorkchainComputeOutput output_from_compute_phase(
     return out;
 }
 
-class UnoDescriptorEngine final : public block::WorkchainEngine {
+class UnoNativeEngine final : public block::WorkchainEngine {
  public:
     block::WorkchainEngineKey engine_key() const override {
         return block::uno_workchain_engine_key();
@@ -86,9 +111,6 @@ class UnoDescriptorEngine final : public block::WorkchainEngine {
     td::Result<block::WorkchainComputeOutput> run_compute(
         const block::WorkchainComputeInput& input,
         const block::WorkchainComputeContext& context) const override {
-        if (!has_uno_compute_handler()) {
-            return td::Status::Error("descriptor-selected Uno workchain has no registered compute handler");
-        }
         if (input.inbound_body.is_null()) {
             block::WorkchainComputeOutput out;
             out.completed = true;
@@ -97,7 +119,7 @@ class UnoDescriptorEngine final : public block::WorkchainEngine {
         }
         block::ComputePhase cp{};
         vm::CellSlice body_cs{*input.inbound_body};
-        bool ok = invoke_uno_compute(
+        bool ok = uno_workchain::uno_run_compute_phase(
             cp,
             input.current_data,
             body_cs,
@@ -106,7 +128,7 @@ class UnoDescriptorEngine final : public block::WorkchainEngine {
             context.now,
             context.rand_seed.data());
         if (!ok) {
-            return td::Status::Error("Uno compute handler failed");
+            return td::Status::Error("Uno compute phase failed");
         }
         return output_from_compute_phase(cp, cp.success && cp.new_data.not_null());
     }
@@ -114,39 +136,8 @@ class UnoDescriptorEngine final : public block::WorkchainEngine {
 
 }  // namespace
 
-static UnoComputeHandler g_handler;
-
-td::Ref<vm::Cell> get_uno_code_marker_cell() {
-    static const td::Ref<vm::Cell> kMarker = []() {
-        vm::CellBuilder cb;
-        cb.store_long(0x55, 8);  // 'U' — Uno activated account marker
-        return cb.finalize();
-    }();
-    return kMarker;
-}
-
-void set_uno_compute_handler(UnoComputeHandler handler) {
-    g_handler = std::move(handler);
-}
-
-bool has_uno_compute_handler() noexcept {
-    return static_cast<bool>(g_handler);
-}
-
-bool invoke_uno_compute(
-    block::ComputePhase& cp,
-    td::Ref<vm::Cell> state_data,
-    vm::CellSlice& in_msg_body,
-    uint64_t gas_limit,
-    uint64_t block_seqno,
-    uint64_t timestamp,
-    const uint8_t rand_seed[32]) {
-    return g_handler(cp, std::move(state_data), in_msg_body, gas_limit,
-                     block_seqno, timestamp, rand_seed);
-}
-
 void register_uno_workchain_engine(block::WorkchainExecutionRegistry& registry) {
-    registry.register_engine_if_absent(std::make_unique<UnoDescriptorEngine>());
+    registry.register_engine_if_absent(std::make_unique<UnoNativeEngine>());
 }
 
-}  // namespace uno_workchain_dispatch
+}  // namespace uno_workchain

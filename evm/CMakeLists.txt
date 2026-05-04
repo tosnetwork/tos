@@ -20,6 +20,7 @@ set(EVM_SRC
   core/cell-state.cpp
   core/compute-phase.cpp
   core/config-param.cpp
+  core/dispatch-engine.cpp
   core/executor.cpp
   core/external-message.cpp
   core/init.cpp

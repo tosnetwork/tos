@@ -209,8 +209,6 @@ set(BLOCK_SOURCE
   block/workchain-execution-dispatch.h
   block/evm-workchain-dispatch.cpp
   block/evm-workchain-dispatch.h
-  block/uno-workchain-dispatch.cpp
-  block/uno-workchain-dispatch.h
   ${TLB_BLOCK_AUTO}
 
   block/block-binlog.h
