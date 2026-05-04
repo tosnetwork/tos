@@ -25,7 +25,6 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "evm/core/init.h"
-#include "evm/core/workchain.h"
 #include "block/output-queue-merger.h"
 #include "block/validator-set.h"
 #include "block/workchain-execution-dispatch.h"
@@ -1142,8 +1141,7 @@ bool ValidateQuery::fetch_config_params() {
     if (resolved_execution.ok().has_value()) {
       auto key = block::workchain_engine_key_from_descriptor(resolved_execution.ok()->descriptor);
       custom_workchain = !block::workchain_engine_key_is_tvm(key);
-      is_evm_custom_workchain =
-          key.format == block::WorkchainFormat::Basic && key.selector == evm_workchain::kVmVersion;
+      is_evm_custom_workchain = block::workchain_engine_key_is_evm(key);
     }
 
     if (custom_workchain) {

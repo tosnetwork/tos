@@ -50,6 +50,8 @@ struct WorkchainEngineKey {
 
 std::string workchain_engine_key_to_string(const WorkchainEngineKey& key);
 bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key);
+bool workchain_engine_key_is_evm(const WorkchainEngineKey& key);
+bool workchain_engine_key_is_uno(const WorkchainEngineKey& key);
 
 // Network-advertised local engine capability bits for tosNode.capabilities.flags.
 // These are node capabilities, not consensus state. They let peers/operators

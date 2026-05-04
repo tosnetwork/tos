@@ -34,8 +34,6 @@ namespace tos::validator {
 
 namespace {
 
-constexpr std::int32_t kUnoVmVersion = 0x554E4F31;  // "UNO1"
-
 // The pre-registry Uno short-circuit in `check_message`
 // previously admitted ANY structurally-valid Uno ext_in_msg without rate
 // limiting. The MineUno limiter in `uno/rpc/handlers.cpp` only fires on the
@@ -192,7 +190,7 @@ td::Result<std::optional<block::ResolvedWorkchainExecution>> resolve_message_wor
 
 bool is_uno_execution(const block::ResolvedWorkchainExecution& execution) {
   auto key = block::workchain_engine_key_from_descriptor(execution.descriptor);
-  return key.format == block::WorkchainFormat::Basic && key.selector == kUnoVmVersion;
+  return block::workchain_engine_key_is_uno(key);
 }
 
 td::Status reject_special_cells_for_custom_compute(td::Ref<vm::Cell> root,

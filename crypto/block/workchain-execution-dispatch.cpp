@@ -60,6 +60,14 @@ bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key) {
   return key.format == WorkchainFormat::Basic && key.selector == kTvmVmVersion;
 }
 
+bool workchain_engine_key_is_evm(const WorkchainEngineKey& key) {
+  return key.format == WorkchainFormat::Basic && key.selector == kEvmVmVersion;
+}
+
+bool workchain_engine_key_is_uno(const WorkchainEngineKey& key) {
+  return key.format == WorkchainFormat::Basic && key.selector == kUnoVmVersion;
+}
+
 td::Result<WorkchainExecutionDescriptor> normalize_workchain_descriptor(const WorkchainInfo& info) {
   if (!info.is_valid()) {
     return td::Status::Error("cannot normalize invalid WorkchainInfo");

@@ -131,7 +131,7 @@ td::Result<std::optional<EvmPostAcceptExecution>> resolve_evm_post_accept_execut
     return std::optional<EvmPostAcceptExecution>{};
   }
   auto key = block::workchain_engine_key_from_descriptor(resolved->descriptor);
-  if (key.format != block::WorkchainFormat::Basic || key.selector != evm_workchain::kVmVersion) {
+  if (!block::workchain_engine_key_is_evm(key)) {
     return std::optional<EvmPostAcceptExecution>{};
   }
   auto policy = resolved->executor->account_policy(resolved->descriptor, *resolved->engine_config);

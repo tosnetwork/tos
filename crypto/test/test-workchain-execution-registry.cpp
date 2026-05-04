@@ -37,6 +37,10 @@ constexpr std::uint32_t kDummyExtendedType = 0x00ABCDEF;
 struct DummyEngineConfig final : public block::WorkchainEngineConfig {
 };
 
+struct CountingEngineConfig final : public block::WorkchainEngineConfig {
+  int resolve_number{0};
+};
+
 class DummyEngine final : public block::WorkchainEngine {
  public:
   explicit DummyEngine(block::WorkchainEngineKey key, bool reject_config = false)
@@ -75,6 +79,45 @@ class DummyEngine final : public block::WorkchainEngine {
  private:
   block::WorkchainEngineKey key_;
   bool reject_config_{false};
+};
+
+class CountingEngine final : public block::WorkchainEngine {
+ public:
+  explicit CountingEngine(block::WorkchainEngineKey key, int& resolve_count)
+      : key_(key), resolve_count_(resolve_count) {
+  }
+
+  block::WorkchainEngineKey engine_key() const override {
+    return key_;
+  }
+
+  td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+      const block::WorkchainExecutionDescriptor& descriptor,
+      const block::Config& /*block_transition_config*/) const override {
+    if (block::workchain_engine_key_from_descriptor(descriptor) != key_) {
+      return td::Status::Error("counting engine received the wrong descriptor key");
+    }
+    auto config = std::make_shared<CountingEngineConfig>();
+    config->resolve_number = ++resolve_count_;
+    std::shared_ptr<const block::WorkchainEngineConfig> result = config;
+    return result;
+  }
+
+  block::AccountExecutionPolicy account_policy(
+      const block::WorkchainExecutionDescriptor& /*descriptor*/,
+      const block::WorkchainEngineConfig& /*engine_config*/) const override {
+    return {};
+  }
+
+  td::Result<block::WorkchainComputeOutput> run_compute(
+      const block::WorkchainComputeInput& /*input*/,
+      const block::WorkchainComputeContext& /*context*/) const override {
+    return td::Status::Error("counting engine is not executable");
+  }
+
+ private:
+  block::WorkchainEngineKey key_;
+  int& resolve_count_;
 };
 
 block::WorkchainExecutionDescriptor make_basic_descriptor(
@@ -154,6 +197,9 @@ TEST(WorkchainExecutionRegistry, NormalizesBasicAndExtendedSelectors) {
   auto basic_key = block::workchain_engine_key_from_descriptor(basic_descriptor);
   CHECK(basic_key.format == block::WorkchainFormat::Basic);
   CHECK(basic_key.selector == kDummyVmVersion);
+  CHECK(!block::workchain_engine_key_is_tvm(basic_key));
+  CHECK(!block::workchain_engine_key_is_evm(basic_key));
+  CHECK(!block::workchain_engine_key_is_uno(basic_key));
 
   auto ext_cell = build_extended_workchain_descr(kDummyExtendedType);
   auto ext_cs = vm::load_cell_slice(ext_cell);
@@ -170,6 +216,13 @@ TEST(WorkchainExecutionRegistry, NormalizesBasicAndExtendedSelectors) {
   auto ext_key = block::workchain_engine_key_from_descriptor(ext_descriptor);
   CHECK(ext_key.format == block::WorkchainFormat::Extended);
   CHECK(ext_key.selector == kDummyExtendedType);
+  CHECK(!block::workchain_engine_key_is_tvm(ext_key));
+  CHECK(!block::workchain_engine_key_is_evm(ext_key));
+  CHECK(!block::workchain_engine_key_is_uno(ext_key));
+
+  CHECK(block::workchain_engine_key_is_tvm({block::WorkchainFormat::Basic, -1}));
+  CHECK(block::workchain_engine_key_is_evm({block::WorkchainFormat::Basic, kEvmVmVersion}));
+  CHECK(block::workchain_engine_key_is_uno({block::WorkchainFormat::Basic, kUnoVmVersion}));
 }
 
 TEST(WorkchainExecutionRegistry, ResolveFailsClosedForMissingAndRejectedEngines) {
@@ -202,6 +255,29 @@ TEST(WorkchainExecutionRegistry, RegisterIfAbsentAndPreflightRequiredWorkchains)
   CHECK(!registry.register_engine_if_absent(std::make_unique<DummyEngine>(
       block::WorkchainEngineKey{block::WorkchainFormat::Basic, kDummyVmVersion})));
   CHECK(registry.validate_required_workchains(workchains, config, roles).is_ok());
+}
+
+TEST(WorkchainExecutionRegistry, ResolveRevalidatesConfigForEachSnapshot) {
+  auto config = make_empty_config();
+  auto descriptor = make_basic_descriptor(7, kDummyVmVersion, 0);
+  int resolve_count = 0;
+
+  block::WorkchainExecutionRegistry registry;
+  CHECK(registry.register_engine_if_absent(std::make_unique<CountingEngine>(
+      block::WorkchainEngineKey{block::WorkchainFormat::Basic, kDummyVmVersion}, resolve_count)));
+
+  auto first = registry.resolve(descriptor, config).move_as_ok();
+  auto* first_config = dynamic_cast<const CountingEngineConfig*>(first.engine_config.get());
+  CHECK(first_config != nullptr);
+  CHECK(first_config->resolve_number == 1);
+  CHECK(resolve_count == 1);
+
+  auto second = registry.resolve(descriptor, config).move_as_ok();
+  auto* second_config = dynamic_cast<const CountingEngineConfig*>(second.engine_config.get());
+  CHECK(second_config != nullptr);
+  CHECK(second_config->resolve_number == 2);
+  CHECK(resolve_count == 2);
+  CHECK(first.engine_config.get() != second.engine_config.get());
 }
 
 TEST(WorkchainExecutionRegistry, RejectsActiveExecutionDescriptorTransitionsWithoutMigration) {
