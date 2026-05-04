@@ -807,7 +807,7 @@ Last updated: 2026-05-04.
 | Area | Status | Current state | Remaining work |
 |---|---:|---|---|
 | Phase 0 - target behavior | ✅ | Target behavior is pinned in this document, including the pre-mainnet no-compatibility policy. | Keep future changes reflected here before coding. |
-| Phase 1 - registry and adapters | ✅ | `crypto/block/workchain-execution-dispatch.*` exists; TVM/EVM/Uno engines register through the registry; `WorkchainInfo` preserves `wfmt_ext.workchain_type_id`. | Keep per-engine dispatch headers narrow until Phase 4 is fully retired. |
+| Phase 1 - registry and adapters | ✅ | `crypto/block/workchain-execution-dispatch.*` exists; TVM/EVM/Uno engines register through the registry; `WorkchainInfo` preserves `wfmt_ext.workchain_type_id`. | None. Per-engine dispatch headers retired in Phase 4. |
 | Phase 2 - descriptor-driven compute | ✅ | `transaction.cpp` resolves custom workchain execution from ConfigParam 12 through `ComputePhaseConfig`; EVM chain id comes from descriptor `vm_mode`; EVM/Uno singleton executor addresses are engine policy; collator and validator paths classify resolved engines through the same registry helper. | Add more regression tests around config transitions and new-engine extensibility. |
 | RPC/admission registry use | ✅ | `eth_sendRawTransaction`, `uno_sendMineUno`, and `uno_sendTransfer` resolve the active workchain from ConfigParam 12 before building external messages. | Future RPC namespaces can move behind engine runtime-service registration. |
 | Custom workchain gas/fee boundary | ✅ | Registry compute path preserves engine-returned `gas_fees`; host TVM gas pricing no longer overwrites custom-engine fees. | Engine-specific fee tests should be expanded when EVM/Uno fee models stabilize. |
