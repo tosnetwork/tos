@@ -265,8 +265,7 @@ constexpr unsigned char kUnoExecutorAddressBytes[32] = {
 
 /// Canonical code-marker byte embedded in StateInit.code of the wc=2
 /// executor account. 0x55 == ASCII 'U'. Declared here so core/ code can
-/// spot-check the marker without pulling in the dispatcher header
-/// (crypto/block/uno-workchain-dispatch.{h,cpp}, owned by Agent 5).
+/// spot-check the marker without reaching into the native dispatch engine.
 constexpr unsigned char kUnoCodeMarkerByte = 0x55;  // 'U'
 
 // ---------------------------------------------------------------------------

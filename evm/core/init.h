@@ -1,8 +1,8 @@
 /*
     EVM Workchain — module initialisation.
 
-    Call init_evm_workchain() once at node startup to register the EVM
-    compute phase handler with the host-chain transaction pipeline.
+    Call init_evm_workchain() once at node startup to register the native
+    EVM workchain engine with the host-chain WorkchainExecutionRegistry.
 
     Source: TOS-specific adapter (not copied from ~/s).
 */
@@ -30,7 +30,7 @@ namespace evm_workchain {
 
 class EvmState;
 
-/// Register the EVM compute phase handler with the host chain.
+/// Register the native EVM workchain engine with the host chain.
 void init_evm_workchain(const std::string& db_root = "");
 
 /// Access the global EVM workchain state singleton.

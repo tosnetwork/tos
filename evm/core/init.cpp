@@ -1,8 +1,8 @@
 /*
     EVM Workchain — module initialisation implementation.
 
-    Registers the EVM compute phase handler with the host-chain dispatch
-    mechanism defined in evm-workchain-dispatch.h.
+    Registers the native EVM workchain engine with the host-chain
+    WorkchainExecutionRegistry.
 
     Source: TOS-specific adapter (not copied from ~/s).
 */

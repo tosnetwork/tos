@@ -801,20 +801,21 @@ Legend:
   operator/capability plumbing remains.
 - ⬜ Not started or intentionally deferred to a future workchain/topology
   upgrade.
+- ⏭ Explicitly deferred out of the current registry baseline.
 
 Last updated: 2026-05-04.
 
-| Area | Status | Current state | Remaining work |
-|---|---:|---|---|
-| Phase 0 - target behavior | ✅ | Target behavior is pinned in this document, including the pre-mainnet no-compatibility policy. | Keep future changes reflected here before coding. |
-| Phase 1 - registry and adapters | ✅ | `crypto/block/workchain-execution-dispatch.*` exists; TVM/EVM/Uno engines register through the registry; `WorkchainInfo` preserves `wfmt_ext.workchain_type_id`. | None. Per-engine dispatch headers retired in Phase 4. |
-| Phase 2 - descriptor-driven compute | ✅ | `transaction.cpp` resolves custom workchain execution from ConfigParam 12 through `ComputePhaseConfig`; EVM chain id comes from descriptor `vm_mode`; EVM/Uno singleton executor addresses are engine policy; collator and validator paths classify resolved engines through the same registry helper. | Add more regression tests around config transitions and new-engine extensibility. |
-| RPC/admission registry use | ✅ | `eth_sendRawTransaction`, `uno_sendMineUno`, and `uno_sendTransfer` resolve the active workchain from ConfigParam 12 before building external messages. | Future RPC namespaces can move behind engine runtime-service registration. |
-| Custom workchain gas/fee boundary | ✅ | Registry compute path preserves engine-returned `gas_fees`; host TVM gas pricing no longer overwrites custom-engine fees. | Engine-specific fee tests should be expanded when EVM/Uno fee models stabilize. |
-| Phase 3 - startup/config-update preflight | 🟡 | `validate_required_workchains` and `LocalWorkchainRoleSet` exist; collator/validator block paths require the local shard workchain; validator-engine now preflights each observed top masterchain state using local shard roles; active execution descriptor key/version/`vm_mode` changes are rejected without a migration rule; full-node `tosNode.capabilities.flags` advertises registered EVM/Uno execution engines. | Add validator assignment/election rules that consume engine capabilities. |
-| Phase 4 - dispatch bridge retirement | ✅ | `evm-workchain-dispatch.*` stripped to `get_evm_code_marker_cell()` only; `uno-workchain-dispatch.*` deleted entirely; `EvmNativeEngine` lives in `evm/core/dispatch-engine.*`, `UnoNativeEngine` in `uno/core/dispatch-engine.*`; both call compute functions directly with no `g_handler` indirection; `evm/core/init.cpp` and `uno/core/init.cpp` each make a single `register_*_workchain_engine()` call. | None. |
-| Phase 5 - future engines | 🟡 | The registry tests include a dummy engine that registers, resolves, and participates in required-workchain preflight without editing generic transaction dispatch. | A production future engine still needs its own module, descriptor builder/validator, and optional runtime services. |
-| EVM v2 shard-local/account-native topology | ⬜ | Explicitly out of scope for the registry baseline. | Requires a separate consensus migration with state layout, ordering, logs/receipts, and cross-shard rules. |
+| Area | Status | Progress | Current state | Remaining work |
+|---|---:|---:|---|---|
+| Phase 0 - target behavior | ✅ | 100% | Target behavior is pinned in this document, including the pre-mainnet no-compatibility policy. | None; keep future changes reflected here before coding. |
+| Phase 1 - registry and adapters | ✅ | 100% | `crypto/block/workchain-execution-dispatch.*` exists; TVM/EVM/Uno engines register through the registry; `WorkchainInfo` preserves `wfmt_ext.workchain_type_id`. | None. Per-engine dispatch headers retired in Phase 4. |
+| Phase 2 - descriptor-driven compute | ✅ | 100% | `transaction.cpp` resolves custom workchain execution from ConfigParam 12 through `ComputePhaseConfig`; EVM chain id comes from descriptor `vm_mode`; EVM/Uno singleton executor addresses are engine policy; collator and validator paths classify resolved engines through the same registry helper. | Baseline complete; add optional regression tests only when new engines or config parameters are introduced. |
+| RPC/admission registry use | ✅ | 100% | `eth_sendRawTransaction`, `uno_sendMineUno`, and `uno_sendTransfer` resolve the active workchain from ConfigParam 12 before building external messages. | Baseline complete; future RPC namespaces can move behind engine runtime-service registration. |
+| Custom workchain gas/fee boundary | ✅ | 100% | Registry compute path preserves engine-returned `gas_fees`; host TVM gas pricing no longer overwrites custom-engine fees. | Baseline complete; expand engine-specific fee tests only when EVM/Uno fee models stabilize. |
+| Phase 3 - startup/config-update preflight | 🟡 | 85% | `validate_required_workchains` and `LocalWorkchainRoleSet` exist; collator/validator block paths require the local shard workchain; validator-engine preflights each observed top masterchain state using local shard roles; active execution descriptor key/version/`vm_mode` changes are rejected without a migration rule; full-node `tosNode.capabilities.flags` advertises registered EVM/Uno execution engines. | Registry baseline complete. The remaining validator assignment/election capability consumption is a separate consensus/scheduler task. |
+| Phase 4 - dispatch bridge retirement | ✅ | 100% | `evm-workchain-dispatch.*` stripped to `get_evm_code_marker_cell()` only; `uno-workchain-dispatch.*` deleted entirely; `EvmNativeEngine` lives in `evm/core/dispatch-engine.*`, `UnoNativeEngine` in `uno/core/dispatch-engine.*`; both call compute functions directly with no `g_handler` indirection; `evm/core/init.cpp` and `uno/core/init.cpp` each make a single `register_*_workchain_engine()` call. | None. |
+| Phase 5 - future engines | 🟡 | 60% | The registry tests include a dummy engine that registers, resolves, and participates in required-workchain preflight without editing generic transaction dispatch. | Generic extensibility is proven. A production future engine still needs its own module, descriptor builder/validator, and optional runtime services when such an engine is actually designed. |
+| EVM v2 shard-local/account-native topology | ⏭ | 0% | Explicitly out of scope for the registry baseline. | Requires a separate consensus migration with state layout, ordering, logs/receipts, and cross-shard rules. |
 
 ## Migration Plan
 
@@ -899,7 +900,7 @@ has no descriptor migration rule, so such config updates are rejected.
 descriptor-selected EVM and Uno execution engines. This is an operator/network
 capability surface only; it is not consensus state.
 
-⬜ Assignment coordination for active workchains remains a separate consensus
+⏭ Assignment coordination for active workchains remains a separate consensus
 task: validator election and shard assignment must consume advertised or
 on-chain engine capabilities and avoid placing incapable validators on shards
 that require an engine they do not support.
@@ -922,10 +923,10 @@ remains.
 The next non-TVM engine should not touch `transaction.cpp`. It should add:
 
 - 🟡 its engine module
-- ⬜ descriptor builder/validator
+- ⏭ descriptor builder/validator
 - ✅ registry registration
 - ✅ tests
-- ⬜ optional RPC/runtime services
+- ⏭ optional RPC/runtime services
 
 If `transaction.cpp` must be edited for a new engine, this architecture has
 failed its main goal.
@@ -969,7 +970,7 @@ Required tests:
 - ✅ EVM revert tests prove `committed` and `engine_success` are distinct and that
   revert nonce/gas/receipt state commits under the pre-mainnet target
   semantics
-- ⬜ any future EVM shard-local or account-native topology fails activation unless
+- ⏭ any future EVM shard-local or account-native topology fails activation unless
   an explicit descriptor/config migration rule is present and tested for state,
   ordering, receipts/logs, and cross-shard access
 - ✅ uninitialized account tests cover null `current_code` and prove

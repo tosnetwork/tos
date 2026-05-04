@@ -296,9 +296,8 @@ class MockEvmEngine final : public block::WorkchainEngine {
 };
 
 // Mock Uno engine for tests that need to inject a fake compute function.
-// Phase 4: replaces the old uno_workchain_dispatch::set_uno_compute_handler
-// pattern; tests that need a mock compute handler register a MockUnoEngine
-// directly with a local WorkchainExecutionRegistry.
+// Tests that need a mock compute handler register a MockUnoEngine directly
+// with a local WorkchainExecutionRegistry.
 using MockUnoComputeFn = std::function<bool(
     block::ComputePhase& cp,
     td::Ref<vm::Cell> state_data,

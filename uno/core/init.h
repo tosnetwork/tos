@@ -30,15 +30,15 @@ namespace uno_workchain {
 
 class UnoState;
 
-/// Register the Uno compute phase handler with the host chain. Called from
+/// Register the native Uno workchain engine with the host chain. Called from
 /// validator-engine.cpp, immediately after `evm_workchain::init_evm_workchain`.
 void init_uno_workchain(const std::string& db_root = "");
 
 /// Run the Uno compute phase using the live global state singleton.
 ///
 /// This is the direct-call entry point used by `UnoNativeEngine::run_compute()`
-/// (uno/core/dispatch-engine.cpp). It replicates the logic that was previously
-/// embedded in the `set_uno_compute_handler` lambda in init.cpp:
+/// (uno/core/dispatch-engine.cpp). It contains the compute path that previously
+/// lived behind the Phase 1-2 callback bridge:
 ///   1. Hydrate g_live from `state_data` if needed; on failure set cp fields
 ///      for sk_bad_state and return true.
 ///   2. Set the current block seqno on g_live.
