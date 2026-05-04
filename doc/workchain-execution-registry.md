@@ -971,7 +971,7 @@ Required tests:
 - ⬜ any future EVM shard-local or account-native topology fails activation unless
   an explicit descriptor/config migration rule is present and tested for state,
   ordering, receipts/logs, and cross-shard access
-- 🟡 uninitialized account tests cover null `current_code` and prove
+- ✅ uninitialized account tests cover null `current_code` and prove
   `activation_code` is not applied before `run_compute`
 - ✅ masterchain transactions continue through the protocol-defined TVM path
   outside ConfigParam 12 registry dispatch

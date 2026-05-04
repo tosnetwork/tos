@@ -456,3 +456,77 @@ TEST(WorkchainExecutionRegistry, EvmComputeUsesDescriptorChainIdNotDefaultSingle
   CHECK(output.engine_success);
   CHECK(observed_chain_id == kDescriptorChainId);
 }
+
+TEST(WorkchainExecutionRegistry, EvmAndUnoAcceptNullCurrentCodeBeforeActivation) {
+  auto config = make_empty_config();
+  block::WorkchainExecutionRegistry registry;
+  evm_workchain_dispatch::register_evm_workchain_engine(registry);
+  uno_workchain_dispatch::register_uno_workchain_engine(registry);
+
+  evm_workchain_dispatch::set_evm_compute_handler(
+      [](block::ComputePhase& cp,
+         td::Ref<vm::Cell> account_data,
+         vm::CellSlice& /*in_msg_body*/,
+         uint64_t /*gas_limit*/,
+         uint64_t /*chain_id*/,
+         uint64_t /*block_seqno*/,
+         uint64_t /*timestamp*/,
+         const uint8_t /*rand_seed*/[32],
+         const uint8_t /*parent_block_hash*/[32]) {
+        CHECK(account_data.is_null());
+        cp.accepted = true;
+        cp.success = true;
+        cp.gas_used = 1;
+        cp.gas_fees = td::make_refint(1);
+        cp.new_data = make_marker_cell(0xE1);
+        return true;
+      });
+
+  uno_workchain_dispatch::set_uno_compute_handler(
+      [](block::ComputePhase& cp,
+         td::Ref<vm::Cell> state_data,
+         vm::CellSlice& /*in_msg_body*/,
+         uint64_t /*gas_limit*/,
+         uint64_t /*block_seqno*/,
+         uint64_t /*timestamp*/,
+         const uint8_t /*rand_seed*/[32]) {
+        CHECK(state_data.is_null());
+        cp.accepted = true;
+        cp.success = true;
+        cp.gas_used = 1;
+        cp.gas_fees = td::make_refint(1);
+        cp.new_data = make_marker_cell(0xA1);
+        return true;
+      });
+
+  auto run_with_null_code = [&](const block::ResolvedWorkchainExecution& resolved) {
+    auto policy = resolved.executor->account_policy(resolved.descriptor, *resolved.engine_config);
+    CHECK(policy.activation_code.not_null());
+
+    block::WorkchainComputeInput input;
+    CHECK(input.current_code.is_null());
+    input.current_data.clear();
+    input.inbound_body = vm::load_cell_slice_ref(make_marker_cell(0x01));
+    input.gas_limit = 100;
+
+    block::WorkchainComputeContext context;
+    context.workchain_id = resolved.descriptor.workchain_id;
+    context.descriptor = resolved.descriptor;
+    context.engine_config = resolved.engine_config;
+    context.block_transition_config = &config;
+
+    auto output = resolved.executor->run_compute(input, context).move_as_ok();
+    CHECK(input.current_code.is_null());
+    CHECK(output.completed);
+    CHECK(output.committed);
+    CHECK(output.engine_success);
+    CHECK(output.new_data.not_null());
+    CHECK(output.new_code.is_null());
+  };
+
+  auto evm = registry.resolve(make_basic_descriptor(1, kEvmVmVersion, 0x544F53), config).move_as_ok();
+  run_with_null_code(evm);
+
+  auto uno = registry.resolve(make_basic_descriptor(2, kUnoVmVersion, 0), config).move_as_ok();
+  run_with_null_code(uno);
+}
