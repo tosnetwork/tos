@@ -225,7 +225,8 @@ static ComputeOutcome run_once(td::Ref<vm::Cell> account_data,
     uint8_t parent_block_hash[32] = {};
     bool ok = ew::run_evm_compute_phase_snapshot(
         cp, std::move(account_data), body_cs, gas_limit,
-        block_seqno, timestamp, rand_seed, parent_block_hash);
+        block_seqno, timestamp, rand_seed, parent_block_hash,
+        ew::current_evm_chain_id());
     return ComputeOutcome{ok, cp.success, cp.skip_reason, cp.new_data,
                           cp.evm_side_effects, cp.vm_log};
 }
@@ -551,7 +552,8 @@ static void test_post_accept_missing_side_effect_withholds_partial_block() {
                            make_test_side_effect(*tx2, recipient, 23'000, 0x30));
 
     size_t applied = ew::apply_stashed_side_effects_for_messages(
-        block_seqno, timestamp, rand_seed, parent_hash, msgs);
+        block_seqno, timestamp, rand_seed, parent_hash,
+        ew::current_evm_chain_id(), msgs);
 
     auto stored0 = ew::global_evm_state().get_transaction_copy(tx0->hash);
     auto receipt0 = ew::global_evm_state().get_receipt_copy(tx0->hash);
@@ -850,7 +852,8 @@ static void test_post_accept_recovers_persisted_side_effect_after_memory_loss() 
 
     std::vector<td::Ref<vm::Cell>> msgs{msg};
     size_t applied = ew::apply_stashed_side_effects_for_messages(
-        block_seqno, timestamp, rand_seed, parent_hash, msgs);
+        block_seqno, timestamp, rand_seed, parent_hash,
+        ew::current_evm_chain_id(), msgs);
 
     auto stored = ew::global_evm_state().get_transaction_copy(tx->hash);
     auto receipt = ew::global_evm_state().get_receipt_copy(tx->hash);
@@ -924,8 +927,8 @@ static void test_post_accept_replays_side_effect_after_stash_and_db_loss() {
     std::vector<td::Ref<vm::Cell>> msgs{msg};
     std::vector<uint64_t> gas_limits{1'000'000};
     size_t applied = ew::apply_stashed_side_effects_for_messages(
-        block_seqno, timestamp, rand_seed, parent_hash, msgs, gas_limits,
-        pre_account_data);
+        block_seqno, timestamp, rand_seed, parent_hash,
+        ew::current_evm_chain_id(), msgs, gas_limits, pre_account_data);
 
     auto stored = ew::global_evm_state().get_transaction_copy(tx->hash);
     auto receipt = ew::global_evm_state().get_receipt_copy(tx->hash);
@@ -1128,7 +1131,8 @@ static void test_post_accept_parser_rejects_special_cells() {
         make_library_special_cell_for_post_accept_test()};
 
     size_t applied = ew::apply_stashed_side_effects_for_messages(
-        737373, 1800000500, rand_seed, parent_hash, msgs);
+        737373, 1800000500, rand_seed, parent_hash,
+        ew::current_evm_chain_id(), msgs);
     auto health = ew::evm_post_accept_health();
     bool ok = applied == 0 &&
               health.malformed_messages == 1 &&
@@ -1185,7 +1189,8 @@ static void test_post_accept_rejects_gas_used_overflow() {
 
     std::vector<td::Ref<vm::Cell>> msgs{msg0, msg1};
     size_t applied = ew::apply_stashed_side_effects_for_messages(
-        block_seqno, timestamp, rand_seed, parent_hash, msgs);
+        block_seqno, timestamp, rand_seed, parent_hash,
+        ew::current_evm_chain_id(), msgs);
     auto health = ew::evm_post_accept_health();
     bool ok = applied == 0 &&
               health.strict_root_failures == 1 &&

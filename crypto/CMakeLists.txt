@@ -205,10 +205,10 @@ set(BLOCK_SOURCE
   block/account-storage-stat.h
   block/account-storage-stat.cpp
   block/precompiled-smc/PrecompiledSmartContract.cpp
+  block/workchain-execution-dispatch.cpp
+  block/workchain-execution-dispatch.h
   block/evm-workchain-dispatch.cpp
   block/evm-workchain-dispatch.h
-  block/uno-workchain-dispatch.cpp
-  block/uno-workchain-dispatch.h
   ${TLB_BLOCK_AUTO}
 
   block/block-binlog.h
@@ -287,6 +287,11 @@ set(FIFT_TEST_SOURCE
 
 set(BIGINT_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/test-bigint.cpp
+  PARENT_SCOPE
+)
+
+set(WORKCHAIN_EXECUTION_REGISTRY_TEST_SOURCE
+  ${CMAKE_CURRENT_SOURCE_DIR}/test/test-workchain-execution-registry.cpp
   PARENT_SCOPE
 )
 
@@ -402,11 +407,11 @@ if (USE_EMSCRIPTEN)
   target_compile_options(tos_block PRIVATE -fexceptions)
 endif()
 
-# EVM workchain lives at the top-level `evm/` subdirectory; see the
-# top-level CMakeLists.txt for `add_subdirectory(evm)`. The TOS-side
-# dispatch hook (block/evm-workchain-dispatch.{cpp,h}) stays here in
-# crypto/ because it is part of the host-chain transaction path; the
-# EVM module registers into it from outside.
+# EVM workchain execution lives at the top-level `evm/` subdirectory; see the
+# top-level CMakeLists.txt for `add_subdirectory(evm)`. The crypto/block
+# EVM file that remains here only exposes the canonical singleton executor
+# code-marker cell to crypto-layer callers without pulling in EVM/silkworm
+# headers.
 
 add_executable(func func/func-main.cpp ${FUNC_LIB_SOURCE})
 target_include_directories(func PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)

@@ -184,11 +184,6 @@ RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
 // Helpers for the validator-manager seam.
 // ---------------------------------------------------------------------------
 
-/// True when `addr` (32-byte big-endian) matches the EVM executor account.
-/// Provided here so `validator/manager.cpp` does not need to include
-/// `evm/core/workchain.h` directly.
-bool is_evm_executor_address(const unsigned char addr[32]) noexcept;
-
 /// Decode an EVM external-message cell (`Message_Any` form built by
 /// `build_evm_external_message`) and compute the keccak256(RLP) tx hash.
 /// Returns std::nullopt for any parse failure — callers should treat that
@@ -210,6 +205,7 @@ size_t apply_stashed_side_effects_for_messages(
     uint64_t accepted_timestamp,
     const uint8_t rand_seed[32],
     const uint8_t parent_block_hash[32],
+    uint64_t chain_id,
     const std::vector<td::Ref<vm::Cell>>& msgs) noexcept;
 
 /// Variant used by the validator manager when the previous canonical shard
@@ -221,12 +217,14 @@ size_t apply_stashed_side_effects_for_messages(
     uint64_t accepted_timestamp,
     const uint8_t rand_seed[32],
     const uint8_t parent_block_hash[32],
+    uint64_t chain_id,
     const std::vector<td::Ref<vm::Cell>>& msgs,
     const std::vector<uint64_t>& gas_limits,
     const td::Ref<vm::Cell>& initial_account_data) noexcept;
 
 bool extract_evm_executor_account_data_from_shard_state(
     td::Ref<vm::Cell> shard_state_root,
+    const unsigned char executor_addr[32],
     td::Ref<vm::Cell>& account_data_out) noexcept;
 
 }  // namespace evm_workchain

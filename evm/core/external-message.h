@@ -10,7 +10,7 @@
 
     For EVM workchain messages:
       - src: addr_none (external source)
-      - dest: workchain=1, address=sha256(sender_address padded to 256 bits)
+      - dest: descriptor-selected EVM workchain, singleton executor address
       - body: raw RLP bytes of the signed Ethereum transaction
 
     Source: TOS-specific adapter (not copied from ~/s).
@@ -29,6 +29,20 @@ namespace evm_workchain {
 /// @param rlp_size      Size of the raw_rlp buffer.
 /// @param sender_addr   Recovered Ethereum sender address (20 bytes).
 /// @return              A cell containing the external message, or null on error.
+td::Ref<vm::Cell> build_evm_external_message(
+    const uint8_t* raw_rlp, size_t rlp_size,
+    const evmc::address& sender_addr,
+    tos::WorkchainId workchain_id);
+
+td::Ref<vm::Cell> build_evm_external_message(
+    const uint8_t* raw_rlp, size_t rlp_size,
+    const evmc::address& sender_addr,
+    tos::WorkchainId workchain_id,
+    const tos::StdSmcAddress& executor_addr);
+
+/// Convenience overload for tests and genesis tooling that still use the
+/// default EVM workchain id from evm/core/workchain.h. Consensus and RPC paths
+/// should pass the descriptor-resolved workchain id explicitly.
 td::Ref<vm::Cell> build_evm_external_message(
     const uint8_t* raw_rlp, size_t rlp_size,
     const evmc::address& sender_addr);

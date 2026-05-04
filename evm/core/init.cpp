@@ -1,8 +1,8 @@
 /*
     EVM Workchain — module initialisation implementation.
 
-    Registers the EVM compute phase handler with the host-chain dispatch
-    mechanism defined in evm-workchain-dispatch.h.
+    Registers the native EVM workchain engine with the host-chain
+    WorkchainExecutionRegistry.
 
     Source: TOS-specific adapter (not copied from ~/s).
 */
@@ -11,8 +11,9 @@
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
-#include "block/evm-workchain-dispatch.h"
+#include "block/workchain-execution-dispatch.h"
 #include "evm/core/cell-codec.h"
+#include "evm/core/dispatch-engine.h"
 #include "evm/rpc/cache-codec.h"
 #include "evm/rpc/cache-db.h"
 #include "evm/core/compute-phase.h"
@@ -223,12 +224,10 @@ void seed_test_accounts(EvmState& state) {
 // =============================================================================
 // CANCUN PRE-FORK PREP (Category E, doc/evm-workchain-known-divergences.md)
 //
-// These helpers prepare the production runtime for a future flip of
-// `cancun_time = 0` in evm-block-context.cpp::evm_chain_config(). They are
-// **safe to call at every Shanghai-era node startup** — none of them changes
-// consensus or state semantics until Cancun is actually activated. Once
-// Cancun activates, silkworm's MergeRuleSet::initialize() invokes the
-// EIP-4788 system call per block; the predeploy must be in state by then.
+// These helpers prepare the production runtime for the EVM chain config
+// profile selected by the active workchain descriptor. They are safe to call
+// at every node startup; once Cancun/Pectra rules are active, the relevant
+// predeploys must already be present in state.
 //
 // Added in clearly-marked section to coordinate with parallel work on
 // genesis-alloc helpers (Agent K) — DO NOT collapse into init_evm_workchain
@@ -744,7 +743,8 @@ void init_evm_workchain(const std::string& db_root) {
     }
 #endif
 
-    LOG(WARNING) << "evm-workchain: initialising (workchain_id=1, chain_id="
+    LOG(WARNING) << "evm-workchain: initialising (default_workchain_id=" << kWorkchainId
+                 << ", chain_id="
                  << current_evm_chain_id() << ")";
 
     // Cell-native state. The dictionary starts empty here; the canonical
@@ -925,35 +925,8 @@ void init_evm_workchain(const std::string& db_root) {
         }
     }
 
-    evm_workchain_dispatch::set_evm_compute_handler(
-        [](block::ComputePhase& cp,
-           td::Ref<vm::Cell> account_data,
-           vm::CellSlice& in_msg_body,
-           uint64_t gas_limit,
-           uint64_t block_seqno,
-           uint64_t timestamp,
-           const uint8_t rand_seed[32],
-           const uint8_t parent_block_hash[32]) -> bool {
-            bool ok = run_evm_compute_phase_snapshot(
-                cp, std::move(account_data), in_msg_body, gas_limit,
-                block_seqno, timestamp, rand_seed, parent_block_hash);
-            // Stash captured side effects under the EVM tx_hash; the
-            // validator manager publishes them post-BFT-accept via
-            // `take_side_effects` + `apply_block_side_effects` from
-            // `cleanup_applied_external_messages`. Applying at compute
-            // time would pollute the RPC cache with records from
-            // candidates that lost BFT.
-            if (cp.evm_side_effects) {
-                auto tx_hash = cp.evm_side_effects->tx_hash;
-                // Audit #4 (2026-04-26): key by accepted-block context plus
-                // tx_hash so rejected candidates with the same tx cannot
-                // publish stale receipt/log/block records post-accept.
-                stash_side_effects(block_seqno, timestamp, rand_seed,
-                                   parent_block_hash, tx_hash,
-                                   *cp.evm_side_effects);
-            }
-            return ok;
-        });
+    register_evm_workchain_engine(
+        block::default_workchain_execution_registry());
 
     LOG(WARNING) << "evm-workchain: handler registered";
 }

@@ -5200,7 +5200,8 @@ static void test_receipt_reports_indexing_incomplete_after_post_accept_gap() {
                                    signed_tx->raw_rlp.size(),
                                    signed_tx->sender)};
     (void)apply_stashed_side_effects_for_messages(
-        990099, 1800000950, rand_seed, parent_hash, msgs);
+        990099, 1800000950, rand_seed, parent_hash,
+        current_evm_chain_id(), msgs);
 
     auto missing_hash_hex = bytes_to_hex0x(
         Bytes{signed_tx->hash.bytes, signed_tx->hash.bytes + 32});
@@ -6765,7 +6766,8 @@ W8aComputeOutcome w8a_drive_compute_once(
     uint8_t parent_block_hash[32] = {};
     bool ok = run_evm_compute_phase_snapshot(
         cp, std::move(account_data), body_cs, gas_limit,
-        block_seqno, timestamp, rand_seed, parent_block_hash);
+        block_seqno, timestamp, rand_seed, parent_block_hash,
+        current_evm_chain_id());
     return W8aComputeOutcome{ok, cp.accepted, cp.skip_reason, cp.new_data,
                               cp.evm_side_effects, cp.vm_log};
 }

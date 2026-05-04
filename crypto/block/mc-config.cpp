@@ -2272,6 +2272,7 @@ bool WorkchainInfo::unpack(tos::WorkchainId wc, vm::CellSlice& cs) {
       }
       vm_version = basic_fmt.vm_version;
       vm_mode = basic_fmt.vm_mode;
+      workchain_type_id = 0;
       min_addr_len = max_addr_len = addr_len_step = 256;
     } else {
       block::gen::WorkchainFormat::Record_wfmt_ext ext;
@@ -2280,6 +2281,7 @@ bool WorkchainInfo::unpack(tos::WorkchainId wc, vm::CellSlice& cs) {
       }
       vm_version = 0;
       vm_mode = 0;
+      workchain_type_id = ext.workchain_type_id;
       min_addr_len = ext.min_addr_len;
       max_addr_len = ext.max_addr_len;
       addr_len_step = ext.addr_len_step;

@@ -293,7 +293,8 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32],
-    const uint8_t parent_block_hash[32]) {
+    const uint8_t parent_block_hash[32],
+    uint64_t chain_id) {
 
     // --- Step 1: Extract the raw Ethereum transaction from the message body ---
     auto payload_opt = extract_evm_payload(in_msg_body);
@@ -314,8 +315,13 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     auto& decoded = std::get<DecodedTransaction>(decode_result);
 
     // --- Step 3: Build EVM block context from host-chain metadata ---
+    if (chain_id == 0) {
+        LOG(ERROR) << "evm-workchain: snapshot compute requires descriptor chain_id";
+        cp.skip_reason = block::ComputePhase::sk_bad_state;
+        return nullptr;
+    }
     auto block = make_evm_block(block_seqno, timestamp, rand_seed, gas_limit);
-    const auto& config = evm_chain_config();
+    auto config = make_evm_chain_config(chain_id);
 
     // EIP-1559 base fee. All validators use the same fixed value so
     // gas accounting is consensus-deterministic across collator /
@@ -809,7 +815,8 @@ bool run_evm_compute_phase_snapshot(
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32],
-    const uint8_t parent_block_hash[32]) {
+    const uint8_t parent_block_hash[32],
+    uint64_t chain_id) {
 
     auto local_state = build_local_state_from_account_data(std::move(account_data));
     if (!local_state) {
@@ -820,7 +827,7 @@ bool run_evm_compute_phase_snapshot(
 
     auto fx = run_compute_against_state(
         cp, in_msg_body, gas_limit, *local_state,
-        block_seqno, timestamp, rand_seed, parent_block_hash);
+        block_seqno, timestamp, rand_seed, parent_block_hash, chain_id);
 
     if (fx) {
         cp.evm_side_effects = std::move(fx);
@@ -846,7 +853,7 @@ bool run_evm_compute_phase(
     static const uint8_t kZeroParentHash[32] = {0};
     auto fx = run_compute_against_state(
         cp, in_msg_body, gas_limit, state,
-        block_seqno, timestamp, rand_seed, kZeroParentHash);
+        block_seqno, timestamp, rand_seed, kZeroParentHash, current_evm_chain_id());
 
     if (fx) {
         cp.evm_side_effects = std::move(fx);

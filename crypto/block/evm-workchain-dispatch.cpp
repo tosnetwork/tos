@@ -1,5 +1,5 @@
 /*
-    EVM Workchain dispatch — callback registry implementation.
+    EVM Workchain dispatch — canonical account marker cell implementation.
     Source: TOS-specific integration point.
 */
 #include "evm-workchain-dispatch.h"
@@ -8,8 +8,6 @@
 
 namespace evm_workchain_dispatch {
 
-static EvmComputeHandler g_handler;
-
 td::Ref<vm::Cell> get_evm_code_marker_cell() {
     static const td::Ref<vm::Cell> kMarker = []() {
         vm::CellBuilder cb;
@@ -17,27 +15,6 @@ td::Ref<vm::Cell> get_evm_code_marker_cell() {
         return cb.finalize();
     }();
     return kMarker;
-}
-
-void set_evm_compute_handler(EvmComputeHandler handler) {
-    g_handler = std::move(handler);
-}
-
-bool has_evm_compute_handler() noexcept {
-    return static_cast<bool>(g_handler);
-}
-
-bool invoke_evm_compute(
-    block::ComputePhase& cp,
-    td::Ref<vm::Cell> account_data,
-    vm::CellSlice& in_msg_body,
-    uint64_t gas_limit,
-    uint64_t block_seqno,
-    uint64_t timestamp,
-    const uint8_t rand_seed[32],
-    const uint8_t parent_block_hash[32]) {
-    return g_handler(cp, std::move(account_data), in_msg_body, gas_limit,
-                     block_seqno, timestamp, rand_seed, parent_block_hash);
 }
 
 }  // namespace evm_workchain_dispatch

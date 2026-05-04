@@ -74,7 +74,7 @@ struct ExecutionResult {
 /// @param txn     Decoded Ethereum transaction (sender must be recovered).
 /// @param block   Block context (from make_evm_block).
 /// @param state   Mutable reference to the EVM workchain state.
-/// @param config  Chain configuration (from evm_chain_config).
+/// @param config  Chain configuration for the active WorkchainDescr.
 /// @return        Execution result with gas, logs, and return data.
 ExecutionResult execute_evm_transaction(
     const silkworm::Transaction& txn,

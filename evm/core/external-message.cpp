@@ -24,6 +24,14 @@
 
 namespace evm_workchain {
 
+namespace {
+
+bool fits_addr_std_workchain_id(tos::WorkchainId workchain_id) {
+    return workchain_id >= -128 && workchain_id <= 127;
+}
+
+}  // namespace
+
 td::Bits256 eth_addr_to_internal(const evmc::address& addr) {
     td::Bits256 result;
     result.set_zero();
@@ -34,9 +42,27 @@ td::Bits256 eth_addr_to_internal(const evmc::address& addr) {
 
 td::Ref<vm::Cell> build_evm_external_message(
     const uint8_t* raw_rlp, size_t rlp_size,
-    const evmc::address& /*sender_addr*/) {
+    const evmc::address& sender_addr) {
+    return build_evm_external_message(raw_rlp, rlp_size, sender_addr, kWorkchainId);
+}
+
+td::Ref<vm::Cell> build_evm_external_message(
+    const uint8_t* raw_rlp, size_t rlp_size,
+    const evmc::address& sender_addr,
+    tos::WorkchainId workchain_id) {
+    tos::StdSmcAddress executor_addr;
+    executor_addr.bits().copy_from(td::ConstBitPtr{kEvmExecutorAddressBytes}, 256);
+    return build_evm_external_message(raw_rlp, rlp_size, sender_addr, workchain_id, executor_addr);
+}
+
+td::Ref<vm::Cell> build_evm_external_message(
+    const uint8_t* raw_rlp, size_t rlp_size,
+    const evmc::address& /*sender_addr*/,
+    tos::WorkchainId workchain_id,
+    const tos::StdSmcAddress& executor_addr) {
 
     if (!raw_rlp || rlp_size == 0) return {};
+    if (!fits_addr_std_workchain_id(workchain_id)) return {};
 
     // --- Build body cell ---
     //
@@ -65,13 +91,12 @@ td::Ref<vm::Cell> build_evm_external_message(
     cb.store_long(0b100, 3);  // addr_std$10 + anycast=0
 
     // workchain_id: int8
-    cb.store_long(kWorkchainId, 8);
+    cb.store_long(workchain_id, 8);
 
-    // address: bits256 — fixed executor account. Every EVM ext-message
-    // routes to the same wc=1 account whose StateInit.data carries the
-    // entire EVM world state. sender_addr is unused at the outer TLB
-    // layer; it is recovered from the RLP body at compute time.
-    cb.store_bytes(reinterpret_cast<const char*>(kEvmExecutorAddressBytes), 32);
+    // address: bits256 — singleton executor account resolved from the active
+    // EVM engine policy. The sender_addr is unused at the outer TLB layer; it
+    // is recovered from the RLP body at compute time.
+    cb.store_bits(executor_addr.cbits(), 256);
 
     // import_fee: Grams = 0  (VarUInteger 16: 4-bit length = 0)
     cb.store_long(0, 4);

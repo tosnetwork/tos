@@ -58,10 +58,11 @@ namespace evm_workchain {
 /// @param block_seqno  Host-chain block sequence number → block.number.
 /// @param timestamp    Host-chain block Unix timestamp.
 /// @param rand_seed    Host-chain 256-bit block random seed.
-/// @param parent_block_hash wc=1 parent block's root_hash fallback, threaded in
+/// @param parent_block_hash EVM workchain parent block root_hash, threaded in
 ///                          by the host for the first block before cp.new_data
 ///                          carries canonical EVM block-hash history.
 ///                          May be all-zero on block 0 / non-EVM contexts.
+/// @param chain_id     Consensus EVM chain id from WorkchainDescr.vm_mode.
 /// @return             true if the phase completed (even on EVM revert);
 ///                     false only on infrastructure failure.
 bool run_evm_compute_phase_snapshot(
@@ -72,7 +73,8 @@ bool run_evm_compute_phase_snapshot(
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32],
-    const uint8_t parent_block_hash[32]);
+    const uint8_t parent_block_hash[32],
+    uint64_t chain_id);
 
 /// Legacy global-state variant. Retained for the test harness and any
 /// historical call site that still hands an EvmState in directly. New

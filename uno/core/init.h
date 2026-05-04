@@ -4,8 +4,8 @@
     Call `init_uno_workchain(db_root)` once at node startup — §8.3.
 
     Responsibilities:
-      1. Register the real compute handler with
-         `uno_workchain_dispatch::set_uno_compute_handler`.
+      1. Register the UnoNativeEngine with the global WorkchainExecutionRegistry
+         via `uno_workchain::register_uno_workchain_engine`.
       2. Load (or zero-init from genesis) the wc=2 executor account's
          UnoShardState from CellDb at `db_root`.
       3. Install the end-of-block hook that:
@@ -19,17 +19,40 @@
 */
 #pragma once
 
+#include <cstdint>
 #include <string>
 
+#include "block/transaction.h"  // block::ComputePhase
 #include "vm/cells/Cell.h"
+#include "vm/cells/CellSlice.h"
 
 namespace uno_workchain {
 
 class UnoState;
 
-/// Register the Uno compute phase handler with the host chain. Called from
+/// Register the native Uno workchain engine with the host chain. Called from
 /// validator-engine.cpp, immediately after `evm_workchain::init_evm_workchain`.
 void init_uno_workchain(const std::string& db_root = "");
+
+/// Run the Uno compute phase using the live global state singleton.
+///
+/// This is the direct-call entry point used by `UnoNativeEngine::run_compute()`
+/// (uno/core/dispatch-engine.cpp). It contains the compute path that previously
+/// lived behind the Phase 1-2 callback bridge:
+///   1. Hydrate g_live from `state_data` if needed; on failure set cp fields
+///      for sk_bad_state and return true.
+///   2. Set the current block seqno on g_live.
+///   3. Delegate to `run_compute_phase(cp, in_msg_body, ...)`.
+///
+/// Returns true if the phase completed (even on reject), false on infra error.
+bool uno_run_compute_phase(
+    block::ComputePhase& cp,
+    td::Ref<vm::Cell> state_data,
+    vm::CellSlice& in_msg_body,
+    uint64_t gas_limit,
+    uint64_t block_seqno,
+    uint64_t timestamp,
+    const uint8_t rand_seed[32]);
 
 /// Access the global Uno state singleton. Created inside
 /// `init_uno_workchain`; owns the in-memory `UnoShardState` for this process.

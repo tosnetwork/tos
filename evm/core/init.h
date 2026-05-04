@@ -1,8 +1,8 @@
 /*
     EVM Workchain — module initialisation.
 
-    Call init_evm_workchain() once at node startup to register the EVM
-    compute phase handler with the host-chain transaction pipeline.
+    Call init_evm_workchain() once at node startup to register the native
+    EVM workchain engine with the host-chain WorkchainExecutionRegistry.
 
     Source: TOS-specific adapter (not copied from ~/s).
 */
@@ -30,7 +30,7 @@ namespace evm_workchain {
 
 class EvmState;
 
-/// Register the EVM compute phase handler with the host chain.
+/// Register the native EVM workchain engine with the host chain.
 void init_evm_workchain(const std::string& db_root = "");
 
 /// Access the global EVM workchain state singleton.
@@ -116,9 +116,8 @@ void reset_evm_hydration_corruption_for_test() noexcept;
 /// Cancun pre-fork prep — see Category E in
 /// `doc/evm-workchain-known-divergences.md`. The two helpers below are
 /// invoked from `init_evm_workchain` on every node startup. They are
-/// idempotent and safe to call against a Shanghai-revision config; they
-/// only become load-bearing once `cancun_time = 0` is flipped in
-/// `evm_chain_config()`.
+/// idempotent and safe to call; the active fork schedule is supplied by
+/// the EVM chain config derived from the workchain descriptor.
 
 /// Deploy the EIP-4788 beacon-roots system contract at the magic address
 /// `0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02`. Sets nonce=1, balance=0,

@@ -16,6 +16,8 @@
 */
 #include "td/utils/Random.h"
 
+#include "block/workchain-execution-dispatch.h"
+#include "config.hpp"
 #include "ext-message-pool.hpp"
 #include "external-message.hpp"
 #include "fabric.h"
@@ -25,17 +27,19 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <unordered_set>
+#include <vector>
 
 namespace tos::validator {
 
 namespace {
 
-// The wc=2 short-circuit in `check_message`
-// previously admitted ANY structurally-valid wc=2 ext_in_msg without rate
+// The pre-registry Uno short-circuit in `check_message`
+// previously admitted ANY structurally-valid Uno ext_in_msg without rate
 // limiting. The MineUno limiter in `uno/rpc/handlers.cpp` only fires on the
 // `uno_sendMineUno` JSON-RPC path; raw `sendBoc` and `liteServer_sendMessage`
 // reach `mine_uno::verify` (~50ms STARK verify each) with no throttle. Add a
-// process-global token bucket here that gates ALL wc=2 ext-message ingress
+// process-global token bucket here that gates ALL Uno ext-message ingress
 // regardless of how the message arrives.
 //
 // Bucket shape mirrors `g_send_mine_uno_limiter` (5/s sustained, 20 burst)
@@ -44,7 +48,7 @@ namespace {
 // expensive collator-side verify, so a flood is rejected with a cheap
 // `co_return td::Status::Error` before any STARK work.
 //
-// We deliberately rate-limit ALL wc=2 ext-msg ingress (Transfer + MineUno)
+// We deliberately rate-limit ALL Uno ext-msg ingress (Transfer + MineUno)
 // from a single bucket here rather than discriminating by body byte 0:
 //   - The CellSlice walk to peek the body byte from a `vm::Cell` ref adds
 //     parsing complexity inside an actor task.
@@ -99,8 +103,8 @@ constexpr uint64_t kWc2TransferBurst  = 20;
 constexpr uint64_t kWc2TransferPerSec = 5;
 WcExtMsgRateLimiter g_wc2_transfer_limiter{kWc2TransferBurst, kWc2TransferPerSec};
 
-// Per-peer wc=2 ingress bucket. Process-global limiters above prevent
-// total wc=2 throughput from exceeding the configured rate, but on
+// Per-peer Uno ingress bucket. Process-global limiters above prevent
+// total Uno throughput from exceeding the configured rate, but on
 // their own they let a single noisy peer drain the entire shared
 // budget and starve every honest user. The per-peer bucket below is
 // consumed BEFORE the global bucket: if any one peer exceeds its own
@@ -116,7 +120,7 @@ WcExtMsgRateLimiter g_wc2_transfer_limiter{kWc2TransferBurst, kWc2TransferPerSec
 // Storage: the map is bounded at kMaxTrackedPeers; on insert when
 // full, the oldest-touched entry is evicted. Lookup is O(n) on
 // eviction but expected n is very small (only peers actively sending
-// wc=2 messages stay tracked).
+// Uno messages stay tracked).
 constexpr uint64_t kWc2PerPeerBurst   = 10;
 constexpr uint64_t kWc2PerPeerPerSec  = 2;
 constexpr size_t   kMaxTrackedPeers   = 4096;
@@ -168,6 +172,60 @@ class WcExtMsgPerPeerLimiter {
 };
 
 WcExtMsgPerPeerLimiter g_wc2_per_peer_limiter;
+
+td::Result<std::optional<block::ResolvedWorkchainExecution>> resolve_message_workchain_execution(
+    const td::Ref<MasterchainState>& state, WorkchainId wc) {
+  if (state.is_null()) {
+    return td::Status::Error(ErrorCode::notready, "masterchain state is not ready");
+  }
+  TRY_RESULT(holder, state->get_config_holder());
+  auto* holder_q = dynamic_cast<const ConfigHolderQ*>(holder.get());
+  if (holder_q == nullptr || holder_q->get_config() == nullptr) {
+    return td::Status::Error("masterchain config holder does not expose block::Config");
+  }
+  const block::Config& config = *holder_q->get_config();
+  return block::default_workchain_execution_registry().resolve_workchain(
+      config.get_workchain_list(), wc, config);
+}
+
+bool is_uno_execution(const block::ResolvedWorkchainExecution& execution) {
+  auto key = block::workchain_engine_key_from_descriptor(execution.descriptor);
+  return block::workchain_engine_key_is_uno(key);
+}
+
+td::Status reject_special_cells_for_custom_compute(td::Ref<vm::Cell> root,
+                                                   block::SizeLimitsConfig::ExtMsgLimits limits) {
+  std::unordered_set<const vm::Cell*> visited;
+  std::vector<td::Ref<vm::Cell>> stack{std::move(root)};
+  const size_t cells_from_size = static_cast<size_t>(limits.max_size) / 64u;
+  const size_t max_scanned_cells =
+      std::min(static_cast<size_t>(65536), std::max(static_cast<size_t>(4096), cells_from_size));
+  size_t popped = 0;
+  while (!stack.empty()) {
+    auto cell = std::move(stack.back());
+    stack.pop_back();
+    if (cell.is_null() || !visited.insert(cell.get()).second) {
+      continue;
+    }
+    if (++popped > max_scanned_cells) {
+      return td::Status::Error("external message tree too large for special-cell scan");
+    }
+    bool special = false;
+    vm::CellSlice cs;
+    try {
+      cs = vm::load_cell_slice_special(cell, special);
+    } catch (...) {
+      return td::Status::Error("external message tree contains an unloadable cell");
+    }
+    if (special) {
+      return td::Status::Error("external message tree contains a special cell");
+    }
+    for (unsigned i = 0, n = cs.size_refs(); i < n; ++i) {
+      stack.push_back(cs.prefetch_ref(i));
+    }
+  }
+  return td::Status::OK();
+}
 
 }  // namespace
 
@@ -452,44 +510,40 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
   WorkchainId wc = message->wc();
   StdSmcAddress addr = message->addr();
 
-  // EVM workchain (workchain 1): skip TVM validation entirely.
-  // EVM accounts have no TVM code — signature and nonce validation
-  // happens in the EVM executor during the collator's compute phase.
-  // Structural validation (BOC/TLB) and rate-limiting still apply.
-  // Must short-circuit BEFORE run_fetch_account_state(), which expects
-  // the workchain's block storage to be populated by a TVM-style collator.
-  //
-  // UNO workchain (workchain 2): same rationale — wc=2 uses the shielded-
-  // pool compute phase (Plonky3 STARK verify), not TVM. Signature / nullifier
-  // / anchor checks all run inside `uno_workchain::run_compute_phase` at
-  // collation time; the ext-message pool has no way to validate the body
-  // (the executor account's state isn't reachable from a TVM Account).
-  // Must short-circuit for the same reason as wc=1.
-  if (wc == 1 /* evm_workchain::kWorkchainId */ ||
-      wc == 2 /* uno_workchain::kWorkchainId */) {
-    // Both EVM (wc=1) and UNO (wc=2)
-    // host a single outer executor account at the canonical 0x00…01 address
-    // — `evm_workchain::kEvmExecutorAddressBytes` and
-    // `uno_workchain::kUnoExecutorAddressBytes`. Reject ext_in_msgs targeted
-    // at any other wc=1 / wc=2 address — accepting them would let a caller
-    // (a) drive arbitrary wc=1 accounts into the EVM compute phase, or
-    // (b) spin up parallel per-account UnoStates and (potentially) replay
-    // nullifiers against state the real executor never sees. Address
-    // bytes hardcoded to avoid pulling evm/core/workchain.h or
-    // uno/core/workchain.h into validator/impl/ — same header-avoidance
-    // convention as the wc==1/wc==2 literals above.
-    static constexpr unsigned char kSingleExecutorAddr[32] = {
-        0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
-        0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1,
-    };
-    if (std::memcmp(addr.data(), kSingleExecutorAddr, 32) != 0) {
-      co_return td::Status::Error(wc == 1
-          ? "wc=1 ext-msg destination is not the evm executor"
-          : "wc=2 ext-msg destination is not the uno executor");
+  auto execution_res = resolve_message_workchain_execution(last_masterchain_state_, wc);
+  if (execution_res.is_error()) {
+    co_return execution_res.move_as_error_prefix("cannot resolve workchain execution for external message: ");
+  }
+  auto execution = execution_res.move_as_ok();
+  if (execution.has_value() &&
+      !block::workchain_engine_key_is_tvm(block::workchain_engine_key_from_descriptor(execution->descriptor))) {
+    if (!execution->descriptor.accept_msgs) {
+      co_return td::Status::Error(PSTRING() << "configured workchain " << wc
+                                            << " does not accept external messages");
     }
-    // Rate-limit wc=2 ingress to bound
+    auto special_scan = reject_special_cells_for_custom_compute(
+        message->root_cell(), last_masterchain_state_->get_ext_msg_limits());
+    if (special_scan.is_error()) {
+      co_return special_scan.move_as_error();
+    }
+    auto policy = execution->executor->account_policy(execution->descriptor, *execution->engine_config);
+    if (!policy.accepts_external_inbound) {
+      co_return td::Status::Error("configured workchain engine does not accept external inbound messages");
+    }
+    auto policy_status = block::validate_account_execution_policy_supported(policy);
+    if (policy_status.is_error()) {
+      co_return policy_status.move_as_error_prefix("configured workchain engine policy is not supported: ");
+    }
+    if (policy.kind == block::AccountExecutionPolicyKind::SingletonExecutor) {
+      if (std::memcmp(addr.data(), policy.singleton_address.value().data(), 32) != 0) {
+        co_return td::Status::Error(
+            PSTRING() << "ext-msg destination is not the configured singleton executor for workchain " << wc);
+      }
+    }
+
+    // Rate-limit Uno ingress to bound
     // forged-MineUno DoS via raw sendBoc / liteServer_sendMessage paths.
-    // wc=1 (EVM) is left unchanged here — its compute phase does not run
+    // EVM is left unchanged here — its compute phase does not run
     // STARK verification, and the EVM RPC layer already has a dedicated
     // limiter; an additional gate would burden the legitimate path more
     // than the (cheaper) attack.
@@ -503,8 +557,8 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
     // applies on the RPC path. ExtMessage itself does not expose the
     // body byte, so re-walk the cell tree here. Failure to peek (e.g.
     // body decode error) defaults to consuming the bucket — fail-closed.
-    if (wc == 2) {
-      // Security audit (round 15 #3 + round 16 #1): wc=2 has TWO expensive
+    if (is_uno_execution(*execution)) {
+      // Security audit (round 15 #3 + round 16 #1): Uno has TWO expensive
       // body kinds at the collator: MineUno (STARK proof verify) and
       // Transfer (Plonky3 transfer_air verify). Discriminate by body
       // byte 0 (UNO wire-format §1: 0x01 → Transfer, 0x02 → MineUno)
@@ -567,17 +621,17 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
       // the per-peer step is skipped and the global bucket alone gates.
       if (source_peer) {
         if (!g_wc2_per_peer_limiter.try_consume(source_peer.value())) {
-          co_return td::Status::Error("wc=2 ext-msg per-peer rate-limited");
+          co_return td::Status::Error("Uno ext-msg per-peer rate-limited");
         }
       }
       if (kind == kTransfer) {
         if (!g_wc2_transfer_limiter.try_consume()) {
-          co_return td::Status::Error("wc=2 transfer ingress rate-limited");
+          co_return td::Status::Error("Uno transfer ingress rate-limited");
         }
       } else {
         // MineUno or unknown — fail-closed onto the MineUno bucket.
         if (!g_wc2_ingress_limiter.try_consume()) {
-          co_return td::Status::Error("wc=2 ext-msg ingress rate-limited");
+          co_return td::Status::Error("Uno ext-msg ingress rate-limited");
         }
       }
     }

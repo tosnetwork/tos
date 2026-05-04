@@ -19,6 +19,7 @@
 */
 #include "adnl/utils.hpp"
 #include "auto/tl/lite_api.h"
+#include "block/workchain-execution-dispatch.h"
 #include "common/delay.h"
 #include "td/utils/SharedSlice.h"
 #include "tl-utils/lite-utils.hpp"
@@ -473,8 +474,10 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 
 void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getCapabilities &query,
                                        td::Promise<td::BufferSlice> promise) {
-  promise.set_value(
-      create_serialize_tl_object<tos_api::tosNode_capabilities>(proto_version_major(), proto_version_minor(), 0));
+  promise.set_value(create_serialize_tl_object<tos_api::tosNode_capabilities>(
+      proto_version_major(), proto_version_minor(),
+      static_cast<td::int32>(block::workchain_execution_capability_flags(
+          block::default_workchain_execution_registry()))));
 }
 
 void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getArchiveInfo &query,

@@ -20,6 +20,7 @@
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api.h"
 #include "auto/tl/tos_api_json.h"
+#include "block/workchain-execution-dispatch.h"
 #include "common/delay.h"
 #include "impl/out-msg-queue-proof.hpp"
 #include "net/download-archive-slice.hpp"
@@ -602,8 +603,10 @@ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNod
 void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getCapabilities &query,
                                       td::Promise<td::BufferSlice> promise) {
   VLOG(FULL_NODE_DEBUG) << "Got query getCapabilities from " << src;
-  promise.set_value(
-      create_serialize_tl_object<tos_api::tosNode_capabilities>(proto_version_major(), proto_version_minor(), 0));
+  promise.set_value(create_serialize_tl_object<tos_api::tosNode_capabilities>(
+      proto_version_major(), proto_version_minor(),
+      static_cast<td::int32>(block::workchain_execution_capability_flags(
+          block::default_workchain_execution_registry()))));
 }
 
 void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getArchiveInfo &query,

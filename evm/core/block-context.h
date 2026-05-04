@@ -41,11 +41,15 @@ silkworm::Block make_evm_block(
     uint64_t gas_limit = 30'000'000,
     const evmc::address& beneficiary = {});
 
-/// Build a minimal ChainConfig for the EVM workchain.
+/// Build a minimal ChainConfig for the EVM workchain with an explicit
+/// consensus chain id.
+silkworm::ChainConfig make_evm_chain_config(uint64_t chain_id);
+
+/// Legacy process-local ChainConfig accessor.
 ///
-/// Uses Shanghai rules (the latest pre-Cancun stable fork) with the
-/// EVM workchain's chain id.  No PoW, no beacon chain — the host
-/// chain provides finality.
+/// Consensus compute must receive an explicit chain id from the active
+/// WorkchainDescr and use make_evm_chain_config(chain_id). This singleton is
+/// retained for non-consensus RPC/helpers and old test paths.
 const silkworm::ChainConfig& evm_chain_config() noexcept;
 
 // --- EIP-1559 base fee calculation ---

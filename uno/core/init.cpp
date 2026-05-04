@@ -73,10 +73,11 @@ UnoConfigView current_uno_config_view() noexcept;
 #include <unordered_map>
 #include <vector>
 
-#include "block/uno-workchain-dispatch.h"
+#include "uno/core/dispatch-engine.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
+#include "block/workchain-execution-dispatch.h"
 #include "td/utils/logging.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cellslice.h"
@@ -1586,6 +1587,44 @@ bool hydrate_live_uno_state_from_cell_for_test(td::Ref<vm::Cell> root) {
 }
 
 // ---------------------------------------------------------------------------
+// uno_run_compute_phase — direct-call entry point for UnoNativeEngine
+// ---------------------------------------------------------------------------
+
+bool uno_run_compute_phase(
+    block::ComputePhase& cp,
+    td::Ref<vm::Cell> state_data,
+    vm::CellSlice& in_msg_body,
+    uint64_t gas_limit,
+    uint64_t block_seqno,
+    uint64_t timestamp,
+    const uint8_t rand_seed[32]) {
+    // g_live must be non-null before any dereference. Null means
+    // init_uno_workchain was never called, which is an infrastructure error,
+    // not a valid compute skip.
+    if (!g_live) {
+        cp.vm_log = "uno: live state not initialized";
+        return false;
+    }
+    if (!g_live->hydrate_from_cell_if_needed(std::move(state_data))) {
+        cp.skip_reason = block::ComputePhase::sk_bad_state;
+        cp.success = false;
+        cp.accepted = false;
+        cp.gas_used = 0;
+        cp.gas_limit = gas_limit;
+        cp.vm_steps = 1;
+        cp.vm_init_state_hash.set_zero();
+        cp.vm_final_state_hash.set_zero();
+        cp.vm_log = "uno: persisted state rejected";
+        return true;
+    }
+    g_live->set_block_seqno(block_seqno);
+    return run_compute_phase(
+        cp, in_msg_body, gas_limit,
+        *g_live,
+        block_seqno, timestamp, rand_seed);
+}
+
+// ---------------------------------------------------------------------------
 // init_uno_workchain
 // ---------------------------------------------------------------------------
 
@@ -1667,35 +1706,9 @@ void init_uno_workchain(const std::string& db_root) {
                   << " entries)";
     }
 
-    // Step 5. Register the real compute handler with the dispatcher.
-    uno_workchain_dispatch::set_uno_compute_handler(
-        [](block::ComputePhase& cp,
-           td::Ref<vm::Cell> state_data,
-           vm::CellSlice& in_msg_body,
-           uint64_t gas_limit,
-           uint64_t block_seqno,
-           uint64_t timestamp,
-           const uint8_t rand_seed[32]) -> bool {
-            if (g_live && !g_live->hydrate_from_cell_if_needed(std::move(state_data))) {
-                cp.skip_reason = block::ComputePhase::sk_bad_state;
-                cp.success = false;
-                cp.accepted = false;
-                cp.gas_used = 0;
-                cp.gas_limit = gas_limit;
-                cp.vm_steps = 1;
-                cp.vm_init_state_hash.set_zero();
-                cp.vm_final_state_hash.set_zero();
-                cp.vm_log = "uno: persisted state rejected";
-                return true;
-            }
-            if (g_live) {
-                g_live->set_block_seqno(block_seqno);
-            }
-            return run_compute_phase(
-                cp, in_msg_body, gas_limit,
-                *g_live,
-                block_seqno, timestamp, rand_seed);
-        });
+    // Step 5. Register the Uno native engine with the global dispatcher.
+    uno_workchain::register_uno_workchain_engine(
+        block::default_workchain_execution_registry());
 
     // Step 5. Bind A6 RPC setter-DI. Every handler in uno/rpc/handlers.cpp
     // consults an atomic<fn*> that defaults to nullptr ("unavailable"). These

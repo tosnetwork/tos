@@ -26,9 +26,9 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "evm/core/init.h"
-#include "evm/core/workchain.h"
 #include "block/mc-config.h"
 #include "block/validator-set.h"
+#include "block/workchain-execution-dispatch.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/actor/SharedFuture.h"
 #include "td/db/utils/BlobView.h"
@@ -151,17 +151,9 @@ void Collator::start_up() {
   if (params_.is_hardfork && workchain() == masterchainId) {
     is_key_block_ = true;
   }
-  // 1. check validity of parameters, especially prev_blocks, shard and min_mc_block_id
-  // wc=2 (UNO workchain) uses the same TVM-free collation path as wc=1 EVM:
-  // ext_in_msgs are routed to the seeded executor account (see
-  // uno_workchain::build_uno_zerostate_accounts_cell()), compute-phase dispatch
-  // lives in crypto/block/transaction.cpp (line ~1938+), wc=2 routing literal
-  // to avoid a uno/core/workchain.h include here.
-  if (workchain() != tos::masterchainId && workchain() != tos::basechainId &&
-      workchain() != evm_workchain::kWorkchainId && workchain() != 2 /* uno_workchain::kWorkchainId */) {
-    fatal_error(-667, "can create block candidates only for masterchain (-1), base workchain (0), EVM workchain (1), and UNO workchain (2)");
-    return;
-  }
+  // 1. check validity of parameters, especially prev_blocks, shard and min_mc_block_id.
+  // Concrete non-TVM workchain ids are validated after the masterchain
+  // ConfigParam 12 snapshot is loaded, through WorkchainExecutionRegistry.
   if (is_busy()) {
     fatal_error(-666, "collator is busy creating another block candidate");
     return;
@@ -1595,24 +1587,10 @@ bool Collator::check_this_shard_mc_info() {
   if (!wc_info_->active) {
     return fatal_error(PSTRING() << "cannot create new block for disabled workchain " << workchain());
   }
-  if (!wc_info_->basic) {
-    return fatal_error(PSTRING() << "cannot create new block for non-basic workchain " << workchain());
-  }
-  if (evm_workchain::is_evm_workchain(workchain())) {
-    if (wc_info_->vm_version != evm_workchain::kVmVersion) {
-      return fatal_error(PSTRING()
-                         << "cannot create EVM workchain block: ConfigParam 12 vm_version=0x"
-                         << td::format::as_hex(wc_info_->vm_version)
-                         << " does not match expected 0x"
-                         << td::format::as_hex(evm_workchain::kVmVersion));
-    }
-    if (wc_info_->vm_mode != evm_workchain::current_evm_chain_id()) {
-      return fatal_error(PSTRING()
-                         << "cannot create EVM workchain block: ConfigParam 12 vm_mode/chain_id=0x"
-                         << td::format::as_hex(wc_info_->vm_mode)
-                         << " does not match runtime chain_id=0x"
-                         << td::format::as_hex(evm_workchain::current_evm_chain_id()));
-    }
+  auto execution_res = block::default_workchain_execution_registry().resolve_workchain(
+      config_->get_workchain_list(), workchain(), *config_);
+  if (execution_res.is_error()) {
+    return fatal_error(execution_res.move_as_error_prefix("cannot create block for configured workchain: "));
   }
   if (wc_info_->enabled_since && wc_info_->enabled_since > config_->utime) {
     return fatal_error(PSTRING() << "cannot create new block for workchain " << workchain()
@@ -2278,37 +2256,43 @@ bool Collator::fetch_config_params() {
   if (res.is_error()) {
     return fatal_error(res.move_as_error());
   }
+  if (!is_masterchain()) {
+    block::LocalWorkchainRoleSet local_roles;
+    local_roles.required_workchains.insert(workchain());
+    auto status = block::default_workchain_execution_registry().validate_required_workchains(
+        config_->get_workchain_list(), *config_, local_roles);
+    if (status.is_error()) {
+      return fatal_error(status.move_as_error_prefix("cannot execute configured workchain: "));
+    }
+  }
   compute_phase_cfg_.libraries = std::make_unique<vm::Dictionary>(config_->get_libraries_root(), 256);
   defer_out_queue_size_limit_ = std::max<td::uint64>(params_.collator_opts->defer_out_queue_size_limit,
                                                      compute_phase_cfg_.size_limits.defer_out_queue_size_limit);
   // This one is checked in validate-query
   hard_defer_out_queue_size_limit_ = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
 
-  // EVM workchain (wc=1): single-executor design. No mirror dict is
-  // allocated — every EVM tx produces exactly one AccountBlock (for the
-  // fixed executor account) so there is no need for a side channel to
-  // smuggle multi-account changes past validate-query.
-  //
-  // On a fresh process the g_evm_state singleton starts empty (modulo
-  // the legacy seed_test_accounts in init_evm_workchain). Rehydration
-  // reads the executor's StateInit.data as a cp.new_data cell and loads
-  // the ^state_root ref directly into CellEvmState. One dict lookup, no
-  // per-account walk.
-  if (workchain() == evm_workchain::kWorkchainId) {
+  bool custom_workchain = false;
+  bool is_evm_custom_workchain = false;
+  auto resolved_execution = block::default_workchain_execution_registry().resolve_workchain(
+      config_->get_workchain_list(), workchain(), *config_);
+  if (resolved_execution.is_error()) {
+    return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
+  }
+  if (resolved_execution.ok().has_value()) {
+    const auto& execution = *resolved_execution.ok();
+    custom_workchain = block::resolved_workchain_execution_is_custom(execution);
+    is_evm_custom_workchain = block::resolved_workchain_execution_is_evm(execution);
+  }
+
+  if (custom_workchain) {
     compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(new_block_seqno);
-    // Thread the wc=1 parent block's root_hash so the snapshot compute
+    // Thread the EVM parent block's root_hash so the snapshot compute
     // path's EIP-2935 system call writes the real parent hash (not zero)
-    // into the historical-block-hash ring buffer. prev_blocks[0] is the
-    // wc=1 prior block when collating wc=1; for genesis (no prev) leave
-    // the default-zeroed value.
-    if (!prev_blocks.empty()) {
+    // into the historical-block-hash ring buffer. For non-EVM custom engines
+    // the field stays zero and only the shared block_seqno carrier is used.
+    if (is_evm_custom_workchain && !prev_blocks.empty()) {
       compute_phase_cfg_.evm_parent_block_hash = prev_blocks[0].root_hash;
     }
-    // Hydration of g_evm_state from canonical ShardAccounts used to live
-    // here so the legacy compute path could read pre-state from the
-    // singleton. Snapshot compute decodes pre-state from the per-tx
-    // `account_data` cell instead, so the trigger is unnecessary. RPC
-    // read paths still hydrate from the cache DB at process init.
   } else {
     compute_phase_cfg_.evm_block_seqno = 0;
   }

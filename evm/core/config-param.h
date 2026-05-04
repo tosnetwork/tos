@@ -46,7 +46,7 @@ td::Ref<vm::Cell> build_evm_zerostate(
     tos::RootHash& root_hash,
     tos::FileHash& file_hash);
 
-/// Extract the EVM chain id bound into a wc=1 WorkchainDescr.
+/// Extract the EVM chain id bound into an EVM WorkchainDescr.
 ///
 /// TOS binds the Ethereum-style EVM chain id to ConfigParam 12 by storing it
 /// in `WorkchainFormat::wfmt_basic.vm_mode`. Returns std::nullopt if `cell`

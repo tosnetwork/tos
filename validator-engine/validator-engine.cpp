@@ -32,6 +32,7 @@
 #include "adnl/adnl-node-id.hpp"
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api.h"
+#include "block/workchain-execution-dispatch.h"
 #include "common/errorlog.h"
 #include "crypto/fift/utils.h"
 #include "crypto/vm/vm.h"
@@ -68,6 +69,7 @@
 #include "uno/core/init.h"
 #include "overlay-manager.h"
 #include "overlays.h"
+#include "validator/impl/config.hpp"
 #include "validator/state-download-buffer.h"
 #include "validator-engine.hpp"
 
@@ -106,6 +108,59 @@ static td::Result<tos::adnl::AdnlNodeIdShort> parse_adnl_id_hex(td::Slice value)
     return td::Status::Error("zero ADNL id");
   }
   return id;
+}
+
+static void add_required_execution_workchain(block::LocalWorkchainRoleSet& roles, tos::ShardIdFull shard) {
+  if (shard.is_valid_ext() && !shard.is_masterchain()) {
+    roles.required_workchains.insert(shard.workchain);
+  }
+}
+
+static block::LocalWorkchainRoleSet build_local_workchain_execution_roles(
+    const Config& config,
+    bool not_all_shards,
+    const td::optional<tos::BlockSeqno>& sync_shards_upto,
+    tos::BlockSeqno mc_seqno) {
+  block::LocalWorkchainRoleSet roles;
+  if (sync_shards_upto && mc_seqno > sync_shards_upto.value()) {
+    return roles;
+  }
+  if (!not_all_shards) {
+    roles.require_all_active = true;
+    return roles;
+  }
+  for (const auto& [_, shards] : config.collators) {
+    for (auto shard : shards) {
+      add_required_execution_workchain(roles, shard);
+    }
+  }
+  for (auto shard : config.shards_to_monitor) {
+    add_required_execution_workchain(roles, shard);
+  }
+  return roles;
+}
+
+static td::Status validate_local_workchain_execution_for_state(
+    const td::Ref<tos::validator::MasterchainState>& state,
+    const Config& local_config,
+    bool not_all_shards,
+    const td::optional<tos::BlockSeqno>& sync_shards_upto) {
+  if (state.is_null()) {
+    return td::Status::Error("masterchain state is not ready");
+  }
+  TRY_RESULT(holder, state->get_config_holder());
+  auto* holder_q = dynamic_cast<const tos::validator::ConfigHolderQ*>(holder.get());
+  if (holder_q == nullptr || holder_q->get_config() == nullptr) {
+    return td::Status::Error("masterchain config holder does not expose block::Config");
+  }
+  const block::Config& config = *holder_q->get_config();
+  auto roles = build_local_workchain_execution_roles(
+      local_config, not_all_shards, sync_shards_upto, state->get_block_id().seqno());
+  if (!roles.require_all_active && roles.required_workchains.empty()) {
+    return td::Status::OK();
+  }
+  return block::default_workchain_execution_registry().validate_required_workchains(
+      config.get_workchain_list(), config, roles);
 }
 
 Config::Config() {
@@ -1592,8 +1647,19 @@ void ValidatorEngine::deleted_key(tos::PublicKeyHash x) {
 }
 
 void ValidatorEngine::got_state(td::Ref<tos::validator::MasterchainState> state) {
+  if (state.is_null()) {
+    LOG(FATAL) << "validator-engine received null masterchain state";
+  }
   if (state_.not_null() && state_->get_block_id() == state->get_block_id()) {
     return;
+  }
+  auto status = validate_local_workchain_execution_for_state(
+      state, config_, not_all_shards_, sync_shards_upto_);
+  if (status.is_error()) {
+    LOG(FATAL) << "validator-engine cannot execute a locally required "
+                  "configured workchain for masterchain state "
+               << state->get_block_id().to_str() << ": "
+               << status.move_as_error();
   }
   state_ = std::move(state);
   validator_set_ = state_->get_total_validator_set(0);
