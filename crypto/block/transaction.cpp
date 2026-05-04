@@ -105,11 +105,17 @@ td::Result<CustomComputePlan> resolve_custom_compute_plan(const block::ComputePh
 }
 
 bool account_allowed_by_policy(const block::AccountExecutionPolicy& policy, const tos::StdSmcAddress& addr) {
-  if (policy.kind == block::AccountExecutionPolicyKind::SingletonExecutor) {
-    return policy.singleton_address.has_value() &&
-           std::memcmp(addr.data(), policy.singleton_address.value().data(), 32) == 0;
+  switch (policy.kind) {
+    case block::AccountExecutionPolicyKind::AnyAccount:
+      return true;
+    case block::AccountExecutionPolicyKind::SingletonExecutor:
+      return policy.singleton_address.has_value() &&
+             std::memcmp(addr.data(), policy.singleton_address.value().data(), 32) == 0;
+    case block::AccountExecutionPolicyKind::ShardLocalExecutor:
+    case block::AccountExecutionPolicyKind::EngineDefined:
+      return false;
   }
-  return true;
+  return false;
 }
 
 bool inbound_allowed_by_policy(const block::AccountExecutionPolicy& policy, bool external) {

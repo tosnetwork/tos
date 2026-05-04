@@ -55,6 +55,7 @@ namespace {
 struct ResolvedEvmRpcWorkchain {
   tos::WorkchainId workchain_id{tos::workchainInvalid};
   uint64_t chain_id{0};
+  tos::StdSmcAddress executor_addr;
 };
 
 td::Result<ResolvedEvmRpcWorkchain> resolve_evm_rpc_workchain_from_masterchain_state(
@@ -83,10 +84,22 @@ td::Result<ResolvedEvmRpcWorkchain> resolve_evm_rpc_workchain_from_masterchain_s
       continue;
     }
     TRY_RESULT(resolved, block::default_workchain_execution_registry().resolve(descriptor, config));
+    auto policy = resolved.executor->account_policy(resolved.descriptor, *resolved.engine_config);
+    if (!policy.accepts_external_inbound) {
+      return td::Status::Error("active EVM workchain does not accept external inbound messages");
+    }
+    if (policy.kind != block::AccountExecutionPolicyKind::SingletonExecutor ||
+        !policy.singleton_address.has_value()) {
+      return td::Status::Error("active EVM workchain RPC submission requires a singleton executor policy");
+    }
     if (found.has_value()) {
       return td::Status::Error("multiple active EVM workchains are configured; eth_sendRawTransaction is ambiguous");
     }
-    found = ResolvedEvmRpcWorkchain{workchain_id, resolved.descriptor.vm_mode};
+    ResolvedEvmRpcWorkchain evm_wc;
+    evm_wc.workchain_id = workchain_id;
+    evm_wc.chain_id = resolved.descriptor.vm_mode;
+    evm_wc.executor_addr = policy.singleton_address.value();
+    found = evm_wc;
   }
   if (!found.has_value()) {
     return td::Status::Error("EVM workchain is not active in ConfigParam 12");
@@ -1658,13 +1671,15 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
             td::actor::send_closure_later(
                 self, &JsonRpcServer::handle_eth_sendRawTransaction_with_chain_id,
                 std::move(raw_bytes), std::move(decoded), std::move(req_id),
-                evm_wc.workchain_id, evm_wc.chain_id, std::move(promise));
+                evm_wc.workchain_id, evm_wc.chain_id, evm_wc.executor_addr,
+                std::move(promise));
           }));
 }
 
 void JsonRpcServer::handle_eth_sendRawTransaction_with_chain_id(
     std::string raw_bytes, evm_workchain::DecodedTransaction decoded,
     std::string req_id, tos::WorkchainId workchain_id, uint64_t chain_id,
+    tos::StdSmcAddress executor_addr,
     td::Promise<HttpReturn> promise) {
 
   // Reject txs that target a foreign chainId. Ethereum mainnet rejects
@@ -1779,7 +1794,7 @@ void JsonRpcServer::handle_eth_sendRawTransaction_with_chain_id(
   try {
     ext_msg = evm_workchain::build_evm_external_message(
         reinterpret_cast<const uint8_t*>(raw_bytes.data()), raw_bytes.size(),
-        decoded.sender, workchain_id);
+        decoded.sender, workchain_id, executor_addr);
   } catch (const std::exception& e) {
     promise.set_value(make_eth_json_error(-32000,
         PSTRING() << "Failed to build external message cell: " << e.what(),

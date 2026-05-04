@@ -339,9 +339,12 @@ struct MockUnoEngineConfig final : public block::WorkchainEngineConfig {
 class MockUnoEngine final : public block::WorkchainEngine {
  public:
   explicit MockUnoEngine(MockUnoComputeFn fn,
-                         bool may_activate_uninitialized_account = true)
+                         bool may_activate_uninitialized_account = true,
+                         block::AccountExecutionPolicyKind policy_kind =
+                             block::AccountExecutionPolicyKind::SingletonExecutor)
       : fn_(std::move(fn))
-      , may_activate_uninitialized_account_(may_activate_uninitialized_account) {}
+      , may_activate_uninitialized_account_(may_activate_uninitialized_account)
+      , policy_kind_(policy_kind) {}
 
   block::WorkchainEngineKey engine_key() const override {
     return block::uno_workchain_engine_key();
@@ -366,11 +369,13 @@ class MockUnoEngine final : public block::WorkchainEngine {
       const block::WorkchainExecutionDescriptor& /*descriptor*/,
       const block::WorkchainEngineConfig& /*engine_config*/) const override {
     block::AccountExecutionPolicy policy;
-    policy.kind = block::AccountExecutionPolicyKind::SingletonExecutor;
+    policy.kind = policy_kind_;
     tos::StdSmcAddress addr;
     addr.set_zero();
     addr.data()[31] = 1;
-    policy.singleton_address = addr;
+    if (policy.kind == block::AccountExecutionPolicyKind::SingletonExecutor) {
+      policy.singleton_address = addr;
+    }
     policy.accepts_external_inbound = true;
     policy.accepts_internal_inbound = true;
     policy.may_activate_uninitialized_account = may_activate_uninitialized_account_;
@@ -424,6 +429,7 @@ class MockUnoEngine final : public block::WorkchainEngine {
  private:
   MockUnoComputeFn fn_;
   bool may_activate_uninitialized_account_;
+  block::AccountExecutionPolicyKind policy_kind_;
 };
 
 }  // namespace
@@ -953,5 +959,52 @@ TEST(WorkchainExecutionRegistry, CustomPolicyCanForbidUninitializedActivation) {
   CHECK(tx.prepare_compute_phase(compute_cfg));
   CHECK(tx.compute_phase != nullptr);
   CHECK(tx.compute_phase->skip_reason == block::ComputePhase::sk_no_state);
+  CHECK(!compute_called);
+}
+
+TEST(WorkchainExecutionRegistry, UnsupportedCustomAccountPoliciesFailClosedBeforeCompute) {
+  auto config = make_empty_config();
+  block::WorkchainSet workchains;
+  workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
+
+  bool compute_called = false;
+  block::WorkchainExecutionRegistry registry;
+  registry.register_engine(std::make_unique<MockUnoEngine>(
+      [&](block::ComputePhase& /*cp*/,
+          td::Ref<vm::Cell> /*state_data*/,
+          vm::CellSlice& /*in_msg_body*/,
+          uint64_t /*gas_limit*/,
+          uint64_t /*block_seqno*/,
+          uint64_t /*timestamp*/,
+          const uint8_t /*rand_seed*/[32]) {
+        compute_called = true;
+        return false;
+      },
+      true,
+      block::AccountExecutionPolicyKind::EngineDefined));
+
+  auto addr = singleton_executor_address();
+  block::Account account(2, addr.bits());
+  account.status = block::Account::acc_nonexist;
+  account.orig_status = block::Account::acc_nonexist;
+  account.balance = block::CurrencyCollection::zero();
+
+  auto msg = build_external_message(2, addr, make_marker_cell(0x01));
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_ord, 1, 100, msg);
+
+  block::ActionPhaseConfig action_cfg;
+  action_cfg.workchains = &workchains;
+  CHECK(tx.unpack_input_msg(false, &action_cfg));
+
+  block::ComputePhaseConfig compute_cfg;
+  compute_cfg.gas_limit = 100;
+  compute_cfg.block_transition_config = &config;
+  compute_cfg.workchain_descriptors = &workchains;
+  compute_cfg.workchain_execution_registry = &registry;
+  compute_cfg.global_version = 14;
+
+  CHECK(tx.prepare_compute_phase(compute_cfg));
+  CHECK(tx.compute_phase != nullptr);
+  CHECK(tx.compute_phase->skip_reason == block::ComputePhase::sk_bad_state);
   CHECK(!compute_called);
 }

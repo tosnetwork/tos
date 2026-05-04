@@ -34,6 +34,12 @@ td::Ref<vm::Cell> build_evm_external_message(
     const evmc::address& sender_addr,
     tos::WorkchainId workchain_id);
 
+td::Ref<vm::Cell> build_evm_external_message(
+    const uint8_t* raw_rlp, size_t rlp_size,
+    const evmc::address& sender_addr,
+    tos::WorkchainId workchain_id,
+    const tos::StdSmcAddress& executor_addr);
+
 /// Convenience overload for tests and genesis tooling that still use the
 /// default EVM workchain id from evm/core/workchain.h. Consensus and RPC paths
 /// should pass the descriptor-resolved workchain id explicitly.

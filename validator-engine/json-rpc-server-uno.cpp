@@ -17,16 +17,15 @@
 
       * uno_sendMineUno   — accepts a hex-encoded MineUno BoC blob, runs
         `decode_mine_uno_bytes()` for syntactic validation, wraps the
-        decoded root cell as an `ext_in_msg` targeting the descriptor-selected
-        Uno executor
-        account, and submits it through `liteServer_sendMessage` exactly
+        decoded root cell as an `ext_in_msg` targeting the registry-resolved
+        Uno executor account, and submits it through `liteServer_sendMessage` exactly
         like `eth_sendRawTransaction`. Returns the canonical_mine_uno_hash
         hex on successful submission.
 
     The Uno ext_in_msg layout mirrors EVM's `build_evm_external_message`
     (see evm/core/external-message.cpp) with three differences:
       * workchain_id  = resolved from ConfigParam 12's active Uno descriptor
-      * dest address  = kUnoExecutorAddressBytes (not kEvmExecutorAddress)
+      * dest address  = resolved from the Uno engine account policy
       * body          = the raw MineUno root cell deserialised from the
                          caller-supplied BoC (not a chunked RLP chain).
         The MineUno envelope is already cell-shaped (§1 wire format),
@@ -71,6 +70,7 @@ namespace {
 
 struct ResolvedUnoRpcWorkchain {
   tos::WorkchainId workchain_id{tos::workchainInvalid};
+  tos::StdSmcAddress executor_addr;
 };
 
 bool fits_addr_std_workchain_id(tos::WorkchainId workchain_id) {
@@ -99,11 +99,21 @@ td::Result<ResolvedUnoRpcWorkchain> resolve_uno_rpc_workchain_from_masterchain_s
       continue;
     }
     TRY_RESULT(resolved, block::default_workchain_execution_registry().resolve(descriptor, config));
-    (void)resolved;
+    auto policy = resolved.executor->account_policy(resolved.descriptor, *resolved.engine_config);
+    if (!policy.accepts_external_inbound) {
+      return td::Status::Error("active Uno workchain does not accept external inbound messages");
+    }
+    if (policy.kind != block::AccountExecutionPolicyKind::SingletonExecutor ||
+        !policy.singleton_address.has_value()) {
+      return td::Status::Error("active Uno workchain RPC submission requires a singleton executor policy");
+    }
     if (found.has_value()) {
       return td::Status::Error("multiple active Uno workchains are configured; Uno JSON-RPC submission is ambiguous");
     }
-    found = ResolvedUnoRpcWorkchain{workchain_id};
+    ResolvedUnoRpcWorkchain uno_wc;
+    uno_wc.workchain_id = workchain_id;
+    uno_wc.executor_addr = policy.singleton_address.value();
+    found = uno_wc;
   }
   if (!found.has_value()) {
     return td::Status::Error("Uno workchain is not active in ConfigParam 12");
@@ -118,7 +128,8 @@ td::Result<ResolvedUnoRpcWorkchain> resolve_uno_rpc_workchain_from_masterchain_s
 // which only differ in how they decode and admission-check the body
 // before reaching this shared envelope step.
 td::Result<td::Ref<vm::Cell>> build_uno_ext_in_msg(td::Ref<vm::Cell> body_root,
-                                                   tos::WorkchainId workchain_id) {
+                                                   tos::WorkchainId workchain_id,
+                                                   const tos::StdSmcAddress& executor_addr) {
   if (body_root.is_null()) {
     return td::Status::Error("uno ext_in_msg: null body root cell");
   }
@@ -134,8 +145,8 @@ td::Result<td::Ref<vm::Cell>> build_uno_ext_in_msg(td::Ref<vm::Cell> body_root,
   cb.store_long(0b100, 3);
   // workchain_id: int8, selected by ConfigParam 12 Uno descriptor
   cb.store_long(workchain_id, 8);
-  // address: bits256 = kUnoExecutorAddressBytes (0x00…01)
-  cb.store_bytes(reinterpret_cast<const char*>(uno_workchain::kUnoExecutorAddressBytes), 32);
+  // address: bits256 = singleton executor resolved from the active Uno engine policy
+  cb.store_bits(executor_addr.cbits(), 256);
   // import_fee: Grams = 0 (VarUInteger 16; 4-bit length = 0)
   cb.store_long(0, 4);
   // init: Maybe (Either StateInit ^StateInit) = nothing$0
@@ -225,6 +236,7 @@ build_jsonrpc_error(int code, const std::string& message,
 }  // namespace
 
 void JsonRpcServer::handle_uno_submit_ext_message(tos::WorkchainId workchain_id,
+                                                   tos::StdSmcAddress executor_addr,
                                                    td::Ref<vm::Cell> body_root,
                                                    std::string req_id,
                                                    std::string result_json,
@@ -232,7 +244,7 @@ void JsonRpcServer::handle_uno_submit_ext_message(tos::WorkchainId workchain_id,
                                                    td::Promise<HttpReturn> promise) {
   td::Ref<vm::Cell> ext_msg;
   try {
-    auto ext_r = build_uno_ext_in_msg(std::move(body_root), workchain_id);
+    auto ext_r = build_uno_ext_in_msg(std::move(body_root), workchain_id, executor_addr);
     if (ext_r.is_error()) {
       promise.set_value(make_eth_json_error(
           -32603,
@@ -513,9 +525,9 @@ void JsonRpcServer::handle_uno_sendMineUno(td::JsonValue& params_val,
             auto wc = wc_res.move_as_ok();
             td::actor::send_closure_later(
                 self, &JsonRpcServer::handle_uno_submit_ext_message,
-                wc.workchain_id, std::move(root_cell), std::move(req_id),
-                std::move(result_json), std::string("uno_sendMineUno"),
-                std::move(promise));
+                wc.workchain_id, wc.executor_addr, std::move(root_cell),
+                std::move(req_id), std::move(result_json),
+                std::string("uno_sendMineUno"), std::move(promise));
           }));
 }
 
@@ -687,9 +699,9 @@ void JsonRpcServer::handle_uno_sendTransfer(td::JsonValue& params_val,
             auto wc = wc_res.move_as_ok();
             td::actor::send_closure_later(
                 self, &JsonRpcServer::handle_uno_submit_ext_message,
-                wc.workchain_id, std::move(root_cell), std::move(req_id),
-                std::move(result_json), std::string("uno_sendTransfer"),
-                std::move(promise));
+                wc.workchain_id, wc.executor_addr, std::move(root_cell),
+                std::move(req_id), std::move(result_json),
+                std::string("uno_sendTransfer"), std::move(promise));
           }));
 }
 
