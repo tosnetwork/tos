@@ -1296,12 +1296,13 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
 
         if (!evm_msgs.empty()) {
           const std::uint64_t evm_chain_id = evm_execution->chain_id;
+          const auto evm_executor_addr = evm_execution->policy.singleton_address.value();
           if (handle && accepted_seqno > 0) {
             auto prev_block_id = handle->one_prev(true);
             auto rand_seed = extra.rand_seed;
             auto P = td::PromiseCreator::lambda(
                 [accepted_seqno, timestamp = info.gen_utime, rand_seed, parent_hash,
-                 evm_chain_id,
+                 evm_chain_id, evm_executor_addr,
                  evm_msgs = std::move(evm_msgs),
                  evm_gas_limits = std::move(evm_gas_limits)](
                     td::Result<td::Ref<ShardState>> R) mutable {
@@ -1315,7 +1316,7 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
                     have_replay_state =
                         evm_workchain::extract_evm_executor_account_data_from_shard_state(
                             prev_state.not_null() ? prev_state->root_cell() : td::Ref<vm::Cell>{},
-                            initial_account_data);
+                            evm_executor_addr.data(), initial_account_data);
                     if (!have_replay_state) {
                       LOG(WARNING) << "evm post-accept: previous shard state does not expose EVM executor account data; "
                                       "using side-effect cache only";

@@ -2024,6 +2024,13 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   }
 
   if (custom_plan.has_custom_compute()) {
+    auto policy_status = block::validate_account_execution_policy_supported(custom_plan.policy);
+    if (policy_status.is_error()) {
+      LOG(ERROR) << "descriptor-selected workchain policy is not supported: "
+                 << policy_status.move_as_error();
+      compute_phase.reset();
+      return false;
+    }
     if (!inbound_allowed_by_policy(custom_plan.policy, in_msg_extern) ||
         !account_allowed_by_policy(custom_plan.policy, account.addr)) {
       cp.skip_reason = ComputePhase::sk_bad_state;

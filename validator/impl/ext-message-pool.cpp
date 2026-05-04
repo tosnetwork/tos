@@ -526,15 +526,15 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
     if (!policy.accepts_external_inbound) {
       co_return td::Status::Error("configured workchain engine does not accept external inbound messages");
     }
+    auto policy_status = block::validate_account_execution_policy_supported(policy);
+    if (policy_status.is_error()) {
+      co_return policy_status.move_as_error_prefix("configured workchain engine policy is not supported: ");
+    }
     if (policy.kind == block::AccountExecutionPolicyKind::SingletonExecutor) {
-      if (!policy.singleton_address.has_value() ||
-          std::memcmp(addr.data(), policy.singleton_address.value().data(), 32) != 0) {
+      if (std::memcmp(addr.data(), policy.singleton_address.value().data(), 32) != 0) {
         co_return td::Status::Error(
             PSTRING() << "ext-msg destination is not the configured singleton executor for workchain " << wc);
       }
-    } else if (policy.kind != block::AccountExecutionPolicyKind::AnyAccount) {
-      co_return td::Status::Error(
-          "configured workchain engine uses an admission policy not supported by the external message pool");
     }
 
     // Rate-limit Uno ingress to bound

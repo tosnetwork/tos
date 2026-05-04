@@ -90,6 +90,10 @@ class UnoNativeEngine final : public block::WorkchainEngine {
         if (descriptor.vm_mode != 0) {
             return td::Status::Error("Uno v1 descriptor requires vm_mode=0");
         }
+        // Uno v1 reads chain_id from the process-global g_uno_config set by
+        // install_uno_config at startup. vm_mode=0 is reserved for Uno v1, so
+        // a future Uno v2 descriptor should encode chain_id in vm_mode and
+        // route it through UnoEngineConfig here, matching EvmNativeEngine.
         std::shared_ptr<const block::WorkchainEngineConfig> result =
             std::make_shared<UnoEngineConfig>();
         return result;

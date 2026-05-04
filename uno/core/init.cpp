@@ -1598,7 +1598,14 @@ bool uno_run_compute_phase(
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32]) {
-    if (g_live && !g_live->hydrate_from_cell_if_needed(std::move(state_data))) {
+    // g_live must be non-null before any dereference. Null means
+    // init_uno_workchain was never called, which is an infrastructure error,
+    // not a valid compute skip.
+    if (!g_live) {
+        cp.vm_log = "uno: live state not initialized";
+        return false;
+    }
+    if (!g_live->hydrate_from_cell_if_needed(std::move(state_data))) {
         cp.skip_reason = block::ComputePhase::sk_bad_state;
         cp.success = false;
         cp.accepted = false;
@@ -1610,9 +1617,7 @@ bool uno_run_compute_phase(
         cp.vm_log = "uno: persisted state rejected";
         return true;
     }
-    if (g_live) {
-        g_live->set_block_seqno(block_seqno);
-    }
+    g_live->set_block_seqno(block_seqno);
     return run_compute_phase(
         cp, in_msg_body, gas_limit,
         *g_live,

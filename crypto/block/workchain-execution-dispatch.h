@@ -116,6 +116,8 @@ struct AccountExecutionPolicy {
   td::Ref<vm::Cell> activation_code;
 };
 
+td::Status validate_account_execution_policy_supported(const AccountExecutionPolicy& policy);
+
 struct WorkchainComputeContext {
   tos::WorkchainId workchain_id{tos::workchainInvalid};
   tos::ShardIdFull shard;
@@ -226,6 +228,10 @@ class WorkchainExecutionRegistry {
                                           const LocalWorkchainRoleSet& local_roles) const;
 
  private:
+  // G: engines_ is written only during node startup (before any collation or
+  // validation actor is created) and is read-only thereafter. std::map has no
+  // internal lock; concurrent writes would be a data race. Do not call
+  // register_engine* from any thread other than the startup sequence.
   std::map<WorkchainEngineKey, std::unique_ptr<WorkchainEngine>> engines_;
 };
 

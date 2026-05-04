@@ -1181,15 +1181,12 @@ RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
 // Validator-manager seam helpers.
 // ---------------------------------------------------------------------------
 
-bool is_evm_executor_address(const unsigned char addr[32]) noexcept {
-    return std::memcmp(addr, kEvmExecutorAddressBytes, 32) == 0;
-}
-
 bool extract_evm_executor_account_data_from_shard_state(
     td::Ref<vm::Cell> shard_state_root,
+    const unsigned char executor_addr[32],
     td::Ref<vm::Cell>& account_data_out) noexcept {
     account_data_out = {};
-    if (shard_state_root.is_null()) return false;
+    if (shard_state_root.is_null() || executor_addr == nullptr) return false;
     try {
         block::gen::ShardStateUnsplit::Record state;
         if (!tlb::unpack_cell(std::move(shard_state_root), state) ||
@@ -1202,7 +1199,7 @@ bool extract_evm_executor_account_data_from_shard_state(
             256,
             block::tlb::aug_ShardAccounts};
         auto exec_value = accounts_dict.lookup(
-            td::ConstBitPtr{kEvmExecutorAddressBytes}, 256);
+            td::ConstBitPtr{executor_addr}, 256);
         if (exec_value.is_null()) {
             return true;
         }

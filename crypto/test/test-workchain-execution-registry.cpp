@@ -962,7 +962,7 @@ TEST(WorkchainExecutionRegistry, CustomPolicyCanForbidUninitializedActivation) {
   CHECK(!compute_called);
 }
 
-TEST(WorkchainExecutionRegistry, UnsupportedCustomAccountPoliciesFailClosedBeforeCompute) {
+TEST(WorkchainExecutionRegistry, UnsupportedCustomAccountPoliciesAbortBeforeCompute) {
   auto config = make_empty_config();
   block::WorkchainSet workchains;
   workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
@@ -1003,8 +1003,31 @@ TEST(WorkchainExecutionRegistry, UnsupportedCustomAccountPoliciesFailClosedBefor
   compute_cfg.workchain_execution_registry = &registry;
   compute_cfg.global_version = 14;
 
-  CHECK(tx.prepare_compute_phase(compute_cfg));
-  CHECK(tx.compute_phase != nullptr);
-  CHECK(tx.compute_phase->skip_reason == block::ComputePhase::sk_bad_state);
+  CHECK(!tx.prepare_compute_phase(compute_cfg));
+  CHECK(tx.compute_phase == nullptr);
   CHECK(!compute_called);
+}
+
+TEST(WorkchainExecutionRegistry, PreflightRejectsUnsupportedCustomAccountPolicies) {
+  auto config = make_empty_config();
+  block::WorkchainSet workchains;
+  workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
+
+  block::WorkchainExecutionRegistry registry;
+  registry.register_engine(std::make_unique<MockUnoEngine>(
+      [](block::ComputePhase& /*cp*/,
+         td::Ref<vm::Cell> /*state_data*/,
+         vm::CellSlice& /*in_msg_body*/,
+         uint64_t /*gas_limit*/,
+         uint64_t /*block_seqno*/,
+         uint64_t /*timestamp*/,
+         const uint8_t /*rand_seed*/[32]) {
+        return false;
+      },
+      true,
+      block::AccountExecutionPolicyKind::ShardLocalExecutor));
+
+  block::LocalWorkchainRoleSet roles;
+  roles.required_workchains.insert(2);
+  CHECK(registry.validate_required_workchains(workchains, config, roles).is_error());
 }

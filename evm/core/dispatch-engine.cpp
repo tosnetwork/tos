@@ -9,12 +9,12 @@
 */
 #include "evm/core/dispatch-engine.h"
 
+#include "block/evm-workchain-dispatch.h"
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
 #include "evm/core/compute-phase.h"
 #include "evm/core/post-accept.h"
 #include "td/utils/Status.h"
-#include "vm/cells/CellBuilder.h"
 
 namespace evm_workchain {
 
@@ -59,13 +59,10 @@ block::WorkchainComputeOutput output_from_compute_phase(
     return out;
 }
 
-td::Ref<vm::Cell> get_evm_code_marker_cell_local() {
-    static const td::Ref<vm::Cell> kMarker = []() {
-        vm::CellBuilder cb;
-        cb.store_long(0x45, 8);  // 'E' — EVM activated account marker
-        return cb.finalize();
-    }();
-    return kMarker;
+inline td::Ref<vm::Cell> get_evm_code_marker_cell_local() {
+    // Use the canonical definition from the legacy dispatch bridge to avoid
+    // divergence while tests and tooling still include that helper.
+    return evm_workchain_dispatch::get_evm_code_marker_cell();
 }
 
 class EvmNativeEngine final : public block::WorkchainEngine {

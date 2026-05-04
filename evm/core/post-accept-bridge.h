@@ -27,9 +27,6 @@ class Cell;
 
 namespace evm_workchain {
 
-/// True when `addr` (32-byte big-endian) matches the EVM executor account.
-bool is_evm_executor_address(const unsigned char addr[32]) noexcept;
-
 /// Look up cached side effects for the accepted block's EVM messages, finalize
 /// block-wide receipt/transaction roots, and publish them via
 /// `apply_block_side_effects`. Messages must be passed in transaction order.
@@ -69,6 +66,7 @@ size_t apply_stashed_side_effects_for_messages(
 /// parsed; `account_data_out` is null if the executor account is absent.
 bool extract_evm_executor_account_data_from_shard_state(
     td::Ref<vm::Cell> shard_state_root,
+    const unsigned char executor_addr[32],
     td::Ref<vm::Cell>& account_data_out) noexcept;
 
 }  // namespace evm_workchain

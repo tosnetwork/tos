@@ -149,6 +149,13 @@ td::Status validate_workchain_execution_descriptor_transitions(
                                          << new_descriptor.vm_mode
                                          << " without an explicit migration rule");
     }
+    // Zerostate hash changes for active workchains are state forks unless a
+    // future migration rule explicitly defines otherwise.
+    if (old_descriptor.zerostate_root_hash != new_descriptor.zerostate_root_hash) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes zerostate_root_hash"
+                                         << " without an explicit migration rule");
+    }
   }
   return td::Status::OK();
 }
@@ -218,8 +225,9 @@ td::Result<std::optional<AccountExecutionPolicy>> WorkchainExecutionRegistry::re
   if (!resolved.has_value()) {
     return std::optional<AccountExecutionPolicy>{};
   }
-  return std::optional<AccountExecutionPolicy>{
-      resolved->executor->account_policy(resolved->descriptor, *resolved->engine_config)};
+  auto policy = resolved->executor->account_policy(resolved->descriptor, *resolved->engine_config);
+  TRY_STATUS(validate_account_execution_policy_supported(policy));
+  return std::optional<AccountExecutionPolicy>{std::move(policy)};
 }
 
 td::Status WorkchainExecutionRegistry::validate_required_workchains(
@@ -231,9 +239,27 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
     }
     TRY_RESULT(descriptor, normalize_workchain_descriptor(*info));
     TRY_RESULT(resolved, resolve(descriptor, block_transition_config));
-    (void)resolved;
+    auto policy = resolved.executor->account_policy(resolved.descriptor, *resolved.engine_config);
+    TRY_STATUS(validate_account_execution_policy_supported(policy));
   }
   return td::Status::OK();
+}
+
+td::Status validate_account_execution_policy_supported(const AccountExecutionPolicy& policy) {
+  switch (policy.kind) {
+    case AccountExecutionPolicyKind::AnyAccount:
+      return td::Status::OK();
+    case AccountExecutionPolicyKind::SingletonExecutor:
+      if (!policy.singleton_address.has_value()) {
+        return td::Status::Error("singleton executor policy is missing singleton_address");
+      }
+      return td::Status::OK();
+    case AccountExecutionPolicyKind::ShardLocalExecutor:
+      return td::Status::Error("shard-local executor policy is not implemented by the host");
+    case AccountExecutionPolicyKind::EngineDefined:
+      return td::Status::Error("engine-defined account policy is not implemented by the host");
+  }
+  return td::Status::Error("unknown account execution policy kind");
 }
 
 bool resolved_workchain_execution_is_custom(const ResolvedWorkchainExecution& execution) {
