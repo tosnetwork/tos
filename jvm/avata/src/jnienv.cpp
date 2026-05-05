@@ -95,11 +95,12 @@ uint64_t destroyJavaVM(Thread* t, uintptr_t*)
     while (t->m->liveCount - t->m->daemonCount > 1) {
       t->m->stateLock->wait(t->systemThread, 0);
     }
-
-    enter(t, Thread::ExclusiveState);
   }
 
-  shutDown(t);
+  {
+    ENTER(t, Thread::ActiveState);
+    shutDown(t);
+  }
 
   return 1;
 }
