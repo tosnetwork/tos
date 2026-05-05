@@ -48,7 +48,7 @@ As of 2026-05-05, `jvm/avata` keeps only the execution pieces that fit the TOS
 contract profile:
 
 - Interpreter execution only.
-- Self-contained Avata/TOS `classpath/` only.
+- Self-contained Avata/TOS `rt/` only.
 - No OpenJDK runtime/classpath bridge.
 - No Android/libcore bridge.
 - No bootimage/codeimage generator or runtime hook.
@@ -58,8 +58,8 @@ contract profile:
   removed from the shipped classpath rather than kept as partial host-facing
   compatibility layers.
 
-The classpath source set was reduced from roughly 420 Java/C++/header files to
-251 Java/C++/header files. The generated `classpath.jar` no longer contains
+The runtime source set was reduced from roughly 420 Java/C++/header files to
+251 Java/C++/header files. The generated `rt.jar` no longer contains
 these package prefixes:
 
 - `java.net`
@@ -84,7 +84,7 @@ collections, `java.util.function`, Avata VM support classes, and small
 contract use of those internal remnants is forbidden unless the profile admits it
 later. `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, `MutableCallSite`,
 `VolatileCallSite`, `SerializedLambda`, and `MethodHandleInfo` are not shipped
-in `classpath.jar`.
+in `rt.jar`.
 
 `~/jdk8u` remains useful as a reference checkout for Java 8 opcode, verifier,
 and admitted API semantics. It is not a runtime build input for the consensus

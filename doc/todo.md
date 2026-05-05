@@ -64,8 +64,8 @@ Status legend: `✅` completed, unchecked items are still open.
     files with `major < 45` (pre-Java 1.1), `major > 52` (Java 9+), or
     `minor == 0xFFFF` (Java preview features) by throwing
     `GcUnsupportedClassVersionError`. Supporting Java files added:
-    `classpath/java/lang/UnsupportedClassVersionError.java` and
-    `classpath/java/lang/ClassFormatError.java`; `types.def` entry added for
+    `rt/java/lang/UnsupportedClassVersionError.java` and
+    `rt/java/lang/ClassFormatError.java`; `types.def` entry added for
     `unsupportedClassVersionError`.
   - **Remaining work:**
     - After the version gate, scan the constant pool in `parsePool()` for
@@ -84,7 +84,7 @@ Status legend: `✅` completed, unchecked items are still open.
 - [ ] Replace host-observing APIs with deterministic traps or TOS-provided values:
   wall-clock time, filesystem, networking, process APIs, native library loading,
   reflection surfaces outside the admitted profile, and thread scheduling.
-  - **Status:** `java.lang.System` in `classpath/java/lang/System.java` already
+  - **Status:** `java.lang.System` in `rt/java/lang/System.java` already
     traps `currentTimeMillis()`, `nanoTime()`, `getenv()`, `load()`,
     `loadLibrary()`, `mapLibraryName()`, `exit()` with
     `UnsupportedOperationException`. The Android/libcore and OpenJDK classpath
@@ -94,7 +94,7 @@ Status legend: `✅` completed, unchecked items are still open.
     `Java_java_lang_System_currentTimeMillis` JNI body returns deterministic
     zero if reached by future classpath changes.
   - **Completed in classpath cut:** broad host-facing packages are absent from
-    `classpath.jar`; `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`,
+    `rt.jar`; `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`,
     `MutableCallSite`, `VolatileCallSite`, `SerializedLambda`, and
     `MethodHandleInfo` are no longer shipped.
   - **Remaining work:**
@@ -151,19 +151,19 @@ Status legend: `✅` completed, unchecked items are still open.
       to via native methods.
     - Files to modify: `jvm/avata/src/machine.cpp` (static table snapshot
       hooks), `jvm/avata/src/heap/heap.cpp` (transaction reset), new files
-      `jvm/avata/classpath/tos/storage/PersistentMap.java`,
-      `jvm/avata/classpath/tos/storage/PersistentList.java`,
+      `jvm/avata/rt/tos/storage/PersistentMap.java`,
+      `jvm/avata/rt/tos/storage/PersistentList.java`,
       `jvm/core/cell-codec.cpp`.
 
 ## Added classpath files
 
-- ✅ `classpath/java/lang/ContractViolationError.java` — deterministic trap base
+- ✅ `rt/java/lang/ContractViolationError.java` — deterministic trap base
   class for forbidden host-API access; extends `Error`.
-- ✅ `classpath/java/lang/OutOfGasError.java` — thrown by the interpreter when
+- ✅ `rt/java/lang/OutOfGasError.java` — thrown by the interpreter when
   `gasCounter` reaches zero; extends `Error`.
-- ✅ `classpath/java/lang/ClassFormatError.java` — base for class-file format
+- ✅ `rt/java/lang/ClassFormatError.java` — base for class-file format
   violations; extends `LinkageError`.
-- ✅ `classpath/java/lang/UnsupportedClassVersionError.java` — thrown by the
+- ✅ `rt/java/lang/UnsupportedClassVersionError.java` — thrown by the
   class reader for class files targeting Java 9+ or pre-Java 1.1; extends
   `ClassFormatError`.
 
@@ -228,7 +228,7 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   `test/HostAPITest.java` covered broad Java SE host surfaces before the
   classpath cut; the current profile suite includes `test/CoreTrapProfile.java`
   for `Object.wait/notify` and thread join/interruption traps. Whole-class
-  forbidden APIs are validated by their absence from `classpath.jar`.
+  forbidden APIs are validated by their absence from `rt.jar`.
 
 ## Completed In `feature/avata-jvm`
 
@@ -241,20 +241,20 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 - ✅ Slimmed Avata to the TOS contract VM profile: removed OpenJDK/Android
   classpath bridges, bootimage/codeimage generator, JIT/codegen/AOT sources,
   embed loader, LZMA build variants, and legacy build-matrix entries. The
-  remaining local build is interpreter + self-contained Avata/TOS classpath.
+  remaining local build is interpreter + self-contained Avata/TOS runtime.
 - ✅ Slimmed the Java class library to the v1 contract `rt.jar` profile:
   removed `java.net`, `java.nio`, `java.security`, `java.text`, `java.math`,
   `java.util.concurrent`, `java.util.logging`, `java.util.regex`,
   `java.util.zip`, `java.util.jar`, `dalvik`, `libcore`, process APIs,
   filesystem path APIs, object-stream serialization, and URL/resource handler
-  packages. The generated `classpath.jar` now contains only `java.lang`,
+  packages. The generated `rt.jar` now contains only `java.lang`,
   annotations, `java.lang.invoke`, `java.lang.ref`, admitted reflection,
   minimal `java.io`, deterministic collections, `java.util.function`, Avata VM
   support classes, and small `sun.*` internals required by VM internals.
 - ✅ Removed callable native-internal and non-admitted invoke shell classes:
   `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, `MutableCallSite`,
   `VolatileCallSite`, `SerializedLambda`, and `MethodHandleInfo` are absent
-  from `classpath.jar`.
+  from `rt.jar`.
 - ✅ Turned `Object.wait/notify/notifyAll` and `Thread.join/interruption` into
   deterministic `ContractViolationError` traps. `Thread.activeCount()`,
   `enumerate()`, and `getId()` now return fixed single-thread profile values.

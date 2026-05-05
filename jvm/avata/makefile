@@ -60,7 +60,7 @@ ifneq ($(process),interpret)
 endif
 
 ifneq ($(openjdk)$(openjdk-src),)
-	x := $(error "OpenJDK runtime/classpath builds were removed from the TOS Avata profile; use the Avata/TOS classpath")
+	x := $(error "OpenJDK runtime/classpath builds were removed from the TOS Avata profile; use the Avata/TOS rt tree")
 endif
 
 ifneq ($(android),)
@@ -105,10 +105,10 @@ endif
 
 root := $(shell (cd .. && pwd))
 build = build/$(platform)-$(arch)$(options)
-classpath-build = $(build)/classpath
+classpath-build = $(build)/rt
 test-build = $(build)/test
 src = src
-classpath-src = classpath
+classpath-src = rt
 test = test
 unittest = unittest
 win32 ?= $(root)/win32
@@ -828,7 +828,7 @@ classpath-sources := $(shell find $(classpath-src) -name '*.java')
 
 classpath-classes = \
 	$(call java-classes,$(classpath-sources),$(classpath-src),$(classpath-build))
-classpath-object = $(build)/classpath-jar.o
+classpath-object = $(build)/rt-jar.o
 classpath-dep = $(classpath-build).dep
 
 vm-classes = \
@@ -933,10 +933,10 @@ test-args = $(test-flags) $(input)
 .PHONY: build
 ifneq ($(supports_avata_executable),false)
 build: $(static-library) $(executable) $(dynamic-library) \
-	$(classpath-dep) $(test-dep) $(test-extra-dep) $(build)/classpath.jar
+	$(classpath-dep) $(test-dep) $(test-extra-dep) $(build)/rt.jar
 else
 build: $(static-library) $(dynamic-library) \
-	$(classpath-dep) $(test-dep) $(test-extra-dep) $(build)/classpath.jar
+	$(classpath-dep) $(test-dep) $(test-extra-dep) $(build)/rt.jar
 endif
 
 $(test-dep): $(classpath-dep)
@@ -999,7 +999,7 @@ $(build)/run-tests.sh: $(test-classes) makefile $(build)/extra-dir/multi-classpa
 $(build)/jdk-run-tests.sh: $(test-classes) makefile $(build)/extra-dir/multi-classpath-test.txt $(build)/test/multi-classpath-test.txt
 	echo 'cd $$(dirname $$0)' > $(@)
 	echo "sh ./test.sh 2>/dev/null \\" >> $(@)
-	echo "'' true $(JAVA_HOME)/bin/java $(mode) \"-Xmx128m -Djava.library.path=. -cp test$(path-separator)extra-dir$(path-separator)classpath\" \\" >> $(@)
+	echo "'' true $(JAVA_HOME)/bin/java $(mode) \"-Xmx128m -Djava.library.path=. -cp test$(path-separator)extra-dir$(path-separator)rt\" \\" >> $(@)
 	echo "$(call class-names,$(test-build),$(filter-out $(test-support-classes), $(test-classes))) \\" >> $(@)
 	echo "" >> $(@)
 
@@ -1124,13 +1124,13 @@ $(converter): $(converter-objects) $(converter-tool-objects)
 	@mkdir -p $(dir $(@))
 	$(build-cc) $(^) -g -o $(@)
 
-$(build)/classpath.jar: $(classpath-dep) $(classpath-jar-dep)
+$(build)/rt.jar: $(classpath-dep) $(classpath-jar-dep)
 	@echo "creating $(@)"
 	(wd=$$(pwd) && \
 	 cd $(classpath-build) && \
 	 $(jar) c0f "$$($(native-path) "$${wd}/$(@)")" .)
 
-$(classpath-object): $(build)/classpath.jar $(converter)
+$(classpath-object): $(build)/rt.jar $(converter)
 	@echo "creating $(@)"
 	$(converter) $(<) $(@) _binary_classpath_jar_start \
 		_binary_classpath_jar_end $(target-format) $(arch)

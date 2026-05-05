@@ -66,7 +66,7 @@ clone; it is a permanent maintenance commitment to the Java 8 execution profile
 needed for consensus execution. No attempt will be made to track the retired
 upstream automatically. OpenJDK/JDK8u sources are reference inputs only for
 opcode, verifier, and admitted API semantics. The consensus build uses the
-self-contained Avata/TOS classpath and audits it like consensus code. The fork
+self-contained Avata/TOS runtime and audits it like consensus code. The fork
 will be maintained to the same standard as `evm/` and `uno/`.
 
 The fork lives at `jvm/avata/` with a pinned commit hash recorded in
@@ -367,7 +367,7 @@ for consensus execution. No TOS integration yet; tested standalone.
 - Import the pinned ReadyTalk source snapshot into `jvm/avata/`
 - Add Avata license/notice material to the repository's third-party audit files
 - Keep the current slim Avata baseline: interpreter-only execution path
-  (`avata/src/interpret.cpp`), Avata/TOS classpath only, and no OpenJDK/Android
+  (`avata/src/interpret.cpp`), Avata/TOS `rt/` runtime only, and no OpenJDK/Android
   classpath bridges, bootimage/codeimage generator, JIT/codegen, embed loader,
   or LZMA build variants
 - Remove Avata's host threading primitives. `monitorenter`/`monitorexit` remain
@@ -471,7 +471,7 @@ placeholder result for tests only. A production binary must fail closed if
 **Goal:** Provide the deterministic `rt.jar` that contract classes compile and
 link against. This runtime is the smart-contract API surface for the JVM
 workchain, not an attempt to reproduce the full OpenJDK 8 class library. It is
-built from the Avata/TOS classpath, may use JDK8u as a semantic reference where
+built from the Avata/TOS `rt/` tree, may use JDK8u as a semantic reference where
 that helps preserve Java language and tooling compatibility, and is extended
 with TOS-specific APIs. It is bundled into the executor account's zerostate by
 content hash.
@@ -803,7 +803,7 @@ Last updated: 2026-05-05.
 | Phase | Status | Notes |
 |---|---|---|
 | Phase 0 — Design | 🟡 | Roadmap and restricted API profile are written; TL-B schemas and stub tests not yet written |
-| Phase 1 — Avata fork | 🟡 | Fork imported and renamed; current slim baseline builds as interpreter + Avata/TOS classpath only. Remaining work: fixed floating point, gas schedule, verifier policy, traps, and TOS integration target |
+| Phase 1 — Avata fork | 🟡 | Fork imported and renamed; current slim baseline builds as interpreter + Avata/TOS `rt/` runtime only. Remaining work: fixed floating point, gas schedule, verifier policy, traps, and TOS integration target |
 | Phase 2 — Framework integration | ⬜ | |
 | Phase 3 — Contract stdlib | ⬜ | |
 | Phase 4 — Heap serialization | ⬜ | Largest risk item; must be prototyped before committing to timeline |

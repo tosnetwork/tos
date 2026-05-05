@@ -17,8 +17,8 @@ between two validator binaries causes a fork.
 - Not a tracking clone of the upstream repository. The upstream project is
   retired; we own this fork permanently.
 - Not built as a multi-mode upstream Avian distribution. The supported local
-  profile is interpreter-only with Avata/TOS classpath.
-- Not intended for iOS, Android, OpenJDK classpath builds, boot images,
+  profile is interpreter-only with the Avata/TOS `rt/` runtime tree.
+- Not intended for iOS, Android, OpenJDK runtime builds, boot images,
   compressed embedded loaders, or ProGuard embedding. Those paths were removed
   for the TOS profile.
 
@@ -94,7 +94,7 @@ parameter change and requires a governance vote.
 The supported standalone build is the slim `make` profile:
 
 - `process=interpret` only
-- restricted Java 8 contract class library from Avata/TOS `classpath/` only
+- restricted Java 8 contract class library from Avata/TOS `rt/` only
 - no OpenJDK runtime/classpath bridge
 - no Android/libcore bridge
 - no bootimage/codeimage generator
@@ -102,10 +102,10 @@ The supported standalone build is the slim `make` profile:
 - no `java.net`, `java.nio`, `java.security`, `java.text`, `java.math`,
   `java.util.concurrent`, `java.util.logging`, `java.util.regex`,
   `java.util.zip`, `java.util.jar`, process APIs, filesystem path APIs,
-  object-stream serialization, or URL-handler packages in `classpath.jar`
+  object-stream serialization, or URL-handler packages in `rt.jar`
 - no `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`,
   `MutableCallSite`, `VolatileCallSite`, `SerializedLambda`, or
-  `MethodHandleInfo` shell classes in `classpath.jar`
+  `MethodHandleInfo` shell classes in `rt.jar`
 
 The CMake files mirror this by excluding the removed codegen targets.
 
@@ -121,10 +121,10 @@ make -C jvm/avata java-version=8 run-test
 ```
 
 The current profile builds `jvm/avata/build/<platform>-<arch>/avata`,
-`libjvm.so`, `libavata.a`, `classpath.jar`, and `avata-unittest`.
+`libjvm.so`, `libavata.a`, `rt.jar`, and `avata-unittest`.
 
 The Avata tests cover the interpreter loop, class loading, exception handling,
-and the admitted classpath profile. TOS cell codec, gas metering, and workchain
+and the admitted runtime API profile. TOS cell codec, gas metering, and workchain
 integration are tested outside this directory.
 
 ## Source layout
@@ -137,7 +137,7 @@ jvm/avata/
     heap/                  ← garbage collector
     jnienv.cpp             ← JNI surface; restricted for TOS
     ...
-  classpath/               ← Avata/TOS Java class library sources
+  rt/                      ← Avata/TOS Java runtime sources for rt.jar
   include/                 ← Public C++ headers (avata/vm.h, jni.h)
   test/                    ← Java test classes
   unittest/                ← C++ unit tests
@@ -149,12 +149,12 @@ jvm/avata/
 
 ## Runtime class library
 
-The class library bundled with Avata is the Avata/TOS `classpath/` tree. It is
+The class library bundled with Avata is the Avata/TOS `rt/` tree. It is
 not built from OpenJDK sources in this profile. OpenJDK/JDK 8 sources are used
 as a reference for JVMS and admitted API behavior, not as an Avata runtime build
 input.
 
-The current `classpath.jar` intentionally contains only the contract profile:
+The current `rt.jar` intentionally contains only the contract profile:
 
 - `java.lang`, annotations, `java.lang.invoke`, `java.lang.ref`, and the
   admitted reflection subset needed by Java 8 source and lambda output
@@ -179,7 +179,7 @@ Language-level classes remain under `java.lang` (`Object`, `String`, `Math`,
 
 Contract classes are compiled against this class library, not against a standard
 OpenJDK distribution. The bootstrap classpath used by the TOS contract compiler
-is the `classpath.jar` produced by this build.
+is the `rt.jar` produced by this build.
 
 ## Updating the pinned commit
 
