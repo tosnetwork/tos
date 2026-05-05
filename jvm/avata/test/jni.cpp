@@ -248,6 +248,45 @@ extern "C" JNIEXPORT jboolean JNICALL
   return result;
 }
 
+static bool expectPendingException(JNIEnv* e)
+{
+  bool result = e->ExceptionCheck();
+  if (result) {
+    e->ExceptionClear();
+  }
+  return result;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+    Java_JNI_testWrongMemberIDs(JNIEnv* e, jclass, jclass c)
+{
+  if (e->GetMethodID(c, "method242", "()I") != 0
+      || !expectPendingException(e)) {
+    return false;
+  }
+
+  if (e->GetStaticMethodID(c, "method121", "()I") != 0
+      || !expectPendingException(e)) {
+    return false;
+  }
+
+  if (e->GetFieldID(c, "field950", "I") != 0
+      || !expectPendingException(e)) {
+    return false;
+  }
+
+  if (e->GetStaticFieldID(c, "field951", "I") != 0
+      || !expectPendingException(e)) {
+    return false;
+  }
+
+  return e->GetStaticMethodID(c, "method242", "()I") != 0
+         && e->GetMethodID(c, "method121", "()I") != 0
+         && e->GetStaticFieldID(c, "field950", "I") != 0
+         && e->GetFieldID(c, "field951", "I") != 0
+         && !e->ExceptionCheck();
+}
+
 extern "C" JNIEXPORT jobject JNICALL
     Java_Buffers_allocateNative(JNIEnv* e, jclass, jint capacity)
 {

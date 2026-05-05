@@ -543,8 +543,19 @@ uint64_t getMethodID(Thread* t, uintptr_t* arguments)
   const char* spec = reinterpret_cast<const char*>(arguments[2]);
 
   GcMethod* method = findMethod(t, c, name, spec);
+  if (method == 0) {
+    return 0;
+  }
 
-  assertT(t, (method->flags() & ACC_STATIC) == 0);
+  if (method->flags() & ACC_STATIC) {
+    throwNew(t,
+             GcNoSuchMethodError::Type,
+             "%s %s is static in %s",
+             name,
+             spec,
+             (*c)->vmClass()->name()->body().begin());
+    return 0;
+  }
 
   return methodID(t, method);
 }
@@ -566,8 +577,19 @@ uint64_t getStaticMethodID(Thread* t, uintptr_t* arguments)
   const char* spec = reinterpret_cast<const char*>(arguments[2]);
 
   GcMethod* method = findMethod(t, c, name, spec);
+  if (method == 0) {
+    return 0;
+  }
 
-  assertT(t, method->flags() & ACC_STATIC);
+  if ((method->flags() & ACC_STATIC) == 0) {
+    throwNew(t,
+             GcNoSuchMethodError::Type,
+             "%s %s is not static in %s",
+             name,
+             spec,
+             (*c)->vmClass()->name()->body().begin());
+    return 0;
+  }
 
   return methodID(t, method);
 }
@@ -1424,8 +1446,26 @@ uint64_t getFieldID(Thread* t, uintptr_t* arguments)
   jclass c = reinterpret_cast<jclass>(arguments[0]);
   const char* name = reinterpret_cast<const char*>(arguments[1]);
   const char* spec = reinterpret_cast<const char*>(arguments[2]);
+  bool requireStatic = arguments[3];
 
-  return fieldID(t, resolveField(t, (*c)->vmClass(), name, spec));
+  GcField* field = resolveField(t, (*c)->vmClass(), name, spec);
+  if (field == 0) {
+    return 0;
+  }
+
+  bool isStatic = field->flags() & ACC_STATIC;
+  if (isStatic != requireStatic) {
+    throwNew(t,
+             GcNoSuchFieldError::Type,
+             "%s %s is %sstatic in %s",
+             name,
+             spec,
+             isStatic ? "" : "not ",
+             (*c)->vmClass()->name()->body().begin());
+    return 0;
+  }
+
+  return fieldID(t, field);
 }
 
 jfieldID JNICALL
@@ -1433,7 +1473,8 @@ jfieldID JNICALL
 {
   uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(c),
                            reinterpret_cast<uintptr_t>(name),
-                           reinterpret_cast<uintptr_t>(spec)};
+                           reinterpret_cast<uintptr_t>(spec),
+                           false};
 
   return run(t, getFieldID, arguments);
 }
@@ -1443,7 +1484,8 @@ jfieldID JNICALL
 {
   uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(c),
                            reinterpret_cast<uintptr_t>(name),
-                           reinterpret_cast<uintptr_t>(spec)};
+                           reinterpret_cast<uintptr_t>(spec),
+                           true};
 
   return run(t, getFieldID, arguments);
 }

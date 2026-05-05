@@ -82,9 +82,15 @@ public class JNI {
 
   private static native boolean testClassGetName(Class c);
 
+  private static native boolean testWrongMemberIDs(Class c);
+
   public static int method242() { return 242; }
+
+  public int method121() { return 121; }
   
   public static final int field950 = 950;
+
+  public int field951 = 951;
 
   public static void main(String[] args) throws Exception {
     expect(onLoadCalled);
@@ -148,5 +154,6 @@ public class JNI {
     expect(testNullLocalRef());
 
     expect(testClassGetName(JNI.class));
+    expect(testWrongMemberIDs(JNI.class));
   }
 }
