@@ -35,23 +35,6 @@ __declspec(noreturn) void printUsage(const wchar_t* executableName)
   exit(0);
 }
 
-void writeDestinationFile(const wchar_t* filename)
-{
-  if (FILE* file = _wfopen(filename, L"wb")) {
-    size_t count = BINARY_LOADER(end) - BINARY_LOADER(start);
-    if (count == fwrite(BINARY_LOADER(start),
-                        sizeof(BINARY_LOADER(start)[0]),
-                        count,
-                        file)) {
-      fclose(file);
-      return;
-    }
-  }
-
-  fprintf(stderr, "Unable to write to destination file\n");
-  exit(EXIT_FAILURE);
-}
-
 void failFile(const char* operation, const wchar_t* fileName)
 {
   fwprintf(stderr, L"Unable to %S '%ls': %S\n",
@@ -59,6 +42,34 @@ void failFile(const char* operation, const wchar_t* fileName)
            fileName,
            strerror(errno));
   exit(EXIT_FAILURE);
+}
+
+void closeAfterError(FILE* file)
+{
+  int error = errno;
+  fclose(file);
+  errno = error;
+}
+
+void writeDestinationFile(const wchar_t* filename)
+{
+  FILE* file = _wfopen(filename, L"wb");
+  if (file == 0) {
+    failFile("open", filename);
+  }
+
+  size_t count = BINARY_LOADER(end) - BINARY_LOADER(start);
+  if (count != fwrite(BINARY_LOADER(start),
+                      sizeof(BINARY_LOADER(start)[0]),
+                      count,
+                      file)) {
+    closeAfterError(file);
+    failFile("write", filename);
+  }
+
+  if (fclose(file) != 0) {
+    failFile("close", filename);
+  }
 }
 
 void readFile(std::vector<char>* jarFile, const wchar_t* fileName)
@@ -69,24 +80,26 @@ void readFile(std::vector<char>* jarFile, const wchar_t* fileName)
   }
 
   if (fseek(file, 0, SEEK_END) != 0) {
-    fclose(file);
+    closeAfterError(file);
     failFile("seek", fileName);
   }
 
   long size = ftell(file);
   if (size < 0) {
-    fclose(file);
+    closeAfterError(file);
     failFile("tell", fileName);
   }
 
   if (fseek(file, 0, SEEK_SET) != 0) {
-    fclose(file);
+    closeAfterError(file);
     failFile("seek", fileName);
   }
 
   jarFile->resize(static_cast<size_t>(size));
-  if (size and fread(&jarFile->at(0), 1, jarFile->size(), file) != jarFile->size()) {
-    fclose(file);
+  if (size
+      and fread(&jarFile->at(0), 1, jarFile->size(), file)
+              != jarFile->size()) {
+    closeAfterError(file);
     failFile("read", fileName);
   }
 
