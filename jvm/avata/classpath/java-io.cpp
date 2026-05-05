@@ -97,6 +97,12 @@ typedef wchar_t char_t;
 
 typedef char char_t;
 
+#ifdef __APPLE__
+#define STAT_MTIME st_mtimespec
+#else
+#define STAT_MTIME st_mtim
+#endif
+
 #endif  // not PLATFORM_WINDOWS
 
 #define RESTARTABLE(_cmd, _result) \
@@ -145,8 +151,52 @@ inline bool exists(string_t path)
   return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
 #else
   STRUCT_STAT s;
-  return STAT(path, &s) == 0;
+  int r;
+  RESTARTABLE(STAT(path, &s), r);
+  return r == 0;
 #endif
+}
+
+inline int doStat(string_t path, STRUCT_STAT* s)
+{
+  int r;
+  RESTARTABLE(STAT(path, s), r);
+  return r;
+}
+
+inline int doAccess(string_t path, int mode)
+{
+  int r;
+  RESTARTABLE(ACCESS(path, mode), r);
+  return r;
+}
+
+inline int doMkdir(string_t path, int mode)
+{
+  int r;
+  RESTARTABLE(MKDIR(path, mode), r);
+  return r;
+}
+
+inline int doChmod(string_t path, int mode)
+{
+  int r;
+  RESTARTABLE(CHMOD(path, mode), r);
+  return r;
+}
+
+inline int doRemove(string_t path)
+{
+  int r;
+  RESTARTABLE(REMOVE(path), r);
+  return r;
+}
+
+inline int doRename(string_t oldPath, string_t newPath)
+{
+  int r;
+  RESTARTABLE(RENAME(oldPath, newPath), r);
+  return r;
 }
 
 inline int doOpen(JNIEnv* e, string_t path, int mask, STRUCT_STAT* stats = 0)
@@ -227,6 +277,102 @@ inline void doWrite(JNIEnv* e, jint fd, const jbyte* data, jint length)
   }
 }
 
+#ifndef PLATFORM_WINDOWS
+char* duplicatePath(string_t path)
+{
+  size_t length = strlen(path);
+  char* result = static_cast<char*>(malloc(length + 1));
+  if (result) {
+    memcpy(result, path, length + 1);
+  }
+  return result;
+}
+
+char* absolutePath(string_t path)
+{
+  if (path[0] == '/') {
+    return duplicatePath(path);
+  }
+
+  char* cwd = getcwd(NULL, 0);
+  if (cwd == 0) {
+    return duplicatePath(path);
+  }
+
+  size_t cwdLength = strlen(cwd);
+  size_t pathLength = strlen(path);
+  bool needsSeparator = (cwdLength == 0 or cwd[cwdLength - 1] != '/');
+  char* result = static_cast<char*>(
+      malloc(cwdLength + (needsSeparator ? 1 : 0) + pathLength + 1));
+  if (result) {
+    memcpy(result, cwd, cwdLength);
+    size_t offset = cwdLength;
+    if (needsSeparator) {
+      result[offset++] = '/';
+    }
+    memcpy(result + offset, path, pathLength + 1);
+  }
+  free(cwd);
+  return result;
+}
+
+char* normalizePath(char* path)
+{
+  size_t length = strlen(path);
+  char** parts = static_cast<char**>(malloc((length + 1) * sizeof(char*)));
+  if (parts == 0) {
+    return 0;
+  }
+
+  unsigned count = 0;
+  size_t start = 0;
+  while (start < length) {
+    while (start < length and path[start] == '/') {
+      ++start;
+    }
+    size_t end = start;
+    while (end < length and path[end] != '/') {
+      ++end;
+    }
+    if (end > start) {
+      path[end] = 0;
+      char* part = path + start;
+      if (strcmp(part, ".") == 0) {
+      } else if (strcmp(part, "..") == 0) {
+        if (count > 0) {
+          --count;
+        }
+      } else {
+        parts[count++] = part;
+      }
+    }
+    start = end + 1;
+  }
+
+  size_t resultLength = 1;
+  for (unsigned i = 0; i < count; ++i) {
+    resultLength += strlen(parts[i]) + (i == 0 ? 0 : 1);
+  }
+
+  char* result = static_cast<char*>(malloc(resultLength + 1));
+  if (result) {
+    size_t offset = 0;
+    result[offset++] = '/';
+    for (unsigned i = 0; i < count; ++i) {
+      if (i != 0) {
+        result[offset++] = '/';
+      }
+      size_t partLength = strlen(parts[i]);
+      memcpy(result + offset, parts[i], partLength);
+      offset += partLength;
+    }
+    result[offset] = 0;
+  }
+  free(parts);
+  return result;
+}
+#endif
+
 #ifdef PLATFORM_WINDOWS
 
 class Directory {
@@ -280,9 +426,52 @@ static inline void releaseChars(JNIEnv* e, jstring path, string_t chars)
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-    Java_java_io_File_toCanonicalPath(JNIEnv* /*e*/, jclass, jstring path)
+    Java_java_io_File_toCanonicalPath(JNIEnv* e, jclass, jstring path)
 {
-  // todo
+#ifdef PLATFORM_WINDOWS
+  string_t chars = getChars(e, path);
+  if (chars) {
+#if !defined(WINAPI_FAMILY) || WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+    const unsigned BufferSize = MAX_PATH;
+    char_t buffer[BufferSize];
+    DWORD success = GetFullPathNameW(chars, BufferSize, buffer, 0);
+    releaseChars(e, path, chars);
+    if (success) {
+      return e->NewString(reinterpret_cast<const jchar*>(buffer),
+                          wcslen(buffer));
+    }
+#else
+    std::wstring partialPath = chars;
+    releaseChars(e, path, chars);
+    std::wstring fullPath = AvataInterop::GetFullPath(partialPath);
+    return e->NewString(reinterpret_cast<const jchar*>(fullPath.c_str()),
+                        fullPath.length());
+#endif
+  }
+#else
+  string_t chars = getChars(e, path);
+  if (chars) {
+    char* resolved = realpath(chars, 0);
+    if (resolved) {
+      jstring result = e->NewStringUTF(resolved);
+      free(resolved);
+      releaseChars(e, path, chars);
+      return result;
+    }
+
+    char* absolute = absolutePath(chars);
+    releaseChars(e, path, chars);
+    if (absolute) {
+      char* normalized = normalizePath(absolute);
+      free(absolute);
+      if (normalized) {
+        jstring result = e->NewStringUTF(normalized);
+        free(normalized);
+        return result;
+      }
+    }
+  }
+#endif
   return path;
 }
 
@@ -380,7 +569,7 @@ extern "C" JNIEXPORT jlong JNICALL
   string_t chars = getChars(e, path);
   if (chars) {
     STRUCT_STAT s;
-    int r = STAT(chars, &s);
+    int r = doStat(chars, &s);
     releaseChars(e, path, chars);
     if (r == 0) {
       return s.st_size;
@@ -397,11 +586,9 @@ extern "C" JNIEXPORT void JNICALL
 {
   string_t chars = getChars(e, path);
   if (chars) {
-    if (not exists(chars)) {
-      int r = ::MKDIR(chars, 0777);
-      if (r != 0) {
-        throwNewErrno(e, "java/io/IOException");
-      }
+    int r = doMkdir(chars, 0777);
+    if (r != 0) {
+      throwNewErrno(e, "java/io/IOException");
     }
     releaseChars(e, path, chars);
   }
@@ -413,16 +600,16 @@ extern "C" JNIEXPORT jboolean JNICALL
   bool result = false;
   string_t chars = getChars(e, path);
   if (chars) {
-    if (not exists(chars)) {
-      int fd = OPEN(chars, O_CREAT | O_WRONLY | O_EXCL, 0666);
-      if (fd == -1) {
-        if (errno != EEXIST) {
-          throwNewErrno(e, "java/io/IOException");
-        }
-      } else {
-        result = true;
-        doClose(e, fd);
+    int fd;
+    RESTARTABLE(OPEN(chars, O_CREAT | O_WRONLY | O_EXCL | OPEN_MASK, 0666),
+                fd);
+    if (fd == -1) {
+      if (errno != EEXIST) {
+        throwNewErrno(e, "java/io/IOException");
       }
+    } else {
+      result = true;
+      doClose(e, fd);
     }
     releaseChars(e, path, chars);
   }
@@ -439,10 +626,10 @@ Java_java_io_File_delete(JNIEnv* e, jclass, jstring path)
     if (GetFileAttributes(chars) & FILE_ATTRIBUTE_DIRECTORY) {
       r = !RemoveDirectory(chars);
     } else {
-      r = REMOVE(chars);
+      r = doRemove(chars);
     }
 #else
-    r = REMOVE(chars);
+    r = doRemove(chars);
 #endif
     if (r != 0) {
       throwNewErrno(e, "java/io/IOException");
@@ -456,7 +643,7 @@ extern "C" JNIEXPORT jboolean JNICALL
 {
   string_t chars = getChars(e, path);
   if (chars) {
-    int r = ACCESS(chars, R_OK);
+    int r = doAccess(chars, R_OK);
     releaseChars(e, path, chars);
     return (r == 0);
   }
@@ -468,7 +655,7 @@ extern "C" JNIEXPORT jboolean JNICALL
 {
   string_t chars = getChars(e, path);
   if (chars) {
-    int r = ACCESS(chars, W_OK);
+    int r = doAccess(chars, W_OK);
     releaseChars(e, path, chars);
     return (r == 0);
   }
@@ -480,7 +667,7 @@ extern "C" JNIEXPORT jboolean JNICALL
 {
   string_t chars = getChars(e, path);
   if (chars) {
-    int r = ACCESS(chars, CHECK_X_OK);
+    int r = doAccess(chars, CHECK_X_OK);
     releaseChars(e, path, chars);
     return (r == 0);
   }
@@ -506,7 +693,7 @@ extern "C" JNIEXPORT jboolean JNICALL
     }
 
     STRUCT_STAT s;
-    int r = STAT(chars, &s);
+    int r = doStat(chars, &s);
     if (r == 0) {
       int mode = s.st_mode;
       if (executable) {
@@ -514,7 +701,7 @@ extern "C" JNIEXPORT jboolean JNICALL
       } else {
         mode &= ~mask;
       }
-      if (CHMOD(chars, mode) != 0) {
+      if (doChmod(chars, mode) != 0) {
         v = false;
       } else {
         v = true;
@@ -550,7 +737,7 @@ extern "C" JNIEXPORT jboolean JNICALL
   if (oldChars) {
     bool v;
     if (newChars) {
-      v = RENAME(oldChars, newChars) == 0;
+      v = doRename(oldChars, newChars) == 0;
 
       releaseChars(e, new_, newChars);
     } else {
@@ -569,7 +756,7 @@ extern "C" JNIEXPORT jboolean JNICALL
   string_t chars = getChars(e, path);
   if (chars) {
     STRUCT_STAT s;
-    int r = STAT(chars, &s);
+    int r = doStat(chars, &s);
     bool v = (r == 0 and S_ISDIR(s.st_mode));
     releaseChars(e, path, chars);
     return v;
@@ -584,7 +771,7 @@ extern "C" JNIEXPORT jboolean JNICALL
   string_t chars = getChars(e, path);
   if (chars) {
     STRUCT_STAT s;
-    int r = STAT(chars, &s);
+    int r = doStat(chars, &s);
     bool v = (r == 0 and S_ISREG(s.st_mode));
     releaseChars(e, path, chars);
     return v;
@@ -645,22 +832,17 @@ extern "C" JNIEXPORT jlong JNICALL
 #endif
     CloseHandle(hFile);
     fileDate.QuadPart -= filetimeToUnixEpochAdjustment.QuadPart;
-    return fileDate.QuadPart / 10000000L;
+    return fileDate.QuadPart / 10000L;
 #else
-    struct stat fileStat;
-    int res = stat(chars, &fileStat);
+    STRUCT_STAT fileStat;
+    int res = doStat(chars, &fileStat);
     releaseChars(e, path, chars);
 
     if (res == -1) {
       return 0;
     }
-#ifdef __APPLE__
-#define MTIME st_mtimespec
-#else
-#define MTIME st_mtim
-#endif
-    return (static_cast<jlong>(fileStat.MTIME.tv_sec) * 1000)
-           + (static_cast<jlong>(fileStat.MTIME.tv_nsec) / (1000 * 1000));
+    return (static_cast<jlong>(fileStat.STAT_MTIME.tv_sec) * 1000)
+           + (static_cast<jlong>(fileStat.STAT_MTIME.tv_nsec) / 1000000);
 #endif
   }
 
@@ -737,7 +919,12 @@ extern "C" JNIEXPORT jlong JNICALL
 {
   string_t chars = getChars(e, path);
   if (chars) {
-    jlong handle = reinterpret_cast<jlong>(opendir(chars));
+    DIR* dir;
+    do {
+      errno = 0;
+      dir = opendir(chars);
+    } while (dir == 0 and errno == EINTR);
+    jlong handle = reinterpret_cast<jlong>(dir);
     releaseChars(e, path, chars);
     return handle;
   } else {
@@ -752,8 +939,12 @@ extern "C" JNIEXPORT jstring JNICALL
 
   if (handle != 0) {
     while (true) {
+      errno = 0;
       directoryEntry = readdir(reinterpret_cast<DIR*>(handle));
       if (directoryEntry == NULL) {
+        if (errno == EINTR) {
+          continue;
+        }
         return NULL;
       } else if (strcmp(directoryEntry->d_name, ".") == 0
                  || strcmp(directoryEntry->d_name, "..") == 0) {

@@ -36,9 +36,9 @@ Status legend: `✅` completed, unchecked items are still open.
 
 ## P1 JDK8u Compatibility Gaps
 
-- [ ] Continue aligning native IO error handling with JDK8u:
+- ✅ Continue aligning native IO error handling with JDK8u:
   file metadata helpers, directory handling, interrupted syscalls, and close
-  semantics still need a full pass.
+  semantics now have a full pass for the current Avata `java.io` surface.
 - [ ] Complete `invokedynamic`/lambda support for the admitted Java profile:
   marker interfaces, bridge methods, and deterministic bootstrap linkage.
 - [ ] Audit `java.lang.invoke` against OpenJDK 8u behavior and decide which parts
@@ -82,3 +82,6 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ `RandomAccessFile` now follows the same JDK8u native open/read/write retry
   model, rejects directories on open, supports `rws`/`rwd`, EOF reads,
   `setLength`, and the core `DataOutput` methods.
+- ✅ `File` metadata helpers now follow JDK8u-style behavior for canonical
+  paths, exclusive file creation, existing-directory `mkdir`, interrupted
+  `stat`/`access`/`chmod`/`remove`/`rename` calls, and directory iteration.

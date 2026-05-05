@@ -52,12 +52,55 @@ public class Files {
       expect(file.delete());
     }
   }
+
+  private static void fileMetadataTest() throws Exception {
+    File dir = new File("file-metadata-test");
+    File child = new File(dir, "child.txt");
+    File renamed = new File(dir, "renamed.txt");
+    try {
+      if (renamed.exists()) expect(renamed.delete());
+      if (child.exists()) expect(child.delete());
+      if (dir.exists()) expect(dir.delete());
+
+      expect(dir.mkdir());
+      expect(!dir.mkdir());
+      expect(dir.exists());
+      expect(dir.isDirectory());
+      expect(!dir.isFile());
+
+      File canonicalAlias = new File(dir.getPath() + File.separator + "."
+          + File.separator + ".." + File.separator + dir.getName());
+      expect(canonicalAlias.getCanonicalPath().equals(dir.getCanonicalPath()));
+
+      expect(child.createNewFile());
+      expect(!child.createNewFile());
+      expect(child.exists());
+      expect(child.isFile());
+      expect(!child.isDirectory());
+      expect(child.length() == 0);
+
+      expect(child.renameTo(renamed));
+      expect(!child.exists());
+      expect(renamed.exists());
+      expect(!child.renameTo(renamed));
+
+      expect(renamed.delete());
+      expect(!renamed.delete());
+      expect(dir.delete());
+      expect(!dir.delete());
+    } finally {
+      if (renamed.exists()) expect(renamed.delete());
+      if (child.exists()) expect(child.delete());
+      if (dir.exists()) expect(dir.delete());
+    }
+  }
   
   public static void main(String[] args) throws Exception {
     isAbsoluteTest(true);
     isAbsoluteTest(false);
     setExecutableTestWithPermissions(true);
     setExecutableTestWithPermissions(false);
+    fileMetadataTest();
     isRootParent();
   
     { File f = new File("test.txt");
