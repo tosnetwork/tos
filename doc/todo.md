@@ -137,3 +137,6 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ `Long`/`Integer` radix string helpers now follow the JDK8u unsigned
   conversion surface for hex/octal/binary and Java 8 `toUnsignedString`
   helpers, including invalid-radix fallback to base 10.
+- ✅ `SimpleDateFormat` now supports a deterministic JDK8u-compatible numeric
+  subset for `y/M/d/H/m/s` fields plus quoted literals, while still rejecting
+  locale-specific text fields outside the consensus profile.
