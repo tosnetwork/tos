@@ -34,6 +34,7 @@ Register fpr(lir::RegisterPair* reg)
 void append(Context* c, uint32_t instruction)
 {
   c->code.append4(instruction);
+  maybeFlushConstantPool(c);
 }
 
 uint32_t lslv(Register Rd, Register Rn, Register Rm, unsigned size)

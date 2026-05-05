@@ -233,6 +233,47 @@ void appendPoolEvent(Context* con,
   b->poolEventTail = e;
 }
 
+void flushConstantPool(Context* con,
+                       MyBlock* b,
+                       unsigned offset,
+                       PoolOffset* tail)
+{
+  PoolOffset* next = tail->next;
+  tail->next = 0;
+
+  appendPoolEvent(con, b, offset, b->poolOffsetHead, tail);
+
+  b->poolOffsetHead = next;
+  if (next == 0) {
+    b->poolOffsetTail = 0;
+  }
+
+  b->lastEventOffset = offset;
+  b->lastPoolOffsetTail = b->poolOffsetTail;
+}
+
+void maybeFlushConstantPool(Context* con)
+{
+  if (vm::TargetBytesPerWord != 4) {
+    return;
+  }
+
+  MyBlock* b = con->lastBlock;
+  if (b == 0 or b->poolOffsetHead == 0) {
+    return;
+  }
+
+  unsigned offset = con->code.length() - b->offset;
+  int32_t distance = (offset + vm::TargetBytesPerWord - 8)
+                     - b->poolOffsetHead->offset;
+
+  // ARM32 literal loads have a 12-bit positive PC-relative offset.  Long
+  // compiler events may not call endEvent before that range is exhausted.
+  if (distance >= PoolOffsetMask - InstructionSize) {
+    flushConstantPool(con, b, offset, b->poolOffsetTail);
+  }
+}
+
 bool needJump(MyBlock* b)
 {
   return b->next or b->size != (b->size & PoolOffsetMask);

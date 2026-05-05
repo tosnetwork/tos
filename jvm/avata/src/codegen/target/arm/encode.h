@@ -683,6 +683,7 @@ inline int dmb()
 inline void emit(Context* con, int code)
 {
   con->code.append4(code);
+  maybeFlushConstantPool(con);
 }
 
 }  // namespace arm

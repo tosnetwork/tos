@@ -146,6 +146,8 @@ void appendPoolEvent(Context* con,
                      PoolOffset* head,
                      PoolOffset* tail);
 
+void maybeFlushConstantPool(Context* con);
+
 }  // namespace arm
 }  // namespace codegen
 }  // namespace avata

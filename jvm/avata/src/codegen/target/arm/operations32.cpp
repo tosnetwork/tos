@@ -10,9 +10,9 @@
 
 #include "context.h"
 #include "operations.h"
+#include "fixup.h"
 #include "encode.h"
 #include "block.h"
-#include "fixup.h"
 #include "multimethod.h"
 
 #if TARGET_BYTES_PER_WORD == 4
