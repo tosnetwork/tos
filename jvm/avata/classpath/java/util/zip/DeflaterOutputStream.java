@@ -47,11 +47,13 @@ public class DeflaterOutputStream extends FilterOutputStream {
     // error condition checking
     if (deflater.finished()) {
       throw new IOException("Already at end of stream");
+    } else if (b == null) {
+      throw new NullPointerException();
     } else if (offset < 0) {
       throw new IndexOutOfBoundsException("Offset can't be less than zero");
     } else if (length < 0) {
       throw new IndexOutOfBoundsException("Length can't be less than zero");
-    } else if (b.length - (offset + length) < 0) {
+    } else if (offset > b.length - length) {
       throw new IndexOutOfBoundsException("Offset + Length is larger than the input byte array");
     } else if (length == 0) {
       return;

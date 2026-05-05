@@ -1,4 +1,5 @@
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
@@ -55,12 +56,42 @@ public class ZipOutputStreamTest
           if (! v) throw new RuntimeException();
         }
 
+        private static interface ThrowingRunnable {
+          void run() throws Exception;
+        }
+
+        private static void expectIndexOutOfBounds(ThrowingRunnable r)
+          throws Exception
+        {
+          try {
+            r.run();
+          } catch (IndexOutOfBoundsException expected) {
+            return;
+          }
+
+          throw new RuntimeException("expected IndexOutOfBoundsException");
+        }
+
+        private static void expectNullPointer(ThrowingRunnable r)
+          throws Exception
+        {
+          try {
+            r.run();
+          } catch (NullPointerException expected) {
+            return;
+          }
+
+          throw new RuntimeException("expected NullPointerException");
+        }
+
         public static void main(String[] args)
           throws Exception
         {
                 List<File> zipFiles = new ArrayList<File>(2);
 
                 try {
+                  testBounds();
+
                   // Test byte-at-a-time write function
                   File f1 = createZip(WriteStyle.Byte);
                   zipFiles.add(f1);
@@ -77,6 +108,116 @@ public class ZipOutputStreamTest
                   // Remove the created zip files
                   cleanUp(zipFiles);
                 }
+        }
+
+        private static void testBounds()
+          throws Exception
+        {
+          final byte[] bytes = new byte[] { 1, 2, 3, 4 };
+
+          final CRC32 crc = new CRC32();
+          expectIndexOutOfBounds(new ThrowingRunnable() {
+            public void run() {
+              crc.update(bytes, 2, Integer.MAX_VALUE);
+            }
+          });
+          expectNullPointer(new ThrowingRunnable() {
+            public void run() {
+              crc.update(null, 0, 1);
+            }
+          });
+
+          final Deflater deflater = new Deflater();
+          try {
+            expectIndexOutOfBounds(new ThrowingRunnable() {
+              public void run() {
+                deflater.setInput(bytes, 2, Integer.MAX_VALUE);
+              }
+            });
+            deflater.setInput(bytes, 0, bytes.length);
+            expectIndexOutOfBounds(new ThrowingRunnable() {
+              public void run() {
+                deflater.deflate(new byte[4], 2, Integer.MAX_VALUE);
+              }
+            });
+            expect(deflater.deflate(new byte[0]) == 0);
+          } finally {
+            deflater.dispose();
+          }
+
+          final Deflater emptyDeflater = new Deflater();
+          try {
+            emptyDeflater.finish();
+            expect(emptyDeflater.deflate(new byte[16]) > 0);
+          } finally {
+            emptyDeflater.dispose();
+          }
+
+          final Inflater inflater = new Inflater();
+          try {
+            expectIndexOutOfBounds(new ThrowingRunnable() {
+              public void run() {
+                inflater.setInput(bytes, 2, Integer.MAX_VALUE);
+              }
+            });
+            inflater.setInput(bytes, 0, bytes.length);
+            expectIndexOutOfBounds(new ThrowingRunnable() {
+              public void run() throws Exception {
+                inflater.inflate(new byte[4], 2, Integer.MAX_VALUE);
+              }
+            });
+          } finally {
+            inflater.dispose();
+          }
+
+          final Inflater emptyInflater = new Inflater();
+          try {
+            expect(emptyInflater.inflate(new byte[0]) == 0);
+          } finally {
+            emptyInflater.dispose();
+          }
+
+          final DeflaterOutputStream deflaterStream
+            = new DeflaterOutputStream(new ByteArrayOutputStream());
+          expectIndexOutOfBounds(new ThrowingRunnable() {
+            public void run() throws Exception {
+              deflaterStream.write(bytes, 2, Integer.MAX_VALUE);
+            }
+          });
+          expectNullPointer(new ThrowingRunnable() {
+            public void run() throws Exception {
+              deflaterStream.write(null, 0, 1);
+            }
+          });
+          deflaterStream.write(bytes, 0, bytes.length);
+          deflaterStream.close();
+
+          final DeflaterOutputStream emptyDeflaterStream
+            = new DeflaterOutputStream(new ByteArrayOutputStream());
+          emptyDeflaterStream.close();
+
+          final ZipOutputStream zip
+            = new ZipOutputStream(new ByteArrayOutputStream());
+          zip.putNextEntry(new ZipEntry("bounds"));
+          expectIndexOutOfBounds(new ThrowingRunnable() {
+            public void run() throws Exception {
+              zip.write(bytes, 2, Integer.MAX_VALUE);
+            }
+          });
+          expectNullPointer(new ThrowingRunnable() {
+            public void run() throws Exception {
+              zip.write(null, 0, 1);
+            }
+          });
+          zip.write(bytes, 0, bytes.length);
+          zip.closeEntry();
+          zip.close();
+
+          final ZipOutputStream emptyZip
+            = new ZipOutputStream(new ByteArrayOutputStream());
+          emptyZip.putNextEntry(new ZipEntry("empty"));
+          emptyZip.closeEntry();
+          emptyZip.close();
         }
 
         private static File createZip(WriteStyle writeStyle)

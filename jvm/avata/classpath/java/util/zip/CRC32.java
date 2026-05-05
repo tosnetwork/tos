@@ -43,6 +43,14 @@ public class CRC32 {
   }
 
   public void update(byte[] array, int offset, int length) {
+    if (array == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > array.length - length) {
+      throw new ArrayIndexOutOfBoundsException();
+    }
+
     for (int i = 0; i < length; ++i) {
       update(array[offset + i] & 0xFF);
     }

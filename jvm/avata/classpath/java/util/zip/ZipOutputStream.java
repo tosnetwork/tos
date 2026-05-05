@@ -85,7 +85,10 @@ public class ZipOutputStream extends DeflaterOutputStream {
   
   @Override
   public void write(byte[] b, int offset, int length) throws IOException {
-    if (offset < 0 || length < 0 || b.length - (offset + length) < 0)
+    if (b == null)
+      throw new NullPointerException();
+
+    if (offset < 0 || length < 0 || offset > b.length - length)
       throw new IndexOutOfBoundsException();
 
     currentEntry.uncompSize += length;

@@ -15,13 +15,15 @@ public class Deflater {
   private static final int Z_OK = 0;
   private static final int Z_STREAM_END = 1;
   private static final int Z_NEED_DICT = 2;
+  private static final int Z_BUF_ERROR = -5;
+  private static final byte[] EmptyInput = new byte[0];
 
 //   static {
 //     System.loadLibrary("natives");
 //   }
 
   private long peer;
-  private byte[] input;
+  private byte[] input = EmptyInput;
   private int offset;
   private int length;
   private boolean needDictionary;
@@ -45,6 +47,16 @@ public class Deflater {
   private void check() {
     if (peer == 0) {
       throw new IllegalStateException();      
+    }
+  }
+
+  private static void checkRange(byte[] array, int offset, int length) {
+    if (array == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > array.length - length) {
+      throw new ArrayIndexOutOfBoundsException();
     }
   }
 
@@ -80,6 +92,7 @@ public class Deflater {
   }
 
   public void setInput(byte[] input, int offset, int length) {
+    checkRange(input, offset, length);
     this.input = input;
     this.offset = offset;
     this.length = length;
@@ -88,7 +101,7 @@ public class Deflater {
   public void reset() {
     dispose();
     peer = make(nowrap, DEFAULT_LEVEL);
-    input = null;
+    input = EmptyInput;
     offset = length = 0;
     finish = false;
     needDictionary = finished = false;
@@ -110,11 +123,16 @@ public class Deflater {
     if (input == null || output == null) {
       throw new NullPointerException();
     }
+    checkRange(output, offset, length);
 
     int[] results = new int[3];
     deflate(peer, 
             input, this.offset, this.length,
             output, offset, length, finish, results);
+
+    if (results[zlibResult] == Z_BUF_ERROR) {
+      return results[outputCount];
+    }
 
     if (results[zlibResult] < 0) {
       throw new AssertionError();

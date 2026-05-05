@@ -15,6 +15,19 @@
 #include "jni.h"
 #include "jni-util.h"
 
+namespace {
+
+jbyte* allocateBuffer(JNIEnv* e, jint length)
+{
+  jbyte* buffer = static_cast<jbyte*>(malloc(length == 0 ? 1 : length));
+  if (buffer == 0) {
+    throwNew(e, "java/lang/OutOfMemoryError", 0);
+  }
+  return buffer;
+}
+
+}
+
 extern "C" JNIEXPORT jlong JNICALL
     Java_java_util_zip_Inflater_make(JNIEnv* e, jclass, jboolean nowrap)
 {
@@ -58,16 +71,14 @@ extern "C" JNIEXPORT void JNICALL
 {
   z_stream* s = reinterpret_cast<z_stream*>(peer);
 
-  jbyte* in = static_cast<jbyte*>(malloc(inputLength));
+  jbyte* in = allocateBuffer(e, inputLength);
   if (in == 0) {
-    throwNew(e, "java/lang/OutOfMemoryError", 0);
     return;
   }
 
-  jbyte* out = static_cast<jbyte*>(malloc(outputLength));
+  jbyte* out = allocateBuffer(e, outputLength);
   if (out == 0) {
     free(in);
-    throwNew(e, "java/lang/OutOfMemoryError", 0);
     return;
   }
 
@@ -138,16 +149,14 @@ extern "C" JNIEXPORT void JNICALL
 {
   z_stream* s = reinterpret_cast<z_stream*>(peer);
 
-  jbyte* in = static_cast<jbyte*>(malloc(inputLength));
+  jbyte* in = allocateBuffer(e, inputLength);
   if (in == 0) {
-    throwNew(e, "java/lang/OutOfMemoryError", 0);
     return;
   }
 
-  jbyte* out = static_cast<jbyte*>(malloc(outputLength));
+  jbyte* out = allocateBuffer(e, outputLength);
   if (out == 0) {
     free(in);
-    throwNew(e, "java/lang/OutOfMemoryError", 0);
     return;
   }
 
