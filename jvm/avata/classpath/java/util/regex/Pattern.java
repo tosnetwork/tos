@@ -29,6 +29,13 @@ public abstract class Pattern implements PikeVMOpcodes {
   public static final int DOTALL           = 32;
   public static final int UNICODE_CASE     = 64;
   public static final int CANON_EQ         = 128;
+  public static final int UNICODE_CHARACTER_CLASS = 256;
+
+  private static final int KnownFlags = UNIX_LINES | CASE_INSENSITIVE
+    | COMMENTS | MULTILINE | LITERAL | DOTALL | UNICODE_CASE | CANON_EQ
+    | UNICODE_CHARACTER_CLASS;
+  private static final int UnsupportedFlags = UNIX_LINES | COMMENTS
+    | UNICODE_CASE | CANON_EQ | UNICODE_CHARACTER_CLASS;
 
   private final int patternFlags;
   private final String pattern;
@@ -43,10 +50,17 @@ public abstract class Pattern implements PikeVMOpcodes {
   }
 
   public static Pattern compile(String regex, int flags) {
-    if (flags != 0) {
-      throw new UnsupportedOperationException("TODO");
+    int unknown = flags & ~KnownFlags;
+    if (unknown != 0) {
+      throw new IllegalArgumentException
+        ("Unknown regex flags: 0x" + Integer.toHexString(unknown));
     }
-    return new Compiler().compile(regex);
+    int unsupported = flags & UnsupportedFlags;
+    if (unsupported != 0) {
+      throw new UnsupportedOperationException
+        ("Unsupported regex flags: 0x" + Integer.toHexString(unsupported));
+    }
+    return new Compiler(flags).compile(regex);
   }
 
   public int flags() {

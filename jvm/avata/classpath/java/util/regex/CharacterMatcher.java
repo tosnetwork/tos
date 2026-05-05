@@ -36,9 +36,30 @@ class CharacterMatcher {
     return result;
   }
 
+  public static CharacterMatcher forChar(char c, boolean caseInsensitive) {
+    CharacterMatcher matcher = new CharacterMatcher(new boolean[0], false);
+    if (caseInsensitive) {
+      matcher.setCaseVariants(c);
+    } else {
+      matcher.setMatch(c);
+    }
+    return matcher;
+  }
+
   public boolean matches(char c) {
     int index = c;
     return (map.length > index && map[index]) ^ inversePattern;
+  }
+
+  public CharacterMatcher caseInsensitive() {
+    CharacterMatcher matcher = new CharacterMatcher
+      (java.util.Arrays.copyOf(map, map.length), inversePattern);
+    for (int i = 0; i < map.length; ++i) {
+      if (map[i]) {
+        matcher.setCaseVariants(i);
+      }
+    }
+    return matcher;
   }
 
   public String toString() {
@@ -101,6 +122,15 @@ class CharacterMatcher {
   private void setMatch(int c) {
     ensureCapacity(c + 1);
     map[c] = true;
+  }
+
+  private void setCaseVariants(int c) {
+    setMatch(c);
+    if (c >= 'a' && c <= 'z') {
+      setMatch(c - ('a' - 'A'));
+    } else if (c >= 'A' && c <= 'Z') {
+      setMatch(c + ('a' - 'A'));
+    }
   }
 
   private void ensureCapacity(int length) {

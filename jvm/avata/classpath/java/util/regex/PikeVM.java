@@ -39,7 +39,7 @@ class PikeVM implements PikeVMOpcodes {
   }
 
   protected PikeVM(int[] program, int findPrefixLength, int groupCount,
-    CharacterMatcher[] classes, PikeVM[] lookarounds)
+    CharacterMatcher[] classes, PikeVM[] lookarounds, boolean multiLine)
   {
     this.program = program;
     this.findPrefixLength = findPrefixLength;
@@ -47,6 +47,7 @@ class PikeVM implements PikeVMOpcodes {
     offsetsCount = 2 * groupCount + 2;
     this.classes = classes;
     this.lookarounds = lookarounds;
+    this.multiLine = multiLine;
   }
 
   /**

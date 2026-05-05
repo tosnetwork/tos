@@ -98,5 +98,37 @@ public class Regex {
     expectGroups("a??(a{3}?)", "aaaa", "aaa");
     expectNoMatch("a(a{3}?)", "aaaaa");
     expectMatch("a(a{3,}?)", "aaaaa");
+
+    expect(Pattern.compile("abc", Pattern.CASE_INSENSITIVE)
+           .matcher("AbC").matches());
+    expect(Pattern.compile("[a-f]+", Pattern.CASE_INSENSITIVE)
+           .matcher("AF").matches());
+    expect(Pattern.compile("a.b", Pattern.LITERAL)
+           .matcher("a.b").matches());
+    expect(!Pattern.compile("a.b", Pattern.LITERAL)
+           .matcher("axb").matches());
+    expect(Pattern.compile("a.b", Pattern.LITERAL | Pattern.CASE_INSENSITIVE)
+           .matcher("A.B").matches());
+    expect(Pattern.compile(".", Pattern.DOTALL).matcher("\n").matches());
+    expect(!Pattern.compile(".").matcher("\n").matches());
+    Matcher matcher = Pattern.compile("^H", Pattern.MULTILINE)
+      .matcher("ello\nHobbes");
+    expect(matcher.find());
+    expect(matcher.start() == 5);
+    expect(!Pattern.compile("^H").matcher("ello\nHobbes").find());
+    expect(Pattern.compile("x", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE)
+           .flags() == (Pattern.CASE_INSENSITIVE | Pattern.MULTILINE));
+    try {
+      Pattern.compile("x", 0x400);
+      expect(false);
+    } catch (IllegalArgumentException e) {
+      // expected
+    }
+    try {
+      Pattern.compile("x", Pattern.UNICODE_CHARACTER_CLASS);
+      expect(false);
+    } catch (UnsupportedOperationException e) {
+      // expected
+    }
   }
 }

@@ -110,3 +110,7 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ Generic reflection now parses admitted JDK8u wildcard type arguments and
   generic array types, including cloned wildcard bounds plus structural
   equality/hash codes.
+- ✅ `Pattern.compile(regex, flags)` now follows JDK8u flag validation for the
+  admitted deterministic subset: `LITERAL`, `DOTALL`, `MULTILINE`, and ASCII
+  `CASE_INSENSITIVE`; unsupported locale/Unicode/canonical modes, including
+  Java 8's `UNICODE_CHARACTER_CLASS`, fail deterministically.

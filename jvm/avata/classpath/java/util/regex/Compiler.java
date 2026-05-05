@@ -29,8 +29,10 @@ class Compiler implements PikeVMOpcodes {
     private int findPreambleSize;
     private ArrayList<CharacterMatcher> classes;
     private ArrayList<PikeVM> lookarounds;
+    private final int flags;
 
-    public Output(Expression expr) {
+    public Output(Expression expr, int flags) {
+      this.flags = flags;
       // try-run to determine the code size
       expr.writeCode(this);
       program = new int[offset];
@@ -69,7 +71,7 @@ class Compiler implements PikeVMOpcodes {
       PikeVM[] lookarounds = new PikeVM[this.lookarounds.size()];
       this.lookarounds.toArray(lookarounds);
       return new PikeVM(program, findPreambleSize, groupCount, classes,
-        lookarounds);
+        lookarounds, (flags & Pattern.MULTILINE) != 0);
     }
 
     public int addClass(CharacterMatcher characterClass) {
@@ -99,7 +101,8 @@ class Compiler implements PikeVMOpcodes {
     private final CharacterMatcher characterClass;
 
     public CharacterRange(CharacterMatcher characterClass) {
-      this.characterClass = characterClass;
+      this.characterClass = has(Pattern.CASE_INSENSITIVE)
+        ? characterClass.caseInsensitive() : characterClass;
     }
 
     protected void writeCode(Output output) {
@@ -313,7 +316,7 @@ class Compiler implements PikeVMOpcodes {
 
     @Override
     protected void writeCode(Output output) {
-      PikeVM vm = new Output(group).toVM();
+      PikeVM vm = new Output(group, flags).toVM();
       if (!forward) {
         vm.reverse();
       }
@@ -362,14 +365,39 @@ class Compiler implements PikeVMOpcodes {
 
   private Group0 root;
   private Stack<Group> groups;
+  private final int flags;
 
   public Compiler() {
+    this(0);
+  }
+
+  public Compiler(int flags) {
+    this.flags = flags;
     root = new Group0();
     groups = new Stack<Group>();
     groups.add(root.group);
   }
 
+  private boolean has(int flag) {
+    return (flags & flag) != 0;
+  }
+
+  private void pushLiteral(Group current, char c) {
+    if (has(Pattern.CASE_INSENSITIVE)) {
+      current.push(new CharacterRange(CharacterMatcher.forChar(c, true)));
+    } else {
+      current.push(c);
+    }
+  }
+
   public Pattern compile(String regex) {
+    if (has(Pattern.LITERAL)) {
+      for (int i = 0; i < regex.length(); ++i) {
+        pushLiteral(root.group, regex.charAt(i));
+      }
+      return makePattern(regex);
+    }
+
     char[] array = regex.toCharArray();
     CharacterMatcher.Parser characterClassParser =
       new CharacterMatcher.Parser(array);
@@ -377,18 +405,18 @@ class Compiler implements PikeVMOpcodes {
       char c = array[index];
       Group current = groups.peek();
       if (regularCharacter.matches(c)) {
-        current.push(c);
+        pushLiteral(current, c);
         continue;
       }
       switch (c) {
       case '.':
-        current.push(DOT);
+        current.push(has(Pattern.DOTALL) ? DOTALL : DOT);
         continue;
       case '\\':
         int unescaped = characterClassParser.parseEscapedCharacter(index + 1);
         if (unescaped >= 0) {
           index = characterClassParser.getEndOffset() - 1;
-          current.push((char)unescaped);
+          pushLiteral(current, (char) unescaped);
           continue;
         }
         CharacterMatcher characterClass = characterClassParser.parseClass(index);
@@ -523,11 +551,15 @@ class Compiler implements PikeVMOpcodes {
       throw new IllegalArgumentException("Unclosed groups: ("
         + (groups.size() - 1) + "): " + regex);
     }
-    PikeVM vm = new Output(root).toVM();
+    return makePattern(regex);
+  }
+
+  private Pattern makePattern(String regex) {
+    PikeVM vm = new Output(root, flags).toVM();
     String plain = vm.isPlainString();
-    if (plain != null) {
-      return new TrivialPattern(regex, plain, 0);
+    if (plain != null && !has(Pattern.CASE_INSENSITIVE)) {
+      return new TrivialPattern(regex, plain, flags);
     }
-    return new RegexPattern(regex, 0, vm);
+    return new RegexPattern(regex, flags, vm);
   }
 }
