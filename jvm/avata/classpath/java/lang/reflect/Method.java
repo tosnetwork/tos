@@ -17,7 +17,9 @@ import avata.Classes;
 
 import java.lang.annotation.Annotation;
 
-public class Method<T> extends AccessibleObject implements Member {
+public class Method<T> extends AccessibleObject
+  implements Member, GenericDeclaration
+{
   public final VMMethod vmMethod;
   private boolean accessible;
 
@@ -67,6 +69,10 @@ public class Method<T> extends AccessibleObject implements Member {
     return Classes.getParameterTypes(vmMethod);
   }
 
+  public int getParameterCount() {
+    return vmMethod.parameterCount;
+  }
+
   public Object invoke(Object instance, Object ... arguments)
     throws InvocationTargetException, IllegalAccessException
   {
@@ -112,6 +118,14 @@ public class Method<T> extends AccessibleObject implements Member {
       }
     }
     throw new RuntimeException();
+  }
+
+  public Type getGenericReturnType() {
+    return SignatureParser.parseMethodReturnType(this);
+  }
+
+  public Type[] getGenericParameterTypes() {
+    return SignatureParser.parseMethodParameterTypes(this);
   }
 
   public <T extends Annotation> T getAnnotation(Class<T> class_) {
@@ -160,5 +174,13 @@ public class Method<T> extends AccessibleObject implements Member {
 
   public Class<?>[] getExceptionTypes() {
     return Classes.getExceptionTypes(vmMethod);
+  }
+
+  public Type[] getGenericExceptionTypes() {
+    return SignatureParser.parseMethodExceptionTypes(this);
+  }
+
+  public TypeVariable<?>[] getTypeParameters() {
+    return SignatureParser.parseTypeParameters(this);
   }
 }

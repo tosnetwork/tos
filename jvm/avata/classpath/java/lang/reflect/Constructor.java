@@ -10,9 +10,13 @@
 
 package java.lang.reflect;
 
+import avata.VMMethod;
+
 import java.lang.annotation.Annotation;
 
-public class Constructor<T> extends AccessibleObject implements Member {
+public class Constructor<T> extends AccessibleObject
+  implements Member, GenericDeclaration
+{
   private Method<T> method;
 
   public Constructor(Method<T> method) {
@@ -38,6 +42,14 @@ public class Constructor<T> extends AccessibleObject implements Member {
 
   public Class[] getParameterTypes() {
     return method.getParameterTypes();
+  }
+
+  public int getParameterCount() {
+    return method.getParameterCount();
+  }
+
+  public Type[] getGenericParameterTypes() {
+    return SignatureParser.parseConstructorParameterTypes(this);
   }
 
   public int getModifiers() {
@@ -77,5 +89,17 @@ public class Constructor<T> extends AccessibleObject implements Member {
 
   public Class<?>[] getExceptionTypes() {
     return method.getExceptionTypes();
+  }
+
+  public Type[] getGenericExceptionTypes() {
+    return SignatureParser.parseConstructorExceptionTypes(this);
+  }
+
+  public TypeVariable<?>[] getTypeParameters() {
+    return SignatureParser.parseTypeParameters(this);
+  }
+
+  VMMethod vmMethod() {
+    return method.vmMethod;
   }
 }

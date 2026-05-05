@@ -11,6 +11,7 @@
 package java.lang.reflect;
 
 import avata.Classes;
+import avata.VMMethod;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,6 +35,89 @@ public class SignatureParser {
     Map<String, TypeVariable> variables
       = collectTypeVariables(declaringClass.getDeclaringClass());
     return parseTypeParameters(declaringClass, variables, false);
+  }
+
+  public static TypeVariable<?>[] parseTypeParameters(Method method) {
+    String signature = methodSignature(method.vmMethod);
+    if (signature == null || signature.length() == 0 || signature.charAt(0) != '<') {
+      return new TypeVariable<?>[0];
+    }
+
+    Map<String, TypeVariable> variables
+      = collectTypeVariables(method.getDeclaringClass());
+    return parseTypeParameters
+      (method, method.vmMethod.class_.loader, signature, variables, false);
+  }
+
+  public static TypeVariable<?>[] parseTypeParameters(Constructor constructor) {
+    VMMethod vmMethod = constructor.vmMethod();
+    String signature = methodSignature(vmMethod);
+    if (signature == null || signature.length() == 0 || signature.charAt(0) != '<') {
+      return new TypeVariable<?>[0];
+    }
+
+    Map<String, TypeVariable> variables
+      = collectTypeVariables(constructor.getDeclaringClass());
+    return parseTypeParameters
+      (constructor, vmMethod.class_.loader, signature, variables, false);
+  }
+
+  public static Type parseMethodReturnType(Method method) {
+    String signature = methodSignature(method.vmMethod);
+    if (signature == null) {
+      return method.getReturnType();
+    }
+
+    Map<String, TypeVariable> variables = collectMethodTypeVariables(method);
+    int offset = skipMethodParameters(signature);
+    if (signature.charAt(offset) == 'V') {
+      return Void.TYPE;
+    }
+    int end = scanTypeSignature(signature.toCharArray(), offset);
+    return SignatureParser.parse
+      (method.vmMethod.class_.loader, signature.substring(offset, end), variables);
+  }
+
+  public static Type[] parseMethodParameterTypes(Method method) {
+    String signature = methodSignature(method.vmMethod);
+    if (signature == null) {
+      return method.getParameterTypes();
+    }
+
+    return parseMethodParameterTypes
+      (method.vmMethod.class_.loader, signature, collectMethodTypeVariables(method));
+  }
+
+  public static Type[] parseMethodExceptionTypes(Method method) {
+    String signature = methodSignature(method.vmMethod);
+    if (signature == null || !hasMethodExceptionTypes(signature)) {
+      return method.getExceptionTypes();
+    }
+
+    return parseMethodExceptionTypes
+      (method.vmMethod.class_.loader, signature, collectMethodTypeVariables(method));
+  }
+
+  public static Type[] parseConstructorParameterTypes(Constructor constructor) {
+    VMMethod vmMethod = constructor.vmMethod();
+    String signature = methodSignature(vmMethod);
+    if (signature == null) {
+      return constructor.getParameterTypes();
+    }
+
+    return parseMethodParameterTypes
+      (vmMethod.class_.loader, signature, collectMethodTypeVariables(constructor));
+  }
+
+  public static Type[] parseConstructorExceptionTypes(Constructor constructor) {
+    VMMethod vmMethod = constructor.vmMethod();
+    String signature = methodSignature(vmMethod);
+    if (signature == null || !hasMethodExceptionTypes(signature)) {
+      return constructor.getExceptionTypes();
+    }
+
+    return parseMethodExceptionTypes
+      (vmMethod.class_.loader, signature, collectMethodTypeVariables(constructor));
   }
 
   private static Type parse(ClassLoader loader, String signature, Map<String, TypeVariable> typeVariables) {
@@ -188,6 +272,39 @@ public class SignatureParser {
     return varsMap;
   }
 
+  private static Map<String, TypeVariable> collectMethodTypeVariables
+    (Method method)
+  {
+    Map<String, TypeVariable> variables
+      = collectTypeVariables(method.getDeclaringClass());
+    String signature = methodSignature(method.vmMethod);
+    if (signature != null && signature.length() > 0 && signature.charAt(0) == '<') {
+      parseTypeParameters
+        (method, method.vmMethod.class_.loader, signature, variables, false);
+    }
+    return variables;
+  }
+
+  private static Map<String, TypeVariable> collectMethodTypeVariables
+    (Constructor constructor)
+  {
+    VMMethod vmMethod = constructor.vmMethod();
+    Map<String, TypeVariable> variables
+      = collectTypeVariables(constructor.getDeclaringClass());
+    String signature = methodSignature(vmMethod);
+    if (signature != null && signature.length() > 0 && signature.charAt(0) == '<') {
+      parseTypeParameters(constructor, vmMethod.class_.loader, signature, variables, false);
+    }
+    return variables;
+  }
+
+  private static String methodSignature(VMMethod method) {
+    if (method.addendum == null || method.addendum.signature == null) {
+      return null;
+    }
+    return Classes.toString((byte[]) method.addendum.signature);
+  }
+
   private static TypeVariable<?>[] parseTypeParameters
     (Class declaringClass, Map<String, TypeVariable> variables, boolean store)
   {
@@ -257,6 +374,169 @@ public class SignatureParser {
     }
 
     return varsList.toArray(new TypeVariable<?>[varsList.size()]);
+  }
+
+  private static TypeVariable<?>[] parseTypeParameters
+    (GenericDeclaration declaration, ClassLoader loader, String signature,
+     Map<String, TypeVariable> variables, boolean store)
+  {
+    final char[] signChars = signature.toCharArray();
+    if (signChars.length == 0 || signChars[0] != '<') {
+      return new TypeVariable<?>[0];
+    }
+
+    LinkedList<TypeVariableImpl> varsList = new LinkedList<TypeVariableImpl>();
+    try {
+      parseTypeParameters
+        (declaration, loader, signature, signChars, variables, varsList);
+    } catch (IndexOutOfBoundsException e) {
+      throw new RuntimeException("Signature of " + declaration + " is broken ("
+                                 + signature + ") and can't be parsed", e);
+    }
+
+    for (TypeVariableImpl tv : varsList) {
+      if (store) {
+        variables.put(tv.getName(), tv);
+      }
+    }
+
+    return varsList.toArray(new TypeVariable<?>[varsList.size()]);
+  }
+
+  private static int parseTypeParameters
+    (GenericDeclaration declaration, ClassLoader loader, String signature,
+     char[] signChars, Map<String, TypeVariable> variables,
+     LinkedList<TypeVariableImpl> varsList)
+  {
+    int i = 1;
+    while (signChars[i] != '>') {
+      final int colon = signature.indexOf(':', i);
+      if (colon < 0 || colon + 1 >= signChars.length) {
+        throw new RuntimeException("Can't find ':' in the signature "
+                                   + signature + " starting from " + i);
+      }
+
+      String typeVarName = new String(signChars, i, colon - i);
+      i = colon + 1;
+
+      ArrayList<Type> bounds = new ArrayList<Type>();
+      if (signChars[i] != ':') {
+        int end = scanTypeSignature(signChars, i);
+        bounds.add(SignatureParser.parse
+                   (loader, new String(signChars, i, end - i), variables));
+        i = end;
+      }
+
+      while (signChars[i] == ':') {
+        i++;
+        int end = scanTypeSignature(signChars, i);
+        bounds.add(SignatureParser.parse
+                   (loader, new String(signChars, i, end - i), variables));
+        i = end;
+      }
+
+      if (bounds.isEmpty()) {
+        bounds.add(Object.class);
+      }
+
+      TypeVariableImpl tv = new TypeVariableImpl
+        (declaration, typeVarName, bounds.toArray(new Type[bounds.size()]));
+      varsList.add(tv);
+      variables.put(typeVarName, tv);
+    }
+
+    return i + 1;
+  }
+
+  private static int skipTypeParameters(String signature) {
+    if (signature.length() == 0 || signature.charAt(0) != '<') {
+      return 0;
+    }
+
+    int depth = 0;
+    for (int i = 0; i < signature.length(); ++i) {
+      char c = signature.charAt(i);
+      if (c == '<') {
+        depth++;
+      } else if (c == '>') {
+        depth--;
+        if (depth == 0) {
+          return i + 1;
+        }
+      }
+    }
+
+    throw new IllegalArgumentException("Bad formal type parameters: " + signature);
+  }
+
+  private static int skipMethodParameters(String signature) {
+    char[] signChars = signature.toCharArray();
+    int offset = skipTypeParameters(signature);
+    if (signChars[offset] != '(') {
+      throw new IllegalArgumentException("Bad method signature: " + signature);
+    }
+
+    offset++;
+    while (signChars[offset] != ')') {
+      offset = scanTypeSignature(signChars, offset);
+    }
+    return offset + 1;
+  }
+
+  private static Type[] parseMethodParameterTypes
+    (ClassLoader loader, String signature, Map<String, TypeVariable> variables)
+  {
+    char[] signChars = signature.toCharArray();
+    int offset = skipTypeParameters(signature);
+    if (signChars[offset] != '(') {
+      throw new IllegalArgumentException("Bad method signature: " + signature);
+    }
+
+    offset++;
+    ArrayList<Type> types = new ArrayList<Type>();
+    while (signChars[offset] != ')') {
+      int end = scanTypeSignature(signChars, offset);
+      types.add(SignatureParser.parse
+                (loader, new String(signChars, offset, end - offset), variables));
+      offset = end;
+    }
+    return types.toArray(new Type[types.size()]);
+  }
+
+  private static Type[] parseMethodExceptionTypes
+    (ClassLoader loader, String signature, Map<String, TypeVariable> variables)
+  {
+    char[] signChars = signature.toCharArray();
+    int offset = skipMethodParameters(signature);
+    if (signChars[offset] == 'V') {
+      offset++;
+    } else {
+      offset = scanTypeSignature(signChars, offset);
+    }
+
+    ArrayList<Type> types = new ArrayList<Type>();
+    while (offset < signChars.length) {
+      if (signChars[offset] != '^') {
+        throw new IllegalArgumentException("Bad throws signature: " + signature);
+      }
+      offset++;
+      int end = scanTypeSignature(signChars, offset);
+      types.add(SignatureParser.parse
+                (loader, new String(signChars, offset, end - offset), variables));
+      offset = end;
+    }
+    return types.toArray(new Type[types.size()]);
+  }
+
+  private static boolean hasMethodExceptionTypes(String signature) {
+    char[] signChars = signature.toCharArray();
+    int offset = skipMethodParameters(signature);
+    if (signChars[offset] == 'V') {
+      offset++;
+    } else {
+      offset = scanTypeSignature(signChars, offset);
+    }
+    return offset < signChars.length;
   }
 
   private static int scanTypeSignature(char[] signature, int offset) {

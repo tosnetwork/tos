@@ -46,9 +46,10 @@ Status legend: `✅` completed, unchecked items are still open.
   are supported in consensus, rejected at verification, or trapped at runtime.
   `LambdaConversionException` now follows the JDK8u constructor surface.
 - [ ] Complete reflection compatibility where admitted by the verifier:
-  `Constructor` and `Method` remaining unsupported paths, and generic
-  signature parsing. `Class.getTypeParameters` now exposes class-level type
-  variables and bounds; `Method.getExceptionTypes` and
+  remaining unsupported paths and full generic signature parsing. Class,
+  method, and constructor type parameters plus generic method/constructor
+  parameter, return, and exception types now use admitted `Signature`
+  metadata; `Method.getExceptionTypes` and
   `Constructor.getExceptionTypes` now resolve the class-file `Exceptions`
   attribute.
 - [ ] Finish encoding/console behavior:
@@ -101,3 +102,6 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ `Class.getTypeParameters` now follows the JDK8u class-level type-variable
   surface for admitted signatures, including declaration identity, multiple
   bounds, default `Object` bounds, bound-array cloning, and equality/hash code.
+- ✅ `Method` and `Constructor` now implement the admitted JDK8u generic
+  reflection surface for type parameters, generic parameter types, generic
+  exception types, method generic return types, and parameter counts.

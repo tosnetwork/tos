@@ -131,6 +131,57 @@ public class Reflection {
     expect(1 == bounds.length);
     expect(bounds[0] == vars[0]);
     expect(vars[0].equals(GenericBounds.class.getTypeParameters()[0]));
+
+    Method generic = Reflection.class.getMethod
+      ("genericMethod", Number.class, java.util.List.class);
+    expect(generic.getParameterCount() == 2);
+
+    TypeVariable[] methodVars = generic.getTypeParameters();
+    expect(2 == methodVars.length);
+    expect("T".equals(methodVars[0].getName()));
+    expect(methodVars[0].getGenericDeclaration() == generic);
+    bounds = methodVars[0].getBounds();
+    expect(2 == bounds.length);
+    expect(bounds[0] == Number.class);
+    expect(bounds[1] == Runnable.class);
+    expect("U".equals(methodVars[1].getName()));
+    bounds = methodVars[1].getBounds();
+    expect(1 == bounds.length);
+    expect(bounds[0].equals(methodVars[0]));
+
+    Type[] genericParameters = generic.getGenericParameterTypes();
+    expect(2 == genericParameters.length);
+    expect(genericParameters[0].equals(methodVars[0]));
+    expect(genericParameters[1] instanceof ParameterizedType);
+    type = (ParameterizedType) genericParameters[1];
+    expect(type.getRawType() == java.util.List.class);
+    args = type.getActualTypeArguments();
+    expect(1 == args.length);
+    expect(args[0] == String.class);
+
+    expect(generic.getGenericReturnType().equals(methodVars[1]));
+    Type[] genericExceptions = generic.getGenericExceptionTypes();
+    expect(1 == genericExceptions.length);
+    expect(genericExceptions[0] == java.io.IOException.class);
+    expect(Reflection.class.getMethod("booleanMethod").getGenericReturnType()
+           == Boolean.TYPE);
+
+    Constructor constructor = GenericConstructor.class.getConstructor(Number.class);
+    expect(constructor.getParameterCount() == 1);
+    TypeVariable[] constructorVars = constructor.getTypeParameters();
+    expect(1 == constructorVars.length);
+    expect("T".equals(constructorVars[0].getName()));
+    expect(constructorVars[0].getGenericDeclaration() == constructor);
+    bounds = constructorVars[0].getBounds();
+    expect(2 == bounds.length);
+    expect(bounds[0] == Number.class);
+    expect(bounds[1] == Runnable.class);
+    genericParameters = constructor.getGenericParameterTypes();
+    expect(1 == genericParameters.length);
+    expect(genericParameters[0].equals(constructorVars[0]));
+    genericExceptions = constructor.getGenericExceptionTypes();
+    expect(1 == genericExceptions.length);
+    expect(genericExceptions[0] == java.io.IOException.class);
   }
 
   public static void throwOOME() {
@@ -140,6 +191,13 @@ public class Reflection {
   public static void throwsChecked()
     throws java.io.IOException, IllegalStateException
   {
+  }
+
+  public static <T extends Number & Runnable, U extends T> U genericMethod
+    (T value, java.util.List<String> names)
+    throws java.io.IOException
+  {
+    return null;
   }
 
   private static void exceptionTypes() throws Exception {
@@ -371,6 +429,13 @@ class Gybe extends Bandersnatch { }
 class ThrowsConstructor {
   public ThrowsConstructor()
     throws java.io.IOException, IllegalArgumentException
+  {
+  }
+}
+
+class GenericConstructor {
+  public <T extends Number & Runnable> GenericConstructor(T value)
+    throws java.io.IOException
   {
   }
 }
