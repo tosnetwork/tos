@@ -3,6 +3,30 @@ public class Strings {
     if (! v) throw new RuntimeException();
   }
 
+  private interface Action {
+    public void run() throws Exception;
+  }
+
+  private static void expectStringIndexOutOfBounds(Action action)
+    throws Exception
+  {
+    try {
+      action.run();
+      throw new RuntimeException("expected StringIndexOutOfBoundsException");
+    } catch (StringIndexOutOfBoundsException expected) {
+    }
+  }
+
+  private static void expectArrayIndexOutOfBounds(Action action)
+    throws Exception
+  {
+    try {
+      action.run();
+      throw new RuntimeException("expected ArrayIndexOutOfBoundsException");
+    } catch (ArrayIndexOutOfBoundsException expected) {
+    }
+  }
+
   private static boolean equal(Object a, Object b) {
     return a == b || (a != null && a.equals(b));
   }
@@ -114,7 +138,64 @@ public class Strings {
     expect("\0078".matches("\\078"));
   }
 
+  private static void testStringBounds() throws Exception {
+    final byte[] oneByte = new byte[] { 97 };
+    final char[] oneChar = new char[] { 'a' };
+
+    expectStringIndexOutOfBounds(new Action() {
+      public void run() {
+        new String(oneByte, 1, Integer.MAX_VALUE);
+      }
+    });
+
+    expectStringIndexOutOfBounds(new Action() {
+      public void run() throws Exception {
+        new String(oneByte, 0, Integer.MAX_VALUE, "UTF-8");
+      }
+    });
+
+    expectStringIndexOutOfBounds(new Action() {
+      public void run() {
+        new String(oneByte, 0, 1, Integer.MAX_VALUE);
+      }
+    });
+
+    expectStringIndexOutOfBounds(new Action() {
+      public void run() {
+        new String(oneChar, 1, Integer.MAX_VALUE);
+      }
+    });
+
+    byte[] out = new byte[5];
+    "abcdef".getBytes(2, 5, out, 1);
+    expect(arraysEqual(out, new byte[] { 0, 99, 100, 101, 0 }));
+
+    expectStringIndexOutOfBounds(new Action() {
+      public void run() {
+        "abc".getBytes(2, 1, new byte[1], 0);
+      }
+    });
+
+    expectArrayIndexOutOfBounds(new Action() {
+      public void run() {
+        "abc".getBytes(1, 3, new byte[1], 0);
+      }
+    });
+
+    char[] chars = new char[2];
+    "abc".getChars(1, 3, chars, 0);
+    expect(chars[0] == 'b' && chars[1] == 'c');
+
+    expectStringIndexOutOfBounds(new Action() {
+      public void run() {
+        "abc".getChars(2, 1, new char[1], 0);
+      }
+    });
+  }
+
   public static void main(String[] args) throws Exception {
+    testStringBounds();
+
     expect(new String(new byte[] { 99, 111, 109, 46, 101, 99, 111, 118, 97,
                                    116, 101, 46, 110, 97, 116, 46, 98, 117,
                                    115, 46, 83, 121, 109, 98, 111, 108 })

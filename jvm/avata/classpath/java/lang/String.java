@@ -89,12 +89,7 @@ public final class String
                                     String charsetName)
     throws UnsupportedEncodingException
   {
-    if (offset < 0 )
-      throw new StringIndexOutOfBoundsException(offset);
-    else if (offset + length > bytes.length)
-      throw new StringIndexOutOfBoundsException(offset + length);
-    else if (length < 0)
-      throw new StringIndexOutOfBoundsException(length);
+    checkOffsetAndLength(offset, length, bytes.length);
 
     if (charsetName.equalsIgnoreCase(UTF_8_ENCODING)) {
       char[] c = Utf8.decode16(bytes, offset, length);
@@ -111,12 +106,7 @@ public final class String
   }
 
   public String(byte bytes[], int highByte, int offset, int length) {
-    if (offset < 0 )
-      throw new StringIndexOutOfBoundsException(offset);
-    else if (offset + length > bytes.length)
-      throw new StringIndexOutOfBoundsException(offset + length);
-    else if (length < 0)
-      throw new StringIndexOutOfBoundsException(length);
+    checkOffsetAndLength(offset, length, bytes.length);
 
     char[] c = new char[length];
     int mask = highByte << 8;
@@ -137,12 +127,7 @@ public final class String
       l = ((byte[]) data).length;
     }
 
-    if (offset < 0 )
-      throw new StringIndexOutOfBoundsException(offset);
-    else if (offset + length > l)
-      throw new StringIndexOutOfBoundsException(offset + length);
-    else if (length < 0)
-      throw new StringIndexOutOfBoundsException(length);
+    checkOffsetAndLength(offset, length, l);
 
     if(!copy && Utf8.test(data)) copy = true;
 
@@ -169,6 +154,15 @@ public final class String
       this.offset = offset;
       this.length = length;
     }
+  }
+
+  private static void checkOffsetAndLength(int offset, int length, int size) {
+    if (offset < 0)
+      throw new StringIndexOutOfBoundsException(offset);
+    else if (length < 0)
+      throw new StringIndexOutOfBoundsException(length);
+    else if (offset > size - length)
+      throw new StringIndexOutOfBoundsException(offset);
   }
 
   @Override
@@ -444,15 +438,20 @@ public final class String
     }
   }
 
-  public void getBytes(int srcOffset, int srcLength,
+  public void getBytes(int srcOffset, int srcEnd,
                        byte[] dst, int dstOffset)
   {
     if (srcOffset < 0)
       throw new StringIndexOutOfBoundsException(srcOffset);
-    else if (srcOffset + srcLength > length)
-      throw new StringIndexOutOfBoundsException(srcOffset + srcLength);
-    else if (srcLength < 0)
-      throw new StringIndexOutOfBoundsException(srcLength);
+    else if (srcEnd > length)
+      throw new StringIndexOutOfBoundsException(srcEnd);
+    else if (srcEnd < srcOffset)
+      throw new StringIndexOutOfBoundsException(srcEnd);
+
+    int srcLength = srcEnd - srcOffset;
+    if (dstOffset < 0 || dstOffset > dst.length - srcLength) {
+      throw new ArrayIndexOutOfBoundsException();
+    }
 
     if (data instanceof char[]) {
       char[] src = (char[]) data;
@@ -499,6 +498,8 @@ public final class String
     if (srcOffset < 0)
       throw new StringIndexOutOfBoundsException(srcOffset);
     else if (srcEnd > length)
+      throw new StringIndexOutOfBoundsException(srcEnd);
+    else if (srcEnd < srcOffset)
       throw new StringIndexOutOfBoundsException(srcEnd);
 
     int srcLength = srcEnd-srcOffset;
