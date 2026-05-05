@@ -948,7 +948,7 @@ class MySystem : public System {
 
   virtual void abort()
   {
-    avata::system::crash();
+    avata::util::abortWithoutContext();
   }
 
   virtual void dispose()

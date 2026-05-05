@@ -23,6 +23,8 @@ class Aborter {
   virtual void NO_RETURN abort() = 0;
 };
 
+void NO_RETURN abortWithoutContext();
+
 inline Aborter* getAborter(Aborter* a)
 {
   return a;
@@ -31,8 +33,12 @@ inline Aborter* getAborter(Aborter* a)
 template <class T>
 inline void NO_RETURN abort(T t)
 {
-  getAborter(t)->abort();
-  ::abort();
+  Aborter* a = getAborter(t);
+  if (a) {
+    a->abort();
+  }
+
+  avata::util::abortWithoutContext();
 }
 
 template <class T>

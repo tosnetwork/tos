@@ -1287,6 +1287,7 @@ vm-sources = \
 	$(src)/finder.cpp \
 	$(src)/machine.cpp \
 	$(src)/util.cpp \
+	$(src)/util/abort.cpp \
 	$(src)/heap/heap.cpp \
 	$(src)/$(process).cpp \
 	$(src)/classpath-$(classpath).cpp \
@@ -1422,6 +1423,7 @@ generator-sources = \
 	$(src)/system/$(build-system).cpp \
 	$(wildcard $(src)/system/$(build-system)/*.cpp) \
 	$(src)/finder.cpp \
+	$(src)/util/abort.cpp \
 	$(src)/util/arg-parser.cpp
 
 ifneq ($(lzma),)
