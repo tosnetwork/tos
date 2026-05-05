@@ -1,11 +1,24 @@
 import java.io.FileOutputStream;
 import java.io.FileInputStream;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 
 public class FileOutput {
   private static void expect(boolean v) {
     if (! v) throw new RuntimeException();
+  }
+
+  private interface Action {
+    void run() throws IOException;
+  }
+
+  private static void expectFileNotFound(Action action) throws IOException {
+    try {
+      action.run();
+      throw new RuntimeException("expected FileNotFoundException");
+    } catch (FileNotFoundException expected) {
+    }
   }
 
   private static void test(boolean appendFirst) throws IOException {
@@ -40,6 +53,18 @@ public class FileOutput {
 
   public static void main(String[] args) throws IOException {
     expect(new File("nonexistent-file").length() == 0);
+
+    expectFileNotFound(new Action() {
+      public void run() throws IOException {
+        new FileInputStream(new File("."));
+      }
+    });
+
+    expectFileNotFound(new Action() {
+      public void run() throws IOException {
+        new FileOutputStream(new File("."));
+      }
+    });
 
     test(false);
     test(true);

@@ -32,6 +32,7 @@
 #define READ _read
 #define WRITE _write
 #define STAT _wstat
+#define FSTAT _fstat
 #define STRUCT_STAT struct _stat
 #define MKDIR(path, mode) _wmkdir(path)
 #define CHMOD(path, mode) _wchmod(path, mode)
@@ -79,6 +80,7 @@ typedef wchar_t char_t;
 #define READ read
 #define WRITE write
 #define STAT stat
+#define FSTAT fstat
 #define STRUCT_STAT struct stat
 #define MKDIR mkdir
 #define CHMOD chmod
@@ -94,6 +96,13 @@ typedef wchar_t char_t;
 typedef char char_t;
 
 #endif  // not PLATFORM_WINDOWS
+
+#define RESTARTABLE(_cmd, _result) \
+  do {                             \
+    do {                           \
+      _result = _cmd;              \
+    } while (_result == -1 && errno == EINTR); \
+  } while (0)
 
 #ifndef WINAPI_FAMILY
 #ifndef WINAPI_PARTITION_DESKTOP
@@ -140,13 +149,26 @@ inline bool exists(string_t path)
 
 inline int doOpen(JNIEnv* e, string_t path, int mask)
 {
-  int fd = OPEN(path, mask | OPEN_MASK, S_IRUSR | S_IWUSR);
-  if (fd == -1) {
-    if (errno == ENOENT) {
-      throwNewErrno(e, "java/io/FileNotFoundException");
-    } else {
-      throwNewErrno(e, "java/io/IOException");
+  int fd;
+  RESTARTABLE(OPEN(path, mask | OPEN_MASK, S_IRUSR | S_IWUSR), fd);
+  if (fd != -1) {
+    STRUCT_STAT s;
+    int r;
+    RESTARTABLE(FSTAT(fd, &s), r);
+    if (r == -1) {
+      int savedErrno = errno;
+      CLOSE(fd);
+      errno = savedErrno;
+      fd = -1;
+    } else if (S_ISDIR(s.st_mode)) {
+      CLOSE(fd);
+      errno = EISDIR;
+      fd = -1;
     }
+  }
+
+  if (fd == -1) {
+    throwNewErrno(e, "java/io/FileNotFoundException");
   }
   return fd;
 }
@@ -161,7 +183,8 @@ inline void doClose(JNIEnv* e, jint fd)
 
 inline int doRead(JNIEnv* e, jint fd, jbyte* data, jint length)
 {
-  int r = READ(fd, data, length);
+  int r;
+  RESTARTABLE(READ(fd, data, length), r);
   if (r > 0) {
     return r;
   } else if (r == 0) {
@@ -176,7 +199,8 @@ inline void doWrite(JNIEnv* e, jint fd, const jbyte* data, jint length)
 {
   jint offset = 0;
   while (offset < length) {
-    int r = WRITE(fd, data + offset, length - offset);
+    int r;
+    RESTARTABLE(WRITE(fd, data + offset, length - offset), r);
     if (r < 0) {
       throwNewErrno(e, "java/io/IOException");
       return;
