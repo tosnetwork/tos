@@ -114,3 +114,5 @@ Status legend: `✅` completed, unchecked items are still open.
   admitted deterministic subset: `LITERAL`, `DOTALL`, `MULTILINE`, and ASCII
   `CASE_INSENSITIVE`; unsupported locale/Unicode/canonical modes, including
   Java 8's `UNICODE_CHARACTER_CLASS`, fail deterministically.
+- ✅ `LinkedBlockingQueue.iterator()` now exposes the admitted queue iterator
+  surface as a deterministic FIFO snapshot; iterator mutation fails explicitly.

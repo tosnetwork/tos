@@ -1,4 +1,6 @@
+import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.NoSuchElementException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -33,6 +35,7 @@ public class LinkedBlockingQueueTest {
     QueueHelper.removeAllTest(new LinkedBlockingQueue<Object>());
     QueueHelper.clearTest(new LinkedBlockingQueue<Object>());
     QueueHelper.toArrayTest(new LinkedBlockingQueue<Object>());
+    iteratorTest();
   }
   
   private static void verify(boolean val) {
@@ -204,5 +207,35 @@ public class LinkedBlockingQueueTest {
     verify(lbq.drainTo(drainToResult, limit) == limit);
     verify(drainToResult.size() == limit);
     verify(lbq.size() == objQty - limit);
+  }
+
+  private static void iteratorTest() {
+    LinkedBlockingQueue<String> lbq = new LinkedBlockingQueue<String>();
+    lbq.add("one");
+    lbq.add("two");
+
+    Iterator<String> iterator = lbq.iterator();
+    lbq.add("three");
+
+    verify(iterator.hasNext());
+    verify("one".equals(iterator.next()));
+    verify(iterator.hasNext());
+    verify("two".equals(iterator.next()));
+    verify(! iterator.hasNext());
+    verify(lbq.size() == 3);
+
+    try {
+      iterator.next();
+      throw new RuntimeException("Exception should have thrown");
+    } catch (NoSuchElementException e) {
+      // expected
+    }
+
+    try {
+      iterator.remove();
+      throw new RuntimeException("Exception should have thrown");
+    } catch (UnsupportedOperationException e) {
+      // expected
+    }
   }
 }

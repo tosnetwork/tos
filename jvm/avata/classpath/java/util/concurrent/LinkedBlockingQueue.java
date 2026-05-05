@@ -297,6 +297,23 @@ public class LinkedBlockingQueue<T> extends AbstractQueue<T>
 
   @Override
   public Iterator<T> iterator() {
-    throw new UnsupportedOperationException("Not implemented yet");
+    final Iterator<T> snapshotIterator;
+    synchronized (collectionLock) {
+      snapshotIterator = new LinkedList<T>(storage).iterator();
+    }
+
+    return new Iterator<T>() {
+      public T next() {
+        return snapshotIterator.next();
+      }
+
+      public boolean hasNext() {
+        return snapshotIterator.hasNext();
+      }
+
+      public void remove() {
+        throw new UnsupportedOperationException();
+      }
+    };
   }
 }
