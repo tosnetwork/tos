@@ -1290,14 +1290,18 @@ void**& dynamicTable(MyThread* t);
 
 unsigned& dynamicTableSize(MyThread* t);
 
-void updateDynamicTable(MyThread* t, MyThread* o)
+void updateDynamicTable(MyThread* t)
 {
-  o->dynamicTable = dynamicTable(t);
-  if (t->peer)
-    updateDynamicTable(static_cast<MyThread*>(t->peer), o);
-  if (t->child)
-    updateDynamicTable(static_cast<MyThread*>(t->child), o);
+  t->dynamicTable = dynamicTable(t);
+  if (t->peer) {
+    updateDynamicTable(static_cast<MyThread*>(t->peer));
+  }
+  if (t->child) {
+    updateDynamicTable(static_cast<MyThread*>(t->child));
+  }
 }
+
+void retireDynamicTable(MyThread* t, void** table, unsigned size);
 
 uintptr_t defaultDynamicThunk(MyThread* t);
 
@@ -1352,14 +1356,18 @@ unsigned addDynamic(MyThread* t, GcInvocation* invocation)
 
       ENTER(t, Thread::ExclusiveState);
 
-      if (dynamicTable(t)) {
-        allocator(t)->free(dynamicTable(t), dynamicTableSize(t));
-      }
+      void** oldTable = dynamicTable(t);
+      unsigned oldTableSize = dynamicTableSize(t);
+
       dynamicTable(t) = newTable;
       dynamicTableSize(t) = newCapacity * BytesPerWord;
       roots(t)->setInvocations(t, newData);
 
-      updateDynamicTable(static_cast<MyThread*>(t->m->rootThread), t);
+      updateDynamicTable(static_cast<MyThread*>(t->m->rootThread));
+
+      if (oldTable) {
+        retireDynamicTable(t, oldTable, oldTableSize);
+      }
 
       compileRoots(t)->setDynamicThunks(t, newThunks);
     }
@@ -8734,6 +8742,20 @@ int checkConstant(MyThread* t, size_t expected, T C::*field, const char* name)
 
 class MyProcessor : public Processor {
  public:
+  class DynamicTableAllocation {
+   public:
+    DynamicTableAllocation(void** table,
+                           unsigned size,
+                           DynamicTableAllocation* next)
+        : table(table), size(size), next(next)
+    {
+    }
+
+    void** table;
+    unsigned size;
+    DynamicTableAllocation* next;
+  };
+
   class Thunk {
    public:
     Thunk() : start(0), frameSavedOffset(0), length(0)
@@ -8784,7 +8806,8 @@ class MyProcessor : public Processor {
         useNativeFeatures(useNativeFeatures),
         compilationHandlers(0),
         dynamicTable(0),
-        dynamicTableSize(0)
+        dynamicTableSize(0),
+        retiredDynamicTables(0)
   {
     thunkTable[compileMethodIndex] = voidPointer(local::compileMethod);
     thunkTable[compileVirtualMethodIndex] = voidPointer(compileVirtualMethod);
@@ -9273,6 +9296,13 @@ class MyProcessor : public Processor {
       allocator->free(dynamicTable, dynamicTableSize);
     }
 
+    while (retiredDynamicTables) {
+      DynamicTableAllocation* allocation = retiredDynamicTables;
+      retiredDynamicTables = allocation->next;
+      allocator->free(allocation->table, allocation->size);
+      allocator->free(allocation, sizeof(*allocation));
+    }
+
     this->MyProcessor::~MyProcessor();
 
     allocator->free(this, sizeof(*this));
@@ -9564,6 +9594,7 @@ class MyProcessor : public Processor {
   CompilationHandlerList* compilationHandlers;
   void** dynamicTable;
   unsigned dynamicTableSize;
+  DynamicTableAllocation* retiredDynamicTables;
 };
 
 unsigned& dynamicIndex(MyThread* t)
@@ -9579,6 +9610,15 @@ void**& dynamicTable(MyThread* t)
 unsigned& dynamicTableSize(MyThread* t)
 {
   return static_cast<MyProcessor*>(t->m->processor)->dynamicTableSize;
+}
+
+void retireDynamicTable(MyThread* t, void** table, unsigned size)
+{
+  MyProcessor* processor = static_cast<MyProcessor*>(t->m->processor);
+  processor->retiredDynamicTables = new (processor->allocator->allocate(
+      sizeof(MyProcessor::DynamicTableAllocation)))
+      MyProcessor::DynamicTableAllocation(
+          table, size, processor->retiredDynamicTables);
 }
 
 const char* stringOrNull(const char* str)
