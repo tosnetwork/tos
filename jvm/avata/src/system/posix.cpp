@@ -135,8 +135,14 @@ class MySystem : public System {
    public:
     Thread(System* s, System::Runnable* r) : s(s), r(r), next(0), flags(0)
     {
-      pthread_mutex_init(&mutex, 0);
-      pthread_cond_init(&condition, 0);
+      int rv UNUSED = pthread_mutex_init(&mutex, 0);
+      expect(s, rv == 0);
+
+      rv = pthread_cond_init(&condition, 0);
+      if (rv != 0) {
+        pthread_mutex_destroy(&mutex);
+      }
+      expect(s, rv == 0);
     }
 
     virtual void interrupt()

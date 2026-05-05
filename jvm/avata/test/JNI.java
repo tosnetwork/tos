@@ -76,6 +76,10 @@ public class JNI {
 
   private static native Object testLocalRef(Object o);
 
+  private static native boolean testNullLocalRef();
+
+  private static native void testDoubleDeleteLocalRef(Object o);
+
   public static int method242() { return 242; }
   
   public static final int field950 = 950;
@@ -136,6 +140,9 @@ public class JNI {
 
     { Object o = new Object();
       expect(testLocalRef(o) == o);
+      testDoubleDeleteLocalRef(o);
     }
+
+    expect(testNullLocalRef());
   }
 }

@@ -2520,6 +2520,24 @@ object makeJconstructor(Thread* t,
 }
 #endif  // HAVE_JexecutableHasRealParameterData
 
+GcByteArray* emptyAnnotationTable(Thread* t)
+{
+  GcByteArray* table = makeByteArray(t, 2);
+  table->body()[0] = 0;
+  table->body()[1] = 0;
+  return table;
+}
+
+GcByteArray* annotationTableOrEmpty(Thread* t, object table)
+{
+  if (table == 0) {
+    return 0;
+  }
+
+  GcByteArray* bytes = cast<GcByteArray>(t, table);
+  return bytes->length() < 2 ? emptyAnnotationTable(t) : bytes;
+}
+
 object makeJmethod(Thread* t, GcMethod* vmMethod, int index)
 {
   PROTECT(t, vmMethod);
@@ -2564,7 +2582,7 @@ object makeJmethod(Thread* t, GcMethod* vmMethod, int index)
           t, signature, 0, cast<GcByteArray>(t, signature)->length() - 1);
     }
 
-    annotationTable = addendum->annotationTable();
+    annotationTable = annotationTableOrEmpty(t, addendum->annotationTable());
 
     parameterAnnotationTable = addendum->parameterAnnotationTable();
 
@@ -2652,7 +2670,7 @@ object makeJconstructor(Thread* t, GcMethod* vmMethod, int index)
           t, signature, 0, cast<GcByteArray>(t, signature)->length() - 1);
     }
 
-    annotationTable = addendum->annotationTable();
+    annotationTable = annotationTableOrEmpty(t, addendum->annotationTable());
     parameterAnnotationTable = addendum->parameterAnnotationTable();
   } else {
     signature = 0;
@@ -2733,7 +2751,7 @@ object makeJfield(Thread* t, GcField* vmField, int index)
           t, signature, 0, cast<GcByteArray>(t, signature)->length() - 1);
     }
 
-    annotationTable = addendum->annotationTable();
+    annotationTable = annotationTableOrEmpty(t, addendum->annotationTable());
   } else {
     signature = 0;
     annotationTable = 0;
@@ -4801,9 +4819,11 @@ extern "C" AVATA_EXPORT jbyteArray JNICALL
   ENTER(t, Thread::ActiveState);
 
   GcClassAddendum* addendum = (*c)->vmClass()->addendum();
-  return addendum ? reinterpret_cast<jbyteArray>(
-                        makeLocalReference(t, addendum->annotationTable()))
-                  : 0;
+  object table = addendum ? annotationTableOrEmpty(t, addendum->annotationTable())
+                          : 0;
+  PROTECT(t, table);
+
+  return table ? reinterpret_cast<jbyteArray>(makeLocalReference(t, table)) : 0;
 }
 
 uint64_t jvmGetClassDeclaredMethods(Thread* t, uintptr_t* arguments)

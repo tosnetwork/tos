@@ -12,6 +12,8 @@
 #include <tchar.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <errno.h>
+#include <string.h>
 #include <vector>
 #include <string>
 
@@ -50,14 +52,46 @@ void writeDestinationFile(const wchar_t* filename)
   exit(EXIT_FAILURE);
 }
 
+void failFile(const char* operation, const wchar_t* fileName)
+{
+  fwprintf(stderr, L"Unable to %S '%ls': %S\n",
+           operation,
+           fileName,
+           strerror(errno));
+  exit(EXIT_FAILURE);
+}
+
 void readFile(std::vector<char>* jarFile, const wchar_t* fileName)
 {
-  if (FILE* file = _wfopen(fileName, L"rb")) {
-    fseek(file, 0, SEEK_END);
-    jarFile->resize(ftell(file));
-    fseek(file, 0, SEEK_SET);
-    fread(&jarFile->at(0), 1, jarFile->size(), file);
+  FILE* file = _wfopen(fileName, L"rb");
+  if (file == 0) {
+    failFile("open", fileName);
+  }
+
+  if (fseek(file, 0, SEEK_END) != 0) {
     fclose(file);
+    failFile("seek", fileName);
+  }
+
+  long size = ftell(file);
+  if (size < 0) {
+    fclose(file);
+    failFile("tell", fileName);
+  }
+
+  if (fseek(file, 0, SEEK_SET) != 0) {
+    fclose(file);
+    failFile("seek", fileName);
+  }
+
+  jarFile->resize(static_cast<size_t>(size));
+  if (size and fread(&jarFile->at(0), 1, jarFile->size(), file) != jarFile->size()) {
+    fclose(file);
+    failFile("read", fileName);
+  }
+
+  if (fclose(file) != 0) {
+    failFile("close", fileName);
   }
 }
 

@@ -420,7 +420,7 @@ jobject JNICALL NewLocalRef(Thread* t, jobject o)
 {
   ENTER(t, Thread::ActiveState);
 
-  return makeLocalReference(t, *o);
+  return o ? makeLocalReference(t, *o) : 0;
 }
 
 void JNICALL DeleteLocalRef(Thread* t, jobject r)

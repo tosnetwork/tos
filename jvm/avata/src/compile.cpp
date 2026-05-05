@@ -9047,7 +9047,14 @@ class MyProcessor : public Processor {
   virtual void disposeLocalReference(Thread* t, object* r)
   {
     if (r) {
-      release(t, reinterpret_cast<Reference*>(r));
+      MyThread* thread = static_cast<MyThread*>(t);
+      Reference* reference = reinterpret_cast<Reference*>(r);
+      for (Reference* p = thread->reference; p; p = p->next) {
+        if (p == reference) {
+          release(thread, reference);
+          return;
+        }
+      }
     }
   }
 

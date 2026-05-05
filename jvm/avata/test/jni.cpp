@@ -211,6 +211,20 @@ extern "C" JNIEXPORT jobject JNICALL
   return e->NewLocalRef(o);
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+    Java_JNI_testNullLocalRef(JNIEnv* e, jclass)
+{
+  return e->NewLocalRef(0) == 0;
+}
+
+extern "C" JNIEXPORT void JNICALL
+    Java_JNI_testDoubleDeleteLocalRef(JNIEnv* e, jclass, jobject o)
+{
+  jobject ref = e->NewLocalRef(o);
+  e->DeleteLocalRef(ref);
+  e->DeleteLocalRef(ref);
+}
+
 extern "C" JNIEXPORT jobject JNICALL
     Java_Buffers_allocateNative(JNIEnv* e, jclass, jint capacity)
 {
