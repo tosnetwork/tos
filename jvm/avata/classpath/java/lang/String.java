@@ -702,18 +702,23 @@ public final class String
   }
 
   public String toUpperCase(Locale locale) {
-    if (locale == Locale.ENGLISH) {
-      return toUpperCase();
-    } else {
-      throw new UnsupportedOperationException("toUpperCase("+locale+')');
-    }
+    checkDeterministicCaseLocale(locale, "toUpperCase");
+    return toUpperCase();
   }
 
   public String toLowerCase(Locale locale) {
-    if (locale == Locale.ENGLISH) {
-      return toLowerCase();
-    } else {
-      throw new UnsupportedOperationException("toLowerCase("+locale+')');
+    checkDeterministicCaseLocale(locale, "toLowerCase");
+    return toLowerCase();
+  }
+
+  private static void checkDeterministicCaseLocale(Locale locale, String method) {
+    if (locale == null) {
+      throw new NullPointerException();
+    }
+
+    String language = locale.getLanguage();
+    if (language.equals("tr") || language.equals("az") || language.equals("lt")) {
+      throw new UnsupportedOperationException(method + '(' + locale + ')');
     }
   }
 }

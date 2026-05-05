@@ -146,7 +146,7 @@ public class TreeMap<K,V> implements NavigableMap<K,V> {
   }
 
   public Set<Entry<K, V>> entrySet() {
-    return (Set<Entry<K, V>>) (Set) set;
+    return new EntrySet();
   }
 
   public Set<K> keySet() {
@@ -182,6 +182,47 @@ public class TreeMap<K,V> implements NavigableMap<K,V> {
     
   }
 
+  private class EntrySet extends AbstractSet<Entry<K, V>> {
+    public int size() {
+      return TreeMap.this.size();
+    }
+
+    public boolean isEmpty() {
+      return TreeMap.this.isEmpty();
+    }
+
+    public boolean contains(Object o) {
+      if (! (o instanceof Entry<?,?>)) {
+        return false;
+      }
+
+      Entry<?,?> entry = (Entry<?,?>) o;
+      MyEntry<K,V> candidate = set.find(new MyEntry(entry.getKey(), null));
+      return candidate != null && equal(candidate.value, entry.getValue());
+    }
+
+    public boolean add(Entry<K, V> entry) {
+      throw new UnsupportedOperationException();
+    }
+
+    public boolean remove(Object o) {
+      if (! contains(o)) {
+        return false;
+      }
+
+      TreeMap.this.remove(((Entry<?,?>) o).getKey());
+      return true;
+    }
+
+    public void clear() {
+      TreeMap.this.clear();
+    }
+
+    public Iterator<Entry<K, V>> iterator() {
+      return (Iterator<Entry<K, V>>) (Iterator) set.iterator();
+    }
+  }
+
   private class KeySet extends AbstractSet<K> {
     public int size() {
       return TreeMap.this.size();
@@ -196,13 +237,7 @@ public class TreeMap<K,V> implements NavigableMap<K,V> {
     }
 
     public boolean add(K key) {
-      return set.addAndReplace(new MyEntry(key, null)) != null;
-    }
-
-    public boolean addAll(Collection<? extends K> collection) {
-      boolean change = false;
-      for (K k: collection) if (add(k)) change = true;
-      return change;
+      throw new UnsupportedOperationException();
     }
 
     public boolean remove(Object key) {
@@ -263,11 +298,32 @@ public class TreeMap<K,V> implements NavigableMap<K,V> {
     }
 
     public boolean remove(Object value) {
-      throw new UnsupportedOperationException();
+      for (Iterator<Entry<K, V>> it = TreeMap.this.entrySet().iterator();
+           it.hasNext();)
+      {
+        if (equal(it.next().getValue(), value)) {
+          it.remove();
+          return true;
+        }
+      }
+      return false;
     }
 
     public boolean removeAll(Collection<?> c) {
-      throw new UnsupportedOperationException();
+      if (c == null) {
+        throw new NullPointerException("collection is null");
+      }
+
+      boolean changed = false;
+      for (Iterator<Entry<K, V>> it = TreeMap.this.entrySet().iterator();
+           it.hasNext();)
+      {
+        if (c.contains(it.next().getValue())) {
+          it.remove();
+          changed = true;
+        }
+      }
+      return changed;
     }
 
     public Object[] toArray() {
@@ -573,7 +629,7 @@ public class TreeMap<K,V> implements NavigableMap<K,V> {
       }
 
       public boolean add(K key) {
-        return RangeMap.this.put(key, null) != null;
+        throw new UnsupportedOperationException();
       }
 
       public boolean remove(Object key) {
@@ -605,6 +661,18 @@ public class TreeMap<K,V> implements NavigableMap<K,V> {
 
       public boolean contains(Object value) {
         return RangeMap.this.containsValue(value);
+      }
+
+      public boolean remove(Object value) {
+        for (Iterator<Entry<K,V>> it = RangeMap.this.entrySet().iterator();
+             it.hasNext();)
+        {
+          if (equal(it.next().getValue(), value)) {
+            it.remove();
+            return true;
+          }
+        }
+        return false;
       }
 
       public void clear() {

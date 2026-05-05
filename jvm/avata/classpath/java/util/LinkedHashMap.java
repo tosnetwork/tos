@@ -66,6 +66,7 @@ public class LinkedHashMap<K, V> extends HashMap<K, V> {
     if (linked == null) {
       return null;
     }
+    lookup.remove(key);
     if (linked.previous == null) {
       first = linked.next;
     } else {
@@ -81,6 +82,7 @@ public class LinkedHashMap<K, V> extends HashMap<K, V> {
 
   public void clear() {
     first = last = null;
+    lookup.clear();
     super.clear();
   }
 
@@ -110,20 +112,25 @@ public class LinkedHashMap<K, V> extends HashMap<K, V> {
     }
 
     public boolean contains(Object o) {
-      return (o instanceof Entry<?,?>)
-        && containsKey(((Entry<?,?>)o).getKey());
+      if (o instanceof Entry<?,?>) {
+        Entry<?,?> e = (Entry<?,?>) o;
+        Entry<K, V> candidate = find(e.getKey());
+        return candidate != null
+          && avata.Data.equal(candidate.getValue(), e.getValue());
+      }
+      return false;
     }
 
     public boolean add(Entry<K, V> e) {
-      return put(e.getKey(), e.getValue()) != null;
+      throw new UnsupportedOperationException();
     }
 
     public boolean remove(Object o) {
-      return (o instanceof Entry<?,?>) && remove((Entry<?,?>)o);
-    }
-
-    public boolean remove(Entry<K, V> e) {
-      return LinkedHashMap.this.remove(e.getKey()) != null;
+      if (contains(o)) {
+        LinkedHashMap.this.remove(((Entry<?,?>) o).getKey());
+        return true;
+      }
+      return false;
     }
 
     public Object[] toArray() {
@@ -157,11 +164,15 @@ public class LinkedHashMap<K, V> extends HashMap<K, V> {
     }
 
     public boolean add(K key) {
-      return put(key, null) != null;
+      throw new UnsupportedOperationException();
     }
 
     public boolean remove(Object key) {
-      return LinkedHashMap.this.remove(key) != null;
+      if (containsKey(key)) {
+        LinkedHashMap.this.remove(key);
+        return true;
+      }
+      return false;
     }
 
     public Object[] toArray() {
@@ -218,11 +229,32 @@ public class LinkedHashMap<K, V> extends HashMap<K, V> {
     }
 
     public boolean remove(Object value) {
-      throw new UnsupportedOperationException();
+      for (Iterator<Entry<K, V>> it = LinkedHashMap.this.iterator();
+           it.hasNext();)
+      {
+        if (avata.Data.equal(it.next().getValue(), value)) {
+          it.remove();
+          return true;
+        }
+      }
+      return false;
     }
 
     public boolean removeAll(Collection<?> c) {
-      throw new UnsupportedOperationException();
+      if (c == null) {
+        throw new NullPointerException("collection is null");
+      }
+
+      boolean changed = false;
+      for (Iterator<Entry<K, V>> it = LinkedHashMap.this.iterator();
+           it.hasNext();)
+      {
+        if (c.contains(it.next().getValue())) {
+          it.remove();
+          changed = true;
+        }
+      }
+      return changed;
     }
 
     public Object[] toArray() {
@@ -244,13 +276,17 @@ public class LinkedHashMap<K, V> extends HashMap<K, V> {
 
   private class MyIterator implements Iterator<Entry<K, V>> {
     private LinkedKey<K> current = first;
+    private LinkedKey<K> lastReturned;
+    private boolean canRemove;
 
     public Entry<K, V> next() {
       if (!hasNext()) {
         throw new NoSuchElementException();
       }
-      Entry<K, V> result = find(current.key);
+      lastReturned = current;
+      Entry<K, V> result = find(lastReturned.key);
       current = current.next;
+      canRemove = true;
       return result;
     }
 
@@ -259,9 +295,12 @@ public class LinkedHashMap<K, V> extends HashMap<K, V> {
     }
 
     public void remove() {
-      LinkedHashMap.this.remove(current == null ?
-        last.key : current.previous.key);
+      if (! canRemove) {
+        throw new IllegalStateException();
+      }
+      LinkedHashMap.this.remove(lastReturned.key);
+      lastReturned = null;
+      canRemove = false;
     }
   }
 }
-

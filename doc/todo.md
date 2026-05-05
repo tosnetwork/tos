@@ -143,3 +143,16 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ `BitSet` core navigation and sizing now follow JDK8u behavior for logical
   length, `nextSetBit`/`nextClearBit`, full clear, range checks, and
   differently-sized intersection checks.
+- ✅ `Locale` and locale-aware `String` case conversion now cover the admitted
+  JDK8u deterministic surface: core locale constants, constructor
+  normalization, old ISO language-code mapping, structural equality/hash codes,
+  null handling, ROOT/English-compatible case operations, and explicit traps for
+  locale-specific Turkish/Azeri/Lithuanian casing.
+- ✅ `LinkedHashMap` collection views now follow the admitted JDK8u mutation
+  rules: key/entry view `add` rejects, entry containment/removal matches both
+  key and value, values support removal and bulk removal, iterator removal is
+  single-use, and the linked-order index stays in sync across remove/clear.
+- ✅ `TreeMap` top-level and ranged collection views now follow the admitted
+  JDK8u mutation rules: key/entry view `add` rejects, entry containment/removal
+  matches both key and value, values support removal and bulk removal, and
+  range values can remove backed map entries in sorted order.

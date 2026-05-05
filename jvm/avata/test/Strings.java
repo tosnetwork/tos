@@ -27,6 +27,26 @@ public class Strings {
     }
   }
 
+  private static void expectNullPointer(Action action)
+    throws Exception
+  {
+    try {
+      action.run();
+      throw new RuntimeException("expected NullPointerException");
+    } catch (NullPointerException expected) {
+    }
+  }
+
+  private static void expectUnsupported(Action action)
+    throws Exception
+  {
+    try {
+      action.run();
+      throw new RuntimeException("expected UnsupportedOperationException");
+    } catch (UnsupportedOperationException expected) {
+    }
+  }
+
   private static boolean equal(Object a, Object b) {
     return a == b || (a != null && a.equals(b));
   }
@@ -195,6 +215,34 @@ public class Strings {
 
   public static void main(String[] args) throws Exception {
     testStringBounds();
+
+    expect("title".toUpperCase(java.util.Locale.ROOT).equals("TITLE"));
+    expect("TITLE".toLowerCase(java.util.Locale.ROOT).equals("title"));
+    expect("title".toUpperCase(java.util.Locale.US).equals("TITLE"));
+    expect("TITLE".toLowerCase(new java.util.Locale("EN", "us")).equals("title"));
+    expect(java.util.Locale.ENGLISH.equals(new java.util.Locale("en", "")));
+    expect(java.util.Locale.US.equals(new java.util.Locale("EN", "us")));
+    expect(new java.util.Locale("he", "il").toString().equals("iw_IL"));
+    expectNullPointer(new Action() {
+      public void run() {
+        "title".toUpperCase(null);
+      }
+    });
+    expectNullPointer(new Action() {
+      public void run() {
+        "TITLE".toLowerCase(null);
+      }
+    });
+    expectUnsupported(new Action() {
+      public void run() {
+        "title".toUpperCase(new java.util.Locale("tr", "TR"));
+      }
+    });
+    expectUnsupported(new Action() {
+      public void run() {
+        "TITLE".toLowerCase(new java.util.Locale("lt", "LT"));
+      }
+    });
 
     expect(new String(new byte[] { 99, 111, 109, 46, 101, 99, 111, 118, 97,
                                    116, 101, 46, 110, 97, 116, 46, 98, 117,

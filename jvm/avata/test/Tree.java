@@ -49,6 +49,40 @@ public class Tree {
     }
   }
 
+  private interface Action {
+    public void run();
+  }
+
+  private static void expectUnsupported(Action action) {
+    try {
+      action.run();
+      throw new RuntimeException("expected UnsupportedOperationException");
+    } catch (UnsupportedOperationException expected) {
+    }
+  }
+
+  private static class SimpleEntry<K,V> implements Map.Entry<K,V> {
+    private final K key;
+    private final V value;
+
+    SimpleEntry(K key, V value) {
+      this.key = key;
+      this.value = value;
+    }
+
+    public K getKey() {
+      return key;
+    }
+
+    public V getValue() {
+      return value;
+    }
+
+    public V setValue(V value) {
+      throw new UnsupportedOperationException();
+    }
+  }
+
   private static void ascendingIterator() {
     TreeSet<Integer> t = new TreeSet<Integer>();
     t.add(7);
@@ -156,10 +190,57 @@ public class Tree {
     isEqual(printMap(map), "1=one, 5=five");
   }
 
+  private static void treeMapCollectionViews() {
+    final TreeMap<Integer, String> map = new TreeMap<Integer, String>();
+    map.put(1, "one");
+    map.put(2, null);
+    map.put(3, "three");
+    map.put(4, "four");
+    map.put(5, "five");
+
+    expectUnsupported(new Action() {
+      public void run() {
+        map.keySet().add(Integer.valueOf(9));
+      }
+    });
+    expect(! map.keySet().addAll(new ArrayList<Integer>()));
+    expectUnsupported(new Action() {
+      public void run() {
+        map.entrySet().add(new SimpleEntry<Integer, String>(9, "nine"));
+      }
+    });
+
+    expect(map.entrySet().contains(new SimpleEntry<Integer, String>(2, null)));
+    expect(! map.entrySet().contains(new SimpleEntry<Integer, String>(2, "two")));
+    expect(map.entrySet().remove(new SimpleEntry<Integer, String>(2, null)));
+    expect(! map.containsKey(2));
+    expect(! map.entrySet().remove(new SimpleEntry<Integer, String>(3, "wrong")));
+    expect(map.containsKey(3));
+
+    expect(map.values().remove("three"));
+    expect(! map.containsKey(3));
+
+    Collection<String> doomed = new ArrayList<String>();
+    doomed.add("four");
+    doomed.add("missing");
+    expect(map.values().removeAll(doomed));
+    expect(! map.containsKey(4));
+
+    final SortedMap<Integer, String> range = map.subMap(1, 6);
+    expectUnsupported(new Action() {
+      public void run() {
+        range.keySet().add(Integer.valueOf(2));
+      }
+    });
+    expect(range.values().remove("five"));
+    expect(! map.containsKey(5));
+  }
+
   public static void main(String args[]) {
     ascendingIterator();
     descendingIterator();
     sortedMapViews();
+    treeMapCollectionViews();
     TreeSet<Integer> t1 = new TreeSet<Integer>(new MyCompare());
     t1.add(5); t1.add(2); t1.add(1); t1.add(8); t1.add(3);
     isEqual(printList(t1), "1, 2, 3, 5, 8");
