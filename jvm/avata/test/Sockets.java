@@ -1,6 +1,8 @@
 import java.net.SocketAddress;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.channels.SocketChannel;
+import java.nio.ByteBuffer;
 import java.io.IOException;
 
 public class Sockets {
@@ -28,6 +30,21 @@ public class Sockets {
   }
 
   public static void main(String[] args) throws Exception {
+    Socket socket = new Socket();
+    socket.close();
+    socket.close();
+
+    SocketChannel channel = SocketChannel.open();
+    Socket handle = channel.socket();
+    handle.close();
+    channel.close();
+
+    try {
+      channel.write(new ByteBuffer[1], 1, Integer.MAX_VALUE);
+      expect(false);
+    } catch (IndexOutOfBoundsException expected) {
+    }
+
     // This test sometimes fails without explanation on Travis-CI, so
     // we skip it there:
     if (! "true".equals(System.getenv("TRAVIS"))) {

@@ -17,6 +17,7 @@ import java.io.OutputStream;
 
 public class Socket implements Closeable, AutoCloseable {
 
+        private static final long InvalidSocket = -1;
 	private static final int SD_RECEIVE = 0x00;
 	private static final int SD_SEND = 0x01;
 	private static final int SD_BOTH = 0x02;
@@ -61,7 +62,7 @@ public class Socket implements Closeable, AutoCloseable {
 		
 		@Override
 		public void close() throws IOException {
-			if (!closed) {
+                        if (!closed && isOpen()) {
 				closeInput(sock);
 				closed = true;
 			}
@@ -76,6 +77,7 @@ public class Socket implements Closeable, AutoCloseable {
 		
 		@Override
 		public int read() throws IOException {
+                        checkOpen();
 			byte[] buffer = new byte[1];
 			int size = recv(sock, buffer, 0, 1);
 			if (size == 0) {
@@ -86,6 +88,7 @@ public class Socket implements Closeable, AutoCloseable {
 		
 		@Override
 		public int read(byte[] buffer) throws IOException {
+                        checkOpen();
 			if(buffer.length == 0) return 0; //spec says return 0 if buffer length is zero.
 			int fullSize = buffer.length;
 			int size;
@@ -104,7 +107,7 @@ public class Socket implements Closeable, AutoCloseable {
 		
 		@Override
 		public void close() throws IOException {
-			if (!closed) {
+                        if (!closed && isOpen()) {
 				closeOutput(sock);
 				closed = true;
 			}
@@ -119,6 +122,7 @@ public class Socket implements Closeable, AutoCloseable {
 		
 		@Override
 		public void write(int c) throws IOException {
+                        checkOpen();
 			byte[] res = new byte[1];
 			res[0] = (byte)c;
 			send(sock, res, 0, 1);
@@ -126,7 +130,9 @@ public class Socket implements Closeable, AutoCloseable {
 		
 		@Override
 		public void write(byte[] buffer) throws IOException {
+                        checkOpen();
 			int fullSize = buffer.length;
+                        if (fullSize == 0) return;
 			int index = 0;
 			int size;
 			do {
@@ -144,10 +150,28 @@ public class Socket implements Closeable, AutoCloseable {
 	private SocketOutputStream outputStream;
 	
 	public Socket() throws IOException {
-		Socket.init();
-		sock = create();
-		inputStream = new SocketInputStream();
-		outputStream = new SocketOutputStream();
+                this(true);
+        }
+
+        protected Socket(boolean create) throws IOException {
+                if (create) {
+                        Socket.init();
+                        sock = create();
+                        inputStream = new SocketInputStream();
+                        outputStream = new SocketOutputStream();
+                } else {
+                        sock = InvalidSocket;
+                }
+        }
+
+        private boolean isOpen() {
+                return sock != InvalidSocket;
+        }
+
+        private void checkOpen() throws IOException {
+                if (! isOpen()) {
+                        throw new IOException("socket closed");
+                }
 	}
 	
 	public SocketInputStream getInputStream() {
@@ -178,7 +202,15 @@ public class Socket implements Closeable, AutoCloseable {
 
 	@Override
 	public void close() throws IOException {
-		close(sock);
+                if (isOpen()) {
+                        try {
+                                close(sock);
+                        } finally {
+                                sock = InvalidSocket;
+                                if (inputStream != null) inputStream.closed = true;
+                                if (outputStream != null) outputStream.closed = true;
+                        }
+                }
 	}
 	
 	public void shutdownInput() throws IOException {

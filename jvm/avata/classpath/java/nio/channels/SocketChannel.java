@@ -141,6 +141,13 @@ public class SocketChannel extends SelectableChannel
   public long write(ByteBuffer[] srcs, int offset, int length)
     throws IOException
   {
+    if (srcs == null) {
+      throw new NullPointerException();
+    }
+    if (offset < 0 || length < 0 || offset > srcs.length - length) {
+      throw new IndexOutOfBoundsException();
+    }
+
     long total = 0;
     for (int i = offset; i < offset + length; ++i) {
       total += write(srcs[i]);
@@ -152,7 +159,12 @@ public class SocketChannel extends SelectableChannel
   }
 
   void closeSocket() {
-    natCloseSocket(socket);
+    if (socket != InvalidSocket) {
+      natCloseSocket(socket);
+      socket = InvalidSocket;
+      connected = false;
+      readyToConnect = false;
+    }
   }
 
   int socketFD() {
@@ -167,7 +179,7 @@ public class SocketChannel extends SelectableChannel
 
   public class Handle extends Socket {
     public Handle() throws IOException {
-      super();
+      super(false);
     }
 
     public void setTcpNoDelay(boolean on) throws SocketException {
@@ -190,6 +202,10 @@ public class SocketChannel extends SelectableChannel
         SocketChannel.bind
           (socket, a.getAddress().getRawAddress(), a.getPort());
       }
+    }
+
+    public void close() throws IOException {
+      SocketChannel.this.close();
     }
   }
 

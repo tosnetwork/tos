@@ -163,13 +163,22 @@ void abort(JNIEnv* e, SOCKET sock)
 
 void close(JNIEnv* e, SOCKET sock)
 {
+  int shutdownError = 0;
   if (SOCKET_ERROR == ::shutdown(sock, SD_BOTH)) {
     int errcode = last_socket_error();
     if (errcode != ENOTCONN) {
-      char buf[255];
-      sprintf(buf, "Can't shutdown the socket. System error: %d", errcode);
-      throwNew(e, "java/io/IOException", buf);
+      shutdownError = errcode;
     }
+  }
+
+  if (SOCKET_ERROR == ::closesocket(sock)) {
+    char buf[255];
+    sprintf(buf, "Can't close the socket. System error: %d", last_socket_error());
+    throwNew(e, "java/io/IOException", buf);
+  } else if (shutdownError != 0) {
+    char buf[255];
+    sprintf(buf, "Can't shutdown the socket. System error: %d", shutdownError);
+    throwNew(e, "java/io/IOException", buf);
   }
 }
 
