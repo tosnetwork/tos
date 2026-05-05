@@ -2275,6 +2275,11 @@ $(openjdk-objects): $(build)/openjdk/%-openjdk.o: $(openjdk-src)/%.c \
 	@echo "compiling $(@)"
 	@mkdir -p $(dir $(@))
 	sed 's/^static jclass ia_class;//' < $(<) > $(build)/openjdk/$(notdir $(<))
+	if [ "$(notdir $(<))" = "Class.c" ]; then \
+		sed '/^#include "java_lang_Class.h"$$/d' \
+			< $(build)/openjdk/$(notdir $(<)) > $(build)/openjdk/$(notdir $(<)).tmp; \
+		mv $(build)/openjdk/$(notdir $(<)).tmp $(build)/openjdk/$(notdir $(<)); \
+	fi
 ifeq ($(platform),ios)
 	sed \
 		-e 's/^#ifndef __APPLE__/#if 1/' \
