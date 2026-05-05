@@ -1617,6 +1617,12 @@ test-sources := $(subst $(test)/Buffers.java,,$(test-sources))
 test-sources := $(subst $(test)/ZipOutputStreamTest.java,,$(test-sources))
 test-sources := $(subst $(test)/ClasspathWildcard.java,,$(test-sources))
 test-sources := $(subst $(test)/JNI.java,,$(test-sources))
+# Busy and ConcurrentHashMapTest are fundamentally concurrent stress tests
+# that require Thread.start(); they cannot be run in the consensus profile.
+test-sources := $(subst $(test)/Busy.java,,$(test-sources))
+test-sources := $(subst $(test)/ConcurrentHashMapTest.java,,$(test-sources))
+# Trace exercises Thread.getStackTrace() on a live thread; requires Thread.start().
+test-sources := $(subst $(test)/Trace.java,,$(test-sources))
 
 test-cpp-sources = $(wildcard $(test)/*.cpp)
 test-sources += $(test-support-sources)

@@ -44,9 +44,26 @@ public class InetAddress {
   }
 
   // -----------------------------------------------------------------------
-  // DNS lookup — TRAPPED
+  // Literal IPv4 parsing — admitted; DNS lookup — TRAPPED
   // -----------------------------------------------------------------------
   public static InetAddress getByName(String name) throws UnknownHostException {
+    // Allow dotted-decimal IPv4 literals without DNS (deterministic).
+    if (name != null) {
+      String[] parts = name.split("\\.", -1);
+      if (parts.length == 4) {
+        try {
+          int ip = 0;
+          for (int i = 0; i < 4; i++) {
+            int octet = Integer.parseInt(parts[i]);
+            if (octet < 0 || octet > 255) { break; }
+            ip = (ip << 8) | octet;
+            if (i == 3) return new InetAddress(name, ip);
+          }
+        } catch (NumberFormatException e) {
+          // fall through to trap
+        }
+      }
+    }
     throw new UnsupportedOperationException(MSG);
   }
 

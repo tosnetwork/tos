@@ -78,13 +78,20 @@ public final class URL {
     return openStream();
   }
 
+  // Parse-only handler for http/https: URL construction is deterministic
+  // (string parsing only); openConnection() is trapped.
+  private static final URLStreamHandler HTTP_HANDLER = new URLStreamHandler() {
+    protected java.net.URLConnection openConnection(URL url) throws java.io.IOException {
+      throw new java.io.IOException("networking not available in consensus");
+    }
+  };
+
   private static URLStreamHandler findHandler(String protocol)
     throws MalformedURLException
   {
-    // http/https require host networking — forbidden in the consensus VM.
+    // http/https URL parsing is deterministic; only network I/O is trapped.
     if ("http".equals(protocol) || "https".equals(protocol)) {
-      throw new MalformedURLException(
-          "networking not available in consensus: " + protocol);
+      return HTTP_HANDLER;
     } else if ("avatavmresource".equals(protocol)) {
       return new avata.avatavmresource.Handler();
     } else if ("file".equals(protocol)) {

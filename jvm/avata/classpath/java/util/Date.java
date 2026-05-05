@@ -14,7 +14,7 @@ public class Date implements java.io.Serializable, Cloneable, Comparable<Date> {
   private long when;
 
   public Date() {
-    when = System.currentTimeMillis();
+    when = 0L;
   }
 
   public Date(long when) {

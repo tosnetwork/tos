@@ -25,7 +25,10 @@ public class Random {
 
   public Random() {
     synchronized (Random.class) {
-      setSeed(nextSeed ^ System.currentTimeMillis());
+      // Use the static counter only — System.currentTimeMillis() is
+      // unavailable in the consensus profile.  Each no-arg constructor
+      // still gets a distinct seed via nextSeed rotation.
+      setSeed(nextSeed);
       nextSeed *= 123456789987654321L;
       if (nextSeed == 0) {
         nextSeed = InitialSeed;

@@ -46,6 +46,19 @@ public abstract class System {
 
   private static Properties makeProperties() {
     Properties p = new Properties();
+    // Load VM command-line -D properties first (lower priority).
+    // This populates keys like java.class.path and java.library.path
+    // that the JVM startup sets from the -cp / -D arguments.
+    String[] vmProps = getVMProperties();
+    if (vmProps != null) {
+      for (String kv : vmProps) {
+        int eq = kv.indexOf('=');
+        if (eq > 0) {
+          p.put(kv.substring(0, eq), kv.substring(eq + 1));
+        }
+      }
+    }
+    // Hardcoded deterministic values override any command-line values.
     p.put("java.version",       "1.8.0");
     p.put("java.class.version", "52.0");
     p.put("file.separator",     "/");
@@ -62,10 +75,16 @@ public abstract class System {
     // java.io.tmpdir is needed by libraries that create temp files.
     // Paths are in-memory only; host filesystem access is not available.
     p.put("java.io.tmpdir",     "/tmp");
-    // user.dir is the working directory — fixed to "/" in the consensus VM.
-    p.put("user.dir",           "/");
+    // user.dir is the working directory.  Set to "." (relative CWD); all
+    // native File operations (isDirectory, openDir, toAbsolutePath, etc.)
+    // resolve relative paths via getcwd(2) directly, so "." is always correct
+    // and avoids any System→File→System circular initialization.
+    p.put("user.dir", ".");
     return p;
   }
+
+  // Returns the -D command-line properties as "key=value" strings.
+  private static native String[] getVMProperties();
 
   // Standard streams — kept as host stdio stubs so System.out.println works
   // inside consensus code (outputs go to the node log, not the ledger state).

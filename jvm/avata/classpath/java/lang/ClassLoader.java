@@ -101,7 +101,7 @@ public abstract class ClassLoader {
     }
 
   public static ClassLoader getSystemClassLoader() {
-    return ClassLoader.class.getClassLoader();
+    return avata.SystemClassLoader.appLoader();
   }
 
   protected Class defineClass(String name, byte[] b, int offset, int length) {

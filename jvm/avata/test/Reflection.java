@@ -364,18 +364,20 @@ public class Reflection {
   }
 
   /**
-   * Class.getClassLoader() returns null for all admitted classes (they are
-   * treated as bootstrap-loaded).
+   * Class.getClassLoader() returns the classloader that loaded the class.
+   * Bootstrap-loaded classes (java.lang.*) and primitives return null.
+   * Application classes return their loader (system classloader, non-null).
    *
    * Class.forName(String) (one-arg) is admitted.
    * Class.forName(String,boolean,ClassLoader) with a null loader is
    * equivalent — also admitted.
    */
   private static void classLoaderAndForName() throws Exception {
-    // getClassLoader returns null for all admitted classes
-    expect(Reflection.class.getClassLoader() == null);
+    // Bootstrap and primitive classes have no loader (null)
     expect(String.class.getClassLoader() == null);
     expect(int.class.getClassLoader() == null);
+    // Application classes are loaded by the system classloader (non-null)
+    expect(Reflection.class.getClassLoader() != null);
 
     // one-arg forName is admitted
     Class<?> c = Class.forName("java.lang.Integer");

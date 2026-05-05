@@ -34,7 +34,10 @@ public abstract class Calendar {
   protected Calendar() { }
  
   public static Calendar getInstance() {
-    return new MyCalendar(System.currentTimeMillis());
+    // System.currentTimeMillis() is unavailable in the consensus profile.
+    // Return a calendar at the Unix epoch (0) as a neutral template; callers
+    // that need "current time" must supply it explicitly.
+    return new MyCalendar(0L);
   }
 
   public int get(int field) {

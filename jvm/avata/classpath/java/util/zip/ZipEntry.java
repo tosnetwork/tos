@@ -48,7 +48,7 @@ public class ZipEntry {
   
   public ZipEntry(String name) {
     this.name = name;
-    setTime(System.currentTimeMillis());
+    setTime(0L);
   }
 
   //Method to return name of the file

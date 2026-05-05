@@ -47,6 +47,8 @@ public class File implements Serializable {
     this(parent.getPath() + FileSeparator + child);
   }
 
+  private static long tempFileCounter = 0;
+
   public static File createTempFile(String prefix, String suffix)
     throws IOException
   {
@@ -64,7 +66,12 @@ public class File implements Serializable {
       suffix = ".tmp";
     }
     File ret;
-    long state = System.currentTimeMillis();
+    // System.currentTimeMillis() is unavailable in the consensus profile.
+    // Use a static counter as the seed for temp-file name generation.
+    long state;
+    synchronized (File.class) {
+      state = ++tempFileCounter;
+    }
 
     do {
       ret = generateFile(directory, prefix, state, suffix);

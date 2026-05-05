@@ -489,14 +489,20 @@ public final class Class <T>
   }
 
   /**
-   * In the Avata consensus VM all admitted classes are treated as
-   * bootstrap-loaded.  Returning {@code null} is the JDK8u contract
-   * for bootstrap-class-loader classes and is the only deterministic
-   * answer for a consensus node (exposing the host ClassLoader would
-   * let code observe host-specific state).
+   * Returns null for bootstrap-loaded classes (java.lang.*, etc.) per
+   * JDK8 semantics where the bootstrap class loader is represented as null.
+   * Returns the actual loader for application classes so that dynamic
+   * class definition (defineClass, Proxy) can use it as a parent.
    */
   public ClassLoader getClassLoader() {
-    return null;
+    ClassLoader loader = vmClass.loader;
+    // Boot loader is a SystemClassLoader that is not the app loader.
+    // JDK8 represents it as null.
+    if (loader instanceof avata.SystemClassLoader
+        && loader != avata.SystemClassLoader.appLoader()) {
+      return null;
+    }
+    return loader;
   }
 
   public boolean isSynthetic() {

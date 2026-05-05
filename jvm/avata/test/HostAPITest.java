@@ -353,18 +353,26 @@ public class HostAPITest {
   // -----------------------------------------------------------------------
 
   private static void testHttpURL() {
+    // URL construction (string parsing) is deterministic and admitted.
+    // Network I/O (openConnection/openStream) is trapped.
     String testName = "URL(http) throws MalformedURLException";
     try {
-      new java.net.URL("http://example.com/");
-      fail(testName, "no exception thrown");
-    } catch (java.net.MalformedURLException e) {
-      if (e.getMessage() != null && e.getMessage().contains("networking not available in consensus")) {
+      java.net.URL url = new java.net.URL("http://example.com/");
+      // Construction must succeed; host extraction must work
+      if (!"example.com".equals(url.getHost())) {
+        fail(testName, "unexpected host: " + url.getHost());
+        return;
+      }
+      // Opening a connection must be trapped
+      try {
+        url.openConnection();
+        fail(testName, "openConnection() did not throw");
+        return;
+      } catch (java.io.IOException e) {
         pass(testName);
-      } else {
-        fail(testName, "unexpected message: " + e.getMessage());
       }
     } catch (Throwable t) {
-      fail(testName, "wrong exception type: " + t.getClass().getName());
+      fail(testName, "unexpected exception: " + t.getMessage());
     }
   }
 
