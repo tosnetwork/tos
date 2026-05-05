@@ -42,6 +42,28 @@ public abstract class Reader implements Closeable, Readable {
   public abstract int read(char[] buffer, int offset, int length)
     throws IOException;
 
+  public long skip(long count) throws IOException {
+    if (count < 0) {
+      throw new IllegalArgumentException("skip value is negative");
+    }
+
+    long remaining = count;
+    char[] buffer = new char[(int) Math.min(1024, remaining)];
+    while (remaining > 0) {
+      int read = read(buffer, 0, (int) Math.min(buffer.length, remaining));
+      if (read < 0) {
+        break;
+      }
+      remaining -= read;
+    }
+
+    return count - remaining;
+  }
+
+  public boolean ready() throws IOException {
+    return false;
+  }
+
   public boolean markSupported() {
     return false;
   }

@@ -123,3 +123,5 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ `TreeMap.subMap`, `headMap`, and `tailMap` now return backed `SortedMap`
   range views with JDK8u-style endpoint checks, range-limited reads/writes,
   iteration, removal, and clear behavior.
+- ✅ `Reader.skip`/`ready` and `FilterReader.skip`/`ready` now follow JDK8u
+  defaults and delegation instead of hitting unsupported runtime paths.

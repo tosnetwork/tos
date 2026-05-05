@@ -14,6 +14,10 @@ public abstract class FilterReader extends Reader {
   protected Reader in;
 
   protected FilterReader(Reader in) {
+    if (in == null) {
+      throw new NullPointerException();
+    }
+
     this.in = in;
   }
 
@@ -26,11 +30,11 @@ public abstract class FilterReader extends Reader {
   }
 
   public boolean ready() throws IOException {
-    throw new UnsupportedOperationException();
+    return in.ready();
   }
 
   public long skip(long n) throws IOException {
-    throw new UnsupportedOperationException();
+    return in.skip(n);
   }
 
   public void close() throws IOException {
