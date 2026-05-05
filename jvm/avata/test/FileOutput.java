@@ -22,6 +22,7 @@ public class FileOutput {
       byte[] buffer = new byte[256];
       int c;
       int offset = 0;
+      expect(in.read(buffer, 0, 0) == 0);
       while ((c = in.read(buffer, offset, buffer.length - offset)) != -1) {
         offset += c;
       }
@@ -42,6 +43,35 @@ public class FileOutput {
 
     test(false);
     test(true);
+
+    final File boundsFile = new File("bounds-test.txt");
+    try {
+      FileOutputStream out = new FileOutputStream(boundsFile);
+      out.write(new byte[] {1, 2, 3, 4}, 0, 4);
+      out.write(new byte[] {1, 2, 3, 4}, 0, 0);
+      out.close();
+
+      final byte[] buffer = new byte[4];
+      FileInputStream in = new FileInputStream(boundsFile);
+      try {
+        in.read(buffer, -1, 1);
+        throw new RuntimeException("expected bounds exception");
+      } catch (ArrayIndexOutOfBoundsException expected) {
+      } finally {
+        in.close();
+      }
+
+      out = new FileOutputStream(boundsFile);
+      try {
+        out.write(buffer, 2, Integer.MAX_VALUE);
+        throw new RuntimeException("expected bounds exception");
+      } catch (ArrayIndexOutOfBoundsException expected) {
+      } finally {
+        out.close();
+      }
+    } finally {
+      expect(boundsFile.delete());
+    }
   }
 
 }

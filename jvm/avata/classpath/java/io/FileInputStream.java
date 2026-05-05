@@ -57,8 +57,12 @@ public class FileInputStream extends InputStream {
       throw new NullPointerException();
     }
 
-    if (offset < 0 || offset + length > b.length) {
+    if (offset < 0 || length < 0 || offset > b.length - length) {
       throw new ArrayIndexOutOfBoundsException();
+    }
+
+    if (length == 0) {
+      return 0;
     }
 
     int c = read(fd, b, offset, length);

@@ -174,9 +174,17 @@ inline int doRead(JNIEnv* e, jint fd, jbyte* data, jint length)
 
 inline void doWrite(JNIEnv* e, jint fd, const jbyte* data, jint length)
 {
-  int r = WRITE(fd, data, length);
-  if (r != length) {
-    throwNewErrno(e, "java/io/IOException");
+  jint offset = 0;
+  while (offset < length) {
+    int r = WRITE(fd, data + offset, length - offset);
+    if (r < 0) {
+      throwNewErrno(e, "java/io/IOException");
+      return;
+    } else if (r == 0) {
+      throwNew(e, "java/io/IOException", "write returned zero");
+      return;
+    }
+    offset += r;
   }
 }
 
@@ -770,7 +778,9 @@ extern "C" JNIEXPORT jint JNICALL
 
   int r = doRead(e, fd, data, length);
 
-  e->SetByteArrayRegion(b, offset, length, data);
+  if (r > 0) {
+    e->SetByteArrayRegion(b, offset, r, data);
+  }
 
   free(data);
 

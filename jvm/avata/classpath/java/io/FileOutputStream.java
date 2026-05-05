@@ -56,6 +56,10 @@ public class FileOutputStream extends OutputStream {
       throw new ArrayIndexOutOfBoundsException();
     }
 
+    if (length == 0) {
+      return;
+    }
+
     write(fd, b, offset, length);
   }
 

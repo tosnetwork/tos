@@ -50,7 +50,9 @@ public abstract class ClassLoader {
       p = packages().get(name);
     }
 
-    if (parent != null) {
+    if (p != null) {
+      return p;
+    } else if (parent != null) {
       p = parent.getPackage(name);
     } else {
       // todo: load attributes from JAR manifest if available

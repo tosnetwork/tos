@@ -10,10 +10,12 @@
 
 #if (defined __MINGW32__) || (defined _MSC_VER)
 #define EXPORT __declspec(dllexport)
+#include <windows.h>
 #include <io.h>
 #define open _open
 #define write _write
 #define close _close
+#define unlink _unlink
 #ifdef _MSC_VER
 #define S_IRWXU (_S_IREAD | _S_IWRITE)
 #define and &&
@@ -64,6 +66,11 @@ void* openLibrary(const char* name)
   return LoadLibrary(name);
 }
 
+void closeLibrary(void* library)
+{
+  FreeLibrary(static_cast<HMODULE>(library));
+}
+
 void* librarySymbol(void* library, const char* name)
 {
   void* address;
@@ -96,6 +103,11 @@ void* openLibrary(const char* name)
   return dlopen(name, RTLD_LAZY | RTLD_LOCAL);
 }
 
+void closeLibrary(void* library)
+{
+  dlclose(library);
+}
+
 void* librarySymbol(void* library, const char* name)
 {
   return dlsym(library, name);
@@ -106,9 +118,25 @@ const char* libraryError(void*)
   return dlerror();
 }
 
-const char* temporaryFileName(char* buffer, unsigned)
+const char* temporaryFileName(char* buffer, unsigned size)
 {
-  return tmpnam(buffer);
+  const char* dir = getenv("TMPDIR");
+  if (dir == 0 or strlen(dir) == 0) {
+    dir = "/tmp";
+  }
+
+  if (snprintf(buffer, size, "%s/avata-lzma-XXXXXX", dir)
+      >= static_cast<int>(size)) {
+    return 0;
+  }
+
+  int fd = mkstemp(buffer);
+  if (fd != -1) {
+    close(fd);
+    unlink(buffer);
+    return buffer;
+  }
+  return 0;
 }
 
 #endif
@@ -150,18 +178,26 @@ int main(int ac, const char** av)
 
           if (close(file) == 0 and outSize == result) {
             void* library = openLibrary(name);
-            unlink(name);
 
             if (library) {
+#ifndef PLATFORM_WINDOWS
+              unlink(name);
+#endif
               void* main = librarySymbol(library, "avataMain");
               if (main) {
                 int (*mainFunction)(const char*, int, const char**);
                 memcpy(&mainFunction, &main, sizeof(void*));
-                return mainFunction(name, ac, av);
+                int result = mainFunction(name, ac, av);
+                closeLibrary(library);
+                unlink(name);
+                return result;
               } else {
                 fprintf(stderr, "unable to find main in %s", name);
+                closeLibrary(library);
+                unlink(name);
               }
             } else {
+              unlink(name);
               fprintf(stderr,
                       "unable to load %s: %s\n",
                       name,

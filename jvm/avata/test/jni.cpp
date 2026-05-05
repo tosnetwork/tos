@@ -225,6 +225,29 @@ extern "C" JNIEXPORT void JNICALL
   e->DeleteLocalRef(ref);
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+    Java_JNI_testClassGetName(JNIEnv* e, jclass, jclass c)
+{
+  jclass classClass = e->GetObjectClass(c);
+  if (classClass == 0) return false;
+
+  jmethodID getName
+      = e->GetMethodID(classClass, "getName", "()Ljava/lang/String;");
+  if (getName == 0) return false;
+
+  jstring name = static_cast<jstring>(e->CallObjectMethod(c, getName));
+  if (name == 0) return false;
+
+  const char* chars = e->GetStringUTFChars(name, 0);
+  if (chars == 0) return false;
+
+  bool result = strcmp(chars, "JNI") == 0;
+  e->ReleaseStringUTFChars(name, chars);
+  e->DeleteLocalRef(name);
+  e->DeleteLocalRef(classClass);
+  return result;
+}
+
 extern "C" JNIEXPORT jobject JNICALL
     Java_Buffers_allocateNative(JNIEnv* e, jclass, jint capacity)
 {
