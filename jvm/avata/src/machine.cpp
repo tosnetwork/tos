@@ -3499,7 +3499,7 @@ class HeapClient : public Heap::Client {
   Machine* m;
 };
 
-void doCollect(Thread* t, Heap::CollectionType type, int pendingAllocation)
+void doCollect(Thread* t, Heap::CollectionType type, intptr_t pendingAllocation)
 {
   expect(t, not t->m->collecting);
 
@@ -3518,7 +3518,9 @@ void doCollect(Thread* t, Heap::CollectionType type, int pendingAllocation)
   m->heap->collect(
       type,
       footprint(m->rootThread),
-      pendingAllocation - (t->m->heapPoolIndex * ThreadHeapSizeInWords));
+      pendingAllocation
+          - static_cast<intptr_t>(t->m->heapPoolIndex
+                                  * ThreadHeapSizeInWords));
   m->unsafe = false;
 
   postCollect(m->rootThread);
@@ -4313,7 +4315,7 @@ object allocate3(Thread* t,
       break;
     }
 
-    int pendingAllocation = t->m->heap->fixedFootprint(
+    intptr_t pendingAllocation = t->m->heap->fixedFootprint(
         ceilingDivide(sizeInBytes, BytesPerWord), objectMask);
 
     if (t->heap == 0 or t->m->heap->limitExceeded(pendingAllocation)) {
@@ -4364,12 +4366,13 @@ object allocate3(Thread* t,
   }
 }
 
-void collect(Thread* t, Heap::CollectionType type, int pendingAllocation)
+void collect(Thread* t, Heap::CollectionType type, intptr_t pendingAllocation)
 {
   ENTER(t, Thread::ExclusiveState);
 
-  unsigned pending = pendingAllocation
-                     - (t->m->heapPoolIndex * ThreadHeapSizeInWords);
+  intptr_t pending = pendingAllocation
+                     - static_cast<intptr_t>(t->m->heapPoolIndex
+                                             * ThreadHeapSizeInWords);
 
   if (t->m->heap->limitExceeded(pending)) {
     type = Heap::MajorCollection;

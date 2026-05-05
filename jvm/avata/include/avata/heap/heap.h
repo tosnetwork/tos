@@ -53,10 +53,10 @@ class Heap : public avata::util::Allocator {
   virtual void setImmortalHeap(uintptr_t* start, unsigned sizeInWords) = 0;
   virtual size_t remaining() = 0;
   virtual size_t limit() = 0;
-  virtual bool limitExceeded(int pendingAllocation = 0) = 0;
+  virtual bool limitExceeded(intptr_t pendingAllocation = 0) = 0;
   virtual void collect(CollectionType type,
-                       unsigned footprint,
-                       int pendingAllocation) = 0;
+                       size_t footprint,
+                       intptr_t pendingAllocation) = 0;
   virtual unsigned fixedFootprint(unsigned sizeInWords, bool objectMask) = 0;
   virtual void* allocateFixed(avata::util::Alloc* allocator,
                               unsigned sizeInWords,

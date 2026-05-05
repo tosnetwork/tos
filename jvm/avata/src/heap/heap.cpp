@@ -22,10 +22,12 @@ namespace {
 
 namespace local {
 
-const unsigned Top = ~static_cast<unsigned>(0);
+typedef size_t HeapWordCount;
 
-const unsigned InitialGen2CapacityInBytes = 4 * 1024 * 1024;
-const unsigned InitialTenuredFixieCeilingInBytes = 4 * 1024 * 1024;
+const HeapWordCount Top = ~static_cast<HeapWordCount>(0);
+
+const size_t InitialGen2CapacityInBytes = 4 * 1024 * 1024;
+const size_t InitialTenuredFixieCeilingInBytes = 4 * 1024 * 1024;
 
 const bool Verbose = false;
 const bool Verbose2 = false;
@@ -60,16 +62,122 @@ class Context;
 
 Aborter* getAborter(Context* c);
 
+inline HeapWordCount heapAvg(HeapWordCount low, HeapWordCount high)
+{
+  if (UNLIKELY(low > high)) {
+    abortWithoutContext();
+  }
+  return low + ((high - low) / 2);
+}
+
+inline HeapWordCount heapCeilingDivide(HeapWordCount n, HeapWordCount d)
+{
+  return (n / d) + ((n % d) != 0);
+}
+
+inline HeapWordCount heapWordOf(HeapWordCount i)
+{
+  return i / BitsPerWord;
+}
+
+inline unsigned heapBitOf(HeapWordCount i)
+{
+  return i % BitsPerWord;
+}
+
+inline HeapWordCount heapIndexOf(HeapWordCount word, unsigned bit)
+{
+  return (word * BitsPerWord) + bit;
+}
+
+inline size_t bytesForWords(Context* c, HeapWordCount words)
+{
+  expect(c, words <= static_cast<size_t>(-1) / BytesPerWord);
+  return words * BytesPerWord;
+}
+
+inline HeapWordCount addWordCounts(Context* c,
+                                   HeapWordCount a,
+                                   HeapWordCount b)
+{
+  expect(c, a <= static_cast<HeapWordCount>(-1) - b);
+  return a + b;
+}
+
+inline HeapWordCount multiplyWordCounts(Context* c,
+                                        HeapWordCount a,
+                                        HeapWordCount b)
+{
+  expect(c, a == 0 or b <= static_cast<HeapWordCount>(-1) / a);
+  return a * b;
+}
+
+inline void mapMarkBit(uintptr_t* map, HeapWordCount i)
+{
+  map[heapWordOf(i)] |= static_cast<uintptr_t>(1) << heapBitOf(i);
+}
+
+inline void mapClearBit(uintptr_t* map, HeapWordCount i)
+{
+  map[heapWordOf(i)] &= ~(static_cast<uintptr_t>(1) << heapBitOf(i));
+}
+
+inline unsigned mapGetBit(uintptr_t* map, HeapWordCount i)
+{
+  return (map[heapWordOf(i)] & (static_cast<uintptr_t>(1) << heapBitOf(i)))
+         >> heapBitOf(i);
+}
+
+inline void mapClearBits(uintptr_t* map,
+                         unsigned bitsPerRecord,
+                         HeapWordCount index)
+{
+  for (HeapWordCount i = index, limit = index + bitsPerRecord; i < limit;
+       ++i) {
+    mapClearBit(map, i);
+  }
+}
+
+inline void mapSetBits(uintptr_t* map,
+                       unsigned bitsPerRecord,
+                       HeapWordCount index,
+                       unsigned v)
+{
+  HeapWordCount i = index + bitsPerRecord;
+  while (i > index) {
+    --i;
+    if (v & 1) {
+      mapMarkBit(map, i);
+    } else {
+      mapClearBit(map, i);
+    }
+    v >>= 1;
+  }
+}
+
+inline unsigned mapGetBits(uintptr_t* map,
+                           unsigned bitsPerRecord,
+                           HeapWordCount index)
+{
+  unsigned v = 0;
+  for (HeapWordCount i = index, limit = index + bitsPerRecord; i < limit;
+       ++i) {
+    v <<= 1;
+    v |= mapGetBit(map, i);
+  }
+  return v;
+}
+
 void* tryAllocate(Context* c, size_t size);
 void* allocate(Context* c, size_t size);
 void* allocate(Context* c, size_t size, bool limit);
 void free(Context* c, const void* p, size_t size);
 
 #ifdef USE_ATOMIC_OPERATIONS
-inline void markBitAtomic(uintptr_t* map, unsigned i)
+inline void markBitAtomic(uintptr_t* map, HeapWordCount i)
 {
-  uintptr_t* p = map + wordOf(i);
-  uintptr_t v = static_cast<uintptr_t>(1) << bitOf(i);
+  uintptr_t* p = map + heapWordOf(i);
+  uintptr_t v = static_cast<uintptr_t>(1) << heapBitOf(i);
   for (uintptr_t old = *p; not atomicCompareAndSwap(p, old, old | v);
        old = *p) {
   }
@@ -106,10 +214,10 @@ class Segment {
     class Iterator {
      public:
       Map* map;
-      unsigned index;
-      unsigned limit;
+      HeapWordCount index;
+      HeapWordCount limit;
 
-      Iterator(Map* map, unsigned start, unsigned end) : map(map)
+      Iterator(Map* map, HeapWordCount start, HeapWordCount end) : map(map)
       {
         assertT(map->segment->context, map->bitsPerRecord == 1);
         assertT(map->segment->context, map->segment);
@@ -127,10 +235,10 @@ class Segment {
 
       bool hasMore()
       {
-        unsigned word = wordOf(index);
-        unsigned bit = bitOf(index);
-        unsigned wordLimit = wordOf(limit);
-        unsigned bitLimit = bitOf(limit);
+        HeapWordCount word = heapWordOf(index);
+        unsigned bit = heapBitOf(index);
+        HeapWordCount wordLimit = heapWordOf(limit);
+        unsigned bitLimit = heapBitOf(limit);
 
         for (; word <= wordLimit and (word < wordLimit or bit < bitLimit);
              ++word) {
@@ -139,7 +247,7 @@ class Segment {
             for (; bit < BitsPerWord and (word < wordLimit or bit < bitLimit);
                  ++bit) {
               if (w & (static_cast<uintptr_t>(1) << bit)) {
-                index = ::indexOf(word, bit);
+                index = heapIndexOf(word, bit);
                 //                 printf("hit at index %d\n", index);
                 return true;
               } else {
@@ -156,7 +264,7 @@ class Segment {
         return false;
       }
 
-      unsigned next()
+      HeapWordCount next()
       {
         assertT(map->segment->context, hasMore());
         assertT(map->segment->context, map->segment);
@@ -213,7 +321,7 @@ class Segment {
       }
 
       if (clearNewData) {
-        memset(data, 0, size() * BytesPerWord);
+        memset(data, 0, bytesForWords(segment->context, size()));
       }
 
       if (child) {
@@ -221,40 +329,46 @@ class Segment {
       }
     }
 
-    unsigned calculateOffset(unsigned capacity)
+    HeapWordCount calculateOffset(HeapWordCount capacity)
     {
-      unsigned n = 0;
-      if (child)
-        n += child->calculateFootprint(capacity);
+      HeapWordCount n = 0;
+      if (child) {
+        n = addWordCounts(
+            segment->context, n, child->calculateFootprint(capacity));
+      }
       return n;
     }
 
-    static unsigned calculateSize(Context* c UNUSED,
-                                  unsigned capacity,
-                                  unsigned scale,
-                                  unsigned bitsPerRecord)
+    static HeapWordCount calculateSize(Context* c,
+                                       HeapWordCount capacity,
+                                       unsigned scale,
+                                       unsigned bitsPerRecord)
     {
-      unsigned result = ceilingDivide(
-          ceilingDivide(capacity, scale) * bitsPerRecord, BitsPerWord);
+      HeapWordCount recordCount = heapCeilingDivide(capacity, scale);
+      HeapWordCount bitCount
+          = multiplyWordCounts(c, recordCount, bitsPerRecord);
+      HeapWordCount result = heapCeilingDivide(bitCount, BitsPerWord);
       assertT(c, result);
       return result;
     }
 
-    unsigned calculateSize(unsigned capacity)
+    HeapWordCount calculateSize(HeapWordCount capacity)
     {
       return calculateSize(segment->context, capacity, scale, bitsPerRecord);
     }
 
-    unsigned size()
+    HeapWordCount size()
     {
       return calculateSize(segment->capacity());
     }
 
-    unsigned calculateFootprint(unsigned capacity)
+    HeapWordCount calculateFootprint(HeapWordCount capacity)
     {
-      unsigned n = calculateSize(capacity);
-      if (child)
-        n += child->calculateFootprint(capacity);
+      HeapWordCount n = calculateSize(capacity);
+      if (child) {
+        n = addWordCounts(
+            segment->context, n, child->calculateFootprint(capacity));
+      }
       return n;
     }
 
@@ -272,38 +386,38 @@ class Segment {
         child->replaceWith(m->child);
     }
 
-    unsigned indexOf(unsigned segmentIndex)
+    HeapWordCount indexOf(HeapWordCount segmentIndex)
     {
       return (segmentIndex / scale) * bitsPerRecord;
     }
 
-    unsigned indexOf(void* p)
+    HeapWordCount indexOf(void* p)
     {
       assertT(segment->context, segment->almostContains(p));
       assertT(segment->context, segment->capacity());
       return indexOf(segment->indexOf(p));
     }
 
-    void clearBit(unsigned i)
+    void clearBit(HeapWordCount i)
     {
-      assertT(segment->context, wordOf(i) < size());
+      assertT(segment->context, heapWordOf(i) < size());
 
-      vm::clearBit(data, i);
+      mapClearBit(data, i);
     }
 
-    void setBit(unsigned i)
+    void setBit(HeapWordCount i)
     {
-      assertT(segment->context, wordOf(i) < size());
+      assertT(segment->context, heapWordOf(i) < size());
 
-      vm::markBit(data, i);
+      mapMarkBit(data, i);
     }
 
-    void clearOnlyIndex(unsigned index)
+    void clearOnlyIndex(HeapWordCount index)
     {
-      clearBits(data, bitsPerRecord, index);
+      mapClearBits(data, bitsPerRecord, index);
     }
 
-    void clearOnly(unsigned segmentIndex)
+    void clearOnly(HeapWordCount segmentIndex)
     {
       clearOnlyIndex(indexOf(segmentIndex));
     }
@@ -320,12 +434,12 @@ class Segment {
         child->clear(p);
     }
 
-    void setOnlyIndex(unsigned index, unsigned v = 1)
+    void setOnlyIndex(HeapWordCount index, unsigned v = 1)
     {
-      setBits(data, bitsPerRecord, index, v);
+      mapSetBits(data, bitsPerRecord, index, v);
     }
 
-    void setOnly(unsigned segmentIndex, unsigned v = 1)
+    void setOnly(HeapWordCount segmentIndex, unsigned v = 1)
     {
       setOnlyIndex(indexOf(segmentIndex), v);
     }
@@ -348,7 +462,7 @@ class Segment {
     {
       assertT(segment->context, bitsPerRecord == 1);
       markBitAtomic(data, indexOf(p));
-      assertT(segment->context, getBit(data, indexOf(p)));
+      assertT(segment->context, mapGetBit(data, indexOf(p)));
       if (child)
         child->markAtomic(p);
     }
@@ -356,20 +470,20 @@ class Segment {
 
     unsigned get(void* p)
     {
-      return getBits(data, bitsPerRecord, indexOf(p));
+      return mapGetBits(data, bitsPerRecord, indexOf(p));
     }
   };
 
   Context* context;
   uintptr_t* data;
-  unsigned position_;
-  unsigned capacity_;
+  HeapWordCount position_;
+  HeapWordCount capacity_;
   Map* map;
 
   Segment(Context* context,
           Map* map,
-          unsigned desired,
-          unsigned minimum,
+          HeapWordCount desired,
+          HeapWordCount minimum,
           int64_t available = INT64_MAX)
       : context(context), data(0), position_(0), capacity_(0), map(map)
   {
@@ -382,28 +496,33 @@ class Segment {
 
       capacity_ = desired;
 
-      if (static_cast<int64_t>(footprint(capacity_)) > available) {
-        unsigned top = capacity_;
-        unsigned bottom = minimum;
-        unsigned target = available;
+      HeapWordCount target
+          = available <= 0
+                ? 0
+                : (static_cast<uint64_t>(available)
+                           > static_cast<HeapWordCount>(-1)
+                       ? static_cast<HeapWordCount>(-1)
+                       : static_cast<HeapWordCount>(available));
+      if (footprint(capacity_) > target) {
+        HeapWordCount top = capacity_;
+        HeapWordCount bottom = minimum;
         while (true) {
-          if (static_cast<int64_t>(footprint(capacity_)) > target) {
+          if (footprint(capacity_) > target) {
             if (bottom == capacity_) {
               break;
-            } else if (static_cast<int64_t>(footprint(capacity_ - 1))
-                       <= target) {
+            } else if (footprint(capacity_ - 1) <= target) {
               --capacity_;
               break;
             }
             top = capacity_;
-            capacity_ = avg(bottom, capacity_);
-          } else if (static_cast<int64_t>(footprint(capacity_)) < target) {
-            if (top == capacity_
-                or static_cast<int64_t>(footprint(capacity_ + 1)) >= target) {
+            capacity_ = heapAvg(bottom, capacity_);
+          } else if (footprint(capacity_) < target) {
+            if (top == capacity_ or capacity_ == static_cast<HeapWordCount>(-1)
+                or footprint(capacity_ + 1) >= target) {
               break;
             }
             bottom = capacity_;
-            capacity_ = avg(top, capacity_);
+            capacity_ = heapAvg(capacity_, top);
           } else {
             break;
           }
@@ -412,17 +531,17 @@ class Segment {
 
       while (data == 0) {
         data = static_cast<uintptr_t*>(local::allocate(
-            context, (footprint(capacity_)) * BytesPerWord, false));
+            context, bytesForWords(context, footprint(capacity_)), false));
 
         if (data == 0) {
           if (capacity_ > minimum) {
-            capacity_ = avg(minimum, capacity_);
+            capacity_ = heapAvg(minimum, capacity_);
             if (capacity_ == 0) {
               break;
             }
           } else {
             data = static_cast<uintptr_t*>(local::allocate(
-                context, (footprint(capacity_)) * BytesPerWord));
+                context, bytesForWords(context, footprint(capacity_))));
           }
         }
       }
@@ -436,8 +555,8 @@ class Segment {
   Segment(Context* context,
           Map* map,
           uintptr_t* data,
-          unsigned position,
-          unsigned capacity)
+          HeapWordCount position,
+          HeapWordCount capacity)
       : context(context),
         data(data),
         position_(position),
@@ -449,23 +568,25 @@ class Segment {
     }
   }
 
-  unsigned footprint(unsigned capacity)
+  HeapWordCount footprint(HeapWordCount capacity)
   {
-    return capacity
-           + (map and capacity ? map->calculateFootprint(capacity) : 0);
+    return map and capacity
+               ? addWordCounts(
+                     context, capacity, map->calculateFootprint(capacity))
+               : capacity;
   }
 
-  unsigned capacity()
+  HeapWordCount capacity()
   {
     return capacity_;
   }
 
-  unsigned position()
+  HeapWordCount position()
   {
     return position_;
   }
 
-  unsigned remaining()
+  HeapWordCount remaining()
   {
     return capacity() - position();
   }
@@ -473,7 +594,7 @@ class Segment {
   void replaceWith(Segment* s)
   {
     if (data) {
-      free(context, data, (footprint(capacity())) * BytesPerWord);
+      free(context, data, bytesForWords(context, footprint(capacity())));
     }
     data = s->data;
     s->data = 0;
@@ -506,22 +627,22 @@ class Segment {
     return contains(p) or p == data + position();
   }
 
-  void* get(unsigned offset)
+  void* get(HeapWordCount offset)
   {
     assertT(context, offset <= position());
     return data + offset;
   }
 
-  unsigned indexOf(void* p)
+  HeapWordCount indexOf(void* p)
   {
     assertT(context, almostContains(p));
     return static_cast<uintptr_t*>(p) - data;
   }
 
-  void* allocate(unsigned size)
+  void* allocate(HeapWordCount size)
   {
     assertT(context, size);
-    assertT(context, position() + size <= capacity());
+    assertT(context, size <= capacity() - position());
 
     void* p = data + position();
     position_ += size;
@@ -531,7 +652,7 @@ class Segment {
   void dispose()
   {
     if (data) {
-      free(context, data, (footprint(capacity())) * BytesPerWord);
+      free(context, data, bytesForWords(context, footprint(capacity())));
     }
     data = 0;
     map = 0;
@@ -793,19 +914,19 @@ class Context {
   Segment::Map nextHeapMap;
   Segment nextGen2;
 
-  unsigned gen2Base;
+  HeapWordCount gen2Base;
 
-  unsigned incomingFootprint;
-  int pendingAllocation;
-  unsigned tenureFootprint;
-  unsigned gen1Padding;
-  unsigned tenurePadding;
-  unsigned gen2Padding;
+  HeapWordCount incomingFootprint;
+  intptr_t pendingAllocation;
+  HeapWordCount tenureFootprint;
+  HeapWordCount gen1Padding;
+  HeapWordCount tenurePadding;
+  HeapWordCount gen2Padding;
 
-  unsigned fixieTenureFootprint;
-  unsigned untenuredFixieFootprint;
-  unsigned tenuredFixieFootprint;
-  unsigned tenuredFixieCeiling;
+  size_t fixieTenureFootprint;
+  size_t untenuredFixieFootprint;
+  size_t tenuredFixieFootprint;
+  size_t tenuredFixieCeiling;
 
   Heap::CollectionType mode;
 
@@ -842,13 +963,13 @@ inline Aborter* getAborter(Context* c)
   return c->system;
 }
 
-inline unsigned minimumNextGen1Capacity(Context* c)
+inline HeapWordCount minimumNextGen1Capacity(Context* c)
 {
   return c->gen1.position() - c->tenureFootprint + c->incomingFootprint
          + c->gen1Padding;
 }
 
-inline unsigned minimumNextGen2Capacity(Context* c)
+inline HeapWordCount minimumNextGen2Capacity(Context* c)
 {
   return c->gen2.position() + c->tenureFootprint + c->tenurePadding
          + c->gen2Padding;
@@ -865,15 +986,15 @@ inline void initNextGen1(Context* c)
   new (&(c->nextAgeMap))
       Segment::Map(&(c->nextGen1), max(1, log(TenureThreshold)), 1, 0, false);
 
-  unsigned minimum = minimumNextGen1Capacity(c);
-  unsigned desired = minimum;
+  HeapWordCount minimum = minimumNextGen1Capacity(c);
+  HeapWordCount desired = minimum;
 
   new (&(c->nextGen1)) Segment(c, &(c->nextAgeMap), desired, minimum);
 
   if (Verbose2) {
     fprintf(stderr,
-            "init nextGen1 to %d bytes\n",
-            c->nextGen1.capacity() * BytesPerWord);
+            "init nextGen1 to %zu bytes\n",
+            bytesForWords(c, c->nextGen1.capacity()));
   }
 }
 
@@ -890,11 +1011,13 @@ inline void initNextGen2(Context* c)
   new (&(c->nextHeapMap)) Segment::Map(
       &(c->nextGen2), 1, c->pageMap.scale * 1024, &(c->nextPageMap), true);
 
-  unsigned minimum = minimumNextGen2Capacity(c);
-  unsigned desired = minimum;
+  HeapWordCount minimum = minimumNextGen2Capacity(c);
+  HeapWordCount desired = minimum;
 
   if (not oversizedGen2(c)) {
-    desired *= 2;
+    desired = desired > (static_cast<HeapWordCount>(-1) / 2)
+                  ? static_cast<HeapWordCount>(-1)
+                  : desired * 2;
   }
 
   if (desired < InitialGen2CapacityInBytes / BytesPerWord) {
@@ -908,13 +1031,14 @@ inline void initNextGen2(Context* c)
       minimum,
       static_cast<int64_t>(c->limit / BytesPerWord)
       - (static_cast<int64_t>(c->count / BytesPerWord)
-         - c->gen2.footprint(c->gen2.capacity())
-         - c->gen1.footprint(c->gen1.capacity()) + c->pendingAllocation));
+         - static_cast<int64_t>(c->gen2.footprint(c->gen2.capacity()))
+         - static_cast<int64_t>(c->gen1.footprint(c->gen1.capacity()))
+         + c->pendingAllocation));
 
   if (Verbose2) {
     fprintf(stderr,
-            "init nextGen2 to %d bytes\n",
-            c->nextGen2.capacity() * BytesPerWord);
+            "init nextGen2 to %zu bytes\n",
+            bytesForWords(c, c->nextGen2.capacity()));
   }
 }
 
@@ -1674,8 +1798,8 @@ void visitMarkedFixies(Context* c)
 
 void collect(Context* c,
              Segment::Map* map,
-             unsigned start,
-             unsigned end,
+             HeapWordCount start,
+             HeapWordCount end,
              bool* dirty,
              bool expectDirty UNUSED)
 {
@@ -1684,8 +1808,8 @@ void collect(Context* c,
     wasDirty = true;
     if (map->child) {
       assertT(c, map->scale > 1);
-      unsigned s = it.next();
-      unsigned e = s + map->scale;
+      HeapWordCount s = it.next();
+      HeapWordCount e = s + map->scale;
 
       map->clearOnly(s);
       bool childDirty = false;
@@ -1729,8 +1853,8 @@ void collect2(Context* c)
   }
 
   if (c->mode == Heap::MinorCollection and c->gen2.position()) {
-    unsigned start = 0;
-    unsigned end = start + c->gen2.position();
+    HeapWordCount start = 0;
+    HeapWordCount end = start + c->gen2.position();
     bool dirty;
     collect(c, &(c->heapMap), start, end, &dirty, false);
   }
@@ -1757,17 +1881,23 @@ void collect2(Context* c)
   c->client->visitRoots(&v);
 }
 
-bool limitExceeded(Context* c, int pendingAllocation)
+bool limitExceeded(Context* c, intptr_t pendingAllocation)
 {
   size_t count = c->count;
   if (pendingAllocation >= 0) {
-    count += static_cast<size_t>(pendingAllocation);
+    size_t pending = static_cast<size_t>(pendingAllocation);
+    count = pending > static_cast<size_t>(-1) - count
+                ? static_cast<size_t>(-1)
+                : count + pending;
   } else {
-    size_t pending = static_cast<size_t>(-pendingAllocation);
+    size_t pending = static_cast<size_t>(-(pendingAllocation + 1)) + 1;
     count = pending < count ? count - pending : 0;
   }
 
-  size_t available = static_cast<size_t>(c->gen2.remaining()) * BytesPerWord;
+  size_t availableWords = c->gen2.remaining();
+  size_t available = availableWords > static_cast<size_t>(-1) / BytesPerWord
+                         ? static_cast<size_t>(-1)
+                         : availableWords * BytesPerWord;
   count = available < count ? count - available : 0;
 
   if (Verbose) {
@@ -1852,21 +1982,21 @@ void collect(Context* c)
             static_cast<int>(c->totalTime - c->totalCollectionTime));
 
     fprintf(stderr,
-            " -             gen1: %8d/%8d bytes\n",
-            c->gen1.position() * BytesPerWord,
-            c->gen1.capacity() * BytesPerWord);
+            " -             gen1: %8zu/%8zu bytes\n",
+            bytesForWords(c, c->gen1.position()),
+            bytesForWords(c, c->gen1.capacity()));
 
     fprintf(stderr,
-            " -             gen2: %8d/%8d bytes\n",
-            c->gen2.position() * BytesPerWord,
-            c->gen2.capacity() * BytesPerWord);
+            " -             gen2: %8zu/%8zu bytes\n",
+            bytesForWords(c, c->gen2.position()),
+            bytesForWords(c, c->gen2.capacity()));
 
     fprintf(stderr,
-            " - untenured fixies:          %8d bytes\n",
+            " - untenured fixies:          %8zu bytes\n",
             c->untenuredFixieFootprint);
 
     fprintf(stderr,
-            " -   tenured fixies:          %8d bytes\n",
+            " -   tenured fixies:          %8zu bytes\n",
             c->tenuredFixieFootprint);
   }
 }
@@ -1966,7 +2096,7 @@ class MyHeap : public Heap {
     return c.limit;
   }
 
-  virtual bool limitExceeded(int pendingAllocation = 0)
+  virtual bool limitExceeded(intptr_t pendingAllocation = 0)
   {
     return local::limitExceeded(&c, pendingAllocation);
   }
@@ -1987,8 +2117,8 @@ class MyHeap : public Heap {
   }
 
   virtual void collect(CollectionType type,
-                       unsigned incomingFootprint,
-                       int pendingAllocation)
+                       size_t incomingFootprint,
+                       intptr_t pendingAllocation)
   {
     c.mode = type;
     c.incomingFootprint = incomingFootprint;

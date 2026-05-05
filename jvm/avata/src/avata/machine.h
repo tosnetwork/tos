@@ -1525,7 +1525,7 @@ inline void release(Thread* t, Reference* r)
   }
 }
 
-void collect(Thread* t, Heap::CollectionType type, int pendingAllocation = 0);
+void collect(Thread* t, Heap::CollectionType type, intptr_t pendingAllocation = 0);
 
 void shutDown(Thread* t);
 
