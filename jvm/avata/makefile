@@ -1384,9 +1384,10 @@ bootimage-generator-objects = \
 	$(call cpp-objects,$(bootimage-generator-sources),$(src),$(build))
 bootimage-generator = $(build)/bootimage-generator
 
-ifneq ($(mode),fast)
-	host-vm-options := -$(mode)
-endif
+host-vm-options := $(strip $(subst -interpret,,\
+	$(subst -test,,\
+	$(subst -bootimage-test,,\
+	$(subst -bootimage,,$(options))))))
 
 host-vm = build/$(build-platform)-$(build-arch)-interpret$(host-vm-options)/$(so-prefix)jvm$(so-suffix)
 
@@ -1806,6 +1807,7 @@ $(build)/extra-dir/multi-classpath-test.txt:
 	echo "$@" > $@
 
 $(build)/test/multi-classpath-test.txt:
+	mkdir -p $(build)/test
 	echo "$@" > $@
 
 $(build)/test.sh: $(test)/test.sh

@@ -86,6 +86,7 @@ certain flags described below, all of which are optional.
         openjdk=<openjdk installation directory> \
         openjdk-src=<openjdk source directory> \
         android=<android source directory> \
+        sim={true,false} \
         ios-version=<iOS minimum version>
 
   * `platform` - the target platform
@@ -154,6 +155,10 @@ the OpenJDK Class Library" below for details.
 default Avata class library.  See "Building with the Android Class
 Library" below for details.
     * _default:_ not set
+
+  * `sim` - if true when `platform=ios`, build for the iOS simulator
+instead of a device target.
+    * _default:_ false
 
   * `ios-version` - the minimum iOS SDK version which will be used
 when compiling for ios target. Do not use a value 11.0 or larger,
