@@ -11,6 +11,19 @@ public class ArraysTest {
     }
   }
 
+  private static void expectArrayCopyBounds(Object src,
+                                            int srcOffset,
+                                            Object dst,
+                                            int dstOffset,
+                                            int length)
+  {
+    try {
+      System.arraycopy(src, srcOffset, dst, dstOffset, length);
+      throw new RuntimeException("expected arraycopy bounds exception");
+    } catch (IndexOutOfBoundsException expected) {
+    }
+  }
+
   private static int pseudoRandom(int seed) {
     return 3170425 * seed + 132102;
   }
@@ -168,6 +181,23 @@ public class ArraysTest {
       expect(list[1] == result[1]);
       expect(result.length == 2);
       expect(result.getClass().getComponentType() == Object.class);
+    }
+
+    { int[] src = new int[] { 1 };
+      int[] dst = new int[] { 0 };
+
+      System.arraycopy(src, 1, dst, 1, 0);
+      expect(dst[0] == 0);
+
+      expectArrayCopyBounds(src, -1, dst, 0, 0);
+      expectArrayCopyBounds(src, 0, dst, -1, 0);
+      expectArrayCopyBounds(src, 2, dst, 0, 0);
+      expectArrayCopyBounds(src, 0, dst, 2, 0);
+      expectArrayCopyBounds(src, 0, dst, 0, -1);
+      expectArrayCopyBounds(src, Integer.MAX_VALUE, dst, 0, 1);
+      expectArrayCopyBounds(src, 0, dst, Integer.MAX_VALUE, 1);
+      expectArrayCopyBounds(src, 1, dst, 0, Integer.MAX_VALUE);
+      expectArrayCopyBounds(src, 0, dst, 1, Integer.MAX_VALUE);
     }
 
     { Object[] a = new Object[3];

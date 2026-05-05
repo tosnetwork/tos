@@ -80,35 +80,41 @@ void arrayCopy(Thread* t,
       if (LIKELY(elementSize)) {
         intptr_t sl = fieldAtOffset<uintptr_t>(src, BytesPerWord);
         intptr_t dl = fieldAtOffset<uintptr_t>(dst, BytesPerWord);
-        if (LIKELY(length > 0)) {
-          if (LIKELY(srcOffset >= 0 and srcOffset + length > srcOffset and srcOffset + length <= sl
-                     and dstOffset >= 0 and dstOffset + length > dstOffset and dstOffset + length <= dl)) {
-            uint8_t* sbody = &fieldAtOffset<uint8_t>(src, ArrayBody);
-            uint8_t* dbody = &fieldAtOffset<uint8_t>(dst, ArrayBody);
-            if (src == dst) {
-              memmove(dbody + (dstOffset * elementSize),
-                      sbody + (srcOffset * elementSize),
-                      length * elementSize);
-            } else {
-              memcpy(dbody + (dstOffset * elementSize),
-                     sbody + (srcOffset * elementSize),
-                     length * elementSize);
-            }
 
-            if (objectClass(t, dst)->objectMask()) {
-              mark(t, dst, ArrayBody + (dstOffset * BytesPerWord), length);
-            }
-
-            return;
-          } else {
-            throwNew(t, GcIndexOutOfBoundsException::Type);
-          }
-        } else if (LIKELY(length < 0)) {
+        if (UNLIKELY(length < 0)) {
           throwNew(t, GcIndexOutOfBoundsException::Type, "%d", length);
           return;
-        } else {
+        }
+
+        if (UNLIKELY(srcOffset < 0 or srcOffset > sl or dstOffset < 0
+                     or dstOffset > dl or length > sl - srcOffset
+                     or length > dl - dstOffset)) {
+          throwNew(t, GcIndexOutOfBoundsException::Type);
           return;
         }
+
+        if (LIKELY(length > 0)) {
+          uint8_t* sbody = &fieldAtOffset<uint8_t>(src, ArrayBody);
+          uint8_t* dbody = &fieldAtOffset<uint8_t>(dst, ArrayBody);
+          size_t byteLength = static_cast<size_t>(length) * elementSize;
+          if (src == dst) {
+            memmove(dbody + (static_cast<size_t>(dstOffset) * elementSize),
+                    sbody + (static_cast<size_t>(srcOffset) * elementSize),
+                    byteLength);
+          } else {
+            memcpy(dbody + (static_cast<size_t>(dstOffset) * elementSize),
+                   sbody + (static_cast<size_t>(srcOffset) * elementSize),
+                   byteLength);
+          }
+
+          if (objectClass(t, dst)->objectMask()) {
+            mark(t, dst, ArrayBody + (dstOffset * BytesPerWord), length);
+          }
+
+          return;
+        }
+
+        return;
       }
     }
   } else {
