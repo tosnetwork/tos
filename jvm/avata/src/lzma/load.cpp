@@ -59,6 +59,8 @@ void myFree(void*, void* address)
   free(address);
 }
 
+const unsigned TemporaryNameSize = 1024;
+
 #if (defined __MINGW32__) || (defined _MSC_VER)
 
 void* openLibrary(const char* name)
@@ -141,6 +143,36 @@ const char* temporaryFileName(char* buffer, unsigned size)
 
 #endif
 
+void* temporaryLibrary = 0;
+char temporaryLibraryName[TemporaryNameSize] = {0};
+bool temporaryCleanupRegistered = false;
+
+void cleanupTemporaryLibrary()
+{
+  void* library = temporaryLibrary;
+  temporaryLibrary = 0;
+
+  if (library) {
+    closeLibrary(library);
+  }
+
+  if (temporaryLibraryName[0]) {
+    unlink(temporaryLibraryName);
+    temporaryLibraryName[0] = 0;
+  }
+}
+
+void rememberTemporaryLibrary(const char* name, void* library)
+{
+  temporaryLibrary = library;
+  strncpy(temporaryLibraryName, name, sizeof(temporaryLibraryName) - 1);
+  temporaryLibraryName[sizeof(temporaryLibraryName) - 1] = 0;
+
+  if (! temporaryCleanupRegistered) {
+    temporaryCleanupRegistered = atexit(cleanupTemporaryLibrary) == 0;
+  }
+}
+
 }  // namespace
 
 int main(int ac, const char** av)
@@ -167,9 +199,8 @@ int main(int ac, const char** av)
                             LZMA_FINISH_END,
                             &status,
                             &allocator)) {
-      const unsigned BufferSize = 1024;
-      char buffer[BufferSize];
-      const char* name = temporaryFileName(buffer, BufferSize);
+      char buffer[TemporaryNameSize];
+      const char* name = temporaryFileName(buffer, TemporaryNameSize);
       if (name) {
         int file = open(name, O_CREAT | O_EXCL | O_WRONLY | O_BINARY, S_IRWXU);
         if (file != -1) {
@@ -180,21 +211,23 @@ int main(int ac, const char** av)
             void* library = openLibrary(name);
 
             if (library) {
-#ifndef PLATFORM_WINDOWS
-              unlink(name);
+#if (!defined __MINGW32__) && (!defined _MSC_VER)
+              if (unlink(name) == 0) {
+                name = 0;
+              }
 #endif
+              rememberTemporaryLibrary(name ? name : "", library);
+
               void* main = librarySymbol(library, "avataMain");
               if (main) {
                 int (*mainFunction)(const char*, int, const char**);
                 memcpy(&mainFunction, &main, sizeof(void*));
-                int result = mainFunction(name, ac, av);
-                closeLibrary(library);
-                unlink(name);
+                int result = mainFunction(buffer, ac, av);
+                cleanupTemporaryLibrary();
                 return result;
               } else {
-                fprintf(stderr, "unable to find main in %s", name);
-                closeLibrary(library);
-                unlink(name);
+                fprintf(stderr, "unable to find main in %s", buffer);
+                cleanupTemporaryLibrary();
               }
             } else {
               unlink(name);
