@@ -17,6 +17,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
 public class ObjectOutputStream extends OutputStream implements DataOutput {
+  private final static int HANDLE_OFFSET = 0x7e0000;
   final static short STREAM_MAGIC = (short)0xaced;
   final static short STREAM_VERSION = 5;
   final static byte TC_NULL = (byte)0x70;
@@ -41,6 +42,7 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
   final static byte SC_ENUM = 0x10;
 
   private final OutputStream out;
+  private final ArrayList references = new ArrayList();
 
   public ObjectOutputStream(OutputStream out) throws IOException {
     this.out = out;
@@ -162,14 +164,62 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
     blockData(new int[] { length >> 8, length }, bytes, null);
   }
 
-  private int classHandle;
+  private static class ClassDescReference {
+    final Class clazz;
+
+    ClassDescReference(Class clazz) {
+      this.clazz = clazz;
+    }
+  }
+
+  private int addReference(Object o) {
+    references.add(o);
+    return HANDLE_OFFSET + references.size() - 1;
+  }
+
+  private int lookupReference(Object o) {
+    for (int i = 0; i < references.size(); ++i) {
+      if (references.get(i) == o) {
+        return HANDLE_OFFSET + i;
+      }
+    }
+    return -1;
+  }
+
+  private int lookupClassDesc(Class clazz) {
+    for (int i = 0; i < references.size(); ++i) {
+      Object reference = references.get(i);
+      if (reference instanceof ClassDescReference
+          && ((ClassDescReference)reference).clazz == clazz) {
+        return HANDLE_OFFSET + i;
+      }
+    }
+    return -1;
+  }
+
+  private void reference(int handle) throws IOException {
+    rawByte(TC_REFERENCE);
+    rawInt(handle);
+  }
 
   private void string(String s) throws IOException {
-    int length = s.length();
+    byte[] bytes = s.getBytes("UTF-8");
+    int length = bytes.length;
     rawShort(length);
-    for (byte b : s.getBytes()) {
+    for (byte b : bytes) {
       rawByte(b);
     }
+  }
+
+  private void objectString(String s) throws IOException {
+    int handle = lookupReference(s);
+    if (handle >= 0) {
+      reference(handle);
+      return;
+    }
+    rawByte(TC_STRING);
+    string(s);
+    addReference(s);
   }
 
   private static char primitiveTypeChar(Class type) {
@@ -194,6 +244,11 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
   }
 
   private void classDesc(Class clazz, int scFlags) throws IOException {
+    int handle = lookupClassDesc(clazz);
+    if (handle >= 0) {
+      reference(handle);
+      return;
+    }
     rawByte(TC_CLASSDESC);
 
     // class name
@@ -206,6 +261,7 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
       serialVersionUID = field.getLong(null);
     } catch (Exception ignored) {}
     rawLong(serialVersionUID);
+    addReference(new ClassDescReference(clazz));
 
     // handle
     rawByte(SC_SERIALIZABLE | scFlags);
@@ -220,8 +276,9 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
       } else {
         rawByte(fieldType.isArray() ? '[' : 'L');
         string(field.getName());
-        rawByte(TC_STRING);
-        string("L" + fieldType.getName().replace('.', '/') + ";");
+        objectString(fieldType.isArray()
+          ? fieldType.getName().replace('.', '/')
+          : "L" + fieldType.getName().replace('.', '/') + ";");
       }
     }
     rawByte(TC_ENDBLOCKDATA); // TODO: write annotation
@@ -285,26 +342,31 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
       rawByte(TC_NULL);
       return;
     }
+    int handle = lookupReference(o);
+    if (handle >= 0) {
+      reference(handle);
+      return;
+    }
     if (o instanceof String) {
-      byte[] bytes = ((String)o).getBytes("UTF-8");
-      rawByte(TC_STRING);
-      rawShort(bytes.length);
-      write(bytes);
+      objectString((String)o);
       return;
     }
     rawByte(TC_OBJECT);
     Method writeObject = getReadOrWriteMethod(o, "writeObject");
     if (writeObject == null) {
       classDesc(o.getClass(), 0);
+      addReference(o);
       defaultWriteObject(o);
     } else try {
       classDesc(o.getClass(), SC_WRITE_METHOD);
+      addReference(o);
       current = o;
       writeObject.invoke(o, this);
-      current = null;
       rawByte(TC_ENDBLOCKDATA);
     } catch (Exception e) {
       throw new IOException(e);
+    } finally {
+      current = null;
     }
   }
 

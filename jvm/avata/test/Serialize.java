@@ -117,6 +117,15 @@ public class Serialize implements Serializable {
     }
   }
 
+  private static class ObjectGraph implements Serializable {
+    public static final long serialVersionUID = 0x6f626a6772617068l;
+
+    String first;
+    String second;
+    ObjectGraph self;
+    String[] values;
+  }
+
   public static void main(String[] args) throws Exception {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     ObjectOutputStream out2 = new ObjectOutputStream(out);
@@ -228,6 +237,26 @@ public class Serialize implements Serializable {
     in2.close();
     expectEqual(1, map.size());
     expectEqual("value", (String)map.get("key"));
+
+    out.reset();
+    out2 = new ObjectOutputStream(out);
+    ObjectGraph graph = new ObjectGraph();
+    String shared = new String("shared");
+    graph.first = shared;
+    graph.second = shared;
+    graph.self = graph;
+    out2.writeObject(graph);
+    out2.close();
+    array = out.toByteArray();
+    in = new ByteArrayInputStream(array);
+    in2 = new ObjectInputStream(in);
+    ObjectGraph graphCopy = (ObjectGraph)in2.readObject();
+    in2.close();
+    expect(graphCopy != graph);
+    expect(graphCopy.self == graphCopy);
+    expect(graphCopy.first == graphCopy.second);
+    expectEqual("shared", graphCopy.first);
+    expect(graphCopy.values == null);
 
     out.reset();
     out2 = new ObjectOutputStream(out);

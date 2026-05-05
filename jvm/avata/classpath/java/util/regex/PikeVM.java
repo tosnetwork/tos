@@ -50,6 +50,10 @@ class PikeVM implements PikeVMOpcodes {
     this.multiLine = multiLine;
   }
 
+  public int groupCount() {
+    return groupCount;
+  }
+
   /**
    * The current thread states.
    * <p>

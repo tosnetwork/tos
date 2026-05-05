@@ -2,8 +2,30 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Regex {
+  private interface Thrower {
+    void run();
+  }
+
   private static void expect(boolean v) {
     if (! v) throw new RuntimeException();
+  }
+
+  private static void expectIllegalState(Thrower thrower) {
+    try {
+      thrower.run();
+      expect(false);
+    } catch (IllegalStateException e) {
+      // expected
+    }
+  }
+
+  private static void expectIndexOutOfBounds(Thrower thrower) {
+    try {
+      thrower.run();
+      expect(false);
+    } catch (IndexOutOfBoundsException e) {
+      // expected
+    }
   }
 
   private static Matcher getMatcher(String regex, String string) {
@@ -54,7 +76,61 @@ public class Regex {
     }
   }
 
+  private static void expectMatcherState() {
+    final Matcher trivial = Pattern.compile("abc").matcher("abc");
+    expect(trivial.groupCount() == 0);
+    expectIllegalState(new Thrower() { public void run() { trivial.start(); } });
+    expectIllegalState(new Thrower() { public void run() { trivial.end(); } });
+    expectIllegalState(new Thrower() { public void run() { trivial.group(); } });
+    expectIllegalState(new Thrower() { public void run() { trivial.start(1); } });
+    expect(trivial.matches());
+    expect(trivial.start() == 0);
+    expect(trivial.end() == 3);
+    expect("abc".equals(trivial.group()));
+    expect("abc".equals(trivial.group(0)));
+    expectIndexOutOfBounds(new Thrower() { public void run() { trivial.start(1); } });
+    expectIndexOutOfBounds(new Thrower() { public void run() { trivial.end(-1); } });
+    expectIndexOutOfBounds(new Thrower() { public void run() { trivial.group(1); } });
+    expect(!trivial.find());
+    expectIllegalState(new Thrower() { public void run() { trivial.start(); } });
+
+    final Matcher grouped = Pattern.compile("(a)(b)?").matcher("a");
+    expect(grouped.groupCount() == 2);
+    expectIllegalState(new Thrower() { public void run() { grouped.group(0); } });
+    expect(grouped.matches());
+    expect(grouped.start(0) == 0);
+    expect(grouped.end(0) == 1);
+    expect("a".equals(grouped.group(0)));
+    expect(grouped.start(1) == 0);
+    expect(grouped.end(1) == 1);
+    expect("a".equals(grouped.group(1)));
+    expect(grouped.start(2) == -1);
+    expect(grouped.end(2) == -1);
+    expect(grouped.group(2) == null);
+    expectIndexOutOfBounds(new Thrower() { public void run() { grouped.start(3); } });
+    expectIndexOutOfBounds(new Thrower() { public void run() { grouped.end(-1); } });
+    expectIndexOutOfBounds(new Thrower() { public void run() { grouped.group(3); } });
+
+    final Matcher trivialFind = Pattern.compile("a").matcher("a");
+    expectIndexOutOfBounds(new Thrower() { public void run() { trivialFind.find(-1); } });
+    expectIndexOutOfBounds(new Thrower() { public void run() { trivialFind.find(2); } });
+    expect(trivialFind.find());
+    expect(trivialFind.start() == 0);
+    expect(!trivialFind.find());
+    expectIllegalState(new Thrower() { public void run() { trivialFind.group(); } });
+
+    final Matcher regexFind = Pattern.compile("(a)").matcher("a");
+    expectIndexOutOfBounds(new Thrower() { public void run() { regexFind.find(-1); } });
+    expectIndexOutOfBounds(new Thrower() { public void run() { regexFind.find(2); } });
+    expect(regexFind.find());
+    expect(regexFind.start() == 0);
+    expect("a".equals(regexFind.group(1)));
+    expect(!regexFind.find());
+    expectIllegalState(new Thrower() { public void run() { regexFind.end(); } });
+  }
+
   public static void main(String[] args) {
+    expectMatcherState();
     expectMatch("a(bb)?a", "abba");
     expectNoMatch("a(bb)?a", "abbba");
     expectNoMatch("a(bb)?a", "abbaa");

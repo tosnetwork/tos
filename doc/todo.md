@@ -156,3 +156,12 @@ Status legend: `✅` completed, unchecked items are still open.
   JDK8u mutation rules: key/entry view `add` rejects, entry containment/removal
   matches both key and value, values support removal and bulk removal, and
   range values can remove backed map entries in sorted order.
+- ✅ `java.util.regex.Matcher` now follows the admitted JDK8u match-state
+  surface: reset and failed matches clear prior state, `find(int)` rejects
+  invalid start offsets, group count is available before matching, invalid
+  groups throw bounded exceptions, and unmatched optional groups return
+  `-1`/`null`.
+- ✅ `ObjectOutputStream` now writes JDK8u-style stream handles for strings,
+  class descriptors, and ordinary objects, so admitted serialization preserves
+  shared references and self-references; array field descriptors are emitted
+  and read using binary names compatible with JDK8u descriptor strings.

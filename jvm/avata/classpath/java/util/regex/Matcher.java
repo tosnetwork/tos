@@ -27,7 +27,12 @@ public abstract class Matcher {
   public abstract boolean matches();
 
   public boolean find() {
-    return find(end);
+    int offset = end < 0 ? 0 : end + (start == end ? 1 : 0);
+    if (offset > input.length()) {
+      clearMatch();
+      return false;
+    }
+    return find(offset);
   }
 
   public abstract boolean find(int start);
@@ -38,8 +43,7 @@ public abstract class Matcher {
 
   public Matcher reset(CharSequence input) {
     this.input = input;
-    start = 0;
-    end = 0;
+    clearMatch();
     return this;
   }
 
@@ -81,39 +85,58 @@ public abstract class Matcher {
   }
 
   public int start() {
+    checkMatchAvailable();
     return start;
   }
 
   public int end() {
+    checkMatchAvailable();
     return end;
   }
 
   public String group() {
-    return input.subSequence(start, end).toString();
+    return group(0);
   }
 
   public int start(int group) {
-    if (group == 0) {
-      return start();
-    }
-    throw new UnsupportedOperationException();
+    checkGroup(group);
+    return start;
   }
 
   public int end(int group) {
-    if (group == 0) {
-      return end();
-    }
-    throw new UnsupportedOperationException();
+    checkGroup(group);
+    return end;
   }
 
   public String group(int group) {
-    if (group == 0) {
-      return group();
-    }
-    throw new UnsupportedOperationException();
+    checkGroup(group);
+    return input.subSequence(start, end).toString();
   }
 
   public int groupCount() {
     return 0;
+  }
+
+  protected void clearMatch() {
+    start = end = -1;
+  }
+
+  protected void checkFindStart(int offset) {
+    if (offset < 0 || offset > input.length()) {
+      throw new IndexOutOfBoundsException("Illegal start index");
+    }
+  }
+
+  protected void checkMatchAvailable() {
+    if (start < 0) {
+      throw new IllegalStateException("No match available");
+    }
+  }
+
+  protected void checkGroup(int group) {
+    checkMatchAvailable();
+    if (group < 0 || group > groupCount()) {
+      throw new IndexOutOfBoundsException("No group " + group);
+    }
   }
 }

@@ -24,6 +24,7 @@ class TrivialMatcher extends Matcher {
   }
 
   public boolean matches() {
+    clearMatch();
     if (pattern.equals(input.toString())) {
       start = 0;
       end = input.length();
@@ -33,9 +34,11 @@ class TrivialMatcher extends Matcher {
     }
   }
 
-  public boolean find(int start) {
+  public boolean find(int offset) {
+    checkFindStart(offset);
+    clearMatch();
     String p = pattern;
-    int i = TrivialPattern.indexOf(input, p, start);
+    int i = TrivialPattern.indexOf(input, p, offset);
     if (i >= 0) {
       this.start = i;
       this.end = i + p.length();
@@ -45,4 +48,3 @@ class TrivialMatcher extends Matcher {
     }
   }
 }
-

@@ -35,7 +35,8 @@ public class RegexMatcher extends Matcher {
   };
 
   public Matcher reset() {
-    start = end = -1;
+    clearMatch();
+    groupStart = groupEnd = null;
     return this;
   }
 
@@ -46,26 +47,37 @@ public class RegexMatcher extends Matcher {
   }
 
   public boolean matches() {
+    clearMatch();
     return vm.matches(array, 0, array.length, true, true, adapter);
   }
 
   public boolean find() {
-    return find(end + (start == end ? 1 : 0));
+    int offset = end < 0 ? 0 : end + (start == end ? 1 : 0);
+    if (offset > input.length()) {
+      clearMatch();
+      return false;
+    }
+    return find(offset);
   }
 
   public boolean find(int offset) {
+    checkFindStart(offset);
+    clearMatch();
     return vm.matches(array, offset, array.length, false, false, adapter);
   }
 
   public int start(int group) {
+    checkGroup(group);
     return groupStart[group];
   }
 
   public int end(int group) {
+    checkGroup(group);
     return groupEnd[group];
   }
 
   public String group(int group) {
+    checkGroup(group);
     int offset = start(group);
     if (offset < 0) {
       return null;
@@ -75,6 +87,6 @@ public class RegexMatcher extends Matcher {
   }
 
   public int groupCount() {
-    return groupStart.length - 1;
+    return vm.groupCount();
   }
 }

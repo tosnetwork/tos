@@ -91,7 +91,7 @@ public class ObjectInputStream extends InputStream implements DataInput {
     int length = rawShort();
     byte[] array = new byte[length];
     readFully(array);
-    return new String(array);
+    return new String(array, "UTF-8");
   }
 
   public int read(byte[] b, int offset, int length) throws IOException {
@@ -398,6 +398,8 @@ public class ObjectInputStream extends InputStream implements DataInput {
         if (typeName.startsWith("L") && typeName.endsWith(";")) {
           typeName = typeName.substring(1, typeName.length() - 1)
             .replace('/', '.');
+        } else if (typeName.startsWith("[")) {
+          typeName = typeName.replace('/', '.');
         }
         type = loader.loadClass(typeName);
       } else {
