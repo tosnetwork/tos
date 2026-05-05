@@ -9253,6 +9253,8 @@ class MyProcessor : public Processor {
 
   virtual void dispose()
   {
+    Allocator* allocator = this->allocator;
+
     if (codeAllocator.memory.begin()) {
 #ifndef AVATA_AOT_ONLY
       Memory::free(codeAllocator.memory);

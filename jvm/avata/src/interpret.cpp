@@ -3575,6 +3575,8 @@ class MyProcessor : public Processor {
 
   virtual void dispose()
   {
+    Allocator* allocator = this->allocator;
+
     signals.setCrashDumpDirectory(0);
     this->MyProcessor::~MyProcessor();
     allocator->free(this, sizeof(*this));
