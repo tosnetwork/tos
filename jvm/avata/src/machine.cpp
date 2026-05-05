@@ -3422,7 +3422,7 @@ class HeapClient : public Heap::Client {
 
   virtual void collect(void* context, Heap::CollectionType type)
   {
-    collect(static_cast<Thread*>(context), type);
+    ::collect(static_cast<Thread*>(context), type);
   }
 
   virtual bool isFixed(void* p)

@@ -9271,7 +9271,7 @@ class MyProcessor : public Processor {
       allocator->free(dynamicTable, dynamicTableSize);
     }
 
-    this->~MyProcessor();
+    this->MyProcessor::~MyProcessor();
 
     allocator->free(this, sizeof(*this));
   }
