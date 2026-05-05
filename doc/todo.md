@@ -120,3 +120,6 @@ Status legend: `✅` completed, unchecked items are still open.
   left unsupported: size/emptiness, containment, removal, bulk removal,
   typed/untyped arrays, weakly consistent iteration, null rejection, and
   `addAll` edge cases.
+- ✅ `TreeMap.subMap`, `headMap`, and `tailMap` now return backed `SortedMap`
+  range views with JDK8u-style endpoint checks, range-limited reads/writes,
+  iteration, removal, and clear behavior.

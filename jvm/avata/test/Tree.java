@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Iterator;
+import java.util.SortedMap;
 
 public class Tree {
   private static void expect(boolean v) {
@@ -22,7 +23,7 @@ public class Tree {
     return sb.toString();
   }
 
-  private static String printMap(TreeMap map) {
+  private static String printMap(Map map) {
     StringBuilder sb = new StringBuilder();
 
     for (Iterator<Map.Entry> it = map.entrySet().iterator(); it.hasNext();) {
@@ -78,9 +79,87 @@ public class Tree {
     isEqual(printList(t), "2, 9");
   }
 
+  private static void sortedMapViews() {
+    TreeMap<Integer, String> map = new TreeMap<Integer, String>();
+    map.put(1, "one");
+    map.put(2, "two");
+    map.put(3, "three");
+    map.put(4, "four");
+    map.put(5, "five");
+
+    SortedMap<Integer, String> mid = map.subMap(2, 5);
+    isEqual(printMap(mid), "2=two, 3=three, 4=four");
+    expect(mid.firstKey().intValue() == 2);
+    expect(mid.lastKey().intValue() == 4);
+    expect(mid.size() == 3);
+    expect(mid.containsKey(3));
+    expect(! mid.containsKey(5));
+    expect("three".equals(mid.get(3)));
+    expect(mid.get(5) == null);
+
+    expect("three".equals(mid.put(3, "THREE")));
+    expect("THREE".equals(map.get(3)));
+
+    try {
+      mid.put(5, "FIVE");
+      throw new RuntimeException("Exception should have thrown");
+    } catch (IllegalArgumentException e) {
+      // expected
+    }
+
+    SortedMap<Integer, String> head = mid.headMap(4);
+    isEqual(printMap(head), "2=two, 3=THREE");
+
+    SortedMap<Integer, String> tail = mid.tailMap(3);
+    isEqual(printMap(tail), "3=THREE, 4=four");
+
+    SortedMap<Integer, String> empty = mid.subMap(2, 2);
+    expect(empty.isEmpty());
+
+    try {
+      mid.headMap(6);
+      throw new RuntimeException("Exception should have thrown");
+    } catch (IllegalArgumentException e) {
+      // expected
+    }
+
+    try {
+      mid.tailMap(5);
+      throw new RuntimeException("Exception should have thrown");
+    } catch (IllegalArgumentException e) {
+      // expected
+    }
+
+    try {
+      mid.subMap(5, 5);
+      throw new RuntimeException("Exception should have thrown");
+    } catch (IllegalArgumentException e) {
+      // expected
+    }
+
+    try {
+      mid.subMap(4, 3);
+      throw new RuntimeException("Exception should have thrown");
+    } catch (IllegalArgumentException e) {
+      // expected
+    }
+
+    Iterator<Map.Entry<Integer, String>> it = mid.entrySet().iterator();
+    expect(it.hasNext());
+    expect(it.next().getKey().intValue() == 2);
+    expect(it.hasNext());
+    it.remove();
+    expect(! map.containsKey(2));
+    isEqual(printMap(mid), "3=THREE, 4=four");
+
+    mid.clear();
+    isEqual(printMap(map), "1=one, 5=five");
+  }
+
   public static void main(String args[]) {
     ascendingIterator();
     descendingIterator();
+    sortedMapViews();
     TreeSet<Integer> t1 = new TreeSet<Integer>(new MyCompare());
     t1.add(5); t1.add(2); t1.add(1); t1.add(8); t1.add(3);
     isEqual(printList(t1), "1, 2, 3, 5, 8");

@@ -45,6 +45,12 @@ public class TreeMap<K,V> implements NavigableMap<K,V> {
     return avata.Data.toString(this);
   }
 
+  private int compareKeys(K a, K b) {
+    return comparator == null
+      ? ((Comparable) a).compareTo(b)
+      : comparator.compare(a, b);
+  }
+
   @Override
   public Comparator<? super K> comparator() {
     return comparator;
@@ -72,20 +78,21 @@ public class TreeMap<K,V> implements NavigableMap<K,V> {
 
   @Override
   public SortedMap<K, V> headMap(K toKey) {
-    // TODO - this should be implemented, the trick is making the returned SortedMap backed by this TreeSet
-    throw new UnsupportedOperationException();
+    return new RangeMap(false, null, true, toKey);
   }
 
   @Override
   public SortedMap<K, V> tailMap(K fromKey) {
-    // TODO - this should be implemented, the trick is making the returned SortedMap backed by this TreeSet
-    throw new UnsupportedOperationException();
+    return new RangeMap(true, fromKey, false, null);
   }
 
   @Override
   public SortedMap<K, V> subMap(K fromKey, K toKey) {
-    // TODO - this should be implemented, the trick is making the returned SortedMap backed by this TreeSet
-    throw new UnsupportedOperationException();
+    if (compareKeys(fromKey, toKey) > 0) {
+      throw new IllegalArgumentException();
+    }
+
+    return new RangeMap(true, fromKey, true, toKey);
   }
 
   public V get(Object key) {
@@ -277,6 +284,336 @@ public class TreeMap<K,V> implements NavigableMap<K,V> {
 
     public Iterator<V> iterator() {
       return new avata.Data.ValueIterator(set.iterator());
+    }
+  }
+
+  private class RangeMap implements SortedMap<K,V> {
+    private final boolean hasFromKey;
+    private final K fromKey;
+    private final boolean hasToKey;
+    private final K toKey;
+
+    private RangeMap(boolean hasFromKey, K fromKey,
+                     boolean hasToKey, K toKey)
+    {
+      if (hasFromKey && hasToKey && compareKeys(fromKey, toKey) > 0) {
+        throw new IllegalArgumentException();
+      }
+
+      this.hasFromKey = hasFromKey;
+      this.fromKey = fromKey;
+      this.hasToKey = hasToKey;
+      this.toKey = toKey;
+    }
+
+    private boolean tooLow(K key) {
+      return hasFromKey && compareKeys(key, fromKey) < 0;
+    }
+
+    private boolean tooHigh(K key) {
+      return hasToKey && compareKeys(key, toKey) >= 0;
+    }
+
+    private boolean tooHighEndpoint(K key) {
+      return hasToKey && compareKeys(key, toKey) > 0;
+    }
+
+    private boolean inRange(K key) {
+      return ! tooLow(key) && ! tooHigh(key);
+    }
+
+    private boolean endpointInRange(K key) {
+      return ! tooLow(key) && ! tooHighEndpoint(key);
+    }
+
+    private K key(Object key) {
+      return (K) key;
+    }
+
+    private void checkKey(K key) {
+      if (! inRange(key)) {
+        throw new IllegalArgumentException("key out of range");
+      }
+    }
+
+    private void checkFromKey(K key) {
+      if (! inRange(key)) {
+        throw new IllegalArgumentException("fromKey out of range");
+      }
+    }
+
+    private void checkToKey(K key) {
+      if (! endpointInRange(key)) {
+        throw new IllegalArgumentException("toKey out of range");
+      }
+    }
+
+    public Comparator<? super K> comparator() {
+      return TreeMap.this.comparator();
+    }
+
+    public K firstKey() {
+      Iterator<Entry<K,V>> it = entrySet().iterator();
+      if (! it.hasNext()) {
+        throw new NoSuchElementException();
+      }
+      return it.next().getKey();
+    }
+
+    public K lastKey() {
+      K key = null;
+      boolean found = false;
+      for (Entry<K,V> entry: entrySet()) {
+        key = entry.getKey();
+        found = true;
+      }
+      if (! found) {
+        throw new NoSuchElementException();
+      }
+      return key;
+    }
+
+    public SortedMap<K,V> headMap(K toKey) {
+      checkToKey(toKey);
+      return new RangeMap(hasFromKey, fromKey, true, toKey);
+    }
+
+    public SortedMap<K,V> tailMap(K fromKey) {
+      checkFromKey(fromKey);
+      return new RangeMap(true, fromKey, hasToKey, toKey);
+    }
+
+    public SortedMap<K,V> subMap(K fromKey, K toKey) {
+      if (compareKeys(fromKey, toKey) > 0) {
+        throw new IllegalArgumentException();
+      }
+      checkFromKey(fromKey);
+      checkToKey(toKey);
+      return new RangeMap(true, fromKey, true, toKey);
+    }
+
+    public boolean isEmpty() {
+      return size() == 0;
+    }
+
+    public int size() {
+      int count = 0;
+      for (Entry<K,V> entry: entrySet()) {
+        ++ count;
+      }
+      return count;
+    }
+
+    public boolean containsKey(Object key) {
+      K k = key(key);
+      return inRange(k) && TreeMap.this.containsKey(k);
+    }
+
+    public boolean containsValue(Object value) {
+      for (V v: values()) {
+        if (equal(v, value)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    public V get(Object key) {
+      K k = key(key);
+      return inRange(k) ? TreeMap.this.get(k) : null;
+    }
+
+    public V put(K key, V value) {
+      checkKey(key);
+      return TreeMap.this.put(key, value);
+    }
+
+    public void putAll(Map<? extends K,? extends V> elts) {
+      for (Entry<? extends K, ? extends V> entry: elts.entrySet()) {
+        put(entry.getKey(), entry.getValue());
+      }
+    }
+
+    public V remove(Object key) {
+      K k = key(key);
+      return inRange(k) ? TreeMap.this.remove(k) : null;
+    }
+
+    public void clear() {
+      for (Iterator<Entry<K,V>> it = entrySet().iterator(); it.hasNext();) {
+        it.next();
+        it.remove();
+      }
+    }
+
+    public Set<Entry<K,V>> entrySet() {
+      return new RangeEntrySet();
+    }
+
+    public Set<K> keySet() {
+      return new RangeKeySet();
+    }
+
+    public Collection<V> values() {
+      return new RangeValues();
+    }
+
+    public String toString() {
+      return avata.Data.toString(this);
+    }
+
+    private class RangeEntrySet extends AbstractSet<Entry<K,V>> {
+      public int size() {
+        return RangeMap.this.size();
+      }
+
+      public boolean isEmpty() {
+        return RangeMap.this.isEmpty();
+      }
+
+      public boolean contains(Object o) {
+        if (! (o instanceof Entry<?,?>)) {
+          return false;
+        }
+
+        Entry<?,?> entry = (Entry<?,?>) o;
+        K k = key(entry.getKey());
+        return inRange(k)
+          && TreeMap.this.containsKey(k)
+          && equal(TreeMap.this.get(k), entry.getValue());
+      }
+
+      public boolean remove(Object o) {
+        if (! contains(o)) {
+          return false;
+        }
+
+        TreeMap.this.remove(((Entry<?,?>) o).getKey());
+        return true;
+      }
+
+      public void clear() {
+        RangeMap.this.clear();
+      }
+
+      public Iterator<Entry<K,V>> iterator() {
+        return new RangeEntryIterator();
+      }
+    }
+
+    private class RangeEntryIterator implements Iterator<Entry<K,V>> {
+      private final Iterator<Entry<K,V>> iterator
+        = (Iterator<Entry<K,V>>) (Iterator) TreeMap.this.entrySet().iterator();
+      private Entry<K,V> next;
+      private K lastKey;
+      private boolean foundNext;
+      private boolean canRemove;
+
+      private void findNext() {
+        if (foundNext) {
+          return;
+        }
+
+        while (iterator.hasNext()) {
+          Entry<K,V> entry = iterator.next();
+          K key = entry.getKey();
+          if (tooLow(key)) {
+            continue;
+          }
+          if (tooHigh(key)) {
+            break;
+          }
+          next = entry;
+          foundNext = true;
+          return;
+        }
+
+        next = null;
+        foundNext = true;
+      }
+
+      public boolean hasNext() {
+        findNext();
+        return next != null;
+      }
+
+      public Entry<K,V> next() {
+        if (! hasNext()) {
+          throw new NoSuchElementException();
+        }
+
+        Entry<K,V> result = next;
+        lastKey = result.getKey();
+        foundNext = false;
+        canRemove = true;
+        return result;
+      }
+
+      public void remove() {
+        if (! canRemove) {
+          throw new IllegalStateException();
+        }
+
+        TreeMap.this.remove(lastKey);
+        canRemove = false;
+      }
+    }
+
+    private class RangeKeySet extends AbstractSet<K> {
+      public int size() {
+        return RangeMap.this.size();
+      }
+
+      public boolean isEmpty() {
+        return RangeMap.this.isEmpty();
+      }
+
+      public boolean contains(Object key) {
+        return RangeMap.this.containsKey(key);
+      }
+
+      public boolean add(K key) {
+        return RangeMap.this.put(key, null) != null;
+      }
+
+      public boolean remove(Object key) {
+        if (! contains(key)) {
+          return false;
+        }
+
+        RangeMap.this.remove(key);
+        return true;
+      }
+
+      public void clear() {
+        RangeMap.this.clear();
+      }
+
+      public Iterator<K> iterator() {
+        return new avata.Data.KeyIterator(RangeMap.this.entrySet().iterator());
+      }
+    }
+
+    private class RangeValues extends AbstractCollection<V> {
+      public int size() {
+        return RangeMap.this.size();
+      }
+
+      public boolean isEmpty() {
+        return RangeMap.this.isEmpty();
+      }
+
+      public boolean contains(Object value) {
+        return RangeMap.this.containsValue(value);
+      }
+
+      public void clear() {
+        RangeMap.this.clear();
+      }
+
+      public Iterator<V> iterator() {
+        return new avata.Data.ValueIterator(RangeMap.this.entrySet().iterator());
+      }
     }
   }
 
