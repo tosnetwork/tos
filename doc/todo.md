@@ -116,3 +116,7 @@ Status legend: `✅` completed, unchecked items are still open.
   Java 8's `UNICODE_CHARACTER_CLASS`, fail deterministically.
 - ✅ `LinkedBlockingQueue.iterator()` now exposes the admitted queue iterator
   surface as a deterministic FIFO snapshot; iterator mutation fails explicitly.
+- ✅ `ConcurrentLinkedQueue` now covers the JDK8u queue surface that Avata had
+  left unsupported: size/emptiness, containment, removal, bulk removal,
+  typed/untyped arrays, weakly consistent iteration, null rejection, and
+  `addAll` edge cases.
