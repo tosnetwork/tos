@@ -167,6 +167,8 @@ public class SignatureParser {
       }
       offset = end + 1;
       return res;
+    } else if (c == '[') {
+      return parseArrayType();
     } else if (c != 'L') {
       throw new IllegalArgumentException("Unexpected character: " + c + ", signature: " + new String(array, 0, array.length) + ", i = " + offset);
     }
@@ -203,7 +205,7 @@ public class SignatureParser {
       }
       List<Type> args = new ArrayList<Type>();
       while (array[offset] != '>') {
-        args.add(parseType());
+        args.add(parseTypeArgument());
       }
       ++offset;
       c = array[offset++];
@@ -220,9 +222,38 @@ public class SignatureParser {
     }
   }
 
+  private Type parseArrayType() {
+    int start = offset - 1;
+    Type component = parseType();
+    if (component instanceof Class) {
+      String name = new String(array, start, offset - start).replace('/', '.');
+      return Classes.forCanonicalName(loader, name);
+    }
+    return makeArrayType(component);
+  }
+
+  private Type parseTypeArgument() {
+    char c = array[offset];
+    if (c == '*') {
+      offset++;
+      return makeWildcard(new Type[] { Object.class }, new Type[0]);
+    } else if (c == '+') {
+      offset++;
+      return makeWildcard(new Type[] { parseType() }, new Type[0]);
+    } else if (c == '-') {
+      offset++;
+      return makeWildcard(new Type[] { Object.class }, new Type[] { parseType() });
+    } else {
+      return parseType();
+    }
+  }
+
   private static String typeName(Type type) {
     if (type instanceof Class) {
       Class<?> clazz = (Class<?>) type;
+      if (clazz.isArray()) {
+        return clazz.getCanonicalName();
+      }
       return clazz.getName();
     }
     return type.toString();
@@ -267,14 +298,119 @@ public class SignatureParser {
       @Override
         public String toString() {
           StringBuilder builder = new StringBuilder();
-          builder.append(typeName(raw));
-          builder.append('<');
-          String sep = "";
-          for (Type t : arguments) {
-            builder.append(sep).append(typeName(t));
-            sep = ", ";
+          if (owner != null && raw instanceof Class) {
+            Class rawClass = (Class) raw;
+            builder.append(typeName(owner));
+            builder.append('$');
+            if (owner instanceof ParameterizedType) {
+              Type ownerRaw = ((ParameterizedType) owner).getRawType();
+              if (ownerRaw instanceof Class) {
+                String prefix = ((Class) ownerRaw).getName() + "$";
+                String rawName = rawClass.getName();
+                if (rawName.startsWith(prefix)) {
+                  builder.append(rawName.substring(prefix.length()));
+                } else {
+                  builder.append(rawClass.getSimpleName());
+                }
+              } else {
+                builder.append(rawClass.getSimpleName());
+              }
+            } else {
+              builder.append(rawClass.getSimpleName());
+            }
+          } else {
+            builder.append(typeName(raw));
           }
-          builder.append('>');
+          if (arguments.length > 0) {
+            builder.append('<');
+            String sep = "";
+            for (Type t : arguments) {
+              builder.append(sep).append(typeName(t));
+              sep = ", ";
+            }
+            builder.append('>');
+          }
+          return builder.toString();
+        }
+    };
+  }
+
+  private static GenericArrayType makeArrayType(final Type component) {
+    return new GenericArrayType() {
+      @Override
+        public Type getGenericComponentType() {
+          return component;
+        }
+
+      @Override
+        public boolean equals(Object other) {
+          if (other instanceof GenericArrayType) {
+            GenericArrayType that = (GenericArrayType) other;
+            return equal(component, that.getGenericComponentType());
+          }
+          return false;
+        }
+
+      @Override
+        public int hashCode() {
+          return objectHashCode(component);
+        }
+
+      @Override
+        public String toString() {
+          return typeName(component) + "[]";
+        }
+    };
+  }
+
+  private static WildcardType makeWildcard(final Type[] uppers, final Type[] lowers) {
+    return new WildcardType() {
+      private final Type[] upperBounds = (Type[]) uppers.clone();
+      private final Type[] lowerBounds = (Type[]) lowers.clone();
+
+      @Override
+        public Type[] getUpperBounds() {
+          return (Type[]) upperBounds.clone();
+        }
+
+      @Override
+        public Type[] getLowerBounds() {
+          return (Type[]) lowerBounds.clone();
+        }
+
+      @Override
+        public boolean equals(Object other) {
+          if (other instanceof WildcardType) {
+            WildcardType that = (WildcardType) other;
+            return Arrays.equals(lowerBounds, that.getLowerBounds())
+              && Arrays.equals(upperBounds, that.getUpperBounds());
+          }
+          return false;
+        }
+
+      @Override
+        public int hashCode() {
+          return Arrays.hashCode(lowerBounds) ^ Arrays.hashCode(upperBounds);
+        }
+
+      @Override
+        public String toString() {
+          Type[] bounds = lowerBounds;
+          String prefix = "? super ";
+          if (lowerBounds.length == 0) {
+            if (upperBounds.length == 0
+                || (upperBounds.length == 1 && Object.class.equals(upperBounds[0]))) {
+              return "?";
+            }
+            bounds = upperBounds;
+            prefix = "? extends ";
+          }
+          StringBuilder builder = new StringBuilder(prefix);
+          String sep = "";
+          for (Type t : bounds) {
+            builder.append(sep).append(typeName(t));
+            sep = " & ";
+          }
           return builder.toString();
         }
     };

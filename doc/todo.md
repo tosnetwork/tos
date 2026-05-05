@@ -107,3 +107,6 @@ Status legend: `✅` completed, unchecked items are still open.
   exception types, method generic return types, and parameter counts.
 - ✅ `ParameterizedType` results now use JDK8u-style structural equality,
   hash codes, and cloned actual-type-argument arrays.
+- ✅ Generic reflection now parses admitted JDK8u wildcard type arguments and
+  generic array types, including cloned wildcard bounds plus structural
+  equality/hash codes.

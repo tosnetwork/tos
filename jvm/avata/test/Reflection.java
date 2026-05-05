@@ -5,6 +5,8 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
+import java.lang.reflect.GenericArrayType;
+import java.lang.reflect.WildcardType;
 import java.lang.reflect.InvocationTargetException;
 
 public class Reflection {
@@ -190,6 +192,59 @@ public class Reflection {
     genericExceptions = constructor.getGenericExceptionTypes();
     expect(1 == genericExceptions.length);
     expect(genericExceptions[0] == java.io.IOException.class);
+
+    field = GenericTypes.class.getField("upperWildcard");
+    type = (ParameterizedType) field.getGenericType();
+    args = type.getActualTypeArguments();
+    expect(1 == args.length);
+    expect(args[0] instanceof WildcardType);
+    WildcardType wildcard = (WildcardType) args[0];
+    bounds = wildcard.getUpperBounds();
+    expect(1 == bounds.length);
+    expect(bounds[0] == Number.class);
+    expect(0 == wildcard.getLowerBounds().length);
+    bounds[0] = Object.class;
+    expect(wildcard.getUpperBounds()[0] == Number.class);
+    WildcardType sameWildcard = (WildcardType)
+      ((ParameterizedType) field.getGenericType()).getActualTypeArguments()[0];
+    expect(wildcard.equals(sameWildcard));
+    expect(wildcard.hashCode() == sameWildcard.hashCode());
+
+    field = GenericTypes.class.getField("lowerWildcard");
+    wildcard = (WildcardType)
+      ((ParameterizedType) field.getGenericType()).getActualTypeArguments()[0];
+    bounds = wildcard.getUpperBounds();
+    expect(1 == bounds.length);
+    expect(bounds[0] == Object.class);
+    bounds = wildcard.getLowerBounds();
+    expect(1 == bounds.length);
+    expect(bounds[0] == Integer.class);
+
+    field = GenericTypes.class.getField("unboundedWildcard");
+    wildcard = (WildcardType)
+      ((ParameterizedType) field.getGenericType()).getActualTypeArguments()[0];
+    bounds = wildcard.getUpperBounds();
+    expect(1 == bounds.length);
+    expect(bounds[0] == Object.class);
+    expect(0 == wildcard.getLowerBounds().length);
+    expect("?".equals(wildcard.toString()));
+
+    field = GenericTypes.class.getField("typeVariableArray");
+    expect(field.getGenericType() instanceof GenericArrayType);
+    GenericArrayType arrayType = (GenericArrayType) field.getGenericType();
+    expect(arrayType.getGenericComponentType().equals
+           (GenericTypes.class.getTypeParameters()[0]));
+    expect(arrayType.equals(field.getGenericType()));
+    expect(arrayType.hashCode() == field.getGenericType().hashCode());
+
+    field = GenericTypes.class.getField("parameterizedArray");
+    arrayType = (GenericArrayType) field.getGenericType();
+    expect(arrayType.getGenericComponentType() instanceof ParameterizedType);
+    type = (ParameterizedType) arrayType.getGenericComponentType();
+    expect(type.getRawType() == java.util.List.class);
+    args = type.getActualTypeArguments();
+    expect(1 == args.length);
+    expect(args[0] == String.class);
   }
 
   public static void throwOOME() {
@@ -446,6 +501,14 @@ class GenericConstructor {
     throws java.io.IOException
   {
   }
+}
+
+class GenericTypes<T> {
+  public java.util.List<? extends Number> upperWildcard;
+  public java.util.List<? super Integer> lowerWildcard;
+  public java.util.List<?> unboundedWildcard;
+  public T[] typeVariableArray;
+  public java.util.List<String>[] parameterizedArray;
 }
 
 class Slithy {
