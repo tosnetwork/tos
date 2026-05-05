@@ -3682,6 +3682,7 @@ extern "C" AVATA_EXPORT jint JNICALL
   const char* bootClasspath = 0;
   const char* bootClasspathAppend = "";
   const char* crashDumpDirectory = 0;
+  bool hasFileEncodingProperty = false;
 
   unsigned propertyCount = 0;
 
@@ -3734,6 +3735,9 @@ extern "C" AVATA_EXPORT jint JNICALL
                          EMBED_PREFIX_PROPERTY "=",
                          sizeof(EMBED_PREFIX_PROPERTY)) == 0) {
         embedPrefix = p + sizeof(EMBED_PREFIX_PROPERTY);
+      } else if (strncmp(p, "file.encoding=", sizeof("file.encoding=") - 1)
+                 == 0) {
+        hasFileEncodingProperty = true;
       }
 
       ++propertyCount;
@@ -3791,8 +3795,11 @@ extern "C" AVATA_EXPORT jint JNICALL
     free(bootLibrary);
   Processor* p = makeProcessor(s, h, crashDumpDirectory, true);
 
-  // reserve space for avata.version and file.encoding:
-  propertyCount += 2;
+  // reserve space for avata.version and default file.encoding:
+  propertyCount += 1;
+  if (!hasFileEncodingProperty) {
+    propertyCount += 1;
+  }
 
   const char** properties = static_cast<const char**>(
       h->allocate(sizeof(const char*) * propertyCount));
@@ -3822,9 +3829,10 @@ extern "C" AVATA_EXPORT jint JNICALL
 
   *(propertyPointer++) = "avata.version=" AVATA_VERSION;
 
-  // todo: should this be derived from the OS locale?  Should it be
-  // overrideable via JavaVMInitArgs?
-  *(propertyPointer++) = "file.encoding=UTF-8";
+  // todo: should this be derived from the OS locale?
+  if (!hasFileEncodingProperty) {
+    *(propertyPointer++) = "file.encoding=UTF-8";
+  }
 
   *m = new (h->allocate(sizeof(Machine))) Machine(s,
                                                   h,

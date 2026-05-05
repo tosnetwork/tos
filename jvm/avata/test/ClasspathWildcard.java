@@ -3,6 +3,18 @@ import java.io.IOException;
 import java.io.InputStream;
 
 public class ClasspathWildcard {
+  private static class Result {
+    final int code;
+    final String out;
+    final String err;
+
+    Result(Process process) throws IOException, InterruptedException {
+      code = process.waitFor();
+      out = read(process.getInputStream());
+      err = read(process.getErrorStream());
+    }
+  }
+
   private static void expect(boolean v) {
     if (! v) throw new RuntimeException();
   }
@@ -13,6 +25,12 @@ public class ClasspathWildcard {
       builder.append((char) c);
     }
     return builder.toString();
+  }
+
+  private static Result run(String[] command)
+    throws IOException, InterruptedException
+  {
+    return new Result(Runtime.getRuntime().exec(command));
   }
 
   public static void main(String[] args) throws Exception {
@@ -39,13 +57,26 @@ public class ClasspathWildcard {
       "extra.ClasspathWildcardTarget"
     };
 
-    Process process = Runtime.getRuntime().exec(command);
-    int code = process.waitFor();
-    String out = read(process.getInputStream());
-    String err = read(process.getErrorStream());
+    Result result = run(command);
 
-    expect(code == 0);
-    expect(out.length() == 0);
-    expect(err.length() == 0);
+    expect(result.code == 0);
+    expect(result.out.length() == 0);
+    expect(result.err.length() == 0);
+
+    String[] propertyCommand = {
+      new File(buildDir, executableName).getPath(),
+      "-Dfile.encoding=ISO-8859-1",
+      "-cp",
+      classpath,
+      "extra.PropertyOverrideTarget",
+      "file.encoding",
+      "ISO-8859-1"
+    };
+
+    result = run(propertyCommand);
+
+    expect(result.code == 0);
+    expect(result.out.length() == 0);
+    expect(result.err.length() == 0);
   }
 }
