@@ -23,6 +23,7 @@ public class FormatStrings {
     test.testCharacter();
     test.testHashCode();
     test.testIntegers();
+    test.testIntegerFlags();
     test.testWidths();
     test.testPrecisions();
   }
@@ -39,6 +40,15 @@ public class FormatStrings {
         throw new IllegalArgumentException(
           "Expected `" + expected + "` but was actually `" + actual + "`.");
       }
+    }
+  }
+
+  private void _testIllegalFormat(String format, Object... args) {
+    try {
+      String.format(format, args);
+      throw new IllegalArgumentException("Expected illegal format: " + format);
+    } catch (java.util.IllegalFormatException e) {
+      // expected
     }
   }
 
@@ -274,6 +284,31 @@ public class FormatStrings {
     _testFormat("HexDec `FF9C`", "HexDec `%X`", new Short((short)-100));
   }
 
+  public void testIntegerFlags() {
+    _testFormat("+1234", "%+d", 1234);
+    _testFormat("-1234", "%+d", -1234);
+    _testFormat(" 1234", "% d", 1234);
+    _testFormat("-1234", "% d", -1234);
+    _testFormat("(1234)", "%(d", -1234);
+    _testFormat("1,234,567", "%,d", 1234567);
+    _testFormat("-001,234", "%,08d", -1234);
+    _testFormat("+0001234", "%+08d", 1234);
+    _testFormat("(001234)", "%(08d", -1234);
+    _testFormat("0x4d2", "%#x", 1234);
+    _testFormat("0X0004D2", "%#08X", 1234);
+    _testFormat("02322", "%#o", 1234);
+    _testFormat("ffffffffffffffff", "%x", new Long(-1));
+    _testFormat("1777777777777777777777", "%o", new Long(-1));
+    _testFormat("26 1a 1a", "%d %<x %<x", 26);
+
+    _testIllegalFormat("%+x", 1);
+    _testIllegalFormat("%,x", 1);
+    _testIllegalFormat("%#d", 1);
+    _testIllegalFormat("%-d", 1);
+    _testIllegalFormat("%0d", 1);
+    _testIllegalFormat("%+ d", 1);
+  }
+
   public void testWidths() {
     _testFormat("0001", "%04d", 1);
     _testFormat("   1", "%4d", 1);
@@ -291,6 +326,8 @@ public class FormatStrings {
   public void testPrecisions() {
     _testFormat("Hello", "%-1.5s", "Hello World");
     _testFormat("Hello", "%1.5s", "Hello World");
+    _testFormat("", "%.0s", "Hello World");
+    _testFormat("     ", "%5.0s", "Hello World");
   }
 
 }

@@ -127,3 +127,7 @@ Status legend: `✅` completed, unchecked items are still open.
   defaults and delegation instead of hitting unsupported runtime paths.
 - ✅ `ByteBuffer.order(ByteOrder)` now supports deterministic big-endian and
   little-endian primitive access with JDK8u null/default-order behavior.
+- ✅ `Formatter` integer conversions now cover the admitted JDK8u flag surface:
+  sign, leading-space, parentheses, grouping, alternate octal/hex prefixes,
+  zero padding after prefixes/signs, previous-argument reuse, and zero-length
+  string precision.

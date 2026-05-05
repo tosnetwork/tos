@@ -79,6 +79,7 @@ public final class FormatString {
       throws IOException {
     final Object[] args = fmt_args != null ? fmt_args : new Object[0];
     int cntr = 0;
+    int previous = -1;
     for (final FmtCmpnt cmp : _components) {
       if (cmp._conversion == CONV_LITRL) {
         a.append(cmp._source);
@@ -97,10 +98,15 @@ public final class FormatString {
                 " arguments, but " + cntr + " were supplied."
               );
             }
-            arg = args[cntr++];
+            arg = args[cntr];
+            previous = cntr++;
             break;
           case AIDX_PREV:
-            arg = args[cntr];
+            if (previous < 0) {
+              throw new IllegalFormatException
+                ("Previous argument requested before any argument was used.");
+            }
+            arg = args[previous];
             break;
           default:
             if (index < 1) {
@@ -109,6 +115,7 @@ public final class FormatString {
               throw new IllegalArgumentException();
             } else {
               arg = args[index - 1];
+              previous = index - 1;
             }
         }
       }
@@ -142,6 +149,10 @@ public final class FormatString {
   static final byte FLAG_ALWAYS_INCLUDES_SIGN = (byte)(1<<2); // ('+')
   static final byte FLAG_ALTERNATE_FORM       = (byte)(1<<1); // ('#')
   static final byte FLAG_LEFT_JUSTIFIED       = (byte)(1<<0); // ('-')
+
+  private static final char[] DIGITS =
+    new char[] { '0', '1', '2', '3', '4', '5', '6', '7',
+                 '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
 
   //- conversion capability flags
   static final byte CFLG_WDTH_SUPPRT = CONV_PRCNT;
@@ -384,7 +395,6 @@ public final class FormatString {
     appendify(a, val, flags, width, precision);
   }
 
-  // FIXME: this is broken for octal formats with negative values
   static void convertLong(
         final Appendable a,
         final Long arg, 
@@ -392,17 +402,16 @@ public final class FormatString {
         final int width, 
         final int precision,
         final int radix) throws IOException {
-    final String val;
-    final Long n = arg;
-    final long longValue = n.longValue();
-    if (radix == 10 || longValue > -1) {
-      val = Long.toString(longValue, radix);
+    final long value = arg.longValue();
+    final boolean negative = radix == 10 && value < 0;
+    final String digits;
+    if (radix == 10) {
+      final String val = Long.toString(value, radix);
+      digits = negative ? val.substring(1) : val;
     } else {
-      final long upper = 0xFFFFFFFFL&(longValue>>31);
-      final long lower = 0xFFFFFFFFL&(longValue);
-      val = Long.toString(upper, radix) + Long.toString(lower, radix);
+      digits = unsignedLongToString(value, radix);
     }
-    appendify(a, val, flags, width, precision);
+    appendNumber(a, digits, negative, flags, width, precision, radix);
   }
  
   static void convertInteger(
@@ -412,22 +421,168 @@ public final class FormatString {
         final int width, 
         final int precision,
         final int radix) throws IOException {
-    final String val;
     final Number n = (Number) arg;
     final long longValue = n.longValue();
-    final long modifier;
-    if (arg instanceof Integer) modifier = 0xFFFFFFFFL+1; else
-    if (arg instanceof Short)   modifier = 0xFFFFL+1;     else
-    if (arg instanceof Byte)    modifier = 0xFFL+1;               
+    final long unsignedValue;
+    if (arg instanceof Integer) unsignedValue = longValue & 0xFFFFFFFFL; else
+    if (arg instanceof Short)   unsignedValue = longValue & 0xFFFFL;     else
+    if (arg instanceof Byte)    unsignedValue = longValue & 0xFFL;
     else throw new IllegalFormatException(
       "not an integer number: " + (arg != null ? arg.getClass() : null)
     );
-    if (radix != 10 && longValue < 0) {
-      val = Long.toString(longValue + modifier, radix);
+
+    final boolean negative = radix == 10 && longValue < 0;
+    final String digits;
+    if (radix == 10) {
+      final String val = Long.toString(longValue, radix);
+      digits = negative ? val.substring(1) : val;
     } else {
-      val = Long.toString(longValue, radix);
+      digits = Long.toString(unsignedValue, radix);
     }
-    appendify(a, val, flags, width, precision);
+    appendNumber(a, digits, negative, flags, width, precision, radix);
+  }
+
+  static String unsignedLongToString(final long value, final int radix) {
+    if (value == 0) {
+      return "0";
+    }
+
+    if (value > 0) {
+      return Long.toString(value, radix);
+    }
+
+    final int shift;
+    if (radix == 16) {
+      shift = 4;
+    } else if (radix == 8) {
+      shift = 3;
+    } else if (radix == 2) {
+      shift = 1;
+    } else {
+      throw new IllegalArgumentException();
+    }
+
+    final int mask = radix - 1;
+    final char[] buffer = new char[64];
+    int index = buffer.length;
+    long remaining = value;
+    do {
+      buffer[--index] = DIGITS[(int) (remaining & mask)];
+      remaining >>>= shift;
+    } while (remaining != 0);
+
+    return new String(buffer, index, buffer.length - index);
+  }
+
+  static void appendNumber(
+        final Appendable a,
+        final String digits,
+        final boolean negative,
+        final byte flags,
+        final int width,
+        final int precision,
+        final int radix) throws IOException {
+    if (precision >= 0) {
+      throw new IllegalFormatException
+        ("Precision is not supported for integer conversions.");
+    }
+    validateIntegerFlags(flags, width, radix);
+
+    final boolean decimal = radix == 10;
+    final boolean upper = checkFlag(flags, FLAG_FORCE_UPPER_CASE);
+    String prefix = "";
+    String suffix = "";
+    if (decimal) {
+      if (negative) {
+        if (checkFlag(flags, FLAG_NEGATIVES_IN_PARENS)) {
+          prefix = "(";
+          suffix = ")";
+        } else {
+          prefix = "-";
+        }
+      } else if (checkFlag(flags, FLAG_ALWAYS_INCLUDES_SIGN)) {
+        prefix = "+";
+      } else if (checkFlag(flags, FLAG_LEADING_SPACE_PADDED)) {
+        prefix = " ";
+      }
+    } else if (checkFlag(flags, FLAG_ALTERNATE_FORM)) {
+      prefix = radix == 8 ? "0" : (upper ? "0X" : "0x");
+    }
+
+    String magnitude = upper ? digits.toUpperCase() : digits;
+    if (decimal && checkFlag(flags, FLAG_GROUPING_SEPARATORS)) {
+      magnitude = groupDigits(magnitude);
+    }
+
+    if (checkFlag(flags, FLAG_LEADING_ZERO_PADDED)
+        && !checkFlag(flags, FLAG_LEFT_JUSTIFIED)
+        && width >= 0) {
+      final int desired = width - prefix.length() - suffix.length();
+      if (desired > magnitude.length()) {
+        magnitude = repeat('0', desired - magnitude.length()) + magnitude;
+      }
+    }
+
+    appendPadded(a, prefix + magnitude + suffix, flags, width);
+  }
+
+  private static void validateIntegerFlags(
+        final byte flags,
+        final int width,
+        final int radix) {
+    if (checkFlag(flags, FLAG_LEFT_JUSTIFIED)
+        && checkFlag(flags, FLAG_LEADING_ZERO_PADDED)) {
+      throw new IllegalFormatException("Flags '-' and '0' are incompatible.");
+    }
+    if (checkFlag(flags, FLAG_ALWAYS_INCLUDES_SIGN)
+        && checkFlag(flags, FLAG_LEADING_SPACE_PADDED)) {
+      throw new IllegalFormatException("Flags '+' and ' ' are incompatible.");
+    }
+    if (width < 0
+        && (checkFlag(flags, FLAG_LEFT_JUSTIFIED)
+            || checkFlag(flags, FLAG_LEADING_ZERO_PADDED))) {
+      throw new IllegalFormatException("Flag requires a width.");
+    }
+
+    if (radix == 10) {
+      if (checkFlag(flags, FLAG_ALTERNATE_FORM)) {
+        throw new IllegalFormatException("Flag '#' is not valid for decimal.");
+      }
+    } else if (checkFlag(flags, FLAG_GROUPING_SEPARATORS)
+               || checkFlag(flags, FLAG_NEGATIVES_IN_PARENS)
+               || checkFlag(flags, FLAG_LEADING_SPACE_PADDED)
+               || checkFlag(flags, FLAG_ALWAYS_INCLUDES_SIGN)) {
+      throw new IllegalFormatException
+        ("Sign, grouping, and parenthesized-negative flags require decimal.");
+    }
+  }
+
+  private static String groupDigits(final String digits) {
+    final int length = digits.length();
+    if (length <= 3) {
+      return digits;
+    }
+
+    int first = length % 3;
+    if (first == 0) {
+      first = 3;
+    }
+
+    final StringBuilder builder = new StringBuilder();
+    builder.append(digits.substring(0, first));
+    for (int i = first; i < length; i += 3) {
+      builder.append(',');
+      builder.append(digits.substring(i, i + 3));
+    }
+    return builder.toString();
+  }
+
+  private static String repeat(final char value, final int count) {
+    final StringBuilder builder = new StringBuilder();
+    for (int i = 0; i < count; ++i) {
+      builder.append(value);
+    }
+    return builder.toString();
   }
 
   // FIXME: I'm lazy, so hexidecimal exponential isn't implemented, sorry - bcg
@@ -462,33 +617,35 @@ public final class FormatString {
     if (checkFlag(flags, FLAG_FORCE_UPPER_CASE)) {
       result = result.toUpperCase();
     }
-    // TODO: implement other flags
-    // (+) always include sign
-    // (,) grouping separators
-    // (() negatives in parentheses
-    if (precision > 0) {
+    if (precision >= 0) {
       // FIXME: this behavior should be different for floating point numbers
       final int difference = result.length() - precision;
       if (difference > 0) {
         result = result.substring(0, precision);
-        a.append(result);
-        return;
       }
     }
-    if (width > 0) {
+    appendPadded(a, result, flags, width);
+  }
+
+  private static void appendPadded(
+        final Appendable a,
+        final String result,
+        final byte flags,
+        final int width) throws IOException {
+    if (width >= 0) {
       final int difference = width - result.length();
       final boolean leftJustified = checkFlag(flags, FLAG_LEFT_JUSTIFIED);
       if (!leftJustified && difference > 0) {
-        char fill = checkFlag(flags, FLAG_LEADING_ZERO_PADDED) ? '0' : ' ';
+        final char fill = checkFlag(flags, FLAG_LEADING_ZERO_PADDED) ? '0' : ' ';
         fill(a, difference, fill);
       }
       a.append(result);
       if (leftJustified && difference > 0) {
         fill(a, difference, ' ');
       }
-      return;
+    } else {
+      a.append(result);
     }
-    a.append(result);
   }
 
   private static void fill(Appendable a, int num, char c) throws IOException {
@@ -559,10 +716,10 @@ public final class FormatString {
     }
 
     private final void init() {
-      _argument_index =
-      _width          =
-      _precision      =
-      _conversion     =
+      _argument_index = AIDX_NONE;
+      _width          = -1;
+      _precision      = -1;
+      _conversion     = 0;
       _flags          = 0;
       _source         = null;
     }
@@ -884,14 +1041,15 @@ public final class FormatString {
 
       // if argument index is supported, it should be followed by a '$' and be
       // comprised only of digit characters, or it should be a single '<' char
+      int remainingStart = 0;
       final int dollarIndex = spec.indexOf('$');
       if (dollarIndex > -1) {
         if (acceptsArgument(conversion)) {
-          if (spec.charAt(dollarIndex - 1) == '<') {
-            _argument_index = AIDX_PREV;
-          } else {
-            _argument_index = Integer.valueOf(spec.substring(0, dollarIndex));
+          if (dollarIndex == 0) {
+            throw new IllegalFormatException("Missing argument index.");
           }
+          _argument_index = Integer.valueOf(spec.substring(0, dollarIndex));
+          remainingStart = dollarIndex + 1;
         } else {
           throw new IllegalFormatException(
             "Formats that do not accept arguments cannot specify an index."
@@ -918,12 +1076,21 @@ public final class FormatString {
       // Now loop over the remaining characters to get the width as well as any
       // applicable flags. Note: 0 is a valid flag so must be handled carefully
       final String remaining = spec.substring(
-        Math.max(dollarIndex, 0), dotIndex > -1 ? dotIndex : spec.length()
+        remainingStart, dotIndex > -1 ? dotIndex : spec.length()
       );
       int flagsEnd = -1;
       for (int i = 0, n = remaining.length(); i < n && (flagsEnd == -1); i++) {
         final char c = remaining.charAt(i);
         switch (c) {
+        case '<':
+          if (acceptsArgument(conversion)) {
+            _argument_index = AIDX_PREV;
+          } else {
+            throw new IllegalFormatException(
+              "Formats that do not accept arguments cannot reuse arguments."
+            );
+          }
+          break;
         case '-':
           ensureLeftJustifySupported();
           setFlagTrue(FLAG_LEFT_JUSTIFIED); 
@@ -966,7 +1133,24 @@ public final class FormatString {
           return build();
         }
       }
-      throw new IllegalStateException();
+      validateFlagsWithoutWidth();
+      return build();
+    }
+
+    private final void validateFlagsWithoutWidth() {
+      if (checkFlag(_flags, FLAG_LEFT_JUSTIFIED)
+          && checkFlag(_flags, FLAG_LEADING_ZERO_PADDED)) {
+        throw new IllegalFormatException("Flags '-' and '0' are incompatible.");
+      }
+      if (checkFlag(_flags, FLAG_ALWAYS_INCLUDES_SIGN)
+          && checkFlag(_flags, FLAG_LEADING_SPACE_PADDED)) {
+        throw new IllegalFormatException("Flags '+' and ' ' are incompatible.");
+      }
+      if (_width < 0
+          && (checkFlag(_flags, FLAG_LEFT_JUSTIFIED)
+              || checkFlag(_flags, FLAG_LEADING_ZERO_PADDED))) {
+        throw new IllegalFormatException("Flag requires a width.");
+      }
     }
     private final void ensureLeftJustifySupported() {
       if (!widthSupported(_conversion)) {
