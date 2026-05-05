@@ -109,7 +109,7 @@ public abstract class ClassLoader {
       throw new NullPointerException();
     }
 
-    if (offset < 0 || offset > length || offset + length > b.length) {
+    if (offset < 0 || length < 0 || offset > b.length - length) {
       throw new IndexOutOfBoundsException();
     }
 
