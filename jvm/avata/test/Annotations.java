@@ -1,6 +1,7 @@
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.lang.annotation.Annotation;
 
 import avata.testing.annotations.Color;
 import avata.testing.annotations.Test;
@@ -15,6 +16,12 @@ public class Annotations {
   }
 
   public static void main(String[] args) throws Exception {
+    expect(int.class.getDeclaredAnnotations().length == 0);
+
+    Annotation[] classAnnotations = OnlyClassAnnotation.class.getAnnotations();
+    expect(classAnnotations.length == 1);
+    expect(((Test) classAnnotations[0]).value().equals("only class annotation"));
+
     Method m = Annotations.class.getMethod("foo");
 
     expect(m.isAnnotationPresent(Test.class));
@@ -38,6 +45,9 @@ public class Annotations {
     testProxyDefaultValue();
     testComplexAnnotation();
   }
+
+  @Test("only class annotation")
+  private static class OnlyClassAnnotation { }
 
   @Test("couscous")
   @TestEnum(Color.Red)
