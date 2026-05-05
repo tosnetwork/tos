@@ -160,6 +160,15 @@ Library" below for details.
 instead of a device target.
     * _default:_ false
 
+    For example, an iOS simulator interpreter build can be made with:
+
+        $ make platform=ios arch=x86_64 sim=true process=interpret
+
+    For a device build, leave `sim` unset or set it to false and use a
+    device architecture:
+
+        $ make platform=ios arch=arm64 bootimage=true
+
   * `ios-version` - the minimum iOS SDK version which will be used
 when compiling for ios target. Do not use a value 11.0 or larger,
 if you want to support 32 bit version. This option is only valid
