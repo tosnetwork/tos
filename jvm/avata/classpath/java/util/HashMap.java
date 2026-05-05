@@ -11,6 +11,9 @@
 package java.util;
 
 import avata.Data;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
 public class HashMap<K, V> implements Map<K, V> {
   private static final int MinimumCapacity = 16;
@@ -229,6 +232,129 @@ public class HashMap<K, V> implements Map<K, V> {
 
   Iterator<Entry<K, V>> iterator() {
     return new MyIterator();
+  }
+
+  // --- Java 8 Map additions ---
+
+  public V getOrDefault(Object key, V defaultValue) {
+    Cell<K, V> c = find(key);
+    return c == null ? defaultValue : c.getValue();
+  }
+
+  public V putIfAbsent(K key, V value) {
+    Cell<K, V> c = find(key);
+    if (c == null) {
+      insert(helper.make(key, value, null));
+      return null;
+    } else if (c.getValue() == null) {
+      V old = c.getValue();
+      c.setValue(value);
+      return old;
+    } else {
+      return c.getValue();
+    }
+  }
+
+  public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
+    Cell<K, V> c = find(key);
+    if (c == null || c.getValue() == null) {
+      V value = mappingFunction.apply(key);
+      if (value != null) {
+        if (c == null) {
+          insert(helper.make(key, value, null));
+        } else {
+          c.setValue(value);
+        }
+        return value;
+      }
+      return null;
+    }
+    return c.getValue();
+  }
+
+  public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
+    Cell<K, V> c = find(key);
+    V oldValue = c == null ? null : c.getValue();
+    V newValue = remappingFunction.apply(key, oldValue);
+    if (newValue == null) {
+      if (c != null) remove(key);
+      return null;
+    }
+    if (c == null) {
+      insert(helper.make(key, newValue, null));
+    } else {
+      c.setValue(newValue);
+    }
+    return newValue;
+  }
+
+  public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
+    if (value == null) throw new NullPointerException();
+    Cell<K, V> c = find(key);
+    V oldValue = c == null ? null : c.getValue();
+    V newValue = oldValue == null ? value : remappingFunction.apply(oldValue, value);
+    if (newValue == null) {
+      if (c != null) remove(key);
+    } else if (c == null) {
+      insert(helper.make(key, newValue, null));
+    } else {
+      c.setValue(newValue);
+    }
+    return newValue;
+  }
+
+  public void forEach(BiConsumer<? super K, ? super V> action) {
+    if (array != null) {
+      for (int i = 0; i < array.length; ++i) {
+        for (Cell<K, V> c = array[i]; c != null; c = c.next()) {
+          action.accept(c.getKey(), c.getValue());
+        }
+      }
+    }
+  }
+
+  public void replaceAll(BiFunction<? super K, ? super V, ? extends V> function) {
+    if (array != null) {
+      for (int i = 0; i < array.length; ++i) {
+        for (Cell<K, V> c = array[i]; c != null; c = c.next()) {
+          c.setValue(function.apply(c.getKey(), c.getValue()));
+        }
+      }
+    }
+  }
+
+  public boolean remove(Object key, Object value) {
+    Cell<K, V> c = find(key);
+    if (c != null) {
+      Object cv = c.getValue();
+      if (cv == value || (cv != null && cv.equals(value))) {
+        remove(c);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public boolean replace(K key, V oldValue, V newValue) {
+    Cell<K, V> c = find(key);
+    if (c != null) {
+      Object cv = c.getValue();
+      if (cv == oldValue || (cv != null && cv.equals(oldValue))) {
+        c.setValue(newValue);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public V replace(K key, V value) {
+    Cell<K, V> c = find(key);
+    if (c != null) {
+      V old = c.getValue();
+      c.setValue(value);
+      return old;
+    }
+    return null;
   }
 
   private class MyEntryMap implements Data.EntryMap<K, V> {

@@ -301,8 +301,20 @@ public class ObjectInputStream extends InputStream implements DataInput {
       int handle = rawInt();
       return references.get(handle - HANDLE_OFFSET);
     }
+    if (c == TC_ARRAY) {
+      // Array deserialization: TC_ARRAY classDesc int:length elements...
+      // Matches JDK8u ObjectInputStream.readArray().
+      return readArray();
+    }
+    if (c == TC_ENUM) {
+      // Enum serialization is not supported in the consensus profile.
+      // Encountering TC_ENUM in an incoming stream is a stream-integrity
+      // violation (the peer should never have written it either).
+      throw new UnsupportedOperationException(
+          "enum serialization not supported in consensus profile");
+    }
     if (c != TC_OBJECT) {
-      throw new IOException("Unexpected token: 0x"
+      throw new StreamCorruptedException("Unexpected token: 0x"
         + Integer.toHexString(c));
     }
 
@@ -315,8 +327,15 @@ public class ObjectInputStream extends InputStream implements DataInput {
     } else if (c == TC_CLASSDESC) {
       classDesc = classDesc();
     } else {
-      throw new UnsupportedOperationException("Unexpected token: 0x"
+      throw new StreamCorruptedException("Unexpected token: 0x"
           + Integer.toHexString(c));
+    }
+
+    // readResolve: allows a class to substitute the deserialized object.
+    // Not supported in the consensus profile (reflection-based, non-deterministic).
+    if (ObjectOutputStream.hasReplaceOrResolveMethod(classDesc.clazz, "readResolve")) {
+      throw new UnsupportedOperationException(
+          "readResolve not supported in consensus profile");
     }
 
     try {
@@ -352,6 +371,67 @@ public class ObjectInputStream extends InputStream implements DataInput {
     }
   }
 
+  /**
+   * Reads an array from the stream.  Caller has already consumed TC_ARRAY.
+   * Wire format: classDesc int:length elements...
+   * For primitive arrays elements are raw big-endian values.
+   * For object arrays each element is a full object reference (readObject).
+   */
+  private Object readArray() throws IOException, ClassNotFoundException {
+    // read classDesc for the array type
+    int c = rawByte();
+    ClassDesc cd;
+    if (c == TC_REFERENCE) {
+      int handle = rawInt() - HANDLE_OFFSET;
+      cd = (ClassDesc)references.get(handle);
+    } else if (c == TC_CLASSDESC) {
+      cd = classDesc();
+    } else {
+      throw new StreamCorruptedException(
+          "Unexpected token in array classDesc: 0x" + Integer.toHexString(c));
+    }
+
+    Class cl = cd.clazz;
+    if (!cl.isArray()) {
+      throw new InvalidClassException(cl.getName(), "not an array class");
+    }
+
+    int len = rawInt();
+    Class ccl = cl.getComponentType();
+    Object array = Array.newInstance(ccl, len);
+    references.add(array);
+
+    if (ccl == Integer.TYPE) {
+      int[] ia = (int[]) array;
+      for (int i = 0; i < len; i++) ia[i] = rawInt();
+    } else if (ccl == Byte.TYPE) {
+      byte[] ba = (byte[]) array;
+      readFully(ba);
+    } else if (ccl == Long.TYPE) {
+      long[] ja = (long[]) array;
+      for (int i = 0; i < len; i++) ja[i] = rawLong();
+    } else if (ccl == Float.TYPE) {
+      float[] fa = (float[]) array;
+      for (int i = 0; i < len; i++) fa[i] = Float.intBitsToFloat(rawInt());
+    } else if (ccl == Double.TYPE) {
+      double[] da = (double[]) array;
+      for (int i = 0; i < len; i++) da[i] = Double.longBitsToDouble(rawLong());
+    } else if (ccl == Short.TYPE) {
+      short[] sa = (short[]) array;
+      for (int i = 0; i < len; i++) sa[i] = (short)rawShort();
+    } else if (ccl == Character.TYPE) {
+      char[] ca = (char[]) array;
+      for (int i = 0; i < len; i++) ca[i] = (char)rawShort();
+    } else if (ccl == Boolean.TYPE) {
+      boolean[] za = (boolean[]) array;
+      for (int i = 0; i < len; i++) za[i] = (rawByte() != 0);
+    } else {
+      Object[] oa = (Object[]) array;
+      for (int i = 0; i < len; i++) oa[i] = readObject();
+    }
+    return array;
+  }
+
   private static class ClassDesc {
     Class clazz;
     int flags;
@@ -363,26 +443,61 @@ public class ObjectInputStream extends InputStream implements DataInput {
     ClassDesc result = new ClassDesc();
     String className = rawString();
     ClassLoader loader = Thread.currentThread().getContextClassLoader();
+
+    // Array class names use Java binary format: "[I", "[Ljava.lang.String;"
+    // Class.forName / loadClass accept this form directly.
     result.clazz = loader.loadClass(className);
+
     long serialVersionUID = rawLong();
-    try {
-      Field field = result.clazz.getField("serialVersionUID");
-      long expected = field.getLong(null);
-      if (expected != serialVersionUID) {
-        throw new IOException("Incompatible serial version UID: 0x"
-            + Long.toHexString(serialVersionUID) + " != 0x"
-            + Long.toHexString(expected));
-      }
-    } catch (Exception ignored) { }
+    boolean isArray = result.clazz.isArray();
+    if (!isArray) {
+      // For ordinary classes verify the serialVersionUID if one is declared.
+      // Arrays and enums always have sUID 0 on the wire (JDK8u spec).
+      try {
+        Field field = result.clazz.getDeclaredField("serialVersionUID");
+        long expected = field.getLong(null);
+        if (expected != serialVersionUID) {
+          throw new InvalidClassException(className,
+              "Incompatible serial version UID: 0x"
+              + Long.toHexString(serialVersionUID) + " != 0x"
+              + Long.toHexString(expected));
+        }
+      } catch (InvalidClassException e) {
+        throw e;
+      } catch (Exception ignored) { }
+    }
     references.add(result);
 
     result.flags = rawByte();
-    if ((result.flags & ~(SC_SERIALIZABLE | SC_WRITE_METHOD)) != 0) {
-      throw new UnsupportedOperationException("Cannot handle flags: 0x"
+    // SC_ENUM in flags means the peer wrote a TC_ENUM but the stream was
+    // incorrectly wrapped as TC_CLASSDESC; reject deterministically.
+    if ((result.flags & SC_ENUM) != 0) {
+      throw new UnsupportedOperationException(
+          "enum serialization not supported in consensus profile");
+    }
+    // SC_EXTERNALIZABLE in flags means the peer used Externalizable; reject.
+    if ((result.flags & SC_EXTERNALIZABLE) != 0) {
+      throw new UnsupportedOperationException(
+          "Externalizable not supported in consensus profile");
+    }
+    // For array classDescs only SC_SERIALIZABLE (and nothing else besides
+    // SC_WRITE_METHOD for ordinary classes) is valid.
+    if (!isArray
+        && (result.flags & ~(SC_SERIALIZABLE | SC_WRITE_METHOD)) != 0) {
+      throw new StreamCorruptedException("Cannot handle flags: 0x"
+          + Integer.toHexString(result.flags));
+    }
+    if (isArray
+        && (result.flags & ~SC_SERIALIZABLE) != 0) {
+      throw new StreamCorruptedException("Unexpected flags for array class: 0x"
           + Integer.toHexString(result.flags));
     }
 
     int fieldCount = rawShort();
+    if (isArray && fieldCount != 0) {
+      throw new StreamCorruptedException(
+          "Array classDesc must have 0 fields, got " + fieldCount);
+    }
     result.fields = new Field[fieldCount];
     for (int i = 0; i < result.fields.length; i++) {
       int typeChar = rawByte();
@@ -406,7 +521,8 @@ public class ObjectInputStream extends InputStream implements DataInput {
         type = charToPrimitiveType(typeChar);
       }
       if (result.fields[i].getType() != type) {
-        throw new IOException("Unexpected type of field " + fieldName
+        throw new InvalidClassException(className,
+            "Unexpected type of field " + fieldName
             + ": expected " + result.fields[i].getType() + " but got " + type);
       }
     }
@@ -415,7 +531,7 @@ public class ObjectInputStream extends InputStream implements DataInput {
     if (c == TC_CLASSDESC) {
       result.superClassDesc = classDesc();
     } else if (c != TC_NULL) {
-      throw new UnsupportedOperationException("Unexpected token: 0x"
+      throw new StreamCorruptedException("Unexpected token: 0x"
           + Integer.toHexString(c));
     }
 

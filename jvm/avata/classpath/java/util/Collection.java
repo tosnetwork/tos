@@ -10,6 +10,8 @@
 
 package java.util;
 
+import java.util.function.Predicate;
+
 public interface Collection<T> extends Iterable<T> {
   public int size();
 
@@ -32,4 +34,17 @@ public interface Collection<T> extends Iterable<T> {
   public <S> S[] toArray(S[] array);
 
   public void clear();
+
+  // Java 8 addition
+  default boolean removeIf(Predicate<? super T> filter) {
+    boolean removed = false;
+    java.util.Iterator<T> it = iterator();
+    while (it.hasNext()) {
+      if (filter.test(it.next())) {
+        it.remove();
+        removed = true;
+      }
+    }
+    return removed;
+  }
 }

@@ -12,61 +12,61 @@ package java.net;
 
 import java.io.IOException;
 
+// -------------------------------------------------------------------------
+// Consensus-safe InetAddress — Avata/TOS blockchain JVM
+//
+// DNS resolution is a non-deterministic host operation and is TRAPPED.
+// The class shape is preserved for linkage.
+// -------------------------------------------------------------------------
 public class InetAddress {
+  private static final String MSG =
+      "networking not available in consensus";
+
   private final String name;
   private final int ip;
 
-  private InetAddress(String name) throws UnknownHostException {
+  // Private constructor — reachable only from within this file
+  private InetAddress(String name, int ip) {
     this.name = name;
-    this.ip = ipv4AddressForName(name);
+    this.ip   = ip;
   }
 
   public String getHostName() {
-	return name;
-  }
-  
-  public String getHostAddress() {
-	try {
-		return new InetAddress(name).toString();
-	} catch (UnknownHostException e) {
-		return null;	// Strange case
-	}
+    return name;
   }
 
+  public String getHostAddress() {
+    int a = ip;
+    return ((a >>> 24) & 0xFF) + "." +
+           ((a >>> 16) & 0xFF) + "." +
+           ((a >>>  8) & 0xFF) + "." +
+           ( a         & 0xFF);
+  }
+
+  // -----------------------------------------------------------------------
+  // DNS lookup — TRAPPED
+  // -----------------------------------------------------------------------
   public static InetAddress getByName(String name) throws UnknownHostException {
-    try {
-      Socket.init();
-      return new InetAddress(name);
-    } catch (IOException e) {
-      UnknownHostException uhe = new UnknownHostException(name);
-      uhe.initCause(e);
-      throw uhe;
-    }
+    throw new UnsupportedOperationException(MSG);
   }
 
   public byte[] getAddress() {
-	  byte[] res = new byte[4];
-	  res[0] = (byte) ( ip >>> 24);
-	  res[1] = (byte) ((ip >>> 16) & 0xFF);
-	  res[2] = (byte) ((ip >>> 8 ) & 0xFF);
-	  res[3] = (byte) ((ip       ) & 0xFF);
-	  return res;
+    byte[] res = new byte[4];
+    res[0] = (byte) ( ip >>> 24);
+    res[1] = (byte) ((ip >>> 16) & 0xFF);
+    res[2] = (byte) ((ip >>>  8) & 0xFF);
+    res[3] = (byte) ((ip       ) & 0xFF);
+    return res;
   }
-  
+
   @Override
-	public String toString() {
-	  byte[] addr = getAddress();
-	  return (int)((addr[0] + 256) % 256) + "." + 
-	         (int)((addr[1] + 256) % 256) + "." + 
-	         (int)((addr[2] + 256) % 256) + "." + 
-	         (int)((addr[3] + 256) % 256);
-	}
-  
-  public int getRawAddress() {
-	  return ip;
+  public String toString() {
+    return getHostAddress();
   }
-  
-  static native int ipv4AddressForName(String name) throws UnknownHostException;
+
+  public int getRawAddress() {
+    return ip;
+  }
 
   public boolean equals(Object o) {
     return o instanceof InetAddress && ((InetAddress) o).ip == ip;

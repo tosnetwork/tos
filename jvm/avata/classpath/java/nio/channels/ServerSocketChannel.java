@@ -17,78 +17,42 @@ import java.net.SocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 
+// -------------------------------------------------------------------------
+// Consensus-safe ServerSocketChannel — Avata/TOS blockchain JVM
+// All operations are TRAPPED.
+// -------------------------------------------------------------------------
 public class ServerSocketChannel extends SelectableChannel {
-  private final SocketChannel channel;
 
-  private ServerSocketChannel() throws IOException {
-    channel = new SocketChannel();
-  }
+  private static final String MSG =
+      "networking not available in consensus";
+
+  private ServerSocketChannel() { }
 
   public static ServerSocketChannel open() throws IOException {
-    Socket.init();
-    
-    return new ServerSocketChannel();
+    throw new UnsupportedOperationException(MSG);
   }
 
   public int socketFD() {
-    return channel.socketFD();
+    throw new UnsupportedOperationException(MSG);
   }
 
   public void handleReadyOps(int ops) {
-    channel.handleReadyOps(ops);
+    // no-op
   }
 
   public SelectableChannel configureBlocking(boolean v) throws IOException {
-    return channel.configureBlocking(v);
+    throw new UnsupportedOperationException(MSG);
   }
 
   public void close() throws IOException {
-    channel.close();
+    // no-op
   }
 
   public SocketChannel accept() throws IOException {
-    SocketChannel c = new SocketChannel();
-    c.closeSocket();
-    c.socket = doAccept();
-    c.connected = true;
-    return c;
+    throw new UnsupportedOperationException(MSG);
   }
 
   public ServerSocket socket() {
-    return new Handle();
+    throw new UnsupportedOperationException(MSG);
   }
-
-  private int doAccept() throws IOException {
-    while (true) {
-      int s = natDoAccept(channel.socket);
-      if (s != -1) {
-        return s;
-      }
-      // todo: throw ClosedByInterruptException if this thread was
-      // interrupted during the accept call
-    }
-  }
-
-  private void doListen(int socket, int host, int port) throws IOException {
-    Socket.init();
-
-    natDoListen(socket, host, port);
-  }
-
-  public class Handle extends ServerSocket {
-    public void bind(SocketAddress address)
-      throws IOException
-    {
-      InetSocketAddress a;
-      try {
-        a = (InetSocketAddress) address;
-      } catch (ClassCastException e) {
-        throw new IllegalArgumentException();
-      }
-      doListen(channel.socket, a.getAddress().getRawAddress(), a.getPort());
-    }
-  }
-
-  private static native int natDoAccept(int socket) throws IOException;
-  private static native void natDoListen(int socket, int host, int port) throws IOException;
 }

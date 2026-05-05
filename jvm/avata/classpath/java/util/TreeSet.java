@@ -13,10 +13,17 @@ package java.util;
 import avata.PersistentSet;
 import avata.Cell;
 
-public class TreeSet<T> extends AbstractSet<T> implements Collection<T> {
+public class TreeSet<T> extends AbstractSet<T> implements Collection<T>, SortedSet<T> {
   private PersistentSet<Cell<T>> set;
 
+  private final Comparator<T> comparator;
+
+  public Comparator<? super T> comparator() {
+    return comparator;
+  }
+
   public TreeSet(final Comparator<T> comparator) {
+    this.comparator = comparator;
     set = new PersistentSet(new Comparator<Cell<T>>() {
       public int compare(Cell<T> a, Cell<T> b) {
         return comparator.compare(a.value, b.value);
@@ -130,6 +137,136 @@ public class TreeSet<T> extends AbstractSet<T> implements Collection<T> {
 
   public void clear() {
     set = new PersistentSet(set.comparator());
+  }
+
+  // --- SortedSet range views ---
+
+  /** Returns a view of the subset from fromElement (inclusive) to toElement (exclusive). */
+  public SortedSet<T> subSet(T fromElement, T toElement) {
+    return new SubSet(fromElement, true, toElement, false);
+  }
+
+  /** Returns a view of the portion strictly less than toElement. */
+  public SortedSet<T> headSet(T toElement) {
+    return new SubSet(null, false, toElement, false);
+  }
+
+  /** Returns a view of the portion greater than or equal to fromElement. */
+  public SortedSet<T> tailSet(T fromElement) {
+    return new SubSet(fromElement, true, null, false);
+  }
+
+  private int compare(T a, T b) {
+    return comparator.compare(a, b);
+  }
+
+  private class SubSet extends AbstractSet<T> implements SortedSet<T> {
+    private final T from;
+    private final boolean hasFrom;
+    private final T to;
+    private final boolean hasTo; // currently unused (exclusive end)
+
+    SubSet(T from, boolean hasFrom, T to, boolean hasTo) {
+      this.from = from;
+      this.hasFrom = hasFrom;
+      this.to = to;
+      this.hasTo = hasTo;
+    }
+
+    private boolean inRange(T e) {
+      if (hasFrom && compare(e, from) < 0) return false;
+      if (to != null && compare(e, to) >= 0) return false;
+      return true;
+    }
+
+    public Comparator<? super T> comparator() {
+      return TreeSet.this.comparator;
+    }
+
+    public boolean add(T e) {
+      if (!inRange(e)) throw new IllegalArgumentException("Key out of range");
+      return TreeSet.this.add(e);
+    }
+
+    public boolean remove(Object e) {
+      if (!inRange((T) e)) return false;
+      return TreeSet.this.remove(e);
+    }
+
+    public boolean contains(Object e) {
+      return inRange((T) e) && TreeSet.this.contains(e);
+    }
+
+    public int size() {
+      int count = 0;
+      for (T e : this) count++;
+      return count;
+    }
+
+    public boolean isEmpty() {
+      return !iterator().hasNext();
+    }
+
+    public Iterator<T> iterator() {
+      final Iterator<T> base = TreeSet.this.iterator();
+      return new Iterator<T>() {
+        private T next = advance();
+        private boolean hasNext = next != null;
+
+        private T advance() {
+          while (base.hasNext()) {
+            T e = base.next();
+            if (to != null && compare(e, to) >= 0) return null;
+            if (!hasFrom || compare(e, from) >= 0) return e;
+          }
+          return null;
+        }
+
+        public boolean hasNext() { return hasNext; }
+        public T next() {
+          if (!hasNext) throw new NoSuchElementException();
+          T result = next;
+          next = advance();
+          hasNext = next != null;
+          return result;
+        }
+        public void remove() { throw new UnsupportedOperationException(); }
+      };
+    }
+
+    public T first() {
+      Iterator<T> it = iterator();
+      if (!it.hasNext()) throw new NoSuchElementException();
+      return it.next();
+    }
+
+    public T last() {
+      T result = null;
+      for (T e : this) result = e;
+      if (result == null) throw new NoSuchElementException();
+      return result;
+    }
+
+    public SortedSet<T> subSet(T f, T t) {
+      if (!inRange(f)) throw new IllegalArgumentException("fromKey out of range");
+      if (to != null && compare(t, to) > 0) throw new IllegalArgumentException("toKey out of range");
+      return new SubSet(f, true, t, false);
+    }
+
+    public SortedSet<T> headSet(T t) {
+      if (to != null && compare(t, to) > 0) throw new IllegalArgumentException("toKey out of range");
+      return new SubSet(from, hasFrom, t, false);
+    }
+
+    public SortedSet<T> tailSet(T f) {
+      if (!inRange(f)) throw new IllegalArgumentException("fromKey out of range");
+      return new SubSet(f, true, to, hasTo);
+    }
+
+    public void clear() {
+      Iterator<T> it = iterator();
+      while (it.hasNext()) { it.next(); it.remove(); }
+    }
   }
 
   private class MyIterator<T> implements java.util.Iterator<T> {

@@ -13,9 +13,9 @@ add_executable (avata_unittest
 target_link_libraries (avata_unittest
   avata_codegen
   avata_codegen_x86
-  avata_system
   avata_heap
   avata_util
+  avata_system
   ${PLATFORM_LIBS}
 )
 

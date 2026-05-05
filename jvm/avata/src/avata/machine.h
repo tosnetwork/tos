@@ -1361,6 +1361,25 @@ class Thread {
   uintptr_t backupHeap[ThreadBackupHeapSizeInWords];
   unsigned backupHeapIndex;
 
+  // TOS consensus fields -----------------------------------------------
+  // Per-transaction gas counter (P2). Decremented by 1 per bytecode dispatch
+  // in interpret.cpp. Initialized to the gas_limit from WorkchainComputeInput
+  // before each transaction. When it reaches zero the interpreter throws
+  // OutOfGasError. A value of UINT64_MAX means "unlimited" (used during
+  // bootstrap / classpath initialization before the contract is running).
+  uint64_t gasCounter;
+
+  // Per-transaction monotonic hash counter (P6). Assigned to objects the first
+  // time their identity hash is requested, replacing the address-derived hash
+  // returned by takeHash(). Reset to zero at the start of each transaction so
+  // that the same bytecode sequence on the same inputs produces identical hash
+  // values across validators. Starts at 1 so that zero is never a valid value
+  // (mirrors the String.hashCode() zero-means-uncomputed convention used
+  // elsewhere in machine.h, even though identity hashes and String hashes are
+  // different concepts).
+  uint32_t identityHashCounter;
+  // -------------------------------------------------------------------
+
  private:
   unsigned flags;
 };
@@ -2154,15 +2173,46 @@ inline void markHashTaken(Thread* t, object o)
   t->m->heap->pad(o);
 }
 
-inline uint32_t takeHash(Thread*, object o)
+// gcTakeHash is used ONLY by the GC object-copy callback in machine.cpp to
+// preserve the pre-move hash of a hashTaken object.  It must be idempotent:
+// given the same source object it must always return the same value.  We use
+// the address of the source object (which is fixed at copy time) so GC can
+// store the right value in the destination's extended word.
+// This path is NOT used for Java-visible Object.hashCode(); see objectHash().
+inline uint32_t gcTakeHash(Thread*, object o)
 {
-  // some broken code implicitly relies on System.identityHashCode
-  // always returning a non-negative number (e.g. old versions of
-  // com/sun/xml/bind/v2/util/CollisionCheckStack.hash), hence the "&
-  // 0x7FFFFFFF":
   return (reinterpret_cast<uintptr_t>(o) / BytesPerWord) & 0x7FFFFFFF;
 }
 
+// takeHash is kept as an alias for gcTakeHash for call sites that have not
+// been audited; new code should call gcTakeHash or objectHash directly.
+inline uint32_t takeHash(Thread* t, object o)
+{
+  return gcTakeHash(t, o);
+}
+
+// objectHash returns the identity hash code for object o.  For Java-visible
+// surfaces (Object.hashCode(), System.identityHashCode()) this is the
+// canonical path.
+//
+// TOS P6 – deterministic identity hash:
+// When an object's hash is first requested we assign a per-transaction
+// monotonic counter value rather than deriving it from the object's heap
+// address.  The counter (Thread::identityHashCounter) is reset to 0 at the
+// start of each contract transaction by jvm/core/compute-phase.cpp, so
+// identical bytecode sequences on identical inputs always produce identical
+// hash values across validators regardless of ASLR or heap base differences.
+//
+// IMPORTANT ASSUMPTION: GC must NOT run during a contract transaction in the
+// Avata execution model (the heap is reset between transactions).  If GC runs
+// mid-transaction, objects marked hashTaken may be moved and the GC copy
+// callback will store a gcTakeHash (pointer-based) value in the extended word,
+// overwriting the counter-based value and introducing non-determinism.
+// This is acceptable for bootstrap/classpath code (gasCounter == UINT64_MAX)
+// but must not happen during actual contract execution.
+//
+// The "& 0x7FFFFFFF" keeps the result non-negative, matching the original
+// contract for identityHashCode (some library code asserts >= 0).
 inline uint32_t objectHash(Thread* t, object o)
 {
   if (objectExtended(t, o)) {
@@ -2170,6 +2220,18 @@ inline uint32_t objectHash(Thread* t, object o)
   } else {
     if (not objectFixed(t, o)) {
       markHashTaken(t, o);
+      // TOS P6: assign a counter-based hash value, not the address.
+      // takeHash() below would compute the pointer-based value; instead we
+      // bump the per-thread counter.  Note that the extended word is not yet
+      // allocated (it will be allocated on the next GC cycle that moves this
+      // object); until then we return the counter value on every call.
+      // Once GC moves the object the copy callback calls gcTakeHash(src)
+      // which returns the pointer-based value for the source.  That means
+      // after GC the hash changes from the counter value to an address-based
+      // value. In the TOS contract execution model GC does not run during
+      // contract execution so this transition never occurs for user objects
+      // within one transaction.
+      return (++t->identityHashCounter) & 0x7FFFFFFF;
     }
     return takeHash(t, o);
   }

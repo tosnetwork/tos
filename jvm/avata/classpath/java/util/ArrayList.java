@@ -184,6 +184,42 @@ public class ArrayList<T> extends AbstractList<T> implements java.io.Serializabl
     return listIterator(0);
   }
 
+  public List<T> subList(int fromIndex, int toIndex) {
+    if (fromIndex < 0 || toIndex > size || fromIndex > toIndex) {
+      throw new IndexOutOfBoundsException(
+        "fromIndex=" + fromIndex + ", toIndex=" + toIndex + ", size=" + size);
+    }
+    final ArrayList<T> parent = this;
+    final int offset = fromIndex;
+    final int subSize = toIndex - fromIndex;
+    return new AbstractList<T>() {
+      @Override
+      public int size() { return subSize; }
+      @Override
+      public T get(int index) {
+        if (index < 0 || index >= subSize) throw new IndexOutOfBoundsException("" + index);
+        return parent.get(offset + index);
+      }
+      @Override
+      public T set(int index, T element) {
+        if (index < 0 || index >= subSize) throw new IndexOutOfBoundsException("" + index);
+        return parent.set(offset + index, element);
+      }
+      @Override
+      public void add(int index, T element) {
+        throw new UnsupportedOperationException("subList add not supported");
+      }
+      @Override
+      public T remove(int index) {
+        throw new UnsupportedOperationException("subList remove not supported");
+      }
+      @Override
+      public ListIterator<T> listIterator(int index) {
+        return new Collections.ArrayListIterator(this, index);
+      }
+    };
+  }
+
   public String toString() {
     return avata.Data.toString(this);
   }

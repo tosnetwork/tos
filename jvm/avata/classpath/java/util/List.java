@@ -32,4 +32,8 @@ public interface List<T> extends Collection<T> {
   public ListIterator<T> listIterator(int index);
 
   public ListIterator<T> listIterator();
+
+  default List<T> subList(int fromIndex, int toIndex) {
+    throw new UnsupportedOperationException("subList not supported by this List implementation");
+  }
 }

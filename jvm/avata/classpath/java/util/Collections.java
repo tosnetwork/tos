@@ -813,4 +813,212 @@ public class Collections {
     list.add(o);
     return new UnmodifiableList(list);
   }
+
+  public static <T> Set<T> singleton(T o) {
+    HashSet<T> s = new HashSet<T>(1);
+    s.add(o);
+    return new UnmodifiableSet<T>(s);
+  }
+
+  public static <K, V> Map<K, V> singletonMap(K key, V value) {
+    HashMap<K, V> m = new HashMap<K, V>(1);
+    m.put(key, value);
+    return new UnmodifiableMap<K, V>(m);
+  }
+
+  public static <T> List<T> nCopies(int n, T o) {
+    if (n < 0) throw new IllegalArgumentException("List length = " + n);
+    ArrayList<T> list = new ArrayList<T>(n);
+    for (int i = 0; i < n; i++) list.add(o);
+    return new UnmodifiableList<T>(list);
+  }
+
+  public static <T extends Comparable<? super T>> T min(Collection<? extends T> coll) {
+    return min(coll, null);
+  }
+
+  public static <T> T min(Collection<? extends T> coll, Comparator<? super T> comp) {
+    if (comp == null) {
+      comp = new Comparator<T>() {
+        public int compare(T a, T b) { return ((Comparable) a).compareTo(b); }
+      };
+    }
+    Iterator<? extends T> it = coll.iterator();
+    if (!it.hasNext()) throw new NoSuchElementException();
+    T result = it.next();
+    while (it.hasNext()) {
+      T e = it.next();
+      if (comp.compare(e, result) < 0) result = e;
+    }
+    return result;
+  }
+
+  public static <T extends Comparable<? super T>> T max(Collection<? extends T> coll) {
+    return max(coll, null);
+  }
+
+  public static <T> T max(Collection<? extends T> coll, Comparator<? super T> comp) {
+    if (comp == null) {
+      comp = new Comparator<T>() {
+        public int compare(T a, T b) { return ((Comparable) a).compareTo(b); }
+      };
+    }
+    Iterator<? extends T> it = coll.iterator();
+    if (!it.hasNext()) throw new NoSuchElementException();
+    T result = it.next();
+    while (it.hasNext()) {
+      T e = it.next();
+      if (comp.compare(e, result) > 0) result = e;
+    }
+    return result;
+  }
+
+  public static int frequency(Collection<?> c, Object o) {
+    int count = 0;
+    for (Object e : c) {
+      if (o == null ? e == null : o.equals(e)) count++;
+    }
+    return count;
+  }
+
+  public static <T> void fill(List<? super T> list, T obj) {
+    for (int i = 0, n = list.size(); i < n; i++) {
+      list.set(i, obj);
+    }
+  }
+
+  public static <T> void copy(List<? super T> dest, List<? extends T> src) {
+    if (src.size() > dest.size())
+      throw new IndexOutOfBoundsException("Source does not fit in dest");
+    for (int i = 0, n = src.size(); i < n; i++) {
+      dest.set(i, src.get(i));
+    }
+  }
+
+  public static boolean disjoint(Collection<?> c1, Collection<?> c2) {
+    Collection<?> contains = c2;
+    Collection<?> iterate = c1;
+    // Iterate over the smaller one if possible
+    if (c1 instanceof Set) {
+      iterate = c2;
+      contains = c1;
+    } else if (c2 instanceof Set) {
+      // use defaults
+    }
+    for (Object e : iterate) {
+      if (contains.contains(e)) return false;
+    }
+    return true;
+  }
+
+  public static <T> Comparator<T> reverseOrder() {
+    return new Comparator<T>() {
+      public int compare(T a, T b) { return ((Comparable) b).compareTo(a); }
+    };
+  }
+
+  public static <K, V> SortedMap<K, V> unmodifiableSortedMap(SortedMap<K, ? extends V> m) {
+    return new UnmodifiableSortedMap<K, V>(m);
+  }
+
+  static class UnmodifiableSortedMap<K, V> extends UnmodifiableMap<K, V>
+      implements SortedMap<K, V> {
+    private final SortedMap<K, V> sm;
+
+    UnmodifiableSortedMap(SortedMap<K, ? extends V> m) {
+      super((Map<K, V>) m);
+      this.sm = (SortedMap<K, V>) m;
+    }
+
+    public Comparator<? super K> comparator() { return sm.comparator(); }
+    public SortedMap<K, V> subMap(K f, K t) {
+      return new UnmodifiableSortedMap<K, V>(sm.subMap(f, t));
+    }
+    public SortedMap<K, V> headMap(K t) {
+      return new UnmodifiableSortedMap<K, V>(sm.headMap(t));
+    }
+    public SortedMap<K, V> tailMap(K f) {
+      return new UnmodifiableSortedMap<K, V>(sm.tailMap(f));
+    }
+    public K firstKey() { return sm.firstKey(); }
+    public K lastKey()  { return sm.lastKey(); }
+  }
+
+  public static <T> Set<T> unmodifiableSortedSet(SortedSet<T> s) {
+    return new UnmodifiableSet<T>(s);
+  }
+
+  public static int indexOfSubList(List<?> source, List<?> target) {
+    int sourceSize = source.size();
+    int targetSize = target.size();
+    if (targetSize == 0) return 0;
+    if (targetSize > sourceSize) return -1;
+    for (int i = 0; i <= sourceSize - targetSize; i++) {
+      boolean found = true;
+      for (int j = 0; j < targetSize; j++) {
+        Object s = source.get(i + j);
+        Object t = target.get(j);
+        if (!(s == null ? t == null : s.equals(t))) { found = false; break; }
+      }
+      if (found) return i;
+    }
+    return -1;
+  }
+
+  public static int lastIndexOfSubList(List<?> source, List<?> target) {
+    int sourceSize = source.size();
+    int targetSize = target.size();
+    if (targetSize == 0) return sourceSize;
+    if (targetSize > sourceSize) return -1;
+    for (int i = sourceSize - targetSize; i >= 0; i--) {
+      boolean found = true;
+      for (int j = 0; j < targetSize; j++) {
+        Object s = source.get(i + j);
+        Object t = target.get(j);
+        if (!(s == null ? t == null : s.equals(t))) { found = false; break; }
+      }
+      if (found) return i;
+    }
+    return -1;
+  }
+
+  public static <T> List<T> list(Enumeration<T> e) {
+    ArrayList<T> result = new ArrayList<T>();
+    while (e.hasMoreElements()) result.add(e.nextElement());
+    return result;
+  }
+
+  // (sort(List<T>) already provided as raw sort(List) at top of class)
+
+  public static <T> boolean addAll(Collection<? super T> c, T... elements) {
+    boolean changed = false;
+    for (T e : elements) changed |= c.add(e);
+    return changed;
+  }
+
+  public static void swap(List<?> list, int i, int j) {
+    List l = list;
+    Object tmp = l.get(i);
+    l.set(i, l.get(j));
+    l.set(j, tmp);
+  }
+
+  // Note: a binarySearch(List, Object) overload would erase to the same as binarySearch(List<T>, T)
+  // so we only provide the comparator version here.
+  public static <T> int binarySearch(List<? extends T> list, T key, Comparator<? super T> c) {
+    if (c == null) {
+      c = new Comparator<T>() {
+        public int compare(T a, T b) { return ((Comparable) a).compareTo(b); }
+      };
+    }
+    int left = -1, right = list.size();
+    while (left + 1 < right) {
+      int middle = (left + right) >> 1;
+      int result = c.compare(list.get(middle), key);
+      if (result < 0) left = middle;
+      else if (result > 0) right = middle;
+      else return middle;
+    }
+    return -1 - right;
+  }
 }

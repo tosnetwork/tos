@@ -1,7 +1,10 @@
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.Externalizable;
 import java.io.IOException;
+import java.io.ObjectInput;
 import java.io.ObjectInputStream;
+import java.io.ObjectOutput;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -275,5 +278,102 @@ public class Serialize implements Serializable {
     expectEqual(list.size(), listCopy.size());
     for (int i = 0; i < list.size(); i++)
         expectEqual(list.get(i), listCopy.get(i));
+
+    // --- Array serialization roundtrip tests ---
+
+    // int[] roundtrip
+    out.reset();
+    out2 = new ObjectOutputStream(out);
+    int[] intArr = {1, 2, 3, 0x7fffffff, -1};
+    out2.writeObject(intArr);
+    out2.close();
+    in = new ByteArrayInputStream(out.toByteArray());
+    in2 = new ObjectInputStream(in);
+    int[] intArrCopy = (int[])in2.readObject();
+    in2.close();
+    expect(intArrCopy.length == intArr.length);
+    for (int i = 0; i < intArr.length; i++) expectEqual(intArr[i], intArrCopy[i]);
+
+    // String[] roundtrip (object array)
+    out.reset();
+    out2 = new ObjectOutputStream(out);
+    String[] strArr = {"hello", "world", null, "!"};
+    out2.writeObject(strArr);
+    out2.close();
+    in = new ByteArrayInputStream(out.toByteArray());
+    in2 = new ObjectInputStream(in);
+    String[] strArrCopy = (String[])in2.readObject();
+    in2.close();
+    expect(strArrCopy.length == strArr.length);
+    expectEqual(strArrCopy[0], "hello");
+    expectEqual(strArrCopy[1], "world");
+    expect(strArrCopy[2] == null);
+    expectEqual(strArrCopy[3], "!");
+
+    // byte[] roundtrip
+    out.reset();
+    out2 = new ObjectOutputStream(out);
+    byte[] byteArr = {0, 1, (byte)0xff, 42};
+    out2.writeObject(byteArr);
+    out2.close();
+    in = new ByteArrayInputStream(out.toByteArray());
+    in2 = new ObjectInputStream(in);
+    byte[] byteArrCopy = (byte[])in2.readObject();
+    in2.close();
+    expect(byteArrCopy.length == byteArr.length);
+    for (int i = 0; i < byteArr.length; i++) expect(byteArrCopy[i] == byteArr[i]);
+
+    // --- Enum serialization must throw UnsupportedOperationException ---
+    {
+      boolean thrown = false;
+      try {
+        out.reset();
+        out2 = new ObjectOutputStream(out);
+        out2.writeObject(Thread.State.NEW); // any enum constant
+        out2.close();
+      } catch (UnsupportedOperationException e) {
+        thrown = true;
+        expect(e.getMessage().contains("enum serialization not supported"));
+      } catch (IOException e) {
+        // writeObject wraps exceptions — UOE may be wrapped in IOException
+        Throwable cause = e.getCause();
+        if (cause instanceof UnsupportedOperationException) {
+          thrown = true;
+          expect(cause.getMessage().contains("enum serialization not supported"));
+        } else {
+          throw e;
+        }
+      }
+      expect(thrown);
+    }
+
+    // --- Externalizable must throw UnsupportedOperationException ---
+    {
+      boolean thrown = false;
+      try {
+        out.reset();
+        out2 = new ObjectOutputStream(out);
+        out2.writeObject(new MyExternalizable());
+        out2.close();
+      } catch (UnsupportedOperationException e) {
+        thrown = true;
+        expect(e.getMessage().contains("Externalizable not supported"));
+      } catch (IOException e) {
+        Throwable cause = e.getCause();
+        if (cause instanceof UnsupportedOperationException) {
+          thrown = true;
+          expect(cause.getMessage().contains("Externalizable not supported"));
+        } else {
+          throw e;
+        }
+      }
+      expect(thrown);
+    }
+  }
+
+  /** Helper: an Externalizable class used to test that serialization traps it. */
+  private static class MyExternalizable implements Externalizable {
+    public void writeExternal(ObjectOutput out) {}
+    public void readExternal(ObjectInput in) {}
   }
 }

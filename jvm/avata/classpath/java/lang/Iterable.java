@@ -11,7 +11,15 @@
 package java.lang;
 
 import java.util.Iterator;
+import java.util.function.Consumer;
 
 public interface Iterable<T> {
   public Iterator<T> iterator();
+
+  // Java 8 default addition
+  default void forEach(Consumer<? super T> action) {
+    for (T t : this) {
+      action.accept(t);
+    }
+  }
 }

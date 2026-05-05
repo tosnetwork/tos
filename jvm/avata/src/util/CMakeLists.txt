@@ -1,1 +1,1 @@
-add_library(avata_util arg-parser.cpp fixed-allocator.cpp)
+add_library(avata_util abort.cpp arg-parser.cpp fixed-allocator.cpp)

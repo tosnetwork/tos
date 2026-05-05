@@ -784,6 +784,36 @@ object interpret3(Thread* t, const int base)
 loop:
   instruction = code->body()[ip++];
 
+  // TOS P2: Gas accounting.
+  // Every bytecode dispatch decrements the per-transaction gas counter.
+  // A counter value of UINT64_MAX means "unlimited" (used during bootstrap /
+  // class-library initialization before contract execution begins).
+  // When the limit is reached, throw OutOfGasError deterministically.
+  //
+  // TODO(gas-table): Replace the flat cost of 1 per opcode with the opcode
+  // cost table loaded from ConfigParam 85 in jvm/core/gas-table.cpp. Hook
+  // point: immediately after the `instruction` variable is set, look up
+  // gas_table[instruction] and subtract that many units instead of 1.
+  //
+  // TODO(gas-init): jvm/core/compute-phase.cpp must call
+  //   t->gasCounter = input.gas_limit;
+  //   t->identityHashCounter = 0;
+  // before invoking interpret3() for each contract transaction.
+  //
+  // TODO(oog-class): Replace the throwNew target below with the TOS class
+  //   tos/lang/OutOfGasError once that class is added to the classpath and
+  //   wired into GcOutOfGasError::Type in types.def.
+  if (UNLIKELY(t->gasCounter != UINT64_MAX)) {
+    if (UNLIKELY(t->gasCounter == 0)) {
+      // Out of gas: throw a deterministic trap. Currently reuses
+      // GcOutOfMemoryError as a placeholder until OutOfGasError is plumbed in.
+      // TODO(oog-class): switch to GcOutOfGasError::Type.
+      exception = makeThrowable(t, GcOutOfMemoryError::Type);
+      goto throw_;
+    }
+    --t->gasCounter;
+  }
+
   if (DebugRun) {
     fprintf(stderr,
             "ip: %d; instruction: 0x%x in %s.%s ",

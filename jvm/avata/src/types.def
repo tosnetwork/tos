@@ -260,6 +260,10 @@
 
 (type exceptionInInitializerError java/lang/ExceptionInInitializerError)
 
+(type classFormatError java/lang/ClassFormatError)
+
+(type unsupportedClassVersionError java/lang/UnsupportedClassVersionError)
+
 (type ioException java/io/IOException)
 
 (type fileNotFoundException java/io/FileNotFoundException)

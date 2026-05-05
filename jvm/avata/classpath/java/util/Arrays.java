@@ -687,6 +687,330 @@ public class Arrays {
     return result;
   }
 
+  // --- sort with range for primitive arrays ---
+
+  public static void sort(int[] a, int fromIndex, int toIndex) {
+    checkRange(a.length, fromIndex, toIndex);
+    // Use insertion sort for simplicity (deterministic, no RNG)
+    for (int j = fromIndex + 1; j < toIndex; j++) {
+      int t = a[j];
+      int i = j - 1;
+      while (i >= fromIndex && a[i] > t) { a[i + 1] = a[i]; i--; }
+      a[i + 1] = t;
+    }
+  }
+
+  public static void sort(long[] a, int fromIndex, int toIndex) {
+    checkRange(a.length, fromIndex, toIndex);
+    for (int j = fromIndex + 1; j < toIndex; j++) {
+      long t = a[j]; int i = j - 1;
+      while (i >= fromIndex && a[i] > t) { a[i + 1] = a[i]; i--; }
+      a[i + 1] = t;
+    }
+  }
+
+  public static void sort(byte[] a, int fromIndex, int toIndex) {
+    checkRange(a.length, fromIndex, toIndex);
+    for (int j = fromIndex + 1; j < toIndex; j++) {
+      byte t = a[j]; int i = j - 1;
+      while (i >= fromIndex && a[i] > t) { a[i + 1] = a[i]; i--; }
+      a[i + 1] = t;
+    }
+  }
+
+  public static void sort(char[] a, int fromIndex, int toIndex) {
+    checkRange(a.length, fromIndex, toIndex);
+    for (int j = fromIndex + 1; j < toIndex; j++) {
+      char t = a[j]; int i = j - 1;
+      while (i >= fromIndex && a[i] > t) { a[i + 1] = a[i]; i--; }
+      a[i + 1] = t;
+    }
+  }
+
+  public static void sort(short[] a, int fromIndex, int toIndex) {
+    checkRange(a.length, fromIndex, toIndex);
+    for (int j = fromIndex + 1; j < toIndex; j++) {
+      short t = a[j]; int i = j - 1;
+      while (i >= fromIndex && a[i] > t) { a[i + 1] = a[i]; i--; }
+      a[i + 1] = t;
+    }
+  }
+
+  public static void sort(double[] a, int fromIndex, int toIndex) {
+    checkRange(a.length, fromIndex, toIndex);
+    for (int j = fromIndex + 1; j < toIndex; j++) {
+      double t = a[j]; int i = j - 1;
+      while (i >= fromIndex && a[i] > t) { a[i + 1] = a[i]; i--; }
+      a[i + 1] = t;
+    }
+  }
+
+  public static void sort(float[] a, int fromIndex, int toIndex) {
+    checkRange(a.length, fromIndex, toIndex);
+    for (int j = fromIndex + 1; j < toIndex; j++) {
+      float t = a[j]; int i = j - 1;
+      while (i >= fromIndex && a[i] > t) { a[i + 1] = a[i]; i--; }
+      a[i + 1] = t;
+    }
+  }
+
+  public static void sort(int[] a) {
+    sort(a, 0, a.length);
+  }
+
+  public static void sort(long[] a) {
+    sort(a, 0, a.length);
+  }
+
+  public static void sort(byte[] a) {
+    sort(a, 0, a.length);
+  }
+
+  public static void sort(char[] a) {
+    sort(a, 0, a.length);
+  }
+
+  public static void sort(short[] a) {
+    sort(a, 0, a.length);
+  }
+
+  public static void sort(double[] a) {
+    sort(a, 0, a.length);
+  }
+
+  public static void sort(float[] a) {
+    sort(a, 0, a.length);
+  }
+
+  public static <T> void sort(T[] array, int fromIndex, int toIndex, Comparator<? super T> comparator) {
+    checkRange(array.length, fromIndex, toIndex);
+    // Copy subrange, sort, copy back
+    Object[] sub = new Object[toIndex - fromIndex];
+    System.arraycopy(array, fromIndex, sub, 0, sub.length);
+    sort((T[]) sub, comparator);
+    System.arraycopy(sub, 0, array, fromIndex, sub.length);
+  }
+
+  // --- copyOfRange ---
+
+  public static boolean[] copyOfRange(boolean[] original, int from, int to) {
+    boolean[] result = new boolean[to - from];
+    int len = Math.min(to, original.length) - from;
+    if (len > 0) System.arraycopy(original, from, result, 0, len);
+    return result;
+  }
+
+  public static byte[] copyOfRange(byte[] original, int from, int to) {
+    byte[] result = new byte[to - from];
+    int len = Math.min(to, original.length) - from;
+    if (len > 0) System.arraycopy(original, from, result, 0, len);
+    return result;
+  }
+
+  public static char[] copyOfRange(char[] original, int from, int to) {
+    char[] result = new char[to - from];
+    int len = Math.min(to, original.length) - from;
+    if (len > 0) System.arraycopy(original, from, result, 0, len);
+    return result;
+  }
+
+  public static int[] copyOfRange(int[] original, int from, int to) {
+    int[] result = new int[to - from];
+    int len = Math.min(to, original.length) - from;
+    if (len > 0) System.arraycopy(original, from, result, 0, len);
+    return result;
+  }
+
+  public static long[] copyOfRange(long[] original, int from, int to) {
+    long[] result = new long[to - from];
+    int len = Math.min(to, original.length) - from;
+    if (len > 0) System.arraycopy(original, from, result, 0, len);
+    return result;
+  }
+
+  public static short[] copyOfRange(short[] original, int from, int to) {
+    short[] result = new short[to - from];
+    int len = Math.min(to, original.length) - from;
+    if (len > 0) System.arraycopy(original, from, result, 0, len);
+    return result;
+  }
+
+  public static float[] copyOfRange(float[] original, int from, int to) {
+    float[] result = new float[to - from];
+    int len = Math.min(to, original.length) - from;
+    if (len > 0) System.arraycopy(original, from, result, 0, len);
+    return result;
+  }
+
+  public static double[] copyOfRange(double[] original, int from, int to) {
+    double[] result = new double[to - from];
+    int len = Math.min(to, original.length) - from;
+    if (len > 0) System.arraycopy(original, from, result, 0, len);
+    return result;
+  }
+
+  public static <T> T[] copyOfRange(T[] original, int from, int to) {
+    Class<?> clazz = original.getClass().getComponentType();
+    T[] result = (T[]) java.lang.reflect.Array.newInstance(clazz, to - from);
+    int len = Math.min(to, original.length) - from;
+    if (len > 0) System.arraycopy(original, from, result, 0, len);
+    return result;
+  }
+
+  // --- additional binarySearch overloads ---
+
+  public static int binarySearch(long[] a, long key) {
+    return binarySearch(a, 0, a.length, key);
+  }
+
+  public static int binarySearch(long[] a, int fromIndex, int toIndex, long key) {
+    checkRange(a.length, fromIndex, toIndex);
+    int left = fromIndex, right = toIndex - 1;
+    while (left <= right) {
+      int mid = (left + right) >>> 1;
+      if (a[mid] < key) left = mid + 1;
+      else if (a[mid] > key) right = mid - 1;
+      else return mid;
+    }
+    return -left - 1;
+  }
+
+  public static int binarySearch(byte[] a, byte key) {
+    return binarySearch(a, 0, a.length, key);
+  }
+
+  public static int binarySearch(byte[] a, int fromIndex, int toIndex, byte key) {
+    checkRange(a.length, fromIndex, toIndex);
+    int left = fromIndex, right = toIndex - 1;
+    while (left <= right) {
+      int mid = (left + right) >>> 1;
+      if (a[mid] < key) left = mid + 1;
+      else if (a[mid] > key) right = mid - 1;
+      else return mid;
+    }
+    return -left - 1;
+  }
+
+  public static int binarySearch(char[] a, char key) {
+    int left = 0, right = a.length - 1;
+    while (left <= right) {
+      int mid = (left + right) >>> 1;
+      if (a[mid] < key) left = mid + 1;
+      else if (a[mid] > key) right = mid - 1;
+      else return mid;
+    }
+    return -left - 1;
+  }
+
+  public static int binarySearch(double[] a, double key) {
+    int left = 0, right = a.length - 1;
+    while (left <= right) {
+      int mid = (left + right) >>> 1;
+      if (a[mid] < key) left = mid + 1;
+      else if (a[mid] > key) right = mid - 1;
+      else return mid;
+    }
+    return -left - 1;
+  }
+
+  public static int binarySearch(Object[] a, Object key) {
+    return binarySearch(a, 0, a.length, key, null);
+  }
+
+  public static <T> int binarySearch(T[] a, T key, Comparator<? super T> c) {
+    return binarySearch(a, 0, a.length, key, c);
+  }
+
+  public static <T> int binarySearch(T[] a, int fromIndex, int toIndex, T key, Comparator<? super T> c) {
+    if (c == null) {
+      c = new Comparator<T>() {
+        public int compare(T x, T y) { return ((Comparable) x).compareTo(y); }
+      };
+    }
+    checkRange(a.length, fromIndex, toIndex);
+    int left = fromIndex, right = toIndex - 1;
+    while (left <= right) {
+      int mid = (left + right) >>> 1;
+      int cmp = c.compare(a[mid], key);
+      if (cmp < 0) left = mid + 1;
+      else if (cmp > 0) right = mid - 1;
+      else return mid;
+    }
+    return -left - 1;
+  }
+
+  // --- hashCode for primitive arrays ---
+
+  public static int hashCode(int[] a) {
+    if (a == null) return 0;
+    int result = 1;
+    for (int e : a) result = 31 * result + e;
+    return result;
+  }
+
+  public static int hashCode(long[] a) {
+    if (a == null) return 0;
+    int result = 1;
+    for (long e : a) result = 31 * result + (int)(e ^ (e >>> 32));
+    return result;
+  }
+
+  public static int hashCode(byte[] a) {
+    if (a == null) return 0;
+    int result = 1;
+    for (byte e : a) result = 31 * result + e;
+    return result;
+  }
+
+  public static int hashCode(char[] a) {
+    if (a == null) return 0;
+    int result = 1;
+    for (char e : a) result = 31 * result + e;
+    return result;
+  }
+
+  public static int hashCode(short[] a) {
+    if (a == null) return 0;
+    int result = 1;
+    for (short e : a) result = 31 * result + e;
+    return result;
+  }
+
+  public static int hashCode(boolean[] a) {
+    if (a == null) return 0;
+    int result = 1;
+    for (boolean e : a) result = 31 * result + (e ? 1231 : 1237);
+    return result;
+  }
+
+  public static int hashCode(float[] a) {
+    if (a == null) return 0;
+    int result = 1;
+    for (float e : a) result = 31 * result + Float.floatToIntBits(e);
+    return result;
+  }
+
+  public static int hashCode(double[] a) {
+    if (a == null) return 0;
+    int result = 1;
+    for (double e : a) {
+      long bits = Double.doubleToLongBits(e);
+      result = 31 * result + (int)(bits ^ (bits >>> 32));
+    }
+    return result;
+  }
+
+  public static String deepToString(Object[] a) {
+    if (a == null) return "null";
+    StringBuilder sb = new StringBuilder("[");
+    for (int i = 0; i < a.length; i++) {
+      if (i > 0) sb.append(", ");
+      if (a[i] instanceof Object[]) sb.append(deepToString((Object[]) a[i]));
+      else sb.append(a[i]);
+    }
+    return sb.append("]").toString();
+  }
+
   public static int binarySearch(int[] a, int key) {
     return binarySearch(a, 0, a.length - 1, key);
   }

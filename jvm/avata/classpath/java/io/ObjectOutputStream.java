@@ -40,6 +40,9 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
   final static byte SC_SERIALIZABLE = 0x02;
   final static byte SC_EXTERNALIZABLE = 0x04;
   final static byte SC_ENUM = 0x10;
+  // SC_ARRAY: arrays have SC_SERIALIZABLE flag set in their classDesc but
+  // no fields and sUID 0; no separate flag constant needed — the class name
+  // already starts with '[' to distinguish it.
 
   private final OutputStream out;
   private final ArrayList references = new ArrayList();
@@ -244,6 +247,11 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
   }
 
   private void classDesc(Class clazz, int scFlags) throws IOException {
+    classDesc(clazz, scFlags, false);
+  }
+
+  private void classDesc(Class clazz, int scFlags, boolean isArray)
+      throws IOException {
     int handle = lookupClassDesc(clazz);
     if (handle >= 0) {
       reference(handle);
@@ -251,38 +259,56 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
     }
     rawByte(TC_CLASSDESC);
 
-    // class name
+    // class name — for arrays Class.getName() already returns JVM descriptor
+    // form: "[I", "[Ljava.lang.String;" etc., matching JDK8u wire format.
     string(clazz.getName());
 
-    // serial version UID
-    long serialVersionUID = 1l;
-    try {
-      Field field = clazz.getField("serialVersionUID");
-      serialVersionUID = field.getLong(null);
-    } catch (Exception ignored) {}
+    // serial version UID — JDK8u uses 0 for array classes and enum types.
+    long serialVersionUID = 0l;
+    if (!isArray && !Enum.class.isAssignableFrom(clazz)) {
+      try {
+        Field field = clazz.getDeclaredField("serialVersionUID");
+        serialVersionUID = field.getLong(null);
+      } catch (Exception ignored) {
+        // Default to 1 for ordinary serializable classes without an explicit
+        // serialVersionUID, matching the legacy Avata behaviour.
+        serialVersionUID = 1l;
+      }
+    }
     rawLong(serialVersionUID);
     addReference(new ClassDescReference(clazz));
 
-    // handle
-    rawByte(SC_SERIALIZABLE | scFlags);
+    // flags byte
+    if (isArray) {
+      // Arrays are serializable but have no fields, no write-method, no enum.
+      // JDK8u emits SC_SERIALIZABLE (0x02) for array classDescs.
+      rawByte(SC_SERIALIZABLE);
+    } else {
+      rawByte(SC_SERIALIZABLE | scFlags);
+    }
 
-    Field[] fields = getFields(clazz);
-    rawShort(fields.length);
-    for (Field field : fields) {
-      Class fieldType = field.getType();
-      if (fieldType.isPrimitive()) {
-        rawByte(primitiveTypeChar(fieldType));
-        string(field.getName());
-      } else {
-        rawByte(fieldType.isArray() ? '[' : 'L');
-        string(field.getName());
-        objectString(fieldType.isArray()
-          ? fieldType.getName().replace('.', '/')
-          : "L" + fieldType.getName().replace('.', '/') + ";");
+    if (isArray) {
+      // Arrays carry zero fields in their classDesc (elements follow inline).
+      rawShort(0);
+    } else {
+      Field[] fields = getFields(clazz);
+      rawShort(fields.length);
+      for (Field field : fields) {
+        Class fieldType = field.getType();
+        if (fieldType.isPrimitive()) {
+          rawByte(primitiveTypeChar(fieldType));
+          string(field.getName());
+        } else {
+          rawByte(fieldType.isArray() ? '[' : 'L');
+          string(field.getName());
+          objectString(fieldType.isArray()
+            ? fieldType.getName().replace('.', '/')
+            : "L" + fieldType.getName().replace('.', '/') + ";");
+        }
       }
     }
-    rawByte(TC_ENDBLOCKDATA); // TODO: write annotation
-    rawByte(TC_NULL); // super class desc
+    rawByte(TC_ENDBLOCKDATA); // class annotation (empty)
+    rawByte(TC_NULL);         // super class desc (none for arrays/leaf classes)
   }
 
   private void field(Object o, Field field) throws IOException {
@@ -351,6 +377,45 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
       objectString((String)o);
       return;
     }
+
+    Class cl = o.getClass();
+
+    // Enum serialization: the consensus profile does not support enum
+    // serialization because it depends on reflection over enum constants and
+    // readResolve, making the wire format non-deterministic across JVM
+    // versions that may differ in ordinal ordering.  Reject at the source.
+    if (o instanceof Enum) {
+      throw new UnsupportedOperationException(
+          "enum serialization not supported in consensus profile");
+    }
+
+    // Externalizable: arbitrary user-defined write formats cannot be
+    // guaranteed deterministic across nodes; reject uniformly.
+    if (o instanceof Externalizable) {
+      throw new UnsupportedOperationException(
+          "Externalizable not supported in consensus profile");
+    }
+
+    // writeReplace: allows an object to substitute itself before
+    // serialization.  This hook is reflection-based and can return an
+    // arbitrary replacement — not safe in a deterministic consensus VM.
+    if (hasReplaceOrResolveMethod(cl, "writeReplace")) {
+      throw new UnsupportedOperationException(
+          "writeReplace not supported in consensus profile");
+    }
+
+    // Array serialization: TC_ARRAY + classDesc + int length + elements.
+    // Matches JDK8u wire format exactly (see ObjectOutputStream.writeArray).
+    if (cl.isArray()) {
+      writeArray(o, cl);
+      return;
+    }
+
+    // Plain serializable object check — must implement Serializable.
+    if (!(o instanceof java.io.Serializable)) {
+      throw new NotSerializableException(cl.getName());
+    }
+
     rawByte(TC_OBJECT);
     Method writeObject = getReadOrWriteMethod(o, "writeObject");
     if (writeObject == null) {
@@ -363,11 +428,85 @@ public class ObjectOutputStream extends OutputStream implements DataOutput {
       current = o;
       writeObject.invoke(o, this);
       rawByte(TC_ENDBLOCKDATA);
+    } catch (IOException e) {
+      throw e;
     } catch (Exception e) {
       throw new IOException(e);
     } finally {
       current = null;
     }
+  }
+
+  /**
+   * Writes an array to the stream in JDK8u wire format:
+   *   TC_ARRAY classDesc int:length elements...
+   * For primitive arrays each element is written as raw bytes (big-endian,
+   * same width as the primitive type).  For object arrays each element is
+   * written recursively via writeObject.
+   */
+  private void writeArray(Object o, Class cl) throws IOException {
+    rawByte(TC_ARRAY);
+    classDesc(cl, 0, true);
+    addReference(o);
+
+    Class ccl = cl.getComponentType();
+    if (ccl == Integer.TYPE) {
+      int[] ia = (int[]) o;
+      rawInt(ia.length);
+      for (int v : ia) rawInt(v);
+    } else if (ccl == Byte.TYPE) {
+      byte[] ba = (byte[]) o;
+      rawInt(ba.length);
+      for (byte b : ba) rawByte(b & 0xff);
+    } else if (ccl == Long.TYPE) {
+      long[] ja = (long[]) o;
+      rawInt(ja.length);
+      for (long v : ja) rawLong(v);
+    } else if (ccl == Float.TYPE) {
+      float[] fa = (float[]) o;
+      rawInt(fa.length);
+      for (float v : fa) rawInt(Float.floatToIntBits(v));
+    } else if (ccl == Double.TYPE) {
+      double[] da = (double[]) o;
+      rawInt(da.length);
+      for (double v : da) rawLong(Double.doubleToLongBits(v));
+    } else if (ccl == Short.TYPE) {
+      short[] sa = (short[]) o;
+      rawInt(sa.length);
+      for (short v : sa) rawShort(v);
+    } else if (ccl == Character.TYPE) {
+      char[] ca = (char[]) o;
+      rawInt(ca.length);
+      for (char v : ca) rawShort((short)v);
+    } else if (ccl == Boolean.TYPE) {
+      boolean[] za = (boolean[]) o;
+      rawInt(za.length);
+      for (boolean v : za) rawByte(v ? 1 : 0);
+    } else {
+      // Object array
+      Object[] oa = (Object[]) o;
+      rawInt(oa.length);
+      for (Object elem : oa) writeObject(elem);
+    }
+  }
+
+  /**
+   * Returns true if the class (or any superclass up to but not including
+   * Object) declares a method with the given name, no parameters, and
+   * return type Object.  Used to detect writeReplace/readResolve hooks.
+   */
+  static boolean hasReplaceOrResolveMethod(Class cl, String methodName) {
+    Class c = cl;
+    while (c != null && c != Object.class) {
+      try {
+        java.lang.reflect.Method m = c.getDeclaredMethod(methodName);
+        if (m.getReturnType() == Object.class) {
+          return true;
+        }
+      } catch (NoSuchMethodException ignored) { }
+      c = c.getSuperclass();
+    }
+    return false;
   }
 
   static Method getReadOrWriteMethod(Object o, String methodName) {

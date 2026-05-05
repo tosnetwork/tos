@@ -296,6 +296,95 @@ public class Reflection {
     expect(NamedLocal.class.isLocalClass());
   }
 
+  // --- new consensus-profile alignment tests ---
+
+  /** Verify getGenericType() for a plain (non-generic) field. */
+  private static void fieldGetGenericType() throws Exception {
+    // egads is declared as 'int' — getGenericType must return Integer.TYPE
+    Field egads = Reflection.class.getDeclaredField("egads");
+    expect(egads.getGenericType() == Integer.TYPE);
+    expect(egads.getGenericType() == egads.getType());
+
+    // array field: Integer[] — no Signature attribute, getGenericType returns Class
+    Field arr = Reflection.class.getDeclaredField("array");
+    expect(arr.getGenericType() instanceof Class);
+    expect(arr.getType().isArray());
+
+    // generic field with signature: pinky
+    Field pinky = Reflection.class.getField("pinky");
+    expect(pinky.getGenericType() instanceof java.lang.reflect.ParameterizedType);
+    // getType and getGenericType must agree on raw type
+    java.lang.reflect.ParameterizedType pt =
+      (java.lang.reflect.ParameterizedType) pinky.getGenericType();
+    expect(pt.getRawType() == pinky.getType());
+  }
+
+  /**
+   * setAccessible is a no-op in the Avata consensus VM — all admitted
+   * members are unconditionally accessible and no SecurityException is
+   * thrown.  Verify both directions are accepted without error.
+   */
+  private static void setAccessibleNoOp() throws Exception {
+    Field egads = Reflection.class.getDeclaredField("egads");
+    // must not throw
+    egads.setAccessible(true);
+    egads.setAccessible(false);
+
+    Method bm = Reflection.class.getMethod("booleanMethod");
+    bm.setAccessible(true);
+    bm.setAccessible(false);
+
+    Constructor ctor = Reflection.class.getDeclaredConstructor();
+    ctor.setAccessible(true);
+    ctor.setAccessible(false);
+  }
+
+  /**
+   * Class.newInstance() is admitted for concrete classes that have a
+   * public/package-accessible no-arg constructor.
+   */
+  private static void classNewInstance() throws Exception {
+    // Object has a public no-arg constructor
+    Object o = Object.class.newInstance();
+    expect(o != null);
+
+    // Gybe has a compiler-generated no-arg constructor
+    Object g = Gybe.class.newInstance();
+    expect(g instanceof Gybe);
+
+    // Interface has no constructor — newInstance() must fail
+    try {
+      Runnable.class.newInstance();
+      expect(false);
+    } catch (InstantiationException e) {
+      // expected — interface has no constructor
+    } catch (RuntimeException e) {
+      // accepted — VM may wrap NoSuchMethodException
+    }
+  }
+
+  /**
+   * Class.getClassLoader() returns null for all admitted classes (they are
+   * treated as bootstrap-loaded).
+   *
+   * Class.forName(String) (one-arg) is admitted.
+   * Class.forName(String,boolean,ClassLoader) with a null loader is
+   * equivalent — also admitted.
+   */
+  private static void classLoaderAndForName() throws Exception {
+    // getClassLoader returns null for all admitted classes
+    expect(Reflection.class.getClassLoader() == null);
+    expect(String.class.getClassLoader() == null);
+    expect(int.class.getClassLoader() == null);
+
+    // one-arg forName is admitted
+    Class<?> c = Class.forName("java.lang.Integer");
+    expect(c == Integer.class);
+
+    // isSynthetic on a regular class
+    expect(!Reflection.class.isSynthetic());
+  }
+
   private static class MyClassLoader extends ClassLoader {
     public Package definePackage1(String name) {
       return definePackage(name, null, null, null, null, null, null, null);
@@ -310,6 +399,10 @@ public class Reflection {
     genericType();
     classType();
     exceptionTypes();
+    fieldGetGenericType();
+    setAccessibleNoOp();
+    classNewInstance();
+    classLoaderAndForName();
 
     Class system = Class.forName("java.lang.System");
     Field out = system.getDeclaredField("out");

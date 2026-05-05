@@ -15,219 +15,91 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
+// -------------------------------------------------------------------------
+// Consensus-safe Socket — Avata/TOS blockchain JVM
+//
+// All networking operations are TRAPPED with a deterministic
+// UnsupportedOperationException.  The class shape (fields / inner classes)
+// is preserved for class-file linking compatibility.
+// -------------------------------------------------------------------------
 public class Socket implements Closeable, AutoCloseable {
 
-        private static final long InvalidSocket = -1;
-	private static final int SD_RECEIVE = 0x00;
-	private static final int SD_SEND = 0x01;
-	private static final int SD_BOTH = 0x02;
-	
-	private static final int BUFFER_SIZE = 65535;
-	
-	/**
-	 * This method is called from all routines that depend on winsock in windows,
-	 * so it has public visibility
-	 * @throws IOException
-	 */
-	public static native void init() throws IOException;
-	
-	/**
-	 * Creates the native socket object
-	 * @return Handle to the native object
-	 * @throws IOException
-	 */
-	private static native /* SOCKET */long create() throws IOException;
-	
-	/**
-	 * Connects the native socket object to an address:port
-	 * @param sock Native socket handler
-	 * @param addr Address to connect to
-	 * @param port Port to connect to
-	 * @throws IOException
-	 */
-	private static native void connect(/* SOCKET */long sock, long addr, short port) throws IOException;
-	private static native void bind(/* SOCKET */long sock, long addr, short port) throws IOException;
+  private static final String MSG =
+      "networking not available in consensus";
 
-	private static native void send(/* SOCKET */long sock, byte[] buffer, int start_pos, int count) throws IOException;
-	private static native int recv(/* SOCKET */long sock, byte[] buffer, int start_pos, int count) throws IOException;
-	
-	private static native void abort(/* SOCKET */long sock);
-	private static native void close(/* SOCKET */long sock);
-	private static native void closeOutput(/* SOCKET */long sock);
-	private static native void closeInput(/* SOCKET */long sock);
-	
-	private class SocketInputStream extends InputStream {
+  // -----------------------------------------------------------------------
+  // Winsock bootstrap — kept as no-op so SocketChannel.open() linkage
+  // survives; actual networking is trapped before any native call.
+  // -----------------------------------------------------------------------
+  public static void init() throws IOException {
+    // no-op in consensus mode — native init is never reached
+  }
 
-		private boolean closed = false;
-		
-		@Override
-		public void close() throws IOException {
-                        if (!closed && isOpen()) {
-				closeInput(sock);
-				closed = true;
-			}
-			super.close();
-		}
-		
-		@Override
-		protected void finalize() throws Throwable {
-			close();
-			super.finalize();
-		}
-		
-		@Override
-		public int read() throws IOException {
-                        checkOpen();
-			byte[] buffer = new byte[1];
-			int size = recv(sock, buffer, 0, 1);
-			if (size == 0) {
-				return -1;
-			}
-			return buffer[0];
-		}
-		
-		@Override
-		public int read(byte[] buffer) throws IOException {
-                        checkOpen();
-			if(buffer.length == 0) return 0; //spec says return 0 if buffer length is zero.
-			int fullSize = buffer.length;
-			int size;
-			size = recv(sock, buffer, 0, Math.min(fullSize, Socket.BUFFER_SIZE));
-			fullSize -= size;
-			//removed loop, because otherwise interactive protocols will not work.
-			if(size < 0) throw new IOException("Error while reading stream"); //as the manpage of recv says, a value below zero indicates an error.
-			if(size == 0) return -1; // if the stream is closed (size == 0), then return -1 to indicate end of stream. 
-			return size;
-		}
-	}
-	
-	private class SocketOutputStream extends OutputStream {
+  // -----------------------------------------------------------------------
+  // Constructors — ALL TRAPPED
+  // -----------------------------------------------------------------------
+  public Socket() throws IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
 
-		private boolean closed = false;
-		
-		@Override
-		public void close() throws IOException {
-                        if (!closed && isOpen()) {
-				closeOutput(sock);
-				closed = true;
-			}
-			super.close();
-		}
-		
-		@Override
-		protected void finalize() throws Throwable {
-			close();
-			super.finalize();
-		}
-		
-		@Override
-		public void write(int c) throws IOException {
-                        checkOpen();
-			byte[] res = new byte[1];
-			res[0] = (byte)c;
-			send(sock, res, 0, 1);
-		}
-		
-		@Override
-		public void write(byte[] buffer) throws IOException {
-                        checkOpen();
-			int fullSize = buffer.length;
-                        if (fullSize == 0) return;
-			int index = 0;
-			int size;
-			do {
-				size = Math.min(fullSize, Socket.BUFFER_SIZE);
-				send(sock, buffer, index, size);
-				fullSize -= size;
-				index += size;
-			} while (fullSize != 0 && size != 0);
-		}
+  protected Socket(boolean create) throws IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
 
-	}
+  public Socket(InetAddress address, int port) throws IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
 
-	private long sock;
-	private SocketInputStream inputStream;
-	private SocketOutputStream outputStream;
-	
-	public Socket() throws IOException {
-                this(true);
-        }
+  public Socket(String host, int port) throws UnknownHostException, IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
 
-        protected Socket(boolean create) throws IOException {
-                if (create) {
-                        Socket.init();
-                        sock = create();
-                        inputStream = new SocketInputStream();
-                        outputStream = new SocketOutputStream();
-                } else {
-                        sock = InvalidSocket;
-                }
-        }
+  // -----------------------------------------------------------------------
+  // Instance operations — ALL TRAPPED (should never be reached given
+  // that constructors trap, but guard them anyway for safety)
+  // -----------------------------------------------------------------------
+  public InputStream getInputStream() throws IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
 
-        private boolean isOpen() {
-                return sock != InvalidSocket;
-        }
+  public OutputStream getOutputStream() throws IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
 
-        private void checkOpen() throws IOException {
-                if (! isOpen()) {
-                        throw new IOException("socket closed");
-                }
-	}
-	
-	public SocketInputStream getInputStream() {
-		return inputStream;
-	}
-	
-	public SocketOutputStream getOutputStream() {
-		return outputStream;
-	}
-	
-	public Socket(InetAddress address, int port) throws IOException {
-		this();
-		connect(sock, address.getRawAddress(), (short)port);
-	}
-	
-	public Socket(String host, int port) throws UnknownHostException, IOException {
-		this(InetAddress.getByName(host), port);
-	}
-	
-	public void bind(SocketAddress bindpoint) throws IOException {
-		if (bindpoint instanceof InetSocketAddress) {
-			InetSocketAddress inetBindpoint = (InetSocketAddress)bindpoint;
-			bind(sock, inetBindpoint.getAddress().getRawAddress(), (short) inetBindpoint.getPort());
-		}
-	}
-	
-	public void setTcpNoDelay(boolean on) throws SocketException {}
+  public void bind(SocketAddress bindpoint) throws IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
 
-	@Override
-	public void close() throws IOException {
-                if (isOpen()) {
-                        try {
-                                close(sock);
-                        } finally {
-                                sock = InvalidSocket;
-                                if (inputStream != null) inputStream.closed = true;
-                                if (outputStream != null) outputStream.closed = true;
-                        }
-                }
-	}
-	
-	public void shutdownInput() throws IOException {
-		inputStream.close();
-	}
-	
-	public void shutdownOutput() throws IOException {
-		outputStream.close();
-	}
-	
-        public SocketAddress getRemoteSocketAddress() {
-                 throw new UnsupportedOperationException();
-        }
-	
-	@Override
-	protected void finalize() throws Throwable {
-		close();
-		super.finalize();
-	}
+  public void connect(SocketAddress endpoint) throws IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
+
+  public void connect(SocketAddress endpoint, int timeout) throws IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
+
+  public void setTcpNoDelay(boolean on) throws SocketException {
+    throw new UnsupportedOperationException(MSG);
+  }
+
+  public void shutdownInput() throws IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
+
+  public void shutdownOutput() throws IOException {
+    throw new UnsupportedOperationException(MSG);
+  }
+
+  public SocketAddress getRemoteSocketAddress() {
+    throw new UnsupportedOperationException(MSG);
+  }
+
+  public SocketAddress getLocalSocketAddress() {
+    throw new UnsupportedOperationException(MSG);
+  }
+
+  @Override
+  public void close() throws IOException {
+    // close on a never-opened socket is a no-op (defensive)
+  }
 }

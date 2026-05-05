@@ -10,46 +10,89 @@
 
 package java.util;
 
-public class UUID {
-  private final byte[] data;
+public final class UUID implements java.io.Serializable, Comparable<UUID> {
+  private static final long serialVersionUID = -4856846361193249489L;
 
-  private UUID(byte[] data) {
-    this.data = data;
+  private final long mostSigBits;
+  private final long leastSigBits;
+
+  public UUID(long mostSigBits, long leastSigBits) {
+    this.mostSigBits = mostSigBits;
+    this.leastSigBits = leastSigBits;
   }
 
+  /**
+   * Traps randomUUID() — non-deterministic; not admitted in the consensus profile.
+   */
   public static UUID randomUUID() {
-    byte[] array = new byte[16];
+    throw new UnsupportedOperationException(
+      "UUID.randomUUID() is non-deterministic and not admitted in the consensus profile");
+  }
 
-    new Random().nextBytes(array);
+  public static UUID fromString(String name) {
+    if (name == null) throw new NullPointerException();
+    String[] parts = name.split("-");
+    if (parts.length != 5) {
+      throw new IllegalArgumentException("Invalid UUID string: " + name);
+    }
+    try {
+      long msb = (Long.parseLong(parts[0], 16) << 32)
+               | (Long.parseLong(parts[1], 16) << 16)
+               |  Long.parseLong(parts[2], 16);
+      long lsb = (Long.parseLong(parts[3], 16) << 48)
+               |  Long.parseLong(parts[4], 16);
+      return new UUID(msb, lsb);
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("Invalid UUID string: " + name, e);
+    }
+  }
 
-    array[6] &= 0x0f;
-    array[6] |= 0x40;
-    array[8] &= 0x3f;
-    array[8] |= 0x80;
+  public long getMostSignificantBits() {
+    return mostSigBits;
+  }
 
-    return new UUID(array);
+  public long getLeastSignificantBits() {
+    return leastSigBits;
+  }
+
+  public int version() {
+    return (int) ((mostSigBits >> 12) & 0xf);
+  }
+
+  public int variant() {
+    long lsb = leastSigBits;
+    if ((lsb >>> 63) == 0) return 0;
+    if ((lsb >>> 62) == 2L) return 2;
+    return (int) (lsb >>> 61);
   }
 
   public String toString() {
-    StringBuilder sb = new StringBuilder();
-    toHex(sb, data, 0, 4); sb.append('-');
-    toHex(sb, data, 4, 2); sb.append('-');
-    toHex(sb, data, 6, 2); sb.append('-');
-    toHex(sb, data, 8, 2); sb.append('-');
-    toHex(sb, data, 10, 6);
-    return sb.toString();
+    return (digits(mostSigBits >> 32, 8) + "-" +
+            digits(mostSigBits >> 16, 4) + "-" +
+            digits(mostSigBits,       4) + "-" +
+            digits(leastSigBits >> 48, 4) + "-" +
+            digits(leastSigBits,       12));
   }
 
-  private static char toHex(int i) {
-    return (char) (i < 10 ? i + '0' : (i - 10) + 'A');
+  private static String digits(long val, int digits) {
+    long hi = 1L << (digits * 4);
+    return Long.toHexString(hi | (val & (hi - 1))).substring(1);
   }
 
-  private static void toHex(StringBuilder sb, byte[] array, int offset,
-                            int length)
-  {
-    for (int i = offset; i < offset + length; ++i) {
-      sb.append(toHex((array[i] >> 4) & 0xf));
-      sb.append(toHex((array[i]     ) & 0xf));
-    }
+  public int hashCode() {
+    long hilo = mostSigBits ^ leastSigBits;
+    return ((int)(hilo >> 32)) ^ (int) hilo;
+  }
+
+  public boolean equals(Object obj) {
+    if (!(obj instanceof UUID)) return false;
+    UUID other = (UUID) obj;
+    return mostSigBits == other.mostSigBits && leastSigBits == other.leastSigBits;
+  }
+
+  public int compareTo(UUID other) {
+    int cmp = Long.compare(mostSigBits, other.mostSigBits);
+    if (cmp != 0) return cmp;
+    return Long.compare(leastSigBits, other.leastSigBits);
   }
 }

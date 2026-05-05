@@ -1,5 +1,11 @@
 import java.util.*;
 import java.lang.invoke.LambdaConversionException;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.lang.invoke.MutableCallSite;
+import java.lang.invoke.VolatileCallSite;
+import java.lang.invoke.SerializedLambda;
 
 public class InvokeDynamic {
   private final int foo;
@@ -83,8 +89,52 @@ public class InvokeDynamic {
     expect(e.getStackTrace().length == 0);
   }
 
+  /** Verify that non-admitted MethodHandle/CallSite APIs throw UnsupportedOperationException. */
+  private static void notAdmittedTrapsTest() {
+    // MethodHandles.lookup() must throw UOE
+    try {
+      MethodHandles.lookup();
+      throw new RuntimeException("Expected UnsupportedOperationException from lookup()");
+    } catch (UnsupportedOperationException e) {
+      // expected
+    }
+
+    // MethodHandles.publicLookup() must throw UOE
+    try {
+      MethodHandles.publicLookup();
+      throw new RuntimeException("Expected UnsupportedOperationException from publicLookup()");
+    } catch (UnsupportedOperationException e) {
+      // expected
+    }
+
+    // MutableCallSite construction must throw UOE
+    try {
+      new MutableCallSite(MethodType.methodType(void.class, new Class[0]));
+      throw new RuntimeException("Expected UnsupportedOperationException from MutableCallSite(MethodType)");
+    } catch (UnsupportedOperationException e) {
+      // expected
+    }
+
+    // VolatileCallSite construction must throw UOE
+    try {
+      new VolatileCallSite(MethodType.methodType(void.class, new Class[0]));
+      throw new RuntimeException("Expected UnsupportedOperationException from VolatileCallSite(MethodType)");
+    } catch (UnsupportedOperationException e) {
+      // expected
+    }
+
+    // SerializedLambda construction must throw UOE
+    try {
+      new SerializedLambda(null, "", "", "", 0, "", "", "", "", new Object[0]);
+      throw new RuntimeException("Expected UnsupportedOperationException from SerializedLambda()");
+    } catch (UnsupportedOperationException e) {
+      // expected
+    }
+  }
+
   public static void main(String[] args) {
     lambdaConversionExceptionTest();
+    notAdmittedTrapsTest();
 
     int c = 4;
     Operation op = (a, b) -> a + b - c;
@@ -287,7 +337,16 @@ public class InvokeDynamic {
       java.util.List<String> list = s.get();
     }
 
-    if (! "true".equals(System.getenv("TRAVIS"))) {
+    // System.getenv() throws UnsupportedOperationException in the Avata
+    // consensus profile (environment variables are host-observing).  We treat
+    // that the same as a non-TRAVIS environment for the purpose of this check.
+    boolean onTravis = false;
+    try {
+      onTravis = "true".equals(System.getenv("TRAVIS"));
+    } catch (UnsupportedOperationException e) {
+      // expected in the consensus profile — treat as non-TRAVIS
+    }
+    if (! onTravis) {
       // This test fails on Travis bootimage-test builds, but we
       // haven't been able to reproduce it outside of Travis, despite
       // several attempts to recreate the Travis build environment.
@@ -298,17 +357,24 @@ public class InvokeDynamic {
              .andThen(MyFunction.identity())
              .apply("* Test").equals("* Test"));
 
-      DynamicObservable observable = new DynamicObservable();
-      Thread delayed = new Thread(new DelayedDynamicEvent(observable));
-      delayed.start();
-      observable.waitForStarted();
-      observable.register(DynamicListener.EVENT_HANDLER);
+      // Thread.start() throws UnsupportedOperationException in the Avata
+      // consensus profile (thread creation is host-observing). Skip the
+      // thread-based DynamicObservable test in that case.
       try {
-        delayed.join();
-      } catch (InterruptedException e) {
-        throw new RuntimeException(e);
+        DynamicObservable observable = new DynamicObservable();
+        Thread delayed = new Thread(new DelayedDynamicEvent(observable));
+        delayed.start();
+        observable.waitForStarted();
+        observable.register(DynamicListener.EVENT_HANDLER);
+        try {
+          delayed.join();
+        } catch (InterruptedException e) {
+          throw new RuntimeException(e);
+        }
+        expect(DynamicListener.invoked);
+      } catch (UnsupportedOperationException e) {
+        // Thread.start() not admitted in consensus profile — skip
       }
-      expect(DynamicListener.invoked);
     }
   }
 }

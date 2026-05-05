@@ -214,6 +214,10 @@ public final class Long extends Number implements Comparable<Long> {
     else            return -1;
   }
 
+  public static int compare(long x, long y) {
+    return (x < y) ? -1 : ((x == y) ? 0 : 1);
+  }
+
   private static long pow(long a, long b) {
     long c = 1;
     for (int i = 0; i < b; ++i) c *= a;
@@ -222,7 +226,7 @@ public final class Long extends Number implements Comparable<Long> {
 
   public static long parseLong(String s) {
     return parseLong(s, 10);
-  } 
+  }
 
   public static long parseLong(String s, int radix) {
     int i = 0;

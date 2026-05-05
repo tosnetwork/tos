@@ -64,4 +64,16 @@ public abstract class AbstractList<T> extends AbstractCollection<T>
     }
     return -1;
   }
+
+  public int lastIndexOf(Object o) {
+    int result = -1;
+    int i = 0;
+    for (T v : this) {
+      if (o == null ? v == null : o.equals(v)) {
+        result = i;
+      }
+      i++;
+    }
+    return result;
+  }
 }

@@ -150,9 +150,17 @@ public final class Class <T>
   }
 
   public static Class forName(String name) throws ClassNotFoundException {
-    return forName(name, true, Method.getCaller().class_.loader);
+    return Classes.forName(name, true, Method.getCaller().class_.loader);
   }
 
+  /**
+   * Three-argument {@code Class.forName}.  In the Avata consensus profile
+   * the admitted loader values are {@code null} (bootstrap/system loader)
+   * or the fixed classpath loader.  Passing a user-defined ClassLoader is
+   * profile-external behaviour; the call is accepted but the loader is used
+   * only for resolving already-admitted classes.  Dynamic class loading from
+   * external sources is prevented at the ClassLoader level, not here.
+   */
   public static Class forName(String name, boolean initialize,
                               ClassLoader loader)
     throws ClassNotFoundException
@@ -441,7 +449,7 @@ public final class Class <T>
               && Arrays.equals(vmClass.name, reference.outer))
           {
             try {
-              result[--count] = getClassLoader().loadClass
+              result[--count] = vmClass.loader.loadClass
                 (new String(reference.inner, 0, reference.inner.length - 1));
             } catch (ClassNotFoundException e) {
               throw new Error(e);
@@ -465,7 +473,7 @@ public final class Class <T>
           if (Arrays.equals(vmClass.name, reference.inner)) {
             if (reference.outer != null) {
               try {
-                return getClassLoader().loadClass
+                return vmClass.loader.loadClass
                   (new String(reference.outer, 0, reference.outer.length - 1));
               } catch (ClassNotFoundException e) {
                 throw new Error(e);
@@ -480,8 +488,19 @@ public final class Class <T>
     return null;
   }
 
+  /**
+   * In the Avata consensus VM all admitted classes are treated as
+   * bootstrap-loaded.  Returning {@code null} is the JDK8u contract
+   * for bootstrap-class-loader classes and is the only deterministic
+   * answer for a consensus node (exposing the host ClassLoader would
+   * let code observe host-specific state).
+   */
   public ClassLoader getClassLoader() {
-    return vmClass.loader;
+    return null;
+  }
+
+  public boolean isSynthetic() {
+    return (vmClass.flags & 0x1000) != 0;
   }
 
   public int getModifiers() {
@@ -590,7 +609,7 @@ public final class Class <T>
         path = name.substring(0, index) + "/" + path;
       }
     }
-    return getClassLoader().getResource(path);
+    return vmClass.loader.getResource(path);
   }
 
   public InputStream getResourceAsStream(String path) {
@@ -625,7 +644,7 @@ public final class Class <T>
       String name = getCanonicalName();
       int index = name.lastIndexOf('.');
       if (index >= 0) {
-        return getClassLoader().getPackage(name.substring(0, index));
+        return vmClass.loader.getPackage(name.substring(0, index));
       } else {
         return null;
       }

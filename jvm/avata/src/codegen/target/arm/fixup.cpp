@@ -269,7 +269,7 @@ void maybeFlushConstantPool(Context* con)
 
   // ARM32 literal loads have a 12-bit positive PC-relative offset.  Long
   // compiler events may not call endEvent before that range is exhausted.
-  if (distance >= PoolOffsetMask - InstructionSize) {
+  if (distance >= PoolOffsetMask - static_cast<int32_t>(InstructionSize)) {
     flushConstantPool(con, b, offset, b->poolOffsetTail);
   }
 }

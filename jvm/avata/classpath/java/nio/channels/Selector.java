@@ -14,14 +14,25 @@ import java.io.IOException;
 import java.util.Set;
 import java.util.HashSet;
 
+// -------------------------------------------------------------------------
+// Consensus-safe Selector — Avata/TOS blockchain JVM
+// Selector.open() is TRAPPED: it creates a host file-descriptor and is
+// non-deterministic.
+// -------------------------------------------------------------------------
 public abstract class Selector {
+  private static final String MSG =
+      "networking not available in consensus";
+
   protected final Set<SelectionKey> keys = new HashSet();
   protected final Set<SelectionKey> selectedKeys = new HashSet();
 
+  // -----------------------------------------------------------------------
+  // open() — TRAPPED
+  // -----------------------------------------------------------------------
   public static Selector open() throws IOException {
-    return new SocketSelector();
+    throw new UnsupportedOperationException(MSG);
   }
-  
+
   public void add(SelectionKey key) {
     keys.add(key);
   }

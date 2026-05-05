@@ -77,6 +77,15 @@ repository's normal audit path before the fork is vendored.
 
 ## Java 8 Compatibility Profile
 
+The compatibility target is a **blockchain VM-committable restricted Java 8 API
+profile**, not full OpenJDK 8 API compatibility. Within the admitted profile,
+Avata/TOS APIs must match Java 8/OpenJDK 8 semantics closely enough that
+standard Java 8 tooling can compile normal class files and contracts observe
+predictable Java behavior. Outside that profile, APIs must be rejected by the
+verifier or fail through deterministic consensus-safe traps; they must not
+silently expose validator-local host behavior or diverge from Java semantics in
+untracked ways.
+
 This workchain does not attempt to run arbitrary host-side Java programs, but it
 does commit to Java 8 class-file and opcode compatibility. A class file produced
 by a standard Java 8 toolchain must remain a normal JVM class file; TOS does not

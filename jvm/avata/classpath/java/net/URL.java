@@ -81,8 +81,10 @@ public final class URL {
   private static URLStreamHandler findHandler(String protocol)
     throws MalformedURLException
   {
+    // http/https require host networking — forbidden in the consensus VM.
     if ("http".equals(protocol) || "https".equals(protocol)) {
-      return new avata.http.Handler();
+      throw new MalformedURLException(
+          "networking not available in consensus: " + protocol);
     } else if ("avatavmresource".equals(protocol)) {
       return new avata.avatavmresource.Handler();
     } else if ("file".equals(protocol)) {

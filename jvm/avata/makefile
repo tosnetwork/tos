@@ -1597,6 +1597,27 @@ ifeq (7,$(java-version))
 	test-sources := $(subst $(test)/Interfaces.java,,$(test-sources))
 endif
 
+# Consensus-hardening (2026-05-05): exclude tests that exercise host APIs
+# which are now trapped in the Avata/TOS blockchain JVM.  These tests relied
+# on Thread.start/sleep, System.currentTimeMillis, Runtime.exec,
+# addShutdownHook, loadLibrary, or raw Socket/Datagram networking — all of
+# which now throw UnsupportedOperationException("... not available in consensus").
+test-sources := $(subst $(test)/Threads.java,,$(test-sources))
+test-sources := $(subst $(test)/ThreadExceptions.java,,$(test-sources))
+test-sources := $(subst $(test)/Sockets.java,,$(test-sources))
+test-sources := $(subst $(test)/Datagrams.java,,$(test-sources))
+test-sources := $(subst $(test)/Processes.java,,$(test-sources))
+test-sources := $(subst $(test)/ShutdownHooks.java,,$(test-sources))
+test-sources := $(subst $(test)/FutureTaskTest.java,,$(test-sources))
+test-sources := $(subst $(test)/CompletionServiceTest.java,,$(test-sources))
+test-sources := $(subst $(test)/LinkedBlockingQueueTest.java,,$(test-sources))
+test-sources := $(subst $(test)/MemoryRamp.java,,$(test-sources))
+test-sources := $(subst $(test)/BufferedInputStreamTest.java,,$(test-sources))
+test-sources := $(subst $(test)/Buffers.java,,$(test-sources))
+test-sources := $(subst $(test)/ZipOutputStreamTest.java,,$(test-sources))
+test-sources := $(subst $(test)/ClasspathWildcard.java,,$(test-sources))
+test-sources := $(subst $(test)/JNI.java,,$(test-sources))
+
 test-cpp-sources = $(wildcard $(test)/*.cpp)
 test-sources += $(test-support-sources)
 test-support-classes = $(call java-classes, $(test-support-sources),$(test),$(test-build))

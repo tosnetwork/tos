@@ -41,6 +41,20 @@ public abstract class CharBuffer
     return new ArrayCharBuffer(array, offset, length, false);
   }
 
+  public static CharBuffer wrap(CharSequence csq) {
+    return wrap(csq, 0, csq.length());
+  }
+
+  public static CharBuffer wrap(CharSequence csq, int start, int end) {
+    if (csq == null) throw new NullPointerException();
+    int len = csq.length();
+    if (start < 0 || end > len || start > end)
+      throw new IndexOutOfBoundsException();
+    char[] chars = new char[len];
+    for (int i = 0; i < len; i++) chars[i] = csq.charAt(i);
+    return new ArrayCharBuffer(chars, start, end - start, true); // read-only wrapping of a string
+  }
+
   public abstract CharBuffer asReadOnlyBuffer();
 
   public abstract CharBuffer slice();
@@ -160,4 +174,38 @@ public abstract class CharBuffer
         : new BufferUnderflowException();
     }
   }
+
+  /** Returns a string containing the remaining chars (from position to limit). */
+  public String toString() {
+    int rem = remaining();
+    char[] chars = new char[rem];
+    for (int i = 0; i < rem; i++) {
+      chars[i] = doGet(position + i);
+    }
+    return new String(chars);
+  }
+
+  /** Returns the char at position relative to current position. Implements CharSequence. */
+  public char charAt(int index) {
+    checkGet(position + index, 1, true);
+    return doGet(position + index);
+  }
+
+  /** Length of remaining chars. Implements CharSequence. */
+  public int length() {
+    return remaining();
+  }
+
+  /** Subsequence of remaining chars. Implements CharSequence. */
+  public CharBuffer subSequence(int start, int end) {
+    if (start < 0 || end > remaining() || start > end)
+      throw new IndexOutOfBoundsException();
+    CharBuffer result = duplicate();
+    result.limit(position + end);
+    result.position(position + start);
+    return result;
+  }
+
+  /** Returns a duplicate of this buffer (same content, independent position/limit/mark). */
+  public abstract CharBuffer duplicate();
 }

@@ -12,7 +12,14 @@ package java.net;
 
 import java.io.IOException;
 
+// -------------------------------------------------------------------------
+// Consensus-safe DatagramSocket — Avata/TOS blockchain JVM
+// All operations are TRAPPED.
+// -------------------------------------------------------------------------
 public abstract class DatagramSocket {
+  private static final String MSG =
+      "networking not available in consensus";
+
   public abstract SocketAddress getRemoteSocketAddress();
 
   public abstract void bind(SocketAddress address) throws SocketException;

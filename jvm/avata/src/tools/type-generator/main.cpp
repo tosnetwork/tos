@@ -163,11 +163,11 @@ class Class {
     }
     ss << " {\n";
 
-    for (const auto f : fields) {
+    for (const auto& f : fields) {
       ss << "  " << f->dump() << "\n";
     }
 
-    for (const auto m : methods) {
+    for (const auto& m : methods) {
       ss << "  " << m.dump() << "\n";
     }
     ss << "}";
@@ -505,7 +505,7 @@ class ClassParser {
     cl->super = super;
     assert(!super->arrayField);
     assert(fields.size() == 0);
-    for (const auto f : super->fields) {
+    for (const auto& f : super->fields) {
       add(FieldSpec(false, f));
     }
   }
@@ -822,7 +822,7 @@ void layoutClass(Module& module, Class* cl)
 
   alignment = BytesPerWord;
 
-  for (const auto f : cl->fields) {
+  for (const auto& f : cl->fields) {
     f->elementSize = sizeOf(module, f->typeName);
 
     if (!f->polyfill) {  // polyfills contribute no size
@@ -850,7 +850,7 @@ void layoutClass(Module& module, Class* cl)
 
 void layoutClasses(Module& module)
 {
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
     layoutClass(module, cl);
   }
@@ -939,9 +939,9 @@ void writeAccessor(Output* out, Class* cl, Field* f)
 
 void writeAccessors(Output* out, Module& module)
 {
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
-    for (const auto f : cl->fields) {
+    for (const auto& f : cl->fields) {
       if (!f->polyfill) {
         writeAccessor(out, cl, f);
       }
@@ -954,7 +954,7 @@ void writeAccessors(Output* out, Module& module)
 
 void writeSizes(Output* out, Module& module)
 {
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
 
     out->write("const unsigned FixedSizeOf");
@@ -985,7 +985,7 @@ std::string obfuscate(const std::string& s)
 
 void writeConstructorParameters(Output* out, Module& module, Class* cl)
 {
-  for (const auto f : cl->fields) {
+  for (const auto& f : cl->fields) {
     if (!f->polyfill) {
       out->write(", ");
       out->write(cppFieldType(module, f));
@@ -997,7 +997,7 @@ void writeConstructorParameters(Output* out, Module& module, Class* cl)
 
 void writeConstructorArguments(Output* out, Class* cl)
 {
-  for (const auto f : cl->fields) {
+  for (const auto& f : cl->fields) {
     if (!f->polyfill) {
       out->write(", ");
       out->write(obfuscate(f->name));
@@ -1007,7 +1007,7 @@ void writeConstructorArguments(Output* out, Class* cl)
 
 void writeConstructorInitializations(Output* out, Class* cl)
 {
-  for (const auto f : cl->fields) {
+  for (const auto& f : cl->fields) {
     if (!f->polyfill) {
       out->write("  o->set");
       out->write(capitalize(f->name));
@@ -1020,7 +1020,7 @@ void writeConstructorInitializations(Output* out, Class* cl)
 
 void writeClassDeclarations(Output* out, Module& module)
 {
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
 
     out->write("class Gc");
@@ -1043,7 +1043,7 @@ bool isFieldGcMarkable(Module& module, Field* f)
 
 void writeClassAccessors(Output* out, Module& module, Class* cl)
 {
-  for (const auto f : cl->fields) {
+  for (const auto& f : cl->fields) {
     if (!f->polyfill) {
       out->write("  void set");
       out->write(capitalize(f->name));
@@ -1154,7 +1154,7 @@ void writeClassAccessors(Output* out, Module& module, Class* cl)
 
 void writeClasses(Output* out, Module& module)
 {
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
 
     out->write("class Gc");
@@ -1182,7 +1182,7 @@ void writeClasses(Output* out, Module& module)
 
 void writeInitializerDeclarations(Output* out, Module& module)
 {
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
     out->write("void init");
     out->write(capitalize(cl->name));
@@ -1198,7 +1198,7 @@ void writeInitializerDeclarations(Output* out, Module& module)
 
 void writeConstructorDeclarations(Output* out, Module& module)
 {
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
     out->write("Gc");
     out->write(capitalize(cl->name));
@@ -1214,7 +1214,7 @@ void writeConstructorDeclarations(Output* out, Module& module)
 
 void writeInitializers(Output* out, Module& module)
 {
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
     out->write("void init");
     out->write(capitalize(cl->name));
@@ -1241,7 +1241,7 @@ void writeInitializers(Output* out, Module& module)
 
 void writeConstructors(Output* out, Module& module)
 {
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
 
     bool hasObjectMask = cl->name == "singleton";
@@ -1277,7 +1277,7 @@ void writeConstructors(Output* out, Module& module)
     writeConstructorParameters(out, module, cl);
 
     out->write(")\n{\n");
-    for (const auto f : cl->fields) {
+    for (const auto& f : cl->fields) {
       if (enumName(module, f) == "object" and not f->nogc) {
         out->write("  PROTECT(t, ");
         out->write(obfuscate(f->name));
@@ -1316,7 +1316,7 @@ void writeConstructors(Output* out, Module& module)
 void writeEnums(Output* out, Module& module)
 {
   bool wrote = false;
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
     if (wrote) {
       out->write(",\n");
@@ -1354,7 +1354,7 @@ std::vector<uint32_t> typeObjectMask(Module& module, Class* cl)
 
   set(mask, 0);
 
-  for (const auto f : cl->fields) {
+  for (const auto& f : cl->fields) {
     unsigned offset = f->offset / BytesPerWord;
     if (isFieldGcVisible(module, f)) {
       set(mask, offset);
@@ -1454,7 +1454,7 @@ void writeInitializations(Output* out, Module& module)
   writeInitialization(out, module, alreadyInited, module.classes["intArray"]);
   writeInitialization(out, module, alreadyInited, module.classes["class"]);
 
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
     if (cl->name != "intArray" && cl->name != "class") {
       writeInitialization(out, module, alreadyInited, cl);
@@ -1503,7 +1503,7 @@ void writeJavaInitialization(Output* out,
 void writeJavaInitializations(Output* out, Module& module)
 {
   std::set<Class*> alreadyInited;
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
     if (cl->javaName.size()) {
       writeJavaInitialization(out, cl, alreadyInited);
@@ -1529,7 +1529,7 @@ void writeNameInitialization(Output* out, Class* cl)
 
 void writeNameInitializations(Output* out, Module& module)
 {
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
     if (!cl->javaName.size()) {
       writeNameInitialization(out, cl);
@@ -1540,7 +1540,7 @@ void writeNameInitializations(Output* out, Module& module)
 void writeMap(Output* out, Module& module, Class* cl)
 {
   std::ostringstream ss;
-  for (const auto f : cl->fields) {
+  for (const auto& f : cl->fields) {
     ss << "Type_";
     ss << enumName(module, f);
     if (f->nogc) {
@@ -1569,7 +1569,7 @@ void writeMaps(Output* out, Module& module)
   out->write(module.classes.size());
   out->write("] = {\n");
   bool wrote = false;
-  for (const auto p : module.classes) {
+  for (const auto& p : module.classes) {
     Class* cl = p.second;
     if (wrote) {
       out->write(",\n");

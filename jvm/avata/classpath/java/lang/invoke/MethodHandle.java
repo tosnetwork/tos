@@ -65,4 +65,50 @@ public class MethodHandle {
     }
     return type;
   }
+
+  // -------------------------------------------------------------------------
+  // Methods below are NOT admitted in the Avata consensus profile.
+  // invokeExact / invoke are signature-polymorphic and handled by the
+  // interpreter at the bytecode level; they must never be called via normal
+  // reflective dispatch.  The other combinators allow arbitrary handle
+  // construction from user code, which is host-observing and
+  // non-deterministic across nodes.
+  //
+  // All of these throw UnsupportedOperationException with a deterministic
+  // message so that violating contract code fails loudly rather than
+  // silently diverging.
+  // -------------------------------------------------------------------------
+
+  private static final String NOT_ADMITTED =
+    "MethodHandle direct invocation is not supported in the Avata consensus profile";
+
+  /** NOT ADMITTED — signature-polymorphic; handled by the interpreter only. */
+  public final Object invokeExact(Object... args) throws Throwable {
+    throw new UnsupportedOperationException(NOT_ADMITTED);
+  }
+
+  /** NOT ADMITTED — signature-polymorphic; handled by the interpreter only. */
+  public final Object invoke(Object... args) throws Throwable {
+    throw new UnsupportedOperationException(NOT_ADMITTED);
+  }
+
+  /** NOT ADMITTED — use the invokedynamic bootstrap path instead. */
+  public Object invokeWithArguments(Object... arguments) throws Throwable {
+    throw new UnsupportedOperationException(NOT_ADMITTED);
+  }
+
+  /** NOT ADMITTED — use the invokedynamic bootstrap path instead. */
+  public Object invokeWithArguments(java.util.List<?> arguments) throws Throwable {
+    throw new UnsupportedOperationException(NOT_ADMITTED);
+  }
+
+  /** NOT ADMITTED — type adaptation outside the bootstrap path is not admitted. */
+  public MethodHandle asType(MethodType newType) {
+    throw new UnsupportedOperationException(NOT_ADMITTED);
+  }
+
+  /** NOT ADMITTED — partial application / binding is not admitted for user code. */
+  public MethodHandle bindTo(Object x) {
+    throw new UnsupportedOperationException(NOT_ADMITTED);
+  }
 }

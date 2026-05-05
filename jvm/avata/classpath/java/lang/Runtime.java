@@ -11,15 +11,27 @@
 package java.lang;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.FileInputStream;
-import java.io.OutputStream;
-import java.io.FileOutputStream;
-import java.io.FileDescriptor;
-import java.util.StringTokenizer;
 
+// -------------------------------------------------------------------------
+// Consensus-safe Runtime — Avata/TOS blockchain JVM
+//
+// Every host-observing method is replaced with a deterministic trap.
+// -------------------------------------------------------------------------
 public class Runtime {
   private static final Runtime instance = new Runtime();
+
+  private static final String MSG_EXEC =
+      "process execution not available in consensus";
+  private static final String MSG_NATIVE =
+      "native library loading not available in consensus";
+  private static final String MSG_HALT =
+      "Runtime.halt not available in consensus";
+  private static final String MSG_HOOK =
+      "shutdown hooks not available in consensus";
+
+  // Fixed, deterministic "available processors" for consensus execution.
+  // Smart contracts must not branch on actual hardware concurrency.
+  private static final int CONSENSUS_PROCESSORS = 1;
 
   private Runtime() { }
 
@@ -27,166 +39,85 @@ public class Runtime {
     return instance;
   }
 
-  public void load(String path) {
-    if (path != null) {
-      ClassLoader.load(path, ClassLoader.getCaller(), false);
-    } else {
-      throw new NullPointerException();
-    }
-  }
-
-  public void loadLibrary(String path) {
-    if (path != null) {
-      ClassLoader.load(path, ClassLoader.getCaller(), true);
-    } else {
-      throw new NullPointerException();
-    }
-  }
-
+  // -----------------------------------------------------------------------
+  // Process execution — TRAPPED
+  // -----------------------------------------------------------------------
   public Process exec(String command) throws IOException {
-    StringTokenizer t = new StringTokenizer(command);
-    String[] cmd = new String[t.countTokens()];
-    for (int i = 0; i < cmd.length; i++)
-      cmd[i] = t.nextToken();
-    
-    return exec(cmd);
+    throw new UnsupportedOperationException(MSG_EXEC);
   }
 
-  public Process exec(final String[] command) throws IOException {
-    final MyProcess[] process = new MyProcess[1];
-    final Throwable[] exception = new Throwable[1];
-
-    synchronized (process) {
-      Thread t = new Thread() {
-          public void run() {
-            synchronized (process) {
-              try {
-                long[] info = new long[5];
-                exec(command, info);
-                process[0] = new MyProcess
-                  (info[0], info[1], (int) info[2], (int) info[3],
-                   (int) info[4]);
-              } catch (Throwable e) {
-                exception[0] = e;
-              } finally {          
-                process.notifyAll();
-              }
-            }
-
-            MyProcess p = process[0];
-            if (p != null) {
-              synchronized (p) {
-                try {
-                  if (p.pid != 0) {
-                    p.exitCode = Runtime.waitFor(p.pid, p.tid);
-                    p.pid = 0;
-                    p.tid = 0;
-                  }
-                } finally {
-                  p.notifyAll();
-                }
-              }
-            }
-          }
-        };
-      t.setDaemon(true);
-      t.start();
-
-      while (process[0] == null && exception[0] == null) {
-        try {
-          process.wait();
-        } catch (InterruptedException e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
-
-    if (exception[0] != null) {
-      if (exception[0] instanceof IOException) {
-        String message = "Failed to run \"" + command[0] + "\": " + exception[0].getMessage();
-        throw new IOException(message);
-      } else {
-        throw new RuntimeException(exception[0]);
-      }
-    }
-
-    return process[0];
+  public Process exec(String[] command) throws IOException {
+    throw new UnsupportedOperationException(MSG_EXEC);
   }
 
-  public native void addShutdownHook(Thread t);
+  public Process exec(String command, String[] envp) throws IOException {
+    throw new UnsupportedOperationException(MSG_EXEC);
+  }
 
-  private static native void exec(String[] command, long[] process)
-    throws IOException;
+  public Process exec(String[] command, String[] envp) throws IOException {
+    throw new UnsupportedOperationException(MSG_EXEC);
+  }
 
-  private static native int waitFor(long pid, long tid);
+  // -----------------------------------------------------------------------
+  // Native library loading — TRAPPED
+  // -----------------------------------------------------------------------
+  public void load(String path) {
+    throw new UnsupportedOperationException(MSG_NATIVE);
+  }
 
-  private static native void kill(long pid, int in, int out, int err);
+  public void loadLibrary(String name) {
+    throw new UnsupportedOperationException(MSG_NATIVE);
+  }
 
-  public native void gc();
+  // -----------------------------------------------------------------------
+  // Process termination — TRAPPED
+  // -----------------------------------------------------------------------
+  public void halt(int status) {
+    throw new UnsupportedOperationException(MSG_HALT);
+  }
 
-  public native void exit(int code);
+  public void exit(int code) {
+    throw new UnsupportedOperationException(
+        "System.exit not available in consensus");
+  }
 
+  // -----------------------------------------------------------------------
+  // Shutdown hooks — TRAPPED (non-deterministic execution ordering)
+  // -----------------------------------------------------------------------
+  public void addShutdownHook(Thread t) {
+    throw new UnsupportedOperationException(MSG_HOOK);
+  }
+
+  public boolean removeShutdownHook(Thread t) {
+    throw new UnsupportedOperationException(MSG_HOOK);
+  }
+
+  // -----------------------------------------------------------------------
+  // Hardware / memory queries — return fixed deterministic values
+  // -----------------------------------------------------------------------
+  public int availableProcessors() {
+    return CONSENSUS_PROCESSORS;
+  }
+
+  /** Returns the VM heap remaining — deterministic within one execution. */
   public native long freeMemory();
 
+  /** Returns the VM heap limit — deterministic within one execution. */
   public native long totalMemory();
-  
+
+  /** Returns the VM heap limit — deterministic within one execution. */
   public native long maxMemory();
 
-  private static class MyProcess extends Process {
-    private long pid;
-    private long tid;
-    private final int in;
-    private final int out;
-    private final int err;
-    private int exitCode;
+  // -----------------------------------------------------------------------
+  // GC / finalization
+  //
+  // gc() is delegated to the VM collector which is deterministic (same
+  // object graph, same collection result).  runFinalization() is a no-op
+  // because finalizer ordering is non-deterministic.
+  // -----------------------------------------------------------------------
+  public native void gc();
 
-    public MyProcess(long pid, long tid, int in, int out, int err) {
-      this.pid = pid;
-      this.tid = tid;
-      this.in = in;
-      this.out = out;
-      this.err = err;
-    }
-
-    @Override
-    protected void finalize() throws Throwable {
-      destroy();
-      super.finalize();
-    }
-
-    public void destroy() {
-      if (pid != 0) {
-        kill(pid, in, out, err);
-        pid = 0;
-      }
-    }
-
-    public InputStream getInputStream() {
-      return new FileInputStream(new FileDescriptor(in));
-    }
-
-    public OutputStream getOutputStream() {
-      return new FileOutputStream(new FileDescriptor(out));
-    }
-
-    public InputStream getErrorStream() {
-      return new FileInputStream(new FileDescriptor(err));
-    }
-
-    public synchronized int exitValue() {
-      if (pid != 0) {
-        throw new IllegalThreadStateException();
-      }
-
-      return exitCode;
-    }
-
-    public synchronized int waitFor() throws InterruptedException {
-      while (pid != 0) {
-        wait();
-      }
-
-      return exitCode;
-    }
+  public void runFinalization() {
+    // no-op: finalizer execution order is non-deterministic
   }
 }

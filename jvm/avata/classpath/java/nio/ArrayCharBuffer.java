@@ -104,11 +104,10 @@ class ArrayCharBuffer extends CharBuffer {
     return array[arrayOffset+position];
   }
 
-  public String toString() {
-    return "(ArrayCharBuffer with array: " + array
-      + " arrayOffset: " + arrayOffset
-      + " position: " + position
-      + " limit: " + limit
-      + " capacity: " + capacity + ")";
+  public CharBuffer duplicate() {
+    ArrayCharBuffer dup = new ArrayCharBuffer(array, arrayOffset, capacity, isReadOnly());
+    dup.position(position());
+    dup.limit(limit());
+    return dup;
   }
 }

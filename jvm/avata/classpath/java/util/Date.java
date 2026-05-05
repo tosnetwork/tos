@@ -10,8 +10,8 @@
 
 package java.util;
 
-public class Date {
-  public final long when;
+public class Date implements java.io.Serializable, Cloneable, Comparable<Date> {
+  private long when;
 
   public Date() {
     when = System.currentTimeMillis();
@@ -23,6 +23,36 @@ public class Date {
 
   public long getTime() {
     return when;
+  }
+
+  public void setTime(long time) {
+    this.when = time;
+  }
+
+  public boolean before(Date when) {
+    return this.when < when.when;
+  }
+
+  public boolean after(Date when) {
+    return this.when > when.when;
+  }
+
+  public boolean equals(Object obj) {
+    if (obj instanceof Date) {
+      return when == ((Date) obj).when;
+    }
+    return false;
+  }
+
+  public int hashCode() {
+    return (int) (when ^ (when >>> 32));
+  }
+
+  public int compareTo(Date other) {
+    long diff = when - other.when;
+    if (diff < 0) return -1;
+    if (diff > 0) return 1;
+    return 0;
   }
 
   public String toString() {

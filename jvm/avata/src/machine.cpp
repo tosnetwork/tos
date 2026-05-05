@@ -3480,7 +3480,16 @@ class HeapClient : public Heap::Client {
     if (hashTaken(t, src)) {
       alias(dst, 0) &= PointerMask;
       alias(dst, 0) |= ExtendedMark;
-      extendedWord(t, dst, base) = takeHash(t, src);
+      // TOS P6: Use gcTakeHash (pointer-based) rather than the counter-based
+      // objectHash so that this GC copy callback remains idempotent and
+      // does not consume counter values.  gcTakeHash uses the source object's
+      // pre-move address, which is stable during the copy.  The pointer-based
+      // value stored here is non-deterministic across validators if the heap
+      // base differs.  This is acceptable because in the TOS contract execution
+      // model GC does not run during contract execution (gasCounter != UINT64_MAX),
+      // only during bootstrap; bootstrap objects are never exposed to contract
+      // code via Java hashCode().
+      extendedWord(t, dst, base) = gcTakeHash(t, src);
     }
   }
 
@@ -3844,6 +3853,8 @@ Thread::Thread(Machine* m, GcThread* javaThread, Thread* parent)
           static_cast<uintptr_t*>(m->heap->allocate(ThreadHeapSizeInBytes))),
       heap(defaultHeap),
       backupHeapIndex(0),
+      gasCounter(UINT64_MAX),
+      identityHashCounter(0),
       flags(ActiveFlag)
 {
 }
@@ -4769,6 +4780,30 @@ GcClass* parseClass(Thread* t,
   unsigned majorVer = s.read2();  // major version
   if (DebugClassReader) {
     fprintf(stderr, "read class (minor %d major %d)\n", minorVer, majorVer);
+  }
+
+  // TOS P4: Deterministic class-file verifier profile.
+  // Reject class files targeting a Java version above Java 8 (major 52,
+  // minor 0). Java 9+ classes (major >= 53) use invokedynamic patterns and
+  // module-system constructs that are outside the admitted consensus profile.
+  // Pre-Java 1.1 class files (major < 45) are also rejected as they predate
+  // the bytecode specification this verifier covers.
+  // Minor version 65535 (0xFFFF) is used by Java 21+ "preview" features;
+  // reject unconditionally.
+  // TODO(verifier-forbidden-attrs): After this version gate, add attribute
+  //   scanning in parseMethodTable/parseFieldTable to reject:
+  //   - BootstrapMethods entries outside the admitted invokedynamic surface
+  //   - Module, ModulePackages, ModuleMainClass attributes
+  //   - NestHost, NestMembers (Java 11+)
+  //   - Record (Java 16+)
+  //   - PermittedSubclasses (Java 17+)
+  // TODO(verifier-forbidden-refs): Scan the constant pool for references to
+  //   classes in forbidden packages (java.net.*, java.nio.channels.*,
+  //   java.lang.reflect outside the admitted surface, java.lang.Runtime,
+  //   java.lang.Thread) and throw a deterministic VerifyError before
+  //   class initialization.
+  if (minorVer == 0xFFFF || majorVer > 52 || majorVer < 45) {
+    throwNew(t, GcUnsupportedClassVersionError::Type);
   }
 
   GcList* invocations = makeList(t, 0, 0, 0);

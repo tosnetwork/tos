@@ -13,10 +13,20 @@ package java.lang;
 import java.util.Map;
 import java.util.WeakHashMap;
 
+// -------------------------------------------------------------------------
+// Consensus-safe Thread — Avata/TOS blockchain JVM
+//
+// Smart-contract code executes in a single deterministic thread.
+// - Thread.start() is TRAPPED: spawning host threads breaks consensus.
+// - Thread.sleep() is TRAPPED: wall-clock waits break determinism.
+// - currentThread() returns the single consensus thread (acceptable).
+// - getName(), getId(), getState() are deterministic if fixed.
+// Any method that reads/writes host scheduler state is trapped.
+// -------------------------------------------------------------------------
 public class Thread implements Runnable {
   // set and accessed from within LockSupport
   protected volatile Object parkBlocker;
-  
+
   private long peer;
   private volatile boolean interrupted;
   private volatile boolean unparked;
@@ -36,6 +46,13 @@ public class Thread implements Runnable {
   public static final int MIN_PRIORITY = 1;
   public static final int NORM_PRIORITY = 5;
   public static final int MAX_PRIORITY = 10;
+
+  private static final String MSG_START =
+      "thread creation not available in consensus";
+  private static final String MSG_SLEEP =
+      "thread sleep not available in consensus";
+  private static final String MSG_YIELD =
+      "thread yield not available in consensus";
 
   public Thread(ThreadGroup group, Runnable task, String name, long stackSize)
   {
@@ -82,18 +99,11 @@ public class Thread implements Runnable {
     this((Runnable) null);
   }
 
+  // -----------------------------------------------------------------------
+  // Thread.start() — TRAPPED
+  // -----------------------------------------------------------------------
   public synchronized void start() {
-    if (peer != 0) {
-      throw new IllegalStateException("thread already started");
-    }
-
-    state = (byte) State.RUNNABLE.ordinal();
-
-    peer = doStart();
-    if (peer == 0) {
-      state = (byte) State.NEW.ordinal();
-      throw new RuntimeException("unable to start native thread");
-    }
+    throw new UnsupportedOperationException(MSG_START);
   }
 
   private native long doStart();
@@ -140,6 +150,7 @@ public class Thread implements Runnable {
     return locals;
   }
 
+  // currentThread() is acceptable: returns the single consensus thread.
   public static native Thread currentThread();
 
   public void interrupt() {
@@ -158,28 +169,17 @@ public class Thread implements Runnable {
     return interrupted;
   }
 
+  // -----------------------------------------------------------------------
+  // Thread.sleep() — TRAPPED
+  // -----------------------------------------------------------------------
   public static void sleep(long milliseconds) throws InterruptedException {
-    if (milliseconds <= 0) {
-      milliseconds = 1;
-    }
-
-    Thread t = currentThread();
-    if (t.sleepLock == null) {
-      t.sleepLock = new Object();
-    }
-    synchronized (t.sleepLock) {
-      t.sleepLock.wait(milliseconds);
-    }
+    throw new UnsupportedOperationException(MSG_SLEEP);
   }
 
   public static void sleep(long milliseconds, int nanoseconds)
     throws InterruptedException
   {
-    if (nanoseconds > 0) {
-      ++ milliseconds;
-    }
-
-    sleep(milliseconds);
+    throw new UnsupportedOperationException(MSG_SLEEP);
   }
 
   public StackTraceElement[] getStackTrace() {
@@ -195,7 +195,7 @@ public class Thread implements Runnable {
   public static native int activeCount();
 
   public static native int enumerate(Thread[] array);
-  
+
   public String getName() {
     return name;
   }
@@ -261,7 +261,12 @@ public class Thread implements Runnable {
     daemon = v;
   }
 
-  public static native void yield();
+  // -----------------------------------------------------------------------
+  // Thread.yield() — TRAPPED (reads host scheduler state)
+  // -----------------------------------------------------------------------
+  public static void yield() {
+    throw new UnsupportedOperationException(MSG_YIELD);
+  }
 
   public synchronized void join() throws InterruptedException {
     while (getState() != State.TERMINATED) {
@@ -271,13 +276,11 @@ public class Thread implements Runnable {
 
   public synchronized void join(long milliseconds) throws InterruptedException
   {
-    long then = System.currentTimeMillis();
-    long remaining = milliseconds;
-    while (remaining > 0 && getState() != State.TERMINATED) {
-      wait(remaining);
-
-      remaining = milliseconds - (System.currentTimeMillis() - then);
-    }
+    // join on a thread that never started terminates immediately
+    if (getState() == State.TERMINATED) return;
+    // A thread that was never started will remain in NEW state forever;
+    // waiting with a timeout is the safest behaviour here.
+    wait(milliseconds);
   }
 
   public void join(long milliseconds, int nanoseconds)
@@ -307,5 +310,5 @@ public class Thread implements Runnable {
   public enum State {
     NEW, RUNNABLE, BLOCKED, WAITING, TIMED_WAITING, TERMINATED
   }
-  
+
 }
