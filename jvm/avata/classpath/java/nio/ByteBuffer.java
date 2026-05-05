@@ -14,6 +14,7 @@ public abstract class ByteBuffer
   extends Buffer
   implements Comparable<ByteBuffer>
 {
+  private ByteOrder order = ByteOrder.BIG_ENDIAN;
 
   protected ByteBuffer(boolean readOnly) {
     this.readonly = readOnly;
@@ -133,26 +134,49 @@ public abstract class ByteBuffer
   }
   
   private void rawPutLong(int position, long val) {
-    doPut(position    , (byte) ((val >> 56) & 0xff));
-    doPut(position + 1, (byte) ((val >> 48) & 0xff));
-    doPut(position + 2, (byte) ((val >> 40) & 0xff));
-    doPut(position + 3, (byte) ((val >> 32) & 0xff));
-    doPut(position + 4, (byte) ((val >> 24) & 0xff));
-    doPut(position + 5, (byte) ((val >> 16) & 0xff));
-    doPut(position + 6, (byte) ((val >>  8) & 0xff));
-    doPut(position + 7, (byte) ((val      ) & 0xff));
+    if (order == ByteOrder.BIG_ENDIAN) {
+      doPut(position    , (byte) ((val >> 56) & 0xff));
+      doPut(position + 1, (byte) ((val >> 48) & 0xff));
+      doPut(position + 2, (byte) ((val >> 40) & 0xff));
+      doPut(position + 3, (byte) ((val >> 32) & 0xff));
+      doPut(position + 4, (byte) ((val >> 24) & 0xff));
+      doPut(position + 5, (byte) ((val >> 16) & 0xff));
+      doPut(position + 6, (byte) ((val >>  8) & 0xff));
+      doPut(position + 7, (byte) ((val      ) & 0xff));
+    } else {
+      doPut(position    , (byte) ((val      ) & 0xff));
+      doPut(position + 1, (byte) ((val >>  8) & 0xff));
+      doPut(position + 2, (byte) ((val >> 16) & 0xff));
+      doPut(position + 3, (byte) ((val >> 24) & 0xff));
+      doPut(position + 4, (byte) ((val >> 32) & 0xff));
+      doPut(position + 5, (byte) ((val >> 40) & 0xff));
+      doPut(position + 6, (byte) ((val >> 48) & 0xff));
+      doPut(position + 7, (byte) ((val >> 56) & 0xff));
+    }
   }
 
   private void rawPutInt(int position, int val) {
-    doPut(position    , (byte) ((val >> 24) & 0xff));
-    doPut(position + 1, (byte) ((val >> 16) & 0xff));
-    doPut(position + 2, (byte) ((val >>  8) & 0xff));
-    doPut(position + 3, (byte) ((val      ) & 0xff));
+    if (order == ByteOrder.BIG_ENDIAN) {
+      doPut(position    , (byte) ((val >> 24) & 0xff));
+      doPut(position + 1, (byte) ((val >> 16) & 0xff));
+      doPut(position + 2, (byte) ((val >>  8) & 0xff));
+      doPut(position + 3, (byte) ((val      ) & 0xff));
+    } else {
+      doPut(position    , (byte) ((val      ) & 0xff));
+      doPut(position + 1, (byte) ((val >>  8) & 0xff));
+      doPut(position + 2, (byte) ((val >> 16) & 0xff));
+      doPut(position + 3, (byte) ((val >> 24) & 0xff));
+    }
   }
 
   private void rawPutShort(int position, short val) {
-    doPut(position    , (byte) ((val >> 8) & 0xff));
-    doPut(position + 1, (byte) ((val     ) & 0xff));
+    if (order == ByteOrder.BIG_ENDIAN) {
+      doPut(position    , (byte) ((val >> 8) & 0xff));
+      doPut(position + 1, (byte) ((val     ) & 0xff));
+    } else {
+      doPut(position    , (byte) ((val     ) & 0xff));
+      doPut(position + 1, (byte) ((val >> 8) & 0xff));
+    }
   }
   
   public ByteBuffer putDouble(int position, double val) {
@@ -260,26 +284,49 @@ public abstract class ByteBuffer
   }
 
   private long rawGetLong(int position) {
-    return (((long) (doGet(position    ) & 0xFF)) << 56)
-      |    (((long) (doGet(position + 1) & 0xFF)) << 48)
-      |    (((long) (doGet(position + 2) & 0xFF)) << 40)
-      |    (((long) (doGet(position + 3) & 0xFF)) << 32)
-      |    (((long) (doGet(position + 4) & 0xFF)) << 24)
-      |    (((long) (doGet(position + 5) & 0xFF)) << 16)
-      |    (((long) (doGet(position + 6) & 0xFF)) <<  8)
-      |    (((long) (doGet(position + 7) & 0xFF))      );
+    if (order == ByteOrder.BIG_ENDIAN) {
+      return (((long) (doGet(position    ) & 0xFF)) << 56)
+        |    (((long) (doGet(position + 1) & 0xFF)) << 48)
+        |    (((long) (doGet(position + 2) & 0xFF)) << 40)
+        |    (((long) (doGet(position + 3) & 0xFF)) << 32)
+        |    (((long) (doGet(position + 4) & 0xFF)) << 24)
+        |    (((long) (doGet(position + 5) & 0xFF)) << 16)
+        |    (((long) (doGet(position + 6) & 0xFF)) <<  8)
+        |    (((long) (doGet(position + 7) & 0xFF))      );
+    } else {
+      return (((long) (doGet(position    ) & 0xFF))      )
+        |    (((long) (doGet(position + 1) & 0xFF)) <<  8)
+        |    (((long) (doGet(position + 2) & 0xFF)) << 16)
+        |    (((long) (doGet(position + 3) & 0xFF)) << 24)
+        |    (((long) (doGet(position + 4) & 0xFF)) << 32)
+        |    (((long) (doGet(position + 5) & 0xFF)) << 40)
+        |    (((long) (doGet(position + 6) & 0xFF)) << 48)
+        |    (((long) (doGet(position + 7) & 0xFF)) << 56);
+    }
   }
 
   private int rawGetInt(int position) {
-    return (((int) (doGet(position    ) & 0xFF)) << 24)
-      |    (((int) (doGet(position + 1) & 0xFF)) << 16)
-      |    (((int) (doGet(position + 2) & 0xFF)) <<  8)
-      |    (((int) (doGet(position + 3) & 0xFF))      );
+    if (order == ByteOrder.BIG_ENDIAN) {
+      return (((int) (doGet(position    ) & 0xFF)) << 24)
+        |    (((int) (doGet(position + 1) & 0xFF)) << 16)
+        |    (((int) (doGet(position + 2) & 0xFF)) <<  8)
+        |    (((int) (doGet(position + 3) & 0xFF))      );
+    } else {
+      return (((int) (doGet(position    ) & 0xFF))      )
+        |    (((int) (doGet(position + 1) & 0xFF)) <<  8)
+        |    (((int) (doGet(position + 2) & 0xFF)) << 16)
+        |    (((int) (doGet(position + 3) & 0xFF)) << 24);
+    }
   }
 
   private short rawGetShort(int position) {
-    return (short) ((  ((int) (doGet(position    ) & 0xFF)) << 8)
-                    | (((int) (doGet(position + 1) & 0xFF))     ));
+    if (order == ByteOrder.BIG_ENDIAN) {
+      return (short) ((  ((int) (doGet(position    ) & 0xFF)) << 8)
+                      | (((int) (doGet(position + 1) & 0xFF))     ));
+    } else {
+      return (short) ((  ((int) (doGet(position    ) & 0xFF))     )
+                      | (((int) (doGet(position + 1) & 0xFF)) << 8));
+    }
   }
   
   public double getDouble() {
@@ -335,11 +382,15 @@ public abstract class ByteBuffer
   }
 
   public ByteBuffer order(ByteOrder order) {
-    if (order != ByteOrder.BIG_ENDIAN) throw new UnsupportedOperationException();
+    if (order == null) {
+      throw new NullPointerException();
+    }
+
+    this.order = order;
     return this;
   }
 
   public ByteOrder order() {
-    return ByteOrder.BIG_ENDIAN;
+    return order;
   }
 }

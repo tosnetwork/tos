@@ -1,4 +1,5 @@
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.BufferUnderflowException;
 import java.nio.BufferOverflowException;
 import static avata.testing.Asserts.*;
@@ -161,6 +162,46 @@ public class Buffers {
     assertEquals(2, direct.position());
   }
 
+  private static void testByteOrder() {
+    ByteBuffer buffer = ByteBuffer.allocate(16);
+    assertEquals(ByteOrder.BIG_ENDIAN, buffer.order());
+
+    buffer.order(ByteOrder.LITTLE_ENDIAN);
+    assertEquals(ByteOrder.LITTLE_ENDIAN, buffer.order());
+    buffer.putInt(0x01020304);
+    buffer.putShort((short) 0x0506);
+    buffer.putLong(0x0708090A0B0C0D0EL);
+    buffer.flip();
+
+    assertEquals((byte) 0x04, buffer.get());
+    assertEquals((byte) 0x03, buffer.get());
+    assertEquals((byte) 0x02, buffer.get());
+    assertEquals((byte) 0x01, buffer.get());
+    assertEquals((byte) 0x06, buffer.get());
+    assertEquals((byte) 0x05, buffer.get());
+    assertEquals(0x0708090A0B0C0D0EL, buffer.getLong());
+
+    buffer.rewind();
+    assertEquals(0x01020304, buffer.getInt());
+    assertEquals((short) 0x0506, buffer.getShort());
+
+    buffer.order(ByteOrder.BIG_ENDIAN);
+    buffer.rewind();
+    assertEquals(0x04030201, buffer.getInt());
+
+    assertEquals(ByteOrder.BIG_ENDIAN,
+                 buffer.order(ByteOrder.LITTLE_ENDIAN).duplicate().order());
+    assertEquals(ByteOrder.BIG_ENDIAN, buffer.slice().order());
+    assertEquals(ByteOrder.BIG_ENDIAN, buffer.asReadOnlyBuffer().order());
+
+    try {
+      buffer.order(null);
+      assertTrue(false);
+    } catch (NullPointerException e) {
+      // ok
+    }
+  }
+
   private static native ByteBuffer allocateNative(int capacity);
 
   private static native void freeNative(ByteBuffer b);
@@ -217,6 +258,7 @@ public class Buffers {
     testPrimativeGetAndSet(native_, native_);
     testArrays(native_, native_);
     testBounds();
+    testByteOrder();
 
     try {
       ByteBuffer.allocate(1).getInt();

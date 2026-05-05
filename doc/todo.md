@@ -125,3 +125,5 @@ Status legend: `✅` completed, unchecked items are still open.
   iteration, removal, and clear behavior.
 - ✅ `Reader.skip`/`ready` and `FilterReader.skip`/`ready` now follow JDK8u
   defaults and delegation instead of hitting unsupported runtime paths.
+- ✅ `ByteBuffer.order(ByteOrder)` now supports deterministic big-endian and
+  little-endian primitive access with JDK8u null/default-order behavior.
