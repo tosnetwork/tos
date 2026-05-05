@@ -18,6 +18,7 @@ public abstract class CharBuffer
 
   protected CharBuffer(boolean readOnly) {
     this.readOnly = readOnly;
+    this.readonly = readOnly;
   }
 
   public static CharBuffer allocate(int capacity) {

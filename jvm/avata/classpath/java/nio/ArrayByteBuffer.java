@@ -32,19 +32,25 @@ class ArrayByteBuffer extends ByteBuffer {
   }
 
   public boolean hasArray() {
-    return true;
+    return ! isReadOnly();
   }
 
   public byte[] array() {
+    if (isReadOnly()) {
+      throw new ReadOnlyBufferException();
+    }
     return array;
   }
 
   public ByteBuffer slice() {
     return new ArrayByteBuffer
-      (array, arrayOffset + position, remaining(), true);
+      (array, arrayOffset + position, remaining(), isReadOnly());
   }
 
   public int arrayOffset() {
+    if (isReadOnly()) {
+      throw new ReadOnlyBufferException();
+    }
     return arrayOffset;
   }
 

@@ -131,3 +131,6 @@ Status legend: `✅` completed, unchecked items are still open.
   sign, leading-space, parentheses, grouping, alternate octal/hex prefixes,
   zero padding after prefixes/signs, previous-argument reuse, and zero-length
   string precision.
+- ✅ Heap `ByteBuffer` and `CharBuffer` views now follow JDK8u read-only and
+  backing-array rules: writable slices stay writable, read-only views hide
+  arrays and preserve read-only state through slices/duplicates.

@@ -44,7 +44,7 @@ class FixedArrayByteBuffer extends DirectByteBuffer {
 
   public ByteBuffer slice() {
     return new FixedArrayByteBuffer
-      (address + position, array, arrayOffset + position, remaining(), true);
+      (address + position, array, arrayOffset + position, remaining(), isReadOnly());
   }
   
   @Override

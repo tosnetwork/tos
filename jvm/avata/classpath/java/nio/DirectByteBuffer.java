@@ -39,7 +39,7 @@ class DirectByteBuffer extends ByteBuffer {
   }
 
   public ByteBuffer slice() {
-    return new DirectByteBuffer(address + position, remaining(), true);
+    return new DirectByteBuffer(address + position, remaining(), isReadOnly());
   }
 
   protected void doPut(int position, byte val) {

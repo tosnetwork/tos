@@ -1,7 +1,9 @@
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.CharBuffer;
 import java.nio.BufferUnderflowException;
 import java.nio.BufferOverflowException;
+import java.nio.ReadOnlyBufferException;
 import static avata.testing.Asserts.*;
 
 public class Buffers {
@@ -121,6 +123,15 @@ public class Buffers {
     }
   }
 
+  private static void expectReadOnlyBuffer(Runnable r) {
+    try {
+      r.run();
+      assertTrue(false);
+    } catch (ReadOnlyBufferException expected) {
+      // ok
+    }
+  }
+
   private static void testBounds() {
     final byte[] array = new byte[8];
 
@@ -202,6 +213,83 @@ public class Buffers {
     }
   }
 
+  private static void testArrayBackedViews() {
+    byte[] bytes = new byte[] { 1, 2, 3, 4 };
+    ByteBuffer buffer = ByteBuffer.wrap(bytes);
+    buffer.position(1);
+    buffer.limit(3);
+
+    ByteBuffer slice = buffer.slice();
+    assertTrue(! slice.isReadOnly());
+    assertTrue(slice.hasArray());
+    assertEquals(1, slice.arrayOffset());
+    assertEquals(2, slice.capacity());
+    slice.put(0, (byte) 9);
+    assertEquals((byte) 9, bytes[1]);
+
+    final ByteBuffer readOnly = buffer.asReadOnlyBuffer();
+    assertTrue(readOnly.isReadOnly());
+    assertTrue(! readOnly.hasArray());
+    expectReadOnlyBuffer(new Runnable() {
+      public void run() {
+        readOnly.array();
+      }
+    });
+    expectReadOnlyBuffer(new Runnable() {
+      public void run() {
+        readOnly.arrayOffset();
+      }
+    });
+
+    final ByteBuffer readOnlySlice = readOnly.slice();
+    assertTrue(readOnlySlice.isReadOnly());
+    assertTrue(! readOnlySlice.hasArray());
+    expectReadOnlyBuffer(new Runnable() {
+      public void run() {
+        readOnlySlice.put((byte) 1);
+      }
+    });
+
+    ByteBuffer readOnlyDuplicate = readOnly.duplicate();
+    assertTrue(readOnlyDuplicate.isReadOnly());
+    assertTrue(! readOnlyDuplicate.hasArray());
+
+    char[] chars = new char[] { 'a', 'b', 'c' };
+    CharBuffer charBuffer = CharBuffer.wrap(chars);
+    charBuffer.position(1);
+
+    CharBuffer charSlice = charBuffer.slice();
+    assertTrue(! charSlice.isReadOnly());
+    assertTrue(charSlice.hasArray());
+    assertEquals(1, charSlice.arrayOffset());
+    assertEquals(2, charSlice.capacity());
+    charSlice.put(0, 'z');
+    assertEquals((int) 'z', (int) chars[1]);
+
+    final CharBuffer readOnlyChars = charBuffer.asReadOnlyBuffer();
+    assertTrue(readOnlyChars.isReadOnly());
+    assertTrue(! readOnlyChars.hasArray());
+    expectReadOnlyBuffer(new Runnable() {
+      public void run() {
+        readOnlyChars.array();
+      }
+    });
+    expectReadOnlyBuffer(new Runnable() {
+      public void run() {
+        readOnlyChars.arrayOffset();
+      }
+    });
+
+    final CharBuffer readOnlyCharSlice = readOnlyChars.slice();
+    assertTrue(readOnlyCharSlice.isReadOnly());
+    assertTrue(! readOnlyCharSlice.hasArray());
+    expectReadOnlyBuffer(new Runnable() {
+      public void run() {
+        readOnlyCharSlice.put('x');
+      }
+    });
+  }
+
   private static native ByteBuffer allocateNative(int capacity);
 
   private static native void freeNative(ByteBuffer b);
@@ -259,6 +347,7 @@ public class Buffers {
     testArrays(native_, native_);
     testBounds();
     testByteOrder();
+    testArrayBackedViews();
 
     try {
       ByteBuffer.allocate(1).getInt();

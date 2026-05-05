@@ -32,19 +32,25 @@ class ArrayCharBuffer extends CharBuffer {
   }
 
   public boolean hasArray() {
-    return true;
+    return ! isReadOnly();
   }
 
   public char[] array() {
+    if (isReadOnly()) {
+      throw new ReadOnlyBufferException();
+    }
     return array;
   }
 
   public CharBuffer slice() {
     return new ArrayCharBuffer
-      (array, arrayOffset + position, remaining(), true);
+      (array, arrayOffset + position, remaining(), isReadOnly());
   }
 
   public int arrayOffset() {
+    if (isReadOnly()) {
+      throw new ReadOnlyBufferException();
+    }
     return arrayOffset;
   }
 
