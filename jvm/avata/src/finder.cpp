@@ -699,18 +699,99 @@ void add(Element** first, Element** last, Element* e)
   *last = e;
 }
 
+bool isPathSeparator(char c, char fileSeparator)
+{
+  return c == fileSeparator or (fileSeparator == '\\' and c == '/');
+}
+
 unsigned baseName(const char* name, char fileSeparator)
 {
   const char* p = name;
   const char* last = 0;
   while (*p) {
-    if (*p == fileSeparator) {
+    if (isPathSeparator(*p, fileSeparator)) {
       last = p;
     }
     ++p;
   }
 
   return last ? (last + 1) - name : 0;
+}
+
+char lowerAscii(char c)
+{
+  return (c >= 'A' and c <= 'Z') ? c + ('a' - 'A') : c;
+}
+
+bool hasJarExtension(const char* name)
+{
+  size_t length = strlen(name);
+  if (length < 4) {
+    return false;
+  }
+
+  const char* extension = name + length - 4;
+  return extension[0] == '.' and lowerAscii(extension[1]) == 'j'
+         and lowerAscii(extension[2]) == 'a'
+         and lowerAscii(extension[3]) == 'r';
+}
+
+bool isClasspathWildcard(const char* token,
+                         unsigned tokenLength,
+                         char fileSeparator)
+{
+  return tokenLength > 0 and token[tokenLength - 1] == '*'
+         and (tokenLength == 1
+              or isPathSeparator(token[tokenLength - 2], fileSeparator));
+}
+
+char* copyWildcardDirectory(Alloc* allocator,
+                            const char* token,
+                            unsigned tokenLength)
+{
+  unsigned length = tokenLength - 1;
+
+  if (length == 0) {
+    char* directory = static_cast<char*>(allocator->allocate(2));
+    directory[0] = '.';
+    directory[1] = 0;
+    return directory;
+  }
+
+  char* directory = static_cast<char*>(allocator->allocate(length + 1));
+  memcpy(directory, token, length);
+  directory[length] = 0;
+  return directory;
+}
+
+const char* appendPath(System* s,
+                       Alloc* allocator,
+                       const char* directory,
+                       const char* name)
+{
+  size_t directoryLength = strlen(directory);
+  if (directoryLength > 0
+      and isPathSeparator(directory[directoryLength - 1],
+                          s->fileSeparator())) {
+    return append(allocator, directory, name);
+  } else {
+    char separator[] = {s->fileSeparator(), 0};
+    return append(allocator, directory, separator, name);
+  }
+}
+
+List<const char*>* insertSorted(Alloc* allocator,
+                                List<const char*>* list,
+                                const char* item)
+{
+  List<const char*>** position = &list;
+  while (*position and strcmp((*position)->item, item) <= 0) {
+    position = &((*position)->next);
+  }
+
+  *position = new (allocator->allocate(sizeof(List<const char*>)))
+      List<const char*>(item, *position);
+  return list;
 }
 
 void add(System* s,
@@ -854,6 +935,45 @@ void addJar(System* s,
   }
 }
 
+void addWildcardJars(System* s,
+                     Element** first,
+                     Element** last,
+                     Alloc* allocator,
+                     const char* directoryName,
+                     const char* bootLibrary)
+{
+  if (DebugFind) {
+    fprintf(stderr, "add classpath wildcard %s\n", directoryName);
+  }
+
+  System::Directory* directory = 0;
+  if (not s->success(s->open(&directory, directoryName))) {
+    return;
+  }
+
+  List<const char*>* jars = 0;
+  for (const char* entry = directory->next(); entry; entry = directory->next()) {
+    if (hasJarExtension(entry)) {
+      const char* jar = appendPath(s, allocator, directoryName, entry);
+      size_t length;
+      if (s->stat(jar, &length) == System::TypeFile) {
+        jars = insertSorted(allocator, jars, jar);
+      } else {
+        allocator->free(jar, strlen(jar) + 1);
+      }
+    }
+  }
+
+  directory->dispose();
+
+  while (jars) {
+    List<const char*>* next = jars->next;
+    addJar(s, first, last, allocator, jars->item, bootLibrary);
+    allocator->free(jars, sizeof(List<const char*>));
+    jars = next;
+  }
+}
+
 void add(System* s,
          Element** first,
          Element** last,
@@ -862,7 +982,11 @@ void add(System* s,
          unsigned tokenLength,
          const char* bootLibrary)
 {
-  if (*token == '[' and token[tokenLength - 1] == ']') {
+  if (isClasspathWildcard(token, tokenLength, s->fileSeparator())) {
+    char* directoryName = copyWildcardDirectory(allocator, token, tokenLength);
+    addWildcardJars(s, first, last, allocator, directoryName, bootLibrary);
+    allocator->free(directoryName, strlen(directoryName) + 1);
+  } else if (*token == '[' and token[tokenLength - 1] == ']') {
     char* name = static_cast<char*>(allocator->allocate(tokenLength - 1));
     memcpy(name, token + 1, tokenLength - 1);
     name[tokenLength - 2] = 0;

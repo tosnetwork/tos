@@ -1609,6 +1609,7 @@ test-extra-sources = $(wildcard $(test)/extra/*.java)
 test-extra-classes = \
 	$(call java-classes,$(test-extra-sources),$(test),$(test-build))
 test-extra-dep = $(test-build)-extra.dep
+classpath-wildcard-jar = $(build)/wildcard-lib/classpath-wildcard.JAR
 
 unittest-sources = \
 	$(wildcard $(unittest)/*.cpp) \
@@ -1790,7 +1791,7 @@ ifeq ($(continuations),true)
 $(build)/compile-x86-asm.o: $(src)/continuations-x86.$(asm-format)
 endif
 
-$(build)/run-tests.sh: $(test-classes) makefile $(build)/extra-dir/multi-classpath-test.txt $(build)/test/multi-classpath-test.txt
+$(build)/run-tests.sh: $(test-classes) makefile $(build)/extra-dir/multi-classpath-test.txt $(build)/test/multi-classpath-test.txt $(classpath-wildcard-jar)
 	echo 'cd $$(dirname $$0)' > $(@)
 	echo "sh ./test.sh 2>/dev/null \\" >> $(@)
 	echo "$(shell echo $(library-path) | sed 's|$(build)|\.|g') ./$(name)-unittest${exe-suffix} ./$(notdir $(test-executable)) $(mode) \"-Djava.library.path=. -cp test$(target-path-separator)extra-dir\" \\" >> $(@)
@@ -1811,6 +1812,10 @@ $(build)/extra-dir/multi-classpath-test.txt:
 $(build)/test/multi-classpath-test.txt:
 	mkdir -p $(build)/test
 	echo "$@" > $@
+
+$(classpath-wildcard-jar): $(test-extra-dep)
+	mkdir -p $(dir $@)
+	$(jar) cf $(@) -C $(test-build) extra/ClasspathWildcardTarget.class
 
 $(build)/test.sh: $(test)/test.sh
 	cp $(<) $(@)
