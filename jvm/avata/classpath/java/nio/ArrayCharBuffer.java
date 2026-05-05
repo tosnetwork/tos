@@ -61,6 +61,14 @@ class ArrayCharBuffer extends CharBuffer {
   }
 
   public CharBuffer put(char[] src, int offset, int length) {
+    if (src == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > src.length - length) {
+      throw new IndexOutOfBoundsException();
+    }
+
     checkPut(position, length, false);
 
     System.arraycopy(src, offset, array, arrayOffset + position, length);
@@ -70,6 +78,14 @@ class ArrayCharBuffer extends CharBuffer {
   }
 
   public CharBuffer get(char[] dst, int offset, int length) {
+    if (dst == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > dst.length - length) {
+      throw new IndexOutOfBoundsException();
+    }
+
     checkGet(position, length, false);
 
     System.arraycopy(array, arrayOffset + position, dst, offset, length);

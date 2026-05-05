@@ -65,7 +65,11 @@ class DirectByteBuffer extends ByteBuffer {
   }
 
   public ByteBuffer put(byte[] src, int offset, int length) {
-    if (offset < 0 || offset + length > src.length) {
+    if (src == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > src.length - length) {
       throw new ArrayIndexOutOfBoundsException();
     }
 
@@ -80,7 +84,11 @@ class DirectByteBuffer extends ByteBuffer {
   }
 
   public ByteBuffer get(byte[] dst, int offset, int length) {
-    if (offset < 0 || offset + length > dst.length) {
+    if (dst == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > dst.length - length) {
       throw new ArrayIndexOutOfBoundsException();
     }
 
@@ -88,6 +96,8 @@ class DirectByteBuffer extends ByteBuffer {
 
     unsafe.copyMemory
       (null, address + position, dst, baseOffset + offset, length);
+
+    position += length;
 
     return this;
   }

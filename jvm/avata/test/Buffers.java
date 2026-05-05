@@ -102,6 +102,65 @@ public class Buffers {
     }
   }
 
+  private static void expectIndexOutOfBounds(Runnable r) {
+    try {
+      r.run();
+      assertTrue(false);
+    } catch (IndexOutOfBoundsException expected) {
+      // ok
+    }
+  }
+
+  private static void expectIllegalArgument(Runnable r) {
+    try {
+      r.run();
+      assertTrue(false);
+    } catch (IllegalArgumentException expected) {
+      // ok
+    }
+  }
+
+  private static void testBounds() {
+    final byte[] array = new byte[8];
+
+    expectIndexOutOfBounds(new Runnable() {
+      public void run() {
+        ByteBuffer.wrap(array, -1, 1);
+      }
+    });
+
+    expectIndexOutOfBounds(new Runnable() {
+      public void run() {
+        ByteBuffer.wrap(array).put(array, 2, Integer.MAX_VALUE);
+      }
+    });
+
+    expectIndexOutOfBounds(new Runnable() {
+      public void run() {
+        ByteBuffer.wrap(array).get(array, 2, Integer.MAX_VALUE);
+      }
+    });
+
+    expectIllegalArgument(new Runnable() {
+      public void run() {
+        ByteBuffer.wrap(array).position(-1);
+      }
+    });
+
+    expectIllegalArgument(new Runnable() {
+      public void run() {
+        ByteBuffer.wrap(array).limit(9);
+      }
+    });
+
+    ByteBuffer direct = ByteBuffer.allocateDirect(8);
+    direct.put(new byte[] {1, 2, 3, 4});
+    direct.flip();
+    byte[] out = new byte[2];
+    direct.get(out, 0, 2);
+    assertEquals(2, direct.position());
+  }
+
   private static native ByteBuffer allocateNative(int capacity);
 
   private static native void freeNative(ByteBuffer b);
@@ -157,6 +216,7 @@ public class Buffers {
     testArrays(native_, direct);
     testPrimativeGetAndSet(native_, native_);
     testArrays(native_, native_);
+    testBounds();
 
     try {
       ByteBuffer.allocate(1).getInt();

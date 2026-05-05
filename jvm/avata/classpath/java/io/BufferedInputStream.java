@@ -43,6 +43,18 @@ public class BufferedInputStream extends InputStream {
   }
 
   public int read(byte[] b, int offset, int length) throws IOException {
+    if (b == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > b.length - length) {
+      throw new ArrayIndexOutOfBoundsException();
+    }
+
+    if (length == 0) {
+      return 0;
+    }
+
     int count = 0;
     if (position >= limit && fill() == -1) {
       return -1;
@@ -85,4 +97,3 @@ public class BufferedInputStream extends InputStream {
     in.close();
   }
 }
-

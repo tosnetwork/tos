@@ -33,11 +33,22 @@ public abstract class Buffer {
   }
 
   public final Buffer limit(int newLimit) {
+    if (newLimit < 0 || newLimit > capacity) {
+      throw new IllegalArgumentException();
+    }
+
     limit = newLimit;
+    if (position > limit) {
+      position = limit;
+    }
     return this;
   }
 
   public final Buffer position(int newPosition) {
+    if (newPosition < 0 || newPosition > limit) {
+      throw new IllegalArgumentException();
+    }
+
     position = newPosition;
     return this;
   }

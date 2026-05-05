@@ -18,6 +18,18 @@ public abstract class InputStream implements Closeable {
   }
 
   public int read(byte[] buffer, int offset, int length) throws IOException {
+    if (buffer == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > buffer.length - length) {
+      throw new ArrayIndexOutOfBoundsException();
+    }
+
+    if (length == 0) {
+      return 0;
+    }
+
     for (int i = 0; i < length; ++i) {
       int c = read();
       if (c == -1) {

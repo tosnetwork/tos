@@ -16,9 +16,19 @@ public class ByteArrayInputStream extends InputStream {
   private final int limit;
 
   public ByteArrayInputStream(byte[] array, int offset, int length) {
+    if (array == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > array.length) {
+      throw new ArrayIndexOutOfBoundsException();
+    }
+
     this.array = array;
     position = offset;
-    this.limit = offset + length;
+    this.limit = length > array.length - offset
+      ? array.length
+      : offset + length;
   }
 
   public ByteArrayInputStream(byte[] array) {
@@ -34,6 +44,15 @@ public class ByteArrayInputStream extends InputStream {
   }
 
   public int read(byte[] buffer, int offset, int bufferLength) {
+    if (buffer == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || bufferLength < 0
+        || offset > buffer.length - bufferLength) {
+      throw new ArrayIndexOutOfBoundsException();
+    }
+
     if (bufferLength == 0) {
       return 0;
     }

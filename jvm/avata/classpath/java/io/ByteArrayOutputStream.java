@@ -60,7 +60,7 @@ public class ByteArrayOutputStream extends OutputStream {
       throw new NullPointerException();
     }
 
-    if (offset < 0 || offset + length > b.length) {
+    if (offset < 0 || length < 0 || offset > b.length - length) {
       throw new ArrayIndexOutOfBoundsException();
     }
 

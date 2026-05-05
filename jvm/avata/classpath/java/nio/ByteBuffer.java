@@ -32,6 +32,14 @@ public abstract class ByteBuffer
   }
 
   public static ByteBuffer wrap(byte[] array, int offset, int length) {
+    if (array == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > array.length - length) {
+      throw new IndexOutOfBoundsException();
+    }
+
     return new ArrayByteBuffer(array, offset, length, false);
   }
 
@@ -311,7 +319,7 @@ public abstract class ByteBuffer
       throw new ReadOnlyBufferException();
     }
 
-    if (position < 0 || position+amount > limit) {
+    if (position < 0 || amount < 0 || position > limit - amount) {
       throw absolute
         ? new IndexOutOfBoundsException()
         : new BufferOverflowException();
@@ -319,7 +327,7 @@ public abstract class ByteBuffer
   }
 
   protected void checkGet(int position, int amount, boolean absolute) {
-    if (amount > limit-position) {
+    if (position < 0 || amount < 0 || position > limit - amount) {
       throw absolute
         ? new IndexOutOfBoundsException()
         : new BufferUnderflowException();

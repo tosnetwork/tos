@@ -40,6 +40,18 @@ public class BufferedOutputStream extends OutputStream {
   }
 
   public void write(byte[] b, int offset, int length) throws IOException {
+    if (b == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > b.length - length) {
+      throw new ArrayIndexOutOfBoundsException();
+    }
+
+    if (length == 0) {
+      return;
+    }
+
     if (length > buffer.length - position) {
       drain();
       out.write(b, offset, length);      

@@ -29,6 +29,14 @@ public abstract class CharBuffer
   }
 
   public static CharBuffer wrap(char[] array, int offset, int length) {
+    if (array == null) {
+      throw new NullPointerException();
+    }
+
+    if (offset < 0 || length < 0 || offset > array.length - length) {
+      throw new IndexOutOfBoundsException();
+    }
+
     return new ArrayCharBuffer(array, offset, length, false);
   }
 
@@ -137,7 +145,7 @@ public abstract class CharBuffer
       throw new ReadOnlyBufferException();
     }
 
-    if (position < 0 || position+amount > limit) {
+    if (position < 0 || amount < 0 || position > limit - amount) {
       throw absolute
         ? new IndexOutOfBoundsException()
         : new BufferOverflowException();
@@ -145,7 +153,7 @@ public abstract class CharBuffer
   }
 
   protected void checkGet(int position, int amount, boolean absolute) {
-    if (amount > limit-position) {
+    if (position < 0 || amount < 0 || position > limit - amount) {
       throw absolute
         ? new IndexOutOfBoundsException()
         : new BufferUnderflowException();
