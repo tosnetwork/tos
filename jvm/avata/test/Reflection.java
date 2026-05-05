@@ -4,6 +4,7 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
 import java.lang.reflect.InvocationTargetException;
 
 public class Reflection {
@@ -47,13 +48,18 @@ public class Reflection {
     private class World<S> { }
   }
 
+  private static class GenericBounds<T extends Number & Runnable, U, V extends T> {
+  }
+
   private static void innerClasses() throws Exception {
     Class c = Reflection.class;
     Class[] inner = c.getDeclaredClasses();
-    expect(3 == inner.length);
-    expect(Hello.class == inner[0]
-           || Hello.class == inner[1]
-           || Hello.class == inner[2]);
+    expect(4 == inner.length);
+    boolean foundHello = false;
+    for (int i = 0; i < inner.length; ++i) {
+      foundHello |= Hello.class == inner[i];
+    }
+    expect(foundHello);
   }
 
   private int egads;
@@ -99,6 +105,32 @@ public class Reflection {
     args = arg.getActualTypeArguments();
     expect(1 == args.length);
     expect(args[0] == String.class);
+
+    expect(Reflection.class.getTypeParameters().length == 0);
+    expect(Integer.TYPE.getTypeParameters().length == 0);
+
+    TypeVariable[] vars = GenericBounds.class.getTypeParameters();
+    expect(3 == vars.length);
+    expect("T".equals(vars[0].getName()));
+    expect(vars[0].getGenericDeclaration() == GenericBounds.class);
+    Type[] bounds = vars[0].getBounds();
+    expect(2 == bounds.length);
+    expect(bounds[0] == Number.class);
+    expect(bounds[1] == Runnable.class);
+
+    bounds[0] = String.class;
+    expect(vars[0].getBounds()[0] == Number.class);
+
+    expect("U".equals(vars[1].getName()));
+    bounds = vars[1].getBounds();
+    expect(1 == bounds.length);
+    expect(bounds[0] == Object.class);
+
+    expect("V".equals(vars[2].getName()));
+    bounds = vars[2].getBounds();
+    expect(1 == bounds.length);
+    expect(bounds[0] == vars[0]);
+    expect(vars[0].equals(GenericBounds.class.getTypeParameters()[0]));
   }
 
   public static void throwOOME() {

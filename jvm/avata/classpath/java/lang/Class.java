@@ -711,7 +711,7 @@ public final class Class <T>
   }
 
   public TypeVariable<?>[] getTypeParameters() {
-    throw new UnsupportedOperationException("not yet implemented");
+    return SignatureParser.parseTypeParameters(this);
   }
 
   /** 
