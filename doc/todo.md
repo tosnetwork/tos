@@ -39,8 +39,9 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ Continue aligning native IO error handling with JDK8u:
   file metadata helpers, directory handling, interrupted syscalls, and close
   semantics now have a full pass for the current Avata `java.io` surface.
-- [ ] Complete `invokedynamic`/lambda support for the admitted Java profile:
-  marker interfaces, bridge methods, and deterministic bootstrap linkage.
+- ✅ Complete `invokedynamic`/lambda support for the admitted Java profile:
+  marker interfaces, bridge methods, and deterministic bootstrap linkage now
+  follow the JDK8u `altMetafactory` argument model for Avata's lambda surface.
 - [ ] Audit `java.lang.invoke` against OpenJDK 8u behavior and decide which parts
   are supported in consensus, rejected at verification, or trapped at runtime.
 - [ ] Complete reflection compatibility where admitted by the verifier:
@@ -85,3 +86,7 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ `File` metadata helpers now follow JDK8u-style behavior for canonical
   paths, exclusive file creation, existing-directory `mkdir`, interrupted
   `stat`/`access`/`chmod`/`remove`/`rename` calls, and directory iteration.
+- ✅ `invokedynamic` lambda bootstrap handling now resolves JDK8u-style
+  `altMetafactory` marker and bridge arguments, emits marker interfaces without
+  duplicate interface entries, and generates bridge forwarding methods when
+  requested.

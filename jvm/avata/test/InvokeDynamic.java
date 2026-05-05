@@ -256,10 +256,10 @@ public class InvokeDynamic {
       expect(f.apply(new DoubleHolder(), 20d) == 20d);
     }
 
-    // This abort()s in machine.cpp
-    // { Foo s = (Foo & Marker) this::requiresBridge;
-    //   s.someFunction(1, 2, "");
-    // }
+    { Foo s = (Foo & Marker) this::requiresBridge;
+      expect(s instanceof Marker);
+      s.someFunction(1, 2, "");
+    }
 
     { UnboxedSerializable s = InvokeDynamic::addBoxed;
       expect(s.add(1, 2) == 3);

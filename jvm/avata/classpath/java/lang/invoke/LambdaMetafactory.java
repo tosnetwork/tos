@@ -408,14 +408,32 @@ public class LambdaMetafactory {
                                        implementationName,
                                        implementationSpec,
                                        implementationKind),
-                      emptyInterfaceList);
+                      emptyInterfaceList,
+                      emptyMethodTypeList);
+  }
+
+  private static boolean containsString(List<String> values, String value) {
+    for (String i: values) {
+      if (i.equals(value)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private static void addInterface(List<String> interfaces, String name) {
+    if (! containsString(interfaces, name)) {
+      interfaces.add(name);
+    }
   }
 
   private static byte[] makeLambda(String invokedName,
                                    MethodType invokedType,
                                    MethodType methodType,
                                    MethodHandle methodImplementation,
-                                   Class[] interfaces)
+                                   Class[] interfaces,
+                                   MethodType[] bridges)
   {
     String className;
     { int number;
@@ -427,11 +445,15 @@ public class LambdaMetafactory {
 
     List<PoolEntry> pool = new ArrayList();
 
-    int[] interfaceIndexes = new int[interfaces.length + 1];
-    interfaceIndexes[0] = ConstantPool.addClass(pool, invokedType.returnType().getName().replace('.', '/'));
-    for (int i = 0; i < interfaces.length; i++) {
-      String name = interfaces[i].getName().replace('.', '/');
-      interfaceIndexes[i + 1] = ConstantPool.addClass(pool, name);
+    List<String> interfaceNames = new ArrayList();
+    addInterface(interfaceNames, invokedType.returnType().getName().replace('.', '/'));
+    for (Class i: interfaces) {
+      addInterface(interfaceNames, i.getName().replace('.', '/'));
+    }
+
+    int[] interfaceIndexes = new int[interfaceNames.size()];
+    for (int i = 0; i < interfaceNames.size(); ++i) {
+      interfaceIndexes[i] = ConstantPool.addClass(pool, interfaceNames.get(i));
     }
 
     List<FieldData> fieldTable = new ArrayList();
@@ -446,6 +468,7 @@ public class LambdaMetafactory {
     String constructorSpec = constructorSpec(invokedType);
 
     List<MethodData> methodTable = new ArrayList();
+    List<String> invocationSpecs = new ArrayList();
 
     try {
       methodTable.add
@@ -462,13 +485,29 @@ public class LambdaMetafactory {
           ConstantPool.addUtf8(pool, constructorSpec),
           makeConstructorCode(pool, className, invokedType)));
 
+      String methodSpec = methodType.toMethodDescriptorString();
       methodTable.add
         (new MethodData
          (Modifier.PUBLIC,
           ConstantPool.addUtf8(pool, invokedName),
-          ConstantPool.addUtf8(pool, methodType.toMethodDescriptorString()),
+          ConstantPool.addUtf8(pool, methodSpec),
           makeInvocationCode(pool, className, constructorSpec, invokedType,
                              methodType, methodImplementation)));
+      invocationSpecs.add(methodSpec);
+
+      for (MethodType bridge: bridges) {
+        String spec = bridge.toMethodDescriptorString();
+        if (! containsString(invocationSpecs, spec)) {
+          methodTable.add
+            (new MethodData
+             (Modifier.PUBLIC | 0x0040,
+              ConstantPool.addUtf8(pool, invokedName),
+              ConstantPool.addUtf8(pool, spec),
+              makeInvocationCode(pool, className, constructorSpec, invokedType,
+                                 bridge, methodImplementation)));
+          invocationSpecs.add(spec);
+        }
+      }
     } catch (IOException e) {
       AssertionError error = new AssertionError();
       error.initCause(e);
@@ -510,6 +549,7 @@ public class LambdaMetafactory {
   }
 
   private static final Class[] emptyInterfaceList = new Class[] {};
+  private static final MethodType[] emptyMethodTypeList = new MethodType[] {};
 
   public static CallSite metafactory(MethodHandles.Lookup caller,
                                      String invokedName,
@@ -519,7 +559,12 @@ public class LambdaMetafactory {
                                      MethodType instantiatedMethodType)
     throws LambdaConversionException
   {
-    byte[] classData = makeLambda(invokedName, invokedType, methodType, methodImplementation, emptyInterfaceList);
+    byte[] classData = makeLambda(invokedName,
+                                  invokedType,
+                                  methodType,
+                                  methodImplementation,
+                                  emptyInterfaceList,
+                                  emptyMethodTypeList);
     return makeCallSite(invokedType, classData);
   }
 
@@ -547,51 +592,51 @@ public class LambdaMetafactory {
     MethodHandle methodImplementation = (MethodHandle) args[1];
 
     int flags = (Integer) args[3];
-    boolean serializable = (flags & FLAG_SERIALIZABLE) != 0;
+    int argIndex = 4;
 
-    // Marker interfaces are added to a lambda when they're written like this:
-    //
-    //    Runnable r = (Runnable & Serializable) () -> foo()
-    //
-    // The intersection type in the cast here indicates to the compiler what interfaces
-    // the generated lambda class should implement. Because a lambda has (by definition)
-    // one method only, it is meaningless for these interfaces to contain anything, thus
-    // they are only allowed to be empty marker interfaces. In practice the Serializable
-    // interface is handled specially and the use of markers is extremely rare. Adding
-    // support would be easy though.
-    if ((flags & FLAG_MARKERS) != 0)
-      throw new UnsupportedOperationException("Marker interfaces on lambdas are not supported on Avata yet. Sorry.");
-
-    // In some cases there is a mismatch between what the JVM type system supports and
-    // what the Java language supports. In other cases the type of a lambda expression
-    // may not perfectly match the functional interface which represents it. Consider the
-    // following case:
-    //
-    //    interface I { void foo(Integer i, String s1, Strings s2) }
-    //    class Foo { static void m(Number i, Object... rest) {} }
-    //
-    //    I lambda = Foo::m
-    //
-    // This is allowed by the Java language, even though the interface representing the
-    // lambda specifies three specific arguments and the method implementing the lambda
-    // uses varargs and a different type signature. Behind the scenes the compiler generates
-    // a "bridge" method that does the adaptation.
-    //
-    // You can learn more here: http://www.oracle.com/technetwork/java/jvmls2013heid-2013922.pdf
-    // and here: http://cr.openjdk.java.net/~briangoetz/lambda/lambda-translation.html
-    if ((flags & FLAG_BRIDGES) != 0) {
-      int bridgeCount = (Integer) args[4];
-      if (bridgeCount > 0)
-        throw new UnsupportedOperationException("A lambda that requires bridge methods was used, this is not yet supported by Avata. Sorry.");
+    Class[] interfaces;
+    if ((flags & FLAG_MARKERS) != 0) {
+      int markerCount = (Integer) args[argIndex++];
+      interfaces = new Class[markerCount];
+      for (int i = 0; i < markerCount; ++i) {
+        interfaces[i] = (Class) args[argIndex++];
+      }
+    } else {
+      interfaces = emptyInterfaceList;
     }
 
-    // TODO: This is not necessary if the function type interface is already inheriting
-    // from Serializable.
-    Class[] interfaces = new Class[serializable ? 1 : 0];
-    if (serializable)
-      interfaces[0] = java.io.Serializable.class;
+    MethodType[] bridges;
+    if ((flags & FLAG_BRIDGES) != 0) {
+      int bridgeCount = (Integer) args[argIndex++];
+      bridges = new MethodType[bridgeCount];
+      for (int i = 0; i < bridgeCount; ++i) {
+        bridges[i] = (MethodType) args[argIndex++];
+      }
+    } else {
+      bridges = emptyMethodTypeList;
+    }
 
-    byte[] classData = makeLambda(invokedName, invokedType, methodType, methodImplementation, interfaces);
+    if ((flags & FLAG_SERIALIZABLE) != 0) {
+      boolean foundSerializableSupertype
+        = java.io.Serializable.class.isAssignableFrom(invokedType.returnType());
+      for (Class i: interfaces) {
+        foundSerializableSupertype
+          = foundSerializableSupertype
+          || java.io.Serializable.class.isAssignableFrom(i);
+      }
+
+      if (! foundSerializableSupertype) {
+        interfaces = Arrays.copyOf(interfaces, interfaces.length + 1);
+        interfaces[interfaces.length - 1] = java.io.Serializable.class;
+      }
+    }
+
+    byte[] classData = makeLambda(invokedName,
+                                  invokedType,
+                                  methodType,
+                                  methodImplementation,
+                                  interfaces,
+                                  bridges);
     return makeCallSite(invokedType, classData);
   }
 }

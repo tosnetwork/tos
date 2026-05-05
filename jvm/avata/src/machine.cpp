@@ -6076,6 +6076,155 @@ GcJclass* getDeclaringClass(Thread* t, GcClass* c)
   return 0;
 }
 
+static GcMethodType* resolveBootstrapMethodType(Thread* t,
+                                                GcClassLoader* loader,
+                                                GcSingleton* pool,
+                                                unsigned index)
+{
+  return makeMethodType(t,
+                        loader,
+                        cast<GcByteArray>(t, singletonObject(t, pool, index)),
+                        0,
+                        0,
+                        0);
+}
+
+static GcMethodHandle* resolveBootstrapMethodHandle(Thread* t,
+                                                    GcClassLoader* loader,
+                                                    GcSingleton* pool,
+                                                    unsigned index)
+{
+  return cast<GcMethodHandle>(t,
+                              resolve(t,
+                                      loader,
+                                      pool,
+                                      index,
+                                      findMethodInClass,
+                                      GcNoSuchMethodError::Type));
+}
+
+static GcJclass* resolveBootstrapClass(Thread* t,
+                                       GcClassLoader* loader,
+                                       GcSingleton* pool,
+                                       unsigned index)
+{
+  object o = singletonObject(t, pool, index);
+
+  loadMemoryBarrier();
+
+  if (objectClass(t, o) == type(t, GcReference::Type)) {
+    PROTECT(t, loader);
+    PROTECT(t, pool);
+
+    GcReference* reference = cast<GcReference>(t, o);
+    PROTECT(t, reference);
+
+    GcClass* class_ = resolveClass(t, loader, reference->name());
+    PROTECT(t, class_);
+
+    storeStoreMemoryBarrier();
+    pool->setBodyElement(t, index, reinterpret_cast<uintptr_t>(class_));
+
+    return getJClass(t, class_);
+  }
+
+  return getJClass(t, cast<GcClass>(t, o));
+}
+
+static GcInt* resolveBootstrapInt(Thread* t, GcSingleton* pool, unsigned index)
+{
+  return makeInt(t, singletonValue(t, pool, index));
+}
+
+static void resolveAltMetafactoryArguments(Thread* t,
+                                           GcClassLoader* loader,
+                                           GcSingleton* pool,
+                                           GcCharArray* bootstrapArray,
+                                           GcArray* array)
+{
+  PROTECT(t, loader);
+  PROTECT(t, pool);
+  PROTECT(t, bootstrapArray);
+  PROTECT(t, array);
+
+  const unsigned FlagMarkers = 2;
+  const unsigned FlagBridges = 4;
+
+  if (bootstrapArray->length() < 5) {
+    abort(t);
+  }
+
+  GcMethodType* methodType
+      = resolveBootstrapMethodType(t, loader, pool, bootstrapArray->body()[1]);
+  array->setBodyElement(t, 0, methodType);
+
+  GcMethodHandle* methodHandle
+      = resolveBootstrapMethodHandle(t, loader, pool, bootstrapArray->body()[2]);
+  array->setBodyElement(t, 1, methodHandle);
+
+  GcMethodType* instantiatedMethodType
+      = resolveBootstrapMethodType(t, loader, pool, bootstrapArray->body()[3]);
+  array->setBodyElement(t, 2, instantiatedMethodType);
+
+  GcInt* flagsBox = resolveBootstrapInt(t, pool, bootstrapArray->body()[4]);
+  array->setBodyElement(t, 3, flagsBox);
+
+  unsigned flags = singletonValue(t, pool, bootstrapArray->body()[4]);
+  unsigned argument = 4;
+
+  if (flags & FlagMarkers) {
+    if (argument + 1 >= bootstrapArray->length()) {
+      abort(t);
+    }
+
+    unsigned countIndex = bootstrapArray->body()[argument + 1];
+    unsigned markerCount = singletonValue(t, pool, countIndex);
+    GcInt* markerCountBox = resolveBootstrapInt(t, pool, countIndex);
+    array->setBodyElement(t, argument, markerCountBox);
+    ++argument;
+
+    if (argument + markerCount >= bootstrapArray->length()) {
+      abort(t);
+    }
+
+    for (unsigned i = 0; i < markerCount; ++i) {
+      GcJclass* marker
+          = resolveBootstrapClass(
+              t, loader, pool, bootstrapArray->body()[argument + 1]);
+      array->setBodyElement(t, argument, marker);
+      ++argument;
+    }
+  }
+
+  if (flags & FlagBridges) {
+    if (argument + 1 >= bootstrapArray->length()) {
+      abort(t);
+    }
+
+    unsigned countIndex = bootstrapArray->body()[argument + 1];
+    unsigned bridgeCount = singletonValue(t, pool, countIndex);
+    GcInt* bridgeCountBox = resolveBootstrapInt(t, pool, countIndex);
+    array->setBodyElement(t, argument, bridgeCountBox);
+    ++argument;
+
+    if (argument + bridgeCount >= bootstrapArray->length()) {
+      abort(t);
+    }
+
+    for (unsigned i = 0; i < bridgeCount; ++i) {
+      GcMethodType* bridge
+          = resolveBootstrapMethodType(
+              t, loader, pool, bootstrapArray->body()[argument + 1]);
+      array->setBodyElement(t, argument, bridge);
+      ++argument;
+    }
+  }
+
+  if (argument + 1 != bootstrapArray->length()) {
+    abort(t);
+  }
+}
+
 // Called when interpreting invokedynamic. `invocation` points to
 // static data in the bootstrap method table, which in turn points to
 // a bootstrap method and stores additional data to be passed to
@@ -6157,27 +6306,20 @@ GcCallSite* resolveDynamic(Thread* t, GcInvocation* invocation)
   GcArray* argArray = array;
   PROTECT(t, argArray);
 
-  // Check if the bootstrap method's signature matches that of an altMetafactory
-  if (::strcmp(reinterpret_cast<char*>(bootstrap->spec()->body().begin()),
-               "(Ljava/lang/invoke/MethodHandles$Lookup;"
-               "Ljava/lang/String;"
-               "Ljava/lang/invoke/MethodType;"
-               "[Ljava/lang/Object;)"
-               "Ljava/lang/invoke/CallSite;") == 0) {
-    // If so, create a new array to store the varargs in, and hardcode the BSM signature.
+  // Check if the bootstrap method's signature matches that of an altMetafactory.
+  bool altMetafactory
+      = ::strcmp(reinterpret_cast<char*>(bootstrap->spec()->body().begin()),
+                 "(Ljava/lang/invoke/MethodHandles$Lookup;"
+                 "Ljava/lang/String;"
+                 "Ljava/lang/invoke/MethodType;"
+                 "[Ljava/lang/Object;)"
+                 "Ljava/lang/invoke/CallSite;") == 0;
+
+  if (altMetafactory) {
+    // Store the flat varargs expected by java.lang.invoke.LambdaMetafactory.
     array = makeArray(t, bootstrapArray->length() - 1);
-    spec = "(Ljava/lang/invoke/MethodHandles$Lookup;"
-      "Ljava/lang/String;"
-      "Ljava/lang/invoke/MethodType;"
-      "Ljava/lang/invoke/MethodType;"
-      "Ljava/lang/invoke/MethodHandle;"
-      "Ljava/lang/invoke/MethodType;"
-      "I"
-      "I"
-      "[Ljava/lang/Class;"
-      "I"
-      "[Ljava/lang/invoke/MethodType;"
-      ")Ljava/lang/invoke/CallSite;";
+    resolveAltMetafactoryArguments(
+        t, c->loader(), invocation->pool(), bootstrapArray, array);
   } else if (bootstrap->parameterCount() == 2 + bootstrapArray->length()) {
     // We're calling the simpler `metafactory`. 2 + bootstrapArray->length() is the
     // arguments to the bootstrap method (bootstrapArray->length() - 1), plus the 3 static
@@ -6190,86 +6332,88 @@ GcCallSite* resolveDynamic(Thread* t, GcInvocation* invocation)
     abort(t);
   }
 
-  MethodSpecIterator it(t, spec);
+  if (!altMetafactory) {
+    MethodSpecIterator it(t, spec);
 
-  // Skip over the already handled 3 arguments.
-  for (unsigned i = 0; i < argument; ++i)
-    it.next();
+    // Skip over the already handled 3 arguments.
+    for (unsigned i = 0; i < argument; ++i)
+      it.next();
 
-  // If we're calling altMetafactory then we reset the argument
-  // offset, because we are filling the vararg array instead of the
-  // final argument array.
-  if (argArray != array) {
-    argument = 0;
-  }
-
-  // `i` iterates through the bootstrap arguments (the +1 is because we skip
-  // the bootstrap method's name), `it` iterates through the corresponding types
-  // in the method signature
-  unsigned i = 0;
-  while (i + 1 < bootstrapArray->length() && it.hasNext()) {
-    const char* p = it.next();
-
-    switch (*p) {
-    case 'L': {
-      const char* const methodType = "Ljava/lang/invoke/MethodType;";
-      const char* const methodHandle = "Ljava/lang/invoke/MethodHandle;";
-      if (strncmp(p, methodType, strlen(methodType)) == 0) {
-        GcMethodType* type = makeMethodType(
-            t,
-            c->loader(),
-            cast<GcByteArray>(
-                t,
-                singletonObject(
-                    t, invocation->pool(), bootstrapArray->body()[i + 1])),
-            0,
-            0,
-            0);
-
-        array->setBodyElement(t, i + argument, type);
-      } else if (strncmp(p, methodHandle, strlen(methodHandle)) == 0) {
-        GcMethodHandle* handle = cast<GcMethodHandle>(t,
-                                          resolve(t,
-                                                  c->loader(),
-                                                  invocation->pool(),
-                                                  bootstrapArray->body()[i + 1],
-                                                  findMethodInClass,
-                                                  GcNoSuchMethodError::Type));
-
-        array->setBodyElement(t, i + argument, handle);
-      } else {
-        abort(t);
-      }
-    } break;
-
-    case 'I':
-    case 'F': {
-      GcInt* box = makeInt(
-          t,
-          singletonValue(t, invocation->pool(), bootstrapArray->body()[i + 1]));
-
-      array->setBodyElement(t, i + argument, box);
-    } break;
-
-    case 'J':
-    case 'D': {
-      uint64_t v;
-      memcpy(
-          &v,
-          &singletonValue(t, invocation->pool(), bootstrapArray->body()[i + 1]),
-          8);
-
-      GcLong* box = makeLong(t, v);
-
-      array->setBodyElement(t, i + argument, box);
-    } break;
-
-    default:
-      fprintf(stderr, "todo: unsupported bootstrap argument type: %s", p);
-      abort(t);
+    // If we're calling altMetafactory then we reset the argument
+    // offset, because we are filling the vararg array instead of the
+    // final argument array.
+    if (argArray != array) {
+      argument = 0;
     }
 
-    ++i;
+    // `i` iterates through the bootstrap arguments (the +1 is because we skip
+    // the bootstrap method's name), `it` iterates through the corresponding types
+    // in the method signature
+    unsigned i = 0;
+    while (i + 1 < bootstrapArray->length() && it.hasNext()) {
+      const char* p = it.next();
+
+      switch (*p) {
+      case 'L': {
+        const char* const methodType = "Ljava/lang/invoke/MethodType;";
+        const char* const methodHandle = "Ljava/lang/invoke/MethodHandle;";
+        if (strncmp(p, methodType, strlen(methodType)) == 0) {
+          GcMethodType* type = makeMethodType(
+              t,
+              c->loader(),
+              cast<GcByteArray>(
+                  t,
+                  singletonObject(
+                      t, invocation->pool(), bootstrapArray->body()[i + 1])),
+              0,
+              0,
+              0);
+
+          array->setBodyElement(t, i + argument, type);
+        } else if (strncmp(p, methodHandle, strlen(methodHandle)) == 0) {
+          GcMethodHandle* handle = cast<GcMethodHandle>(t,
+                                            resolve(t,
+                                                    c->loader(),
+                                                    invocation->pool(),
+                                                    bootstrapArray->body()[i + 1],
+                                                    findMethodInClass,
+                                                    GcNoSuchMethodError::Type));
+
+          array->setBodyElement(t, i + argument, handle);
+        } else {
+          abort(t);
+        }
+      } break;
+
+      case 'I':
+      case 'F': {
+        GcInt* box = makeInt(
+            t,
+            singletonValue(t, invocation->pool(), bootstrapArray->body()[i + 1]));
+
+        array->setBodyElement(t, i + argument, box);
+      } break;
+
+      case 'J':
+      case 'D': {
+        uint64_t v;
+        memcpy(
+            &v,
+            &singletonValue(t, invocation->pool(), bootstrapArray->body()[i + 1]),
+            8);
+
+        GcLong* box = makeLong(t, v);
+
+        array->setBodyElement(t, i + argument, box);
+      } break;
+
+      default:
+        fprintf(stderr, "todo: unsupported bootstrap argument type: %s", p);
+        abort(t);
+      }
+
+      ++i;
+    }
   }
 
   GcMethodHandle* handle
