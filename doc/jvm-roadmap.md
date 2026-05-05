@@ -24,80 +24,125 @@ A JVM workchain would add a third paradigm: general-purpose contract logic in a
 strongly-typed, garbage-collected language with a mature toolchain, without
 requiring developers to learn a novel language.
 
-The target audience is Java/Kotlin/Scala developers who want to deploy business
-logic that is too complex for Solidity but does not require ZK primitives. The
-workchain is not a general-purpose JVM for arbitrary Java programs. It is a
-restricted, deterministic subset of Java 8 class-file execution suitable for
-on-chain state transition functions.
+The target audience is Java developers, and eventually Kotlin/Scala developers
+whose compilers can emit Java 8 compatible class files against the TOS runtime
+classpath. The v1 toolchain is Java-first; Kotlin/Scala support depends on
+whether their runtime dependencies can be mapped onto the deterministic TOS
+runtime library.
 
-## Engine Selection: Avian
+The workchain is not a general-purpose JVM for arbitrary Java programs. It is a
+deterministic Java 8 class-file execution environment suitable for on-chain
+state transition functions. Opcode and class-file compatibility follows the
+Java 8 JVMS/OpenJDK model; the restriction is on non-deterministic runtime APIs
+and persistence, not on inventing a non-Java bytecode dialect.
+
+## Engine Selection: Avata
 
 The C++ JVM landscape has very few embeddable candidates. A survey as of May
-2026 found no actively-maintained C++ JVM designed for embedding. The relevant
-options are:
+2026 found no actively-maintained C++ JVM designed for deterministic embedding
+inside a consensus engine. The relevant options are:
 
-| Project | Language | Embeddable | Java 8 | Last active |
+| Project | Language | Embeddable | Java 8 profile | Blocking issue |
 |---|---|---|---|---|
-| Avian (ReadyTalk) | C++ | Yes, by design | Partial (no invokedynamic) | 2019 |
-| KiVM | C++ | No (CLI only) | Yes | 2022 |
-| JamVM | C | Partial | Yes (needs OpenJDK classpath) | 2015 |
-| JLLVM | C++ | No | Yes | 2025 (LLVM JIT only) |
-| JDK Zero | C++ | No (requires full OpenJDK) | Yes | Active |
+| Avata (ReadyTalk source import) | C++ | Yes, by design | Partial / audit required | Retired upstream; must fork, rename, and own |
+| KiVM | C++ | No (CLI-oriented) | Audit required | Not designed as a consensus library |
+| JamVM | C | Partial | Depends on classpath choice | Needs external class library integration |
+| JLLVM-style approaches | C++ / LLVM | No for v1 | JIT-oriented | JIT/AOT pipeline is too large for v1 determinism |
+| JDK Zero | C++ in OpenJDK tree | No | Full Java depends on OpenJDK | Requires full OpenJDK distribution/runtime surface |
 
-**Avian is the starting point.** It is the only option explicitly designed for
-embedding as a library. Its maintenance status (inactive since 2019) is a concern
-for a general-purpose JVM but not for this use case: Java 8 class-file bytecodes
-are specified by the JVM Specification (JVMS, a stable JCP-governed document)
-and have not changed for the bytecode set targeted here. The set of bytecodes
-this workchain must execute does not evolve with OpenJDK releases.
+**Avata is the starting point.** It is the only option explicitly designed for
+embedding as a library. Its maintenance status is a concern for a
+general-purpose JVM: upstream declares the project inactive, and the latest
+commits are old security fixes rather than active development. For this use case
+that risk is manageable only if the fork is treated as consensus code and is
+completed to the Java 8 opcode compatibility target. Java 8 class-file bytecodes
+are specified by the JVM Specification (JVMS, a stable JCP-governed document),
+but that does not make Avata itself consensus-safe. The fork must prove that the
+bytecode interpreter, verifier, class-loader, allocation, exception,
+`invokedynamic`, and floating-point paths used by contracts are deterministic.
 
-Avian will be **forked** and owned by this repository. The fork is not a tracking
-clone; it is a permanent maintenance commitment to the stripped subset of Avian
-needed for consensus execution. No attempt will be made to track upstream Avian
-or upstream OpenJDK class library changes. The fork will be maintained to the
-same standard as `evm/` and `uno/`.
+Avata will be **forked** and owned by this repository. The fork is not a tracking
+clone; it is a permanent maintenance commitment to the Java 8 execution profile
+needed for consensus execution. No attempt will be made to track the retired
+upstream automatically. OpenJDK class-library inputs are vendored/pinned explicitly as
+part of the TOS runtime library and audited like consensus code. The fork will
+be maintained to the same standard as `evm/` and `uno/`.
 
-The fork lives at `jvm/vendor/avian/` with a pinned commit hash recorded in
-`jvm/vendor/avian/PINNED_COMMIT`. Any change to Avian internals must be made
+The fork lives at `jvm/avata/` with a pinned commit hash recorded in
+`jvm/avata/PINNED_COMMIT`. Any change to Avata internals must be made
 inside this repository; no patch file workflow.
 
-## Java 8 Subset
+Phase 0 must also record the Avata license text and third-party notices in the
+repository's normal audit path before the fork is vendored.
 
-This workchain does not attempt to run arbitrary Java 8 programs. The supported
-subset is:
+## Java 8 Compatibility Profile
 
-**Supported:**
-- All numeric and reference bytecodes except `invokedynamic`
-- Static and virtual method dispatch (`invokestatic`, `invokevirtual`,
-  `invokeinterface`, `invokespecial`)
+This workchain does not attempt to run arbitrary host-side Java programs, but it
+does commit to Java 8 class-file and opcode compatibility. A class file produced
+by a standard Java 8 toolchain must remain a normal JVM class file; TOS does not
+define a new bytecode dialect.
+
+**Supported compatibility surface:**
+- Class-file major version 52 (`Java SE 8`) using JVMS-compatible parsing,
+  verification, linking, and exception semantics
+- All Java 8 bytecode opcodes, including `invokedynamic`, floating-point
+  opcodes, `monitorenter`, and `monitorexit`. Floating-point opcodes execute
+  through the TOS deterministic fixed floating-point engine, not host CPU
+  floating-point instructions.
+- Constant-pool structures required by Java 8, including
+  `CONSTANT_InvokeDynamic`, `MethodHandle`, `MethodType`, and
+  `BootstrapMethods`
+- Static, virtual, interface, special, and dynamic method dispatch
 - Generics (compiler-erased; JVM-transparent)
-- Annotations (retained at runtime for contract metadata only)
+- Annotations parsed by the validator for contract metadata; runtime annotation
+  reflection is available only if the deterministic runtime profile admits it
 - Single-dimensional and multi-dimensional arrays of primitives and references
 - Object inheritance and interfaces
 - Exception handling (`athrow`, `try/catch/finally`)
-- `synchronized` blocks are accepted syntactically but forbidden in contract
-  classes: the JVM will throw `ContractViolationError` at runtime if
-  `monitorenter` / `monitorexit` is executed
+- Class initialization (`<clinit>`) with deterministic execution rules; Phase 0
+  must define when initializers run during deploy and per-transaction restore
 
-**Explicitly not supported:**
-- `invokedynamic` (covers all lambda expressions, method references, and
-  `java.util.stream`); descriptors invoking this bytecode are rejected at class
-  load time
-- `java.lang.Thread` and any multi-threading API
-- Any `java.io`, `java.net`, `java.nio`, or `java.sql` class
-- Reflection (`java.lang.reflect`, `Class.forName`, `ClassLoader`)
-- Native methods (`native` keyword); no JNI surface exposed to contract classes
-- `System.currentTimeMillis()`, `Math.random()`, `UUID.randomUUID()`, or any
-  other non-deterministic stdlib entry point
+The runtime class library is a TOS-pinned `rt.jar` derived from OpenJDK classes
+and extended with TOS APIs. Language-level classes remain under `java.lang`
+(`Object`, `String`, `Math`, `System`, errors, and related helpers). TOS domain
+APIs that are not language primitives live under `tos.*`, such as
+`tos.storage.*`, `tos.contract.*`, and `tos.emit.*`.
 
-The contract stdlib (see Phase 3) is a purpose-built replacement for
-`java.lang.*` basics: `Object`, `String` (immutable, value-type semantics),
-`Math` (deterministic operations only), `System` (block context read-only API),
-and a small collection of persistent data structure types.
+**Consensus runtime restrictions:**
+- `java.lang.Thread`, monitor wait/notify, executors, and other multi-threading
+  APIs must be unavailable or throw deterministic `ContractViolationError`.
+  The opcodes `monitorenter` / `monitorexit` still execute with deterministic
+  single-thread monitor semantics for Java compatibility.
+- Host IO, networking, filesystem, processes, native libraries, and database
+  APIs (`java.io`, `java.net`, `java.nio` where host-backed, `java.sql`,
+  `java.lang.Process`, JNI/native methods) must not access validator-local
+  resources. The class library may include OpenJDK-derived class shapes, but
+  consensus execution must reject or deterministically trap calls that would
+  observe the host.
+- Non-deterministic entry points such as wall-clock time, entropy,
+  `Math.random()`, UUID generation, environment variables, and system
+  properties are replaced by deterministic TOS-defined APIs or rejected.
+- Floating-point execution is strictfp-equivalent for all contract code,
+  regardless of the source method's `strictfp` modifier. The TOS fixed
+  floating-point engine pins rounding, NaN canonicalization, signed-zero,
+  infinity, overflow, underflow, and subnormal handling so Linux/macOS/Windows
+  and different CPU architectures produce identical bits.
+- Reflection and class loading are allowed only to the extent Phase 0 can pin a
+  deterministic, contract-local behavior. Arbitrary `ClassLoader` access to
+  validator-local code is forbidden.
+- Finalizers, cleaners, weak/soft/phantom references, and object-address-derived
+  identity behavior are unavailable unless a deterministic implementation is
+  specified.
 
-A contract class that references any forbidden class or bytecode is rejected at
-class-load time with an error that names the specific offending reference. The
-rejection is deterministic and consensus-safe.
+A contract class that violates the deterministic runtime profile is rejected or
+traps with an error that names the specific offending reference. The rejection
+or trap is deterministic and consensus-safe.
+
+The validator must run a real class-file verifier for the supported profile,
+including constant-pool validation, StackMapTable/type checks, access checks,
+method descriptor checks, static field shape checks, and the forbidden-reference
+rules above. Admission checks in RPC or tooling are convenience only; consensus
+compute re-validates the exact class bytes it executes.
 
 ## Design Constraints
 
@@ -105,13 +150,18 @@ rejection is deterministic and consensus-safe.
 
 Every validator running the same block must produce identical compute output.
 This rules out:
-- JIT compilation with optimizer-visible non-determinism (Avian's JIT is
+- JIT compilation with optimizer-visible non-determinism (Avata's JIT is
   disabled in this fork; the interpreter path is used exclusively)
 - Any system call that returns non-deterministic values (time, entropy, pid)
-- Avian's threading primitives; the fork runs single-threaded
-- GC-compacting that would reorder object addresses visible to contract code
-  (the fork's GC must be configured to preserve address ordering or use a
-  non-compacting collector for the contract heap region)
+- Avata's threading primitives; the fork runs single-threaded
+- Any object-address leakage to contract code. Default `Object.hashCode`,
+  `System.identityHashCode`, `toString` identity suffixes, and any native object
+  pointer exposure must either be absent or derived from deterministic
+  per-transaction object ids. A compacting GC is acceptable only if object
+  addresses are never observable and serialization is canonical.
+- Host-dependent floating-point behavior. v1 supports Java 8 floating opcodes,
+  but they must run through the TOS fixed floating-point implementation with
+  pinned strictfp-equivalent semantics, not host-dependent x87/SSE/ARM behavior.
 
 ### State is cell-native
 
@@ -132,25 +182,33 @@ process-local cache would break this invariant.
 JVM v1 follows the same account execution policy as EVM v1 and Uno v1:
 `SingletonExecutor(0x0000...0001)`. All messages targeting `wc=3` are routed
 through the executor account. Per-contract state is stored as sub-cells of the
-executor account's data cell, keyed by a contract address or class hash. This
-is not the long-term account model but it is the correct v1 starting point:
-it matches the existing host-side policy machinery and avoids designing a new
-account topology before the serialization model is proven.
+executor account's data cell, keyed by a `contract_id`. The deployed class bytes
+are stored separately by `class_hash`; each `contract_id` points to the
+`class_hash` it executes plus its own static state. This allows multiple
+deployments of the same class to have distinct state.
+
+This is not the long-term account model but it is the correct v1 starting
+point: it matches the existing host-side policy machinery and avoids designing
+a new account topology before the serialization model is proven.
 
 A future JVM v2 may adopt an account-native model where each Java contract is a
 distinct TOS account on `wc=3`. That is a separate workchain design, not a
 cleanup of v1. The v1 executor account address `0x0000...0001` and activation
 code marker (`0x4a` = `'J'`) are frozen as part of the JVM v1 descriptor.
 
-### No invokedynamic
+### OpenJDK opcode compatibility
 
-Avian does not implement `invokedynamic`. This workchain inherits that
-constraint deliberately: supporting `invokedynamic` would require a correct
-implementation of `java.lang.invoke.MethodHandle` and `CallSite` chaining,
-which is a significant JVM subsystem. The tradeoff is that lambda expressions
-and method references in contract source code are compile errors. Developers
-must use anonymous inner classes instead. This is a deliberate restriction, not
-a deficiency to be patched later without a full design review.
+The JVM workchain commits to Java 8 opcode compatibility, including
+`invokedynamic`. Avata's historical support is not sufficient by itself:
+Phase 1 must complete or replace the `java.lang.invoke`, `MethodHandle`,
+bootstrap-method, `CallSite`, and generated-lambda paths needed for standard
+Java 8 bytecode. This is a major consensus-safety item, not an optional
+post-v1 feature.
+
+The compatibility promise is bytecode-level, not a promise to expose host
+capabilities. Bytecode that calls OpenJDK APIs with non-deterministic or
+host-observing behavior must still trap deterministically under the TOS runtime
+profile.
 
 ### Activation requires a capability gate
 
@@ -172,9 +230,15 @@ post-genesis governance activation.
 | Engine ConfigParam | ConfigParam 85 (JVM v1 chain parameters) |
 
 The `(format, selector)` key `{Basic, 0x4a564d31}` identifies this engine in
-the registry. As with EVM and Uno, `vm_mode = 0` is a legacy sentinel and must
-be treated as an invalid production descriptor. Production descriptors are built
-by `jvm_workchain::build_jvm_workchain_descr()`.
+the registry. `vm_mode = 0` is valid for JVM v1, matching Uno's reserved-mode
+pattern. JVM chain identity and gas/class limits live in ConfigParam 85, not in
+`vm_mode`. A future JVM v2 that changes descriptor semantics must use either a
+new selector or a documented migration boundary; it must not silently reinterpret
+the v1 descriptor.
+
+Production descriptors are built by `jvm_workchain::build_jvm_workchain_descr()`.
+The builder must also add ConfigParam 85 to the config dictionary and update
+`doc/ConfigParam.md` when the slot is reserved.
 
 ## Architecture Overview
 
@@ -192,12 +256,14 @@ JvmNativeEngine::run_compute(input, context)
     ├─ Deserialize input.current_data (cell) → JvmHeap
     │      └─ JvmCellCodec::decode_heap()
     │
-    ├─ Load contract class from JvmHeap.class_store
-    │
     ├─ Decode input.inbound_body → JvmCallDescriptor
-    │      (method name, argument encoding, value transfer)
+    │      (contract_id, method_id, argument encoding, value transfer)
     │
-    ├─ Avian interpreter: execute entry method
+    ├─ Resolve contract_id → class_hash + static state
+    │
+    ├─ Load contract class from JvmHeap.class_store[class_hash]
+    │
+    ├─ Avata interpreter: execute entry method
     │      single-threaded, gas-metered, no JIT
     │
     ├─ Serialize post-execution JvmHeap → new_data (cell)
@@ -208,9 +274,11 @@ JvmNativeEngine::run_compute(input, context)
 ```
 
 Side effects (event logs emitted by contracts) are staged in
-`WorkchainComputeOutput::side_effects` and applied post-block-accept through
-`WorkchainRuntimeServices::apply_post_accept_side_effects`. They are not
-consensus state.
+`WorkchainComputeOutput::side_effects` and applied only after block acceptance.
+The preferred target hook is
+`WorkchainRuntimeServices::apply_post_accept_side_effects`; if that hook has
+not landed, JVM should mirror the EVM post-accept stash/replay pattern. Side
+effects are not consensus state.
 
 ## Phase Breakdown and Effort Estimates
 
@@ -231,58 +299,91 @@ format and the message ABI at the TL-B / binary level.
 - This document updated with any design changes discovered during review
 - Registry integration tests for a stub JVM engine (registers, resolves,
   respects required-workchain preflight; no actual bytecode execution)
-- TL-B schema for `JvmHeap` cell layout and `JvmCallDescriptor` message body
+- TL-B schema for `JvmExecutorState` cell layout and `JvmCallDescriptor`
+  message body
+- ConfigParam 85 schema, slot reservation note in `doc/ConfigParam.md`, and
+  governance activation checklist for adding it to mandatory/critical params if
+  the implementation chooses to require presence for active `wc=3`
+- Class-file verifier profile: exact supported class-file version, forbidden
+  class-library references, OpenJDK opcode/class-file compatibility cases,
+  deterministic runtime traps, static field rules, and duplicate ABI method-id
+  handling
+- OpenJDK-derived runtime library plan: pinned source revision, license/notice
+  handling, package list, TOS extensions, and deterministic replacements for
+  host-observing APIs
+- Persisted value profile: exact allowed static field types and
+  `PersistentMap` / `PersistentList` key-value encodings. Arbitrary Java object
+  graphs are not persisted in v1.
+- Node capability plan: add a JVM bit next to
+  `kTosNodeCapabilityWorkchainEvm` / `kTosNodeCapabilityWorkchainUno`, and
+  require `validate_required_workchains` coverage before activation
 
 **Effort:** 1–2 weeks
 
 ---
 
-### Phase 1 — Avian fork and determinism hardening
+### Phase 1 — Avata fork and determinism hardening
 
-**Goal:** Produce a stripped, deterministic, embeddable build of Avian suitable
+**Goal:** Produce a stripped, deterministic, embeddable build of Avata suitable
 for consensus execution. No TOS integration yet; tested standalone.
 
 **Work items:**
 
-- Fork `ReadyTalk/avian` into `jvm/vendor/avian/` at a pinned commit
-- Remove or disable Avian's JIT compiler (`avian/src/compile*.cpp`); force
-  interpreter-only execution path (`avian/src/interpret.cpp`)
-- Remove Avian's threading primitives; `monitorenter`/`monitorexit` must
-  throw `ContractViolationError` at runtime
+- Import the pinned ReadyTalk source snapshot into `jvm/avata/`
+- Add Avata license/notice material to the repository's third-party audit files
+- Remove or disable Avata's JIT compiler (`avata/src/compile*.cpp`); force
+  interpreter-only execution path (`avata/src/interpret.cpp`)
+- Remove Avata's host threading primitives. `monitorenter`/`monitorexit` remain
+  supported opcodes, but execute with deterministic single-thread monitor
+  semantics; `wait`/`notify`/`Thread` APIs trap deterministically.
 - Audit and remove or stub all `syscall` / `time` / `rand` / `getpid` paths
-  in Avian's platform layer
-- Validate GC behavior: determine whether Avian's semi-space collector
-  produces deterministic address assignment for identical allocation sequences;
-  if not, replace with a non-compacting mark-sweep for the contract heap region
-- Add class-load-time rejection of `invokedynamic` instructions
-- Add class-load-time rejection of references to forbidden packages
-  (`java.io`, `java.net`, `java.lang.Thread`, `java.lang.reflect`, etc.)
-- Wire a per-transaction gas counter into Avian's interpreter dispatch loop;
+  in Avata's platform layer
+- Validate GC behavior: determine whether Avata's semi-space collector
+  can run without exposing addresses or preserving process-local state between
+  transactions; if not, replace it with a bounded per-transaction arena or a
+  non-compacting collector for the contract heap region
+- Complete Java 8 opcode support in the interpreter, including
+  `invokedynamic`, `java.lang.invoke` linkage, floating-point opcodes, and
+  monitor opcodes
+- Add the TOS fixed floating-point engine for Java `float`/`double` opcodes:
+  strictfp-equivalent binary32/binary64 arithmetic with pinned rounding,
+  NaN/signed-zero/infinity/subnormal behavior, plus conformance tests for all
+  supported platforms
+- Add class-load-time validation for unsupported class-file versions and
+  deterministic runtime traps for forbidden host-observing packages/classes
+  (`java.io`, `java.net`, `java.lang.Thread`, `java.lang.reflect` where not
+  admitted by Phase 0, etc.)
+- Make `Object.hashCode`, `System.identityHashCode`, object `toString`, and
+  exception stack traces deterministic or unavailable
+- Wire a per-transaction gas counter into Avata's interpreter dispatch loop;
   `OutOfGasError` must be thrown deterministically when the counter reaches zero
-- Build system: integrate Avian as a static library via CMake;
-  `jvm/vendor/avian/CMakeLists.txt` exports a single `avian_interpreter` target
+- Build system: integrate Avata as a static library via CMake;
+  `jvm/avata/CMakeLists.txt` exports a single `avata_interpreter` target
 
 **Determinism test harness:**
 Run the same bytecode twice in the same process with freshly initialized heaps
 and assert byte-identical output state. Run with `valgrind --tool=memcheck` to
 eliminate undefined behavior that could cause inter-validator divergence.
 
-**Effort:** 4–8 weeks
+**Effort:** 8–14 weeks
 
-**Key risk:** GC non-determinism. If Avian's collector cannot be made
-deterministic without significant surgery, evaluate replacing it with a simpler
-arena allocator that is reset per transaction. A per-transaction arena (no GC
-at all) is safe if gas limits are low enough that no single transaction can
-exhaust a pre-allocated arena; this simplifies determinism at the cost of
-disabling long-lived in-contract allocation patterns.
+**Key risk:** Avata VM surface area. GC behavior, class loading, exceptions,
+JNI/native stubs, and object identity must all be reduced to deterministic
+consensus-safe behavior. If Avata's collector cannot be made deterministic
+without significant surgery, evaluate replacing it with a simpler arena
+allocator that is reset per transaction. A per-transaction arena (no GC at all)
+is safe if gas limits are low enough that no single transaction can exhaust a
+pre-allocated arena; this simplifies determinism at the cost of limiting
+allocation-heavy contracts.
 
 ---
 
 ### Phase 2 — Framework integration
 
-**Goal:** Wire the stripped Avian build into the TOS workchain execution
+**Goal:** Wire the stripped Avata build into the TOS workchain execution
 registry. No real contract execution yet; the `run_compute` stub returns a
-placeholder result.
+placeholder result for tests only. A production binary must fail closed if
+`wc=3` is active before real compute is implemented.
 
 **Work items:**
 
@@ -293,19 +394,28 @@ placeholder result.
   - `validate_and_resolve_config()` reads and validates ConfigParam 85
   - `account_policy()` returns `SingletonExecutor(0x0000...0001)` with
     activation code `0x4a`
-  - `run_compute()` stub: deserialize nothing, execute nothing, return
-    `completed=false, skip_reason=WORKCHAIN_NOT_READY`
+  - `run_compute()` test stub: deserialize nothing, execute nothing, return a
+    deterministic not-ready result; production startup must refuse active JVM
+    descriptors until Phase 4+ real compute is wired
 - `jvm/core/config-param.h` / `.cpp`:
   - `build_jvm_workchain_descr()` (ConfigParam 12 descriptor)
   - `build_jvm_config_cell()` / `parse_jvm_config_cell()` (ConfigParam 85)
-  - ConfigParam 85 fields: `chain_id`, `gas_price`, `max_gas_per_tx`,
-    `max_class_bytes`, `max_heap_cells`, `contract_stdlib_hash`
+  - ConfigParam 85 fields: `chain_id`, `schema_version`, `gas_price`,
+    `max_gas_per_tx`, `max_class_bytes`, `max_total_class_bytes`,
+    `max_heap_bytes`, `max_static_fields`, `class_file_major = 52`,
+    `gas_schedule_version`, and `stdlib_hash`
 - `jvm/core/zerostate.h` / `.cpp`:
   - `build_jvm_zerostate_accounts_cell()`: creates singleton executor account
-    with empty `JvmHeap` data cell and activation code marker `0x4a`
+    with empty `JvmExecutorState` data cell and activation code marker `0x4a`
 - `jvm/core/init.h` / `.cpp`:
-  - `init_jvm_workchain(db_root)`: initializes Avian library state, reads
-    ConfigParam 85, calls `register_jvm_workchain_engine(registry)`
+  - `init_jvm_workchain(db_root)`: initializes non-consensus Avata process
+    resources and calls `register_jvm_workchain_engine(registry)`. Consensus
+    ConfigParam 85 parsing happens only inside `validate_and_resolve_config()`
+    against the block-transition config snapshot.
+- `crypto/block/workchain-execution-dispatch.h` / `.cpp`:
+  - Add `jvm_workchain_engine_key()`, `workchain_engine_key_is_jvm()`, and a
+    `kTosNodeCapabilityWorkchainJvm` capability bit
+  - Include the JVM bit in `workchain_execution_capability_flags()`
 - `validator-engine/validator-engine.cpp`:
   - One added line: `jvm_workchain::init_jvm_workchain(db_root_)`
 
@@ -315,44 +425,63 @@ placeholder result.
 
 ### Phase 3 — Contract standard library
 
-**Goal:** Provide the minimal class library that contract classes may import.
-This is not `java.lang.*` from OpenJDK. It is a purpose-built set of classes
-compiled as `.class` files and bundled into the executor account's zerostate.
+**Goal:** Provide the deterministic `rt.jar` that contract classes compile and
+link against. This runtime is based on pinned OpenJDK Java 8 class-library
+sources and extended with TOS-specific APIs. It is bundled into the executor
+account's zerostate by content hash.
 
 **Classes required:**
-- `tos.jvm.lang.Object` — root class; replaces `java.lang.Object`
-- `tos.jvm.lang.String` — immutable UTF-8 value type; no interning
-- `tos.jvm.lang.Math` — deterministic arithmetic (no `random`, no
-  `log`/`sin`/`cos` unless bit-exact IEEE 754 is proven per JLS §15.4)
-- `tos.jvm.lang.System` — read-only block context: `blockNumber()`,
+- `java.lang.Object` — minimal JVM root class required by class-file semantics;
+  no finalization and no address-derived hash code
+- `java.lang.Class` — opaque class token only; no class loading or reflective
+  member access
+- `java.lang.String` — deterministic immutable string/value type; string
+  literal conversion rules and interning behavior must be pinned in Phase 0
+- `java.lang.CharSequence` and small interfaces needed by `String`
+- `java.lang.Throwable`, `java.lang.Error`, `java.lang.RuntimeException`, and
+  the narrow exception types emitted by the verifier/runtime
+- `java.lang.Math` / `java.lang.StrictMath` — OpenJDK-compatible method surface
+  backed by the same TOS fixed floating-point engine; transcendental methods
+  require pinned bit-exact algorithms before they are admitted in consensus
+- `java.lang.System` — no time, environment, properties, or IO streams; exposes
+  only deterministic chain APIs: `blockNumber()`,
   `blockTimestamp()`, `randSeed()` (from `context.rand_seed`),
-  `callerAddress()`, `value()`
-- `tos.jvm.lang.Error`, `tos.jvm.lang.OutOfGasError`,
-  `tos.jvm.lang.ContractViolationError`
-- `tos.jvm.contract.ContractEntry` — annotation type; marks a `public static`
+  `callerAddress()`, `value()`, and `sendMessage(destAddr, value, body)`
+- `java.lang.OutOfGasError` and `java.lang.ContractViolationError`, both
+  subclasses of `java.lang.Error`
+- `tos.contract.ContractEntry` — annotation type; marks a `public static`
   method as callable from an inbound message (referenced by Phase 6 ABI)
-- `tos.jvm.storage.PersistentMap<K,V>` — ordered key-value map backed by the
+- `tos.storage.PersistentMap<K,V>` — ordered key-value map backed by the
   cell tree; the primary persistent data structure for contracts
-- `tos.jvm.storage.PersistentList<T>` — append-only list backed by the cell tree
-- `tos.jvm.emit.EventLog` — emit a log entry staged in side effects
+- `tos.storage.PersistentList<T>` — append-only list backed by the cell tree
+- `tos.emit.EventLog` — emit a log entry staged in side effects
 
-Classes from `java.lang.*` in OpenJDK are **not** available. Any contract class
-that references `java.lang.Object` directly will fail class loading; it must
-reference `tos.jvm.lang.Object`. This is enforced by the class-load-time
-forbidden-package filter installed in Phase 1.
+The list above is the minimum class surface that must be audited explicitly; it
+is not the entire runtime library. Phase 3 must decide which OpenJDK packages
+are included in `rt.jar`, which methods are deterministic and callable, and
+which methods are present only as linkage-compatible traps.
 
-Contracts are compiled with a custom `javac` bootstrap classpath pointing only
-at the `tos.jvm.*` classes. This is toolchain work outside the consensus path
-and may be delivered separately from the validator binary.
+OpenJDK class shapes are the baseline, but not every OpenJDK behavior is
+admitted in consensus. Host-observing methods are replaced, stubbed, or trapped
+deterministically. Because this workchain ships its own pinned `rt.jar`, TOS can
+extend `java.lang.System` with chain context methods while still preserving
+normal Java class-file compatibility.
 
-**Effort:** 3–5 weeks
+Contracts are compiled with a custom Java 8 boot classpath containing the
+whitelisted `java.lang` runtime classes and `tos.*` APIs. The build tool must
+force class-file major version 52 and then run the same verifier/admission
+checks as the validator. This toolchain work is outside the consensus path and
+may be delivered separately from the validator binary, but consensus never
+trusts it.
+
+**Effort:** 8–12 weeks
 
 ---
 
 ### Phase 4 — Heap serialization
 
 **Goal:** Implement `JvmCellCodec`: bidirectional translation between a live
-Avian heap and a TOS cell tree. This is the largest single engineering task in
+Avata heap and a TOS cell tree. This is the largest single engineering task in
 the entire workchain.
 
 The problem: a JVM heap is an object graph (directed, potentially cyclic if
@@ -367,56 +496,86 @@ cell codec must define a canonical serialization of the contract heap that is:
 
 **Recommended approach for v1:** restrict the heap surface that is serialized.
 Rather than attempting a general object-graph serializer, require that all
-persistent contract state flow through `tos.jvm.storage.PersistentMap` and
-`tos.jvm.storage.PersistentList`. These types are implemented as thin Java
+persistent contract state flow through `tos.storage.PersistentMap` and
+`tos.storage.PersistentList`. These types are implemented as thin Java
 wrappers over cell-tree operations in native C++ (similar to how Uno's state
 types are thin wrappers over nullifier and commitment tree operations). The
 contract heap between calls is then reduced to:
-- the values of all static fields of the contract class that are of a
-  `Persistent*` type (the roots of the persistent state)
+- the values of all allowed static fields for the target `contract_id`
 - primitive static fields (int, long, boolean, etc.)
+- cell roots for `Persistent*` static fields
 - no heap-allocated mutable objects survive across transaction boundaries
+
+Allowed persisted values must be a closed set: primitive integers/booleans,
+fixed-size byte arrays or addresses, deterministic strings if admitted by
+Phase 0, and cell-backed `Persistent*` roots. Ordinary object references,
+arrays of references, and mutable heap objects are transient only.
 
 This eliminates the general object-graph serialization problem at the cost of
 restricting contracts to a structured state model. It is the correct v1
 tradeoff; unrestricted cross-transaction heap persistence can be addressed in
 v2 with a full object-graph serializer once the execution model is proven.
 
+Contract classes may not use arbitrary executable `<clinit>` logic. Deployment
+creates the initial `JvmContractState` from the deploy message and constant
+static field defaults; subsequent transactions restore static fields from the
+cell state before invoking the entry method. This prevents class loading from
+resetting persisted state every transaction.
+
+Static fields are scoped to `contract_id`, not to `class_hash`. The runtime must
+therefore use an isolated class-loader/runtime context per contract invocation,
+or an equivalent mechanism, so two deployments of the same class never share
+mutable static fields.
+
 **Work items:**
 
 - `jvm/core/cell-codec.h` / `.cpp`:
   - `JvmCellCodec::encode_heap(JvmHeap&) → td::Ref<vm::Cell>`
   - `JvmCellCodec::decode_heap(td::Ref<vm::Cell>) → JvmHeap`
-  - Encode: walk static fields of contract class; for `Persistent*` fields,
-    flush the underlying cell-tree root; for primitive fields, pack into a
-    flat cell
+  - Encode: walk static fields of the invoked contract instance; for
+    `Persistent*` fields, flush the underlying cell-tree root; for primitive
+    fields, pack into a canonical field cell
   - Decode: reconstruct `Persistent*` wrappers from stored cell roots; restore
-    primitive static fields; re-initialize the contract class loader with the
-    decoded state
+    primitive static fields; initialize the contract class loader without
+    running arbitrary user `<clinit>` code
 - `jvm/core/persistent-map.cpp` / `persistent-list.cpp`:
-  - Native C++ implementations of `tos.jvm.storage.Persistent*` that operate
+  - Native C++ implementations of `tos.storage.Persistent*` that operate
     directly on `vm::Cell` trees (no intermediate Java heap objects for stored
     data)
-- TL-B schema for `JvmHeap` cell (defined in Phase 0; implemented here).
+- TL-B schema for `JvmExecutorState` cell (defined in Phase 0; implemented
+  here).
   A magic tag is required, following the pattern of `UnoConfig` (`#26554E4F`):
   ```
   // magic = 0x4a564d31 ("JVM1")
-  jvm_heap#4a564d31 class_store_hash:bits256
-                    static_fields:(HashmapE 16 ^StaticFieldCell)
-                    = JvmHeap;
+  jvm_executor_state#4a564d31
+      schema_version:uint8
+      class_store:(HashmapE 256 ^JvmClassCell)
+      contracts:(HashmapE 256 ^JvmContractState)
+      = JvmExecutorState;
+
+  jvm_class_cell#_ class_hash:bits256
+                    class_bytes:^Cell
+                    verifier_profile_hash:bits256
+                    = JvmClassCell;
+
+  jvm_contract_state#_ class_hash:bits256
+                       static_fields:(HashmapE 16 ^StaticFieldCell)
+                       = JvmContractState;
   ```
-  The static field map uses a 16-bit key (field index within the contract class,
-  matching the `fields_count` limit in the class file format). A content-hash
-  key (256-bit) would be robust to field reordering but is unnecessary for v1
-  where class upgrades deploy a new class hash; the simpler index key is
-  preferred. This choice must be pinned in Phase 0 and frozen thereafter.
+  The `contracts` map key is `contract_id`. The `class_store` map key is
+  `class_hash`. The static field map uses a 16-bit key (field index within the
+  contract class, matching the `fields_count` limit in the class file format).
+  A content-hash key (256-bit) would be robust to field reordering but is
+  unnecessary for v1 where class upgrades deploy a new class hash; the simpler
+  index key is preferred. This choice must be pinned in Phase 0 and frozen
+  thereafter.
 
 **Effort:** 3–5 months
 
-**Key risk:** Avian's class loader may store per-class metadata in ways that
+**Key risk:** Avata's class loader may store per-class metadata in ways that
 are not easily separable from the heap. A detailed audit of
-`avian/src/machine.cpp` and `avian/src/heap.cpp` is required before estimating
-this phase more precisely. If Avian's class loader state is entangled with the
+`avata/src/machine.cpp` and `avata/src/heap.cpp` is required before estimating
+this phase more precisely. If Avata's class loader state is entangled with the
 object heap in ways that prevent clean per-transaction reset, the fork may need
 significant restructuring.
 
@@ -427,7 +586,7 @@ significant restructuring.
 **Goal:** Map JVM bytecode execution to a gas schedule. Gas is charged
 per-bytecode-instruction, per-cell-operation, and per-heap-allocation.
 
-The gas counter installed in Phase 1 (into Avian's interpreter loop) is
+The gas counter installed in Phase 1 (into Avata's interpreter loop) is
 extended with a full per-opcode gas table.
 
 **Gas schedule design principles:**
@@ -444,7 +603,7 @@ extended with a full per-opcode gas table.
 The gas schedule is stored in ConfigParam 85 as a versioned table so it can be
 adjusted by governance without a binary upgrade.
 
-**Effort:** 3–5 weeks
+**Effort:** 4–6 weeks
 
 ---
 
@@ -456,26 +615,33 @@ carried in `input.inbound_body`, and the encoding for outbound messages
 
 **Inbound call descriptor (`JvmCallDescriptor`):**
 ```
-jvm_call#_  class_hash:bits256
+jvm_call#_  contract_id:bits256
             method_id:uint32        // first 4 bytes of keccak(method_sig)
             args:^ArgsCell
             = JvmCallDescriptor;
 ```
 
-`class_hash` identifies which contract class to invoke. `method_id` selects the
-public static entry method. `ArgsCell` encodes arguments using a compact binary
-encoding derived from the method descriptor signature.
+`contract_id` identifies the deployed contract instance. The executor state maps
+that id to a `class_hash`, and the `class_hash` selects the verified class
+bytes. `method_id` selects the public static entry method. `ArgsCell` encodes
+arguments using a compact binary encoding derived from the method descriptor
+signature.
 
 Only `public static` methods annotated with `@ContractEntry` are callable from
 inbound messages. Other methods may only be called from within the same
 transaction's execution.
 
+Class-load validation must reject duplicate `method_id` values among callable
+entry methods in the same class. The ABI must also define a deploy message:
+class bytes, constructor/initializer arguments, optional deployment salt, and
+the deterministic `contract_id = hash(deployer, class_hash, salt, init_args)`
+derivation.
+
 **Outbound action encoding:**
 Contract code may enqueue outbound messages by calling
-`tos.jvm.lang.System.sendMessage(destAddr, value, body)`. This builds a
-standard TOS action list cell compatible with the host action phase. The
-encoding mirrors the existing TVM action list model so the host action phase
-requires no changes.
+`java.lang.System.sendMessage(destAddr, value, body)`. This builds a standard
+TOS action list cell compatible with the host action phase. The encoding mirrors
+the existing TVM action list model so the host action phase requires no changes.
 
 **Effort:** 2–4 weeks
 
@@ -483,20 +649,24 @@ requires no changes.
 
 ### Phase 7 — RPC namespace
 
-**Goal:** Implement `jvm_*` JSON-RPC endpoints through
-`WorkchainRuntimeServices::register_rpc`. These are non-consensus surfaces and
-must not affect compute dispatch.
+**Goal:** Implement `jvm_*` JSON-RPC endpoints through the target
+`WorkchainRuntimeServices::register_rpc` hook once it lands. If that runtime
+services hook is still only a design target, mirror the existing EVM/Uno RPC
+registration pattern but keep it outside consensus dispatch. These are
+non-consensus surfaces and must not affect compute.
 
 **Endpoints:**
 - `jvm_deployContract`: submit a class file and initial state; builds an
-  external message targeting the executor account
+  external message targeting the executor account and returns the deterministic
+  `contract_id`
 - `jvm_call`: call a view (read-only) method locally; does not submit a tx
 - `jvm_getContractState`: return the decoded static fields of a deployed contract
 - `jvm_getReceipts`: return event logs for a given block range
 
 Admission (`jvm_deployContract` pre-check) validates class files against the
-forbidden-bytecode and forbidden-package rules before building the external
-message, as a convenience; consensus compute re-validates on execution.
+Java 8 verifier profile and deterministic runtime API policy before building
+the external message, as a convenience; consensus compute re-validates on
+execution.
 
 **Effort:** 2–4 weeks
 
@@ -515,17 +685,28 @@ performance profiling.
 - Replay test: serialize a block to disk, reimport it, assert identical state
 - Gas exhaustion test: contract that runs out of gas mid-execution; assert state
   does not commit
-- Forbidden-bytecode test: class that contains `invokedynamic`; assert
-  deterministic load-time rejection
+- OpenJDK opcode compatibility tests: lambdas/method references
+  (`invokedynamic`), floating-point arithmetic, `monitorenter`/`monitorexit`,
+  exceptions, arrays, interface dispatch, and class initialization
+- Fixed floating-point conformance test: run the same float/double corpus on
+  every supported OS/CPU target and assert byte-identical results, including
+  NaN, signed zero, infinities, overflow, underflow, and subnormals
+- Forbidden host API tests: classes that call time, entropy, threads, IO,
+  networking, native methods, or host reflection; assert deterministic rejection
+  or deterministic `ContractViolationError`
+- Duplicate ABI id test: two `@ContractEntry` methods with the same
+  four-byte `method_id`; assert class-load rejection
+- Multi-instance test: deploy the same `class_hash` twice with different salts;
+  assert the two `contract_id` states evolve independently
 - Performance baseline: measure wall time for a 1000-tx block of representative
   contracts under a release build; set a regression gate so future changes do
   not silently degrade throughput
 - Security review: class loader isolation (one contract cannot access another
   contract's static fields via reflection or class cast); heap bounds (gas
   exhaustion before heap overflows the pre-allocated arena); cell codec
-  round-trip correctness (decode(encode(h)) == h for all reachable heaps)
+  round-trip correctness for every persisted `JvmContractState`
 
-**Effort:** 4–6 weeks
+**Effort:** 6–8 weeks
 
 ---
 
@@ -534,18 +715,18 @@ performance profiling.
 | Phase | Description | Estimated effort |
 |---|---|---|
 | 0 | Design pinning, stub registry tests | 1–2 weeks |
-| 1 | Avian fork, determinism hardening | 4–8 weeks |
+| 1 | Avata fork, opcode compatibility, determinism hardening | 8–14 weeks |
 | 2 | Framework integration (WorkchainEngine, ConfigParam, genesis) | 2–3 weeks |
-| 3 | Contract standard library (`tos.jvm.*`) | 3–5 weeks |
+| 3 | OpenJDK-derived `rt.jar` + `tos.*` domain APIs | 8–12 weeks |
 | **4** | **Heap serialization (cell codec)** | **3–5 months** |
-| 5 | Gas metering | 3–5 weeks |
+| 5 | Gas metering | 4–6 weeks |
 | 6 | Message ABI | 2–4 weeks |
 | 7 | RPC namespace | 2–4 weeks |
-| 8 | Hardening and integration testing | 4–6 weeks |
-| **Total** | | **~9–14 engineer-months** |
+| 8 | Hardening and integration testing | 6–8 weeks |
+| **Total** | | **~14–24 engineer-months** |
 
 Phase 4 (heap serialization) dominates the estimate. The v1 restricted-state
-model (persistent state flows only through `tos.jvm.storage.Persistent*` types)
+model (persistent state flows only through `tos.storage.Persistent*` types)
 is the design decision that keeps Phase 4 in the 3–5 month range rather than
 the 12–18 month range that a general object-graph serializer would require. This
 restriction must not be relaxed without a full Phase 4 redesign.
@@ -568,7 +749,7 @@ Last updated: 2026-05-04.
 | Phase | Status | Notes |
 |---|---|---|
 | Phase 0 — Design | ⬜ | This document is the starting point; TL-B schemas and stub tests not yet written |
-| Phase 1 — Avian fork | ⬜ | |
+| Phase 1 — Avata fork | ⬜ | |
 | Phase 2 — Framework integration | ⬜ | |
 | Phase 3 — Contract stdlib | ⬜ | |
 | Phase 4 — Heap serialization | ⬜ | Largest risk item; must be prototyped before committing to timeline |
@@ -577,7 +758,7 @@ Last updated: 2026-05-04.
 | Phase 7 — RPC namespace | ⬜ | |
 | Phase 8 — Hardening | ⬜ | |
 | JVM v2 account-native topology | ⏭ | Requires a separate consensus migration design; out of scope for v1 |
-| Lambda / invokedynamic support | ⏭ | Requires full MethodHandle/CallSite implementation; out of scope for v1 |
+| Lambda / invokedynamic support | ⬜ | Required for OpenJDK Java 8 opcode compatibility; implemented in Phase 1 |
 | Per-account contract model | ⏭ | Each Java contract as a distinct TOS account on wc=3; out of scope for v1 |
 
 ## File Layout (target)
@@ -585,7 +766,7 @@ Last updated: 2026-05-04.
 ```
 jvm/
   vendor/
-    avian/              ← forked Avian, pinned commit, stripped and determinized
+    avata/              ← forked Avata, pinned commit, stripped and determinized
       PINNED_COMMIT
       CMakeLists.txt
       src/
@@ -615,18 +796,26 @@ jvm/
     rpc.h
     rpc.cpp             ← jvm_* JSON-RPC handlers
   stdlib/
+    OPENJDK_PINNED_COMMIT
+    THIRD_PARTY_NOTICES.md
+    openjdk/            ← pinned OpenJDK-derived class-library sources
     src/
-      tos/jvm/lang/Object.java
-      tos/jvm/lang/String.java
-      tos/jvm/lang/Math.java
-      tos/jvm/lang/System.java
-      tos/jvm/lang/Error.java
-      tos/jvm/lang/OutOfGasError.java
-      tos/jvm/lang/ContractViolationError.java
-      tos/jvm/contract/ContractEntry.java
-      tos/jvm/storage/PersistentMap.java
-      tos/jvm/storage/PersistentList.java
-      tos/jvm/emit/EventLog.java
+      java/lang/Object.java
+      java/lang/Class.java
+      java/lang/String.java
+      java/lang/CharSequence.java
+      java/lang/Throwable.java
+      java/lang/Error.java
+      java/lang/RuntimeException.java
+      java/lang/Math.java
+      java/lang/StrictMath.java
+      java/lang/System.java
+      java/lang/OutOfGasError.java
+      java/lang/ContractViolationError.java
+      tos/contract/ContractEntry.java
+      tos/storage/PersistentMap.java
+      tos/storage/PersistentList.java
+      tos/emit/EventLog.java
     build/              ← compiled .class files bundled into zerostate
   test/
     ...
@@ -636,27 +825,25 @@ jvm/
 
 The following questions must be answered before Phase 1 begins:
 
-1. **GC model for v1.** Should the fork replace Avian's semi-space GC with a
+1. **GC model for v1.** Should the fork replace Avata's semi-space GC with a
    per-transaction arena allocator, or determinize the existing GC? An arena is
    simpler to audit for determinism but limits maximum per-transaction heap size.
    Gas limits should prevent abuse either way, but the interaction between gas
    limits and heap limits needs a concrete number for ConfigParam 85.
 
-2. **Class store location.** Contract class files must be available to the class
-   loader during execution. In v1 the class store is part of the executor
-   account's data cell (`JvmHeap.class_store_hash` identifies the class tree).
-   This means deploying a new contract is a transaction that updates the executor
-   account's class store cell. Alternatively, class files could be addressed by
-   content hash and stored in a separate global class registry cell. The choice
-   affects deploy transaction design and class isolation guarantees.
+2. **Class store retention limits.** Contract class files must be available to
+   the class loader during execution. In v1 the class store is part of the
+   executor account's data cell (`class_store[class_hash]`). Deploying a new
+   contract is therefore a transaction that updates the executor account's class
+   store and `contracts[contract_id]`. Phase 0 must set concrete limits for
+   `max_class_bytes`, `max_total_class_bytes`, eviction/pruning policy if any,
+   and whether identical `class_hash` entries are deduplicated.
 
-3. **Cross-contract calls in v1.** Can one deployed contract call a method on
-   another deployed contract within the same transaction? If yes, the call must
-   be mediated (one contract cannot access another's static fields directly),
-   which requires a call-dispatch mechanism. If no, cross-contract interaction
-   requires asynchronous TOS message passing. The simpler v1 answer is no
-   synchronous cross-contract calls; each inbound message targets exactly one
-   contract class.
+3. **Cross-contract calls in v1.** The recommended v1 rule is no synchronous
+   cross-contract calls: each inbound message targets exactly one `contract_id`,
+   and cross-contract interaction uses asynchronous TOS messages. Phase 0 must
+   either freeze this rule or define a mediated call-dispatch mechanism that
+   preserves per-`contract_id` static-field isolation.
 
 4. **TOS native contract interop.** Can a JVM contract send a synchronous
    read-only query to a TOS TVM contract (e.g. a token balance query)? In v1
@@ -664,7 +851,13 @@ The following questions must be answered before Phase 1 begins:
    is asynchronous through TOS messages. Synchronous reads from external state
    would break the snapshot execution model.
 
-5. **`wc=3` vs new network.** Should the JVM workchain be activated on the
+5. **OpenJDK runtime package boundary.** The v1 class-file profile is
+   OpenJDK/JVMS-compatible, but consensus cannot expose host resources. Phase 0
+   must decide which OpenJDK packages/methods are callable, which are present
+   only as linkage-compatible deterministic traps, and how the developer
+   toolchain reports those restrictions before deployment.
+
+6. **`wc=3` vs new network.** Should the JVM workchain be activated on the
    existing TOS network as `wc=3`, or should it initially be deployed as a
    separate devnet to validate the design before integration? A separate devnet
    allows Phase 4 to be proven without affecting EVM and Uno validator

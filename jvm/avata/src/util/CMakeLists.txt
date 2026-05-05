@@ -1,0 +1,1 @@
+add_library(avata_util arg-parser.cpp fixed-allocator.cpp)
