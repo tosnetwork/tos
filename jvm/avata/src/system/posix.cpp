@@ -57,7 +57,7 @@ typedef struct ucontext {
 #include <avata/system/memory.h>
 #include <avata/util/math.h>
 
-#define ACQUIRE(x) MutexResource MAKE_NAME(mutexResource_)(x)
+#define ACQUIRE(x) MutexResource MAKE_NAME(mutexResource_)(s, x)
 
 using namespace vm;
 using namespace avata::util;
@@ -66,17 +66,20 @@ namespace {
 
 class MutexResource {
  public:
-  MutexResource(pthread_mutex_t& m) : m(&m)
+  MutexResource(System* s, pthread_mutex_t& m) : s(s), m(&m)
   {
-    pthread_mutex_lock(&m);
+    int rv UNUSED = pthread_mutex_lock(&m);
+    expect(s, rv == 0);
   }
 
   ~MutexResource()
   {
-    pthread_mutex_unlock(m);
+    int rv UNUSED = pthread_mutex_unlock(m);
+    expect(s, rv == 0);
   }
 
  private:
+  System* s;
   pthread_mutex_t* m;
 };
 
@@ -140,7 +143,8 @@ class MySystem : public System {
 
       rv = pthread_cond_init(&condition, 0);
       if (rv != 0) {
-        pthread_mutex_destroy(&mutex);
+        int destroyRv UNUSED = pthread_mutex_destroy(&mutex);
+        expect(s, destroyRv == 0);
       }
       expect(s, rv == 0);
     }
@@ -179,8 +183,12 @@ class MySystem : public System {
 
     virtual void dispose()
     {
-      pthread_mutex_destroy(&mutex);
-      pthread_cond_destroy(&condition);
+      int rv UNUSED = pthread_mutex_destroy(&mutex);
+      expect(s, rv == 0);
+
+      rv = pthread_cond_destroy(&condition);
+      expect(s, rv == 0);
+
       ::free(this);
     }
 
@@ -197,22 +205,26 @@ class MySystem : public System {
    public:
     Mutex(System* s) : s(s)
     {
-      pthread_mutex_init(&mutex, 0);
+      int rv UNUSED = pthread_mutex_init(&mutex, 0);
+      expect(s, rv == 0);
     }
 
     virtual void acquire()
     {
-      pthread_mutex_lock(&mutex);
+      int rv UNUSED = pthread_mutex_lock(&mutex);
+      expect(s, rv == 0);
     }
 
     virtual void release()
     {
-      pthread_mutex_unlock(&mutex);
+      int rv UNUSED = pthread_mutex_unlock(&mutex);
+      expect(s, rv == 0);
     }
 
     virtual void dispose()
     {
-      pthread_mutex_destroy(&mutex);
+      int rv UNUSED = pthread_mutex_destroy(&mutex);
+      expect(s, rv == 0);
       ::free(this);
     }
 
@@ -224,7 +236,8 @@ class MySystem : public System {
    public:
     Monitor(System* s) : s(s), owner_(0), first(0), last(0), depth(0)
     {
-      pthread_mutex_init(&mutex, 0);
+      int rv UNUSED = pthread_mutex_init(&mutex, 0);
+      expect(s, rv == 0);
     }
 
     virtual bool tryAcquire(System::Thread* context)
@@ -255,7 +268,8 @@ class MySystem : public System {
       Thread* t = static_cast<Thread*>(context);
 
       if (owner_ != t) {
-        pthread_mutex_lock(&mutex);
+        int rv UNUSED = pthread_mutex_lock(&mutex);
+        expect(s, rv == 0);
         owner_ = t;
       }
       ++depth;
@@ -268,7 +282,8 @@ class MySystem : public System {
       if (owner_ == t) {
         if (--depth == 0) {
           owner_ = 0;
-          pthread_mutex_unlock(&mutex);
+          int rv UNUSED = pthread_mutex_unlock(&mutex);
+          expect(s, rv == 0);
         }
       } else {
         sysAbort(s);
@@ -359,7 +374,8 @@ class MySystem : public System {
           depth = this->depth;
           this->depth = 0;
           owner_ = 0;
-          pthread_mutex_unlock(&mutex);
+          int unlockRv UNUSED = pthread_mutex_unlock(&mutex);
+          expect(s, unlockRv == 0);
 
           // Pretend anything greater than one million years (in
           // milliseconds) is infinity so as to avoid overflow.
@@ -390,7 +406,8 @@ class MySystem : public System {
           notified = ((t->flags & Notified) != 0);
         }
 
-        pthread_mutex_lock(&mutex);
+        int lockRv UNUSED = pthread_mutex_lock(&mutex);
+        expect(s, lockRv == 0);
 
         {
           ACQUIRE(t->mutex);
@@ -469,7 +486,8 @@ class MySystem : public System {
     virtual void dispose()
     {
       expect(s, owner_ == 0);
-      pthread_mutex_destroy(&mutex);
+      int rv UNUSED = pthread_mutex_destroy(&mutex);
+      expect(s, rv == 0);
       ::free(this);
     }
 
