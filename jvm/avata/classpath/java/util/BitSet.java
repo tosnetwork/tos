@@ -38,6 +38,10 @@ public class BitSet implements Serializable, Cloneable {
   }
 
   public BitSet(int bitLength) {
+    if (bitLength < 0) {
+      throw new NegativeArraySizeException();
+    }
+
     if (bitLength % BITS_PER_LONG == 0) {
       enlarge(longPosition(bitLength));
     } else {
@@ -97,6 +101,10 @@ public class BitSet implements Serializable, Cloneable {
   }
 
   public boolean get(int index) {
+    if (index < 0) {
+      throw new IndexOutOfBoundsException();
+    }
+
     int pos = longPosition(index);
     if (pos < bits.length) {
       return (bits[pos] & bitPosition(index)) != 0;
@@ -122,12 +130,21 @@ public class BitSet implements Serializable, Cloneable {
   }
 
   public void set(int index) {
+    if (index < 0) {
+      throw new IndexOutOfBoundsException();
+    }
+
     int pos = longPosition(index);
     enlarge(pos);
     bits[pos] |= bitPosition(index);
   }
 
   public void set(int start, int end) {
+    checkRange(start, end);
+    if (start == end) {
+      return;
+    }
+
     MaskInfoIterator iter = new MaskInfoIterator(start, end);
     enlarge(iter.getLastPartition());
     while (iter.hasNext()) {
@@ -137,6 +154,10 @@ public class BitSet implements Serializable, Cloneable {
   }
 
   public void clear(int index) {
+    if (index < 0) {
+      throw new IndexOutOfBoundsException();
+    }
+
     int pos = longPosition(index);
     if (pos < bits.length) {
       bits[pos] &= (MASK ^ bitPosition(index));
@@ -144,10 +165,23 @@ public class BitSet implements Serializable, Cloneable {
   }
 
   public void clear(int start, int end) {
+    checkRange(start, end);
+    if (start == end) {
+      return;
+    }
+
     MaskInfoIterator iter = new MaskInfoIterator(start, end);
     while (iter.hasNext()) {
       MaskInfo info = iter.next();
-      bits[info.partitionIndex] &= (MASK ^ info.mask);
+      if (info.partitionIndex < bits.length) {
+        bits[info.partitionIndex] &= (MASK ^ info.mask);
+      }
+    }
+  }
+
+  public void clear() {
+    for (int i = 0; i < bits.length; i++) {
+      bits[i] = 0;
     }
   }
 
@@ -161,8 +195,8 @@ public class BitSet implements Serializable, Cloneable {
   }
 
   public boolean intersects(BitSet otherBits) {
-    int max = Math.max(bits.length, otherBits.bits.length);
-    for (int i = 0; i < max; i++) {
+    int min = Math.min(bits.length, otherBits.bits.length);
+    for (int i = 0; i < min; i++) {
       if ((bits[i] & otherBits.bits[i]) != 0) {
         return true;
       }
@@ -171,7 +205,14 @@ public class BitSet implements Serializable, Cloneable {
   }
 
   public int length() {
-    return bits.length << BITS_PER_LONG_SHIFT;
+    for (int i = bits.length - 1; i >= 0; --i) {
+      long word = bits[i];
+      if (word != 0) {
+        return (i << BITS_PER_LONG_SHIFT)
+          + BITS_PER_LONG - numberOfLeadingZeros(word);
+      }
+    }
+    return 0;
   }
 
   public int nextSetBit(int fromIndex) {
@@ -179,30 +220,27 @@ public class BitSet implements Serializable, Cloneable {
   }
 
   private int nextBit(int fromIndex, boolean bitClear) {
+    if (fromIndex < 0) {
+      throw new IndexOutOfBoundsException();
+    }
+
     int pos = longPosition(fromIndex);
     if (pos >= bits.length) {
-      return -1;
+      return bitClear ? fromIndex : -1;
     }
-    int current = fromIndex;
-    do {
-      long currValue = bits[pos];
-      if (currValue == 0) {
-        pos++;
-        current = pos << BITS_PER_LONG_SHIFT;
-      } else {
-        do {
-          long bitPos = bitPosition(current);
-          if (((currValue & bitPos) != 0) ^ bitClear) {
-            return current;
-          } else {
-            current++;
-          }
-        } while (current % BITS_PER_LONG != 0);
-      }
-      pos++;
-    } while (pos < bits.length);
 
-    return -1;
+    long word = (bitClear ? ~bits[pos] : bits[pos])
+      & (MASK << (fromIndex % BITS_PER_LONG));
+    while (true) {
+      if (word != 0) {
+        return (pos << BITS_PER_LONG_SHIFT) + numberOfTrailingZeros(word);
+      }
+
+      if (++pos == bits.length) {
+        return bitClear ? pos << BITS_PER_LONG_SHIFT : -1;
+      }
+      word = bitClear ? ~bits[pos] : bits[pos];
+    }
   }
 
   public int nextClearBit(int fromIndex) {
@@ -216,6 +254,34 @@ public class BitSet implements Serializable, Cloneable {
     }
     
     return numSetBits;
+  }
+
+  private static void checkRange(int fromIndex, int toIndex) {
+    if (fromIndex < 0 || toIndex < 0 || fromIndex > toIndex) {
+      throw new IndexOutOfBoundsException();
+    }
+  }
+
+  private static int numberOfLeadingZeros(long value) {
+    int count = 0;
+    for (int i = BITS_PER_LONG - 1; i >= 0; --i) {
+      if ((value & (1L << i)) != 0) {
+        return count;
+      }
+      count++;
+    }
+    return BITS_PER_LONG;
+  }
+
+  private static int numberOfTrailingZeros(long value) {
+    int count = 0;
+    for (int i = 0; i < BITS_PER_LONG; ++i) {
+      if ((value & (1L << i)) != 0) {
+        return count;
+      }
+      count++;
+    }
+    return BITS_PER_LONG;
   }
 
   private static class MaskInfoIterator implements Iterator<MaskInfo> {

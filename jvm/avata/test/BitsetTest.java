@@ -49,6 +49,7 @@ public class BitsetTest {
     
     testFlip();
     testClear();
+    testJdkCompatibleEdges();
 
     BitSet expandingSet = new BitSet();
     //should force us to have 3 partitions.
@@ -103,6 +104,59 @@ public class BitsetTest {
       assertTrue("bit " + i + " should be set", bitset.get(i));
     }
     assertTrue("bit 65 should not be set", !bitset.get(65));
+  }
+
+  private static void testJdkCompatibleEdges() {
+    BitSet bitset = new BitSet();
+    assertEquals("empty length", 0, bitset.length());
+    assertEquals("empty next set bit", -1, bitset.nextSetBit(0));
+    assertEquals("empty next clear bit", 0, bitset.nextClearBit(0));
+
+    bitset.set(0);
+    assertEquals("one bit length", 1, bitset.length());
+    assertEquals("clear bit after set", 1, bitset.nextClearBit(0));
+
+    bitset.set(130);
+    assertEquals("high bit length", 131, bitset.length());
+    bitset.clear(130);
+    assertEquals("length shrinks after clear", 1, bitset.length());
+
+    bitset.clear(1, 1000);
+    assertEquals("clear beyond storage is allowed", 1, bitset.length());
+    bitset.clear();
+    assertTrue("clear all empties set", bitset.isEmpty());
+
+    BitSet left = new BitSet();
+    BitSet right = new BitSet();
+    right.set(128);
+    assertTrue("different sized non-overlap does not intersect", !left.intersects(right));
+    left.set(128);
+    assertTrue("different sized overlap intersects", left.intersects(right));
+
+    expectIndexOutOfBounds(new Runnable() {
+      public void run() {
+        new BitSet().get(-1);
+      }
+    });
+    expectIndexOutOfBounds(new Runnable() {
+      public void run() {
+        new BitSet().set(2, 1);
+      }
+    });
+    expectIndexOutOfBounds(new Runnable() {
+      public void run() {
+        new BitSet().nextSetBit(-1);
+      }
+    });
+  }
+
+  private static void expectIndexOutOfBounds(Runnable runnable) {
+    try {
+      runnable.run();
+      throw new RuntimeException("Expected IndexOutOfBoundsException");
+    } catch (IndexOutOfBoundsException expected) {
+      // expected
+    }
   }
   
   static void assertTrue(String msg, boolean flag) {

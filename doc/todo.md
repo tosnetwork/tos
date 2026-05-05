@@ -140,3 +140,6 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ `SimpleDateFormat` now supports a deterministic JDK8u-compatible numeric
   subset for `y/M/d/H/m/s` fields plus quoted literals, while still rejecting
   locale-specific text fields outside the consensus profile.
+- ✅ `BitSet` core navigation and sizing now follow JDK8u behavior for logical
+  length, `nextSetBit`/`nextClearBit`, full clear, range checks, and
+  differently-sized intersection checks.
