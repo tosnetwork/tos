@@ -105,3 +105,5 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ `Method` and `Constructor` now implement the admitted JDK8u generic
   reflection surface for type parameters, generic parameter types, generic
   exception types, method generic return types, and parameter counts.
+- ✅ `ParameterizedType` results now use JDK8u-style structural equality,
+  hash codes, and cloned actual-type-argument arrays.

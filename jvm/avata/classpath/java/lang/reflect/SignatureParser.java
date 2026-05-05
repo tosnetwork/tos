@@ -14,6 +14,7 @@ import avata.Classes;
 import avata.VMMethod;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.LinkedList;
 import java.util.Map;
@@ -211,7 +212,8 @@ public class SignatureParser {
         return type;
       }
       if (c != '.') {
-        throw new RuntimeException("TODO");
+        throw new IllegalArgumentException
+          ("Unexpected character after parameterized type: " + c);
       }
       ownerType = type;
       builder.append("$");
@@ -228,6 +230,8 @@ public class SignatureParser {
 
   private static ParameterizedType makeType(final Type[] args, final Type owner, final Type raw) {
     return new ParameterizedType() {
+      private final Type[] arguments = (Type[]) args.clone();
+
       @Override
         public Type getRawType() {
           return raw;
@@ -240,7 +244,24 @@ public class SignatureParser {
 
       @Override
         public Type[] getActualTypeArguments() {
-          return args;
+          return (Type[]) arguments.clone();
+        }
+
+      @Override
+        public boolean equals(Object other) {
+          if (other instanceof ParameterizedType) {
+            ParameterizedType that = (ParameterizedType) other;
+            return equal(owner, that.getOwnerType())
+              && equal(raw, that.getRawType())
+              && Arrays.equals(arguments, that.getActualTypeArguments());
+          }
+          return false;
+        }
+
+      @Override
+        public int hashCode() {
+          return Arrays.hashCode(arguments) ^ objectHashCode(owner)
+            ^ objectHashCode(raw);
         }
 
       @Override
@@ -249,7 +270,7 @@ public class SignatureParser {
           builder.append(typeName(raw));
           builder.append('<');
           String sep = "";
-          for (Type t : args) {
+          for (Type t : arguments) {
             builder.append(sep).append(typeName(t));
             sep = ", ";
           }
@@ -257,6 +278,14 @@ public class SignatureParser {
           return builder.toString();
         }
     };
+  }
+
+  private static boolean equal(Object a, Object b) {
+    return a == b || (a != null && a.equals(b));
+  }
+
+  private static int objectHashCode(Object o) {
+    return o == null ? 0 : o.hashCode();
   }
   
   private static Map<String, TypeVariable> collectTypeVariables(Class clz) {

@@ -106,6 +106,14 @@ public class Reflection {
     expect(1 == args.length);
     expect(args[0] == String.class);
 
+    Type[] copy = arg.getActualTypeArguments();
+    copy[0] = Object.class;
+    expect(arg.getActualTypeArguments()[0] == String.class);
+
+    ParameterizedType sameType = (ParameterizedType) field.getGenericType();
+    expect(type.equals((ParameterizedType) sameType));
+    expect(type.hashCode() == sameType.hashCode());
+
     expect(Reflection.class.getTypeParameters().length == 0);
     expect(Integer.TYPE.getTypeParameters().length == 0);
 
