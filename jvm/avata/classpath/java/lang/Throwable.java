@@ -25,6 +25,13 @@ public class Throwable implements Serializable {
     this.cause = cause;
   }
 
+  protected Throwable(String message, Throwable cause, boolean enableSuppression,
+                      boolean writableStackTrace) {
+    this.message = message;
+    this.trace = writableStackTrace ? trace(1) : new StackTraceElement[0];
+    this.cause = cause;
+  }
+
   public Throwable(String message) {
     this(message, null);
   }

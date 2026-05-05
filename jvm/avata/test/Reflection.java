@@ -1,6 +1,7 @@
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.InvocationTargetException;
@@ -104,6 +105,29 @@ public class Reflection {
     throw new OutOfMemoryError();
   }
 
+  public static void throwsChecked()
+    throws java.io.IOException, IllegalStateException
+  {
+  }
+
+  private static void exceptionTypes() throws Exception {
+    Class[] exceptions = Reflection.class.getMethod("booleanMethod")
+      .getExceptionTypes();
+    expect(exceptions.length == 0);
+
+    exceptions = Reflection.class.getMethod("throwsChecked")
+      .getExceptionTypes();
+    expect(exceptions.length == 2);
+    expect(exceptions[0] == java.io.IOException.class);
+    expect(exceptions[1] == IllegalStateException.class);
+
+    Constructor constructor = ThrowsConstructor.class.getConstructor();
+    exceptions = constructor.getExceptionTypes();
+    expect(exceptions.length == 2);
+    expect(exceptions[0] == java.io.IOException.class);
+    expect(exceptions[1] == IllegalArgumentException.class);
+  }
+
   public static void classType() throws Exception {
     // Class types
     expect(!Reflection.class.isAnonymousClass());
@@ -132,6 +156,7 @@ public class Reflection {
     annotations();
     genericType();
     classType();
+    exceptionTypes();
 
     Class system = Class.forName("java.lang.System");
     Field out = system.getDeclaredField("out");
@@ -310,6 +335,13 @@ public class Reflection {
 class Bandersnatch { }
 
 class Gybe extends Bandersnatch { }
+
+class ThrowsConstructor {
+  public ThrowsConstructor()
+    throws java.io.IOException, IllegalArgumentException
+  {
+  }
+}
 
 class Slithy {
   public static void tove(Gybe gybe) {

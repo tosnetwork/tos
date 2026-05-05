@@ -44,9 +44,12 @@ Status legend: `✅` completed, unchecked items are still open.
   follow the JDK8u `altMetafactory` argument model for Avata's lambda surface.
 - [ ] Audit `java.lang.invoke` against OpenJDK 8u behavior and decide which parts
   are supported in consensus, rejected at verification, or trapped at runtime.
+  `LambdaConversionException` now follows the JDK8u constructor surface.
 - [ ] Complete reflection compatibility where admitted by the verifier:
-  `Class.getTypeParameters`, `Method.getExceptionTypes`, `Constructor` and
-  `Method` remaining unsupported paths, and generic signature parsing.
+  `Class.getTypeParameters`, `Constructor` and `Method` remaining unsupported
+  paths, and generic signature parsing. `Method.getExceptionTypes` and
+  `Constructor.getExceptionTypes` now resolve the class-file `Exceptions`
+  attribute.
 - [ ] Finish encoding/console behavior:
   `file.encoding` default/override behavior is fixed, but stdout/stderr console
   encoding and unsupported charset handling still need cross-platform checks.
@@ -90,3 +93,7 @@ Status legend: `✅` completed, unchecked items are still open.
   `altMetafactory` marker and bridge arguments, emits marker interfaces without
   duplicate interface entries, and generates bridge forwarding methods when
   requested.
+- ✅ `LambdaConversionException` constructors now match the JDK8u surface,
+  including cause/message handling and the writable-stack-trace flag.
+- ✅ `Method.getExceptionTypes` and `Constructor.getExceptionTypes` now expose
+  declared exception classes from the parsed class-file `Exceptions` attribute.

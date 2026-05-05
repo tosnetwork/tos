@@ -76,6 +76,6 @@ public class Constructor<T> extends AccessibleObject implements Member {
   }
 
   public Class<?>[] getExceptionTypes() {
-    throw new UnsupportedOperationException("not yet implemented");
+    return method.getExceptionTypes();
   }
 }

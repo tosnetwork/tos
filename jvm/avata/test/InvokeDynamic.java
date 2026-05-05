@@ -1,4 +1,5 @@
 import java.util.*;
+import java.lang.invoke.LambdaConversionException;
 
 public class InvokeDynamic {
   private final int foo;
@@ -71,7 +72,20 @@ public class InvokeDynamic {
     if (! v) throw new RuntimeException();
   }
 
+  private static void lambdaConversionExceptionTest() {
+    Throwable cause = new IllegalArgumentException("cause");
+    LambdaConversionException e
+      = new LambdaConversionException("message", cause);
+    expect("message".equals(e.getMessage()));
+    expect(e.getCause() == cause);
+
+    e = new LambdaConversionException("message", cause, false, false);
+    expect(e.getStackTrace().length == 0);
+  }
+
   public static void main(String[] args) {
+    lambdaConversionExceptionTest();
+
     int c = 4;
     Operation op = (a, b) -> a + b - c;
     expect(op.operate(2, 3) == (2 + 3) - 4);

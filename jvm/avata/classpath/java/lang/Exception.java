@@ -15,6 +15,11 @@ public class Exception extends Throwable {
     super(message, cause);
   }
 
+  protected Exception(String message, Throwable cause, boolean enableSuppression,
+                      boolean writableStackTrace) {
+    super(message, cause, enableSuppression, writableStackTrace);
+  }
+
   public Exception(String message) {
     this(message, null);
   }

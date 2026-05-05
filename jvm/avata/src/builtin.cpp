@@ -17,6 +17,12 @@
 
 using namespace vm;
 
+namespace vm {
+object resolveExceptionJTypes(Thread* t,
+                              GcClassLoader* loader,
+                              GcMethodAddendum* addendum);
+}
+
 namespace {
 
 int64_t search(Thread* t,
@@ -118,6 +124,17 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 {
   return reinterpret_cast<intptr_t>(t->m->classpath->getVMMethod(
       t, cast<GcJmethod>(t, reinterpret_cast<object>(arguments[0]))));
+}
+
+extern "C" AVATA_EXPORT int64_t JNICALL
+    Avata_avata_Classes_getExceptionTypes(Thread* t,
+                                          object,
+                                          uintptr_t* arguments)
+{
+  GcMethod* method = cast<GcMethod>(t, reinterpret_cast<object>(arguments[0]));
+
+  return reinterpret_cast<int64_t>(
+      resolveExceptionJTypes(t, method->class_()->loader(), method->addendum()));
 }
 
 extern "C" AVATA_EXPORT void JNICALL
