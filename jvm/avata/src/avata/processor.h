@@ -15,20 +15,6 @@
 #include <avata/system/system.h>
 #include <avata/heap/heap.h>
 #include <avata/util/allocator.h>
-#include "bootimage.h"
-#include "avata/heapwalk.h"
-#include "avata/zone.h"
-
-namespace avata {
-namespace codegen {
-class DelayedPromise;
-}
-
-namespace util {
-template <class T>
-class Slice;
-}
-}
 
 namespace vm {
 
@@ -45,7 +31,6 @@ class GcClassAddendum;
 class GcClassLoader;
 class GcArray;
 class GcSingleton;
-class GcTriple;
 
 class Processor {
  public:
@@ -65,16 +50,6 @@ class Processor {
     virtual int ip() = 0;
 
     virtual unsigned count() = 0;
-  };
-
-  class CompilationHandler {
-   public:
-    virtual void compiled(const void* code,
-                          unsigned size,
-                          unsigned frameSize,
-                          const char* name) = 0;
-
-    virtual void dispose() = 0;
   };
 
   virtual Thread* makeThread(Machine* m, GcThread* javaThread, Thread* parent)
@@ -158,28 +133,6 @@ class Processor {
   virtual void dispose() = 0;
 
   virtual object getStackTrace(Thread* t, Thread* target) = 0;
-
-  virtual void initialize(BootImage* image, avata::util::Slice<uint8_t> code)
-      = 0;
-
-  virtual void addCompilationHandler(CompilationHandler* handler) = 0;
-
-  virtual void compileMethod(Thread* t,
-                             Zone* zone,
-                             GcTriple** constants,
-                             GcTriple** calls,
-                             avata::codegen::DelayedPromise** addresses,
-                             GcMethod* method,
-                             OffsetResolver* resolver,
-                             Machine* hostVM) = 0;
-
-  virtual void visitRoots(Thread* t, HeapWalker* w) = 0;
-
-  virtual void normalizeVirtualThunks(Thread* t) = 0;
-
-  virtual unsigned* makeCallTable(Thread* t, HeapWalker* w) = 0;
-
-  virtual void boot(Thread* t, BootImage* image, uint8_t* code) = 0;
 
   virtual void callWithCurrentContinuation(Thread* t, object receiver) = 0;
 

@@ -15,7 +15,6 @@
 #include "avata/constants.h"
 #include "avata/processor.h"
 #include "avata/arch.h"
-#include "avata/lzma.h"
 
 #include <avata/util/runtime-array.h>
 #include <avata/util/math.h>
@@ -3391,8 +3390,6 @@ void boot(Thread* t)
   type(t, GcDoubleArray::Type)
       ->setInterfaceTable(t, roots(t)->arrayInterfaceTable());
 
-  m->processor->boot(t, 0, 0);
-
   {
     GcCode* bootCode = makeCode(t, 0, 0, 0, 0, 0, 0, 0, 0, 1);
     bootCode->body()[0] = impdep1;
@@ -3480,16 +3477,12 @@ class HeapClient : public Heap::Client {
     if (hashTaken(t, src)) {
       alias(dst, 0) &= PointerMask;
       alias(dst, 0) |= ExtendedMark;
-      // TOS P6: Use gcTakeHash (pointer-based) rather than the counter-based
-      // objectHash so that this GC copy callback remains idempotent and
-      // does not consume counter values.  gcTakeHash uses the source object's
-      // pre-move address, which is stable during the copy.  The pointer-based
-      // value stored here is non-deterministic across validators if the heap
-      // base differs.  This is acceptable because in the TOS contract execution
-      // model GC does not run during contract execution (gasCounter != UINT64_MAX),
-      // only during bootstrap; bootstrap objects are never exposed to contract
-      // code via Java hashCode().
-      extendedWord(t, dst, base) = gcTakeHash(t, src);
+      uint32_t hash;
+      if (findIdentityHash(t, src, &hash)) {
+        extendedWord(t, dst, base) = hash;
+      } else {
+        extendedWord(t, dst, base) = gcTakeHash(t, src);
+      }
     }
   }
 
@@ -3726,7 +3719,6 @@ Machine::Machine(System* system,
       shutdownLock(0),
       libraries(0),
       errorLog(0),
-      bootimage(0),
       types(0),
       roots(0),
       finalizers(0),
@@ -3814,10 +3806,6 @@ void Machine::dispose()
     heap->free(heapPool[i], ThreadHeapSizeInBytes);
   }
 
-  if (bootimage) {
-    heap->free(bootimage, bootimageSize);
-  }
-
   heap->free(arguments, sizeof(const char*) * argumentCount);
 
   for (unsigned int i = 0; i < propertyCount; i++) {
@@ -3855,6 +3843,7 @@ Thread::Thread(Machine* m, GcThread* javaThread, Thread* parent)
       backupHeapIndex(0),
       gasCounter(UINT64_MAX),
       identityHashCounter(0),
+      identityHashes(0),
       flags(ActiveFlag)
 {
 }
@@ -3875,54 +3864,11 @@ void Thread::init()
       abort(this);
     }
 
-    BootImage* image = 0;
-    uint8_t* code = 0;
-    const char* imageFunctionName = findProperty(m, "avata.bootimage");
-    if (imageFunctionName) {
-      bool lzma = strncmp("lzma:", imageFunctionName, 5) == 0;
-      const char* symbolName = lzma ? imageFunctionName + 5 : imageFunctionName;
-
-      void* imagep = m->libraries->resolve(symbolName);
-      if (imagep) {
-        uint8_t* (*imageFunction)(size_t*);
-        memcpy(&imageFunction, &imagep, BytesPerWord);
-
-        size_t size = 0;
-        uint8_t* imageBytes = imageFunction(&size);
-        if (lzma) {
-#ifdef AVATA_USE_LZMA
-          m->bootimage = image = reinterpret_cast<BootImage*>(decodeLZMA(
-              m->system, m->heap, imageBytes, size, &(m->bootimageSize)));
-#else
-          abort(this);
-#endif
-        } else {
-          image = reinterpret_cast<BootImage*>(imageBytes);
-        }
-
-        const char* codeFunctionName = findProperty(m, "avata.codeimage");
-        if (codeFunctionName) {
-          void* codep = m->libraries->resolve(codeFunctionName);
-          if (codep) {
-            uint8_t* (*codeFunction)(size_t*);
-            memcpy(&codeFunction, &codep, BytesPerWord);
-
-            code = codeFunction(&size);
-          }
-        }
-      }
-    }
-
     m->unsafe = false;
 
     enter(this, ActiveState);
 
-    if (image and code) {
-      m->processor->boot(this, image, code);
-      makeArrayInterfaceTable(this);
-    } else {
-      boot(this);
-    }
+    boot(this);
 
     GcWeakHashMap* map = makeWeakHashMap(this, 0, 0);
     // sequence point, for gc (don't recombine statements)
@@ -3977,6 +3923,12 @@ void Thread::dispose()
 
   if (systemThread) {
     systemThread->dispose();
+  }
+
+  for (IdentityHashEntry* e = identityHashes; e;) {
+    IdentityHashEntry* next = e->next;
+    free(e);
+    e = next;
   }
 
   --m->threadCount;

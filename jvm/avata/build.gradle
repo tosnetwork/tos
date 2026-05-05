@@ -71,9 +71,8 @@ ext {
   java_home = java_home
 
   libDir = "${buildDir}/lib"
-  lzmaDir = "${libDir}/lzma"
 
-  buildOptions = ['', '-lzma']
+  buildOptions = ['']
 }
 
 repositories {
@@ -131,11 +130,6 @@ model {
           args "platform=${platform.operatingSystem.name}",
                "arch=${platform.architecture.name}"
 
-          if(buildOption == "-lzma") {
-            dependsOn 'extractLzma'
-            args "lzma=${lzmaDir}"
-          }
-
           if(platform.operatingSystem.name == "windows") {
               dependsOn "extract${platform.name}${buildOption}"
               args "win32=${libDir}/tools/win32",
@@ -184,19 +178,6 @@ task javadocJar(type: Jar) {
 
 jar {
   baseName "classpath-avata"
-}
-
-task downloadLzma(type: Exec) {
-  commandLine "curl"
-  args "--create-dirs", "-o", "${lzmaDir}/lzma920.tar.bz2", "-f", "http://oss.readytalk.com/avata-web/lzma920.tar.bz2"
-}
-
-task extractLzma(type: Copy) {
-  dependsOn downloadLzma
-  from {
-    tarTree(resources.bzip2("${lzmaDir}/lzma920.tar.bz2"))
-  }
-  into lzmaDir
 }
 
 task install {
@@ -261,20 +242,6 @@ publishing {
             name "libavata"
             type "a"
             extension "a"
-          }
-
-          if (buildOption == "-lzma") {
-            artifact("${nativeBuildDir}/libavata-lzma.a") {
-              name "libavata-lzma"
-              type "a"
-              extension "a"
-            }
-
-            artifact("${nativeBuildDir}/lzma/lzma${binSuffix}") {
-              name "lzma"
-              type publishBinSuffix
-              extension publishBinSuffix
-            }
           }
         }
       }

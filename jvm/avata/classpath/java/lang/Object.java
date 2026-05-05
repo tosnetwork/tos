@@ -11,6 +11,9 @@
 package java.lang;
 
 public class Object {
+  private static final String MSG_MONITOR =
+      "object wait/notify not available in the TOS JVM profile";
+
   protected Object clone() throws CloneNotSupportedException {
     if ((this instanceof Cloneable) || getClass().isArray()) {
       return clone(this);
@@ -35,9 +38,13 @@ public class Object {
 
   public native int hashCode();
 
-  public native final void notify();
+  public final void notify() {
+    throw new ContractViolationError(MSG_MONITOR);
+  }
 
-  public native final void notifyAll();
+  public final void notifyAll() {
+    throw new ContractViolationError(MSG_MONITOR);
+  }
 
   public native String toString();
 
@@ -45,7 +52,9 @@ public class Object {
     wait(0);
   }
 
-  public native final void wait(long milliseconds) throws InterruptedException;
+  public final void wait(long milliseconds) throws InterruptedException {
+    throw new ContractViolationError(MSG_MONITOR);
+  }
 
   public final void wait(long milliseconds, int nanoseconds)
     throws InterruptedException

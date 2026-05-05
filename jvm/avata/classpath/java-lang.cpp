@@ -1049,20 +1049,10 @@ extern "C" JNIEXPORT jobjectArray JNICALL
 extern "C" JNIEXPORT jlong JNICALL
     Java_java_lang_System_currentTimeMillis(JNIEnv*, jclass)
 {
-#ifdef PLATFORM_WINDOWS
-  // We used to use _ftime here, but that only gives us 1-second
-  // resolution on Windows 7.  _ftime_s might work better, but MinGW
-  // doesn't have it as of this writing.  So we use this mess instead:
-  FILETIME time;
-  GetSystemTimeAsFileTime(&time);
-  return (((static_cast<jlong>(time.dwHighDateTime) << 32) | time.dwLowDateTime)
-          / 10000) - 11644473600000LL;
-#else
-  timeval tv = {0, 0};
-  gettimeofday(&tv, 0);
-  return (static_cast<jlong>(tv.tv_sec) * 1000)
-         + (static_cast<jlong>(tv.tv_usec) / 1000);
-#endif
+  // The Java-level System.currentTimeMillis() traps in the TOS profile.  Keep
+  // this legacy JNI entry deterministic in case it is reached by future
+  // classpath changes.
+  return 0;
 }
 
 extern "C" JNIEXPORT jstring JNICALL

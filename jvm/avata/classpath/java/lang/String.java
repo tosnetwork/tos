@@ -13,9 +13,6 @@ package java.lang;
 import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.util.Comparator;
-import java.util.Formatter;
-import java.util.Locale;
-import java.util.regex.Pattern;
 
 import avata.Iso88591;
 import avata.Utf8;
@@ -534,11 +531,13 @@ public final class String
   }
 
   public String[] split(String regex) {
-    return split(regex, 0);
+    throw new UnsupportedOperationException(
+        "regex not available in the TOS JVM profile");
   }
 
   public String[] split(String regex, int limit) {
-    return Pattern.compile(regex).split(this, limit);
+    throw new UnsupportedOperationException(
+        "regex not available in the TOS JVM profile");
   }
 
   @Override
@@ -547,15 +546,18 @@ public final class String
   }
 
   public boolean matches(String regex) {
-    return Pattern.matches(regex, this);
+    throw new UnsupportedOperationException(
+        "regex not available in the TOS JVM profile");
   }
 
   public String replaceFirst(String regex, String replacement) {
-    return Pattern.compile(regex).matcher(this).replaceFirst(replacement);
+    throw new UnsupportedOperationException(
+        "regex not available in the TOS JVM profile");
   }
 
   public String replaceAll(String regex, String replacement) {
-    return Pattern.compile(regex).matcher(this).replaceAll(replacement);
+    throw new UnsupportedOperationException(
+        "regex not available in the TOS JVM profile");
   }
 
   public String replace(CharSequence target, CharSequence replace) {
@@ -597,17 +599,8 @@ public final class String
   public native String intern();
 
   public static String format(String fmt, Object... args) {
-    final Formatter formatter = new Formatter();
-    final String result = formatter.format(fmt, args).toString();
-    formatter.close();
-    return result;
-  }
-
-  public static String format(Locale l, String fmt, Object... args) {
-    final Formatter formatter = new Formatter();
-    final String result = formatter.format(l, fmt, args).toString();
-    formatter.close();
-    return result;
+    throw new UnsupportedOperationException(
+        "formatter not available in the TOS JVM profile");
   }
 
   public static String valueOf(Object s) {
@@ -701,24 +694,4 @@ public final class String
     return Character.codePointCount(this, start, end);
   }
 
-  public String toUpperCase(Locale locale) {
-    checkDeterministicCaseLocale(locale, "toUpperCase");
-    return toUpperCase();
-  }
-
-  public String toLowerCase(Locale locale) {
-    checkDeterministicCaseLocale(locale, "toLowerCase");
-    return toLowerCase();
-  }
-
-  private static void checkDeterministicCaseLocale(Locale locale, String method) {
-    if (locale == null) {
-      throw new NullPointerException();
-    }
-
-    String language = locale.getLanguage();
-    if (language.equals("tr") || language.equals("az") || language.equals("lt")) {
-      throw new UnsupportedOperationException(method + '(' + locale + ')');
-    }
-  }
 }

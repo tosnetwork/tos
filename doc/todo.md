@@ -48,17 +48,13 @@ Status legend: `✅` completed, unchecked items are still open.
     - Replace the flat per-opcode cost of 1 with the opcode cost table from
       `jvm/core/gas-table.cpp` (ConfigParam 85).
 
-- [ ] Disable or isolate JIT/AOT/host-VM compilation paths for consensus execution.
+- ✅ Disable or isolate JIT/AOT/host-VM compilation paths for consensus execution.
   Contract execution must use a deterministic interpreter-only profile unless a
   future compiled profile is proven byte-identical across validators.
-  - **Status:** The JIT (`compile.cpp`, `compile-x86_64.S`, etc.) is present in
-    the source tree but `src/CMakeLists.txt` does not include `compile.cpp` in
-    any library target. The `MyProcessor::compileMethod()` in `interpret.cpp`
-    calls `abort(s)`, making JIT invocation a hard crash at runtime. The CMake
-    `avata_interpreter` static library target (to be defined in P2 build work)
-    must explicitly exclude all `compile-*.cpp` / `compile-*.S` files. No further
-    code change is needed for correctness; the build configuration is the
-    gate-keeper. Annotate `CMakeLists.txt` to document the intentional exclusion.
+  - **Status:** Completed by slimming the Avata source and build profile. The
+    legacy JIT/codegen/AOT sources (`src/codegen/**`, `include/avata/codegen/**`,
+    `src/compile*`) and codegen unit tests have been removed. Make and CMake now
+    build the interpreter profile only.
 
 - [ ] Define and enforce a deterministic class-file verifier profile: supported
   class-file versions, TOS extensions, forbidden attributes/classes, duplicate
@@ -91,20 +87,19 @@ Status legend: `✅` completed, unchecked items are still open.
   - **Status:** `java.lang.System` in `classpath/java/lang/System.java` already
     traps `currentTimeMillis()`, `nanoTime()`, `getenv()`, `load()`,
     `loadLibrary()`, `mapLibraryName()`, `exit()` with
-    `UnsupportedOperationException`. The native C++ surface
-    (`classpath-android.cpp`) still calls `t->m->system->now()` for
-    `Avata_java_lang_System_currentTimeMillis` and
-    `Avata_java_lang_System_nanoTime` — these are reachable if the Java
-    `System.java` trap is bypassed by native reflection.
+    `UnsupportedOperationException`. The Android/libcore and OpenJDK classpath
+    bridges have been removed from the TOS Avata profile.
+  - **Completed in slim pass:** `Avata_java_lang_ClassLoader_load` now throws
+    `ContractViolationError`, and the legacy
+    `Java_java_lang_System_currentTimeMillis` JNI body returns deterministic
+    zero if reached by future classpath changes.
+  - **Completed in classpath cut:** broad host-facing packages are absent from
+    `classpath.jar`; `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`,
+    `MutableCallSite`, `VolatileCallSite`, `SerializedLambda`, and
+    `MethodHandleInfo` are no longer shipped.
   - **Remaining work:**
-    - Patch `Avata_java_lang_System_currentTimeMillis` and
-      `Avata_java_lang_System_nanoTime` in `src/classpath-android.cpp` to return
-      0 unconditionally (or throw `ContractViolationError`).
-    - Add `ContractViolationError` throw to `Avata_java_lang_ClassLoader_load`
-      in `src/classpath-avata.cpp` (currently calls `loadLibrary`).
-    - Audit `classpath/java-lang.cpp` `Java_java_lang_System_currentTimeMillis`
-      (openjdk path) similarly.
-    - Add negative tests in `unittest/` for each trapped surface.
+    - Add deploy-time verifier negative tests for forbidden package/class
+      references that are absent or internal-only.
 
 - [ ] Make object identity deterministic or unavailable: `Object.hashCode`,
   `System.identityHashCode`, object `toString`, and exception stack traces must
@@ -113,29 +108,27 @@ Status legend: `✅` completed, unchecked items are still open.
     - `Thread::identityHashCounter` (uint32_t) added to `vm::Thread` in
       `jvm/avata/src/avata/machine.h`, initialized to 0 in `Thread::Thread()`
       in `machine.cpp`.
-    - `objectHash()` in `machine.h` now returns `(++t->identityHashCounter) &
-      0x7FFFFFFF` for un-extended non-fixed objects, replacing the
-      address-derived value. GC copy callback updated to call `gcTakeHash()`
-      (pointer-based) rather than `takeHash()` so the counter is not consumed
-      during GC moves.
-    - `gcTakeHash()` (pointer-based, idempotent) added alongside `takeHash()`
-      alias and the new counter-based `objectHash()`.
+    - `Thread::identityHashes` stores the first Java-visible identity hash per
+      object, so repeated `Object.hashCode()` / `System.identityHashCode()`
+      calls remain stable.
+    - `objectHash()` in `machine.h` returns a per-transaction counter value for
+      un-extended non-fixed objects, replacing the address-derived value.
+    - GC copy callback preserves the counter-based identity hash when a side
+      table entry exists; `gcTakeHash()` is now only a fallback for VM-internal
+      hashTaken objects without a Java-visible identity entry.
+    - `Object.toString()` still uses `ClassName@0x<hash>`, but the hash now
+      comes from the deterministic `objectHash()` path rather than the heap
+      address.
   - **Remaining work:**
-    - `Avata_java_lang_Object_toString` in `src/builtin.cpp` still uses
-      `objectHash(t, this_)` and formats `"ClassName@0x%x"`. Change to strip the
-      `@` address suffix or replace with a fixed `"ClassName@<hash>"` using the
-      counter-based value.
-    - Exception stack traces (`Traces.java`, `builtin.cpp`) must not include
+    - Exception stack traces (`Throwable`, `StackTraceElement`, native trace
+      builders) must not include
       host-local file paths. Verify that `StackTraceElement.getFileName()` and
       `.getLineNumber()` only include class-file-embedded source info, not
       absolute host paths.
     - `jvm/core/compute-phase.cpp` must reset `t->identityHashCounter = 0` at
       the start of each transaction so counter values are transaction-scoped.
-    - GC-moved objects still get a pointer-based hash stored in their extended
-      word (see `gcTakeHash`). Full determinism requires either (a) disabling GC
-      during contract execution or (b) a side-table mapping objects to
-      counter-assigned hashes that survives GC moves. Option (a) is preferred for
-      the initial TOS execution model.
+    - `jvm/core/compute-phase.cpp` must clear `t->identityHashes` when the
+      transaction-scoped heap is reset.
 
 - [ ] Finalize contract heap/state persistence: static field admission rules,
   persisted primitive/value profiles, `PersistentMap`/`PersistentList`
@@ -174,7 +167,12 @@ Status legend: `✅` completed, unchecked items are still open.
   class reader for class files targeting Java 9+ or pre-Java 1.1; extends
   `ClassFormatError`.
 
-## P1 JDK8u Compatibility Gaps
+## Historical JDK8u Compatibility Work
+
+This section records work completed before the slim contract-classpath cut.
+Several APIs listed here were intentionally removed from the current v1
+contract profile after the first-principles review. They remain useful as
+history, not as a promise that the current `rt.jar` exposes those APIs.
 
 - ✅ Continue aligning native IO error handling with JDK8u:
   file metadata helpers, directory handling, interrupted syscalls, and close
@@ -184,12 +182,15 @@ Status legend: `✅` completed, unchecked items are still open.
   follow the JDK8u `altMetafactory` argument model for Avata's lambda surface.
 - ✅ Audit `java.lang.invoke` against OpenJDK 8u behavior: `CallSite` is now
   abstract per JDK8u; `ConstantCallSite` is the sole admitted subclass;
-  `MutableCallSite` and `VolatileCallSite` trap deterministically (runtime
-  target mutation breaks consensus); `MethodHandle` non-admitted methods trap;
+  `MutableCallSite` and `VolatileCallSite` were initially deterministic traps
+  and are now removed from the v1 classpath (runtime target mutation breaks
+  consensus); `MethodHandle` non-admitted methods trap;
   `MethodHandles.lookup()`/`publicLookup()` and all `Lookup` factory methods
-  trap (host-observing); `SerializedLambda` traps (lambda serialization not
-  admitted); `WrongMethodTypeException` and `MethodHandleInfo` added per JDK8u
-  API surface.
+  trap (host-observing); `SerializedLambda` was initially a deterministic trap
+  and is now removed from the v1 classpath (lambda serialization not admitted);
+  `WrongMethodTypeException` retained; `MethodHandleInfo`/`Lookup.revealDirect`
+  removed from the v1 classpath because direct-handle introspection is outside
+  the admitted contract API profile.
 - ✅ Complete reflection compatibility: `Class.getClassLoader()` returns `null`
   (bootstrap model); `Class.isSynthetic()` checks `ACC_SYNTHETIC`; `Field`
   generic type reflection works; `AccessibleObject.setAccessible` is a no-op
@@ -223,11 +224,11 @@ Status legend: `✅` completed, unchecked items are still open.
 - [ ] Add cross-platform deterministic test runs: same bytecode, same inputs,
   fresh heap, byte-identical output state on Linux/macOS/Windows and target
   validator architectures.
-- ✅ Add negative tests for forbidden host APIs: `test/HostAPITest.java` (28
-  sub-tests) covers `System` time/env/load/exit, `Runtime.exec`/halt/hooks,
-  `Thread.start`/sleep/yield, `Socket`/`InetAddress`/`URLClassLoader`,
-  `SocketChannel`/`Selector` — all pass with deterministic
-  `UnsupportedOperationException`.
+- ✅ Add profile negative tests for forbidden host APIs. Historical
+  `test/HostAPITest.java` covered broad Java SE host surfaces before the
+  classpath cut; the current profile suite includes `test/CoreTrapProfile.java`
+  for `Object.wait/notify` and thread join/interruption traps. Whole-class
+  forbidden APIs are validated by their absence from `classpath.jar`.
 
 ## Completed In `feature/avata-jvm`
 
@@ -237,6 +238,26 @@ Status legend: `✅` completed, unchecked items are still open.
   zip/zlib APIs.
 - ✅ NIO accept descriptor leak coverage.
 - ✅ LZMA temporary loader cleanup.
+- ✅ Slimmed Avata to the TOS contract VM profile: removed OpenJDK/Android
+  classpath bridges, bootimage/codeimage generator, JIT/codegen/AOT sources,
+  embed loader, LZMA build variants, and legacy build-matrix entries. The
+  remaining local build is interpreter + self-contained Avata/TOS classpath.
+- ✅ Slimmed the Java class library to the v1 contract `rt.jar` profile:
+  removed `java.net`, `java.nio`, `java.security`, `java.text`, `java.math`,
+  `java.util.concurrent`, `java.util.logging`, `java.util.regex`,
+  `java.util.zip`, `java.util.jar`, `dalvik`, `libcore`, process APIs,
+  filesystem path APIs, object-stream serialization, and URL/resource handler
+  packages. The generated `classpath.jar` now contains only `java.lang`,
+  annotations, `java.lang.invoke`, `java.lang.ref`, admitted reflection,
+  minimal `java.io`, deterministic collections, `java.util.function`, Avata VM
+  support classes, and small `sun.*` internals required by VM internals.
+- ✅ Removed callable native-internal and non-admitted invoke shell classes:
+  `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, `MutableCallSite`,
+  `VolatileCallSite`, `SerializedLambda`, and `MethodHandleInfo` are absent
+  from `classpath.jar`.
+- ✅ Turned `Object.wait/notify/notifyAll` and `Thread.join/interruption` into
+  deterministic `ContractViolationError` traps. `Thread.activeCount()`,
+  `enumerate()`, and `getId()` now return fixed single-thread profile values.
 - ✅ POSIX synchronization error checks.
 - ✅ `file.encoding` user override handling.
 - ✅ File input/output native calls now retry interrupted syscalls and reject
@@ -329,10 +350,13 @@ Status legend: `✅` completed, unchecked items are still open.
   added with JDK8u-compatible `classname` field. Exception types aligned across
   write and read paths.
 - ✅ `java.lang.invoke` profile audited and aligned: `CallSite` abstract per
-  JDK8u; `ConstantCallSite` admitted; `MutableCallSite`/`VolatileCallSite` trap;
+  JDK8u; `ConstantCallSite` admitted; `MutableCallSite`/`VolatileCallSite`
+  removed from the v1 classpath;
   `MethodHandle` Java-surface non-admitted methods trap; `MethodHandles.Lookup`
-  factory methods trap; `SerializedLambda` traps; `WrongMethodTypeException` and
-  `MethodHandleInfo` added; `LambdaMetafactory` updated to use `ConstantCallSite`.
+  factory methods trap; `SerializedLambda` and `MethodHandleInfo` removed from
+  the v1 classpath;
+  `WrongMethodTypeException` retained; `LambdaMetafactory`
+  updated to use `ConstantCallSite`.
 - ✅ Reflection API aligned: `Class.getClassLoader()` returns null;
   `Class.isSynthetic()` added; `Class.forName` fixed; `FunctionalInterface`
   annotation added; `Long.compare(long,long)` added.

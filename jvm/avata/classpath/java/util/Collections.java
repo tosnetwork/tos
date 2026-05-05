@@ -16,23 +16,9 @@ public class Collections {
 
   private Collections() { }
 
-  public static void shuffle(List list, Random random) {
-    Object[] array = Data.toArray(list, new Object[list.size()]);
-    for (int i = 0; i < array.length; ++i) {
-      int j = random.nextInt(array.length);
-      Object tmp = array[i];
-      array[i] = array[j];
-      array[j] = tmp;
-    }
- 
-    list.clear();
-    for (int i = 0; i < array.length; ++i) {
-      list.add(array[i]);
-    }
-  }
-
   public static void shuffle(List list) {
-    shuffle(list, new Random());
+    throw new UnsupportedOperationException(
+        "random shuffle not available in the TOS JVM profile");
   }
 
   public static void sort(List list) {

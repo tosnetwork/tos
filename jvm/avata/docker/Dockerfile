@@ -2,7 +2,6 @@ FROM debian:jessie
 MAINTAINER Joshua Warner, joshuawarner32@gmail.com
 
 RUN echo 'deb http://http.debian.net/debian jessie-backports main' >> /etc/apt/sources.list && \
-    echo 'deb-src http://http.debian.net/debian jessie-backports main' >> /etc/apt/sources.list && \
     dpkg --add-architecture i386 && \
     apt-get update && \
     mkdir /var/src/
@@ -54,29 +53,6 @@ RUN cd /var/src/ && \
     unzip win64.zip && \
     rm win64.zip && \
     mv win64-* win64			
-
-# Add openjdk-src stuff
-RUN apt-get install -y \
-    libcups2-dev \
-    libgconf2-dev && \
-    mkdir /var/src/openjdk/ && \
-    cd /var/src/openjdk/ && \
-    apt-get source openjdk-8 && \
-    apt-get clean all && \
-    find /var/src/openjdk && \
-    rm /var/src/openjdk/*.gz /var/src/openjdk/*.dsc && \
-    cd /var/src/openjdk/ && \
-    tar -xf /var/src/openjdk/openjdk*/jdk.tar.xz && \
-    mv /var/src/openjdk/jdk-*/src /var/src/openjdk-src && \
-    rm -rf /var/src/openjdk && \
-    apt-get clean all
-
-# Download/extract lzma source
-RUN mkdir /var/src/lzma && \
-    cd /var/src/lzma && \
-    apt-get install -y p7zip && \
-    wget http://www.7-zip.org/a/lzma1507.7z -O lzma.7z && \
-    p7zip -d lzma.7z
 
 # Avata build location
 VOLUME /var/src/avata

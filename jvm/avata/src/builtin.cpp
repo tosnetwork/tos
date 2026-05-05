@@ -644,9 +644,8 @@ extern "C" AVATA_EXPORT void JNICALL
   }
 }
 
-// NB: The following primitive get/put methods are only used by the
-// interpreter.  The JIT/AOT compiler implements them as intrinsics,
-// so these versions will be ignored.
+// NB: The following primitive get/put methods are used by the interpreter.
+// The removed legacy JIT/AOT pipeline used to replace them with intrinsics.
 
 extern "C" AVATA_EXPORT void JNICALL
     Avata_sun_misc_Unsafe_putByte__JB(Thread*, object, uintptr_t* arguments)

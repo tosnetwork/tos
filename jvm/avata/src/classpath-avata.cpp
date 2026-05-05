@@ -143,42 +143,25 @@ class MyClasspath : public Classpath {
     return AVATA_CLASSPATH;
   }
 
-  virtual object makeDirectByteBuffer(Thread* t, void* p, jlong capacity)
+  virtual object makeDirectByteBuffer(Thread* t, void*, jlong)
   {
-    GcClass* c
-        = resolveClass(t, roots(t)->bootLoader(), "java/nio/DirectByteBuffer");
-    PROTECT(t, c);
-
-    object instance = makeNew(t, c);
-    PROTECT(t, instance);
-
-    GcMethod* constructor = resolveMethod(t, c, "<init>", "(JI)V");
-
-    t->m->processor->invoke(t,
-                            constructor,
-                            instance,
-                            reinterpret_cast<int64_t>(p),
-                            static_cast<int32_t>(capacity));
-
-    return instance;
+    throwNew(t,
+             GcContractViolationError::Type,
+             "direct byte buffers are not admitted in the TOS JVM profile");
   }
 
-  virtual void* getDirectBufferAddress(Thread* t, object b)
+  virtual void* getDirectBufferAddress(Thread* t, object)
   {
-    PROTECT(t, b);
-
-    GcField* field = resolveField(t, objectClass(t, b), "address", "J");
-
-    return reinterpret_cast<void*>(fieldAtOffset<int64_t>(b, field->offset()));
+    throwNew(t,
+             GcContractViolationError::Type,
+             "direct byte buffers are not admitted in the TOS JVM profile");
   }
 
-  virtual int64_t getDirectBufferCapacity(Thread* t, object b)
+  virtual int64_t getDirectBufferCapacity(Thread* t, object)
   {
-    PROTECT(t, b);
-
-    GcField* field = resolveField(t, objectClass(t, b), "capacity", "I");
-
-    return fieldAtOffset<int32_t>(b, field->offset());
+    throwNew(t,
+             GcContractViolationError::Type,
+             "direct byte buffers are not admitted in the TOS JVM profile");
   }
 
   virtual bool canTailCall(Thread* t UNUSED,
@@ -251,7 +234,6 @@ namespace vm {
 
 Classpath* makeClasspath(System*,
                          Allocator* allocator,
-                         const char*,
                          const char*)
 {
   return new (allocator->allocate(sizeof(local::MyClasspath)))
@@ -470,23 +452,11 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_ClassLoader_load(Thread* t, object, uintptr_t* arguments)
+    Avata_java_lang_ClassLoader_load(Thread* t, object, uintptr_t*)
 {
-  GcString* name = cast<GcString>(t, reinterpret_cast<object>(arguments[0]));
-
-  Thread::LibraryLoadStack stack(
-      t,
-      cast<GcJclass>(t, reinterpret_cast<object>(arguments[1]))
-          ->vmClass()
-          ->loader());
-
-  bool mapName = arguments[2];
-
-  unsigned length = name->length(t);
-  THREAD_RUNTIME_ARRAY(t, char, n, length + 1);
-  stringChars(t, name, RUNTIME_ARRAY_BODY(n));
-
-  loadLibrary(t, "", RUNTIME_ARRAY_BODY(n), mapName, true);
+  throwNew(t,
+           GcContractViolationError::Type,
+           "native library loading is not admitted in the TOS JVM profile");
 }
 
 extern "C" AVATA_EXPORT void JNICALL

@@ -326,11 +326,6 @@ public class Longs {
       expect(getLong(array, 0) == 231);
     }
 
-    java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(8);
-    buffer.putLong(231);
-    buffer.flip();
-    expect(buffer.getLong() == 231);
-
     expect(unsignedShiftRight32(231) == 0);
 
     { int[] x = new int[] { 1701899151 };

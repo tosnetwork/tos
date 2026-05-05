@@ -1,7 +1,7 @@
 # JVM Workchain Roadmap
 
-Status: design — not started
-Date: 2026-05-04
+Status: working design — Avata slim baseline in progress
+Date: 2026-05-05
 
 This document describes the plan to add a third non-TVM workchain to TOS: a JVM
 execution domain (`wc=3`). It covers engine selection rationale, design
@@ -64,9 +64,10 @@ bytecode interpreter, verifier, class-loader, allocation, exception,
 Avata will be **forked** and owned by this repository. The fork is not a tracking
 clone; it is a permanent maintenance commitment to the Java 8 execution profile
 needed for consensus execution. No attempt will be made to track the retired
-upstream automatically. OpenJDK class-library inputs are vendored/pinned explicitly as
-part of the TOS runtime library and audited like consensus code. The fork will
-be maintained to the same standard as `evm/` and `uno/`.
+upstream automatically. OpenJDK/JDK8u sources are reference inputs only for
+opcode, verifier, and admitted API semantics. The consensus build uses the
+self-contained Avata/TOS classpath and audits it like consensus code. The fork
+will be maintained to the same standard as `evm/` and `uno/`.
 
 The fork lives at `jvm/avata/` with a pinned commit hash recorded in
 `jvm/avata/PINNED_COMMIT`. Any change to Avata internals must be made
@@ -77,6 +78,10 @@ repository's normal audit path before the fork is vendored.
 
 ## Java 8 Compatibility Profile
 
+The detailed working profile and Avata development order are maintained in
+`doc/jvm-profile.md`. This roadmap summarizes the same boundary at the phase
+level.
+
 The compatibility target is a **blockchain VM-committable restricted Java 8 API
 profile**, not full OpenJDK 8 API compatibility. Within the admitted profile,
 Avata/TOS APIs must match Java 8/OpenJDK 8 semantics closely enough that
@@ -85,6 +90,21 @@ predictable Java behavior. Outside that profile, APIs must be rejected by the
 verifier or fail through deterministic consensus-safe traps; they must not
 silently expose validator-local host behavior or diverge from Java semantics in
 untracked ways.
+
+The first-principles compatibility boundary is:
+- **100% Java 8 class-file and bytecode opcode compatibility** for the execution
+  engine, including verifier/linker/interpreter semantics for the supported
+  class-file profile. TOS commits to executing ordinary Java 8 class files, not
+  a TOS-specific bytecode dialect.
+- **A TOS smart-contract runtime library**, not full OpenJDK 8 class-library
+  compatibility. The shipped `rt.jar` is designed for deterministic contract
+  execution and may include OpenJDK-shaped classes, Java language primitives,
+  and `tos.*` APIs, but it intentionally excludes or traps host-side Java APIs
+  that are not meaningful or safe on-chain.
+- **Familiar Java developer workflow** through TOS-provided `javac` and local
+  `java`-style runner tooling. Developers should be able to write Java 8
+  source, compile it to normal class files against the TOS `rt.jar`, and run the
+  same contract locally before deployment.
 
 This workchain does not attempt to run arbitrary host-side Java programs, but it
 does commit to Java 8 class-file and opcode compatibility. A class file produced
@@ -111,11 +131,13 @@ define a new bytecode dialect.
 - Class initialization (`<clinit>`) with deterministic execution rules; Phase 0
   must define when initializers run during deploy and per-transaction restore
 
-The runtime class library is a TOS-pinned `rt.jar` derived from OpenJDK classes
-and extended with TOS APIs. Language-level classes remain under `java.lang`
-(`Object`, `String`, `Math`, `System`, errors, and related helpers). TOS domain
-APIs that are not language primitives live under `tos.*`, such as
-`tos.storage.*`, `tos.contract.*`, and `tos.emit.*`.
+The runtime class library is a TOS-pinned `rt.jar` built from the Avata/TOS
+classpath and extended with TOS APIs. OpenJDK/JDK8u class shapes may be used as
+semantic references, but they are not runtime build inputs for the consensus
+profile. Language-level classes remain under `java.lang` (`Object`, `String`,
+`Math`, `System`, errors, and related helpers). TOS domain APIs that are not
+language primitives live under `tos.*`, such as `tos.storage.*`,
+`tos.contract.*`, and `tos.emit.*`.
 
 **Consensus runtime restrictions:**
 - `java.lang.Thread`, monitor wait/notify, executors, and other multi-threading
@@ -123,11 +145,15 @@ APIs that are not language primitives live under `tos.*`, such as
   The opcodes `monitorenter` / `monitorexit` still execute with deterministic
   single-thread monitor semantics for Java compatibility.
 - Host IO, networking, filesystem, processes, native libraries, and database
-  APIs (`java.io`, `java.net`, `java.nio` where host-backed, `java.sql`,
-  `java.lang.Process`, JNI/native methods) must not access validator-local
-  resources. The class library may include OpenJDK-derived class shapes, but
-  consensus execution must reject or deterministically trap calls that would
-  observe the host.
+  APIs must not access validator-local resources. In the v1 `rt.jar`, broad
+  host-facing Java SE packages are absent by default: `java.net`, host-backed
+  `java.nio`, `java.security`, `java.text`, `java.math`,
+  `java.util.concurrent`, `java.util.logging`, `java.util.regex`,
+  `java.util.zip`, and `java.util.jar` are not shipped unless explicitly
+  admitted later. Minimal `java.io` remains only for byte-array/string streams
+  and VM stdin/stdout/stderr descriptors; path-based filesystem APIs are absent.
+  JNI/native methods and any remaining internal host hook must reject or trap
+  deterministically before observing the host.
 - Non-deterministic entry points such as wall-clock time, entropy,
   `Math.random()`, UUID generation, environment variables, and system
   properties are replaced by deterministic TOS-defined APIs or rejected.
@@ -317,9 +343,9 @@ format and the message ABI at the TL-B / binary level.
   class-library references, OpenJDK opcode/class-file compatibility cases,
   deterministic runtime traps, static field rules, and duplicate ABI method-id
   handling
-- OpenJDK-derived runtime library plan: pinned source revision, license/notice
-  handling, package list, TOS extensions, and deterministic replacements for
-  host-observing APIs
+- TOS runtime library profile plan: package list, license/notice handling,
+  optional OpenJDK/JDK8u semantic references, TOS extensions, and deterministic
+  replacements for host-observing APIs
 - Persisted value profile: exact allowed static field types and
   `PersistentMap` / `PersistentList` key-value encodings. Arbitrary Java object
   graphs are not persisted in v1.
@@ -340,8 +366,10 @@ for consensus execution. No TOS integration yet; tested standalone.
 
 - Import the pinned ReadyTalk source snapshot into `jvm/avata/`
 - Add Avata license/notice material to the repository's third-party audit files
-- Remove or disable Avata's JIT compiler (`avata/src/compile*.cpp`); force
-  interpreter-only execution path (`avata/src/interpret.cpp`)
+- Keep the current slim Avata baseline: interpreter-only execution path
+  (`avata/src/interpret.cpp`), Avata/TOS classpath only, and no OpenJDK/Android
+  classpath bridges, bootimage/codeimage generator, JIT/codegen, embed loader,
+  or LZMA build variants
 - Remove Avata's host threading primitives. `monitorenter`/`monitorexit` remain
   supported opcodes, but execute with deterministic single-thread monitor
   semantics; `wait`/`notify`/`Thread` APIs trap deterministically.
@@ -359,9 +387,15 @@ for consensus execution. No TOS integration yet; tested standalone.
   NaN/signed-zero/infinity/subnormal behavior, plus conformance tests for all
   supported platforms
 - Add class-load-time validation for unsupported class-file versions and
-  deterministic runtime traps for forbidden host-observing packages/classes
-  (`java.io`, `java.net`, `java.lang.Thread`, `java.lang.reflect` where not
-  admitted by Phase 0, etc.)
+  deterministic runtime traps for forbidden host-observing packages/classes.
+  In the v1 classpath, broad host packages such as `java.net` and host-backed
+  `java.nio` are absent; minimal `java.io` is descriptor/string/byte-array
+  only; non-admitted whole classes such as `sun.misc.Unsafe`, `avata.Machine`,
+  `avata.Traces`, `MutableCallSite`, `VolatileCallSite`, `SerializedLambda`,
+  and `MethodHandleInfo` are absent from
+  `rt.jar`; `java.lang.Thread` and non-admitted reflection/class-loading
+  surfaces must reject or trap deterministically where their containing classes
+  are still required.
 - Make `Object.hashCode`, `System.identityHashCode`, object `toString`, and
   exception stack traces deterministic or unavailable
 - Wire a per-transaction gas counter into Avata's interpreter dispatch loop;
@@ -435,9 +469,12 @@ placeholder result for tests only. A production binary must fail closed if
 ### Phase 3 — Contract standard library
 
 **Goal:** Provide the deterministic `rt.jar` that contract classes compile and
-link against. This runtime is based on pinned OpenJDK Java 8 class-library
-sources and extended with TOS-specific APIs. It is bundled into the executor
-account's zerostate by content hash.
+link against. This runtime is the smart-contract API surface for the JVM
+workchain, not an attempt to reproduce the full OpenJDK 8 class library. It is
+built from the Avata/TOS classpath, may use JDK8u as a semantic reference where
+that helps preserve Java language and tooling compatibility, and is extended
+with TOS-specific APIs. It is bundled into the executor account's zerostate by
+content hash.
 
 **Classes required:**
 - `java.lang.Object` — minimal JVM root class required by class-file semantics;
@@ -466,12 +503,12 @@ account's zerostate by content hash.
 - `tos.emit.EventLog` — emit a log entry staged in side effects
 
 The list above is the minimum class surface that must be audited explicitly; it
-is not the entire runtime library. Phase 3 must decide which OpenJDK packages
-are included in `rt.jar`, which methods are deterministic and callable, and
-which methods are present only as linkage-compatible traps.
+is not the entire runtime library. Phase 3 must decide which Java-compatible
+packages are included in `rt.jar`, which methods are deterministic and
+callable, and which methods are present only as linkage-compatible traps.
 
-OpenJDK class shapes are the baseline, but not every OpenJDK behavior is
-admitted in consensus. Host-observing methods are replaced, stubbed, or trapped
+JDK8u class shapes are references, but not every OpenJDK behavior is admitted
+in consensus. Host-observing methods are replaced, stubbed, or trapped
 deterministically. Because this workchain ships its own pinned `rt.jar`, TOS can
 extend `java.lang.System` with chain context methods while still preserving
 normal Java class-file compatibility.
@@ -482,6 +519,14 @@ force class-file major version 52 and then run the same verifier/admission
 checks as the validator. This toolchain work is outside the consensus path and
 may be delivered separately from the validator binary, but consensus never
 trusts it.
+
+The developer distribution must provide a `javac` command path and a local
+`java`-style runner path configured for the TOS runtime profile. The compiler
+uses the TOS `rt.jar` as the boot classpath so unsupported OpenJDK APIs fail
+early at compile or admission time. The local runner executes the same Avata
+interpreter profile, gas rules, fixed floating-point behavior, deterministic
+traps, and heap/state codec as validators, so local tests exercise the same
+contract surface that will run on-chain.
 
 **Effort:** 8–12 weeks
 
@@ -726,7 +771,7 @@ performance profiling.
 | 0 | Design pinning, stub registry tests | 1–2 weeks |
 | 1 | Avata fork, opcode compatibility, determinism hardening | 8–14 weeks |
 | 2 | Framework integration (WorkchainEngine, ConfigParam, genesis) | 2–3 weeks |
-| 3 | OpenJDK-derived `rt.jar` + `tos.*` domain APIs | 8–12 weeks |
+| 3 | TOS contract `rt.jar` + `tos.*` domain APIs | 8–12 weeks |
 | **4** | **Heap serialization (cell codec)** | **3–5 months** |
 | 5 | Gas metering | 4–6 weeks |
 | 6 | Message ABI | 2–4 weeks |
@@ -753,12 +798,12 @@ Legend:
 - ⬜ Not started
 - ⏭ Explicitly deferred
 
-Last updated: 2026-05-04.
+Last updated: 2026-05-05.
 
 | Phase | Status | Notes |
 |---|---|---|
-| Phase 0 — Design | ⬜ | This document is the starting point; TL-B schemas and stub tests not yet written |
-| Phase 1 — Avata fork | ⬜ | |
+| Phase 0 — Design | 🟡 | Roadmap and restricted API profile are written; TL-B schemas and stub tests not yet written |
+| Phase 1 — Avata fork | 🟡 | Fork imported and renamed; current slim baseline builds as interpreter + Avata/TOS classpath only. Remaining work: fixed floating point, gas schedule, verifier policy, traps, and TOS integration target |
 | Phase 2 — Framework integration | ⬜ | |
 | Phase 3 — Contract stdlib | ⬜ | |
 | Phase 4 — Heap serialization | ⬜ | Largest risk item; must be prototyped before committing to timeline |
@@ -774,15 +819,14 @@ Last updated: 2026-05-04.
 
 ```
 jvm/
-  vendor/
-    avata/              ← forked Avata, pinned commit, stripped and determinized
-      PINNED_COMMIT
-      CMakeLists.txt
-      src/
-        interpret.cpp   ← interpreter loop with gas counter wired in
-        machine.cpp
-        heap.cpp
-        ...
+  avata/                ← forked Avata, pinned commit, stripped and determinized
+    PINNED_COMMIT
+    CMakeLists.txt
+    src/
+      interpret.cpp     ← interpreter loop with gas counter wired in
+      machine.cpp
+      heap.cpp
+      ...
   core/
     dispatch-engine.h
     dispatch-engine.cpp ← JvmNativeEngine, register_jvm_workchain_engine()
@@ -804,10 +848,9 @@ jvm/
     gas-table.cpp       ← per-opcode gas schedule from ConfigParam 85
     rpc.h
     rpc.cpp             ← jvm_* JSON-RPC handlers
-  stdlib/
-    OPENJDK_PINNED_COMMIT
+  rt/
+    PROFILE.md
     THIRD_PARTY_NOTICES.md
-    openjdk/            ← pinned OpenJDK-derived class-library sources
     src/
       java/lang/Object.java
       java/lang/Class.java
@@ -832,7 +875,7 @@ jvm/
 
 ## Open Questions
 
-The following questions must be answered before Phase 1 begins:
+The following questions must be answered before Phase 1 is considered complete:
 
 1. **GC model for v1.** Should the fork replace Avata's semi-space GC with a
    per-transaction arena allocator, or determinize the existing GC? An arena is
@@ -860,9 +903,9 @@ The following questions must be answered before Phase 1 begins:
    is asynchronous through TOS messages. Synchronous reads from external state
    would break the snapshot execution model.
 
-5. **OpenJDK runtime package boundary.** The v1 class-file profile is
+5. **TOS runtime package boundary.** The v1 class-file profile is
    OpenJDK/JVMS-compatible, but consensus cannot expose host resources. Phase 0
-   must decide which OpenJDK packages/methods are callable, which are present
+   must decide which Java-compatible packages/methods are callable, which are present
    only as linkage-compatible deterministic traps, and how the developer
    toolchain reports those restrictions before deployment.
 

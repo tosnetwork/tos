@@ -39,8 +39,7 @@ public class Integers {
       int nolz = 0;
       boolean nolzFound = false;
       for(int j = 0; j < 31; j++) {
-        double r = Math.random();
-        if(r < 0.5) {
+        if(((i >> (j % 16)) & 1) == 0) {
           binary += "0";
           if(!nolzFound) {
             nolz++;
@@ -51,8 +50,7 @@ public class Integers {
         }
       }
 
-      double r = Math.random();
-      if(r < 0.5) {
+      if((i & 1) == 0) {
         // positive
         binary = "0" + binary;
         nolz++;

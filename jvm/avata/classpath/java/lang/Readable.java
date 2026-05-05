@@ -10,9 +10,8 @@
 
 package java.lang;
 
-import java.nio.CharBuffer;
 import java.io.IOException;
 
 public interface Readable {
-  int read(CharBuffer buffer) throws IOException;
+  int read(char[] buffer) throws IOException;
 }

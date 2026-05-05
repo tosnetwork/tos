@@ -37,49 +37,42 @@ build-platform := \
 arch = $(build-arch)
 target-arch = $(arch)
 
-bootimage-platform = \
+host-platform = \
 	$(subst cygwin,windows,$(subst mingw32,windows,$(build-platform)))
 
-platform = $(bootimage-platform)
-
-codegen-targets = native
+platform = $(host-platform)
 
 mode = fast
-process = compile
+process = interpret
 
-ifneq ($(process),compile)
+ifneq ($(process),interpret)
 	options := -$(process)
 endif
 ifneq ($(mode),fast)
 	options := $(options)-$(mode)
 endif
-ifneq ($(lzma),)
-	options := $(options)-lzma
-endif
-ifeq ($(bootimage),true)
-	options := $(options)-bootimage
-	ifeq ($(bootimage-test),true)
-		# this option indicates that we should AOT-compile the test
-		# classes as well as the class library
-		options := $(options)-test
-	endif
-endif
-ifeq ($(tails),true)
-	options := $(options)-tails
-endif
-ifeq ($(continuations),true)
-	options := $(options)-continuations
-endif
-ifeq ($(codegen-targets),all)
-	options := $(options)-all
-endif
-
 ifeq ($(filter debug debug-fast fast stress stress-major small,$(mode)),)
 	x := $(error "'$(mode)' is not a valid mode (choose one of: debug debug-fast fast stress stress-major small)")
 endif
 
-ifeq ($(filter compile interpret,$(process)),)
-	x := $(error "'$(process)' is not a valid process (choose one of: compile interpret)")
+ifneq ($(process),interpret)
+	x := $(error "'$(process)' is not a supported TOS consensus build mode; use process=interpret")
+endif
+
+ifneq ($(openjdk)$(openjdk-src),)
+	x := $(error "OpenJDK runtime/classpath builds were removed from the TOS Avata profile; use the Avata/TOS classpath")
+endif
+
+ifneq ($(android),)
+	x := $(error "Android/libcore builds were removed from the TOS Avata profile")
+endif
+
+ifneq ($(bootimage)$(bootimage-test),)
+	x := $(error "bootimage/codeimage builds were removed from the TOS Avata profile")
+endif
+
+ifneq ($(tails)$(continuations)$(lzma),)
+	x := $(error "legacy tails/continuations/lzma build variants are not part of the TOS Avata profile")
 endif
 
 ifeq ($(filter x86_64 i386 arm arm64,$(arch)),)
@@ -110,16 +103,8 @@ ifeq ($(platform),ios)
 	endif
 endif
 
-ifeq ($(bootimage-test),true)
-	ifneq ($(bootimage),true)
-		x := $(error "bootimage-test=true only works when bootimage=true")
-	endif
-endif
-
-aot-only = false
 root := $(shell (cd .. && pwd))
 build = build/$(platform)-$(arch)$(options)
-host-build-root = $(build)/host
 classpath-build = $(build)/classpath
 test-build = $(build)/test
 src = src
@@ -128,16 +113,8 @@ test = test
 unittest = unittest
 win32 ?= $(root)/win32
 win64 ?= $(root)/win64
-winrt ?= $(root)/winrt
-wp8 ?= $(root)/wp8
 
 classpath = avata
-
-bootimage-classpath = $(classpath-build)
-
-ifeq ($(bootimage-test),true)
-	bootimage-classpath = $(classpath-build):$(test-build)
-endif
 
 ifeq ($(use-werror),true)
 	werror = -Werror
@@ -145,7 +122,6 @@ endif
 
 test-executable = $(shell pwd)/$(executable)
 boot-classpath = $(classpath-build)
-embed-prefix = /avata-embedded
 
 native-path = echo
 
@@ -179,245 +155,6 @@ ifeq ($(build-kernel),darwin)
 endif
 
 library-path = $(library-path-variable)=$(build)
-
-
-
-ifneq ($(openjdk),)
-	openjdk-version := $(call get-java-version,$(openjdk)/bin/java)
-
-	openjdk-arch = $(arch)
-	ifeq ($(arch),x86_64)
-		openjdk-arch = amd64
-	endif
-
-	ifneq ($(android),)
-		x := $(error "android and openjdk are incompatible")
-	endif
-
-	ifneq ($(openjdk-src),)
-		include openjdk-src.mk
-		options := $(options)-openjdk-src
-		classpath-objects = $(openjdk-objects) $(openjdk-local-objects)
-		classpath-cflags = -DAVATA_OPENJDK_SRC -DBOOT_JAVAHOME
-		openjdk-jar-dep = $(build)/openjdk-jar.dep
-		classpath-jar-dep = $(openjdk-jar-dep)
-		javahome = $(embed-prefix)/javahomeJar
-		javahome-files = lib/currency.data lib/security/java.security \
-			lib/security/java.policy lib/security/cacerts
-
-		ifneq (,$(wildcard $(openjdk)/jre/lib/zi))
-			javahome-files += lib/zi
-		endif
-
-		ifneq (,$(wildcard $(openjdk)/jre/lib/tzdb.dat))
-			javahome-files += lib/tzdb.dat
-		endif
-
-		local-policy = lib/security/local_policy.jar
-		ifneq (,$(wildcard $(openjdk)/jre/$(local-policy)))
-			javahome-files += $(local-policy)
-		endif
-
-		export-policy = lib/security/US_export_policy.jar
-		ifneq (,$(wildcard $(openjdk)/jre/$(export-policy)))
-			javahome-files += $(export-policy)
-		endif
-
-		ifeq ($(platform),windows)
-			javahome-files += lib/tzmappings
-		endif
-		javahome-object = $(build)/javahome-jar.o
-		boot-javahome-object = $(build)/boot-javahome.o
-		stub-sources = $(src)/openjdk/stubs.cpp
-		stub-objects = $(call cpp-objects,$(stub-sources),$(src),$(build))
-	else
-		soname-flag = -Wl,-soname -Wl,$(so-prefix)jvm$(so-suffix)
-		version-script-flag = -Wl,--version-script=openjdk.ld
-		options := $(options)-openjdk
-		test-executable = $(shell pwd)/$(executable-dynamic)
-		ifeq ($(build-kernel),darwin)
-			library-path = \
-				$(library-path-variable)=$(build):$(openjdk)/jre/lib
-		else
-			library-path = \
-				$(library-path-variable)=$(build):$(openjdk)/jre/lib/$(openjdk-arch)
-		endif
-		javahome = "$$($(native-path) "$(openjdk)/jre")"
-	endif
-
-	classpath = openjdk
-	boot-classpath := "$(boot-classpath)$(path-separator)$$($(native-path) "$(openjdk)/jre/lib/rt.jar")"
-	build-javahome = $(openjdk)/jre
-endif
-
-ifneq ($(android),)
-	options := $(options)-android
-	classpath-jar-dep = $(build)/android.dep
-	luni-native = $(android)/libcore/luni/src/main/native
-	classpath-cflags = -DBOOT_JAVAHOME
-	android-cflags = -I$(luni-native) \
-		-I$(android)/libnativehelper/include/nativehelper \
-		-I$(android)/libnativehelper \
-		-I$(android)/system/core/include \
-		-I$(android)/external/zlib \
-		-I$(android)/external/icu4c/i18n \
-		-I$(android)/external/icu4c/common \
-		-I$(android)/external/expat \
-		-I$(android)/external/openssl/include \
-		-I$(android)/external/openssl \
-		-I$(android)/libcore/include \
-		-I$(build)/android-src/external/fdlibm \
-		-I$(build)/android-src \
-		-fno-exceptions \
-		-D_FILE_OFFSET_BITS=64 \
-		-DOS_SHARED_LIB_FORMAT_STR="\"$(so-prefix)%s$(so-suffix)\"" \
-		-DJNI_JARJAR_PREFIX= \
-		-D__DARWIN_UNIX03=1 \
-		-D__PROVIDE_FIXMES \
-		-DSTATIC_LIB \
-		-D__STDC_FORMAT_MACROS=1 \
-		-g3 \
-		-Wno-shift-count-overflow
-
-	# on Windows (in MinGW-based build) there are neither __BEGIN_DECLS nor __END_DECLS
-	# defines; we don't want to patch every file that uses them, so we stub them in
-	# using CFLAGS mechanism
-	# Also we have off64_t defined in mingw-w64 headers, so let's tell that
-	ifeq ($(platform),windows)
-		android-cflags += "-D__BEGIN_DECLS=extern \"C\" {" "-D__END_DECLS=}" "-DHAVE_OFF64_T"
-	endif
-
-	luni-cpps := $(shell find $(luni-native) -name '*.cpp')
-
-	libziparchive-native := $(android)/system/core/libziparchive
-	libziparchive-ccs := $(libziparchive-native)/zip_archive.cc
-
-	libutils-native := $(android)/system/core/libutils
-	libutils-cpps := $(libutils-native)/FileMap.cpp
-
-	libnativehelper-native := $(android)/libnativehelper
-	libnativehelper-cpps := $(libnativehelper-native)/JniConstants.cpp \
-		$(libnativehelper-native)/toStringArray.cpp
-
-	crypto-native := $(android)/external/conscrypt/src/main/native
-	crypto-cpps := $(crypto-native)/org_conscrypt_NativeCrypto.cpp
-
-	ifeq ($(platform),windows)
-		android-cflags += -D__STDC_CONSTANT_MACROS -DHAVE_WIN32_FILEMAP -D__STDC_FORMAT_MACROS
-		blacklist = $(luni-native)/java_io_Console.cpp \
-			$(luni-native)/java_lang_ProcessManager.cpp
-
-		icu-libs := $(android)/external/icu4c/lib/libsicuin.a \
-			$(android)/external/icu4c/lib/libsicuuc.a \
-			$(android)/external/icu4c/lib/sicudt.a
-		platform-lflags := -lgdi32 -lshlwapi -lwsock32 -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lpthread -Wl,-Bdynamic
-	else
-		android-cflags += -fPIC -DHAVE_SYS_UIO_H -DHAVE_POSIX_FILEMAP
-		blacklist =
-
-		icu-libs := $(android)/external/icu4c/lib/libicui18n.a \
-			$(android)/external/icu4c/lib/libicuuc.a \
-			$(android)/external/icu4c/lib/libicudata.a
-	endif
-	luni-cpps := $(filter-out $(blacklist),$(luni-cpps))
-
-	classpath-lflags := \
-		$(icu-libs) \
-		$(android)/external/fdlibm/libfdm.a \
-		$(android)/external/expat/.libs/libexpat.a \
-		$(android)/openssl-upstream/libssl.a \
-		$(android)/openssl-upstream/libcrypto.a \
-		$(platform-lflags) \
-		-lstdc++
-
-	ifeq ($(platform),linux)
-		android-cflags += -DHAVE_OFF64_T
-		classpath-lflags += -lrt
-	endif
-
-	classpath-objects = \
-		$(call cpp-objects,$(luni-cpps),$(luni-native),$(build)) \
-		$(call cpp-objects,$(crypto-cpps),$(crypto-native),$(build)) \
-		$(call cpp-objects,$(libnativehelper-cpps),$(libnativehelper-native),$(build)) \
-		$(call cc-objects,$(libziparchive-ccs),$(libziparchive-native),$(build)) \
-		$(call cpp-objects,$(libutils-cpps),$(libutils-native),$(build))
-	luni-java = $(android)/libcore/luni/src/main/java
-
-	luni-blacklist = \
-		$(luni-java)/libcore/reflect/AnnotationAccess.java
-
-	luni-javas := \
-		$(filter-out $(luni-blacklist),$(shell find $(luni-java) -name '*.java'))
-
-	luni-nonjavas := $(shell find $(luni-java) -not -type d -not -name '*.java')
-	luni-copied-nonjavas = $(call noop-files,$(luni-nonjavas),$(luni-java),)
-
-	crypto-java = $(android)/external/conscrypt/src/main/java
-	crypto-javas := $(shell find $(crypto-java) -name '*.java')
-
-	crypto-platform-java = $(android)/external/conscrypt/src/platform/java
-	crypto-platform-javas := $(shell find $(crypto-platform-java) -name '*.java')
-
-	dalvik-java = $(android)/libcore/dalvik/src/main/java
-	dalvik-javas := \
-		$(dalvik-java)/dalvik/system/DalvikLogHandler.java \
-		$(dalvik-java)/dalvik/system/CloseGuard.java \
-		$(dalvik-java)/dalvik/system/VMDebug.java \
-		$(dalvik-java)/dalvik/system/BlockGuard.java \
-		$(dalvik-java)/dalvik/system/SocketTagger.java \
-		$(dalvik-java)/dalvik/system/DalvikLogging.java \
-
-	libart-java = $(android)/libcore/libart/src/main/java
-	libart-javas := \
-		$(libart-java)/dalvik/system/VMRuntime.java \
-		$(libart-java)/dalvik/system/VMStack.java \
-		$(libart-java)/java/lang/Thread.java \
-		$(libart-java)/java/lang/ThreadGroup.java \
-		$(libart-java)/java/lang/Enum.java \
-		$(libart-java)/java/lang/String.java \
-		$(libart-java)/java/lang/ref/Reference.java \
-		$(libart-java)/java/lang/reflect/AccessibleObject.java \
-
-	xml-java = $(android)/libcore/xml/src/main/java
-	xml-javas := $(shell find $(xml-java) -name '*.java')
-
-	okhttp-android-java = $(android)/external/okhttp/android/main/java
-	okhttp-android-javas := $(shell find $(okhttp-android-java) -name '*.java')
-
-	okhttp-java = $(android)/external/okhttp/okhttp/src/main/java
-	okhttp-javas := $(shell find $(okhttp-java) -name '*.java')
-
-	okio-java = $(android)/external/okhttp/okio/src/main/java
-	okio-javas := $(shell find $(okio-java) -name '*.java')
-
-	bcpkix-java = $(android)/external/bouncycastle/bcpkix/src/main/java
-	bcpkix-javas := $(shell find $(bcpkix-java) -name '*.java')
-
-	bcprov-java = $(android)/external/bouncycastle/bcprov/src/main/java
-	bcprov-javas := $(shell find $(bcprov-java) -name '*.java')
-
-	android-classes = \
-		$(call java-classes,$(luni-javas),$(luni-java),$(build)/android) \
-		$(call java-classes,$(crypto-javas),$(crypto-java),$(build)/android) \
-		$(call java-classes,$(crypto-platform-javas),$(crypto-platform-java),$(build)/android) \
-		$(call java-classes,$(dalvik-javas),$(dalvik-java),$(build)/android) \
-		$(call java-classes,$(libart-javas),$(libart-java),$(build)/android) \
-		$(call java-classes,$(xml-javas),$(xml-java),$(build)/android) \
-		$(call java-classes,$(okhttp-javas),$(okhttp-java),$(build)/android) \
-		$(call java-classes,$(okhttp-android-javas),$(okhttp-android-java),$(build)/android) \
-		$(call java-classes,$(okio-javas),$(okio-java),$(build)/android) \
-		$(call java-classes,$(bcpkix-javas),$(bcpkix-java),$(build)/android) \
-		$(call java-classes,$(bcprov-javas),$(bcprov-java),$(build)/android)
-
-	classpath = android
-
-	javahome-files = tzdata
-	javahome-object = $(build)/javahome-jar.o
-	boot-javahome-object = $(build)/boot-javahome.o
-	build-javahome = $(android)/bionic/libc/zoneinfo
-	stub-sources = $(src)/android/stubs.cpp
-	stub-objects = $(call cpp-objects,$(stub-sources),$(src),$(build))
-endif
 
 ifeq ($(classpath),avata)
 	jni-sources := $(shell find $(classpath-src) -name '*.cpp')
@@ -488,8 +225,7 @@ common-cflags = $(warnings) -std=c++0x -fno-rtti -fno-exceptions -I$(classpath-s
 	"-I$(JAVA_HOME)/include" -I$(src) -I$(build) -Iinclude $(classpath-cflags) \
 	-D__STDC_LIMIT_MACROS -D_JNI_IMPLEMENTATION_ -DAVATA_VERSION=\"$(version)\" \
 	-DAVATA_INFO="\"$(info)\"" \
-	-DUSE_ATOMIC_OPERATIONS -DAVATA_JAVA_HOME=\"$(javahome)\" \
-	-DAVATA_EMBED_PREFIX=\"$(embed-prefix)\" $(target-cflags)
+	-DUSE_ATOMIC_OPERATIONS -DAVATA_JAVA_HOME=\"$(javahome)\" $(target-cflags)
 
 asmflags = $(target-cflags) -I$(src)
 
@@ -570,12 +306,6 @@ static = -static
 shared = -shared
 
 rpath = -Wl,-rpath=\$$ORIGIN -Wl,-z,origin
-
-openjdk-extra-cflags = -fvisibility=hidden
-
-bootimage-cflags = -DTARGET_BYTES_PER_WORD=$(pointer-size)
-bootimage-symbols = _binary_bootimage_bin_start:_binary_bootimage_bin_end
-codeimage-symbols = _binary_codeimage_bin_start:_binary_codeimage_bin_end
 
 developer-dir := $(shell if test -d /Developer/Platforms/$(target).platform/Developer/SDKs; then echo /Developer; \
 	else echo /Applications/Xcode.app/Contents/Developer; fi)
@@ -662,71 +392,6 @@ ifeq ($(platform),freebsd)
 		"-I$(JAVA_HOME)/include/freebsd" -I$(src) -pthread
 	cflags = $(build-cflags)
 endif
-ifeq ($(platform),android)
-	ifeq ($(build-platform),cygwin)
-		ndk = "$$(cygpath -u "$(ANDROID_NDK)")"
-	else
-		ndk = $(ANDROID_NDK)
-	endif
-
-	ifeq ($(android-version),)
-		android-version = 5
-	endif
-
-	ifeq ($(android-toolchain),)
-		android-toolchain = 4.7
-	endif
-
-	ifeq ($(arch),arm)
-		android-toolchain-name = arm-linux-androideabi
-		android-toolchain-prefix = arm-linux-androideabi-
-	endif
-	ifeq ($(arch),i386)
-		android-toolchain-name = x86
-		android-toolchain-prefix = i686-linux-android-
-	endif
-
-	ifeq ($(android-arm-arch),)
-		android-arm-arch = armv5
-	endif
-
-	options := $(options)-api$(android-version)-$(android-toolchain)-$(android-arm-arch)
-
-	build-cflags = $(common-cflags) -I$(src)
-	build-lflags = -lz -lpthread
-	ifeq ($(subst cygwin,windows,$(subst mingw32,windows,$(build-platform))),windows)
-		toolchain-host-platform = $(subst cygwin,windows,$(subst mingw32,windows,$(build-platform)))
-		build-system = windows
-		build-cxx = i686-w64-mingw32-g++
-		build-cc = i686-w64-mingw32-gcc
-		sysroot = "$$(cygpath -w "$(ndk)/platforms/android-$(android-version)/arch-arm")"
-		build-cflags += "-I$(JAVA_HOME)/include/win32"
-	else
-		toolchain-host-platform = $(subst cygwin,windows,$(subst mingw32,windows,$(build-platform)))-*
-		sysroot = $(ndk)/platforms/android-$(android-version)/arch-arm
-		build-cflags += "-I$(JAVA_HOME)/include/linux"
-		build-lflags += -ldl
-	endif
-	toolchain = $(ndk)/toolchains/$(android-toolchain-name)-$(android-toolchain)/prebuilt/$(toolchain-host-platform)
-	cflags = "-I$(sysroot)/usr/include" "-I$(JAVA_HOME)/include/linux" $(common-cflags) "-I$(src)" -std=c++11 $(no-psabi)
-	lflags = "-L$(sysroot)/usr/lib" $(common-lflags) -llog
-	target-format = elf
-	use-lto = false
-
-	ifeq ($(arch),arm)
-		cflags += -marm -march=$(android-arm-arch) -ftree-vectorize -ffast-math -mfloat-abi=softfp
-	endif
-	ifeq ($(arch),i386)
-	endif
-
-	cxx = $(toolchain)/bin/$(android-toolchain-prefix)g++ --sysroot="$(sysroot)"
-	cc = $(toolchain)/bin/$(android-toolchain-prefix)gcc --sysroot="$(sysroot)"
-	as = $(cxx)
-	ar = $(toolchain)/bin/$(android-toolchain-prefix)ar
-	ranlib = $(toolchain)/bin/$(android-toolchain-prefix)ranlib
-	strip = $(toolchain)/bin/$(android-toolchain-prefix)strip
-endif
-
 ifeq ($(kernel),darwin)
 	target-format = macho
 	ifeq (${OSX_SDK_SYSROOT},)
@@ -773,9 +438,6 @@ ifeq ($(kernel),darwin)
 	ifneq ($(platform),ios)
 		lflags +=	-framework CoreServices -framework SystemConfiguration \
 			-framework Security
-	endif
-	ifeq ($(bootimage),true)
-		bootimage-lflags = -Wl,-segprot,__RWX,rwx,rwx
 	endif
 	rdynamic =
 	strip-all = -S -x
@@ -896,8 +558,6 @@ ifeq ($(kernel),darwin)
 	cflags += -I$(JAVA_HOME)/include/darwin
 endif
 
-openjdk-extra-cflags += $(classpath-extra-cflags)
-
 find-tool = $(shell if ( command -v "$(1)$(2)" >/dev/null ); then (echo "$(1)$(2)") else (echo "$(2)"); fi)
 
 ifeq ($(platform),windows)
@@ -906,7 +566,6 @@ ifeq ($(platform),windows)
 	inc = "$(win32)/include"
 	lib = "$(win32)/lib"
 
-	embed-prefix = c:/avata-embedded
 	system = windows
 
 	so-prefix =
@@ -920,7 +579,6 @@ ifeq ($(platform),windows)
 	cflags = -I$(inc) $(common-cflags) -DWINVER=0x0500 -U__STRICT_ANSI__
 
 	ifeq (,$(filter mingw32 cygwin,$(build-platform)))
-		openjdk-extra-cflags += -I$(src)/openjdk/caseSensitive
 		prefix := $(shell i686-w64-mingw32-gcc --version >/dev/null 2>&1 \
 			&& echo i686-w64-mingw32- || echo x86_64-w64-mingw32-)
 		cxx = $(prefix)g++ -m32
@@ -935,7 +593,6 @@ ifeq ($(platform),windows)
 		common-cflags += "-I$(JAVA_HOME)/include/win32"
 		build-cflags = $(common-cflags) -I$(src) -I$(inc) -mthreads \
 			-D_WIN32_WINNT=0x0500
-		openjdk-extra-cflags =
 		build-lflags = -L$(lib) $(common-lflags)
 		ifeq ($(build-platform),cygwin)
 			build-cxx = i686-w64-mingw32-g++
@@ -963,205 +620,6 @@ ifeq ($(platform),windows)
 	else
 		shared += -Wl,--add-stdcall-alias
 	endif
-
-	embed = $(build-embed)/embed$(exe-suffix)
-	embed-loader = $(build-embed-loader)/embed-loader$(exe-suffix)
-	embed-loader-o = $(build-embed)/embed-loader.o
-endif
-
-ifeq ($(platform),wp8)
-	ifeq ($(shell uname -s | grep -i -c WOW64),1)
-		programFiles = Program Files (x86)
-	else
-		programFiles = Program Files
-	endif
-	ifeq ($(MSVS_ROOT),)
-		# Environment variable MSVS_ROOT not found. It should be something like
-		# "C:\$(programFiles)\Microsoft Visual Studio 11.0"
-		MSVS_ROOT = C:\$(programFiles)\Microsoft Visual Studio 11.0
-	endif
-	ifeq ($(MSVC_ROOT),)
-		# Environment variable MSVC_ROOT not found. It should be something like
-		# "C:\$(programFiles)\Microsoft Visual Studio 11.0\VC"
-		MSVC_ROOT = $(MSVS_ROOT)\VC
-	endif
-	ifeq ($(WP80_SDK),)
-		# Environment variable WP8_SDK not found. It should be something like
-		# "C:\Program Files[ (x86)]\Microsoft Visual Studio 11.0\VC\WPSDK\WP80"
-		# TODO: Lookup in SOFTWARE\Microsoft\Microsoft SDKs\WindowsPhone\v8.0
-		WP80_SDK = $(MSVS_ROOT)\VC\WPSDK\WP80
-	endif
-	ifeq ($(WP80_KIT),)
-		# Environment variable WP8_KIT not found. It should be something like
-		# "c:\Program Files[ (x86)]\Windows Phone Kits\8.0"
-		# TODO: Lookup in SOFTWARE\Microsoft\Microsoft SDKs\WindowsPhone\v8.0
-		WP80_KIT = C:\$(programFiles)\Windows Phone Kits\8.0
-	endif
-	ifeq ($(WIN8_KIT),)
-		# Environment variable WIN8_KIT not found. It should be something like
-		# "c:\Program Files[ (x86)]\Windows Kits\8.0"
-		WIN8_KIT = C:\$(programFiles)\Windows Kits\8.0
-	endif
-	ifeq ($(build-platform),cygwin)
-		windows-path = cygpath -w
-	else
-		windows-path = $(native-path)
-	endif
-	windows-java-home := $(shell $(windows-path) "$(JAVA_HOME)")
-	target-format = pe
-	ms_cl_compiler = wp8
-	use-lto = false
-	supports_avata_executable = false
-	aot-only = true
-	ifneq ($(bootimage),true)
-		x := $(error Windows Phone 8 target requires bootimage=true)
-	endif
-	system = windows
-	build-system = windows
-	static-prefix =
-	static-suffix = .lib
-	so-prefix =
-	so-suffix = .dll
-	exe-suffix = .exe
-	manifest-flags = -MANIFEST:NO
-
-	ifeq ($(arch),arm)
-		wp8_arch = \x86_arm
-		vc_arch = \arm
-		w8kit_arch = arm
-		deps_arch = ARM
-		as = "$$(cygpath -u "$(WP80_SDK)\bin\x86_arm\armasm.exe")"
-		cxx = "$$(cygpath -u "$(WP80_SDK)\bin\x86_arm\cl.exe")"
-		ld = "$$(cygpath -u "$(WP80_SDK)\bin\x86_arm\link.exe")"
-		asmflags = -machine ARM -32
-		asm-output = -o $(1)
-		asm-input = $(1)
-		machine_type = ARM
-		bootimage-symbols = binary_bootimage_bin_start:binary_bootimage_bin_end
-		codeimage-symbols = binary_codeimage_bin_start:binary_codeimage_bin_end
-	endif
-	ifeq ($(arch),i386)
-		wp8_arch =
-		vc_arch =
-		w8kit_arch = x86
-		deps_arch = x86
-		asmflags = $(target-cflags) -safeseh -nologo -Gd
-		as = "$$(cygpath -u "$(WP80_SDK)\bin\ml.exe")"
-		cxx = "$$(cygpath -u "$(WP80_SDK)\bin\cl.exe")"
-		ld = "$$(cygpath -u "$(WP80_SDK)\bin\link.exe")"
-		ifeq ($(mode),debug)
-			asmflags += -Zd
-		endif
-		ifeq ($(mode),debug-fast)
-			asmflags += -Zd
-		endif
-		asm-output = $(output)
-		machine_type = X86
-	endif
-
-	PATH := $(shell cygpath -u "$(MSVS_ROOT)\Common7\IDE"):$(shell cygpath -u "$(WP80_SDK)\bin$(wp8_arch)"):$(shell cygpath -u "$(WP80_SDK)\bin"):${PATH}
-
-	build-cflags = $(common-cflags) -I$(src) -I$(inc) -mthreads
-	build-lflags = -lz -lpthread
-
-	cflags = -nologo \
-		-AI"$(WP80_KIT)\Windows Metadata" \
-		-I"$(WP80_SDK)\include" -I"$(WP80_KIT)\Include" -I"$(WP80_KIT)\Include\minwin" -I"$(WP80_KIT)\Include\mincore" \
-		-DWINAPI_FAMILY=WINAPI_FAMILY_PHONE_APP -D_USRDLL -D_WINDLL \
-		-DAVATA_VERSION=\"$(version)\" -D_JNI_IMPLEMENTATION_ \
-		-DUSE_ATOMIC_OPERATIONS -DAVATA_JAVA_HOME=\"$(javahome)\" \
-		-DAVATA_EMBED_PREFIX=\"$(embed-prefix)\" \
-		-I"$(shell $(windows-path) "$(wp8)/zlib/upstream")" -I"$(shell $(windows-path) "$(wp8)/interop/avata-interop-client")" \
-		-I"$(shell $(windows-path) "$(wp8)/include")" -I$(src) -I$(classpath-src) \
-		-I"$(build)" \
-		-I"$(windows-java-home)/include" -I"$(windows-java-home)/include/win32" \
-		-DTARGET_BYTES_PER_WORD=$(pointer-size) \
-		-Gd -EHsc
-
-	common-lflags =
-
-	ifeq ($(mode),debug)
-		build-type = Debug
-	endif
-	ifeq ($(mode),debug-fast)
-		build-type = Debug
-	endif
-	ifeq ($(mode),stress-major)
-		build-type = Release
-	endif
-	ifeq ($(mode),fast)
-		build-type = Release
-	endif
-	ifeq ($(mode),fast)
-		build-type = Release
-	endif
-	ifeq ($(mode),small)
-		build-type = Release
-	endif
-
-	arflags = -MACHINE:$(machine_type)
-	lflags = $(common-lflags) -nologo \
-		-MACHINE:$(machine_type) \
-		-LIBPATH:"$(WP80_KIT)\lib\$(w8kit_arch)" -LIBPATH:"$(WP80_SDK)\lib$(vc_arch)" -LIBPATH:"$(WIN8_KIT)\Lib\win8\um\$(w8kit_arch)" \
-		ws2_32.lib \
-		"$(shell $(windows-path) "$(wp8)\lib\$(deps_arch)\$(build-type)\zlib.lib")" "$(shell $(windows-path) "$(wp8)\lib\$(deps_arch)\$(build-type)\ThreadEmulation.lib")" \
-		"$(shell $(windows-path) "$(wp8)\lib\$(deps_arch)\$(build-type)\AvataInteropClient.lib")"
-	lflags += -NXCOMPAT -DYNAMICBASE -SUBSYSTEM:CONSOLE -TLBID:1
-	lflags += -NODEFAULTLIB:"ole32.lib" -NODEFAULTLIB:"kernel32.lib"
-	lflags += PhoneAppModelHost.lib WindowsPhoneCore.lib -WINMD -WINMDFILE:$(subst $(so-suffix),.winmd,$(@))
-
-	cc = $(cxx)
-	asm-format = masm
-	shared = -dll
-	ar = "$$(cygpath -u "$(WP80_SDK)\bin\lib.exe")"
-	arflags += -nologo
-	ifeq ($(build-platform),cygwin)
-		build-cxx = i686-w64-mingw32-g++
-		build-cc = i686-w64-mingw32-gcc
-		dlltool = i686-w64-mingw32-dlltool
-		ranlib =
-		strip =
-	endif
-	output = -Fo$(1)
-
-	#TODO: -MT or -ZW?
-	cflags_debug = -Od -Zi -MDd
-	cflags_debug_fast = -Od -Zi -MDd
-	cflags_stress = -O0 -g3 -MD
-	cflags_stress_major = -O0 -g3 -MD
-	cflags_fast = -O2 -Zi -MD
-	cflags_small = -O1s -Zi -MD
-	# -GL [whole program optimization] in 'fast' and 'small' breaks compilation for some reason
-
-	ifeq ($(mode),debug)
-		cflags +=
-		lflags +=
-	endif
-	ifeq ($(mode),debug-fast)
-		cflags += -DNDEBUG
-		lflags +=
-	endif
-	ifeq ($(mode),stress-major)
-		cflags +=
-		lflags +=
-	endif
-	ifeq ($(mode),fast)
-		cflags +=
-		lflags +=
-	endif
-	# -LTCG is needed only if -GL is used
-	ifeq ($(mode),fast)
-		cflags += -DNDEBUG
-		lflags += -LTCG
-		arflags +=
-	endif
-	ifeq ($(mode),small)
-		cflags += -DNDEBUG
-		lflags += -LTCG
-		arflags +=
-	endif
-
-	strip = :
 endif
 
 ifdef msvc
@@ -1179,15 +637,10 @@ ifdef msvc
 	manifest-flags = -MANIFEST -MANIFESTFILE:$(@).manifest
 	cflags = -nologo -DAVATA_VERSION=\"$(version)\" -D_JNI_IMPLEMENTATION_ \
 		-DUSE_ATOMIC_OPERATIONS -DAVATA_JAVA_HOME=\"$(javahome)\" \
-		-DAVATA_EMBED_PREFIX=\"$(embed-prefix)\" \
 		-Fd$(build)/$(name).pdb -I"$(zlib)/include" -I$(src) -I$(classpath-src) \
 		-I"$(build)" -Iinclude \
 		-I"$(windows-java-home)/include" -I"$(windows-java-home)/include/win32" \
 		-DTARGET_BYTES_PER_WORD=$(pointer-size)
-
-	ifneq ($(lzma),)
-		cflags += -I$(shell $(windows-path) "$(lzma)")
-	endif
 
 	shared = -dll
 	lflags = -nologo -LIBPATH:"$(zlib)/lib" -DEFAULTLIB:ws2_32 \
@@ -1288,6 +741,7 @@ vm-sources = \
 	$(src)/machine.cpp \
 	$(src)/util.cpp \
 	$(src)/util/abort.cpp \
+	$(src)/util/arg-parser.cpp \
 	$(src)/heap/heap.cpp \
 	$(src)/$(process).cpp \
 	$(src)/classpath-$(classpath).cpp \
@@ -1300,61 +754,7 @@ vm-asm-sources = $(src)/$(arch).$(asm-format)
 
 target-asm = $(asm)
 
-build-embed = $(build)/embed
-build-embed-loader = $(build)/embed-loader
-
-embed-loader-sources = $(src)/embedded-loader.cpp
-embed-loader-objects = $(call cpp-objects,$(embed-loader-sources),$(src),$(build-embed-loader))
-
-embed-sources = $(src)/embed.cpp
-embed-objects = $(call cpp-objects,$(embed-sources),$(src),$(build-embed))
-
-compiler-sources = \
-	$(src)/codegen/compiler.cpp \
-	$(wildcard $(src)/codegen/compiler/*.cpp) \
-	$(src)/debug-util.cpp \
-	$(src)/codegen/runtime.cpp \
-	$(src)/codegen/targets.cpp \
-	$(src)/util/fixed-allocator.cpp
-
-x86-assembler-sources = $(wildcard $(src)/codegen/target/x86/*.cpp)
-
-arm-assembler-sources = $(wildcard $(src)/codegen/target/arm/*.cpp)
-
-all-assembler-sources = \
-	$(x86-assembler-sources) \
-	$(arm-assembler-sources)
-
-native-assembler-sources = $($(target-asm)-assembler-sources)
-
-all-codegen-target-sources = \
-	$(compiler-sources) \
-	$(native-assembler-sources)
-
-ifeq ($(process),compile)
-	vm-sources += $(compiler-sources)
-
-	ifeq ($(codegen-targets),native)
-		vm-sources += $(native-assembler-sources)
-	endif
-	ifeq ($(codegen-targets),all)
-		ifneq (,$(filter arm arm64,$(arch)))
-			# The x86 jit has a dependency on the x86 assembly code,
-			# and thus can't be successfully built on non-x86 platforms.
-			vm-sources += $(native-assembler-sources)
-		else
-			vm-sources += $(all-assembler-sources)
-		endif
-	endif
-
-	vm-asm-sources += $(src)/compile-$(arch).$(asm-format)
-endif
-ifeq ($(aot-only),true)
-	cflags += -DAVATA_AOT_ONLY
-endif
-
 vm-cpp-objects = $(call cpp-objects,$(vm-sources),$(src),$(build))
-all-codegen-target-objects = $(call cpp-objects,$(all-codegen-target-sources),$(src),$(build))
 vm-asm-objects = $(call asm-objects,$(vm-asm-sources),$(src),$(build))
 vm-objects = $(vm-cpp-objects) $(vm-asm-objects)
 
@@ -1366,48 +766,12 @@ unittest-objects = $(call cpp-objects,$(unittest-sources),$(unittest),$(build)/u
 
 vm-heapwalk-objects = $(heapwalk-objects)
 
-ifeq ($(tails),true)
-	cflags += -DAVATA_TAILS
-endif
-
-ifeq ($(continuations),true)
-	cflags += -DAVATA_CONTINUATIONS
-	asmflags += -DAVATA_CONTINUATIONS
-endif
-
-bootimage-generator-sources = $(src)/tools/bootimage-generator/main.cpp $(src)/util/arg-parser.cpp $(stub-sources)
-
-ifneq ($(lzma),)
-	bootimage-generator-sources += $(src)/lzma-encode.cpp
-endif
-
-bootimage-generator-objects = \
-	$(call cpp-objects,$(bootimage-generator-sources),$(src),$(build))
-bootimage-generator = $(build)/bootimage-generator
-
-host-vm-options := $(strip $(subst -interpret,,\
-	$(subst -test,,\
-	$(subst -bootimage-test,,\
-	$(subst -bootimage,,$(options))))))
-
-host-vm = build/$(build-platform)-$(build-arch)-interpret$(host-vm-options)/$(so-prefix)jvm$(so-suffix)
-
-bootimage-object = $(build)/bootimage-bin.o
-codeimage-object = $(build)/codeimage-bin.o
-
-ifeq ($(bootimage),true)
-	vm-classpath-objects = $(bootimage-object) $(codeimage-object)
-	cflags += -DBOOT_IMAGE -DAVATA_CLASSPATH=\"\"
-else
-	vm-classpath-objects = $(classpath-object)
-	cflags += -DBOOT_CLASSPATH=\"[classpathJar]\" \
-		-DAVATA_CLASSPATH=\"[classpathJar]\"
-endif
+vm-classpath-objects = $(classpath-object)
+cflags += -DBOOT_CLASSPATH=\"[classpathJar]\" \
+	-DAVATA_CLASSPATH=\"[classpathJar]\"
 
 cflags += $(extra-cflags)
 lflags += $(extra-lflags)
-
-openjdk-cflags += $(extra-cflags)
 
 driver-source = $(src)/main.cpp
 driver-object = $(build)/main.o
@@ -1426,59 +790,12 @@ generator-sources = \
 	$(src)/util/abort.cpp \
 	$(src)/util/arg-parser.cpp
 
-ifneq ($(lzma),)
-	common-cflags += -I$(lzma) -DAVATA_USE_LZMA
-
-	vm-sources += \
-		$(src)/lzma-decode.cpp
-
-	generator-sources += \
-		$(src)/lzma-decode.cpp
-
-	lzma-decode-sources = \
-		$(lzma)/C/LzmaDec.c
-
-	lzma-decode-objects = \
-		$(call c-objects,$(lzma-decode-sources),$(lzma)/C,$(build))
-
-	lzma-encode-sources = \
-		$(lzma)/C/LzmaEnc.c \
-		$(lzma)/C/LzFind.c
-
-	lzma-encode-objects = \
-		$(call c-objects,$(lzma-encode-sources),$(lzma)/C,$(build))
-
-	lzma-encoder = $(build)/lzma/lzma
-
-	lzma-build-cflags = -D_7ZIP_ST -D__STDC_CONSTANT_MACROS \
-		-fno-exceptions -fPIC -I$(lzma)/C
-
-	lzma-cflags = $(lzma-build-cflags) $(classpath-extra-cflags)
-
-	lzma-encoder-sources = \
-		$(src)/lzma/main.cpp
-
-	lzma-encoder-objects = \
-		$(call cpp-objects,$(lzma-encoder-sources),$(src),$(build))
-
-	lzma-encoder-lzma-sources = $(lzma-encode-sources) $(lzma-decode-sources)
-
-	lzma-encoder-lzma-objects = \
-		$(call generator-c-objects,$(lzma-encoder-lzma-sources),$(lzma)/C,$(build))
-
-	lzma-loader = $(build)/lzma/load.o
-
-	lzma-library = $(build)/libavata-lzma.a
-endif
-
 generator-cpp-objects = \
 	$(foreach x,$(1),$(patsubst $(2)/%.cpp,$(3)/%-build.o,$(x)))
 generator-c-objects = \
 	$(foreach x,$(1),$(patsubst $(2)/%.c,$(3)/%-build.o,$(x)))
 generator-objects = \
 	$(call generator-cpp-objects,$(generator-sources),$(src),$(build))
-generator-lzma-objects = \
-	$(call generator-c-objects,$(lzma-decode-sources),$(lzma)/C,$(build))
 generator = $(build)/generator
 
 all-depends = $(shell find include -name '*.h')
@@ -1507,67 +824,7 @@ executable-dynamic = $(build)/$(name)-dynamic$(exe-suffix)
 
 unittest-executable = $(build)/$(name)-unittest${exe-suffix}
 
-ifneq ($(classpath),avata)
-# Assembler, ConstantPool, and Stream are not technically needed for a
-# working build, but we include them since our Subroutine test uses
-# them to synthesize a class:
-	classpath-sources := \
-		$(classpath-src)/avata/Addendum.java \
-		$(classpath-src)/avata/AnnotationInvocationHandler.java \
-		$(classpath-src)/avata/Assembler.java \
-		$(classpath-src)/avata/Callback.java \
-		$(classpath-src)/avata/Cell.java \
-		$(classpath-src)/avata/ClassAddendum.java \
-		$(classpath-src)/avata/Classes.java \
-		$(classpath-src)/avata/Code.java \
-		$(classpath-src)/avata/ConstantPool.java \
-		$(classpath-src)/avata/Continuations.java \
-		$(classpath-src)/avata/FieldAddendum.java \
-		$(classpath-src)/avata/Function.java \
-		$(classpath-src)/avata/IncompatibleContinuationException.java \
-		$(classpath-src)/avata/InnerClassReference.java \
-		$(classpath-src)/avata/Machine.java \
-		$(classpath-src)/avata/MethodAddendum.java \
-		$(classpath-src)/avata/Pair.java \
-		$(classpath-src)/avata/Singleton.java \
-		$(classpath-src)/avata/Stream.java \
-		$(classpath-src)/avata/SystemClassLoader.java \
-		$(classpath-src)/avata/Traces.java \
-		$(classpath-src)/avata/VMClass.java \
-		$(classpath-src)/avata/VMField.java \
-		$(classpath-src)/avata/VMMethod.java \
-		$(classpath-src)/avata/avatavmresource/Handler.java \
-		$(classpath-src)/avata/file/Handler.java \
-		$(classpath-src)/java/lang/invoke/MethodHandle.java \
-		$(classpath-src)/java/lang/invoke/MethodHandles.java \
-		$(classpath-src)/java/lang/invoke/MethodType.java \
-		$(classpath-src)/java/lang/invoke/LambdaMetafactory.java \
-		$(classpath-src)/java/lang/invoke/LambdaConversionException.java \
-		$(classpath-src)/java/lang/invoke/CallSite.java
-
-	ifeq ($(openjdk),)
-		classpath-sources := $(classpath-sources) \
-			$(classpath-src)/dalvik/system/BaseDexClassLoader.java \
-			$(classpath-src)/libcore/reflect/AnnotationAccess.java \
-			$(classpath-src)/sun/reflect/ConstantPool.java \
-			$(classpath-src)/java/net/ProtocolFamily.java \
-			$(classpath-src)/java/net/StandardProtocolFamily.java \
-			$(classpath-src)/sun/misc/Cleaner.java \
-			$(classpath-src)/sun/misc/Unsafe.java \
-			$(classpath-src)/java/lang/Object.java \
-			$(classpath-src)/java/lang/Class.java \
-			$(classpath-src)/java/lang/ClassLoader.java \
-			$(classpath-src)/java/lang/Package.java \
-			$(classpath-src)/java/lang/reflect/Proxy.java \
-			$(classpath-src)/java/lang/reflect/Field.java \
-			$(classpath-src)/java/lang/reflect/SignatureParser.java \
-			$(classpath-src)/java/lang/reflect/Constructor.java \
-			$(classpath-src)/java/lang/reflect/AccessibleObject.java \
-			$(classpath-src)/java/lang/reflect/Method.java
-	endif
-else
-	classpath-sources := $(shell find $(classpath-src) -name '*.java')
-endif
+classpath-sources := $(shell find $(classpath-src) -name '*.java')
 
 classpath-classes = \
 	$(call java-classes,$(classpath-sources),$(classpath-src),$(classpath-build))
@@ -1579,50 +836,42 @@ vm-classes = \
 	avata/resource/*.class
 
 test-support-sources = $(shell find $(test)/avata/ -name '*.java')
-test-sources := $(wildcard $(test)/*.java)
 
-# HACK ALERT!!
-# This test fails regularly on travis, but nowhere else.  We have yet to spend the time to investigate that test, so we disable it on PR builds.
-# Note: travis set TRAVIS_PULL_REQUEST environment variable to either the PR number or "false", as appropriate
-ifeq (false,$(TRAVIS_PULL_REQUEST))
-else
-ifeq (,$(TRAVIS_PULL_REQUEST))
-else
-	test-sources := $(subst $(test)/Trace.java,,$(test-sources))
-endif
-endif
+# The TOS profile test set follows the admitted contract runtime, not Avata's
+# old broad Java SE class-library surface.
+test-sources = \
+	$(test)/AllFloats.java \
+	$(test)/Annotations.java \
+	$(test)/ArrayDequeTest.java \
+	$(test)/ArraysTest.java \
+	$(test)/Collections.java \
+	$(test)/DequeHelper.java \
+	$(test)/DivideByZero.java \
+	$(test)/Enums.java \
+	$(test)/Exceptions.java \
+	$(test)/Floats.java \
+	$(test)/Hello.java \
+	$(test)/Initializers.java \
+	$(test)/Integers.java \
+	$(test)/InvokeDynamic.java \
+	$(test)/List.java \
+	$(test)/Longs.java \
+	$(test)/CoreTrapProfile.java \
+	$(test)/NullPointer.java \
+	$(test)/Proxies.java \
+	$(test)/QueueHelper.java \
+	$(test)/Reflection.java \
+	$(test)/Simple.java \
+	$(test)/StackOverflow.java \
+	$(test)/StringBuilderTest.java \
+	$(test)/Strings.java \
+	$(test)/Subroutine.java \
+	$(test)/Switch.java \
+	$(test)/Tree.java
 
 ifeq (7,$(java-version))
 	test-sources := $(subst $(test)/InvokeDynamic.java,,$(test-sources))
-	test-sources := $(subst $(test)/Interfaces.java,,$(test-sources))
 endif
-
-# Consensus-hardening (2026-05-05): exclude tests that exercise host APIs
-# which are now trapped in the Avata/TOS blockchain JVM.  These tests relied
-# on Thread.start/sleep, System.currentTimeMillis, Runtime.exec,
-# addShutdownHook, loadLibrary, or raw Socket/Datagram networking — all of
-# which now throw UnsupportedOperationException("... not available in consensus").
-test-sources := $(subst $(test)/Threads.java,,$(test-sources))
-test-sources := $(subst $(test)/ThreadExceptions.java,,$(test-sources))
-test-sources := $(subst $(test)/Sockets.java,,$(test-sources))
-test-sources := $(subst $(test)/Datagrams.java,,$(test-sources))
-test-sources := $(subst $(test)/Processes.java,,$(test-sources))
-test-sources := $(subst $(test)/ShutdownHooks.java,,$(test-sources))
-test-sources := $(subst $(test)/FutureTaskTest.java,,$(test-sources))
-test-sources := $(subst $(test)/CompletionServiceTest.java,,$(test-sources))
-test-sources := $(subst $(test)/LinkedBlockingQueueTest.java,,$(test-sources))
-test-sources := $(subst $(test)/MemoryRamp.java,,$(test-sources))
-test-sources := $(subst $(test)/BufferedInputStreamTest.java,,$(test-sources))
-test-sources := $(subst $(test)/Buffers.java,,$(test-sources))
-test-sources := $(subst $(test)/ZipOutputStreamTest.java,,$(test-sources))
-test-sources := $(subst $(test)/ClasspathWildcard.java,,$(test-sources))
-test-sources := $(subst $(test)/JNI.java,,$(test-sources))
-# Busy and ConcurrentHashMapTest are fundamentally concurrent stress tests
-# that require Thread.start(); they cannot be run in the consensus profile.
-test-sources := $(subst $(test)/Busy.java,,$(test-sources))
-test-sources := $(subst $(test)/ConcurrentHashMapTest.java,,$(test-sources))
-# Trace exercises Thread.getStackTrace() on a live thread; requires Thread.start().
-test-sources := $(subst $(test)/Trace.java,,$(test-sources))
 
 test-cpp-sources = $(wildcard $(test)/*.cpp)
 test-sources += $(test-support-sources)
@@ -1632,7 +881,7 @@ test-cpp-objects = $(call cpp-objects,$(test-cpp-sources),$(test),$(test-build))
 test-library = $(build)/$(so-prefix)test$(so-suffix)
 test-dep = $(test-build).dep
 
-test-extra-sources = $(wildcard $(test)/extra/*.java)
+test-extra-sources = $(test)/extra/ClasspathWildcardTarget.java
 test-extra-classes = \
 	$(call java-classes,$(test-extra-sources),$(test),$(test-build))
 test-extra-dep = $(test-build)-extra.dep
@@ -1640,24 +889,10 @@ classpath-wildcard-jar = $(build)/wildcard-lib/classpath-wildcard.JAR
 
 unittest-sources = \
 	$(wildcard $(unittest)/*.cpp) \
-	$(wildcard $(unittest)/util/*.cpp) \
-	$(wildcard $(unittest)/codegen/*.cpp)
+	$(wildcard $(unittest)/util/*.cpp)
 
 unittest-depends = \
 	$(wildcard $(unittest)/*.h)
-
-ifeq ($(continuations),true)
-	continuation-tests = \
-		extra.ComposableContinuations \
-		extra.Continuations \
-		extra.Coroutines \
-		extra.DynamicWind
-endif
-
-ifeq ($(tails),true)
-	tail-tests = \
-		extra.Tails
-endif
 
 ifeq ($(target-arch),i386)
 	cflags += -DAVATA_TARGET_ARCH=AVATA_ARCH_X86
@@ -1695,36 +930,13 @@ test-flags = -Djava.library.path=$(build) \
 
 test-args = $(test-flags) $(input)
 
-ifneq ($(filter linux windows macosx,$(platform)),)
-eclipse-exec-env = eclipse-ee
-eclipse-jdk-dir = $(build)/eclipse/jdk
-eclipse-ee-file = $(eclipse-jdk-dir)/avata.ee
-eclipse-bin-dir = $(eclipse-jdk-dir)/bin
-eclipse-lib-dir = $(eclipse-jdk-dir)/jre/lib
-eclipse-src-dir = $(eclipse-jdk-dir)/src
-define eclipse-ee-descriptor
-# An Eclipse execution environment for the Avata JVM\
-\n-Dee.executable=bin/java${exe-suffix}\
-\n-Dee.bootclasspath=jre/lib/rt.jar\
-\n-Dee.language.level=1.7\
-\n-Dee.name=$(name)-$(version)-$(platform)-$(arch)$(options)\
-\n-Dee.src=src\
-\n-Dee.javadoc=file://$${ee.home}/doc\
-\n-Djava.home=$${ee.home}\n
-endef
-else
-eclipse-exec-env =
-endif
-
 .PHONY: build
 ifneq ($(supports_avata_executable),false)
-build: $(static-library) $(executable) $(dynamic-library) $(lzma-library) \
-	$(lzma-encoder) $(executable-dynamic) $(classpath-dep) $(test-dep) \
-	$(test-extra-dep) $(embed) $(build)/classpath.jar $(eclipse-exec-env)
+build: $(static-library) $(executable) $(dynamic-library) \
+	$(classpath-dep) $(test-dep) $(test-extra-dep) $(build)/classpath.jar
 else
-build: $(static-library) $(dynamic-library) $(lzma-library) \
-	$(lzma-encoder) $(classpath-dep) $(test-dep) \
-	$(test-extra-dep) $(embed) $(build)/classpath.jar
+build: $(static-library) $(dynamic-library) \
+	$(classpath-dep) $(test-dep) $(test-extra-dep) $(build)/classpath.jar
 endif
 
 $(test-dep): $(classpath-dep)
@@ -1759,10 +971,6 @@ else
 	ssh -p$(remote-test-port) $(remote-test-user)@$(remote-test-host) sh "$(remote-test-dir)/$(platform)-$(arch)$(options)/run-tests.sh"
 endif
 
-.PHONY: jdk-test
-jdk-test: $(test-dep) $(build)/classpath.jar $(build)/jdk-run-tests.sh $(build)/test.sh
-	/bin/sh $(build)/jdk-run-tests.sh
-
 .PHONY: tarball
 tarball:
 	@echo "creating build/avata-$(version).tar.bz2"
@@ -1781,56 +989,19 @@ clean:
 	@echo "removing build directories"
 	rm -rf build cmake-build distrib lib
 
-.PHONY: eclipse-ee
-ifneq ($(strip $(eclipse-exec-env)),)
-eclipse-ee: $(eclipse-ee-file) $(eclipse-lib-dir)/rt.jar $(eclipse-bin-dir)/java${exe-suffix} $(eclipse-src-dir)
-
-$(eclipse-bin-dir):
-	@mkdir -p $(@)
-
-$(eclipse-lib-dir):
-	@mkdir -p $(@)
-
-$(eclipse-jdk-dir):
-	@mkdir -p $(@)
-
-$(eclipse-ee-file): $(eclipse-jdk-dir)
-	@echo "writing eclipse execution environment descriptor to $(@)"
-	@printf '${eclipse-ee-descriptor}' > $(@)
-
-$(eclipse-src-dir): $(eclipse-jdk-dir)
-	@echo "symlinking classpath for $(@)"
-	@ln -sf ../../../../classpath $(@)
-
-$(eclipse-bin-dir)/java$(exe-suffix): $(eclipse-bin-dir) $(executable)
-	@echo "symlinking $(executable) for $(@)"
-	@ln -sf ../../../$(name)${exe-suffix} $(@)
-
-$(eclipse-lib-dir)/rt.jar: $(eclipse-lib-dir) $(build)/classpath.jar
-	@echo "symlinking $(build)/classpath.jar for $(@)"
-	@ln -sf ../../../../classpath.jar $(@)
-else
-eclipse-ee:
-	$(error "Eclipse execution environment for platform '$(platform)' is not supported")
-endif
-
-ifeq ($(continuations),true)
-$(build)/compile-x86-asm.o: $(src)/continuations-x86.$(asm-format)
-endif
-
 $(build)/run-tests.sh: $(test-classes) makefile $(build)/extra-dir/multi-classpath-test.txt $(build)/test/multi-classpath-test.txt $(classpath-wildcard-jar)
 	echo 'cd $$(dirname $$0)' > $(@)
 	echo "sh ./test.sh 2>/dev/null \\" >> $(@)
 	echo "$(shell echo $(library-path) | sed 's|$(build)|\.|g') ./$(name)-unittest${exe-suffix} ./$(notdir $(test-executable)) $(mode) \"-Djava.library.path=. -cp test$(target-path-separator)extra-dir\" \\" >> $(@)
 	echo "$(call class-names,$(test-build),$(filter-out $(test-support-classes), $(test-classes))) \\" >> $(@)
-	echo "$(continuation-tests) $(tail-tests)" >> $(@)
+	echo "" >> $(@)
 
 $(build)/jdk-run-tests.sh: $(test-classes) makefile $(build)/extra-dir/multi-classpath-test.txt $(build)/test/multi-classpath-test.txt
 	echo 'cd $$(dirname $$0)' > $(@)
 	echo "sh ./test.sh 2>/dev/null \\" >> $(@)
 	echo "'' true $(JAVA_HOME)/bin/java $(mode) \"-Xmx128m -Djava.library.path=. -cp test$(path-separator)extra-dir$(path-separator)classpath\" \\" >> $(@)
 	echo "$(call class-names,$(test-build),$(filter-out $(test-support-classes), $(test-classes))) \\" >> $(@)
-	echo "$(continuation-tests) $(tail-tests)" >> $(@)
+	echo "" >> $(@)
 
 $(build)/extra-dir/multi-classpath-test.txt:
 	mkdir -p $(build)/extra-dir
@@ -1859,69 +1030,6 @@ $(classpath-dep): $(classpath-sources) $(classpath-jar-dep)
 	$(javac) -source 1.$(java-version) -target 1.$(java-version) \
 		-d $(classpath-build) -bootclasspath $(boot-classpath) \
 		$(classpath-sources)
-	@touch $(@)
-
-$(build)/android-src/%.cpp: $(luni-native)/%.cpp
-	cp $(<) $(@)
-
-$(build)/android-src/%.cpp: $(libnativehelper-native)/%.cpp
-	cp $(<) $(@)
-
-$(build)/android-src/%.cpp: $(crypto-native)/%.cpp
-	cp $(<) $(@)
-
-$(build)/android-src/%.cpp: $(libziparchive-native)/%.cc
-	cp $(<) $(@)
-
-$(build)/android-src/%.cpp: $(libutils-native)/%.cpp
-	cp $(<) $(@)
-
-$(build)/%.o: $(build)/android-src/%.cpp $(build)/android.dep
-	@echo "compiling $(@)"
-	@mkdir -p $(dir $(@))
-	$(cxx) $(android-cflags) $(classpath-extra-cflags) -c \
-		$$($(windows-path) $(<)) $(call output,$(@))
-
-$(build)/android.dep: $(luni-javas) $(dalvik-javas) $(libart-javas) \
-		$(xml-javas) $(okhttp-android-javas) $(okhttp-javas) $(okio-javas) \
-		$(bcpkix-javas) $(bcprov-javas) $(luni-nonjavas) $(crypto-javas) $(crypto-platform-javas)
-	@echo "compiling luni classes"
-	@mkdir -p $(classpath-build)
-	@mkdir -p $(build)/android
-	@mkdir -p $(build)/android-src/external/fdlibm
-	@mkdir -p $(build)/android-src/libexpat
-	cp $(android)/external/fdlibm/fdlibm.h $(build)/android-src/external/fdlibm/
-	cp $(android)/external/expat/lib/expat*.h $(build)/android-src/libexpat/
-	cp -a $(luni-java)/* $(xml-java)/* $(okhttp-android-java)/* $(okhttp-java)/* $(okio-java)/* $(bcpkix-java)/* $(bcprov-java)/* $(build)/android-src/
-	rm $(call noop-files,$(luni-blacklist),$(luni-java),$(build)/android-src)
-	(cd $(dalvik-java) && \
-			$(jar) c $(call noop-files,$(dalvik-javas),$(dalvik-java),.)) \
-		| (cd $(build)/android-src && $(jar) x)
-	(cd $(libart-java) && \
-			$(jar) c $(call noop-files,$(libart-javas),$(libart-java),.)) \
-		| (cd $(build)/android-src && $(jar) x)
-	(cd $(crypto-java) && \
-			$(jar) c $(call noop-files,$(crypto-javas),$(crypto-java),.)) \
-		| (cd $(build)/android-src && $(jar) x)
-	(cd $(crypto-platform-java) && \
-			$(jar) c $(call noop-files,$(crypto-platform-javas),$(crypto-platform-java),.)) \
-		| (cd $(build)/android-src && $(jar) x)
-	(cd $(classpath-src) && \
-			$(jar) c $(call noop-files,$(classpath-sources),$(classpath-src),.)) \
-		| (cd $(build)/android-src && $(jar) x)
-#	(cd android && $(jar) c *)	| (cd $(build)/android-src && $(jar) x)
-	find $(build)/android-src -name '*.java' > $(build)/android.txt
-	$(javac) -Xmaxerrs 1000 -d $(build)/android @$(build)/android.txt
-	rm $(build)/android/sun/misc/Unsafe* \
-		$(build)/android/java/lang/reflect/Proxy*
-	for x in $(luni-copied-nonjavas); \
-		do cp $(luni-java)$${x} $(build)/android$${x} ; \
-	done
-	# fix security.properties - get rid of "com.android" in front of classes starting with "org"
-	sed -i -e 's/\(.*=\)com\.android\.\(org\..*\)/\1\2/g' \
-		$(build)/android/java/security/security.properties
-	chmod +w $(build)/android/java/security/security.properties
-	cp -r $(build)/android/* $(classpath-build)
 	@touch $(@)
 
 $(test-build)/%.class: $(test)/%.java
@@ -1971,11 +1079,6 @@ endef
 $(vm-cpp-objects): $(build)/%.o: $(src)/%.cpp $(vm-depends)
 	$(compile-object)
 
-ifeq ($(process),interpret)
-$(all-codegen-target-objects): $(build)/%.o: $(src)/%.cpp $(vm-depends)
-	$(compile-object)
-endif
-
 $(unittest-objects): $(build)/unittest/%.o: $(unittest)/%.cpp $(vm-depends) $(unittest-depends)
 	$(compile-unittest-object)
 
@@ -1995,61 +1098,8 @@ else
 	$(ld) $(^) $(shared) $(lflags) -o $(@)
 endif
 
-ifdef embed
-$(embed): $(embed-objects) $(embed-loader-o)
-	@echo "building $(embed)"
-ifdef ms_cl_compiler
-	$(ld) $(lflags) $(^) -out:$(@) \
-		-debug -PDB:$(subst $(exe-suffix),.pdb,$(@)) $(manifest-flags)
-ifdef mt
-	$(mt) -nologo -manifest $(@).manifest -outputresource:"$(@);1"
-endif
-else
-	$(cxx) $(^) $(lflags) $(static) $(call output,$(@))
-endif
-
-$(build-embed)/%.o: $(src)/%.cpp
-	@echo "compiling $(@)"
-	@mkdir -p $(dir $(@))
-	$(cxx) $(cflags) -c $(<) $(call output,$(@))
-
-$(embed-loader-o): $(embed-loader) $(converter)
-	@mkdir -p $(dir $(@))
-	$(converter) $(<) $(@) _binary_loader_start \
-		_binary_loader_end $(target-format) $(arch)
-
-$(embed-loader): $(embed-loader-objects) $(vm-objects) $(classpath-objects) \
-		$(heapwalk-objects) $(lzma-decode-objects)
-ifdef ms_cl_compiler
-	$(ld) $(lflags) $(^) -out:$(@) \
-		-debug -PDB:$(subst $(exe-suffix),.pdb,$(@)) $(manifest-flags)
-ifdef mt
-	$(mt) -nologo -manifest $(@).manifest -outputresource:"$(@);1"
-endif
-else
-	$(dlltool) -z $(addsuffix .def,$(basename $(@))) $(^)
-	$(dlltool) -d $(addsuffix .def,$(basename $(@))) -e $(addsuffix .exp,$(basename $(@)))
-	$(ld) $(addsuffix .exp,$(basename $(@))) $(^) \
-		$(lflags) $(classpath-lflags) $(bootimage-lflags) -o $(@)
-endif
-	$(strip) $(strip-all) $(@)
-
-$(build-embed-loader)/%.o: $(src)/%.cpp
-	@echo "compiling $(@)"
-	@mkdir -p $(dir $(@))
-	$(cxx) $(cflags) -c $(<) $(call output,$(@))
-endif
-
-$(build)/%.o: $(lzma)/C/%.c
-	@echo "compiling $(@)"
-	@mkdir -p $(dir $(@))
-	$(cc) $(lzma-cflags) -c $$($(windows-path) $(<)) $(call output,$(@))
-
 $(vm-asm-objects): $(build)/%-asm.o: $(src)/%.$(asm-format)
 	$(compile-asm-object)
-
-$(bootimage-generator-objects): $(build)/%.o: $(src)/%.cpp $(vm-depends)
-	$(compile-object)
 
 $(heapwalk-objects): $(build)/%.o: $(src)/%.cpp $(vm-depends)
 	$(compile-object)
@@ -2066,9 +1116,6 @@ $(build)/main-dynamic.o: $(driver-source)
 $(boot-object): $(boot-source)
 	$(compile-object)
 
-$(boot-javahome-object): $(src)/boot-javahome.cpp
-	$(compile-object)
-
 $(object-writer-objects) $(binary-to-object-objects): $(build)/%.o: $(src)/%.cpp $(binary-to-object-depends) $(object-writer-depends) $(all-depends)
 	@mkdir -p $(dir $(@))
 	$(build-cxx) $(converter-cflags) -c $(<) -o $(@)
@@ -2076,31 +1123,6 @@ $(object-writer-objects) $(binary-to-object-objects): $(build)/%.o: $(src)/%.cpp
 $(converter): $(converter-objects) $(converter-tool-objects)
 	@mkdir -p $(dir $(@))
 	$(build-cc) $(^) -g -o $(@)
-
-$(lzma-encoder-objects): $(build)/lzma/%.o: $(src)/lzma/%.cpp
-	@mkdir -p $(dir $(@))
-	$(build-cxx) $(lzma-build-cflags) -c $(<) -o $(@)
-
-$(lzma-encoder): $(lzma-encoder-objects) $(lzma-encoder-lzma-objects)
-	$(build-cc) $(^) -g -o $(@)
-
-$(lzma-library): $(lzma-loader) $(lzma-decode-objects)
-	@echo "creating $(@)"
-	@rm -rf $(build)/libavata-lzma
-	@mkdir -p $(build)/libavata-lzma
-	rm -rf $(@)
-	for x in $(^); \
-		do cp $${x} $(build)/libavata-lzma/$$(echo $${x} | sed s:/:_:g); \
-	done
-ifdef ms_cl_compiler
-	$(ar) $(arflags) $(build)/libavata-lzma/*.o -out:$(@)
-else
-	$(ar) cru $(@) $(build)/libavata-lzma/*.o
-	$(ranlib) $(@)
-endif
-
-$(lzma-loader): $(src)/lzma/load.cpp
-	$(compile-object)
 
 $(build)/classpath.jar: $(classpath-dep) $(classpath-jar-dep)
 	@echo "creating $(@)"
@@ -2113,17 +1135,6 @@ $(classpath-object): $(build)/classpath.jar $(converter)
 	$(converter) $(<) $(@) _binary_classpath_jar_start \
 		_binary_classpath_jar_end $(target-format) $(arch)
 
-$(build)/javahome.jar:
-	@echo "creating $(@)"
-	(wd=$$(pwd) && \
-	 cd "$(build-javahome)" && \
-	 $(jar) c0f "$$($(native-path) "$${wd}/$(@)")" $(javahome-files))
-
-$(javahome-object): $(build)/javahome.jar $(converter)
-	@echo "creating $(@)"
-	$(converter) $(<) $(@) _binary_javahome_jar_start \
-		_binary_javahome_jar_end $(target-format) $(arch)
-
 define compile-generator-object
 	@echo "compiling $(@)"
 	@mkdir -p $(dir $(@))
@@ -2135,17 +1146,10 @@ $(generator-objects): $(generator-depends)
 $(generator-objects): $(build)/%-build.o: $(src)/%.cpp
 	$(compile-generator-object)
 
-$(build)/%-build.o: $(lzma)/C/%.c
-	@echo "compiling $(@)"
-	@mkdir -p $(dir $(@))
-	$(build-cc) -DPOINTER_SIZE=$(pointer-size) -O0 -g3 $(lzma-build-cflags) \
-		-c $(<) -o $(@)
-
 $(jni-objects): $(build)/%.o: $(classpath-src)/%.cpp $(vm-depends)
 	$(compile-object)
 
-$(static-library): $(vm-objects) $(classpath-objects) $(vm-heapwalk-objects) \
-		$(javahome-object) $(boot-javahome-object) $(lzma-decode-objects)
+$(static-library): $(vm-objects) $(classpath-objects) $(vm-heapwalk-objects)
 	@echo "creating $(@)"
 	@rm -rf $(build)/libavata
 	@mkdir -p $(build)/libavata
@@ -2160,33 +1164,18 @@ else
 	$(ranlib) $(@)
 endif
 
-$(bootimage-object) $(codeimage-object): $(bootimage-generator) \
-		$(classpath-jar-dep) $(test-dep)
-	@echo "generating bootimage and codeimage binaries from $(classpath-build) using $(<)"
-	$(<) -cp $(bootimage-classpath) -bootimage $(bootimage-object) -codeimage $(codeimage-object) \
-		-bootimage-symbols $(bootimage-symbols) \
-		-codeimage-symbols $(codeimage-symbols) \
-		-hostvm $(host-vm)
-
 executable-objects = $(vm-objects) $(classpath-objects) $(driver-object) \
-	$(vm-heapwalk-objects) $(boot-object) $(vm-classpath-objects) \
-	$(javahome-object) $(boot-javahome-object) $(lzma-decode-objects)
+	$(vm-heapwalk-objects) $(boot-object) $(vm-classpath-objects)
 
 unittest-executable-objects = $(unittest-objects) $(vm-objects) \
-	$(vm-heapwalk-objects) $(build)/util/arg-parser.o $(stub-objects) \
-	$(lzma-decode-objects)
-
-ifeq ($(process),interpret)
-	unittest-executable-objects += $(all-codegen-target-objects)
-endif
+	$(vm-heapwalk-objects)
 
 # apparently, make does poorly with ifs inside of defines, and indented defines.
 # I suggest re-indenting the following before making edits (and unindenting afterwards):
 ifneq ($(platform),windows)
 define link-executable
 	@echo linking $(@)
-	$(ld) $(^) $(rdynamic) $(lflags) $(classpath-lflags) $(bootimage-lflags) \
-		-o $(@)
+	$(ld) $(^) $(rdynamic) $(lflags) -o $(@)
 endef
 else
 ifdef ms_cl_compiler
@@ -2208,7 +1197,7 @@ define link-executable
 	@echo linking $(@)
 	$(dlltool) -z $(@).def $(^)
 	$(dlltool) -d $(@).def -e $(@).exp
-	$(ld) $(@).exp $(^) $(lflags) $(classpath-lflags) -o $(@)
+	$(ld) $(@).exp $(^) $(lflags) -o $(@)
 endef
 endif
 endif
@@ -2219,56 +1208,8 @@ $(executable): $(executable-objects)
 $(unittest-executable): $(unittest-executable-objects)
 	$(link-executable)
 
-$(bootimage-generator): $(bootimage-generator-objects) $(vm-objects)
-	echo building $(bootimage-generator) arch=$(build-arch) platform=$(bootimage-platform)
-	$(MAKE) process=interpret \
-		bootimage= \
-		bootimage-test= \
-		mode=$(mode) \
-		platform=$(bootimage-platform) \
-		arch=$(build-arch)
-	$(MAKE) mode=$(mode) \
-		build=$(host-build-root) \
-		arch=$(build-arch) \
-		aot-only=false \
-		target-arch=$(arch) \
-		armv6=$(armv6) \
-		platform=$(bootimage-platform) \
-		target-format=$(target-format) \
-		android=$(android) \
-		openjdk=$(openjdk) \
-		openjdk-src=$(openjdk-src) \
-		bootimage-generator= \
-		build-bootimage-generator=$(bootimage-generator) \
-		target-cflags="$(bootimage-cflags)" \
-		target-asm=$(asm) \
-		$(bootimage-generator)
-
-$(build-bootimage-generator): \
-		$(vm-objects) $(classpath-object) \
-		$(heapwalk-objects) $(bootimage-generator-objects) $(converter-objects) \
-		$(lzma-decode-objects) $(lzma-encode-objects)
-	@echo "linking $(@)"
-ifeq ($(platform),windows)
-ifdef ms_cl_compiler
-	$(ld) $(bootimage-generator-lflags) $(lflags) $(^) -out:$(@) \
-		-debug -PDB:$(subst $(exe-suffix),.pdb,$(@)) $(manifest-flags)
-ifdef mt
-	$(mt) -nologo -manifest $(@).manifest -outputresource:"$(@);1"
-endif
-else
-	$(dlltool) -z $(@).def $(^)
-	$(dlltool) -d $(@).def -e $(@).exp
-	$(ld) $(@).exp $(^) $(bootimage-generator-lflags) $(lflags) -o $(@)
-endif
-else
-	$(ld) $(^) $(rdynamic) $(bootimage-generator-lflags) $(lflags) -o $(@)
-endif
-
-$(dynamic-library): $(vm-objects) $(dynamic-object) $(classpath-objects) \
-		$(vm-heapwalk-objects) $(boot-object) $(vm-classpath-objects) \
-		$(classpath-libraries) $(javahome-object) $(boot-javahome-object) \
-		$(lzma-decode-objects)
+$(dynamic-library): $(vm-objects) $(classpath-objects) \
+		$(vm-heapwalk-objects) $(boot-object) $(vm-classpath-objects)
 	@echo "linking $(@)"
 ifdef ms_cl_compiler
 	$(ld) $(shared) $(lflags) $(^) -out:$(@) \
@@ -2279,8 +1220,7 @@ ifdef mt
 endif
 else
 	$(ld) $(^) $(version-script-flag) $(soname-flag) \
-		$(shared) $(lflags) $(classpath-lflags) $(bootimage-lflags) \
-		-o $(@)
+		$(shared) $(lflags) -o $(@)
 endif
 	$(strip) $(strip-all) $(@)
 
@@ -2300,129 +1240,6 @@ else
 endif
 	$(strip) $(strip-all) $(@)
 
-$(generator): $(generator-objects) $(generator-lzma-objects)
+$(generator): $(generator-objects)
 	@echo "linking $(@)"
 	$(build-ld-cpp) $(^) $(build-lflags) $(static-on-windows) -o $(@)
-
-$(openjdk-objects): $(build)/openjdk/%-openjdk.o: $(openjdk-src)/%.c \
-		$(openjdk-headers-dep)
-	@echo "compiling $(@)"
-	@mkdir -p $(dir $(@))
-	sed 's/^static jclass ia_class;//' < $(<) > $(build)/openjdk/$(notdir $(<))
-	if [ "$(notdir $(<))" = "Class.c" ]; then \
-		sed '/^#include "java_lang_Class.h"$$/d' \
-			< $(build)/openjdk/$(notdir $(<)) > $(build)/openjdk/$(notdir $(<)).tmp; \
-		mv $(build)/openjdk/$(notdir $(<)).tmp $(build)/openjdk/$(notdir $(<)); \
-	fi
-ifeq ($(platform),ios)
-	sed \
-		-e 's/^#ifndef __APPLE__/#if 1/' \
-		-e 's/^#ifdef __APPLE__/#if 0/' \
-		< "$(openjdk-src)/solaris/native/java/lang/ProcessEnvironment_md.c" \
-		> $(build)/openjdk/ProcessEnvironment_md.c
-	sed \
-		-e 's/^#ifndef __APPLE__/#if 1/' \
-		-e 's/^#ifdef __APPLE__/#if 0/' \
-		< "$(openjdk-src)/solaris/native/java/lang/UNIXProcess_md.c" \
-		> $(build)/openjdk/UNIXProcess_md.c
-	if [ -e "$(openjdk-src)/solaris/native/java/lang/childproc.h" ]; then \
-		sed \
-			-e 's/^#ifndef __APPLE__/#if 1/' \
-			-e 's/^#ifdef __APPLE__/#if 0/' \
-			< "$(openjdk-src)/solaris/native/java/lang/childproc.h" \
-			> $(build)/openjdk/childproc.h; \
-	fi
-endif
-ifneq (7,$(openjdk-version))
-	if [ -f openjdk-patches/$(notdir $(<)).8.patch ]; then \
-		( cd $(build) && patch -p0 ) < openjdk-patches/$(notdir $(<)).8.patch; \
-	fi
-	if [ -f openjdk-patches/$(notdir $(<)).8.$(platform).patch ]; then \
-		( cd $(build) && patch -p0 ) < openjdk-patches/$(notdir $(<)).8.$(platform).patch; \
-	fi
-endif
-	if [ -f openjdk-patches/$(notdir $(<)).patch ]; then \
-		( cd $(build) && patch -p0 ) < openjdk-patches/$(notdir $(<)).patch; \
-	fi
-	$(cc) -fPIC $(openjdk-extra-cflags) $(openjdk-cflags) \
-		$(optimization-cflags) -w -c $(build)/openjdk/$(notdir $(<)) \
-		$(call output,$(@)) -Wno-return-type
-
-$(openjdk-local-objects): $(build)/openjdk/%-openjdk.o: $(src)/openjdk/%.c \
-		$(openjdk-headers-dep)
-	@echo "compiling $(@)"
-	@mkdir -p $(dir $(@))
-	$(cc) -fPIC $(openjdk-extra-cflags) $(openjdk-cflags) \
-		$(optimization-cflags) -w -c $(<) $(call output,$(@))
-
-$(openjdk-headers-dep):
-	@echo "generating openjdk headers"
-	@mkdir -p $(dir $(@))
-	$(javah) -d $(build)/openjdk -bootclasspath $(boot-classpath) \
-		$(openjdk-headers-classes)
-ifeq ($(platform),windows)
-	sed 's/^#ifdef _WIN64/#if 1/' \
-		< "$(openjdk-src)/windows/native/java/net/net_util_md.h" \
-		> $(build)/openjdk/net_util_md.h
-	sed \
-		-e 's/\(^#include "net_util.h"\)/\1\n#if (defined _INC_NLDEF) || (defined _WS2DEF_)\n#define HIDE(x) hide_##x\n#else\n#define HIDE(x) x\n#define _WINSOCK2API_\n#endif/' \
-		-e 's/\(IpPrefix[a-zA-Z_]*\)/HIDE(\1)/' \
-		-e 's/\(IpSuffix[a-zA-Z_]*\)/HIDE(\1)/' \
-		-e 's/\(IpDad[a-zA-Z_]*\)/HIDE(\1)/' \
-		-e 's/\(ScopeLevel[a-zA-Z_]*\)/HIDE(\1)/' \
-		-e 's/\(SCOPE_LEVEL[a-zA-Z_]*\)/HIDE(\1)/' \
-		< "$(openjdk-src)/windows/native/java/net/NetworkInterface.h" \
-		> $(build)/openjdk/NetworkInterface.h
-	echo 'static int getAddrsFromAdapter(IP_ADAPTER_ADDRESSES *ptr, netaddr **netaddrPP);' >> $(build)/openjdk/NetworkInterface.h
-endif
-
-ifeq ($(kernel),darwin)
-	mkdir -p $(build)/openjdk/netinet
-	for file in \
-		$(header-sysroot)/usr/include/netinet/ip.h \
-		$(header-sysroot)/usr/include/netinet/in_systm.h \
-		$(header-sysroot)/usr/include/netinet/ip_icmp.h \
-		$(header-sysroot)/usr/include/netinet/in_var.h \
-		$(header-sysroot)/usr/include/netinet/icmp6.h \
-		$(header-sysroot)/usr/include/netinet/ip_var.h; do \
-		if [ ! -f "$(build)/openjdk/netinet/$$(basename $${file})" ]; then \
-			ln -s "$${file}" "$(build)/openjdk/netinet/$$(basename $${file})"; \
-		fi; \
-	done
-	mkdir -p $(build)/openjdk/netinet6
-	for file in \
-		$(header-sysroot)/usr/include/netinet6/in6_var.h; do \
-		if [ ! -f "$(build)/openjdk/netinet6/$$(basename $${file})" ]; then \
-			ln -s "$${file}" "$(build)/openjdk/netinet6/$$(basename $${file})"; \
-		fi; \
-	done
-	mkdir -p $(build)/openjdk/net
-	for file in \
-		$(header-sysroot)/usr/include/net/if_arp.h; do \
-		if [ ! -f "$(build)/openjdk/net/$$(basename $${file})" ]; then \
-			ln -s "$${file}" "$(build)/openjdk/net/$$(basename $${file})"; \
-		fi; \
-	done
-	mkdir -p $(build)/openjdk/sys
-	for file in \
-		$(header-sysroot)/usr/include/sys/kern_event.h \
-		$(header-sysroot)/usr/include/sys/sys_domain.h; do \
-		if [ ! -f "$(build)/openjdk/sys/$$(basename $${file})" ]; then \
-			ln -s "$${file}" "$(build)/openjdk/sys/$$(basename $${file})"; \
-		fi; \
-	done
-endif
-	@touch $(@)
-
-$(openjdk-jar-dep):
-	@echo "extracting openjdk classes"
-	@mkdir -p $(dir $(@))
-	@mkdir -p $(classpath-build)
-	(cd $(classpath-build) && \
-		$(jar) xf "$$($(native-path) "$(openjdk)/jre/lib/rt.jar")" && \
-		$(jar) xf "$$($(native-path) "$(openjdk)/jre/lib/jsse.jar")" && \
-		$(jar) xf "$$($(native-path) "$(openjdk)/jre/lib/jce.jar")" && \
-		$(jar) xf "$$($(native-path) "$(openjdk)/jre/lib/charsets.jar")" && \
-		$(jar) xf "$$($(native-path) "$(openjdk)/jre/lib/ext/sunjce_provider.jar")" && \
-		$(jar) xf "$$($(native-path) "$(openjdk)/jre/lib/resources.jar")")
-	@touch $(@)

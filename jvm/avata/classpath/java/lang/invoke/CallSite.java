@@ -13,8 +13,7 @@ package java.lang.invoke;
 /**
  * Avata consensus profile: CallSite is abstract per JDK8u.
  * Only ConstantCallSite is admitted (bootstrap-method path).
- * MutableCallSite and VolatileCallSite allow runtime target mutation
- * and are NOT admitted — their constructors throw UnsupportedOperationException.
+ * Runtime-mutable call-site variants are not admitted in the v1 profile.
  */
 public abstract class CallSite {
   MethodHandle target;

@@ -248,7 +248,7 @@ public class Subroutine {
       }
     } finally {
       synchronized (this) {
-        notifyAll();
+        hashCode();
       }
     }
     return true;

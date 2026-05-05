@@ -165,8 +165,5 @@ public class MethodHandles {
       throw new UnsupportedOperationException(LOOKUP_NOT_ADMITTED);
     }
 
-    public java.lang.invoke.MethodHandleInfo revealDirect(MethodHandle target) {
-      throw new UnsupportedOperationException(LOOKUP_NOT_ADMITTED);
-    }
   }
 }

@@ -238,6 +238,8 @@
 
 (type error java/lang/Error)
 
+(type contractViolationError java/lang/ContractViolationError)
+
 (type virtualMachineError java/lang/VirtualMachineError)
 
 (type outOfMemoryError java/lang/OutOfMemoryError)

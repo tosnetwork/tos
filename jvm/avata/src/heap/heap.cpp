@@ -796,9 +796,6 @@ class Fixie {
     }
   }
 
-  // be sure to update e.g. TargetFixieSizeInBytes in bootimage.cpp if
-  // you add/remove/change fields in this class:
-
   uint16_t age;
   uint16_t flags;
   uint32_t size;

@@ -389,7 +389,7 @@ public class Reflection {
 
   private static class MyClassLoader extends ClassLoader {
     public Package definePackage1(String name) {
-      return definePackage(name, null, null, null, null, null, null, null);
+      return definePackage(name, null, null, null, null, null, null);
     }
   }
 

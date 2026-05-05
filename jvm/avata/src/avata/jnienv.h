@@ -17,7 +17,6 @@
 #define JAVA_COMMAND_PROPERTY "sun.java.command"
 #define JAVA_LAUNCHER_PROPERTY "sun.java.launcher"
 #define CRASHDIR_PROPERTY "avata.crash.dir"
-#define EMBED_PREFIX_PROPERTY "avata.embed.prefix"
 #define CLASSPATH_PROPERTY "java.class.path"
 #define JAVA_HOME_PROPERTY "java.home"
 #define REENTRANT_PROPERTY "avata.reentrant"

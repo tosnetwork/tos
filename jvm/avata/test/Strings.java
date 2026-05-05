@@ -149,15 +149,6 @@ public class Strings {
            (prematureEOS ? "\u00ae\ufffd" : "\u00ae\uaeaf"));
   }
 
-  public static void testTrivialPattern() throws Exception {
-    expect("?7".matches("\\0777"));
-    expect("\007".matches("\\a"));
-    expect("\\".matches("\\\\"));
-    expect("J".matches("\\x4A"));
-    expect("a".matches("\\x61"));
-    expect("\0078".matches("\\078"));
-  }
-
   private static void testStringBounds() throws Exception {
     final byte[] oneByte = new byte[] { 97 };
     final char[] oneChar = new char[] { 'a' };
@@ -216,96 +207,14 @@ public class Strings {
   public static void main(String[] args) throws Exception {
     testStringBounds();
 
-    expect("title".toUpperCase(java.util.Locale.ROOT).equals("TITLE"));
-    expect("TITLE".toLowerCase(java.util.Locale.ROOT).equals("title"));
-    expect("title".toUpperCase(java.util.Locale.US).equals("TITLE"));
-    expect("TITLE".toLowerCase(new java.util.Locale("EN", "us")).equals("title"));
-    expect(java.util.Locale.ENGLISH.equals(new java.util.Locale("en", "")));
-    expect(java.util.Locale.US.equals(new java.util.Locale("EN", "us")));
-    expect(new java.util.Locale("he", "il").toString().equals("iw_IL"));
-    expectNullPointer(new Action() {
-      public void run() {
-        "title".toUpperCase(null);
-      }
-    });
-    expectNullPointer(new Action() {
-      public void run() {
-        "TITLE".toLowerCase(null);
-      }
-    });
-    expectUnsupported(new Action() {
-      public void run() {
-        "title".toUpperCase(new java.util.Locale("tr", "TR"));
-      }
-    });
-    expectUnsupported(new Action() {
-      public void run() {
-        "TITLE".toLowerCase(new java.util.Locale("lt", "LT"));
-      }
-    });
+    expect("title".toUpperCase().equals("TITLE"));
+    expect("TITLE".toLowerCase().equals("title"));
 
     expect(new String(new byte[] { 99, 111, 109, 46, 101, 99, 111, 118, 97,
                                    116, 101, 46, 110, 97, 116, 46, 98, 117,
                                    115, 46, 83, 121, 109, 98, 111, 108 })
       .equals("com.ecovate.nat.bus.Symbol"));
     
-    final String months = "Jan\u00aeFeb\u00aeMar\u00ae";
-    expect(months.split("\u00ae").length == 3);
-    expect(months.replaceAll("\u00ae", ".").equals("Jan.Feb.Mar."));
-
-    // Java 8 changed the semantics of String.split relative to
-    // previous versions, therefore we accept multiple possible
-    // results:
-    expect(arraysEqual
-           ("xyz".split("",  0), new String[] { "", "x", "y", "z" })
-           || arraysEqual
-           ("xyz".split("",  0), new String[] { "x", "y", "z" }));
-    expect(arraysEqual
-           ("xyz".split("",  1), new String[] { "xyz" }));
-    expect(arraysEqual
-           ("xyz".split("",  2), new String[] { "", "xyz" })
-           || arraysEqual
-           ("xyz".split("",  2), new String[] { "x", "yz" }));
-    expect(arraysEqual
-           ("xyz".split("",  3), new String[] { "", "x", "yz" })
-           || arraysEqual
-           ("xyz".split("",  3), new String[] { "x", "y", "z" }));
-    expect(arraysEqual
-           ("xyz".split("",  4), new String[] { "", "x", "y", "z" })
-           || arraysEqual
-           ("xyz".split("",  4), new String[] { "x", "y", "z", "" }));
-    expect(arraysEqual
-           ("xyz".split("",  5), new String[] { "", "x", "y", "z", "" })
-           || arraysEqual
-           ("xyz".split("",  5), new String[] { "x", "y", "z", "" }));
-    expect(arraysEqual
-           ("xyz".split("",  6), new String[] { "", "x", "y", "z", "" })
-           || arraysEqual
-           ("xyz".split("",  6), new String[] { "x", "y", "z", "" }));
-    expect(arraysEqual
-           ("xyz".split("", -1), new String[] { "", "x", "y", "z", "" })
-           || arraysEqual
-           ("xyz".split("", -1), new String[] { "x", "y", "z", "" }));
-
-    expect(arraysEqual("".split("xyz",  0), new String[] { "" }));
-    expect(arraysEqual("".split("xyz",  1), new String[] { "" }));
-    expect(arraysEqual("".split("xyz", -1), new String[] { "" }));
-
-    expect(arraysEqual("".split("",  0), new String[] { "" }));
-    expect(arraysEqual("".split("",  1), new String[] { "" }));
-    expect(arraysEqual("".split("", -1), new String[] { "" }));
-
-    expect("foo_foofoo__foo".replaceAll("_", "__")
-           .equals("foo__foofoo____foo"));
-
-    expect("foo_foofoo__foo".replaceFirst("_", "__")
-           .equals("foo__foofoo__foo"));
-
-    expect("stereomime".matches("stereomime"));
-    expect(! "stereomime".matches("stereomim"));
-    expect(! "stereomime".matches("tereomime"));
-    expect(! "stereomime".matches("sterEomime"));
-
     StringBuilder sb = new StringBuilder();
     sb.append('$');
     sb.append('2');
@@ -319,13 +228,6 @@ public class Strings {
 
     testDecode(false);
     testDecode(true);
-
-    expect
-      (java.text.MessageFormat.format
-       ("{0} enjoy {1} {2}.  do {4}?  {4} do?",
-        "I", "grape", "nuts", "foobar",
-        new Object() { public String toString() { return "you"; } })
-       .equals("I enjoy grape nuts.  do you?  you do?"));
 
     { java.io.ByteArrayOutputStream bout = new java.io.ByteArrayOutputStream();
       java.io.PrintStream pout = new java.io.PrintStream(bout, true, "UTF-8");
@@ -359,13 +261,5 @@ public class Strings {
 
     expect("abc".lastIndexOf('b', 100) == 1);
 
-    testTrivialPattern();
-
-    { String s = "hello, world!";
-      java.nio.CharBuffer buffer = java.nio.CharBuffer.allocate(s.length());
-      new java.io.InputStreamReader
-        (new java.io.ByteArrayInputStream(s.getBytes())).read(buffer);
-      expect(s.equals(new String(buffer.array())));
-    }
   }
 }

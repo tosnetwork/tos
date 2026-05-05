@@ -1003,9 +1003,15 @@ class GcObject {
 };
 
 class GcFinalizer;
+class GcClass;
 class GcClassLoader;
+class GcField;
+class GcJclass;
+class GcMethod;
 class GcJreference;
 class GcArray;
+class GcString;
+class GcThread;
 class GcThrowable;
 class GcRoots;
 
@@ -1066,7 +1072,6 @@ class Machine {
   System::Monitor* shutdownLock;
   System::Library* libraries;
   FILE* errorLog;
-  BootImage* bootimage;
   GcArray* types;
   GcRoots* roots;
   GcFinalizer* finalizers;
@@ -1083,7 +1088,6 @@ class Machine {
   JNIEnvVTable jniEnvVTable;
   uintptr_t* heapPool[ThreadHeapPoolSize];
   unsigned heapPoolIndex;
-  size_t bootimageSize;
 };
 
 void printTrace(Thread* t, GcThrowable* exception);
@@ -1378,6 +1382,12 @@ class Thread {
   // elsewhere in machine.h, even though identity hashes and String hashes are
   // different concepts).
   uint32_t identityHashCounter;
+  struct IdentityHashEntry {
+    object key;
+    uint32_t value;
+    IdentityHashEntry* next;
+  };
+  IdentityHashEntry* identityHashes;
   // -------------------------------------------------------------------
 
  private:
@@ -1477,8 +1487,7 @@ class ThreadRuntimeArray : public Thread::AutoResource {
 
 Classpath* makeClasspath(System* system,
                          Allocator* allocator,
-                         const char* javaHome,
-                         const char* embedPrefix);
+                         const char* javaHome);
 
 typedef uint64_t(JNICALL* FastNativeFunction)(Thread*, GcMethod*, uintptr_t*);
 typedef void(JNICALL* FastVoidNativeFunction)(Thread*, GcMethod*, uintptr_t*);
@@ -2173,6 +2182,32 @@ inline void markHashTaken(Thread* t, object o)
   t->m->heap->pad(o);
 }
 
+inline bool findIdentityHash(Thread* t, object o, uint32_t* value)
+{
+  for (Thread::IdentityHashEntry* e = t->identityHashes; e; e = e->next) {
+    if (e->key == o) {
+      *value = e->value;
+      return true;
+    }
+  }
+  return false;
+}
+
+inline void rememberIdentityHash(Thread* t, object o, uint32_t value)
+{
+  Thread::IdentityHashEntry* e
+      = static_cast<Thread::IdentityHashEntry*>(
+          malloc(sizeof(Thread::IdentityHashEntry)));
+  if (e == 0) {
+    abort(t);
+  }
+
+  e->key = o;
+  e->value = value;
+  e->next = t->identityHashes;
+  t->identityHashes = e;
+}
+
 // gcTakeHash is used ONLY by the GC object-copy callback in machine.cpp to
 // preserve the pre-move hash of a hashTaken object.  It must be idempotent:
 // given the same source object it must always return the same value.  We use
@@ -2203,13 +2238,11 @@ inline uint32_t takeHash(Thread* t, object o)
 // identical bytecode sequences on identical inputs always produce identical
 // hash values across validators regardless of ASLR or heap base differences.
 //
-// IMPORTANT ASSUMPTION: GC must NOT run during a contract transaction in the
-// Avata execution model (the heap is reset between transactions).  If GC runs
-// mid-transaction, objects marked hashTaken may be moved and the GC copy
-// callback will store a gcTakeHash (pointer-based) value in the extended word,
-// overwriting the counter-based value and introducing non-determinism.
-// This is acceptable for bootstrap/classpath code (gasCounter == UINT64_MAX)
-// but must not happen during actual contract execution.
+// If GC moves a hashTaken object, machine.cpp first looks up the counter-based
+// identity hash in Thread::identityHashes and stores that value in the
+// destination object's extended word.  gcTakeHash is used only as a fallback for
+// pre-existing VM-internal hashTaken objects that have no Java-visible identity
+// hash side-table entry.
 //
 // The "& 0x7FFFFFFF" keeps the result non-negative, matching the original
 // contract for identityHashCode (some library code asserts >= 0).
@@ -2219,19 +2252,17 @@ inline uint32_t objectHash(Thread* t, object o)
     return extendedWord(t, o, baseSize(t, o, objectClass(t, o)));
   } else {
     if (not objectFixed(t, o)) {
+      uint32_t value;
+      if (findIdentityHash(t, o, &value)) {
+        return value;
+      }
+
       markHashTaken(t, o);
-      // TOS P6: assign a counter-based hash value, not the address.
-      // takeHash() below would compute the pointer-based value; instead we
-      // bump the per-thread counter.  Note that the extended word is not yet
-      // allocated (it will be allocated on the next GC cycle that moves this
-      // object); until then we return the counter value on every call.
-      // Once GC moves the object the copy callback calls gcTakeHash(src)
-      // which returns the pointer-based value for the source.  That means
-      // after GC the hash changes from the counter value to an address-based
-      // value. In the TOS contract execution model GC does not run during
-      // contract execution so this transition never occurs for user objects
-      // within one transaction.
-      return (++t->identityHashCounter) & 0x7FFFFFFF;
+      do {
+        value = (++t->identityHashCounter) & 0x7FFFFFFF;
+      } while (value == 0);
+      rememberIdentityHash(t, o, value);
+      return value;
     }
     return takeHash(t, o);
   }

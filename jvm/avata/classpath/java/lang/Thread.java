@@ -53,6 +53,10 @@ public class Thread implements Runnable {
       "thread sleep not available in consensus";
   private static final String MSG_YIELD =
       "thread yield not available in consensus";
+  private static final String MSG_INTERRUPT =
+      "thread interruption not available in consensus";
+  private static final String MSG_JOIN =
+      "thread join not available in consensus";
 
   public Thread(ThreadGroup group, Runnable task, String name, long stackSize)
   {
@@ -154,19 +158,19 @@ public class Thread implements Runnable {
   public static native Thread currentThread();
 
   public void interrupt() {
-    interrupt(peer);
+    throw new ContractViolationError(MSG_INTERRUPT);
   }
 
   private static native boolean interrupt(long peer);
 
   public static boolean interrupted() {
-    return interrupted(currentThread().peer);
+    throw new ContractViolationError(MSG_INTERRUPT);
   }
 
   private static native boolean interrupted(long peer);
 
   public boolean isInterrupted() {
-    return interrupted;
+    throw new ContractViolationError(MSG_INTERRUPT);
   }
 
   // -----------------------------------------------------------------------
@@ -192,9 +196,17 @@ public class Thread implements Runnable {
 
   private static native Object getStackTrace(long peer);
 
-  public static native int activeCount();
+  public static int activeCount() {
+    return 1;
+  }
 
-  public static native int enumerate(Thread[] array);
+  public static int enumerate(Thread[] array) {
+    if (array != null && array.length > 0) {
+      array[0] = currentThread();
+      return 1;
+    }
+    return 0;
+  }
 
   public String getName() {
     return name;
@@ -269,28 +281,18 @@ public class Thread implements Runnable {
   }
 
   public synchronized void join() throws InterruptedException {
-    while (getState() != State.TERMINATED) {
-      wait();
-    }
+    throw new ContractViolationError(MSG_JOIN);
   }
 
   public synchronized void join(long milliseconds) throws InterruptedException
   {
-    // join on a thread that never started terminates immediately
-    if (getState() == State.TERMINATED) return;
-    // A thread that was never started will remain in NEW state forever;
-    // waiting with a timeout is the safest behaviour here.
-    wait(milliseconds);
+    throw new ContractViolationError(MSG_JOIN);
   }
 
   public void join(long milliseconds, int nanoseconds)
     throws InterruptedException
   {
-    if (nanoseconds > 0) {
-      ++ milliseconds;
-    }
-
-    join(milliseconds);
+    throw new ContractViolationError(MSG_JOIN);
   }
 
   public ThreadGroup getThreadGroup() {
@@ -300,7 +302,7 @@ public class Thread implements Runnable {
   public static native boolean holdsLock(Object o);
 
   public long getId() {
-    return peer;
+    return 1;
   }
 
   public interface UncaughtExceptionHandler {

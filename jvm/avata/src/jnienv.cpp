@@ -3416,20 +3416,6 @@ uint64_t boot(Thread* t, uintptr_t*)
 
   t->m->classpath->boot(t);
 
-  const char* port = findProperty(t, "avata.trace.port");
-  if (port) {
-    GcString* host = makeString(t, "0.0.0.0");
-    PROTECT(t, host);
-
-    GcMethod* method = resolveMethod(t,
-                                     roots(t)->bootLoader(),
-                                     "avata/Traces",
-                                     "startTraceListener",
-                                     "(Ljava/lang/String;I)V");
-
-    t->m->processor->invoke(t, method, 0, host, atoi(port));
-  }
-
   enter(t, Thread::IdleState);
 
   return 1;
@@ -3677,7 +3663,6 @@ extern "C" AVATA_EXPORT jint JNICALL
   const char* classpath = 0;
   const char* javaHome = AVATA_JAVA_HOME;
   bool reentrant = false;
-  const char* embedPrefix = AVATA_EMBED_PREFIX;
   const char* bootClasspathPrepend = "";
   const char* bootClasspath = 0;
   const char* bootClasspathAppend = "";
@@ -3731,10 +3716,6 @@ extern "C" AVATA_EXPORT jint JNICALL
       } else if (strncmp(p, REENTRANT_PROPERTY "=", sizeof(REENTRANT_PROPERTY))
                  == 0) {
         reentrant = strcmp(p + sizeof(REENTRANT_PROPERTY), "true") == 0;
-      } else if (strncmp(p,
-                         EMBED_PREFIX_PROPERTY "=",
-                         sizeof(EMBED_PREFIX_PROPERTY)) == 0) {
-        embedPrefix = p + sizeof(EMBED_PREFIX_PROPERTY);
       } else if (strncmp(p, "file.encoding=", sizeof("file.encoding=") - 1)
                  == 0) {
         hasFileEncodingProperty = true;
@@ -3758,7 +3739,7 @@ extern "C" AVATA_EXPORT jint JNICALL
 
   System* s = makeSystem(reentrant);
   Heap* h = makeHeap(s, heapLimit);
-  Classpath* c = makeClasspath(s, h, javaHome, embedPrefix);
+  Classpath* c = makeClasspath(s, h, javaHome);
 
   if (bootClasspath == 0) {
     bootClasspath = c->bootClasspath();

@@ -10,8 +10,6 @@
 
 package avata;
 
-import java.util.concurrent.Callable;
-
 /**
  * This class provides methods to capture continuations and manage
  * control flow when calling continuations.
@@ -118,6 +116,10 @@ import java.util.concurrent.Callable;
  * passed, regardless of how the stack is wound or unwound.
  */
 public class Continuations {
+  public interface Callable<T> {
+    public T call() throws Exception;
+  }
+
   private Continuations() { }
 
   private static final ThreadLocal<Reset> latestReset = new ThreadLocal();

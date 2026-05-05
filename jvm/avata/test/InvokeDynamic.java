@@ -3,9 +3,6 @@ import java.lang.invoke.LambdaConversionException;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-import java.lang.invoke.MutableCallSite;
-import java.lang.invoke.VolatileCallSite;
-import java.lang.invoke.SerializedLambda;
 
 public class InvokeDynamic {
   private final int foo;
@@ -32,7 +29,7 @@ public class InvokeDynamic {
     }
   }
 
-  private interface Supplier<T> extends java.io.Serializable {
+  private interface Supplier<T> {
     T get();
   }
 
@@ -89,7 +86,7 @@ public class InvokeDynamic {
     expect(e.getStackTrace().length == 0);
   }
 
-  /** Verify that non-admitted MethodHandle/CallSite APIs throw UnsupportedOperationException. */
+  /** Verify that non-admitted MethodHandle APIs throw UnsupportedOperationException. */
   private static void notAdmittedTrapsTest() {
     // MethodHandles.lookup() must throw UOE
     try {
@@ -107,29 +104,6 @@ public class InvokeDynamic {
       // expected
     }
 
-    // MutableCallSite construction must throw UOE
-    try {
-      new MutableCallSite(MethodType.methodType(void.class, new Class[0]));
-      throw new RuntimeException("Expected UnsupportedOperationException from MutableCallSite(MethodType)");
-    } catch (UnsupportedOperationException e) {
-      // expected
-    }
-
-    // VolatileCallSite construction must throw UOE
-    try {
-      new VolatileCallSite(MethodType.methodType(void.class, new Class[0]));
-      throw new RuntimeException("Expected UnsupportedOperationException from VolatileCallSite(MethodType)");
-    } catch (UnsupportedOperationException e) {
-      // expected
-    }
-
-    // SerializedLambda construction must throw UOE
-    try {
-      new SerializedLambda(null, "", "", "", 0, "", "", "", "", new Object[0]);
-      throw new RuntimeException("Expected UnsupportedOperationException from SerializedLambda()");
-    } catch (UnsupportedOperationException e) {
-      // expected
-    }
   }
 
   public static void main(String[] args) {
@@ -145,11 +119,11 @@ public class InvokeDynamic {
     }
   }
 
-  private interface Foo extends java.io.Serializable {
+  private interface Foo {
     void someFunction(Integer a, Integer b, String s);
   }
 
-  private interface UnboxedSerializable extends java.io.Serializable {
+  private interface Unboxed2 {
     int add(int a, int b);
   }
 
@@ -325,7 +299,7 @@ public class InvokeDynamic {
       s.someFunction(1, 2, "");
     }
 
-    { UnboxedSerializable s = InvokeDynamic::addBoxed;
+    { Unboxed2 s = InvokeDynamic::addBoxed;
       expect(s.add(1, 2) == 3);
     }
 

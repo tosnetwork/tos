@@ -10,21 +10,7 @@
 
 package java.io;
 
-import java.nio.CharBuffer;
-
 public abstract class Reader implements Closeable, Readable {
-  public int read(CharBuffer buffer) throws IOException {
-    int c = read(buffer.array(),
-                 buffer.arrayOffset() + buffer.position(),
-                 buffer.remaining());
-
-    if (c > 0) {
-      buffer.position(buffer.position() + c);
-    }
-
-    return c;
-  }
-
   public int read() throws IOException {
     char[] buffer = new char[1];
     int c = read(buffer);

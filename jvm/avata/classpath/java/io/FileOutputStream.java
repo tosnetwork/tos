@@ -21,21 +21,6 @@ public class FileOutputStream extends OutputStream {
     this.fd = fd.value;
   }
 
-  public FileOutputStream(String path) throws IOException {
-    this(path, false);
-  }
-
-  public FileOutputStream(String path, boolean append) throws IOException {
-    fd = open(path, append);
-  }
-  
-
-  public FileOutputStream(File file) throws IOException {
-    this(file.getPath());
-  }
-
-  private static native int open(String path, boolean append) throws IOException;
-
   private static native void write(int fd, int c) throws IOException;
 
   private static native void write(int fd, byte[] b, int offset, int length)

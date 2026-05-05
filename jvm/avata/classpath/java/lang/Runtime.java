@@ -10,8 +10,6 @@
 
 package java.lang;
 
-import java.io.IOException;
-
 // -------------------------------------------------------------------------
 // Consensus-safe Runtime — Avata/TOS blockchain JVM
 //
@@ -20,8 +18,6 @@ import java.io.IOException;
 public class Runtime {
   private static final Runtime instance = new Runtime();
 
-  private static final String MSG_EXEC =
-      "process execution not available in consensus";
   private static final String MSG_NATIVE =
       "native library loading not available in consensus";
   private static final String MSG_HALT =
@@ -37,25 +33,6 @@ public class Runtime {
 
   public static Runtime getRuntime() {
     return instance;
-  }
-
-  // -----------------------------------------------------------------------
-  // Process execution — TRAPPED
-  // -----------------------------------------------------------------------
-  public Process exec(String command) throws IOException {
-    throw new UnsupportedOperationException(MSG_EXEC);
-  }
-
-  public Process exec(String[] command) throws IOException {
-    throw new UnsupportedOperationException(MSG_EXEC);
-  }
-
-  public Process exec(String command, String[] envp) throws IOException {
-    throw new UnsupportedOperationException(MSG_EXEC);
-  }
-
-  public Process exec(String[] command, String[] envp) throws IOException {
-    throw new UnsupportedOperationException(MSG_EXEC);
   }
 
   // -----------------------------------------------------------------------

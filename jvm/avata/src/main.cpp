@@ -193,10 +193,6 @@ int main(int ac, const char** av)
   ++vmArgs.nOptions;
 #endif
 
-#ifdef BOOT_IMAGE
-  vmArgs.nOptions += 2;
-#endif
-
 #ifdef BOOT_BUILTINS
   ++vmArgs.nOptions;
 #endif
@@ -205,14 +201,6 @@ int main(int ac, const char** av)
   vmArgs.options = RUNTIME_ARRAY_BODY(options);
 
   unsigned optionIndex = 0;
-
-#ifdef BOOT_IMAGE
-  vmArgs.options[optionIndex++].optionString
-      = const_cast<char*>("-Davata.bootimage=bootimageBin");
-
-  vmArgs.options[optionIndex++].optionString
-      = const_cast<char*>("-Davata.codeimage=codeimageBin");
-#endif
 
 #ifdef BOOT_LIBRARY
   vmArgs.options[optionIndex++].optionString

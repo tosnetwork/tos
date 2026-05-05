@@ -17,7 +17,6 @@
 
 #include "avata/zlib-custom.h"
 #include "avata/finder.h"
-#include "avata/lzma.h"
 #include "avata/append.h"
 
 using namespace vm;
@@ -624,10 +623,7 @@ class BuiltinElement : public JarElement {
   {
     if (index == 0) {
       if (s->success(s->load(&library, libraryName))) {
-        bool lzma = strncmp("lzma.", name, 5) == 0;
-        const char* symbolName = lzma ? name + 5 : name;
-
-        void* p = library->resolve(symbolName);
+        void* p = library->resolve(name);
         if (p) {
           uint8_t* (*function)(size_t*);
           memcpy(&function, &p, BytesPerWord);
@@ -635,28 +631,14 @@ class BuiltinElement : public JarElement {
           size_t size = 0;
           uint8_t* data = function(&size);
           if (data) {
-            bool freePointer;
-            if (lzma) {
-#ifdef AVATA_USE_LZMA
-              size_t outSize;
-              data = decodeLZMA(s, allocator, data, size, &outSize);
-              size = outSize;
-              freePointer = true;
-#else
-              abort(s);
-#endif
-            } else {
-              freePointer = false;
-            }
             region = new (allocator->allocate(sizeof(PointerRegion)))
-                PointerRegion(s, allocator, data, size, freePointer);
+                PointerRegion(s, allocator, data, size, false);
             index = JarIndex::open(s, allocator, region);
           } else if (DebugFind) {
-            fprintf(
-                stderr, "%s in %s returned null\n", symbolName, libraryName);
+            fprintf(stderr, "%s in %s returned null\n", name, libraryName);
           }
         } else if (DebugFind) {
-          fprintf(stderr, "unable to find %s in %s\n", symbolName, libraryName);
+          fprintf(stderr, "unable to find %s in %s\n", name, libraryName);
         }
       } else if (DebugFind) {
         fprintf(stderr, "unable to load %s\n", libraryName);

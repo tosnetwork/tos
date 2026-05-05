@@ -37,9 +37,6 @@ public abstract class System {
       "native library loading not available in consensus";
   private static final String MSG_EXIT =
       "System.exit not available in consensus";
-  private static final String MSG_NET =
-      "networking not available in consensus";
-
   // Deterministic property set — only keys whose values are
   // platform-independent and byte-identical across all nodes.
   private static final Properties PROPERTIES = makeProperties();
@@ -65,20 +62,14 @@ public abstract class System {
     p.put("path.separator",     ":");
     p.put("line.separator",     "\n");
     p.put("file.encoding",      "UTF-8");
-    // Deterministic locale — fixed to English/US so Locale.DEFAULT is stable
-    // across all nodes.  user.language and user.region must not be host-derived.
+    // Deterministic language metadata. The v1 profile does not ship Locale,
+    // but these keys must still not be host-derived.
     p.put("user.language",      "en");
     p.put("user.region",        "US");
-    // os.name is needed by java/io/File to detect the path separator.
-    // Fixed to "Linux" (POSIX paths) for all consensus nodes.
+    // Compatibility-only values. Path-based File APIs are not shipped in the
+    // v1 profile, but a few libraries read these properties defensively.
     p.put("os.name",            "Linux");
-    // java.io.tmpdir is needed by libraries that create temp files.
-    // Paths are in-memory only; host filesystem access is not available.
     p.put("java.io.tmpdir",     "/tmp");
-    // user.dir is the working directory.  Set to "." (relative CWD); all
-    // native File operations (isDirectory, openDir, toAbsolutePath, etc.)
-    // resolve relative paths via getcwd(2) directly, so "." is always correct
-    // and avoids any System→File→System circular initialization.
     p.put("user.dir", ".");
     return p;
   }
@@ -195,16 +186,5 @@ public abstract class System {
   // -----------------------------------------------------------------------
   public static void exit(int code) {
     throw new UnsupportedOperationException(MSG_EXIT);
-  }
-
-  // -----------------------------------------------------------------------
-  // SecurityManager stubs — no-op in the consensus VM
-  // -----------------------------------------------------------------------
-  public static SecurityManager getSecurityManager() {
-    return null;
-  }
-
-  public static void setSecurityManager(SecurityManager sm) {
-    // ignored in the consensus VM
   }
 }

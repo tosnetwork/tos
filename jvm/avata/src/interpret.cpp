@@ -3526,48 +3526,6 @@ class MyProcessor : public Processor {
     return makeObjectArray(t, 0);
   }
 
-  virtual void initialize(BootImage*, avata::util::Slice<uint8_t>)
-  {
-    abort(s);
-  }
-
-  virtual void addCompilationHandler(CompilationHandler*)
-  {
-    abort(s);
-  }
-
-  virtual void compileMethod(vm::Thread*,
-                             Zone*,
-                             GcTriple**,
-                             GcTriple**,
-                             avata::codegen::DelayedPromise**,
-                             GcMethod*,
-                             OffsetResolver*,
-                             JavaVM*)
-  {
-    abort(s);
-  }
-
-  virtual void visitRoots(vm::Thread*, HeapWalker*)
-  {
-    abort(s);
-  }
-
-  virtual void normalizeVirtualThunks(vm::Thread*)
-  {
-    abort(s);
-  }
-
-  virtual unsigned* makeCallTable(vm::Thread*, HeapWalker*)
-  {
-    abort(s);
-  }
-
-  virtual void boot(vm::Thread*, BootImage* image, uint8_t* code)
-  {
-    expect(s, image == 0 and code == 0);
-  }
-
   virtual void callWithCurrentContinuation(vm::Thread*, object)
   {
     abort(s);

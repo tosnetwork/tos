@@ -1,4 +1,3 @@
-add_subdirectory(codegen)
 add_subdirectory(system)
 add_subdirectory(heap)
 add_subdirectory(util)

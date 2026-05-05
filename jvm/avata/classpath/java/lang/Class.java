@@ -30,18 +30,12 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.SignatureParser;
 import java.lang.annotation.Annotation;
-import java.io.InputStream;
-import java.io.IOException;
-import java.net.URL;
 import java.util.Arrays;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.HashMap;
-import java.security.ProtectionDomain;
-import java.security.Permissions;
-import java.security.AllPermission;
 
 public final class Class <T>
   implements Type, AnnotatedElement, GenericDeclaration
@@ -604,29 +598,6 @@ public final class Class <T>
     return getSuperclass() == Enum.class && (vmClass.flags & EnumFlag) != 0;
   }
 
-  public URL getResource(String path) {
-    if (path.startsWith("/")) {
-      path = path.substring(1);
-    } else {
-      String name = Classes.makeString
-        (vmClass.name, 0, vmClass.name.length - 1);
-      int index = name.lastIndexOf('/');
-      if (index >= 0) {
-        path = name.substring(0, index) + "/" + path;
-      }
-    }
-    return vmClass.loader.getResource(path);
-  }
-
-  public InputStream getResourceAsStream(String path) {
-    URL url = getResource(path);
-    try {
-      return (url == null ? null : url.openStream());
-    } catch (IOException e) {
-      return null;
-    }
-  }
-
   public boolean desiredAssertionStatus() {
     return false;
   }
@@ -729,10 +700,6 @@ public final class Class <T>
     }
 
     return array;
-  }
-
-  public ProtectionDomain getProtectionDomain() {
-    return Classes.getProtectionDomain(vmClass);
   }
 
   public TypeVariable<?>[] getTypeParameters() {

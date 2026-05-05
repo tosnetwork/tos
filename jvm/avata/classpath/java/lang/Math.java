@@ -10,15 +10,9 @@
 
 package java.lang;
 
-import java.util.Random;
-
 public final class Math {
   public static final double E = 2.718281828459045;
   public static final double PI = 3.141592653589793;
-
-  private static class Static {
-    public static final Random random = new Random();
-  }
 
   private Math() { }
 
@@ -87,7 +81,8 @@ public final class Math {
   }
 
   public static double random() {
-    return Static.random.nextDouble();
+    throw new UnsupportedOperationException(
+        "randomness not available in the TOS JVM profile");
   }
 
   public static native double floor(double v);

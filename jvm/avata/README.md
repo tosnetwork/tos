@@ -16,10 +16,11 @@ between two validator binaries causes a fork.
 - Not a general-purpose JVM for standalone programs.
 - Not a tracking clone of the upstream repository. The upstream project is
   retired; we own this fork permanently.
-- Not built with `make`. The upstream `makefile` remains in the tree for
-  historical reference but the TOS build uses CMake exclusively (see below).
-- Not intended for iOS, Android, Windows/Cygwin, or ProGuard embedding. Those
-  paths in the upstream source are dead code for our purposes.
+- Not built as a multi-mode upstream Avian distribution. The supported local
+  profile is interpreter-only with Avata/TOS classpath.
+- Not intended for iOS, Android, OpenJDK classpath builds, boot images,
+  compressed embedded loaders, or ProGuard embedding. Those paths were removed
+  for the TOS profile.
 
 ## Relationship to the upstream source
 
@@ -31,8 +32,7 @@ commit" below).
 
 The original upstream `README.md` is replaced by this file. The upstream
 `LICENSE.txt` is preserved unchanged; see `LICENSE.txt` for terms. Third-party
-notices for vendored components under `lzma/` and `openjdk-patches/` are
-covered by `../../THIRD_PARTY_NOTICES.md`.
+notices for the fork are covered by `../../THIRD_PARTY_NOTICES.md`.
 
 ## TOS-specific modifications
 
@@ -40,9 +40,8 @@ The following changes have been made to the upstream source since the fork:
 
 ### Interpreter-only execution
 
-The JIT compiler (`compile.cpp`, `compile-x86_64.S`, and related files) is
-retained in the tree but **not linked** by the TOS CMake target. All contract
-execution runs through `interpret.cpp`. JIT compilation introduces
+The JIT/codegen sources and build paths have been removed from the TOS profile.
+All contract execution runs through `interpret.cpp`. JIT compilation introduces
 platform-dependent optimisation decisions that would make consensus output
 non-deterministic across validator hardware.
 
@@ -75,9 +74,8 @@ The following paths are removed or replaced with deterministic stubs:
   `tos.contract.Context.randSeed()`.
 - Process and environment APIs (`getenv`, `System.getenv`,
   `System.getProperties`, `Runtime.exec`): throw `ContractViolationError`.
-- File and network IO where backed by validator-local resources: throw
-  `ContractViolationError`. Class-library shapes may remain for source
-  compatibility, but execution must not reach the host.
+- File and network IO where backed by validator-local resources: removed from
+  the shipped class library or trapped before any host call.
 
 ### Gas counter
 
@@ -91,34 +89,43 @@ Gas costs per opcode are loaded from the gas table in `jvm/core/gas-table.cpp`,
 which reads ConfigParam 85 at startup. Changing the gas table is a consensus
 parameter change and requires a governance vote.
 
-### CMake build
+### Slim build profile
 
-The upstream `makefile` is not used by TOS. The CMake target is defined in
-`CMakeLists.txt` and exports a single static library target `avata_interpreter`.
-The TOS top-level CMake includes this as a subdirectory dependency of
-`jvm/core/`.
+The supported standalone build is the slim `make` profile:
+
+- `process=interpret` only
+- restricted Java 8 contract class library from Avata/TOS `classpath/` only
+- no OpenJDK runtime/classpath bridge
+- no Android/libcore bridge
+- no bootimage/codeimage generator
+- no JIT/codegen, embed loader, or LZMA variants
+- no `java.net`, `java.nio`, `java.security`, `java.text`, `java.math`,
+  `java.util.concurrent`, `java.util.logging`, `java.util.regex`,
+  `java.util.zip`, `java.util.jar`, process APIs, filesystem path APIs,
+  object-stream serialization, or URL-handler packages in `classpath.jar`
+- no `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`,
+  `MutableCallSite`, `VolatileCallSite`, `SerializedLambda`, or
+  `MethodHandleInfo` shell classes in `classpath.jar`
+
+The CMake files mirror this by excluding the removed codegen targets.
 
 ## Building
 
-Avata is built as part of the normal TOS build. There is no standalone build
-step.
+Standalone verification:
 
 ```bash
 # from the TOS repository root
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target avata_interpreter -j 64
+make -C jvm/avata java-version=8 build-test
+make -C jvm/avata java-version=8 input=Hello run
+make -C jvm/avata java-version=8 run-test
 ```
 
-To run Avata's own unit tests in isolation:
+The current profile builds `jvm/avata/build/<platform>-<arch>/avata`,
+`libjvm.so`, `libavata.a`, `classpath.jar`, and `avata-unittest`.
 
-```bash
-cmake --build build --target avata-unittest -j 64
-./build/jvm/avata/avata-unittest
-```
-
-The unit tests cover the interpreter loop, class verifier, exception handling,
-and floating-point determinism. They do not cover TOS cell codec or gas metering
-(those are tested in `jvm/test/`).
+The Avata tests cover the interpreter loop, class loading, exception handling,
+and the admitted classpath profile. TOS cell codec, gas metering, and workchain
+integration are tested outside this directory.
 
 ## Source layout
 
@@ -128,26 +135,40 @@ jvm/avata/
     interpret.cpp          ← interpreter loop; gas counter wired here
     machine.cpp            ← VM state, class loading, object allocation
     heap/                  ← garbage collector
-    compile.cpp            ← JIT (not linked by TOS target)
     jnienv.cpp             ← JNI surface; restricted for TOS
-    classpath-openjdk.cpp  ← OpenJDK classpath bridge
     ...
-  classpath/               ← Java class library sources (TOS-pinned rt.jar)
+  classpath/               ← Avata/TOS Java class library sources
   include/                 ← Public C++ headers (avata/vm.h, jni.h)
-  openjdk-patches/         ← Patches applied to OpenJDK classes at fork time
   test/                    ← Java test classes
   unittest/                ← C++ unit tests
-  CMakeLists.txt           ← TOS build entry point
+  makefile                 ← Supported standalone slim build
+  CMakeLists.txt           ← Slim CMake entry point
   LICENSE.txt              ← Original ReadyTalk/avian license (Apache 2.0)
   PINNED_COMMIT            ← Upstream commit this fork was cut from
 ```
 
 ## Runtime class library
 
-The class library bundled with Avata is a TOS-pinned subset of OpenJDK, patched
-at fork time and extended with TOS domain APIs. Language-level classes remain
-under `java.lang` (`Object`, `String`, `Math`, `System`, errors). TOS domain
-APIs live under `tos.*`:
+The class library bundled with Avata is the Avata/TOS `classpath/` tree. It is
+not built from OpenJDK sources in this profile. OpenJDK/JDK 8 sources are used
+as a reference for JVMS and admitted API behavior, not as an Avata runtime build
+input.
+
+The current `classpath.jar` intentionally contains only the contract profile:
+
+- `java.lang`, annotations, `java.lang.invoke`, `java.lang.ref`, and the
+  admitted reflection subset needed by Java 8 source and lambda output
+- minimal `java.io` for byte-array/string streams, readers/writers,
+  `DataInput`/`DataOutput`, and VM stdin/stdout/stderr through
+  `FileDescriptor` only
+- deterministic `java.util` collections plus `java.util.function`
+- Avata VM support classes and the small `sun.misc` / `sun.reflect` internal
+  remnants still required by VM internals. The v1 profile does not ship
+  `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, `MutableCallSite`,
+  `VolatileCallSite`, `SerializedLambda`, or `MethodHandleInfo`.
+
+Language-level classes remain under `java.lang` (`Object`, `String`, `Math`,
+`System`, errors). TOS domain APIs live under `tos.*`:
 
 | Package | Contents |
 |---|---|
@@ -177,8 +198,8 @@ Before updating `PINNED_COMMIT`:
    explicitly list any files in the consensus path that changed.
 
 Do not update the pin to pick up unrelated upstream fixes without going through
-this process. The maintenance burden of staying current with an unmaintained
-upstream is lower than the risk of an unreviewed consensus change.
+this process. The current policy is to maintain Avata locally rather than track
+upstream Avian.
 
 ## Determinism requirements
 

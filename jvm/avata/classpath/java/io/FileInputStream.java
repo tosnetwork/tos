@@ -22,20 +22,9 @@ public class FileInputStream extends InputStream {
     this.fd = fd.value;
   }
 
-  public FileInputStream(String path) throws IOException {
-    fd = open(path);
-    remaining = (int) new File(path).length();
-  }
-
-  public FileInputStream(File file) throws IOException {
-    this(file.getPath());
-  }
-
   public int available() throws IOException {
     return remaining;
   }
-
-  private static native int open(String path) throws IOException;
 
   private static native int read(int fd) throws IOException;
 

@@ -10,8 +10,6 @@
 
 package java.lang;
 
-import java.net.URL;
-
 public class Package {
   private final String name;
   private final String implementationTitle;
@@ -20,7 +18,6 @@ public class Package {
   private final String specificationTitle;
   private final String specificationVendor;
   private final String specificationVersion;
-  private final URL sealed;
   private final ClassLoader loader;
 
   Package(String name,
@@ -30,7 +27,6 @@ public class Package {
           String specificationTitle,
           String specificationVendor,
           String specificationVersion,
-          URL sealed,
           ClassLoader loader)
   {
     this.name                  = name;
@@ -40,7 +36,6 @@ public class Package {
     this.specificationTitle    = specificationTitle;
     this.specificationVendor   = specificationVendor;
     this.specificationVersion  = specificationVersion;
-    this.sealed                = sealed;
     this.loader                = loader;
   }
 
@@ -73,10 +68,6 @@ public class Package {
   }
 
   public boolean isSealed() {
-    return sealed != null;
-  }
-
-  public boolean isSealed(URL url) {
-    return sealed.equals(url);
+    return false;
   }
 }

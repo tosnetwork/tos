@@ -82,25 +82,13 @@ public class PrintStream extends OutputStream {
     print(String.valueOf(s));
   }
 
-  public synchronized PrintStream printf(java.util.Locale locale, String format, Object... args) {
-    // should this be cached in an instance variable??
-    final java.util.Formatter formatter = new java.util.Formatter(this);
-    formatter.format(locale, format, args);
-    return this;
-  }
-
   public synchronized PrintStream printf(String format, Object... args) {
-    final java.util.Formatter formatter = new java.util.Formatter(this);
-    formatter.format(format, args);
-    return this;
+    throw new UnsupportedOperationException(
+        "formatter not available in the TOS JVM profile");
   }
 
   public PrintStream format(String format, Object... args) {
     return printf(format, args);
-  }
-
-  public PrintStream format(java.util.Locale locale, String format, Object... args) {
-    return printf(locale, format, args);
   }
 
   public synchronized void println(String s) {
