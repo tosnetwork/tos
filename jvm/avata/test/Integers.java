@@ -72,6 +72,13 @@ public class Integers {
 
     expect(gcd(12, 4) == 4);
 
+    expect(Integer.toUnsignedString(-1).equals("4294967295"));
+    expect(Integer.toUnsignedString(-10).equals("4294967286"));
+    expect(Integer.toUnsignedString(-1, 16).equals("ffffffff"));
+    expect(Integer.toUnsignedString(-1, 8).equals("37777777777"));
+    expect(Integer.toUnsignedLong(-1) == 4294967295L);
+    expect(Integer.toString(10, 1).equals("10"));
+
     { int a = 2;
       int b = 2;
       int c = a + b;

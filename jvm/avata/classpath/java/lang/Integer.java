@@ -70,6 +70,18 @@ public final class Integer extends Number implements Comparable<Integer> {
     return Long.toString(((long) v) & 0xFFFFFFFFL, 2);
   }
 
+  public static String toUnsignedString(int v) {
+    return toUnsignedString(v, 10);
+  }
+
+  public static String toUnsignedString(int v, int radix) {
+    return Long.toUnsignedString(((long) v) & 0xFFFFFFFFL, radix);
+  }
+
+  public static long toUnsignedLong(int v) {
+    return ((long) v) & 0xFFFFFFFFL;
+  }
+
   public byte byteValue() {
     return (byte) value;
   }

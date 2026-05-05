@@ -14,6 +14,13 @@ public final class Long extends Number implements Comparable<Long> {
   public static final long MIN_VALUE = -9223372036854775808l;
   public static final long MAX_VALUE =  9223372036854775807l;
 
+  private static final char[] digits =
+    new char[] { '0', '1', '2', '3', '4', '5', '6', '7',
+                 '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+                 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+                 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+                 'w', 'x', 'y', 'z' };
+
   public static final Class TYPE = avata.Classes.forCanonicalName("J");
 
   private final long value;
@@ -51,8 +58,8 @@ public final class Long extends Number implements Comparable<Long> {
   }
 
   public static String toString(long v, int radix) {
-    if (radix < 1 || radix > 36) {
-      throw new IllegalArgumentException("radix " + radix + " not in [1,36]");
+    if (radix < Character.MIN_RADIX || radix > Character.MAX_RADIX) {
+      radix = 10;
     }
 
     if (v == 0) {
@@ -91,15 +98,90 @@ public final class Long extends Number implements Comparable<Long> {
   }
 
   public static String toHexString(long v) {
-    return toString(v, 16);
+    return toUnsignedString0(v, 4);
   }
 
   public static String toOctalString(long v) {
-    return toString(v, 8);
+    return toUnsignedString0(v, 3);
   }
 
   public static String toBinaryString(long v) {
-    return toString(v, 2);
+    return toUnsignedString0(v, 1);
+  }
+
+  public static String toUnsignedString(long v) {
+    return toUnsignedString(v, 10);
+  }
+
+  public static String toUnsignedString(long v, int radix) {
+    if (radix < Character.MIN_RADIX || radix > Character.MAX_RADIX) {
+      radix = 10;
+    }
+
+    if (v >= 0) {
+      return toString(v, radix);
+    }
+
+    switch (radix) {
+    case 2:
+      return toBinaryString(v);
+    case 4:
+      return toUnsignedString0(v, 2);
+    case 8:
+      return toOctalString(v);
+    case 16:
+      return toHexString(v);
+    case 32:
+      return toUnsignedString0(v, 5);
+    default:
+      return toUnsignedStringGeneric(v, radix);
+    }
+  }
+
+  private static String toUnsignedString0(long v, int shift) {
+    if (v == 0) {
+      return "0";
+    }
+
+    int mask = (1 << shift) - 1;
+    char[] buffer = new char[64];
+    int index = buffer.length;
+    do {
+      buffer[--index] = digits[(int) (v & mask)];
+      v >>>= shift;
+    } while (v != 0);
+    return new String(buffer, index, buffer.length - index);
+  }
+
+  private static String toUnsignedStringGeneric(long v, int radix) {
+    char[] buffer = new char[65];
+    int index = buffer.length;
+    do {
+      long quotient = divideUnsigned(v, radix);
+      int remainder = (int) (v - quotient * radix);
+      buffer[--index] = digits[remainder];
+      v = quotient;
+    } while (v != 0);
+    return new String(buffer, index, buffer.length - index);
+  }
+
+  private static long divideUnsigned(long dividend, int divisor) {
+    if (dividend >= 0) {
+      return dividend / divisor;
+    }
+
+    long quotient = ((dividend >>> 1) / divisor) << 1;
+    long remainder = dividend - quotient * divisor;
+    if (compareUnsigned(remainder, divisor) >= 0) {
+      ++quotient;
+    }
+    return quotient;
+  }
+
+  private static int compareUnsigned(long a, long b) {
+    a += MIN_VALUE;
+    b += MIN_VALUE;
+    return a < b ? -1 : (a == b ? 0 : 1);
   }
 
   public byte byteValue() {

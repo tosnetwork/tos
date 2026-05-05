@@ -134,3 +134,6 @@ Status legend: `✅` completed, unchecked items are still open.
 - ✅ Heap `ByteBuffer` and `CharBuffer` views now follow JDK8u read-only and
   backing-array rules: writable slices stay writable, read-only views hide
   arrays and preserve read-only state through slices/duplicates.
+- ✅ `Long`/`Integer` radix string helpers now follow the JDK8u unsigned
+  conversion surface for hex/octal/binary and Java 8 `toUnsignedString`
+  helpers, including invalid-radix fallback to base 10.

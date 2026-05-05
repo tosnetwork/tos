@@ -120,6 +120,18 @@ public class Longs {
     expect(String.valueOf(-9223372036854775808L).equals
            ("-9223372036854775808"));
 
+    expect(Long.toString(35L, 36).equals("z"));
+    expect(Long.toString(10L, 1).equals("10"));
+    expect(Long.toHexString(-1L).equals("ffffffffffffffff"));
+    expect(Long.toOctalString(-1L).equals("1777777777777777777777"));
+    expect(Long.toBinaryString(-1L).equals
+           ("1111111111111111111111111111111111111111111111111111111111111111"));
+    expect(Long.toUnsignedString(-1L).equals("18446744073709551615"));
+    expect(Long.toUnsignedString(-10L).equals("18446744073709551606"));
+    expect(Long.toUnsignedString(Long.MIN_VALUE).equals("9223372036854775808"));
+    expect(Long.toUnsignedString(-1L, 16).equals("ffffffffffffffff"));
+    expect(Long.toUnsignedString(-1L, 36).equals("3w5e11264sgsf"));
+
     { long a = -5;
       long b = 2;
       expect(a >> b == -5L >> 2);
