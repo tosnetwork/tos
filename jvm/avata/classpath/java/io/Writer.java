@@ -25,9 +25,13 @@ public abstract class Writer implements Closeable, Flushable, Appendable {
   }
 
   public void write(String s, int offset, int length) throws IOException {
+    if (offset < 0 || length < 0 || offset > s.length() - length) {
+      throw new IndexOutOfBoundsException();
+    }
+
     char[] b = new char[length];
     s.getChars(offset, offset + length, b, 0);
-    write(b);
+    write(b, 0, length);
   }
 
   public abstract void write(char[] buffer, int offset, int length)
@@ -39,18 +43,25 @@ public abstract class Writer implements Closeable, Flushable, Appendable {
   }
 
   public Appendable append(final CharSequence sequence) throws IOException {
-    return append(sequence, 0, sequence.length());
+    CharSequence s = sequence == null ? "null" : sequence;
+    return append(s, 0, s.length());
   }
 
-  public Appendable append(CharSequence sequence, int start, int end) 
-      throws IOException {
+  public Appendable append(CharSequence sequence, int start, int end)
+      throws IOException
+  {
+    CharSequence s = sequence == null ? "null" : sequence;
+    if (start < 0 || end < start || end > s.length()) {
+      throw new IndexOutOfBoundsException();
+    }
+
     final int length = end - start;
-    if (sequence instanceof String) {
-      write((String)sequence, start, length);
+    if (s instanceof String) {
+      write((String) s, start, length);
     } else {
       final char[] charArray = new char[length];
-      for (int i = start; i < end; i++) { 
-        charArray[i] = sequence.charAt(i);
+      for (int i = 0; i < length; ++i) {
+        charArray[i] = s.charAt(start + i);
       }
       write(charArray, 0, length);
     }
