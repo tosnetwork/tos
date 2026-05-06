@@ -43,6 +43,8 @@ $0 == "java/io/FileDescriptor.class" { reject("forbidden host file descriptor AP
 $0 == "java/io/FileInputStream.class" { reject("forbidden host file descriptor API"); next; }
 $0 == "java/io/FileOutputStream.class" { reject("forbidden host file descriptor API"); next; }
 $0 == "java/io/FileNotFoundException.class" { reject("forbidden host file API"); next; }
+$0 == "java/io/FilterInputStream.class" { reject("forbidden stream decorator shell"); next; }
+$0 == "java/io/FilterOutputStream.class" { reject("forbidden stream decorator shell"); next; }
 $0 == "java/io/FilterReader.class" { reject("forbidden reader decorator API"); next; }
 $0 == "java/io/LineNumberReader.class" { reject("forbidden source-position reader API"); next; }
 $0 == "java/io/PushbackReader.class" { reject("forbidden parser pushback reader API"); next; }
@@ -96,6 +98,7 @@ $0 == "java/util/Enumeration.class" { reject("forbidden legacy iterator API"); n
 $0 == "java/util/Vector.class" { reject("forbidden legacy synchronized collection"); next; }
 $0 == "java/util/Stack.class" { reject("forbidden legacy synchronized collection"); next; }
 $0 == "java/util/EmptyStackException.class" { reject("forbidden legacy stack API"); next; }
+$0 == "java/util/AbstractSequentialList.class" { reject("forbidden empty sequential-list shell"); next; }
 $0 == "java/util/StringTokenizer.class" { reject("forbidden legacy tokenizer API"); next; }
 $0 ~ /^java\/util\/Collections\$(RandomAccess)?Synchronized/ { reject("forbidden synchronized collection wrapper"); next; }
 $0 ~ /^java\/lang\/invoke\// { reject("forbidden method-handle and invokedynamic API"); next; }

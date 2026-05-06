@@ -2493,7 +2493,8 @@ GcClass* parseClass(Thread* t,
                     GcClassSpace* loader,
                     const uint8_t* data,
                     unsigned length,
-                    Gc::Type throwType = GcNoClassDefFoundError::Type);
+                    Gc::Type throwType = GcNoClassDefFoundError::Type,
+                    bool strictContractProfile = false);
 
 GcClass* resolveClass(Thread* t,
                       GcClassSpace* loader,

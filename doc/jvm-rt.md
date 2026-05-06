@@ -101,6 +101,12 @@ These classes are still TOS-specific APIs. Their package placement does not make
 them Java SE APIs, and the verifier/toolchain must reject contracts that assume
 they exist on a general-purpose OpenJDK runtime.
 
+The `avata.*` package is reserved for VM-private boot runtime implementation
+classes. It may remain inside `rt.jar` so boot classes can reach native VM
+helpers, but it is not part of the contract API. Contract-facing wrappers must
+live in `java.lang`, and strict contract admission rejects application class
+names and references under `avata/*`.
+
 ## Java Package Policy
 
 ### `java.lang`
@@ -167,13 +173,13 @@ The v1 profile also removes `java.lang.Package`, `Class.forName`,
 `Class.getEnclosingClass`, `Class.desiredAssertionStatus`,
 `Class.asSubclass`, `Class.cast`, the old private `Class$ClassType` enum
 helper, `java.lang.reflect.*`, `java.lang.ref.*`, finalization entry points,
-and `System.gc()`. Memory is exposed through explicit
-deterministic accounting (`avata.Memory`) instead of observable collection
-behavior. During contract execution, `Memory.used()`, `Memory.remaining()`, and
-`Memory.limit()` report transaction-local allocation counters configured by the
-contract ABI, not global heap collector state. Movable objects allocated during
-a contract invocation are scoped to the transaction arena checkpoint and are
-discarded when the invocation ends.
+and `System.gc()`. Memory is exposed through explicit deterministic accounting
+(`java.lang.Memory`) instead of observable collection behavior. During contract
+execution, `Memory.used()`, `Memory.remaining()`, and `Memory.limit()` report
+transaction-local allocation counters configured by the contract ABI, not global
+heap collector state. Movable objects allocated during a contract invocation are
+scoped to the transaction arena checkpoint and are discarded when the invocation
+ends.
 
 Application-class mutable static fields are not part of the v1 runtime state
 model. The verifier admits only `static final` primitive/String constants with
@@ -204,7 +210,8 @@ Admit:
 - basic `InputStream`, `OutputStream`, `Reader`, `Writer`
 - `PrintStream` and `PrintWriter` for deterministic VM-managed output
 - `IOException` for stream failures
-- `Serializable` only as a marker if the verifier/profile admits it
+- `Serializable` only as a boot-runtime marker; application contract references
+  are rejected by the verifier
 
 Reject or remove:
 
@@ -219,6 +226,9 @@ Reject or remove:
 - source/parser reader decorators such as `FilterReader`, `LineNumberReader`,
   and `PushbackReader`; contracts keep byte-array/string stream primitives, not
   Java SE parser infrastructure
+- stream decorator shells such as `FilterInputStream` and
+  `FilterOutputStream`; admitted byte-array/string/data streams should compose
+  directly instead of exposing Java SE wrapper extension points
 
 OpenZeppelin requirements do not need host files. Contract persistence must use
 Avata's `java.lang.Storage` and related persistent types.
@@ -252,6 +262,8 @@ Reject or remove:
 - empty or partial map abstraction shells such as `AbstractMap` and
   `NavigableMap`; admitted map behavior is exposed through the pinned `Map`,
   `SortedMap`, and `TreeMap` surfaces only
+- empty list hierarchy shells such as `AbstractSequentialList`; concrete
+  admitted lists extend the useful base classes directly
 - `Vector`, `Stack`, `StringTokenizer`, and `Enumeration`, because the contract
   profile uses explicit list/deque/iterator APIs instead of legacy synchronized
   or pre-collection surfaces

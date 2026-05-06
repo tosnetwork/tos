@@ -215,6 +215,13 @@ public class VerifierProfile {
                      new MethodData[0]);
   }
 
+  private static byte[] makeEmptyClass(String name) throws IOException {
+    return makeClass(name,
+                     new ArrayList<PoolEntry>(),
+                     new FieldData[0],
+                     new MethodData[0]);
+  }
+
   private static byte[] makeForbiddenClassMethodReference(String name,
                                                           String spec)
       throws IOException {
@@ -629,14 +636,16 @@ public class VerifierProfile {
       }
     });
 
-    final String[] forbiddenReaderHelpers = new String[] {
+    final String[] forbiddenStreamDecorators = new String[] {
+      "java/io/FilterInputStream",
+      "java/io/FilterOutputStream",
       "java/io/FilterReader",
       "java/io/LineNumberReader",
       "java/io/PushbackReader",
     };
-    for (int i = 0; i < forbiddenReaderHelpers.length; ++i) {
-      final String owner = forbiddenReaderHelpers[i];
-      expectVerifyError("forbidden reader helper ref", new Thrower() {
+    for (int i = 0; i < forbiddenStreamDecorators.length; ++i) {
+      final String owner = forbiddenStreamDecorators[i];
+      expectVerifyError("forbidden stream decorator ref", new Thrower() {
         public void run() throws Exception {
           define("VerifierProfile$ForbiddenClassReference",
                  makeForbiddenClassReference(owner));
@@ -679,6 +688,13 @@ public class VerifierProfile {
       }
     });
 
+    expectVerifyError("forbidden sequential-list shell ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/util/AbstractSequentialList"));
+      }
+    });
+
     expectVerifyError("forbidden string buffer ref", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$ForbiddenClassReference",
@@ -698,6 +714,45 @@ public class VerifierProfile {
       public void run() throws Exception {
         define("VerifierProfile$ForbiddenClassReference",
                makeForbiddenClassReference("java/lang/Package"));
+      }
+    });
+
+    final String[] forbiddenBootOnlySymbols = new String[] {
+      "java/io/Serializable",
+      "java/lang/Cloneable",
+      "java/lang/CloneNotSupportedException",
+      "java/lang/ClassNotFoundException",
+    };
+    for (int i = 0; i < forbiddenBootOnlySymbols.length; ++i) {
+      final String owner = forbiddenBootOnlySymbols[i];
+      expectVerifyError("forbidden boot-only symbol ref", new Thrower() {
+        public void run() throws Exception {
+          define("VerifierProfile$ForbiddenClassReference",
+                 makeForbiddenClassReference(owner));
+        }
+      });
+    }
+
+    final String[] forbiddenAvataInternals = new String[] {
+      "avata/Classes",
+      "avata/SystemClassSpace",
+      "avata/VMClass",
+      "avata/Memory",
+    };
+    for (int i = 0; i < forbiddenAvataInternals.length; ++i) {
+      final String owner = forbiddenAvataInternals[i];
+      expectVerifyError("forbidden avata internal ref", new Thrower() {
+        public void run() throws Exception {
+          define("VerifierProfile$ForbiddenClassReference",
+                 makeForbiddenClassReference(owner));
+        }
+      });
+    }
+
+    expectVerifyError("forbidden avata package class", new Thrower() {
+      public void run() throws Exception {
+        define("avata/ForbiddenContractClass",
+               makeEmptyClass("avata/ForbiddenContractClass"));
       }
     });
 

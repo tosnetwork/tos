@@ -76,12 +76,15 @@ these package prefixes:
 - `libcore`
 - Avata URL/file/jar/http resource-handler packages
 
-The remaining `rt.jar` surface is intentionally narrow: `java.lang`,
-annotations, minimal byte-array/string/descriptor-backed `java.io`,
-deterministic collections, `java.util.function`, and Avata VM support classes.
-It does not ship `java.lang.invoke`, `java.lang.reflect`, `java.lang.ref`, or
-`sun.*`. Method handles, lambda bootstrap classes, reflection, dynamic proxies,
-package metadata, weak/soft/phantom references, finalization, cleaners,
+The remaining contract-facing `rt.jar` surface is intentionally narrow:
+`java.lang`, annotations, minimal byte-array/string/descriptor-backed
+`java.io`, deterministic collections, and `java.util.function`. The jar may
+also contain `avata.*` classes needed by the boot runtime implementation, but
+those classes are VM-private rather than contract APIs. Contract admission
+rejects application class names and references under `avata/*`. It does not
+ship `java.lang.invoke`, `java.lang.reflect`, `java.lang.ref`, or `sun.*`.
+Method handles, lambda bootstrap classes, reflection, dynamic proxies, package
+metadata, weak/soft/phantom references, finalization, cleaners,
 `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, public class-file
 generation helpers, and public continuation/coroutine APIs are not shipped in
 `rt.jar`.
@@ -166,12 +169,13 @@ Examples:
 | `java.lang.Object`, `String`, primitive wrappers | Admitted, deterministic subset |
 | `java.lang.Math` | Admitted only when backed by bit-exact fixed algorithms; randomness is forbidden |
 | `java.lang.System` | TOS-specific deterministic chain context only; host APIs forbidden |
-| Minimal `java.io` | Admitted only for byte-array/string streams and VM stdio descriptors; no path-based host filesystem |
+| Minimal `java.io` | Admitted only for byte-array/string/data streams and VM stdio descriptors; no path-based host filesystem or Java SE decorator shells |
 | `java.net`, host-backed `java.nio` | Absent from v1 `rt.jar` and forbidden unless explicitly admitted later |
 | `java.lang.Thread`, wait/notify, executors | Forbidden or deterministic trap; `InterruptedException` is a compiler-required boot symbol but contract references are verifier-forbidden |
 | Reflection | Public `java.lang.reflect.*`, `java.lang.Package`, and optional `Class` reflection helpers are absent unless explicitly admitted |
 | Class loading | Forbidden except validator-controlled contract class resolution; `Class.forName` and package/source metadata lookup are absent |
-| Serialization, regex, text formatting, zip/jar, locale/date APIs | Absent from v1 `rt.jar` unless explicitly admitted later |
+| Serialization, regex, text formatting, zip/jar, locale/date APIs | Serialization APIs are verifier-forbidden for application classes; the rest are absent from v1 `rt.jar` unless explicitly admitted later |
+| `avata.*` | VM-private boot runtime implementation namespace; contract class names and references under `avata/*` are rejected |
 | `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces` | Absent from v1 `rt.jar`; forbidden unless explicitly admitted later |
 | Class-file generation helpers and continuation APIs | Absent from v1 `rt.jar`; tests may keep private support copies |
 | Collections | Admitted selectively when deterministic and useful for contracts; `EnumSet`, empty abstraction shells, and partial `NavigableMap` APIs are absent |

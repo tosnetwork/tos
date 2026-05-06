@@ -200,11 +200,12 @@ The current `rt.jar` intentionally contains only the contract profile:
   `DataInput`/`DataOutput`, and VM-private stdin/stdout/stderr streams. Public
   `FileDescriptor`, `FileInputStream`, `FileOutputStream`, and
   `FileNotFoundException` are not shipped. `FilterReader`, `LineNumberReader`,
-  and `PushbackReader` are also outside the contract runtime. `System.in` is
-  deterministic EOF.
+  `PushbackReader`, `FilterInputStream`, and `FilterOutputStream` are also
+  outside the contract runtime. `System.in` is deterministic EOF.
 - deterministic ordered/list `java.util` collections plus `java.util.function`;
-  hash/identity/weak collections, `EnumSet`, `AbstractMap`, `NavigableMap`,
-  `Properties`, and synchronized collection wrappers are not shipped
+  hash/identity/weak collections, `EnumSet`, `AbstractMap`,
+  `AbstractSequentialList`, `NavigableMap`, `Properties`, and synchronized
+  collection wrappers are not shipped
 - `java.lang.Runtime` is not shipped; host runtime and process APIs are outside
   the contract profile
 - `SecurityException`, `ThreadDeath`, `IllegalThreadStateException`,
@@ -221,8 +222,10 @@ The current `rt.jar` intentionally contains only the contract profile:
   software implementation.
 - `StringBuffer` is not shipped; contract code uses `StringBuilder`.
 - `Collections.shuffle` is not shipped; the profile has no implicit random API.
-- Avata VM support classes required by the runtime implementation, including
-  deterministic memory accounting helpers. The v1 profile does not ship
+- VM-private `avata.*` support classes required by the boot runtime
+  implementation, including deterministic memory accounting helpers. These are
+  not contract APIs; strict contract admission rejects application class names
+  and references under `avata/*`. The v1 profile does not ship
   `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, or `avata.Traces`.
 
 Language-level classes and Avata contract runtime helpers remain under
@@ -241,7 +244,7 @@ Contract execution starts through `avata_begin_contract_transaction_with_limits`
 when both gas and memory limits are available. Movable contract allocations run
 under a transaction arena checkpoint and are rolled back at transaction end.
 The Java runtime exposes only transaction-local memory counters through
-`avata.Memory`; public Java GC, finalization, weak-reference, and cleaner
+`java.lang.Memory`; public Java GC, finalization, weak-reference, and cleaner
 semantics are not part of the TOS profile. While a contract transaction is
 active, boot runtime classes may not perform reference-type `putstatic`.
 Application classes are stricter: the verifier admits only `static final`

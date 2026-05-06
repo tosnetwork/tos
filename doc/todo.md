@@ -66,7 +66,7 @@ Status legend: `✅` completed, unchecked items are still open.
     `avata_contract_memory_remaining()`, and
     `avata_contract_memory_limit()`. Contract allocations increment
     `Thread::contractMemoryUsed` and throw deterministic `OutOfMemoryError`
-    if the configured transaction memory limit is exceeded. `avata.Memory`
+    if the configured transaction memory limit is exceeded. `java.lang.Memory`
     reads these transaction-local counters while a contract transaction is
     active.
   - **Remaining work:**
@@ -221,8 +221,8 @@ Status legend: `✅` completed, unchecked items are still open.
       boot `putstatic` while a contract transaction is active.
     - ✅ Transaction memory accounting is implemented for contract-observable
       memory: `Thread::contractMemoryUsed` is reset at transaction boundaries,
-      allocation increments it, `avata.Memory.used/remaining/limit` exposes it,
-      and the contract ABI can set/read the memory limit.
+      allocation increments it, `java.lang.Memory.used/remaining/limit`
+      exposes it, and the contract ABI can set/read the memory limit.
     - ✅ Transaction-local movable heap reset is implemented with an arena
       checkpoint: `beginContractTransactionWithLimits()` records the current
       `Thread::heap`/`heapIndex`/`heapOffset` and `Machine::heapPoolIndex`;
@@ -345,8 +345,10 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   `Properties`, legacy synchronized collections/tokenizers, and thread-local
   APIs. The generated `rt.jar` now contains only `java.lang`, annotations,
   minimal `java.io`, deterministic ordered/list collections,
-  `java.util.function`, and Avata VM support classes. `java.util.EnumSet` is
-  absent because application enum classes are outside v1. Public
+  `java.util.function`, and VM-private `avata.*` support classes required by
+  the boot runtime. Contract admission rejects application class names and
+  references under `avata/*`. `java.util.EnumSet` is absent because application
+  enum classes are outside v1. Public
   `java.lang.invoke`, `java.lang.ref`, `java.lang.reflect`, and `sun.*`
   classes are no longer shipped.
 - ✅ Removed additional non-contract public surfaces from the v1 `rt.jar`:
@@ -484,6 +486,17 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   decorators (`FilterReader`, `LineNumberReader`, `PushbackReader`) plus
   empty or partial collection shells (`AbstractMap`, `NavigableMap`). The
   verifier and `rt/check-profile.sh` now reject references to these APIs.
+- ✅ Removed additional Java SE wrapper and hierarchy shells:
+  `FilterInputStream`, `FilterOutputStream`, and `AbstractSequentialList`.
+  `LinkedList` now extends the admitted `AbstractList` base directly. The
+  verifier also rejects application references to boot-only compatibility
+  symbols such as `Serializable`, `Cloneable`, `CloneNotSupportedException`,
+  and `ClassNotFoundException`.
+- ✅ Marked `avata.*` as VM-private instead of contract-facing API:
+  contract-facing memory counters are exposed through `java.lang.Memory`, while
+  strict contract admission rejects application class names and constant-pool
+  references under `avata/*`. `java.lang.Class` no longer exposes
+  `avata.VMClass` through public fields, constructors, or methods.
 - ✅ Host-API consensus hardening: `System` exposes only deterministic VM-managed
   streams and fixed property reads; `Runtime` is removed from the v1 `rt.jar`;
   `Thread` remains VM-internal and contract references are rejected. The earlier

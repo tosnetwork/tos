@@ -78,7 +78,7 @@ public abstract class ClassSpace {
   }
 
   protected void resolveClass(Class c) {
-    Classes.link(c.vmClass, this);
+    Classes.link(SystemClassSpace.vmClass(c), this);
   }
 
   public final ClassSpace getParent() {

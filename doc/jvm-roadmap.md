@@ -398,8 +398,9 @@ for consensus execution. No TOS integration yet; tested standalone.
 - Audit and remove or stub all `syscall` / `time` / `rand` / `getpid` paths
   in Avata's platform layer
 - Replace the legacy Avata contract-heap collection model with bounded
-  transaction-local memory accounting. `avata.Memory` exposes used/remaining/
-  limit counters; the contract ABI can start execution with gas and memory
+  transaction-local memory accounting. `java.lang.Memory` exposes
+  used/remaining/limit counters; the contract ABI can start execution with gas
+  and memory
   limits; allocation increments the transaction memory counter and fails
   deterministically when the limit is exceeded. Movable contract allocations
   now run under an arena checkpoint that is rolled back at transaction end, and

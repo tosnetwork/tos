@@ -23,9 +23,9 @@ public final class Class <T> {
   private static final int PrimitiveFlag = 1 <<  5;
   private static final int EnumFlag      = 1 << 14;
 
-  public final VMClass vmClass;
+  private final VMClass vmClass;
 
-  public Class(VMClass vmClass) {
+  private Class(VMClass vmClass) {
     this.vmClass = vmClass;
   }
 
@@ -52,7 +52,7 @@ public final class Class <T> {
     return getName(vmClass);
   }
 
-  public static String getName(VMClass c) {
+  private static String getName(VMClass c) {
     if (c.name == null) {
       if ((c.vmFlags & PrimitiveFlag) != 0) {
         if (c == Classes.primitiveClass('V')) {
@@ -203,7 +203,7 @@ public final class Class <T> {
     return vmClass.arrayDimensions != 0;
   }
 
-  public static boolean isInstance(VMClass c, Object o) {
+  private static boolean isInstance(VMClass c, Object o) {
     return o != null && Classes.isAssignableFrom
       (c, o.getVMClass());
   }

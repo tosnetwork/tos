@@ -613,11 +613,26 @@ bool byteArrayEqualsCString(GcByteArray* array, const char* value)
 
 bool forbiddenInternalClass(const int8_t* begin,
                             const int8_t* end,
-                            GcByteArray* currentClassName)
+                            GcByteArray* currentClassName,
+                            bool applicationClass,
+                            bool strictContractProfile)
 {
   if (currentClassName
       && segmentEqualsCString(begin, end, currentClassName->body().begin())) {
     return false;
+  }
+
+  if (applicationClass && strictContractProfile
+      && segmentStartsWith(begin, end, "avata/")) {
+    return true;
+  }
+
+  if (applicationClass
+      && (segmentEqualsOrNested(begin, end, "java/io/Serializable")
+          || segmentEqualsOrNested(begin, end, "java/lang/Cloneable")
+          || segmentEqualsOrNested(begin, end, "java/lang/CloneNotSupportedException")
+          || segmentEqualsOrNested(begin, end, "java/lang/ClassNotFoundException"))) {
+    return true;
   }
 
   return segmentEqualsOrNested(begin, end, "java/lang/Runtime")
@@ -625,6 +640,8 @@ bool forbiddenInternalClass(const int8_t* begin,
       || segmentEqualsOrNested(begin, end, "java/io/FileInputStream")
       || segmentEqualsOrNested(begin, end, "java/io/FileOutputStream")
       || segmentEqualsOrNested(begin, end, "java/io/FileNotFoundException")
+      || segmentEqualsOrNested(begin, end, "java/io/FilterInputStream")
+      || segmentEqualsOrNested(begin, end, "java/io/FilterOutputStream")
       || segmentEqualsOrNested(begin, end, "java/io/FilterReader")
       || segmentEqualsOrNested(begin, end, "java/io/LineNumberReader")
       || segmentEqualsOrNested(begin, end, "java/io/PushbackReader")
@@ -660,6 +677,7 @@ bool forbiddenInternalClass(const int8_t* begin,
       || segmentEqualsOrNested(begin, end, "java/util/Vector")
       || segmentEqualsOrNested(begin, end, "java/util/Stack")
       || segmentEqualsOrNested(begin, end, "java/util/EmptyStackException")
+      || segmentEqualsOrNested(begin, end, "java/util/AbstractSequentialList")
       || segmentEqualsOrNested(begin, end, "java/util/NavigableMap")
       || segmentEqualsOrNested(begin, end, "java/util/StringTokenizer")
       || segmentStartsWith(begin, end, "java/lang/reflect/");
@@ -680,7 +698,10 @@ bool forbiddenInternalMethod(GcReference* reference)
           || byteArrayEqualsCString(name, "cast"));
 }
 
-bool classNameForbidden(GcByteArray* name, GcByteArray* currentClassName)
+bool classNameForbidden(GcByteArray* name,
+                        GcByteArray* currentClassName,
+                        bool applicationClass,
+                        bool strictContractProfile)
 {
   const int8_t* begin = name->body().begin();
   const int8_t* end = begin;
@@ -695,7 +716,8 @@ bool classNameForbidden(GcByteArray* name, GcByteArray* currentClassName)
     while (*end && *end != ';') {
       ++end;
     }
-    return forbiddenInternalClass(begin, end, currentClassName);
+    return forbiddenInternalClass(
+        begin, end, currentClassName, applicationClass, strictContractProfile);
   }
 
   end = begin;
@@ -703,10 +725,14 @@ bool classNameForbidden(GcByteArray* name, GcByteArray* currentClassName)
     ++end;
   }
 
-  return forbiddenInternalClass(begin, end, currentClassName);
+  return forbiddenInternalClass(
+      begin, end, currentClassName, applicationClass, strictContractProfile);
 }
 
-bool descriptorForbidden(GcByteArray* spec, GcByteArray* currentClassName)
+bool descriptorForbidden(GcByteArray* spec,
+                         GcByteArray* currentClassName,
+                         bool applicationClass,
+                         bool strictContractProfile)
 {
   for (const int8_t* p = spec->body().begin(); *p; ++p) {
     if (*p == 'L') {
@@ -716,7 +742,12 @@ bool descriptorForbidden(GcByteArray* spec, GcByteArray* currentClassName)
         ++end;
       }
 
-      if (forbiddenInternalClass(begin, end, currentClassName)) {
+      if (forbiddenInternalClass(
+              begin,
+              end,
+              currentClassName,
+              applicationClass,
+              strictContractProfile)) {
         return true;
       }
 
@@ -729,18 +760,44 @@ bool descriptorForbidden(GcByteArray* spec, GcByteArray* currentClassName)
 
 void verifyClassNameAllowed(Thread* t,
                             GcByteArray* name,
-                            GcByteArray* currentClassName)
+                            GcByteArray* currentClassName,
+                            bool applicationClass,
+                            bool strictContractProfile)
 {
-  if (classNameForbidden(name, currentClassName)) {
+  if (classNameForbidden(
+          name, currentClassName, applicationClass, strictContractProfile)) {
     throwNew(t, GcVerifyError::Type);
   }
 }
 
 void verifyDescriptorAllowed(Thread* t,
                              GcByteArray* spec,
-                             GcByteArray* currentClassName)
+                             GcByteArray* currentClassName,
+                             bool applicationClass,
+                             bool strictContractProfile)
 {
-  if (descriptorForbidden(spec, currentClassName)) {
+  if (descriptorForbidden(
+          spec, currentClassName, applicationClass, strictContractProfile)) {
+    throwNew(t, GcVerifyError::Type);
+  }
+}
+
+void verifyDeclaredClassNameAllowed(Thread* t,
+                                    GcByteArray* name,
+                                    bool applicationClass,
+                                    bool strictContractProfile)
+{
+  if (!applicationClass || !strictContractProfile) {
+    return;
+  }
+
+  const int8_t* begin = name->body().begin();
+  const int8_t* end = begin;
+  while (*end) {
+    ++end;
+  }
+
+  if (segmentStartsWith(begin, end, "avata/")) {
     throwNew(t, GcVerifyError::Type);
   }
 }
@@ -774,7 +831,9 @@ void verifyClassFileAttributeAllowed(Thread* t, GcByteArray* name)
 
 void verifyConstantPoolProfile(Thread* t,
                                GcSingleton* pool,
-                               GcByteArray* currentClassName)
+                               GcByteArray* currentClassName,
+                               bool applicationClass,
+                               bool strictContractProfile)
 {
   PROTECT(t, pool);
   PROTECT(t, currentClassName);
@@ -795,14 +854,25 @@ void verifyConstantPoolProfile(Thread* t,
         verifyClassNameAllowed(
             t,
             reference->class_() ? reference->class_() : reference->name(),
-            currentClassName);
+            currentClassName,
+            applicationClass,
+            strictContractProfile);
         if (reference->spec()) {
-          verifyDescriptorAllowed(t, reference->spec(), currentClassName);
+          verifyDescriptorAllowed(
+              t,
+              reference->spec(),
+              currentClassName,
+              applicationClass,
+              strictContractProfile);
         }
       } else if (valueClass == type(t, GcPair::Type)) {
         GcPair* nameAndType = cast<GcPair>(t, value);
         verifyDescriptorAllowed(
-            t, cast<GcByteArray>(t, nameAndType->second()), currentClassName);
+            t,
+            cast<GcByteArray>(t, nameAndType->second()),
+            currentClassName,
+            applicationClass,
+            strictContractProfile);
       }
     }
   }
@@ -1282,7 +1352,11 @@ void parseFieldTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
 
       GcByteArray* specBytes
           = cast<GcByteArray>(t, singletonObject(t, pool, spec - 1));
-      verifyDescriptorAllowed(t, specBytes, class_->name());
+      verifyDescriptorAllowed(t,
+                              specBytes,
+                              class_->name(),
+                              class_->loader() != roots(t)->bootClassSpace(),
+                              false);
 
       unsigned code = fieldCode(t, specBytes->body()[0]);
 
@@ -2419,7 +2493,11 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
       }
 
       verifyNoDuplicateMethod(t, methodTable, i, nameBytes, specBytes);
-      verifyDescriptorAllowed(t, specBytes, class_->name());
+      verifyDescriptorAllowed(t,
+                              specBytes,
+                              class_->name(),
+                              class_->loader() != roots(t)->bootClassSpace(),
+                              false);
 
       if (DebugClassReader) {
         fprintf(stderr,
@@ -4748,7 +4826,8 @@ GcClass* parseClass(Thread* t,
                     GcClassSpace* loader,
                     const uint8_t* data,
                     unsigned size,
-                    Gc::Type throwType)
+                    Gc::Type throwType,
+                    bool strictContractProfile)
 {
   PROTECT(t, loader);
 
@@ -4797,11 +4876,16 @@ GcClass* parseClass(Thread* t,
   GcByteArray* className
       = cast<GcReference>(t, singletonObject(t, pool, name - 1))->name();
 
-  if (loader != roots(t)->bootClassSpace()) {
+  bool applicationClass = loader != roots(t)->bootClassSpace();
+  if (applicationClass) {
     verifyApplicationClassProfile(t, flags);
   }
 
-  verifyConstantPoolProfile(t, pool, className);
+  verifyDeclaredClassNameAllowed(
+      t, className, applicationClass, strictContractProfile);
+
+  verifyConstantPoolProfile(
+      t, pool, className, applicationClass, strictContractProfile);
 
   GcClass* class_ = (GcClass*)makeClass(
       t,
@@ -4907,7 +4991,8 @@ uint64_t runParseClass(Thread* t, uintptr_t* arguments)
   Gc::Type throwType = static_cast<Gc::Type>(arguments[2]);
 
   return reinterpret_cast<uintptr_t>(
-      parseClass(t, loader, region->start(), region->length(), throwType));
+      parseClass(
+          t, loader, region->start(), region->length(), throwType, false));
 }
 
 GcClass* resolveSystemClass(Thread* t,
@@ -5892,7 +5977,8 @@ GcClass* defineClass(Thread* t,
 {
   PROTECT(t, loader);
 
-  GcClass* c = parseClass(t, loader, buffer, length);
+  GcClass* c = parseClass(
+      t, loader, buffer, length, GcNoClassDefFoundError::Type, true);
 
   // char name[byteArrayLength(t, className(t, c))];
   // memcpy(name, &byteArrayBody(t, className(t, c), 0),
