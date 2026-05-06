@@ -83,6 +83,61 @@ public abstract class StorageCodec<T> {
         }
       };
 
+
+  public static final StorageCodec<Integer> INTEGER =
+      new StorageCodec<Integer>() {
+        public byte[] encode(Integer value) {
+          int v = value.intValue();
+          return new byte[] {
+            (byte) (v >>> 24),
+            (byte) (v >>> 16),
+            (byte) (v >>> 8),
+            (byte) v
+          };
+        }
+
+        public Integer decode(byte[] bytes) {
+          if (bytes.length != 4) {
+            throw new IllegalArgumentException("invalid integer storage value");
+          }
+          return Integer.valueOf(((bytes[0] & 0xff) << 24)
+                                 | ((bytes[1] & 0xff) << 16)
+                                 | ((bytes[2] & 0xff) << 8)
+                                 | (bytes[3] & 0xff));
+        }
+      };
+
+  public static final StorageCodec<Long> LONG =
+      new StorageCodec<Long>() {
+        public byte[] encode(Long value) {
+          long v = value.longValue();
+          return new byte[] {
+            (byte) (v >>> 56),
+            (byte) (v >>> 48),
+            (byte) (v >>> 40),
+            (byte) (v >>> 32),
+            (byte) (v >>> 24),
+            (byte) (v >>> 16),
+            (byte) (v >>> 8),
+            (byte) v
+          };
+        }
+
+        public Long decode(byte[] bytes) {
+          if (bytes.length != 8) {
+            throw new IllegalArgumentException("invalid long storage value");
+          }
+          return Long.valueOf(((long) (bytes[0] & 0xff) << 56)
+                              | ((long) (bytes[1] & 0xff) << 48)
+                              | ((long) (bytes[2] & 0xff) << 40)
+                              | ((long) (bytes[3] & 0xff) << 32)
+                              | ((long) (bytes[4] & 0xff) << 24)
+                              | ((long) (bytes[5] & 0xff) << 16)
+                              | ((long) (bytes[6] & 0xff) << 8)
+                              | (long) (bytes[7] & 0xff));
+        }
+      };
+
   protected StorageCodec() { }
 
   public abstract byte[] encode(T value);

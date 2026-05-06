@@ -605,3 +605,265 @@ TEST(StorageHostInvocationWrapper)
   avata_clear_storage_host();
   destroyReferenceHost(&state);
 }
+
+TEST(StorageHostThreeLevelNesting)
+{
+  unsigned char slotA[AVATA_STORAGE_SLOT_SIZE];
+  unsigned char slotB[AVATA_STORAGE_SLOT_SIZE];
+  unsigned char slotC[AVATA_STORAGE_SLOT_SIZE];
+  fillSlot(slotA, 0x10);
+  fillSlot(slotB, 0x20);
+  fillSlot(slotC, 0x30);
+  unsigned char v1[] = {1};
+  unsigned char v2[] = {2};
+  unsigned char v3[] = {3};
+
+  ReferenceHost state;
+  AvataStorageHost host;
+  makeReferenceStorageHost(&state, &host);
+
+  /* A begins, writes A. B begins, writes B. C begins, writes C.
+     C commits into B. B commits into A. A rollback: all slots gone. */
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.store(host.user, slotA, v1, 1)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.store(host.user, slotB, v2, 1)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.store(host.user, slotC, v3, 1)));
+  assertTrue(loadEquals(&host, slotA, v1, 1));
+  assertTrue(loadEquals(&host, slotB, v2, 1));
+  assertTrue(loadEquals(&host, slotC, v3, 1));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.commitTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.commitTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.rollbackTransaction(host.user)));
+  assertTrue(loadMissing(&host, slotA));
+  assertTrue(loadMissing(&host, slotB));
+  assertTrue(loadMissing(&host, slotC));
+
+  /* Now with full commit at all levels: all slots persist. */
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.store(host.user, slotA, v1, 1)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.store(host.user, slotB, v2, 1)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.store(host.user, slotC, v3, 1)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.commitTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.commitTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.commitTransaction(host.user)));
+  assertTrue(loadEquals(&host, slotA, v1, 1));
+  assertTrue(loadEquals(&host, slotB, v2, 1));
+  assertTrue(loadEquals(&host, slotC, v3, 1));
+
+  destroyReferenceHost(&state);
+}
+
+TEST(StorageHostInnerRollbackRestoresOuter)
+{
+  unsigned char slot[AVATA_STORAGE_SLOT_SIZE];
+  fillSlot(slot, 0x50);
+  unsigned char v1[] = {1};
+  unsigned char v2[] = {2};
+  unsigned char v3[] = {3};
+
+  ReferenceHost state;
+  AvataStorageHost host;
+  makeReferenceStorageHost(&state, &host);
+
+  /* A begins, writes slot=1. B begins, overwrites slot=2. B rollback: slot=1. */
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.store(host.user, slot, v1, 1)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.store(host.user, slot, v2, 1)));
+  assertTrue(loadEquals(&host, slot, v2, 1));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.rollbackTransaction(host.user)));
+  assertTrue(loadEquals(&host, slot, v1, 1));
+
+  /* B2 begins, overwrites slot=3. B2 commits into A. A commits: slot=3. */
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.store(host.user, slot, v3, 1)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.commitTransaction(host.user)));
+  assertTrue(loadEquals(&host, slot, v3, 1));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.commitTransaction(host.user)));
+  assertTrue(loadEquals(&host, slot, v3, 1));
+
+  destroyReferenceHost(&state);
+}
+
+TEST(StorageHostLargeValueRoundTrip)
+{
+  const size_t LargeValueSize = 1024;
+  unsigned char slot[AVATA_STORAGE_SLOT_SIZE];
+  fillSlot(slot, 0xA0);
+  unsigned char largeValue[LargeValueSize];
+  for (size_t i = 0; i < LargeValueSize; ++i) {
+    largeValue[i] = static_cast<unsigned char>(i ^ 0xAB);
+  }
+
+  ReferenceHost state;
+  AvataStorageHost host;
+  makeReferenceStorageHost(&state, &host);
+  state.gasLimit = 1000000;
+
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(
+                  host.store(host.user, slot, largeValue, LargeValueSize)));
+  assertTrue(loadEquals(&host, slot, largeValue, LargeValueSize));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.commitTransaction(host.user)));
+  assertTrue(loadEquals(&host, slot, largeValue, LargeValueSize));
+
+  /* Rollback large value clear restores the large value. */
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.clear(host.user, slot)));
+  assertTrue(loadMissing(&host, slot));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.rollbackTransaction(host.user)));
+  assertTrue(loadEquals(&host, slot, largeValue, LargeValueSize));
+
+  destroyReferenceHost(&state);
+}
+
+TEST(StorageHostMultipleIndependentSlots)
+{
+  const int SlotCount = 5;
+  unsigned char slots[SlotCount][AVATA_STORAGE_SLOT_SIZE];
+  unsigned char values[SlotCount];
+  for (int i = 0; i < SlotCount; ++i) {
+    fillSlot(slots[i], static_cast<unsigned char>(0xB0 + i));
+    values[i] = static_cast<unsigned char>(i + 10);
+  }
+
+  ReferenceHost state;
+  AvataStorageHost host;
+  makeReferenceStorageHost(&state, &host);
+  state.gasLimit = 1000000;
+
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  for (int i = 0; i < SlotCount; ++i) {
+    assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+                static_cast<uint32_t>(
+                    host.store(host.user, slots[i], &values[i], 1)));
+  }
+  for (int i = 0; i < SlotCount; ++i) {
+    assertTrue(loadEquals(&host, slots[i], &values[i], 1));
+  }
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.commitTransaction(host.user)));
+
+  /* Clear slot 2 in a transaction, rollback: all slots intact. */
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.beginTransaction(host.user)));
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.clear(host.user, slots[2])));
+  assertTrue(loadMissing(&host, slots[2]));
+  for (int i = 0; i < SlotCount; ++i) {
+    if (i != 2) {
+      assertTrue(loadEquals(&host, slots[i], &values[i], 1));
+    }
+  }
+  assertEqual(static_cast<uint32_t>(AVATA_STORAGE_OK),
+              static_cast<uint32_t>(host.rollbackTransaction(host.user)));
+  for (int i = 0; i < SlotCount; ++i) {
+    assertTrue(loadEquals(&host, slots[i], &values[i], 1));
+  }
+
+  destroyReferenceHost(&state);
+}
+
+TEST(StorageHostGasDeterminism)
+{
+  /* Same operation charges same gas regardless of prior storage state. */
+  unsigned char slotNew[AVATA_STORAGE_SLOT_SIZE];
+  unsigned char slotExisting[AVATA_STORAGE_SLOT_SIZE];
+  fillSlot(slotNew, 0xC0);
+  fillSlot(slotExisting, 0xC1);
+  unsigned char v1[] = {1};
+  unsigned char v2[] = {2};
+
+  ReferenceHost state;
+  AvataStorageHost host;
+  makeReferenceStorageHost(&state, &host);
+  state.gasLimit = 1000000;
+
+  host.beginTransaction(host.user);
+  host.store(host.user, slotExisting, v1, 1);
+  host.commitTransaction(host.user);
+
+  /* Load missing slot: fixed cost == LoadGas. */
+  state.gasUsed = 0;
+  assertTrue(loadMissing(&host, slotNew));
+  assertEqual(static_cast<uint64_t>(LoadGas), state.gasUsed);
+
+  /* Load existing slot: same fixed cost. */
+  state.gasUsed = 0;
+  assertTrue(loadEquals(&host, slotExisting, v1, 1));
+  assertEqual(static_cast<uint64_t>(LoadGas), state.gasUsed);
+
+  /* Store to new slot. */
+  state.gasUsed = 0;
+  host.beginTransaction(host.user);
+  host.store(host.user, slotNew, v1, 1);
+  uint64_t newStoreCost = state.gasUsed;
+  host.rollbackTransaction(host.user);
+
+  /* Store to existing slot: same cost. */
+  state.gasUsed = 0;
+  host.beginTransaction(host.user);
+  host.store(host.user, slotExisting, v2, 1);
+  uint64_t existingStoreCost = state.gasUsed;
+  host.rollbackTransaction(host.user);
+
+  assertEqual(newStoreCost, existingStoreCost);
+  assertEqual(static_cast<uint64_t>(StoreGas), newStoreCost);
+
+  /* Clear missing slot: fixed cost == ClearGas. */
+  state.gasUsed = 0;
+  host.beginTransaction(host.user);
+  host.clear(host.user, slotNew);
+  uint64_t clearMissingCost = state.gasUsed;
+  host.rollbackTransaction(host.user);
+
+  /* Clear existing slot: same cost. */
+  state.gasUsed = 0;
+  host.beginTransaction(host.user);
+  host.clear(host.user, slotExisting);
+  uint64_t clearExistingCost = state.gasUsed;
+  host.rollbackTransaction(host.user);
+
+  assertEqual(clearMissingCost, clearExistingCost);
+  assertEqual(static_cast<uint64_t>(ClearGas), clearMissingCost);
+
+  destroyReferenceHost(&state);
+}

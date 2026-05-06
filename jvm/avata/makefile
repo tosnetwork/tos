@@ -863,6 +863,7 @@ test-sources = \
 	$(test)/StackOverflow.java \
 	$(test)/StringBuilderTest.java \
 	$(test)/Strings.java \
+	$(test)/StorageTest.java \
 	$(test)/Switch.java \
 	$(test)/Tree.java \
 	$(test)/VerifierProfile.java
