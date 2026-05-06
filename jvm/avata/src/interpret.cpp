@@ -62,7 +62,7 @@ inline bool contractMayAccessStaticField(Thread* t,
   }
 
   if (field->class_()->loader() != roots(t)->bootClassSpace()) {
-    return false;
+    return !write && (field->flags() & ACC_FINAL) != 0;
   }
 
   return !write || field->code() != ObjectField;

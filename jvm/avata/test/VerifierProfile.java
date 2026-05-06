@@ -6,6 +6,8 @@ import avata.ConstantPool;
 import avata.ConstantPool.PoolEntry;
 import avata.Stream;
 import avata.SystemClassSpace;
+import avata.VMClass;
+import avata.VMMethod;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -18,9 +20,13 @@ public class VerifierProfile {
   private static int constantMethodType() { return 16; }
   private static int constantInvokeDynamic() { return 18; }
   private static int refInvokeStatic() { return 6; }
+  private static int accProtected() { return 0x0004; }
+  private static int accFinal() { return 0x0010; }
   private static int accSynchronized() { return 0x0020; }
   private static int accNative() { return 0x0100; }
   private static int accAbstract() { return 0x0400; }
+  private static int accEnum() { return 0x4000; }
+  private static int opcodeGetstatic() { return 0xb2; }
 
   private interface Thrower {
     void run() throws Exception;
@@ -47,8 +53,12 @@ public class VerifierProfile {
   }
 
   private static Class define(String name, byte[] bytes) {
-    return SystemClassSpace.getClass(Classes.defineVMClass(
-        SystemClassSpace.appClassSpace(), bytes, 0, bytes.length));
+    return SystemClassSpace.getClass(defineVM(name, bytes));
+  }
+
+  private static VMClass defineVM(String name, byte[] bytes) {
+    return Classes.defineVMClass(
+        SystemClassSpace.appClassSpace(), bytes, 0, bytes.length);
   }
 
   private static byte[] returnVoidCode() throws IOException {
@@ -101,14 +111,53 @@ public class VerifierProfile {
                                   FieldData[] fields,
                                   MethodData[] methods)
       throws IOException {
+    return makeClassWithFlags(name,
+                              Assembler.ACC_PUBLIC,
+                              pool,
+                              fields,
+                              methods);
+  }
+
+  private static byte[] makeClassWithFlags(String name,
+                                           int flags,
+                                           List<PoolEntry> pool,
+                                           FieldData[] fields,
+                                           MethodData[] methods)
+      throws IOException {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
-    Assembler.writeClass(out,
-                         pool,
-                         ConstantPool.addClass(pool, name),
-                         ConstantPool.addClass(pool, "java/lang/Object"),
-                         new int[0],
-                         fields,
-                         methods);
+    int className = ConstantPool.addClass(pool, name);
+    int superName = ConstantPool.addClass(pool, "java/lang/Object");
+    int codeName = ConstantPool.addUtf8(pool, "Code");
+
+    Stream.write4(out, 0xCAFEBABE);
+    Stream.write2(out, 0); // minor version
+    Stream.write2(out, 50); // major version
+    Stream.write2(out, pool.size() + 1);
+    for (PoolEntry e : pool) {
+      e.writeTo(out);
+    }
+    Stream.write2(out, flags);
+    Stream.write2(out, className + 1);
+    Stream.write2(out, superName + 1);
+    Stream.write2(out, 0); // interfaces
+    Stream.write2(out, fields.length);
+    for (FieldData f : fields) {
+      Stream.write2(out, f.flags);
+      Stream.write2(out, f.nameIndex + 1);
+      Stream.write2(out, f.specIndex + 1);
+      Stream.write2(out, 0); // attributes
+    }
+    Stream.write2(out, methods.length);
+    for (MethodData m : methods) {
+      Stream.write2(out, m.flags);
+      Stream.write2(out, m.nameIndex + 1);
+      Stream.write2(out, m.specIndex + 1);
+      Stream.write2(out, 1); // attributes
+      Stream.write2(out, codeName + 1);
+      Stream.write4(out, m.code.length);
+      out.write(m.code);
+    }
+    Stream.write2(out, 0); // class attributes
     return out.toByteArray();
   }
 
@@ -271,6 +320,41 @@ public class VerifierProfile {
                      new MethodData[] { method, method });
   }
 
+  private static byte[] makeSynchronizedMethod() throws IOException {
+    return makeClassWithRawMethod("VerifierProfile$SynchronizedMethod",
+                                  new ArrayList<PoolEntry>(),
+                                  Assembler.ACC_PUBLIC | accSynchronized(),
+                                  "locked",
+                                  "()V",
+                                  true);
+  }
+
+  private static byte[] makeNativeMethod() throws IOException {
+    return makeClassWithRawMethod("VerifierProfile$NativeMethod",
+                                  new ArrayList<PoolEntry>(),
+                                  Assembler.ACC_PUBLIC | accNative(),
+                                  "nativeMethod",
+                                  "()V",
+                                  false);
+  }
+
+  private static byte[] makeFinalizerMethod() throws IOException {
+    return makeClassWithRawMethod("VerifierProfile$FinalizerMethod",
+                                  new ArrayList<PoolEntry>(),
+                                  accProtected(),
+                                  "finalize",
+                                  "()V",
+                                  true);
+  }
+
+  private static byte[] makeEnumClass() throws IOException {
+    return makeClassWithFlags("VerifierProfile$EnumClass",
+                              Assembler.ACC_PUBLIC | accEnum(),
+                              new ArrayList<PoolEntry>(),
+                              new FieldData[0],
+                              new MethodData[0]);
+  }
+
   private static byte[] makeClassWithRawMethod(String className,
                                                List<PoolEntry> pool,
                                                int flags,
@@ -320,6 +404,15 @@ public class VerifierProfile {
                                   Assembler.ACC_STATIC,
                                   "<clinit>",
                                   "(I)V",
+                                  true);
+  }
+
+  private static byte[] makeApplicationClinit() throws IOException {
+    return makeClassWithRawMethod("VerifierProfile$ApplicationClinit",
+                                  new ArrayList<PoolEntry>(),
+                                  Assembler.ACC_STATIC,
+                                  "<clinit>",
+                                  "()V",
                                   true);
   }
 
@@ -410,6 +503,87 @@ public class VerifierProfile {
                      pool,
                      fields,
                      new MethodData[0]);
+  }
+
+  private static byte[] makeStaticFinalFieldWithoutConstantValue()
+      throws IOException {
+    List<PoolEntry> pool = new ArrayList<PoolEntry>();
+    FieldData[] fields = new FieldData[] {
+      new FieldData(Assembler.ACC_PUBLIC | Assembler.ACC_STATIC | accFinal(),
+                    ConstantPool.addUtf8(pool, "counter"),
+                    ConstantPool.addUtf8(pool, "I"))
+    };
+    return makeClass("VerifierProfile$StaticFinalWithoutConstantValue",
+                     pool,
+                     fields,
+                     new MethodData[0]);
+  }
+
+  private static byte[] makeStaticFinalConstantField() throws IOException {
+    String className = "VerifierProfile$StaticFinalConstant";
+    List<PoolEntry> pool = new ArrayList<PoolEntry>();
+    int fieldName = ConstantPool.addUtf8(pool, "answer");
+    int fieldSpec = ConstantPool.addUtf8(pool, "I");
+    int value = ConstantPool.addInteger(pool, 42);
+    int constantValue = ConstantPool.addUtf8(pool, "ConstantValue");
+    int methodName = ConstantPool.addUtf8(pool, "read");
+    int methodSpec = ConstantPool.addUtf8(pool, "()I");
+    int fieldRef = ConstantPool.addFieldRef(pool, className, "answer", "I");
+    int codeName = ConstantPool.addUtf8(pool, "Code");
+    int name = ConstantPool.addClass(pool, className);
+    int superName = ConstantPool.addClass(pool, "java/lang/Object");
+
+    ByteArrayOutputStream code = new ByteArrayOutputStream();
+    Stream.write2(code, 1); // max stack
+    Stream.write2(code, 0); // max locals
+    Stream.write4(code, 4); // code length
+    Stream.write1(code, opcodeGetstatic());
+    Stream.write2(code, fieldRef + 1);
+    Stream.write1(code, Assembler.ireturn);
+    Stream.write2(code, 0); // exception handler table length
+    Stream.write2(code, 0); // code attribute count
+    byte[] codeBytes = code.toByteArray();
+
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    Stream.write4(out, 0xCAFEBABE);
+    Stream.write2(out, 0); // minor version
+    Stream.write2(out, 50); // major version
+    Stream.write2(out, pool.size() + 1);
+    for (PoolEntry e : pool) {
+      e.writeTo(out);
+    }
+    Stream.write2(out, Assembler.ACC_PUBLIC);
+    Stream.write2(out, name + 1);
+    Stream.write2(out, superName + 1);
+    Stream.write2(out, 0); // interfaces
+    Stream.write2(out, 1); // fields
+    Stream.write2(out, Assembler.ACC_PUBLIC | Assembler.ACC_STATIC | accFinal());
+    Stream.write2(out, fieldName + 1);
+    Stream.write2(out, fieldSpec + 1);
+    Stream.write2(out, 1); // field attributes
+    Stream.write2(out, constantValue + 1);
+    Stream.write4(out, 2);
+    Stream.write2(out, value + 1);
+    Stream.write2(out, 1); // methods
+    Stream.write2(out, Assembler.ACC_PUBLIC | Assembler.ACC_STATIC);
+    Stream.write2(out, methodName + 1);
+    Stream.write2(out, methodSpec + 1);
+    Stream.write2(out, 1); // method attributes
+    Stream.write2(out, codeName + 1);
+    Stream.write4(out, codeBytes.length);
+    out.write(codeBytes);
+    Stream.write2(out, 0); // class attributes
+    return out.toByteArray();
+  }
+
+  private static int invokeStaticInt(VMClass class_, String name, String spec) {
+    VMMethod method = Classes.findMethod(class_, name, spec);
+    if (method == null) {
+      throw new RuntimeException("missing method: " + name + spec);
+    }
+
+    return ((Integer) Classes.invokeVMMethod(method, null, new Object[0]))
+        .intValue();
   }
 
   public static void main(String[] args) throws Exception {
@@ -540,39 +714,70 @@ public class VerifierProfile {
       }
     });
 
-    expectClassFormatError("invalid clinit descriptor", new Thrower() {
+    expectVerifyError("synchronized method", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$SynchronizedMethod",
+               makeSynchronizedMethod());
+      }
+    });
+
+    expectVerifyError("native method", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$NativeMethod", makeNativeMethod());
+      }
+    });
+
+    expectVerifyError("finalizer method", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$FinalizerMethod", makeFinalizerMethod());
+      }
+    });
+
+    expectVerifyError("enum class", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$EnumClass", makeEnumClass());
+      }
+    });
+
+    expectVerifyError("application clinit", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ApplicationClinit", makeApplicationClinit());
+      }
+    });
+
+    expectVerifyError("invalid clinit descriptor", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$InvalidClinitDescriptor",
                makeInvalidClinitDescriptor());
       }
     });
 
-    expectClassFormatError("non-static clinit", new Thrower() {
+    expectVerifyError("non-static clinit", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$NonStaticClinit", makeNonStaticClinit());
       }
     });
 
-    expectClassFormatError("native clinit", new Thrower() {
+    expectVerifyError("native clinit", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$NativeClinit", makeNativeClinit());
       }
     });
 
-    expectClassFormatError("synchronized clinit", new Thrower() {
+    expectVerifyError("synchronized clinit", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$SynchronizedClinit",
                makeSynchronizedClinit());
       }
     });
 
-    expectClassFormatError("abstract clinit", new Thrower() {
+    expectVerifyError("abstract clinit", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$AbstractClinit", makeAbstractClinit());
       }
     });
 
-    expectClassFormatError("clinit without code", new Thrower() {
+    expectVerifyError("clinit without code", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$ClinitWithoutCode", makeClinitWithoutCode());
       }
@@ -603,5 +808,18 @@ public class VerifierProfile {
         define("VerifierProfile$StaticField", makeStaticField());
       }
     });
+
+    expectVerifyError("static final without ConstantValue", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$StaticFinalWithoutConstantValue",
+               makeStaticFinalFieldWithoutConstantValue());
+      }
+    });
+
+    VMClass constants = defineVM("VerifierProfile$StaticFinalConstant",
+                                 makeStaticFinalConstantField());
+    if (invokeStaticInt(constants, "read", "()I") != 42) {
+      throw new RuntimeException("static final constant read failed");
+    }
   }
 }

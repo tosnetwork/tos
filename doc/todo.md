@@ -115,19 +115,25 @@ Status legend: `✅` completed, unchecked items are still open.
     name+descriptor pairs are rejected with `GcClassFormatError`.
     `CONSTANT_MethodHandle`, `CONSTANT_MethodType`, and
     `CONSTANT_InvokeDynamic` are rejected by the v1 contract verifier because
-    the runtime no longer ships public `java.lang.invoke` classes. Class
-    initializers are admitted only as static
-    `()V` methods with bytecode, and native/abstract/synchronized
-    `<clinit>` methods are rejected. Constructors must be non-static and return
-    `void`. Runtime initialization failure remains deterministic: an exception
-    thrown from class initialization marks the class with `InitErrorFlag`,
-    rethrows as `ExceptionInInitializerError`, and later initialization attempts
-    throw `NoClassDefFoundError`. Supporting Java files now include
+    the runtime no longer ships public `java.lang.invoke` classes. Application
+    class initializers (`<clinit>`) are rejected with `VerifyError`; boot
+    runtime class initializers remain internal and must be static `()V` methods
+    with bytecode. Application methods with `ACC_SYNCHRONIZED` or `ACC_NATIVE`
+    are rejected with `VerifyError`; deterministic `monitorenter`/`monitorexit`
+    opcodes remain supported for synchronized blocks, and native entry points
+    are limited to the pinned boot runtime. Application `finalize()V` methods
+    are rejected with `VerifyError`, so object finalization is not an
+    application lifecycle hook. Application classes with `ACC_ENUM` are
+    rejected with `VerifyError`. Constructors must be non-static and return
+    `void`.
+    Supporting Java files now include
     `ClassFormatError`, `UnsupportedClassVersionError`, and `VerifyError`.
     `VerifierProfile` covers forbidden class refs, forbidden descriptors,
     forbidden attributes, duplicate methods, forbidden method-handle /
     method-type / invokedynamic constants, malformed class
-    initializers/constructors, and forbidden reflection/ref refs.
+    initializers/constructors, application `<clinit>`, mutable static fields,
+    admitted static-final constants, synchronized/native/finalizer application
+    methods, enum class flags, and forbidden reflection/ref refs.
   - **Remaining work:**
     - Move from the current verifier helper allowlist to a generated profile
       manifest once `rt.jar` is finalized.
@@ -204,12 +210,15 @@ Status legend: `✅` completed, unchecked items are still open.
     journaling, nested commit merging, and rollback restoration for the future
     chain execution adapter.
   - **Design:**
-    - Application classes may not declare static fields in the v1 profile.
-      `machine.cpp` `parseFieldTable()` rejects `ACC_STATIC` fields for
-      non-boot class spaces with `VerifyError`. Static methods remain allowed.
-      Boot runtime classes may keep audited static constants/helpers, but the
-      interpreter still rejects reference-type boot `putstatic` while a contract
-      transaction is active.
+    - Application classes may not declare mutable static fields in the v1
+      profile. `machine.cpp` `parseFieldTable()` admits only `static final`
+      primitive/String constants with `ConstantValue` for non-boot class
+      spaces; other `ACC_STATIC` fields are rejected with `VerifyError`.
+      Static methods remain allowed. During contract execution, application
+      `getstatic` is allowed only for these admitted final constants, and
+      application `putstatic` is rejected. Boot runtime classes may keep audited
+      static constants/helpers, but the interpreter still rejects reference-type
+      boot `putstatic` while a contract transaction is active.
     - ✅ Transaction memory accounting is implemented for contract-observable
       memory: `Thread::contractMemoryUsed` is reset at transaction boundaries,
       allocation increments it, `avata.Memory.used/remaining/limit` exposes it,
@@ -222,11 +231,13 @@ Status legend: `✅` completed, unchecked items are still open.
       rejects fixed/oversized allocation and does not invoke the legacy
       collector fallback while `contractActive` is true. `avata-unittest`
       covers checkpoint rollback and heap-chunk release.
-    - ✅ Static-field profile is enforced before execution: application static
-      fields are rejected at class load, and `VerifierProfile` plus
-      `ContractStaticFieldVerifier` cover the negative path. This includes
-      Java enum classes and interface constants because javac emits static
-      fields for them.
+    - ✅ Static-field profile is enforced before execution: application
+      mutable static fields are rejected at class load, while `static final`
+      primitive/String constants with `ConstantValue` are admitted.
+      `VerifierProfile` covers rejected mutable statics, rejected static-final
+      fields without `ConstantValue`, and admitted static-final constant reads.
+      Java enum classes remain outside the profile because javac emits mutable
+      static state for them.
     - Remaining heap/state work: implement the cell-backed persistent value
       profile for `Storage`, `Mapping`, and future persistent containers;
       ensure bootstrap/classpath objects stay outside the transaction arena.

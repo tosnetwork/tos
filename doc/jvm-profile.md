@@ -186,10 +186,20 @@ Create a machine-readable and documented admission profile:
 - Forbidden attributes and post-Java-8 metadata.
 - Forbidden packages/classes/methods.
 - Reflection-free class metadata surface.
-- Static-field policy: application classes may not declare `ACC_STATIC` fields;
-  the verifier rejects them at class load. Static methods remain allowed.
-  Compiler features that synthesize static fields, including Java enums and
-  interface constants, are outside the v1 contract profile.
+- Static-field policy: application classes may not declare mutable static
+  fields. The verifier admits only `static final` primitive/String constants
+  with a `ConstantValue` attribute; static methods remain allowed.
+- Enum policy: application classes may not declare `ACC_ENUM`; Java enum
+  classes are outside the v1 contract profile.
+- Class-initializer policy: application classes may not declare `<clinit>`;
+  hidden static initialization is rejected at class load. Boot runtime
+  initializers remain internal to the pinned `rt.jar`.
+- Method-flag policy: application methods may not declare `ACC_SYNCHRONIZED` or
+  `ACC_NATIVE`. `monitorenter`/`monitorexit` opcodes remain supported with
+  deterministic single-thread semantics, and admitted runtime native helpers
+  are provided only by the pinned boot `rt.jar`.
+- Finalization policy: application classes may not declare `finalize()V`.
+  Object finalization is not part of the contract lifecycle.
 - ABI entry point rules.
 - Class initialization rules.
 - Deterministic trap taxonomy.

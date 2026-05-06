@@ -133,8 +133,17 @@ define a new bytecode dialect.
 - Single-dimensional and multi-dimensional arrays of primitives and references
 - Object inheritance and interfaces
 - Exception handling (`athrow`, `try/catch/finally`)
-- Class initialization (`<clinit>`) with deterministic execution rules; Phase 0
-  must define when initializers run during deploy and per-transaction restore
+- No application class initialization (`<clinit>`) in the v1 contract profile;
+  static entry/helper methods remain allowed, but hidden initializer execution
+  is rejected by the verifier
+- No application enum classes (`ACC_ENUM`). Java enum classes synthesize static
+  state and are outside the v1 profile.
+- No application `ACC_SYNCHRONIZED` or `ACC_NATIVE` methods. Synchronized
+  blocks still compile to `monitorenter`/`monitorexit` and use deterministic
+  single-thread monitor semantics; native entry points are limited to audited
+  boot-runtime helpers.
+- No application `finalize()V` methods. Object finalization is not part of the
+  contract lifecycle.
 
 The runtime class library is a TOS-pinned `rt.jar` built from the Avata/TOS
 classpath and extended with TOS APIs. OpenJDK/JDK8u class shapes may be used as
@@ -395,12 +404,13 @@ for consensus execution. No TOS integration yet; tested standalone.
   deterministically when the limit is exceeded. Movable contract allocations
   now run under an arena checkpoint that is rolled back at transaction end, and
   contract execution rejects fixed/oversized allocation plus the legacy
-  collector fallback. Application classes may not declare static fields; the
-  verifier rejects `ACC_STATIC` fields at class load, while static methods
-  remain allowed. Boot runtime classes may not perform reference-type
-  `putstatic` during contract execution, so Java static fields cannot
-  accidentally retain transient heap objects across invocations. The remaining
-  heap work is to serialize explicitly admitted persistent state into cells.
+  collector fallback. Application classes may not declare mutable static
+  fields; the verifier admits only `static final` primitive/String constants
+  with `ConstantValue`, while static methods remain allowed. Boot runtime
+  classes may not perform reference-type `putstatic` during contract execution,
+  so Java static fields cannot accidentally retain transient heap objects
+  across invocations. The remaining heap work is to serialize explicitly
+  admitted persistent state into cells.
 - Complete Java 8 opcode support in the interpreter, including deterministic
   VM-internal `invokedynamic` linkage, floating-point opcodes, and monitor
   opcodes. Public `java.lang.invoke` remains outside the v1 runtime profile.
@@ -571,9 +581,10 @@ cell codec must define a canonical serialization of the contract heap that is:
 Rather than attempting a general object-graph serializer, require that all
 persistent contract state flow through `Storage`, `Mapping`, and future
 cell-backed persistent containers. Application classes may not declare static
-fields; javac features that synthesize them, including enum constants and
-interface constants, are outside the v1 contract profile. The contract heap
-between calls is then reduced to:
+fields except compile-time `static final` primitive/String constants with
+`ConstantValue`; javac features that synthesize mutable static state, including
+enum constants, are outside the v1 contract profile. The contract heap between
+calls is then reduced to:
 - storage cells addressed by explicit slot keys
 - cell roots for future `Persistent*` containers
 - no heap-allocated mutable objects survive across transaction boundaries
@@ -588,11 +599,12 @@ restricting contracts to a structured state model. It is the correct v1
 tradeoff; unrestricted cross-transaction heap persistence can be addressed in
 v2 with a full object-graph serializer once the execution model is proven.
 
-Contract classes may not use static fields as hidden state. Deployment creates
-the initial `JvmContractState` from the deploy message and explicit storage
-roots; subsequent transactions install the account-state storage overlay before
-invoking the entry method. This prevents class loading from resetting or sharing
-contract state implicitly.
+Contract classes may not use mutable static fields as hidden state. Compile-time
+`static final` primitive/String constants are admitted because they do not
+create a state root. Deployment creates the initial `JvmContractState` from the
+deploy message and explicit storage roots; subsequent transactions install the
+account-state storage overlay before invoking the entry method. This prevents
+class loading from resetting or sharing contract state implicitly.
 
 **Work items:**
 
@@ -886,10 +898,11 @@ The following questions must be answered before Phase 1 is considered complete:
 
 1. **Persistent state and transaction arena boundary for v1.** Explicit
    memory-limit accounting and movable-heap arena rollback exist in the contract
-   ABI and allocation path. Application static fields are rejected, so the
-   remaining work is serializing explicit storage/persistent-container roots
-   into cells and ensuring no transient heap reference crosses the transaction
-   boundary. Phase 0 must set concrete heap and gas numbers for ConfigParam 85
+   ABI and allocation path. Application mutable static fields are rejected, so
+   the remaining work is serializing explicit storage/persistent-container
+   roots into cells and ensuring no transient heap reference crosses the
+   transaction boundary. Phase 0 must set concrete heap and gas numbers for
+   ConfigParam 85
    so allocation-heavy contracts fail deterministically before exhausting
    validator memory.
 

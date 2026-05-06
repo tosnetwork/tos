@@ -1,20 +1,4 @@
 public class Exceptions {
-  static class ThrowError {
-    static {
-      if (true) throw new AssertionError();
-    }
-
-    static void foo() { }
-  }
-
-  static class ThrowException {
-    static {
-      if (true) throw new RuntimeException();
-    }
-
-    static void foo() { }
-  }
-
   private static void evenMoreDangerous() {
     throw new RuntimeException("chaos! panic! overwhelming anxiety!");
   }
@@ -36,24 +20,6 @@ public class Exceptions {
     try {
       dangerous();
     } catch (Exception e) {
-      e.printStackTrace();
-      threw = true;
-    }
-    expect(threw);
-    threw = false;
-
-    try {
-      ThrowError.foo();
-    } catch (AssertionError e) {
-      e.printStackTrace();
-      threw = true;
-    }
-    expect(threw);
-    threw = false;
-
-    try {
-      ThrowException.foo();
-    } catch (ExceptionInInitializerError e) {
       e.printStackTrace();
       threw = true;
     }

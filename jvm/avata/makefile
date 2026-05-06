@@ -864,7 +864,8 @@ test-sources = \
 	$(test)/StringBuilderTest.java \
 	$(test)/Strings.java \
 	$(test)/Switch.java \
-	$(test)/Tree.java
+	$(test)/Tree.java \
+	$(test)/VerifierProfile.java
 
 test-cpp-sources = $(wildcard $(test)/*.cpp)
 test-sources += $(test-support-sources)

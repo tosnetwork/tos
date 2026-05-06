@@ -791,6 +791,33 @@ bool methodNameEquals(GcByteArray* name, const char* expected)
   return byteArrayEquals(name, expected);
 }
 
+void verifyApplicationClassProfile(Thread* t, unsigned flags)
+{
+  if ((flags & ACC_ENUM) != 0) {
+    throwNew(t,
+             GcVerifyError::Type,
+             "enum classes are not admitted in application classes");
+  }
+}
+
+void verifyApplicationMethodProfile(Thread* t,
+                                    unsigned flags,
+                                    GcByteArray* name,
+                                    GcByteArray* spec)
+{
+  if ((flags & (ACC_SYNCHRONIZED | ACC_NATIVE)) != 0) {
+    throwNew(t,
+             GcVerifyError::Type,
+             "synchronized and native methods are not admitted in application classes");
+  }
+
+  if (methodNameEquals(name, "finalize") && byteArrayEquals(spec, "()V")) {
+    throwNew(t,
+             GcVerifyError::Type,
+             "object finalizers are not admitted in application classes");
+  }
+}
+
 void verifyClassInitializerProfile(Thread* t,
                                    unsigned flags,
                                    GcByteArray* spec,
@@ -1209,13 +1236,6 @@ void parseFieldTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
 
       addendum = 0;
 
-      if ((flags & ACC_STATIC)
-          && class_->loader() != roots(t)->bootClassSpace()) {
-        throwNew(t,
-                 GcVerifyError::Type,
-                 "static fields are not admitted in application classes");
-      }
-
       GcByteArray* specBytes
           = cast<GcByteArray>(t, singletonObject(t, pool, spec - 1));
       verifyDescriptorAllowed(t, specBytes, class_->name());
@@ -1231,6 +1251,9 @@ void parseFieldTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
 
         if (vm::strcmp(reinterpret_cast<const int8_t*>("ConstantValue"),
                        name->body().begin()) == 0) {
+          if (length != 2) {
+            throwNew(t, GcClassFormatError::Type);
+          }
           value = s.read2();
         } else if (vm::strcmp(reinterpret_cast<const int8_t*>("Signature"),
                               name->body().begin()) == 0) {
@@ -1241,6 +1264,21 @@ void parseFieldTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
           addendum->setSignature(t, singletonObject(t, pool, s.read2() - 1));
         } else {
           s.skip(length);
+        }
+      }
+
+      if ((flags & ACC_STATIC)
+          && class_->loader() != roots(t)->bootClassSpace()) {
+        bool constantValueTypeMatches = value != 0
+            && value - 1 < poolSize(t, pool)
+            && singletonIsObject(t, pool, value - 1) == (code == ObjectField);
+        bool constant = (flags & ACC_FINAL) && constantValueTypeMatches
+            && (code != ObjectField
+                || byteArrayEquals(specBytes, "Ljava/lang/String;"));
+        if (!constant) {
+          throwNew(t,
+                   GcVerifyError::Type,
+                   "mutable static fields are not admitted in application classes");
         }
       }
 
@@ -2332,6 +2370,10 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
       GcByteArray* specBytes
           = cast<GcByteArray>(t, singletonObject(t, pool, spec - 1));
 
+      if (class_->loader() != roots(t)->bootClassSpace()) {
+        verifyApplicationMethodProfile(t, flags, nameBytes, specBytes);
+      }
+
       verifyNoDuplicateMethod(t, methodTable, i, nameBytes, specBytes);
       verifyDescriptorAllowed(t, specBytes, class_->name());
 
@@ -2432,6 +2474,11 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
         method->offset() = i;
 
         if (methodNameEquals(method->name(), "<clinit>")) {
+          if (class_->loader() != roots(t)->bootClassSpace()) {
+            throwNew(t,
+                     GcVerifyError::Type,
+                     "class initializers are not admitted in application classes");
+          }
           verifyClassInitializerProfile(t, flags, specBytes, code);
           method->vmFlags() |= ClassInitFlag;
           class_->vmFlags() |= NeedInitFlag;
@@ -4758,6 +4805,11 @@ GcClass* parseClass(Thread* t,
   unsigned name = s.read2();
   GcByteArray* className
       = cast<GcReference>(t, singletonObject(t, pool, name - 1))->name();
+
+  if (loader != roots(t)->bootClassSpace()) {
+    verifyApplicationClassProfile(t, flags);
+  }
+
   verifyConstantPoolProfile(t, pool, className);
 
   GcClass* class_ = (GcClass*)makeClass(

@@ -229,11 +229,18 @@ The Java runtime exposes only transaction-local memory counters through
 `avata.Memory`; public Java GC, finalization, weak-reference, and cleaner
 semantics are not part of the TOS profile. While a contract transaction is
 active, boot runtime classes may not perform reference-type `putstatic`.
-Application classes are stricter: the verifier rejects any declared static
-field at class load time. Static methods remain allowed, but Java enums and
-interface constants are outside the v1 profile because javac emits static
-fields for them. Persistent state must use `Storage`, `Mapping`, and future
-cell-backed state types rather than ordinary Java static fields.
+Application classes are stricter: the verifier admits only `static final`
+primitive/String constants with `ConstantValue` and rejects mutable static
+fields. Static methods remain allowed, but Java enum classes are outside the v1
+profile because javac emits mutable static state; application `ACC_ENUM`
+classes are rejected directly.
+Application `<clinit>` methods are also rejected, so hidden static
+initialization cannot run before an explicit entry method. Application methods
+may not be `synchronized` or `native`; native helpers are limited to the pinned
+boot runtime. Application classes may not declare `finalize()V`; object
+finalization is not a contract lifecycle hook. Persistent state must use
+`Storage`, `Mapping`, and future cell-backed state types rather than ordinary
+Java static fields.
 
 ## Updating the pinned commit
 

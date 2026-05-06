@@ -157,13 +157,21 @@ contract ABI, not global heap collector state. Movable objects allocated during
 a contract invocation are scoped to the transaction arena checkpoint and are
 discarded when the invocation ends.
 
-Application-class static fields are not part of the v1 runtime state model.
-The verifier rejects any `ACC_STATIC` field declared by an application class at
-class load time. Static methods remain allowed, so entry points and pure helper
-methods can still be `public static`. Compiler features that synthesize static
-fields, including Java enums and interface constants, are outside the v1
-contract profile. Boot runtime classes may keep audited constants and helpers,
-but reference-type `putstatic` is still rejected during contract execution.
+Application-class mutable static fields are not part of the v1 runtime state
+model. The verifier admits only `static final` primitive/String constants with
+a `ConstantValue` attribute; these constants do not create mutable contract
+state. Static methods remain allowed, so entry points and pure helper methods
+can still be `public static`. Compiler features that synthesize mutable static
+state, including Java enums, are outside the v1 contract profile. Application
+`ACC_ENUM` classes are rejected directly.
+Application `<clinit>` methods are also rejected at class load time, so hidden
+static initialization cannot run before an explicit contract entry method.
+Application methods may not be `synchronized` or `native`; synchronized blocks
+still use deterministic monitor opcodes, and native helpers are limited to the
+pinned boot runtime. Application classes may not declare `finalize()V`; object
+finalization is not a contract lifecycle hook. Boot runtime classes may keep
+audited constants and helpers, but reference-type `putstatic` is still rejected
+during contract execution.
 Persistent contract state must flow through `Storage`, `Mapping`, and future
 cell-backed persistent types instead of Java static object graphs.
 
