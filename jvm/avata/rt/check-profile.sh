@@ -112,6 +112,7 @@ $0 == "java/util/StringTokenizer.class" { reject("forbidden legacy tokenizer API
 $0 ~ /^java\/util\/Collections\$(RandomAccess)?Synchronized/ { reject("forbidden synchronized collection wrapper"); next; }
 $0 ~ /^java\/lang\/invoke\// { reject("forbidden method-handle and invokedynamic API"); next; }
 $0 ~ /^java\/lang\/reflect\// { reject("forbidden reflection API"); next; }
+$0 ~ /^java\/lang\/ref\// { reject("forbidden weak/soft/phantom reference API"); next; }
 
 $0 ~ /^sun\// {
   reject("unexpected sun internal class");
