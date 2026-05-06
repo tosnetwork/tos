@@ -16,6 +16,7 @@
 #include "avata/processor.h"
 #include "avata/process.h"
 #include "avata/arch.h"
+#include <avata/contract.h>
 
 #include <avata/util/runtime-array.h>
 #include <avata/util/list.h>
@@ -763,6 +764,63 @@ void safePoint(Thread* t)
   }
 }
 
+uint64_t saturatedAdd(uint64_t a, uint64_t b)
+{
+  if (UINT64_MAX - a < b) {
+    return UINT64_MAX;
+  }
+  return a + b;
+}
+
+uint64_t saturatedMultiply(uint64_t a, uint64_t b)
+{
+  if (a != 0 && b > UINT64_MAX / a) {
+    return UINT64_MAX;
+  }
+  return a * b;
+}
+
+bool chargeAllocationHelperGas(Thread* t, unsigned helper, uint64_t units)
+{
+  return chargeContractHelperGas(t, helper, units);
+}
+
+bool chargeArrayAllocationGas(Thread* t,
+                              uint64_t arrayCount,
+                              uint64_t elementCount)
+{
+  if (!chargeAllocationHelperGas(
+          t, AVATA_CONTRACT_HELPER_ALLOCATION_ARRAY_BASE, arrayCount)) {
+    return false;
+  }
+  return chargeAllocationHelperGas(
+      t, AVATA_CONTRACT_HELPER_ALLOCATION_ARRAY_ELEMENT, elementCount);
+}
+
+void calculateMultiArrayAllocation(int32_t* counts,
+                                   unsigned dimensions,
+                                   uint64_t* arrayCount,
+                                   uint64_t* elementCount)
+{
+  uint64_t arrays = 1;
+  uint64_t elements = 0;
+  uint64_t arraysAtLevel = 1;
+
+  for (unsigned i = 0; i < dimensions; ++i) {
+    uint64_t count = static_cast<uint64_t>(counts[i]);
+    elements = saturatedAdd(
+        elements, saturatedMultiply(arraysAtLevel, count));
+
+    if (i + 1 < dimensions) {
+      arraysAtLevel = saturatedMultiply(arraysAtLevel, count);
+      arrays = saturatedAdd(arrays, arraysAtLevel);
+    }
+  }
+
+  *arrayCount = arrays;
+  *elementCount = elements;
+}
+
 object interpret3(Thread* t, const int base)
 {
   unsigned instruction = nop;
@@ -785,26 +843,24 @@ loop:
   instruction = code->body()[ip++];
 
   // TOS P2: Gas accounting.
-  // Every bytecode dispatch decrements the per-transaction gas counter.
+  // Every bytecode dispatch charges the per-transaction gas counter using the
+  // machine's opcode gas table.
   // A counter value of UINT64_MAX means "unlimited" (used during bootstrap /
   // class-library initialization before contract execution begins).
   // When the limit is reached, throw OutOfGasError deterministically.
-  //
-  // TODO(gas-table): Replace the flat cost of 1 per opcode with the opcode
-  // cost table loaded from ConfigParam 85 in jvm/core/gas-table.cpp. Hook
-  // point: immediately after the `instruction` variable is set, look up
-  // gas_table[instruction] and subtract that many units instead of 1.
   //
   // TODO(gas-init): The workchain compute-phase adapter must call
   // avata_begin_contract_transaction() before invoking contract bytecode.
   //
   if (UNLIKELY(t->gasCounter != UINT64_MAX)) {
-    if (UNLIKELY(t->gasCounter == 0)) {
+    uint64_t gasCost = t->m->opcodeGasCosts[instruction];
+    if (UNLIKELY(t->gasCounter < gasCost)) {
       // Out of gas: throw a deterministic trap before executing this opcode.
+      t->gasCounter = 0;
       exception = makeThrowable(t, GcOutOfGasError::Type);
       goto throw_;
     }
-    --t->gasCounter;
+    t->gasCounter -= gasCost;
   }
 
   if (DebugRun) {
@@ -915,6 +971,11 @@ loop:
       uint16_t index = codeReadInt16(t, code, ip);
 
       GcClass* class_ = resolveClassInPool(t, frameMethod(t, frame), index - 1);
+
+      if (!chargeArrayAllocationGas(t, 1, static_cast<uint64_t>(count))) {
+        exception = makeThrowable(t, GcOutOfGasError::Type);
+        goto throw_;
+      }
 
       pushObject(t, makeObjectArray(t, class_, count));
     } else {
@@ -2603,6 +2664,15 @@ loop:
       }
     }
 
+    uint64_t arrayCount = 0;
+    uint64_t elementCount = 0;
+    calculateMultiArrayAllocation(
+        RUNTIME_ARRAY_BODY(counts), dimensions, &arrayCount, &elementCount);
+    if (!chargeArrayAllocationGas(t, arrayCount, elementCount)) {
+      exception = makeThrowable(t, GcOutOfGasError::Type);
+      goto throw_;
+    }
+
     object array = makeArray(t, RUNTIME_ARRAY_BODY(counts)[0]);
     setObjectClass(t, array, class_);
     PROTECT(t, array);
@@ -2621,6 +2691,12 @@ loop:
 
     initClass(t, class_);
 
+    if (!chargeAllocationHelperGas(
+            t, AVATA_CONTRACT_HELPER_ALLOCATION_OBJECT, 1)) {
+      exception = makeThrowable(t, GcOutOfGasError::Type);
+      goto throw_;
+    }
+
     pushObject(t, make(t, class_));
   }
     goto loop;
@@ -2630,6 +2706,11 @@ loop:
 
     if (LIKELY(count >= 0)) {
       uint8_t type = code->body()[ip++];
+
+      if (!chargeArrayAllocationGas(t, 1, static_cast<uint64_t>(count))) {
+        exception = makeThrowable(t, GcOutOfGasError::Type);
+        goto throw_;
+      }
 
       object array;
 

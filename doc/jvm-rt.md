@@ -271,6 +271,13 @@ host before invoking Java contract code. The host callbacks map exactly to
 non-null buffer must be released through the optional host `freeValue` callback
 or through `free()` if no callback is installed.
 
+The native bridge now charges storage helper gas before host/fallback access
+from the VM helper-cost table: `load` has a fixed cost, `clear` has a fixed
+cost, and `store` charges a fixed base plus a per-byte cost. The checked-in
+table values are standalone defaults for the current Avata profile; the final
+workchain adapter should source the schedule from the consensus gas
+configuration through `avata_set_contract_helper_gas_costs()`.
+
 The execution adapter should bracket each Java contract invocation with
 `avata_storage_execute_transaction()`. That wrapper calls
 `avata_storage_begin_transaction()`, runs the supplied invocation callback, then
@@ -282,8 +289,9 @@ Adapters that need lower-level control may call
 optional transaction callbacks for their own write-set journal. If no host is
 installed, Avata uses a deterministic process-local reference implementation
 with nested snapshots for tests. The production blockchain backend must replace
-that fallback with the execution host's account-state overlay, including gas
-accounting, write journaling, and rollback on failed calls.
+that fallback with the execution host's account-state overlay, including write
+journaling and rollback on failed calls. Storage helper gas is charged by the
+Avata native bridge before callbacks reach that host.
 
 The checked-in `StorageHostReferenceAdapter` unit test models the expected host
 adapter behavior: every load/store/clear charges deterministic gas, writes are
@@ -506,13 +514,16 @@ Every admitted API must have deterministic gas costs.
 
 Required metering areas:
 
-- bytecode execution
-- object allocation
-- array allocation and copy
+- bytecode execution (implemented with a 256-entry opcode table and flat
+  standalone defaults)
+- object allocation (baseline metering implemented for Java `new` bytecode)
+- array allocation (baseline metering implemented for Java array allocation
+  bytecodes)
+- array copy (baseline metering implemented for `System.arraycopy()`)
 - string operations
 - `Uint256` arithmetic
 - hashing and signature verification
-- storage reads and writes
+- storage reads and writes (baseline native helper metering implemented)
 - storage iteration
 - ABI encode/decode
 - event emission

@@ -1017,6 +1017,9 @@ class GcRoots;
 
 class Machine {
  public:
+  static const unsigned OpcodeCount = 256;
+  static const unsigned ContractHelperGasCostCount = 9;
+
   enum AllocationType {
     MovableAllocation,
     FixedAllocation,
@@ -1086,6 +1089,8 @@ class Machine {
   bool alive;
   JavaVMVTable javaVMVTable;
   JNIEnvVTable jniEnvVTable;
+  uint64_t opcodeGasCosts[OpcodeCount];
+  uint64_t contractHelperGasCosts[ContractHelperGasCostCount];
   uintptr_t* heapPool[ThreadHeapPoolSize];
   unsigned heapPoolIndex;
 };
@@ -1366,10 +1371,10 @@ class Thread {
   unsigned backupHeapIndex;
 
   // TOS consensus fields -----------------------------------------------
-  // Per-transaction gas counter (P2). Decremented by 1 per bytecode dispatch
-  // in interpret.cpp. Initialized by avata_begin_contract_transaction() before
-  // each transaction. When it reaches zero the interpreter throws
-  // OutOfGasError. A value of UINT64_MAX means "unlimited" (used during
+  // Per-transaction gas counter (P2). Bytecode dispatch charges the machine's
+  // opcode gas table; native contract helpers charge explicit gas through the
+  // contract ABI. Initialized by avata_begin_contract_transaction() before
+  // each transaction. A value of UINT64_MAX means "unlimited" (used during
   // bootstrap / classpath initialization outside contract execution).
   uint64_t gasCounter;
 
@@ -1399,6 +1404,32 @@ AVATA_EXPORT void beginContractTransaction(Thread* t, uint64_t gasLimit);
 AVATA_EXPORT void endContractTransaction(Thread* t);
 
 AVATA_EXPORT uint64_t contractRemainingGas(Thread* t);
+
+AVATA_EXPORT bool chargeContractGas(Thread* t, uint64_t gasCost);
+
+AVATA_EXPORT bool chargeContractHelperGas(Thread* t,
+                                          unsigned helper,
+                                          uint64_t units);
+
+AVATA_EXPORT void resetOpcodeGasCosts(Machine* m);
+
+AVATA_EXPORT bool setOpcodeGasCost(Machine* m,
+                                   unsigned opcode,
+                                   uint64_t gasCost);
+
+AVATA_EXPORT bool setOpcodeGasCosts(Machine* m,
+                                    const uint64_t* gasCosts,
+                                    unsigned gasCostCount);
+
+AVATA_EXPORT void resetContractHelperGasCosts(Machine* m);
+
+AVATA_EXPORT bool setContractHelperGasCost(Machine* m,
+                                           unsigned helper,
+                                           uint64_t gasCost);
+
+AVATA_EXPORT bool setContractHelperGasCosts(Machine* m,
+                                            const uint64_t* gasCosts,
+                                            unsigned gasCostCount);
 
 class GcJfield;
 

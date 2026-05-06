@@ -80,15 +80,27 @@ The following paths are removed or replaced with deterministic stubs:
 ### Gas counter
 
 A per-transaction gas counter is wired into the interpreter dispatch loop in
-`interpret.cpp`. When the counter reaches zero, the interpreter throws
-`java.lang.OutOfGasError` deterministically without executing any further
+`interpret.cpp`. When gas is insufficient, the interpreter throws
+`java.lang.OutOfGasError` deterministically without executing the next
 bytecode. The workchain adapter initializes the counter by calling
 `avata_begin_contract_transaction()` from `include/avata/contract.h` with the
 transaction gas limit before contract bytecode starts.
 
-Gas costs per opcode are loaded from the gas table in `jvm/core/gas-table.cpp`,
-which reads ConfigParam 85 at startup. Changing the gas table is a consensus
-parameter change and requires a governance vote.
+The VM stores a 256-entry opcode gas table. The standalone default charges 1
+for every opcode; the workchain adapter must replace that table with
+`avata_set_opcode_gas_costs()` from `include/avata/contract.h` after loading the
+ConfigParam 85 schedule. Changing the gas table is a consensus parameter change
+and requires a governance vote.
+
+Native contract helpers charge explicit gas through `avata_charge_contract_gas()`
+or the helper-cost table. The standalone helper table currently covers
+`java.lang.Storage` load, store base, store byte, clear costs, plus explicit
+object and array allocation costs for the Java allocation bytecodes, and
+`System.arraycopy()` base/per-element copy costs. The workchain adapter must
+replace that table with
+`avata_set_contract_helper_gas_costs()` from the same consensus gas schedule
+used for opcodes. `java.lang.Storage` charges from the helper table before
+touching the installed storage host or the deterministic fallback store.
 
 ### Slim build profile
 

@@ -4278,6 +4278,9 @@ Machine::Machine(System* system,
       alive(true),
       heapPoolIndex(0)
 {
+  resetOpcodeGasCosts(this);
+  resetContractHelperGasCosts(this);
+
   heap->setClient(heapClient);
 
   populateJNITables(&javaVMVTable, &jniEnvVTable);
@@ -4509,6 +4512,152 @@ void endContractTransaction(Thread* t)
 uint64_t contractRemainingGas(Thread* t)
 {
   return t->gasCounter;
+}
+
+bool chargeContractGas(Thread* t, uint64_t gasCost)
+{
+  if (gasCost == 0 || gasCost == UINT64_MAX) {
+    return false;
+  }
+
+  if (t->gasCounter == UINT64_MAX) {
+    return true;
+  }
+
+  if (t->gasCounter < gasCost) {
+    t->gasCounter = 0;
+    return false;
+  }
+
+  t->gasCounter -= gasCost;
+  return true;
+}
+
+bool chargeContractHelperGas(Thread* t, unsigned helper, uint64_t units)
+{
+  if (helper >= Machine::ContractHelperGasCostCount) {
+    return false;
+  }
+
+  if (units == 0 || t->gasCounter == UINT64_MAX) {
+    return true;
+  }
+
+  uint64_t gasCost = t->m->contractHelperGasCosts[helper];
+  if (gasCost == 0 || gasCost == UINT64_MAX) {
+    return false;
+  }
+  if (units > UINT64_MAX / gasCost) {
+    t->gasCounter = 0;
+    return false;
+  }
+
+  uint64_t totalGasCost = gasCost * units;
+  if (totalGasCost == UINT64_MAX) {
+    t->gasCounter = 0;
+    return false;
+  }
+
+  return chargeContractGas(t, totalGasCost);
+}
+
+void resetOpcodeGasCosts(Machine* m)
+{
+  for (unsigned i = 0; i < Machine::OpcodeCount; ++i) {
+    m->opcodeGasCosts[i] = 1;
+  }
+}
+
+namespace {
+
+bool validGasCost(uint64_t gasCost)
+{
+  return gasCost != 0 && gasCost != UINT64_MAX;
+}
+
+const uint64_t DefaultContractHelperGasCosts[
+    Machine::ContractHelperGasCostCount] = {
+    20,   // AVATA_CONTRACT_HELPER_STORAGE_LOAD
+    100,  // AVATA_CONTRACT_HELPER_STORAGE_STORE_BASE
+    1,    // AVATA_CONTRACT_HELPER_STORAGE_STORE_BYTE
+    50,   // AVATA_CONTRACT_HELPER_STORAGE_CLEAR
+    5,    // AVATA_CONTRACT_HELPER_ALLOCATION_OBJECT
+    8,    // AVATA_CONTRACT_HELPER_ALLOCATION_ARRAY_BASE
+    1,    // AVATA_CONTRACT_HELPER_ALLOCATION_ARRAY_ELEMENT
+    3,    // AVATA_CONTRACT_HELPER_ARRAYCOPY_BASE
+    1     // AVATA_CONTRACT_HELPER_ARRAYCOPY_ELEMENT
+};
+
+}  // namespace
+
+bool setOpcodeGasCost(Machine* m, unsigned opcode, uint64_t gasCost)
+{
+  if (opcode >= Machine::OpcodeCount || !validGasCost(gasCost)) {
+    return false;
+  }
+
+  m->opcodeGasCosts[opcode] = gasCost;
+  return true;
+}
+
+bool setOpcodeGasCosts(Machine* m,
+                       const uint64_t* gasCosts,
+                       unsigned gasCostCount)
+{
+  if (gasCosts == 0 || gasCostCount != Machine::OpcodeCount) {
+    return false;
+  }
+
+  for (unsigned i = 0; i < Machine::OpcodeCount; ++i) {
+    if (!validGasCost(gasCosts[i])) {
+      return false;
+    }
+  }
+
+  for (unsigned i = 0; i < Machine::OpcodeCount; ++i) {
+    m->opcodeGasCosts[i] = gasCosts[i];
+  }
+
+  return true;
+}
+
+void resetContractHelperGasCosts(Machine* m)
+{
+  for (unsigned i = 0; i < Machine::ContractHelperGasCostCount; ++i) {
+    m->contractHelperGasCosts[i] = DefaultContractHelperGasCosts[i];
+  }
+}
+
+bool setContractHelperGasCost(Machine* m, unsigned helper, uint64_t gasCost)
+{
+  if (helper >= Machine::ContractHelperGasCostCount
+      || !validGasCost(gasCost)) {
+    return false;
+  }
+
+  m->contractHelperGasCosts[helper] = gasCost;
+  return true;
+}
+
+bool setContractHelperGasCosts(Machine* m,
+                               const uint64_t* gasCosts,
+                               unsigned gasCostCount)
+{
+  if (gasCosts == 0 || gasCostCount != Machine::ContractHelperGasCostCount) {
+    return false;
+  }
+
+  for (unsigned i = 0; i < Machine::ContractHelperGasCostCount; ++i) {
+    if (!validGasCost(gasCosts[i])) {
+      return false;
+    }
+  }
+
+  for (unsigned i = 0; i < Machine::ContractHelperGasCostCount; ++i) {
+    m->contractHelperGasCosts[i] = gasCosts[i];
+  }
+
+  return true;
 }
 
 void shutDown(Thread* t)
@@ -7022,6 +7171,181 @@ extern "C" AVATA_CONTRACT_EXPORT int avata_contract_remaining_gas(
   }
 
   *remaining_gas = vm::contractRemainingGas(reinterpret_cast<Thread*>(thread));
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_charge_contract_gas(
+    AvataThread* thread,
+    uint64_t gas_cost)
+{
+  if (thread == 0 || gas_cost == 0 || gas_cost == UINT64_MAX) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  if (!vm::chargeContractGas(reinterpret_cast<Thread*>(thread), gas_cost)) {
+    return AVATA_CONTRACT_OUT_OF_GAS;
+  }
+
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_charge_contract_helper_gas(
+    AvataThread* thread,
+    uint16_t helper,
+    uint64_t units)
+{
+  if (thread == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->m == 0 || helper >= Machine::ContractHelperGasCostCount) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  if (!vm::chargeContractHelperGas(t, helper, units)) {
+    return AVATA_CONTRACT_OUT_OF_GAS;
+  }
+
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_reset_opcode_gas_costs(
+    AvataThread* thread)
+{
+  if (thread == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->m == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  vm::resetOpcodeGasCosts(t->m);
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_set_opcode_gas_cost(
+    AvataThread* thread,
+    uint8_t opcode,
+    uint64_t gas_cost)
+{
+  if (thread == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->m == 0 || !vm::setOpcodeGasCost(t->m, opcode, gas_cost)) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_set_opcode_gas_costs(
+    AvataThread* thread,
+    const uint64_t* gas_costs,
+    uint32_t gas_cost_count)
+{
+  if (thread == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->m == 0
+      || !vm::setOpcodeGasCosts(t->m, gas_costs, gas_cost_count)) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_get_opcode_gas_cost(
+    AvataThread* thread,
+    uint8_t opcode,
+    uint64_t* gas_cost)
+{
+  if (thread == 0 || gas_cost == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->m == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  *gas_cost = t->m->opcodeGasCosts[opcode];
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_reset_contract_helper_gas_costs(
+    AvataThread* thread)
+{
+  if (thread == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->m == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  vm::resetContractHelperGasCosts(t->m);
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_set_contract_helper_gas_cost(
+    AvataThread* thread,
+    uint16_t helper,
+    uint64_t gas_cost)
+{
+  if (thread == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->m == 0
+      || !vm::setContractHelperGasCost(t->m, helper, gas_cost)) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_set_contract_helper_gas_costs(
+    AvataThread* thread,
+    const uint64_t* gas_costs,
+    uint32_t gas_cost_count)
+{
+  if (thread == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->m == 0
+      || !vm::setContractHelperGasCosts(t->m, gas_costs, gas_cost_count)) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_get_contract_helper_gas_cost(
+    AvataThread* thread,
+    uint16_t helper,
+    uint64_t* gas_cost)
+{
+  if (thread == 0 || gas_cost == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->m == 0 || helper >= Machine::ContractHelperGasCostCount) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  *gas_cost = t->m->contractHelperGasCosts[helper];
   return AVATA_CONTRACT_OK;
 }
 

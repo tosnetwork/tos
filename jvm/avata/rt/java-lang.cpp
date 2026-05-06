@@ -14,6 +14,7 @@
 #include "stdio.h"
 #include "jni.h"
 #include "jni-util.h"
+#include "avata/contract.h"
 #include "avata/storage.h"
 #include "errno.h"
 #include "fcntl.h"
@@ -337,6 +338,24 @@ bool hasActiveStorageHost()
       and activeStorageHost.load
       and activeStorageHost.store
       and activeStorageHost.clear;
+}
+
+bool chargeStorageGas(JNIEnv* e, uint16_t helper, uint64_t units)
+{
+  int status = avata_charge_contract_helper_gas(
+      reinterpret_cast<AvataThread*>(e), helper, units);
+  if (status == AVATA_CONTRACT_OK) {
+    return true;
+  }
+
+  if (status == AVATA_CONTRACT_OUT_OF_GAS) {
+    throwNew(e, "java/lang/OutOfGasError", "out of gas");
+  } else {
+    throwNew(e,
+             "java/lang/ContractViolationError",
+             "Invalid contract gas charge");
+  }
+  return false;
 }
 
 bool checkByteArray(JNIEnv* e, jbyteArray array, const char* name)
@@ -1437,6 +1456,9 @@ extern "C" JNIEXPORT jbyteArray JNICALL
   if (!copyStorageSlot(e, slot, key)) {
     return 0;
   }
+  if (!chargeStorageGas(e, AVATA_CONTRACT_HELPER_STORAGE_LOAD, 1)) {
+    return 0;
+  }
 
   if (hasActiveStorageHost()) {
     return loadFromActiveStorageHost(e, key);
@@ -1460,6 +1482,16 @@ extern "C" JNIEXPORT void JNICALL
   unsigned char* bytes = 0;
   jsize byteCount = 0;
   if (!copyStorageValue(e, value, &bytes, &byteCount)) {
+    return;
+  }
+  if (!chargeStorageGas(e, AVATA_CONTRACT_HELPER_STORAGE_STORE_BASE, 1)) {
+    free(bytes);
+    return;
+  }
+  if (!chargeStorageGas(e,
+                        AVATA_CONTRACT_HELPER_STORAGE_STORE_BYTE,
+                        static_cast<uint64_t>(byteCount))) {
+    free(bytes);
     return;
   }
 
@@ -1497,6 +1529,9 @@ extern "C" JNIEXPORT void JNICALL
 {
   unsigned char key[StorageSlotLength];
   if (!copyStorageSlot(e, slot, key)) {
+    return;
+  }
+  if (!chargeStorageGas(e, AVATA_CONTRACT_HELPER_STORAGE_CLEAR, 1)) {
     return;
   }
 

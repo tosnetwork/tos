@@ -38,20 +38,38 @@ Status legend: `✅` completed, unchecked items are still open.
     `jvm/avata/src/avata/machine.h`. The interpreter dispatch loop
     (`interpret3()` in `jvm/avata/src/interpret.cpp`, label `loop:` at line 784)
     now decrements `gasCounter` on every bytecode dispatch and throws
-    `GcOutOfGasError` when the counter reaches zero; a value of `UINT64_MAX`
+    `GcOutOfGasError` when gas is insufficient; a value of `UINT64_MAX`
     bypasses the check (bootstrap mode). `java.lang.OutOfGasError` is wired in
     `types.def`. `include/avata/contract.h` now exposes
     `avata_begin_contract_transaction()`, `avata_end_contract_transaction()`,
     and `avata_contract_remaining_gas()` so the future workchain adapter can
     initialize gas and reset Java-visible identity hash state at the
-    transaction boundary.
+    transaction boundary. `Machine::opcodeGasCosts[256]` now holds a
+    per-opcode gas table. The interpreter charges
+    `opcodeGasCosts[instruction]` before executing each bytecode. The default
+    profile charges 1 for every opcode, and `include/avata/contract.h` exposes
+    ABI calls to reset, set, bulk-set, and read opcode costs.
+    `avata_charge_contract_gas()` now charges deterministic helper/native gas,
+    returning `AVATA_CONTRACT_OUT_OF_GAS` and consuming the remaining counter on
+    failure. `Machine::contractHelperGasCosts[9]` now holds helper schedules
+    for storage load/store/clear and explicit bytecode allocation costs
+    (`new`, `newarray`, `anewarray`, `multianewarray`) plus
+    `System.arraycopy()` base and per-element copy costs. The public ABI can
+    reset, set, bulk-set, read, and charge helper costs through
+    `avata_charge_contract_helper_gas()`. `java.lang.Storage` charges from
+    that helper table before host/fallback storage access.
   - **Remaining work:**
     - Add the actual JVM workchain compute-phase adapter and call
       `avata_begin_contract_transaction(thread, input.gas_limit)` before each
       contract invocation, then read `avata_contract_remaining_gas()` to derive
       `gas_used`.
-    - Replace the flat per-opcode cost of 1 with the opcode cost table from
-      `jvm/core/gas-table.cpp` (ConfigParam 85).
+    - Load the opcode and helper cost tables from `jvm/core/gas-table.cpp`
+      (ConfigParam 85) through `avata_set_opcode_gas_costs()` and
+      `avata_set_contract_helper_gas_costs()` instead of using the standalone
+      defaults.
+    - Extend deterministic helper costs beyond `Storage`, bytecode allocation,
+      and `System.arraycopy()` to crypto, ABI, string-heavy helpers, and any
+      future admitted native entry points.
 
 - ✅ Disable or isolate JIT/AOT/host-VM compilation paths for consensus execution.
   Contract execution must use a deterministic interpreter-only profile unless a

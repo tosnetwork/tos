@@ -11,6 +11,7 @@
 #ifndef CLASSPATH_COMMON_H
 #define CLASSPATH_COMMON_H
 
+#include <avata/contract.h>
 #include <avata/util/string.h>
 #include <avata/util/runtime-array.h>
 #include <avata/util/tokenizer.h>
@@ -90,6 +91,16 @@ void arrayCopy(Thread* t,
                      or dstOffset > dl or length > sl - srcOffset
                      or length > dl - dstOffset)) {
           throwNew(t, GcIndexOutOfBoundsException::Type);
+          return;
+        }
+
+        if (UNLIKELY(!chargeContractHelperGas(
+                         t, AVATA_CONTRACT_HELPER_ARRAYCOPY_BASE, 1)
+                     || !chargeContractHelperGas(
+                         t,
+                         AVATA_CONTRACT_HELPER_ARRAYCOPY_ELEMENT,
+                         static_cast<uint64_t>(length)))) {
+          throwNew(t, GcOutOfGasError::Type);
           return;
         }
 
