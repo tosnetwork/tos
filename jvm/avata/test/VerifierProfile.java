@@ -168,12 +168,13 @@ public class VerifierProfile {
     return out.toByteArray();
   }
 
-  private static byte[] makeForbiddenClassReference() throws IOException {
+  private static byte[] makeForbiddenClassReference(String owner)
+      throws IOException {
     List<PoolEntry> pool = new ArrayList<PoolEntry>();
     ConstantPool.addMethodRef(pool,
-                              "java/lang/Runtime",
-                              "getRuntime",
-                              "()Ljava/lang/Runtime;");
+                              owner,
+                              "forbidden",
+                              "()V");
     return makeClass("VerifierProfile$ForbiddenClassReference",
                      pool,
                      new FieldData[0],
@@ -440,7 +441,49 @@ public class VerifierProfile {
     expectVerifyError("forbidden class ref", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$ForbiddenClassReference",
-               makeForbiddenClassReference());
+               makeForbiddenClassReference("java/lang/Runtime"));
+      }
+    });
+
+    expectVerifyError("forbidden hash collection ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/util/HashMap"));
+      }
+    });
+
+    expectVerifyError("forbidden file descriptor ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/io/FileDescriptor"));
+      }
+    });
+
+    expectVerifyError("forbidden file exception ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/io/FileNotFoundException"));
+      }
+    });
+
+    expectVerifyError("forbidden weak reference ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/ref/WeakReference"));
+      }
+    });
+
+    expectVerifyError("forbidden legacy collection ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/util/Vector"));
+      }
+    });
+
+    expectVerifyError("forbidden string buffer ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/StringBuffer"));
       }
     });
 

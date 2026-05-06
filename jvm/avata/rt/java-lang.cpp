@@ -20,18 +20,12 @@
 #include "fcntl.h"
 #include "ctype.h"
 
-// Make sure M_* constants (in particular M_E) are exposed in math.h.
-// This was a problem on the default mingw install on ubuntu precise
-#undef __STRICT_ANSI__
-#include "math.h"
-
 #ifdef PLATFORM_WINDOWS
 
 #include "windows.h"
 #include "winbase.h"
 #include "io.h"
 #include "tchar.h"
-#include "float.h"
 #include "sys/types.h"
 #include "sys/timeb.h"
 #define SO_PREFIX ""
@@ -39,9 +33,6 @@
 
 #ifdef _MSC_VER
 #define snprintf sprintf_s
-#define isnan _isnan
-#define isfinite _finite
-#define strtof strtod
 #endif
 
 #else  // not PLATFORM_WINDOWS
@@ -81,11 +72,6 @@
 
 #endif
 #endif  // WINAPI_FAMILY
-
-#ifndef M_E
-// in new C++-11 standard math.h doesn't have M_E, at least on MinGW, so define it manually
-#define M_E		2.7182818284590452354
-#endif  // M_E
 
 namespace {
 
@@ -1568,182 +1554,4 @@ extern "C" JNIEXPORT jstring JNICALL
     e->ReleaseStringUTFChars(name, chars);
   }
   return r;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-    Java_java_lang_Double_isInfinite(JNIEnv*, jclass, jdouble val)
-{
-  return !isfinite(val);
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-    Java_java_lang_Double_isNaN(JNIEnv*, jclass, jdouble val)
-{
-  return isnan(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Double_doubleFromString(JNIEnv* e,
-                                           jclass,
-                                           jstring s,
-                                           jintArray numDoublesRead)
-{
-  const char* chars = e->GetStringUTFChars(s, 0);
-  double d = 0.0;
-  jint numRead = 0;
-
-  if (chars) {
-    char* lastRead;
-    d = strtod(chars, &lastRead);
-    if ((lastRead != chars) && ((chars + strlen(chars)) == lastRead)) {
-      numRead = 1;
-    }
-    e->ReleaseStringUTFChars(s, chars);
-  }
-  e->SetIntArrayRegion(numDoublesRead, 0, 1, &numRead);
-  return d;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-    Java_java_lang_Float_isInfinite(JNIEnv*, jclass, jfloat val)
-{
-  return !isfinite(val);
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-    Java_java_lang_Float_isNaN(JNIEnv*, jclass, jfloat val)
-{
-  return isnan(val);
-}
-
-extern "C" JNIEXPORT jfloat JNICALL
-    Java_java_lang_Float_floatFromString(JNIEnv* e,
-                                         jclass,
-                                         jstring s,
-                                         jintArray numFloatsRead)
-{
-  const char* chars = e->GetStringUTFChars(s, 0);
-  float f = 0.0;
-  jint numRead = 0;
-
-  if (chars) {
-    char* lastRead;
-    f = strtof(chars, &lastRead);
-    if ((lastRead != chars) && ((chars + strlen(chars)) == lastRead)) {
-      numRead = 1;
-    }
-    e->ReleaseStringUTFChars(s, chars);
-  }
-  e->SetIntArrayRegion(numFloatsRead, 0, 1, &numRead);
-  return f;
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_sin(JNIEnv*, jclass, jdouble val)
-{
-  return sin(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_cos(JNIEnv*, jclass, jdouble val)
-{
-  return cos(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_tan(JNIEnv*, jclass, jdouble val)
-{
-  return tan(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_asin(JNIEnv*, jclass, jdouble val)
-{
-  return asin(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_acos(JNIEnv*, jclass, jdouble val)
-{
-  return acos(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_atan(JNIEnv*, jclass, jdouble val)
-{
-  return atan(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_atan2(JNIEnv*, jclass, jdouble y, jdouble x)
-{
-  return atan2(y, x);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_sinh(JNIEnv*, jclass, jdouble val)
-{
-  return sinh(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_cosh(JNIEnv*, jclass, jdouble val)
-{
-  return cosh(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_tanh(JNIEnv*, jclass, jdouble val)
-{
-  return tanh(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_sqrt(JNIEnv*, jclass, jdouble val)
-{
-  return sqrt(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_pow(JNIEnv*, jclass, jdouble val, jdouble exp)
-{
-  return pow(val, exp);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_log(JNIEnv*, jclass, jdouble val)
-{
-  return log(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_floor(JNIEnv*, jclass, jdouble val)
-{
-  return floor(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_ceil(JNIEnv*, jclass, jdouble val)
-{
-  return ceil(val);
-}
-
-extern "C" JNIEXPORT jdouble JNICALL
-    Java_java_lang_Math_exp(JNIEnv*, jclass, jdouble exp)
-{
-  return pow(M_E, exp);
-}
-
-extern "C" JNIEXPORT jint JNICALL
-    Java_java_lang_Double_fillBufferWithDouble(JNIEnv* e,
-                                               jclass,
-                                               jdouble val,
-                                               jbyteArray buffer,
-                                               jint bufferSize)
-{
-  jboolean isCopy;
-  jbyte* buf = e->GetByteArrayElements(buffer, &isCopy);
-  jint count = snprintf(reinterpret_cast<char*>(buf), bufferSize, "%g", val);
-  e->ReleaseByteArrayElements(buffer, buf, 0);
-  return count;
 }

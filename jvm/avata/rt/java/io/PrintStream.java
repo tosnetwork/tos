@@ -43,7 +43,7 @@ public class PrintStream extends OutputStream {
     this(out, false);
   }
 
-  public synchronized void print(String s) {
+  public void print(String s) {
     try {
       out.write(s.getBytes(encoding));
       if (autoFlush) flush();
@@ -70,19 +70,11 @@ public class PrintStream extends OutputStream {
     print(String.valueOf(v));
   }
 
-  public void print(float v) {
-    print(String.valueOf(v));
-  }
-
-  public void print(double v) {
-    print(String.valueOf(v));
-  }
-
   public void print(char[] s) {
     print(String.valueOf(s));
   }
 
-  public synchronized PrintStream printf(String format, Object... args) {
+  public PrintStream printf(String format, Object... args) {
     throw new UnsupportedOperationException(
         "formatter not available in the TOS JVM profile");
   }
@@ -91,7 +83,7 @@ public class PrintStream extends OutputStream {
     return printf(format, args);
   }
 
-  public synchronized void println(String s) {
+  public void println(String s) {
     try {
       out.write(s.getBytes(encoding));
       out.write(Static.newline);
@@ -99,7 +91,7 @@ public class PrintStream extends OutputStream {
     } catch (IOException e) { }
   }
 
-  public synchronized void println() {
+  public void println() {
     try {
       out.write(Static.newline);
       if (autoFlush) flush();
@@ -123,14 +115,6 @@ public class PrintStream extends OutputStream {
   }
 
   public void println(long v) {
-    println(String.valueOf(v));
-  }
-
-  public void println(float v) {
-    println(String.valueOf(v));
-  }
-
-  public void println(double v) {
     println(String.valueOf(v));
   }
 

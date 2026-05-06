@@ -272,8 +272,6 @@
 
 (type ioException java/io/IOException)
 
-(type fileNotFoundException java/io/FileNotFoundException)
-
 (type incompatibleContinuationException
   avata/IncompatibleContinuationException)
 

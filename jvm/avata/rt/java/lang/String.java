@@ -631,14 +631,6 @@ public final class String
     return Long.toString(v);
   }
 
-  public static String valueOf(float v) {
-    return Float.toString(v);
-  }
-
-  public static String valueOf(double v) {
-    return Double.toString(v);
-  }
-
   public static String valueOf(char[] data, int offset, int length) {
     return new String(data, offset, length);
   }

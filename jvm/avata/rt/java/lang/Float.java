@@ -24,10 +24,6 @@ public final class Float extends Number {
 
   private final float value;  
 
-  public Float(String value) {
-    this.value = parseFloat(value);
-  }
-
   public Float(float value) {
     this.value = value;
   }
@@ -36,24 +32,12 @@ public final class Float extends Number {
     return new Float(value);
   }
 
-  public static Float valueOf(String s) {
-    return new Float(s);
-  }
-
   public boolean equals(Object o) {
     return o instanceof Float && ((Float) o).value == value;
   }
 
   public int hashCode() {
     return floatToRawIntBits(value);
-  }
-
-  public String toString() {
-    return toString(value);
-  }
-
-  public static String toString(float v) {
-    return Double.toString(v);
   }
 
   public byte byteValue() {
@@ -88,16 +72,6 @@ public final class Float extends Number {
     return isNaN(value);
   }
 
-  public static float parseFloat(String s) {
-    int[] numRead = new int[1];
-    float f = floatFromString(s, numRead);
-    if (numRead[0] == 1) {
-      return f;
-    } else {
-      throw new NumberFormatException(s);
-    }
-  }
-  
   public static int floatToIntBits(float value) {
     int result = floatToRawIntBits(value);
     
@@ -113,9 +87,11 @@ public final class Float extends Number {
 
   public static native float intBitsToFloat(int bits);
 
-  public static native boolean isInfinite(float value);
+  public static boolean isInfinite(float value) {
+    return value == POSITIVE_INFINITY || value == NEGATIVE_INFINITY;
+  }
 
-  public static native boolean isNaN(float value);
-
-  public static native float floatFromString(String s, int[] numRead);
+  public static boolean isNaN(float value) {
+    return value != value;
+  }
 }

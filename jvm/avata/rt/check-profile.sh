@@ -39,11 +39,33 @@ $0 ~ /^java\/util\/regex\// { reject("forbidden java.util.regex package"); next;
 $0 ~ /^java\/util\/zip\// { reject("forbidden java.util.zip package"); next; }
 $0 ~ /^java\/util\/jar\// { reject("forbidden java.util.jar package"); next; }
 $0 ~ /^javax\// { reject("forbidden javax package"); next; }
+$0 == "java/io/FileDescriptor.class" { reject("forbidden host file descriptor API"); next; }
+$0 == "java/io/FileInputStream.class" { reject("forbidden host file descriptor API"); next; }
+$0 == "java/io/FileOutputStream.class" { reject("forbidden host file descriptor API"); next; }
+$0 == "java/io/FileNotFoundException.class" { reject("forbidden host file API"); next; }
 $0 == "java/lang/Process.class" { reject("forbidden process API"); next; }
 $0 == "java/lang/ProcessBuilder.class" { reject("forbidden process API"); next; }
+$0 == "java/lang/Runtime.class" { reject("forbidden host runtime API"); next; }
+$0 == "java/lang/StringBuffer.class" { reject("forbidden legacy synchronized string buffer"); next; }
+$0 == "java/lang/ThreadLocal.class" { reject("forbidden thread-local API"); next; }
+$0 == "java/lang/InheritableThreadLocal.class" { reject("forbidden thread-local API"); next; }
 $0 == "sun/misc/Unsafe.class" { reject("forbidden unsafe API"); next; }
 $0 == "avata/Machine.class" { reject("forbidden host VM API"); next; }
 $0 == "avata/Traces.class" { reject("forbidden host tracing API"); next; }
+$0 == "java/util/HashMap.class" { reject("forbidden hash collection"); next; }
+$0 == "java/util/HashSet.class" { reject("forbidden hash collection"); next; }
+$0 == "java/util/Hashtable.class" { reject("forbidden hash collection"); next; }
+$0 == "java/util/IdentityHashMap.class" { reject("forbidden identity hash collection"); next; }
+$0 == "java/util/LinkedHashMap.class" { reject("forbidden hash collection"); next; }
+$0 == "java/util/LinkedHashSet.class" { reject("forbidden hash collection"); next; }
+$0 == "java/util/Properties.class" { reject("forbidden mutable host-property map"); next; }
+$0 == "java/util/WeakHashMap.class" { reject("forbidden weak hash collection"); next; }
+$0 == "java/util/Enumeration.class" { reject("forbidden legacy iterator API"); next; }
+$0 == "java/util/Vector.class" { reject("forbidden legacy synchronized collection"); next; }
+$0 == "java/util/Stack.class" { reject("forbidden legacy synchronized collection"); next; }
+$0 == "java/util/EmptyStackException.class" { reject("forbidden legacy stack API"); next; }
+$0 == "java/util/StringTokenizer.class" { reject("forbidden legacy tokenizer API"); next; }
+$0 ~ /^java\/util\/Collections\$(RandomAccess)?Synchronized/ { reject("forbidden synchronized collection wrapper"); next; }
 $0 == "java/lang/invoke/MutableCallSite.class" { reject("forbidden mutable call site"); next; }
 $0 == "java/lang/invoke/VolatileCallSite.class" { reject("forbidden volatile call site"); next; }
 $0 == "java/lang/invoke/SerializedLambda.class" { reject("forbidden lambda serialization"); next; }

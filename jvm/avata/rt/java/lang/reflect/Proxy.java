@@ -28,10 +28,8 @@ import avata.Assembler.MethodData;
 
 import java.util.List;
 import java.util.ArrayList;
-import java.util.Map;
-import java.util.HashMap;
 import java.util.Set;
-import java.util.HashSet;
+import java.util.TreeSet;
 import java.io.OutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -40,12 +38,39 @@ public class Proxy {
   private static int nextNumber;
 
   protected InvocationHandler h;
-  protected final static Map<Class, Method[]> methodRefsMap =
-    new HashMap<Class, Method[]>();
+  private static final List<MethodRefsEntry> methodRefsEntries =
+    new ArrayList<MethodRefsEntry>();
   protected final Method[] methodRefs;
 
   public Proxy() {
-    methodRefs = methodRefsMap.get(getClass());
+    methodRefs = methodRefsFor(getClass());
+  }
+
+  private static Method[] methodRefsFor(Class proxyClass) {
+    synchronized (methodRefsEntries) {
+      for (MethodRefsEntry entry: methodRefsEntries) {
+        if (entry.proxyClass == proxyClass) {
+          return entry.methods;
+        }
+      }
+    }
+    return null;
+  }
+
+  private static void rememberMethodRefs(Class proxyClass, Method[] methods) {
+    synchronized (methodRefsEntries) {
+      methodRefsEntries.add(new MethodRefsEntry(proxyClass, methods));
+    }
+  }
+
+  private static final class MethodRefsEntry {
+    final Class proxyClass;
+    final Method[] methods;
+
+    MethodRefsEntry(Class proxyClass, Method[] methods) {
+      this.proxyClass = proxyClass;
+      this.methods = methods;
+    }
   }
 
   public static Class getProxyClass(ClassLoader loader,
@@ -368,7 +393,7 @@ public class Proxy {
         (pool, interfaces[i].getName().replace('.', '/'));
     }
 
-    Set<String> specs = new HashSet<String>();
+    Set<String> specs = new TreeSet<String>();
     List<MethodData> methodTable = new ArrayList<MethodData>();
     List<Method> refs = new ArrayList<Method>();
     for (Class c: interfaces) {
@@ -379,6 +404,7 @@ public class Proxy {
           if (specs.contains(spec)) {
             continue;
           }
+          specs.add(spec);
           methodTable.add(new MethodData
             (Modifier.PUBLIC,
              ConstantPool.addUtf8(pool, Classes.toString(m.name)),
@@ -409,7 +435,7 @@ public class Proxy {
     byte[] classData = out.toByteArray();
     Class result = avata.SystemClassLoader.getClass
       (avata.Classes.defineVMClass(loader, classData, 0, classData.length));
-    methodRefsMap.put(result, refs.toArray(new Method[refs.size()]));
+    rememberMethodRefs(result, refs.toArray(new Method[refs.size()]));
     return result;
   }
 

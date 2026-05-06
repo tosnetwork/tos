@@ -54,10 +54,6 @@ public class StringBuilder implements CharSequence, Appendable {
     }
   }
 
-  public StringBuilder append(StringBuffer sb) {
-    return append(sb.toString());
-  }
-
   public StringBuilder append(CharSequence sequence) {
     return append(sequence.toString());
   }
@@ -101,14 +97,6 @@ public class StringBuilder implements CharSequence, Appendable {
   }
 
   public StringBuilder append(long v) {
-    return append(String.valueOf(v));
-  }
-
-  public StringBuilder append(float v) {
-    return append(String.valueOf(v));
-  }
-
-  public StringBuilder append(double v) {
     return append(String.valueOf(v));
   }
 

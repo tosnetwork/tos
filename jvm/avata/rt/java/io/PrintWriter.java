@@ -34,7 +34,7 @@ public class PrintWriter extends Writer {
     this(out, false);
   }
 
-  public synchronized void print(String s) {
+  public void print(String s) {
     try {
       out.write(s.toCharArray());
     } catch (IOException e) { }
@@ -48,7 +48,7 @@ public class PrintWriter extends Writer {
     print(String.valueOf(c));
   }
 
-  public synchronized void println(String s) {
+  public void println(String s) {
     try {
       out.write(s.toCharArray());    
       out.write(newline);
@@ -56,7 +56,7 @@ public class PrintWriter extends Writer {
     } catch (IOException e) { }
   }
 
-  public synchronized void println() {
+  public void println() {
     try {
       out.write(newline);
       if (autoFlush) flush();

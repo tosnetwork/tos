@@ -110,7 +110,7 @@ small and deterministic.
 
 Admit:
 
-- `Object`, `Class`, `String`, `StringBuilder`, `StringBuffer`
+- `Object`, `Class`, `String`, `StringBuilder`
 - primitive wrappers and `Number`
 - core exceptions, errors, and stack-trace structures
 - `Enum`, `Iterable`, `Comparable`, `CharSequence`, `Appendable`
@@ -118,20 +118,26 @@ Admit:
 - VM-required reflection, annotation, and reference classes
 - `Storage` and `Mapping` as deterministic primitives for contract state
 - `Math`, only when every operation is backed by bit-exact deterministic
-  algorithms
+  algorithms. The v1 profile keeps arithmetic helpers such as min/max/abs,
+  signum, round, floor, and ceil; it does not admit host-native randomness or
+  libm-backed transcendental functions such as sqrt, pow, sin, cos, log, or exp.
+  Float/double string parsing and formatting are also omitted until they have a
+  pinned software implementation.
 
 Restrict or reject:
 
 - `Thread`, `ThreadGroup`, `ThreadLocal`, `InheritableThreadLocal`, wait/notify,
   and scheduling APIs
-- `Runtime` host APIs
+- `Runtime`; contract code must not reach a host runtime facade
 - `System` host APIs such as wall-clock time, environment, properties, native
   library loading, and host IO
 - identity behavior derived from native object addresses
 
 `java.lang.System` may expose only deterministic VM-managed streams and strictly
-specified helpers. Chain data belongs in Avata's `java.lang.Context`, not in
-host-style `System` APIs.
+specified helpers. It must not expose a mutable `Properties` object or
+host-derived property map. Chain data belongs in Avata's `java.lang.Context`,
+not in host-style `System` APIs. `System.in` is deterministic EOF, because a
+contract must not read host stdin.
 
 ### `java.io`
 
@@ -143,7 +149,7 @@ Admit:
 - string readers and writers
 - basic `InputStream`, `OutputStream`, `Reader`, `Writer`
 - `PrintStream` and `PrintWriter` for deterministic VM-managed output
-- `IOException` and `FileNotFoundException` when needed for VM linkage
+- `IOException` for stream failures
 - `Serializable` only as a marker if the verifier/profile admits it
 
 Reject or remove:
@@ -151,7 +157,11 @@ Reject or remove:
 - path-based host filesystem access
 - file metadata, directory traversal, permissions, locking, and host path
   normalization
-- native file descriptors except VM-owned stdin/stdout/stderr descriptors
+- public native file descriptors and file streams; `System.in/out/err` must use
+  VM-private standard-stream implementations instead of exposing
+  `FileDescriptor`, `FileInputStream`, or `FileOutputStream`
+- file-specific exceptions such as `FileNotFoundException`, because the profile
+  has no host filesystem API
 
 OpenZeppelin requirements do not need host files. Contract persistence must use
 Avata's `java.lang.Storage` and related persistent types.
@@ -165,20 +175,30 @@ identity hash behavior, implementation resize policy, or iteration order.
 Admit first:
 
 - `List`, `Map`, `Set`, `Collection`, `Iterator`
-- `ArrayList`, `HashMap`, `HashSet`, `TreeMap`, `TreeSet` if their behavior is
-  pinned and tested for transient use
+- `ArrayList`, `TreeMap`, `TreeSet` if their behavior is pinned and tested for
+  transient use
 - `Arrays`, `Collections`, `Objects`, `Optional`, `Comparator`
 - `ArrayDeque`, `Queue`, `Deque`
 - `java.util.function.*` for Java 8 source compatibility
 
-Review before keeping:
+Reject or remove:
 
-- `Vector`, `Stack`, `Hashtable`, `Properties`, `StringTokenizer`,
-  `Enumeration`
+- `HashMap`, `HashSet`, `LinkedHashMap`, and `LinkedHashSet`, because contract
+  behavior must not depend on hash bucket order, resize policy, or
+  implementation-defined hash behavior
+- `Hashtable` and `Properties`, because they combine hash iteration with
+  host-style mutable property state
 - `IdentityHashMap`, because object identity must be consensus-safe
-- `WeakHashMap`, because VM internals may need it but contract code should not
-  rely on weak-reference behavior
-- linked collection variants if iteration order is admitted and tested
+- `WeakHashMap`, because weak-reference clearing depends on GC timing
+
+- `Vector`, `Stack`, `StringTokenizer`, and `Enumeration`, because the contract
+  profile uses explicit list/deque/iterator APIs instead of legacy synchronized
+  or pre-collection surfaces
+- `Collections.synchronizedMap`, `synchronizedSet`, `synchronizedList`, and the
+  generated synchronized wrapper classes, because the profile is single-threaded
+  and must not expose concurrency-oriented collection APIs
+- `StringBuffer`, because the profile uses `StringBuilder` and does not expose
+  legacy synchronized string builders
 
 Do not use `java.util` collections as implicit persistent storage. Persistent
 state needs explicit `java.lang` storage types so serialization, gas, iteration,

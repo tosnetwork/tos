@@ -80,40 +80,25 @@ public final class Math {
     return f > 0 ? +1.0f : f < 0 ? -1.0f : 0;
   }
 
-  public static double random() {
-    throw new UnsupportedOperationException(
-        "randomness not available in the TOS JVM profile");
+  public static double floor(double v) {
+    if (v != v || v == 0.0 || v >= 9223372036854775808.0
+        || v <= -9223372036854775808.0) {
+      return v;
+    }
+
+    long i = (long) v;
+    double d = (double) i;
+    return d > v ? d - 1.0 : d;
   }
 
-  public static native double floor(double v);
+  public static double ceil(double v) {
+    if (v != v || v == 0.0 || v >= 9223372036854775808.0
+        || v <= -9223372036854775808.0) {
+      return v;
+    }
 
-  public static native double ceil(double v);
-
-  public static native double exp(double v);
-
-  public static native double log(double v);
-
-  public static native double cos(double v);
-
-  public static native double sin(double v);
-
-  public static native double tan(double v);
-
-  public static native double cosh(double v);
-
-  public static native double sinh(double v);
-
-  public static native double tanh(double v);
-
-  public static native double acos(double v);
-
-  public static native double asin(double v);
-
-  public static native double atan(double v);
-
-  public static native double atan2(double y, double x);
-
-  public static native double sqrt(double v);
-
-  public static native double pow(double v, double e);
+    long i = (long) v;
+    double d = (double) i;
+    return d < v ? d + 1.0 : d;
+  }
 }

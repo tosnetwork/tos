@@ -16,6 +16,14 @@ public class Collections {
 
   private Collections() { }
 
+  private static boolean equal(Object a, Object b) {
+    return a == b || (a != null && a.equals(b));
+  }
+
+  private static int objectHashCode(Object o) {
+    return o == null ? 0 : o.hashCode();
+  }
+
   public static void shuffle(List list) {
     throw new UnsupportedOperationException(
         "random shuffle not available in the TOS JVM profile");
@@ -169,280 +177,15 @@ public class Collections {
   }
 
   public static final <K,V> Map<K,V> emptyMap() {
-    return (Map<K, V>) new UnmodifiableMap<Object, Object>(
-      new HashMap<Object, Object>(0));
+    return (Map<K, V>) EmptyMap.Instance;
   }
 
   public static final <T> Set<T> emptySet() {
-    return (Set<T>) new UnmodifiableSet<Object>(
-      new HashSet<Object>(0));
+    return (Set<T>) EmptySet.Instance;
   }
   
-  public static <T> Enumeration<T> enumeration(Collection<T> c) {
-    return new IteratorEnumeration<T> (c.iterator());
-  }
-
   public static <T> Comparator<T> reverseOrder(Comparator<T> cmp) {
     return new ReverseComparator<T>(cmp);
-  }
-  
-  static class IteratorEnumeration<T> implements Enumeration<T> {
-    private final Iterator<T> it;
-
-    public IteratorEnumeration(Iterator<T> it) {
-      this.it = it;
-    }
-
-    public T nextElement() {
-      return it.next();
-    }
-
-    public boolean hasMoreElements() {
-      return it.hasNext();
-    }
-  }
-
-  static class SynchronizedCollection<T> implements Collection<T> {
-    protected final Object lock;
-    protected final Collection<T> collection;
-
-    public SynchronizedCollection(Object lock, Collection<T> collection) {
-      this.lock = lock;
-      this.collection = collection;
-    }
-
-    public int size() {
-      synchronized (lock) { return collection.size(); }
-    }
-
-    public boolean isEmpty() {
-      return size() == 0;
-    }
-
-    public boolean contains(Object e) {
-      synchronized (lock) { return collection.contains(e); }
-    }
-
-    public boolean add(T e) {
-      synchronized (lock) { return collection.add(e); }
-    }
-
-    public boolean addAll(Collection<? extends T> collection) {
-      synchronized (lock) { return this.collection.addAll(collection); }
-    }
-
-    public boolean remove(Object e) {
-      synchronized (lock) { return collection.remove((T)e); }
-    }
-
-    public Object[] toArray() {
-      return toArray(new Object[size()]);      
-    }
-
-    public <T> T[] toArray(T[] array) {
-      synchronized (lock) { return collection.toArray(array); }
-    }
-
-    public void clear() {
-      synchronized (lock) { collection.clear(); }
-    }
-
-    public Iterator<T> iterator() {
-      return new SynchronizedIterator<T>(lock, collection.iterator());
-    }
-
-    public boolean containsAll(Collection<?> c) {
-      synchronized (lock) { return collection.containsAll(c); }
-    }
-
-    public boolean removeAll(Collection<?> c) {
-      synchronized (lock) { return collection.removeAll(c); }
-    }
-  }
-  
-  static class SynchronizedMap<K,V> implements Map<K,V> {
-    protected final Object lock;
-    protected final Map<K,V> map;
-
-    SynchronizedMap(Map<K,V> map) {
-      this.map = map;
-      this.lock = this;
-    }
-
-    SynchronizedMap(Object lock, Map<K,V> map) {
-      this.lock = lock;
-      this.map = map;
-    }
-    
-    public void clear() {
-      synchronized (lock) { map.clear(); }
-    }
-    public boolean containsKey(Object key) {
-      synchronized (lock) { return map.containsKey(key); }
-    }
-    public boolean containsValue(Object value) {
-      synchronized (lock) { return map.containsValue(value); }
-    }
-    public Set<java.util.Map.Entry<K, V>> entrySet() {
-      synchronized (lock) { return new SynchronizedSet<java.util.Map.Entry<K, V>>(lock, map.entrySet()); }
-    }
-    public V get(Object key) {
-      synchronized (lock) { return map.get(key); }
-    }
-    public boolean isEmpty() {
-      synchronized (lock) { return map.isEmpty(); }
-    }
-    public Set<K> keySet() {
-      synchronized (lock) { return new SynchronizedSet<K>(lock, map.keySet()); }
-    }
-    public V put(K key, V value) {
-      synchronized (lock) { return map.put(key, value); }
-    }
-    public void putAll(Map<? extends K, ? extends V> elts) {
-      synchronized (lock) { map.putAll(elts); }
-    }
-    public V remove(Object key) {
-      synchronized (lock) { return map.remove(key); }
-    }
-    public int size() {
-      synchronized (lock) { return map.size(); }
-    }
-    public Collection<V> values() {
-      synchronized (lock) { return new SynchronizedCollection<V>(lock, map.values()); }
-    }
-  }
-  
-  public static <K,V> Map<K,V> synchronizedMap(Map<K,V> map) {
-    return new SynchronizedMap<K, V> (map); 
-  }
-  
-  static class SynchronizedSet<T>
-    extends SynchronizedCollection<T>
-    implements Set<T>
-  {
-    public SynchronizedSet(Object lock, Set<T> set) {
-      super(lock, set);
-    }
-  }
-
-  public static <V> Set<V> synchronizedSet(Set<V> set) {
-    return new SynchronizedSet<V> (set, set);
-  }
-  
-  static class SynchronizedList<T>
-    extends SynchronizedCollection<T>
-    implements List<T>
-  {
-    private final List<T> list;
-    
-    public SynchronizedList(List<T> list) {
-      super(list, list);
-      
-      this.list = list;
-    }
-
-    @Override
-    public T get(int index) {
-      synchronized (lock) {
-        return list.get(index);
-      }
-    }
-
-    @Override
-    public T set(int index, T value) {
-      synchronized (lock) {
-        return list.set(index, value);
-      }
-    }
-
-    @Override
-    public T remove(int index) {
-      synchronized (lock) {
-        return list.remove(index);
-      }
-    }
-
-    @Override
-    public void add(int index, T element) {
-      synchronized (lock) {
-        list.add(index, element);
-      }
-    }
-
-    @Override
-    public boolean addAll(int startIndex, Collection<? extends T> c) {
-      synchronized (lock) {
-        return list.addAll(startIndex, c);
-      }
-    }
-
-    @Override
-    public int indexOf(Object value) {
-      synchronized (lock) {
-        return list.indexOf(value);
-      }
-    }
-
-    @Override
-    public int lastIndexOf(Object value) {
-      synchronized (lock) {
-        return list.lastIndexOf(value);
-      }
-    }
-
-    @Override
-    public ListIterator<T> listIterator(int index) {
-      // as described in the javadocs, user should be synchronized on list before calling
-      return list.listIterator(index);
-    }
-
-    @Override
-    public ListIterator<T> listIterator() {
-      // as described in the javadocs, user should be synchronized on list before calling
-      return list.listIterator();
-    }
-  }
-  
-  static class RandomAccessSynchronizedList<T>
-    extends SynchronizedList<T>
-    implements RandomAccess
-  {
-    public RandomAccessSynchronizedList(List<T> list) {
-      super(list);
-    }
-  }
-  
-  public static <T> List<T> synchronizedList(List<T> list) {
-    List<T> result;
-    if (list instanceof RandomAccess) {
-      result = new RandomAccessSynchronizedList<T>(list);
-    } else {
-      result = new SynchronizedList<T>(list);
-    }
-    
-    return result;
-  }
-
-  static class SynchronizedIterator<T> implements Iterator<T> {
-    private final Object lock;
-    private final Iterator<T> it;
-
-    public SynchronizedIterator(Object lock, Iterator<T> it) {
-      this.lock = lock;
-      this.it = it;
-    }
-
-    public T next() {
-      synchronized (lock) { return it.next(); }
-    }
-
-    public boolean hasNext() {
-      synchronized (lock) { return it.hasNext(); }
-    }
-
-    public void remove() {
-      synchronized (lock) { it.remove(); }
-    }
   }
 
   static class ArrayListIterator<T> implements ListIterator<T> {
@@ -780,6 +523,278 @@ public class Collections {
   public static <T> Set<T> unmodifiableSet(Set<T> hs) {
     return new UnmodifiableSet<T>(hs);
   }
+
+  private static final class EmptyIterator<T> implements Iterator<T> {
+    public boolean hasNext() {
+      return false;
+    }
+
+    public T next() {
+      throw new NoSuchElementException();
+    }
+
+    public void remove() {
+      throw new UnsupportedOperationException();
+    }
+  }
+
+  private static final class SingleIterator<T> implements Iterator<T> {
+    private final T element;
+    private boolean consumed;
+
+    SingleIterator(T element) {
+      this.element = element;
+    }
+
+    public boolean hasNext() {
+      return ! consumed;
+    }
+
+    public T next() {
+      if (consumed) {
+        throw new NoSuchElementException();
+      }
+      consumed = true;
+      return element;
+    }
+
+    public void remove() {
+      throw new UnsupportedOperationException();
+    }
+  }
+
+  private static final class EmptySet<T> extends AbstractSet<T> {
+    static final EmptySet Instance = new EmptySet();
+
+    public int size() {
+      return 0;
+    }
+
+    public boolean contains(Object element) {
+      return false;
+    }
+
+    public boolean add(T element) {
+      throw new UnsupportedOperationException();
+    }
+
+    public boolean remove(Object element) {
+      throw new UnsupportedOperationException();
+    }
+
+    public boolean removeAll(Collection<?> c) {
+      throw new UnsupportedOperationException();
+    }
+
+    public void clear() {
+      throw new UnsupportedOperationException();
+    }
+
+    public Iterator<T> iterator() {
+      return new EmptyIterator<T>();
+    }
+  }
+
+  private static final class SingletonSet<T> extends AbstractSet<T> {
+    private final T element;
+
+    SingletonSet(T element) {
+      this.element = element;
+    }
+
+    public int size() {
+      return 1;
+    }
+
+    public boolean contains(Object value) {
+      return equal(element, value);
+    }
+
+    public boolean add(T element) {
+      throw new UnsupportedOperationException();
+    }
+
+    public boolean remove(Object element) {
+      throw new UnsupportedOperationException();
+    }
+
+    public boolean removeAll(Collection<?> c) {
+      throw new UnsupportedOperationException();
+    }
+
+    public void clear() {
+      throw new UnsupportedOperationException();
+    }
+
+    public Iterator<T> iterator() {
+      return new SingleIterator<T>(element);
+    }
+  }
+
+  private static final class SingleEntry<K, V> implements Map.Entry<K, V> {
+    private final K key;
+    private final V value;
+
+    SingleEntry(K key, V value) {
+      this.key = key;
+      this.value = value;
+    }
+
+    public K getKey() {
+      return key;
+    }
+
+    public V getValue() {
+      return value;
+    }
+
+    public V setValue(V value) {
+      throw new UnsupportedOperationException();
+    }
+
+    public boolean equals(Object other) {
+      if (! (other instanceof Map.Entry)) {
+        return false;
+      }
+      Map.Entry<?, ?> e = (Map.Entry<?, ?>) other;
+      return equal(key, e.getKey()) && equal(value, e.getValue());
+    }
+
+    public int hashCode() {
+      return objectHashCode(key) ^ objectHashCode(value);
+    }
+  }
+
+  private static final class EmptyMap<K, V> implements Map<K, V> {
+    static final EmptyMap Instance = new EmptyMap();
+
+    public boolean isEmpty() {
+      return true;
+    }
+
+    public int size() {
+      return 0;
+    }
+
+    public boolean containsKey(Object key) {
+      return false;
+    }
+
+    public boolean containsValue(Object value) {
+      return false;
+    }
+
+    public V get(Object key) {
+      return null;
+    }
+
+    public V put(K key, V value) {
+      throw new UnsupportedOperationException();
+    }
+
+    public void putAll(Map<? extends K, ? extends V> elts) {
+      throw new UnsupportedOperationException();
+    }
+
+    public V remove(Object key) {
+      throw new UnsupportedOperationException();
+    }
+
+    public void clear() {
+      throw new UnsupportedOperationException();
+    }
+
+    public Set<Map.Entry<K, V>> entrySet() {
+      return Collections.<Map.Entry<K, V>>emptySet();
+    }
+
+    public Set<K> keySet() {
+      return Collections.<K>emptySet();
+    }
+
+    public Collection<V> values() {
+      return Collections.<V>emptyList();
+    }
+
+    public boolean equals(Object other) {
+      return other instanceof Map && ((Map) other).isEmpty();
+    }
+
+    public int hashCode() {
+      return 0;
+    }
+  }
+
+  private static final class SingletonMap<K, V> implements Map<K, V> {
+    private final K key;
+    private final V value;
+
+    SingletonMap(K key, V value) {
+      this.key = key;
+      this.value = value;
+    }
+
+    public boolean isEmpty() {
+      return false;
+    }
+
+    public int size() {
+      return 1;
+    }
+
+    public boolean containsKey(Object key) {
+      return equal(this.key, key);
+    }
+
+    public boolean containsValue(Object value) {
+      return equal(this.value, value);
+    }
+
+    public V get(Object key) {
+      return containsKey(key) ? value : null;
+    }
+
+    public V put(K key, V value) {
+      throw new UnsupportedOperationException();
+    }
+
+    public void putAll(Map<? extends K, ? extends V> elts) {
+      throw new UnsupportedOperationException();
+    }
+
+    public V remove(Object key) {
+      throw new UnsupportedOperationException();
+    }
+
+    public void clear() {
+      throw new UnsupportedOperationException();
+    }
+
+    public Set<Map.Entry<K, V>> entrySet() {
+      return Collections.<Map.Entry<K, V>>singleton(
+          new SingleEntry<K, V>(key, value));
+    }
+
+    public Set<K> keySet() {
+      return Collections.<K>singleton(key);
+    }
+
+    public Collection<V> values() {
+      return Collections.<V>singletonList(value);
+    }
+
+    public boolean equals(Object other) {
+      if (! (other instanceof Map)) {
+        return false;
+      }
+      Map<?, ?> map = (Map<?, ?>) other;
+      return map.size() == 1 && map.containsKey(key) && equal(value, map.get(key));
+    }
+
+    public int hashCode() {
+      return objectHashCode(key) ^ objectHashCode(value);
+    }
+  }
   
   private static final class ReverseComparator<T> implements Comparator<T> {
 
@@ -801,15 +816,11 @@ public class Collections {
   }
 
   public static <T> Set<T> singleton(T o) {
-    HashSet<T> s = new HashSet<T>(1);
-    s.add(o);
-    return new UnmodifiableSet<T>(s);
+    return new SingletonSet<T>(o);
   }
 
   public static <K, V> Map<K, V> singletonMap(K key, V value) {
-    HashMap<K, V> m = new HashMap<K, V>(1);
-    m.put(key, value);
-    return new UnmodifiableMap<K, V>(m);
+    return new SingletonMap<K, V>(key, value);
   }
 
   public static <T> List<T> nCopies(int n, T o) {
@@ -966,12 +977,6 @@ public class Collections {
       if (found) return i;
     }
     return -1;
-  }
-
-  public static <T> List<T> list(Enumeration<T> e) {
-    ArrayList<T> result = new ArrayList<T>();
-    while (e.hasMoreElements()) result.add(e.nextElement());
-    return result;
   }
 
   // (sort(List<T>) already provided as raw sort(List) at top of class)

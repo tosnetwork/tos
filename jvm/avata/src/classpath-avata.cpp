@@ -13,6 +13,7 @@
 #include "avata/process.h"
 
 #include <avata/util/runtime-array.h>
+#include <stdio.h>
 
 using namespace vm;
 
@@ -59,7 +60,6 @@ class MyClasspath : public Classpath {
                           0,
                           NewState,
                           NormalPriority,
-                          0,
                           0,
                           0,
                           roots(t)->appLoader(),
@@ -397,6 +397,60 @@ extern "C" AVATA_EXPORT int64_t JNICALL
   }
 
   return reinterpret_cast<int64_t>(array);
+}
+
+namespace {
+
+FILE* systemStream(bool error)
+{
+  return error ? stderr : stdout;
+}
+
+void writeStandardBytes(FILE* stream, GcByteArray* buffer, int32_t offset,
+                        int32_t length)
+{
+  fwrite(&buffer->body()[offset], 1, length, stream);
+  fflush(stream);
+}
+
+}  // namespace
+
+extern "C" AVATA_EXPORT void JNICALL
+    Avata_java_lang_System_writeStdoutByte(Thread*,
+                                           object,
+                                           uintptr_t* arguments)
+{
+  fputc(static_cast<unsigned char>(arguments[0]), stdout);
+  fflush(stdout);
+}
+
+extern "C" AVATA_EXPORT void JNICALL
+    Avata_java_lang_System_writeStdout(Thread* t,
+                                       object,
+                                       uintptr_t* arguments)
+{
+  GcByteArray* buffer
+      = cast<GcByteArray>(t, reinterpret_cast<object>(arguments[0]));
+  writeStandardBytes(systemStream(false), buffer, arguments[1], arguments[2]);
+}
+
+extern "C" AVATA_EXPORT void JNICALL
+    Avata_java_lang_System_writeStderrByte(Thread*,
+                                           object,
+                                           uintptr_t* arguments)
+{
+  fputc(static_cast<unsigned char>(arguments[0]), stderr);
+  fflush(stderr);
+}
+
+extern "C" AVATA_EXPORT void JNICALL
+    Avata_java_lang_System_writeStderr(Thread* t,
+                                       object,
+                                       uintptr_t* arguments)
+{
+  GcByteArray* buffer
+      = cast<GcByteArray>(t, reinterpret_cast<object>(arguments[0]));
+  writeStandardBytes(systemStream(true), buffer, arguments[1], arguments[2]);
 }
 
 extern "C" AVATA_EXPORT void JNICALL

@@ -1,6 +1,6 @@
 package java.lang;
 
-import java.util.HashMap;
+import java.util.TreeMap;
 
 public abstract class Storage {
   private static final Storage DEFAULT = memory();
@@ -30,8 +30,8 @@ public abstract class Storage {
   }
 
   private static final class MemoryStorage extends Storage {
-    private final HashMap<Bytes32, byte[]> slots =
-        new HashMap<Bytes32, byte[]>();
+    private final TreeMap<Bytes32, byte[]> slots =
+        new TreeMap<Bytes32, byte[]>();
 
     public byte[] load(Bytes32 slot) {
       checkSlot(slot);

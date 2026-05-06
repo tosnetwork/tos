@@ -10,9 +10,6 @@
 
 package java.lang;
 
-import java.util.Map;
-import java.util.WeakHashMap;
-
 // -------------------------------------------------------------------------
 // Consensus-safe Thread — Avata/TOS blockchain JVM
 //
@@ -34,7 +31,6 @@ public class Thread implements Runnable {
   private byte state;
   private byte priority;
   private final Runnable task;
-  private Map<ThreadLocal, Object> locals;
   private Object sleepLock;
   private ClassLoader classLoader;
   private UncaughtExceptionHandler exceptionHandler;
@@ -65,17 +61,6 @@ public class Thread implements Runnable {
     this.name = name;
 
     Thread current = currentThread();
-
-    Map<ThreadLocal, Object> map = current.locals;
-    if (map != null) {
-      for (Map.Entry<ThreadLocal, Object> e: map.entrySet()) {
-        if (e.getKey() instanceof InheritableThreadLocal) {
-          InheritableThreadLocal itl = (InheritableThreadLocal) e.getKey();
-          locals().put(itl, itl.childValue(e.getValue()));
-        }
-      }
-    }
-
     classLoader = current.classLoader;
   }
 
@@ -145,13 +130,6 @@ public class Thread implements Runnable {
 
   public void setContextClassLoader(ClassLoader v) {
     classLoader = v;
-  }
-
-  public Map<ThreadLocal, Object> locals() {
-    if (locals == null) {
-      locals = new WeakHashMap();
-    }
-    return locals;
   }
 
   // currentThread() is acceptable: returns the single consensus thread.

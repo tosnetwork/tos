@@ -157,6 +157,11 @@ language primitives live under `tos.*`, such as `tos.storage.*`,
 - Non-deterministic entry points such as wall-clock time, entropy,
   `Math.random()`, UUID generation, environment variables, and system
   properties are replaced by deterministic TOS-defined APIs or rejected.
+- Hash-backed and identity/weak collections (`HashMap`, `HashSet`,
+  `LinkedHashMap`, `LinkedHashSet`, `Hashtable`, `IdentityHashMap`,
+  `WeakHashMap`, and `Properties`) are not part of the contract `rt.jar`;
+  transient maps must use explicitly ordered structures such as `TreeMap`, and
+  persistent state must use Avata storage abstractions.
 - Floating-point execution is strictfp-equivalent for all contract code,
   regardless of the source method's `strictfp` modifier. The TOS fixed
   floating-point engine pins rounding, NaN canonicalization, signed-zero,
@@ -486,9 +491,10 @@ content hash.
 - `java.lang.CharSequence` and small interfaces needed by `String`
 - `java.lang.Throwable`, `java.lang.Error`, `java.lang.RuntimeException`, and
   the narrow exception types emitted by the verifier/runtime
-- `java.lang.Math` / `java.lang.StrictMath` — OpenJDK-compatible method surface
-  backed by the same TOS fixed floating-point engine; transcendental methods
-  require pinned bit-exact algorithms before they are admitted in consensus
+- `java.lang.Math` — only the deterministic arithmetic helper subset is
+  admitted in v1. `Math.random`, host-libm transcendental functions, and
+  float/double string parse/format helpers stay out until pinned software
+  implementations exist. `StrictMath` is not shipped in the v1 profile.
 - `java.lang.System` — no time, environment, properties, or IO streams; exposes
   only deterministic chain APIs: `blockNumber()`,
   `blockTimestamp()`, `randSeed()` (from `context.rand_seed`),
@@ -860,7 +866,6 @@ jvm/
       java/lang/Error.java
       java/lang/RuntimeException.java
       java/lang/Math.java
-      java/lang/StrictMath.java
       java/lang/System.java
       java/lang/OutOfGasError.java
       java/lang/ContractViolationError.java

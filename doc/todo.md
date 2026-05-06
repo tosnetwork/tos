@@ -266,7 +266,7 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   `NotSerializableException`).
 - ✅ Fill class-library gaps: `java.util.function` package (6 interfaces),
   `Optional<T>`, `StringJoiner`, `UUID` deterministic rewrite
-  (`randomUUID()` traps), `Date` `Comparable` + mutators, `Map`/`HashMap` Java
+  (`randomUUID()` traps), `Date` `Comparable` + mutators, `Map` Java
   8 default methods, `Collections` 15+ missing methods, `Arrays` full primitive
   sorts/`copyOfRange`/`binarySearch`/`hashCode`/`deepToString`, `TreeSet`
   `SortedSet` + backed range views, `ArrayList.subList`, `Collection.removeIf`,
@@ -304,11 +304,21 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   removed `java.net`, `java.nio`, `java.security`, `java.text`, `java.math`,
   `java.util.concurrent`, `java.util.logging`, `java.util.regex`,
   `java.util.zip`, `java.util.jar`, `dalvik`, `libcore`, process APIs,
-  filesystem path APIs, object-stream serialization, and URL/resource handler
-  packages. The generated `rt.jar` now contains only `java.lang`,
-  annotations, `java.lang.invoke`, `java.lang.ref`, admitted reflection,
-  minimal `java.io`, deterministic collections, `java.util.function`, Avata VM
-  support classes, and small `sun.*` internals required by VM internals.
+  filesystem path APIs, public file descriptor streams, object-stream
+  serialization, URL/resource handler packages, hash/identity/weak collections,
+  `Properties`, legacy synchronized collections/tokenizers, and thread-local
+  APIs. The generated `rt.jar` now contains only `java.lang`, annotations,
+  `java.lang.invoke`, VM-internal `java.lang.ref` linkage, admitted reflection,
+  minimal `java.io`, deterministic ordered/list collections,
+  `java.util.function`, Avata VM support classes, and small `sun.*` internals
+  required by VM internals.
+- ✅ Removed additional non-contract public surfaces from the v1 `rt.jar`:
+  `java.lang.Runtime`, `java.io.FileNotFoundException`, host-backed
+  `System.in`, `Math.random`, host-native `Math` transcendental functions,
+  host-libc float/double string parse/format APIs, `StringBuffer`, and
+  `Collections.synchronized*` wrappers. `System.in` is now deterministic EOF;
+  stdout/stderr writes are best-effort debug output and do not feed host IO
+  errors back into contract behavior.
 - ✅ Added `rt/check-profile.sh` to `build-test`, so generated `rt.jar` fails
   the build if forbidden packages or non-admitted shell classes are reintroduced.
 - ✅ Removed callable native-internal and non-admitted invoke shell classes:
@@ -385,10 +395,9 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   normalization, old ISO language-code mapping, structural equality/hash codes,
   null handling, ROOT/English-compatible case operations, and explicit traps for
   locale-specific Turkish/Azeri/Lithuanian casing.
-- ✅ `LinkedHashMap` collection views now follow the admitted JDK8u mutation
-  rules: key/entry view `add` rejects, entry containment/removal matches both
-  key and value, values support removal and bulk removal, iterator removal is
-  single-use, and the linked-order index stays in sync across remove/clear.
+- ✅ Hash-backed collections were removed from the admitted contract profile:
+  `HashMap`, `HashSet`, `LinkedHashMap`, `LinkedHashSet`, `Hashtable`,
+  `IdentityHashMap`, `WeakHashMap`, and `Properties` are absent from `rt.jar`.
 - ✅ `TreeMap` top-level and ranged collection views now follow the admitted
   JDK8u mutation rules: key/entry view `add` rejects, entry containment/removal
   matches both key and value, values support removal and bulk removal, and
@@ -420,18 +429,17 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 - ✅ Reflection API aligned: `Class.getClassLoader()` returns null;
   `Class.isSynthetic()` added; `Class.forName` fixed; `FunctionalInterface`
   annotation added; `Long.compare(long,long)` added.
-- ✅ Host-API consensus hardening: `System` (time/env/load/exit), `Runtime`
-  (exec/halt/hooks, `availableProcessors()` → 1), and `Thread`
-  (start/sleep/yield) throw deterministic traps or return fixed single-thread
-  values. The earlier `java.net.*` and `java.nio.channels.*` trap shells were
-  removed from the v1 `rt.jar` entirely. System properties are replaced with a
-  static deterministic set.
+- ✅ Host-API consensus hardening: `System` exposes only deterministic VM-managed
+  streams and fixed property reads; `Runtime` is removed from the v1 `rt.jar`;
+  `Thread` remains VM-internal and contract references are rejected. The earlier
+  `java.net.*` and `java.nio.channels.*` trap shells were removed from the v1
+  `rt.jar` entirely.
 - ✅ Class-library sweep: `java.util.function` package (Function, BiFunction,
   Consumer, BiConsumer, Predicate, Supplier); `Optional<T>`; `StringJoiner`;
   `UUID` deterministic rewrite (`randomUUID()` traps, `fromString`/`toString`
   lowercase, `Comparable`); `Date` (`setTime`, `before`/`after`, `compareTo`,
-  `Comparable`); `Map`/`HashMap` Java 8 defaults (`computeIfAbsent`, `merge`,
-  `forEach`, `replaceAll`, `getOrDefault`, `putIfAbsent`, `replace`);
+  `Comparable`); `Map` Java 8 defaults (`computeIfAbsent`, `merge`,
+  `forEach`, `replaceAll`, `getOrDefault`);
   `Collections` additions (`singleton`, `singletonMap`, `nCopies`, `min`/`max`,
   `frequency`, `fill`, `copy`, `disjoint`, `reverseOrder`, `unmodifiableSorted*`,
   `indexOfSubList`, `addAll` varargs, `swap`, `binarySearch(Comparator)`);

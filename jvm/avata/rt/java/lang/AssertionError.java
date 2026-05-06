@@ -23,14 +23,6 @@ public class AssertionError extends Error {
     super(""+detailMessage, null);
   }
 
-  public AssertionError(double detailMessage) {
-    super(""+detailMessage, null);
-  }
-
-  public AssertionError(float detailMessage) {
-    super(""+detailMessage, null);
-  }
-
   public AssertionError(int detailMessage) {
     super(""+detailMessage, null);
   }

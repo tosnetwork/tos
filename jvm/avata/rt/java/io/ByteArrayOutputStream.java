@@ -110,7 +110,7 @@ public class ByteArrayOutputStream extends OutputStream {
     return array;
   }
   
-  public synchronized void writeTo(OutputStream out) throws IOException {
+  public void writeTo(OutputStream out) throws IOException {
     if (length==0) return;
 
     if (out == null){

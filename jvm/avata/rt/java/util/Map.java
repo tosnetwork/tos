@@ -45,9 +45,9 @@ public interface Map<K, V> {
 
   // Java 8 default-method additions (admitted deterministic subset).
   // Note: remove(K,V), putIfAbsent(K,V), replace(K,V), replace(K,V,V) are
-  // NOT default methods here because ConcurrentMap declares them as abstract,
-  // which would cause an erasure clash under javac -source 1.8.
-  // They are implemented as concrete methods in HashMap and its subclasses.
+  // NOT default methods here because ConcurrentMap declares them as abstract
+  // in the broader JDK surface. The Avata profile currently admits only these
+  // deterministic defaults.
 
   default V getOrDefault(Object key, V defaultValue) {
     V v = get(key);

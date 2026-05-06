@@ -72,8 +72,9 @@ The following paths are removed or replaced with deterministic stubs:
   `Context.blockTimestamp()` instead.
 - Entropy (`/dev/urandom`, `SecureRandom`): removed; contracts use
   `Context.randSeed()`.
-- Process and environment APIs (`getenv`, `System.getenv`,
-  `System.getProperties`, `Runtime.exec`): throw `ContractViolationError`.
+- Process and environment APIs (`getenv`, `System.getenv`, `Runtime.exec`):
+  throw `ContractViolationError`; `System.getProperties` is absent from the
+  contract profile.
 - File and network IO where backed by validator-local resources: removed from
   the shipped class library or trapped before any host call.
 
@@ -175,12 +176,24 @@ input.
 
 The current `rt.jar` intentionally contains only the contract profile:
 
-- `java.lang`, annotations, `java.lang.invoke`, `java.lang.ref`, and the
-  admitted reflection subset needed by Java 8 source and lambda output
+- `java.lang`, annotations, `java.lang.invoke`, and the admitted reflection
+  subset needed by Java 8 source and lambda output
+- VM-internal `java.lang.ref` linkage remains for GC support, but contract
+  class references to weak/soft/phantom references are rejected by the verifier
 - minimal `java.io` for byte-array/string streams, readers/writers,
-  `DataInput`/`DataOutput`, and VM stdin/stdout/stderr through
-  `FileDescriptor` only
-- deterministic `java.util` collections plus `java.util.function`
+  `DataInput`/`DataOutput`, and VM-private stdin/stdout/stderr streams. Public
+  `FileDescriptor`, `FileInputStream`, `FileOutputStream`, and
+  `FileNotFoundException` are not shipped. `System.in` is deterministic EOF.
+- deterministic ordered/list `java.util` collections plus `java.util.function`;
+  hash/identity/weak collections, `Properties`, and synchronized collection
+  wrappers are not shipped
+- `java.lang.Runtime` is not shipped; host runtime and process APIs are outside
+  the contract profile
+- `Math.random` and host-native transcendental `Math` functions are not shipped;
+  floating-point opcode support is handled by the VM, not by host libm calls.
+  Float/double string parse/format APIs are omitted until they have a pinned
+  software implementation.
+- `StringBuffer` is not shipped; contract code uses `StringBuilder`.
 - Avata VM support classes and the small `sun.misc` / `sun.reflect` internal
   remnants still required by VM internals. The v1 profile does not ship
   `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, `MutableCallSite`,

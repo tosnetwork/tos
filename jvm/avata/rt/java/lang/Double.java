@@ -22,20 +22,12 @@ public final class Double extends Number {
 
   private final double value;
 
-  public Double(String value) {
-    this.value = parseDouble(value);
-  }
-
   public Double(double value) {
     this.value = value;
   }
 
   public static Double valueOf(double value) {
     return new Double(value);
-  }
-
-  public static Double valueOf(String s) {
-    return new Double(s);
   }
 
   public boolean equals(Object o) {
@@ -45,16 +37,6 @@ public final class Double extends Number {
   public int hashCode() {
     long v = doubleToRawLongBits(value);
     return (int) ((v >> 32) ^ (v & 0xFF));
-  }
-
-  public String toString() {
-    return toString(value);
-  }
-
-  public static String toString(double v) {
-    byte[] buffer = new byte[20];
-    int numChars = fillBufferWithDouble(v, buffer, 20);
-    return new String(buffer, 0, numChars, false);
   }
 
   public byte byteValue() {
@@ -89,31 +71,20 @@ public final class Double extends Number {
     return isNaN(value);
   }
 
-  public static double parseDouble(String s) {
-    int[] numRead = new int[1];
-    double d = doubleFromString(s, numRead);
-    if (numRead[0] == 1) {
-      return d;
-    } else {
-      throw new NumberFormatException(s);
-    }
-  }
-
   public static long doubleToLongBits(double value) {
     if (isNaN(value)) return 0x7ff8000000000000L;
     return doubleToRawLongBits(value);
   }
 
-  public static native int fillBufferWithDouble(double value, byte[] buffer,
-                                                int charCount);
-
   public static native long doubleToRawLongBits(double value);
 
   public static native double longBitsToDouble(long bits);
 
-  public static native boolean isInfinite(double value);
+  public static boolean isInfinite(double value) {
+    return value == POSITIVE_INFINITY || value == NEGATIVE_INFINITY;
+  }
 
-  public static native boolean isNaN(double value);
-
-  public static native double doubleFromString(String s, int[] numRead);
+  public static boolean isNaN(double value) {
+    return value != value;
+  }
 }

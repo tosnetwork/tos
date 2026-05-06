@@ -122,7 +122,7 @@ public class Continuations {
 
   private Continuations() { }
 
-  private static final ThreadLocal<Reset> latestReset = new ThreadLocal();
+  private static Reset latestReset;
 
   /**
    * Captures the current continuation, passing a reference to the
@@ -186,8 +186,8 @@ public class Continuations {
   }
 
   public static <B,C> C reset(final Callable<B> thunk) throws Exception {
-    final Reset reset = new Reset(latestReset.get());
-    latestReset.set(reset);
+    final Reset reset = new Reset(latestReset);
+    latestReset = reset;
     try {
       Object result = callWithCurrentContinuation
         (new Function<Callback<Object>,Object>() {
@@ -207,7 +207,7 @@ public class Continuations {
         }
       }
     } finally {
-      latestReset.set(reset.next);
+      latestReset = reset.next;
     }
   }
 
@@ -218,7 +218,7 @@ public class Continuations {
     return (A) callWithCurrentContinuation
       (new Function<Callback<Object>,Object>() {
         public Object call(final Callback continuation) {
-          final Reset reset = latestReset.get();
+          final Reset reset = latestReset;
           reset.shifts = new Cell(new Function() {
               public Object call(Object ignored) throws Exception {
                 return receiver.call

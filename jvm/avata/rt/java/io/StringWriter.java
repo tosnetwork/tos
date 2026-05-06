@@ -11,7 +11,7 @@
 package java.io;
 
 public class StringWriter extends Writer {
-  private final StringBuffer out = new StringBuffer();
+  private final StringBuilder out = new StringBuilder();
   
   public void write(char[] b, int offset, int length) throws IOException {
     out.append(b, offset, length);
@@ -25,7 +25,4 @@ public class StringWriter extends Writer {
 
   public void close() throws IOException { }
 
-  public StringBuffer getBuffer() {
-    return out;
-  }
 }

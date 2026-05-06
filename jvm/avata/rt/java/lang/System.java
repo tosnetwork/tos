@@ -14,11 +14,10 @@ import java.io.PrintStream;
 import java.io.InputStream;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.FileDescriptor;
+import java.io.OutputStream;
+import java.io.IOException;
 import java.util.Map;
-import java.util.Properties;
+import java.util.TreeMap;
 
 // -------------------------------------------------------------------------
 // Consensus-safe System — Avata/TOS blockchain JVM
@@ -39,10 +38,10 @@ public abstract class System {
       "System.exit not available in consensus";
   // Deterministic property set — only keys whose values are
   // platform-independent and byte-identical across all nodes.
-  private static final Properties PROPERTIES = makeProperties();
+  private static final Map<String, String> PROPERTIES = makeProperties();
 
-  private static Properties makeProperties() {
-    Properties p = new Properties();
+  private static Map<String, String> makeProperties() {
+    Map<String, String> p = new TreeMap<String, String>();
     // Load VM command-line -D properties first (lower priority).
     // This populates keys like java.class.path and java.library.path
     // that the JVM startup sets from the -cp / -D arguments.
@@ -80,13 +79,79 @@ public abstract class System {
   // Standard streams — kept as host stdio stubs so System.out.println works
   // inside consensus code (outputs go to the node log, not the ledger state).
   public static final PrintStream out = new PrintStream
-    (new BufferedOutputStream(new FileOutputStream(FileDescriptor.out)), true);
+    (new BufferedOutputStream(new StandardOutputStream(false)), true);
 
   public static final PrintStream err = new PrintStream
-    (new BufferedOutputStream(new FileOutputStream(FileDescriptor.err)), true);
+    (new BufferedOutputStream(new StandardOutputStream(true)), true);
 
   public static final InputStream in
-    = new BufferedInputStream(new FileInputStream(FileDescriptor.in));
+    = new BufferedInputStream(new StandardInputStream());
+
+  private static final class StandardInputStream extends InputStream {
+    public int read() throws IOException {
+      return -1;
+    }
+
+    public int read(byte[] b, int offset, int length) throws IOException {
+      if (b == null) {
+        throw new NullPointerException();
+      }
+
+      if (offset < 0 || length < 0 || offset > b.length - length) {
+        throw new ArrayIndexOutOfBoundsException();
+      }
+
+      if (length == 0) {
+        return 0;
+      }
+
+      return -1;
+    }
+  }
+
+  private static final class StandardOutputStream extends OutputStream {
+    private final boolean error;
+
+    StandardOutputStream(boolean error) {
+      this.error = error;
+    }
+
+    public void write(int c) throws IOException {
+      if (error) {
+        writeStderrByte(c);
+      } else {
+        writeStdoutByte(c);
+      }
+    }
+
+    public void write(byte[] b, int offset, int length) throws IOException {
+      if (b == null) {
+        throw new NullPointerException();
+      }
+
+      if (offset < 0 || length < 0 || offset > b.length - length) {
+        throw new ArrayIndexOutOfBoundsException();
+      }
+
+      if (length == 0) {
+        return;
+      }
+
+      if (error) {
+        writeStderr(b, offset, length);
+      } else {
+        writeStdout(b, offset, length);
+      }
+    }
+  }
+
+  private static native void writeStdoutByte(int c);
+
+  private static native void writeStdout(byte[] b, int offset, int length);
+
+  private static native void writeStderrByte(int c);
+
+  private static native void writeStderr(byte[] b, int offset, int length);
 
   // -----------------------------------------------------------------------
   // arraycopy — admitted; delegates to native implementation
@@ -127,31 +192,12 @@ public abstract class System {
   // System properties — only deterministic keys are exposed
   // -----------------------------------------------------------------------
   public static String getProperty(String name) {
-    return (String) PROPERTIES.get(name);
+    return PROPERTIES.get(name);
   }
 
   public static String getProperty(String name, String defaultValue) {
     String result = getProperty(name);
     return (result != null) ? result : defaultValue;
-  }
-
-  /**
-   * setProperty is permitted within a single execution context (smart
-   * contract may configure its own properties) but host-derived keys
-   * must not be re-injected.  We accept the call and update the local
-   * in-execution map.
-   */
-  public static String setProperty(String name, String value) {
-    return (String) PROPERTIES.put(name, value);
-  }
-
-  public static String clearProperty(String name) {
-    return (String) PROPERTIES.remove(name);
-  }
-
-  public static Properties getProperties() {
-    // Return the deterministic set; callers may read but not modify host info.
-    return PROPERTIES;
   }
 
   // -----------------------------------------------------------------------

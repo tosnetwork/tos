@@ -16,11 +16,11 @@ public class AllFloats {
   private static float subtract(float a, float b) {return a - b;}
   private static double subtract(double a, double b) {return a - b;}
   private static double subtract(float a, double b) {return a - b;}
-  private static float complex(float a, float b) {return (a - b) / (a * b) + (float)Math.sqrt(a);}
-  private static double complex(double a, double b) {return (a - b) / (a * b) + Math.sqrt(a);}
-  private static double complex(float a, double b) {return (a - b) / (a * b) + Math.sqrt(a);}
-  private static double sqrt(double a) {return Math.sqrt(a);}
-  private static float complexNoIntrinsic(float a, float b) {return (a - b) / (a * b) + (float)sqrt(a);}
+  private static float complex(float a, float b) {return (a - b) / (a * b) + a / b;}
+  private static double complex(double a, double b) {return (a - b) / (a * b) + a / b;}
+  private static double complex(float a, double b) {return (a - b) / (a * b) + a / b;}
+  private static double ratio(double a, double b) {return a / b;}
+  private static float complexNoIntrinsic(float a, float b) {return (a - b) / (a * b) + (float)ratio(a, b);}
   private static int f2i(float a) {return (int)a;}
   private static long f2l(float a) {return (long)a;}
   private static float i2f(int a) {return (float)a;}
@@ -58,10 +58,10 @@ public class AllFloats {
     expect(subtract(5f, 4f) == 5f-4f);
     expect(subtract(5d, 4d) == 5f-4d);
     expect(subtract(5f, 4d) == 5f-4d);
-    expect(complex(4f, 3f) == (4f-3f)/(4f*3f) + 2f);
-    expect(complex(4d, 3d) == (4d-3d)/(4d*3d) + 2d);
-    expect(complex(4f, 3d) == (4f-3d)/(4f*3d) + 2f);
-    expect(complexNoIntrinsic(4f, 3f) == (4f-3f)/(4f*3f) + 2f);
+    expect(complex(4f, 3f) == (4f-3f)/(4f*3f) + 4f/3f);
+    expect(complex(4d, 3d) == (4d-3d)/(4d*3d) + 4d/3d);
+    expect(complex(4f, 3d) == (4f-3d)/(4f*3d) + 4f/3d);
+    expect(complexNoIntrinsic(4f, 3f) == (4f-3f)/(4f*3f) + 4f/3f);
     
     expect(f2i(4f) == 4);
     expect(f2l(4f) == 4);

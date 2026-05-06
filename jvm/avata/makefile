@@ -1033,6 +1033,7 @@ $(generated-code): %.cpp: $(src)/types.def $(generator) $(classpath-dep)
 
 $(classpath-dep): $(classpath-sources) $(classpath-jar-dep)
 	@echo "compiling classpath classes"
+	@rm -rf $(classpath-build)
 	@mkdir -p $(classpath-build)
 	$(javac) -source 1.$(java-version) -target 1.$(java-version) \
 		-d $(classpath-build) -bootclasspath $(boot-classpath) \

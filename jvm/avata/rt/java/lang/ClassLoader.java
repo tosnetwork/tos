@@ -11,7 +11,7 @@
 package java.lang;
 
 import java.util.Map;
-import java.util.HashMap;
+import java.util.TreeMap;
 
 public abstract class ClassLoader {
   private final ClassLoader parent;
@@ -31,7 +31,7 @@ public abstract class ClassLoader {
 
   private Map<String, Package> packages() {
     if (packages == null) {
-      packages = new HashMap();
+      packages = new TreeMap();
     }
     return packages;
   }

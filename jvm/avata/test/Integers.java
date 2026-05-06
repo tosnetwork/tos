@@ -31,7 +31,7 @@ public class Integers {
       positive <<= 1;
 
       expect(Integer.numberOfLeadingZeros(negative) == 0);
-      negative += ((int)Math.pow(2, i));
+      negative += (i == 31 ? Integer.MAX_VALUE : (1 << i));
     }
 
     for(int i = 0; i < 99999; i++) {

@@ -18,7 +18,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.LinkedList;
 import java.util.Map;
-import java.util.HashMap;
+import java.util.TreeMap;
 
 public class SignatureParser {
   private final ClassLoader loader;
@@ -425,7 +425,7 @@ public class SignatureParser {
   }
   
   private static Map<String, TypeVariable> collectTypeVariables(Class clz) {
-    Map<String, TypeVariable> varsMap = new HashMap<String, TypeVariable>();
+    Map<String, TypeVariable> varsMap = new TreeMap<String, TypeVariable>();
     LinkedList<Class> classList = new LinkedList<Class>();
     for (Class c = clz; c != null; c = c.getDeclaringClass()) {
       classList.addFirst(c);
