@@ -844,6 +844,7 @@ test-support-sources = \
 test-sources = \
 	$(test)/AllFloats.java \
 	$(test)/ArrayDequeTest.java \
+	$(test)/DeterministicFloatTest.java \
 	$(test)/ArraysTest.java \
 	$(test)/Collections.java \
 	$(test)/ContractLibraryPrimitives.java \

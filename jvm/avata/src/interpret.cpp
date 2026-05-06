@@ -22,6 +22,8 @@
 #include <avata/util/list.h>
 #include <avata/util/slice.h>
 
+#include "softfloat/tos_softfloat.h"
+
 using namespace vm;
 using namespace avata::system;
 
@@ -163,6 +165,24 @@ inline double popDouble(Thread* t)
 {
   uint64_t v = popLong(t);
   return bitsToDouble(v);
+}
+
+/* Bit-level float/double helpers used by the deterministic softfloat paths. */
+inline uint32_t popFloatBits(Thread* t)
+{
+  return popInt(t);
+}
+inline void pushFloatBits(Thread* t, uint32_t bits)
+{
+  pushInt(t, bits);
+}
+inline uint64_t popDoubleBits(Thread* t)
+{
+  return popLong(t);
+}
+inline void pushDoubleBits(Thread* t, uint64_t bits)
+{
+  pushLong(t, bits);
 }
 
 inline object peekObject(Thread* t, unsigned index)
@@ -1227,53 +1247,24 @@ loop:
     goto loop;
 
   case d2f: {
-    pushFloat(t, static_cast<float>(popDouble(t)));
+    pushFloatBits(t, tos_d2f(popDoubleBits(t)));
   }
     goto loop;
 
   case d2i: {
-    double f = popDouble(t);
-    switch (fpclassify(f)) {
-    case FP_NAN:
-      pushInt(t, 0);
-      break;
-    case FP_INFINITE:
-      pushInt(t, signbit(f) ? INT32_MIN : INT32_MAX);
-      break;
-    default:
-      pushInt(t,
-              f >= INT32_MAX
-                  ? INT32_MAX
-                  : (f <= INT32_MIN ? INT32_MIN : static_cast<int32_t>(f)));
-      break;
-    }
+    pushInt(t, static_cast<uint32_t>(tos_d2i(popDoubleBits(t))));
   }
     goto loop;
 
   case d2l: {
-    double f = popDouble(t);
-    switch (fpclassify(f)) {
-    case FP_NAN:
-      pushLong(t, 0);
-      break;
-    case FP_INFINITE:
-      pushLong(t, signbit(f) ? INT64_MIN : INT64_MAX);
-      break;
-    default:
-      pushLong(t,
-               f >= INT64_MAX
-                   ? INT64_MAX
-                   : (f <= INT64_MIN ? INT64_MIN : static_cast<int64_t>(f)));
-      break;
-    }
+    pushLong(t, static_cast<uint64_t>(tos_d2l(popDoubleBits(t))));
   }
     goto loop;
 
   case dadd: {
-    double b = popDouble(t);
-    double a = popDouble(t);
-
-    pushDouble(t, a + b);
+    uint64_t b = popDoubleBits(t);
+    uint64_t a = popDoubleBits(t);
+    pushDoubleBits(t, tos_dadd(a, b));
   }
     goto loop;
 
@@ -1325,40 +1316,16 @@ loop:
     goto loop;
 
   case dcmpg: {
-    double b = popDouble(t);
-    double a = popDouble(t);
-
-    if (isNaN(a) or isNaN(b)) {
-      pushInt(t, 1);
-    }
-    if (a < b) {
-      pushInt(t, static_cast<unsigned>(-1));
-    } else if (a > b) {
-      pushInt(t, 1);
-    } else if (a == b) {
-      pushInt(t, 0);
-    } else {
-      pushInt(t, 1);
-    }
+    uint64_t b = popDoubleBits(t);
+    uint64_t a = popDoubleBits(t);
+    pushInt(t, static_cast<uint32_t>(tos_dcmpg(a, b)));
   }
     goto loop;
 
   case dcmpl: {
-    double b = popDouble(t);
-    double a = popDouble(t);
-
-    if (isNaN(a) or isNaN(b)) {
-      pushInt(t, static_cast<unsigned>(-1));
-    }
-    if (a < b) {
-      pushInt(t, static_cast<unsigned>(-1));
-    } else if (a > b) {
-      pushInt(t, 1);
-    } else if (a == b) {
-      pushInt(t, 0);
-    } else {
-      pushInt(t, static_cast<unsigned>(-1));
-    }
+    uint64_t b = popDoubleBits(t);
+    uint64_t a = popDoubleBits(t);
+    pushInt(t, static_cast<uint32_t>(tos_dcmpl(a, b)));
   }
     goto loop;
 
@@ -1373,41 +1340,35 @@ loop:
     goto loop;
 
   case ddiv: {
-    double b = popDouble(t);
-    double a = popDouble(t);
-
-    pushDouble(t, a / b);
+    uint64_t b = popDoubleBits(t);
+    uint64_t a = popDoubleBits(t);
+    pushDoubleBits(t, tos_ddiv(a, b));
   }
     goto loop;
 
   case dmul: {
-    double b = popDouble(t);
-    double a = popDouble(t);
-
-    pushDouble(t, a * b);
+    uint64_t b = popDoubleBits(t);
+    uint64_t a = popDoubleBits(t);
+    pushDoubleBits(t, tos_dmul(a, b));
   }
     goto loop;
 
   case dneg: {
-    double a = popDouble(t);
-
-    pushDouble(t, -a);
+    pushDoubleBits(t, tos_dneg(popDoubleBits(t)));
   }
     goto loop;
 
   case vm::drem: {
-    double b = popDouble(t);
-    double a = popDouble(t);
-
-    pushDouble(t, fmod(a, b));
+    uint64_t b = popDoubleBits(t);
+    uint64_t a = popDoubleBits(t);
+    pushDoubleBits(t, tos_drem(a, b));
   }
     goto loop;
 
   case dsub: {
-    double b = popDouble(t);
-    double a = popDouble(t);
-
-    pushDouble(t, a - b);
+    uint64_t b = popDoubleBits(t);
+    uint64_t a = popDoubleBits(t);
+    pushDoubleBits(t, tos_dsub(a, b));
   }
     goto loop;
 
@@ -1484,50 +1445,24 @@ loop:
     goto loop;
 
   case f2d: {
-    pushDouble(t, popFloat(t));
+    pushDoubleBits(t, tos_f2d(popFloatBits(t)));
   }
     goto loop;
 
   case f2i: {
-    float f = popFloat(t);
-    switch (fpclassify(f)) {
-    case FP_NAN:
-      pushInt(t, 0);
-      break;
-    case FP_INFINITE:
-      pushInt(t, signbit(f) ? INT32_MIN : INT32_MAX);
-      break;
-    default:
-      pushInt(t,
-              f >= INT32_MAX
-                  ? INT32_MAX
-                  : (f <= INT32_MIN ? INT32_MIN : static_cast<int32_t>(f)));
-      break;
-    }
+    pushInt(t, static_cast<uint32_t>(tos_f2i(popFloatBits(t))));
   }
     goto loop;
 
   case f2l: {
-    float f = popFloat(t);
-    switch (fpclassify(f)) {
-    case FP_NAN:
-      pushLong(t, 0);
-      break;
-    case FP_INFINITE:
-      pushLong(t, signbit(f) ? INT64_MIN : INT64_MAX);
-      break;
-    default:
-      pushLong(t, static_cast<int64_t>(f));
-      break;
-    }
+    pushLong(t, static_cast<uint64_t>(tos_f2l(popFloatBits(t))));
   }
     goto loop;
 
   case vm::fadd: {
-    float b = popFloat(t);
-    float a = popFloat(t);
-
-    pushFloat(t, a + b);
+    uint32_t b = popFloatBits(t);
+    uint32_t a = popFloatBits(t);
+    pushFloatBits(t, tos_fadd(a, b));
   }
     goto loop;
 
@@ -1579,40 +1514,16 @@ loop:
     goto loop;
 
   case fcmpg: {
-    float b = popFloat(t);
-    float a = popFloat(t);
-
-    if (isNaN(a) or isNaN(b)) {
-      pushInt(t, 1);
-    }
-    if (a < b) {
-      pushInt(t, static_cast<unsigned>(-1));
-    } else if (a > b) {
-      pushInt(t, 1);
-    } else if (a == b) {
-      pushInt(t, 0);
-    } else {
-      pushInt(t, 1);
-    }
+    uint32_t b = popFloatBits(t);
+    uint32_t a = popFloatBits(t);
+    pushInt(t, static_cast<uint32_t>(tos_fcmpg(a, b)));
   }
     goto loop;
 
   case fcmpl: {
-    float b = popFloat(t);
-    float a = popFloat(t);
-
-    if (isNaN(a) or isNaN(b)) {
-      pushInt(t, static_cast<unsigned>(-1));
-    }
-    if (a < b) {
-      pushInt(t, static_cast<unsigned>(-1));
-    } else if (a > b) {
-      pushInt(t, 1);
-    } else if (a == b) {
-      pushInt(t, 0);
-    } else {
-      pushInt(t, static_cast<unsigned>(-1));
-    }
+    uint32_t b = popFloatBits(t);
+    uint32_t a = popFloatBits(t);
+    pushInt(t, static_cast<uint32_t>(tos_fcmpl(a, b)));
   }
     goto loop;
 
@@ -1632,41 +1543,35 @@ loop:
     goto loop;
 
   case vm::fdiv: {
-    float b = popFloat(t);
-    float a = popFloat(t);
-
-    pushFloat(t, a / b);
+    uint32_t b = popFloatBits(t);
+    uint32_t a = popFloatBits(t);
+    pushFloatBits(t, tos_fdiv(a, b));
   }
     goto loop;
 
   case vm::fmul: {
-    float b = popFloat(t);
-    float a = popFloat(t);
-
-    pushFloat(t, a * b);
+    uint32_t b = popFloatBits(t);
+    uint32_t a = popFloatBits(t);
+    pushFloatBits(t, tos_fmul(a, b));
   }
     goto loop;
 
   case fneg: {
-    float a = popFloat(t);
-
-    pushFloat(t, -a);
+    pushFloatBits(t, tos_fneg(popFloatBits(t)));
   }
     goto loop;
 
   case frem: {
-    float b = popFloat(t);
-    float a = popFloat(t);
-
-    pushFloat(t, fmodf(a, b));
+    uint32_t b = popFloatBits(t);
+    uint32_t a = popFloatBits(t);
+    pushFloatBits(t, tos_frem(a, b));
   }
     goto loop;
 
   case vm::fsub: {
-    float b = popFloat(t);
-    float a = popFloat(t);
-
-    pushFloat(t, a - b);
+    uint32_t b = popFloatBits(t);
+    uint32_t a = popFloatBits(t);
+    pushFloatBits(t, tos_fsub(a, b));
   }
     goto loop;
 
@@ -1738,12 +1643,12 @@ loop:
     goto loop;
 
   case i2d: {
-    pushDouble(t, static_cast<double>(static_cast<int32_t>(popInt(t))));
+    pushDoubleBits(t, tos_i2d(static_cast<int32_t>(popInt(t))));
   }
     goto loop;
 
   case i2f: {
-    pushFloat(t, static_cast<float>(static_cast<int32_t>(popInt(t))));
+    pushFloatBits(t, tos_i2f(static_cast<int32_t>(popInt(t))));
   }
     goto loop;
 
@@ -2309,12 +2214,12 @@ loop:
     goto loop;
 
   case l2d: {
-    pushDouble(t, static_cast<double>(static_cast<int64_t>(popLong(t))));
+    pushDoubleBits(t, tos_l2d(static_cast<int64_t>(popLong(t))));
   }
     goto loop;
 
   case l2f: {
-    pushFloat(t, static_cast<float>(static_cast<int64_t>(popLong(t))));
+    pushFloatBits(t, tos_l2f(static_cast<int64_t>(popLong(t))));
   }
     goto loop;
 
