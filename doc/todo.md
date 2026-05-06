@@ -141,7 +141,19 @@ Status legend: `✅` completed, unchecked items are still open.
     method-type / invokedynamic constants, malformed class
     initializers/constructors, application `<clinit>`, mutable static fields,
     admitted static-final constants, synchronized/native/finalizer application
-    methods, enum class flags, and forbidden reflection/ref refs.
+    methods, enum class flags, forbidden reflection/ref refs, class-file
+    version acceptance/rejection (major 52/45 accepted; 53+ and 44- and
+    minor=0xFFFF rejected), stale `avata/*` namespace rejection in both
+    constant-pool class refs and declared class names, additional explicit class
+    ref tests for Thread/ClassLoader/invoke/reflect, forbidden
+    `java/internal/*` field descriptors, static mutable String fields, and
+    all six remaining forbidden attributes (Module, ModulePackages,
+    ModuleMainClass, NestHost, Record, PermittedSubclasses).
+    `machine.cpp` now also rejects constant-pool class refs and declared class
+    names under the stale `avata/` package prefix.
+  - ✅ **Deploy-time verifier negative tests added:** `VerifierProfile` now covers
+    all forbidden package/class references, stale namespace rejection, version
+    boundary tests, and all forbidden attribute variants.
   - **Remaining work:**
     - Move from the current verifier helper allowlist to a generated profile
       manifest once `rt.jar` is finalized.
@@ -167,9 +179,7 @@ Status legend: `✅` completed, unchecked items are still open.
     also removed legacy thread/security/type shell classes
     (`IllegalThreadStateException`, `ThreadDeath`, `SecurityException`,
     `TypeNotPresentException`) plus `Collections.shuffle`.
-  - **Remaining work:**
-    - Add deploy-time verifier negative tests for forbidden package/class
-      references that are absent or internal-only.
+  - ✅ **Deploy-time verifier negative tests added:** see VerifierProfile above.
 
 - [ ] Make object identity deterministic or unavailable: `Object.hashCode`,
   `System.identityHashCode`, object `toString`, and exception stack traces must

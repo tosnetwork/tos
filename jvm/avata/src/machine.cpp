@@ -625,8 +625,12 @@ bool forbiddenInternalClass(const int8_t* begin,
     return false;
   }
 
+  // Reject java/internal/* and stale avata/* in the strict contract profile.
+  // java/internal/* is VM-private; avata/* was the old package, moved to
+  // java.internal.*. Both are absent from the contract rt.jar/api.jar.
   if (applicationClass && strictContractProfile
-      && segmentStartsWith(begin, end, "java/internal/")) {
+      && (segmentStartsWith(begin, end, "java/internal/")
+          || segmentStartsWith(begin, end, "avata/"))) {
     return true;
   }
 
@@ -800,7 +804,8 @@ void verifyDeclaredClassNameAllowed(Thread* t,
     ++end;
   }
 
-  if (segmentStartsWith(begin, end, "java/internal/")) {
+  if (segmentStartsWith(begin, end, "java/internal/")
+      || segmentStartsWith(begin, end, "avata/")) {
     throwNew(t, GcVerifyError::Type);
   }
 }
@@ -1318,7 +1323,11 @@ void parseInterfaceTable(Thread* t,
   class_->setInterfaceTable(t, interfaceTable);
 }
 
-void parseFieldTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
+void parseFieldTable(Thread* t,
+                     Stream& s,
+                     GcClass* class_,
+                     GcSingleton* pool,
+                     bool strictContractProfile)
 {
   PROTECT(t, class_);
   PROTECT(t, pool);
@@ -1359,7 +1368,7 @@ void parseFieldTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
                               specBytes,
                               class_->name(),
                               class_->loader() != roots(t)->bootClassSpace(),
-                              false);
+                              strictContractProfile);
 
       unsigned code = fieldCode(t, specBytes->body()[0]);
 
@@ -2435,7 +2444,11 @@ GcList* addInterfaceMethods(Thread* t,
   return 0;
 }
 
-void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
+void parseMethodTable(Thread* t,
+                      Stream& s,
+                      GcClass* class_,
+                      GcSingleton* pool,
+                      bool strictContractProfile)
 {
   PROTECT(t, class_);
   PROTECT(t, pool);
@@ -2500,7 +2513,7 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
                               specBytes,
                               class_->name(),
                               class_->loader() != roots(t)->bootClassSpace(),
-                              false);
+                              strictContractProfile);
 
       if (DebugClassReader) {
         fprintf(stderr,
@@ -4934,9 +4947,9 @@ GcClass* parseClass(Thread* t,
 
   parseInterfaceTable(t, s, class_, pool, throwType);
 
-  parseFieldTable(t, s, class_, pool);
+  parseFieldTable(t, s, class_, pool, strictContractProfile);
 
-  parseMethodTable(t, s, class_, pool);
+  parseMethodTable(t, s, class_, pool, strictContractProfile);
 
   parseAttributeTable(t, s, class_, pool);
 

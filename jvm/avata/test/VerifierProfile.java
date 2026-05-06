@@ -52,6 +52,17 @@ public class VerifierProfile {
     throw new RuntimeException("expected ClassFormatError: " + name);
   }
 
+  private static void expectUnsupportedClassVersionError(String name,
+                                                          Thrower thrower)
+      throws Exception {
+    try {
+      thrower.run();
+    } catch (UnsupportedClassVersionError expected) {
+      return;
+    }
+    throw new RuntimeException("expected UnsupportedClassVersionError: " + name);
+  }
+
   private static Class define(String name, byte[] bytes) {
     return SystemClassSpace.getClass(defineVM(name, bytes));
   }
@@ -159,6 +170,58 @@ public class VerifierProfile {
     }
     Stream.write2(out, 0); // class attributes
     return out.toByteArray();
+  }
+
+  private static byte[] makeClassWithVersion(int minorVersion,
+                                              int majorVersion)
+      throws IOException {
+    List<PoolEntry> pool = new ArrayList<PoolEntry>();
+    int className = ConstantPool.addClass(pool, "VerifierProfile$VersionTest");
+    int superName = ConstantPool.addClass(pool, "java/lang/Object");
+
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    Stream.write4(out, 0xCAFEBABE);
+    Stream.write2(out, minorVersion);
+    Stream.write2(out, majorVersion);
+    Stream.write2(out, pool.size() + 1);
+    for (PoolEntry e : pool) {
+      e.writeTo(out);
+    }
+    Stream.write2(out, Assembler.ACC_PUBLIC);
+    Stream.write2(out, className + 1);
+    Stream.write2(out, superName + 1);
+    Stream.write2(out, 0); // interfaces
+    Stream.write2(out, 0); // fields
+    Stream.write2(out, 0); // methods
+    Stream.write2(out, 0); // class attributes
+    return out.toByteArray();
+  }
+
+  private static byte[] makeForbiddenInternalFieldDescriptor()
+      throws IOException {
+    List<PoolEntry> pool = new ArrayList<PoolEntry>();
+    FieldData[] fields = new FieldData[] {
+      new FieldData(Assembler.ACC_PUBLIC,
+                    ConstantPool.addUtf8(pool, "traces"),
+                    ConstantPool.addUtf8(pool, "Ljava/internal/Traces;"))
+    };
+    return makeClass("VerifierProfile$ForbiddenInternalFieldDescriptor",
+                     pool,
+                     fields,
+                     new MethodData[0]);
+  }
+
+  private static byte[] makeStaticStringField() throws IOException {
+    List<PoolEntry> pool = new ArrayList<PoolEntry>();
+    FieldData[] fields = new FieldData[] {
+      new FieldData(Assembler.ACC_PUBLIC | Assembler.ACC_STATIC,
+                    ConstantPool.addUtf8(pool, "name"),
+                    ConstantPool.addUtf8(pool, "Ljava/lang/String;"))
+    };
+    return makeClass("VerifierProfile$StaticStringField",
+                     pool,
+                     fields,
+                     new MethodData[0]);
   }
 
   private static byte[] makeClassWithBootstrapMethods(String className,
@@ -990,6 +1053,114 @@ public class VerifierProfile {
                                  makeStaticFinalConstantField());
     if (invokeStaticInt(constants, "read", "()I") != 42) {
       throw new RuntimeException("static final constant read failed");
+    }
+
+    // Class-file version tests.
+    // Java 8 (major=52, minor=0) must be accepted.
+    define("VerifierProfile$VersionTest", makeClassWithVersion(0, 52));
+
+    // Java 1.1 (major=45, minor=3) must be accepted — earliest admitted.
+    define("VerifierProfile$VersionTest", makeClassWithVersion(3, 45));
+
+    // Java 9+ (major=53) must be rejected with UnsupportedClassVersionError.
+    expectUnsupportedClassVersionError("java 9+ class file major", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$VersionTest", makeClassWithVersion(0, 53));
+      }
+    });
+
+    // Pre-Java-1.1 (major=44) must be rejected with UnsupportedClassVersionError.
+    expectUnsupportedClassVersionError("pre-java-1.1 class file major",
+        new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$VersionTest", makeClassWithVersion(0, 44));
+      }
+    });
+
+    // Java preview minor (0xFFFF) must be rejected with UnsupportedClassVersionError.
+    expectUnsupportedClassVersionError("java preview minor version", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$VersionTest", makeClassWithVersion(0xFFFF, 52));
+      }
+    });
+
+    // Additional forbidden class ref tests for completeness.
+    expectVerifyError("forbidden Thread class ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/Thread"));
+      }
+    });
+
+    expectVerifyError("forbidden ClassLoader class ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/ClassLoader"));
+      }
+    });
+
+    expectVerifyError("forbidden invoke/MethodHandle class ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/invoke/MethodHandle"));
+      }
+    });
+
+    expectVerifyError("forbidden reflect/Field class ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/reflect/Field"));
+      }
+    });
+
+    // Stale avata/* namespace must be rejected in constant-pool class refs.
+    expectVerifyError("stale avata/* class ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("avata/SomeClass"));
+      }
+    });
+
+    // Stale avata/* namespace must be rejected as a declared class name.
+    expectVerifyError("stale avata/* declared class name", new Thrower() {
+      public void run() throws Exception {
+        define("avata/ForbiddenContractClass",
+               makeEmptyClass("avata/ForbiddenContractClass"));
+      }
+    });
+
+    // java/internal/* in field descriptor must be rejected.
+    expectVerifyError("forbidden java.internal field descriptor", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenInternalFieldDescriptor",
+               makeForbiddenInternalFieldDescriptor());
+      }
+    });
+
+    // Static mutable String field must be rejected.
+    expectVerifyError("static String field", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$StaticStringField", makeStaticStringField());
+      }
+    });
+
+    // Additional forbidden class-file attribute tests.
+    final String[] forbiddenAttributes = new String[] {
+      "Module",
+      "ModulePackages",
+      "ModuleMainClass",
+      "NestHost",
+      "Record",
+      "PermittedSubclasses",
+    };
+    for (int i = 0; i < forbiddenAttributes.length; ++i) {
+      final String attr = forbiddenAttributes[i];
+      expectVerifyError("forbidden attribute " + attr, new Thrower() {
+        public void run() throws Exception {
+          define("VerifierProfile$ForbiddenAttribute",
+                 makeForbiddenClassAttribute(attr));
+        }
+      });
     }
   }
 }
