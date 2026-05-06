@@ -35,7 +35,7 @@ const unsigned FrameFootprint = 4;
 
 class Thread : public vm::Thread {
  public:
-  Thread(Machine* m, GcThread* javaThread, vm::Thread* parent)
+  Thread(Machine* m, GcExecutionContext* javaThread, vm::Thread* parent)
       : vm::Thread(m, javaThread, parent),
         ip(0),
         sp(0),
@@ -52,6 +52,21 @@ class Thread : public vm::Thread {
   List<unsigned>* stackPointers;
   uintptr_t stack[0];
 };
+
+inline bool contractMayAccessStaticField(Thread* t,
+                                         GcField* field,
+                                         bool write)
+{
+  if (!t->contractActive) {
+    return true;
+  }
+
+  if (field->class_()->loader() != roots(t)->bootClassSpace()) {
+    return false;
+  }
+
+  return !write || field->code() != ObjectField;
+}
 
 inline void pushObject(Thread* t, object o)
 {
@@ -1684,6 +1699,14 @@ loop:
 
     PROTECT(t, field);
 
+    if (UNLIKELY(!contractMayAccessStaticField(t, field, false))) {
+      exception = makeThrowable(
+          t,
+          GcContractViolationError::Type,
+          "static field access is not admitted during contract execution");
+      goto throw_;
+    }
+
     initClass(t, field->class_());
 
     ACQUIRE_FIELD_FOR_READ(t, field);
@@ -2083,32 +2106,8 @@ loop:
     goto loop;
 
   case invokedynamic: {
-    uint16_t index = codeReadInt16(t, code, ip);
-
-    ip += 2;
-
-    GcInvocation* invocation = cast<GcInvocation>(t, singletonObject(t, code->pool(), index - 1));
-
-    GcCallSite* site = invocation->site();
-
-    loadMemoryBarrier();
-
-    if (site == 0) {
-      PROTECT(t, invocation);
-
-      invocation->setClass(t, frameMethod(t, frame)->class_());
-
-      site = resolveDynamic(t, invocation);
-      PROTECT(t, site);
-
-      storeStoreMemoryBarrier();
-
-      invocation->setSite(t, site);
-      site->setInvocation(t, invocation);
-    }
-
-    method = site->target()->method();
-  } goto invoke;
+    throwNew(t, GcVerifyError::Type);
+  } goto loop;
 
   case invokeinterface: {
     uint16_t index = codeReadInt16(t, code, ip);
@@ -2872,6 +2871,14 @@ loop:
 
     PROTECT(t, field);
 
+    if (UNLIKELY(!contractMayAccessStaticField(t, field, true))) {
+      exception = makeThrowable(
+          t,
+          GcContractViolationError::Type,
+          "static field access is not admitted during contract execution");
+      goto throw_;
+    }
+
     ACQUIRE_FIELD_FOR_WRITE(t, field);
 
     initClass(t, field->class_());
@@ -3279,7 +3286,7 @@ object invoke(Thread* t, GcMethod* method)
     class_ = objectClass(t, peekObject(t, t->sp - parameterFootprint));
 
     if (class_->vmFlags() & BootstrapFlag) {
-      resolveClass(t, roots(t)->bootLoader(), class_->name());
+      resolveClass(t, roots(t)->bootClassSpace(), class_->name());
     }
 
     if (method->class_()->flags() & ACC_INTERFACE) {
@@ -3353,7 +3360,7 @@ class MyProcessor : public Processor {
   }
 
   virtual vm::Thread* makeThread(Machine* m,
-                                 GcThread* javaThread,
+                                 GcExecutionContext* javaThread,
                                  vm::Thread* parent)
   {
     Thread* t = new (m->heap->allocate(sizeof(Thread) + m->stackSizeInBytes))
@@ -3408,7 +3415,7 @@ class MyProcessor : public Processor {
                              object methodTable,
                              GcClassAddendum* addendum,
                              GcSingleton* staticTable,
-                             GcClassLoader* loader,
+                             GcClassSpace* loader,
                              unsigned vtableLength UNUSED)
   {
     return vm::makeClass(t,
@@ -3582,7 +3589,7 @@ class MyProcessor : public Processor {
   }
 
   virtual object invokeList(vm::Thread* vmt,
-                            GcClassLoader* loader,
+                            GcClassSpace* loader,
                             const char* className,
                             const char* methodName,
                             const char* methodSpec,

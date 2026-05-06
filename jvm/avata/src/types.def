@@ -6,39 +6,17 @@
 (type jclass java/lang/Class
   (require class vmClass))
 
-(type jaccessibleObject java/lang/reflect/AccessibleObject)
-
-(type jexecutable java/lang/reflect/Executable)
-
-(type jfield java/lang/reflect/Field)
-
-(type jmethod java/lang/reflect/Method)
-
-(type jconstructor java/lang/reflect/Constructor)
-
-(type constantPool sun/reflect/ConstantPool)
-
 (type serializable java/io/Serializable)
 
 (type cloneable java/lang/Cloneable)
 
-(type callSite java/lang/invoke/CallSite
-  (require invocation invocation))
-
-(type methodHandle java/lang/invoke/MethodHandle
-  (alias method method vmtarget))
-
-(type methodType java/lang/invoke/MethodType)
-
-(type lookup java/lang/invoke/MethodHandles$Lookup)
-
 (type singleton avata/Singleton
   (array maybe_object body))
 
-(type classLoader java/lang/ClassLoader
+(type classSpace avata/ClassSpace
   (object map))
 
-(type systemClassLoader avata/SystemClassLoader
+(type systemClassSpace avata/SystemClassSpace
   (void* finder))
 
 (type field avata/VMField)
@@ -83,26 +61,10 @@
 (type lineNumberTable
   (array uint64_t body))
 
-(type invocation
-  (uint16_t bootstrap)
-  (int32_t index)
-  (class class)
-  (singleton pool)
-  (method template)
-  (field array bootstrapMethodTable)
-  (callSite site))
-
 (type triple
   (object first)
   (object second)
   (object third))
-
-(type finalizer
-  (nogc object target)
-  (void* finalize)
-  (nogc object next)
-  (object queueTarget)
-  (finalizer queueNext))
 
 (type list
   (uint32_t size)
@@ -137,9 +99,6 @@
 (type hashMap
   (uint32_t size)
   (field array array))
-
-(type weakHashMap
-  (extends hashMap))
 
 (type pair avata/Pair
   (object first)
@@ -184,7 +143,7 @@
   (polyfill uint32_t offset)
   (polyfill uint32_t length))
 
-(type thread java/lang/Thread
+(type executionContext avata/ExecutionContext
   (require object sleepLock)
   (require object interruptLock)
   (require uint8_t interrupted)
@@ -193,7 +152,7 @@
   (alias peer uint64_t nativePeer)
   (require uint64_t peer))
 
-(type threadGroup java/lang/ThreadGroup)
+(type executionGroup avata/ExecutionGroup)
 
 (type stackTraceElement java/lang/StackTraceElement)
 
@@ -226,13 +185,9 @@
 
 (type cloneNotSupportedException java/lang/CloneNotSupportedException)
 
-(type reflectiveOperationException java/lang/ReflectiveOperationException)
-
 (type classCastException java/lang/ClassCastException)
 
 (type classNotFoundException java/lang/ClassNotFoundException)
-
-(type invocationTargetException java/lang/reflect/InvocationTargetException)
 
 (type interruptedException java/lang/InterruptedException)
 
@@ -292,30 +247,6 @@
 (type float java/lang/Float)
 
 (type double java/lang/Double)
-
-(type referenceQueue java/lang/ref/ReferenceQueue
-  (alias front jreference head)
-  (require object jnext))
-
-(type jreference java/lang/ref/Reference
-  (alias target object referent)
-  (alias queue referenceQueue queue)
-  (alias jNext jreference next)
-  (alias jNext jreference queueNext)
-  (alias vmNext object discovered)
-  (alias vmNext object pendingNext)
-  (nogc object target)
-  (nogc object queue)
-  (nogc object vmNext))
-
-(type weakReference java/lang/ref/WeakReference)
-
-(type softReference java/lang/ref/SoftReference)
-
-(type phantomReference java/lang/ref/PhantomReference)
-
-(type cleaner sun/misc/Cleaner
-  (cleaner queueNext))
 
 (type byteArray [B
   (extends jobject)
@@ -399,8 +330,8 @@
   (extends jobject))
 
 (type roots
-  (classLoader bootLoader)
-  (classLoader appLoader)
+  (classSpace bootClassSpace)
+  (classSpace appClassSpace)
   (hashMap bootstrapClassMap)
   (hashMap packageMap)
   (method findLoadedClassMethod)
@@ -414,9 +345,6 @@
   (vector jNIMethodTable)
   (vector jNIFieldTable)
   (pair shutdownHooks)
-  (thread finalizerThread)
-  (finalizer objectsToFinalize)
-  (cleaner objectsToClean)
   (throwable nullPointerException)
   (throwable arithmeticException)
   (throwable arrayIndexOutOfBoundsException)
@@ -425,8 +353,7 @@
   (finder virtualFileFinders)
   (field array virtualFiles)
   (field array arrayInterfaceTable)
-  (object threadTerminated)
-  (field array invocations))
+  (object threadTerminated))
 
 (type compileRoots
   (field array callTable)

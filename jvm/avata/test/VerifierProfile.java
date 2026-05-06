@@ -1,9 +1,11 @@
 import avata.Assembler;
 import avata.Assembler.FieldData;
 import avata.Assembler.MethodData;
+import avata.Classes;
 import avata.ConstantPool;
 import avata.ConstantPool.PoolEntry;
 import avata.Stream;
+import avata.SystemClassSpace;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -20,25 +22,8 @@ public class VerifierProfile {
   private static final int ACC_NATIVE = 0x0100;
   private static final int ACC_ABSTRACT = 0x0400;
 
-  private static final String ALT_METAFACTORY_SPEC =
-      "(Ljava/lang/invoke/MethodHandles$Lookup;"
-      + "Ljava/lang/String;"
-      + "Ljava/lang/invoke/MethodType;"
-      + "[Ljava/lang/Object;)"
-      + "Ljava/lang/invoke/CallSite;";
-
   private interface Thrower {
     void run() throws Exception;
-  }
-
-  private static class MyClassLoader extends ClassLoader {
-    MyClassLoader(ClassLoader parent) {
-      super(parent);
-    }
-
-    Class define(String name, byte[] bytes) {
-      return super.defineClass(name, bytes, 0, bytes.length);
-    }
   }
 
   private static void expectVerifyError(String name, Thrower thrower)
@@ -62,8 +47,8 @@ public class VerifierProfile {
   }
 
   private static Class define(String name, byte[] bytes) {
-    return new MyClassLoader(VerifierProfile.class.getClassLoader())
-        .define(name, bytes);
+    return SystemClassSpace.getClass(Classes.defineVMClass(
+        SystemClassSpace.appClassSpace(), bytes, 0, bytes.length));
   }
 
   private static byte[] returnVoidCode() throws IOException {
@@ -248,33 +233,14 @@ public class VerifierProfile {
         new int[][] { new int[] { handle } });
   }
 
-  private static byte[] makeForbiddenSerializableBootstrap()
+  private static byte[] makeForbiddenMethodTypeConstant()
       throws IOException {
     List<PoolEntry> pool = new ArrayList<PoolEntry>();
-    int bootstrapRef = ConstantPool.addMethodRef(pool,
-                                                "java/lang/invoke/"
-                                                    + "LambdaMetafactory",
-                                                "altMetafactory",
-                                                ALT_METAFACTORY_SPEC);
-    int bootstrap = addMethodHandle(pool, REF_INVOKE_STATIC, bootstrapRef);
-    int methodType = addMethodType(pool, "()V");
-    int implementationRef = ConstantPool.addMethodRef(
-        pool, "VerifierProfile$ForbiddenSerializableBootstrap", "target", "()V");
-    int implementation
-        = addMethodHandle(pool, REF_INVOKE_STATIC, implementationRef);
-    int serializableFlag = ConstantPool.addInteger(pool, 1);
-    return makeClassWithBootstrapMethods(
-        "VerifierProfile$ForbiddenSerializableBootstrap",
-        pool,
-        new int[][] {
-          new int[] {
-            bootstrap,
-            methodType,
-            implementation,
-            methodType,
-            serializableFlag
-          }
-        });
+    addMethodType(pool, "()V");
+    return makeClass("VerifierProfile$ForbiddenMethodTypeConstant",
+                     pool,
+                     new FieldData[0],
+                     new MethodData[0]);
   }
 
   private static byte[] makeMissingBootstrapMethodsAttribute()
@@ -420,21 +386,17 @@ public class VerifierProfile {
                                   true);
   }
 
-  private static void validAllowedReflectionReference() throws Exception {
+  private static byte[] makeForbiddenReflectionReference() throws IOException {
     List<PoolEntry> pool = new ArrayList<PoolEntry>();
     FieldData[] fields = new FieldData[] {
       new FieldData(Assembler.ACC_PUBLIC,
                     ConstantPool.addUtf8(pool, "method"),
                     ConstantPool.addUtf8(pool, "Ljava/lang/reflect/Method;"))
     };
-    Class c = define("VerifierProfile$AllowedReflectionReference",
-                     makeClass("VerifierProfile$AllowedReflectionReference",
-                               pool,
-                               fields,
-                               new MethodData[0]));
-    if (!"VerifierProfile$AllowedReflectionReference".equals(c.getName())) {
-      throw new RuntimeException("wrong defined class name");
-    }
+    return makeClass("VerifierProfile$ForbiddenReflectionReference",
+                     pool,
+                     fields,
+                     new MethodData[0]);
   }
 
   public static void main(String[] args) throws Exception {
@@ -487,6 +449,36 @@ public class VerifierProfile {
       }
     });
 
+    expectVerifyError("forbidden security exception ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/SecurityException"));
+      }
+    });
+
+    expectVerifyError("forbidden thread death ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/ThreadDeath"));
+      }
+    });
+
+    expectVerifyError("forbidden thread state exception ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference(
+                   "java/lang/IllegalThreadStateException"));
+      }
+    });
+
+    expectVerifyError("forbidden type-not-present exception ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference(
+                   "java/lang/TypeNotPresentException"));
+      }
+    });
+
     expectVerifyError("forbidden field descriptor", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$ForbiddenFieldDescriptor",
@@ -515,10 +507,10 @@ public class VerifierProfile {
       }
     });
 
-    expectVerifyError("forbidden serializable bootstrap", new Thrower() {
+    expectVerifyError("forbidden method type constant", new Thrower() {
       public void run() throws Exception {
-        define("VerifierProfile$ForbiddenSerializableBootstrap",
-               makeForbiddenSerializableBootstrap());
+        define("VerifierProfile$ForbiddenMethodTypeConstant",
+               makeForbiddenMethodTypeConstant());
       }
     });
 
@@ -586,6 +578,11 @@ public class VerifierProfile {
       }
     });
 
-    validAllowedReflectionReference();
+    expectVerifyError("forbidden reflection descriptor", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenReflectionReference",
+               makeForbiddenReflectionReference());
+      }
+    });
   }
 }

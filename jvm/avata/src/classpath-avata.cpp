@@ -40,61 +40,33 @@ class MyClasspath : public Classpath {
     return vm::makeString(t, array, offset, length, 0);
   }
 
-  virtual GcThread* makeThread(Thread* t, Thread* parent)
+  virtual GcExecutionContext* makeThread(Thread* t, Thread* parent)
   {
-    GcThreadGroup* group;
+    GcExecutionGroup* group;
     if (parent) {
       group = parent->javaThread->group();
     } else {
-      group = makeThreadGroup(t, 0, 0, 0);
+      group = makeExecutionGroup(t, 0, 0, 0);
     }
 
     const unsigned NewState = 0;
     const unsigned NormalPriority = 5;
 
-    return vm::makeThread(t,
-                          0,
-                          0,
-                          0,
-                          0,
-                          0,
-                          NewState,
-                          NormalPriority,
-                          0,
-                          0,
-                          roots(t)->appLoader(),
-                          0,
-                          0,
-                          group,
-                          0);
-  }
-
-  virtual object makeJMethod(Thread* t, GcMethod* vmMethod)
-  {
-    PROTECT(t, vmMethod);
-
-    GcJmethod* jmethod = makeJmethod(t, vmMethod, false);
-
-    return vmMethod->name()->body()[0] == '<'
-               ? (object)makeJconstructor(t, jmethod)
-               : (object)jmethod;
-  }
-
-  virtual GcMethod* getVMMethod(Thread* t, object jmethod)
-  {
-    return objectClass(t, jmethod) == type(t, GcJmethod::Type)
-               ? cast<GcJmethod>(t, jmethod)->vmMethod()
-               : cast<GcJconstructor>(t, jmethod)->method()->vmMethod();
-  }
-
-  virtual object makeJField(Thread* t, GcField* vmField)
-  {
-    return makeJfield(t, vmField, false);
-  }
-
-  virtual GcField* getVMField(Thread* t UNUSED, GcJfield* jfield)
-  {
-    return jfield->vmField();
+    return vm::makeExecutionContext(t,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    NewState,
+                                    NormalPriority,
+                                    0,
+                                    0,
+                                    roots(t)->appClassSpace(),
+                                    0,
+                                    0,
+                                    group,
+                                    0);
   }
 
   virtual void clearInterrupted(Thread*)
@@ -105,10 +77,10 @@ class MyClasspath : public Classpath {
   virtual void runThread(Thread* t)
   {
     GcMethod* method = resolveMethod(t,
-                                     roots(t)->bootLoader(),
-                                     "java/lang/Thread",
+                                     roots(t)->bootClassSpace(),
+                                     "avata/ExecutionContext",
                                      "run",
-                                     "(Ljava/lang/Thread;)V");
+                                     "(Lavata/ExecutionContext;)V");
 
     t->m->processor->invoke(t, method, 0, t->javaThread);
   }
@@ -149,28 +121,16 @@ class MyClasspath : public Classpath {
                            GcByteArray* calleeMethodName,
                            GcByteArray*)
   {
-    // we can't tail call System.load[Library] or
-    // Runtime.load[Library] due to their use of
-    // ClassLoader.getCaller, which gets confused if we elide stack
-    // frames.
-
-    return (
-        (strcmp("loadLibrary",
-                reinterpret_cast<char*>(calleeMethodName->body().begin()))
-         and strcmp("load",
-                    reinterpret_cast<char*>(calleeMethodName->body().begin())))
-        or (strcmp("java/lang/System",
-                   reinterpret_cast<char*>(calleeClassName->body().begin()))
-            and strcmp(
-                    "java/lang/Runtime",
-                    reinterpret_cast<char*>(calleeClassName->body().begin()))));
+    // Native library loading is trapped in java.lang.System before reaching
+    // this path, so normal tail-call eligibility is enough for the rt profile.
+    return true;
   }
 
-  virtual GcClassLoader* libraryClassLoader(Thread* t, GcMethod* caller)
+  virtual GcClassSpace* libraryClassSpace(Thread* t, GcMethod* caller)
   {
-    return (caller->class_() == type(t, Gc::ClassLoaderType)
+    return (caller->class_() == type(t, Gc::ClassSpaceType)
             and t->libraryLoadStack)
-               ? t->libraryLoadStack->classLoader
+               ? t->libraryLoadStack->classSpace
                : caller->class_()->loader();
   }
 
@@ -186,24 +146,6 @@ class MyClasspath : public Classpath {
 
   Allocator* allocator;
 };
-
-void enumerateThreads(Thread* t,
-                      Thread* x,
-                      GcArray* array,
-                      unsigned* index,
-                      unsigned limit)
-{
-  if (*index < limit) {
-    array->setBodyElement(t, *index, x->javaThread);
-    ++(*index);
-
-    if (x->peer)
-      enumerateThreads(t, x->peer, array, index, limit);
-
-    if (x->child)
-      enumerateThreads(t, x->child, array, index, limit);
-  }
-}
 
 }  // namespace local
 
@@ -240,79 +182,30 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_reflect_Field_getPrimitive(Thread* t,
-                                               object,
-                                               uintptr_t* arguments)
-{
-  return getPrimitive(
-      t, reinterpret_cast<object>(arguments[0]), arguments[1], arguments[2]);
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_reflect_Field_getObject(Thread*,
-                                            object,
-                                            uintptr_t* arguments)
-{
-  return reinterpret_cast<int64_t>(fieldAtOffset<object>(
-      reinterpret_cast<object>(arguments[0]), arguments[1]));
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_reflect_Field_setPrimitive(Thread* t,
-                                               object,
-                                               uintptr_t* arguments)
-{
-  int64_t value;
-  memcpy(&value, arguments + 3, 8);
-
-  setPrimitive(t,
-               reinterpret_cast<object>(arguments[0]),
-               arguments[1],
-               arguments[2],
-               value);
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_reflect_Field_setObject(Thread* t,
-                                            object,
-                                            uintptr_t* arguments)
-{
-  setField(t,
-           reinterpret_cast<object>(arguments[0]),
-           arguments[1],
-           reinterpret_cast<object>(arguments[2]));
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_reflect_Constructor_make(Thread* t,
-                                             object,
-                                             uintptr_t* arguments)
-{
-  return reinterpret_cast<int64_t>(
-      make(t, cast<GcClass>(t, reinterpret_cast<object>(arguments[0]))));
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_reflect_Method_getCaller(Thread* t, object, uintptr_t*)
+    Avata_avata_Classes_getCallerMethod(Thread* t, object, uintptr_t*)
 {
   return reinterpret_cast<int64_t>(getCaller(t, 2));
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_reflect_Method_invoke(Thread* t,
-                                          object,
-                                          uintptr_t* arguments)
+    Avata_avata_Classes_invokeVMMethod(Thread* t,
+                                       object,
+                                       uintptr_t* arguments)
 {
-  return invokeMethod(t,
-                      cast<GcMethod>(t, reinterpret_cast<object>(arguments[0])),
-                      reinterpret_cast<object>(arguments[1]),
-                      reinterpret_cast<object>(arguments[2]));
+  GcMethod* method = cast<GcMethod>(t, reinterpret_cast<object>(arguments[0]));
+  unsigned returnCode = method->returnCode();
+
+  return reinterpret_cast<int64_t>(translateInvokeResult(
+      t,
+      returnCode,
+      t->m->processor->invokeArray(t,
+                                   method,
+                                   reinterpret_cast<object>(arguments[1]),
+                                   reinterpret_cast<object>(arguments[2]))));
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_reflect_Array_getLength(Thread* t,
-                                            object,
-                                            uintptr_t* arguments)
+    Avata_avata_VMArray_getLength(Thread* t, object, uintptr_t* arguments)
 {
   object array = reinterpret_cast<object>(arguments[0]);
 
@@ -330,9 +223,9 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_reflect_Array_makeObjectArray(Thread* t,
-                                                  object,
-                                                  uintptr_t* arguments)
+    Avata_avata_VMArray_makeObjectArray(Thread* t,
+                                        object,
+                                        uintptr_t* arguments)
 {
   GcJclass* elementType
       = cast<GcJclass>(t, reinterpret_cast<object>(arguments[0]));
@@ -382,21 +275,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
   object this_ = reinterpret_cast<object>(arguments[0]);
 
   return reinterpret_cast<int64_t>(intern(t, this_));
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_System_getVMProperties(Thread* t, object, uintptr_t*)
-{
-  object array
-      = makeObjectArray(t, type(t, GcString::Type), t->m->propertyCount);
-  PROTECT(t, array);
-
-  for (unsigned i = 0; i < t->m->propertyCount; ++i) {
-    GcString* s = makeString(t, "%s", t->m->properties[i]);
-    reinterpret_cast<GcArray*>(array)->setBodyElement(t, i, s);
-  }
-
-  return reinterpret_cast<int64_t>(array);
 }
 
 namespace {
@@ -479,41 +357,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_ClassLoader_getCaller(Thread* t, object, uintptr_t*)
-{
-  return reinterpret_cast<int64_t>(getJClass(t, getCaller(t, 2)->class_()));
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_ClassLoader_load(Thread* t, object, uintptr_t*)
-{
-  throwNew(t,
-           GcContractViolationError::Type,
-           "native library loading is not admitted in the TOS JVM profile");
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_Runtime_gc(Thread* t, object, uintptr_t*)
-{
-  collect(t, Heap::MajorCollection);
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_Runtime_addShutdownHook(Thread* t,
-                                            object,
-                                            uintptr_t* arguments)
-{
-  object hook = reinterpret_cast<object>(arguments[1]);
-  PROTECT(t, hook);
-
-  ACQUIRE(t, t->m->shutdownLock);
-
-  GcPair* p = makePair(t, hook, roots(t)->shutdownHooks());
-  // sequence point, for gc (don't recombine statements)
-  roots(t)->setShutdownHooks(t, p);
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
     Avata_java_lang_Throwable_trace(Thread* t, object, uintptr_t* arguments)
 {
   return reinterpret_cast<int64_t>(getTrace(t, arguments[0]));
@@ -542,128 +385,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Thread_currentThread(Thread* t, object, uintptr_t*)
-{
-  return reinterpret_cast<int64_t>(t->javaThread);
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Thread_doStart(Thread* t, object, uintptr_t* arguments)
-{
-  return reinterpret_cast<int64_t>(
-      startThread(t, cast<GcThread>(t, reinterpret_cast<object>(*arguments))));
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_Thread_interrupt(Thread* t, object, uintptr_t* arguments)
-{
-  int64_t peer;
-  memcpy(&peer, arguments, 8);
-
-  threadInterrupt(t, reinterpret_cast<Thread*>(peer)->javaThread);
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Thread_interrupted(Thread* t, object, uintptr_t* arguments)
-{
-  int64_t peer;
-  memcpy(&peer, arguments, 8);
-
-  return threadIsInterrupted(
-      t, reinterpret_cast<Thread*>(peer)->javaThread, true);
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Thread_getStackTrace(Thread* t,
-                                         object,
-                                         uintptr_t* arguments)
-{
-  int64_t peer;
-  memcpy(&peer, arguments, 8);
-
-  if (reinterpret_cast<Thread*>(peer) == t) {
-    return reinterpret_cast<int64_t>(makeTrace(t));
-  } else {
-    return reinterpret_cast<int64_t>(
-        t->m->processor->getStackTrace(t, reinterpret_cast<Thread*>(peer)));
-  }
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Thread_activeCount(Thread* t, object, uintptr_t*)
-{
-  return t->m->liveCount;
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Thread_enumerate(Thread* t, object, uintptr_t* arguments)
-{
-  GcArray* array = cast<GcArray>(t, reinterpret_cast<object>(*arguments));
-
-  ACQUIRE_RAW(t, t->m->stateLock);
-
-  unsigned count = min(t->m->liveCount,
-                       objectArrayLength(t, reinterpret_cast<object>(array)));
-  unsigned index = 0;
-  local::enumerateThreads(t, t->m->rootThread, array, &index, count);
-  return count;
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Thread_holdsLock(Thread* t, object, uintptr_t* arguments)
-{
-  GcMonitor* m
-      = objectMonitor(t, reinterpret_cast<object>(arguments[0]), false);
-
-  return m and m->owner() == t;
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_Thread_yield(Thread* t, object, uintptr_t*)
-{
-  t->m->system->yield();
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Atomic_getOffset(Thread* t, object, uintptr_t* arguments)
-{
-  return cast<GcJfield>(t, reinterpret_cast<object>(arguments[0]))
-      ->vmField()
-      ->offset();
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_sun_misc_Unsafe_objectFieldOffset(Thread* t,
-                                            object,
-                                            uintptr_t* arguments)
-{
-  return cast<GcJfield>(t, reinterpret_cast<object>(arguments[1]))
-      ->vmField()
-      ->offset();
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Atomic_compareAndSwapObject(Thread* t,
-                                            object,
-                                            uintptr_t* arguments)
-{
-  object target = reinterpret_cast<object>(arguments[0]);
-  int64_t offset;
-  memcpy(&offset, arguments + 1, 8);
-  uintptr_t expect = arguments[3];
-  uintptr_t update = arguments[4];
-
-  bool success = atomicCompareAndSwap(
-      &fieldAtOffset<uintptr_t>(target, offset), expect, update);
-
-  if (success) {
-    mark(t, target, offset);
-  }
-
-  return success;
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
     Avata_avata_Classes_isAssignableFrom(Thread* t,
                                          object,
                                          uintptr_t* arguments)
@@ -679,17 +400,26 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
+    Avata_avata_Memory_used(Thread* t, object, uintptr_t*)
+{
+  return contractMemoryUsed(t);
+}
+
+extern "C" AVATA_EXPORT int64_t JNICALL
+    Avata_avata_Memory_remaining(Thread* t, object, uintptr_t*)
+{
+  return contractMemoryRemaining(t);
+}
+
+extern "C" AVATA_EXPORT int64_t JNICALL
+    Avata_avata_Memory_limit(Thread* t, object, uintptr_t*)
+{
+  return contractMemoryLimit(t);
+}
+
+extern "C" AVATA_EXPORT int64_t JNICALL
     Avata_avata_Classes_getVMClass(Thread* t, object, uintptr_t* arguments)
 {
   return reinterpret_cast<int64_t>(
       objectClass(t, reinterpret_cast<object>(arguments[0])));
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Classes_makeMethod(Thread* t, object, uintptr_t* arguments)
-{
-  return reinterpret_cast<uintptr_t>(
-      makeMethod(t,
-                 cast<GcJclass>(t, reinterpret_cast<object>(arguments[0])),
-                 arguments[1]));
 }

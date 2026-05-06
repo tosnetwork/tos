@@ -51,6 +51,7 @@ class Heap : public avata::util::Allocator {
 
   virtual void setClient(Client* client) = 0;
   virtual void setImmortalHeap(uintptr_t* start, unsigned sizeInWords) = 0;
+  virtual size_t used() = 0;
   virtual size_t remaining() = 0;
   virtual size_t limit() = 0;
   virtual bool limitExceeded(intptr_t pendingAllocation = 0) = 0;

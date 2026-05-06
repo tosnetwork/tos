@@ -5,28 +5,29 @@
    that the above copyright notice and this permission notice appear
    in all copies.
 
-   There is NO WARRANTY for this software.  See license.txt for
-   details. */
+   There is NO WARRANTY; see license.txt for details. */
 
-package java.lang;
+package avata;
 
 import java.util.Map;
 import java.util.TreeMap;
 
-public abstract class ClassLoader {
-  private final ClassLoader parent;
+/**
+ * VM-internal fixed class namespace.
+ *
+ * This owns the boot/application class maps used by the VM. It is not a
+ * user-extensible Java SE class-loading API.
+ */
+public abstract class ClassSpace {
+  private final ClassSpace parent;
   private Map<String, Package> packages;
 
-  protected ClassLoader(ClassLoader parent) {
-    if (parent == null) {
-      this.parent = getSystemClassLoader();
-    } else {
-      this.parent = parent;
-    }
+  protected ClassSpace(ClassSpace parent) {
+    this.parent = parent == null ? SystemClassSpace.appClassSpace() : parent;
   }
 
-  protected ClassLoader() {
-    this(getSystemClassLoader());
+  protected ClassSpace() {
+    this(SystemClassSpace.appClassSpace());
   }
 
   private Map<String, Package> packages() {
@@ -36,7 +37,7 @@ public abstract class ClassLoader {
     return packages;
   }
 
-  protected Package getPackage(String name) {
+  public Package getPackage(String name) {
     Package p;
     synchronized (this) {
       p = packages().get(name);
@@ -47,7 +48,6 @@ public abstract class ClassLoader {
     } else if (parent != null) {
       p = parent.getPackage(name);
     } else {
-      // todo: load attributes from JAR manifest if available
       p = definePackage(name, null, null, null, null, null, null);
     }
 
@@ -61,7 +61,6 @@ public abstract class ClassLoader {
         }
       }
     }
-
 
     return p;
   }
@@ -91,10 +90,6 @@ public abstract class ClassLoader {
       }
     }
 
-  public static ClassLoader getSystemClassLoader() {
-    return avata.SystemClassLoader.appLoader();
-  }
-
   protected Class defineClass(String name, byte[] b, int offset, int length) {
     if (b == null) {
       throw new NullPointerException();
@@ -104,8 +99,7 @@ public abstract class ClassLoader {
       throw new IndexOutOfBoundsException();
     }
 
-    return avata.SystemClassLoader.getClass
-      (avata.Classes.defineVMClass(this, b, offset, length));
+    return SystemClassSpace.getClass(Classes.defineVMClass(this, b, offset, length));
   }
 
   protected Class findClass(String name) throws ClassNotFoundException {
@@ -148,18 +142,10 @@ public abstract class ClassLoader {
   }
 
   protected void resolveClass(Class c) {
-    avata.Classes.link(c.vmClass, this);
+    Classes.link(c.vmClass, this);
   }
 
-  public final ClassLoader getParent() {
+  public final ClassSpace getParent() {
     return parent;
   }
-
-  protected String findLibrary(String name) {
-    return null;
-  }
-
-  static native Class getCaller();
-
-  static native void load(String name, Class caller, boolean mapName);
 }

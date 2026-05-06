@@ -59,9 +59,10 @@ identical bit patterns.
 
 `monitorenter` and `monitorexit` execute with deterministic single-thread
 monitor semantics (no OS mutex; a counter per object). They do not block or
-yield. `java.lang.Thread` construction, `Thread.start()`, `Object.wait()`,
-`Object.notify()`, and related APIs throw `ContractViolationError`
-deterministically before any OS call is made.
+yield. Public `java.lang.Thread`, `ThreadGroup`, `ThreadLocal`, and
+`java.lang.ref.*` APIs are not shipped. `Object.wait()`, `Object.notify()`, and
+related monitor-wait APIs throw `ContractViolationError` deterministically
+before any OS call is made.
 
 ### Non-deterministic syscall removal
 
@@ -73,8 +74,9 @@ The following paths are removed or replaced with deterministic stubs:
 - Entropy (`/dev/urandom`, `SecureRandom`): removed; contracts use
   `Context.randSeed()`.
 - Process and environment APIs (`getenv`, `System.getenv`, `Runtime.exec`):
-  throw `ContractViolationError`; `System.getProperties` is absent from the
-  contract profile.
+  throw `ContractViolationError`; `System.getProperties` is absent, and
+  `System.getProperty` exposes only a fixed deterministic allow-list. VM
+  command-line `-D` values are not visible to contract code.
 - File and network IO where backed by validator-local resources: removed from
   the shipped class library or trapped before any host call.
 
@@ -120,9 +122,8 @@ The supported standalone build is the slim `make` profile:
   `java.util.concurrent`, `java.util.logging`, `java.util.regex`,
   `java.util.zip`, `java.util.jar`, process APIs, filesystem path APIs,
   object-stream serialization, or URL-handler packages in `rt.jar`
-- no `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`,
-  `MutableCallSite`, `VolatileCallSite`, `SerializedLambda`, or
-  `MethodHandleInfo` shell classes in `rt.jar`
+- no `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, or
+  `avata.Traces` shell classes in `rt.jar`
 
 `make build-test` runs `rt/check-profile.sh` against the generated `rt.jar` and
 fails if any forbidden package or shell class is reintroduced.
@@ -154,7 +155,8 @@ jvm/avata/
   src/
     interpret.cpp          ← interpreter loop; gas counter wired here
     machine.cpp            ← VM state, class loading, object allocation
-    heap/                  ← garbage collector
+    heap/                  ← bounded heap manager; contract-visible memory is
+                              tracked by transaction-local counters
     jnienv.cpp             ← JNI surface; restricted for TOS
     ...
   rt/                      ← Avata/TOS Java runtime sources for rt.jar
@@ -176,10 +178,14 @@ input.
 
 The current `rt.jar` intentionally contains only the contract profile:
 
-- `java.lang`, annotations, `java.lang.invoke`, and the admitted reflection
-  subset needed by Java 8 source and lambda output
-- VM-internal `java.lang.ref` linkage remains for GC support, but contract
-  class references to weak/soft/phantom references are rejected by the verifier
+- `java.lang` and annotations for deterministic language/runtime metadata.
+- no `java.lang.invoke`, `java.lang.reflect`, `java.lang.ref`, or `sun.*`
+  classes. Method handles, lambda bootstrap classes, reflection,
+  weak/soft/phantom references, finalization, dynamic proxies, and cleaner
+  behavior are outside the v1 contract profile. `CONSTANT_MethodHandle`,
+  `CONSTANT_MethodType`, `CONSTANT_InvokeDynamic`, and `BootstrapMethods` are
+  rejected by the v1 verifier until a deterministic VM-internal bootstrap
+  design is admitted.
 - minimal `java.io` for byte-array/string streams, readers/writers,
   `DataInput`/`DataOutput`, and VM-private stdin/stdout/stderr streams. Public
   `FileDescriptor`, `FileInputStream`, `FileOutputStream`, and
@@ -189,15 +195,20 @@ The current `rt.jar` intentionally contains only the contract profile:
   wrappers are not shipped
 - `java.lang.Runtime` is not shipped; host runtime and process APIs are outside
   the contract profile
+- `SecurityException`, `ThreadDeath`, `IllegalThreadStateException`,
+  `InstantiationException`, `ReflectiveOperationException`, and
+  `TypeNotPresentException` are not shipped; security-manager, thread-death,
+  thread-scheduling, reflection, and optional reflective-type APIs are outside
+  the contract profile.
 - `Math.random` and host-native transcendental `Math` functions are not shipped;
   floating-point opcode support is handled by the VM, not by host libm calls.
   Float/double string parse/format APIs are omitted until they have a pinned
   software implementation.
 - `StringBuffer` is not shipped; contract code uses `StringBuilder`.
-- Avata VM support classes and the small `sun.misc` / `sun.reflect` internal
-  remnants still required by VM internals. The v1 profile does not ship
-  `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, `MutableCallSite`,
-  `VolatileCallSite`, `SerializedLambda`, or `MethodHandleInfo`.
+- `Collections.shuffle` is not shipped; the profile has no implicit random API.
+- Avata VM support classes required by the runtime implementation, including
+  deterministic memory accounting helpers. The v1 profile does not ship
+  `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, or `avata.Traces`.
 
 Language-level classes and Avata contract runtime helpers remain under
 `java.lang` (`Object`, `String`, `Math`, `System`, errors, storage, ABI, token
@@ -210,6 +221,17 @@ interfaces):
 Contract classes are compiled against this class library, not against a standard
 OpenJDK distribution. The bootstrap classpath used by the TOS contract compiler
 is the `rt.jar` produced by this build.
+
+Contract execution starts through `avata_begin_contract_transaction_with_limits`
+when both gas and memory limits are available. Movable contract allocations run
+under a transaction arena checkpoint and are rolled back at transaction end.
+The Java runtime exposes only transaction-local memory counters through
+`avata.Memory`; public Java GC, finalization, weak-reference, and cleaner
+semantics are not part of the TOS profile. While a contract transaction is
+active, application-class `getstatic` and `putstatic` access traps with
+`ContractViolationError`, and boot runtime classes may not perform
+reference-type `putstatic`; persistent state must use `Storage`, `Mapping`, and
+future cell-backed state types rather than ordinary Java static fields.
 
 ## Updating the pinned commit
 

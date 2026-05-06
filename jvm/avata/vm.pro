@@ -10,10 +10,10 @@
 # the VM depends on the fixed layout of the following classes:
 
 -keepclassmembers class java.lang.Class { !static <fields>; }
--keepclassmembers class java.lang.ClassLoader { !static <fields>; }
+-keepclassmembers class avata.ClassSpace { !static <fields>; }
 -keepclassmembers class java.lang.String { !static <fields>; }
--keepclassmembers class java.lang.Thread { !static <fields>; }
--keepclassmembers class java.lang.ThreadGroup { !static <fields>; }
+-keepclassmembers class avata.ExecutionContext { !static <fields>; }
+-keepclassmembers class avata.ExecutionGroup { !static <fields>; }
 -keepclassmembers class java.lang.StackTraceElement { !static <fields>; }
 -keepclassmembers class java.lang.Throwable { !static <fields>; }
 -keepclassmembers class java.lang.Byte { !static <fields>; }
@@ -24,15 +24,6 @@
 -keepclassmembers class java.lang.Long { !static <fields>; }
 -keepclassmembers class java.lang.Float { !static <fields>; }
 -keepclassmembers class java.lang.Double { !static <fields>; }
--keepclassmembers class java.lang.ref.Reference { !static <fields>; }
--keepclassmembers class java.lang.ref.ReferenceQueue { !static <fields>; }
--keepclassmembers class java.lang.ref.WeakReference { !static <fields>; }
--keepclassmembers class java.lang.ref.PhantomReference { !static <fields>; }
--keepclassmembers class java.lang.reflect.Field { !static <fields>; }
--keepclassmembers class java.lang.reflect.Method { !static <fields>; }
--keepclassmembers class java.lang.reflect.Constructor { !static <fields>; }
--keepclassmembers class java.lang.reflect.AccessibleObject { !static <fields>; }
--keepclassmembers class sun.reflect.ConstantPool { !static <fields>; }
 -keepclassmembers class avata.VMClass { !static <fields>; }
 -keepclassmembers class avata.VMMethod { !static <fields>; }
 -keepclassmembers class avata.VMField { !static <fields>; }
@@ -50,7 +41,6 @@
 -keep public class java.lang.IllegalStateException
 -keep public class java.lang.IllegalArgumentException
 -keep public class java.lang.IllegalMonitorStateException
--keep public class java.lang.IllegalThreadStateException
 -keep public class java.lang.IndexOutOfBoundsException
 -keep public class java.lang.ArrayIndexOutOfBoundsException
 -keep public class java.lang.ArrayStoreException
@@ -69,14 +59,11 @@
 -keep public class java.lang.ExceptionInInitializerError
 -keep public class java.lang.OutOfMemoryError
 -keep public class java.lang.IncompatibleClassChangeError
--keep public class java.lang.reflect.InvocationTargetException
 -keep public class java.io.IOException
--keep public class java.io.FileNotFoundException
--keep public class java.util.Locale
 
-# ClassLoader.getSystemClassloader() depends on the existence of this class:
+# The VM-internal fixed classpath loader depends on the existence of this class:
 
--keep             class avata.SystemClassLoader
+-keep             class avata.SystemClassSpace
 
 # the VM references these classes by name, so protect them from obfuscation:
 
@@ -94,12 +81,12 @@
    native <methods>;
  }
 
-# Thread.run is called by name in the VM
+# ExecutionContext.run is called by name in the VM
 
--keepclassmembers class java.lang.Thread {
-   private static void run(java.lang.Thread);
+-keepclassmembers class avata.ExecutionContext {
+   private static void run(avata.ExecutionContext);
    public void run();
- }
+}
 
 # when continuations are enabled, the VM may call these methods by name:
 
@@ -125,7 +112,7 @@
 
 # called by name in the VM:
 
--keepclassmembers class java.lang.ClassLoader {
+-keepclassmembers class avata.ClassSpace {
    public java.lang.Class loadClass(java.lang.String);
  }
 

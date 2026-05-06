@@ -10,8 +10,8 @@
 
 package avata;
 
-public class SystemClassLoader extends ClassLoader {
-  public static native ClassLoader appLoader();
+public class SystemClassSpace extends ClassSpace {
+  public static native ClassSpace appClassSpace();
 
   private native VMClass findVMClass(String name)
     throws ClassNotFoundException;
@@ -36,7 +36,7 @@ public class SystemClassLoader extends ClassLoader {
   {
     Class c = findLoadedClass(name);
     if (c == null) {
-      ClassLoader parent = getParent();
+      ClassSpace parent = getParent();
       if (parent != null) {
         try {
           c = parent.loadClass(name);

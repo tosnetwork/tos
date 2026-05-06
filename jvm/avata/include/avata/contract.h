@@ -21,6 +21,7 @@ enum {
   AVATA_CONTRACT_OK = 0,
   AVATA_CONTRACT_BAD_ARGUMENT = 1,
   AVATA_CONTRACT_OUT_OF_GAS = 2,
+  AVATA_CONTRACT_OUT_OF_MEMORY = 3,
   AVATA_CONTRACT_OPCODE_COUNT = 256
 };
 
@@ -42,11 +43,28 @@ AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction(
     AvataThread* thread,
     uint64_t gas_limit);
 
+AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction_with_limits(
+    AvataThread* thread,
+    uint64_t gas_limit,
+    uint64_t memory_limit);
+
 AVATA_CONTRACT_EXPORT int avata_end_contract_transaction(AvataThread* thread);
 
 AVATA_CONTRACT_EXPORT int avata_contract_remaining_gas(
     AvataThread* thread,
     uint64_t* remaining_gas);
+
+AVATA_CONTRACT_EXPORT int avata_contract_memory_used(
+    AvataThread* thread,
+    uint64_t* used_bytes);
+
+AVATA_CONTRACT_EXPORT int avata_contract_memory_remaining(
+    AvataThread* thread,
+    uint64_t* remaining_bytes);
+
+AVATA_CONTRACT_EXPORT int avata_contract_memory_limit(
+    AvataThread* thread,
+    uint64_t* limit_bytes);
 
 AVATA_CONTRACT_EXPORT int avata_charge_contract_gas(
     AvataThread* thread,

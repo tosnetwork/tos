@@ -80,7 +80,7 @@ public class Longs {
     expect(volatileLong == getConstant());
 
     { Rectangle r = new Rectangle();
-      Rectangle.class.getMethod("setX", long.class).invoke(r, 42L);
+      r.setX(42L);
       expect(r.x == 42L);
     }
 

@@ -3,7 +3,6 @@ public class Initializers {
     public static String foo = "Static2.foo";
 
     static {
-      System.gc();
       new Exception().printStackTrace();
     }
   }

@@ -12,6 +12,4 @@ package avata;
 
 public class MethodAddendum extends Addendum {
   public Object exceptionTable;
-  public Object annotationDefault;
-  public Object parameterAnnotationTable;
 }

@@ -313,20 +313,12 @@ GcTriple* hashMapFindNode(Thread* t,
                           uint32_t (*hash)(Thread*, object),
                           bool (*equal)(Thread*, object, object))
 {
-  bool weak = objectClass(t, map) == type(t, GcWeakHashMap::Type);
-
   GcArray* array = map->array();
   if (array) {
     unsigned index = hash(t, key) & (array->length() - 1);
     for (GcTriple* n = cast<GcTriple>(t, array->body()[index]); n;
          n = cast<GcTriple>(t, n->third())) {
       object k = n->first();
-      if (weak) {
-        k = cast<GcJreference>(t, k)->target();
-        if (k == 0) {
-          continue;
-        }
-      }
 
       if (equal(t, key, k)) {
         return n;
@@ -363,7 +355,6 @@ void hashMapResize(Thread* t,
     }
 
     if (oldArray) {
-      bool weak = objectClass(t, map) == type(t, GcWeakHashMap::Type);
       for (unsigned i = 0; i < oldArray->length(); ++i) {
         GcTriple* next;
         for (GcTriple* p = cast<GcTriple>(t, oldArray->body()[i]); p;
@@ -371,12 +362,6 @@ void hashMapResize(Thread* t,
           next = cast<GcTriple>(t, p->third());
 
           object k = p->first();
-          if (weak) {
-            k = cast<GcJreference>(t, k)->target();
-            if (k == 0) {
-              continue;
-            }
-          }
 
           unsigned index = hash(t, k) & (newLength - 1);
 
@@ -404,8 +389,6 @@ void hashMapInsert(Thread* t,
 
   uint32_t h = hash(t, key);
 
-  bool weak = objectClass(t, map) == type(t, GcWeakHashMap::Type);
-
   GcArray* array = map->array();
 
   ++map->size();
@@ -421,20 +404,6 @@ void hashMapInsert(Thread* t,
 
   object k = key;
 
-  if (weak) {
-    PROTECT(t, key);
-    PROTECT(t, value);
-
-    GcWeakReference* r = makeWeakReference(t, 0, 0, 0, 0);
-
-    r->setTarget(t, key);
-    r->setVmNext(t, t->m->weakReferences);
-    t->m->weakReferences = r->as<GcJreference>(t);
-    k = r;
-
-    array = map->array();
-  }
-
   GcTriple* n = makeTriple(t, k, value, 0);
 
   array = map->array();
@@ -445,8 +414,6 @@ void hashMapInsert(Thread* t,
   array->setBodyElement(t, index, n);
 
   if (map->size() <= array->length() / 3) {
-    // this might happen if nodes were removed during GC in which case
-    // we weren't able to resize at the time
     hashMapResize(t, map, hash, array->length() / 2);
   }
 }
@@ -472,8 +439,6 @@ object hashMapRemove(Thread* t,
                      uint32_t (*hash)(Thread*, object),
                      bool (*equal)(Thread*, object, object))
 {
-  bool weak = objectClass(t, map) == type(t, GcWeakHashMap::Type);
-
   GcArray* array = map->array();
   object o = 0;
   if (array) {
@@ -481,14 +446,6 @@ object hashMapRemove(Thread* t,
     GcTriple* p = 0;
     for (GcTriple* n = cast<GcTriple>(t, array->body()[index]); n;) {
       object k = n->first();
-      if (weak) {
-        k = cast<GcJreference>(t, k)->target();
-        if (k == 0) {
-          n = cast<GcTriple>(t,
-                             hashMapRemoveNode(t, map, index, p, n)->third());
-          continue;
-        }
-      }
 
       if (equal(t, key, k)) {
         o = hashMapRemoveNode(t, map, index, p, n)->second();

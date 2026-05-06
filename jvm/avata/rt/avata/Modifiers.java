@@ -5,12 +5,11 @@
    that the above copyright notice and this permission notice appear
    in all copies.
 
-   There is NO WARRANTY for this software.  See license.txt for
-   details. */
+   There is NO WARRANTY for details. */
 
-package java.lang.reflect;
+package avata;
 
-public final class Modifier {
+public final class Modifiers {
   public static final int PUBLIC       = 1 <<  0;
   public static final int PRIVATE      = 1 <<  1;
   public static final int PROTECTED    = 1 <<  2;
@@ -25,16 +24,5 @@ public final class Modifier {
   public static final int ABSTRACT     = 1 << 10;
   public static final int STRICT       = 1 << 11;
 
-  private Modifier() { }
-
-  public static boolean isPublic   (int v) { return (v &    PUBLIC) != 0; }
-  public static boolean isPrivate  (int v) { return (v &   PRIVATE) != 0; }
-  public static boolean isProtected(int v) { return (v & PROTECTED) != 0; }
-  public static boolean isStatic   (int v) { return (v &    STATIC) != 0; }
-  public static boolean isFinal    (int v) { return (v &     FINAL) != 0; }
-  public static boolean isTransient(int v) { return (v & TRANSIENT) != 0; }
-  public static boolean isSuper    (int v) { return (v &     SUPER) != 0; }
-  public static boolean isNative   (int v) { return (v &    NATIVE) != 0; }
-  public static boolean isAbstract (int v) { return (v &  ABSTRACT) != 0; }
-  public static boolean isInterface(int v) { return (v & INTERFACE) != 0; }
+  private Modifiers() { }
 }

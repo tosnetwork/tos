@@ -177,14 +177,11 @@ const int NativeLine = -2;
 const int UnknownLine = -1;
 
 // class vmFlags:
-const unsigned ReferenceFlag = 1 << 0;
-const unsigned WeakReferenceFlag = 1 << 1;
 const unsigned NeedInitFlag = 1 << 2;
 const unsigned InitFlag = 1 << 3;
 const unsigned InitErrorFlag = 1 << 4;
 const unsigned PrimitiveFlag = 1 << 5;
 const unsigned BootstrapFlag = 1 << 6;
-const unsigned HasFinalizerFlag = 1 << 7;
 const unsigned LinkFlag = 1 << 8;
 const unsigned HasFinalMemberFlag = 1 << 9;
 const unsigned SingletonFlag = 1 << 10;
@@ -997,16 +994,14 @@ class GcObject {
   }
 };
 
-class GcFinalizer;
 class GcClass;
-class GcClassLoader;
+class GcClassSpace;
 class GcField;
 class GcJclass;
 class GcMethod;
-class GcJreference;
 class GcArray;
 class GcString;
-class GcThread;
+class GcExecutionContext;
 class GcThrowable;
 class GcRoots;
 
@@ -1050,7 +1045,6 @@ class Machine {
   Classpath* classpath;
   Thread* rootThread;
   Thread* exclusive;
-  Thread* finalizeThread;
   Reference* jniReferences;
   char** properties;
   unsigned propertyCount;
@@ -1072,11 +1066,6 @@ class Machine {
   FILE* errorLog;
   GcArray* types;
   GcRoots* roots;
-  GcFinalizer* finalizers;
-  GcFinalizer* tenuredFinalizers;
-  GcFinalizer* finalizeQueue;
-  GcJreference* weakReferences;
-  GcJreference* tenuredWeakReferences;
   bool unsafe;
   bool collecting;
   bool triedBuiltinOnLoad;
@@ -1120,7 +1109,7 @@ extern "C" uint64_t vmRun(uint64_t (*function)(Thread*, uintptr_t*),
 
 extern "C" void vmRun_returnAddress();
 
-class GcThread;
+class GcExecutionContext;
 class GcThrowable;
 class GcString;
 
@@ -1235,11 +1224,11 @@ class Thread {
 
   class LibraryLoadStack : public AutoResource {
    public:
-    LibraryLoadStack(Thread* t, GcClassLoader* classLoader)
+    LibraryLoadStack(Thread* t, GcClassSpace* classSpace)
         : AutoResource(t),
           next(t->libraryLoadStack),
-          classLoader(classLoader),
-          protector(t, &(this->classLoader))
+          classSpace(classSpace),
+          protector(t, &(this->classSpace))
     {
       t->libraryLoadStack = this;
     }
@@ -1255,7 +1244,7 @@ class Thread {
     }
 
     LibraryLoadStack* next;
-    GcClassLoader* classLoader;
+    GcClassSpace* classSpace;
     SingleProtector protector;
   };
 
@@ -1322,7 +1311,7 @@ class Thread {
     Thread* t;
   };
 
-  Thread(Machine* m, GcThread* javaThread, Thread* parent);
+  Thread(Machine* m, GcExecutionContext* javaThread, Thread* parent);
 
   void init();
   void exit();
@@ -1350,7 +1339,7 @@ class Thread {
   unsigned criticalLevel;
   System::Thread* systemThread;
   System::Monitor* lock;
-  GcThread* javaThread;
+  GcExecutionContext* javaThread;
   GcThrowable* exception;
   unsigned heapIndex;
   unsigned heapOffset;
@@ -1388,6 +1377,17 @@ class Thread {
     IdentityHashEntry* next;
   };
   IdentityHashEntry* identityHashes;
+
+  // Per-transaction memory accounting. This is contract-visible memory usage,
+  // not Java GC state. It is reset at transaction boundaries and incremented
+  // by object/array allocations while the gas counter is active.
+  uint64_t contractMemoryUsed;
+  uint64_t contractMemoryLimit;
+  uintptr_t* contractHeapCheckpoint;
+  unsigned contractHeapIndexCheckpoint;
+  unsigned contractHeapOffsetCheckpoint;
+  unsigned contractHeapPoolIndexCheckpoint;
+  bool contractActive;
   // -------------------------------------------------------------------
 
  private:
@@ -1396,11 +1396,23 @@ class Thread {
 
 AVATA_EXPORT void beginContractTransaction(Thread* t, uint64_t gasLimit);
 
+AVATA_EXPORT void beginContractTransactionWithLimits(Thread* t,
+                                                     uint64_t gasLimit,
+                                                     uint64_t memoryLimit);
+
 AVATA_EXPORT void endContractTransaction(Thread* t);
 
 AVATA_EXPORT uint64_t contractRemainingGas(Thread* t);
 
+AVATA_EXPORT uint64_t contractMemoryUsed(Thread* t);
+
+AVATA_EXPORT uint64_t contractMemoryRemaining(Thread* t);
+
+AVATA_EXPORT uint64_t contractMemoryLimit(Thread* t);
+
 AVATA_EXPORT bool chargeContractGas(Thread* t, uint64_t gasCost);
+
+AVATA_EXPORT bool chargeContractMemory(Thread* t, uint64_t bytes);
 
 AVATA_EXPORT bool chargeContractHelperGas(Thread* t,
                                           unsigned helper,
@@ -1426,8 +1438,6 @@ AVATA_EXPORT bool setContractHelperGasCosts(Machine* m,
                                             const uint64_t* gasCosts,
                                             unsigned gasCostCount);
 
-class GcJfield;
-
 class Classpath {
  public:
   virtual GcJclass* makeJclass(Thread* t, GcClass* class_) = 0;
@@ -1437,15 +1447,7 @@ class Classpath {
                                int32_t offset,
                                int32_t length) = 0;
 
-  virtual GcThread* makeThread(Thread* t, Thread* parent) = 0;
-
-  virtual object makeJMethod(Thread* t, GcMethod* vmMethod) = 0;
-
-  virtual GcMethod* getVMMethod(Thread* t, object jmethod) = 0;
-
-  virtual object makeJField(Thread* t, GcField* vmField) = 0;
-
-  virtual GcField* getVMField(Thread* t, GcJfield* jfield) = 0;
+  virtual GcExecutionContext* makeThread(Thread* t, Thread* parent) = 0;
 
   virtual void clearInterrupted(Thread* t) = 0;
 
@@ -1469,7 +1471,7 @@ class Classpath {
                            GcByteArray* calleeMethodName,
                            GcByteArray* calleeMethodSpec) = 0;
 
-  virtual GcClassLoader* libraryClassLoader(Thread* t, GcMethod* caller) = 0;
+  virtual GcClassSpace* libraryClassSpace(Thread* t, GcMethod* caller) = 0;
 
   virtual void shutDown(Thread* t) = 0;
 
@@ -1860,17 +1862,13 @@ inline void runJavaThread(Thread* t)
   t->m->classpath->runThread(t);
 }
 
-void runFinalizeThread(Thread* t);
-
 inline uint64_t runThread(Thread* t, uintptr_t*)
 {
   t->m->localThread->set(t);
 
   checkDaemon(t);
 
-  if (t == t->m->finalizeThread) {
-    runFinalizeThread(t);
-  } else if (t->javaThread) {
+  if (t->javaThread) {
     runJavaThread(t);
   }
 
@@ -1924,7 +1922,7 @@ inline void removeThread(Thread* t, Thread* p)
   p->dispose();
 }
 
-inline Thread* startThread(Thread* t, GcThread* javaThread)
+inline Thread* startThread(Thread* t, GcExecutionContext* javaThread)
 {
   {
     PROTECT(t, javaThread);
@@ -2073,16 +2071,7 @@ inline object makeNew(Thread* t, GcClass* class_)
   return instance;
 }
 
-object makeNewGeneral(Thread* t, GcClass* class_);
-
-inline object make(Thread* t, GcClass* class_)
-{
-  if (UNLIKELY(class_->vmFlags() & (WeakReferenceFlag | HasFinalizerFlag))) {
-    return makeNewGeneral(t, class_);
-  } else {
-    return makeNew(t, class_);
-  }
-}
+inline object make(Thread* t, GcClass* class_) { return makeNew(t, class_); }
 
 GcByteArray* makeByteArrayV(Thread* t, const char* format, va_list a, int size);
 
@@ -2488,11 +2477,9 @@ inline void scanMethodSpec(Thread* t,
   *returnCode = fieldCode(t, *it.returnSpec());
 }
 
-GcClass* findLoadedClass(Thread* t, GcClassLoader* loader, GcByteArray* spec);
+GcClass* findLoadedClass(Thread* t, GcClassSpace* loader, GcByteArray* spec);
 
 GcJclass* getDeclaringClass(Thread* t, GcClass* c);
-
-GcCallSite* resolveDynamic(Thread* t, GcInvocation* invocation);
 
 inline bool emptyMethod(Thread* t UNUSED, GcMethod* method)
 {
@@ -2506,19 +2493,19 @@ object parseUtf8(Thread* t, const char* data, unsigned length);
 object parseUtf8(Thread* t, GcByteArray* array);
 
 GcClass* parseClass(Thread* t,
-                    GcClassLoader* loader,
+                    GcClassSpace* loader,
                     const uint8_t* data,
                     unsigned length,
                     Gc::Type throwType = GcNoClassDefFoundError::Type);
 
 GcClass* resolveClass(Thread* t,
-                      GcClassLoader* loader,
+                      GcClassSpace* loader,
                       GcByteArray* name,
                       bool throw_ = true,
                       Gc::Type throwType = GcNoClassDefFoundError::Type);
 
 inline GcClass* resolveClass(Thread* t,
-                             GcClassLoader* loader,
+                             GcClassSpace* loader,
                              const char* name,
                              bool throw_ = true,
                              Gc::Type throwType = GcNoClassDefFoundError::Type)
@@ -2529,19 +2516,19 @@ inline GcClass* resolveClass(Thread* t,
 }
 
 GcClass* resolveSystemClass(Thread* t,
-                            GcClassLoader* loader,
+                            GcClassSpace* loader,
                             GcByteArray* name,
                             bool throw_ = true,
                             Gc::Type throwType = GcNoClassDefFoundError::Type);
 
 inline GcClass* resolveSystemClass(Thread* t,
-                                   GcClassLoader* loader,
+                                   GcClassSpace* loader,
                                    const char* name)
 {
   return resolveSystemClass(t, loader, makeByteArray(t, "%s", name));
 }
 
-void linkClass(Thread* t, GcClassLoader* loader, GcClass* class_);
+void linkClass(Thread* t, GcClassSpace* loader, GcClass* class_);
 
 GcMethod* resolveMethod(Thread* t,
                         GcClass* class_,
@@ -2549,7 +2536,7 @@ GcMethod* resolveMethod(Thread* t,
                         const char* methodSpec);
 
 inline GcMethod* resolveMethod(Thread* t,
-                               GcClassLoader* loader,
+                               GcClassSpace* loader,
                                const char* className,
                                const char* methodName,
                                const char* methodSpec)
@@ -2564,7 +2551,7 @@ GcField* resolveField(Thread* t,
                       const char* fieldSpec);
 
 inline GcField* resolveField(Thread* t,
-                             GcClassLoader* loader,
+                             GcClassSpace* loader,
                              const char* className,
                              const char* fieldName,
                              const char* fieldSpec)
@@ -2582,7 +2569,7 @@ void postInitClass(Thread* t, GcClass* c);
 void initClass(Thread* t, GcClass* c);
 
 GcClass* resolveObjectArrayClass(Thread* t,
-                                 GcClassLoader* loader,
+                                 GcClassSpace* loader,
                                  GcClass* elementClass);
 
 object makeObjectArray(Thread* t, GcClass* elementClass, unsigned count);
@@ -2819,7 +2806,7 @@ inline GcMethod* findInterfaceMethod(Thread* t,
     PROTECT(t, method);
     PROTECT(t, class_);
 
-    resolveSystemClass(t, roots(t)->bootLoader(), class_->name());
+    resolveSystemClass(t, roots(t)->bootClassSpace(), class_->name());
   }
 
   GcClass* interface = method->class_();
@@ -2852,8 +2839,6 @@ inline object& objectArrayBody(Thread* t UNUSED, object array, unsigned index)
 }
 
 unsigned parameterFootprint(Thread* t, const char* s, bool static_);
-
-void addFinalizer(Thread* t, object target, void (*finalize)(Thread*, object));
 
 inline bool acquireSystem(Thread* t, Thread* target)
 {
@@ -3488,7 +3473,7 @@ inline unsigned poolSize(Thread* t, GcSingleton* pool)
 }
 
 inline GcClass* resolveClassInObject(Thread* t,
-                                     GcClassLoader* loader,
+                                     GcClassSpace* loader,
                                      object container,
                                      unsigned classOffset,
                                      bool throw_ = true)
@@ -3515,7 +3500,7 @@ inline GcClass* resolveClassInObject(Thread* t,
 }
 
 inline GcClass* resolveClassInPool(Thread* t,
-                                   GcClassLoader* loader,
+                                   GcClassSpace* loader,
                                    GcMethod* method,
                                    unsigned index,
                                    bool throw_ = true)
@@ -3552,7 +3537,7 @@ inline GcClass* resolveClassInPool(Thread* t,
 
 inline object resolve(
     Thread* t,
-    GcClassLoader* loader,
+    GcClassSpace* loader,
     GcSingleton* pool,
     unsigned index,
     object (*find)(vm::Thread*, GcClass*, GcByteArray*, GcByteArray*),
@@ -3585,10 +3570,6 @@ inline object resolve(
       if (o) {
         storeStoreMemoryBarrier();
 
-        if (objectClass(t, o) == type(t, GcMethod::Type)) {
-          o = makeMethodHandle(t, reference->kind(), loader, cast<GcMethod>(t, o), 0);
-        }
-
         pool->setBodyElement(t, index, reinterpret_cast<uintptr_t>(o));
       }
     } else {
@@ -3600,7 +3581,7 @@ inline object resolve(
 }
 
 inline GcField* resolveField(Thread* t,
-                             GcClassLoader* loader,
+                             GcClassSpace* loader,
                              GcMethod* method,
                              unsigned index,
                              bool throw_ = true)
@@ -3703,12 +3684,12 @@ class FieldWriteResource {
 };
 
 inline GcMethod* resolveMethod(Thread* t,
-                               GcClassLoader* loader,
+                               GcClassSpace* loader,
                                GcMethod* method,
                                unsigned index,
                                bool throw_ = true)
 {
-  GcMethodHandle* handle = cast<GcMethodHandle>(t,
+  return cast<GcMethod>(t,
                         resolve(t,
                                 loader,
                                 method->code()->pool(),
@@ -3716,8 +3697,6 @@ inline GcMethod* resolveMethod(Thread* t,
                                 findMethodInClass,
                                 GcNoSuchMethodError::Type,
                                 throw_));
-
-  return handle ? handle->method() : 0;
 }
 
 inline GcMethod* resolveMethod(Thread* t,
@@ -3888,7 +3867,7 @@ void populateMultiArray(Thread* t,
 GcMethod* getCaller(Thread* t, unsigned target, bool skipMethodInvoke = false);
 
 GcClass* defineClass(Thread* t,
-                     GcClassLoader* loader,
+                     GcClassSpace* loader,
                      const uint8_t* buffer,
                      unsigned length);
 
@@ -3953,13 +3932,13 @@ inline unsigned lineNumberLine(uint64_t ln)
   return ln & 0xFFFFFFFF;
 }
 
-object interruptLock(Thread* t, GcThread* thread);
+object interruptLock(Thread* t, GcExecutionContext* thread);
 
 void clearInterrupted(Thread* t);
 
-void threadInterrupt(Thread* t, GcThread* thread);
+void threadInterrupt(Thread* t, GcExecutionContext* thread);
 
-bool threadIsInterrupted(Thread* t, GcThread* thread, bool clear);
+bool threadIsInterrupted(Thread* t, GcExecutionContext* thread, bool clear);
 
 inline FILE* errorLog(Thread* t)
 {

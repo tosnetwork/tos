@@ -10,6 +10,8 @@
 
 package java.lang;
 
+import avata.ClassSpace;
+
 public class Package {
   private final String name;
   private final String implementationTitle;
@@ -18,16 +20,16 @@ public class Package {
   private final String specificationTitle;
   private final String specificationVendor;
   private final String specificationVersion;
-  private final ClassLoader loader;
+  private final ClassSpace loader;
 
-  Package(String name,
-          String implementationTitle,
-          String implementationVendor,
-          String implementationVersion,
-          String specificationTitle,
-          String specificationVendor,
-          String specificationVersion,
-          ClassLoader loader)
+  public Package(String name,
+                 String implementationTitle,
+                 String implementationVendor,
+                 String implementationVersion,
+                 String specificationTitle,
+                 String specificationVendor,
+                 String specificationVersion,
+                 ClassSpace loader)
   {
     this.name                  = name;
     this.implementationTitle   = implementationTitle;

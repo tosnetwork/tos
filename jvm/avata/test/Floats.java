@@ -98,7 +98,7 @@ public class Floats {
     expect(new Double(42.0) == 42.0);
 
     { Rectangle r = new Rectangle();
-      Rectangle.class.getMethod("setX", double.class).invoke(r, 42.0);
+      r.setX(42.0);
       expect(r.x == 42.0);
     }
 

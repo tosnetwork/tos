@@ -114,8 +114,8 @@ Admit:
 - primitive wrappers and `Number`
 - core exceptions, errors, and stack-trace structures
 - `Enum`, `Iterable`, `Comparable`, `CharSequence`, `Appendable`
-- Java 8 lambda linkage classes under `java.lang.invoke`
-- VM-required reflection, annotation, and reference classes
+- annotations plus VM-required class metadata helpers; no public reflection or
+  reference API
 - `Storage` and `Mapping` as deterministic primitives for contract state
 - `Math`, only when every operation is backed by bit-exact deterministic
   algorithms. The v1 profile keeps arithmetic helpers such as min/max/abs,
@@ -129,15 +129,41 @@ Restrict or reject:
 - `Thread`, `ThreadGroup`, `ThreadLocal`, `InheritableThreadLocal`, wait/notify,
   and scheduling APIs
 - `Runtime`; contract code must not reach a host runtime facade
-- `System` host APIs such as wall-clock time, environment, properties, native
-  library loading, and host IO
+- `System` host APIs such as wall-clock time, environment, host-derived
+  properties, native library loading, and host IO
+- `java.lang.invoke` and Java SE method-handle/lambda bootstrap APIs. The v1
+  verifier rejects `CONSTANT_MethodHandle`, `CONSTANT_MethodType`,
+  `CONSTANT_InvokeDynamic`, and `BootstrapMethods` until deterministic
+  VM-internal bootstrap linkage is specified.
 - identity behavior derived from native object addresses
 
 `java.lang.System` may expose only deterministic VM-managed streams and strictly
-specified helpers. It must not expose a mutable `Properties` object or
-host-derived property map. Chain data belongs in Avata's `java.lang.Context`,
-not in host-style `System` APIs. `System.in` is deterministic EOF, because a
-contract must not read host stdin.
+specified helpers. Its property surface is a fixed allow-list only; it must not
+ingest VM command-line `-D` values, expose a mutable `Properties` object, or
+return a host-derived property map. Chain data belongs in Avata's
+`java.lang.Context`, not in host-style `System` APIs. `System.in` is
+deterministic EOF, because a contract must not read host stdin.
+
+Remove legacy shell classes that exist only for a general-purpose JVM profile:
+`IllegalThreadStateException`, `ThreadDeath`, `SecurityException`, and
+`TypeNotPresentException`. They are tied to thread scheduling, security manager,
+or optional reflective-type behavior that the contract profile does not admit.
+The v1 profile also removes `java.lang.reflect.*`, `java.lang.ref.*`,
+finalization entry points, and `System.gc()`. Memory is exposed through explicit
+deterministic accounting (`avata.Memory`) instead of observable collection
+behavior. During contract execution, `Memory.used()`, `Memory.remaining()`, and
+`Memory.limit()` report transaction-local allocation counters configured by the
+contract ABI, not global heap collector state. Movable objects allocated during
+a contract invocation are scoped to the transaction arena checkpoint and are
+discarded when the invocation ends.
+
+Application-class static fields are not part of the v1 runtime state model.
+During contract execution, `getstatic` and `putstatic` on application classes
+trap with `ContractViolationError`; boot runtime classes may read
+already-initialized VM-private constants and helpers, but reference-type
+`putstatic` is also rejected during contract execution. Persistent contract
+state must flow through `Storage`, `Mapping`, and future cell-backed persistent
+types instead of Java static object graphs.
 
 ### `java.io`
 
@@ -199,6 +225,9 @@ Reject or remove:
   and must not expose concurrency-oriented collection APIs
 - `StringBuffer`, because the profile uses `StringBuilder` and does not expose
   legacy synchronized string builders
+- `Collections.shuffle`, because the profile does not expose random APIs; any
+  permutation required by a contract must be derived from explicit chain input
+  and implemented with audited deterministic code
 
 Do not use `java.util` collections as implicit persistent storage. Persistent
 state needs explicit `java.lang` storage types so serialization, gas, iteration,

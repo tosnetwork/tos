@@ -10,8 +10,6 @@
 
 package java.lang;
 
-import java.lang.reflect.Method;
-
 public abstract class Enum<E extends Enum<E>> implements Comparable<E> {
   private final String name;
   protected final int ordinal;
@@ -34,17 +32,11 @@ public abstract class Enum<E extends Enum<E>> implements Comparable<E> {
     if (!enumType.isEnum())
       throw new IllegalArgumentException(enumType.getCanonicalName() + " is not an enum.");
 
-    try {
-      Method method = enumType.getMethod("values");
-      Enum values[] = (Enum[]) method.invoke(null);
-      for (Enum value: values) {
-        if (name.equals(value.name)) {
-          return (T) value;
-        }
+    Enum values[] = (Enum[]) enumType.getEnumConstants();
+    for (Enum value: values) {
+      if (name.equals(value.name)) {
+        return (T) value;
       }
-    } catch (Exception ex) {
-      // Cannot happen
-      throw new Error(ex);
     }
 
     throw new IllegalArgumentException(enumType.getCanonicalName() + "." + name + " is not an enum constant.");

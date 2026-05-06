@@ -12,7 +12,18 @@ public class CoreTrapProfile {
     throw new RuntimeException("expected ContractViolationError: " + name);
   }
 
+  private static void expectProperty(String key, String expected) {
+    String actual = System.getProperty(key);
+    if (expected == null ? actual != null : !expected.equals(actual)) {
+      throw new RuntimeException("unexpected property " + key + ": " + actual);
+    }
+  }
+
   public static void main(String[] args) {
+    expectProperty("line.separator", "\n");
+    expectProperty("avata.builtins", null);
+    expectProperty("java.class.path", null);
+
     expectTrap("Object.wait", new Thrower() {
       public void run() {
         try {

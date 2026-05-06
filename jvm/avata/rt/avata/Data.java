@@ -33,14 +33,14 @@ public class Data {
     boolean reused = array.length >= collection.size();
 
     if (array.length < collection.size()) {
-      array = (T[]) java.lang.reflect.Array.newInstance(c, collection.size());
+      array = (T[]) VMArray.newInstance(c, collection.size());
     }
 
     int i = 0;
     for (Object o: collection) {
       if (o == null || c.isInstance(o)) {
         if (i == array.length) {
-          T[] newArray = (T[]) java.lang.reflect.Array.newInstance
+          T[] newArray = (T[]) VMArray.newInstance
             (c, array.length == 0 ? 1 : array.length * 2);
           System.arraycopy(array, 0, newArray, 0, array.length);
           array = newArray;
@@ -57,7 +57,7 @@ public class Data {
         array[i] = null;
       }
     } else if (i != array.length) {
-      T[] newArray = (T[]) java.lang.reflect.Array.newInstance(c, i);
+      T[] newArray = (T[]) VMArray.newInstance(c, i);
       System.arraycopy(array, 0, newArray, 0, i);
       array = newArray;
     }

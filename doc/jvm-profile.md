@@ -77,14 +77,12 @@ these package prefixes:
 - Avata URL/file/jar/http resource-handler packages
 
 The remaining `rt.jar` surface is intentionally narrow: `java.lang`,
-annotations, `java.lang.invoke`, `java.lang.ref`, admitted `java.lang.reflect`,
-minimal byte-array/string/descriptor-backed `java.io`, deterministic
-collections, `java.util.function`, Avata VM support classes, and small
-`java.lang.ref` / `sun.*` internal remnants required by VM internals. Direct
-contract use of those internal remnants is forbidden unless the profile admits it
-later. `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, `MutableCallSite`,
-`VolatileCallSite`, `SerializedLambda`, and `MethodHandleInfo` are not shipped
-in `rt.jar`.
+annotations, minimal byte-array/string/descriptor-backed `java.io`,
+deterministic collections, `java.util.function`, and Avata VM support classes.
+It does not ship `java.lang.invoke`, `java.lang.reflect`, `java.lang.ref`, or
+`sun.*`. Method handles, lambda bootstrap classes, reflection, dynamic proxies,
+weak/soft/phantom references, finalization, cleaners, `sun.misc.Unsafe`,
+`avata.Machine`, and `avata.Traces` are not shipped in `rt.jar`.
 
 `~/jdk8u` remains useful as a reference checkout for Java 8 opcode, verifier,
 and admitted API semantics. It is not a runtime build input for the consensus
@@ -112,8 +110,12 @@ Required engine surface:
 - StackMapTable/type verification for the admitted profile.
 - All Java 8 bytecode opcodes.
 - Static, virtual, special, interface, and dynamic dispatch.
-- `invokedynamic`, `MethodHandle`, `MethodType`, bootstrap methods, and lambda
-  linkage required by standard Java 8 `javac` output.
+- Java 8 opcode decoding, including `invokedynamic`. The v1 contract profile
+  currently rejects `CONSTANT_MethodHandle`, `CONSTANT_MethodType`,
+  `CONSTANT_InvokeDynamic`, and `BootstrapMethods` before execution because the
+  runtime does not admit public `java.lang.invoke` classes. A future admission
+  must use deterministic VM-internal bootstrap linkage rather than exposing the
+  Java SE method-handle API.
 - Exception handling and deterministic stack unwinding.
 - Class initialization rules pinned for deploy-time and call-time execution.
 - Deterministic monitor semantics for `monitorenter` and `monitorexit` in the
@@ -136,9 +138,10 @@ has three categories:
 - **Contract APIs:** `tos.contract.*`, `tos.storage.*`, `tos.emit.*`, and other
   chain-specific APIs for persistent state, ABI entry points, events, caller
   context, value transfer, and deterministic chain data.
-- **Compatibility shells:** OpenJDK-shaped classes that may exist for linkage or
-  compilation but whose host-observing methods deterministically trap or are
-  rejected before deployment.
+- **Compiler-required metadata classes:** small Java 8 source/tooling support
+  types that are genuinely required by `javac` and the admitted class-file
+  profile. Host-facing Java SE classes are deleted from `rt.jar` instead of
+  kept as empty throwing shells.
 
 The runtime library should preserve Java behavior inside the admitted profile.
 Outside it, deterministic failure is better than partial OpenJDK behavior.
@@ -151,7 +154,6 @@ Each API must be classified before implementation:
 |---|---|---|
 | Admitted | Safe and useful for contracts | Implement and test against Java 8 semantics where applicable |
 | TOS-specific | Chain runtime API | Define TOS semantics and test deterministic behavior |
-| Linkage shell | Needed for compilation/linkage only | Present class/method shape; method traps deterministically |
 | Forbidden | Not allowed in contract bytecode | Verifier rejects reference before execution |
 | Deferred | Potentially useful but not yet specified | Treat as forbidden until admitted |
 
@@ -165,10 +167,10 @@ Examples:
 | Minimal `java.io` | Admitted only for byte-array/string streams and VM stdio descriptors; no path-based host filesystem |
 | `java.net`, host-backed `java.nio` | Absent from v1 `rt.jar` and forbidden unless explicitly admitted later |
 | `java.lang.Thread`, wait/notify, executors | Forbidden or deterministic trap |
-| Reflection | Admitted only for explicitly pinned contract-local metadata |
+| Reflection | Public `java.lang.reflect.*` is absent; only pinned `Class` metadata helpers remain |
 | Class loading | Forbidden except validator-controlled contract class resolution |
 | Serialization, regex, text formatting, zip/jar, locale/date APIs | Absent from v1 `rt.jar` unless explicitly admitted later |
-| `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, mutable/volatile call sites, lambda serialization, direct method-handle introspection | Absent from v1 `rt.jar`; forbidden unless explicitly admitted later |
+| `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces` | Absent from v1 `rt.jar`; forbidden unless explicitly admitted later |
 | Collections | Admitted selectively when deterministic and useful for contracts |
 
 ## Avata Development Order
@@ -183,8 +185,10 @@ Create a machine-readable and documented admission profile:
 - Allowed class-file version range: Java 8 major 52 for contract code.
 - Forbidden attributes and post-Java-8 metadata.
 - Forbidden packages/classes/methods.
-- Allowed reflection surface.
-- Allowed static field shapes.
+- Reflection-free class metadata surface.
+- Static-field policy: application-class static access is rejected during v1
+  contract execution until the explicit persisted-value/cell-codec profile is
+  admitted.
 - ABI entry point rules.
 - Class initialization rules.
 - Deterministic trap taxonomy.
@@ -198,8 +202,8 @@ re-validate the exact bytes they execute.
 Focus on interpreter correctness and determinism:
 
 - Audit every opcode implementation against Java 8 JVMS semantics.
-- Complete `invokedynamic` and lambda linkage for standard Java 8 `javac`
-  output.
+- Complete deterministic VM-internal `invokedynamic` linkage, without adding
+  public `java.lang.invoke` classes to `rt.jar`.
 - Replace host floating-point operations with deterministic fixed
   floating-point calls.
 - Ensure exception handling, class initialization, and monitor opcodes are
@@ -218,7 +222,7 @@ entropy APIs.
 
 ### 4. Make Object Identity Consensus-Safe
 
-Contract code must not observe process addresses or GC layout. Required work:
+Contract code must not observe process addresses or heap layout. Required work:
 
 - Deterministic or unavailable `Object.hashCode`.
 - Deterministic or unavailable `System.identityHashCode`.
@@ -232,9 +236,10 @@ Define the minimum useful runtime first:
 
 - Java language basics under `java.lang`.
 - Deterministic numeric/string helpers.
-- TOS contract APIs under `tos.*`.
+- TOS contract APIs as Avata runtime extensions under `java.lang`.
 - Persistent state wrappers backed by TOS cells.
-- Compatibility shells for rejected host APIs when needed for tooling.
+- No compatibility shells for host APIs in the shipped contract `rt.jar`;
+  forbidden APIs are absent or rejected by the admission profile.
 
 Do not continue broad OpenJDK API filling unless an API is admitted by the
 contract profile and has deterministic tests.

@@ -12,6 +12,5 @@ package avata;
 
 public class Addendum {
   public Singleton pool;
-  public Object annotationTable;
   public Object signature;
 }

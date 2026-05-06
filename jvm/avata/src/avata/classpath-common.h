@@ -338,7 +338,7 @@ GcObject* translateInvokeResult(Thread* t, unsigned returnCode, object o)
 }
 
 GcClass* resolveClassBySpec(Thread* t,
-                            GcClassLoader* loader,
+                            GcClassSpace* loader,
                             const char* spec,
                             unsigned specLength)
 {
@@ -363,7 +363,7 @@ GcClass* resolveClassBySpec(Thread* t,
 }
 
 GcJclass* resolveJType(Thread* t,
-                       GcClassLoader* loader,
+                       GcClassSpace* loader,
                        const char* spec,
                        unsigned specLength)
 {
@@ -371,7 +371,7 @@ GcJclass* resolveJType(Thread* t,
 }
 
 GcPair* resolveParameterTypes(Thread* t,
-                              GcClassLoader* loader,
+                              GcClassSpace* loader,
                               GcByteArray* spec,
                               unsigned* parameterCount,
                               unsigned* returnTypeSpec)
@@ -445,7 +445,7 @@ GcPair* resolveParameterTypes(Thread* t,
 }
 
 object resolveParameterJTypes(Thread* t,
-                              GcClassLoader* loader,
+                              GcClassSpace* loader,
                               GcByteArray* spec,
                               unsigned* parameterCount,
                               unsigned* returnTypeSpec)
@@ -462,45 +462,6 @@ object resolveParameterJTypes(Thread* t,
     object c = getJClass(t, cast<GcClass>(t, list->first()));
     reinterpret_cast<GcArray*>(array)->setBodyElement(t, i, c);
     list = cast<GcPair>(t, list->second());
-  }
-
-  return array;
-}
-
-object resolveExceptionJTypes(Thread* t,
-                              GcClassLoader* loader,
-                              GcMethodAddendum* addendum)
-{
-  if (addendum == 0 or addendum->exceptionTable() == 0) {
-    return makeObjectArray(t, type(t, GcJclass::Type), 0);
-  }
-
-  PROTECT(t, loader);
-  PROTECT(t, addendum);
-
-  GcShortArray* exceptionTable
-      = cast<GcShortArray>(t, addendum->exceptionTable());
-  PROTECT(t, exceptionTable);
-
-  object array
-      = makeObjectArray(t, type(t, GcJclass::Type), exceptionTable->length());
-  PROTECT(t, array);
-
-  for (unsigned i = 0; i < exceptionTable->length(); ++i) {
-    uint16_t index = exceptionTable->body()[i] - 1;
-
-    object o = singletonObject(t, addendum->pool()->as<GcSingleton>(t), index);
-
-    if (objectClass(t, o) == type(t, GcReference::Type)) {
-      o = resolveClass(t, loader, cast<GcReference>(t, o)->name());
-
-      addendum->pool()->setBodyElement(
-          t, index, reinterpret_cast<uintptr_t>(o));
-    }
-
-    o = getJClass(t, cast<GcClass>(t, o));
-
-    reinterpret_cast<GcArray*>(array)->setBodyElement(t, i, o);
   }
 
   return array;
@@ -597,16 +558,6 @@ object invoke(Thread* t, GcMethod* method, object instance, object args)
   initClass(t, method->class_());
 
   unsigned returnCode = method->returnCode();
-
-  THREAD_RESOURCE0(t, {
-    if (t->exception) {
-      t->exception = makeThrowable(
-          t, GcInvocationTargetException::Type, 0, 0, t->exception);
-
-      t->exception->as<GcInvocationTargetException>(t)
-          ->setTarget(t, t->exception->cause());
-    }
-  });
 
   object result;
   if (args) {
@@ -769,40 +720,6 @@ unsigned classModifiers(Thread* t, GcClass* c)
   return c->flags();
 }
 
-object makeMethod(Thread* t, GcJclass* class_, int index)
-{
-  GcMethod* method = cast<GcMethod>(
-      t, cast<GcArray>(t, class_->vmClass()->methodTable())->body()[index]);
-  PROTECT(t, method);
-
-  GcClass* c
-      = resolveClass(t, roots(t)->bootLoader(), "java/lang/reflect/Method");
-  PROTECT(t, c);
-
-  object instance = makeNew(t, c);
-  PROTECT(t, instance);
-
-  GcMethod* constructor = resolveMethod(t, c, "<init>", "(Lavata/VMMethod;)V");
-
-  t->m->processor->invoke(t, constructor, instance, method);
-
-  if (method->name()->body()[0] == '<') {
-    object oldInstance = instance;
-
-    c = resolveClass(
-        t, roots(t)->bootLoader(), "java/lang/reflect/Constructor");
-
-    object instance = makeNew(t, c);
-
-    GcMethod* constructor
-        = resolveMethod(t, c, "<init>", "(Ljava/lang/Method;)V");
-
-    t->m->processor->invoke(t, constructor, instance, oldInstance);
-  }
-
-  return instance;
-}
-
 int64_t getPrimitive(Thread* t, object instance, int code, int offset)
 {
   switch (code) {
@@ -861,22 +778,6 @@ void setPrimitive(Thread* t,
   default:
     abort(t);
   }
-}
-
-int64_t invokeMethod(Thread* t, GcMethod* method, object instance, object args)
-{
-  THREAD_RESOURCE0(t, {
-    if (t->exception) {
-      GcThrowable* exception = t->exception;
-      t->exception = makeThrowable(
-          t, GcInvocationTargetException::Type, 0, 0, exception);
-    }
-  });
-
-  unsigned returnCode = method->returnCode();
-
-  return reinterpret_cast<int64_t>(translateInvokeResult(
-      t, returnCode, t->m->processor->invokeArray(t, method, instance, args)));
 }
 
 }  // namespace vm

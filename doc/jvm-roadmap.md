@@ -21,7 +21,8 @@ function of chain state, message data, and block context.
 EVM (`wc=1`) and Uno (`wc=2`) cover the two dominant smart-contract paradigms
 currently targeted by TOS: EVM-compatible DeFi and privacy-preserving payments.
 A JVM workchain would add a third paradigm: general-purpose contract logic in a
-strongly-typed, garbage-collected language with a mature toolchain, without
+strongly-typed language with a mature toolchain, deterministic transaction-local
+memory accounting, and no Java-observable GC semantics, without
 requiring developers to learn a novel language.
 
 The target audience is Java developers, and eventually Kotlin/Scala developers
@@ -114,14 +115,18 @@ define a new bytecode dialect.
 **Supported compatibility surface:**
 - Class-file major version 52 (`Java SE 8`) using JVMS-compatible parsing,
   verification, linking, and exception semantics
-- All Java 8 bytecode opcodes, including `invokedynamic`, floating-point
-  opcodes, `monitorenter`, and `monitorexit`. Floating-point opcodes execute
-  through the TOS deterministic fixed floating-point engine, not host CPU
-  floating-point instructions.
-- Constant-pool structures required by Java 8, including
+- All Java 8 bytecode opcodes in the engine decoder, including
+  `invokedynamic`, floating-point opcodes, `monitorenter`, and `monitorexit`.
+  The v1 contract verifier currently rejects `invokedynamic` class-file
+  structures until deterministic VM-internal bootstrap linkage is admitted.
+  Floating-point opcodes execute through the TOS deterministic fixed
+  floating-point engine, not host CPU floating-point instructions.
+- Constant-pool parsing for Java 8 structures. The v1 profile rejects
   `CONSTANT_InvokeDynamic`, `MethodHandle`, `MethodType`, and
-  `BootstrapMethods`
-- Static, virtual, interface, special, and dynamic method dispatch
+  `BootstrapMethods` before execution because public `java.lang.invoke` is not
+  part of the contract runtime.
+- Static, virtual, interface, and special method dispatch; dynamic dispatch is
+  a VM-internal future item, not a public method-handle API item.
 - Generics (compiler-erased; JVM-transparent)
 - Annotations parsed by the validator for contract metadata; runtime annotation
   reflection is available only if the deterministic runtime profile admits it
@@ -197,8 +202,9 @@ This rules out:
 - Any object-address leakage to contract code. Default `Object.hashCode`,
   `System.identityHashCode`, `toString` identity suffixes, and any native object
   pointer exposure must either be absent or derived from deterministic
-  per-transaction object ids. A compacting GC is acceptable only if object
-  addresses are never observable and serialization is canonical.
+  per-transaction object ids. The v1 contract heap should not expose Java GC
+  semantics; allocation is accounted against a bounded transaction-local memory
+  budget and the transaction heap is discarded at the transaction boundary.
 - Host-dependent floating-point behavior. v1 supports Java 8 floating opcodes,
   but they must run through the TOS fixed floating-point implementation with
   pinned strictfp-equivalent semantics, not host-dependent x87/SSE/ARM behavior.
@@ -239,11 +245,13 @@ code marker (`0x4a` = `'J'`) are frozen as part of the JVM v1 descriptor.
 ### OpenJDK opcode compatibility
 
 The JVM workchain commits to Java 8 opcode compatibility, including
-`invokedynamic`. Avata's historical support is not sufficient by itself:
-Phase 1 must complete or replace the `java.lang.invoke`, `MethodHandle`,
-bootstrap-method, `CallSite`, and generated-lambda paths needed for standard
-Java 8 bytecode. This is a major consensus-safety item, not an optional
-post-v1 feature.
+`invokedynamic`, but the contract runtime does not ship public
+`java.lang.invoke` classes. Avata's historical lambda support was removed from
+the v1 profile because it carried Java SE method-handle and bootstrap API
+surface into `rt.jar`. Future `invokedynamic` admission must be implemented as
+deterministic VM-internal linkage and verified without exposing
+`MethodHandle`, `MethodType`, `CallSite`, or `LambdaMetafactory` classes to
+contracts.
 
 The compatibility promise is bytecode-level, not a promise to expose host
 capabilities. Bytecode that calls OpenJDK APIs with non-deterministic or
@@ -380,13 +388,22 @@ for consensus execution. No TOS integration yet; tested standalone.
   semantics; `wait`/`notify`/`Thread` APIs trap deterministically.
 - Audit and remove or stub all `syscall` / `time` / `rand` / `getpid` paths
   in Avata's platform layer
-- Validate GC behavior: determine whether Avata's semi-space collector
-  can run without exposing addresses or preserving process-local state between
-  transactions; if not, replace it with a bounded per-transaction arena or a
-  non-compacting collector for the contract heap region
-- Complete Java 8 opcode support in the interpreter, including
-  `invokedynamic`, `java.lang.invoke` linkage, floating-point opcodes, and
-  monitor opcodes
+- Replace the legacy Avata contract-heap collection model with bounded
+  transaction-local memory accounting. `avata.Memory` exposes used/remaining/
+  limit counters; the contract ABI can start execution with gas and memory
+  limits; allocation increments the transaction memory counter and fails
+  deterministically when the limit is exceeded. Movable contract allocations
+  now run under an arena checkpoint that is rolled back at transaction end, and
+  contract execution rejects fixed/oversized allocation plus the legacy
+  collector fallback. Application-class `getstatic`/`putstatic` access is also
+  rejected while a contract transaction is active, and boot runtime classes may
+  not perform reference-type `putstatic` in that window, so Java static fields
+  cannot accidentally retain transient heap objects across invocations. The
+  remaining heap work is to serialize explicitly admitted persistent state into
+  cells.
+- Complete Java 8 opcode support in the interpreter, including deterministic
+  VM-internal `invokedynamic` linkage, floating-point opcodes, and monitor
+  opcodes. Public `java.lang.invoke` remains outside the v1 runtime profile.
 - Add the TOS fixed floating-point engine for Java `float`/`double` opcodes:
   strictfp-equivalent binary32/binary64 arithmetic with pinned rounding,
   NaN/signed-zero/infinity/subnormal behavior, plus conformance tests for all
@@ -395,9 +412,8 @@ for consensus execution. No TOS integration yet; tested standalone.
   deterministic runtime traps for forbidden host-observing packages/classes.
   In the v1 classpath, broad host packages such as `java.net` and host-backed
   `java.nio` are absent; minimal `java.io` is descriptor/string/byte-array
-  only; non-admitted whole classes such as `sun.misc.Unsafe`, `avata.Machine`,
-  `avata.Traces`, `MutableCallSite`, `VolatileCallSite`, `SerializedLambda`,
-  and `MethodHandleInfo` are absent from
+  only; non-admitted whole classes/packages such as `java.lang.invoke`,
+  `sun.misc.Unsafe`, `avata.Machine`, and `avata.Traces` are absent from
   `rt.jar`; `java.lang.Thread` and non-admitted reflection/class-loading
   surfaces must reject or trap deterministically where their containing classes
   are still required.
@@ -415,14 +431,11 @@ eliminate undefined behavior that could cause inter-validator divergence.
 
 **Effort:** 8–14 weeks
 
-**Key risk:** Avata VM surface area. GC behavior, class loading, exceptions,
-JNI/native stubs, and object identity must all be reduced to deterministic
-consensus-safe behavior. If Avata's collector cannot be made deterministic
-without significant surgery, evaluate replacing it with a simpler arena
-allocator that is reset per transaction. A per-transaction arena (no GC at all)
-is safe if gas limits are low enough that no single transaction can exhaust a
-pre-allocated arena; this simplifies determinism at the cost of limiting
-allocation-heavy contracts.
+**Key risk:** Avata VM surface area. Class resolution, exceptions, JNI/native
+stubs, object identity, and heap allocation must all be reduced to deterministic
+consensus-safe behavior. The v1 target is a per-transaction arena with explicit
+memory counters, not Java-observable garbage collection. Gas and memory limits
+must be sized together so a single transaction cannot exhaust validator memory.
 
 ---
 
@@ -632,10 +645,10 @@ mutable static fields.
 
 **Effort:** 3–5 months
 
-**Key risk:** Avata's class loader may store per-class metadata in ways that
-are not easily separable from the heap. A detailed audit of
+**Key risk:** Avata's class-space metadata may store per-class state in ways
+that are not easily separable from the heap. A detailed audit of
 `avata/src/machine.cpp` and `avata/src/heap.cpp` is required before estimating
-this phase more precisely. If Avata's class loader state is entangled with the
+this phase more precisely. If Avata's class-space state is entangled with the
 object heap in ways that prevent clean per-transaction reset, the fork may need
 significant restructuring.
 
@@ -818,7 +831,7 @@ Last updated: 2026-05-05.
 | Phase 7 — RPC namespace | ⬜ | |
 | Phase 8 — Hardening | ⬜ | |
 | JVM v2 account-native topology | ⏭ | Requires a separate consensus migration design; out of scope for v1 |
-| Lambda / invokedynamic support | ⬜ | Required for OpenJDK Java 8 opcode compatibility; implemented in Phase 1 |
+| Lambda / invokedynamic support | ⬜ | Required for full Java 8 opcode compatibility, but must be VM-internal and deterministic; public `java.lang.invoke` stays absent from v1 `rt.jar` |
 | Per-account contract model | ⏭ | Each Java contract as a distinct TOS account on wc=3; out of scope for v1 |
 
 ## File Layout (target)
@@ -882,11 +895,13 @@ jvm/
 
 The following questions must be answered before Phase 1 is considered complete:
 
-1. **GC model for v1.** Should the fork replace Avata's semi-space GC with a
-   per-transaction arena allocator, or determinize the existing GC? An arena is
-   simpler to audit for determinism but limits maximum per-transaction heap size.
-   Gas limits should prevent abuse either way, but the interaction between gas
-   limits and heap limits needs a concrete number for ConfigParam 85.
+1. **Static state and transaction arena boundary for v1.** Explicit
+   memory-limit accounting and movable-heap arena rollback exist in the contract
+   ABI and allocation path. The remaining work is pinning which static fields
+   may survive a transaction, serializing them into cells, and ensuring no
+   transient heap reference crosses the transaction boundary. Phase 0 must set
+   concrete heap and gas numbers for ConfigParam 85 so allocation-heavy
+   contracts fail deterministically before exhausting validator memory.
 
 2. **Class store retention limits.** Contract class files must be available to
    the class loader during execution. In v1 the class store is part of the

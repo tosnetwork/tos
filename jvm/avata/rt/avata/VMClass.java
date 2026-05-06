@@ -37,6 +37,6 @@ public class VMClass {
   public VMMethod[] methodTable;
   public ClassAddendum addendum;
   public Singleton staticTable;
-  public ClassLoader loader;
+  public ClassSpace loader;
   public byte[] source;
 }

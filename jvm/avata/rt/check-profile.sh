@@ -46,12 +46,23 @@ $0 == "java/io/FileNotFoundException.class" { reject("forbidden host file API");
 $0 == "java/lang/Process.class" { reject("forbidden process API"); next; }
 $0 == "java/lang/ProcessBuilder.class" { reject("forbidden process API"); next; }
 $0 == "java/lang/Runtime.class" { reject("forbidden host runtime API"); next; }
+$0 == "java/lang/IllegalThreadStateException.class" { reject("forbidden thread scheduling API"); next; }
+$0 == "java/lang/SecurityException.class" { reject("forbidden security-manager API"); next; }
 $0 == "java/lang/StringBuffer.class" { reject("forbidden legacy synchronized string buffer"); next; }
+$0 == "java/lang/ClassLoader.class" { reject("forbidden dynamic class-loader API"); next; }
+$0 == "java/lang/Thread.class" { reject("forbidden thread API"); next; }
+$0 == "java/lang/ThreadDeath.class" { reject("forbidden thread scheduling API"); next; }
+$0 == "java/lang/ThreadGroup.class" { reject("forbidden thread API"); next; }
 $0 == "java/lang/ThreadLocal.class" { reject("forbidden thread-local API"); next; }
+$0 == "java/lang/TypeNotPresentException.class" { reject("forbidden optional reflective type API"); next; }
 $0 == "java/lang/InheritableThreadLocal.class" { reject("forbidden thread-local API"); next; }
 $0 == "sun/misc/Unsafe.class" { reject("forbidden unsafe API"); next; }
 $0 == "avata/Machine.class" { reject("forbidden host VM API"); next; }
 $0 == "avata/Traces.class" { reject("forbidden host tracing API"); next; }
+$0 == "avata/VMClassLoader.class" { reject("stale VM class-loader shell"); next; }
+$0 == "avata/SystemClassLoader.class" { reject("stale VM class-loader shell"); next; }
+$0 == "avata/VMThread.class" { reject("stale VM thread shell"); next; }
+$0 == "avata/VMThreadGroup.class" { reject("stale VM thread-group shell"); next; }
 $0 == "java/util/HashMap.class" { reject("forbidden hash collection"); next; }
 $0 == "java/util/HashSet.class" { reject("forbidden hash collection"); next; }
 $0 == "java/util/Hashtable.class" { reject("forbidden hash collection"); next; }
@@ -66,12 +77,10 @@ $0 == "java/util/Stack.class" { reject("forbidden legacy synchronized collection
 $0 == "java/util/EmptyStackException.class" { reject("forbidden legacy stack API"); next; }
 $0 == "java/util/StringTokenizer.class" { reject("forbidden legacy tokenizer API"); next; }
 $0 ~ /^java\/util\/Collections\$(RandomAccess)?Synchronized/ { reject("forbidden synchronized collection wrapper"); next; }
-$0 == "java/lang/invoke/MutableCallSite.class" { reject("forbidden mutable call site"); next; }
-$0 == "java/lang/invoke/VolatileCallSite.class" { reject("forbidden volatile call site"); next; }
-$0 == "java/lang/invoke/SerializedLambda.class" { reject("forbidden lambda serialization"); next; }
-$0 == "java/lang/invoke/MethodHandleInfo.class" { reject("forbidden method-handle introspection"); next; }
+$0 ~ /^java\/lang\/invoke\// { reject("forbidden method-handle and invokedynamic API"); next; }
+$0 ~ /^java\/lang\/reflect\// { reject("forbidden reflection API"); next; }
 
-$0 ~ /^sun\// && $0 != "sun/misc/Cleaner.class" && $0 != "sun/reflect/ConstantPool.class" {
+$0 ~ /^sun\// {
   reject("unexpected sun internal class");
   next;
 }
@@ -80,9 +89,6 @@ $0 ~ /^avata\// { next; }
 $0 ~ /^java\/lang\// { next; }
 $0 ~ /^java\/io\// { next; }
 $0 ~ /^java\/util\// { next; }
-$0 == "sun/misc/Cleaner.class" { next; }
-$0 == "sun/reflect/ConstantPool.class" { next; }
-
 {
   reject("outside admitted rt.jar package roots");
 }

@@ -59,11 +59,22 @@ Status legend: `✅` completed, unchecked items are still open.
     reset, set, bulk-set, read, and charge helper costs through
     `avata_charge_contract_helper_gas()`. `java.lang.Storage` charges from
     that helper table before host/fallback storage access.
+    `include/avata/contract.h` also exposes transaction memory-limit and
+    memory-counter ABI calls:
+    `avata_begin_contract_transaction_with_limits()`,
+    `avata_contract_memory_used()`,
+    `avata_contract_memory_remaining()`, and
+    `avata_contract_memory_limit()`. Contract allocations increment
+    `Thread::contractMemoryUsed` and throw deterministic `OutOfMemoryError`
+    if the configured transaction memory limit is exceeded. `avata.Memory`
+    reads these transaction-local counters while a contract transaction is
+    active.
   - **Remaining work:**
     - Add the actual JVM workchain compute-phase adapter and call
-      `avata_begin_contract_transaction(thread, input.gas_limit)` before each
-      contract invocation, then read `avata_contract_remaining_gas()` to derive
-      `gas_used`.
+      `avata_begin_contract_transaction_with_limits(thread, input.gas_limit,
+      input.memory_limit)` before each contract invocation, then read
+      `avata_contract_remaining_gas()` and `avata_contract_memory_used()` to
+      derive resource usage.
     - Load the opcode and helper cost tables from `jvm/core/gas-table.cpp`
       (ConfigParam 85) through `avata_set_opcode_gas_costs()` and
       `avata_set_contract_helper_gas_costs()` instead of using the standalone
@@ -92,20 +103,20 @@ Status legend: `✅` completed, unchecked items are still open.
     `minor == 0xFFFF` (Java preview features) by throwing
     `GcUnsupportedClassVersionError`. It also rejects forbidden class
     references in constant-pool class entries and field/method descriptors:
-    `java.lang.Thread`, `java.lang.Runtime`, and `java.lang.reflect.*` outside
-    the admitted reflect surface. Packages absent from `rt.jar`, such as
+    `java.lang.Thread`, `java.lang.ClassLoader`, `java.lang.Runtime`,
+    all `java.lang.invoke.*`, all `java.lang.reflect.*`, and all
+    `java.lang.ref.*`. Packages absent from `rt.jar`, such as
     `java.net` and `java.nio`, are enforced by absence plus the build-time
     `rt/check-profile.sh` check rather than verifier special cases. Forbidden
     Java 9+ class-file attributes (`Module`,
-    `ModulePackages`, `ModuleMainClass`, `NestHost`, `NestMembers`, `Record`,
-    `PermittedSubclasses`) are rejected in field, method, and class attribute
-    tables with `GcVerifyError`. Duplicate method name+descriptor pairs are
-    rejected with `GcClassFormatError`. `BootstrapMethods` is now restricted to
-    the admitted Java 8 lambda surface:
-    `LambdaMetafactory.metafactory` and `altMetafactory` with exact
-    descriptors, method-type / method-handle / marker / bridge argument shape,
-    no missing table for invokedynamic, and no serializable or unknown
-    altMetafactory flags. Class initializers are admitted only as static
+    `ModulePackages`, `ModuleMainClass`, `NestHost`, `NestMembers`,
+    `BootstrapMethods`, `Record`, `PermittedSubclasses`) are rejected in field,
+    method, and class attribute tables with `GcVerifyError`. Duplicate method
+    name+descriptor pairs are rejected with `GcClassFormatError`.
+    `CONSTANT_MethodHandle`, `CONSTANT_MethodType`, and
+    `CONSTANT_InvokeDynamic` are rejected by the v1 contract verifier because
+    the runtime no longer ships public `java.lang.invoke` classes. Class
+    initializers are admitted only as static
     `()V` methods with bytecode, and native/abstract/synchronized
     `<clinit>` methods are rejected. Constructors must be non-static and return
     `void`. Runtime initialization failure remains deterministic: an exception
@@ -114,9 +125,9 @@ Status legend: `✅` completed, unchecked items are still open.
     throw `NoClassDefFoundError`. Supporting Java files now include
     `ClassFormatError`, `UnsupportedClassVersionError`, and `VerifyError`.
     `VerifierProfile` covers forbidden class refs, forbidden descriptors,
-    forbidden attributes, duplicate methods, forbidden bootstrap methods,
-    forbidden serializable bootstrap flags, missing `BootstrapMethods`,
-    malformed class initializers/constructors, and admitted reflection refs.
+    forbidden attributes, duplicate methods, forbidden method-handle /
+    method-type / invokedynamic constants, malformed class
+    initializers/constructors, and forbidden reflection/ref refs.
   - **Remaining work:**
     - Move from the current verifier helper allowlist to a generated profile
       manifest once `rt.jar` is finalized.
@@ -129,14 +140,19 @@ Status legend: `✅` completed, unchecked items are still open.
     `loadLibrary()`, `mapLibraryName()`, `exit()` with
     `UnsupportedOperationException`. The Android/libcore and OpenJDK classpath
     bridges have been removed from the TOS Avata profile.
-  - **Completed in slim pass:** `Avata_java_lang_ClassLoader_load` now throws
-    `ContractViolationError`, and the legacy
+  - **Completed in slim pass:** public `java.lang.ClassLoader` and the old
+    `Avata_java_lang_ClassLoader_load` path have been removed. The legacy
     `Java_java_lang_System_currentTimeMillis` JNI body returns deterministic
     zero if reached by future classpath changes.
   - **Completed in classpath cut:** broad host-facing packages are absent from
-    `rt.jar`; `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`,
-    `MutableCallSite`, `VolatileCallSite`, `SerializedLambda`, and
-    `MethodHandleInfo` are no longer shipped.
+    `rt.jar`; `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, and
+    `avata.Traces` are no longer shipped.
+  - ✅ **Completed in contract-profile audit:** `System.getProperty()` now exposes
+    only a fixed deterministic allow-list and no longer ingests VM command-line
+    `-D` properties such as `avata.builtins` or `java.class.path`. The profile
+    also removed legacy thread/security/type shell classes
+    (`IllegalThreadStateException`, `ThreadDeath`, `SecurityException`,
+    `TypeNotPresentException`) plus `Collections.shuffle`.
   - **Remaining work:**
     - Add deploy-time verifier negative tests for forbidden package/class
       references that are absent or internal-only.
@@ -153,9 +169,9 @@ Status legend: `✅` completed, unchecked items are still open.
       calls remain stable.
     - `objectHash()` in `machine.h` returns a per-transaction counter value for
       un-extended non-fixed objects, replacing the address-derived value.
-    - GC copy callback preserves the counter-based identity hash when a side
-      table entry exists; `gcTakeHash()` is now only a fallback for VM-internal
-      hashTaken objects without a Java-visible identity entry.
+    - The legacy heap-copy callback preserves the counter-based identity hash
+      when a side table entry exists; `gcTakeHash()` is now only a fallback for
+      VM-internal hashTaken objects without a Java-visible identity entry.
     - `Object.toString()` still uses `ClassName@0x<hash>`, but the hash now
       comes from the deterministic `objectHash()` path rather than the heap
       address.
@@ -173,7 +189,7 @@ Status legend: `✅` completed, unchecked items are still open.
 
 - [ ] Finalize contract heap/state persistence: static field admission rules,
   persisted primitive/value profiles, `PersistentMap`/`PersistentList`
-  encoding, heap reset/snapshot model, and GC/arena behavior.
+  encoding, heap reset/snapshot model, and bounded arena memory accounting.
   - **Partially implemented:** `java.lang.Storage` now exposes scalar
     32-byte slot operations, `java.lang.Mapping` derives Ethereum-style hashed
     slots, and `include/avata/storage.h` exposes the native
@@ -194,12 +210,29 @@ Status legend: `✅` completed, unchecked items are still open.
       on re-entry. Primitive types (`int`, `long`, `boolean`, etc.) map directly
       to TL-B cell fields. Reference-type statics are admitted only if they hold
       a `PersistentMap` or `PersistentList` root.
-    - Heap reset: after each transaction, all per-transaction heap objects must
-      be discarded. `Thread::heap` and `Thread::defaultHeap` should be reset to
-      a fresh allocation or zeroed arena. The GC (heap.cpp) needs a
-      `resetForTransaction()` entry point that discards gen1/gen2 objects but
-      preserves bootstrap/classpath objects loaded before the gas counter was
-      enabled.
+    - ✅ Transaction memory accounting is implemented for contract-observable
+      memory: `Thread::contractMemoryUsed` is reset at transaction boundaries,
+      allocation increments it, `avata.Memory.used/remaining/limit` exposes it,
+      and the contract ABI can set/read the memory limit.
+    - ✅ Transaction-local movable heap reset is implemented with an arena
+      checkpoint: `beginContractTransactionWithLimits()` records the current
+      `Thread::heap`/`heapIndex`/`heapOffset` and `Machine::heapPoolIndex`;
+      `endContractTransaction()` clears allocations after that checkpoint and
+      frees heap chunks added during the transaction. Contract execution also
+      rejects fixed/oversized allocation and does not invoke the legacy
+      collector fallback while `contractActive` is true. `avata-unittest`
+      covers checkpoint rollback and heap-chunk release.
+    - ✅ Static-field leakage guard is implemented for contract execution:
+      `getstatic` and `putstatic` on application classes now throw
+      `ContractViolationError` while `Thread::contractActive` is true. Boot
+      runtime classes may read already-initialized constants/helpers, but
+      reference-type `putstatic` is rejected during contract execution so lazy
+      boot class initialization cannot cache transaction-arena objects in
+      runtime static fields. This makes ordinary Java static state transiently
+      unavailable until a canonical state codec is admitted.
+    - Remaining heap/state work: implement the static-table/cell codec for the
+      explicit persisted-value profile; ensure bootstrap/classpath objects stay
+      outside the transaction arena.
     - The real chain integration still needs to install an account-state
       overlay through `avata_set_storage_host()` before contract invocation,
       call `avata_storage_execute_transaction()` around execution, and implement
@@ -235,26 +268,21 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 - ✅ Continue aligning native IO error handling with JDK8u:
   file metadata helpers, directory handling, interrupted syscalls, and close
   semantics now have a full pass for the current Avata `java.io` surface.
-- ✅ Complete `invokedynamic`/lambda support for the admitted Java profile:
-  marker interfaces, bridge methods, and deterministic bootstrap linkage now
-  follow the JDK8u `altMetafactory` argument model for Avata's lambda surface.
-- ✅ Audit `java.lang.invoke` against OpenJDK 8u behavior: `CallSite` is now
-  abstract per JDK8u; `ConstantCallSite` is the sole admitted subclass;
-  `MutableCallSite` and `VolatileCallSite` were initially deterministic traps
-  and are now removed from the v1 classpath (runtime target mutation breaks
-  consensus); `MethodHandle` non-admitted methods trap;
-  `MethodHandles.lookup()`/`publicLookup()` and all `Lookup` factory methods
-  trap (host-observing); `SerializedLambda` was initially a deterministic trap
-  and is now removed from the v1 classpath (lambda serialization not admitted);
-  `WrongMethodTypeException` retained; `MethodHandleInfo`/`Lookup.revealDirect`
-  removed from the v1 classpath because direct-handle introspection is outside
-  the admitted contract API profile.
-- ✅ Complete reflection compatibility: `Class.getClassLoader()` returns `null`
-  (bootstrap model); `Class.isSynthetic()` checks `ACC_SYNTHETIC`; `Field`
-  generic type reflection works; `AccessibleObject.setAccessible` is a no-op
-  (consensus profile does not restrict access); `Class.newInstance()` works for
-  concrete classes, throws `InstantiationException` for interfaces;
-  `Class.forName` uses caller loader; `FunctionalInterface` annotation added.
+- ✅ Removed public `java.lang.invoke` from the admitted v1 Java profile:
+  `CallSite`, `ConstantCallSite`, `MutableCallSite`, `VolatileCallSite`,
+  `SerializedLambda`, `MethodHandle`, `MethodHandles`, `MethodType`,
+  `WrongMethodTypeException`, `LambdaConversionException`,
+  `LambdaMetafactory`, and `MethodHandleInfo` are absent from `rt.jar`.
+  The verifier rejects `CONSTANT_MethodHandle`, `CONSTANT_MethodType`,
+  `CONSTANT_InvokeDynamic`, and `BootstrapMethods`. Future Java 8
+  `invokedynamic` admission must be VM-internal and deterministic, not a public
+  Java SE method-handle API surface.
+- ✅ Removed Java reflection compatibility from the contract profile:
+  `java.lang.reflect.*`, dynamic proxies, generic reflection, `Class.newInstance`,
+  reflective method/field lookup, `InstantiationException`, and
+  `ReflectiveOperationException` are no longer shipped. `Class` keeps only the
+  deterministic metadata methods needed by normal Java 8 code and lambda
+  linkage.
 - [ ] Finish encoding/console behavior:
   `file.encoding` default/override behavior is fixed, but stdout/stderr console
   encoding and unsupported charset handling still need cross-platform checks.
@@ -308,10 +336,10 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   serialization, URL/resource handler packages, hash/identity/weak collections,
   `Properties`, legacy synchronized collections/tokenizers, and thread-local
   APIs. The generated `rt.jar` now contains only `java.lang`, annotations,
-  `java.lang.invoke`, VM-internal `java.lang.ref` linkage, admitted reflection,
   minimal `java.io`, deterministic ordered/list collections,
-  `java.util.function`, Avata VM support classes, and small `sun.*` internals
-  required by VM internals.
+  `java.util.function`, and Avata VM support classes. Public
+  `java.lang.invoke`, `java.lang.ref`, `java.lang.reflect`, and `sun.*`
+  classes are no longer shipped.
 - ✅ Removed additional non-contract public surfaces from the v1 `rt.jar`:
   `java.lang.Runtime`, `java.io.FileNotFoundException`, host-backed
   `System.in`, `Math.random`, host-native `Math` transcendental functions,
@@ -322,9 +350,8 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 - ✅ Added `rt/check-profile.sh` to `build-test`, so generated `rt.jar` fails
   the build if forbidden packages or non-admitted shell classes are reintroduced.
 - ✅ Removed callable native-internal and non-admitted invoke shell classes:
-  `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, `MutableCallSite`,
-  `VolatileCallSite`, `SerializedLambda`, and `MethodHandleInfo` are absent
-  from `rt.jar`.
+  `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, and `avata.Traces`
+  are absent from `rt.jar`.
 - ✅ Turned `Object.wait/notify/notifyAll` and `Thread.join/interruption` into
   deterministic `ContractViolationError` traps. `Thread.activeCount()`,
   `enumerate()`, and `getId()` now return fixed single-thread profile values.
@@ -338,12 +365,9 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 - ✅ `File` metadata helpers now follow JDK8u-style behavior for canonical
   paths, exclusive file creation, existing-directory `mkdir`, interrupted
   `stat`/`access`/`chmod`/`remove`/`rename` calls, and directory iteration.
-- ✅ `invokedynamic` lambda bootstrap handling now resolves JDK8u-style
-  `altMetafactory` marker and bridge arguments, emits marker interfaces without
-  duplicate interface entries, and generates bridge forwarding methods when
-  requested.
-- ✅ `LambdaConversionException` constructors now match the JDK8u surface,
-  including cause/message handling and the writable-stack-trace flag.
+- ✅ Removed the earlier Java-surface lambda bootstrap implementation from the
+  v1 profile. It is no longer part of `rt.jar`; future `invokedynamic` work
+  must be VM-internal and consensus-specified.
 - ✅ `Method.getExceptionTypes` and `Constructor.getExceptionTypes` now expose
   declared exception classes from the parsed class-file `Exceptions` attribute.
 - ✅ `Class.getTypeParameters` now follows the JDK8u class-level type-variable
@@ -418,17 +442,12 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   `UnsupportedOperationException` with fixed messages. `InvalidClassException`
   added with JDK8u-compatible `classname` field. Exception types aligned across
   write and read paths.
-- ✅ `java.lang.invoke` profile audited and aligned: `CallSite` abstract per
-  JDK8u; `ConstantCallSite` admitted; `MutableCallSite`/`VolatileCallSite`
-  removed from the v1 classpath;
-  `MethodHandle` Java-surface non-admitted methods trap; `MethodHandles.Lookup`
-  factory methods trap; `SerializedLambda` and `MethodHandleInfo` removed from
-  the v1 classpath;
-  `WrongMethodTypeException` retained; `LambdaMetafactory`
-  updated to use `ConstantCallSite`.
-- ✅ Reflection API aligned: `Class.getClassLoader()` returns null;
-  `Class.isSynthetic()` added; `Class.forName` fixed; `FunctionalInterface`
-  annotation added; `Long.compare(long,long)` added.
+- ✅ `java.lang.invoke` removed from the v1 contract classpath. The remaining
+  Java 8 `invokedynamic` work is tracked as a VM-internal deterministic
+  bootstrap design item, not as a public method-handle API compatibility item.
+- ✅ Reflection API removed from the contract profile; `Class.isSynthetic()` and
+  `Class.forName` remain as deterministic class metadata helpers;
+  `FunctionalInterface` annotation added; `Long.compare(long,long)` added.
 - ✅ Host-API consensus hardening: `System` exposes only deterministic VM-managed
   streams and fixed property reads; `Runtime` is removed from the v1 `rt.jar`;
   `Thread` remains VM-internal and contract references are rejected. The earlier

@@ -24,8 +24,4 @@ public class VMMethod {
   public MethodAddendum addendum;
   public VMClass class_;
   public Code code;
-  
-  public boolean hasAnnotations() {
-    return addendum != null && addendum.annotationTable != null;
-  }
 }

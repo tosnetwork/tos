@@ -12,32 +12,14 @@ package java.lang;
 
 import avata.VMClass;
 import avata.ClassAddendum;
-import avata.AnnotationInvocationHandler;
-import avata.SystemClassLoader;
+import avata.SystemClassSpace;
 import avata.Classes;
 import avata.InnerClassReference;
+import avata.Modifiers;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.GenericDeclaration;
-import java.lang.reflect.Method;
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
-import java.lang.reflect.Type;
-import java.lang.reflect.TypeVariable;
-import java.lang.reflect.Proxy;
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.AnnotatedElement;
-import java.lang.reflect.SignatureParser;
-import java.lang.annotation.Annotation;
 import java.util.Arrays;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.LinkedList;
 
-public final class Class <T>
-  implements Type, AnnotatedElement, GenericDeclaration
-{
+public final class Class <T> {
   private static final int PrimitiveFlag = 1 <<  5;
   private static final int EnumFlag      = 1 << 14;
 
@@ -129,60 +111,33 @@ public final class Class <T>
     }
   }
 
-  public T newInstance()
-    throws IllegalAccessException, InstantiationException
-  {
-    try {
-      return (T) getConstructor().newInstance();
-    } catch (NoSuchMethodException e) {
-      throw new RuntimeException(e);
-    } catch (InvocationTargetException e) {
-      throw new RuntimeException(e);
-    }
-  }
-
   public static Class forName(String name) throws ClassNotFoundException {
-    return Classes.forName(name, true, Method.getCaller().class_.loader);
-  }
-
-  /**
-   * Three-argument {@code Class.forName}.  In the Avata consensus profile
-   * the admitted loader values are {@code null} (bootstrap/system loader)
-   * or the fixed classpath loader.  Passing a user-defined ClassLoader is
-   * profile-external behaviour; the call is accepted but the loader is used
-   * only for resolving already-admitted classes.  Dynamic class loading from
-   * external sources is prevented at the ClassLoader level, not here.
-   */
-  public static Class forName(String name, boolean initialize,
-                              ClassLoader loader)
-    throws ClassNotFoundException
-  {
-    return Classes.forName(name, initialize, loader);
+    return Classes.forName(name, true, Classes.getCallerMethod().class_.loader);
   }
 
   public Class getComponentType() {
     if (isArray()) {
       String n = getName();
       if ("[Z".equals(n)) {
-        return SystemClassLoader.getClass(Classes.primitiveClass('Z'));
+        return SystemClassSpace.getClass(Classes.primitiveClass('Z'));
       } else if ("[B".equals(n)) {
-        return SystemClassLoader.getClass(Classes.primitiveClass('B'));
+        return SystemClassSpace.getClass(Classes.primitiveClass('B'));
       } else if ("[S".equals(n)) {
-        return SystemClassLoader.getClass(Classes.primitiveClass('S'));
+        return SystemClassSpace.getClass(Classes.primitiveClass('S'));
       } else if ("[C".equals(n)) {
-        return SystemClassLoader.getClass(Classes.primitiveClass('C'));
+        return SystemClassSpace.getClass(Classes.primitiveClass('C'));
       } else if ("[I".equals(n)) {
-        return SystemClassLoader.getClass(Classes.primitiveClass('I'));
+        return SystemClassSpace.getClass(Classes.primitiveClass('I'));
       } else if ("[F".equals(n)) {
-        return SystemClassLoader.getClass(Classes.primitiveClass('F'));
+        return SystemClassSpace.getClass(Classes.primitiveClass('F'));
       } else if ("[J".equals(n)) {
-        return SystemClassLoader.getClass(Classes.primitiveClass('J'));
+        return SystemClassSpace.getClass(Classes.primitiveClass('J'));
       } else if ("[D".equals(n)) {
-        return SystemClassLoader.getClass(Classes.primitiveClass('D'));
+        return SystemClassSpace.getClass(Classes.primitiveClass('D'));
       }
 
       if (vmClass.arrayElementClass == null) throw new AssertionError();
-      return SystemClassLoader.getClass((VMClass) vmClass.arrayElementClass);
+      return SystemClassSpace.getClass((VMClass) vmClass.arrayElementClass);
     } else {
       return null;
     }
@@ -192,200 +147,6 @@ public final class Class <T>
     return Classes.isAssignableFrom(vmClass, c.vmClass);
   }
 
-  public Field getDeclaredField(String name) throws NoSuchFieldException {
-    int index = Classes.findField(vmClass, name);
-    if (index < 0) {
-      throw new NoSuchFieldException(name);
-    } else {
-      return new Field(vmClass.fieldTable[index]);
-    }
-  }
-
-  public Field getField(String name) throws NoSuchFieldException {
-    for (VMClass c = vmClass; c != null; c = c.super_) {
-      int index = Classes.findField(c, name);
-      if (index >= 0) {
-        return new Field(vmClass.fieldTable[index]);
-      }
-    }
-    throw new NoSuchFieldException(name);
-  }
-
-  public Method getDeclaredMethod(String name, Class ... parameterTypes)
-    throws NoSuchMethodException
-  {
-    if (name.startsWith("<")) {
-      throw new NoSuchMethodException(name);
-    }
-    int index = Classes.findMethod(vmClass, name, parameterTypes);
-    if (index < 0) {
-      throw new NoSuchMethodException(name);
-    } else {
-      return new Method(vmClass.methodTable[index]);
-    }
-  }
-
-  public Method getMethod(String name, Class ... parameterTypes)
-    throws NoSuchMethodException
-  {
-    if (name.startsWith("<")) {
-      throw new NoSuchMethodException(name);
-    }
-    for (VMClass c = vmClass; c != null; c = c.super_) {
-      int index = Classes.findMethod(c, name, parameterTypes);
-      if (index >= 0) {
-        return new Method(c.methodTable[index]);
-      }
-    }
-    throw new NoSuchMethodException(name);
-  }
-
-  public Constructor getConstructor(Class ... parameterTypes)
-    throws NoSuchMethodException
-  {
-    int index = Classes.findMethod(vmClass, "<init>", parameterTypes);
-    if (index < 0) {
-      throw new NoSuchMethodException();
-    } else {
-      return new Constructor(new Method(vmClass.methodTable[index]));
-    }
-  }
-
-  public Constructor getDeclaredConstructor(Class ... parameterTypes)
-    throws NoSuchMethodException
-  {
-    Constructor c = null;
-    Constructor[] constructors = getDeclaredConstructors();
-
-    for (int i = 0; i < constructors.length; ++i) {
-      if (Classes.match(parameterTypes, constructors[i].getParameterTypes())) {
-        c = constructors[i];
-      }
-    }
-
-    if (c == null) {
-      throw new NoSuchMethodException();
-    } else {
-      return c;
-    }
-  }
-
-  private int countConstructors(boolean publicOnly) {
-    int count = 0;
-    if (vmClass.methodTable != null) {
-      for (int i = 0; i < vmClass.methodTable.length; ++i) {
-        if (((! publicOnly)
-             || ((vmClass.methodTable[i].flags & Modifier.PUBLIC))
-             != 0)
-            && Method.getName(vmClass.methodTable[i]).equals("<init>"))
-        {
-          ++ count;
-        }
-      }
-    }
-    return count;
-  }
-
-  public Constructor[] getDeclaredConstructors() {
-    Constructor[] array = new Constructor[countConstructors(false)];
-    if (vmClass.methodTable != null) {
-      Classes.link(vmClass);
-
-      int index = 0;
-      for (int i = 0; i < vmClass.methodTable.length; ++i) {
-        if (Method.getName(vmClass.methodTable[i]).equals("<init>")) {
-          array[index++] = new Constructor(new Method(vmClass.methodTable[i]));
-        }
-      }
-    }
-
-    return array;
-  }
-
-  public Constructor[] getConstructors() {
-    Constructor[] array = new Constructor[countConstructors(true)];
-    if (vmClass.methodTable != null) {
-      Classes.link(vmClass);
-
-      int index = 0;
-      for (int i = 0; i < vmClass.methodTable.length; ++i) {
-        if (((vmClass.methodTable[i].flags & Modifier.PUBLIC) != 0)
-            && Method.getName(vmClass.methodTable[i]).equals("<init>"))
-        {
-          array[index++] = new Constructor(new Method(vmClass.methodTable[i]));
-        }
-      }
-    }
-
-    return array;
-  }
-
-  public Field[] getDeclaredFields() {
-    if (vmClass.fieldTable != null) {
-      Field[] array = new Field[vmClass.fieldTable.length];
-      for (int i = 0; i < vmClass.fieldTable.length; ++i) {
-        array[i] = new Field(vmClass.fieldTable[i]);
-      }
-      return array;
-    } else {
-      return new Field[0];
-    }
-  }
-
-  private int countPublicFields() {
-    int count = 0;
-    if (vmClass.fieldTable != null) {
-      for (int i = 0; i < vmClass.fieldTable.length; ++i) {
-        if (((vmClass.fieldTable[i].flags & Modifier.PUBLIC)) != 0) {
-          ++ count;
-        }
-      }
-    }
-    return count;
-  }
-
-  public Field[] getFields() {
-    Field[] array = new Field[countPublicFields()];
-    if (vmClass.fieldTable != null) {
-      Classes.link(vmClass);
-
-      int ai = 0;
-      for (int i = 0; i < vmClass.fieldTable.length; ++i) {
-        if (((vmClass.fieldTable[i].flags & Modifier.PUBLIC)) != 0) {
-          array[ai++] = new Field(vmClass.fieldTable[i]);
-        }
-      }
-    }
-    return array;
-  }
-
-  private static void getAllFields(VMClass vmClass, ArrayList<Field> fields) {
-    if (vmClass.super_ != null) {
-      getAllFields(vmClass.super_, fields);
-    }
-    if (vmClass.fieldTable != null) {
-      Classes.link(vmClass);
-
-      for (int i = 0; i < vmClass.fieldTable.length; ++i) {
-        fields.add(new Field(vmClass.fieldTable[i]));
-      }
-    }
-  }
-
-  public Field[] getAllFields() {
-    ArrayList<Field> fields = new ArrayList<Field>();
-    getAllFields(vmClass, fields);
-    return fields.toArray(new Field[fields.size()]);
-  }
-
-  public Method[] getDeclaredMethods() {
-    return Classes.getMethods(vmClass, false);
-  }
-
-  public Method[] getMethods() {
-    return Classes.getMethods(vmClass, true);
-  }
-
   public Class[] getInterfaces() {
     ClassAddendum addendum = vmClass.addendum;
     if (addendum != null) {
@@ -393,7 +154,7 @@ public final class Class <T>
       if (table != null) {
         Class[] array = new Class[table.length];
         for (int i = 0; i < table.length; ++i) {
-          array[i] = SystemClassLoader.getClass((VMClass) table[i]);
+          array[i] = SystemClassSpace.getClass((VMClass) table[i]);
         }
         return array;
       }
@@ -403,17 +164,9 @@ public final class Class <T>
 
   public native Class getEnclosingClass();
 
-  public native Method getEnclosingMethod();
-
-  public native Constructor getEnclosingConstructor();
-
   public T[] getEnumConstants() {
     if (Enum.class.isAssignableFrom(this)) {
-      try {
-        return (T[]) getMethod("values").invoke(null);
-      } catch (Exception e) {
-        throw new Error();
-      }
+      return (T[]) Classes.enumConstants(this);
     } else {
       return null;
     }
@@ -480,23 +233,6 @@ public final class Class <T>
     return null;
   }
 
-  /**
-   * Returns null for bootstrap-loaded classes (java.lang.*, etc.) per
-   * JDK8 semantics where the bootstrap class loader is represented as null.
-   * Returns the actual loader for application classes so that dynamic
-   * class definition (defineClass, Proxy) can use it as a parent.
-   */
-  public ClassLoader getClassLoader() {
-    ClassLoader loader = vmClass.loader;
-    // Boot loader is a SystemClassLoader that is not the app loader.
-    // JDK8 represents it as null.
-    if (loader instanceof avata.SystemClassLoader
-        && loader != avata.SystemClassLoader.appLoader()) {
-      return null;
-    }
-    return loader;
-  }
-
   public boolean isSynthetic() {
     return (vmClass.flags & 0x1000) != 0;
   }
@@ -519,7 +255,7 @@ public final class Class <T>
   }
 
   public boolean isInterface() {
-    return (vmClass.flags & Modifier.INTERFACE) != 0;
+    return (vmClass.flags & Modifiers.INTERFACE) != 0;
   }
 
   public boolean isAnnotation() {
@@ -527,7 +263,7 @@ public final class Class <T>
   }
 
   public Class getSuperclass() {
-    return (vmClass.super_ == null ? null : SystemClassLoader.getClass(vmClass.super_));
+    return (vmClass.super_ == null ? null : SystemClassSpace.getClass(vmClass.super_));
   }
   
   private enum ClassType { GLOBAL, MEMBER, LOCAL, ANONYMOUS }
@@ -624,160 +360,6 @@ public final class Class <T>
         return null;
       }
     }
-  }
-
-  public boolean isAnnotationPresent
-    (Class<? extends Annotation> class_)
-  {
-    return getAnnotation(class_) != null;
-  }
-
-  private static Annotation getAnnotation(VMClass c, Object[] a) {
-    if (a[0] == null) {
-      a[0] = Proxy.newProxyInstance
-        (c.loader, new Class[] { (Class) a[1] },
-         new AnnotationInvocationHandler(a));
-    }
-    return (Annotation) a[0];
-  }
-
-  public <T extends Annotation> T getAnnotation(Class<T> class_) {
-    for (VMClass c = vmClass; c != null; c = c.super_) {
-      if (c.addendum != null && c.addendum.annotationTable != null) {
-        Classes.link(c, c.loader);
-
-        Object[] table = (Object[]) c.addendum.annotationTable;
-        for (int i = 0; i < table.length; ++i) {
-          Object[] a = (Object[]) table[i];
-          if (a[1] == class_) {
-            return (T) getAnnotation(c, a);
-          }
-        }
-      }
-    }
-    return null;
-  }
-
-  public Annotation[] getDeclaredAnnotations() {
-    if (vmClass.addendum != null && vmClass.addendum.annotationTable != null) {
-      Classes.link(vmClass);
-
-      Object[] table = (Object[]) vmClass.addendum.annotationTable;
-      Annotation[] array = new Annotation[table.length];
-      for (int i = 0; i < table.length; ++i) {
-        array[i] = getAnnotation(vmClass, (Object[]) table[i]);
-      }
-      return array;
-    } else {
-      return new Annotation[0];
-    }
-  }
-
-  private int countAnnotations() {
-    int count = 0;
-    for (VMClass c = vmClass; c != null; c = c.super_) {
-      if (c.addendum != null && c.addendum.annotationTable != null) {
-        Classes.link(c, c.loader);
-        count += ((Object[]) c.addendum.annotationTable).length;
-      }
-    }
-    return count;
-  }
-
-  public Annotation[] getAnnotations() {
-    Annotation[] array = new Annotation[countAnnotations()];
-    int i = 0;
-    for (VMClass c = vmClass; c != null; c = c.super_) {
-      if (c.addendum != null && c.addendum.annotationTable != null) {
-        Classes.link(c, c.loader);
-        Object[] table = (Object[]) c.addendum.annotationTable;
-        for (int j = 0; j < table.length; ++j) {
-          array[i++] = getAnnotation(c, (Object[]) table[j]);
-        }
-      }
-    }
-
-    return array;
-  }
-
-  public TypeVariable<?>[] getTypeParameters() {
-    return SignatureParser.parseTypeParameters(this);
-  }
-
-  /** 
-   * The first one is the superclass, the others are interfaces
-   **/
-  private String[] getGenericTypeSignatures() {
-    String signature = Classes.toString((byte[]) vmClass.addendum.signature);
-    final char[] signChars = signature.toCharArray();
-
-    // Addendum format:
-    // <generic args if present>LBaseClass;LIface1;LIface2;...
-    // We should split it
-    
-    int i = -1;
-    
-    // Passing the generic args
-    int angles = 0;
-    do {
-      i++;
-      if (signChars[i] == '<') angles ++;
-      else if (signChars[i] == '>') angles --;
-    } while (angles > 0);
-    if (signChars[i] == '>') i++;
-    
-    // Splitting types list
-    LinkedList<String> typeSigns = new LinkedList<String>();
-    StringBuilder curTypeSign = new StringBuilder();
-    for (; i < signChars.length; i++) {
-      // Counting braces
-      if (signChars[i] == '<') angles ++;
-      else if (signChars[i] == '>') angles --;
-      
-      // Appending character
-      curTypeSign.append(signChars[i]);
-
-      // Splitting
-      if (angles == 0 && signChars[i] == ';') {
-        typeSigns.add(curTypeSign.toString());
-        curTypeSign.setLength(0);
-      }
-    }
-    if (curTypeSign.length() > 0) typeSigns.add(curTypeSign.toString());
-
-    String[] res = new String[typeSigns.size()];
-    return typeSigns.toArray(res);
-  }
-
-  public Type[] getGenericInterfaces() {
-    if (vmClass.addendum == null || vmClass.addendum.signature == null) {
-      return getInterfaces();
-    }
-    
-    String[] typeSigns = getGenericTypeSignatures();
-    if (typeSigns.length < 1) {
-      throw new RuntimeException("Class signature doesn't contain any type");
-    }
-    
-    // Parsing types
-    Type[] res = new Type[typeSigns.length - 1];
-    for (int i = 0; i < typeSigns.length - 1; i++) {
-      res[i] = SignatureParser.parse(vmClass.loader, typeSigns[i + 1], this);
-    }
-    
-    return res;
-  }
-
-  public Type getGenericSuperclass() {
-    if (vmClass.addendum == null || vmClass.addendum.signature == null) {
-      return getSuperclass();
-    }
-    String[] typeSigns = getGenericTypeSignatures();
-    if (typeSigns.length < 1) {
-      throw new RuntimeException("Class signature doesn't contain any type");
-    }
-
-    return SignatureParser.parse(vmClass.loader, typeSigns[0], this);
   }
 
 }

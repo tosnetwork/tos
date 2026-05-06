@@ -24,11 +24,6 @@ public class Collections {
     return o == null ? 0 : o.hashCode();
   }
 
-  public static void shuffle(List list) {
-    throw new UnsupportedOperationException(
-        "random shuffle not available in the TOS JVM profile");
-  }
-
   public static void sort(List list) {
     sort(list, new Comparator() {
         public int compare(Object a, Object b) {

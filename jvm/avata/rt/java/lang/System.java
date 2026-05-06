@@ -36,25 +36,12 @@ public abstract class System {
       "native library loading not available in consensus";
   private static final String MSG_EXIT =
       "System.exit not available in consensus";
-  // Deterministic property set — only keys whose values are
+  // Deterministic property set — only fixed keys whose values are
   // platform-independent and byte-identical across all nodes.
   private static final Map<String, String> PROPERTIES = makeProperties();
 
   private static Map<String, String> makeProperties() {
     Map<String, String> p = new TreeMap<String, String>();
-    // Load VM command-line -D properties first (lower priority).
-    // This populates keys like java.class.path and java.library.path
-    // that the JVM startup sets from the -cp / -D arguments.
-    String[] vmProps = getVMProperties();
-    if (vmProps != null) {
-      for (String kv : vmProps) {
-        int eq = kv.indexOf('=');
-        if (eq > 0) {
-          p.put(kv.substring(0, eq), kv.substring(eq + 1));
-        }
-      }
-    }
-    // Hardcoded deterministic values override any command-line values.
     p.put("java.version",       "1.8.0");
     p.put("java.class.version", "52.0");
     p.put("file.separator",     "/");
@@ -72,9 +59,6 @@ public abstract class System {
     p.put("user.dir", ".");
     return p;
   }
-
-  // Returns the -D command-line properties as "key=value" strings.
-  private static native String[] getVMProperties();
 
   // Standard streams — kept as host stdio stubs so System.out.println works
   // inside consensus code (outputs go to the node log, not the ledger state).
@@ -213,19 +197,6 @@ public abstract class System {
 
   public static void loadLibrary(String name) {
     throw new UnsupportedOperationException(MSG_NATIVE);
-  }
-
-  // -----------------------------------------------------------------------
-  // GC / finalization — made no-ops; running GC is deterministic in Avata
-  // (the heap is heap-isolated per execution) and contract code must not
-  // observe collection timing.
-  // -----------------------------------------------------------------------
-  public static void gc() {
-    // no-op
-  }
-
-  public static void runFinalization() {
-    // no-op: finalizers are non-deterministic; suppress silently
   }
 
   // -----------------------------------------------------------------------

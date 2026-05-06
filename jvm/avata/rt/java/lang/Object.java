@@ -28,10 +28,8 @@ public class Object {
     return this == o;
   }
 
-  protected void finalize() throws Throwable { }
-
   public final Class<? extends Object> getClass() {
-    return avata.SystemClassLoader.getClass(getVMClass());
+    return avata.SystemClassSpace.getClass(getVMClass());
   }
 
   native avata.VMClass getVMClass();

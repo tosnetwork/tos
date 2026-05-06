@@ -841,12 +841,12 @@ test-support-sources = $(shell find $(test)/avata/ -name '*.java')
 # old broad Java SE class-library surface.
 test-sources = \
 	$(test)/AllFloats.java \
-	$(test)/Annotations.java \
 	$(test)/ArrayDequeTest.java \
 	$(test)/ArraysTest.java \
 	$(test)/Collections.java \
 	$(test)/ContractLibraryPrimitives.java \
 	$(test)/ContractRuntimePrimitives.java \
+	$(test)/ContractStaticProfile.java \
 	$(test)/DequeHelper.java \
 	$(test)/DivideByZero.java \
 	$(test)/Enums.java \
@@ -855,26 +855,17 @@ test-sources = \
 	$(test)/Hello.java \
 	$(test)/Initializers.java \
 	$(test)/Integers.java \
-	$(test)/InvokeDynamic.java \
 	$(test)/List.java \
 	$(test)/Longs.java \
 	$(test)/CoreTrapProfile.java \
 	$(test)/NullPointer.java \
-	$(test)/Proxies.java \
 	$(test)/QueueHelper.java \
-	$(test)/Reflection.java \
 	$(test)/Simple.java \
 	$(test)/StackOverflow.java \
 	$(test)/StringBuilderTest.java \
 	$(test)/Strings.java \
-	$(test)/Subroutine.java \
 	$(test)/Switch.java \
-	$(test)/Tree.java \
-	$(test)/VerifierProfile.java
-
-ifeq (7,$(java-version))
-	test-sources := $(subst $(test)/InvokeDynamic.java,,$(test-sources))
-endif
+	$(test)/Tree.java
 
 test-cpp-sources = $(wildcard $(test)/*.cpp)
 test-sources += $(test-support-sources)
@@ -1051,9 +1042,6 @@ $(test-dep): $(test-sources) $(test-library)
 		$(javac) -source 1.$(java-version) -target 1.$(java-version) \
 			-classpath $(test-build) -d $(test-build) -bootclasspath $(boot-classpath) $${files}; \
 	fi
-	$(javac) -source 1.$(java-version) -target 1.$(java-version) \
-		-XDjsrlimit=0 -d $(test-build) \
-		-bootclasspath $(boot-classpath) test/Subroutine.java
 	@touch $(@)
 
 $(test-extra-dep): $(test-extra-sources)

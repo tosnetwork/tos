@@ -2083,6 +2083,11 @@ class MyHeap : public Heap {
     c.immortalHeapEnd = start + sizeInWords;
   }
 
+  virtual size_t used()
+  {
+    return c.count;
+  }
+
   virtual size_t remaining()
   {
     return c.count < c.limit ? c.limit - c.count : 0;

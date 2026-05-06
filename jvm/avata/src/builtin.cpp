@@ -17,18 +17,12 @@
 
 using namespace vm;
 
-namespace vm {
-object resolveExceptionJTypes(Thread* t,
-                              GcClassLoader* loader,
-                              GcMethodAddendum* addendum);
-}
-
 namespace {
 
 int64_t search(Thread* t,
-               GcClassLoader* loader,
+               GcClassSpace* loader,
                GcString* name,
-               GcClass* (*op)(Thread*, GcClassLoader*, GcByteArray*),
+               GcClass* (*op)(Thread*, GcClassSpace*, GcByteArray*),
                bool replaceDots)
 {
   if (LIKELY(name)) {
@@ -50,7 +44,7 @@ int64_t search(Thread* t,
 }
 
 GcClass* resolveSystemClassThrow(Thread* t,
-                                 GcClassLoader* loader,
+                                 GcClassSpace* loader,
                                  GcByteArray* spec)
 {
   return resolveSystemClass(
@@ -119,24 +113,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
       cast<GcJclass>(t, reinterpret_cast<object>(arguments[0]))->vmClass());
 }
 
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Classes_toVMMethod(Thread* t, object, uintptr_t* arguments)
-{
-  return reinterpret_cast<intptr_t>(t->m->classpath->getVMMethod(
-      t, cast<GcJmethod>(t, reinterpret_cast<object>(arguments[0]))));
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Classes_getExceptionTypes(Thread* t,
-                                          object,
-                                          uintptr_t* arguments)
-{
-  GcMethod* method = cast<GcMethod>(t, reinterpret_cast<object>(arguments[0]));
-
-  return reinterpret_cast<int64_t>(
-      resolveExceptionJTypes(t, method->class_()->loader(), method->addendum()));
-}
-
 extern "C" AVATA_EXPORT void JNICALL
     Avata_avata_Classes_initialize(Thread* t, object, uintptr_t* arguments)
 {
@@ -160,8 +136,8 @@ extern "C" AVATA_EXPORT void JNICALL
 extern "C" AVATA_EXPORT int64_t JNICALL
     Avata_avata_Classes_resolveVMClass(Thread* t, object, uintptr_t* arguments)
 {
-  GcClassLoader* loader
-      = cast<GcClassLoader>(t, reinterpret_cast<object>(arguments[0]));
+  GcClassSpace* loader
+      = cast<GcClassSpace>(t, reinterpret_cast<object>(arguments[0]));
   GcByteArray* spec
       = cast<GcByteArray>(t, reinterpret_cast<object>(arguments[1]));
 
@@ -172,8 +148,8 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 extern "C" AVATA_EXPORT int64_t JNICALL
     Avata_avata_Classes_defineVMClass(Thread* t, object, uintptr_t* arguments)
 {
-  GcClassLoader* loader
-      = cast<GcClassLoader>(t, reinterpret_cast<object>(arguments[0]));
+  GcClassSpace* loader
+      = cast<GcClassSpace>(t, reinterpret_cast<object>(arguments[0]));
   GcByteArray* b = cast<GcByteArray>(t, reinterpret_cast<object>(arguments[1]));
   int offset = arguments[2];
   int length = arguments[3];
@@ -201,25 +177,25 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_SystemClassLoader_appLoader(Thread* t, object, uintptr_t*)
+    Avata_avata_SystemClassSpace_appClassSpace(Thread* t, object, uintptr_t*)
 {
-  return reinterpret_cast<int64_t>(roots(t)->appLoader());
+  return reinterpret_cast<int64_t>(roots(t)->appClassSpace());
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_SystemClassLoader_findLoadedVMClass(Thread* t,
+    Avata_avata_SystemClassSpace_findLoadedVMClass(Thread* t,
                                                     object,
                                                     uintptr_t* arguments)
 {
-  GcClassLoader* loader
-      = cast<GcClassLoader>(t, reinterpret_cast<object>(arguments[0]));
+  GcClassSpace* loader
+      = cast<GcClassSpace>(t, reinterpret_cast<object>(arguments[0]));
   GcString* name = cast<GcString>(t, reinterpret_cast<object>(arguments[1]));
 
   return search(t, loader, name, findLoadedClass, true);
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_SystemClassLoader_vmClass(Thread* t,
+    Avata_avata_SystemClassSpace_vmClass(Thread* t,
                                           object,
                                           uintptr_t* arguments)
 {
@@ -228,24 +204,24 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_SystemClassLoader_findVMClass(Thread* t,
+    Avata_avata_SystemClassSpace_findVMClass(Thread* t,
                                               object,
                                               uintptr_t* arguments)
 {
-  GcClassLoader* loader
-      = cast<GcClassLoader>(t, reinterpret_cast<object>(arguments[0]));
+  GcClassSpace* loader
+      = cast<GcClassSpace>(t, reinterpret_cast<object>(arguments[0]));
   GcString* name = cast<GcString>(t, reinterpret_cast<object>(arguments[1]));
 
   return search(t, loader, name, resolveSystemClassThrow, true);
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_SystemClassLoader_resourceURLPrefix(Thread* t,
+    Avata_avata_SystemClassSpace_resourceURLPrefix(Thread* t,
                                                     object,
                                                     uintptr_t* arguments)
 {
-  GcClassLoader* loader
-      = cast<GcClassLoader>(t, reinterpret_cast<object>(arguments[0]));
+  GcClassSpace* loader
+      = cast<GcClassSpace>(t, reinterpret_cast<object>(arguments[0]));
   GcString* name = cast<GcString>(t, reinterpret_cast<object>(arguments[1]));
 
   if (LIKELY(name)) {
@@ -253,7 +229,7 @@ extern "C" AVATA_EXPORT int64_t JNICALL
     stringChars(t, name, RUNTIME_ARRAY_BODY(n));
 
     const char* name
-        = static_cast<Finder*>(loader->as<GcSystemClassLoader>(t)->finder())
+        = static_cast<Finder*>(loader->as<GcSystemClassSpace>(t)->finder())
               ->urlPrefix(RUNTIME_ARRAY_BODY(n));
 
     return name ? reinterpret_cast<uintptr_t>(makeString(t, "%s", name)) : 0;
@@ -263,13 +239,13 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_SystemClassLoader_00024ResourceEnumeration_nextResourceURLPrefix(
+    Avata_avata_SystemClassSpace_00024ResourceEnumeration_nextResourceURLPrefix(
         Thread* t,
         object,
         uintptr_t* arguments)
 {
-  GcClassLoader* loader
-      = cast<GcClassLoader>(t, reinterpret_cast<object>(arguments[1]));
+  GcClassSpace* loader
+      = cast<GcClassSpace>(t, reinterpret_cast<object>(arguments[1]));
   GcString* name = cast<GcString>(t, reinterpret_cast<object>(arguments[2]));
   GcLongArray* finderElementPtrPtr
       = cast<GcLongArray>(t, reinterpret_cast<object>(arguments[3]));
@@ -281,7 +257,7 @@ extern "C" AVATA_EXPORT int64_t JNICALL
     void*& finderElementPtr
         = reinterpret_cast<void*&>(finderElementPtrPtr->body()[0]);
     const char* name
-        = static_cast<Finder*>(loader->as<GcSystemClassLoader>(t)->finder())
+        = static_cast<Finder*>(loader->as<GcSystemClassSpace>(t)->finder())
               ->nextUrlPrefix(RUNTIME_ARRAY_BODY(n), finderElementPtr);
 
     return name ? reinterpret_cast<uintptr_t>(makeString(t, "%s", name)) : 0;
@@ -291,7 +267,7 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_SystemClassLoader_getClass(Thread* t,
+    Avata_avata_SystemClassSpace_getClass(Thread* t,
                                            object,
                                            uintptr_t* arguments)
 {
@@ -300,7 +276,7 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_SystemClassLoader_getPackageSource(Thread* t,
+    Avata_avata_SystemClassSpace_getPackageSource(Thread* t,
                                                    object,
                                                    uintptr_t* arguments)
 {
@@ -366,32 +342,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
   THREAD_RESOURCE0(t, t->clearFlag(Thread::TryNativeFlag));
 
   return reinterpret_cast<int64_t (*)(int64_t)>(function)(argument);
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_Runtime_exit(Thread* t, object, uintptr_t* arguments)
-{
-  shutDown(t);
-
-  t->m->system->exit(arguments[1]);
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Runtime_freeMemory(Thread* t, object, uintptr_t*)
-{
-  return t->m->heap->remaining();
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Runtime_totalMemory(Thread* t, object, uintptr_t*)
-{
-  return t->m->heap->limit();
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Runtime_maxMemory(Thread* t, object, uintptr_t*)
-{
-  return t->m->heap->limit();
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
@@ -1047,7 +997,7 @@ extern "C" AVATA_EXPORT void JNICALL
 extern "C" AVATA_EXPORT void JNICALL
     Avata_sun_misc_Unsafe_unpark(Thread* t, object, uintptr_t* arguments)
 {
-  GcThread* thread = cast<GcThread>(t, reinterpret_cast<object>(arguments[1]));
+  GcExecutionContext* thread = cast<GcExecutionContext>(t, reinterpret_cast<object>(arguments[1]));
 
   monitorAcquire(t, cast<GcMonitor>(t, interruptLock(t, thread)));
   thread->unparked() = true;
@@ -1265,43 +1215,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Class_getEnclosingMethod(Thread* t,
-                                             object,
-                                             uintptr_t* arguments)
-{
-  GcClass* c
-      = cast<GcJclass>(t, reinterpret_cast<object>(arguments[0]))->vmClass();
-  PROTECT(t, c);
-
-  GcClassAddendum* addendum = c->addendum();
-  if (addendum) {
-    PROTECT(t, addendum);
-
-    GcByteArray* enclosingClass
-        = cast<GcByteArray>(t, addendum->enclosingClass());
-
-    if (enclosingClass) {
-      GcClass* enclosing = resolveClass(t, c->loader(), enclosingClass);
-
-      GcPair* enclosingMethod = cast<GcPair>(t, addendum->enclosingMethod());
-
-      if (enclosingMethod) {
-        return reinterpret_cast<uintptr_t>(t->m->classpath->makeJMethod(
-            t,
-            cast<GcMethod>(
-                t,
-                findMethodInClass(
-                    t,
-                    enclosing,
-                    cast<GcByteArray>(t, enclosingMethod->first()),
-                    cast<GcByteArray>(t, enclosingMethod->second())))));
-      }
-    }
-  }
-  return 0;
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
     Avata_java_lang_Class_getEnclosingClass(Thread* t,
                                             object,
                                             uintptr_t* arguments)
@@ -1324,15 +1237,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Class_getEnclosingConstructor(Thread* t,
-                                                  object method,
-                                                  uintptr_t* arguments)
-{
-  return Avata_java_lang_Class_getEnclosingMethod(t, method, arguments);
-}
-
-
-extern "C" AVATA_EXPORT int64_t JNICALL
     Avata_java_lang_Object_toString(Thread* t, object, uintptr_t* arguments)
 {
   object this_ = reinterpret_cast<object>(arguments[0]);
@@ -1349,28 +1253,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 {
   return reinterpret_cast<int64_t>(
       objectClass(t, reinterpret_cast<object>(arguments[0])));
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_Object_wait(Thread* t, object, uintptr_t* arguments)
-{
-  object this_ = reinterpret_cast<object>(arguments[0]);
-  int64_t milliseconds;
-  memcpy(&milliseconds, arguments + 1, 8);
-
-  vm::wait(t, this_, milliseconds);
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_Object_notify(Thread* t, object, uintptr_t* arguments)
-{
-  notify(t, reinterpret_cast<object>(arguments[0]));
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_java_lang_Object_notifyAll(Thread* t, object, uintptr_t* arguments)
-{
-  notifyAll(t, reinterpret_cast<object>(arguments[0]));
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL

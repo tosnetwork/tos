@@ -183,33 +183,6 @@ void turnOffTheLights(Thread* t)
 
   enter(t, Thread::ExitState);
 
-  {
-    GcFinalizer* p = 0;
-    PROTECT(t, p);
-
-    for (p = t->m->finalizers; p;) {
-      GcFinalizer* f = p;
-      p = cast<GcFinalizer>(t, p->next());
-
-      void (*function)(Thread*, object);
-      memcpy(&function, &f->finalize(), BytesPerWord);
-      if (function) {
-        function(t, f->target());
-      }
-    }
-
-    for (p = t->m->tenuredFinalizers; p;) {
-      GcFinalizer* f = p;
-      p = cast<GcFinalizer>(t, p->next());
-
-      void (*function)(Thread*, object);
-      memcpy(&function, &f->finalize(), BytesPerWord);
-      if (function) {
-        function(t, f->target());
-      }
-    }
-  }
-
   if (GcArray* files = roots(t)->virtualFiles()) {
     PROTECT(t, files);
     for (unsigned i = 0; i < files->length(); ++i) {
@@ -377,280 +350,11 @@ object findInInterfaces(
   return result;
 }
 
-void finalizerTargetUnreachable(Thread* t, Heap::Visitor* v, GcFinalizer** p)
-{
-  v->visit(&(*p)->target());
-
-  GcFinalizer* finalizer = *p;
-  *p = cast<GcFinalizer>(t, finalizer->next());
-
-  void (*function)(Thread*, object);
-  memcpy(&function, &finalizer->finalize(), BytesPerWord);
-
-  if (function) {
-    // TODO: use set() here?
-    finalizer->next() = t->m->finalizeQueue;
-    t->m->finalizeQueue = finalizer;
-  } else {
-    finalizer->setQueueTarget(t, finalizer->target());
-    finalizer->setQueueNext(t, roots(t)->objectsToFinalize());
-    roots(t)->setObjectsToFinalize(t, finalizer);
-  }
-}
-
-void referenceTargetUnreachable(Thread* t, Heap::Visitor* v, GcJreference** p)
-{
-  if (DebugReferences) {
-    fprintf(
-        stderr, "target %p unreachable for reference %p\n", (*p)->target(), *p);
-  }
-
-  v->visit(p);
-  (*p)->target() = 0;
-
-  if (objectClass(t, *p) == type(t, GcCleaner::Type)) {
-    // In openjdk, sun/misc/Cleaner extends PhantomReference
-    GcCleaner* cleaner = (*p)->as<GcCleaner>(t);
-
-    *p = cast<GcJreference>(t, (*p)->vmNext());
-
-    cleaner->setQueueNext(t, roots(t)->objectsToClean());
-    roots(t)->setObjectsToClean(t, cleaner);
-  } else {
-    if ((*p)->queue()
-        and t->m->heap->status((*p)->queue()) != Heap::Unreachable) {
-      // queue is reachable - add the reference
-
-      v->visit(&(*p)->queue());
-
-      GcReferenceQueue* q = (*p)->queue();
-
-      if (q->front()) {
-        (*p)->setJNext(t, q->front());
-      } else {
-        (*p)->setJNext(t, *p);
-      }
-      q->setFront(t, *p);
-
-      (*p)->queue() = 0;
-    }
-
-    *p = cast<GcJreference>(t, (*p)->vmNext());
-  }
-}
-
-void referenceUnreachable(Thread* t, Heap::Visitor* v, GcJreference** p)
-{
-  GcJreference* r = t->m->heap->follow(*p);
-
-  if (DebugReferences) {
-    fprintf(stderr, "reference %p unreachable (target %p)\n", *p, r->target());
-  }
-
-  if (r->queue() and t->m->heap->status(r->queue()) != Heap::Unreachable) {
-    // queue is reachable - add the reference
-    referenceTargetUnreachable(t, v, p);
-  } else {
-    *p = cast<GcJreference>(t, (*p)->vmNext());
-  }
-}
-
-void referenceTargetReachable(Thread* t, Heap::Visitor* v, GcJreference** p)
-{
-  if (DebugReferences) {
-    fprintf(
-        stderr, "target %p reachable for reference %p\n", (*p)->target(), *p);
-  }
-
-  v->visit(p);
-  v->visit(&(*p)->target());
-
-  if (t->m->heap->status((*p)->queue()) == Heap::Unreachable) {
-    (*p)->queue() = 0;
-  } else {
-    v->visit(&(*p)->queue());
-  }
-}
-
-bool isFinalizable(Thread* t, object o)
-{
-  return t->m->heap->status(o) == Heap::Unreachable
-         and (t->m->heap->follow(objectClass(t, o))->vmFlags()
-              & HasFinalizerFlag);
-}
-
-void clearTargetIfFinalizable(Thread* t, GcJreference* r)
-{
-  if (isFinalizable(t, t->m->heap->follow(r->target()))) {
-    r->target() = 0;
-  }
-}
-
 void postVisit(Thread* t, Heap::Visitor* v)
 {
   Machine* m = t->m;
-  bool major = m->heap->collectionType() == Heap::MajorCollection;
-
-  assertT(t, m->finalizeQueue == 0);
 
   m->heap->postVisit();
-
-  for (GcJreference* p = m->weakReferences; p;) {
-    GcJreference* r = m->heap->follow(p);
-    p = cast<GcJreference>(t, r->vmNext());
-    clearTargetIfFinalizable(t, r);
-  }
-
-  if (major) {
-    for (GcJreference* p = m->tenuredWeakReferences; p;) {
-      GcJreference* r = m->heap->follow(p);
-      p = cast<GcJreference>(t, r->vmNext());
-      clearTargetIfFinalizable(t, r);
-    }
-  }
-
-  for (Reference* r = m->jniReferences; r; r = r->next) {
-    if (r->weak
-        and isFinalizable(t,
-                          static_cast<object>(t->m->heap->follow(r->target)))) {
-      r->target = 0;
-    }
-  }
-
-  GcFinalizer* firstNewTenuredFinalizer = 0;
-  GcFinalizer* lastNewTenuredFinalizer = 0;
-
-  {
-    object unreachable = 0;
-    for (GcFinalizer** p = &(m->finalizers); *p;) {
-      v->visit(p);
-
-      if (m->heap->status((*p)->target()) == Heap::Unreachable) {
-        GcFinalizer* finalizer = *p;
-        *p = cast<GcFinalizer>(t, finalizer->next());
-
-        finalizer->next() = unreachable;
-        unreachable = finalizer;
-      } else {
-        p = reinterpret_cast<GcFinalizer**>(&(*p)->next());
-      }
-    }
-
-    for (GcFinalizer** p = &(m->finalizers); *p;) {
-      // target is reachable
-      v->visit(&(*p)->target());
-
-      if (m->heap->status(*p) == Heap::Tenured) {
-        // the finalizer is tenured, so we remove it from
-        // m->finalizers and later add it to m->tenuredFinalizers
-
-        if (lastNewTenuredFinalizer == 0) {
-          lastNewTenuredFinalizer = *p;
-        }
-
-        GcFinalizer* finalizer = *p;
-        *p = cast<GcFinalizer>(t, finalizer->next());
-        finalizer->next() = firstNewTenuredFinalizer;
-        firstNewTenuredFinalizer = finalizer;
-      } else {
-        p = reinterpret_cast<GcFinalizer**>(&(*p)->next());
-      }
-    }
-
-    for (object* p = &unreachable; *p;) {
-      // target is unreachable - queue it up for finalization
-      finalizerTargetUnreachable(t, v, reinterpret_cast<GcFinalizer**>(p));
-    }
-  }
-
-  GcJreference* firstNewTenuredWeakReference = 0;
-  GcJreference* lastNewTenuredWeakReference = 0;
-
-  for (GcJreference** p = &(m->weakReferences); *p;) {
-    if (m->heap->status(*p) == Heap::Unreachable) {
-      // reference is unreachable
-      referenceUnreachable(t, v, p);
-    } else if (m->heap->status(m->heap->follow(*p)->target())
-               == Heap::Unreachable) {
-      // target is unreachable
-      referenceTargetUnreachable(t, v, p);
-    } else {
-      // both reference and target are reachable
-      referenceTargetReachable(t, v, p);
-
-      if (m->heap->status(*p) == Heap::Tenured) {
-        // the reference is tenured, so we remove it from
-        // m->weakReferences and later add it to
-        // m->tenuredWeakReferences
-
-        if (lastNewTenuredWeakReference == 0) {
-          lastNewTenuredWeakReference = *p;
-        }
-
-        GcJreference* reference = (*p);
-        *p = cast<GcJreference>(t, reference->vmNext());
-        reference->vmNext() = firstNewTenuredWeakReference;
-        firstNewTenuredWeakReference = reference;
-      } else {
-        p = reinterpret_cast<GcJreference**>(&(*p)->vmNext());
-      }
-    }
-  }
-
-  if (major) {
-    {
-      object unreachable = 0;
-      for (GcFinalizer** p = &(m->tenuredFinalizers); *p;) {
-        v->visit(p);
-
-        if (m->heap->status((*p)->target()) == Heap::Unreachable) {
-          GcFinalizer* finalizer = *p;
-          *p = cast<GcFinalizer>(t, finalizer->next());
-
-          finalizer->next() = unreachable;
-          unreachable = finalizer;
-        } else {
-          p = reinterpret_cast<GcFinalizer**>(&(*p)->next());
-        }
-      }
-
-      for (GcFinalizer** p = &(m->tenuredFinalizers); *p;) {
-        // target is reachable
-        v->visit(&(*p)->target());
-        p = reinterpret_cast<GcFinalizer**>(&(*p)->next());
-      }
-
-      for (object* p = &unreachable; *p;) {
-        // target is unreachable - queue it up for finalization
-        finalizerTargetUnreachable(t, v, reinterpret_cast<GcFinalizer**>(p));
-      }
-    }
-
-    for (GcJreference** p = &(m->tenuredWeakReferences); *p;) {
-      if (m->heap->status(*p) == Heap::Unreachable) {
-        // reference is unreachable
-        referenceUnreachable(t, v, reinterpret_cast<GcJreference**>(p));
-      } else if (m->heap->status(m->heap->follow(*p)->target())
-                 == Heap::Unreachable) {
-        // target is unreachable
-        referenceTargetUnreachable(t, v, reinterpret_cast<GcJreference**>(p));
-      } else {
-        // both reference and target are reachable
-        referenceTargetReachable(t, v, reinterpret_cast<GcJreference**>(p));
-        p = reinterpret_cast<GcJreference**>(&(*p)->vmNext());
-      }
-    }
-  }
-
-  if (lastNewTenuredFinalizer) {
-    lastNewTenuredFinalizer->next() = m->tenuredFinalizers;
-    m->tenuredFinalizers = firstNewTenuredFinalizer;
-  }
-
-  if (lastNewTenuredWeakReference) {
-    lastNewTenuredWeakReference->vmNext() = m->tenuredWeakReferences;
-    m->tenuredWeakReferences = firstNewTenuredWeakReference;
-  }
 
   for (Reference* r = m->jniReferences; r; r = r->next) {
     if (r->weak) {
@@ -699,43 +403,6 @@ void postCollect(Thread* t)
   for (Thread* c = t->child; c; c = c->peer) {
     postCollect(c);
   }
-}
-
-uint64_t invoke(Thread* t, uintptr_t* arguments)
-{
-  GcMethod* m = cast<GcMethod>(t, *reinterpret_cast<object*>(arguments[0]));
-  object o = *reinterpret_cast<object*>(arguments[1]);
-
-  t->m->processor->invoke(t, m, o);
-
-  return 1;
-}
-
-void finalizeObject(Thread* t, object o, const char* name)
-{
-  for (GcClass* c = objectClass(t, o); c; c = c->super()) {
-    GcArray* mtable = cast<GcArray>(t, c->methodTable());
-    for (unsigned i = 0; i < mtable->length(); ++i) {
-      GcMethod* m = cast<GcMethod>(t, mtable->body()[i]);
-
-      if (vm::strcmp(reinterpret_cast<const int8_t*>(name),
-                     m->name()->body().begin()) == 0
-          and vm::strcmp(reinterpret_cast<const int8_t*>("()V"),
-                         m->spec()->body().begin()) == 0) {
-        PROTECT(t, m);
-        PROTECT(t, o);
-
-        uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(&m),
-                                 reinterpret_cast<uintptr_t>(&o)};
-
-        run(t, invoke, arguments);
-
-        t->exception = 0;
-        return;
-      }
-    }
-  }
-  abort(t);
 }
 
 unsigned readByte(AbstractStream& s, unsigned* value)
@@ -851,11 +518,6 @@ GcByteArray* makeByteArray(Thread* t, Stream& s, unsigned length)
   return value;
 }
 
-void removeByteArray(Thread* t, object o)
-{
-  hashMapRemove(t, roots(t)->byteArrayMap(), o, byteArrayHash, objectEqual);
-}
-
 GcByteArray* internByteArray(Thread* t, GcByteArray* array)
 {
   PROTECT(t, array);
@@ -865,10 +527,9 @@ GcByteArray* internByteArray(Thread* t, GcByteArray* array)
   GcTriple* n = hashMapFindNode(
       t, roots(t)->byteArrayMap(), array, byteArrayHash, byteArrayEqual);
   if (n) {
-    return cast<GcByteArray>(t, cast<GcJreference>(t, n->first())->target());
+    return cast<GcByteArray>(t, n->first());
   } else {
     hashMapInsert(t, roots(t)->byteArrayMap(), array, 0, byteArrayHash);
-    addFinalizer(t, array, removeByteArray);
     return array;
   }
 }
@@ -939,38 +600,6 @@ bool segmentEqualsCString(const int8_t* begin,
   return value[i] == 0;
 }
 
-bool allowedReflectClass(const int8_t* begin, const int8_t* end)
-{
-  return segmentEqualsOrNested(begin,
-                               end,
-                               "java/lang/reflect/AccessibleObject")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/AnnotatedElement")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Array")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Constructor")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Field")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/GenericArrayType")
-      || segmentEqualsOrNested(begin,
-                               end,
-                               "java/lang/reflect/GenericDeclaration")
-      || segmentEqualsOrNested(begin,
-                               end,
-                               "java/lang/reflect/InvocationHandler")
-      || segmentEqualsOrNested(begin,
-                               end,
-                               "java/lang/reflect/InvocationTargetException")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Member")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Method")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Modifier")
-      || segmentEqualsOrNested(begin,
-                               end,
-                               "java/lang/reflect/ParameterizedType")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Proxy")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/SignatureParser")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Type")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/TypeVariable")
-      || segmentEqualsOrNested(begin, end, "java/lang/reflect/WildcardType");
-}
-
 bool forbiddenInternalClass(const int8_t* begin,
                             const int8_t* end,
                             GcByteArray* currentClassName)
@@ -985,11 +614,17 @@ bool forbiddenInternalClass(const int8_t* begin,
       || segmentEqualsOrNested(begin, end, "java/io/FileInputStream")
       || segmentEqualsOrNested(begin, end, "java/io/FileOutputStream")
       || segmentEqualsOrNested(begin, end, "java/io/FileNotFoundException")
+      || segmentEqualsOrNested(begin, end, "java/lang/IllegalThreadStateException")
+      || segmentEqualsOrNested(begin, end, "java/lang/SecurityException")
       || segmentEqualsOrNested(begin, end, "java/lang/StringBuffer")
+      || segmentEqualsOrNested(begin, end, "java/lang/ClassLoader")
       || segmentEqualsOrNested(begin, end, "java/lang/Thread")
+      || segmentEqualsOrNested(begin, end, "java/lang/ThreadDeath")
       || segmentEqualsOrNested(begin, end, "java/lang/ThreadGroup")
       || segmentEqualsOrNested(begin, end, "java/lang/ThreadLocal")
+      || segmentEqualsOrNested(begin, end, "java/lang/TypeNotPresentException")
       || segmentEqualsOrNested(begin, end, "java/lang/InheritableThreadLocal")
+      || segmentStartsWith(begin, end, "java/lang/invoke/")
       || segmentStartsWith(begin, end, "java/lang/ref/")
       || segmentEqualsOrNested(begin, end, "java/util/HashMap")
       || segmentEqualsOrNested(begin, end, "java/util/HashSet")
@@ -1004,8 +639,7 @@ bool forbiddenInternalClass(const int8_t* begin,
       || segmentEqualsOrNested(begin, end, "java/util/Stack")
       || segmentEqualsOrNested(begin, end, "java/util/EmptyStackException")
       || segmentEqualsOrNested(begin, end, "java/util/StringTokenizer")
-      || (segmentStartsWith(begin, end, "java/lang/reflect/")
-          && !allowedReflectClass(begin, end));
+      || segmentStartsWith(begin, end, "java/lang/reflect/");
 }
 
 bool classNameForbidden(GcByteArray* name, GcByteArray* currentClassName)
@@ -1085,6 +719,8 @@ bool forbiddenClassFileAttribute(GcByteArray* name)
                     name->body().begin()) == 0
       || vm::strcmp(reinterpret_cast<const int8_t*>("NestMembers"),
                     name->body().begin()) == 0
+      || vm::strcmp(reinterpret_cast<const int8_t*>("BootstrapMethods"),
+                    name->body().begin()) == 0
       || vm::strcmp(reinterpret_cast<const int8_t*>("Record"),
                     name->body().begin()) == 0
       || vm::strcmp(reinterpret_cast<const int8_t*>("PermittedSubclasses"),
@@ -1132,236 +768,6 @@ bool byteArrayEquals(GcByteArray* value, const char* expected)
 {
   return vm::strcmp(reinterpret_cast<const int8_t*>(expected),
                     value->body().begin()) == 0;
-}
-
-bool referenceEquals(GcReference* reference,
-                     unsigned kind,
-                     const char* className,
-                     const char* name,
-                     const char* spec)
-{
-  return reference->class_() != 0
-      && reference->name() != 0
-      && reference->spec() != 0
-      && reference->kind() == kind
-      && byteArrayEquals(reference->class_(), className)
-      && byteArrayEquals(reference->name(), name)
-      && byteArrayEquals(reference->spec(), spec);
-}
-
-void verifyBootstrapPoolIndex(Thread* t, GcSingleton* pool, unsigned index)
-{
-  if (index >= poolSize(t, pool)) {
-    throwNew(t, GcVerifyError::Type);
-  }
-}
-
-GcReference* bootstrapReference(Thread* t,
-                                GcSingleton* pool,
-                                unsigned index)
-{
-  verifyBootstrapPoolIndex(t, pool, index);
-
-  if (!singletonIsObject(t, pool, index)) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  object value = singletonObject(t, pool, index);
-  if (value == 0 || objectClass(t, value) != type(t, GcReference::Type)) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  return cast<GcReference>(t, value);
-}
-
-void verifyBootstrapMethodType(Thread* t,
-                               GcSingleton* pool,
-                               GcByteArray* currentClassName,
-                               unsigned index)
-{
-  verifyBootstrapPoolIndex(t, pool, index);
-
-  if (!singletonIsObject(t, pool, index)) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  object value = singletonObject(t, pool, index);
-  if (value == 0 || objectClass(t, value) != type(t, GcByteArray::Type)) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  verifyDescriptorAllowed(t, cast<GcByteArray>(t, value), currentClassName);
-}
-
-void verifyBootstrapMethodHandle(Thread* t,
-                                 GcSingleton* pool,
-                                 GcByteArray* currentClassName,
-                                 unsigned index)
-{
-  GcReference* reference = bootstrapReference(t, pool, index);
-  if (reference->kind() < REF_invokeVirtual
-      || reference->kind() > REF_invokeInterface
-      || reference->class_() == 0
-      || reference->name() == 0
-      || reference->spec() == 0) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  verifyClassNameAllowed(t, reference->class_(), currentClassName);
-  verifyDescriptorAllowed(t, reference->spec(), currentClassName);
-}
-
-unsigned bootstrapInt(Thread* t, GcSingleton* pool, unsigned index)
-{
-  verifyBootstrapPoolIndex(t, pool, index);
-  if (singletonIsObject(t, pool, index)) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  return singletonValue(t, pool, index);
-}
-
-void verifyBootstrapClass(Thread* t,
-                          GcSingleton* pool,
-                          GcByteArray* currentClassName,
-                          unsigned index)
-{
-  GcReference* reference = bootstrapReference(t, pool, index);
-  if (reference->kind() != 0 || reference->class_() != 0
-      || reference->spec() != 0) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  verifyClassNameAllowed(t, reference->name(), currentClassName);
-}
-
-void verifyLambdaMetafactoryArguments(Thread* t,
-                                      GcSingleton* pool,
-                                      GcByteArray* currentClassName,
-                                      GcCharArray* element)
-{
-  if (element->length() != 4) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  verifyBootstrapMethodType(t, pool, currentClassName, element->body()[1]);
-  verifyBootstrapMethodHandle(t, pool, currentClassName, element->body()[2]);
-  verifyBootstrapMethodType(t, pool, currentClassName, element->body()[3]);
-}
-
-void verifyAltMetafactoryArguments(Thread* t,
-                                   GcSingleton* pool,
-                                   GcByteArray* currentClassName,
-                                   GcCharArray* element)
-{
-  const unsigned FlagMarkers = 2;
-  const unsigned FlagBridges = 4;
-  const unsigned AdmittedFlags = FlagMarkers | FlagBridges;
-
-  if (element->length() < 5) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  verifyBootstrapMethodType(t, pool, currentClassName, element->body()[1]);
-  verifyBootstrapMethodHandle(t, pool, currentClassName, element->body()[2]);
-  verifyBootstrapMethodType(t, pool, currentClassName, element->body()[3]);
-
-  unsigned flags = bootstrapInt(t, pool, element->body()[4]);
-  if (flags & ~AdmittedFlags) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  unsigned argument = 4;
-
-  if (flags & FlagMarkers) {
-    if (argument + 1 >= element->length()) {
-      throwNew(t, GcVerifyError::Type);
-    }
-
-    unsigned markerCount = bootstrapInt(t, pool, element->body()[argument + 1]);
-    ++argument;
-
-    if (argument + markerCount >= element->length()) {
-      throwNew(t, GcVerifyError::Type);
-    }
-
-    for (unsigned i = 0; i < markerCount; ++i) {
-      verifyBootstrapClass(
-          t, pool, currentClassName, element->body()[argument + 1]);
-      ++argument;
-    }
-  }
-
-  if (flags & FlagBridges) {
-    if (argument + 1 >= element->length()) {
-      throwNew(t, GcVerifyError::Type);
-    }
-
-    unsigned bridgeCount = bootstrapInt(t, pool, element->body()[argument + 1]);
-    ++argument;
-
-    if (argument + bridgeCount >= element->length()) {
-      throwNew(t, GcVerifyError::Type);
-    }
-
-    for (unsigned i = 0; i < bridgeCount; ++i) {
-      verifyBootstrapMethodType(
-          t, pool, currentClassName, element->body()[argument + 1]);
-      ++argument;
-    }
-  }
-
-  if (argument + 1 != element->length()) {
-    throwNew(t, GcVerifyError::Type);
-  }
-}
-
-void verifyBootstrapMethodProfile(Thread* t,
-                                  GcSingleton* pool,
-                                  GcByteArray* currentClassName,
-                                  GcCharArray* element)
-{
-  PROTECT(t, pool);
-  PROTECT(t, currentClassName);
-  PROTECT(t, element);
-
-  if (element->length() == 0) {
-    throwNew(t, GcVerifyError::Type);
-  }
-
-  GcReference* bootstrap = bootstrapReference(t, pool, element->body()[0]);
-  PROTECT(t, bootstrap);
-
-  const char* metafactorySpec
-      = "(Ljava/lang/invoke/MethodHandles$Lookup;"
-        "Ljava/lang/String;"
-        "Ljava/lang/invoke/MethodType;"
-        "Ljava/lang/invoke/MethodType;"
-        "Ljava/lang/invoke/MethodHandle;"
-        "Ljava/lang/invoke/MethodType;)"
-        "Ljava/lang/invoke/CallSite;";
-  const char* altMetafactorySpec
-      = "(Ljava/lang/invoke/MethodHandles$Lookup;"
-        "Ljava/lang/String;"
-        "Ljava/lang/invoke/MethodType;"
-        "[Ljava/lang/Object;)"
-        "Ljava/lang/invoke/CallSite;";
-
-  if (referenceEquals(bootstrap,
-                      REF_invokeStatic,
-                      "java/lang/invoke/LambdaMetafactory",
-                      "metafactory",
-                      metafactorySpec)) {
-    verifyLambdaMetafactoryArguments(t, pool, currentClassName, element);
-  } else if (referenceEquals(bootstrap,
-                             REF_invokeStatic,
-                             "java/lang/invoke/LambdaMetafactory",
-                             "altMetafactory",
-                             altMetafactorySpec)) {
-    verifyAltMetafactoryArguments(t, pool, currentClassName, element);
-  } else {
-    throwNew(t, GcVerifyError::Type);
-  }
 }
 
 void verifyNoDuplicateMethod(Thread* t,
@@ -1418,11 +824,9 @@ unsigned parsePoolEntry(Thread* t,
                         Stream& s,
                         uint32_t* index,
                         GcSingleton* pool,
-                        GcList* invocations,
                         unsigned i)
 {
   PROTECT(t, pool);
-  PROTECT(t, invocations);
 
   s.setPosition(index[i]);
 
@@ -1464,7 +868,7 @@ unsigned parsePoolEntry(Thread* t,
   case CONSTANT_Class: {
     if (singletonObject(t, pool, i) == 0) {
       unsigned si = s.read2() - 1;
-      parsePoolEntry(t, s, index, pool, invocations, si);
+      parsePoolEntry(t, s, index, pool, si);
 
       GcReference* value = makeReference(
           t, 0, 0, cast<GcByteArray>(t, singletonObject(t, pool, si)), 0);
@@ -1480,7 +884,7 @@ unsigned parsePoolEntry(Thread* t,
   case CONSTANT_String: {
     if (singletonObject(t, pool, i) == 0) {
       unsigned si = s.read2() - 1;
-      parsePoolEntry(t, s, index, pool, invocations, si);
+      parsePoolEntry(t, s, index, pool, si);
 
       object value
           = parseUtf8(t, cast<GcByteArray>(t, singletonObject(t, pool, si)));
@@ -1501,8 +905,8 @@ unsigned parsePoolEntry(Thread* t,
       unsigned ni = s.read2() - 1;
       unsigned ti = s.read2() - 1;
 
-      parsePoolEntry(t, s, index, pool, invocations, ni);
-      parsePoolEntry(t, s, index, pool, invocations, ti);
+      parsePoolEntry(t, s, index, pool, ni);
+      parsePoolEntry(t, s, index, pool, ti);
 
       GcByteArray* name = cast<GcByteArray>(t, singletonObject(t, pool, ni));
       GcByteArray* type = cast<GcByteArray>(t, singletonObject(t, pool, ti));
@@ -1527,8 +931,8 @@ unsigned parsePoolEntry(Thread* t,
       unsigned ci = s.read2() - 1;
       unsigned nti = s.read2() - 1;
 
-      parsePoolEntry(t, s, index, pool, invocations, ci);
-      parsePoolEntry(t, s, index, pool, invocations, nti);
+      parsePoolEntry(t, s, index, pool, ci);
+      parsePoolEntry(t, s, index, pool, nti);
 
       GcByteArray* className
           = cast<GcReference>(t, singletonObject(t, pool, ci))->name();
@@ -1554,88 +958,9 @@ unsigned parsePoolEntry(Thread* t,
     return 1;
 
   case CONSTANT_MethodHandle:
-    if (singletonObject(t, pool, i) == 0) {
-      unsigned kind = s.read1();
-      unsigned ri = s.read2() - 1;
-
-      parsePoolEntry(t, s, index, pool, invocations, ri);
-
-      GcReference* value = cast<GcReference>(t, singletonObject(t, pool, ri));
-
-      if (DebugClassReader) {
-        fprintf(stderr,
-                "   consts[%d] = method handle %d %s.%s%s\n",
-                i,
-                kind,
-                value->class_()->body().begin(),
-                value->name()->body().begin(),
-                value->spec()->body().begin());
-      }
-
-      value = makeReference(
-          t, kind, value->class_(), value->name(), value->spec());
-
-      pool->setBodyElement(t, i, reinterpret_cast<uintptr_t>(value));
-    }
-    return 1;
-
   case CONSTANT_MethodType:
-    if (singletonObject(t, pool, i) == 0) {
-      unsigned ni = s.read2() - 1;
-
-      parsePoolEntry(t, s, index, pool, invocations, ni);
-
-      pool->setBodyElement(
-          t, i, reinterpret_cast<uintptr_t>(singletonObject(t, pool, ni)));
-    }
-    return 1;
-
   case CONSTANT_InvokeDynamic:
-    if (singletonObject(t, pool, i) == 0) {
-      unsigned bootstrap = s.read2();
-      unsigned nti = s.read2() - 1;
-
-      parsePoolEntry(t, s, index, pool, invocations, nti);
-
-      GcPair* nameAndType = cast<GcPair>(t, singletonObject(t, pool, nti));
-
-      const char* specString = reinterpret_cast<const char*>(
-          cast<GcByteArray>(t, nameAndType->second())->body().begin());
-
-      unsigned parameterCount;
-      unsigned parameterFootprint;
-      unsigned returnCode;
-      scanMethodSpec(t,
-                     specString,
-                     true,
-                     &parameterCount,
-                     &parameterFootprint,
-                     &returnCode);
-
-      GcMethod* template_
-          = makeMethod(t,
-                       0,
-                       returnCode,
-                       parameterCount,
-                       parameterFootprint,
-                       ACC_STATIC,
-                       0,
-                       0,
-                       0,
-                       cast<GcByteArray>(t, nameAndType->first()),
-                       cast<GcByteArray>(t, nameAndType->second()),
-                       0,
-                       0,
-                       0);
-
-      object value = reinterpret_cast<object>(
-          makeInvocation(t, bootstrap, -1, 0, pool, template_, 0, 0));
-      PROTECT(t, value);
-
-      pool->setBodyElement(t, i, reinterpret_cast<uintptr_t>(value));
-
-      listAppend(t, invocations, value);
-    }
+    throwNew(t, GcVerifyError::Type);
     return 1;
 
   default:
@@ -1643,10 +968,8 @@ unsigned parsePoolEntry(Thread* t,
   }
 }
 
-GcSingleton* parsePool(Thread* t, Stream& s, GcList* invocations)
+GcSingleton* parsePool(Thread* t, Stream& s)
 {
-  PROTECT(t, invocations);
-
   unsigned count = s.read2() - 1;
   GcSingleton* pool = makeSingletonOfSize(t, count + poolMaskSize(count));
   PROTECT(t, pool);
@@ -1732,7 +1055,7 @@ GcSingleton* parsePool(Thread* t, Stream& s, GcList* invocations)
     unsigned end = s.position();
 
     for (unsigned i = 0; i < count;) {
-      i += parsePoolEntry(t, s, index, pool, invocations, i);
+      i += parsePoolEntry(t, s, index, pool, i);
     }
 
     s.setPosition(end);
@@ -1768,7 +1091,7 @@ GcClassAddendum* getClassAddendum(Thread* t, GcClass* class_, GcSingleton* pool)
   if (addendum == 0) {
     PROTECT(t, class_);
 
-    addendum = makeClassAddendum(t, pool, 0, 0, 0, 0, -1, 0, 0);
+    addendum = makeClassAddendum(t, pool, 0, 0, 0, -1, 0, 0);
     setField(t, class_, ClassAddendum, addendum);
   }
   return addendum;
@@ -1905,21 +1228,10 @@ void parseFieldTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
         } else if (vm::strcmp(reinterpret_cast<const int8_t*>("Signature"),
                               name->body().begin()) == 0) {
           if (addendum == 0) {
-            addendum = makeFieldAddendum(t, pool, 0, 0);
+            addendum = makeFieldAddendum(t, pool, 0);
           }
 
           addendum->setSignature(t, singletonObject(t, pool, s.read2() - 1));
-        } else if (vm::strcmp(reinterpret_cast<const int8_t*>(
-                                  "RuntimeVisibleAnnotations"),
-                              name->body().begin()) == 0) {
-          if (addendum == 0) {
-            addendum = makeFieldAddendum(t, pool, 0, 0);
-          }
-
-          GcByteArray* body = makeByteArray(t, length);
-          s.read(reinterpret_cast<uint8_t*>(body->body().begin()), length);
-
-          addendum->setAnnotationTable(t, body);
         } else {
           s.skip(length);
         }
@@ -3042,7 +2354,7 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
         } else if (vm::strcmp(reinterpret_cast<const int8_t*>("Exceptions"),
                               attributeName->body().begin()) == 0) {
           if (addendum == 0) {
-            addendum = makeMethodAddendum(t, pool, 0, 0, 0, 0, 0);
+            addendum = makeMethodAddendum(t, pool, 0, 0);
           }
           unsigned exceptionCount = s.read2();
           GcShortArray* body = makeShortArray(t, exceptionCount);
@@ -3050,46 +2362,13 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
             body->body()[i] = s.read2();
           }
           addendum->setExceptionTable(t, body);
-        } else if (vm::strcmp(
-                       reinterpret_cast<const int8_t*>("AnnotationDefault"),
-                       attributeName->body().begin()) == 0) {
-          if (addendum == 0) {
-            addendum = makeMethodAddendum(t, pool, 0, 0, 0, 0, 0);
-          }
-
-          GcByteArray* body = makeByteArray(t, length);
-          s.read(reinterpret_cast<uint8_t*>(body->body().begin()), length);
-
-          addendum->setAnnotationDefault(t, body);
         } else if (vm::strcmp(reinterpret_cast<const int8_t*>("Signature"),
                               attributeName->body().begin()) == 0) {
           if (addendum == 0) {
-            addendum = makeMethodAddendum(t, pool, 0, 0, 0, 0, 0);
+            addendum = makeMethodAddendum(t, pool, 0, 0);
           }
 
           addendum->setSignature(t, singletonObject(t, pool, s.read2() - 1));
-        } else if (vm::strcmp(reinterpret_cast<const int8_t*>(
-                                  "RuntimeVisibleAnnotations"),
-                              attributeName->body().begin()) == 0) {
-          if (addendum == 0) {
-            addendum = makeMethodAddendum(t, pool, 0, 0, 0, 0, 0);
-          }
-
-          GcByteArray* body = makeByteArray(t, length);
-          s.read(reinterpret_cast<uint8_t*>(body->body().begin()), length);
-
-          addendum->setAnnotationTable(t, body);
-        } else if (vm::strcmp(reinterpret_cast<const int8_t*>(
-                                  "RuntimeVisibleParameterAnnotations"),
-                              attributeName->body().begin()) == 0) {
-          if (addendum == 0) {
-            addendum = makeMethodAddendum(t, pool, 0, 0, 0, 0, 0);
-          }
-
-          GcByteArray* body = makeByteArray(t, length);
-          s.read(reinterpret_cast<uint8_t*>(body->body().begin()), length);
-
-          addendum->setParameterAnnotationTable(t, body);
         } else {
           s.skip(length);
         }
@@ -3142,14 +2421,6 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
           hashMapInsert(t, virtualMap, method, method, methodHash);
         }
 
-        if (UNLIKELY((class_->flags() & ACC_INTERFACE) == 0
-                     and vm::strcmp(reinterpret_cast<const int8_t*>("finalize"),
-                                    method->name()->body().begin()) == 0
-                     and vm::strcmp(reinterpret_cast<const int8_t*>("()V"),
-                                    method->spec()->body().begin()) == 0
-                     and (not emptyMethod(t, method)))) {
-          class_->vmFlags() |= HasFinalizerFlag;
-        }
       } else {
         method->offset() = i;
 
@@ -3306,14 +2577,10 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
 void parseAttributeTable(Thread* t,
                          Stream& s,
                          GcClass* class_,
-                         GcSingleton* pool,
-                         GcList* invocations)
+                         GcSingleton* pool)
 {
   PROTECT(t, class_);
   PROTECT(t, pool);
-  PROTECT(t, invocations);
-
-  bool sawBootstrapMethods = false;
 
   unsigned attributeCount = s.read2();
   for (unsigned j = 0; j < attributeCount; ++j) {
@@ -3360,47 +2627,6 @@ void parseAttributeTable(Thread* t,
 
       GcClassAddendum* addendum = getClassAddendum(t, class_, pool);
       addendum->setInnerClassTable(t, table);
-    } else if (vm::strcmp(
-                   reinterpret_cast<const int8_t*>("RuntimeVisibleAnnotations"),
-                   name->body().begin()) == 0) {
-      GcByteArray* body = makeByteArray(t, length);
-      PROTECT(t, body);
-      s.read(reinterpret_cast<uint8_t*>(body->body().begin()), length);
-
-      GcClassAddendum* addendum = getClassAddendum(t, class_, pool);
-      addendum->setAnnotationTable(t, body);
-    } else if (vm::strcmp(reinterpret_cast<const int8_t*>("BootstrapMethods"),
-                          name->body().begin()) == 0) {
-      if (sawBootstrapMethods) {
-        throwNew(t, GcVerifyError::Type);
-      }
-      sawBootstrapMethods = true;
-
-      unsigned count = s.read2();
-      GcArray* array = makeArray(t, count * 2);
-      PROTECT(t, array);
-
-      for (unsigned i = 0; i < count; ++i) {
-        unsigned reference = s.read2() - 1;
-        unsigned argumentCount = s.read2();
-        GcCharArray* element = makeCharArray(t, 1 + argumentCount);
-        element->body()[0] = reference;
-        for (unsigned ai = 0; ai < argumentCount; ++ai) {
-          element->body()[1 + ai] = s.read2() - 1;
-        }
-        verifyBootstrapMethodProfile(t, pool, class_->name(), element);
-        array->setBodyElement(t, i, element);
-      }
-
-      for (GcPair* p = cast<GcPair>(t, invocations->front()); p;
-           p = cast<GcPair>(t, p->second())) {
-        GcInvocation* invocation = cast<GcInvocation>(t, p->first());
-        if (invocation->bootstrap() >= count) {
-          throwNew(t, GcVerifyError::Type);
-        }
-
-        invocation->setBootstrapMethodTable(t, array);
-      }
     } else if (vm::strcmp(reinterpret_cast<const int8_t*>("EnclosingMethod"),
                           name->body().begin()) == 0) {
       int16_t enclosingClass = s.read2();
@@ -3421,10 +2647,6 @@ void parseAttributeTable(Thread* t,
     } else {
       s.skip(length);
     }
-  }
-
-  if (!sawBootstrapMethods && invocations->front()) {
-    throwNew(t, GcVerifyError::Type);
   }
 }
 
@@ -3471,8 +2693,6 @@ void updateBootstrapClass(Thread* t, GcClass* bootstrapClass, GcClass* class_)
 
   expect(t, bootstrapClass->fixedSize() >= class_->fixedSize());
 
-  expect(t, (class_->vmFlags() & HasFinalizerFlag) == 0);
-
   PROTECT(t, bootstrapClass);
   PROTECT(t, class_);
 
@@ -3495,7 +2715,7 @@ void updateBootstrapClass(Thread* t, GcClass* bootstrapClass, GcClass* class_)
 }
 
 GcClass* makeArrayClass(Thread* t,
-                        GcClassLoader* loader,
+                        GcClassSpace* loader,
                         unsigned dimensions,
                         GcByteArray* spec,
                         GcClass* elementClass)
@@ -3510,7 +2730,7 @@ GcClass* makeArrayClass(Thread* t,
     // avoid infinite recursion due to trying to create an array to
     // make a stack trace for a ClassNotFoundException.
     resolveSystemClass(
-        t, roots(t)->bootLoader(), type(t, GcJobject::Type)->name(), false);
+        t, roots(t)->bootClassSpace(), type(t, GcJobject::Type)->name(), false);
   }
 
   GcArray* vtable = cast<GcArray>(t, type(t, GcJobject::Type)->virtualTable());
@@ -3549,7 +2769,7 @@ GcClass* makeArrayClass(Thread* t,
   return c;
 }
 
-void saveLoadedClass(Thread* t, GcClassLoader* loader, GcClass* c)
+void saveLoadedClass(Thread* t, GcClassSpace* loader, GcClass* c)
 {
   PROTECT(t, loader);
   PROTECT(t, c);
@@ -3566,7 +2786,7 @@ void saveLoadedClass(Thread* t, GcClassLoader* loader, GcClass* c)
 }
 
 GcClass* makeArrayClass(Thread* t,
-                        GcClassLoader* loader,
+                        GcClassSpace* loader,
                         GcByteArray* spec,
                         bool throw_,
                         Gc::Type throwType)
@@ -3649,7 +2869,7 @@ GcClass* makeArrayClass(Thread* t,
 }
 
 GcClass* resolveArrayClass(Thread* t,
-                           GcClassLoader* loader,
+                           GcClassSpace* loader,
                            GcByteArray* spec,
                            bool throw_,
                            Gc::Type throwType)
@@ -3669,7 +2889,7 @@ GcClass* resolveArrayClass(Thread* t,
     PROTECT(t, loader);
     PROTECT(t, spec);
 
-    c = findLoadedClass(t, roots(t)->bootLoader(), spec);
+    c = findLoadedClass(t, roots(t)->bootClassSpace(), spec);
 
     if (c) {
       return c;
@@ -3677,26 +2897,6 @@ GcClass* resolveArrayClass(Thread* t,
       return makeArrayClass(t, loader, spec, throw_, throwType);
     }
   }
-}
-
-void removeMonitor(Thread* t, object o)
-{
-  unsigned hash;
-  if (DebugMonitors) {
-    hash = objectHash(t, o);
-  }
-
-  object m
-      = hashMapRemove(t, roots(t)->monitorMap(), o, objectHash, objectEqual);
-
-  if (DebugMonitors) {
-    fprintf(stderr, "dispose monitor %p for object %x\n", m, hash);
-  }
-}
-
-void removeString(Thread* t, object o)
-{
-  hashMapRemove(t, roots(t)->stringMap(), o, stringHash, objectEqual);
 }
 
 void bootClass(Thread* t,
@@ -3773,7 +2973,7 @@ void bootClass(Thread* t,
                                                0,
                                                0,
                                                0,
-                                               roots(t)->bootLoader(),
+                                               roots(t)->bootClassSpace(),
                                                vtableLength);
 
   setType(t, type, class_);
@@ -3839,13 +3039,13 @@ void boot(Thread* t)
 
   m->roots = reinterpret_cast<GcRoots*>(allocate(t, GcRoots::FixedSize, true));
 
-  object classLoader = allocate(t, GcSystemClassLoader::FixedSize, true);
+  object classSpace = allocate(t, GcSystemClassSpace::FixedSize, true);
   // sequence point, for gc (don't recombine statements)
-  roots(t)->setBootLoader(t, reinterpret_cast<GcClassLoader*>(classLoader));
+  roots(t)->setBootClassSpace(t, reinterpret_cast<GcClassSpace*>(classSpace));
 
-  classLoader = allocate(t, GcSystemClassLoader::FixedSize, true);
+  classSpace = allocate(t, GcSystemClassSpace::FixedSize, true);
   // sequence point, for gc (don't recombine statements)
-  roots(t)->setAppLoader(t, reinterpret_cast<GcClassLoader*>(classLoader));
+  roots(t)->setAppClassSpace(t, reinterpret_cast<GcClassSpace*>(classSpace));
 
   m->types = reinterpret_cast<GcArray*>(
       allocate(t, pad((TypeCount + 2) * BytesPerWord), true));
@@ -3859,9 +3059,9 @@ void boot(Thread* t)
   GcClass* rootsClass = type(t, GcRoots::Type);
   setField(t, m->roots, 0, rootsClass);
 
-  GcClass* loaderClass = type(t, GcSystemClassLoader::Type);
-  setField(t, roots(t)->bootLoader(), 0, loaderClass);
-  setField(t, roots(t)->appLoader(), 0, loaderClass);
+  GcClass* classSpaceClass = type(t, GcSystemClassSpace::Type);
+  setField(t, roots(t)->bootClassSpace(), 0, classSpaceClass);
+  setField(t, roots(t)->appClassSpace(), 0, classSpaceClass);
 
   GcClass* objectClass = type(t, GcJobject::Type);
 
@@ -3878,14 +3078,6 @@ void boot(Thread* t)
   type(t, GcSingleton::Type)->vmFlags() |= SingletonFlag;
 
   type(t, GcContinuation::Type)->vmFlags() |= ContinuationFlag;
-
-  type(t, GcJreference::Type)->vmFlags() |= ReferenceFlag;
-  type(t, GcWeakReference::Type)->vmFlags() |= ReferenceFlag
-                                               | WeakReferenceFlag;
-  type(t, GcSoftReference::Type)->vmFlags() |= ReferenceFlag
-                                               | WeakReferenceFlag;
-  type(t, GcPhantomReference::Type)->vmFlags() |= ReferenceFlag
-                                                  | WeakReferenceFlag;
 
   type(t, GcJboolean::Type)->vmFlags() |= PrimitiveFlag;
   type(t, GcJbyte::Type)->vmFlags() |= PrimitiveFlag;
@@ -3910,19 +3102,19 @@ void boot(Thread* t)
 
   {
     GcHashMap* map = makeHashMap(t, 0, 0);
-    roots(t)->bootLoader()->setMap(t, map);
+    roots(t)->bootClassSpace()->setMap(t, map);
   }
 
-  roots(t)->bootLoader()->as<GcSystemClassLoader>(t)->finder() = m->bootFinder;
+  roots(t)->bootClassSpace()->as<GcSystemClassSpace>(t)->finder() = m->bootFinder;
 
   {
     GcHashMap* map = makeHashMap(t, 0, 0);
-    roots(t)->appLoader()->setMap(t, map);
+    roots(t)->appClassSpace()->setMap(t, map);
   }
 
-  roots(t)->appLoader()->as<GcSystemClassLoader>(t)->finder() = m->appFinder;
+  roots(t)->appClassSpace()->as<GcSystemClassSpace>(t)->finder() = m->appFinder;
 
-  roots(t)->appLoader()->setParent(t, roots(t)->bootLoader());
+  roots(t)->appClassSpace()->setParent(t, roots(t)->bootClassSpace());
 
   {
     GcHashMap* map = makeHashMap(t, 0, 0);
@@ -3931,9 +3123,9 @@ void boot(Thread* t)
   }
 
   {
-    GcWeakHashMap* map = makeWeakHashMap(t, 0, 0);
+    GcHashMap* map = makeHashMap(t, 0, 0);
     // sequence point, for gc (don't recombine statements)
-    roots(t)->setStringMap(t, map->as<GcHashMap>(t));
+    roots(t)->setStringMap(t, map);
   }
 
   makeArrayInterfaceTable(t);
@@ -4112,27 +3304,6 @@ void doCollect(Thread* t, Heap::CollectionType type, intptr_t pendingAllocation)
     t->clearFlag(Thread::StressFlag);
 #endif
 
-  GcFinalizer* finalizeQueue = t->m->finalizeQueue;
-  t->m->finalizeQueue = 0;
-  for (; finalizeQueue;
-       finalizeQueue = cast<GcFinalizer>(t, finalizeQueue->next())) {
-    void (*function)(Thread*, object);
-    memcpy(&function, &finalizeQueue->finalize(), BytesPerWord);
-    function(t, finalizeQueue->target());
-  }
-
-  if ((roots(t)->objectsToFinalize() or roots(t)->objectsToClean())
-      and m->finalizeThread == 0 and t->state != Thread::ExitState) {
-    m->finalizeThread = m->processor->makeThread(
-        m, roots(t)->finalizerThread(), m->rootThread);
-
-    addThread(t, m->finalizeThread);
-
-    if (not startThread(t, m->finalizeThread)) {
-      removeThread(t, m->finalizeThread);
-      m->finalizeThread = 0;
-    }
-  }
 }
 
 uint64_t invokeLoadClass(Thread* t, uintptr_t* arguments)
@@ -4265,7 +3436,6 @@ Machine::Machine(System* system,
       classpath(classpath),
       rootThread(0),
       exclusive(0),
-      finalizeThread(0),
       jniReferences(0),
       propertyCount(propertyCount),
       arguments(arguments),
@@ -4286,11 +3456,6 @@ Machine::Machine(System* system,
       errorLog(0),
       types(0),
       roots(0),
-      finalizers(0),
-      tenuredFinalizers(0),
-      finalizeQueue(0),
-      weakReferences(0),
-      tenuredWeakReferences(0),
       unsafe(false),
       collecting(false),
       triedBuiltinOnLoad(false),
@@ -4386,7 +3551,7 @@ void Machine::dispose()
   heap->free(this, sizeof(*this));
 }
 
-Thread::Thread(Machine* m, GcThread* javaThread, Thread* parent)
+Thread::Thread(Machine* m, GcExecutionContext* javaThread, Thread* parent)
     : vtable(&(m->jniEnvVTable)),
       m(m),
       parent(parent),
@@ -4412,6 +3577,13 @@ Thread::Thread(Machine* m, GcThread* javaThread, Thread* parent)
       gasCounter(UINT64_MAX),
       identityHashCounter(0),
       identityHashes(0),
+      contractMemoryUsed(0),
+      contractMemoryLimit(UINT64_MAX),
+      contractHeapCheckpoint(0),
+      contractHeapIndexCheckpoint(0),
+      contractHeapOffsetCheckpoint(0),
+      contractHeapPoolIndexCheckpoint(0),
+      contractActive(false),
       flags(ActiveFlag)
 {
 }
@@ -4438,13 +3610,13 @@ void Thread::init()
 
     boot(this);
 
-    GcWeakHashMap* map = makeWeakHashMap(this, 0, 0);
+    GcHashMap* map = makeHashMap(this, 0, 0);
     // sequence point, for gc (don't recombine statements)
-    roots(this)->setByteArrayMap(this, map->as<GcHashMap>(this));
+    roots(this)->setByteArrayMap(this, map);
 
-    map = makeWeakHashMap(this, 0, 0);
+    map = makeHashMap(this, 0, 0);
     // sequence point, for gc (don't recombine statements)
-    roots(this)->setMonitorMap(this, map->as<GcHashMap>(this));
+    roots(this)->setMonitorMap(this, map);
 
     GcVector* v = makeVector(this, 0, 0);
     // sequence point, for gc (don't recombine statements)
@@ -4496,6 +3668,50 @@ void clearIdentityHashState(Thread* t)
   t->identityHashCounter = 0;
 }
 
+void checkpointContractHeap(Thread* t)
+{
+  t->contractHeapCheckpoint = t->heap;
+  t->contractHeapIndexCheckpoint = t->heapIndex;
+  t->contractHeapOffsetCheckpoint = t->heapOffset;
+  t->contractHeapPoolIndexCheckpoint = t->m ? t->m->heapPoolIndex : 0;
+}
+
+void resetContractHeap(Thread* t)
+{
+  if (t->m == 0 || t->m->heap == 0 || t->contractHeapCheckpoint == 0) {
+    return;
+  }
+
+  uintptr_t* checkpointHeap = t->contractHeapCheckpoint;
+  unsigned checkpointIndex = t->contractHeapIndexCheckpoint;
+
+  if (checkpointIndex < ThreadHeapSizeInWords) {
+    unsigned wordsToClear
+        = t->heap == checkpointHeap && t->heapIndex >= checkpointIndex
+              ? t->heapIndex - checkpointIndex
+              : ThreadHeapSizeInWords - checkpointIndex;
+    memset(checkpointHeap + checkpointIndex, 0, wordsToClear * BytesPerWord);
+  }
+
+  for (unsigned i = t->contractHeapPoolIndexCheckpoint;
+       i < t->m->heapPoolIndex;
+       ++i) {
+    t->m->heap->free(t->m->heapPool[i], ThreadHeapSizeInBytes);
+    t->m->heapPool[i] = 0;
+  }
+  t->m->heapPoolIndex = t->contractHeapPoolIndexCheckpoint;
+
+  t->heap = checkpointHeap;
+  t->heapIndex = checkpointIndex;
+  t->heapOffset = t->contractHeapOffsetCheckpoint;
+
+  if (t->getFlags() & Thread::UseBackupHeapFlag) {
+    memset(t->backupHeap, 0, ThreadBackupHeapSizeInBytes);
+    t->clearFlag(Thread::UseBackupHeapFlag);
+    t->backupHeapIndex = 0;
+  }
+}
+
 }  // namespace
 
 void Thread::dispose()
@@ -4519,19 +3735,69 @@ void Thread::dispose()
 
 void beginContractTransaction(Thread* t, uint64_t gasLimit)
 {
+  beginContractTransactionWithLimits(t, gasLimit, UINT64_MAX);
+}
+
+void beginContractTransactionWithLimits(Thread* t,
+                                        uint64_t gasLimit,
+                                        uint64_t memoryLimit)
+{
   clearIdentityHashState(t);
+  checkpointContractHeap(t);
   t->gasCounter = gasLimit;
+  t->contractMemoryUsed = 0;
+  t->contractMemoryLimit = memoryLimit;
+  t->contractActive = true;
 }
 
 void endContractTransaction(Thread* t)
 {
   clearIdentityHashState(t);
+  resetContractHeap(t);
   t->gasCounter = UINT64_MAX;
+  t->contractMemoryUsed = 0;
+  t->contractMemoryLimit = UINT64_MAX;
+  t->contractHeapCheckpoint = 0;
+  t->contractHeapIndexCheckpoint = 0;
+  t->contractHeapOffsetCheckpoint = 0;
+  t->contractHeapPoolIndexCheckpoint = 0;
+  t->contractActive = false;
 }
 
 uint64_t contractRemainingGas(Thread* t)
 {
   return t->gasCounter;
+}
+
+uint64_t contractMemoryUsed(Thread* t)
+{
+  if (!t->contractActive) {
+    return t->m && t->m->heap ? t->m->heap->used() : 0;
+  }
+  return t->contractMemoryUsed;
+}
+
+uint64_t contractMemoryRemaining(Thread* t)
+{
+  if (!t->contractActive) {
+    return t->m && t->m->heap ? t->m->heap->remaining() : UINT64_MAX;
+  }
+
+  if (t->contractMemoryLimit == UINT64_MAX) {
+    return UINT64_MAX;
+  }
+
+  return t->contractMemoryUsed < t->contractMemoryLimit
+             ? t->contractMemoryLimit - t->contractMemoryUsed
+             : 0;
+}
+
+uint64_t contractMemoryLimit(Thread* t)
+{
+  if (!t->contractActive) {
+    return t->m && t->m->heap ? t->m->heap->limit() : UINT64_MAX;
+  }
+  return t->contractMemoryLimit;
 }
 
 bool chargeContractGas(Thread* t, uint64_t gasCost)
@@ -4550,6 +3816,23 @@ bool chargeContractGas(Thread* t, uint64_t gasCost)
   }
 
   t->gasCounter -= gasCost;
+  return true;
+}
+
+bool chargeContractMemory(Thread* t, uint64_t bytes)
+{
+  if (bytes == 0 || !t->contractActive) {
+    return true;
+  }
+
+  if (t->contractMemoryLimit != UINT64_MAX) {
+    if (bytes > t->contractMemoryLimit
+        || t->contractMemoryUsed > t->contractMemoryLimit - bytes) {
+      return false;
+    }
+  }
+
+  t->contractMemoryUsed += bytes;
   return true;
 }
 
@@ -4693,7 +3976,7 @@ void shutDown(Thread* t)
   GcPair* h = hooks;
   PROTECT(t, h);
   for (; h; h = cast<GcPair>(t, h->second())) {
-    startThread(t, cast<GcThread>(t, h->first()));
+    startThread(t, cast<GcExecutionContext>(t, h->first()));
   }
 
   // wait for hooks to exit
@@ -4701,7 +3984,7 @@ void shutDown(Thread* t)
   for (; h; h = cast<GcPair>(t, h->second())) {
     while (true) {
       Thread* ht
-          = reinterpret_cast<Thread*>(cast<GcThread>(t, h->first())->peer());
+          = reinterpret_cast<Thread*>(cast<GcExecutionContext>(t, h->first())->peer());
 
       {
         ACQUIRE(t, t->m->stateLock);
@@ -4713,22 +3996,6 @@ void shutDown(Thread* t)
           ENTER(t, Thread::IdleState);
           t->m->stateLock->wait(t->systemThread, 0);
         }
-      }
-    }
-  }
-
-  // tell finalize thread to exit and wait for it to do so
-  {
-    ACQUIRE(t, t->m->stateLock);
-    Thread* finalizeThread = t->m->finalizeThread;
-    if (finalizeThread) {
-      t->m->finalizeThread = 0;
-      t->m->stateLock->notifyAll(t->systemThread);
-
-      while (finalizeThread->state != Thread::ZombieState
-             and finalizeThread->state != Thread::JoinedState) {
-        ENTER(t, Thread::IdleState);
-        t->m->stateLock->wait(t->systemThread, 0);
       }
     }
   }
@@ -4977,6 +4244,14 @@ object allocate3(Thread* t,
     return allocateSmall(t, sizeInBytes);
   }
 
+  if (UNLIKELY(t->contractActive && type != Machine::MovableAllocation)) {
+    throw_(t, roots(t)->outOfMemoryError());
+  }
+
+  if (UNLIKELY(!chargeContractMemory(t, pad(sizeInBytes)))) {
+    throw_(t, roots(t)->outOfMemoryError());
+  }
+
   ACQUIRE_RAW(t, t->m->stateLock);
 
   while (t->m->exclusive and t->m->exclusive != t) {
@@ -5025,6 +4300,9 @@ object allocate3(Thread* t,
         ceilingDivide(sizeInBytes, BytesPerWord), objectMask);
 
     if (t->heap == 0 or t->m->heap->limitExceeded(pendingAllocation)) {
+      if (t->contractActive) {
+        throw_(t, roots(t)->outOfMemoryError());
+      }
       //     fprintf(stderr, "gc");
       //     vmPrintTrace(t);
       collect(t, Heap::MinorCollection, pendingAllocation);
@@ -5091,29 +4369,6 @@ void collect(Thread* t, Heap::CollectionType type, intptr_t pendingAllocation)
     // into the smallest possible space:
     doCollect(t, Heap::MajorCollection, pendingAllocation);
   }
-}
-
-object makeNewGeneral(Thread* t, GcClass* class_)
-{
-  assertT(t, t->state == Thread::ActiveState);
-
-  PROTECT(t, class_);
-
-  object instance = makeNew(t, class_);
-  PROTECT(t, instance);
-
-  if (class_->vmFlags() & WeakReferenceFlag) {
-    ACQUIRE(t, t->m->referenceLock);
-
-    cast<GcJreference>(t, instance)->vmNext() = t->m->weakReferences;
-    t->m->weakReferences = cast<GcJreference>(t, instance);
-  }
-
-  if (class_->vmFlags() & HasFinalizerFlag) {
-    addFinalizer(t, instance, 0);
-  }
-
-  return instance;
 }
 
 void popResources(Thread* t)
@@ -5292,7 +4547,7 @@ uint64_t resolveBootstrap(Thread* t, uintptr_t* arguments)
   GcByteArray* name
       = cast<GcByteArray>(t, reinterpret_cast<object>(arguments[0]));
 
-  resolveSystemClass(t, roots(t)->bootLoader(), name);
+  resolveSystemClass(t, roots(t)->bootClassSpace(), name);
 
   return 1;
 }
@@ -5445,7 +4700,7 @@ unsigned primitiveSize(Thread* t, unsigned code)
 }
 
 GcClass* parseClass(Thread* t,
-                    GcClassLoader* loader,
+                    GcClassSpace* loader,
                     const uint8_t* data,
                     unsigned size,
                     Gc::Type throwType)
@@ -5489,10 +4744,7 @@ GcClass* parseClass(Thread* t,
     throwNew(t, GcUnsupportedClassVersionError::Type);
   }
 
-  GcList* invocations = makeList(t, 0, 0, 0);
-  PROTECT(t, invocations);
-
-  GcSingleton* pool = parsePool(t, s, invocations);
+  GcSingleton* pool = parsePool(t, s);
   PROTECT(t, pool);
 
   unsigned flags = s.read2();
@@ -5536,8 +4788,7 @@ GcClass* parseClass(Thread* t,
 
     class_->setSuper(t, sc);
 
-    class_->vmFlags() |= (sc->vmFlags() & (ReferenceFlag | WeakReferenceFlag
-                                           | HasFinalizerFlag | NeedInitFlag));
+    class_->vmFlags() |= (sc->vmFlags() & NeedInitFlag);
   }
 
   if (DebugClassReader) {
@@ -5550,7 +4801,7 @@ GcClass* parseClass(Thread* t,
 
   parseMethodTable(t, s, class_, pool);
 
-  parseAttributeTable(t, s, class_, pool, invocations);
+  parseAttributeTable(t, s, class_, pool);
 
   GcArray* vtable = cast<GcArray>(t, class_->virtualTable());
   unsigned vtableLength = (vtable ? vtable->length() : 0);
@@ -5600,8 +4851,8 @@ GcClass* parseClass(Thread* t,
 
 uint64_t runParseClass(Thread* t, uintptr_t* arguments)
 {
-  GcClassLoader* loader
-      = cast<GcClassLoader>(t, reinterpret_cast<object>(arguments[0]));
+  GcClassSpace* loader
+      = cast<GcClassSpace>(t, reinterpret_cast<object>(arguments[0]));
   System::Region* region = reinterpret_cast<System::Region*>(arguments[1]);
   Gc::Type throwType = static_cast<Gc::Type>(arguments[2]);
 
@@ -5610,7 +4861,7 @@ uint64_t runParseClass(Thread* t, uintptr_t* arguments)
 }
 
 GcClass* resolveSystemClass(Thread* t,
-                            GcClassLoader* loader,
+                            GcClassSpace* loader,
                             GcByteArray* spec,
                             bool throw_,
                             Gc::Type throwType)
@@ -5634,15 +4885,15 @@ GcClass* resolveSystemClass(Thread* t,
     if (spec->body()[0] == '[') {
       class_ = resolveArrayClass(t, loader, spec, throw_, throwType);
     } else {
-      GcSystemClassLoader* sysLoader = loader->as<GcSystemClassLoader>(t);
-      PROTECT(t, sysLoader);
+      GcSystemClassSpace* sysClassSpace = loader->as<GcSystemClassSpace>(t);
+      PROTECT(t, sysClassSpace);
 
       THREAD_RUNTIME_ARRAY(t, char, file, spec->length() + 6);
       memcpy(
           RUNTIME_ARRAY_BODY(file), spec->body().begin(), spec->length() - 1);
       memcpy(RUNTIME_ARRAY_BODY(file) + spec->length() - 1, ".class", 7);
 
-      System::Region* region = static_cast<Finder*>(sysLoader->finder())
+      System::Region* region = static_cast<Finder*>(sysClassSpace->finder())
                                    ->find(RUNTIME_ARRAY_BODY(file));
 
       if (region) {
@@ -5679,7 +4930,7 @@ GcClass* resolveSystemClass(Thread* t,
         }
 
         {
-          const char* source = static_cast<Finder*>(sysLoader->finder())
+          const char* source = static_cast<Finder*>(sysClassSpace->finder())
                                    ->sourceUrl(RUNTIME_ARRAY_BODY(file));
 
           if (source) {
@@ -5722,7 +4973,7 @@ GcClass* resolveSystemClass(Thread* t,
   return class_;
 }
 
-GcClass* findLoadedClass(Thread* t, GcClassLoader* loader, GcByteArray* spec)
+GcClass* findLoadedClass(Thread* t, GcClassSpace* loader, GcByteArray* spec)
 {
   PROTECT(t, loader);
   PROTECT(t, spec);
@@ -5740,12 +4991,12 @@ GcClass* findLoadedClass(Thread* t, GcClassLoader* loader, GcByteArray* spec)
 }
 
 GcClass* resolveClass(Thread* t,
-                      GcClassLoader* loader,
+                      GcClassSpace* loader,
                       GcByteArray* spec,
                       bool throw_,
                       Gc::Type throwType)
 {
-  if (objectClass(t, loader) == type(t, GcSystemClassLoader::Type)) {
+  if (objectClass(t, loader) == type(t, GcSystemClassSpace::Type)) {
     return resolveSystemClass(t, loader, spec, throw_, throwType);
   } else {
     PROTECT(t, loader);
@@ -5761,19 +5012,19 @@ GcClass* resolveClass(Thread* t,
     } else {
       if (roots(t)->loadClassMethod() == 0) {
         GcMethod* m = resolveMethod(t,
-                                    roots(t)->bootLoader(),
-                                    "java/lang/ClassLoader",
+                                    roots(t)->bootClassSpace(),
+                                    "avata/ClassSpace",
                                     "loadClass",
                                     "(Ljava/lang/String;)Ljava/lang/Class;");
 
         if (m) {
           roots(t)->setLoadClassMethod(t, m);
 
-          GcClass* classLoaderClass = type(t, GcClassLoader::Type);
+          GcClass* classLoaderClass = type(t, GcClassSpace::Type);
 
           if (classLoaderClass->vmFlags() & BootstrapFlag) {
             resolveSystemClass(
-                t, roots(t)->bootLoader(), classLoaderClass->name());
+                t, roots(t)->bootClassSpace(), classLoaderClass->name());
           }
         }
       }
@@ -5994,7 +5245,7 @@ void initClass(Thread* t, GcClass* c)
 }
 
 GcClass* resolveObjectArrayClass(Thread* t,
-                                 GcClassLoader* loader,
+                                 GcClassSpace* loader,
                                  GcClass* elementClass)
 {
   PROTECT(t, loader);
@@ -6148,21 +5399,6 @@ unsigned parameterFootprint(Thread* t, const char* s, bool static_)
   return footprint;
 }
 
-void addFinalizer(Thread* t, object target, void (*finalize)(Thread*, object))
-{
-  PROTECT(t, target);
-
-  ACQUIRE(t, t->m->referenceLock);
-
-  void* function;
-  memcpy(&function, &finalize, BytesPerWord);
-
-  GcFinalizer* f = makeFinalizer(t, 0, function, 0, 0, 0);
-  f->target() = target;
-  f->next() = t->m->finalizers;
-  t->m->finalizers = f;
-}
-
 GcMonitor* objectMonitor(Thread* t, object o, bool createNew)
 {
   assertT(t, t->state == Thread::ActiveState);
@@ -6202,7 +5438,6 @@ GcMonitor* objectMonitor(Thread* t, object o, bool createNew)
 
       hashMapInsert(t, roots(t)->monitorMap(), o, m, objectHash);
 
-      addFinalizer(t, o, removeMonitor);
     }
 
     return cast<GcMonitor>(t, m);
@@ -6221,10 +5456,9 @@ object intern(Thread* t, object s)
       = hashMapFindNode(t, roots(t)->stringMap(), s, stringHash, stringEqual);
 
   if (n) {
-    return cast<GcJreference>(t, n->first())->target();
+    return n->first();
   } else {
     hashMapInsert(t, roots(t)->stringMap(), s, 0, stringHash);
-    addFinalizer(t, s, removeString);
     return s;
   }
 }
@@ -6483,45 +5717,6 @@ object makeTrace(Thread* t, Thread* target)
   return v.trace ? v.trace : makeObjectArray(t, 0);
 }
 
-void runFinalizeThread(Thread* t)
-{
-  GcFinalizer* finalizeList = 0;
-  PROTECT(t, finalizeList);
-
-  GcCleaner* cleanList = 0;
-  PROTECT(t, cleanList);
-
-  while (true) {
-    {
-      ACQUIRE(t, t->m->stateLock);
-
-      while (t->m->finalizeThread and roots(t)->objectsToFinalize() == 0
-             and roots(t)->objectsToClean() == 0) {
-        ENTER(t, Thread::IdleState);
-        t->m->stateLock->wait(t->systemThread, 0);
-      }
-
-      if (t->m->finalizeThread == 0) {
-        return;
-      } else {
-        finalizeList = roots(t)->objectsToFinalize();
-        roots(t)->setObjectsToFinalize(t, 0);
-
-        cleanList = roots(t)->objectsToClean();
-        roots(t)->setObjectsToClean(t, 0);
-      }
-    }
-
-    for (; finalizeList; finalizeList = finalizeList->queueNext()) {
-      finalizeObject(t, finalizeList->queueTarget(), "finalize");
-    }
-
-    for (; cleanList; cleanList = cleanList->queueNext()) {
-      finalizeObject(t, cleanList, "clean");
-    }
-  }
-}
-
 object parseUtf8(Thread* t, const char* data, unsigned length)
 {
   class Client : public Stream::Client {
@@ -6609,30 +5804,24 @@ slow_path:
 
 GcMethod* getCaller(Thread* t, unsigned target, bool skipMethodInvoke)
 {
+  (void)skipMethodInvoke;
+
   if (static_cast<int>(target) == -1) {
     target = 2;
   }
 
   class Visitor : public Processor::StackVisitor {
    public:
-    Visitor(Thread* t, unsigned target, bool skipMethodInvoke)
+    Visitor(Thread* t, unsigned target)
         : t(t),
           method(0),
           count(0),
-          target(target),
-          skipMethodInvoke(skipMethodInvoke)
+          target(target)
     {
     }
 
     virtual bool visit(Processor::StackWalker* walker)
     {
-      if (skipMethodInvoke
-          and walker->method()->class_() == type(t, GcJmethod::Type)
-          and strcmp(walker->method()->name()->body().begin(),
-                     reinterpret_cast<const int8_t*>("invoke")) == 0) {
-        return true;
-      }
-
       if (count == target) {
         method = walker->method();
         return false;
@@ -6646,8 +5835,7 @@ GcMethod* getCaller(Thread* t, unsigned target, bool skipMethodInvoke)
     GcMethod* method;
     unsigned count;
     unsigned target;
-    bool skipMethodInvoke;
-  } v(t, target, skipMethodInvoke);
+  } v(t, target);
 
   t->m->processor->walkStack(t, &v);
 
@@ -6655,7 +5843,7 @@ GcMethod* getCaller(Thread* t, unsigned target, bool skipMethodInvoke)
 }
 
 GcClass* defineClass(Thread* t,
-                     GcClassLoader* loader,
+                     GcClassSpace* loader,
                      const uint8_t* buffer,
                      unsigned length)
 {
@@ -6720,7 +5908,7 @@ void populateMultiArray(Thread* t,
   }
 }
 
-object interruptLock(Thread* t, GcThread* thread)
+object interruptLock(Thread* t, GcExecutionContext* thread)
 {
   object lock = thread->interruptLock();
 
@@ -6750,7 +5938,7 @@ void clearInterrupted(Thread* t)
   monitorRelease(t, cast<GcMonitor>(t, interruptLock(t, t->javaThread)));
 }
 
-void threadInterrupt(Thread* t, GcThread* thread)
+void threadInterrupt(Thread* t, GcExecutionContext* thread)
 {
   PROTECT(t, thread);
 
@@ -6763,7 +5951,7 @@ void threadInterrupt(Thread* t, GcThread* thread)
   monitorRelease(t, cast<GcMonitor>(t, interruptLock(t, thread)));
 }
 
-bool threadIsInterrupted(Thread* t, GcThread* thread, bool clear)
+bool threadIsInterrupted(Thread* t, GcExecutionContext* thread, bool clear)
 {
   PROTECT(t, thread);
 
@@ -6797,361 +5985,6 @@ GcJclass* getDeclaringClass(Thread* t, GcClass* c)
   return 0;
 }
 
-static GcMethodType* resolveBootstrapMethodType(Thread* t,
-                                                GcClassLoader* loader,
-                                                GcSingleton* pool,
-                                                unsigned index)
-{
-  return makeMethodType(t,
-                        loader,
-                        cast<GcByteArray>(t, singletonObject(t, pool, index)),
-                        0,
-                        0,
-                        0);
-}
-
-static GcMethodHandle* resolveBootstrapMethodHandle(Thread* t,
-                                                    GcClassLoader* loader,
-                                                    GcSingleton* pool,
-                                                    unsigned index)
-{
-  return cast<GcMethodHandle>(t,
-                              resolve(t,
-                                      loader,
-                                      pool,
-                                      index,
-                                      findMethodInClass,
-                                      GcNoSuchMethodError::Type));
-}
-
-static GcJclass* resolveBootstrapClass(Thread* t,
-                                       GcClassLoader* loader,
-                                       GcSingleton* pool,
-                                       unsigned index)
-{
-  object o = singletonObject(t, pool, index);
-
-  loadMemoryBarrier();
-
-  if (objectClass(t, o) == type(t, GcReference::Type)) {
-    PROTECT(t, loader);
-    PROTECT(t, pool);
-
-    GcReference* reference = cast<GcReference>(t, o);
-    PROTECT(t, reference);
-
-    GcClass* class_ = resolveClass(t, loader, reference->name());
-    PROTECT(t, class_);
-
-    storeStoreMemoryBarrier();
-    pool->setBodyElement(t, index, reinterpret_cast<uintptr_t>(class_));
-
-    return getJClass(t, class_);
-  }
-
-  return getJClass(t, cast<GcClass>(t, o));
-}
-
-static GcInt* resolveBootstrapInt(Thread* t, GcSingleton* pool, unsigned index)
-{
-  return makeInt(t, singletonValue(t, pool, index));
-}
-
-static void resolveAltMetafactoryArguments(Thread* t,
-                                           GcClassLoader* loader,
-                                           GcSingleton* pool,
-                                           GcCharArray* bootstrapArray,
-                                           GcArray* array)
-{
-  PROTECT(t, loader);
-  PROTECT(t, pool);
-  PROTECT(t, bootstrapArray);
-  PROTECT(t, array);
-
-  const unsigned FlagMarkers = 2;
-  const unsigned FlagBridges = 4;
-
-  if (bootstrapArray->length() < 5) {
-    abort(t);
-  }
-
-  GcMethodType* methodType
-      = resolveBootstrapMethodType(t, loader, pool, bootstrapArray->body()[1]);
-  array->setBodyElement(t, 0, methodType);
-
-  GcMethodHandle* methodHandle
-      = resolveBootstrapMethodHandle(t, loader, pool, bootstrapArray->body()[2]);
-  array->setBodyElement(t, 1, methodHandle);
-
-  GcMethodType* instantiatedMethodType
-      = resolveBootstrapMethodType(t, loader, pool, bootstrapArray->body()[3]);
-  array->setBodyElement(t, 2, instantiatedMethodType);
-
-  GcInt* flagsBox = resolveBootstrapInt(t, pool, bootstrapArray->body()[4]);
-  array->setBodyElement(t, 3, flagsBox);
-
-  unsigned flags = singletonValue(t, pool, bootstrapArray->body()[4]);
-  unsigned argument = 4;
-
-  if (flags & FlagMarkers) {
-    if (argument + 1 >= bootstrapArray->length()) {
-      abort(t);
-    }
-
-    unsigned countIndex = bootstrapArray->body()[argument + 1];
-    unsigned markerCount = singletonValue(t, pool, countIndex);
-    GcInt* markerCountBox = resolveBootstrapInt(t, pool, countIndex);
-    array->setBodyElement(t, argument, markerCountBox);
-    ++argument;
-
-    if (argument + markerCount >= bootstrapArray->length()) {
-      abort(t);
-    }
-
-    for (unsigned i = 0; i < markerCount; ++i) {
-      GcJclass* marker
-          = resolveBootstrapClass(
-              t, loader, pool, bootstrapArray->body()[argument + 1]);
-      array->setBodyElement(t, argument, marker);
-      ++argument;
-    }
-  }
-
-  if (flags & FlagBridges) {
-    if (argument + 1 >= bootstrapArray->length()) {
-      abort(t);
-    }
-
-    unsigned countIndex = bootstrapArray->body()[argument + 1];
-    unsigned bridgeCount = singletonValue(t, pool, countIndex);
-    GcInt* bridgeCountBox = resolveBootstrapInt(t, pool, countIndex);
-    array->setBodyElement(t, argument, bridgeCountBox);
-    ++argument;
-
-    if (argument + bridgeCount >= bootstrapArray->length()) {
-      abort(t);
-    }
-
-    for (unsigned i = 0; i < bridgeCount; ++i) {
-      GcMethodType* bridge
-          = resolveBootstrapMethodType(
-              t, loader, pool, bootstrapArray->body()[argument + 1]);
-      array->setBodyElement(t, argument, bridge);
-      ++argument;
-    }
-  }
-
-  if (argument + 1 != bootstrapArray->length()) {
-    abort(t);
-  }
-}
-
-// Called when interpreting invokedynamic. `invocation` points to
-// static data in the bootstrap method table, which in turn points to
-// a bootstrap method and stores additional data to be passed to
-// it. `resolveDynamic` will then call this bootstrap method after
-// resolving the arguments as required. The called method is assumed
-// to be a lambda `metafactory` or `altMetafactory`.
-//
-// Note that capture/bridging etc happens within the bootstrap method,
-// this is just the code that dispatches to it.
-//
-// Returns the CallSite returned by the bootstrap method.
-GcCallSite* resolveDynamic(Thread* t, GcInvocation* invocation)
-{
-  PROTECT(t, invocation);
-
-  // Use the invocation's Class to get the bootstrap method table and get a classloader.
-  GcClass* c = invocation->class_();
-  PROTECT(t, c);
-
-  // First element points to the bootstrap method. The rest are static data passed to the BSM.
-  GcCharArray* bootstrapArray = cast<GcCharArray>(
-      t, cast<GcArray>(t, invocation->bootstrapMethodTable())
-             ->body()[invocation->bootstrap()]);
-
-  PROTECT(t, bootstrapArray);
-
-  // Resolve the bootstrap method itself.
-  GcMethod* bootstrap = cast<GcMethodHandle>(t,
-                                       resolve(t,
-                                               c->loader(),
-                                               invocation->pool(),
-                                               bootstrapArray->body()[0],
-                                               findMethodInClass,
-                                               GcNoSuchMethodError::Type))->method();
-  PROTECT(t, bootstrap);
-
-  // Caller context info to be passed to the bootstrap method.
-  GcLookup* lookup
-      = makeLookup(t, c, ACC_PUBLIC | ACC_PRIVATE | ACC_PROTECTED | ACC_STATIC);
-  PROTECT(t, lookup);
-
-  // The name of the linked-to method.
-  GcByteArray* nameBytes = invocation->template_()->name();
-  GcString* name
-      = t->m->classpath->makeString(t, nameBytes, 0, nameBytes->length() - 1);
-  PROTECT(t, name);
-
-  // This is the type of the linked-to method (e.g. lambda).
-  GcMethodType* type = makeMethodType(
-      t, c->loader(), invocation->template_()->spec(), 0, 0, 0);
-  PROTECT(t, type);
-
-  // `array` stores either
-  // 1. All the arguments to be passed to the bootstrap method in the case of `metafactory`
-  // 2. The vararg object array to be passed to `altMetafactory`
-  GcArray* array = makeArray(t, bootstrap->parameterCount());
-  PROTECT(t, array);
-
-  // These are common arguments to metafactory and altMetafactory
-  unsigned argument = 0;
-  array->setBodyElement(t, argument++, lookup);
-  array->setBodyElement(t, argument++, name);
-  array->setBodyElement(t, argument++, type);
-
-  THREAD_RUNTIME_ARRAY(t, char, specBuffer, bootstrap->spec()->length());
-
-  const char* spec;
-  // `argArray` stores the final arguments to be passed to the bootstrap method.
-  // Later in this function we iterate through the method signature +
-  // bootstrap array and resolve the arguments as required into `array`.
-  //
-  // In the case of a `metafactory` call:
-  //   `argArray = [caller, invokedName, invokedType, methodType, methodImplementation, instantiatedType]`
-  //   `array = argArray`
-  //
-  // In the case of an `altMetafactory` call:
-  //   `argArray = [caller, invokedName, invokedType, array]`
-  //   `array = [methodType, methodImplementation, instantiatedType, flags, ...]`
-  GcArray* argArray = array;
-  PROTECT(t, argArray);
-
-  // Check if the bootstrap method's signature matches that of an altMetafactory.
-  bool altMetafactory
-      = ::strcmp(reinterpret_cast<char*>(bootstrap->spec()->body().begin()),
-                 "(Ljava/lang/invoke/MethodHandles$Lookup;"
-                 "Ljava/lang/String;"
-                 "Ljava/lang/invoke/MethodType;"
-                 "[Ljava/lang/Object;)"
-                 "Ljava/lang/invoke/CallSite;") == 0;
-
-  if (altMetafactory) {
-    // Store the flat varargs expected by java.lang.invoke.LambdaMetafactory.
-    array = makeArray(t, bootstrapArray->length() - 1);
-    resolveAltMetafactoryArguments(
-        t, c->loader(), invocation->pool(), bootstrapArray, array);
-  } else if (bootstrap->parameterCount() == 2 + bootstrapArray->length()) {
-    // We're calling the simpler `metafactory`. 2 + bootstrapArray->length() is the
-    // arguments to the bootstrap method (bootstrapArray->length() - 1), plus the 3 static
-    // arguments (lookup, name, type).
-    memcpy(RUNTIME_ARRAY_BODY(specBuffer),
-           bootstrap->spec()->body().begin(),
-           bootstrap->spec()->length());
-    spec = RUNTIME_ARRAY_BODY(specBuffer);
-  } else {
-    abort(t);
-  }
-
-  if (!altMetafactory) {
-    MethodSpecIterator it(t, spec);
-
-    // Skip over the already handled 3 arguments.
-    for (unsigned i = 0; i < argument; ++i)
-      it.next();
-
-    // If we're calling altMetafactory then we reset the argument
-    // offset, because we are filling the vararg array instead of the
-    // final argument array.
-    if (argArray != array) {
-      argument = 0;
-    }
-
-    // `i` iterates through the bootstrap arguments (the +1 is because we skip
-    // the bootstrap method's name), `it` iterates through the corresponding types
-    // in the method signature
-    unsigned i = 0;
-    while (i + 1 < bootstrapArray->length() && it.hasNext()) {
-      const char* p = it.next();
-
-      switch (*p) {
-      case 'L': {
-        const char* const methodType = "Ljava/lang/invoke/MethodType;";
-        const char* const methodHandle = "Ljava/lang/invoke/MethodHandle;";
-        if (strncmp(p, methodType, strlen(methodType)) == 0) {
-          GcMethodType* type = makeMethodType(
-              t,
-              c->loader(),
-              cast<GcByteArray>(
-                  t,
-                  singletonObject(
-                      t, invocation->pool(), bootstrapArray->body()[i + 1])),
-              0,
-              0,
-              0);
-
-          array->setBodyElement(t, i + argument, type);
-        } else if (strncmp(p, methodHandle, strlen(methodHandle)) == 0) {
-          GcMethodHandle* handle = cast<GcMethodHandle>(t,
-                                            resolve(t,
-                                                    c->loader(),
-                                                    invocation->pool(),
-                                                    bootstrapArray->body()[i + 1],
-                                                    findMethodInClass,
-                                                    GcNoSuchMethodError::Type));
-
-          array->setBodyElement(t, i + argument, handle);
-        } else {
-          abort(t);
-        }
-      } break;
-
-      case 'I':
-      case 'F': {
-        GcInt* box = makeInt(
-            t,
-            singletonValue(t, invocation->pool(), bootstrapArray->body()[i + 1]));
-
-        array->setBodyElement(t, i + argument, box);
-      } break;
-
-      case 'J':
-      case 'D': {
-        uint64_t v;
-        memcpy(
-            &v,
-            &singletonValue(t, invocation->pool(), bootstrapArray->body()[i + 1]),
-            8);
-
-        GcLong* box = makeLong(t, v);
-
-        array->setBodyElement(t, i + argument, box);
-      } break;
-
-      default:
-        fprintf(stderr, "todo: unsupported bootstrap argument type: %s", p);
-        abort(t);
-      }
-
-      ++i;
-    }
-  }
-
-  GcMethodHandle* handle
-      = (bootstrap->flags() & ACC_STATIC)
-            ? 0
-            : makeMethodHandle(t, REF_invokeSpecial, c->loader(), bootstrap, 0);
-
-  // If we're calling altMetafactory we set the fourth argument to the vararg array.
-  if (argArray != array) {
-    argArray->setBodyElement(t, 3, array);
-  }
-
-  // Finally we make the bootstrap call.
-  return cast<GcCallSite>(
-      t, t->m->processor->invokeArray(t, bootstrap, handle, argArray));
-}
-
 void noop()
 {
 }
@@ -7169,6 +6002,20 @@ extern "C" AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction(
   }
 
   vm::beginContractTransaction(reinterpret_cast<Thread*>(thread), gas_limit);
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int
+avata_begin_contract_transaction_with_limits(AvataThread* thread,
+                                             uint64_t gas_limit,
+                                             uint64_t memory_limit)
+{
+  if (thread == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  vm::beginContractTransactionWithLimits(
+      reinterpret_cast<Thread*>(thread), gas_limit, memory_limit);
   return AVATA_CONTRACT_OK;
 }
 
@@ -7192,6 +6039,43 @@ extern "C" AVATA_CONTRACT_EXPORT int avata_contract_remaining_gas(
   }
 
   *remaining_gas = vm::contractRemainingGas(reinterpret_cast<Thread*>(thread));
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_contract_memory_used(
+    AvataThread* thread,
+    uint64_t* used_bytes)
+{
+  if (thread == 0 || used_bytes == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  *used_bytes = vm::contractMemoryUsed(reinterpret_cast<Thread*>(thread));
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_contract_memory_remaining(
+    AvataThread* thread,
+    uint64_t* remaining_bytes)
+{
+  if (thread == 0 || remaining_bytes == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  *remaining_bytes
+      = vm::contractMemoryRemaining(reinterpret_cast<Thread*>(thread));
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_contract_memory_limit(
+    AvataThread* thread,
+    uint64_t* limit_bytes)
+{
+  if (thread == 0 || limit_bytes == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  *limit_bytes = vm::contractMemoryLimit(reinterpret_cast<Thread*>(thread));
   return AVATA_CONTRACT_OK;
 }
 

@@ -320,8 +320,8 @@ uint64_t defineClass(Thread* t, uintptr_t* arguments)
           t,
           cast<GcClass>(t,
                         defineClass(t,
-                                    loader ? cast<GcClassLoader>(t, *loader)
-                                           : roots(t)->bootLoader(),
+                                    loader ? cast<GcClassSpace>(t, *loader)
+                                           : roots(t)->bootClassSpace(),
                                     buffer,
                                     length)))));
 }
@@ -350,8 +350,8 @@ uint64_t findClass(Thread* t, uintptr_t* arguments)
 
   GcClass* c
       = resolveClass(t,
-                     caller ? t->m->classpath->libraryClassLoader(t, caller)
-                            : roots(t)->appLoader(),
+                     caller ? t->m->classpath->libraryClassSpace(t, caller)
+                            : roots(t)->appClassSpace(),
                      n);
 
   if (t->m->classpath->mayInitClasses()) {
@@ -3042,74 +3042,38 @@ void JNICALL ReleasePrimitiveArrayCritical(Thread* t, jarray, void*, jint)
   }
 }
 
-uint64_t fromReflectedMethod(Thread* t, uintptr_t* arguments)
-{
-  jobject m = reinterpret_cast<jobject>(arguments[0]);
-
-  return methodID(t, t->m->classpath->getVMMethod(t, *m));
-}
-
 jmethodID JNICALL FromReflectedMethod(Thread* t, jobject method)
 {
-  uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(method)};
-
-  return static_cast<jmethodID>(run(t, fromReflectedMethod, arguments));
-}
-
-uint64_t toReflectedMethod(Thread* t, uintptr_t* arguments)
-{
-  jmethodID m = arguments[1];
-  jboolean isStatic = arguments[2];
-
-  return reinterpret_cast<uintptr_t>(makeLocalReference(
-      t,
-      t->m->classpath->makeJMethod(
-          t, isStatic ? getStaticMethod(t, m) : getMethod(t, m))));
+  (void)t;
+  (void)method;
+  return 0;
 }
 
 jobject JNICALL
     ToReflectedMethod(Thread* t, jclass c, jmethodID method, jboolean isStatic)
 {
-  uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(c),
-                           static_cast<uintptr_t>(method),
-                           static_cast<uintptr_t>(isStatic)};
-
-  return reinterpret_cast<jobject>(run(t, toReflectedMethod, arguments));
-}
-
-uint64_t fromReflectedField(Thread* t, uintptr_t* arguments)
-{
-  jobject f = reinterpret_cast<jobject>(arguments[0]);
-
-  return fieldID(t, t->m->classpath->getVMField(t, cast<GcJfield>(t, *f)));
+  (void)t;
+  (void)c;
+  (void)method;
+  (void)isStatic;
+  return 0;
 }
 
 jfieldID JNICALL FromReflectedField(Thread* t, jobject field)
 {
-  uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(field)};
-
-  return static_cast<jfieldID>(run(t, fromReflectedField, arguments));
-}
-
-uint64_t toReflectedField(Thread* t, uintptr_t* arguments)
-{
-  jfieldID f = arguments[1];
-  jboolean isStatic = arguments[2];
-
-  return reinterpret_cast<uintptr_t>(makeLocalReference(
-      t,
-      t->m->classpath->makeJField(
-          t, isStatic ? getStaticField(t, f) : getField(t, f))));
+  (void)t;
+  (void)field;
+  return 0;
 }
 
 jobject JNICALL
     ToReflectedField(Thread* t, jclass c, jfieldID field, jboolean isStatic)
 {
-  uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(c),
-                           static_cast<uintptr_t>(field),
-                           static_cast<uintptr_t>(isStatic)};
-
-  return reinterpret_cast<jobject>(run(t, toReflectedField, arguments));
+  (void)t;
+  (void)c;
+  (void)field;
+  (void)isStatic;
+  return 0;
 }
 
 uint64_t registerNatives(Thread* t, uintptr_t* arguments)
@@ -3361,12 +3325,6 @@ uint64_t boot(Thread* t, uintptr_t*)
   t->javaThread = t->m->classpath->makeThread(t, 0);
 
   t->javaThread->peer() = reinterpret_cast<jlong>(t);
-
-  GcThread* jthread = t->m->classpath->makeThread(t, t);
-  // sequence point, for gc (don't recombine statements)
-  roots(t)->setFinalizerThread(t, jthread);
-
-  roots(t)->finalizerThread()->daemon() = true;
 
   t->m->classpath->boot(t);
 

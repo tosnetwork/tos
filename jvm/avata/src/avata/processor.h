@@ -26,9 +26,9 @@ class GcMethodAddendum;
 class GcIntArray;
 class GcContinuation;
 class GcThrowable;
-class GcThread;
+class GcExecutionContext;
 class GcClassAddendum;
-class GcClassLoader;
+class GcClassSpace;
 class GcArray;
 class GcSingleton;
 
@@ -52,7 +52,7 @@ class Processor {
     virtual unsigned count() = 0;
   };
 
-  virtual Thread* makeThread(Machine* m, GcThread* javaThread, Thread* parent)
+  virtual Thread* makeThread(Machine* m, GcExecutionContext* javaThread, Thread* parent)
       = 0;
 
   virtual GcMethod* makeMethod(Thread* t,
@@ -85,7 +85,7 @@ class Processor {
                              object methodTable,
                              GcClassAddendum* addendum,
                              GcSingleton* staticTable,
-                             GcClassLoader* loader,
+                             GcClassSpace* loader,
                              unsigned vtableLength) = 0;
 
   virtual void initVtable(Thread* t, GcClass* c) = 0;
@@ -121,7 +121,7 @@ class Processor {
                             va_list arguments) = 0;
 
   virtual object invokeList(Thread* t,
-                            GcClassLoader* loader,
+                            GcClassSpace* loader,
                             const char* className,
                             const char* methodName,
                             const char* methodSpec,
@@ -165,7 +165,7 @@ class Processor {
   }
 
   object invoke(Thread* t,
-                GcClassLoader* loader,
+                GcClassSpace* loader,
                 const char* className,
                 const char* methodName,
                 const char* methodSpec,
