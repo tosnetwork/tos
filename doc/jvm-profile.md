@@ -81,8 +81,10 @@ annotations, minimal byte-array/string/descriptor-backed `java.io`,
 deterministic collections, `java.util.function`, and Avata VM support classes.
 It does not ship `java.lang.invoke`, `java.lang.reflect`, `java.lang.ref`, or
 `sun.*`. Method handles, lambda bootstrap classes, reflection, dynamic proxies,
-weak/soft/phantom references, finalization, cleaners, `sun.misc.Unsafe`,
-`avata.Machine`, and `avata.Traces` are not shipped in `rt.jar`.
+package metadata, weak/soft/phantom references, finalization, cleaners,
+`sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, public class-file
+generation helpers, and public continuation/coroutine APIs are not shipped in
+`rt.jar`.
 
 `~/jdk8u` remains useful as a reference checkout for Java 8 opcode, verifier,
 and admitted API semantics. It is not a runtime build input for the consensus
@@ -166,12 +168,13 @@ Examples:
 | `java.lang.System` | TOS-specific deterministic chain context only; host APIs forbidden |
 | Minimal `java.io` | Admitted only for byte-array/string streams and VM stdio descriptors; no path-based host filesystem |
 | `java.net`, host-backed `java.nio` | Absent from v1 `rt.jar` and forbidden unless explicitly admitted later |
-| `java.lang.Thread`, wait/notify, executors | Forbidden or deterministic trap |
-| Reflection | Public `java.lang.reflect.*` is absent; only pinned `Class` metadata helpers remain |
-| Class loading | Forbidden except validator-controlled contract class resolution |
+| `java.lang.Thread`, wait/notify, executors | Forbidden or deterministic trap; `InterruptedException` is a compiler-required boot symbol but contract references are verifier-forbidden |
+| Reflection | Public `java.lang.reflect.*`, `java.lang.Package`, and optional `Class` reflection helpers are absent unless explicitly admitted |
+| Class loading | Forbidden except validator-controlled contract class resolution; `Class.forName` and package/source metadata lookup are absent |
 | Serialization, regex, text formatting, zip/jar, locale/date APIs | Absent from v1 `rt.jar` unless explicitly admitted later |
 | `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces` | Absent from v1 `rt.jar`; forbidden unless explicitly admitted later |
-| Collections | Admitted selectively when deterministic and useful for contracts |
+| Class-file generation helpers and continuation APIs | Absent from v1 `rt.jar`; tests may keep private support copies |
+| Collections | Admitted selectively when deterministic and useful for contracts; `EnumSet`, empty abstraction shells, and partial `NavigableMap` APIs are absent |
 
 ## Avata Development Order
 

@@ -10,7 +10,7 @@
 
 package java.util;
 
-public class LinkedList<T> extends AbstractSequentialList<T> implements Deque<T> {
+public class LinkedList<T> extends AbstractList<T> implements Deque<T> {
   private Cell<T> front;
   private Cell<T> rear;
   private int size;

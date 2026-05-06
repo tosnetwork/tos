@@ -124,6 +124,13 @@ The supported standalone build is the slim `make` profile:
   object-stream serialization, or URL-handler packages in `rt.jar`
 - no `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, or
   `avata.Traces` shell classes in `rt.jar`
+- no public class-file generation helpers or continuation/coroutine APIs in
+  `rt.jar`
+- no runtime string-based class loading through `Class.forName`; contract class
+  resolution is controlled by the deployment/call path
+- no package metadata API or Java SE `Class` reflection conveniences such as
+  `getPackage`, declared/enclosing/declaring-class queries,
+  `desiredAssertionStatus`, `asSubclass`, or `cast`
 
 `make build-test` runs `rt/check-profile.sh` against the generated `rt.jar` and
 fails if any forbidden package or shell class is reintroduced.
@@ -179,6 +186,9 @@ input.
 The current `rt.jar` intentionally contains only the contract profile:
 
 - `java.lang` and annotations for deterministic language/runtime metadata.
+  `Class.forName`, `java.lang.Package`, and Java SE `Class` reflection
+  conveniences such as package, declared/enclosing/declaring-class, assertion,
+  subclass, and cast helpers are not shipped.
 - no `java.lang.invoke`, `java.lang.reflect`, `java.lang.ref`, or `sun.*`
   classes. Method handles, lambda bootstrap classes, reflection,
   weak/soft/phantom references, finalization, dynamic proxies, and cleaner
@@ -189,17 +199,22 @@ The current `rt.jar` intentionally contains only the contract profile:
 - minimal `java.io` for byte-array/string streams, readers/writers,
   `DataInput`/`DataOutput`, and VM-private stdin/stdout/stderr streams. Public
   `FileDescriptor`, `FileInputStream`, `FileOutputStream`, and
-  `FileNotFoundException` are not shipped. `System.in` is deterministic EOF.
+  `FileNotFoundException` are not shipped. `FilterReader`, `LineNumberReader`,
+  and `PushbackReader` are also outside the contract runtime. `System.in` is
+  deterministic EOF.
 - deterministic ordered/list `java.util` collections plus `java.util.function`;
-  hash/identity/weak collections, `Properties`, and synchronized collection
-  wrappers are not shipped
+  hash/identity/weak collections, `EnumSet`, `AbstractMap`, `NavigableMap`,
+  `Properties`, and synchronized collection wrappers are not shipped
 - `java.lang.Runtime` is not shipped; host runtime and process APIs are outside
   the contract profile
 - `SecurityException`, `ThreadDeath`, `IllegalThreadStateException`,
-  `InstantiationException`, `ReflectiveOperationException`, and
-  `TypeNotPresentException` are not shipped; security-manager, thread-death,
-  thread-scheduling, reflection, and optional reflective-type APIs are outside
-  the contract profile.
+  `InstantiationException`, `ReflectiveOperationException`,
+  `IllegalAccessException`, `NoSuchFieldException`,
+  `NoSuchMethodException`, and `TypeNotPresentException` are not shipped;
+  security-manager, thread-death, thread-scheduling, reflection, and optional
+  reflective-type APIs are outside the contract profile. `InterruptedException`
+  is retained only as a JDK8 `javac` boot-classpath requirement; verifier
+  admission rejects contract references to it.
 - `Math.random` and host-native transcendental `Math` functions are not shipped;
   floating-point opcode support is handled by the VM, not by host libm calls.
   Float/double string parse/format APIs are omitted until they have a pinned

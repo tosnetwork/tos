@@ -43,10 +43,14 @@ $0 == "java/io/FileDescriptor.class" { reject("forbidden host file descriptor AP
 $0 == "java/io/FileInputStream.class" { reject("forbidden host file descriptor API"); next; }
 $0 == "java/io/FileOutputStream.class" { reject("forbidden host file descriptor API"); next; }
 $0 == "java/io/FileNotFoundException.class" { reject("forbidden host file API"); next; }
+$0 == "java/io/FilterReader.class" { reject("forbidden reader decorator API"); next; }
+$0 == "java/io/LineNumberReader.class" { reject("forbidden source-position reader API"); next; }
+$0 == "java/io/PushbackReader.class" { reject("forbidden parser pushback reader API"); next; }
 $0 == "java/lang/Process.class" { reject("forbidden process API"); next; }
 $0 == "java/lang/ProcessBuilder.class" { reject("forbidden process API"); next; }
 $0 == "java/lang/Runtime.class" { reject("forbidden host runtime API"); next; }
 $0 == "java/lang/IllegalThreadStateException.class" { reject("forbidden thread scheduling API"); next; }
+$0 == "java/lang/IllegalAccessException.class" { reject("forbidden reflection exception API"); next; }
 $0 == "java/lang/SecurityException.class" { reject("forbidden security-manager API"); next; }
 $0 == "java/lang/StringBuffer.class" { reject("forbidden legacy synchronized string buffer"); next; }
 $0 == "java/lang/ClassLoader.class" { reject("forbidden dynamic class-loader API"); next; }
@@ -56,6 +60,10 @@ $0 == "java/lang/ThreadGroup.class" { reject("forbidden thread API"); next; }
 $0 == "java/lang/ThreadLocal.class" { reject("forbidden thread-local API"); next; }
 $0 == "java/lang/TypeNotPresentException.class" { reject("forbidden optional reflective type API"); next; }
 $0 == "java/lang/InheritableThreadLocal.class" { reject("forbidden thread-local API"); next; }
+$0 == "java/lang/Class$ClassType.class" { reject("forbidden reflection classification helper"); next; }
+$0 == "java/lang/NoSuchFieldException.class" { reject("forbidden reflection exception API"); next; }
+$0 == "java/lang/NoSuchMethodException.class" { reject("forbidden reflection exception API"); next; }
+$0 == "java/lang/Package.class" { reject("forbidden package metadata API"); next; }
 $0 == "sun/misc/Unsafe.class" { reject("forbidden unsafe API"); next; }
 $0 == "avata/Machine.class" { reject("forbidden host VM API"); next; }
 $0 == "avata/Traces.class" { reject("forbidden host tracing API"); next; }
@@ -63,12 +71,25 @@ $0 == "avata/VMClassLoader.class" { reject("stale VM class-loader shell"); next;
 $0 == "avata/SystemClassLoader.class" { reject("stale VM class-loader shell"); next; }
 $0 == "avata/VMThread.class" { reject("stale VM thread shell"); next; }
 $0 == "avata/VMThreadGroup.class" { reject("stale VM thread-group shell"); next; }
+$0 == "avata/Assembler.class" { reject("forbidden class-file generation helper"); next; }
+$0 ~ /^avata\/Assembler\$/ { reject("forbidden class-file generation helper"); next; }
+$0 == "avata/ConstantPool.class" { reject("forbidden class-file generation helper"); next; }
+$0 ~ /^avata\/ConstantPool\$/ { reject("forbidden class-file generation helper"); next; }
+$0 == "avata/Stream.class" { reject("forbidden binary class-file stream helper"); next; }
+$0 == "avata/Callback.class" { reject("forbidden continuation API"); next; }
+$0 == "avata/Function.class" { reject("forbidden continuation API"); next; }
+$0 == "avata/Continuations.class" { reject("forbidden continuation API"); next; }
+$0 ~ /^avata\/Continuations\$/ { reject("forbidden continuation API"); next; }
+$0 == "avata/IncompatibleContinuationException.class" { reject("forbidden continuation API"); next; }
 $0 == "java/util/HashMap.class" { reject("forbidden hash collection"); next; }
 $0 == "java/util/HashSet.class" { reject("forbidden hash collection"); next; }
 $0 == "java/util/Hashtable.class" { reject("forbidden hash collection"); next; }
+$0 == "java/util/EnumSet.class" { reject("forbidden enum collection"); next; }
+$0 == "java/util/AbstractMap.class" { reject("forbidden empty map shell"); next; }
 $0 == "java/util/IdentityHashMap.class" { reject("forbidden identity hash collection"); next; }
 $0 == "java/util/LinkedHashMap.class" { reject("forbidden hash collection"); next; }
 $0 == "java/util/LinkedHashSet.class" { reject("forbidden hash collection"); next; }
+$0 == "java/util/NavigableMap.class" { reject("forbidden partial navigable map API"); next; }
 $0 == "java/util/Properties.class" { reject("forbidden mutable host-property map"); next; }
 $0 == "java/util/WeakHashMap.class" { reject("forbidden weak hash collection"); next; }
 $0 == "java/util/Enumeration.class" { reject("forbidden legacy iterator API"); next; }

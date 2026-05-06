@@ -657,49 +657,6 @@ Finder* getFinder(Thread* t, const char* name, size_t nameLength)
   return 0;
 }
 
-object getDeclaredClasses(Thread* t, GcClass* c, bool publicOnly)
-{
-  GcClassAddendum* addendum = c->addendum();
-  if (addendum) {
-    GcArray* table = cast<GcArray>(t, addendum->innerClassTable());
-    if (table) {
-      PROTECT(t, table);
-
-      unsigned count = 0;
-      for (unsigned i = 0; i < table->length(); ++i) {
-        GcInnerClassReference* reference
-            = cast<GcInnerClassReference>(t, table->body()[i]);
-        GcByteArray* outer = reference->outer();
-        if (outer and byteArrayEqual(t, outer, c->name())
-            and ((not publicOnly) or (reference->flags() & ACC_PUBLIC))) {
-          ++count;
-        }
-      }
-
-      object result = makeObjectArray(t, type(t, GcJclass::Type), count);
-      PROTECT(t, result);
-
-      for (unsigned i = 0; i < table->length(); ++i) {
-        GcInnerClassReference* reference
-            = cast<GcInnerClassReference>(t, table->body()[i]);
-        GcByteArray* outer = reference->outer();
-        if (outer and byteArrayEqual(t, outer, c->name())
-            and ((not publicOnly) or (reference->flags() & ACC_PUBLIC))) {
-          object inner
-              = getJClass(t, resolveClass(t, c->loader(), reference->inner()));
-
-          --count;
-          reinterpret_cast<GcArray*>(result)->setBodyElement(t, count, inner);
-        }
-      }
-
-      return result;
-    }
-  }
-
-  return makeObjectArray(t, type(t, GcJclass::Type), 0);
-}
-
 unsigned classModifiers(Thread* t, GcClass* c)
 {
   GcClassAddendum* addendum = c->addendum();

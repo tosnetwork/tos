@@ -8,7 +8,7 @@
    There is NO WARRANTY for this software.  See license.txt for
    details. */
 
-package avata;
+package avata.testing.bytecode;
 
 import java.io.InputStream;
 import java.io.OutputStream;

@@ -8,11 +8,11 @@
    There is NO WARRANTY for this software.  See license.txt for
    details. */
 
-package avata;
+package avata.testing.bytecode;
 
-import static avata.Stream.write1;
-import static avata.Stream.write2;
-import static avata.Stream.write4;
+import static avata.testing.bytecode.Stream.write1;
+import static avata.testing.bytecode.Stream.write2;
+import static avata.testing.bytecode.Stream.write4;
 
 import java.util.List;
 import java.io.OutputStream;

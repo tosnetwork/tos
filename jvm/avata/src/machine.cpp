@@ -600,6 +600,17 @@ bool segmentEqualsCString(const int8_t* begin,
   return value[i] == 0;
 }
 
+bool byteArrayEqualsCString(GcByteArray* array, const char* value)
+{
+  const int8_t* begin = array->body().begin();
+  const int8_t* end = begin;
+  while (*end) {
+    ++end;
+  }
+  return segmentEqualsCString(
+      begin, end, reinterpret_cast<const int8_t*>(value));
+}
+
 bool forbiddenInternalClass(const int8_t* begin,
                             const int8_t* end,
                             GcByteArray* currentClassName)
@@ -614,7 +625,12 @@ bool forbiddenInternalClass(const int8_t* begin,
       || segmentEqualsOrNested(begin, end, "java/io/FileInputStream")
       || segmentEqualsOrNested(begin, end, "java/io/FileOutputStream")
       || segmentEqualsOrNested(begin, end, "java/io/FileNotFoundException")
+      || segmentEqualsOrNested(begin, end, "java/io/FilterReader")
+      || segmentEqualsOrNested(begin, end, "java/io/LineNumberReader")
+      || segmentEqualsOrNested(begin, end, "java/io/PushbackReader")
+      || segmentEqualsOrNested(begin, end, "java/lang/InterruptedException")
       || segmentEqualsOrNested(begin, end, "java/lang/IllegalThreadStateException")
+      || segmentEqualsOrNested(begin, end, "java/lang/IllegalAccessException")
       || segmentEqualsOrNested(begin, end, "java/lang/SecurityException")
       || segmentEqualsOrNested(begin, end, "java/lang/StringBuffer")
       || segmentEqualsOrNested(begin, end, "java/lang/ClassLoader")
@@ -624,11 +640,17 @@ bool forbiddenInternalClass(const int8_t* begin,
       || segmentEqualsOrNested(begin, end, "java/lang/ThreadLocal")
       || segmentEqualsOrNested(begin, end, "java/lang/TypeNotPresentException")
       || segmentEqualsOrNested(begin, end, "java/lang/InheritableThreadLocal")
+      || segmentEqualsOrNested(begin, end, "java/lang/Class$ClassType")
+      || segmentEqualsOrNested(begin, end, "java/lang/NoSuchFieldException")
+      || segmentEqualsOrNested(begin, end, "java/lang/NoSuchMethodException")
+      || segmentEqualsOrNested(begin, end, "java/lang/Package")
       || segmentStartsWith(begin, end, "java/lang/invoke/")
       || segmentStartsWith(begin, end, "java/lang/ref/")
+      || segmentEqualsOrNested(begin, end, "java/util/AbstractMap")
       || segmentEqualsOrNested(begin, end, "java/util/HashMap")
       || segmentEqualsOrNested(begin, end, "java/util/HashSet")
       || segmentEqualsOrNested(begin, end, "java/util/Hashtable")
+      || segmentEqualsOrNested(begin, end, "java/util/EnumSet")
       || segmentEqualsOrNested(begin, end, "java/util/IdentityHashMap")
       || segmentEqualsOrNested(begin, end, "java/util/LinkedHashMap")
       || segmentEqualsOrNested(begin, end, "java/util/LinkedHashSet")
@@ -638,8 +660,24 @@ bool forbiddenInternalClass(const int8_t* begin,
       || segmentEqualsOrNested(begin, end, "java/util/Vector")
       || segmentEqualsOrNested(begin, end, "java/util/Stack")
       || segmentEqualsOrNested(begin, end, "java/util/EmptyStackException")
+      || segmentEqualsOrNested(begin, end, "java/util/NavigableMap")
       || segmentEqualsOrNested(begin, end, "java/util/StringTokenizer")
       || segmentStartsWith(begin, end, "java/lang/reflect/");
+}
+
+bool forbiddenInternalMethod(GcReference* reference)
+{
+  GcByteArray* name = reference->name();
+  return reference->class_()
+      && byteArrayEqualsCString(reference->class_(), "java/lang/Class")
+      && (byteArrayEqualsCString(name, "forName")
+          || byteArrayEqualsCString(name, "getPackage")
+          || byteArrayEqualsCString(name, "getDeclaredClasses")
+          || byteArrayEqualsCString(name, "getDeclaringClass")
+          || byteArrayEqualsCString(name, "getEnclosingClass")
+          || byteArrayEqualsCString(name, "desiredAssertionStatus")
+          || byteArrayEqualsCString(name, "asSubclass")
+          || byteArrayEqualsCString(name, "cast"));
 }
 
 bool classNameForbidden(GcByteArray* name, GcByteArray* currentClassName)
@@ -751,7 +789,13 @@ void verifyConstantPoolProfile(Thread* t,
       GcClass* valueClass = objectClass(t, value);
       if (valueClass == type(t, GcReference::Type)) {
         GcReference* reference = cast<GcReference>(t, value);
-        verifyClassNameAllowed(t, reference->name(), currentClassName);
+        if (forbiddenInternalMethod(reference)) {
+          throwNew(t, GcVerifyError::Type);
+        }
+        verifyClassNameAllowed(
+            t,
+            reference->class_() ? reference->class_() : reference->name(),
+            currentClassName);
         if (reference->spec()) {
           verifyDescriptorAllowed(t, reference->spec(), currentClassName);
         }
@@ -3131,8 +3175,6 @@ void boot(Thread* t)
 
   type(t, GcSingleton::Type)->vmFlags() |= SingletonFlag;
 
-  type(t, GcContinuation::Type)->vmFlags() |= ContinuationFlag;
-
   type(t, GcJboolean::Type)->vmFlags() |= PrimitiveFlag;
   type(t, GcJbyte::Type)->vmFlags() |= PrimitiveFlag;
   type(t, GcJchar::Type)->vmFlags() |= PrimitiveFlag;
@@ -3412,57 +3454,6 @@ object findInTable(Thread* t,
   }
 
   return 0;
-}
-
-void updatePackageMap(Thread* t, GcClass* class_)
-{
-  PROTECT(t, class_);
-
-  if (roots(t)->packageMap() == 0) {
-    GcHashMap* map = makeHashMap(t, 0, 0);
-    // sequence point, for gc (don't recombine statements)
-    roots(t)->setPackageMap(t, map);
-  }
-
-  GcByteArray* className = class_->name();
-  if ('[' != className->body()[0]) {
-    THREAD_RUNTIME_ARRAY(t, char, packageName, className->length());
-
-    char* s = reinterpret_cast<char*>(className->body().begin());
-    char* p = strrchr(s, '/');
-
-    if (p) {
-      int length = (p - s) + 1;
-      memcpy(
-          RUNTIME_ARRAY_BODY(packageName), className->body().begin(), length);
-      RUNTIME_ARRAY_BODY(packageName)[length] = 0;
-
-      GcByteArray* key
-          = vm::makeByteArray(t, "%s", RUNTIME_ARRAY_BODY(packageName));
-      PROTECT(t, key);
-
-      hashMapRemove(
-          t, roots(t)->packageMap(), key, byteArrayHash, byteArrayEqual);
-
-      GcByteArray* source = class_->source();
-      if (source) {
-        // note that we strip the "file:" prefix, since OpenJDK's
-        // Package.defineSystemPackage expects an unadorned filename:
-        const unsigned PrefixLength = 5;
-        unsigned sourceNameLength = source->length() - PrefixLength;
-        THREAD_RUNTIME_ARRAY(t, char, sourceName, sourceNameLength);
-        memcpy(RUNTIME_ARRAY_BODY(sourceName),
-               &source->body()[PrefixLength],
-               sourceNameLength);
-
-        source = vm::makeByteArray(t, "%s", RUNTIME_ARRAY_BODY(sourceName));
-      } else {
-        source = vm::makeByteArray(t, "avata-dummy-package-source");
-      }
-
-      hashMapInsert(t, roots(t)->packageMap(), key, source, byteArrayHash);
-    }
-  }
 }
 
 }  // namespace
@@ -5022,8 +5013,6 @@ GcClass* resolveSystemClass(Thread* t,
     if (class_) {
       hashMapInsert(
           t, cast<GcHashMap>(t, loader->map()), spec, class_, byteArrayHash);
-
-      updatePackageMap(t, class_);
     } else if (throw_) {
       throwNew(t, throwType, "%s", spec->body().begin());
     }
@@ -5561,8 +5550,6 @@ void walk(Thread* t, Heap::Walker* w, object o, unsigned start)
   GcClass* class_ = t->m->heap->follow(objectClass(t, o));
   GcIntArray* objectMask = t->m->heap->follow(class_->objectMask());
 
-  bool more = true;
-
   if (objectMask) {
     unsigned fixedSize = class_->fixedSize();
     unsigned arrayElementSize = class_->arrayElementSize();
@@ -5575,34 +5562,31 @@ void walk(Thread* t, Heap::Walker* w, object o, unsigned start)
            objectMask->body().begin(),
            objectMask->length() * 4);
 
-    more = ::walk(t,
-                  w,
-                  RUNTIME_ARRAY_BODY(mask),
-                  fixedSize,
-                  arrayElementSize,
-                  arrayLength,
-                  start);
+    ::walk(t,
+           w,
+           RUNTIME_ARRAY_BODY(mask),
+           fixedSize,
+           arrayElementSize,
+           arrayLength,
+           start);
   } else if (class_->vmFlags() & SingletonFlag) {
     GcSingleton* s = cast<GcSingleton>(t, o);
     unsigned length = s->length();
     if (length) {
-      more = ::walk(t,
-                    w,
-                    singletonMask(t, s),
-                    (singletonCount(t, s) + 2) * BytesPerWord,
-                    0,
-                    0,
-                    start);
+      ::walk(t,
+             w,
+             singletonMask(t, s),
+             (singletonCount(t, s) + 2) * BytesPerWord,
+             0,
+             0,
+             start);
     } else if (start == 0) {
-      more = w->visit(0);
+      w->visit(0);
     }
   } else if (start == 0) {
-    more = w->visit(0);
+    w->visit(0);
   }
 
-  if (more and class_->vmFlags() & ContinuationFlag) {
-    t->m->processor->walkContinuationBody(t, w, o, start);
-  }
 }
 
 int walkNext(Thread* t, object o, int previous)
@@ -6021,27 +6005,6 @@ bool threadIsInterrupted(Thread* t, GcExecutionContext* thread, bool clear)
   }
   monitorRelease(t, cast<GcMonitor>(t, interruptLock(t, thread)));
   return v;
-}
-
-GcJclass* getDeclaringClass(Thread* t, GcClass* c)
-{
-  GcClassAddendum* addendum = c->addendum();
-  if (addendum) {
-    GcArray* table = cast<GcArray>(t, addendum->innerClassTable());
-    if (table) {
-      for (unsigned i = 0; i < table->length(); ++i) {
-        GcInnerClassReference* reference
-            = cast<GcInnerClassReference>(t, table->body()[i]);
-        if (reference->outer()
-            and strcmp(reference->inner()->body().begin(),
-                       c->name()->body().begin()) == 0) {
-          return getJClass(t, resolveClass(t, c->loader(), reference->outer()));
-        }
-      }
-    }
-  }
-
-  return 0;
 }
 
 void noop()

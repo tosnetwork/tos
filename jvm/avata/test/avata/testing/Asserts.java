@@ -1,7 +1,5 @@
 package avata.testing;
 
-import java.util.Collection;
-
 public class Asserts {
 
   public static void assertEquals(byte first, byte second) {
@@ -30,13 +28,13 @@ public class Asserts {
   
   public static void assertEquals(float first, float second) {
     if(first != second) {
-      throw new RuntimeException(first+" is not equals to: "+second);
+      throw new RuntimeException("float values are not equal");
     }
   }
   
   public static void assertEquals(double first, double second) {
     if(first != second) {
-      throw new RuntimeException(first+" is not equals to: "+second);
+      throw new RuntimeException("double values are not equal");
     }
   }
   
@@ -56,12 +54,6 @@ public class Asserts {
   public static void assertTrue(boolean flag) {
     if (!flag) {
       throw new RuntimeException("Error: "+flag+" is not True");
-    }
-  }
-  
-  public static void assertContains(Enum<?> element, Collection<?> collection) {
-    if (!collection.contains(element)) {
-      throw new RuntimeException("expected " + element + " in the collection:"+collection);
     }
   }
 }

@@ -111,10 +111,6 @@ public final class Class <T> {
     }
   }
 
-  public static Class forName(String name) throws ClassNotFoundException {
-    return Classes.forName(name, true, Classes.getCallerMethod().class_.loader);
-  }
-
   public Class getComponentType() {
     if (isArray()) {
       String n = getName();
@@ -162,75 +158,12 @@ public final class Class <T> {
     return new Class[0];
   }
 
-  public native Class getEnclosingClass();
-
   public T[] getEnumConstants() {
     if (Enum.class.isAssignableFrom(this)) {
       return (T[]) Classes.enumConstants(this);
     } else {
       return null;
     }
-  }
-
-  public Class[] getDeclaredClasses() {
-    ClassAddendum addendum = vmClass.addendum;
-    if (addendum != null) {
-      InnerClassReference[] table = addendum.innerClassTable;
-      if (table != null) {
-        int count = 0;
-        for (int i = 0; i < table.length; ++i) {
-          InnerClassReference reference = table[i];
-          if (reference.outer != null
-              && Arrays.equals(vmClass.name, reference.outer))
-          {
-            ++ count;
-          }
-        }
-
-        Class[] result = new Class[count];
-        for (int i = 0; i < table.length; ++i) {
-          InnerClassReference reference = table[i];
-          if (reference.outer != null
-              && Arrays.equals(vmClass.name, reference.outer))
-          {
-            try {
-              result[--count] = vmClass.loader.loadClass
-                (new String(reference.inner, 0, reference.inner.length - 1));
-            } catch (ClassNotFoundException e) {
-              throw new Error(e);
-            }
-          }
-        }
-
-        return result;
-      }
-    }
-    return new Class[0];
-  }
-
-  public Class getDeclaringClass() {
-    ClassAddendum addendum = vmClass.addendum;
-    if (addendum != null) {
-      InnerClassReference[] table = addendum.innerClassTable;
-      if (table != null) {
-        for (int i = 0; i < table.length; ++i) {
-          InnerClassReference reference = table[i];
-          if (Arrays.equals(vmClass.name, reference.inner)) {
-            if (reference.outer != null) {
-              try {
-                return vmClass.loader.loadClass
-                  (new String(reference.outer, 0, reference.outer.length - 1));
-              } catch (ClassNotFoundException e) {
-                throw new Error(e);
-              }
-            } else {
-              return null;
-            }
-          }
-        }
-      }
-    }
-    return null;
   }
 
   public boolean isSynthetic() {
@@ -266,51 +199,6 @@ public final class Class <T> {
     return (vmClass.super_ == null ? null : SystemClassSpace.getClass(vmClass.super_));
   }
   
-  private enum ClassType { GLOBAL, MEMBER, LOCAL, ANONYMOUS }
-  
-  /**
-    * Determines the class type.
-    * 
-    * There are four class types: global (no dollar sign), anonymous (only digits after the dollar sign),
-    * local (starts with digits after the dollar, ends in class name) and member (does not start with digits
-    * after the dollar sign).
-    * 
-    * @return the class type
-    */
-  private ClassType getClassType() {
-    final String name = getName();
-    // Find the last dollar, as classes can be nested
-    int dollar = name.lastIndexOf('$');
-    if (dollar < 0) return ClassType.GLOBAL;
-
-    // Find the first non-digit after the dollar, if any
-    final char[] chars = name.toCharArray();
-    int skipDigits;
-    for (skipDigits = dollar + 1; skipDigits < chars.length; skipDigits++) {
-       if (chars[skipDigits] < '0' || chars[skipDigits] > '9') break;
-    }
-
-    if (skipDigits == chars.length) {
-      return ClassType.ANONYMOUS;
-    } else if (skipDigits == dollar + 1) {
-      return ClassType.MEMBER;
-    } else {
-      return ClassType.LOCAL;
-    }
-  }
-    
-  public boolean isAnonymousClass () {
-    return getClassType() == ClassType.ANONYMOUS;
-  }
-  
-  public boolean isLocalClass () {
-    return getClassType() == ClassType.LOCAL;
-  }
-
-  public boolean isMemberClass () {
-    return getClassType() == ClassType.MEMBER;
-  }
-
   public boolean isArray() {
     return vmClass.arrayDimensions != 0;
   }
@@ -330,36 +218,6 @@ public final class Class <T> {
 
   public boolean isEnum() {
     return getSuperclass() == Enum.class && (vmClass.flags & EnumFlag) != 0;
-  }
-
-  public boolean desiredAssertionStatus() {
-    return false;
-  }
-
-  public <T> Class<? extends T> asSubclass(Class<T> c) {
-    if (! c.isAssignableFrom(this)) {
-      throw new ClassCastException();
-    }
-
-    return (Class<? extends T>) this;
-  }
-
-  public T cast(Object o) {
-    return (T) o;
-  }
-
-  public Package getPackage() {
-    if ((vmClass.vmFlags & PrimitiveFlag) != 0 || isArray()) {
-      return null;
-    } else {
-      String name = getCanonicalName();
-      int index = name.lastIndexOf('.');
-      if (index >= 0) {
-        return vmClass.loader.getPackage(name.substring(0, index));
-      } else {
-        return null;
-      }
-    }
   }
 
 }

@@ -275,37 +275,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
       getJClass(t, cast<GcClass>(t, reinterpret_cast<object>(arguments[0]))));
 }
 
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_SystemClassSpace_getPackageSource(Thread* t,
-                                                   object,
-                                                   uintptr_t* arguments)
-{
-  GcString* name = cast<GcString>(t, reinterpret_cast<object>(arguments[0]));
-  PROTECT(t, name);
-
-  ACQUIRE(t, t->m->classLock);
-
-  THREAD_RUNTIME_ARRAY(t, char, chars, name->length(t) + 2);
-  stringChars(t, name, RUNTIME_ARRAY_BODY(chars));
-  replace('.', '/', RUNTIME_ARRAY_BODY(chars));
-  RUNTIME_ARRAY_BODY(chars)[name->length(t)] = '/';
-  RUNTIME_ARRAY_BODY(chars)[name->length(t) + 1] = 0;
-
-  GcByteArray* key = makeByteArray(t, RUNTIME_ARRAY_BODY(chars));
-
-  GcByteArray* array = cast<GcByteArray>(
-      t,
-      hashMapFind(
-          t, roots(t)->packageMap(), key, byteArrayHash, byteArrayEqual));
-
-  if (array) {
-    return reinterpret_cast<uintptr_t>(makeLocalReference(
-        t, t->m->classpath->makeString(t, array, 0, array->length())));
-  } else {
-    return 0;
-  }
-}
-
 extern "C" AVATA_EXPORT void JNICALL
     Avata_avata_Machine_dumpHeap(Thread* t, object, uintptr_t* arguments)
 {
@@ -463,58 +432,6 @@ extern "C" AVATA_EXPORT void JNICALL
   int64_t peer;
   memcpy(&peer, arguments, 8);
   reinterpret_cast<System::Region*>(peer)->dispose();
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_avata_Continuations_callWithCurrentContinuation(Thread* t,
-                                                          object,
-                                                          uintptr_t* arguments)
-{
-  t->m->processor->callWithCurrentContinuation(
-      t, reinterpret_cast<object>(*arguments));
-
-  abort(t);
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_avata_Continuations_dynamicWind2(Thread* t,
-                                           object,
-                                           uintptr_t* arguments)
-{
-  t->m->processor->dynamicWind(t,
-                               reinterpret_cast<object>(arguments[0]),
-                               reinterpret_cast<object>(arguments[1]),
-                               reinterpret_cast<object>(arguments[2]));
-
-  abort(t);
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_avata_Continuations_00024Continuation_handleResult(
-        Thread* t,
-        object,
-        uintptr_t* arguments)
-{
-  t->m->processor->feedResultToContinuation(
-      t,
-      cast<GcContinuation>(t, reinterpret_cast<object>(arguments[0])),
-      reinterpret_cast<object>(arguments[1]));
-
-  abort(t);
-}
-
-extern "C" AVATA_EXPORT void JNICALL
-    Avata_avata_Continuations_00024Continuation_handleException(
-        Thread* t,
-        object,
-        uintptr_t* arguments)
-{
-  t->m->processor->feedExceptionToContinuation(
-      t,
-      cast<GcContinuation>(t, reinterpret_cast<object>(arguments[0])),
-      cast<GcThrowable>(t, reinterpret_cast<object>(arguments[1])));
-
-  abort(t);
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
@@ -1212,28 +1129,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
     Avata_avata_Classes_primitiveClass(Thread* t, object, uintptr_t* arguments)
 {
   return reinterpret_cast<int64_t>(primitiveClass(t, arguments[0]));
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_lang_Class_getEnclosingClass(Thread* t,
-                                            object,
-                                            uintptr_t* arguments)
-{
-  GcClass* c
-      = cast<GcJclass>(t, reinterpret_cast<object>(arguments[0]))->vmClass();
-  PROTECT(t, c);
-
-  GcClassAddendum* addendum = c->addendum();
-  if (addendum) {
-    GcByteArray* enclosingClass
-        = cast<GcByteArray>(t, addendum->enclosingClass());
-
-    if (enclosingClass) {
-      return reinterpret_cast<uintptr_t>(
-          getJClass(t, resolveClass(t, c->loader(), enclosingClass)));
-    }
-  }
-  return 0;
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL

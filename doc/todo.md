@@ -345,7 +345,8 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   `Properties`, legacy synchronized collections/tokenizers, and thread-local
   APIs. The generated `rt.jar` now contains only `java.lang`, annotations,
   minimal `java.io`, deterministic ordered/list collections,
-  `java.util.function`, and Avata VM support classes. Public
+  `java.util.function`, and Avata VM support classes. `java.util.EnumSet` is
+  absent because application enum classes are outside v1. Public
   `java.lang.invoke`, `java.lang.ref`, `java.lang.reflect`, and `sun.*`
   classes are no longer shipped.
 - ✅ Removed additional non-contract public surfaces from the v1 `rt.jar`:
@@ -360,6 +361,15 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 - ✅ Removed callable native-internal and non-admitted invoke shell classes:
   `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, and `avata.Traces`
   are absent from `rt.jar`.
+- ✅ Removed non-contract class-generation and continuation APIs from
+  `rt.jar`: `avata.Assembler`, `avata.ConstantPool`, `avata.Stream`,
+  `avata.Continuations`, `avata.Callback`, `avata.Function`, and
+  `avata.IncompatibleContinuationException`. The verifier test keeps private
+  class-file writer helpers under `test/avata/testing/bytecode`.
+- ✅ Removed stale broad-profile tests and extra tools that depended on APIs no
+  longer present in the contract runtime, including host file IO,
+  application enums/`EnumSet`, command-line property override behavior, old
+  tail-call variants, and heap-dump helpers built on hash collections.
 - ✅ Turned `Object.wait/notify/notifyAll` and `Thread.join/interruption` into
   deterministic `ContractViolationError` traps. `Thread.activeCount()`,
   `enumerate()`, and `getId()` now return fixed single-thread profile values.
@@ -402,8 +412,9 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 - ✅ `TreeMap.subMap`, `headMap`, and `tailMap` now return backed `SortedMap`
   range views with JDK8u-style endpoint checks, range-limited reads/writes,
   iteration, removal, and clear behavior.
-- ✅ `Reader.skip`/`ready` and `FilterReader.skip`/`ready` now follow JDK8u
-  defaults and delegation instead of hitting unsupported runtime paths.
+- ✅ `Reader.skip`/`ready` now follows JDK8u defaults. The earlier
+  `FilterReader` compatibility work was superseded by the contract profile:
+  `FilterReader` is now removed from `rt.jar`.
 - ✅ `ByteBuffer.order(ByteOrder)` now supports deterministic big-endian and
   little-endian primitive access with JDK8u null/default-order behavior.
 - ✅ `Formatter` integer conversions now cover the admitted JDK8u flag surface:
@@ -453,9 +464,26 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 - ✅ `java.lang.invoke` removed from the v1 contract classpath. The remaining
   Java 8 `invokedynamic` work is tracked as a VM-internal deterministic
   bootstrap design item, not as a public method-handle API compatibility item.
-- ✅ Reflection API removed from the contract profile; `Class.isSynthetic()` and
-  `Class.forName` remain as deterministic class metadata helpers;
-  `FunctionalInterface` annotation added; `Long.compare(long,long)` added.
+- ✅ Reflection API removed from the contract profile; `Class.isSynthetic()`
+  remains as a pinned metadata helper, while dynamic `Class.forName` and the
+  old private `Class$ClassType` anonymous/local/member classification helper
+  were removed from `rt.jar`. Reflection checked-exception shells
+  `IllegalAccessException`, `NoSuchFieldException`, and
+  `NoSuchMethodException` were also removed. `FunctionalInterface` annotation
+  added; `Long.compare(long,long)` added.
+- ✅ Further runtime slimming removed Java SE package metadata and low-value
+  reflection conveniences from `rt.jar`: `java.lang.Package`,
+  `Class.getPackage`, declared/enclosing/declaring-class queries,
+  `desiredAssertionStatus`, `asSubclass`, and `cast`. The VM package-source
+  map and native package lookup entry point were removed too.
+- ✅ Removed the old VM wait/notify helper paths from the contract runtime.
+  `Object.wait/notify` remain deterministic `ContractViolationError` traps.
+  `InterruptedException` stays only as a JDK8 `javac` boot-classpath symbol,
+  and application references to it are rejected by the verifier.
+- ✅ Contract-profile class library cleanup removed source/parser reader
+  decorators (`FilterReader`, `LineNumberReader`, `PushbackReader`) plus
+  empty or partial collection shells (`AbstractMap`, `NavigableMap`). The
+  verifier and `rt/check-profile.sh` now reject references to these APIs.
 - ✅ Host-API consensus hardening: `System` exposes only deterministic VM-managed
   streams and fixed property reads; `Runtime` is removed from the v1 `rt.jar`;
   `Thread` remains VM-internal and contract references are rejected. The earlier

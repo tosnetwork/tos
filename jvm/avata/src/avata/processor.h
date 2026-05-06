@@ -24,7 +24,6 @@ class GcClass;
 class GcMethod;
 class GcMethodAddendum;
 class GcIntArray;
-class GcContinuation;
 class GcThrowable;
 class GcExecutionContext;
 class GcClassAddendum;
@@ -133,24 +132,6 @@ class Processor {
   virtual void dispose() = 0;
 
   virtual object getStackTrace(Thread* t, Thread* target) = 0;
-
-  virtual void callWithCurrentContinuation(Thread* t, object receiver) = 0;
-
-  virtual void dynamicWind(Thread* t, object before, object thunk, object after)
-      = 0;
-
-  virtual void feedResultToContinuation(Thread* t,
-                                        GcContinuation* continuation,
-                                        object result) = 0;
-
-  virtual void feedExceptionToContinuation(Thread* t,
-                                           GcContinuation* continuation,
-                                           GcThrowable* exception) = 0;
-
-  virtual void walkContinuationBody(Thread* t,
-                                    Heap::Walker* w,
-                                    object o,
-                                    unsigned start) = 0;
 
   object invoke(Thread* t, GcMethod* method, object this_, ...)
   {

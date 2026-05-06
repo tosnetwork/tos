@@ -118,24 +118,6 @@
 
 (type innerClassReference avata/InnerClassReference)
 
-(type continuationContext
-  (continuationContext next)
-  (object before)
-  (object after)
-  (object continuation)
-  (method method))
-
-(type continuation avata/Continuations$Continuation
-  (continuation next)
-  (continuationContext context)
-  (method method)
-  (void* address)
-  (uintptr_t returnAddressOffset)
-  (uintptr_t framePointerOffset)
-  (array uintptr_t body))
-
-(type unwindResult avata/Continuations$UnwindResult)
-
 (type string java/lang/String
   (alias data object value)
   (alias length uint32_t count)
@@ -226,9 +208,6 @@
 (type unsupportedClassVersionError java/lang/UnsupportedClassVersionError)
 
 (type ioException java/io/IOException)
-
-(type incompatibleContinuationException
-  avata/IncompatibleContinuationException)
 
 (type number java/lang/Number)
 
@@ -333,7 +312,6 @@
   (classSpace bootClassSpace)
   (classSpace appClassSpace)
   (hashMap bootstrapClassMap)
-  (hashMap packageMap)
   (method findLoadedClassMethod)
   (method loadClassMethod)
   (hashMap monitorMap)

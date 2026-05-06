@@ -46,17 +46,15 @@ public class Object {
 
   public native String toString();
 
-  public final void wait() throws InterruptedException {
+  public final void wait() {
     wait(0);
   }
 
-  public final void wait(long milliseconds) throws InterruptedException {
+  public final void wait(long milliseconds) {
     throw new ContractViolationError(MSG_MONITOR);
   }
 
-  public final void wait(long milliseconds, int nanoseconds)
-    throws InterruptedException
-  {
+  public final void wait(long milliseconds, int nanoseconds) {
     if (nanoseconds != 0) {
       ++ milliseconds;
     }

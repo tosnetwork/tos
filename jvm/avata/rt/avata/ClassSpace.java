@@ -9,9 +9,6 @@
 
 package avata;
 
-import java.util.Map;
-import java.util.TreeMap;
-
 /**
  * VM-internal fixed class namespace.
  *
@@ -20,7 +17,6 @@ import java.util.TreeMap;
  */
 public abstract class ClassSpace {
   private final ClassSpace parent;
-  private Map<String, Package> packages;
 
   protected ClassSpace(ClassSpace parent) {
     this.parent = parent == null ? SystemClassSpace.appClassSpace() : parent;
@@ -29,66 +25,6 @@ public abstract class ClassSpace {
   protected ClassSpace() {
     this(SystemClassSpace.appClassSpace());
   }
-
-  private Map<String, Package> packages() {
-    if (packages == null) {
-      packages = new TreeMap();
-    }
-    return packages;
-  }
-
-  public Package getPackage(String name) {
-    Package p;
-    synchronized (this) {
-      p = packages().get(name);
-    }
-
-    if (p != null) {
-      return p;
-    } else if (parent != null) {
-      p = parent.getPackage(name);
-    } else {
-      p = definePackage(name, null, null, null, null, null, null);
-    }
-
-    if (p != null) {
-      synchronized (this) {
-        Package p2 = packages().get(name);
-        if (p2 != null) {
-          p = p2;
-        } else {
-          packages().put(name, p);
-        }
-      }
-    }
-
-    return p;
-  }
-
-  protected Package[] getPackages() {
-    synchronized (this) {
-      return packages().values().toArray(new Package[packages().size()]);
-    }
-  }
-
-  protected Package definePackage(String name,
-                                  String specificationTitle,
-                                  String specificationVersion,
-                                  String specificationVendor,
-                                  String implementationTitle,
-                                  String implementationVersion,
-                                  String implementationVendor)
-    {
-      Package p = new Package
-        (name, implementationTitle, implementationVersion,
-         implementationVendor, specificationTitle, specificationVersion,
-         specificationVendor, this);
-
-      synchronized (this) {
-        packages().put(name, p);
-        return p;
-      }
-    }
 
   protected Class defineClass(String name, byte[] b, int offset, int length) {
     if (b == null) {

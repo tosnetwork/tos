@@ -3623,36 +3623,6 @@ class MyProcessor : public Processor {
     return makeObjectArray(t, 0);
   }
 
-  virtual void callWithCurrentContinuation(vm::Thread*, object)
-  {
-    abort(s);
-  }
-
-  virtual void dynamicWind(vm::Thread*, object, object, object)
-  {
-    abort(s);
-  }
-
-  virtual void feedResultToContinuation(vm::Thread*, GcContinuation*, object)
-  {
-    abort(s);
-  }
-
-  virtual void feedExceptionToContinuation(vm::Thread*,
-                                           GcContinuation*,
-                                           GcThrowable*)
-  {
-    abort(s);
-  }
-
-  virtual void walkContinuationBody(vm::Thread*,
-                                    Heap::Walker*,
-                                    object,
-                                    unsigned)
-  {
-    abort(s);
-  }
-
   virtual void dispose(vm::Thread* t)
   {
     t->m->heap->free(t, sizeof(Thread) + t->m->stackSizeInBytes);

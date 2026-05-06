@@ -30,12 +30,8 @@
 -keepclassmembers class avata.ClassAddendum { !static <fields>; }
 -keepclassmembers class avata.MethodAddendum { !static <fields>; }
 -keepclassmembers class avata.FieldAddendum { !static <fields>; }
--keepclassmembers class avata.Continuations$Continuation { !static <fields>; }
--keepclassmembers class avata.Continuations$UnwindResult { !static <fields>; }
-
 # the VM may throw instances of the following:
 
--keep public class avata.IncompatibleContinuationException
 -keep public class java.lang.Exception
 -keep public class java.lang.RuntimeException
 -keep public class java.lang.IllegalStateException
@@ -87,22 +83,6 @@
    private static void run(avata.ExecutionContext);
    public void run();
 }
-
-# when continuations are enabled, the VM may call these methods by name:
-
--keepclassmembers class avata.Continuations {
-   *** wind(...);
-   *** rewind(...);
- }
-
--keepclassmembernames class avata.CallbackReceiver {
-   *** receive(...);
- }
-
-# the above methods include these classes in their signatures:
-
--keepnames public class avata.Callback
--keepnames public class java.util.concurrent.Callable
 
 # Proguard gets confused about clone() and array classes (http://sourceforge.net/tracker/index.php?func=detail&aid=2851344&group_id=54750&atid=474704):
 

@@ -1,13 +1,13 @@
-import avata.Assembler;
-import avata.Assembler.FieldData;
-import avata.Assembler.MethodData;
 import avata.Classes;
-import avata.ConstantPool;
-import avata.ConstantPool.PoolEntry;
-import avata.Stream;
 import avata.SystemClassSpace;
 import avata.VMClass;
 import avata.VMMethod;
+import avata.testing.bytecode.Assembler;
+import avata.testing.bytecode.Assembler.FieldData;
+import avata.testing.bytecode.Assembler.MethodData;
+import avata.testing.bytecode.ConstantPool;
+import avata.testing.bytecode.ConstantPool.PoolEntry;
+import avata.testing.bytecode.Stream;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -210,6 +210,20 @@ public class VerifierProfile {
                               "forbidden",
                               "()V");
     return makeClass("VerifierProfile$ForbiddenClassReference",
+                     pool,
+                     new FieldData[0],
+                     new MethodData[0]);
+  }
+
+  private static byte[] makeForbiddenClassMethodReference(String name,
+                                                          String spec)
+      throws IOException {
+    List<PoolEntry> pool = new ArrayList<PoolEntry>();
+    ConstantPool.addMethodRef(pool,
+                              "java/lang/Class",
+                              name,
+                              spec);
+    return makeClass("VerifierProfile$ForbiddenClassMethodReference",
                      pool,
                      new FieldData[0],
                      new MethodData[0]);
@@ -615,6 +629,21 @@ public class VerifierProfile {
       }
     });
 
+    final String[] forbiddenReaderHelpers = new String[] {
+      "java/io/FilterReader",
+      "java/io/LineNumberReader",
+      "java/io/PushbackReader",
+    };
+    for (int i = 0; i < forbiddenReaderHelpers.length; ++i) {
+      final String owner = forbiddenReaderHelpers[i];
+      expectVerifyError("forbidden reader helper ref", new Thrower() {
+        public void run() throws Exception {
+          define("VerifierProfile$ForbiddenClassReference",
+                 makeForbiddenClassReference(owner));
+        }
+      });
+    }
+
     expectVerifyError("forbidden weak reference ref", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$ForbiddenClassReference",
@@ -629,6 +658,27 @@ public class VerifierProfile {
       }
     });
 
+    expectVerifyError("forbidden enum collection ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/util/EnumSet"));
+      }
+    });
+
+    expectVerifyError("forbidden abstract map shell ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/util/AbstractMap"));
+      }
+    });
+
+    expectVerifyError("forbidden partial navigable map ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/util/NavigableMap"));
+      }
+    });
+
     expectVerifyError("forbidden string buffer ref", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$ForbiddenClassReference",
@@ -636,10 +686,75 @@ public class VerifierProfile {
       }
     });
 
+    expectVerifyError("forbidden class classification helper ref",
+        new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/Class$ClassType"));
+      }
+    });
+
+    expectVerifyError("forbidden package metadata ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/Package"));
+      }
+    });
+
+    final String[][] forbiddenClassMethods = new String[][] {
+      new String[] { "forName", "(Ljava/lang/String;)Ljava/lang/Class;" },
+      new String[] { "getPackage", "()Ljava/lang/Package;" },
+      new String[] { "getDeclaredClasses", "()[Ljava/lang/Class;" },
+      new String[] { "getDeclaringClass", "()Ljava/lang/Class;" },
+      new String[] { "getEnclosingClass", "()Ljava/lang/Class;" },
+      new String[] { "desiredAssertionStatus", "()Z" },
+      new String[] { "asSubclass", "(Ljava/lang/Class;)Ljava/lang/Class;" },
+      new String[] { "cast", "(Ljava/lang/Object;)Ljava/lang/Object;" },
+    };
+    for (int i = 0; i < forbiddenClassMethods.length; ++i) {
+      final String methodName = forbiddenClassMethods[i][0];
+      final String methodSpec = forbiddenClassMethods[i][1];
+      expectVerifyError("forbidden Class." + methodName + " ref",
+          new Thrower() {
+        public void run() throws Exception {
+          define("VerifierProfile$ForbiddenClassMethodReference",
+                 makeForbiddenClassMethodReference(methodName, methodSpec));
+        }
+      });
+    }
+
     expectVerifyError("forbidden security exception ref", new Thrower() {
       public void run() throws Exception {
         define("VerifierProfile$ForbiddenClassReference",
                makeForbiddenClassReference("java/lang/SecurityException"));
+      }
+    });
+
+    expectVerifyError("forbidden illegal-access exception ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/IllegalAccessException"));
+      }
+    });
+
+    expectVerifyError("forbidden no-such-field exception ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/NoSuchFieldException"));
+      }
+    });
+
+    expectVerifyError("forbidden no-such-method exception ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/NoSuchMethodException"));
+      }
+    });
+
+    expectVerifyError("forbidden interrupted exception ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/InterruptedException"));
       }
     });
 

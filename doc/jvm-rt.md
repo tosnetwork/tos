@@ -131,6 +131,14 @@ Restrict or reject:
 - `Runtime`; contract code must not reach a host runtime facade
 - `System` host APIs such as wall-clock time, environment, host-derived
   properties, native library loading, and host IO
+- dynamic class loading through `Class.forName`; contract classes must be
+  resolved by the validator-controlled deployment/call path, not by runtime
+  string lookups
+- package metadata and optional `Class` reflection helpers such as
+  `Class.getPackage`, declared/enclosing/declaring-class queries,
+  anonymous/local/member-class checks, `desiredAssertionStatus`, `asSubclass`,
+  and `cast`; these are Java SE reflection conveniences, not contract execution
+  primitives
 - `java.lang.invoke` and Java SE method-handle/lambda bootstrap APIs. The v1
   verifier rejects `CONSTANT_MethodHandle`, `CONSTANT_MethodType`,
   `CONSTANT_InvokeDynamic`, and `BootstrapMethods` until deterministic
@@ -146,10 +154,20 @@ deterministic EOF, because a contract must not read host stdin.
 
 Remove legacy shell classes that exist only for a general-purpose JVM profile:
 `IllegalThreadStateException`, `ThreadDeath`, `SecurityException`, and
-`TypeNotPresentException`. They are tied to thread scheduling, security manager,
+`TypeNotPresentException`, plus reflection
+checked-exception types such as `IllegalAccessException`,
+`NoSuchFieldException`, and `NoSuchMethodException`. They are tied to thread
+scheduling, security manager,
 or optional reflective-type behavior that the contract profile does not admit.
-The v1 profile also removes `java.lang.reflect.*`, `java.lang.ref.*`,
-finalization entry points, and `System.gc()`. Memory is exposed through explicit
+`InterruptedException` remains only because JDK8 `javac` requires the
+`java.lang` symbol while compiling against a custom boot classpath; contract
+bytecode references to it are still rejected by the verifier.
+The v1 profile also removes `java.lang.Package`, `Class.forName`,
+`Class.getPackage`, `Class.getDeclaredClasses`, `Class.getDeclaringClass`,
+`Class.getEnclosingClass`, `Class.desiredAssertionStatus`,
+`Class.asSubclass`, `Class.cast`, the old private `Class$ClassType` enum
+helper, `java.lang.reflect.*`, `java.lang.ref.*`, finalization entry points,
+and `System.gc()`. Memory is exposed through explicit
 deterministic accounting (`avata.Memory`) instead of observable collection
 behavior. During contract execution, `Memory.used()`, `Memory.remaining()`, and
 `Memory.limit()` report transaction-local allocation counters configured by the
@@ -198,6 +216,9 @@ Reject or remove:
   `FileDescriptor`, `FileInputStream`, or `FileOutputStream`
 - file-specific exceptions such as `FileNotFoundException`, because the profile
   has no host filesystem API
+- source/parser reader decorators such as `FilterReader`, `LineNumberReader`,
+  and `PushbackReader`; contracts keep byte-array/string stream primitives, not
+  Java SE parser infrastructure
 
 OpenZeppelin requirements do not need host files. Contract persistence must use
 Avata's `java.lang.Storage` and related persistent types.
@@ -226,7 +247,11 @@ Reject or remove:
   host-style mutable property state
 - `IdentityHashMap`, because object identity must be consensus-safe
 - `WeakHashMap`, because weak-reference clearing depends on GC timing
-
+- `EnumSet`, because application enum classes are outside the v1 contract
+  profile and `ACC_ENUM` application classes are rejected
+- empty or partial map abstraction shells such as `AbstractMap` and
+  `NavigableMap`; admitted map behavior is exposed through the pinned `Map`,
+  `SortedMap`, and `TreeMap` surfaces only
 - `Vector`, `Stack`, `StringTokenizer`, and `Enumeration`, because the contract
   profile uses explicit list/deque/iterator APIs instead of legacy synchronized
   or pre-collection surfaces
@@ -238,6 +263,11 @@ Reject or remove:
 - `Collections.shuffle`, because the profile does not expose random APIs; any
   permutation required by a contract must be derived from explicit chain input
   and implemented with audited deterministic code
+- class-file generation helpers such as `avata.Assembler`, `avata.ConstantPool`,
+  and `avata.Stream`; verifier tests may keep private copies outside `rt.jar`
+- continuation/coroutine APIs such as `avata.Continuations`, `avata.Callback`,
+  and `avata.Function`, because continuation capture is not an admitted
+  contract control-flow primitive
 
 Do not use `java.util` collections as implicit persistent storage. Persistent
 state needs explicit `java.lang` storage types so serialization, gas, iteration,

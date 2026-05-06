@@ -185,7 +185,6 @@ const unsigned BootstrapFlag = 1 << 6;
 const unsigned LinkFlag = 1 << 8;
 const unsigned HasFinalMemberFlag = 1 << 9;
 const unsigned SingletonFlag = 1 << 10;
-const unsigned ContinuationFlag = 1 << 11;
 
 // method vmFlags:
 const unsigned ClassInitFlag = 1 << 0;
@@ -2479,8 +2478,6 @@ inline void scanMethodSpec(Thread* t,
 
 GcClass* findLoadedClass(Thread* t, GcClassSpace* loader, GcByteArray* spec);
 
-GcJclass* getDeclaringClass(Thread* t, GcClass* c);
-
 inline bool emptyMethod(Thread* t UNUSED, GcMethod* method)
 {
   return ((method->flags() & ACC_NATIVE) == 0)
@@ -3220,87 +3217,6 @@ inline void release(Thread* t, object o)
   }
 
   monitorRelease(t, m);
-}
-
-inline void wait(Thread* t, object o, int64_t milliseconds)
-{
-  unsigned hash;
-  if (DebugMonitors) {
-    hash = objectHash(t, o);
-  }
-
-  GcMonitor* m = objectMonitor(t, o, false);
-
-  if (DebugMonitors) {
-    fprintf(stderr,
-            "thread %p waits %d millis on %p for %x\n",
-            t,
-            static_cast<int>(milliseconds),
-            m,
-            hash);
-  }
-
-  if (m and m->owner() == t) {
-    PROTECT(t, m);
-
-    bool interrupted = monitorWait(t, m, milliseconds);
-
-    if (interrupted) {
-      if (t->m->alive or (t->getFlags() & Thread::DaemonFlag) == 0) {
-        t->m->classpath->clearInterrupted(t);
-        throwNew(t, GcInterruptedException::Type);
-      } else {
-        throw_(t, roots(t)->shutdownInProgress());
-      }
-    }
-  } else {
-    throwNew(t, GcIllegalMonitorStateException::Type);
-  }
-
-  if (DebugMonitors) {
-    fprintf(stderr, "thread %p wakes up on %p for %x\n", t, m, hash);
-  }
-
-  stress(t);
-}
-
-inline void notify(Thread* t, object o)
-{
-  unsigned hash;
-  if (DebugMonitors) {
-    hash = objectHash(t, o);
-  }
-
-  GcMonitor* m = objectMonitor(t, o, false);
-
-  if (DebugMonitors) {
-    fprintf(stderr, "thread %p notifies on %p for %x\n", t, m, hash);
-  }
-
-  if (m and m->owner() == t) {
-    monitorNotify(t, m);
-  } else {
-    throwNew(t, GcIllegalMonitorStateException::Type);
-  }
-}
-
-inline void notifyAll(Thread* t, object o)
-{
-  GcMonitor* m = objectMonitor(t, o, false);
-
-  if (DebugMonitors) {
-    fprintf(stderr,
-            "thread %p notifies all on %p for %x\n",
-            t,
-            m,
-            objectHash(t, o));
-  }
-
-  if (m and m->owner() == t) {
-    monitorNotifyAll(t, m);
-  } else {
-    throwNew(t, GcIllegalMonitorStateException::Type);
-  }
 }
 
 inline void interrupt(Thread* t, Thread* target)

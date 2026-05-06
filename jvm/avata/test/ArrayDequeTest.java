@@ -10,7 +10,7 @@ public class ArrayDequeTest {
     }
   }
   
-  public static void main(String[] args) throws InterruptedException {
+  public static void main(String[] args) {
     QueueHelper.sizeTest(new ArrayDeque<Object>());
     QueueHelper.isEmptyTest(new ArrayDeque<Object>());
     QueueHelper.addTest(new ArrayDeque<Object>());

@@ -26,11 +26,7 @@ public class CoreTrapProfile {
 
     expectTrap("Object.wait", new Thrower() {
       public void run() {
-        try {
-          new Object().wait(1);
-        } catch (InterruptedException e) {
-          throw new RuntimeException(e);
-        }
+        new Object().wait(1);
       }
     });
 

@@ -54,6 +54,4 @@ public class SystemClassSpace extends ClassSpace {
 
     return c;
   }
-
-  protected static native String getPackageSource(String name);
 }
