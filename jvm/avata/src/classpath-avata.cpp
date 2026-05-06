@@ -143,27 +143,6 @@ class MyClasspath : public Classpath {
     return AVATA_CLASSPATH;
   }
 
-  virtual object makeDirectByteBuffer(Thread* t, void*, jlong)
-  {
-    throwNew(t,
-             GcContractViolationError::Type,
-             "direct byte buffers are not admitted in the TOS JVM profile");
-  }
-
-  virtual void* getDirectBufferAddress(Thread* t, object)
-  {
-    throwNew(t,
-             GcContractViolationError::Type,
-             "direct byte buffers are not admitted in the TOS JVM profile");
-  }
-
-  virtual int64_t getDirectBufferCapacity(Thread* t, object)
-  {
-    throwNew(t,
-             GcContractViolationError::Type,
-             "direct byte buffers are not admitted in the TOS JVM profile");
-  }
-
   virtual bool canTailCall(Thread* t UNUSED,
                            GcMethod*,
                            GcByteArray* calleeClassName,

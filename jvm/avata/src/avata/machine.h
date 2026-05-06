@@ -930,11 +930,6 @@ struct JNIEnvVTable {
 
   jboolean(JNICALL* ExceptionCheck)(JNIEnv*);
 
-  jobject(JNICALL* NewDirectByteBuffer)(JNIEnv*, void*, jlong);
-
-  void*(JNICALL* GetDirectBufferAddress)(JNIEnv* env, jobject);
-
-  jlong(JNICALL* GetDirectBufferCapacity)(JNIEnv*, jobject);
 };
 
 inline void atomicOr(uint32_t* p, int v)
@@ -1018,7 +1013,7 @@ class GcRoots;
 class Machine {
  public:
   static const unsigned OpcodeCount = 256;
-  static const unsigned ContractHelperGasCostCount = 9;
+  static const unsigned ContractHelperGasCostCount = 10;
 
   enum AllocationType {
     MovableAllocation,
@@ -1467,12 +1462,6 @@ class Classpath {
   virtual void boot(Thread* t) = 0;
 
   virtual const char* bootClasspath() = 0;
-
-  virtual object makeDirectByteBuffer(Thread* t, void* p, jlong capacity) = 0;
-
-  virtual void* getDirectBufferAddress(Thread* t, object buffer) = 0;
-
-  virtual int64_t getDirectBufferCapacity(Thread* t, object buffer) = 0;
 
   virtual bool canTailCall(Thread* t,
                            GcMethod* caller,

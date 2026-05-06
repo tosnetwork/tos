@@ -93,11 +93,14 @@ ConfigParam 85 schedule. Changing the gas table is a consensus parameter change
 and requires a governance vote.
 
 Native contract helpers charge explicit gas through `avata_charge_contract_gas()`
-or the helper-cost table. The standalone helper table currently covers
-`java.lang.Storage` load, store base, store byte, clear costs, plus explicit
-object and array allocation costs for the Java allocation bytecodes, and
-`System.arraycopy()` base/per-element copy costs. The workchain adapter must
-replace that table with
+or the helper-cost table. The standalone helper table currently covers:
+`java.lang.Storage` load/store/clear native costs, dynamic allocation
+surcharges for Java allocation bytecodes, and `System.arraycopy()`
+base/per-element copy costs. Every Java native method invocation also charges
+the `AVATA_CONTRACT_HELPER_NATIVE_CALL` fixed surcharge before entering native
+C++ code. The fixed base cost for each bytecode remains in the opcode gas
+table; helper entries are only for variable-size or native/VM work. The
+workchain adapter must replace the helper table with
 `avata_set_contract_helper_gas_costs()` from the same consensus gas schedule
 used for opcodes. `java.lang.Storage` charges from the helper table before
 touching the installed storage host or the deterministic fallback store.

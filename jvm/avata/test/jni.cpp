@@ -286,19 +286,3 @@ extern "C" JNIEXPORT jboolean JNICALL
          && e->GetFieldID(c, "field951", "I") != 0
          && !e->ExceptionCheck();
 }
-
-extern "C" JNIEXPORT jobject JNICALL
-    Java_Buffers_allocateNative(JNIEnv* e, jclass, jint capacity)
-{
-  void* p = allocate(e, capacity);
-  if (p == 0)
-    return 0;
-
-  return e->NewDirectByteBuffer(p, capacity);
-}
-
-extern "C" JNIEXPORT void JNICALL
-    Java_Buffers_freeNative(JNIEnv* e, jclass, jobject b)
-{
-  free(e->GetDirectBufferAddress(b));
-}

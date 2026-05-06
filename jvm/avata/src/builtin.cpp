@@ -845,28 +845,6 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_nio_FixedArrayByteBuffer_allocateFixed(Thread* t,
-                                                      object,
-                                                      uintptr_t* arguments)
-{
-  int capacity = arguments[0];
-  GcLongArray* address
-      = cast<GcLongArray>(t, reinterpret_cast<object>(arguments[1]));
-  PROTECT(t, address);
-
-  GcArray* array = reinterpret_cast<GcArray*>(allocate3(
-      t, t->m->heap, Machine::FixedAllocation, ArrayBody + capacity, false));
-
-  setObjectClass(
-      t, reinterpret_cast<object>(array), type(t, GcByteArray::Type));
-  array->length() = capacity;
-
-  address->body()[0] = reinterpret_cast<intptr_t>(array) + ArrayBody;
-
-  return reinterpret_cast<intptr_t>(array);
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
     Avata_sun_misc_Unsafe_getObject(Thread*, object, uintptr_t* arguments)
 {
   object o = reinterpret_cast<object>(arguments[1]);

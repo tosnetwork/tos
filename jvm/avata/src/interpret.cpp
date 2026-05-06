@@ -524,6 +524,11 @@ void marshalArguments(Thread* t,
   }
 }
 
+bool chargeNativeCallGas(Thread* t)
+{
+  return chargeContractHelperGas(t, AVATA_CONTRACT_HELPER_NATIVE_CALL, 1);
+}
+
 unsigned invokeNativeSlow(Thread* t, GcMethod* method, void* function)
 {
   PROTECT(t, method);
@@ -619,6 +624,10 @@ unsigned invokeNativeSlow(Thread* t, GcMethod* method, void* function)
 unsigned invokeNative(Thread* t, GcMethod* method)
 {
   PROTECT(t, method);
+
+  if (!chargeNativeCallGas(t)) {
+    throwNew(t, GcOutOfGasError::Type);
+  }
 
   resolveNative(t, method);
 
@@ -795,6 +804,14 @@ bool chargeArrayAllocationGas(Thread* t,
   }
   return chargeAllocationHelperGas(
       t, AVATA_CONTRACT_HELPER_ALLOCATION_ARRAY_ELEMENT, elementCount);
+}
+
+bool chargeObjectAllocationGas(Thread* t, GcClass* class_)
+{
+  return chargeAllocationHelperGas(
+      t,
+      AVATA_CONTRACT_HELPER_ALLOCATION_OBJECT_WORD,
+      ceilingDivide(class_->fixedSize(), BytesPerWord));
 }
 
 void calculateMultiArrayAllocation(int32_t* counts,
@@ -2691,8 +2708,7 @@ loop:
 
     initClass(t, class_);
 
-    if (!chargeAllocationHelperGas(
-            t, AVATA_CONTRACT_HELPER_ALLOCATION_OBJECT, 1)) {
+    if (!chargeObjectAllocationGas(t, class_)) {
       exception = makeThrowable(t, GcOutOfGasError::Type);
       goto throw_;
     }

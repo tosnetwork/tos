@@ -980,9 +980,7 @@ bool forbiddenInternalClass(const int8_t* begin,
     return false;
   }
 
-  return segmentStartsWith(begin, end, "java/net/")
-      || segmentStartsWith(begin, end, "java/nio/channels/")
-      || segmentEqualsOrNested(begin, end, "java/lang/Runtime")
+  return segmentEqualsOrNested(begin, end, "java/lang/Runtime")
       || segmentEqualsOrNested(begin, end, "java/lang/Thread")
       || (segmentStartsWith(begin, end, "java/lang/reflect/")
           && !allowedReflectClass(begin, end));
@@ -4581,11 +4579,12 @@ const uint64_t DefaultContractHelperGasCosts[
     100,  // AVATA_CONTRACT_HELPER_STORAGE_STORE_BASE
     1,    // AVATA_CONTRACT_HELPER_STORAGE_STORE_BYTE
     50,   // AVATA_CONTRACT_HELPER_STORAGE_CLEAR
-    5,    // AVATA_CONTRACT_HELPER_ALLOCATION_OBJECT
+    1,    // AVATA_CONTRACT_HELPER_ALLOCATION_OBJECT_WORD
     8,    // AVATA_CONTRACT_HELPER_ALLOCATION_ARRAY_BASE
     1,    // AVATA_CONTRACT_HELPER_ALLOCATION_ARRAY_ELEMENT
     3,    // AVATA_CONTRACT_HELPER_ARRAYCOPY_BASE
-    1     // AVATA_CONTRACT_HELPER_ARRAYCOPY_ELEMENT
+    1,    // AVATA_CONTRACT_HELPER_ARRAYCOPY_ELEMENT
+    2     // AVATA_CONTRACT_HELPER_NATIVE_CALL
 };
 
 }  // namespace

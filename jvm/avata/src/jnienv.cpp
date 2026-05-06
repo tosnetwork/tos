@@ -3270,52 +3270,6 @@ jobject JNICALL PopLocalFrame(Thread* t, jobject result)
   return reinterpret_cast<jobject>(run(t, popLocalFrame, arguments));
 }
 
-uint64_t newDirectByteBuffer(Thread* t, uintptr_t* arguments)
-{
-  jlong capacity;
-  memcpy(&capacity, arguments + 1, sizeof(jlong));
-
-  return reinterpret_cast<uintptr_t>(makeLocalReference(
-      t,
-      t->m->classpath->makeDirectByteBuffer(
-          t, reinterpret_cast<void*>(arguments[0]), capacity)));
-}
-
-jobject JNICALL NewDirectByteBuffer(Thread* t, void* p, jlong capacity)
-{
-  uintptr_t arguments[1 + (sizeof(jlong) / BytesPerWord)];
-  arguments[0] = reinterpret_cast<uintptr_t>(p);
-  memcpy(arguments + 1, &capacity, sizeof(jlong));
-
-  return reinterpret_cast<jobject>(run(t, newDirectByteBuffer, arguments));
-}
-
-uint64_t getDirectBufferAddress(Thread* t, uintptr_t* arguments)
-{
-  return reinterpret_cast<uintptr_t>(t->m->classpath->getDirectBufferAddress(
-      t, *reinterpret_cast<jobject>(arguments[0])));
-}
-
-void* JNICALL GetDirectBufferAddress(Thread* t, jobject b)
-{
-  uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(b)};
-
-  return reinterpret_cast<void*>(run(t, getDirectBufferAddress, arguments));
-}
-
-uint64_t getDirectBufferCapacity(Thread* t, uintptr_t* arguments)
-{
-  return t->m->classpath->getDirectBufferCapacity(
-      t, *reinterpret_cast<jobject>(arguments[0]));
-}
-
-jlong JNICALL GetDirectBufferCapacity(Thread* t, jobject b)
-{
-  uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(b)};
-
-  return run(t, getDirectBufferCapacity, arguments);
-}
-
 struct JavaVMOption {
   char* optionString;
   void* extraInfo;
@@ -3458,9 +3412,6 @@ void populateJNITables(JavaVMVTable* vmTable, JNIEnvVTable* envTable)
   envTable->ThrowNew = local::ThrowNew;
   envTable->Throw = local::Throw;
   envTable->ExceptionCheck = local::ExceptionCheck;
-  envTable->NewDirectByteBuffer = local::NewDirectByteBuffer;
-  envTable->GetDirectBufferAddress = local::GetDirectBufferAddress;
-  envTable->GetDirectBufferCapacity = local::GetDirectBufferCapacity;
   envTable->NewLocalRef = local::NewLocalRef;
   envTable->DeleteLocalRef = local::DeleteLocalRef;
   envTable->GetObjectClass = local::GetObjectClass;

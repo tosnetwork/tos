@@ -184,8 +184,8 @@ public class VerifierProfile {
     List<PoolEntry> pool = new ArrayList<PoolEntry>();
     FieldData[] fields = new FieldData[] {
       new FieldData(Assembler.ACC_PUBLIC,
-                    ConstantPool.addUtf8(pool, "socket"),
-                    ConstantPool.addUtf8(pool, "Ljava/net/Socket;"))
+                    ConstantPool.addUtf8(pool, "runtime"),
+                    ConstantPool.addUtf8(pool, "Ljava/lang/Runtime;"))
     };
     return makeClass("VerifierProfile$ForbiddenFieldDescriptor",
                      pool,

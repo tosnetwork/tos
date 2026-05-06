@@ -51,10 +51,11 @@ Status legend: `✅` completed, unchecked items are still open.
     ABI calls to reset, set, bulk-set, and read opcode costs.
     `avata_charge_contract_gas()` now charges deterministic helper/native gas,
     returning `AVATA_CONTRACT_OUT_OF_GAS` and consuming the remaining counter on
-    failure. `Machine::contractHelperGasCosts[9]` now holds helper schedules
-    for storage load/store/clear and explicit bytecode allocation costs
-    (`new`, `newarray`, `anewarray`, `multianewarray`) plus
-    `System.arraycopy()` base and per-element copy costs. The public ABI can
+    failure. `Machine::contractHelperGasCosts[10]` now holds helper schedules
+    for storage load/store/clear, dynamic opcode surcharges (`new` object
+    words, `newarray`/`anewarray`/`multianewarray` array bases and elements),
+    `System.arraycopy()` base/per-element copy costs, and the fixed native-call
+    surcharge charged by every Java native method invocation. The public ABI can
     reset, set, bulk-set, read, and charge helper costs through
     `avata_charge_contract_helper_gas()`. `java.lang.Storage` charges from
     that helper table before host/fallback storage access.
@@ -67,9 +68,12 @@ Status legend: `✅` completed, unchecked items are still open.
       (ConfigParam 85) through `avata_set_opcode_gas_costs()` and
       `avata_set_contract_helper_gas_costs()` instead of using the standalone
       defaults.
-    - Extend deterministic helper costs beyond `Storage`, bytecode allocation,
-      and `System.arraycopy()` to crypto, ABI, string-heavy helpers, and any
-      future admitted native entry points.
+    - Extend dynamic deterministic helper costs beyond `Storage`, dynamic
+      allocation, and `System.arraycopy()` to crypto, ABI, event emission,
+      cross-contract calls, and any future admitted native entry points whose
+      cost depends on input size. Do not add gas to Java classes directly;
+      Java-level libraries are covered by opcode gas plus any native/helper
+      calls they make.
 
 - ✅ Disable or isolate JIT/AOT/host-VM compilation paths for consensus execution.
   Contract execution must use a deterministic interpreter-only profile unless a

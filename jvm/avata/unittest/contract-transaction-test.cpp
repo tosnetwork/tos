@@ -188,9 +188,9 @@ TEST(ContractHelperGasTable)
               static_cast<uint32_t>(
                   avata_get_contract_helper_gas_cost(
                       abiThread,
-                      AVATA_CONTRACT_HELPER_ALLOCATION_OBJECT,
+                      AVATA_CONTRACT_HELPER_ALLOCATION_OBJECT_WORD,
                       &gasCost)));
-  assertEqual(static_cast<uint64_t>(5), gasCost);
+  assertEqual(static_cast<uint64_t>(1), gasCost);
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
               static_cast<uint32_t>(
                   avata_get_contract_helper_gas_cost(
@@ -219,6 +219,13 @@ TEST(ContractHelperGasTable)
                       AVATA_CONTRACT_HELPER_ARRAYCOPY_ELEMENT,
                       &gasCost)));
   assertEqual(static_cast<uint64_t>(1), gasCost);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_get_contract_helper_gas_cost(
+                      abiThread,
+                      AVATA_CONTRACT_HELPER_NATIVE_CALL,
+                      &gasCost)));
+  assertEqual(static_cast<uint64_t>(2), gasCost);
 
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
               static_cast<uint32_t>(
@@ -341,6 +348,13 @@ TEST(ContractHelperGasTable)
                       AVATA_CONTRACT_HELPER_ARRAYCOPY_BASE,
                       &gasCost)));
   assertEqual(static_cast<uint64_t>(3), gasCost);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_get_contract_helper_gas_cost(
+                      abiThread,
+                      AVATA_CONTRACT_HELPER_NATIVE_CALL,
+                      &gasCost)));
+  assertEqual(static_cast<uint64_t>(2), gasCost);
 
   free(thread->m);
   free(thread);

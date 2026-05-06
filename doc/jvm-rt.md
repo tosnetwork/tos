@@ -516,11 +516,15 @@ Required metering areas:
 
 - bytecode execution (implemented with a 256-entry opcode table and flat
   standalone defaults)
-- object allocation (baseline metering implemented for Java `new` bytecode)
-- array allocation (baseline metering implemented for Java array allocation
-  bytecodes)
+- object allocation (dynamic word-count surcharge implemented for Java `new`
+  bytecode; fixed base cost belongs in the opcode table)
+- array allocation (dynamic base/element surcharge implemented for Java array
+  allocation bytecodes; fixed base cost belongs in the opcode table)
 - array copy (baseline metering implemented for `System.arraycopy()`)
-- string operations
+- native method calls (fixed native-call surcharge implemented at the VM native
+  invocation boundary; dynamic helpers add input-size costs where needed)
+- string operations when backed by native/VM helpers; pure Java string logic is
+  covered by opcode gas and `System.arraycopy()` when it copies arrays
 - `Uint256` arithmetic
 - hashing and signature verification
 - storage reads and writes (baseline native helper metering implemented)

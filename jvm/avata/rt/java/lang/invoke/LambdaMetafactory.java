@@ -35,9 +35,7 @@ import avata.Assembler;
 import avata.ConstantPool.PoolEntry;
 import avata.SystemClassLoader;
 
-// To understand what this is all about, please read:
-//
-//   http://cr.openjdk.java.net/~briangoetz/lambda/lambda-translation.html
+// Implements the Java 8 lambda translation strategy used by javac.
 
 public class LambdaMetafactory {
   private static int nextNumber = 0;
