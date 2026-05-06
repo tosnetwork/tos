@@ -158,12 +158,14 @@ a contract invocation are scoped to the transaction arena checkpoint and are
 discarded when the invocation ends.
 
 Application-class static fields are not part of the v1 runtime state model.
-During contract execution, `getstatic` and `putstatic` on application classes
-trap with `ContractViolationError`; boot runtime classes may read
-already-initialized VM-private constants and helpers, but reference-type
-`putstatic` is also rejected during contract execution. Persistent contract
-state must flow through `Storage`, `Mapping`, and future cell-backed persistent
-types instead of Java static object graphs.
+The verifier rejects any `ACC_STATIC` field declared by an application class at
+class load time. Static methods remain allowed, so entry points and pure helper
+methods can still be `public static`. Compiler features that synthesize static
+fields, including Java enums and interface constants, are outside the v1
+contract profile. Boot runtime classes may keep audited constants and helpers,
+but reference-type `putstatic` is still rejected during contract execution.
+Persistent contract state must flow through `Storage`, `Mapping`, and future
+cell-backed persistent types instead of Java static object graphs.
 
 ### `java.io`
 

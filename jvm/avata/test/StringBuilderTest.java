@@ -1,7 +1,5 @@
 
 public class StringBuilderTest {
-  private static final int iterations = 1000;
-    
   public static void main(String[] args) {
     verifyAppendStrLength();
     verifyAppendCharLength();
@@ -22,6 +20,7 @@ public class StringBuilderTest {
   }
   
   private static void verifyAppendStrLength() {
+    int iterations = 1000;
     String fooStr = "foobar";
     
     StringBuilder sb = new StringBuilder();

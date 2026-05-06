@@ -186,9 +186,10 @@ Create a machine-readable and documented admission profile:
 - Forbidden attributes and post-Java-8 metadata.
 - Forbidden packages/classes/methods.
 - Reflection-free class metadata surface.
-- Static-field policy: application-class static access is rejected during v1
-  contract execution until the explicit persisted-value/cell-codec profile is
-  admitted.
+- Static-field policy: application classes may not declare `ACC_STATIC` fields;
+  the verifier rejects them at class load. Static methods remain allowed.
+  Compiler features that synthesize static fields, including Java enums and
+  interface constants, are outside the v1 contract profile.
 - ABI entry point rules.
 - Class initialization rules.
 - Deterministic trap taxonomy.

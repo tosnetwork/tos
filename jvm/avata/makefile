@@ -835,7 +835,9 @@ vm-classes = \
 	avata/*.class \
 	avata/resource/*.class
 
-test-support-sources = $(shell find $(test)/avata/ -name '*.java')
+test-support-sources = \
+	$(shell find $(test)/avata/ -name '*.java') \
+	$(test)/ContractStaticProfile.java
 
 # The TOS profile test set follows the admitted contract runtime, not Avata's
 # old broad Java SE class-library surface.
@@ -846,14 +848,11 @@ test-sources = \
 	$(test)/Collections.java \
 	$(test)/ContractLibraryPrimitives.java \
 	$(test)/ContractRuntimePrimitives.java \
-	$(test)/ContractStaticProfile.java \
 	$(test)/DequeHelper.java \
 	$(test)/DivideByZero.java \
-	$(test)/Enums.java \
 	$(test)/Exceptions.java \
 	$(test)/Floats.java \
 	$(test)/Hello.java \
-	$(test)/Initializers.java \
 	$(test)/Integers.java \
 	$(test)/List.java \
 	$(test)/Longs.java \

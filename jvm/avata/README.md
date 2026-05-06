@@ -228,10 +228,12 @@ under a transaction arena checkpoint and are rolled back at transaction end.
 The Java runtime exposes only transaction-local memory counters through
 `avata.Memory`; public Java GC, finalization, weak-reference, and cleaner
 semantics are not part of the TOS profile. While a contract transaction is
-active, application-class `getstatic` and `putstatic` access traps with
-`ContractViolationError`, and boot runtime classes may not perform
-reference-type `putstatic`; persistent state must use `Storage`, `Mapping`, and
-future cell-backed state types rather than ordinary Java static fields.
+active, boot runtime classes may not perform reference-type `putstatic`.
+Application classes are stricter: the verifier rejects any declared static
+field at class load time. Static methods remain allowed, but Java enums and
+interface constants are outside the v1 profile because javac emits static
+fields for them. Persistent state must use `Storage`, `Mapping`, and future
+cell-backed state types rather than ordinary Java static fields.
 
 ## Updating the pinned commit
 

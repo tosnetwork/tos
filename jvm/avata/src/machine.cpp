@@ -1209,6 +1209,13 @@ void parseFieldTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
 
       addendum = 0;
 
+      if ((flags & ACC_STATIC)
+          && class_->loader() != roots(t)->bootClassSpace()) {
+        throwNew(t,
+                 GcVerifyError::Type,
+                 "static fields are not admitted in application classes");
+      }
+
       GcByteArray* specBytes
           = cast<GcByteArray>(t, singletonObject(t, pool, spec - 1));
       verifyDescriptorAllowed(t, specBytes, class_->name());

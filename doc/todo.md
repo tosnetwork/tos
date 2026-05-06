@@ -187,9 +187,9 @@ Status legend: `✅` completed, unchecked items are still open.
     - The transaction-scoped heap reset path must also discard objects whose
       identity hash was materialized in the previous transaction.
 
-- [ ] Finalize contract heap/state persistence: static field admission rules,
-  persisted primitive/value profiles, `PersistentMap`/`PersistentList`
-  encoding, heap reset/snapshot model, and bounded arena memory accounting.
+- [ ] Finalize contract heap/state persistence: persisted value profiles,
+  `PersistentMap`/`PersistentList` encoding, heap reset/snapshot model, and
+  bounded arena memory accounting.
   - **Partially implemented:** `java.lang.Storage` now exposes scalar
     32-byte slot operations, `java.lang.Mapping` derives Ethereum-style hashed
     slots, and `include/avata/storage.h` exposes the native
@@ -204,12 +204,12 @@ Status legend: `✅` completed, unchecked items are still open.
     journaling, nested commit merging, and rollback restoration for the future
     chain execution adapter.
   - **Design:**
-    - Static fields are allocated in `GcSingleton* staticTable` per class (see
-      `machine.cpp` `parseFieldTable`). Between transactions the static table
-      must be snapshotted into the contract's persistent cell store and restored
-      on re-entry. Primitive types (`int`, `long`, `boolean`, etc.) map directly
-      to TL-B cell fields. Reference-type statics are admitted only if they hold
-      a `PersistentMap` or `PersistentList` root.
+    - Application classes may not declare static fields in the v1 profile.
+      `machine.cpp` `parseFieldTable()` rejects `ACC_STATIC` fields for
+      non-boot class spaces with `VerifyError`. Static methods remain allowed.
+      Boot runtime classes may keep audited static constants/helpers, but the
+      interpreter still rejects reference-type boot `putstatic` while a contract
+      transaction is active.
     - ✅ Transaction memory accounting is implemented for contract-observable
       memory: `Thread::contractMemoryUsed` is reset at transaction boundaries,
       allocation increments it, `avata.Memory.used/remaining/limit` exposes it,
@@ -222,17 +222,14 @@ Status legend: `✅` completed, unchecked items are still open.
       rejects fixed/oversized allocation and does not invoke the legacy
       collector fallback while `contractActive` is true. `avata-unittest`
       covers checkpoint rollback and heap-chunk release.
-    - ✅ Static-field leakage guard is implemented for contract execution:
-      `getstatic` and `putstatic` on application classes now throw
-      `ContractViolationError` while `Thread::contractActive` is true. Boot
-      runtime classes may read already-initialized constants/helpers, but
-      reference-type `putstatic` is rejected during contract execution so lazy
-      boot class initialization cannot cache transaction-arena objects in
-      runtime static fields. This makes ordinary Java static state transiently
-      unavailable until a canonical state codec is admitted.
-    - Remaining heap/state work: implement the static-table/cell codec for the
-      explicit persisted-value profile; ensure bootstrap/classpath objects stay
-      outside the transaction arena.
+    - ✅ Static-field profile is enforced before execution: application static
+      fields are rejected at class load, and `VerifierProfile` plus
+      `ContractStaticFieldVerifier` cover the negative path. This includes
+      Java enum classes and interface constants because javac emits static
+      fields for them.
+    - Remaining heap/state work: implement the cell-backed persistent value
+      profile for `Storage`, `Mapping`, and future persistent containers;
+      ensure bootstrap/classpath objects stay outside the transaction arena.
     - The real chain integration still needs to install an account-state
       overlay through `avata_set_storage_host()` before contract invocation,
       call `avata_storage_execute_transaction()` around execution, and implement

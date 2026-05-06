@@ -14,13 +14,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class VerifierProfile {
-  private static final int CONSTANT_METHOD_HANDLE = 15;
-  private static final int CONSTANT_METHOD_TYPE = 16;
-  private static final int CONSTANT_INVOKE_DYNAMIC = 18;
-  private static final int REF_INVOKE_STATIC = 6;
-  private static final int ACC_SYNCHRONIZED = 0x0020;
-  private static final int ACC_NATIVE = 0x0100;
-  private static final int ACC_ABSTRACT = 0x0400;
+  private static int constantMethodHandle() { return 15; }
+  private static int constantMethodType() { return 16; }
+  private static int constantInvokeDynamic() { return 18; }
+  private static int refInvokeStatic() { return 6; }
+  private static int accSynchronized() { return 0x0020; }
+  private static int accNative() { return 0x0100; }
+  private static int accAbstract() { return 0x0400; }
 
   private interface Thrower {
     void run() throws Exception;
@@ -67,7 +67,7 @@ public class VerifierProfile {
                                      final int referenceIndex) {
     return ConstantPool.add(pool, new PoolEntry() {
       public void writeTo(OutputStream out) throws IOException {
-        Stream.write1(out, CONSTANT_METHOD_HANDLE);
+        Stream.write1(out, constantMethodHandle());
         Stream.write1(out, kind);
         Stream.write2(out, referenceIndex + 1);
       }
@@ -78,7 +78,7 @@ public class VerifierProfile {
     final int descriptorIndex = ConstantPool.addUtf8(pool, spec);
     return ConstantPool.add(pool, new PoolEntry() {
       public void writeTo(OutputStream out) throws IOException {
-        Stream.write1(out, CONSTANT_METHOD_TYPE);
+        Stream.write1(out, constantMethodType());
         Stream.write2(out, descriptorIndex + 1);
       }
     });
@@ -89,7 +89,7 @@ public class VerifierProfile {
                                       final int nameAndTypeIndex) {
     return ConstantPool.add(pool, new PoolEntry() {
       public void writeTo(OutputStream out) throws IOException {
-        Stream.write1(out, CONSTANT_INVOKE_DYNAMIC);
+        Stream.write1(out, constantInvokeDynamic());
         Stream.write2(out, bootstrapIndex);
         Stream.write2(out, nameAndTypeIndex + 1);
       }
@@ -226,7 +226,7 @@ public class VerifierProfile {
                                              "java/lang/String",
                                              "valueOf",
                                              "(I)Ljava/lang/String;");
-    int handle = addMethodHandle(pool, REF_INVOKE_STATIC, methodRef);
+    int handle = addMethodHandle(pool, refInvokeStatic(), methodRef);
     return makeClassWithBootstrapMethods(
         "VerifierProfile$ForbiddenBootstrapMethod",
         pool,
@@ -335,7 +335,7 @@ public class VerifierProfile {
   private static byte[] makeNativeClinit() throws IOException {
     return makeClassWithRawMethod("VerifierProfile$NativeClinit",
                                   new ArrayList<PoolEntry>(),
-                                  Assembler.ACC_STATIC | ACC_NATIVE,
+                                  Assembler.ACC_STATIC | accNative(),
                                   "<clinit>",
                                   "()V",
                                   true);
@@ -344,7 +344,7 @@ public class VerifierProfile {
   private static byte[] makeSynchronizedClinit() throws IOException {
     return makeClassWithRawMethod("VerifierProfile$SynchronizedClinit",
                                   new ArrayList<PoolEntry>(),
-                                  Assembler.ACC_STATIC | ACC_SYNCHRONIZED,
+                                  Assembler.ACC_STATIC | accSynchronized(),
                                   "<clinit>",
                                   "()V",
                                   true);
@@ -353,7 +353,7 @@ public class VerifierProfile {
   private static byte[] makeAbstractClinit() throws IOException {
     return makeClassWithRawMethod("VerifierProfile$AbstractClinit",
                                   new ArrayList<PoolEntry>(),
-                                  Assembler.ACC_STATIC | ACC_ABSTRACT,
+                                  Assembler.ACC_STATIC | accAbstract(),
                                   "<clinit>",
                                   "()V",
                                   true);
@@ -394,6 +394,19 @@ public class VerifierProfile {
                     ConstantPool.addUtf8(pool, "Ljava/lang/reflect/Method;"))
     };
     return makeClass("VerifierProfile$ForbiddenReflectionReference",
+                     pool,
+                     fields,
+                     new MethodData[0]);
+  }
+
+  private static byte[] makeStaticField() throws IOException {
+    List<PoolEntry> pool = new ArrayList<PoolEntry>();
+    FieldData[] fields = new FieldData[] {
+      new FieldData(Assembler.ACC_PUBLIC | Assembler.ACC_STATIC,
+                    ConstantPool.addUtf8(pool, "counter"),
+                    ConstantPool.addUtf8(pool, "I"))
+    };
+    return makeClass("VerifierProfile$StaticField",
                      pool,
                      fields,
                      new MethodData[0]);
@@ -582,6 +595,12 @@ public class VerifierProfile {
       public void run() throws Exception {
         define("VerifierProfile$ForbiddenReflectionReference",
                makeForbiddenReflectionReference());
+      }
+    });
+
+    expectVerifyError("static field", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$StaticField", makeStaticField());
       }
     });
   }

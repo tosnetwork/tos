@@ -117,17 +117,17 @@ void clearPendingException(vm::Thread* thread)
   }
 }
 
-bool expectContractViolation(vm::Thread* thread, vm::jclass violationClass)
+bool expectPendingException(vm::Thread* thread, vm::jclass expectedClass)
 {
   vm::jthrowable exception = thread->vtable->ExceptionOccurred(thread);
   if (exception == 0) {
     return false;
   }
 
-  bool isViolation = thread->vtable->IsInstanceOf(
-      thread, reinterpret_cast<vm::jobject>(exception), violationClass);
+  bool matches = thread->vtable->IsInstanceOf(
+      thread, reinterpret_cast<vm::jobject>(exception), expectedClass);
   thread->vtable->ExceptionClear(thread);
-  return isViolation;
+  return matches;
 }
 
 }  // namespace
@@ -284,7 +284,7 @@ TEST(ContractHelperGasCharge)
   free(thread);
 }
 
-TEST(ContractStaticFieldTrap)
+TEST(ContractStaticFieldVerifier)
 {
   vm::JavaVMOption options[3];
   options[0].optionString = const_cast<char*>("-Xbootclasspath:rt.jar");
@@ -308,63 +308,15 @@ TEST(ContractStaticFieldTrap)
   assertTrue(machine != 0);
   assertTrue(thread != 0);
 
+  vm::jclass verifyErrorClass
+      = thread->vtable->FindClass(thread, "java/lang/VerifyError");
+  assertTrue(verifyErrorClass != 0);
+  clearPendingException(thread);
+
   vm::jclass target
       = thread->vtable->FindClass(thread, "ContractStaticProfile");
-  assertTrue(target != 0);
-  clearPendingException(thread);
-
-  vm::jclass violationClass
-      = thread->vtable->FindClass(thread, "java/lang/ContractViolationError");
-  assertTrue(violationClass != 0);
-  clearPendingException(thread);
-
-  vm::jmethodID writePrimitive = thread->vtable->GetStaticMethodID(
-      thread, target, "writePrimitive", "()V");
-  vm::jmethodID readPrimitive
-      = thread->vtable->GetStaticMethodID(thread, target, "readPrimitive", "()I");
-  vm::jmethodID writeObject
-      = thread->vtable->GetStaticMethodID(thread, target, "writeObject", "()V");
-  assertTrue(writePrimitive != 0);
-  assertTrue(readPrimitive != 0);
-  assertTrue(writeObject != 0);
-  clearPendingException(thread);
-
-  thread->vtable->CallStaticVoidMethod(thread, target, writePrimitive);
-  assertTrue(thread->vtable->ExceptionOccurred(thread) == 0);
-  assertEqual(static_cast<uint32_t>(7),
-              static_cast<uint32_t>(
-                  thread->vtable->CallStaticIntMethod(
-                      thread, target, readPrimitive)));
-  assertTrue(thread->vtable->ExceptionOccurred(thread) == 0);
-
-  AvataThread* abiThread = reinterpret_cast<AvataThread*>(thread);
-
-  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
-              static_cast<uint32_t>(
-                  avata_begin_contract_transaction_with_limits(
-                      abiThread, 10000, UINT64_MAX)));
-  thread->vtable->CallStaticIntMethod(thread, target, readPrimitive);
-  assertTrue(expectContractViolation(thread, violationClass));
-  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
-              static_cast<uint32_t>(avata_end_contract_transaction(abiThread)));
-
-  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
-              static_cast<uint32_t>(
-                  avata_begin_contract_transaction_with_limits(
-                      abiThread, 10000, UINT64_MAX)));
-  thread->vtable->CallStaticVoidMethod(thread, target, writePrimitive);
-  assertTrue(expectContractViolation(thread, violationClass));
-  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
-              static_cast<uint32_t>(avata_end_contract_transaction(abiThread)));
-
-  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
-              static_cast<uint32_t>(
-                  avata_begin_contract_transaction_with_limits(
-                      abiThread, 10000, UINT64_MAX)));
-  thread->vtable->CallStaticVoidMethod(thread, target, writeObject);
-  assertTrue(expectContractViolation(thread, violationClass));
-  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
-              static_cast<uint32_t>(avata_end_contract_transaction(abiThread)));
+  assertTrue(target == 0);
+  assertTrue(expectPendingException(thread, verifyErrorClass));
 
   assertEqual(static_cast<uint32_t>(JNI_OK),
               static_cast<uint32_t>(machine->vtable->DestroyJavaVM(machine)));

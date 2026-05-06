@@ -1,6 +1,4 @@
 public class Longs {
-  private static volatile long volatileLong = getConstant();
-  
   private static long getConstant() {
     return 0x123456789ABCDEFL;
   }
@@ -77,6 +75,7 @@ public class Longs {
   }
 
   public static void main(String[] args) throws Exception {
+    long volatileLong = getConstant();
     expect(volatileLong == getConstant());
 
     { Rectangle r = new Rectangle();

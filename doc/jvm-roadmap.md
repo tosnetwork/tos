@@ -230,7 +230,7 @@ JVM v1 follows the same account execution policy as EVM v1 and Uno v1:
 through the executor account. Per-contract state is stored as sub-cells of the
 executor account's data cell, keyed by a `contract_id`. The deployed class bytes
 are stored separately by `class_hash`; each `contract_id` points to the
-`class_hash` it executes plus its own static state. This allows multiple
+`class_hash` it executes plus its own explicit storage state. This allows multiple
 deployments of the same class to have distinct state.
 
 This is not the long-term account model but it is the correct v1 starting
@@ -307,7 +307,7 @@ JvmNativeEngine::run_compute(input, context)
     ├─ Decode input.inbound_body → JvmCallDescriptor
     │      (contract_id, method_id, argument encoding, value transfer)
     │
-    ├─ Resolve contract_id → class_hash + static state
+    ├─ Resolve contract_id → class_hash + storage root
     │
     ├─ Load contract class from JvmHeap.class_store[class_hash]
     │
@@ -359,9 +359,9 @@ format and the message ABI at the TL-B / binary level.
 - TOS runtime library profile plan: package list, license/notice handling,
   optional OpenJDK/JDK8u semantic references, TOS extensions, and deterministic
   replacements for host-observing APIs
-- Persisted value profile: exact allowed static field types and
+- Persisted value profile: exact allowed storage value types and
   `PersistentMap` / `PersistentList` key-value encodings. Arbitrary Java object
-  graphs are not persisted in v1.
+  graphs and Java static fields are not persisted in v1.
 - Node capability plan: add a JVM bit next to
   `kTosNodeCapabilityWorkchainEvm` / `kTosNodeCapabilityWorkchainUno`, and
   require `validate_required_workchains` coverage before activation
@@ -395,12 +395,12 @@ for consensus execution. No TOS integration yet; tested standalone.
   deterministically when the limit is exceeded. Movable contract allocations
   now run under an arena checkpoint that is rolled back at transaction end, and
   contract execution rejects fixed/oversized allocation plus the legacy
-  collector fallback. Application-class `getstatic`/`putstatic` access is also
-  rejected while a contract transaction is active, and boot runtime classes may
-  not perform reference-type `putstatic` in that window, so Java static fields
-  cannot accidentally retain transient heap objects across invocations. The
-  remaining heap work is to serialize explicitly admitted persistent state into
-  cells.
+  collector fallback. Application classes may not declare static fields; the
+  verifier rejects `ACC_STATIC` fields at class load, while static methods
+  remain allowed. Boot runtime classes may not perform reference-type
+  `putstatic` during contract execution, so Java static fields cannot
+  accidentally retain transient heap objects across invocations. The remaining
+  heap work is to serialize explicitly admitted persistent state into cells.
 - Complete Java 8 opcode support in the interpreter, including deterministic
   VM-internal `invokedynamic` linkage, floating-point opcodes, and monitor
   opcodes. Public `java.lang.invoke` remains outside the v1 runtime profile.
@@ -463,7 +463,7 @@ placeholder result for tests only. A production binary must fail closed if
   - `build_jvm_config_cell()` / `parse_jvm_config_cell()` (ConfigParam 85)
   - ConfigParam 85 fields: `chain_id`, `schema_version`, `gas_price`,
     `max_gas_per_tx`, `max_class_bytes`, `max_total_class_bytes`,
-    `max_heap_bytes`, `max_static_fields`, `class_file_major = 52`,
+    `max_heap_bytes`, `max_storage_cells`, `class_file_major = 52`,
     `gas_schedule_version`, and `stdlib_hash`
 - `jvm/core/zerostate.h` / `.cpp`:
   - `build_jvm_zerostate_accounts_cell()`: creates singleton executor account
@@ -569,48 +569,40 @@ cell codec must define a canonical serialization of the contract heap that is:
 
 **Recommended approach for v1:** restrict the heap surface that is serialized.
 Rather than attempting a general object-graph serializer, require that all
-persistent contract state flow through `tos.storage.PersistentMap` and
-`tos.storage.PersistentList`. These types are implemented as thin Java
-wrappers over cell-tree operations in native C++ (similar to how Uno's state
-types are thin wrappers over nullifier and commitment tree operations). The
-contract heap between calls is then reduced to:
-- the values of all allowed static fields for the target `contract_id`
-- primitive static fields (int, long, boolean, etc.)
-- cell roots for `Persistent*` static fields
+persistent contract state flow through `Storage`, `Mapping`, and future
+cell-backed persistent containers. Application classes may not declare static
+fields; javac features that synthesize them, including enum constants and
+interface constants, are outside the v1 contract profile. The contract heap
+between calls is then reduced to:
+- storage cells addressed by explicit slot keys
+- cell roots for future `Persistent*` containers
 - no heap-allocated mutable objects survive across transaction boundaries
 
 Allowed persisted values must be a closed set: primitive integers/booleans,
 fixed-size byte arrays or addresses, deterministic strings if admitted by
-Phase 0, and cell-backed `Persistent*` roots. Ordinary object references,
-arrays of references, and mutable heap objects are transient only.
+Phase 0, and cell-backed persistent roots. Ordinary object references, arrays
+of references, and mutable heap objects are transient only.
 
 This eliminates the general object-graph serialization problem at the cost of
 restricting contracts to a structured state model. It is the correct v1
 tradeoff; unrestricted cross-transaction heap persistence can be addressed in
 v2 with a full object-graph serializer once the execution model is proven.
 
-Contract classes may not use arbitrary executable `<clinit>` logic. Deployment
-creates the initial `JvmContractState` from the deploy message and constant
-static field defaults; subsequent transactions restore static fields from the
-cell state before invoking the entry method. This prevents class loading from
-resetting persisted state every transaction.
-
-Static fields are scoped to `contract_id`, not to `class_hash`. The runtime must
-therefore use an isolated class-loader/runtime context per contract invocation,
-or an equivalent mechanism, so two deployments of the same class never share
-mutable static fields.
+Contract classes may not use static fields as hidden state. Deployment creates
+the initial `JvmContractState` from the deploy message and explicit storage
+roots; subsequent transactions install the account-state storage overlay before
+invoking the entry method. This prevents class loading from resetting or sharing
+contract state implicitly.
 
 **Work items:**
 
 - `jvm/core/cell-codec.h` / `.cpp`:
   - `JvmCellCodec::encode_heap(JvmHeap&) → td::Ref<vm::Cell>`
   - `JvmCellCodec::decode_heap(td::Ref<vm::Cell>) → JvmHeap`
-  - Encode: walk static fields of the invoked contract instance; for
-    `Persistent*` fields, flush the underlying cell-tree root; for primitive
-    fields, pack into a canonical field cell
-  - Decode: reconstruct `Persistent*` wrappers from stored cell roots; restore
-    primitive static fields; initialize the contract class loader without
-    running arbitrary user `<clinit>` code
+  - Encode: flush explicit storage roots and future `Persistent*` container
+    roots into canonical cells
+  - Decode: reconstruct storage overlays and future `Persistent*` wrappers from
+    stored cell roots without restoring Java static fields
 - `jvm/core/persistent-map.cpp` / `persistent-list.cpp`:
   - Native C++ implementations of `tos.storage.Persistent*` that operate
     directly on `vm::Cell` trees (no intermediate Java heap objects for stored
@@ -632,16 +624,12 @@ mutable static fields.
                     = JvmClassCell;
 
   jvm_contract_state#_ class_hash:bits256
-                       static_fields:(HashmapE 16 ^StaticFieldCell)
+                       storage_root:^Cell
                        = JvmContractState;
   ```
   The `contracts` map key is `contract_id`. The `class_store` map key is
-  `class_hash`. The static field map uses a 16-bit key (field index within the
-  contract class, matching the `fields_count` limit in the class file format).
-  A content-hash key (256-bit) would be robust to field reordering but is
-  unnecessary for v1 where class upgrades deploy a new class hash; the simpler
-  index key is preferred. This choice must be pinned in Phase 0 and frozen
-  thereafter.
+  `class_hash`. `storage_root` is the canonical root of the explicit
+  contract-storage tree; Java static fields are not encoded in v1 state.
 
 **Effort:** 3–5 months
 
@@ -733,7 +721,8 @@ non-consensus surfaces and must not affect compute.
   external message targeting the executor account and returns the deterministic
   `contract_id`
 - `jvm_call`: call a view (read-only) method locally; does not submit a tx
-- `jvm_getContractState`: return the decoded static fields of a deployed contract
+- `jvm_getContractState`: return the decoded explicit storage state of a
+  deployed contract
 - `jvm_getReceipts`: return event logs for a given block range
 
 Admission (`jvm_deployContract` pre-check) validates class files against the
@@ -774,10 +763,10 @@ performance profiling.
 - Performance baseline: measure wall time for a 1000-tx block of representative
   contracts under a release build; set a regression gate so future changes do
   not silently degrade throughput
-- Security review: class loader isolation (one contract cannot access another
-  contract's static fields via reflection or class cast); heap bounds (gas
-  exhaustion before heap overflows the pre-allocated arena); cell codec
-  round-trip correctness for every persisted `JvmContractState`
+- Security review: contract storage isolation (one contract cannot access
+  another contract's storage root); heap bounds (gas exhaustion before heap
+  overflows the pre-allocated arena); cell codec round-trip correctness for
+  every persisted `JvmContractState`
 
 **Effort:** 6–8 weeks
 
@@ -895,13 +884,14 @@ jvm/
 
 The following questions must be answered before Phase 1 is considered complete:
 
-1. **Static state and transaction arena boundary for v1.** Explicit
+1. **Persistent state and transaction arena boundary for v1.** Explicit
    memory-limit accounting and movable-heap arena rollback exist in the contract
-   ABI and allocation path. The remaining work is pinning which static fields
-   may survive a transaction, serializing them into cells, and ensuring no
-   transient heap reference crosses the transaction boundary. Phase 0 must set
-   concrete heap and gas numbers for ConfigParam 85 so allocation-heavy
-   contracts fail deterministically before exhausting validator memory.
+   ABI and allocation path. Application static fields are rejected, so the
+   remaining work is serializing explicit storage/persistent-container roots
+   into cells and ensuring no transient heap reference crosses the transaction
+   boundary. Phase 0 must set concrete heap and gas numbers for ConfigParam 85
+   so allocation-heavy contracts fail deterministically before exhausting
+   validator memory.
 
 2. **Class store retention limits.** Contract class files must be available to
    the class loader during execution. In v1 the class store is part of the
