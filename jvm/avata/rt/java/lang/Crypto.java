@@ -1,5 +1,9 @@
 package java.lang;
 
+// TODO(gas): keccak256 and future hash/signature helpers must charge explicit
+// helper gas proportional to input length before admission to the v1 profile.
+// Add AVATA_CONTRACT_HELPER_CRYPTO_* entries to contract.h and charge via the
+// native bridge when Crypto methods are backed by C++ primitives.
 public final class Crypto {
   private static final int KECCAK_256_RATE = 136;
 

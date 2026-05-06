@@ -69,6 +69,15 @@ Status legend: `✅` completed, unchecked items are still open.
     if the configured transaction memory limit is exceeded. `java.lang.Memory`
     reads these transaction-local counters while a contract transaction is
     active.
+  - ✅ **Gas schedule finalization:** The flat "1 per opcode" default replaced with
+    a tiered default schedule in `include/avata/gas_schedule.h`. Tiers:
+    NOP/STACK=1, INT_ARITH/LONG_ARITH/CONVERT/COMPARE/BRANCH=2,
+    FLOAT_ARITH/DOUBLE_ARITH/MONITOR=3, FIELD=3, ALLOC/TYPECHECK=5, DIV=5,
+    INVOKE/THROW=10. `machine.cpp` `resetOpcodeGasCosts()` now loads from
+    `kTosDefaultOpcodeGasCosts[256]`. Tests `TieredOpcodeGasSchedule` (all 256
+    slots > 0, spot-check every tier, ordering invariants) and
+    `HelperGasOutOfGasRegression` (storage load/store/clear OOG boundaries) added
+    to `unittest/contract-transaction-test.cpp`. All tests pass.
   - **Remaining work:**
     - Add the actual JVM workchain compute-phase adapter and call
       `avata_begin_contract_transaction_with_limits(thread, input.gas_limit,
@@ -78,13 +87,12 @@ Status legend: `✅` completed, unchecked items are still open.
     - Load the opcode and helper cost tables from `jvm/core/gas-table.cpp`
       (ConfigParam 85) through `avata_set_opcode_gas_costs()` and
       `avata_set_contract_helper_gas_costs()` instead of using the standalone
-      defaults.
-    - Extend dynamic deterministic helper costs beyond `Storage`, dynamic
-      allocation, and `System.arraycopy()` to crypto, ABI, event emission,
-      cross-contract calls, and any future admitted native entry points whose
-      cost depends on input size. Do not add gas to Java classes directly;
-      Java-level libraries are covered by opcode gas plus any native/helper
-      calls they make.
+      defaults in `gas_schedule.h`.
+    - Extend dynamic deterministic helper costs to crypto, ABI, event emission,
+      cross-contract calls, and any other admitted native entry points whose
+      cost depends on input size. TODOs added to `Crypto.java` and `ABI.java`.
+      Do not add gas to Java classes directly; Java-level libraries are covered
+      by opcode gas plus any native/helper calls they make.
 
 - ✅ Disable or isolate JIT/AOT/host-VM compilation paths for consensus execution.
   Contract execution must use a deterministic interpreter-only profile unless a

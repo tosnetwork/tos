@@ -1,5 +1,9 @@
 package java.lang;
 
+// TODO(gas): ABI encode/decode operations backed by native helpers must charge
+// helper gas proportional to encoded byte length.  Add
+// AVATA_CONTRACT_HELPER_ABI_ENCODE_BYTE / AVATA_CONTRACT_HELPER_ABI_DECODE_BYTE
+// to contract.h and charge via the native bridge before v1 admission.
 public final class ABI {
   private ABI() { }
 

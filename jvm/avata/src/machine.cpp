@@ -17,6 +17,9 @@
 #include "avata/processor.h"
 #include "avata/arch.h"
 
+#define AVATA_GAS_SCHEDULE_DEFINE_TABLE
+#include <avata/gas_schedule.h>
+
 #include <avata/util/runtime-array.h>
 #include <avata/util/math.h>
 
@@ -3990,7 +3993,7 @@ bool chargeContractHelperGas(Thread* t, unsigned helper, uint64_t units)
 void resetOpcodeGasCosts(Machine* m)
 {
   for (unsigned i = 0; i < Machine::OpcodeCount; ++i) {
-    m->opcodeGasCosts[i] = 1;
+    m->opcodeGasCosts[i] = kTosDefaultOpcodeGasCosts[i];
   }
 }
 

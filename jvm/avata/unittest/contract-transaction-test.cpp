@@ -5,7 +5,9 @@
 #include <string.h>
 
 #include <avata/contract.h>
+#include <avata/gas_schedule.h>
 #include "avata/machine.h"
+#include "avata/constants.h"
 
 #include "test-harness.h"
 
@@ -598,7 +600,8 @@ TEST(ContractOpcodeGasTable)
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
               static_cast<uint32_t>(
                   avata_get_opcode_gas_cost(abiThread, vm::iadd, &gasCost)));
-  assertEqual(static_cast<uint64_t>(1), gasCost);
+  /* iadd is TOS_GAS_INT_ARITH = 2 in the tiered schedule */
+  assertEqual(static_cast<uint64_t>(TOS_GAS_INT_ARITH), gasCost);
 
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
               static_cast<uint32_t>(
@@ -648,7 +651,155 @@ TEST(ContractOpcodeGasTable)
               static_cast<uint32_t>(
                   avata_get_opcode_gas_cost(
                       abiThread, vm::ireturn, &gasCost)));
-  assertEqual(static_cast<uint64_t>(1), gasCost);
+  /* ireturn is TOS_GAS_RETURN = 1 */
+  assertEqual(static_cast<uint64_t>(TOS_GAS_RETURN), gasCost);
+
+  free(thread->m);
+  free(thread);
+}
+
+/* Verify the tiered default gas schedule: every slot > 0, spot-check tiers. */
+TEST(TieredOpcodeGasSchedule)
+{
+  vm::Thread* thread = makeThreadStub();
+  AvataThread* abiThread = reinterpret_cast<AvataThread*>(thread);
+
+  uint64_t gasCost = 0;
+
+  /* Every opcode slot must have a non-zero cost after reset. */
+  for (unsigned i = 0; i < AVATA_CONTRACT_OPCODE_COUNT; ++i) {
+    assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+                static_cast<uint32_t>(
+                    avata_get_opcode_gas_cost(
+                        abiThread, static_cast<uint8_t>(i), &gasCost)));
+    assertTrue(gasCost > 0);
+  }
+
+  /* Spot-check tier assignments. */
+  avata_get_opcode_gas_cost(abiThread, vm::nop, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_NOP), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::iload_0, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_STACK), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::iaload, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_ARRAY_ACCESS), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::iadd, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_INT_ARITH), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::ladd, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_LONG_ARITH), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::fadd, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_FLOAT_ARITH), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::dadd, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_DOUBLE_ARITH), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::idiv, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_DIV), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::ldiv_, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_DIV), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::i2l, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_CONVERT), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::lcmp, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_COMPARE), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::ifeq, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_BRANCH), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::goto_, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_BRANCH), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::ireturn, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_RETURN), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::return_, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_RETURN), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::getfield, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_FIELD), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::invokevirtual, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_INVOKE), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::invokedynamic, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_INVOKE), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::new_, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_ALLOC), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::athrow, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_THROW), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::checkcast, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_TYPECHECK), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::monitorenter, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_MONITOR), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::monitorexit, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_MONITOR), gasCost);
+
+  /* Ordering invariants: float > int, invoke > field, div > add */
+  uint64_t a, b;
+  avata_get_opcode_gas_cost(abiThread, vm::fadd, &a);
+  avata_get_opcode_gas_cost(abiThread, vm::iadd, &b);
+  assertTrue(a > b);
+  avata_get_opcode_gas_cost(abiThread, vm::invokevirtual, &a);
+  avata_get_opcode_gas_cost(abiThread, vm::getfield, &b);
+  assertTrue(a > b);
+  avata_get_opcode_gas_cost(abiThread, vm::idiv, &a);
+  avata_get_opcode_gas_cost(abiThread, vm::iadd, &b);
+  assertTrue(a > b);
+
+  free(thread->m);
+  free(thread);
+}
+
+/* Out-of-gas at helper boundary: storage operations with tight gas budgets. */
+TEST(HelperGasOutOfGasRegression)
+{
+  vm::Thread* thread = makeThreadStub();
+  AvataThread* abiThread = reinterpret_cast<AvataThread*>(thread);
+
+  uint64_t remaining = 0;
+
+  /* Default storage load cost is 20.  gas=15 → load must fail. */
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_begin_contract_transaction(abiThread, 15)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OUT_OF_GAS),
+              static_cast<uint32_t>(
+                  avata_charge_contract_helper_gas(
+                      abiThread, AVATA_CONTRACT_HELPER_STORAGE_LOAD, 1)));
+  avata_contract_remaining_gas(abiThread, &remaining);
+  assertEqual(static_cast<uint64_t>(0), remaining);
+  avata_end_contract_transaction(abiThread);
+
+  /* gas=20 → exactly one load succeeds; second load fails. */
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_begin_contract_transaction(abiThread, 20)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_charge_contract_helper_gas(
+                      abiThread, AVATA_CONTRACT_HELPER_STORAGE_LOAD, 1)));
+  avata_contract_remaining_gas(abiThread, &remaining);
+  assertEqual(static_cast<uint64_t>(0), remaining);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OUT_OF_GAS),
+              static_cast<uint32_t>(
+                  avata_charge_contract_helper_gas(
+                      abiThread, AVATA_CONTRACT_HELPER_STORAGE_LOAD, 1)));
+  avata_end_contract_transaction(abiThread);
+
+  /* Store: base=100, per-byte=1.  gas=110 with 5 bytes → 105 gas used, 5 left. */
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_begin_contract_transaction(abiThread, 110)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_charge_contract_helper_gas(
+                      abiThread, AVATA_CONTRACT_HELPER_STORAGE_STORE_BASE, 1)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_charge_contract_helper_gas(
+                      abiThread, AVATA_CONTRACT_HELPER_STORAGE_STORE_BYTE, 5)));
+  avata_contract_remaining_gas(abiThread, &remaining);
+  assertEqual(static_cast<uint64_t>(5), remaining);
+  avata_end_contract_transaction(abiThread);
+
+  /* Clear: cost=50.  gas=49 → must fail. */
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_begin_contract_transaction(abiThread, 49)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OUT_OF_GAS),
+              static_cast<uint32_t>(
+                  avata_charge_contract_helper_gas(
+                      abiThread, AVATA_CONTRACT_HELPER_STORAGE_CLEAR, 1)));
+  avata_end_contract_transaction(abiThread);
 
   free(thread->m);
   free(thread);
