@@ -795,20 +795,13 @@ loop:
   // point: immediately after the `instruction` variable is set, look up
   // gas_table[instruction] and subtract that many units instead of 1.
   //
-  // TODO(gas-init): jvm/core/compute-phase.cpp must call
-  //   t->gasCounter = input.gas_limit;
-  //   t->identityHashCounter = 0;
-  // before invoking interpret3() for each contract transaction.
+  // TODO(gas-init): The workchain compute-phase adapter must call
+  // avata_begin_contract_transaction() before invoking contract bytecode.
   //
-  // TODO(oog-class): Replace the throwNew target below with the TOS class
-  //   tos/lang/OutOfGasError once that class is added to the classpath and
-  //   wired into GcOutOfGasError::Type in types.def.
   if (UNLIKELY(t->gasCounter != UINT64_MAX)) {
     if (UNLIKELY(t->gasCounter == 0)) {
-      // Out of gas: throw a deterministic trap. Currently reuses
-      // GcOutOfMemoryError as a placeholder until OutOfGasError is plumbed in.
-      // TODO(oog-class): switch to GcOutOfGasError::Type.
-      exception = makeThrowable(t, GcOutOfMemoryError::Type);
+      // Out of gas: throw a deterministic trap before executing this opcode.
+      exception = makeThrowable(t, GcOutOfGasError::Type);
       goto throw_;
     }
     --t->gasCounter;

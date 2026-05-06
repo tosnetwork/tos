@@ -38,13 +38,18 @@ Status legend: `✅` completed, unchecked items are still open.
     `jvm/avata/src/avata/machine.h`. The interpreter dispatch loop
     (`interpret3()` in `jvm/avata/src/interpret.cpp`, label `loop:` at line 784)
     now decrements `gasCounter` on every bytecode dispatch and throws
-    `GcOutOfMemoryError` (placeholder) when the counter reaches zero; a value of
-    `UINT64_MAX` bypasses the check (bootstrap mode).
+    `GcOutOfGasError` when the counter reaches zero; a value of `UINT64_MAX`
+    bypasses the check (bootstrap mode). `java.lang.OutOfGasError` is wired in
+    `types.def`. `include/avata/contract.h` now exposes
+    `avata_begin_contract_transaction()`, `avata_end_contract_transaction()`,
+    and `avata_contract_remaining_gas()` so the future workchain adapter can
+    initialize gas and reset Java-visible identity hash state at the
+    transaction boundary.
   - **Remaining work:**
-    - Replace placeholder `GcOutOfMemoryError` with `GcOutOfGasError` once
-      `OutOfGasError` is wired into `types.def` and the generated Gc types.
-    - Wire `jvm/core/compute-phase.cpp` to set `t->gasCounter = input.gas_limit`
-      and `t->identityHashCounter = 0` before each contract invocation.
+    - Add the actual JVM workchain compute-phase adapter and call
+      `avata_begin_contract_transaction(thread, input.gas_limit)` before each
+      contract invocation, then read `avata_contract_remaining_gas()` to derive
+      `gas_used`.
     - Replace the flat per-opcode cost of 1 with the opcode cost table from
       `jvm/core/gas-table.cpp` (ConfigParam 85).
 
@@ -63,23 +68,34 @@ Status legend: `✅` completed, unchecked items are still open.
   - **Partially implemented:** `jvm/avata/src/machine.cpp` now rejects class
     files with `major < 45` (pre-Java 1.1), `major > 52` (Java 9+), or
     `minor == 0xFFFF` (Java preview features) by throwing
-    `GcUnsupportedClassVersionError`. Supporting Java files added:
-    `rt/java/lang/UnsupportedClassVersionError.java` and
-    `rt/java/lang/ClassFormatError.java`; `types.def` entry added for
-    `unsupportedClassVersionError`.
+    `GcUnsupportedClassVersionError`. It also rejects forbidden class
+    references in constant-pool class entries and field/method descriptors:
+    `java.net.*`, `java.nio.channels.*`, `java.lang.Thread`,
+    `java.lang.Runtime`, and `java.lang.reflect.*` outside the admitted reflect
+    surface. Forbidden Java 9+ class-file attributes (`Module`,
+    `ModulePackages`, `ModuleMainClass`, `NestHost`, `NestMembers`, `Record`,
+    `PermittedSubclasses`) are rejected in field, method, and class attribute
+    tables with `GcVerifyError`. Duplicate method name+descriptor pairs are
+    rejected with `GcClassFormatError`. `BootstrapMethods` is now restricted to
+    the admitted Java 8 lambda surface:
+    `LambdaMetafactory.metafactory` and `altMetafactory` with exact
+    descriptors, method-type / method-handle / marker / bridge argument shape,
+    no missing table for invokedynamic, and no serializable or unknown
+    altMetafactory flags. Class initializers are admitted only as static
+    `()V` methods with bytecode, and native/abstract/synchronized
+    `<clinit>` methods are rejected. Constructors must be non-static and return
+    `void`. Runtime initialization failure remains deterministic: an exception
+    thrown from class initialization marks the class with `InitErrorFlag`,
+    rethrows as `ExceptionInInitializerError`, and later initialization attempts
+    throw `NoClassDefFoundError`. Supporting Java files now include
+    `ClassFormatError`, `UnsupportedClassVersionError`, and `VerifyError`.
+    `VerifierProfile` covers forbidden class refs, forbidden descriptors,
+    forbidden attributes, duplicate methods, forbidden bootstrap methods,
+    forbidden serializable bootstrap flags, missing `BootstrapMethods`,
+    malformed class initializers/constructors, and admitted reflection refs.
   - **Remaining work:**
-    - After the version gate, scan the constant pool in `parsePool()` for
-      references to classes in forbidden packages (`java.net.*`,
-      `java.nio.channels.*`, `java.lang.Thread`, `java.lang.Runtime`,
-      `java.lang.reflect` outside the admitted surface) and throw
-      `GcVerifyError` deterministically.
-    - In `parseMethodTable()` / `parseFieldTable()`, reject forbidden attributes:
-      `Module`, `ModulePackages`, `ModuleMainClass`, `NestHost`, `NestMembers`,
-      `Record`, `PermittedSubclasses`.
-    - Add duplicate ABI method detection: two methods with the same name+descriptor
-      in the same class must be rejected (per JVMS §4.6).
-    - Files to modify: `jvm/avata/src/machine.cpp` (`parsePool`,
-      `parseMethodTable`, `parseFieldTable`).
+    - Move from the current verifier helper allowlist to a generated profile
+      manifest once `rt.jar` is finalized.
 
 - [ ] Replace host-observing APIs with deterministic traps or TOS-provided values:
   wall-clock time, filesystem, networking, process APIs, native library loading,
@@ -125,14 +141,28 @@ Status legend: `✅` completed, unchecked items are still open.
       host-local file paths. Verify that `StackTraceElement.getFileName()` and
       `.getLineNumber()` only include class-file-embedded source info, not
       absolute host paths.
-    - `jvm/core/compute-phase.cpp` must reset `t->identityHashCounter = 0` at
-      the start of each transaction so counter values are transaction-scoped.
-    - `jvm/core/compute-phase.cpp` must clear `t->identityHashes` when the
-      transaction-scoped heap is reset.
+    - The future JVM workchain compute-phase adapter must call
+      `avata_begin_contract_transaction()` at the start of each transaction so
+      counter values are transaction-scoped.
+    - The transaction-scoped heap reset path must also discard objects whose
+      identity hash was materialized in the previous transaction.
 
 - [ ] Finalize contract heap/state persistence: static field admission rules,
   persisted primitive/value profiles, `PersistentMap`/`PersistentList`
   encoding, heap reset/snapshot model, and GC/arena behavior.
+  - **Partially implemented:** `java.lang.Storage` now exposes scalar
+    32-byte slot operations, `java.lang.Mapping` derives Ethereum-style hashed
+    slots, and `include/avata/storage.h` exposes the native
+    `avata_set_storage_host()` C ABI plus begin/commit/rollback transaction
+    entry points plus `avata_storage_execute_transaction()`. `Storage.host()`
+    delegates through that installed host when
+    present and otherwise uses a deterministic process-local fallback with
+    nested snapshots for tests. `avata-unittest` now covers callback forwarding
+    fallback transaction begin/commit/rollback behavior, and invocation-wrapper
+    commit/rollback behavior. The
+    `StorageHostReferenceAdapter` unit test also models gas charging, write-set
+    journaling, nested commit merging, and rollback restoration for the future
+    chain execution adapter.
   - **Design:**
     - Static fields are allocated in `GcSingleton* staticTable` per class (see
       `machine.cpp` `parseFieldTable`). Between transactions the static table
@@ -146,14 +176,16 @@ Status legend: `✅` completed, unchecked items are still open.
       `resetForTransaction()` entry point that discards gen1/gen2 objects but
       preserves bootstrap/classpath objects loaded before the gas counter was
       enabled.
-    - `PersistentMap` and `PersistentList` are not yet implemented; they need
-      TL-B codec stubs in `jvm/core/` that the classpath Java classes delegate
-      to via native methods.
+    - The real chain integration still needs to install an account-state
+      overlay through `avata_set_storage_host()` before contract invocation,
+      call `avata_storage_execute_transaction()` around execution, and implement
+      gas charging plus chain-level write-set persistence.
+    - Persistent enumerable containers are not yet implemented. The v1 profile
+      currently has non-iterable `Mapping`; enumerable state needs a separately
+      specified ordered container.
     - Files to modify: `jvm/avata/src/machine.cpp` (static table snapshot
-      hooks), `jvm/avata/src/heap/heap.cpp` (transaction reset), new files
-      `jvm/avata/rt/tos/storage/PersistentMap.java`,
-      `jvm/avata/rt/tos/storage/PersistentList.java`,
-      `jvm/core/cell-codec.cpp`.
+      hooks), `jvm/avata/src/heap/heap.cpp` (transaction reset), and the
+      TOS chain execution adapter that embeds Avata.
 
 ## Added classpath files
 
@@ -163,6 +195,8 @@ Status legend: `✅` completed, unchecked items are still open.
   `gasCounter` reaches zero; extends `Error`.
 - ✅ `rt/java/lang/ClassFormatError.java` — base for class-file format
   violations; extends `LinkageError`.
+- ✅ `rt/java/lang/VerifyError.java` — thrown when class verification rejects a
+  class that violates the TOS contract profile; extends `LinkageError`.
 - ✅ `rt/java/lang/UnsupportedClassVersionError.java` — thrown by the
   class reader for class files targeting Java 9+ or pre-Java 1.1; extends
   `ClassFormatError`.

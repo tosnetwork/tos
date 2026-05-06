@@ -1367,10 +1367,10 @@ class Thread {
 
   // TOS consensus fields -----------------------------------------------
   // Per-transaction gas counter (P2). Decremented by 1 per bytecode dispatch
-  // in interpret.cpp. Initialized to the gas_limit from WorkchainComputeInput
-  // before each transaction. When it reaches zero the interpreter throws
+  // in interpret.cpp. Initialized by avata_begin_contract_transaction() before
+  // each transaction. When it reaches zero the interpreter throws
   // OutOfGasError. A value of UINT64_MAX means "unlimited" (used during
-  // bootstrap / classpath initialization before the contract is running).
+  // bootstrap / classpath initialization outside contract execution).
   uint64_t gasCounter;
 
   // Per-transaction monotonic hash counter (P6). Assigned to objects the first
@@ -1393,6 +1393,12 @@ class Thread {
  private:
   unsigned flags;
 };
+
+AVATA_EXPORT void beginContractTransaction(Thread* t, uint64_t gasLimit);
+
+AVATA_EXPORT void endContractTransaction(Thread* t);
+
+AVATA_EXPORT uint64_t contractRemainingGas(Thread* t);
 
 class GcJfield;
 
@@ -2233,10 +2239,10 @@ inline uint32_t takeHash(Thread* t, object o)
 // TOS P6 – deterministic identity hash:
 // When an object's hash is first requested we assign a per-transaction
 // monotonic counter value rather than deriving it from the object's heap
-// address.  The counter (Thread::identityHashCounter) is reset to 0 at the
-// start of each contract transaction by jvm/core/compute-phase.cpp, so
-// identical bytecode sequences on identical inputs always produce identical
-// hash values across validators regardless of ASLR or heap base differences.
+// address.  The counter (Thread::identityHashCounter) is reset to 0 by
+// avata_begin_contract_transaction(), so identical bytecode sequences on
+// identical inputs always produce identical hash values across validators
+// regardless of ASLR or heap base differences.
 //
 // If GC moves a hashTaken object, machine.cpp first looks up the counter-based
 // identity hash in Thread::identityHashes and stores that value in the

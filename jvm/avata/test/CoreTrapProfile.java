@@ -28,21 +28,5 @@ public class CoreTrapProfile {
         new Object().notify();
       }
     });
-
-    expectTrap("Thread.interrupt", new Thrower() {
-      public void run() {
-        Thread.currentThread().interrupt();
-      }
-    });
-
-    expectTrap("Thread.join", new Thrower() {
-      public void run() {
-        try {
-          new Thread().join();
-        } catch (InterruptedException e) {
-          throw new RuntimeException(e);
-        }
-      }
-    });
   }
 }

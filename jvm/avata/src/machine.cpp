@@ -11,6 +11,7 @@
 #include "avata/jnienv.h"
 #include "avata/machine.h"
 #include "avata/util.h"
+#include <avata/contract.h>
 #include <avata/util/stream.h>
 #include "avata/constants.h"
 #include "avata/processor.h"
@@ -872,6 +873,527 @@ GcByteArray* internByteArray(Thread* t, GcByteArray* array)
   }
 }
 
+unsigned literalLength(const char* s)
+{
+  unsigned length = 0;
+  while (s[length]) {
+    ++length;
+  }
+  return length;
+}
+
+bool segmentEquals(const int8_t* begin, const int8_t* end, const char* value)
+{
+  for (unsigned i = 0; begin + i != end; ++i) {
+    if (value[i] == 0 || begin[i] != static_cast<int8_t>(value[i])) {
+      return false;
+    }
+  }
+
+  return value[end - begin] == 0;
+}
+
+bool segmentStartsWith(const int8_t* begin,
+                       const int8_t* end,
+                       const char* value)
+{
+  unsigned length = literalLength(value);
+  if (static_cast<unsigned>(end - begin) < length) {
+    return false;
+  }
+
+  for (unsigned i = 0; i < length; ++i) {
+    if (begin[i] != static_cast<int8_t>(value[i])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool segmentEqualsOrNested(const int8_t* begin,
+                           const int8_t* end,
+                           const char* value)
+{
+  unsigned length = literalLength(value);
+  if (static_cast<unsigned>(end - begin) == length) {
+    return segmentEquals(begin, end, value);
+  }
+
+  return static_cast<unsigned>(end - begin) > length
+      && segmentStartsWith(begin, end, value)
+      && begin[length] == '$';
+}
+
+bool segmentEqualsCString(const int8_t* begin,
+                          const int8_t* end,
+                          const int8_t* value)
+{
+  unsigned i = 0;
+  for (; begin + i != end; ++i) {
+    if (value[i] == 0 || begin[i] != value[i]) {
+      return false;
+    }
+  }
+
+  return value[i] == 0;
+}
+
+bool allowedReflectClass(const int8_t* begin, const int8_t* end)
+{
+  return segmentEqualsOrNested(begin,
+                               end,
+                               "java/lang/reflect/AccessibleObject")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/AnnotatedElement")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Array")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Constructor")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Field")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/GenericArrayType")
+      || segmentEqualsOrNested(begin,
+                               end,
+                               "java/lang/reflect/GenericDeclaration")
+      || segmentEqualsOrNested(begin,
+                               end,
+                               "java/lang/reflect/InvocationHandler")
+      || segmentEqualsOrNested(begin,
+                               end,
+                               "java/lang/reflect/InvocationTargetException")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Member")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Method")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Modifier")
+      || segmentEqualsOrNested(begin,
+                               end,
+                               "java/lang/reflect/ParameterizedType")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Proxy")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/SignatureParser")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/Type")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/TypeVariable")
+      || segmentEqualsOrNested(begin, end, "java/lang/reflect/WildcardType");
+}
+
+bool forbiddenInternalClass(const int8_t* begin,
+                            const int8_t* end,
+                            GcByteArray* currentClassName)
+{
+  if (currentClassName
+      && segmentEqualsCString(begin, end, currentClassName->body().begin())) {
+    return false;
+  }
+
+  return segmentStartsWith(begin, end, "java/net/")
+      || segmentStartsWith(begin, end, "java/nio/channels/")
+      || segmentEqualsOrNested(begin, end, "java/lang/Runtime")
+      || segmentEqualsOrNested(begin, end, "java/lang/Thread")
+      || (segmentStartsWith(begin, end, "java/lang/reflect/")
+          && !allowedReflectClass(begin, end));
+}
+
+bool classNameForbidden(GcByteArray* name, GcByteArray* currentClassName)
+{
+  const int8_t* begin = name->body().begin();
+  const int8_t* end = begin;
+
+  while (*begin == '[') {
+    ++begin;
+  }
+
+  if (*begin == 'L') {
+    ++begin;
+    end = begin;
+    while (*end && *end != ';') {
+      ++end;
+    }
+    return forbiddenInternalClass(begin, end, currentClassName);
+  }
+
+  end = begin;
+  while (*end) {
+    ++end;
+  }
+
+  return forbiddenInternalClass(begin, end, currentClassName);
+}
+
+bool descriptorForbidden(GcByteArray* spec, GcByteArray* currentClassName)
+{
+  for (const int8_t* p = spec->body().begin(); *p; ++p) {
+    if (*p == 'L') {
+      const int8_t* begin = p + 1;
+      const int8_t* end = begin;
+      while (*end && *end != ';') {
+        ++end;
+      }
+
+      if (forbiddenInternalClass(begin, end, currentClassName)) {
+        return true;
+      }
+
+      p = end;
+    }
+  }
+
+  return false;
+}
+
+void verifyClassNameAllowed(Thread* t,
+                            GcByteArray* name,
+                            GcByteArray* currentClassName)
+{
+  if (classNameForbidden(name, currentClassName)) {
+    throwNew(t, GcVerifyError::Type);
+  }
+}
+
+void verifyDescriptorAllowed(Thread* t,
+                             GcByteArray* spec,
+                             GcByteArray* currentClassName)
+{
+  if (descriptorForbidden(spec, currentClassName)) {
+    throwNew(t, GcVerifyError::Type);
+  }
+}
+
+bool forbiddenClassFileAttribute(GcByteArray* name)
+{
+  return vm::strcmp(reinterpret_cast<const int8_t*>("Module"),
+                    name->body().begin()) == 0
+      || vm::strcmp(reinterpret_cast<const int8_t*>("ModulePackages"),
+                    name->body().begin()) == 0
+      || vm::strcmp(reinterpret_cast<const int8_t*>("ModuleMainClass"),
+                    name->body().begin()) == 0
+      || vm::strcmp(reinterpret_cast<const int8_t*>("NestHost"),
+                    name->body().begin()) == 0
+      || vm::strcmp(reinterpret_cast<const int8_t*>("NestMembers"),
+                    name->body().begin()) == 0
+      || vm::strcmp(reinterpret_cast<const int8_t*>("Record"),
+                    name->body().begin()) == 0
+      || vm::strcmp(reinterpret_cast<const int8_t*>("PermittedSubclasses"),
+                    name->body().begin()) == 0;
+}
+
+void verifyClassFileAttributeAllowed(Thread* t, GcByteArray* name)
+{
+  if (forbiddenClassFileAttribute(name)) {
+    throwNew(t, GcVerifyError::Type);
+  }
+}
+
+void verifyConstantPoolProfile(Thread* t,
+                               GcSingleton* pool,
+                               GcByteArray* currentClassName)
+{
+  PROTECT(t, pool);
+  PROTECT(t, currentClassName);
+
+  for (unsigned i = 0; i < poolSize(t, pool); ++i) {
+    if (singletonIsObject(t, pool, i)) {
+      object value = singletonObject(t, pool, i);
+      if (value == 0) {
+        continue;
+      }
+
+      GcClass* valueClass = objectClass(t, value);
+      if (valueClass == type(t, GcReference::Type)) {
+        GcReference* reference = cast<GcReference>(t, value);
+        verifyClassNameAllowed(t, reference->name(), currentClassName);
+        if (reference->spec()) {
+          verifyDescriptorAllowed(t, reference->spec(), currentClassName);
+        }
+      } else if (valueClass == type(t, GcPair::Type)) {
+        GcPair* nameAndType = cast<GcPair>(t, value);
+        verifyDescriptorAllowed(
+            t, cast<GcByteArray>(t, nameAndType->second()), currentClassName);
+      }
+    }
+  }
+}
+
+bool byteArrayEquals(GcByteArray* value, const char* expected)
+{
+  return vm::strcmp(reinterpret_cast<const int8_t*>(expected),
+                    value->body().begin()) == 0;
+}
+
+bool referenceEquals(GcReference* reference,
+                     unsigned kind,
+                     const char* className,
+                     const char* name,
+                     const char* spec)
+{
+  return reference->class_() != 0
+      && reference->name() != 0
+      && reference->spec() != 0
+      && reference->kind() == kind
+      && byteArrayEquals(reference->class_(), className)
+      && byteArrayEquals(reference->name(), name)
+      && byteArrayEquals(reference->spec(), spec);
+}
+
+void verifyBootstrapPoolIndex(Thread* t, GcSingleton* pool, unsigned index)
+{
+  if (index >= poolSize(t, pool)) {
+    throwNew(t, GcVerifyError::Type);
+  }
+}
+
+GcReference* bootstrapReference(Thread* t,
+                                GcSingleton* pool,
+                                unsigned index)
+{
+  verifyBootstrapPoolIndex(t, pool, index);
+
+  if (!singletonIsObject(t, pool, index)) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  object value = singletonObject(t, pool, index);
+  if (value == 0 || objectClass(t, value) != type(t, GcReference::Type)) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  return cast<GcReference>(t, value);
+}
+
+void verifyBootstrapMethodType(Thread* t,
+                               GcSingleton* pool,
+                               GcByteArray* currentClassName,
+                               unsigned index)
+{
+  verifyBootstrapPoolIndex(t, pool, index);
+
+  if (!singletonIsObject(t, pool, index)) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  object value = singletonObject(t, pool, index);
+  if (value == 0 || objectClass(t, value) != type(t, GcByteArray::Type)) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  verifyDescriptorAllowed(t, cast<GcByteArray>(t, value), currentClassName);
+}
+
+void verifyBootstrapMethodHandle(Thread* t,
+                                 GcSingleton* pool,
+                                 GcByteArray* currentClassName,
+                                 unsigned index)
+{
+  GcReference* reference = bootstrapReference(t, pool, index);
+  if (reference->kind() < REF_invokeVirtual
+      || reference->kind() > REF_invokeInterface
+      || reference->class_() == 0
+      || reference->name() == 0
+      || reference->spec() == 0) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  verifyClassNameAllowed(t, reference->class_(), currentClassName);
+  verifyDescriptorAllowed(t, reference->spec(), currentClassName);
+}
+
+unsigned bootstrapInt(Thread* t, GcSingleton* pool, unsigned index)
+{
+  verifyBootstrapPoolIndex(t, pool, index);
+  if (singletonIsObject(t, pool, index)) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  return singletonValue(t, pool, index);
+}
+
+void verifyBootstrapClass(Thread* t,
+                          GcSingleton* pool,
+                          GcByteArray* currentClassName,
+                          unsigned index)
+{
+  GcReference* reference = bootstrapReference(t, pool, index);
+  if (reference->kind() != 0 || reference->class_() != 0
+      || reference->spec() != 0) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  verifyClassNameAllowed(t, reference->name(), currentClassName);
+}
+
+void verifyLambdaMetafactoryArguments(Thread* t,
+                                      GcSingleton* pool,
+                                      GcByteArray* currentClassName,
+                                      GcCharArray* element)
+{
+  if (element->length() != 4) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  verifyBootstrapMethodType(t, pool, currentClassName, element->body()[1]);
+  verifyBootstrapMethodHandle(t, pool, currentClassName, element->body()[2]);
+  verifyBootstrapMethodType(t, pool, currentClassName, element->body()[3]);
+}
+
+void verifyAltMetafactoryArguments(Thread* t,
+                                   GcSingleton* pool,
+                                   GcByteArray* currentClassName,
+                                   GcCharArray* element)
+{
+  const unsigned FlagMarkers = 2;
+  const unsigned FlagBridges = 4;
+  const unsigned AdmittedFlags = FlagMarkers | FlagBridges;
+
+  if (element->length() < 5) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  verifyBootstrapMethodType(t, pool, currentClassName, element->body()[1]);
+  verifyBootstrapMethodHandle(t, pool, currentClassName, element->body()[2]);
+  verifyBootstrapMethodType(t, pool, currentClassName, element->body()[3]);
+
+  unsigned flags = bootstrapInt(t, pool, element->body()[4]);
+  if (flags & ~AdmittedFlags) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  unsigned argument = 4;
+
+  if (flags & FlagMarkers) {
+    if (argument + 1 >= element->length()) {
+      throwNew(t, GcVerifyError::Type);
+    }
+
+    unsigned markerCount = bootstrapInt(t, pool, element->body()[argument + 1]);
+    ++argument;
+
+    if (argument + markerCount >= element->length()) {
+      throwNew(t, GcVerifyError::Type);
+    }
+
+    for (unsigned i = 0; i < markerCount; ++i) {
+      verifyBootstrapClass(
+          t, pool, currentClassName, element->body()[argument + 1]);
+      ++argument;
+    }
+  }
+
+  if (flags & FlagBridges) {
+    if (argument + 1 >= element->length()) {
+      throwNew(t, GcVerifyError::Type);
+    }
+
+    unsigned bridgeCount = bootstrapInt(t, pool, element->body()[argument + 1]);
+    ++argument;
+
+    if (argument + bridgeCount >= element->length()) {
+      throwNew(t, GcVerifyError::Type);
+    }
+
+    for (unsigned i = 0; i < bridgeCount; ++i) {
+      verifyBootstrapMethodType(
+          t, pool, currentClassName, element->body()[argument + 1]);
+      ++argument;
+    }
+  }
+
+  if (argument + 1 != element->length()) {
+    throwNew(t, GcVerifyError::Type);
+  }
+}
+
+void verifyBootstrapMethodProfile(Thread* t,
+                                  GcSingleton* pool,
+                                  GcByteArray* currentClassName,
+                                  GcCharArray* element)
+{
+  PROTECT(t, pool);
+  PROTECT(t, currentClassName);
+  PROTECT(t, element);
+
+  if (element->length() == 0) {
+    throwNew(t, GcVerifyError::Type);
+  }
+
+  GcReference* bootstrap = bootstrapReference(t, pool, element->body()[0]);
+  PROTECT(t, bootstrap);
+
+  const char* metafactorySpec
+      = "(Ljava/lang/invoke/MethodHandles$Lookup;"
+        "Ljava/lang/String;"
+        "Ljava/lang/invoke/MethodType;"
+        "Ljava/lang/invoke/MethodType;"
+        "Ljava/lang/invoke/MethodHandle;"
+        "Ljava/lang/invoke/MethodType;)"
+        "Ljava/lang/invoke/CallSite;";
+  const char* altMetafactorySpec
+      = "(Ljava/lang/invoke/MethodHandles$Lookup;"
+        "Ljava/lang/String;"
+        "Ljava/lang/invoke/MethodType;"
+        "[Ljava/lang/Object;)"
+        "Ljava/lang/invoke/CallSite;";
+
+  if (referenceEquals(bootstrap,
+                      REF_invokeStatic,
+                      "java/lang/invoke/LambdaMetafactory",
+                      "metafactory",
+                      metafactorySpec)) {
+    verifyLambdaMetafactoryArguments(t, pool, currentClassName, element);
+  } else if (referenceEquals(bootstrap,
+                             REF_invokeStatic,
+                             "java/lang/invoke/LambdaMetafactory",
+                             "altMetafactory",
+                             altMetafactorySpec)) {
+    verifyAltMetafactoryArguments(t, pool, currentClassName, element);
+  } else {
+    throwNew(t, GcVerifyError::Type);
+  }
+}
+
+void verifyNoDuplicateMethod(Thread* t,
+                             GcArray* methodTable,
+                             unsigned methodCount,
+                             GcByteArray* name,
+                             GcByteArray* spec)
+{
+  for (unsigned i = 0; i < methodCount; ++i) {
+    GcMethod* existing = cast<GcMethod>(t, methodTable->body()[i]);
+    if (vm::strcmp(existing->name()->body().begin(), name->body().begin()) == 0
+        && vm::strcmp(existing->spec()->body().begin(), spec->body().begin())
+               == 0) {
+      throwNew(t, GcClassFormatError::Type);
+    }
+  }
+}
+
+bool methodNameEquals(GcByteArray* name, const char* expected)
+{
+  return byteArrayEquals(name, expected);
+}
+
+void verifyClassInitializerProfile(Thread* t,
+                                   unsigned flags,
+                                   GcByteArray* spec,
+                                   GcCode* code)
+{
+  if (!byteArrayEquals(spec, "()V")
+      || (flags & ACC_STATIC) == 0
+      || (flags & (ACC_SYNCHRONIZED | ACC_NATIVE | ACC_ABSTRACT)) != 0
+      || code == 0) {
+    throwNew(t, GcClassFormatError::Type);
+  }
+}
+
+void verifyConstructorProfile(Thread* t, unsigned flags, GcByteArray* spec)
+{
+  if ((flags & ACC_STATIC) || spec->body()[0] != '(') {
+    throwNew(t, GcClassFormatError::Type);
+  }
+
+  const int8_t* p = spec->body().begin();
+  while (*p && *p != ')') {
+    ++p;
+  }
+
+  if (*p != ')' || p[1] != 'V' || p[2] != 0) {
+    throwNew(t, GcClassFormatError::Type);
+  }
+}
+
 unsigned parsePoolEntry(Thread* t,
                         Stream& s,
                         uint32_t* index,
@@ -1344,15 +1866,18 @@ void parseFieldTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
 
       addendum = 0;
 
-      unsigned code = fieldCode(
-          t,
-          cast<GcByteArray>(t, singletonObject(t, pool, spec - 1))->body()[0]);
+      GcByteArray* specBytes
+          = cast<GcByteArray>(t, singletonObject(t, pool, spec - 1));
+      verifyDescriptorAllowed(t, specBytes, class_->name());
+
+      unsigned code = fieldCode(t, specBytes->body()[0]);
 
       unsigned attributeCount = s.read2();
       for (unsigned j = 0; j < attributeCount; ++j) {
         GcByteArray* name
             = cast<GcByteArray>(t, singletonObject(t, pool, s.read2() - 1));
         unsigned length = s.read4();
+        verifyClassFileAttributeAllowed(t, name);
 
         if (vm::strcmp(reinterpret_cast<const int8_t*>("ConstantValue"),
                        name->body().begin()) == 0) {
@@ -2463,6 +2988,13 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
       unsigned flags = s.read2();
       unsigned name = s.read2();
       unsigned spec = s.read2();
+      GcByteArray* nameBytes
+          = cast<GcByteArray>(t, singletonObject(t, pool, name - 1));
+      GcByteArray* specBytes
+          = cast<GcByteArray>(t, singletonObject(t, pool, spec - 1));
+
+      verifyNoDuplicateMethod(t, methodTable, i, nameBytes, specBytes);
+      verifyDescriptorAllowed(t, specBytes, class_->name());
 
       if (DebugClassReader) {
         fprintf(stderr,
@@ -2470,12 +3002,8 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
                 flags,
                 name,
                 spec,
-                cast<GcByteArray>(t, singletonObject(t, pool, name - 1))
-                    ->body()
-                    .begin(),
-                cast<GcByteArray>(t, singletonObject(t, pool, spec - 1))
-                    ->body()
-                    .begin());
+                nameBytes->body().begin(),
+                specBytes->body().begin());
       }
 
       addendum = 0;
@@ -2486,6 +3014,7 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
         GcByteArray* attributeName
             = cast<GcByteArray>(t, singletonObject(t, pool, s.read2() - 1));
         unsigned length = s.read4();
+        verifyClassFileAttributeAllowed(t, attributeName);
 
         if (vm::strcmp(reinterpret_cast<const int8_t*>("Code"),
                        attributeName->body().begin()) == 0) {
@@ -2547,9 +3076,7 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
       }
 
       const char* specString = reinterpret_cast<const char*>(
-          cast<GcByteArray>(t, singletonObject(t, pool, spec - 1))
-              ->body()
-              .begin());
+          specBytes->body().begin());
 
       unsigned parameterCount;
       unsigned parameterFootprint;
@@ -2569,8 +3096,8 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
           parameterFootprint,
           flags,
           0,  // offset
-          cast<GcByteArray>(t, singletonObject(t, pool, name - 1)),
-          cast<GcByteArray>(t, singletonObject(t, pool, spec - 1)),
+          nameBytes,
+          specBytes,
           addendum,
           class_,
           code);
@@ -2606,12 +3133,12 @@ void parseMethodTable(Thread* t, Stream& s, GcClass* class_, GcSingleton* pool)
       } else {
         method->offset() = i;
 
-        if (vm::strcmp(reinterpret_cast<const int8_t*>("<clinit>"),
-                       method->name()->body().begin()) == 0) {
+        if (methodNameEquals(method->name(), "<clinit>")) {
+          verifyClassInitializerProfile(t, flags, specBytes, code);
           method->vmFlags() |= ClassInitFlag;
           class_->vmFlags() |= NeedInitFlag;
-        } else if (vm::strcmp(reinterpret_cast<const int8_t*>("<init>"),
-                              method->name()->body().begin()) == 0) {
+        } else if (methodNameEquals(method->name(), "<init>")) {
+          verifyConstructorProfile(t, flags, specBytes);
           method->vmFlags() |= ConstructorFlag;
         }
       }
@@ -2766,11 +3293,14 @@ void parseAttributeTable(Thread* t,
   PROTECT(t, pool);
   PROTECT(t, invocations);
 
+  bool sawBootstrapMethods = false;
+
   unsigned attributeCount = s.read2();
   for (unsigned j = 0; j < attributeCount; ++j) {
     GcByteArray* name
         = cast<GcByteArray>(t, singletonObject(t, pool, s.read2() - 1));
     unsigned length = s.read4();
+    verifyClassFileAttributeAllowed(t, name);
 
     if (vm::strcmp(reinterpret_cast<const int8_t*>("SourceFile"),
                    name->body().begin()) == 0) {
@@ -2821,6 +3351,11 @@ void parseAttributeTable(Thread* t,
       addendum->setAnnotationTable(t, body);
     } else if (vm::strcmp(reinterpret_cast<const int8_t*>("BootstrapMethods"),
                           name->body().begin()) == 0) {
+      if (sawBootstrapMethods) {
+        throwNew(t, GcVerifyError::Type);
+      }
+      sawBootstrapMethods = true;
+
       unsigned count = s.read2();
       GcArray* array = makeArray(t, count * 2);
       PROTECT(t, array);
@@ -2833,12 +3368,18 @@ void parseAttributeTable(Thread* t,
         for (unsigned ai = 0; ai < argumentCount; ++ai) {
           element->body()[1 + ai] = s.read2() - 1;
         }
+        verifyBootstrapMethodProfile(t, pool, class_->name(), element);
         array->setBodyElement(t, i, element);
       }
 
       for (GcPair* p = cast<GcPair>(t, invocations->front()); p;
            p = cast<GcPair>(t, p->second())) {
-        cast<GcInvocation>(t, p->first())->setBootstrapMethodTable(t, array);
+        GcInvocation* invocation = cast<GcInvocation>(t, p->first());
+        if (invocation->bootstrap() >= count) {
+          throwNew(t, GcVerifyError::Type);
+        }
+
+        invocation->setBootstrapMethodTable(t, array);
       }
     } else if (vm::strcmp(reinterpret_cast<const int8_t*>("EnclosingMethod"),
                           name->body().begin()) == 0) {
@@ -2860,6 +3401,10 @@ void parseAttributeTable(Thread* t,
     } else {
       s.skip(length);
     }
+  }
+
+  if (!sawBootstrapMethods && invocations->front()) {
+    throwNew(t, GcVerifyError::Type);
   }
 }
 
@@ -3915,6 +4460,21 @@ void Thread::exit()
   }
 }
 
+namespace {
+
+void clearIdentityHashState(Thread* t)
+{
+  for (Thread::IdentityHashEntry* e = t->identityHashes; e;) {
+    Thread::IdentityHashEntry* next = e->next;
+    free(e);
+    e = next;
+  }
+  t->identityHashes = 0;
+  t->identityHashCounter = 0;
+}
+
+}  // namespace
+
 void Thread::dispose()
 {
   if (lock) {
@@ -3925,17 +4485,30 @@ void Thread::dispose()
     systemThread->dispose();
   }
 
-  for (IdentityHashEntry* e = identityHashes; e;) {
-    IdentityHashEntry* next = e->next;
-    free(e);
-    e = next;
-  }
+  clearIdentityHashState(this);
 
   --m->threadCount;
 
   m->heap->free(defaultHeap, ThreadHeapSizeInBytes);
 
   m->processor->dispose(this);
+}
+
+void beginContractTransaction(Thread* t, uint64_t gasLimit)
+{
+  clearIdentityHashState(t);
+  t->gasCounter = gasLimit;
+}
+
+void endContractTransaction(Thread* t)
+{
+  clearIdentityHashState(t);
+  t->gasCounter = UINT64_MAX;
+}
+
+uint64_t contractRemainingGas(Thread* t)
+{
+  return t->gasCounter;
 }
 
 void shutDown(Thread* t)
@@ -4742,18 +5315,6 @@ GcClass* parseClass(Thread* t,
   // the bytecode specification this verifier covers.
   // Minor version 65535 (0xFFFF) is used by Java 21+ "preview" features;
   // reject unconditionally.
-  // TODO(verifier-forbidden-attrs): After this version gate, add attribute
-  //   scanning in parseMethodTable/parseFieldTable to reject:
-  //   - BootstrapMethods entries outside the admitted invokedynamic surface
-  //   - Module, ModulePackages, ModuleMainClass attributes
-  //   - NestHost, NestMembers (Java 11+)
-  //   - Record (Java 16+)
-  //   - PermittedSubclasses (Java 17+)
-  // TODO(verifier-forbidden-refs): Scan the constant pool for references to
-  //   classes in forbidden packages (java.net.*, java.nio.channels.*,
-  //   java.lang.reflect outside the admitted surface, java.lang.Runtime,
-  //   java.lang.Thread) and throw a deterministic VerifyError before
-  //   class initialization.
   if (minorVer == 0xFFFF || majorVer > 52 || majorVer < 45) {
     throwNew(t, GcUnsupportedClassVersionError::Type);
   }
@@ -4766,6 +5327,9 @@ GcClass* parseClass(Thread* t,
 
   unsigned flags = s.read2();
   unsigned name = s.read2();
+  GcByteArray* className
+      = cast<GcReference>(t, singletonObject(t, pool, name - 1))->name();
+  verifyConstantPoolProfile(t, pool, className);
 
   GcClass* class_ = (GcClass*)makeClass(
       t,
@@ -4777,7 +5341,7 @@ GcClass* parseClass(Thread* t,
       0,  // array element class
       0,  // runtime data index
       0,  // object mask
-      cast<GcReference>(t, singletonObject(t, pool, name - 1))->name(),
+      className,
       0,  // source file
       0,  // super
       0,  // interfaces
@@ -6425,6 +6989,41 @@ void noop()
 #include "type-constructors.cpp"
 
 }  // namespace vm
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction(
+    AvataThread* thread,
+    uint64_t gas_limit)
+{
+  if (thread == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  vm::beginContractTransaction(reinterpret_cast<Thread*>(thread), gas_limit);
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_end_contract_transaction(
+    AvataThread* thread)
+{
+  if (thread == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  vm::endContractTransaction(reinterpret_cast<Thread*>(thread));
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_contract_remaining_gas(
+    AvataThread* thread,
+    uint64_t* remaining_gas)
+{
+  if (thread == 0 || remaining_gas == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  *remaining_gas = vm::contractRemainingGas(reinterpret_cast<Thread*>(thread));
+  return AVATA_CONTRACT_OK;
+}
 
 // for debugging
 AVATA_EXPORT void vmfPrintTrace(Thread* t, FILE* out)

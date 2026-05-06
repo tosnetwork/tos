@@ -157,76 +157,6 @@ public class InvokeDynamic {
     }
   }
 
-  private static class DynamicObservable {
-    private Runnable listener;
-    private boolean started;
-    private boolean registered;
-
-    synchronized void waitForStarted() {
-      while (! started) {
-        try {
-          wait();
-        } catch (InterruptedException e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
-
-    synchronized void awaitRegistration() {
-      started = true;
-      notifyAll();
-
-      while (! registered) {
-        try {
-          wait();
-        } catch (InterruptedException e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
-
-    synchronized void register(Runnable listener) {
-      this.listener = listener;
-      registered = true;
-      notifyAll();
-    }
-
-    void notifyListener() {
-      listener.run();
-    }
-  }
-
-  private static class DynamicListener {
-    static boolean invoked;
-    static final Runnable EVENT_HANDLER = DynamicListener::eventHandler;
-
-    static void eventHandler() {
-      DynamicStaticTarget.someOtherStaticMethod();
-    }
-  }
-
-  private static class DynamicStaticTarget {
-    private static final Runnable someLambda = () -> {
-    };
-
-    static void someOtherStaticMethod() {
-      DynamicListener.invoked = true;
-    }
-  }
-
-  private static class DelayedDynamicEvent implements Runnable {
-    private final DynamicObservable observable;
-
-    DelayedDynamicEvent(DynamicObservable observable) {
-      this.observable = observable;
-    }
-
-    public void run() {
-      observable.awaitRegistration();
-      observable.notifyListener();
-    }
-  }
-
   private void test() {
     { int c = 2;
       Operation op = (a, b) -> ((a + b) * c) - foo;
@@ -330,25 +260,6 @@ public class InvokeDynamic {
       expect(MyFunction.identity()
              .andThen(MyFunction.identity())
              .apply("* Test").equals("* Test"));
-
-      // Thread.start() throws UnsupportedOperationException in the Avata
-      // consensus profile (thread creation is host-observing). Skip the
-      // thread-based DynamicObservable test in that case.
-      try {
-        DynamicObservable observable = new DynamicObservable();
-        Thread delayed = new Thread(new DelayedDynamicEvent(observable));
-        delayed.start();
-        observable.waitForStarted();
-        observable.register(DynamicListener.EVENT_HANDLER);
-        try {
-          delayed.join();
-        } catch (InterruptedException e) {
-          throw new RuntimeException(e);
-        }
-        expect(DynamicListener.invoked);
-      } catch (UnsupportedOperationException e) {
-        // Thread.start() not admitted in consensus profile — skip
-      }
     }
   }
 }

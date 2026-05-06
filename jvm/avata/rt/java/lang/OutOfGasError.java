@@ -10,9 +10,10 @@
    gas_limit field of WorkchainComputeInput before contract execution begins.
    Gas costs per opcode are loaded from ConfigParam 85 (gas-table.cpp).
 
-   It extends Error (not RuntimeException) so that contract code cannot
-   catch and ignore it.  Validators treat an OutOfGasError as an abrupt
-   termination: gas_used equals gas_limit, no state changes are committed. */
+   It extends Error (not RuntimeException) so normal application-level
+   Exception handlers do not catch it.  Validators treat an OutOfGasError as
+   an abrupt termination: gas_used equals gas_limit, no state changes are
+   committed. */
 package java.lang;
 
 public final class OutOfGasError extends Error {

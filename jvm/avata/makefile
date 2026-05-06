@@ -845,6 +845,8 @@ test-sources = \
 	$(test)/ArrayDequeTest.java \
 	$(test)/ArraysTest.java \
 	$(test)/Collections.java \
+	$(test)/ContractLibraryPrimitives.java \
+	$(test)/ContractRuntimePrimitives.java \
 	$(test)/DequeHelper.java \
 	$(test)/DivideByZero.java \
 	$(test)/Enums.java \
@@ -867,7 +869,8 @@ test-sources = \
 	$(test)/Strings.java \
 	$(test)/Subroutine.java \
 	$(test)/Switch.java \
-	$(test)/Tree.java
+	$(test)/Tree.java \
+	$(test)/VerifierProfile.java
 
 ifeq (7,$(java-version))
 	test-sources := $(subst $(test)/InvokeDynamic.java,,$(test-sources))
@@ -1168,7 +1171,7 @@ executable-objects = $(vm-objects) $(classpath-objects) $(driver-object) \
 	$(vm-heapwalk-objects) $(boot-object) $(vm-classpath-objects)
 
 unittest-executable-objects = $(unittest-objects) $(vm-objects) \
-	$(vm-heapwalk-objects)
+	$(classpath-objects) $(vm-heapwalk-objects)
 
 # apparently, make does poorly with ifs inside of defines, and indented defines.
 # I suggest re-indenting the following before making edits (and unindenting afterwards):

@@ -171,10 +171,11 @@ public abstract class System {
 
   // -----------------------------------------------------------------------
   // GC / finalization — made no-ops; running GC is deterministic in Avata
-  // (the heap is heap-isolated per execution) so we delegate to the VM.
+  // (the heap is heap-isolated per execution) and contract code must not
+  // observe collection timing.
   // -----------------------------------------------------------------------
   public static void gc() {
-    Runtime.getRuntime().gc();
+    // no-op
   }
 
   public static void runFinalization() {

@@ -244,6 +244,8 @@
 
 (type outOfMemoryError java/lang/OutOfMemoryError)
 
+(type outOfGasError java/lang/OutOfGasError)
+
 (type stackOverflowError java/lang/StackOverflowError)
 
 (type linkageError java/lang/LinkageError)
@@ -263,6 +265,8 @@
 (type exceptionInInitializerError java/lang/ExceptionInInitializerError)
 
 (type classFormatError java/lang/ClassFormatError)
+
+(type verifyError java/lang/VerifyError)
 
 (type unsupportedClassVersionError java/lang/UnsupportedClassVersionError)
 

@@ -69,9 +69,9 @@ The following paths are removed or replaced with deterministic stubs:
 
 - Wall-clock time (`gettimeofday`, `clock_gettime`, `System.currentTimeMillis`,
   `System.nanoTime`): return zero; contracts must use
-  `tos.contract.Context.blockTimestamp()` instead.
+  `Context.blockTimestamp()` instead.
 - Entropy (`/dev/urandom`, `SecureRandom`): removed; contracts use
-  `tos.contract.Context.randSeed()`.
+  `Context.randSeed()`.
 - Process and environment APIs (`getenv`, `System.getenv`,
   `System.getProperties`, `Runtime.exec`): throw `ContractViolationError`.
 - File and network IO where backed by validator-local resources: removed from
@@ -81,9 +81,10 @@ The following paths are removed or replaced with deterministic stubs:
 
 A per-transaction gas counter is wired into the interpreter dispatch loop in
 `interpret.cpp`. When the counter reaches zero, the interpreter throws
-`tos.lang.OutOfGasError` deterministically without executing any further
-bytecode. The counter is initialized by `jvm/core/compute-phase.cpp` from the
-`gas_limit` field of `WorkchainComputeInput` before each transaction.
+`java.lang.OutOfGasError` deterministically without executing any further
+bytecode. The workchain adapter initializes the counter by calling
+`avata_begin_contract_transaction()` from `include/avata/contract.h` with the
+transaction gas limit before contract bytecode starts.
 
 Gas costs per opcode are loaded from the gas table in `jvm/core/gas-table.cpp`,
 which reads ConfigParam 85 at startup. Changing the gas table is a consensus
@@ -167,15 +168,13 @@ The current `rt.jar` intentionally contains only the contract profile:
   `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, `MutableCallSite`,
   `VolatileCallSite`, `SerializedLambda`, or `MethodHandleInfo`.
 
-Language-level classes remain under `java.lang` (`Object`, `String`, `Math`,
-`System`, errors). TOS domain APIs live under `tos.*`:
+Language-level classes and Avata contract runtime helpers remain under
+`java.lang` (`Object`, `String`, `Math`, `System`, errors, storage, ABI, token
+interfaces):
 
 | Package | Contents |
 |---|---|
-| `tos.contract` | `ContractEntry` annotation, `Context` (block metadata) |
-| `tos.storage` | `PersistentMap`, `PersistentList` (cell-tree backed) |
-| `tos.emit` | `EventLog` (side-effect log entries) |
-| `tos.lang` | `OutOfGasError`, `ContractViolationError` |
+| `java.lang` | Core Java classes plus Avata contract APIs such as `Storage`, `Mapping`, `ABI`, `OutOfGasError`, and `ContractViolationError` |
 
 Contract classes are compiled against this class library, not against a standard
 OpenJDK distribution. The bootstrap classpath used by the TOS contract compiler
