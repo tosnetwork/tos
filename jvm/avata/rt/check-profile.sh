@@ -1,20 +1,29 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-  echo "usage: $0 <rt.jar> [jar-command]" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 3 ]; then
+  echo "usage: $0 <rt.jar|api.jar> [jar-command] [rt|api]" >&2
   exit 2
 fi
 
 rt_jar=$1
 jar_cmd=${2:-jar}
+profile=${3:-rt}
+
+case "$profile" in
+  rt|api) ;;
+  *)
+    echo "usage: $0 <rt.jar|api.jar> [jar-command] [rt|api]" >&2
+    exit 2
+    ;;
+esac
 
 if [ ! -f "$rt_jar" ]; then
-  echo "rt profile check failed: missing $rt_jar" >&2
+  echo "$profile profile check failed: missing $rt_jar" >&2
   exit 2
 fi
 
-bad_entries=$("$jar_cmd" tf "$rt_jar" | awk '
+bad_entries=$("$jar_cmd" tf "$rt_jar" | awk -v profile="$profile" '
 function reject(reason) {
   print $0 " (" reason ")";
   failed = 1;
@@ -67,22 +76,22 @@ $0 == "java/lang/NoSuchFieldException.class" { reject("forbidden reflection exce
 $0 == "java/lang/NoSuchMethodException.class" { reject("forbidden reflection exception API"); next; }
 $0 == "java/lang/Package.class" { reject("forbidden package metadata API"); next; }
 $0 == "sun/misc/Unsafe.class" { reject("forbidden unsafe API"); next; }
-$0 == "avata/Machine.class" { reject("forbidden host VM API"); next; }
-$0 == "avata/Traces.class" { reject("forbidden host tracing API"); next; }
-$0 == "avata/VMClassLoader.class" { reject("stale VM class-loader shell"); next; }
-$0 == "avata/SystemClassLoader.class" { reject("stale VM class-loader shell"); next; }
-$0 == "avata/VMThread.class" { reject("stale VM thread shell"); next; }
-$0 == "avata/VMThreadGroup.class" { reject("stale VM thread-group shell"); next; }
-$0 == "avata/Assembler.class" { reject("forbidden class-file generation helper"); next; }
-$0 ~ /^avata\/Assembler\$/ { reject("forbidden class-file generation helper"); next; }
-$0 == "avata/ConstantPool.class" { reject("forbidden class-file generation helper"); next; }
-$0 ~ /^avata\/ConstantPool\$/ { reject("forbidden class-file generation helper"); next; }
-$0 == "avata/Stream.class" { reject("forbidden binary class-file stream helper"); next; }
-$0 == "avata/Callback.class" { reject("forbidden continuation API"); next; }
-$0 == "avata/Function.class" { reject("forbidden continuation API"); next; }
-$0 == "avata/Continuations.class" { reject("forbidden continuation API"); next; }
-$0 ~ /^avata\/Continuations\$/ { reject("forbidden continuation API"); next; }
-$0 == "avata/IncompatibleContinuationException.class" { reject("forbidden continuation API"); next; }
+$0 == "java/internal/Machine.class" { reject("forbidden host VM API"); next; }
+$0 == "java/internal/Traces.class" { reject("forbidden host tracing API"); next; }
+$0 == "java/internal/VMClassLoader.class" { reject("stale VM class-loader shell"); next; }
+$0 == "java/internal/SystemClassLoader.class" { reject("stale VM class-loader shell"); next; }
+$0 == "java/internal/VMThread.class" { reject("stale VM thread shell"); next; }
+$0 == "java/internal/VMThreadGroup.class" { reject("stale VM thread-group shell"); next; }
+$0 == "java/internal/Assembler.class" { reject("forbidden class-file generation helper"); next; }
+$0 ~ /^java\/internal\/Assembler\$/ { reject("forbidden class-file generation helper"); next; }
+$0 == "java/internal/ConstantPool.class" { reject("forbidden class-file generation helper"); next; }
+$0 ~ /^java\/internal\/ConstantPool\$/ { reject("forbidden class-file generation helper"); next; }
+$0 == "java/internal/Stream.class" { reject("forbidden binary class-file stream helper"); next; }
+$0 == "java/internal/Callback.class" { reject("forbidden continuation API"); next; }
+$0 == "java/internal/Function.class" { reject("forbidden continuation API"); next; }
+$0 == "java/internal/Continuations.class" { reject("forbidden continuation API"); next; }
+$0 ~ /^java\/internal\/Continuations\$/ { reject("forbidden continuation API"); next; }
+$0 == "java/internal/IncompatibleContinuationException.class" { reject("forbidden continuation API"); next; }
 $0 == "java/util/HashMap.class" { reject("forbidden hash collection"); next; }
 $0 == "java/util/HashSet.class" { reject("forbidden hash collection"); next; }
 $0 == "java/util/Hashtable.class" { reject("forbidden hash collection"); next; }
@@ -109,7 +118,16 @@ $0 ~ /^sun\// {
   next;
 }
 
-$0 ~ /^avata\// { next; }
+$0 ~ /^avata\// {
+  reject("stale avata Java package");
+  next;
+}
+$0 ~ /^java\/internal\// {
+  if (profile == "api") {
+    reject("VM-private java.internal implementation class in api.jar");
+  }
+  next;
+}
 $0 ~ /^java\/lang\// { next; }
 $0 ~ /^java\/io\// { next; }
 $0 ~ /^java\/util\// { next; }
@@ -123,9 +141,9 @@ END {
 ' || true)
 
 if [ -n "$bad_entries" ]; then
-  echo "rt profile check failed for $rt_jar:" >&2
+  echo "$profile profile check failed for $rt_jar:" >&2
   echo "$bad_entries" >&2
   exit 1
 fi
 
-echo "rt profile check: success"
+echo "$profile profile check: success"

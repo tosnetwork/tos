@@ -10,7 +10,7 @@
 
 package java.io;
 
-import avata.Utf8;
+import java.internal.Utf8;
 
 public class OutputStreamWriter extends Writer {
   private final OutputStream out;

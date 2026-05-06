@@ -637,7 +637,7 @@ public class Arrays {
 
   public static <T> T[] copyOf(T[] array, int newLength) {
     Class<?> clazz = array.getClass().getComponentType();
-    T[] result = (T[])avata.VMArray.newInstance(clazz, newLength);
+    T[] result = (T[])java.internal.VMArray.newInstance(clazz, newLength);
     int length = array.length > newLength ? newLength : array.length;
     System.arraycopy(array, 0, result, 0, length);
     return result;
@@ -647,7 +647,7 @@ public class Arrays {
     Class<? extends T[]> newType)
   {
     T[] result
-      = (T[])avata.VMArray.newInstance(newType.getComponentType(), newLength);
+      = (T[])java.internal.VMArray.newInstance(newType.getComponentType(), newLength);
     int length = array.length > newLength ? newLength : array.length;
     System.arraycopy(array, 0, result, 0, length);
     return result;
@@ -817,7 +817,7 @@ public class Arrays {
 
   public static <T> T[] copyOfRange(T[] original, int from, int to) {
     Class<?> clazz = original.getClass().getComponentType();
-    T[] result = (T[]) avata.VMArray.newInstance(clazz, to - from);
+    T[] result = (T[]) java.internal.VMArray.newInstance(clazz, to - from);
     int len = Math.min(to, original.length) - from;
     if (len > 0) System.arraycopy(original, from, result, 0, len);
     return result;

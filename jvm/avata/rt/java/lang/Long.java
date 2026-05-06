@@ -21,7 +21,7 @@ public final class Long extends Number implements Comparable<Long> {
                  'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
                  'w', 'x', 'y', 'z' };
 
-  public static final Class TYPE = avata.Classes.forCanonicalName("J");
+  public static final Class TYPE = java.internal.Classes.forCanonicalName("J");
 
   private final long value;
 

@@ -7,7 +7,7 @@
 
    There is NO WARRANTY; see license.txt for details. */
 
-package avata;
+package java.internal;
 
 /**
  * VM-internal fixed class namespace.

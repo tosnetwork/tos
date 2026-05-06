@@ -13,14 +13,14 @@ public final class Memory {
   private Memory() { }
 
   public static long used() {
-    return avata.Memory.used();
+    return java.internal.Memory.used();
   }
 
   public static long remaining() {
-    return avata.Memory.remaining();
+    return java.internal.Memory.remaining();
   }
 
   public static long limit() {
-    return avata.Memory.limit();
+    return java.internal.Memory.limit();
   }
 }

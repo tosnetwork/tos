@@ -29,10 +29,10 @@ public class Object {
   }
 
   public final Class<? extends Object> getClass() {
-    return avata.SystemClassSpace.getClass(getVMClass());
+    return java.internal.SystemClassSpace.getClass(getVMClass());
   }
 
-  native avata.VMClass getVMClass();
+  native java.internal.VMClass getVMClass();
 
   public native int hashCode();
 

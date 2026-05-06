@@ -268,7 +268,7 @@ public class ArrayDeque<T> extends AbstractDeque<T>
 
   @Override
   public <S> S[] toArray(S[] array) {
-    return avata.Data.toArray(this, array);
+    return java.internal.Data.toArray(this, array);
   }
 
   public Iterator<T> iterator() {

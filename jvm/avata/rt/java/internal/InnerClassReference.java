@@ -8,20 +8,11 @@
    There is NO WARRANTY for this software.  See license.txt for
    details. */
 
-package avata;
+package java.internal;
 
-public class VMMethod {
-  public byte vmFlags;
-  public byte returnCode;
-  public byte parameterCount;
-  public byte parameterFootprint;
-  public short flags;
-  public short offset;
-  public int nativeID;
-  public int runtimeDataIndex;
+public class InnerClassReference {
+  public byte[] inner;
+  public byte[] outer;
   public byte[] name;
-  public byte[] spec;
-  public MethodAddendum addendum;
-  public VMClass class_;
-  public Code code;
+  public short flags;
 }

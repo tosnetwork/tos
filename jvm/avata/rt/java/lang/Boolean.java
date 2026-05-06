@@ -11,7 +11,7 @@
 package java.lang;
 
 public final class Boolean implements Comparable<Boolean> {
-  public static final Class TYPE = avata.Classes.forCanonicalName("Z");
+  public static final Class TYPE = java.internal.Classes.forCanonicalName("Z");
 
   public static final Boolean FALSE = new Boolean(false);
   public static final Boolean TRUE = new Boolean(true);

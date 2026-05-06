@@ -38,7 +38,7 @@ public class TreeMap<K,V> implements SortedMap<K,V> {
   }
 
   public String toString() {
-    return avata.Data.toString(this);
+    return java.internal.Data.toString(this);
   }
 
   private int compareKeys(K a, K b) {
@@ -235,7 +235,7 @@ public class TreeMap<K,V> implements SortedMap<K,V> {
     }
 
     public <T> T[] toArray(T[] array) {
-      return avata.Data.toArray(this, array);      
+      return java.internal.Data.toArray(this, array);
     }
 
     public void clear() {
@@ -243,7 +243,7 @@ public class TreeMap<K,V> implements SortedMap<K,V> {
     }
 
     public Iterator<K> iterator() {
-      return new avata.Data.KeyIterator(set.iterator());
+      return new java.internal.Data.KeyIterator(set.iterator());
     }
   }
 
@@ -317,7 +317,7 @@ public class TreeMap<K,V> implements SortedMap<K,V> {
     }
 
     public <T> T[] toArray(T[] array) {
-      return avata.Data.toArray(this, array);      
+      return java.internal.Data.toArray(this, array);
     }
 
     public void clear() {
@@ -325,7 +325,7 @@ public class TreeMap<K,V> implements SortedMap<K,V> {
     }
 
     public Iterator<V> iterator() {
-      return new avata.Data.ValueIterator(set.iterator());
+      return new java.internal.Data.ValueIterator(set.iterator());
     }
   }
 
@@ -501,7 +501,7 @@ public class TreeMap<K,V> implements SortedMap<K,V> {
     }
 
     public String toString() {
-      return avata.Data.toString(this);
+      return java.internal.Data.toString(this);
     }
 
     private class RangeEntrySet extends AbstractSet<Entry<K,V>> {
@@ -632,7 +632,7 @@ public class TreeMap<K,V> implements SortedMap<K,V> {
       }
 
       public Iterator<K> iterator() {
-        return new avata.Data.KeyIterator(RangeMap.this.entrySet().iterator());
+        return new java.internal.Data.KeyIterator(RangeMap.this.entrySet().iterator());
       }
     }
 
@@ -666,7 +666,7 @@ public class TreeMap<K,V> implements SortedMap<K,V> {
       }
 
       public Iterator<V> iterator() {
-        return new avata.Data.ValueIterator(RangeMap.this.entrySet().iterator());
+        return new java.internal.Data.ValueIterator(RangeMap.this.entrySet().iterator());
       }
     }
   }

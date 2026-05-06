@@ -151,8 +151,8 @@ Status legend: `✅` completed, unchecked items are still open.
     `Java_java_lang_System_currentTimeMillis` JNI body returns deterministic
     zero if reached by future classpath changes.
   - **Completed in classpath cut:** broad host-facing packages are absent from
-    `rt.jar`; `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, and
-    `avata.Traces` are no longer shipped.
+    `rt.jar`; `java.lang.invoke`, `sun.misc.Unsafe`, `java.internal.Machine`, and
+    `java.internal.Traces` are no longer shipped.
   - ✅ **Completed in contract-profile audit:** `System.getProperty()` now exposes
     only a fixed deterministic allow-list and no longer ingests VM command-line
     `-D` properties such as `avata.builtins` or `java.class.path`. The profile
@@ -345,9 +345,9 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   `Properties`, legacy synchronized collections/tokenizers, and thread-local
   APIs. The generated `rt.jar` now contains only `java.lang`, annotations,
   minimal `java.io`, deterministic ordered/list collections,
-  `java.util.function`, and VM-private `avata.*` support classes required by
+  `java.util.function`, and VM-private `java.internal.*` support classes required by
   the boot runtime. Contract admission rejects application class names and
-  references under `avata/*`. `java.util.EnumSet` is absent because application
+  references under `java/internal/*`. `java.util.EnumSet` is absent because application
   enum classes are outside v1. Public
   `java.lang.invoke`, `java.lang.ref`, `java.lang.reflect`, and `sun.*`
   classes are no longer shipped.
@@ -361,12 +361,12 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 - ✅ Added `rt/check-profile.sh` to `build-test`, so generated `rt.jar` fails
   the build if forbidden packages or non-admitted shell classes are reintroduced.
 - ✅ Removed callable native-internal and non-admitted invoke shell classes:
-  `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, and `avata.Traces`
+  `java.lang.invoke`, `sun.misc.Unsafe`, `java.internal.Machine`, and `java.internal.Traces`
   are absent from `rt.jar`.
 - ✅ Removed non-contract class-generation and continuation APIs from
-  `rt.jar`: `avata.Assembler`, `avata.ConstantPool`, `avata.Stream`,
-  `avata.Continuations`, `avata.Callback`, `avata.Function`, and
-  `avata.IncompatibleContinuationException`. The verifier test keeps private
+  `rt.jar`: `java.internal.Assembler`, `java.internal.ConstantPool`, `java.internal.Stream`,
+  `java.internal.Continuations`, `java.internal.Callback`, `java.internal.Function`, and
+  `java.internal.IncompatibleContinuationException`. The verifier test keeps private
   class-file writer helpers under `test/avata/testing/bytecode`.
 - ✅ Removed stale broad-profile tests and extra tools that depended on APIs no
   longer present in the contract runtime, including host file IO,
@@ -492,11 +492,31 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   verifier also rejects application references to boot-only compatibility
   symbols such as `Serializable`, `Cloneable`, `CloneNotSupportedException`,
   and `ClassNotFoundException`.
-- ✅ Marked `avata.*` as VM-private instead of contract-facing API:
+- ✅ Marked `java.internal.*` as VM-private instead of contract-facing API:
   contract-facing memory counters are exposed through `java.lang.Memory`, while
   strict contract admission rejects application class names and constant-pool
-  references under `avata/*`. `java.lang.Class` no longer exposes
-  `avata.VMClass` through public fields, constructors, or methods.
+  references under `java/internal/*`. `java.lang.Class` no longer exposes
+  `java.internal.VMClass` through public fields, constructors, or methods.
+- ✅ Moved the VM-private Java runtime implementation package from `avata.*`
+  to `java.internal.*`: sources now live under `jvm/avata/rt/java/internal`,
+  native entry points use `Avata_java_internal_*`, `types.def` names
+  `java/internal/*`, and the old `avata/*` Java package is rejected as stale.
+- ✅ Removed stale Avian host native entry points that are not part of the
+  contract runtime: `sun.misc.Unsafe`, host file-system IO, process runtime
+  hooks, host `System` property/environment/time/library helpers, Date
+  formatting, object-stream allocation, resource URL handlers, and internal
+  Machine escape hatches. `build-test` now runs `rt/check-native-profile.sh` to
+  prevent these symbols from returning.
+- ✅ Added a separate contract compiler API artifact:
+  `jvm/avata/build/<platform>-<arch>/api.jar` is generated from the
+  runtime class tree with the VM-private `java/internal/*` package excluded. `build-test`
+  checks that this jar has no `java/internal/*` entries, can compile a basic contract
+  source through javac, and rejects source-level `import java.internal.*`.
+- ✅ Added the initial `tos-javac` prototype at `jvm/avata/tools/tos-javac`.
+  It forces Java 8 source/target settings, uses `api.jar` as the boot
+  classpath, rejects user bootclasspath/source/target overrides, and is covered
+  by `build-test`. Verifier/admission integration into the wrapper remains
+  open.
 - ✅ Host-API consensus hardening: `System` exposes only deterministic VM-managed
   streams and fixed property reads; `Runtime` is removed from the v1 `rt.jar`;
   `Thread` remains VM-internal and contract references are rejected. The earlier

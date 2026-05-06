@@ -101,11 +101,12 @@ These classes are still TOS-specific APIs. Their package placement does not make
 them Java SE APIs, and the verifier/toolchain must reject contracts that assume
 they exist on a general-purpose OpenJDK runtime.
 
-The `avata.*` package is reserved for VM-private boot runtime implementation
+The `java.internal.*` package is reserved for VM-private boot runtime implementation
 classes. It may remain inside `rt.jar` so boot classes can reach native VM
 helpers, but it is not part of the contract API. Contract-facing wrappers must
-live in `java.lang`, and strict contract admission rejects application class
-names and references under `avata/*`.
+live in `java.lang`. The generated `api.jar` excludes `java.internal.*` so
+javac cannot compile source-level imports of VM internals, and strict contract
+admission rejects application class names and references under `java/internal/*`.
 
 ## Java Package Policy
 
@@ -275,10 +276,10 @@ Reject or remove:
 - `Collections.shuffle`, because the profile does not expose random APIs; any
   permutation required by a contract must be derived from explicit chain input
   and implemented with audited deterministic code
-- class-file generation helpers such as `avata.Assembler`, `avata.ConstantPool`,
-  and `avata.Stream`; verifier tests may keep private copies outside `rt.jar`
-- continuation/coroutine APIs such as `avata.Continuations`, `avata.Callback`,
-  and `avata.Function`, because continuation capture is not an admitted
+- class-file generation helpers such as `java.internal.Assembler`, `java.internal.ConstantPool`,
+  and `java.internal.Stream`; verifier tests may keep private copies outside `rt.jar`
+- continuation/coroutine APIs such as `java.internal.Continuations`, `java.internal.Callback`,
+  and `java.internal.Function`, because continuation capture is not an admitted
   contract control-flow primitive
 
 Do not use `java.util` collections as implicit persistent storage. Persistent
@@ -515,7 +516,8 @@ Initial classes or class families:
 - `SafeCast`
 - `Governor`
 
-These classes should be normal Java source compiled against `rt.jar`. They
+These classes should be normal Java source compiled against `api.jar`
+for contract development and packaged into `rt.jar` for runtime execution. They
 should not be VM magic unless they need privileged access to Avata VM
 primitives.
 

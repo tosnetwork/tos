@@ -623,7 +623,7 @@ bool forbiddenInternalClass(const int8_t* begin,
   }
 
   if (applicationClass && strictContractProfile
-      && segmentStartsWith(begin, end, "avata/")) {
+      && segmentStartsWith(begin, end, "java/internal/")) {
     return true;
   }
 
@@ -797,7 +797,7 @@ void verifyDeclaredClassNameAllowed(Thread* t,
     ++end;
   }
 
-  if (segmentStartsWith(begin, end, "avata/")) {
+  if (segmentStartsWith(begin, end, "java/internal/")) {
     throwNew(t, GcVerifyError::Type);
   }
 }
@@ -5146,7 +5146,7 @@ GcClass* resolveClass(Thread* t,
       if (roots(t)->loadClassMethod() == 0) {
         GcMethod* m = resolveMethod(t,
                                     roots(t)->bootClassSpace(),
-                                    "avata/ClassSpace",
+                                    "java/internal/ClassSpace",
                                     "loadClass",
                                     "(Ljava/lang/String;)Ljava/lang/Class;");
 

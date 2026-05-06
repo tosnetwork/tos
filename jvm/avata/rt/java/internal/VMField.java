@@ -8,12 +8,16 @@
    There is NO WARRANTY for this software.  See license.txt for
    details. */
 
-package avata;
+package java.internal;
 
-public abstract class Singleton {
-  public static native int getInt(Object singleton, int offset);
-  public static native long getLong(Object singleton, int offset);
-  public static native Object getObject(Object singleton, int offset);
-
-  // Fields in types.def
+public class VMField {
+  public byte vmFlags;
+  public byte code;
+  public short flags;
+  public short offset;
+  public int nativeID;
+  public byte[] name;
+  public byte[] spec;
+  public FieldAddendum addendum;
+  public VMClass class_;
 }

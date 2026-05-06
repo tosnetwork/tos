@@ -11,7 +11,7 @@
 package java.lang;
 
 public final class Short extends Number implements Comparable<Short> {
-  public static final Class TYPE = avata.Classes.forCanonicalName("S");
+  public static final Class TYPE = java.internal.Classes.forCanonicalName("S");
 
   public static final short MIN_VALUE = -32768;
   public static final short MAX_VALUE = 32767;

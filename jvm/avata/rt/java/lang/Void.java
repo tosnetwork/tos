@@ -11,7 +11,7 @@
 package java.lang;
 
 public final class Void {
-  public static final Class TYPE = avata.Classes.forCanonicalName("V");
+  public static final Class TYPE = java.internal.Classes.forCanonicalName("V");
 
   private Void() { }
 }

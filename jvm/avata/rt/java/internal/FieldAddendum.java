@@ -8,8 +8,6 @@
    There is NO WARRANTY for this software.  See license.txt for
    details. */
 
-package avata;
+package java.internal;
 
-public class MethodAddendum extends Addendum {
-  public Object exceptionTable;
-}
+public class FieldAddendum extends Addendum { }

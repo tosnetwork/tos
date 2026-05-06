@@ -7,7 +7,7 @@
 
    There is NO WARRANTY; see license.txt for details. */
 
-package avata;
+package java.internal;
 
 final class ExecutionContext implements Runnable {
   protected volatile Object parkBlocker;

@@ -11,7 +11,7 @@
 package java.lang;
 
 public final class Byte extends Number implements Comparable<Byte> {
-  public static final Class TYPE = avata.Classes.forCanonicalName("B");
+  public static final Class TYPE = java.internal.Classes.forCanonicalName("B");
 
   public static final byte MIN_VALUE = -128;
   public static final byte MAX_VALUE = 127;

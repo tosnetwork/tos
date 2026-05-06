@@ -7,7 +7,7 @@
 
    There is NO WARRANTY; see license.txt for details. */
 
-package avata;
+package java.internal;
 
 final class ExecutionGroup {
   private final ExecutionGroup parent;

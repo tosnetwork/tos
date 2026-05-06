@@ -24,8 +24,9 @@ The JVM workchain has three compatibility commitments:
    library.
 3. **The developer workflow should feel like Java.** Developers should write
    Java 8 source, compile it with a TOS-provided `javac` path against the TOS
-   `rt.jar`, run it locally with a TOS-provided `java`-style runner, and deploy
-   the resulting normal class files after verifier/admission checks.
+   `api.jar`, run it locally with a TOS-provided `java`-style runner
+   backed by the full `rt.jar`, and deploy the resulting normal class files
+   after verifier/admission checks.
 
 Everything else follows from these principles. OpenJDK class-library parity is
 not an independent goal. It is useful only when it supports the contract runtime
@@ -76,16 +77,18 @@ these package prefixes:
 - `libcore`
 - Avata URL/file/jar/http resource-handler packages
 
-The remaining contract-facing `rt.jar` surface is intentionally narrow:
+The remaining contract-facing Java surface is intentionally narrow:
 `java.lang`, annotations, minimal byte-array/string/descriptor-backed
-`java.io`, deterministic collections, and `java.util.function`. The jar may
-also contain `avata.*` classes needed by the boot runtime implementation, but
-those classes are VM-private rather than contract APIs. Contract admission
-rejects application class names and references under `avata/*`. It does not
-ship `java.lang.invoke`, `java.lang.reflect`, `java.lang.ref`, or `sun.*`.
+`java.io`, deterministic collections, and `java.util.function`. The runtime
+`rt.jar` may also contain `java.internal.*` classes needed by the boot runtime
+implementation, but those classes are VM-private rather than contract APIs and
+are omitted from the generated `api.jar` used by javac. Contract
+admission rejects application class names and references under `java/internal/*`. It
+does not ship `java.lang.invoke`, `java.lang.reflect`, `java.lang.ref`, or
+`sun.*`.
 Method handles, lambda bootstrap classes, reflection, dynamic proxies, package
 metadata, weak/soft/phantom references, finalization, cleaners,
-`sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, public class-file
+`sun.misc.Unsafe`, `java.internal.Machine`, `java.internal.Traces`, public class-file
 generation helpers, and public continuation/coroutine APIs are not shipped in
 `rt.jar`.
 
@@ -175,8 +178,8 @@ Examples:
 | Reflection | Public `java.lang.reflect.*`, `java.lang.Package`, and optional `Class` reflection helpers are absent unless explicitly admitted |
 | Class loading | Forbidden except validator-controlled contract class resolution; `Class.forName` and package/source metadata lookup are absent |
 | Serialization, regex, text formatting, zip/jar, locale/date APIs | Serialization APIs are verifier-forbidden for application classes; the rest are absent from v1 `rt.jar` unless explicitly admitted later |
-| `avata.*` | VM-private boot runtime implementation namespace; contract class names and references under `avata/*` are rejected |
-| `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces` | Absent from v1 `rt.jar`; forbidden unless explicitly admitted later |
+| `java.internal.*` | VM-private boot runtime implementation namespace; contract class names and references under `java/internal/*` are rejected |
+| `java.lang.invoke`, `sun.misc.Unsafe`, `java.internal.Machine`, `java.internal.Traces` | Absent from v1 `rt.jar`; forbidden unless explicitly admitted later |
 | Class-file generation helpers and continuation APIs | Absent from v1 `rt.jar`; tests may keep private support copies |
 | Collections | Admitted selectively when deterministic and useful for contracts; `EnumSet`, empty abstraction shells, and partial `NavigableMap` APIs are absent |
 
@@ -267,7 +270,10 @@ contract profile and has deterministic tests.
 Provide two developer-facing tools:
 
 - `tos-javac`: wraps or configures Java 8 `javac`, forces class-file major 52,
-  uses the TOS `rt.jar` as boot classpath, and runs verifier/admission checks.
+  uses the TOS `api.jar` as boot classpath, and runs
+  verifier/admission checks. The current prototype is
+  `jvm/avata/tools/tos-javac`; it pins the boot classpath and source/target
+  level, while full verifier integration remains a follow-up.
 - `tos-java`: local deterministic runner using the same Avata interpreter,
   `rt.jar`, gas model, fixed floating-point behavior, traps, and heap/state
   codec as validators.
@@ -310,7 +316,9 @@ criterion.
 5. Turn host-observing APIs into verifier rejects or deterministic traps.
 6. ✅ Define the initial slim TOS `rt.jar` package list; next, add the
    contract-facing `tos.*` APIs.
-7. Build `tos-javac` and `tos-java` prototypes around the same profile.
+7. ✅ Start the `tos-javac` prototype around `api.jar`; next, wire
+   verifier/admission checks into that wrapper and build the `tos-java` runner
+   prototype.
 
 The practical rule is simple: Avata development should first make Java 8
 bytecode execution deterministic and complete, then expose only the runtime

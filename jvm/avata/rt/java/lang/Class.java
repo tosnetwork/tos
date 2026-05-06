@@ -10,12 +10,12 @@
 
 package java.lang;
 
-import avata.VMClass;
-import avata.ClassAddendum;
-import avata.SystemClassSpace;
-import avata.Classes;
-import avata.InnerClassReference;
-import avata.Modifiers;
+import java.internal.VMClass;
+import java.internal.ClassAddendum;
+import java.internal.SystemClassSpace;
+import java.internal.Classes;
+import java.internal.InnerClassReference;
+import java.internal.Modifiers;
 
 import java.util.Arrays;
 

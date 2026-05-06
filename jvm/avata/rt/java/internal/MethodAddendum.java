@@ -8,11 +8,8 @@
    There is NO WARRANTY for this software.  See license.txt for
    details. */
 
-package avata;
+package java.internal;
 
-public class InnerClassReference {
-  public byte[] inner;
-  public byte[] outer;
-  public byte[] name;
-  public short flags;
+public class MethodAddendum extends Addendum {
+  public Object exceptionTable;
 }

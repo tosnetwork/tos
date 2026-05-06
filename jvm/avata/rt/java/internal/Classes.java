@@ -8,7 +8,7 @@
    There is NO WARRANTY for this software.  See license.txt for
    details. */
 
-package avata;
+package java.internal;
 
 public class Classes {
   private static final int LinkFlag = 1 << 8;

@@ -8,16 +8,9 @@
    There is NO WARRANTY for this software.  See license.txt for
    details. */
 
-package avata;
+package java.internal;
 
-public class VMField {
-  public byte vmFlags;
-  public byte code;
-  public short flags;
-  public short offset;
-  public int nativeID;
-  public byte[] name;
-  public byte[] spec;
-  public FieldAddendum addendum;
-  public VMClass class_;
+public class Addendum {
+  public Singleton pool;
+  public Object signature;
 }

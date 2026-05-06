@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: tos-javac [--avata-build-dir DIR] [--api JAR] [--javac JAVAC] <javac args...>
+
+Compiles contract Java source against Avata's api.jar. The wrapper
+forces Java 8 source/target level and refuses options that would replace the
+contract boot classpath.
+EOF
+}
+
+die() {
+  echo "tos-javac: $*" >&2
+  exit 2
+}
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+avata_dir=$(cd "$script_dir/.." && pwd)
+
+build_dir=${AVATA_BUILD_DIR:-}
+api_jar=${AVATA_API_JAR:-}
+javac_bin=${AVATA_JAVAC:-}
+user_args=()
+
+while (($#)); do
+  case "$1" in
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --avata-build-dir)
+      (($# >= 2)) || die "--avata-build-dir requires a value"
+      build_dir=$2
+      shift 2
+      ;;
+    --avata-build-dir=*)
+      build_dir=${1#*=}
+      shift
+      ;;
+    --api)
+      (($# >= 2)) || die "$1 requires a value"
+      api_jar=$2
+      shift 2
+      ;;
+    --api=*)
+      api_jar=${1#*=}
+      shift
+      ;;
+    --javac)
+      (($# >= 2)) || die "--javac requires a value"
+      javac_bin=$2
+      shift 2
+      ;;
+    --javac=*)
+      javac_bin=${1#*=}
+      shift
+      ;;
+    --)
+      shift
+      user_args+=("$@")
+      break
+      ;;
+    -bootclasspath|-source|-target|--release)
+      die "$1 is fixed by tos-javac"
+      ;;
+    -bootclasspath:*|-Xbootclasspath:*|-Xbootclasspath/*|-source=*|-target=*|--release=*)
+      die "$1 is fixed by tos-javac"
+      ;;
+    *)
+      user_args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$api_jar" ]]; then
+  if [[ -n "$build_dir" ]]; then
+    api_jar="$build_dir/api.jar"
+  elif [[ -f "$avata_dir/build/linux-x86_64/api.jar" ]]; then
+    api_jar="$avata_dir/build/linux-x86_64/api.jar"
+  else
+    mapfile -t candidates < <(find "$avata_dir/build" -maxdepth 2 \
+      -name api.jar -type f 2>/dev/null | sort)
+    if [[ ${#candidates[@]} -eq 1 ]]; then
+      api_jar=${candidates[0]}
+    elif [[ ${#candidates[@]} -eq 0 ]]; then
+      die "api.jar not found; run make -C jvm/avata build-test or pass --api"
+    else
+      die "multiple api.jar files found; pass --api or --avata-build-dir"
+    fi
+  fi
+fi
+
+[[ -f "$api_jar" ]] || die "missing API jar: $api_jar"
+
+if [[ -z "$javac_bin" ]]; then
+  if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/javac" ]]; then
+    javac_bin="$JAVA_HOME/bin/javac"
+  else
+    javac_bin=$(command -v javac) || die "javac not found"
+  fi
+fi
+
+exec "$javac_bin" -encoding UTF-8 -source 1.8 -target 1.8 \
+  -bootclasspath "$api_jar" "${user_args[@]}"

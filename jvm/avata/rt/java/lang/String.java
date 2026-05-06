@@ -14,8 +14,8 @@ import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.util.Comparator;
 
-import avata.Iso88591;
-import avata.Utf8;
+import java.internal.Iso88591;
+import java.internal.Utf8;
 
 public final class String
   implements Comparable<String>, CharSequence, Serializable

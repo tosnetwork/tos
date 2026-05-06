@@ -1,6 +1,6 @@
 (type jobject java/lang/Object)
 
-(type class avata/VMClass
+(type class java/internal/VMClass
   (array void* vtable))
 
 (type jclass java/lang/Class
@@ -10,26 +10,26 @@
 
 (type cloneable java/lang/Cloneable)
 
-(type singleton avata/Singleton
+(type singleton java/internal/Singleton
   (array maybe_object body))
 
-(type classSpace avata/ClassSpace
+(type classSpace java/internal/ClassSpace
   (object map))
 
-(type systemClassSpace avata/SystemClassSpace
+(type systemClassSpace java/internal/SystemClassSpace
   (void* finder))
 
-(type field avata/VMField)
+(type field java/internal/VMField)
 
-(type method avata/VMMethod)
+(type method java/internal/VMMethod)
 
-(type addendum avata/Addendum)
+(type addendum java/internal/Addendum)
 
-(type classAddendum avata/ClassAddendum)
+(type classAddendum java/internal/ClassAddendum)
 
-(type methodAddendum avata/MethodAddendum)
+(type methodAddendum java/internal/MethodAddendum)
 
-(type fieldAddendum avata/FieldAddendum)
+(type fieldAddendum java/internal/FieldAddendum)
 
 (type classRuntimeData
   (object arrayClass)
@@ -100,7 +100,7 @@
   (uint32_t size)
   (field array array))
 
-(type pair avata/Pair
+(type pair java/internal/Pair
   (object first)
   (object second))
 
@@ -116,7 +116,7 @@
   (void* value)
   (object next))
 
-(type innerClassReference avata/InnerClassReference)
+(type innerClassReference java/internal/InnerClassReference)
 
 (type string java/lang/String
   (alias data object value)
@@ -125,7 +125,7 @@
   (polyfill uint32_t offset)
   (polyfill uint32_t length))
 
-(type executionContext avata/ExecutionContext
+(type executionContext java/internal/ExecutionContext
   (require object sleepLock)
   (require object interruptLock)
   (require uint8_t interrupted)
@@ -134,7 +134,7 @@
   (alias peer uint64_t nativePeer)
   (require uint64_t peer))
 
-(type executionGroup avata/ExecutionGroup)
+(type executionGroup java/internal/ExecutionGroup)
 
 (type stackTraceElement java/lang/StackTraceElement)
 
@@ -258,7 +258,7 @@
   (extends jobject)
   (array int32_t body))
 
-(type code avata/Code
+(type code java/internal/Code
   (singleton pool)
   (intArray stackMap)
   (object exceptionHandlerTable)

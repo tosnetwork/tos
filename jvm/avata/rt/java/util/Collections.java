@@ -10,7 +10,7 @@
 
 package java.util;
 
-import avata.Data;
+import java.internal.Data;
 
 public class Collections {
 

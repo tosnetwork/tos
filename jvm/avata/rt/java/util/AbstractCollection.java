@@ -97,12 +97,12 @@ public abstract class AbstractCollection<T> implements Collection<T> {
   }
 
   public <S> S[] toArray(S[] array) {
-    return avata.Data.toArray(this, array);
+    return java.internal.Data.toArray(this, array);
   }
 
   public abstract Iterator<T> iterator();
 
   public String toString() {
-    return avata.Data.toString(this);
+    return java.internal.Data.toString(this);
   }
 }

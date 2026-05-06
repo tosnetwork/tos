@@ -122,8 +122,8 @@ The supported standalone build is the slim `make` profile:
   `java.util.concurrent`, `java.util.logging`, `java.util.regex`,
   `java.util.zip`, `java.util.jar`, process APIs, filesystem path APIs,
   object-stream serialization, or URL-handler packages in `rt.jar`
-- no `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, or
-  `avata.Traces` shell classes in `rt.jar`
+- no `java.lang.invoke`, `sun.misc.Unsafe`, `java.internal.Machine`, or
+  `java.internal.Traces` shell classes in `rt.jar`
 - no public class-file generation helpers or continuation/coroutine APIs in
   `rt.jar`
 - no runtime string-based class loading through `Class.forName`; contract class
@@ -133,7 +133,10 @@ The supported standalone build is the slim `make` profile:
   `desiredAssertionStatus`, `asSubclass`, or `cast`
 
 `make build-test` runs `rt/check-profile.sh` against the generated `rt.jar` and
-fails if any forbidden package or shell class is reintroduced.
+`api.jar`, and fails if any forbidden package or shell class is
+reintroduced. It also verifies that `tools/tos-javac` compiles against
+`api.jar` and rejects source-level imports of VM-private `java.internal.*`
+classes.
 
 The CMake files mirror this by excluding the removed codegen targets.
 
@@ -149,7 +152,18 @@ make -C jvm/avata java-version=8 run-test
 ```
 
 The current profile builds `jvm/avata/build/<platform>-<arch>/avata`,
-`libjvm.so`, `libavata.a`, `rt.jar`, and `avata-unittest`.
+`libjvm.so`, `libavata.a`, `rt.jar`, `api.jar`, and `avata-unittest`.
+
+The contract compiler wrapper prototype is:
+
+```bash
+jvm/avata/tools/tos-javac --avata-build-dir jvm/avata/build/linux-x86_64 \
+  -d out Contract.java
+```
+
+The wrapper forces Java 8 source/target settings, uses `api.jar` as
+the boot classpath, and rejects user-supplied bootclasspath/source/target
+overrides.
 
 The Avata tests cover the interpreter loop, class loading, exception handling,
 and the admitted runtime API profile. TOS cell codec, gas metering, and workchain
@@ -222,11 +236,11 @@ The current `rt.jar` intentionally contains only the contract profile:
   software implementation.
 - `StringBuffer` is not shipped; contract code uses `StringBuilder`.
 - `Collections.shuffle` is not shipped; the profile has no implicit random API.
-- VM-private `avata.*` support classes required by the boot runtime
+- VM-private `java.internal.*` support classes required by the boot runtime
   implementation, including deterministic memory accounting helpers. These are
   not contract APIs; strict contract admission rejects application class names
-  and references under `avata/*`. The v1 profile does not ship
-  `java.lang.invoke`, `sun.misc.Unsafe`, `avata.Machine`, or `avata.Traces`.
+  and references under `java/internal/*`. The v1 profile does not ship
+  `java.lang.invoke`, `sun.misc.Unsafe`, `java.internal.Machine`, or `java.internal.Traces`.
 
 Language-level classes and Avata contract runtime helpers remain under
 `java.lang` (`Object`, `String`, `Math`, `System`, errors, storage, ABI, token
@@ -238,7 +252,9 @@ interfaces):
 
 Contract classes are compiled against this class library, not against a standard
 OpenJDK distribution. The bootstrap classpath used by the TOS contract compiler
-is the `rt.jar` produced by this build.
+is the `api.jar` produced by this build. The full `rt.jar` is the VM
+runtime image and may contain VM-private `java.internal.*` implementation helpers that
+are intentionally absent from `api.jar`.
 
 Contract execution starts through `avata_begin_contract_transaction_with_limits`
 when both gas and memory limits are available. Movable contract allocations run

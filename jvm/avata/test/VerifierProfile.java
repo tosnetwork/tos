@@ -1,7 +1,7 @@
-import avata.Classes;
-import avata.SystemClassSpace;
-import avata.VMClass;
-import avata.VMMethod;
+import java.internal.Classes;
+import java.internal.SystemClassSpace;
+import java.internal.VMClass;
+import java.internal.VMMethod;
 import avata.testing.bytecode.Assembler;
 import avata.testing.bytecode.Assembler.FieldData;
 import avata.testing.bytecode.Assembler.MethodData;
@@ -733,15 +733,15 @@ public class VerifierProfile {
       });
     }
 
-    final String[] forbiddenAvataInternals = new String[] {
-      "avata/Classes",
-      "avata/SystemClassSpace",
-      "avata/VMClass",
-      "avata/Memory",
+    final String[] forbiddenInternalClasses = new String[] {
+      "java/internal/Classes",
+      "java/internal/SystemClassSpace",
+      "java/internal/VMClass",
+      "java/internal/Memory",
     };
-    for (int i = 0; i < forbiddenAvataInternals.length; ++i) {
-      final String owner = forbiddenAvataInternals[i];
-      expectVerifyError("forbidden avata internal ref", new Thrower() {
+    for (int i = 0; i < forbiddenInternalClasses.length; ++i) {
+      final String owner = forbiddenInternalClasses[i];
+      expectVerifyError("forbidden java.internal internal ref", new Thrower() {
         public void run() throws Exception {
           define("VerifierProfile$ForbiddenClassReference",
                  makeForbiddenClassReference(owner));
@@ -749,10 +749,10 @@ public class VerifierProfile {
       });
     }
 
-    expectVerifyError("forbidden avata package class", new Thrower() {
+    expectVerifyError("forbidden java.internal package class", new Thrower() {
       public void run() throws Exception {
-        define("avata/ForbiddenContractClass",
-               makeEmptyClass("avata/ForbiddenContractClass"));
+        define("java/internal/ForbiddenContractClass",
+               makeEmptyClass("java/internal/ForbiddenContractClass"));
       }
     });
 

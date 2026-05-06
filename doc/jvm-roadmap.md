@@ -424,7 +424,7 @@ for consensus execution. No TOS integration yet; tested standalone.
   In the v1 classpath, broad host packages such as `java.net` and host-backed
   `java.nio` are absent; minimal `java.io` is descriptor/string/byte-array
   only; non-admitted whole classes/packages such as `java.lang.invoke`,
-  `sun.misc.Unsafe`, `avata.Machine`, and `avata.Traces` are absent from
+  `sun.misc.Unsafe`, `java.internal.Machine`, and `java.internal.Traces` are absent from
   `rt.jar`; `java.lang.Thread` and non-admitted reflection/class-loading
   surfaces must reject or trap deterministically where their containing classes
   are still required.
@@ -552,11 +552,12 @@ trusts it.
 
 The developer distribution must provide a `javac` command path and a local
 `java`-style runner path configured for the TOS runtime profile. The compiler
-uses the TOS `rt.jar` as the boot classpath so unsupported OpenJDK APIs fail
-early at compile or admission time. The local runner executes the same Avata
-interpreter profile, gas rules, fixed floating-point behavior, deterministic
-traps, and heap/state codec as validators, so local tests exercise the same
-contract surface that will run on-chain.
+uses the TOS `api.jar` as the boot classpath so unsupported OpenJDK
+APIs and VM-private `java.internal.*` helpers fail early at compile or admission time.
+The local runner executes the same Avata interpreter profile with the full
+`rt.jar`, gas rules, fixed floating-point behavior, deterministic traps, and
+heap/state codec as validators, so local tests exercise the same contract
+surface that will run on-chain.
 
 **Effort:** 8–12 weeks
 

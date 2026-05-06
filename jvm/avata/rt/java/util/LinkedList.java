@@ -360,7 +360,7 @@ public class LinkedList<T> extends AbstractList<T> implements Deque<T> {
 
   @Override
   public String toString() {
-    return avata.Data.toString(this);
+    return java.internal.Data.toString(this);
   }
 
   @Override

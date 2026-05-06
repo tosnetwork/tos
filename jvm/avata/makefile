@@ -832,8 +832,8 @@ classpath-object = $(build)/rt-jar.o
 classpath-dep = $(classpath-build).dep
 
 vm-classes = \
-	avata/*.class \
-	avata/resource/*.class
+	java/internal/*.class \
+	java/internal/resource/*.class
 
 test-support-sources = \
 	$(shell find $(test)/avata/ -name '*.java') \
@@ -927,10 +927,12 @@ test-args = $(test-flags) $(input)
 .PHONY: build
 ifneq ($(supports_avata_executable),false)
 build: $(static-library) $(executable) $(dynamic-library) \
-	$(classpath-dep) $(test-dep) $(test-extra-dep) $(build)/rt.jar
+	$(classpath-dep) $(test-dep) $(test-extra-dep) $(build)/rt.jar \
+	$(build)/api.jar
 else
 build: $(static-library) $(dynamic-library) \
-	$(classpath-dep) $(test-dep) $(test-extra-dep) $(build)/rt.jar
+	$(classpath-dep) $(test-dep) $(test-extra-dep) $(build)/rt.jar \
+	$(build)/api.jar
 endif
 
 $(test-dep): $(classpath-dep)
@@ -953,11 +955,63 @@ vg: build
 test: build-test run-test
 
 .PHONY: build-test
-build-test: build check-rt-profile $(build)/run-tests.sh $(build)/test.sh $(unittest-executable)
+build-test: build check-native-profile check-rt-profile check-api-profile \
+	check-api-javac $(build)/run-tests.sh $(build)/test.sh \
+	$(unittest-executable)
+
+.PHONY: check-native-profile
+check-native-profile: $(classpath-src)/check-native-profile.sh
+	/bin/sh $(classpath-src)/check-native-profile.sh .
 
 .PHONY: check-rt-profile
 check-rt-profile: $(build)/rt.jar $(classpath-src)/check-profile.sh
 	/bin/sh $(classpath-src)/check-profile.sh $(build)/rt.jar "$(JAVA_HOME)/bin/jar"
+
+.PHONY: check-api-profile
+check-api-profile: $(build)/api.jar $(classpath-src)/check-profile.sh
+	/bin/sh $(classpath-src)/check-profile.sh $(build)/api.jar "$(JAVA_HOME)/bin/jar" api
+
+.PHONY: check-api-javac
+check-api-javac: $(build)/api.jar tools/tos-javac
+	@echo "checking api.jar bootclasspath"
+	@rm -rf $(build)/api-check
+	@mkdir -p $(build)/api-check/src $(build)/api-check/out
+	@printf '%s\n' \
+		'public final class ApiCompileCheck {' \
+		'  public static long remaining() {' \
+		'    return Memory.remaining();' \
+		'  }' \
+		'  public static String className(Object value) {' \
+		'    return value.getClass().getName();' \
+		'  }' \
+		'}' \
+		> $(build)/api-check/src/ApiCompileCheck.java
+	AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
+		tools/tos-javac \
+		-d $(build)/api-check/out \
+		$(build)/api-check/src/ApiCompileCheck.java
+	@printf '%s\n' \
+		'import java.internal.Classes;' \
+		'public final class ForbiddenInternalCompileCheck {' \
+		'  Object value;' \
+		'}' \
+		> $(build)/api-check/src/ForbiddenInternalCompileCheck.java
+	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
+		tools/tos-javac \
+		-d $(build)/api-check/out \
+		$(build)/api-check/src/ForbiddenInternalCompileCheck.java \
+		> $(build)/api-check/forbidden.log 2>&1; then \
+		echo "api.jar check failed: javac accepted java.internal.* import" >&2; \
+		cat $(build)/api-check/forbidden.log >&2; \
+		exit 1; \
+	fi
+	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
+		tools/tos-javac -bootclasspath $(build)/rt.jar \
+		$(build)/api-check/src/ApiCompileCheck.java \
+		> $(build)/api-check/override.log 2>&1; then \
+		echo "api.jar check failed: tos-javac accepted bootclasspath override" >&2; \
+		exit 1; \
+	fi
 
 .PHONY: run-test
 run-test: build-test
@@ -1125,6 +1179,13 @@ $(build)/rt.jar: $(classpath-dep) $(classpath-jar-dep)
 	(wd=$$(pwd) && \
 	 cd $(classpath-build) && \
 	 $(jar) c0f "$$($(native-path) "$${wd}/$(@)")" .)
+
+$(build)/api.jar: $(classpath-dep) $(classpath-jar-dep)
+	@echo "creating $(@)"
+	(wd=$$(pwd) && \
+	 cd $(classpath-build) && \
+	 files=$$(find . -type f ! -path './java/internal/*' -print | sed 's#^\./##') && \
+	 $(jar) c0f "$$($(native-path) "$${wd}/$(@)")" $$files)
 
 $(classpath-object): $(build)/rt.jar $(converter)
 	@echo "creating $(@)"

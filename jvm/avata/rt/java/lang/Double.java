@@ -11,7 +11,7 @@
 package java.lang;
 
 public final class Double extends Number {
-  public static final Class TYPE = avata.Classes.forCanonicalName("D");
+  public static final Class TYPE = java.internal.Classes.forCanonicalName("D");
 
   public static final double NEGATIVE_INFINITY = -1.0 / 0.0;
   public static final double POSITIVE_INFINITY =  1.0 / 0.0;

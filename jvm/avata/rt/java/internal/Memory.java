@@ -7,7 +7,7 @@
 
    There is NO WARRANTY for details. */
 
-package avata;
+package java.internal;
 
 public final class Memory {
   private Memory() { }

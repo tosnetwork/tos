@@ -10,8 +10,8 @@
 
 package java.util;
 
-import avata.PersistentSet;
-import avata.Cell;
+import java.internal.PersistentSet;
+import java.internal.Cell;
 
 public class TreeSet<T> extends AbstractSet<T> implements Collection<T>, SortedSet<T> {
   private PersistentSet<Cell<T>> set;
@@ -68,7 +68,7 @@ public class TreeSet<T> extends AbstractSet<T> implements Collection<T>, SortedS
   }
 
   public String toString() {
-    return avata.Data.toString(this);
+    return java.internal.Data.toString(this);
   }
 
   public boolean add(T value) {

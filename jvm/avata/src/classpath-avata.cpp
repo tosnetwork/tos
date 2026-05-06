@@ -78,9 +78,9 @@ class MyClasspath : public Classpath {
   {
     GcMethod* method = resolveMethod(t,
                                      roots(t)->bootClassSpace(),
-                                     "avata/ExecutionContext",
+                                     "java/internal/ExecutionContext",
                                      "run",
-                                     "(Lavata/ExecutionContext;)V");
+                                     "(Ljava/internal/ExecutionContext;)V");
 
     t->m->processor->invoke(t, method, 0, t->javaThread);
   }
@@ -164,31 +164,13 @@ Classpath* makeClasspath(System*,
 }  // namespace vm
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_java_io_ObjectInputStream_makeInstance(Thread* t,
-                                                 object,
-                                                 uintptr_t* arguments)
-{
-  GcClass* c = cast<GcClass>(t, reinterpret_cast<object>(arguments[0]));
-
-  return reinterpret_cast<int64_t>(make(t, c));
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_LegacyObjectInputStream_makeInstance(Thread* t,
-                                                     object,
-                                                     uintptr_t* arguments)
-{
-  return Avata_java_io_ObjectInputStream_makeInstance(t, NULL, arguments);
-}
-
-extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Classes_getCallerMethod(Thread* t, object, uintptr_t*)
+    Avata_java_internal_Classes_getCallerMethod(Thread* t, object, uintptr_t*)
 {
   return reinterpret_cast<int64_t>(getCaller(t, 2));
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Classes_invokeVMMethod(Thread* t,
+    Avata_java_internal_Classes_invokeVMMethod(Thread* t,
                                        object,
                                        uintptr_t* arguments)
 {
@@ -205,7 +187,7 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_VMArray_getLength(Thread* t, object, uintptr_t* arguments)
+    Avata_java_internal_VMArray_getLength(Thread* t, object, uintptr_t* arguments)
 {
   object array = reinterpret_cast<object>(arguments[0]);
 
@@ -223,7 +205,7 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_VMArray_makeObjectArray(Thread* t,
+    Avata_java_internal_VMArray_makeObjectArray(Thread* t,
                                         object,
                                         uintptr_t* arguments)
 {
@@ -385,7 +367,7 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Classes_isAssignableFrom(Thread* t,
+    Avata_java_internal_Classes_isAssignableFrom(Thread* t,
                                          object,
                                          uintptr_t* arguments)
 {
@@ -400,25 +382,25 @@ extern "C" AVATA_EXPORT int64_t JNICALL
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Memory_used(Thread* t, object, uintptr_t*)
+    Avata_java_internal_Memory_used(Thread* t, object, uintptr_t*)
 {
   return contractMemoryUsed(t);
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Memory_remaining(Thread* t, object, uintptr_t*)
+    Avata_java_internal_Memory_remaining(Thread* t, object, uintptr_t*)
 {
   return contractMemoryRemaining(t);
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Memory_limit(Thread* t, object, uintptr_t*)
+    Avata_java_internal_Memory_limit(Thread* t, object, uintptr_t*)
 {
   return contractMemoryLimit(t);
 }
 
 extern "C" AVATA_EXPORT int64_t JNICALL
-    Avata_avata_Classes_getVMClass(Thread* t, object, uintptr_t* arguments)
+    Avata_java_internal_Classes_getVMClass(Thread* t, object, uintptr_t* arguments)
 {
   return reinterpret_cast<int64_t>(
       objectClass(t, reinterpret_cast<object>(arguments[0])));

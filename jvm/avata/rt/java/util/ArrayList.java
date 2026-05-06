@@ -217,7 +217,7 @@ public class ArrayList<T> extends AbstractList<T> implements java.io.Serializabl
   }
 
   public String toString() {
-    return avata.Data.toString(this);
+    return java.internal.Data.toString(this);
   }
 
 }
