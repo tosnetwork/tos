@@ -52,15 +52,18 @@ std::string workchain_engine_key_to_string(const WorkchainEngineKey& key);
 WorkchainEngineKey tvm_workchain_engine_key();
 WorkchainEngineKey evm_workchain_engine_key();
 WorkchainEngineKey uno_workchain_engine_key();
+WorkchainEngineKey jvm_workchain_engine_key();
 bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key);
 bool workchain_engine_key_is_evm(const WorkchainEngineKey& key);
 bool workchain_engine_key_is_uno(const WorkchainEngineKey& key);
+bool workchain_engine_key_is_jvm(const WorkchainEngineKey& key);
 
 // Network-advertised local engine capability bits for tosNode.capabilities.flags.
 // These are node capabilities, not consensus state. They let peers/operators
 // see which descriptor-selected engines this binary has registered.
 static constexpr td::uint32 kTosNodeCapabilityWorkchainEvm = 1u << 0;
 static constexpr td::uint32 kTosNodeCapabilityWorkchainUno = 1u << 1;
+static constexpr td::uint32 kTosNodeCapabilityWorkchainJvm = 1u << 2;
 
 struct WorkchainExecutionDescriptor {
   tos::WorkchainId workchain_id{tos::workchainInvalid};
