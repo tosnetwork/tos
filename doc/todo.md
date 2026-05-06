@@ -92,9 +92,11 @@ Status legend: `✅` completed, unchecked items are still open.
     `minor == 0xFFFF` (Java preview features) by throwing
     `GcUnsupportedClassVersionError`. It also rejects forbidden class
     references in constant-pool class entries and field/method descriptors:
-    `java.net.*`, `java.nio.channels.*`, `java.lang.Thread`,
-    `java.lang.Runtime`, and `java.lang.reflect.*` outside the admitted reflect
-    surface. Forbidden Java 9+ class-file attributes (`Module`,
+    `java.lang.Thread`, `java.lang.Runtime`, and `java.lang.reflect.*` outside
+    the admitted reflect surface. Packages absent from `rt.jar`, such as
+    `java.net` and `java.nio`, are enforced by absence plus the build-time
+    `rt/check-profile.sh` check rather than verifier special cases. Forbidden
+    Java 9+ class-file attributes (`Module`,
     `ModulePackages`, `ModuleMainClass`, `NestHost`, `NestMembers`, `Record`,
     `PermittedSubclasses`) are rejected in field, method, and class attribute
     tables with `GcVerifyError`. Duplicate method name+descriptor pairs are
@@ -307,6 +309,8 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   annotations, `java.lang.invoke`, `java.lang.ref`, admitted reflection,
   minimal `java.io`, deterministic collections, `java.util.function`, Avata VM
   support classes, and small `sun.*` internals required by VM internals.
+- ✅ Added `rt/check-profile.sh` to `build-test`, so generated `rt.jar` fails
+  the build if forbidden packages or non-admitted shell classes are reintroduced.
 - ✅ Removed callable native-internal and non-admitted invoke shell classes:
   `sun.misc.Unsafe`, `avata.Machine`, `avata.Traces`, `MutableCallSite`,
   `VolatileCallSite`, `SerializedLambda`, and `MethodHandleInfo` are absent
@@ -417,12 +421,11 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   `Class.isSynthetic()` added; `Class.forName` fixed; `FunctionalInterface`
   annotation added; `Long.compare(long,long)` added.
 - ✅ Host-API consensus hardening: `System` (time/env/load/exit), `Runtime`
-  (exec/halt/hooks, `availableProcessors()` → 1), `Thread` (start/sleep/yield),
-  `java.net.*` (Socket/ServerSocket/DatagramSocket/InetAddress/URLClassLoader/URL
-  http-handler), `java.nio.channels.*` (SocketChannel/ServerSocketChannel/
-  DatagramChannel/Selector) all throw deterministic `UnsupportedOperationException`.
-  System properties replaced with a static deterministic set. 28-test negative
-  suite `HostAPITest.java` passes.
+  (exec/halt/hooks, `availableProcessors()` → 1), and `Thread`
+  (start/sleep/yield) throw deterministic traps or return fixed single-thread
+  values. The earlier `java.net.*` and `java.nio.channels.*` trap shells were
+  removed from the v1 `rt.jar` entirely. System properties are replaced with a
+  static deterministic set.
 - ✅ Class-library sweep: `java.util.function` package (Function, BiFunction,
   Consumer, BiConsumer, Predicate, Supplier); `Optional<T>`; `StringJoiner`;
   `UUID` deterministic rewrite (`randomUUID()` traps, `fromString`/`toString`

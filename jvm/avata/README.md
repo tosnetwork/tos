@@ -123,6 +123,9 @@ The supported standalone build is the slim `make` profile:
   `MutableCallSite`, `VolatileCallSite`, `SerializedLambda`, or
   `MethodHandleInfo` shell classes in `rt.jar`
 
+`make build-test` runs `rt/check-profile.sh` against the generated `rt.jar` and
+fails if any forbidden package or shell class is reintroduced.
+
 The CMake files mirror this by excluding the removed codegen targets.
 
 ## Building

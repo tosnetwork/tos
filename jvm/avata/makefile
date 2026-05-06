@@ -962,7 +962,11 @@ vg: build
 test: build-test run-test
 
 .PHONY: build-test
-build-test: build $(build)/run-tests.sh $(build)/test.sh $(unittest-executable)
+build-test: build check-rt-profile $(build)/run-tests.sh $(build)/test.sh $(unittest-executable)
+
+.PHONY: check-rt-profile
+check-rt-profile: $(build)/rt.jar $(classpath-src)/check-profile.sh
+	/bin/sh $(classpath-src)/check-profile.sh $(build)/rt.jar "$(JAVA_HOME)/bin/jar"
 
 .PHONY: run-test
 run-test: build-test
