@@ -38,6 +38,7 @@
 #include "jvm/core/storage-cell-host.h"
 #include "jvm/core/zerostate.h"
 #include "td/utils/tests.h"
+#include "vm/boc.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cellslice.h"
 #include "vm/dict.h"
@@ -3175,4 +3176,108 @@ TEST(JvmWorkchainCore, JvmActivationConfigBuildsAndRoundTrips) {
   CHECK(parsed.gas_schedule_version == cfg.gas_schedule_version);
   CHECK(parsed.opcode_gas_costs == cfg.opcode_gas_costs);
   CHECK(parsed.helper_gas_costs == cfg.helper_gas_costs);
+}
+
+// Verify that an out-of-memory invocation produces a correct compute output:
+// not committed, not out_of_gas, vm_log identifies OOM, new_data is null.
+TEST(JvmWorkchainCore, AvataInvocationBuildsOutOfMemoryComputeOutput) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 3;
+  auto api = make_test_jvm_execution_api();
+  JvmStorageCellHost storage;
+  FakeJvmExecutionThread thread;
+  thread.invoke_status = api.out_of_memory_status;
+  thread.remaining_gas = 800;
+  thread.memory_used = cfg.max_heap_bytes;  // at limit — not exceeding
+
+  JvmExecutorState previous_state;
+  previous_state.stdlib_hash = cfg.stdlib_hash;
+  previous_state.storage_root = storage.root_cell();
+
+  auto invocation = execute_jvm_avata_transaction(
+      &thread, cfg, 1000, storage, api, nullptr).move_as_ok();
+  CHECK(!invocation.success);
+  CHECK(!invocation.out_of_gas);
+  CHECK(invocation.out_of_memory);
+
+  auto output = build_jvm_workchain_output(
+      cfg, previous_state, 1000, invocation).move_as_ok();
+
+  CHECK(output.completed);
+  CHECK(output.accepted);
+  CHECK(!output.committed);
+  CHECK(!output.engine_success);
+  CHECK(!output.out_of_gas);
+  CHECK(output.skip_reason == block::ComputePhase::sk_none);
+  CHECK(output.exit_code == api.out_of_memory_status);
+  CHECK(output.gas_used == 200);  // 1000 - 800
+  CHECK(output.vm_log == "JVM execution exhausted memory");
+  CHECK(output.new_data.is_null());
+  CHECK(output.action_list.is_null());
+}
+
+// Verify that memory_used exceeding max_heap_bytes causes
+// execute_jvm_avata_transaction to return an error rather than a result.
+// This is the post-invocation config guard that prevents a misbehaving Avata
+// thread from reporting usage above the arena limit.
+TEST(JvmWorkchainCore, MaxHeapBytesExceededReturnsError) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto api = make_test_jvm_execution_api();
+  JvmStorageCellHost storage;
+  FakeJvmExecutionThread thread;
+  // Avata reports "success" but claims it used more memory than the limit.
+  thread.invoke_status = api.ok_status;
+  thread.remaining_gas = 900;
+  thread.memory_used = cfg.max_heap_bytes + 1;
+
+  CHECK(execute_jvm_avata_transaction(
+            &thread, cfg, 1000, storage, api, nullptr).is_error());
+}
+
+// Verify that the executor-state cell serializes to bytes (BOC) and back
+// without loss, and that re-running compute against the deserialized cell
+// produces an identical result.  This is the "serialize to disk / reimport"
+// replay test from Phase 8.
+TEST(JvmWorkchainCore, JvmStateCellBocRoundTripPreservesComputeOutput) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1;
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  JvmStorageSlot slot{};
+  slot[31] = 0xCC;
+  const JvmStorageValue value{0x55};
+
+  // Tx 1: write a known value into storage.
+  auto out1 = run_jvm_tx(
+      std::make_shared<WriteSlotRuntime>(slot, value),
+      td::Ref<vm::Cell>{}, 0x11, descriptor, config).move_as_ok();
+  CHECK(out1.committed && out1.new_data.not_null());
+
+  // BOC round-trip: serialize new_data to bytes, deserialize back.
+  auto boc = vm::std_boc_serialize(out1.new_data).move_as_ok();
+  auto restored = vm::std_boc_deserialize(boc.as_slice()).move_as_ok();
+  CHECK(restored.not_null());
+
+  // Cell identity: deserialized cell must have the same hash as the original.
+  CHECK(restored->get_hash() == out1.new_data->get_hash());
+
+  // Functional identity: running compute from the deserialized cell must
+  // produce the same storage content as running it from the original cell.
+  auto out_orig = run_jvm_tx(
+      std::make_shared<WriteSlotRuntime>(slot, JvmStorageValue{0xDD}),
+      out1.new_data, 0x12, descriptor, config).move_as_ok();
+  auto out_restored = run_jvm_tx(
+      std::make_shared<WriteSlotRuntime>(slot, JvmStorageValue{0xDD}),
+      restored, 0x12, descriptor, config).move_as_ok();
+
+  CHECK(out_orig.committed && out_restored.committed);
+  CHECK(out_orig.new_data.not_null() && out_restored.new_data.not_null());
+  CHECK(out_orig.new_data->get_hash() == out_restored.new_data->get_hash());
 }
