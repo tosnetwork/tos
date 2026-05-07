@@ -247,9 +247,14 @@ point: it matches the existing host-side policy machinery and avoids designing
 a new account topology before the serialization model is proven.
 
 A future JVM v2 may adopt an account-native model where each Java contract is a
-distinct TOS account on `wc=3`. That is a separate workchain design, not a
-cleanup of v1. The v1 executor account address `0x0000...0001` and activation
-code marker (`0x4a` = `'J'`) are frozen as part of the JVM v1 descriptor.
+distinct TOS account on `wc=3`. That is a separate engineering effort, not a
+cleanup of v1: it requires a new account-creation policy in
+`WorkchainExecutionRegistry` and a class-store deduplication design. Since TOS
+is pre-launch, there is no on-chain state to migrate; v2 could be designed as
+the initial account model if this work is completed before v1 is activated. The
+v1 executor account address `0x0000...0001` and activation code marker
+(`0x4a` = `'J'`) are frozen as part of the JVM v1 descriptor but are not
+binding if v2 supersedes v1 before mainnet activation.
 
 ### OpenJDK opcode compatibility
 
@@ -954,9 +959,9 @@ Last updated: 2026-05-07.
 | Phase 6 — Message ABI | ✅ | `JvmCallDescriptor`, typed `JVMA` args codec (bool/int/long/Address/Uint256/Bytes32/Bytes4/Bytes), `JvmDeployDescriptor`, restricted `JVMM` manifest, `JVMC` class-state envelope, deterministic deploy class-byte installation (ConfigParam 85 size limits enforced), state-backed Avata class loading, pre-runtime inbound validation, typed static-void invocation, duplicate manifest-key rejection, and linked resolver integration all implemented. Outbound action encoding: committed events flow through `event-host` to `OutList` action cells compatible with the TOS action phase |
 | Phase 7 — RPC namespace | 🟡 | `jvm_deployContract`, `jvm_callContract`, `jvm_getContractState`, `jvm_getReceipts` — request/response codecs and admission checks in `jvm/core/rpc.{h,cpp}`. Standalone wiring via `handle_jvm_rpc()`. Full node hook (`WorkchainRuntimeServices::register_rpc`) pending once that hook lands |
 | Phase 8 — Hardening | 🟡 | `EndToEndDeployCallPersistAndRollback` (3-tx deploy→call→rollback flow), `MultiInstanceIndependentStorageSlots`, `JvmActivationConfigBuildsAndRoundTrips`, `AvataInvocationBuildsOutOfMemoryComputeOutput` (OOM path: not committed, correct vm_log), `MaxHeapBytesExceededReturnsError` (post-invocation config guard), `JvmStateCellBocRoundTripPreservesComputeOutput` (BOC serialize→deserialize replay), and deterministic in-memory replay test all exist. Verifier negative tests (`VerifierProfile`, `CoreTrapProfile`), float determinism (`DeterministicFloatTest`), and path-sanitization tests (`StackTraceSourceFileTest`: unix/windows/plain/no-SourceFile) all pass. Missing: cross-platform float conformance vector against x86/ARM/WASM (requires multi-platform CI), performance baseline measurement |
-| JVM v2 account-native topology | ⏭ | Requires a separate consensus migration design; out of scope for v1 |
+| JVM v2 account-native topology | ⏭ | Deferred for engineering scope, not for migration reasons (TOS is pre-launch; there is no on-chain state to migrate). The real blockers are: (1) `WorkchainExecutionRegistry` needs a new account-creation policy beyond `SingletonExecutor`; (2) a class-store deduplication/reference-counting design is required when multiple contracts share the same class bytes; (3) the v1 singleton execution path should be validated first before adding per-account complexity. Can be designed as the initial account model if v1 is not activated before this work is complete |
 | Lambda / `invokedynamic` support | 🟡 | Verifier rejects `CONSTANT_MethodHandle`, `CONSTANT_MethodType`, `CONSTANT_InvokeDynamic`, and `BootstrapMethods` (v1 position: reject). VM-internal deterministic bootstrap linkage is a post-v1 item; public `java.lang.invoke` stays absent from v1 `rt.jar`. Decision and negative tests exist; end-to-end wrapper test (`check-api-javac` lambda compile → rejection) confirmed. Positive bootstrap path is explicitly deferred |
-| Per-account contract model | ⏭ | Each Java contract as a distinct TOS account on `wc=3`; out of scope for v1 |
+| Per-account contract model | ⏭ | Each Java contract as a distinct TOS account on `wc=3`; same scope as JVM v2 account-native topology above |
 
 **v1 consensus-activation blockers (remaining):**
 1. Full node RPC wiring — Phase 7 scaffold done; `WorkchainRuntimeServices::register_rpc` hook integration pending
