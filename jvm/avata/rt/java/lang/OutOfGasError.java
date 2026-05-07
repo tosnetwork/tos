@@ -8,7 +8,8 @@
 
    The gas counter is initialized by jvm/core/compute-phase.cpp from the
    gas_limit field of WorkchainComputeInput before contract execution begins.
-   Gas costs per opcode are loaded from ConfigParam 85 (gas-table.cpp).
+   Gas costs per opcode are loaded from ConfigParam 85 by the JVM workchain
+   adapter and installed into the interpreter's gas table before execution.
 
    It extends Error (not RuntimeException) so normal application-level
    Exception handlers do not catch it.  Validators treat an OutOfGasError as

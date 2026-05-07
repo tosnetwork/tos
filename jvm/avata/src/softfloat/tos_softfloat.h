@@ -1,84 +1,93 @@
 /* TOS deterministic floating-point shim for Java float/double opcodes.
  *
- * TODO(consensus-fp): This implementation uses the host C99 FP unit with
- * explicit NaN canonicalization and JVMS-correct conversion clamping.  It
- * correctly handles NaN, signed-zero, Infinity, and all conversion edge
- * cases.  For full cross-platform bit-identity across x87/SSE/ARM/RISC-V
- * validators, replace the arithmetic operations with Berkeley SoftFloat 3e
- * (http://www.jhauser.us/arithmetic/SoftFloat.html) compiled with
- * SOFTFLOAT_ROUND_NEAR_EVEN before consensus activation.
- *
- * What IS already deterministic here:
- *   - NaN detection (bit pattern, no FPU)
- *   - NaN canonicalization on all outputs
- *   - fneg/dneg (single-bit flip, no FPU)
- *   - fcmpg/fcmpl/dcmpg/dcmpl NaN return path (early exit, no comparison)
- *   - f2i/f2l/d2i/d2l clamping (NaN→0, ±Inf and overflow→MAX/MIN_VALUE)
- *
- * What depends on the host FPU (round-to-nearest-even assumed):
- *   - fadd/fsub/fmul/fdiv/frem and their double counterparts
- *   - f2d/d2f/i2f/l2f/i2d/l2d
- *
- * All functions operate on raw bit representations (uint32_t for float,
- * uint64_t for double) so the interpreter can stay in integer space.
+ * All arithmetic, comparisons, and conversions are routed through Berkeley
+ * SoftFloat 3e.  The interpreter passes raw IEEE-754 bit patterns
+ * (uint32_t/uint64_t), so this layer never asks the host FPU to compute a
+ * consensus value.
  */
 
 #pragma once
 
 #include <stdint.h>
-#include <math.h>
-#include <string.h>
 
-/* Canonical NaN bit patterns (quietNaN, sign=0, payload=0x400000/0x8000000000000) */
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "platform.h"
+#include "softfloat.h"
+
+float32_t tos_softfloat_f32_fmod(float32_t a, float32_t b);
+float64_t tos_softfloat_f64_fmod(float64_t a, float64_t b);
+#ifdef __cplusplus
+}
+#endif
+
+/* Canonical NaN bit patterns (quietNaN, sign=0). */
 #define TOS_FLOAT_CANONICAL_NAN  UINT32_C(0x7FC00000)
 #define TOS_DOUBLE_CANONICAL_NAN UINT64_C(0x7FF8000000000000)
 
-/* Bit-level type punning -- standard C++ via memcpy, no UB */
-static inline float tos_u32_to_f(uint32_t b)
+static inline void tos_softfloat_begin()
 {
-  float f;
-  memcpy(&f, &b, 4);
-  return f;
-}
-static inline uint32_t tos_f_to_u32(float f)
-{
-  uint32_t b;
-  memcpy(&b, &f, 4);
-  return b;
-}
-static inline double tos_u64_to_d(uint64_t b)
-{
-  double d;
-  memcpy(&d, &b, 8);
-  return d;
-}
-static inline uint64_t tos_d_to_u64(double d)
-{
-  uint64_t b;
-  memcpy(&b, &d, 8);
-  return b;
+  softfloat_roundingMode = softfloat_round_near_even;
+  softfloat_detectTininess = softfloat_tininess_afterRounding;
+  softfloat_exceptionFlags = 0;
 }
 
-/* NaN detection via bit pattern -- host-FPU-independent */
+static inline float32_t tos_f32(uint32_t bits)
+{
+  float32_t value;
+  value.v = bits;
+  return value;
+}
+
+static inline float64_t tos_f64(uint64_t bits)
+{
+  float64_t value;
+  value.v = bits;
+  return value;
+}
+
+/* NaN detection via bit pattern. */
 static inline int tos_fnan(uint32_t bits)
 {
   return (bits & UINT32_C(0x7F800000)) == UINT32_C(0x7F800000)
       && (bits & UINT32_C(0x007FFFFF)) != 0;
 }
+
 static inline int tos_dnan(uint64_t bits)
 {
   return (bits & UINT64_C(0x7FF0000000000000)) == UINT64_C(0x7FF0000000000000)
       && (bits & UINT64_C(0x000FFFFFFFFFFFFF)) != 0;
 }
 
-/* NaN canonicalization */
 static inline uint32_t tos_fcanon(uint32_t bits)
 {
   return tos_fnan(bits) ? TOS_FLOAT_CANONICAL_NAN : bits;
 }
+
 static inline uint64_t tos_dcanon(uint64_t bits)
 {
   return tos_dnan(bits) ? TOS_DOUBLE_CANONICAL_NAN : bits;
+}
+
+static inline int tos_fpositive_ge(uint32_t bits, uint32_t threshold)
+{
+  return (bits & UINT32_C(0x80000000)) == 0 && bits >= threshold;
+}
+
+static inline int tos_fnegative_le(uint32_t bits, uint32_t threshold)
+{
+  return (bits & UINT32_C(0x80000000)) != 0 && bits >= threshold;
+}
+
+static inline int tos_dpositive_ge(uint64_t bits, uint64_t threshold)
+{
+  return (bits & UINT64_C(0x8000000000000000)) == 0 && bits >= threshold;
+}
+
+static inline int tos_dnegative_le(uint64_t bits, uint64_t threshold)
+{
+  return (bits & UINT64_C(0x8000000000000000)) != 0 && bits >= threshold;
 }
 
 /* ------------------------------------------------------------------ */
@@ -87,26 +96,35 @@ static inline uint64_t tos_dcanon(uint64_t bits)
 
 static inline uint32_t tos_fadd(uint32_t a, uint32_t b)
 {
-  return tos_fcanon(tos_f_to_u32(tos_u32_to_f(a) + tos_u32_to_f(b)));
-}
-static inline uint32_t tos_fsub(uint32_t a, uint32_t b)
-{
-  return tos_fcanon(tos_f_to_u32(tos_u32_to_f(a) - tos_u32_to_f(b)));
-}
-static inline uint32_t tos_fmul(uint32_t a, uint32_t b)
-{
-  return tos_fcanon(tos_f_to_u32(tos_u32_to_f(a) * tos_u32_to_f(b)));
-}
-static inline uint32_t tos_fdiv(uint32_t a, uint32_t b)
-{
-  return tos_fcanon(tos_f_to_u32(tos_u32_to_f(a) / tos_u32_to_f(b)));
-}
-static inline uint32_t tos_frem(uint32_t a, uint32_t b)
-{
-  return tos_fcanon(tos_f_to_u32(fmodf(tos_u32_to_f(a), tos_u32_to_f(b))));
+  tos_softfloat_begin();
+  return tos_fcanon(f32_add(tos_f32(a), tos_f32(b)).v);
 }
 
-/* fneg: flip sign bit only, then canonicalize if NaN */
+static inline uint32_t tos_fsub(uint32_t a, uint32_t b)
+{
+  tos_softfloat_begin();
+  return tos_fcanon(f32_sub(tos_f32(a), tos_f32(b)).v);
+}
+
+static inline uint32_t tos_fmul(uint32_t a, uint32_t b)
+{
+  tos_softfloat_begin();
+  return tos_fcanon(f32_mul(tos_f32(a), tos_f32(b)).v);
+}
+
+static inline uint32_t tos_fdiv(uint32_t a, uint32_t b)
+{
+  tos_softfloat_begin();
+  return tos_fcanon(f32_div(tos_f32(a), tos_f32(b)).v);
+}
+
+static inline uint32_t tos_frem(uint32_t a, uint32_t b)
+{
+  tos_softfloat_begin();
+  return tos_fcanon(tos_softfloat_f32_fmod(tos_f32(a), tos_f32(b)).v);
+}
+
+/* fneg: flip sign bit only, then canonicalize if NaN. */
 static inline uint32_t tos_fneg(uint32_t a)
 {
   uint32_t r = a ^ UINT32_C(0x80000000);
@@ -115,28 +133,31 @@ static inline uint32_t tos_fneg(uint32_t a)
 
 /* ------------------------------------------------------------------ */
 /* Float comparisons (JVMS NaN semantics)                              */
-/* fcmpg: NaN → +1;  fcmpl: NaN → -1                                  */
+/* fcmpg: NaN -> +1; fcmpl: NaN -> -1                                  */
 /* ------------------------------------------------------------------ */
 
 static inline int32_t tos_fcmpg(uint32_t ab, uint32_t bb)
 {
   if (tos_fnan(ab) || tos_fnan(bb))
     return 1;
-  float a = tos_u32_to_f(ab), b = tos_u32_to_f(bb);
-  if (a < b)
+
+  tos_softfloat_begin();
+  if (f32_lt(tos_f32(ab), tos_f32(bb)))
     return -1;
-  if (a > b)
+  if (f32_lt(tos_f32(bb), tos_f32(ab)))
     return 1;
   return 0;
 }
+
 static inline int32_t tos_fcmpl(uint32_t ab, uint32_t bb)
 {
   if (tos_fnan(ab) || tos_fnan(bb))
     return -1;
-  float a = tos_u32_to_f(ab), b = tos_u32_to_f(bb);
-  if (a < b)
+
+  tos_softfloat_begin();
+  if (f32_lt(tos_f32(ab), tos_f32(bb)))
     return -1;
-  if (a > b)
+  if (f32_lt(tos_f32(bb), tos_f32(ab)))
     return 1;
   return 0;
 }
@@ -147,26 +168,35 @@ static inline int32_t tos_fcmpl(uint32_t ab, uint32_t bb)
 
 static inline uint64_t tos_dadd(uint64_t a, uint64_t b)
 {
-  return tos_dcanon(tos_d_to_u64(tos_u64_to_d(a) + tos_u64_to_d(b)));
-}
-static inline uint64_t tos_dsub(uint64_t a, uint64_t b)
-{
-  return tos_dcanon(tos_d_to_u64(tos_u64_to_d(a) - tos_u64_to_d(b)));
-}
-static inline uint64_t tos_dmul(uint64_t a, uint64_t b)
-{
-  return tos_dcanon(tos_d_to_u64(tos_u64_to_d(a) * tos_u64_to_d(b)));
-}
-static inline uint64_t tos_ddiv(uint64_t a, uint64_t b)
-{
-  return tos_dcanon(tos_d_to_u64(tos_u64_to_d(a) / tos_u64_to_d(b)));
-}
-static inline uint64_t tos_drem(uint64_t a, uint64_t b)
-{
-  return tos_dcanon(tos_d_to_u64(fmod(tos_u64_to_d(a), tos_u64_to_d(b))));
+  tos_softfloat_begin();
+  return tos_dcanon(f64_add(tos_f64(a), tos_f64(b)).v);
 }
 
-/* dneg: flip sign bit only, then canonicalize if NaN */
+static inline uint64_t tos_dsub(uint64_t a, uint64_t b)
+{
+  tos_softfloat_begin();
+  return tos_dcanon(f64_sub(tos_f64(a), tos_f64(b)).v);
+}
+
+static inline uint64_t tos_dmul(uint64_t a, uint64_t b)
+{
+  tos_softfloat_begin();
+  return tos_dcanon(f64_mul(tos_f64(a), tos_f64(b)).v);
+}
+
+static inline uint64_t tos_ddiv(uint64_t a, uint64_t b)
+{
+  tos_softfloat_begin();
+  return tos_dcanon(f64_div(tos_f64(a), tos_f64(b)).v);
+}
+
+static inline uint64_t tos_drem(uint64_t a, uint64_t b)
+{
+  tos_softfloat_begin();
+  return tos_dcanon(tos_softfloat_f64_fmod(tos_f64(a), tos_f64(b)).v);
+}
+
+/* dneg: flip sign bit only, then canonicalize if NaN. */
 static inline uint64_t tos_dneg(uint64_t a)
 {
   uint64_t r = a ^ UINT64_C(0x8000000000000000);
@@ -181,21 +211,24 @@ static inline int32_t tos_dcmpg(uint64_t ab, uint64_t bb)
 {
   if (tos_dnan(ab) || tos_dnan(bb))
     return 1;
-  double a = tos_u64_to_d(ab), b = tos_u64_to_d(bb);
-  if (a < b)
+
+  tos_softfloat_begin();
+  if (f64_lt(tos_f64(ab), tos_f64(bb)))
     return -1;
-  if (a > b)
+  if (f64_lt(tos_f64(bb), tos_f64(ab)))
     return 1;
   return 0;
 }
+
 static inline int32_t tos_dcmpl(uint64_t ab, uint64_t bb)
 {
   if (tos_dnan(ab) || tos_dnan(bb))
     return -1;
-  double a = tos_u64_to_d(ab), b = tos_u64_to_d(bb);
-  if (a < b)
+
+  tos_softfloat_begin();
+  if (f64_lt(tos_f64(ab), tos_f64(bb)))
     return -1;
-  if (a > b)
+  if (f64_lt(tos_f64(bb), tos_f64(ab)))
     return 1;
   return 0;
 }
@@ -204,94 +237,100 @@ static inline int32_t tos_dcmpl(uint64_t ab, uint64_t bb)
 /* Conversions                                                          */
 /* ------------------------------------------------------------------ */
 
-/* f2d: widen float to double; NaN → canonical double NaN */
 static inline uint64_t tos_f2d(uint32_t fb)
 {
   if (tos_fnan(fb))
     return TOS_DOUBLE_CANONICAL_NAN;
-  return tos_d_to_u64((double)tos_u32_to_f(fb));
+
+  tos_softfloat_begin();
+  return tos_dcanon(f32_to_f64(tos_f32(fb)).v);
 }
 
-/* d2f: narrow double to float; NaN → canonical float NaN */
 static inline uint32_t tos_d2f(uint64_t db)
 {
   if (tos_dnan(db))
     return TOS_FLOAT_CANONICAL_NAN;
-  return tos_fcanon(tos_f_to_u32((float)tos_u64_to_d(db)));
+
+  tos_softfloat_begin();
+  return tos_fcanon(f64_to_f32(tos_f64(db)).v);
 }
 
-/* f2i: NaN→0; ±Inf and overflow clamp to INT32_MAX/MIN */
 static inline int32_t tos_f2i(uint32_t fb)
 {
   if (tos_fnan(fb))
     return 0;
-  float f = tos_u32_to_f(fb);
-  /* 2147483648.0f is the smallest float > INT32_MAX */
-  if (f >= 2147483648.0f)
+  if (tos_fpositive_ge(fb, UINT32_C(0x4F000000)))
     return INT32_MAX;
-  if (f <= -2147483648.0f)
+  if (tos_fnegative_le(fb, UINT32_C(0xCF000000)))
     return INT32_MIN;
-  return (int32_t)f;
+
+  tos_softfloat_begin();
+  return static_cast<int32_t>(
+      f32_to_i32(tos_f32(fb), softfloat_round_minMag, false));
 }
 
-/* f2l: NaN→0; ±Inf and overflow clamp to INT64_MAX/MIN */
 static inline int64_t tos_f2l(uint32_t fb)
 {
   if (tos_fnan(fb))
     return 0;
-  float f = tos_u32_to_f(fb);
-  /* 9.223372036854776e18f == 2^63 (smallest float > INT64_MAX) */
-  if (f >= 9.223372036854776e18f)
+  if (tos_fpositive_ge(fb, UINT32_C(0x5F000000)))
     return INT64_MAX;
-  /* -2^63 == INT64_MIN, exactly representable as float */
-  if (f <= -9.223372036854776e18f)
+  if (tos_fnegative_le(fb, UINT32_C(0xDF000000)))
     return INT64_MIN;
-  return (int64_t)f;
+
+  tos_softfloat_begin();
+  return static_cast<int64_t>(
+      f32_to_i64(tos_f32(fb), softfloat_round_minMag, false));
 }
 
-/* d2i: NaN→0; ±Inf and overflow clamp */
 static inline int32_t tos_d2i(uint64_t db)
 {
   if (tos_dnan(db))
     return 0;
-  double d = tos_u64_to_d(db);
-  if (d >= 2147483648.0)
+  if (tos_dpositive_ge(db, UINT64_C(0x41E0000000000000)))
     return INT32_MAX;
-  if (d <= -2147483649.0)
+  if (tos_dnegative_le(db, UINT64_C(0xC1E0000000200000)))
     return INT32_MIN;
-  return (int32_t)d;
+
+  tos_softfloat_begin();
+  return static_cast<int32_t>(
+      f64_to_i32(tos_f64(db), softfloat_round_minMag, false));
 }
 
-/* d2l: NaN→0; ±Inf and overflow clamp */
 static inline int64_t tos_d2l(uint64_t db)
 {
   if (tos_dnan(db))
     return 0;
-  double d = tos_u64_to_d(db);
-  /* 9.223372036854776e18 == 2^63 */
-  if (d >= 9.223372036854776e18)
+  if (tos_dpositive_ge(db, UINT64_C(0x43E0000000000000)))
     return INT64_MAX;
-  if (d <= -9.223372036854776e18)
+  if (tos_dnegative_le(db, UINT64_C(0xC3E0000000000000)))
     return INT64_MIN;
-  return (int64_t)d;
+
+  tos_softfloat_begin();
+  return static_cast<int64_t>(
+      f64_to_i64(tos_f64(db), softfloat_round_minMag, false));
 }
 
-/* i2f / l2f: int/long → float bits */
 static inline uint32_t tos_i2f(int32_t i)
 {
-  return tos_f_to_u32((float)i);
-}
-static inline uint32_t tos_l2f(int64_t l)
-{
-  return tos_f_to_u32((float)l);
+  tos_softfloat_begin();
+  return i32_to_f32(i).v;
 }
 
-/* i2d / l2d: int/long → double bits */
+static inline uint32_t tos_l2f(int64_t l)
+{
+  tos_softfloat_begin();
+  return i64_to_f32(l).v;
+}
+
 static inline uint64_t tos_i2d(int32_t i)
 {
-  return tos_d_to_u64((double)i);
+  tos_softfloat_begin();
+  return i32_to_f64(i).v;
 }
+
 static inline uint64_t tos_l2d(int64_t l)
 {
-  return tos_d_to_u64((double)l);
+  tos_softfloat_begin();
+  return i64_to_f64(l).v;
 }

@@ -1,0 +1,70 @@
+/*
+    JVM Workchain — Avata-backed JvmComputeRuntime adapter.
+*/
+#pragma once
+
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include "jvm/core/dispatch-engine.h"
+
+namespace jvm_workchain {
+
+struct JvmLinkedAvataRuntimeOptions {
+    // Required boot runtime jar. Normally provided by the CMake Avata bridge
+    // default or TOS_JVM_AVATA_RT_JAR at validator startup.
+    std::string boot_classpath;
+
+    // Optional contract/application classpath. The v1 manifest resolver maps
+    // (contract_id, method_id) to class/method names and resolves them here.
+    std::string classpath;
+
+    std::string max_heap{"128m"};
+    std::vector<std::string> extra_options;
+};
+
+struct JvmAvataCallTarget {
+    void* thread{nullptr};
+    void* invocation_user{nullptr};
+};
+
+using JvmAvataResolveCallTarget =
+    td::Result<JvmAvataCallTarget> (*)(
+        const block::WorkchainComputeInput& input,
+        const block::WorkchainComputeContext& context,
+        const JvmConfig& config,
+        const JvmExecutorState& previous_state,
+        void* user);
+
+class JvmAvataRuntime final : public JvmComputeRuntime {
+ public:
+    JvmAvataRuntime(JvmAvataExecutionApi api,
+                    JvmAvataResolveCallTarget resolve_call_target,
+                    void* resolve_user = nullptr,
+                    std::shared_ptr<void> resolve_owner = nullptr);
+
+    td::Result<JvmAvataInvocationResult> run_contract(
+        const block::WorkchainComputeInput& input,
+        const block::WorkchainComputeContext& context,
+        const JvmConfig& config,
+        const JvmExecutorState& previous_state) const override;
+
+ private:
+    JvmAvataExecutionApi api_;
+    JvmAvataResolveCallTarget resolve_call_target_{nullptr};
+    void* resolve_user_{nullptr};
+    std::shared_ptr<void> resolve_owner_;
+    mutable std::mutex mutex_;
+};
+
+// Build a JvmAvataExecutionApi backed by the linked Avata interpreter C ABI.
+// The call target resolver must resolve and pass an AvataContractMethod through
+// JvmAvataCallTarget::invocation_user.
+JvmAvataExecutionApi make_linked_jvm_avata_execution_api();
+
+td::Result<std::shared_ptr<const JvmComputeRuntime>>
+make_linked_jvm_avata_runtime(const JvmLinkedAvataRuntimeOptions& options);
+
+}  // namespace jvm_workchain

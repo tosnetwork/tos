@@ -1,0 +1,60 @@
+/*
+    JVM Workchain — deterministic event host adapter.
+
+    Avata's java.lang.Event native API emits up to four 32-byte topics plus an
+    arbitrary byte payload. This adapter records the ordered event list for one
+    transaction and exposes nested snapshots so failed calls can roll back
+    emitted events with storage writes.
+*/
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
+#include "td/utils/Status.h"
+#include "vm/cells.h"
+
+struct AvataEventHost;
+
+namespace jvm_workchain {
+
+constexpr std::size_t kJvmEventTopicBytes = 32;
+constexpr std::size_t kJvmEventMaxTopics = 4;
+constexpr std::size_t kJvmEventDataMaxBytes = 1024 * 1024;
+constexpr std::uint32_t kJvmEventPayloadMagic = 0x4a564d45;  // "JVME"
+constexpr std::uint8_t kJvmEventPayloadSchemaVersion = 1;
+
+using JvmEventTopic = std::array<std::uint8_t, kJvmEventTopicBytes>;
+using JvmEventData = std::vector<std::uint8_t>;
+
+struct JvmEvent {
+    std::vector<JvmEventTopic> topics;
+    JvmEventData data;
+};
+
+class JvmEventHost {
+ public:
+    const std::vector<JvmEvent>& events() const;
+
+    td::Status emit(const std::vector<JvmEventTopic>& topics,
+                    const JvmEventData& data);
+    td::Status begin_transaction();
+    td::Status commit_transaction();
+    td::Status rollback_transaction();
+
+ private:
+    std::vector<JvmEvent> events_;
+    std::vector<std::size_t> snapshots_;
+};
+
+void configure_avata_event_host(JvmEventHost& events, AvataEventHost& host);
+
+td::Ref<vm::Cell> encode_jvm_event_payload(const JvmEvent& event);
+td::Result<JvmEvent> decode_jvm_event_payload(td::Ref<vm::Cell> cell);
+td::Ref<vm::Cell> encode_jvm_event_message(const JvmEvent& event);
+td::Ref<vm::Cell> build_jvm_event_action_list(
+    const std::vector<JvmEvent>& events);
+
+}  // namespace jvm_workchain

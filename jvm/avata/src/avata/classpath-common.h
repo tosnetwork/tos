@@ -270,6 +270,36 @@ System::Library* loadLibrary(Thread* t,
   return lib;
 }
 
+GcString* makeSourceFileString(Thread* t, GcByteArray* file)
+{
+  if (file == 0) {
+    return 0;
+  }
+
+  unsigned length = file->length();
+  if (length == 0) {
+    return 0;
+  }
+
+  const int8_t* body = file->body().begin();
+  if (body[length - 1] == 0) {
+    --length;
+  }
+
+  unsigned start = 0;
+  for (unsigned i = 0; i < length; ++i) {
+    if (body[i] == '/' || body[i] == '\\' || body[i] == ':') {
+      start = i + 1;
+    }
+  }
+
+  if (start >= length) {
+    return 0;
+  }
+
+  return t->m->classpath->makeString(t, file, start, length - start);
+}
+
 GcStackTraceElement* makeStackTraceElement(Thread* t, GcTraceElement* e)
 {
   PROTECT(t, e);
@@ -298,8 +328,8 @@ GcStackTraceElement* makeStackTraceElement(Thread* t, GcTraceElement* e)
   unsigned line = t->m->processor->lineNumber(t, method, e->ip());
 
   GcByteArray* file = method->class_()->sourceFile();
-  GcString* file_string
-      = file ? t->m->classpath->makeString(t, file, 0, file->length() - 1) : 0;
+  GcString* file_string = makeSourceFileString(t, file);
+  PROTECT(t, file_string);
 
   return makeStackTraceElement(
       t, class_name_string, method_name_string, file_string, line);

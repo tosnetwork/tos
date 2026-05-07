@@ -432,13 +432,22 @@ for consensus execution. No TOS integration yet; tested standalone.
   exception stack traces deterministic or unavailable
 - Wire a per-transaction gas counter into Avata's interpreter dispatch loop;
   `OutOfGasError` must be thrown deterministically when the counter reaches zero
-- Build system: integrate Avata as a static library via CMake;
-  `jvm/avata/CMakeLists.txt` exports a single `avata_interpreter` target
+- Build system: Avata is integrated as a static library via CMake;
+  `jvm/avata/CMakeLists.txt` exports `avata_interpreter`, `jvm_workchain_core`
+  links it, and `make_linked_jvm_avata_execution_api()` maps the workchain
+  bridge to the Avata C ABI. `init_jvm_workchain()` now installs a linked
+  Avata VM runtime when the runtime jar is available and keeps wc=3 fail-closed
+  if VM creation fails.
 
 **Determinism test harness:**
-Run the same bytecode twice in the same process with freshly initialized heaps
-and assert byte-identical output state. Run with `valgrind --tool=memcheck` to
-eliminate undefined behavior that could cause inter-validator divergence.
+`make -C jvm/avata run-test` runs each Java test twice with the same bytecode,
+VM flags, classpath, and input, then compares complete stdout/stderr. The
+generated `run-determinism.sh` is also used by the remote-test path so the same
+replay check can run on Linux, macOS, Windows, FreeBSD, and target validator
+architectures. The workchain registry test also replays the same JVM compute
+input and compares `new_data` and action-list cell hashes, gas, exit code, and
+VM log. Run stress builds with `valgrind --tool=memcheck` to eliminate undefined
+behavior that could cause inter-validator divergence.
 
 **Effort:** 8–14 weeks
 
@@ -467,8 +476,8 @@ placeholder result for tests only. A production binary must fail closed if
   - `account_policy()` returns `SingletonExecutor(0x0000...0001)` with
     activation code `0x4a`
   - `run_compute()` test stub: deserialize nothing, execute nothing, return a
-    deterministic not-ready result; production startup must refuse active JVM
-    descriptors until Phase 4+ real compute is wired
+    deterministic not-ready result until the production Avata resolver is
+    installed
 - `jvm/core/config-param.h` / `.cpp`:
   - `build_jvm_workchain_descr()` (ConfigParam 12 descriptor)
   - `build_jvm_config_cell()` / `parse_jvm_config_cell()` (ConfigParam 85)
@@ -481,9 +490,18 @@ placeholder result for tests only. A production binary must fail closed if
     with empty `JvmExecutorState` data cell and activation code marker `0x4a`
 - `jvm/core/init.h` / `.cpp`:
   - `init_jvm_workchain(db_root)`: initializes non-consensus Avata process
-    resources and calls `register_jvm_workchain_engine(registry)`. Consensus
-    ConfigParam 85 parsing happens only inside `validate_and_resolve_config()`
-    against the block-transition config snapshot.
+    resources, creates the linked Avata runtime from
+    `TOS_JVM_AVATA_RT_JAR`/the CMake default plus optional
+    `TOS_JVM_AVATA_CONTRACT_CLASSPATH`, and calls
+    `register_jvm_workchain_engine(registry, runtime)`. Consensus ConfigParam
+    85 parsing happens only inside `validate_and_resolve_config()` against the
+    block-transition config snapshot.
+- `jvm/core/avata-runtime.h` / `.cpp`:
+  - `JvmAvataRuntime` installs storage/event hosts and invokes Avata through
+    the execution bridge. `make_linked_jvm_avata_execution_api()` binds that
+    bridge to the linked Avata C ABI. `make_linked_jvm_avata_runtime()` creates
+    the process-local Avata VM/thread and resolves inbound calls from the
+    executor-state class manifest before entering the gas/memory transaction.
 - `crypto/block/workchain-execution-dispatch.h` / `.cpp`:
   - Add `jvm_workchain_engine_key()`, `workchain_engine_key_is_jvm()`, and a
     `kTosNodeCapabilityWorkchainJvm` capability bit
@@ -690,10 +708,12 @@ carried in `input.inbound_body`, and the encoding for outbound messages
 
 **Inbound call descriptor (`JvmCallDescriptor`):**
 ```
-jvm_call#_  contract_id:bits256
-            method_id:uint32        // first 4 bytes of keccak(method_sig)
-            args:^ArgsCell
-            = JvmCallDescriptor;
+jvm_call#4a564d49
+    schema_version:uint8  // 1
+    contract_id:bits256
+    method_id:uint32      // first 4 bytes of keccak(method_sig)
+    args:^ArgsCell
+    = JvmCallDescriptor;
 ```
 
 `contract_id` identifies the deployed contract instance. The executor state maps
@@ -711,6 +731,34 @@ entry methods in the same class. The ABI must also define a deploy message:
 class bytes, constructor/initializer arguments, optional deployment salt, and
 the deterministic `contract_id = hash(deployer, class_hash, salt, init_args)`
 derivation.
+
+**Class manifest (`JvmAvataClassManifest`):**
+```
+jvm_manifest#4a564d4d
+    schema_version:uint8  // 1
+    count:uint16
+    entries:^(JvmManifestEntry chain)
+    = JvmAvataClassManifest;
+
+jvm_manifest_entry
+    contract_id:bits256
+    method_id:uint32
+    has_next:bit
+    next:^(JvmManifestEntry)?
+    class_name:^StringCell
+    method_name:^StringCell
+    method_spec:^StringCell
+    = JvmManifestEntry;
+```
+
+Implementation status: `jvm/core/message-abi.*` implements the v1 call
+descriptor envelope and `JvmNativeEngine` rejects malformed inbound bodies
+before entering an installed runtime. `jvm/core/class-manifest.*` implements the
+v1 `class_state_root` manifest, rejects duplicate `(contract_id, method_id)`
+entries, and `JvmCellCodec` validates it when decoding executor state. The
+linked Avata runtime resolver uses that manifest to resolve a static-void Avata
+method before executing the gas/memory transaction. Deployment messages, class
+byte storage/loading from deploy state, and typed argument decoding remain open.
 
 **Outbound action encoding:**
 Contract code may enqueue outbound messages by calling
@@ -820,7 +868,7 @@ Legend:
 - ⬜ Not started
 - ⏭ Explicitly deferred
 
-Last updated: 2026-05-05.
+Last updated: 2026-05-07.
 
 | Phase | Status | Notes |
 |---|---|---|
@@ -830,7 +878,7 @@ Last updated: 2026-05-05.
 | Phase 3 — Contract stdlib | ⬜ | |
 | Phase 4 — Heap serialization | ⬜ | Largest risk item; must be prototyped before committing to timeline |
 | Phase 5 — Gas metering | ⬜ | |
-| Phase 6 — Message ABI | ⬜ | |
+| Phase 6 — Message ABI | 🟡 | `JvmCallDescriptor`, `JvmAvataClassManifest`, pre-runtime inbound validation, duplicate manifest-key rejection, and linked resolver integration are implemented; deploy ABI, class byte loading, and typed args remain |
 | Phase 7 — RPC namespace | ⬜ | |
 | Phase 8 — Hardening | ⬜ | |
 | JVM v2 account-native topology | ⏭ | Requires a separate consensus migration design; out of scope for v1 |
@@ -866,8 +914,10 @@ jvm/
     persistent-list.cpp ← native C++ PersistentList
     message-abi.h
     message-abi.cpp     ← JvmCallDescriptor encode/decode
+    class-manifest.h
+    class-manifest.cpp  ← class_state_root JVMM manifest codec/resolver map
     gas-table.h
-    gas-table.cpp       ← per-opcode gas schedule from ConfigParam 85
+    config-param.cpp    ← ConfigParam 85 limits and gas schedule codec
     rpc.h
     rpc.cpp             ← jvm_* JSON-RPC handlers
   rt/

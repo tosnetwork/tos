@@ -32,6 +32,7 @@ target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_a
 
 target_link_libraries(validator-engine evm_workchain)
 target_link_libraries(validator-engine uno_workchain)
+target_link_libraries(validator-engine jvm_workchain_core)
 if (JEMALLOC_FOUND)
   target_include_directories(validator-engine PRIVATE ${JEMALLOC_INCLUDE_DIR})
   target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1)

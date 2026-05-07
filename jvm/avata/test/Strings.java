@@ -47,6 +47,16 @@ public class Strings {
     }
   }
 
+  private static void expectUnsupportedEncoding(Action action)
+    throws Exception
+  {
+    try {
+      action.run();
+      throw new RuntimeException("expected UnsupportedEncodingException");
+    } catch (java.io.UnsupportedEncodingException expected) {
+    }
+  }
+
   private static boolean equal(Object a, Object b) {
     return a == b || (a != null && a.equals(b));
   }
@@ -258,6 +268,63 @@ public class Strings {
       pout.print("\u00e9");
       expect(arraysEqual(bout.toByteArray(), bytes));
     }
+
+    { String s = "\ud83d\ude00";
+      byte[] utf8 = new byte[] { (byte) 0xf0, (byte) 0x9f,
+                                 (byte) 0x98, (byte) 0x80 };
+      expect(arraysEqual(s.getBytes("UTF-8"), utf8));
+      expect(new String(utf8, "UTF-8").equals(s));
+
+      java.io.ByteArrayOutputStream bout = new java.io.ByteArrayOutputStream();
+      java.io.OutputStreamWriter writer
+        = new java.io.OutputStreamWriter(bout, "UTF-8");
+      writer.write(s);
+      writer.flush();
+      expect(arraysEqual(bout.toByteArray(), utf8));
+
+      java.io.Reader reader = new java.io.InputStreamReader(
+          new java.io.ByteArrayInputStream(utf8), "UTF-8");
+      char[] decoded = new char[2];
+      expect(reader.read(decoded, 0, decoded.length) == 2);
+      expect(new String(decoded).equals(s));
+    }
+
+    { byte[] bytes = new byte[] { (byte) 0xe9 };
+      java.io.Reader reader = new java.io.InputStreamReader(
+          new java.io.ByteArrayInputStream(bytes), "latin-1");
+      char[] decoded = new char[1];
+      expect(reader.read(decoded, 0, decoded.length) == 1);
+      expect(decoded[0] == '\u00e9');
+
+      java.io.ByteArrayOutputStream bout = new java.io.ByteArrayOutputStream();
+      java.io.OutputStreamWriter writer
+        = new java.io.OutputStreamWriter(bout, "latin-1");
+      writer.write("\u00e9");
+      writer.flush();
+      expect(arraysEqual(bout.toByteArray(), bytes));
+    }
+
+    expectUnsupportedEncoding(new Action() {
+      public void run() throws Exception {
+        new java.io.PrintStream(new java.io.ByteArrayOutputStream(),
+                                true,
+                                "UTF-16");
+      }
+    });
+
+    expectUnsupportedEncoding(new Action() {
+      public void run() throws Exception {
+        new java.io.InputStreamReader(new java.io.ByteArrayInputStream(
+                                      new byte[0]), "UTF-16");
+      }
+    });
+
+    expectUnsupportedEncoding(new Action() {
+      public void run() throws Exception {
+        new java.io.OutputStreamWriter(new java.io.ByteArrayOutputStream(),
+                                       "UTF-16");
+      }
+    });
 
     expect("abc".lastIndexOf('b', 100) == 1);
 

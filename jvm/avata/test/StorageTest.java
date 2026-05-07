@@ -171,6 +171,19 @@ public class StorageTest {
     expect(bytesEqual(loaded, new byte[] { 2, 3 }), "overwrite should replace value");
   }
 
+  private static void testDefaultStorageUsesHost() {
+    Storage storage = Storage.current();
+    Bytes32 slot = makeSlot(0x91);
+    byte[] value = new byte[] { 9, 8, 7 };
+    storage.clear(slot);
+    storage.store(slot, value);
+    expect(bytesEqual(storage.load(slot), value),
+           "default Storage.current should load through host storage");
+    storage.clear(slot);
+    expect(storage.load(slot) == null,
+           "default Storage.current clear should remove host storage value");
+  }
+
   // --- StorageCodec round-trips ---
 
   private static void testStorageCodecRoundTrips() {
@@ -380,6 +393,98 @@ public class StorageTest {
            "different owner namespace should have independent storage");
   }
 
+  private static void testPersistentMap() {
+    Storage storage = Storage.memory();
+    Bytes32 ns = PersistentMap.namespace("test.StorageTest.persistentMap");
+    PersistentMap<Address, Uint256> balances =
+        new PersistentMap<Address, Uint256>(storage, ns, StorageCodec.UINT256);
+
+    Address alice = Address.fromHex(0,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    Address bob = Address.fromHex(0,
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+    expect(!balances.containsKey(alice), "PersistentMap should start empty");
+    expect(balances.put(alice, Uint256.valueOf(10)) == null,
+           "PersistentMap first put should return null");
+    expect(balances.get(alice).equals(Uint256.valueOf(10)),
+           "PersistentMap get after put failed");
+    expect(balances.put(alice, Uint256.valueOf(11)).equals(Uint256.valueOf(10)),
+           "PersistentMap overwrite should return old value");
+    expect(balances.get(alice).equals(Uint256.valueOf(11)),
+           "PersistentMap overwrite value failed");
+    expect(balances.getOrDefault(bob, Uint256.valueOf(99)).equals(Uint256.valueOf(99)),
+           "PersistentMap getOrDefault failed");
+    expect(balances.remove(alice).equals(Uint256.valueOf(11)),
+           "PersistentMap remove should return old value");
+    expect(!balances.containsKey(alice), "PersistentMap remove should clear key");
+
+    Bytes32 defaultNs =
+        PersistentMap.namespace("test.StorageTest.persistentMap.defaultHost");
+    PersistentMap<Address, Uint256> defaultBalances =
+        new PersistentMap<Address, Uint256>(defaultNs, StorageCodec.UINT256);
+    defaultBalances.remove(alice);
+    defaultBalances.put(alice, Uint256.valueOf(77));
+    PersistentMap<Address, Uint256> reconstructed =
+        new PersistentMap<Address, Uint256>(defaultNs, StorageCodec.UINT256);
+    expect(reconstructed.get(alice).equals(Uint256.valueOf(77)),
+           "PersistentMap default constructor should use host-backed storage");
+    reconstructed.remove(alice);
+  }
+
+  private static void testPersistentList() {
+    Storage storage = Storage.memory();
+    Bytes32 ns = PersistentList.namespace("test.StorageTest.persistentList");
+    PersistentList<String> list =
+        new PersistentList<String>(storage, ns, StorageCodec.STRING);
+
+    expect(list.isEmpty(), "PersistentList should start empty");
+    list.add("alpha");
+    list.add("beta");
+    expect(list.size() == 2, "PersistentList size after add failed");
+    expect("alpha".equals(list.get(0)), "PersistentList first element failed");
+    expect("beta".equals(list.get(1)), "PersistentList second element failed");
+
+    list.set(1, "beta2");
+    PersistentList<String> reconstructed =
+        new PersistentList<String>(storage, ns, StorageCodec.STRING);
+    expect(reconstructed.size() == 2,
+           "PersistentList reconstruction size failed");
+    expect("beta2".equals(reconstructed.get(1)),
+           "PersistentList reconstruction value failed");
+    expect("beta2".equals(reconstructed.removeLast()),
+           "PersistentList removeLast value failed");
+    expect(reconstructed.size() == 1,
+           "PersistentList removeLast size failed");
+
+    expectException(new Action() {
+      public void run() { list.get(-1); }
+    });
+    expectException(new Action() {
+      public void run() { list.set(9, "x"); }
+    });
+
+    reconstructed.clear();
+    expect(reconstructed.isEmpty(), "PersistentList clear failed");
+    expectException(new Action() {
+      public void run() { reconstructed.removeLast(); }
+    });
+
+    Bytes32 defaultNs =
+        PersistentList.namespace("test.StorageTest.persistentList.defaultHost");
+    PersistentList<String> defaultList =
+        new PersistentList<String>(defaultNs, StorageCodec.STRING);
+    defaultList.clear();
+    defaultList.add("host");
+    PersistentList<String> defaultList2 =
+        new PersistentList<String>(defaultNs, StorageCodec.STRING);
+    expect(defaultList2.size() == 1,
+           "PersistentList default constructor should use host-backed storage");
+    expect("host".equals(defaultList2.get(0)),
+           "PersistentList default host-backed value failed");
+    defaultList2.clear();
+  }
+
   public static void main(String[] args) {
     testMissingSlot();
     testStoreAndLoad();
@@ -391,11 +496,14 @@ public class StorageTest {
     testNullValueRejected();
     testClearNonExistentSlot();
     testOverwrite();
+    testDefaultStorageUsesHost();
     testStorageCodecRoundTrips();
     testMappingSlotDeterminism();
     testMappingSlotUniqueness();
     testMappingSlotKeyTypes();
     testMappingKnownHash();
     testNestedMappings();
+    testPersistentMap();
+    testPersistentList();
   }
 }

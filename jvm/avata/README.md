@@ -107,6 +107,8 @@ workchain adapter must replace the helper table with
 `avata_set_contract_helper_gas_costs()` from the same consensus gas schedule
 used for opcodes. `java.lang.Storage` charges from the helper table before
 touching the installed storage host or the deterministic fallback store.
+`java.lang.Event` charges event base, per-topic, and per-data-byte helper gas
+before forwarding to the installed event host.
 
 ### Slim build profile
 

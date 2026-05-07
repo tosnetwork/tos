@@ -324,6 +324,112 @@ TEST(ContractStaticFieldVerifier)
               static_cast<uint32_t>(machine->vtable->DestroyJavaVM(machine)));
 }
 
+TEST(ContractStaticVoidInvocationAbi)
+{
+  vm::JavaVMOption options[3];
+  options[0].optionString = const_cast<char*>("-Xbootclasspath:rt.jar");
+  options[0].extraInfo = 0;
+  options[1].optionString = const_cast<char*>("-Djava.class.path=test");
+  options[1].extraInfo = 0;
+  options[2].optionString = const_cast<char*>("-Xmx128m");
+  options[2].extraInfo = 0;
+
+  vm::JavaVMInitArgs args;
+  args.version = JNI_VERSION_1_6;
+  args.nOptions = 3;
+  args.options = options;
+  args.ignoreUnrecognized = JNI_TRUE;
+
+  vm::Machine* machine = 0;
+  vm::Thread* thread = 0;
+  assertEqual(static_cast<uint32_t>(JNI_OK),
+              static_cast<uint32_t>(
+                  JNI_CreateJavaVM(&machine, &thread, &args)));
+  assertTrue(machine != 0);
+  assertTrue(thread != 0);
+
+  AvataThread* abiThread = reinterpret_cast<AvataThread*>(thread);
+  AvataContractMethod okMethod = 0;
+  AvataContractMethod failMethod = 0;
+  AvataContractMethod burnMethod = 0;
+
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
+              static_cast<uint32_t>(
+                  avata_resolve_contract_static_void(
+                      0, "ContractEntryPoint", "ok", "()V", &okMethod)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
+              static_cast<uint32_t>(
+                  avata_resolve_contract_static_void(
+                      abiThread, 0, "ok", "()V", &okMethod)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void(abiThread, 0)));
+
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_resolve_contract_static_void(
+                      abiThread,
+                      "ContractEntryPoint",
+                      "ok",
+                      "()V",
+                      &okMethod)));
+  assertTrue(okMethod != 0);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_resolve_contract_static_void(
+                      abiThread,
+                      "ContractEntryPoint",
+                      "fail",
+                      "()V",
+                      &failMethod)));
+  assertTrue(failMethod != 0);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_resolve_contract_static_void(
+                      abiThread,
+                      "ContractEntryPoint",
+                      "burn",
+                      "()V",
+                      &burnMethod)));
+  assertTrue(burnMethod != 0);
+
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_begin_contract_transaction_with_limits(
+                      abiThread, 10000, 1024 * 1024)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void(abiThread, okMethod)));
+  assertTrue(thread->vtable->ExceptionOccurred(thread) == 0);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(avata_end_contract_transaction(abiThread)));
+
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_begin_contract_transaction_with_limits(
+                      abiThread, 10000, 1024 * 1024)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_EXCEPTION),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void(abiThread, failMethod)));
+  assertTrue(thread->vtable->ExceptionOccurred(thread) == 0);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(avata_end_contract_transaction(abiThread)));
+
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_begin_contract_transaction_with_limits(
+                      abiThread, 4, 1024 * 1024)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OUT_OF_GAS),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void(abiThread, burnMethod)));
+  assertTrue(thread->vtable->ExceptionOccurred(thread) == 0);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(avata_end_contract_transaction(abiThread)));
+
+  assertEqual(static_cast<uint32_t>(JNI_OK),
+              static_cast<uint32_t>(machine->vtable->DestroyJavaVM(machine)));
+}
+
 TEST(ContractArenaCheckpointReset)
 {
   TestHeap heap;
@@ -449,6 +555,27 @@ TEST(ContractHelperGasTable)
                       AVATA_CONTRACT_HELPER_NATIVE_CALL,
                       &gasCost)));
   assertEqual(static_cast<uint64_t>(2), gasCost);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_get_contract_helper_gas_cost(
+                      abiThread,
+                      AVATA_CONTRACT_HELPER_EVENT_BASE,
+                      &gasCost)));
+  assertEqual(static_cast<uint64_t>(50), gasCost);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_get_contract_helper_gas_cost(
+                      abiThread,
+                      AVATA_CONTRACT_HELPER_EVENT_TOPIC,
+                      &gasCost)));
+  assertEqual(static_cast<uint64_t>(10), gasCost);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_get_contract_helper_gas_cost(
+                      abiThread,
+                      AVATA_CONTRACT_HELPER_EVENT_BYTE,
+                      &gasCost)));
+  assertEqual(static_cast<uint64_t>(1), gasCost);
 
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
               static_cast<uint32_t>(
@@ -578,6 +705,13 @@ TEST(ContractHelperGasTable)
                       AVATA_CONTRACT_HELPER_NATIVE_CALL,
                       &gasCost)));
   assertEqual(static_cast<uint64_t>(2), gasCost);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_get_contract_helper_gas_cost(
+                      abiThread,
+                      AVATA_CONTRACT_HELPER_EVENT_BASE,
+                      &gasCost)));
+  assertEqual(static_cast<uint64_t>(50), gasCost);
 
   free(thread->m);
   free(thread);
@@ -799,6 +933,27 @@ TEST(HelperGasOutOfGasRegression)
               static_cast<uint32_t>(
                   avata_charge_contract_helper_gas(
                       abiThread, AVATA_CONTRACT_HELPER_STORAGE_CLEAR, 1)));
+  avata_end_contract_transaction(abiThread);
+
+  /* Event: base=50, topic=10, byte=1.  gas=72 with 2 topics and 3 bytes fails
+     at the final byte charge after spending 70 gas. */
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_begin_contract_transaction(abiThread, 72)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_charge_contract_helper_gas(
+                      abiThread, AVATA_CONTRACT_HELPER_EVENT_BASE, 1)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_charge_contract_helper_gas(
+                      abiThread, AVATA_CONTRACT_HELPER_EVENT_TOPIC, 2)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OUT_OF_GAS),
+              static_cast<uint32_t>(
+                  avata_charge_contract_helper_gas(
+                      abiThread, AVATA_CONTRACT_HELPER_EVENT_BYTE, 3)));
+  avata_contract_remaining_gas(abiThread, &remaining);
+  assertEqual(static_cast<uint64_t>(0), remaining);
   avata_end_contract_transaction(abiThread);
 
   free(thread->m);

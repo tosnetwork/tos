@@ -531,6 +531,53 @@ Per-chain parameters for wc=2 (Uno shielded workchain). See [uno-workchain.md §
 
 **Activation**: the param is installed at zerostate (`crypto/smartcont/gen-zerostate.fif`) alongside the wc=2 workchain descriptor in ConfigParam 12. No runtime governance upgrade path is required for v1, but the param is mutable through the standard proposal flow (ConfigParam 11) if future rate-adjustment is needed. `max_spends_per_tx`, `max_outputs_per_tx`, and `tree_depth` are effectively consensus-binding (mutating them breaks AIR public-input shape); treat them as frozen after genesis.
 
+## ConfigParam 85 — JVM Workchain Chain Config
+
+Per-chain parameters for wc=3 (Avata JVM workchain). The workchain descriptor
+uses ConfigParam 12 with `vm_version = 0x4a564d31` (`"JVM1"`) and
+`vm_mode = 0`; all JVM-specific limits and gas tables live in ConfigParam 85.
+
+Root cell layout:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `magic` | uint32 | `0x4a564d43` (`"JVMC"`) |
+| `schema_version` | uint8 | **1** |
+| `chain_id` | uint32 | JVM workchain chain id; must be non-zero |
+| `gas_price` | uint64 | nanotomi price per JVM gas unit |
+| `max_gas_per_tx` | uint64 | hard per-transaction gas limit |
+| `max_class_bytes` | uint32 | max byte size for one admitted contract class |
+| `max_total_class_bytes` | uint32 | max aggregate class bytes per contract package |
+| `max_heap_bytes` | uint32 | deterministic transaction heap/memory limit |
+| `max_storage_cells` | uint32 | max account-state cell budget |
+| `class_file_major` | uint16 | **52** for Java 8 class files |
+| `gas_schedule_version` | uint8 | non-zero version of the embedded gas table |
+| `stdlib_hash` | bytes32 | hash commitment to the admitted `rt.jar` / API profile |
+| `opcode_gas_table` | ref | linked gas table with exactly 256 uint64 entries |
+| `helper_gas_table` | ref | linked gas table with exactly 13 uint64 helper entries |
+
+Each gas-table cell stores `chunk:uint8` followed by `chunk` uint64 costs and,
+when more entries remain, one reference to the next cell. `chunk` must be in
+`1..15`; every gas cost must be in `1..UINT64_MAX-1`.
+
+Helper gas entries are ordered by the Avata ABI constants: storage load,
+storage store base, storage store byte, storage clear, object allocation word,
+array allocation base, array allocation element, `System.arraycopy()` base,
+`System.arraycopy()` element, native call, event base, event topic, and event
+data byte.
+
+**Activation**: validators parse and validate ConfigParam 85 through
+`jvm/core/config-param.cpp` during workchain-engine resolution. The
+`JvmAvataRuntime` bridge applies the parsed opcode/helper gas tables and heap
+limit at the Avata transaction boundary. The main CMake build links the
+canonical `avata_interpreter` target and `make_linked_jvm_avata_execution_api()`
+maps the bridge to the Avata C ABI. `init_jvm_workchain()` now installs a
+linked Avata runtime from `TOS_JVM_AVATA_RT_JAR` or the CMake-generated
+`rt.jar` default, optional `TOS_JVM_AVATA_CONTRACT_CLASSPATH`, and
+`TOS_JVM_AVATA_HEAP`. The runtime resolves inbound calls through the
+`class_state_root` manifest. If VM creation fails, wc=3 registration remains
+fail-closed with a null runtime.
+
 ## Negative (Internal) Parameters
 
 | Param | Description |

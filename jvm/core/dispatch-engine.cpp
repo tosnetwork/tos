@@ -1,24 +1,29 @@
 /*
-    JVM Workchain — native engine implementation (Phase 2 scaffold).
+    JVM Workchain — native engine implementation.
 
     JvmNativeEngine implements WorkchainEngine following the same pattern as
     EvmNativeEngine (evm/core/dispatch-engine.cpp) and UnoNativeEngine.
 
-    Phase 2 stub: run_compute returns a NOT_READY result until Phase 4 heap
-    serialization (JvmCellCodec) is implemented.  A production binary must
-    fail closed if wc=3 is active before real compute is wired.
+    run_compute decodes the canonical JvmExecutorState and delegates actual
+    contract invocation to an installed JvmComputeRuntime. A production binary
+    without that runtime fails closed if wc=3 is active.
 
     Source: TOS-specific integration point.
 */
 #include "jvm/core/dispatch-engine.h"
 
+#include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
+#include "jvm/core/cell-codec.h"
+#include "jvm/core/config-param.h"
+#include "jvm/core/message-abi.h"
 #include "td/utils/Status.h"
 #include "td/utils/logging.h"
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellBuilder.h"
 
 #include <memory>
+#include <string>
 
 namespace jvm_workchain {
 
@@ -40,18 +45,24 @@ td::Ref<vm::Cell> jvm_activation_code_cell() {
 }
 
 struct JvmEngineConfig final : public block::WorkchainEngineConfig {
-    // ConfigParam 85 fields (Phase 2 stub: all zero defaults).
-    std::uint32_t chain_id{0};
-    std::uint8_t  schema_version{0};
-    std::uint64_t gas_price{0};
-    std::uint64_t max_gas_per_tx{0};
-    std::uint32_t max_class_bytes{0};
-    std::uint32_t max_total_class_bytes{0};
-    std::uint32_t max_heap_bytes{0};
-    std::uint32_t max_storage_cells{0};
-    std::uint16_t class_file_major{52};
-    std::uint8_t  gas_schedule_version{0};
+    JvmConfig config;
 };
+
+bool same_stdlib_hash(const JvmConfig& cfg, const JvmExecutorState& state) {
+    return cfg.stdlib_hash == state.stdlib_hash;
+}
+
+block::WorkchainComputeOutput skipped_output(int skip_reason,
+                                             std::string vm_log,
+                                             bool out_of_gas = false) {
+    block::WorkchainComputeOutput out;
+    out.completed = true;
+    out.skip_reason = skip_reason;
+    out.out_of_gas = out_of_gas;
+    out.gas_fees = td::zero_refint();
+    out.vm_log = std::move(vm_log);
+    return out;
+}
 
 block::WorkchainEngineKey jvm_engine_key() {
     // vm_version = 0x4a564d31 ("JVM1"), sign-extended to int64_t via int32_t.
@@ -62,6 +73,10 @@ block::WorkchainEngineKey jvm_engine_key() {
 
 class JvmNativeEngine final : public block::WorkchainEngine {
  public:
+    explicit JvmNativeEngine(std::shared_ptr<const JvmComputeRuntime> runtime)
+        : runtime_(std::move(runtime)) {
+    }
+
     block::WorkchainEngineKey engine_key() const override {
         return jvm_engine_key();
     }
@@ -69,7 +84,7 @@ class JvmNativeEngine final : public block::WorkchainEngine {
     td::Result<std::shared_ptr<const block::WorkchainEngineConfig>>
     validate_and_resolve_config(
         const block::WorkchainExecutionDescriptor& descriptor,
-        const block::Config& /*block_transition_config*/) const override {
+        const block::Config& block_transition_config) const override {
         if (descriptor.format != block::WorkchainFormat::Basic ||
             static_cast<std::int32_t>(descriptor.vm_version) != kJvmVmVersion) {
             return td::Status::Error("JVM engine received non-JVM descriptor");
@@ -77,10 +92,11 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         if (descriptor.vm_mode != 0) {
             return td::Status::Error("JVM v1 descriptor requires vm_mode=0");
         }
-        // Phase 2 stub: return defaults.  Phase 2+ will parse ConfigParam 85.
-        // TODO(Phase 2): parse block_transition_config.get_config_param(kJvmConfigParam)
-        // into JvmEngineConfig fields.
+        TRY_RESULT(parsed_config,
+                   parse_jvm_config_cell(
+                       block_transition_config.get_config_param(kJvmConfigParam)));
         auto cfg = std::make_shared<JvmEngineConfig>();
+        cfg->config = parsed_config;
         std::shared_ptr<const block::WorkchainEngineConfig> result = cfg;
         return result;
     }
@@ -99,22 +115,63 @@ class JvmNativeEngine final : public block::WorkchainEngine {
     }
 
     td::Result<block::WorkchainComputeOutput> run_compute(
-        const block::WorkchainComputeInput& /*input*/,
-        const block::WorkchainComputeContext& /*context*/) const override {
-        // Phase 2 stub: real compute requires Phase 4 heap serialization.
-        // Returning an error here causes the validator to skip the transaction,
-        // which is the correct fail-closed behavior before the engine is ready.
-        // TODO(Phase 4): replace with JvmCellCodec::decode_heap() +
-        //   avata_begin_contract_transaction_with_limits() + avata interpreter
-        //   + avata_storage_execute_transaction() + JvmCellCodec::encode_heap().
-        return td::Status::Error("JVM compute not yet implemented (Phase 2 scaffold)");
+        const block::WorkchainComputeInput& input,
+        const block::WorkchainComputeContext& context) const override {
+        auto* cfg = dynamic_cast<const JvmEngineConfig*>(context.engine_config.get());
+        if (cfg == nullptr || cfg->config.chain_id == 0) {
+            return td::Status::Error("JVM engine missing resolved ConfigParam 85");
+        }
+        if (input.inbound_body.is_null()) {
+            return skipped_output(block::ComputePhase::sk_bad_state,
+                                  "JVM inbound body is missing");
+        }
+        if (parse_jvm_call_descriptor(input.inbound_body).is_error()) {
+            return skipped_output(block::ComputePhase::sk_bad_state,
+                                  "JVM inbound body is not a valid call descriptor");
+        }
+        if (input.gas_limit == 0 || input.gas_limit > cfg->config.max_gas_per_tx) {
+            return skipped_output(block::ComputePhase::sk_no_gas,
+                                  "JVM gas limit is outside ConfigParam 85 bounds",
+                                  true);
+        }
+
+        JvmExecutorState state;
+        if (input.current_data.not_null()) {
+            if (!decode_jvm_executor_state(input.current_data, state)) {
+                return skipped_output(block::ComputePhase::sk_bad_state,
+                                      "JVM executor state cell is malformed");
+            }
+            if (!same_stdlib_hash(cfg->config, state)) {
+                return skipped_output(block::ComputePhase::sk_bad_state,
+                                      "JVM executor state stdlib hash does not match ConfigParam 85");
+            }
+        } else {
+            state.schema_version = kJvmExecutorStateSchemaVersion;
+            state.stdlib_hash = cfg->config.stdlib_hash;
+        }
+
+        if (runtime_ == nullptr) {
+            return skipped_output(block::ComputePhase::sk_bad_state,
+                                  "JVM Avata interpreter runtime is not installed");
+        }
+
+        TRY_RESULT(invocation,
+                   runtime_->run_contract(input, context, cfg->config, state));
+        return build_jvm_workchain_output(
+            cfg->config, state, input.gas_limit, invocation);
     }
+
+ private:
+    std::shared_ptr<const JvmComputeRuntime> runtime_;
 };
 
 }  // namespace
 
-void register_jvm_workchain_engine(block::WorkchainExecutionRegistry& registry) {
-    registry.register_engine_if_absent(std::make_unique<JvmNativeEngine>());
+void register_jvm_workchain_engine(
+    block::WorkchainExecutionRegistry& registry,
+    std::shared_ptr<const JvmComputeRuntime> runtime) {
+    registry.register_engine_if_absent(
+        std::make_unique<JvmNativeEngine>(std::move(runtime)));
 }
 
 }  // namespace jvm_workchain

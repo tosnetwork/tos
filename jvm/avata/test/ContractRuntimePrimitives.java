@@ -25,6 +25,14 @@ public class ContractRuntimePrimitives {
     }
   }
 
+  private static void expectNullPointer(Action action) {
+    try {
+      action.run();
+      throw new RuntimeException("expected NullPointerException");
+    } catch (NullPointerException expected) {
+    }
+  }
+
   private static boolean bytesEqual(byte[] a, byte[] b) {
     if (a.length != b.length) {
       return false;
@@ -160,6 +168,40 @@ public class ContractRuntimePrimitives {
     expect(MerkleProof.verify(new Bytes32[] { leafB }, root, leafA));
   }
 
+  private static void testEvent() {
+    Bytes32 transfer = Event.topic("Transfer(address,address,uint256)");
+    expect(transfer.equals(Crypto.keccak256(
+        "Transfer(address,address,uint256)".getBytes())));
+
+    Event.emit(transfer);
+    Event.emit(transfer, Bytes.fromHex("010203"));
+    Event.emit(new Bytes32[] { transfer, Bytes32.ZERO }, Bytes.EMPTY);
+    Event.emit(new Bytes32[0], Bytes.EMPTY);
+
+    expectIllegalArgument(new Action() {
+      public void run() {
+        Event.emit(new Bytes32[] {
+          Bytes32.ZERO, Bytes32.ZERO, Bytes32.ZERO, Bytes32.ZERO, Bytes32.ZERO
+        }, Bytes.EMPTY);
+      }
+    });
+    expectNullPointer(new Action() {
+      public void run() {
+        Event.emit((Bytes32[]) null, Bytes.EMPTY);
+      }
+    });
+    expectNullPointer(new Action() {
+      public void run() {
+        Event.emit(new Bytes32[] { Bytes32.ZERO }, null);
+      }
+    });
+    expectNullPointer(new Action() {
+      public void run() {
+        Event.emit(new Bytes32[] { null }, Bytes.EMPTY);
+      }
+    });
+  }
+
   private static void testMapping() {
     Address alice = Address.fromHex(0,
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -263,6 +305,7 @@ public class ContractRuntimePrimitives {
     testAddress();
     testUint256();
     testCryptoAndAbi();
+    testEvent();
     testMapping();
     testHostStorage();
   }

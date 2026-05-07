@@ -16,12 +16,14 @@ extern "C" {
 #endif
 
 typedef struct AvataThread AvataThread;
+typedef uintptr_t AvataContractMethod;
 
 enum {
   AVATA_CONTRACT_OK = 0,
   AVATA_CONTRACT_BAD_ARGUMENT = 1,
   AVATA_CONTRACT_OUT_OF_GAS = 2,
   AVATA_CONTRACT_OUT_OF_MEMORY = 3,
+  AVATA_CONTRACT_EXCEPTION = 4,
   AVATA_CONTRACT_OPCODE_COUNT = 256
 };
 
@@ -36,7 +38,10 @@ enum {
   AVATA_CONTRACT_HELPER_ARRAYCOPY_BASE = 7,
   AVATA_CONTRACT_HELPER_ARRAYCOPY_ELEMENT = 8,
   AVATA_CONTRACT_HELPER_NATIVE_CALL = 9,
-  AVATA_CONTRACT_HELPER_GAS_COST_COUNT = 10
+  AVATA_CONTRACT_HELPER_EVENT_BASE = 10,
+  AVATA_CONTRACT_HELPER_EVENT_TOPIC = 11,
+  AVATA_CONTRACT_HELPER_EVENT_BYTE = 12,
+  AVATA_CONTRACT_HELPER_GAS_COST_COUNT = 13
 };
 
 AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction(
@@ -49,6 +54,17 @@ AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction_with_limits(
     uint64_t memory_limit);
 
 AVATA_CONTRACT_EXPORT int avata_end_contract_transaction(AvataThread* thread);
+
+AVATA_CONTRACT_EXPORT int avata_resolve_contract_static_void(
+    AvataThread* thread,
+    const char* class_name,
+    const char* method_name,
+    const char* method_spec,
+    AvataContractMethod* resolved_method);
+
+AVATA_CONTRACT_EXPORT int avata_invoke_contract_static_void(
+    AvataThread* thread,
+    AvataContractMethod resolved_method);
 
 AVATA_CONTRACT_EXPORT int avata_contract_remaining_gas(
     AvataThread* thread,

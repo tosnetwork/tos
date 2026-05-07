@@ -3,7 +3,7 @@ package java.lang;
 import java.util.TreeMap;
 
 public abstract class Storage {
-  private static final Storage DEFAULT = memory();
+  private static final Storage DEFAULT = host();
 
   protected Storage() { }
 

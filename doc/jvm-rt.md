@@ -440,6 +440,16 @@ ERC20, ERC721, ERC1155, Ownable, AccessControl, Governor, and Timelock all rely
 on events as part of their external behavior. Events must be part of the
 committed execution result, not best-effort stdout text.
 
+The current runtime exposes `java.lang.Event` with `topic(signature)` and
+`emit(...)` overloads for up to four 32-byte topics plus raw `Bytes` data. The
+native bridge is intentionally narrow and host-driven through
+`include/avata/event.h`: installed hosts receive a contiguous topic buffer and
+payload bytes, with optional begin/commit/rollback callbacks so failed contract
+calls can discard emitted events with storage writes. The bridge charges helper
+gas for event base cost, each indexed topic, and each payload byte before it
+calls the installed host. When no event host is installed, standalone local
+tests use a deterministic no-op sink.
+
 ### `java.lang.ABI`
 
 Required APIs:
@@ -633,7 +643,7 @@ Required metering areas:
 - storage reads and writes (baseline native helper metering implemented)
 - storage iteration
 - ABI encode/decode
-- event emission
+- event emission (baseline native helper metering implemented)
 - cross-contract calls
 
 APIs with unbounded work, such as enumerable map clearing or returning all keys,

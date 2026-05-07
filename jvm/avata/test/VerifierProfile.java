@@ -819,6 +819,34 @@ public class VerifierProfile {
       }
     });
 
+    expectVerifyError("forbidden java package class", new Thrower() {
+      public void run() throws Exception {
+        define("java/lang/ForbiddenContractClass",
+               makeEmptyClass("java/lang/ForbiddenContractClass"));
+      }
+    });
+
+    expectVerifyError("forbidden package-private rt helper ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/ContractHex"));
+      }
+    });
+
+    expectVerifyError("forbidden rt implementation inner ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("java/lang/Storage$MemoryStorage"));
+      }
+    });
+
+    expectVerifyError("forbidden javax ref", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$ForbiddenClassReference",
+               makeForbiddenClassReference("javax/crypto/Cipher"));
+      }
+    });
+
     final String[][] forbiddenClassMethods = new String[][] {
       new String[] { "forName", "(Ljava/lang/String;)Ljava/lang/Class;" },
       new String[] { "getPackage", "()Ljava/lang/Package;" },

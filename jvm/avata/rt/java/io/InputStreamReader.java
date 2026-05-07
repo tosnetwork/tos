@@ -10,30 +10,53 @@
 
 package java.io;
 
+import java.internal.Iso88591;
 import java.internal.Utf8;
 
 public class InputStreamReader extends Reader {
   private static final int MultibytePadding = 4;
+  private static final String UTF_8_ENCODING = "UTF-8";
+  private static final String ISO_8859_1_ENCODING = "ISO-8859-1";
+  private static final String LATIN_1_ENCODING = "LATIN-1";
 
   private final InputStream in;
+  private final String encoding;
 
   public InputStreamReader(InputStream in) {
     this.in = in;
+    this.encoding = UTF_8_ENCODING;
   }
 
   public InputStreamReader(InputStream in, String encoding)
     throws UnsupportedEncodingException
   {
-    this(in);
-
-    if (! encoding.equals("UTF-8")) {
+    this.in = in;
+    if (encoding == null) {
+      throw new NullPointerException();
+    }
+    if (encoding.equalsIgnoreCase(UTF_8_ENCODING)) {
+      this.encoding = UTF_8_ENCODING;
+    } else if (encoding.equalsIgnoreCase(ISO_8859_1_ENCODING)
+               || encoding.equalsIgnoreCase(LATIN_1_ENCODING)) {
+      this.encoding = ISO_8859_1_ENCODING;
+    } else {
       throw new UnsupportedEncodingException(encoding);
-    }    
+    }
   }
   
   public int read(char[] b, int offset, int length) throws IOException {
     if (length == 0) {
       return 0;
+    }
+    if (encoding.equals(ISO_8859_1_ENCODING)) {
+      byte[] buffer = new byte[length];
+      int c = in.read(buffer, 0, length);
+      if (c <= 0) {
+        return c;
+      }
+      char[] decoded = Iso88591.decode(buffer, 0, c);
+      System.arraycopy(decoded, 0, b, offset, c);
+      return c;
     }
 
     byte[] buffer = new byte[length + MultibytePadding];

@@ -14,6 +14,7 @@
 #include <avata/contract.h>
 #include <avata/util/stream.h>
 #include "avata/constants.h"
+#include "avata/contract-profile.h"
 #include "avata/processor.h"
 #include "avata/arch.h"
 
@@ -575,20 +576,6 @@ bool segmentStartsWith(const int8_t* begin,
   return true;
 }
 
-bool segmentEqualsOrNested(const int8_t* begin,
-                           const int8_t* end,
-                           const char* value)
-{
-  unsigned length = literalLength(value);
-  if (static_cast<unsigned>(end - begin) == length) {
-    return segmentEquals(begin, end, value);
-  }
-
-  return static_cast<unsigned>(end - begin) > length
-      && segmentStartsWith(begin, end, value)
-      && begin[length] == '$';
-}
-
 bool segmentEqualsCString(const int8_t* begin,
                           const int8_t* end,
                           const int8_t* value)
@@ -614,6 +601,17 @@ bool byteArrayEqualsCString(GcByteArray* array, const char* value)
       begin, end, reinterpret_cast<const int8_t*>(value));
 }
 
+bool contractProfileAdmitsApiClass(const int8_t* begin, const int8_t* end)
+{
+  for (unsigned i = 0; i < kContractProfileAdmittedApiClassCount; ++i) {
+    if (segmentEquals(begin, end, kContractProfileAdmittedApiClasses[i])) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 bool forbiddenInternalClass(const int8_t* begin,
                             const int8_t* end,
                             GcByteArray* currentClassName,
@@ -625,69 +623,21 @@ bool forbiddenInternalClass(const int8_t* begin,
     return false;
   }
 
-  // Reject java/internal/* and stale avata/* in the strict contract profile.
-  // java/internal/* is VM-private; avata/* was the old package, moved to
-  // java.internal.*. Both are absent from the contract rt.jar/api.jar.
-  if (applicationClass && strictContractProfile
-      && (segmentStartsWith(begin, end, "java/internal/")
-          || segmentStartsWith(begin, end, "avata/"))) {
+  if (!applicationClass || !strictContractProfile) {
+    return false;
+  }
+
+  if (segmentStartsWith(begin, end, "avata/")
+      || segmentStartsWith(begin, end, "javax/")
+      || segmentStartsWith(begin, end, "sun/")) {
     return true;
   }
 
-  if (applicationClass
-      && (segmentEqualsOrNested(begin, end, "java/io/Serializable")
-          || segmentEqualsOrNested(begin, end, "java/lang/Cloneable")
-          || segmentEqualsOrNested(begin, end, "java/lang/CloneNotSupportedException")
-          || segmentEqualsOrNested(begin, end, "java/lang/ClassNotFoundException"))) {
-    return true;
+  if (segmentStartsWith(begin, end, "java/")) {
+    return !contractProfileAdmitsApiClass(begin, end);
   }
 
-  return segmentEqualsOrNested(begin, end, "java/lang/Runtime")
-      || segmentEqualsOrNested(begin, end, "java/io/FileDescriptor")
-      || segmentEqualsOrNested(begin, end, "java/io/FileInputStream")
-      || segmentEqualsOrNested(begin, end, "java/io/FileOutputStream")
-      || segmentEqualsOrNested(begin, end, "java/io/FileNotFoundException")
-      || segmentEqualsOrNested(begin, end, "java/io/FilterInputStream")
-      || segmentEqualsOrNested(begin, end, "java/io/FilterOutputStream")
-      || segmentEqualsOrNested(begin, end, "java/io/FilterReader")
-      || segmentEqualsOrNested(begin, end, "java/io/LineNumberReader")
-      || segmentEqualsOrNested(begin, end, "java/io/PushbackReader")
-      || segmentEqualsOrNested(begin, end, "java/lang/InterruptedException")
-      || segmentEqualsOrNested(begin, end, "java/lang/IllegalThreadStateException")
-      || segmentEqualsOrNested(begin, end, "java/lang/IllegalAccessException")
-      || segmentEqualsOrNested(begin, end, "java/lang/SecurityException")
-      || segmentEqualsOrNested(begin, end, "java/lang/StringBuffer")
-      || segmentEqualsOrNested(begin, end, "java/lang/ClassLoader")
-      || segmentEqualsOrNested(begin, end, "java/lang/Thread")
-      || segmentEqualsOrNested(begin, end, "java/lang/ThreadDeath")
-      || segmentEqualsOrNested(begin, end, "java/lang/ThreadGroup")
-      || segmentEqualsOrNested(begin, end, "java/lang/ThreadLocal")
-      || segmentEqualsOrNested(begin, end, "java/lang/TypeNotPresentException")
-      || segmentEqualsOrNested(begin, end, "java/lang/InheritableThreadLocal")
-      || segmentEqualsOrNested(begin, end, "java/lang/Class$ClassType")
-      || segmentEqualsOrNested(begin, end, "java/lang/NoSuchFieldException")
-      || segmentEqualsOrNested(begin, end, "java/lang/NoSuchMethodException")
-      || segmentEqualsOrNested(begin, end, "java/lang/Package")
-      || segmentStartsWith(begin, end, "java/lang/invoke/")
-      || segmentStartsWith(begin, end, "java/lang/ref/")
-      || segmentEqualsOrNested(begin, end, "java/util/AbstractMap")
-      || segmentEqualsOrNested(begin, end, "java/util/HashMap")
-      || segmentEqualsOrNested(begin, end, "java/util/HashSet")
-      || segmentEqualsOrNested(begin, end, "java/util/Hashtable")
-      || segmentEqualsOrNested(begin, end, "java/util/EnumSet")
-      || segmentEqualsOrNested(begin, end, "java/util/IdentityHashMap")
-      || segmentEqualsOrNested(begin, end, "java/util/LinkedHashMap")
-      || segmentEqualsOrNested(begin, end, "java/util/LinkedHashSet")
-      || segmentEqualsOrNested(begin, end, "java/util/Properties")
-      || segmentEqualsOrNested(begin, end, "java/util/WeakHashMap")
-      || segmentEqualsOrNested(begin, end, "java/util/Enumeration")
-      || segmentEqualsOrNested(begin, end, "java/util/Vector")
-      || segmentEqualsOrNested(begin, end, "java/util/Stack")
-      || segmentEqualsOrNested(begin, end, "java/util/EmptyStackException")
-      || segmentEqualsOrNested(begin, end, "java/util/AbstractSequentialList")
-      || segmentEqualsOrNested(begin, end, "java/util/NavigableMap")
-      || segmentEqualsOrNested(begin, end, "java/util/StringTokenizer")
-      || segmentStartsWith(begin, end, "java/lang/reflect/");
+  return false;
 }
 
 bool forbiddenInternalMethod(GcReference* reference)
@@ -804,8 +754,10 @@ void verifyDeclaredClassNameAllowed(Thread* t,
     ++end;
   }
 
-  if (segmentStartsWith(begin, end, "java/internal/")
-      || segmentStartsWith(begin, end, "avata/")) {
+  if (segmentStartsWith(begin, end, "java/")
+      || segmentStartsWith(begin, end, "avata/")
+      || segmentStartsWith(begin, end, "javax/")
+      || segmentStartsWith(begin, end, "sun/")) {
     throwNew(t, GcVerifyError::Type);
   }
 }
@@ -4028,7 +3980,10 @@ const uint64_t DefaultContractHelperGasCosts[
     1,    // AVATA_CONTRACT_HELPER_ALLOCATION_ARRAY_ELEMENT
     3,    // AVATA_CONTRACT_HELPER_ARRAYCOPY_BASE
     1,    // AVATA_CONTRACT_HELPER_ARRAYCOPY_ELEMENT
-    2     // AVATA_CONTRACT_HELPER_NATIVE_CALL
+    2,    // AVATA_CONTRACT_HELPER_NATIVE_CALL
+    50,   // AVATA_CONTRACT_HELPER_EVENT_BASE
+    10,   // AVATA_CONTRACT_HELPER_EVENT_TOPIC
+    1     // AVATA_CONTRACT_HELPER_EVENT_BYTE
 };
 
 }  // namespace
@@ -6117,6 +6072,30 @@ void noop()
 
 }  // namespace vm
 
+namespace {
+
+int avata_pending_contract_exception_status(Thread* t)
+{
+  if (t == 0 || t->exception == 0) {
+    return AVATA_CONTRACT_OK;
+  }
+
+  int status = AVATA_CONTRACT_EXCEPTION;
+  if (t->exception != 0) {
+    GcClass* exceptionClass = objectClass(t, t->exception);
+    if (exceptionClass == type(t, GcOutOfGasError::Type)) {
+      status = AVATA_CONTRACT_OUT_OF_GAS;
+    } else if (exceptionClass == type(t, GcOutOfMemoryError::Type)) {
+      status = AVATA_CONTRACT_OUT_OF_MEMORY;
+    }
+  }
+
+  t->exception = 0;
+  return status;
+}
+
+}  // namespace
+
 extern "C" AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction(
     AvataThread* thread,
     uint64_t gas_limit)
@@ -6152,6 +6131,65 @@ extern "C" AVATA_CONTRACT_EXPORT int avata_end_contract_transaction(
 
   vm::endContractTransaction(reinterpret_cast<Thread*>(thread));
   return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_resolve_contract_static_void(
+    AvataThread* thread,
+    const char* class_name,
+    const char* method_name,
+    const char* method_spec,
+    AvataContractMethod* resolved_method)
+{
+  if (thread == 0 || class_name == 0 || method_name == 0 ||
+      method_spec == 0 || resolved_method == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  *resolved_method = 0;
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->vtable == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  jclass c = t->vtable->FindClass(t, class_name);
+  int status = avata_pending_contract_exception_status(t);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+  if (c == 0) {
+    return AVATA_CONTRACT_EXCEPTION;
+  }
+
+  jmethodID method
+      = t->vtable->GetStaticMethodID(t, c, method_name, method_spec);
+  status = avata_pending_contract_exception_status(t);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+  if (method == 0) {
+    return AVATA_CONTRACT_EXCEPTION;
+  }
+
+  *resolved_method = static_cast<AvataContractMethod>(method);
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_invoke_contract_static_void(
+    AvataThread* thread,
+    AvataContractMethod resolved_method)
+{
+  if (thread == 0 || resolved_method == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->vtable == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  t->vtable->CallStaticVoidMethodA(
+      t, 0, static_cast<jmethodID>(resolved_method), 0);
+  return avata_pending_contract_exception_status(t);
 }
 
 extern "C" AVATA_CONTRACT_EXPORT int avata_contract_remaining_gas(

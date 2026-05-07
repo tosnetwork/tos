@@ -1,14 +1,24 @@
-# JVM workchain core — Phase 2 scaffold.
+# JVM workchain core.
 #
-# Provides jvm_workchain_core: JvmNativeEngine registration stub plus the
+# Provides jvm_workchain_core: JvmNativeEngine registration plus the
 # init_jvm_workchain() entry point called once at validator startup.
 #
-# run_compute() returns NOT_READY until Phase 4 (JvmCellCodec) is wired.
-# TODO(Phase 2): link avata_interpreter once jvm/avata/CMakeLists.txt exports it.
+# run_compute() fails closed until init installs a real Avata runtime; tests can
+# inject a deterministic JvmComputeRuntime to exercise the full compute-output
+# path.  The core target depends on avata_interpreter so the main TOS build
+# produces the canonical interpreter archive, rt.jar, and api.jar.
 
 set(JVM_CORE_SRC
+  avata-execution.cpp
+  avata-runtime.cpp
+  cell-codec.cpp
+  class-manifest.cpp
+  config-param.cpp
   dispatch-engine.cpp
+  event-host.cpp
   init.cpp
+  message-abi.cpp
+  storage-cell-host.cpp
 )
 
 add_library(jvm_workchain_core STATIC ${JVM_CORE_SRC})
@@ -19,5 +29,5 @@ target_include_directories(jvm_workchain_core PUBLIC
 
 target_link_libraries(jvm_workchain_core PUBLIC
     tos_block
-    # TODO(Phase 2): avata_interpreter
+    avata_interpreter
 )

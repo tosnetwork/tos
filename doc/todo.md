@@ -10,30 +10,24 @@ Status legend: `✅` completed, unchecked items are still open.
 
 ## P0 Consensus-Safety Work
 
-- [ ] Implement deterministic fixed floating-point execution for all Java
+- ✅ Implement deterministic fixed floating-point execution for all Java
   `float` and `double` opcodes. The implementation must pin rounding, NaN,
   signed-zero, infinity, and subnormal behavior across supported OS/CPU
   combinations.
-  - **Design (not yet implemented):** All float/double opcodes (`fadd`, `fsub`,
-    `fmul`, `fdiv`, `frem`, `dadd`, `dsub`, `dmul`, `ddiv`, `drem`, `fcmpg`,
-    `fcmpl`, `dcmpg`, `dcmpl`, `f2d`, `d2f`, `f2i`, `f2l`, `d2i`, `d2l`,
-    `i2f`, `i2d`, `l2f`, `l2d`) are dispatched in `interpret.cpp` using native
-    C++ `float`/`double` operations which rely on the host FPU. The fix requires
-    replacing each operation with a call to a software-float library that
-    implements IEEE 754 with fixed round-to-nearest-even, canonical NaN
-    (`0x7FC00000` for float, `0x7FF8000000000000` for double), and no
-    extended precision. Recommended approach: integrate Berkeley SoftFloat 3e
-    (`jvm/avata/src/softfloat/`) or use the existing
-    `jdk8u/hotspot/src/share/vm/runtime/sharedRuntime.cpp` `f2i`/`d2i` clamping
-    as a model for the conversion opcodes. The `fcmpg`/`fcmpl` NaN branch in
-    `interpret.cpp` (lines 1469-1480) is structurally correct but uses host
-    `fpclassify` and comparison operators which have no strictfp guarantee.
-    Estimated scope: 400-600 lines of opcode rewrites + softfloat integration.
+  - ✅ Berkeley SoftFloat 3e is vendored under
+    `jvm/avata/src/softfloat/berkeley/` and the Avata makefile compiles only the
+    f32/f64 functions needed by Java 8 opcodes. `tos_softfloat.h` now routes
+    all float/double arithmetic, comparisons, and conversions through SoftFloat
+    with round-to-nearest-even, canonical NaNs (`0x7FC00000` and
+    `0x7FF8000000000000`), deterministic Java cast clamping, and no host-FPU
+    arithmetic. `frem`/`drem` use Avata's SoftFloat-derived fmod helper because
+    SoftFloat's public `f*_rem` routines implement IEEE remainder, not Java `%`.
+    `DeterministicFloatTest` and `AllFloats` pass on the new path.
 
-- [ ] Add gas accounting to the Avata interpreter dispatch loop. Every bytecode and
+- ✅ Add gas accounting to the Avata interpreter dispatch loop. Every bytecode and
   admitted runtime helper must charge deterministic gas and throw a deterministic
   out-of-gas trap.
-  - **Partially implemented:** `Thread::gasCounter` (uint64_t) and
+  - **Implemented:** `Thread::gasCounter` (uint64_t) and
     `Thread::identityHashCounter` (uint32_t) fields added to `vm::Thread` in
     `jvm/avata/src/avata/machine.h`. The interpreter dispatch loop
     (`interpret3()` in `jvm/avata/src/interpret.cpp`, label `loop:` at line 784)
@@ -42,7 +36,7 @@ Status legend: `✅` completed, unchecked items are still open.
     bypasses the check (bootstrap mode). `java.lang.OutOfGasError` is wired in
     `types.def`. `include/avata/contract.h` now exposes
     `avata_begin_contract_transaction()`, `avata_end_contract_transaction()`,
-    and `avata_contract_remaining_gas()` so the future workchain adapter can
+    and `avata_contract_remaining_gas()` so the workchain bridge can
     initialize gas and reset Java-visible identity hash state at the
     transaction boundary. `Machine::opcodeGasCosts[256]` now holds a
     per-opcode gas table. The interpreter charges
@@ -51,14 +45,16 @@ Status legend: `✅` completed, unchecked items are still open.
     ABI calls to reset, set, bulk-set, and read opcode costs.
     `avata_charge_contract_gas()` now charges deterministic helper/native gas,
     returning `AVATA_CONTRACT_OUT_OF_GAS` and consuming the remaining counter on
-    failure. `Machine::contractHelperGasCosts[10]` now holds helper schedules
+    failure. `Machine::contractHelperGasCosts[13]` now holds helper schedules
     for storage load/store/clear, dynamic opcode surcharges (`new` object
     words, `newarray`/`anewarray`/`multianewarray` array bases and elements),
     `System.arraycopy()` base/per-element copy costs, and the fixed native-call
     surcharge charged by every Java native method invocation. The public ABI can
     reset, set, bulk-set, read, and charge helper costs through
     `avata_charge_contract_helper_gas()`. `java.lang.Storage` charges from
-    that helper table before host/fallback storage access.
+    that helper table before host/fallback storage access. `java.lang.Event`
+    exposes deterministic log/event emission and charges event base, per-topic,
+    and per-data-byte helper gas before forwarding to the installed event host.
     `include/avata/contract.h` also exposes transaction memory-limit and
     memory-counter ABI calls:
     `avata_begin_contract_transaction_with_limits()`,
@@ -78,21 +74,53 @@ Status legend: `✅` completed, unchecked items are still open.
     slots > 0, spot-check every tier, ordering invariants) and
     `HelperGasOutOfGasRegression` (storage load/store/clear OOG boundaries) added
     to `unittest/contract-transaction-test.cpp`. All tests pass.
-  - **Remaining work:**
-    - Add the actual JVM workchain compute-phase adapter and call
-      `avata_begin_contract_transaction_with_limits(thread, input.gas_limit,
-      input.memory_limit)` before each contract invocation, then read
-      `avata_contract_remaining_gas()` and `avata_contract_memory_used()` to
-      derive resource usage.
-    - Load the opcode and helper cost tables from `jvm/core/gas-table.cpp`
-      (ConfigParam 85) through `avata_set_opcode_gas_costs()` and
-      `avata_set_contract_helper_gas_costs()` instead of using the standalone
-      defaults in `gas_schedule.h`.
-    - Extend dynamic deterministic helper costs to crypto, ABI, event emission,
+  - ✅ **Config descriptor helper:** `build_jvm_workchain_descr()` now builds the
+    JVM v1 ConfigParam 12 `WorkchainDescr` (`wfmt_basic`,
+    `vm_version="JVM1"`, `vm_mode=0`) and validates it against the generated
+    TL-B schema. `test-workchain-execution-registry` checks that the normalized
+    descriptor resolves to the JVM engine key.
+  - ✅ **Workchain execution bridge:** `JvmAvataRuntime` now implements
+    `JvmComputeRuntime` and calls `execute_jvm_avata_transaction()` for the
+    resolved Avata thread/call target. That bridge installs ConfigParam 85
+    opcode/helper gas tables, opens storage/event snapshots, calls
+    `avata_begin_contract_transaction_with_limits(thread, input.gas_limit,
+    config.max_heap_bytes)`, invokes the supplied contract entry callback,
+    reads `avata_contract_remaining_gas()` and
+    `avata_contract_memory_used()`, and converts successful results to the
+    canonical `JvmExecutorState` plus action list. The registry test exercises
+    this path through `JvmNativeEngine::run_compute()`.
+  - **Completed work:**
+    - ✅ Added deterministic compute-output assembly:
+      `build_jvm_workchain_output()` converts an Avata invocation result into
+      `WorkchainComputeOutput`, charges `gas_used * ConfigParam85.gas_price`,
+      commits only successful storage roots into the canonical
+      `JvmExecutorState`, preserves the class-state root, emits a non-null
+      TOS action list for successful executions, and reports failure/OOG
+      without committing `new_data` or actions.
+    - ✅ `JvmNativeEngine::run_compute()` now decodes the executor-state cell,
+      validates the `stdlib_hash`, enforces ConfigParam 85 gas bounds, and
+      delegates actual contract invocation to an installed `JvmComputeRuntime`.
+      If no runtime is installed, wc=3 compute still fails closed with a
+      deterministic skipped output. The registry test injects a mock runtime and
+      verifies the full path from ConfigParam 85 resolution through
+      `WorkchainComputeOutput`.
+    - ✅ ConfigParam 85 parsing is now implemented in
+      `jvm/core/config-param.{h,cpp}` and `JvmNativeEngine` resolves it during
+      `validate_and_resolve_config()`. The parsed chain limits, opcode gas
+      table, and helper gas table are carried in `JvmEngineConfig`; malformed
+      or missing ConfigParam 85 is a consensus error. The standalone
+      `gas_schedule.h` defaults remain only for local Avata tests; consensus
+      execution applies the resolved tables through
+      `avata_set_opcode_gas_costs()` and
+      `avata_set_contract_helper_gas_costs()` at transaction start.
+    - Extend dynamic deterministic helper costs to future native crypto, ABI,
       cross-contract calls, and any other admitted native entry points whose
-      cost depends on input size. TODOs added to `Crypto.java` and `ABI.java`.
-      Do not add gas to Java classes directly; Java-level libraries are covered
-      by opcode gas plus any native/helper calls they make.
+      cost depends on input size. `Crypto.java` and `ABI.java` are currently
+      pure Java, so they are covered by opcode gas and do not have a separate
+      native helper entry yet. `java.lang.Event` is now native-hosted and has
+      explicit event base/topic/data-byte helper gas. Do not add gas to Java
+      classes directly; Java-level libraries are covered by opcode gas plus any
+      native/helper calls they make.
 
 - ✅ Disable or isolate JIT/AOT/host-VM compilation paths for consensus execution.
   Contract execution must use a deterministic interpreter-only profile unless a
@@ -102,11 +130,11 @@ Status legend: `✅` completed, unchecked items are still open.
     `src/compile*`) and codegen unit tests have been removed. Make and CMake now
     build the interpreter profile only.
 
-- [ ] Define and enforce a deterministic class-file verifier profile: supported
+- ✅ Define and enforce a deterministic class-file verifier profile: supported
   class-file versions, TOS extensions, forbidden attributes/classes, duplicate
   ABI method handling, class initialization rules, and deterministic trap
   behavior.
-  - **Partially implemented:** `jvm/avata/src/machine.cpp` now rejects class
+  - **Implemented:** `jvm/avata/src/machine.cpp` now rejects class
     files with `major < 45` (pre-Java 1.1), `major > 52` (Java 9+), or
     `minor == 0xFFFF` (Java preview features) by throwing
     `GcUnsupportedClassVersionError`. It also rejects forbidden class
@@ -154,11 +182,13 @@ Status legend: `✅` completed, unchecked items are still open.
   - ✅ **Deploy-time verifier negative tests added:** `VerifierProfile` now covers
     all forbidden package/class references, stale namespace rejection, version
     boundary tests, and all forbidden attribute variants.
-  - **Remaining work:**
-    - Move from the current verifier helper allowlist to a generated profile
-      manifest once `rt.jar` is finalized.
+  - ✅ **Generated contract API manifest added:** `build-test` now regenerates
+    `jvm/avata/src/avata/contract-profile.h` from `api.jar` and fails if the
+    checked-in manifest is stale. The deploy-time verifier admits only classes
+    present in that generated manifest for `java/*` references, while keeping
+    VM boot helper classes available inside `rt.jar`.
 
-- [ ] Replace host-observing APIs with deterministic traps or TOS-provided values:
+- ✅ Replace host-observing APIs with deterministic traps or TOS-provided values:
   wall-clock time, filesystem, networking, process APIs, native library loading,
   reflection surfaces outside the admitted profile, and thread scheduling.
   - **Status:** `java.lang.System` in `rt/java/lang/System.java` already
@@ -181,10 +211,10 @@ Status legend: `✅` completed, unchecked items are still open.
     `TypeNotPresentException`) plus `Collections.shuffle`.
   - ✅ **Deploy-time verifier negative tests added:** see VerifierProfile above.
 
-- [ ] Make object identity deterministic or unavailable: `Object.hashCode`,
+- ✅ Make object identity deterministic or unavailable: `Object.hashCode`,
   `System.identityHashCode`, object `toString`, and exception stack traces must
   not leak process addresses or host-local execution details.
-  - **Partially implemented:**
+  - **Implemented:**
     - `Thread::identityHashCounter` (uint32_t) added to `vm::Thread` in
       `jvm/avata/src/avata/machine.h`, initialized to 0 in `Thread::Thread()`
       in `machine.cpp`.
@@ -199,22 +229,23 @@ Status legend: `✅` completed, unchecked items are still open.
     - `Object.toString()` still uses `ClassName@0x<hash>`, but the hash now
       comes from the deterministic `objectHash()` path rather than the heap
       address.
-  - **Remaining work:**
-    - Exception stack traces (`Throwable`, `StackTraceElement`, native trace
-      builders) must not include
-      host-local file paths. Verify that `StackTraceElement.getFileName()` and
-      `.getLineNumber()` only include class-file-embedded source info, not
-      absolute host paths.
-    - The future JVM workchain compute-phase adapter must call
-      `avata_begin_contract_transaction()` at the start of each transaction so
-      counter values are transaction-scoped.
-    - The transaction-scoped heap reset path must also discard objects whose
-      identity hash was materialized in the previous transaction.
+  - ✅ Exception stack traces no longer expose path-like `SourceFile` payloads.
+    `makeStackTraceElement()` strips `/`, `\`, and `:` prefixes and exposes
+    only the basename from the class-file `SourceFile` attribute.
+    `StackTraceSourceFileTest` constructs a class whose `SourceFile` is an
+    absolute host-like path and verifies `StackTraceElement.getFileName()` only
+    returns `SecretContract.java`.
+  - ✅ `execute_jvm_avata_transaction()` opens the Avata contract transaction at
+    the start of each workchain invocation, so identity counters are scoped to
+    the transaction.
+  - ✅ `endContractTransaction()` clears the identity-hash side table and resets
+    the transaction arena checkpoint, discarding transient objects and hashes
+    materialized during the previous transaction.
 
-- [ ] Finalize contract heap/state persistence: persisted value profiles,
+- ✅ Finalize contract heap/state persistence: persisted value profiles,
   `PersistentMap`/`PersistentList` encoding, heap reset/snapshot model, and
   bounded arena memory accounting.
-  - **Partially implemented:** `java.lang.Storage` now exposes scalar
+  - **Implemented:** `java.lang.Storage` now exposes scalar
     32-byte slot operations, `java.lang.Mapping` derives Ethereum-style hashed
     slots, and `include/avata/storage.h` exposes the native
     `avata_set_storage_host()` C ABI plus begin/commit/rollback transaction
@@ -256,19 +287,79 @@ Status legend: `✅` completed, unchecked items are still open.
       fields without `ConstantValue`, and admitted static-final constant reads.
       Java enum classes remain outside the profile because javac emits mutable
       static state for them.
-    - Remaining heap/state work: implement the cell-backed persistent value
-      profile for `Storage`, `Mapping`, and future persistent containers;
-      ensure bootstrap/classpath objects stay outside the transaction arena.
-    - The real chain integration still needs to install an account-state
-      overlay through `avata_set_storage_host()` before contract invocation,
-      call `avata_storage_execute_transaction()` around execution, and implement
-      gas charging plus chain-level write-set persistence.
-    - Persistent enumerable containers are not yet implemented. The v1 profile
-      currently has non-iterable `Mapping`; enumerable state needs a separately
-      specified ordered container.
-    - Files to modify: `jvm/avata/src/machine.cpp` (static table snapshot
-      hooks), `jvm/avata/src/heap/heap.cpp` (transaction reset), and the
-      TOS chain execution adapter that embeds Avata.
+    - ✅ `PersistentMap` and `PersistentList` are now available in `java.lang`.
+      `PersistentMap` wraps the existing deterministic slot-hashed `Mapping`;
+      `PersistentList` stores a deterministic length slot and indexed element
+      slots. `Storage.current()` now defaults to `Storage.host()`, so default
+      persistent containers use the host/native storage path; `Storage.memory()`
+      remains available for explicit unit-test state. `StorageTest` covers map
+      overwrite/remove semantics, list reconstruction/removal/clear behavior,
+      and default host-backed reconstruction.
+    - ✅ Added the first `JvmCellCodec` state envelope in `jvm/core/cell-codec.*`.
+      It encodes/decodes the canonical v1 executor-state cell carrying
+      `stdlib_hash`, `storage_root`, and `class_state_root`, rejecting wrong
+      magic/schema, special cells, malformed Maybe refs, and trailing bits/refs.
+      This is the `cp.new_data` root shape; it is intentionally not a general
+      Java heap object-graph serializer.
+    - ✅ Added `jvm/core/storage-cell-host.*`: a cell-backed 256-bit-slot
+      dictionary for `Storage` values. It supports arbitrary byte values through
+      chunked cell chains, validates storage roots, provides nested
+      begin/commit/rollback snapshots, and can fill an `AvataStorageHost`
+      callback table for `avata_set_storage_host()`. `JvmCellCodec` now
+      validates the storage root shape when decoding executor state.
+      `test-workchain-execution-registry` now covers missing slots, present
+      empty values, chunked value round-trips, root reload, nested transaction
+      rollback/commit, and the Avata callback convention that present empty
+      values are returned as a non-null pointer with length zero.
+    - ✅ `JvmAvataRuntime` now creates `JvmStorageCellHost` from
+      `JvmExecutorState.storage_root`, installs the generated
+      `AvataStorageHost` and `AvataEventHost` around Avata execution, applies
+      ConfigParam 85 gas tables to the Avata thread, and lets
+      `build_jvm_workchain_output()` persist the updated storage root into
+      `cp.new_data`.
+    - ✅ Added `jvm/core/avata-execution.*`: a narrow function-pointer gas
+      bridge that applies the resolved ConfigParam 85 opcode/helper gas arrays
+      to an Avata thread. The compute bridge passes
+      `avata_set_opcode_gas_costs()` and
+      `avata_set_contract_helper_gas_costs()` through this helper before
+      invoking contract bytecode. It now also exposes
+      `execute_jvm_avata_transaction()`, which installs the cell-backed
+      storage host, opens the storage snapshot, begins the Avata contract
+      gas/memory transaction, invokes a narrow contract callback, queries
+      gas/memory usage, commits storage only on success, rolls back storage on
+      failure/OOG, and clears the global Avata storage host on every path.
+      `test-workchain-execution-registry` covers successful table
+      installation, failed gas-table installation, successful storage commit,
+      failed invocation rollback, OOG classification, failed transaction begin,
+      invalid gas reports, and host cleanup.
+    - ✅ Added `jvm/core/event-host.*` and wired it into
+      `execute_jvm_avata_transaction()`. The execution bridge can now install
+      an `AvataEventHost` beside the storage host, record deterministic ordered
+      events during invocation, commit them only on successful contract
+      execution, roll them back on failure/OOG/OOM, and clear the global event
+      host on every path. JVM event payloads now have a canonical cell encoding
+      and can be converted into valid `OutList` action cells carrying outbound
+      external messages, so committed events are ready to flow through the
+      normal TOS transaction action phase once the interpreter bridge supplies
+      real invocations.
+    - Persistent ordered list storage is implemented. The v1 profile still does
+      not expose full map iteration because storage slots are hashed and the
+      chain adapter must define an explicit index structure before enumerable
+      maps are admitted.
+    - ✅ The storage/event/gas bridge, output assembly, linked interpreter ABI,
+      and manifest-backed runtime resolver are now covered by
+      `test-workchain-execution-registry`. Remaining deploy work is no longer
+      this bridge layer; it is class-byte storage/loading from deploy state and
+      typed argument decoding.
+    - ✅ Added a narrow two-phase contract entry ABI in
+      `include/avata/contract.h`: `avata_resolve_contract_static_void()`
+      resolves a class/method outside the transaction arena and returns an
+      opaque `AvataContractMethod`; `avata_invoke_contract_static_void()` then
+      invokes that pre-resolved method inside the gas/memory transaction. This
+      prevents class loading from retaining transaction-arena objects after
+      `endContractTransaction()` resets the arena. `ContractStaticVoidInvocationAbi`
+      covers success, Java exception classification, OOG classification, and
+      pending-exception cleanup.
 
 ## Added classpath files
 
@@ -309,9 +400,14 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   `ReflectiveOperationException` are no longer shipped. `Class` keeps only the
   deterministic metadata methods needed by normal Java 8 code and lambda
   linkage.
-- [ ] Finish encoding/console behavior:
-  `file.encoding` default/override behavior is fixed, but stdout/stderr console
-  encoding and unsupported charset handling still need cross-platform checks.
+- ✅ Finish encoding/console behavior:
+  `file.encoding`, `System.out`/`System.err` default encoding, and
+  reader/writer explicit charset handling are pinned to deterministic UTF-8
+  plus ISO-8859-1/Latin-1 where explicitly admitted. `Utf8` now handles
+  standard four-byte UTF-8 code points instead of relying on host charset
+  behavior, `OutputStreamWriter` and `InputStreamReader` reject unsupported
+  charsets deterministically, and `Strings` covers UTF-8 supplementary
+  characters, Latin-1 round trips, and unsupported charset exceptions.
 - ✅ Align serialization and object stream behavior with the admitted runtime
   profile: array objects serialized as TC_ARRAY with JDK8u wire format; enum,
   `Externalizable`, `writeReplace`, and `readResolve` trap deterministically;
@@ -329,13 +425,50 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 
 ## P2 Platform And Build Work
 
-- [ ] Integrate Avata as a static library in the main TOS CMake build with a narrow
-  exported target for the interpreter profile.
-- [ ] Keep the JDK8u reference revision pinned in docs when behavior is copied or
+- ✅ Install the production Avata runtime resolver in the JVM workchain.
+  - ✅ `jvm/avata/CMakeLists.txt` now exports `avata_interpreter`, an imported
+    static target backed by the canonical Avata makefile's
+    `build/<platform>-<arch>/libavata.a` output. The target also declares the
+    generated `rt.jar` and `api.jar` byproducts.
+  - ✅ `jvm_workchain_core` now links `avata_interpreter`, so the main CMake
+    build and `validator-engine` drive the canonical Avata static archive and
+    jar outputs.
+  - ✅ `make_linked_jvm_avata_execution_api()` now maps the core execution
+    bridge to the linked Avata C ABI, including gas tables, storage/event host
+    installation, transaction resource counters, and the two-phase static-void
+    contract invocation adapter.
+  - ✅ `jvm/core/class-manifest.*` defines the v1 `class_state_root` manifest
+    (`JVMM`, schema 1). It maps `(contract_id, method_id)` to an Avata
+    `class_name`, `method_name`, and `method_spec`, rejects malformed strings and
+    duplicate keys, and is now validated by `JvmCellCodec` when decoding
+    executor state.
+  - ✅ `make_linked_jvm_avata_runtime()` creates the linked Avata VM, keeps the
+    machine/thread alive for the process lifetime, resolves inbound
+    `JvmCallDescriptor` values through the manifest, and invokes the resolved
+    static-void method through the existing gas/storage/event bridge.
+  - ✅ `init_jvm_workchain()` now installs that linked runtime from
+    `TOS_JVM_AVATA_RT_JAR` or the CMake Avata bridge default, optional
+    `TOS_JVM_AVATA_CONTRACT_CLASSPATH`, and `TOS_JVM_AVATA_HEAP`. If VM creation
+    fails, registration still succeeds with a null runtime and wc=3 remains
+    fail-closed.
+- ✅ Add the first inbound JVM message ABI codec:
+  `jvm/core/message-abi.*` encodes and decodes the canonical v1
+  `JvmCallDescriptor` (`contract_id`, `method_id`, `args`), rejects malformed
+  bodies before Avata runtime invocation, and is covered by
+  `test-workchain-execution-registry`.
+- ✅ Keep the JDK8u reference revision pinned in docs when behavior is copied or
   compared. Current local reference checkout: `~/jdk8u` at `24fbffc3f77f`.
-- [ ] Add cross-platform deterministic test runs: same bytecode, same inputs,
+- ✅ Add cross-platform deterministic test runs: same bytecode, same inputs,
   fresh heap, byte-identical output state on Linux/macOS/Windows and target
-  validator architectures.
+  validator architectures. `make -C jvm/avata run-test` now runs a deterministic
+  replay phase after the normal Java tests, executing every Java test twice with
+  the same VM/classpath/input and comparing complete stdout/stderr. The same
+  generated `run-determinism.sh` is also used by the existing remote-test path,
+  so CI/remote runners can enforce the same replay check on each supported OS
+  and architecture. `test-workchain-execution-registry` also includes
+  `JvmComputeOutputIsDeterministicAcrossReplay`, which runs the same JVM compute
+  input twice and compares committed `new_data` and action-list cell hashes plus
+  gas, exit code, and VM log.
 - ✅ Add profile negative tests for forbidden host APIs. Historical
   `test/HostAPITest.java` covered broad Java SE host surfaces before the
   classpath cut; the current profile suite includes `test/CoreTrapProfile.java`
@@ -530,6 +663,11 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   runtime class tree with the VM-private `java/internal/*` package excluded. `build-test`
   checks that this jar has no `java/internal/*` entries, can compile a basic contract
   source through javac, and rejects source-level `import java.internal.*`.
+- ✅ Added a generated contract profile manifest for the verifier:
+  `rt/generate-profile-header.sh` reads `api.jar`, removes VM/runtime-private
+  bridge classes from the application-visible profile, and writes
+  `src/avata/contract-profile.h`. `build-test` diffs a freshly generated copy
+  against the checked-in header so `api.jar` and verifier policy cannot drift.
 - ✅ Added the initial `tos-javac` prototype at `jvm/avata/tools/tos-javac`.
   It forces Java 8 source/target settings, uses `api.jar` as the boot
   classpath, rejects user bootclasspath/source/target overrides, and is covered

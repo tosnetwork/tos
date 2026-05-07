@@ -901,8 +901,10 @@ loop:
   // class-library initialization before contract execution begins).
   // When the limit is reached, throw OutOfGasError deterministically.
   //
-  // TODO(gas-init): The workchain compute-phase adapter must call
-  // avata_begin_contract_transaction() before invoking contract bytecode.
+  // Consensus execution enters through execute_jvm_avata_transaction(), which
+  // installs ConfigParam 85 gas tables and opens the Avata contract
+  // transaction. Standalone embedders must call avata_begin_contract_transaction
+  // before invoking contract bytecode if they need bounded gas.
   //
   if (UNLIKELY(t->gasCounter != UINT64_MAX)) {
     uint64_t gasCost = t->m->opcodeGasCosts[instruction];

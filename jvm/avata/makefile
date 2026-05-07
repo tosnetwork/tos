@@ -14,7 +14,7 @@ get-java-version = $(shell "$1" -version 2>&1 \
 
 host-java-version := $(call get-java-version,$(JAVA_HOME)/bin/java)
 ifeq ($(filter 6 7 8,$(host-java-version)),)
-java-version := 7
+java-version := 8
 else
 java-version := $(host-java-version)
 endif
@@ -220,9 +220,14 @@ warnings = -Wall -Wextra $(werror) -Wunused-parameter -Winit-self \
 	-Wno-non-virtual-dtor
 
 target-cflags = -DTARGET_BYTES_PER_WORD=$(pointer-size)
+softfloat-include-cflags = \
+	-I$(src)/softfloat/berkeley \
+	-I$(src)/softfloat/berkeley/source/8086-SSE \
+	-I$(src)/softfloat/berkeley/source/include
 
 common-cflags = $(warnings) -std=c++0x -fno-rtti -fno-exceptions -I$(classpath-src) \
-	"-I$(JAVA_HOME)/include" -I$(src) -I$(build) -Iinclude $(classpath-cflags) \
+	"-I$(JAVA_HOME)/include" -I$(src) -I$(build) -Iinclude \
+	$(softfloat-include-cflags) $(classpath-cflags) \
 	-D__STDC_LIMIT_MACROS -D_JNI_IMPLEMENTATION_ -DAVATA_VERSION=\"$(version)\" \
 	-DAVATA_INFO="\"$(info)\"" \
 	-DUSE_ATOMIC_OPERATIONS -DAVATA_JAVA_HOME=\"$(javahome)\" $(target-cflags)
@@ -704,6 +709,11 @@ ifeq ($(use-lto),true)
 endif
 
 cflags += $(optimization-cflags)
+softfloat-cflags = $(optimization-cflags) -Wall -Wextra $(werror) \
+	-Werror-implicit-function-declaration -std=c99 -fPIC -fvisibility=hidden \
+	-DSOFTFLOAT_FAST_INT64 -DSOFTFLOAT_ROUND_ODD -DINLINE_LEVEL=5 \
+	-DSOFTFLOAT_FAST_DIV32TO16 -DSOFTFLOAT_FAST_DIV64TO32 \
+	$(softfloat-include-cflags)
 
 ifndef ms_cl_compiler
 ifneq ($(kernel),darwin)
@@ -750,13 +760,69 @@ vm-sources = \
 	$(src)/process.cpp \
 	$(src)/heapdump.cpp
 
+softfloat-sources = \
+	$(src)/softfloat/berkeley/source/softfloat_state.c \
+	$(src)/softfloat/berkeley/source/s_countLeadingZeros8.c \
+	$(src)/softfloat/berkeley/source/s_countLeadingZeros16.c \
+	$(src)/softfloat/berkeley/source/s_countLeadingZeros32.c \
+	$(src)/softfloat/berkeley/source/s_countLeadingZeros64.c \
+	$(src)/softfloat/berkeley/source/s_shiftRightJam32.c \
+	$(src)/softfloat/berkeley/source/s_shiftRightJam64.c \
+	$(src)/softfloat/berkeley/source/s_shiftRightJam64Extra.c \
+	$(src)/softfloat/berkeley/source/s_shortShiftRightJam64.c \
+	$(src)/softfloat/berkeley/source/s_shortShiftRightJam64Extra.c \
+	$(src)/softfloat/berkeley/source/s_mul64To128.c \
+	$(src)/softfloat/berkeley/source/s_approxRecip_1Ks.c \
+	$(src)/softfloat/berkeley/source/s_approxRecip32_1.c \
+	$(src)/softfloat/berkeley/source/s_roundToI32.c \
+	$(src)/softfloat/berkeley/source/s_roundToI64.c \
+	$(src)/softfloat/berkeley/source/s_normSubnormalF32Sig.c \
+	$(src)/softfloat/berkeley/source/s_roundPackToF32.c \
+	$(src)/softfloat/berkeley/source/s_normRoundPackToF32.c \
+	$(src)/softfloat/berkeley/source/s_addMagsF32.c \
+	$(src)/softfloat/berkeley/source/s_subMagsF32.c \
+	$(src)/softfloat/berkeley/source/f32_add.c \
+	$(src)/softfloat/berkeley/source/f32_sub.c \
+	$(src)/softfloat/berkeley/source/f32_mul.c \
+	$(src)/softfloat/berkeley/source/f32_div.c \
+	$(src)/softfloat/berkeley/source/f32_lt.c \
+	$(src)/softfloat/berkeley/source/f32_to_i32.c \
+	$(src)/softfloat/berkeley/source/f32_to_i64.c \
+	$(src)/softfloat/berkeley/source/f32_to_f64.c \
+	$(src)/softfloat/berkeley/source/i32_to_f32.c \
+	$(src)/softfloat/berkeley/source/i64_to_f32.c \
+	$(src)/softfloat/berkeley/source/s_normSubnormalF64Sig.c \
+	$(src)/softfloat/berkeley/source/s_roundPackToF64.c \
+	$(src)/softfloat/berkeley/source/s_normRoundPackToF64.c \
+	$(src)/softfloat/berkeley/source/s_addMagsF64.c \
+	$(src)/softfloat/berkeley/source/s_subMagsF64.c \
+	$(src)/softfloat/berkeley/source/f64_add.c \
+	$(src)/softfloat/berkeley/source/f64_sub.c \
+	$(src)/softfloat/berkeley/source/f64_mul.c \
+	$(src)/softfloat/berkeley/source/f64_div.c \
+	$(src)/softfloat/berkeley/source/f64_lt.c \
+	$(src)/softfloat/berkeley/source/f64_to_i32.c \
+	$(src)/softfloat/berkeley/source/f64_to_i64.c \
+	$(src)/softfloat/berkeley/source/f64_to_f32.c \
+	$(src)/softfloat/berkeley/source/i32_to_f64.c \
+	$(src)/softfloat/berkeley/source/i64_to_f64.c \
+	$(src)/softfloat/berkeley/source/8086-SSE/softfloat_raiseFlags.c \
+	$(src)/softfloat/berkeley/source/8086-SSE/s_f32UIToCommonNaN.c \
+	$(src)/softfloat/berkeley/source/8086-SSE/s_commonNaNToF32UI.c \
+	$(src)/softfloat/berkeley/source/8086-SSE/s_propagateNaNF32UI.c \
+	$(src)/softfloat/berkeley/source/8086-SSE/s_f64UIToCommonNaN.c \
+	$(src)/softfloat/berkeley/source/8086-SSE/s_commonNaNToF64UI.c \
+	$(src)/softfloat/berkeley/source/8086-SSE/s_propagateNaNF64UI.c \
+	$(src)/softfloat/tos_softfloat_fmod.c
+
 vm-asm-sources = $(src)/$(arch).$(asm-format)
 
 target-asm = $(asm)
 
 vm-cpp-objects = $(call cpp-objects,$(vm-sources),$(src),$(build))
+softfloat-objects = $(call c-objects,$(softfloat-sources),$(src),$(build))
 vm-asm-objects = $(call asm-objects,$(vm-asm-sources),$(src),$(build))
-vm-objects = $(vm-cpp-objects) $(vm-asm-objects)
+vm-objects = $(vm-cpp-objects) $(softfloat-objects) $(vm-asm-objects)
 
 heapwalk-sources = $(src)/heapwalk.cpp
 heapwalk-objects = \
@@ -848,6 +914,7 @@ test-sources = \
 	$(test)/ArraysTest.java \
 	$(test)/Collections.java \
 	$(test)/ContractLibraryPrimitives.java \
+	$(test)/ContractEntryPoint.java \
 	$(test)/ContractRuntimePrimitives.java \
 	$(test)/DequeHelper.java \
 	$(test)/DivideByZero.java \
@@ -862,6 +929,7 @@ test-sources = \
 	$(test)/QueueHelper.java \
 	$(test)/Simple.java \
 	$(test)/StackOverflow.java \
+	$(test)/StackTraceSourceFileTest.java \
 	$(test)/StringBuilderTest.java \
 	$(test)/Strings.java \
 	$(test)/StorageTest.java \
@@ -958,7 +1026,8 @@ test: build-test run-test
 
 .PHONY: build-test
 build-test: build check-native-profile check-rt-profile check-api-profile \
-	check-api-javac $(build)/run-tests.sh $(build)/test.sh \
+	check-contract-profile-header check-api-javac $(build)/run-tests.sh \
+	$(build)/run-determinism.sh $(build)/test.sh $(build)/determinism.sh \
 	$(unittest-executable)
 
 .PHONY: check-native-profile
@@ -972,6 +1041,18 @@ check-rt-profile: $(build)/rt.jar $(classpath-src)/check-profile.sh
 .PHONY: check-api-profile
 check-api-profile: $(build)/api.jar $(classpath-src)/check-profile.sh
 	/bin/sh $(classpath-src)/check-profile.sh $(build)/api.jar "$(JAVA_HOME)/bin/jar" api
+
+.PHONY: check-contract-profile-header
+check-contract-profile-header: $(build)/api.jar $(classpath-src)/generate-profile-header.sh src/avata/contract-profile.h
+	@echo "checking contract profile manifest"
+	@tmp="$(build)/contract-profile.h.generated" && \
+	/bin/sh $(classpath-src)/generate-profile-header.sh \
+		$(build)/api.jar "$(JAVA_HOME)/bin/jar" "$$tmp" && \
+	if ! cmp -s "$$tmp" src/avata/contract-profile.h; then \
+		echo "contract profile manifest is stale; regenerate src/avata/contract-profile.h" >&2; \
+		diff -u src/avata/contract-profile.h "$$tmp" >&2 || true; \
+		exit 1; \
+	fi
 
 .PHONY: check-api-javac
 check-api-javac: $(build)/api.jar tools/tos-javac
@@ -1019,10 +1100,12 @@ check-api-javac: $(build)/api.jar tools/tos-javac
 run-test: build-test
 ifneq ($(remote-test),true)
 	/bin/sh $(build)/run-tests.sh
+	/bin/sh $(build)/run-determinism.sh
 else
 	@echo "running tests on $(remote-test-user)@$(remote-test-host):$(remote-test-port), in $(remote-test-dir)"
 	rsync $(build) -rav --exclude '*.o' --rsh="ssh -p$(remote-test-port)" $(remote-test-user)@$(remote-test-host):$(remote-test-dir)
 	ssh -p$(remote-test-port) $(remote-test-user)@$(remote-test-host) sh "$(remote-test-dir)/$(platform)-$(arch)$(options)/run-tests.sh"
+	ssh -p$(remote-test-port) $(remote-test-user)@$(remote-test-host) sh "$(remote-test-dir)/$(platform)-$(arch)$(options)/run-determinism.sh"
 endif
 
 .PHONY: tarball
@@ -1057,6 +1140,13 @@ $(build)/jdk-run-tests.sh: $(test-classes) makefile $(build)/extra-dir/multi-cla
 	echo "$(call class-names,$(test-build),$(filter-out $(test-support-classes), $(test-classes))) \\" >> $(@)
 	echo "" >> $(@)
 
+$(build)/run-determinism.sh: $(test-classes) makefile $(build)/determinism.sh $(build)/extra-dir/multi-classpath-test.txt $(build)/test/multi-classpath-test.txt $(classpath-wildcard-jar)
+	echo 'cd $$(dirname $$0)' > $(@)
+	echo "sh ./determinism.sh 2>/dev/null \\" >> $(@)
+	echo "$(shell echo $(library-path) | sed 's|$(build)|\.|g') ./$(notdir $(test-executable)) $(mode) \"-Djava.library.path=. -cp test$(target-path-separator)extra-dir\" \\" >> $(@)
+	echo "$(call class-names,$(test-build),$(filter-out $(test-support-classes), $(test-classes))) \\" >> $(@)
+	echo "" >> $(@)
+
 $(build)/extra-dir/multi-classpath-test.txt:
 	mkdir -p $(build)/extra-dir
 	echo "$@" > $@
@@ -1070,6 +1160,9 @@ $(classpath-wildcard-jar): $(test-extra-dep)
 	$(jar) cf $(@) -C $(test-build) extra/ClasspathWildcardTarget.class
 
 $(build)/test.sh: $(test)/test.sh
+	cp $(<) $(@)
+
+$(build)/determinism.sh: $(test)/determinism.sh
 	cp $(<) $(@)
 
 gen-arg = $(shell echo $(1) | sed -e 's:$(build)/type-\(.*\)\.cpp:\1:')
@@ -1116,6 +1209,12 @@ define compile-object
 	$(cxx) $(cflags) -c $$($(windows-path) $(<)) $(call output,$(@))
 endef
 
+define compile-softfloat-object
+	@echo "compiling $(@)"
+	@mkdir -p $(dir $(@))
+	$(cc) $(softfloat-cflags) -c $$($(windows-path) $(<)) $(call output,$(@))
+endef
+
 define compile-asm-object
 	@echo "compiling $(@)"
 	@mkdir -p $(dir $(@))
@@ -1130,6 +1229,9 @@ endef
 
 $(vm-cpp-objects): $(build)/%.o: $(src)/%.cpp $(vm-depends)
 	$(compile-object)
+
+$(softfloat-objects): $(build)/%.o: $(src)/%.c $(vm-depends)
+	$(compile-softfloat-object)
 
 $(unittest-objects): $(build)/unittest/%.o: $(unittest)/%.cpp $(vm-depends) $(unittest-depends)
 	$(compile-unittest-object)
