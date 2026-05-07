@@ -1026,7 +1026,7 @@ test: build-test run-test
 
 .PHONY: build-test
 build-test: build check-native-profile check-rt-profile check-api-profile \
-	check-contract-profile-header check-api-javac $(build)/run-tests.sh \
+	check-contract-profile-header check-api-javac check-api-java $(build)/run-tests.sh \
 	$(build)/run-determinism.sh $(build)/test.sh $(build)/determinism.sh \
 	$(unittest-executable)
 
@@ -1055,7 +1055,7 @@ check-contract-profile-header: $(build)/api.jar $(classpath-src)/generate-profil
 	fi
 
 .PHONY: check-api-javac
-check-api-javac: $(build)/api.jar tools/tos-javac
+check-api-javac: $(build)/api.jar tools/javac
 	@echo "checking api.jar bootclasspath"
 	@rm -rf $(build)/api-check
 	@mkdir -p $(build)/api-check/src $(build)/api-check/out
@@ -1070,7 +1070,7 @@ check-api-javac: $(build)/api.jar tools/tos-javac
 		'}' \
 		> $(build)/api-check/src/ApiCompileCheck.java
 	AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
-		tools/tos-javac \
+		tools/javac \
 		-d $(build)/api-check/out \
 		$(build)/api-check/src/ApiCompileCheck.java
 	@printf '%s\n' \
@@ -1080,7 +1080,7 @@ check-api-javac: $(build)/api.jar tools/tos-javac
 		'}' \
 		> $(build)/api-check/src/ForbiddenInternalCompileCheck.java
 	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
-		tools/tos-javac \
+		tools/javac \
 		-d $(build)/api-check/out \
 		$(build)/api-check/src/ForbiddenInternalCompileCheck.java \
 		> $(build)/api-check/forbidden.log 2>&1; then \
@@ -1089,10 +1089,10 @@ check-api-javac: $(build)/api.jar tools/tos-javac
 		exit 1; \
 	fi
 	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
-		tools/tos-javac -bootclasspath $(build)/rt.jar \
+		tools/javac -bootclasspath $(build)/rt.jar \
 		$(build)/api-check/src/ApiCompileCheck.java \
 		> $(build)/api-check/override.log 2>&1; then \
-		echo "api.jar check failed: tos-javac accepted bootclasspath override" >&2; \
+		echo "api.jar check failed: tools/javac accepted bootclasspath override" >&2; \
 		exit 1; \
 	fi
 	@printf '%s\n' \
@@ -1101,11 +1101,11 @@ check-api-javac: $(build)/api.jar tools/tos-javac
 		'}' \
 		> $(build)/api-check/src/MutableStaticCompileCheck.java
 	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
-		tools/tos-javac \
+		tools/javac \
 		-d $(build)/api-check/out \
 		$(build)/api-check/src/MutableStaticCompileCheck.java \
 		> $(build)/api-check/mutable-static.log 2>&1; then \
-		echo "api.jar check failed: tos-javac accepted mutable static field" >&2; \
+		echo "api.jar check failed: tools/javac accepted mutable static field" >&2; \
 		exit 1; \
 	fi
 	@printf '%s\n' \
@@ -1116,11 +1116,64 @@ check-api-javac: $(build)/api.jar tools/tos-javac
 		'}' \
 		> $(build)/api-check/src/LambdaCompileCheck.java
 	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
-		tools/tos-javac \
+		tools/javac \
 		-d $(build)/api-check/out \
 		$(build)/api-check/src/LambdaCompileCheck.java \
 		> $(build)/api-check/lambda.log 2>&1; then \
-		echo "api.jar check failed: tos-javac accepted invokedynamic lambda" >&2; \
+		echo "api.jar check failed: tools/javac accepted invokedynamic lambda" >&2; \
+		exit 1; \
+	fi
+
+.PHONY: check-api-java
+check-api-java: $(build)/api.jar $(build)/rt.jar $(executable) tools/javac tools/java
+	@echo "checking local Avata java runner"
+	@rm -rf $(build)/api-run-check
+	@mkdir -p $(build)/api-run-check/src $(build)/api-run-check/out
+	@printf '%s\n' \
+		'public final class LocalRunnerCheck {' \
+		'  public static void main(String[] args) {' \
+		'    System.out.println("local-runner:" + args.length + ":" + Memory.limit());' \
+		'  }' \
+		'}' \
+		> $(build)/api-run-check/src/LocalRunnerCheck.java
+	AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
+		tools/javac \
+		-d $(build)/api-run-check/out \
+		$(build)/api-run-check/src/LocalRunnerCheck.java
+	AVATA_BUILD_DIR=$(build) \
+		tools/java \
+		--gas 1000000 --memory 1048576 \
+		-cp $(build)/api-run-check/out LocalRunnerCheck one two \
+		> $(build)/api-run-check/runner.log
+	@grep -q '^local-runner:2:1048576$$' $(build)/api-run-check/runner.log || { \
+		echo "api.jar check failed: tools/java runner output mismatch" >&2; \
+		cat $(build)/api-run-check/runner.log >&2; \
+		exit 1; \
+	}
+	@if AVATA_BUILD_DIR=$(build) \
+		tools/java --gas 1 --memory 1048576 \
+		-cp $(build)/api-run-check/out LocalRunnerCheck \
+		> $(build)/api-run-check/gas.log 2>&1; then \
+		echo "api.jar check failed: tools/java low-gas execution succeeded" >&2; \
+		exit 1; \
+	fi
+	@grep -q 'OutOfGasError' $(build)/api-run-check/gas.log || { \
+		echo "api.jar check failed: tools/java low-gas run did not report OutOfGasError" >&2; \
+		cat $(build)/api-run-check/gas.log >&2; \
+		exit 1; \
+	}
+	@if AVATA_BUILD_DIR=$(build) \
+		tools/java -Xbootclasspath:$(build)/api.jar \
+		-cp $(build)/api-run-check/out LocalRunnerCheck \
+		> $(build)/api-run-check/boot-override.log 2>&1; then \
+		echo "api.jar check failed: tools/java accepted bootclasspath override" >&2; \
+		exit 1; \
+	fi
+	@if AVATA_BUILD_DIR=$(build) \
+		tools/java -Djava.library.path=/tmp \
+		-cp $(build)/api-run-check/out LocalRunnerCheck \
+		> $(build)/api-run-check/native-path-override.log 2>&1; then \
+		echo "api.jar check failed: tools/java accepted java.library.path override" >&2; \
 		exit 1; \
 	fi
 

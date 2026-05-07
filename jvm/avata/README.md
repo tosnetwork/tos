@@ -136,9 +136,10 @@ The supported standalone build is the slim `make` profile:
 
 `make build-test` runs `rt/check-profile.sh` against the generated `rt.jar` and
 `api.jar`, and fails if any forbidden package or shell class is
-reintroduced. It also verifies that `tools/tos-javac` compiles against
-`api.jar` and rejects source-level imports of VM-private `java.internal.*`
-classes.
+reintroduced. It also verifies that `tools/javac` compiles against
+`api.jar`, rejects source-level imports of VM-private `java.internal.*`
+classes, and that `tools/java` can execute a compiled class with the local
+Avata interpreter and `rt.jar`.
 
 The CMake files mirror this by excluding the removed codegen targets.
 
@@ -159,16 +160,22 @@ The current profile builds `jvm/avata/build/<platform>-<arch>/avata`,
 The contract compiler wrapper prototype is:
 
 ```bash
-jvm/avata/tools/tos-javac --avata-build-dir jvm/avata/build/linux-x86_64 \
+jvm/avata/tools/javac --avata-build-dir jvm/avata/build/linux-x86_64 \
   -d out Contract.java
+jvm/avata/tools/java --avata-build-dir jvm/avata/build/linux-x86_64 \
+  --gas 1000000 --memory 1048576 -cp out Contract
 ```
 
-The wrapper forces Java 8 source/target settings, uses `api.jar` as
+The compiler wrapper forces Java 8 source/target settings, uses `api.jar` as
 the boot classpath, rejects user-supplied bootclasspath/source/target
 overrides, and checks generated `.class` files against the Avata contract
 profile before returning success. That post-compile check catches bytecode
 `javac` can emit but the contract verifier rejects, including mutable static
-fields and Java 8 lambda/`invokedynamic` output.
+fields and Java 8 lambda/`invokedynamic` output. The local runner wrapper fixes
+the boot classpath to Avata `rt.jar` and rejects bootclasspath/native library
+path overrides. Its `--gas` and `--memory` options start the standalone
+interpreter in contract-resource mode, so local runs can reproduce deterministic
+`OutOfGasError`/`OutOfMemoryError` failures before deployment.
 
 The Avata tests cover the interpreter loop, class loading, exception handling,
 and the admitted runtime API profile. TOS cell codec, gas metering, and workchain

@@ -3,8 +3,8 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: tos-javac [--avata-build-dir DIR] [--api JAR] [--javac JAVAC]
-                 [--javap JAVAP] <javac args...>
+usage: javac [--avata-build-dir DIR] [--api JAR] [--javac JAVAC]
+             [--javap JAVAP] <javac args...>
 
 Compiles contract Java source against Avata's api.jar. The wrapper
 forces Java 8 source/target level, refuses options that would replace the
@@ -14,7 +14,7 @@ EOF
 }
 
 die() {
-  echo "tos-javac: $*" >&2
+  echo "avata-javac: $*" >&2
   exit 2
 }
 
@@ -75,10 +75,10 @@ while (($#)); do
       break
       ;;
     -bootclasspath|-source|-target|--release)
-      die "$1 is fixed by tos-javac"
+      die "$1 is fixed by jvm/avata/tools/javac"
       ;;
     -bootclasspath:*|-Xbootclasspath:*|-Xbootclasspath/*|-source=*|-target=*|--release=*)
-      die "$1 is fixed by tos-javac"
+      die "$1 is fixed by jvm/avata/tools/javac"
       ;;
     *)
       user_args+=("$1")
@@ -130,7 +130,7 @@ fi
 profile_header=${AVATA_CONTRACT_PROFILE_HEADER:-$avata_dir/src/avata/contract-profile.h}
 [[ -f "$profile_header" ]] || die "missing contract profile header: $profile_header"
 
-tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/tos-javac.XXXXXX")
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/avata-javac.XXXXXX")
 trap 'rm -rf "$tmp_dir"' EXIT
 marker="$tmp_dir/compile-start"
 allowed_java="$tmp_dir/allowed-java-classes"
@@ -178,7 +178,7 @@ for root in "${class_roots[@]}"; do
   seen_roots[$root]=1
   while IFS= read -r -d '' class_file; do
     class_files+=("$class_file")
-  done < <(find "$root" -type f -name '*.class' -newer "$marker" -print0)
+  done < <(find "$root" -type f -name '*.class' -newer "$marker" -print0 2>/dev/null)
 done
 
 check_class_file() {

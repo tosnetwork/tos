@@ -11,8 +11,10 @@
 #include "stdlib.h"
 #include "stdio.h"
 #include "string.h"
+#include "errno.h"
 #include "jni.h"
 
+#include <avata/contract.h>
 #include <avata/system/system.h>
 #include "avata/finder.h"
 
@@ -118,6 +120,68 @@ const char* mainClass(const char* jar)
   return result;
 }
 
+bool parseUint64(const char* value, uint64_t* out)
+{
+  if (value == 0 or *value == 0) {
+    return false;
+  }
+
+  errno = 0;
+  char* end = 0;
+  unsigned long long parsed = strtoull(value, &end, 10);
+  if (errno != 0 or end == value or *end != 0) {
+    return false;
+  }
+
+  *out = static_cast<uint64_t>(parsed);
+  return true;
+}
+
+bool parseContractResourceOption(const char* option,
+                                 uint64_t* gasLimit,
+                                 uint64_t* memoryLimit,
+                                 bool* enabled)
+{
+  const char GasPrefix[] = "-Xavata-gas:";
+  const char MemoryPrefix[] = "-Xavata-memory:";
+
+  if (strncmp(option, GasPrefix, sizeof(GasPrefix) - 1) == 0) {
+    if (!parseUint64(option + sizeof(GasPrefix) - 1, gasLimit)) {
+      fprintf(stderr, "invalid Avata gas limit: %s\n", option);
+      exit(-1);
+    }
+    *enabled = true;
+    return true;
+  }
+
+  if (strncmp(option, MemoryPrefix, sizeof(MemoryPrefix) - 1) == 0) {
+    if (!parseUint64(option + sizeof(MemoryPrefix) - 1, memoryLimit)) {
+      fprintf(stderr, "invalid Avata memory limit: %s\n", option);
+      exit(-1);
+    }
+    *enabled = true;
+    return true;
+  }
+
+  return false;
+}
+
+void initializeStandaloneContractRuntime(JNIEnv* e)
+{
+  jclass bootProfileClass = e->FindClass("java/internal/BootProfile");
+  if (e->ExceptionCheck()) {
+    return;
+  }
+
+  jmethodID initialize = e->GetStaticMethodID(
+      bootProfileClass, "initializeForContract", "()V");
+  if (e->ExceptionCheck()) {
+    return;
+  }
+
+  e->CallStaticVoidMethod(bootProfileClass, initialize);
+}
+
 void usageAndExit(const char* name)
 {
   fprintf(
@@ -129,6 +193,8 @@ void usageAndExit(const char* name)
       "\t[-Xbootclasspath/p:<classpath to prepend to bootstrap classpath>]\n"
       "\t[-Xbootclasspath:<bootstrap classpath>]\n"
       "\t[-Xbootclasspath/a:<classpath to append to bootstrap classpath>]\n"
+      "\t[-Xavata-gas:<contract gas limit>]\n"
+      "\t[-Xavata-memory:<contract memory limit in bytes>]\n"
       "\t[-D<property name>=<property value> ...]\n"
       "\t{<class name>|-jar <app jar>} [<argument> ...]\n",
       name);
@@ -149,6 +215,9 @@ int main(int ac, const char** av)
   int argc = 0;
   const char** argv = 0;
   const char* classpath = ".";
+  uint64_t contractGasLimit = UINT64_MAX;
+  uint64_t contractMemoryLimit = UINT64_MAX;
+  bool contractResourcesEnabled = false;
 
   for (int i = 1; i < ac; ++i) {
     if (strcmp(av[i], "-cp") == 0 or strcmp(av[i], "-classpath") == 0) {
@@ -159,6 +228,12 @@ int main(int ac, const char** av)
       if (i + 1 == ac)
         usageAndExit(av[0]);
       jar = av[++i];
+    } else if (parseContractResourceOption(av[i],
+                                           &contractGasLimit,
+                                           &contractMemoryLimit,
+                                           &contractResourcesEnabled)) {
+      // handled above; do not pass this private standalone-runner option into
+      // the VM property parser.
     } else if (strncmp(av[i], "-X", 2) == 0 or strncmp(av[i], "-D", 2) == 0) {
       ++vmArgs.nOptions;
     } else if (strcmp(av[i], "-client") == 0 or strcmp(av[i], "-server") == 0) {
@@ -231,6 +306,15 @@ int main(int ac, const char** av)
       = RUNTIME_ARRAY_BODY(classpathPropertyBuffer);
 
   for (int i = 1; i < ac; ++i) {
+    uint64_t ignoredGas = 0;
+    uint64_t ignoredMemory = 0;
+    bool ignoredEnabled = false;
+    if (parseContractResourceOption(av[i],
+                                    &ignoredGas,
+                                    &ignoredMemory,
+                                    &ignoredEnabled)) {
+      continue;
+    }
     if (strncmp(av[i], "-X", 2) == 0 or strncmp(av[i], "-D", 2) == 0) {
       vmArgs.options[optionIndex++].optionString = const_cast<char*>(av[i]);
     }
@@ -244,6 +328,7 @@ int main(int ac, const char** av)
   void* env;
   JNI_CreateJavaVM(&vm, &env, &vmArgs);
   JNIEnv* e = static_cast<JNIEnv*>(env);
+  int exitCode = 0;
 
   jclass c = 0;
   if (not e->ExceptionCheck()) {
@@ -259,22 +344,61 @@ int main(int ac, const char** av)
     if (not e->ExceptionCheck()) {
       jclass stringClass = e->FindClass("java/lang/String");
       if (not e->ExceptionCheck()) {
-        jobjectArray a = e->NewObjectArray(argc, stringClass, 0);
-        if (not e->ExceptionCheck()) {
-          for (int i = 0; i < argc; ++i) {
-            e->SetObjectArrayElement(a, i, e->NewStringUTF(argv[i]));
-          }
+        if (contractResourcesEnabled) {
+          initializeStandaloneContractRuntime(e);
+        }
 
-          e->CallStaticVoidMethod(c, m, a);
+        bool contractTransactionActive = false;
+        if (contractResourcesEnabled and not e->ExceptionCheck()) {
+          int status = avata_begin_contract_transaction_with_limits(
+              reinterpret_cast<AvataThread*>(e),
+              contractGasLimit,
+              contractMemoryLimit);
+          if (status != AVATA_CONTRACT_OK) {
+            fprintf(stderr,
+                    "Avata contract transaction setup failed: %d\n",
+                    status);
+            exitCode = -1;
+          } else {
+            contractTransactionActive = true;
+          }
+        }
+
+        if (exitCode == 0) {
+          jobjectArray a = e->NewObjectArray(argc, stringClass, 0);
+          if (not e->ExceptionCheck()) {
+            for (int i = 0; i < argc; ++i) {
+              e->SetObjectArrayElement(a, i, e->NewStringUTF(argv[i]));
+            }
+
+            e->CallStaticVoidMethod(c, m, a);
+          }
+        }
+
+        if (e->ExceptionCheck()) {
+          exitCode = -1;
+          e->ExceptionDescribe();
+        }
+
+        if (contractTransactionActive) {
+          int status = avata_end_contract_transaction(
+              reinterpret_cast<AvataThread*>(e));
+          if (status != AVATA_CONTRACT_OK) {
+            fprintf(stderr,
+                    "Avata contract transaction cleanup failed: %d\n",
+                    status);
+            exitCode = -1;
+          }
         }
       }
     }
   }
 
-  int exitCode = 0;
-  if (e->ExceptionCheck()) {
-    exitCode = -1;
-    e->ExceptionDescribe();
+  if (exitCode == 0) {
+    if (e->ExceptionCheck()) {
+      exitCode = -1;
+      e->ExceptionDescribe();
+    }
   }
 
   vm->DestroyJavaVM();

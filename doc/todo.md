@@ -702,7 +702,8 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   bridge classes from the application-visible profile, and writes
   `src/avata/contract-profile.h`. `build-test` diffs a freshly generated copy
   against the checked-in header so `api.jar` and verifier policy cannot drift.
-- ✅ Added the initial `tos-javac` prototype at `jvm/avata/tools/tos-javac`.
+- ✅ Added the initial Avata contract compiler wrapper at
+  `jvm/avata/tools/javac`.
   It forces Java 8 source/target settings, uses `api.jar` as the boot
   classpath, rejects user bootclasspath/source/target overrides, runs a
   post-compile class-file admission check against the generated contract
@@ -711,6 +712,13 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   `<clinit>`, enum classes, native/synchronized/finalizer methods, unsupported
   class-file versions, stale `avata/*` classes, and `java/*` references outside
   the admitted profile before deployment.
+- ✅ Added the local Avata contract runner wrapper at `jvm/avata/tools/java`.
+  It fixes the boot classpath to the generated `rt.jar`, forwards normal Java
+  classpath/main-class arguments to the Avata interpreter, sets the local
+  `java.library.path`, rejects user bootclasspath/native library path
+  overrides, exposes `--gas`/`--memory` resource limits, and is covered by
+  `build-test` including deterministic `Memory.limit()` and low-gas
+  `OutOfGasError` checks.
 - ✅ Host-API consensus hardening: `System` exposes only deterministic VM-managed
   streams and fixed property reads; `Runtime` is removed from the v1 `rt.jar`;
   `Thread` remains VM-internal and contract references are rejected. The earlier

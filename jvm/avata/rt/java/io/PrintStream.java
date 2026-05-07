@@ -21,10 +21,17 @@ public class PrintStream extends OutputStream {
       = System.getProperty("line.separator").getBytes();
   }
 
+  private static String defaultEncoding() {
+    if (Static.newline.length < 0) {
+      throw new AssertionError();
+    }
+    return Static.defaultEncoding;
+  }
+
   public PrintStream(OutputStream out, boolean autoFlush) {
     this.out = out;
     this.autoFlush = autoFlush;
-    this.encoding = Static.defaultEncoding;
+    this.encoding = defaultEncoding();
   }
 
   public PrintStream(OutputStream out, boolean autoFlush, String encoding)

@@ -214,7 +214,7 @@ Create a machine-readable and documented admission profile:
 - Class initialization rules.
 - Deterministic trap taxonomy.
 
-This profile is the contract between `tos-javac`, the local runner, deploy-time
+This profile is the contract between `jvm/avata/tools/javac`, the local runner, deploy-time
 checks, and validator execution. Tooling can reject early, but validators must
 re-validate the exact bytes they execute.
 
@@ -269,14 +269,16 @@ contract profile and has deterministic tests.
 
 Provide two developer-facing tools:
 
-- `tos-javac`: wraps or configures Java 8 `javac`, forces class-file major 52,
+- `jvm/avata/tools/javac`: wraps or configures Java 8 `javac`, forces class-file major 52,
   uses the TOS `api.jar` as boot classpath, and runs
-  verifier/admission checks. The current prototype is
-  `jvm/avata/tools/tos-javac`; it pins the boot classpath and source/target
-  level, while full verifier integration remains a follow-up.
-- `tos-java`: local deterministic runner using the same Avata interpreter,
+  verifier/admission checks. The current wrapper pins the boot classpath and
+  source/target level, then rejects generated class files outside the Avata
+  contract verifier profile before deployment.
+- `jvm/avata/tools/java`: local deterministic runner using the same Avata interpreter,
   `rt.jar`, gas model, fixed floating-point behavior, traps, and heap/state
-  codec as validators.
+  codec as validators. The wrapper exposes `--gas` and `--memory` limits that
+  enter the standalone interpreter's contract-resource mode for local OOG/OOM
+  reproduction.
 
 The local runner must be a developer convenience, not an alternate semantics
 source. Validator execution remains authoritative.
@@ -298,8 +300,8 @@ Required suites:
 - **Forbidden API tests:** host APIs fail before or during execution without
   observing the host.
 - **Runtime API tests:** admitted `rt.jar` APIs match documented semantics.
-- **Toolchain tests:** `tos-javac` output is accepted by the validator profile;
-  `tos-java` local execution matches validator execution.
+- **Toolchain tests:** `jvm/avata/tools/javac` output is accepted by the validator profile;
+  `jvm/avata/tools/java` local execution matches validator execution.
 
 OpenJDK tests may be used as references for engine semantics and admitted API
 behavior, but passing the full OpenJDK class-library test suite is not a release
@@ -316,9 +318,9 @@ criterion.
 5. Turn host-observing APIs into verifier rejects or deterministic traps.
 6. ✅ Define the initial slim TOS `rt.jar` package list; next, add the
    contract-facing `tos.*` APIs.
-7. ✅ Start the `tos-javac` prototype around `api.jar`; next, wire
-   verifier/admission checks into that wrapper and build the `tos-java` runner
-   prototype.
+7. ✅ Build the `jvm/avata/tools/javac` wrapper around `api.jar` and the
+   `jvm/avata/tools/java` local runner around `rt.jar`; both are covered by
+   `build-test`.
 
 The practical rule is simple: Avata development should first make Java 8
 bytecode execution deterministic and complete, then expose only the runtime
