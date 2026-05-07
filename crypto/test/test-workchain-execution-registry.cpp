@@ -3012,9 +3012,29 @@ TEST(JvmWorkchainCore, RpcCallContractParsesRequest) {
   CHECK(req->method_id == 305419896u);
   CHECK(req->gas_limit == 100000u);
   CHECK(req->contract_id[31] == 1);
+  // args must be initialised to a canonical empty cell, not null.
+  CHECK(req->args.not_null());
 
   // Missing contractId — must fail.
   CHECK(!parse_jvm_call_contract_request(R"({"methodId":1})").has_value());
+
+  // Handler must return a real BOC-encoded call descriptor, not a placeholder.
+  auto result = handle_jvm_call_contract(*req, "99");
+  CHECK(!result.is_error);
+  // id must be threaded through correctly.
+  CHECK(result.json.find("\"id\":99") != std::string::npos);
+  // Response must contain callDescriptorBoc field with a 0x-prefixed hex value.
+  auto boc_pos = result.json.find("\"callDescriptorBoc\":\"0x");
+  CHECK(boc_pos != std::string::npos);
+  // BOC must be non-trivially long (at minimum a few bytes for the descriptor).
+  auto hex_start = result.json.find("0x", boc_pos) + 2;
+  unsigned hex_len = 0;
+  while (hex_start + hex_len < result.json.size()
+         && std::isxdigit(static_cast<unsigned char>(
+                result.json[hex_start + hex_len]))) {
+    ++hex_len;
+  }
+  CHECK(hex_len >= 8);
 }
 
 TEST(JvmWorkchainCore, RpcGetContractStateParsesRequest) {
@@ -3028,6 +3048,31 @@ TEST(JvmWorkchainCore, RpcGetContractStateParsesRequest) {
   CHECK(req->contract_id[31] == 1);
 
   CHECK(!parse_jvm_get_contract_state_request(R"({})").has_value());
+
+  // When executor_state contains a class state rooted at the queried
+  // contract_id, the handler must populate className and classHash.
+  constexpr uint8_t kMarker = 0x01;
+  req->contract_id = make_test_jvm_call_descriptor(kMarker).contract_id;
+
+  JvmExecutorState exec_state;
+  exec_state.stdlib_hash = make_test_jvm_config().stdlib_hash;
+  exec_state.storage_root = {};
+  exec_state.class_state_root = make_jvm_class_state_cell(kMarker);
+  req->executor_state = encode_jvm_executor_state(exec_state);
+
+  auto result = handle_jvm_get_contract_state(*req, "5");
+  CHECK(!result.is_error);
+  CHECK(result.json.find("\"id\":5") != std::string::npos);
+  // className must be the class registered for this contract_id.
+  CHECK(result.json.find("\"className\":\"ContractEntryPoint\"") != std::string::npos);
+  // classHash must be a 0x-prefixed 64-hex-char value (non-null).
+  CHECK(result.json.find("\"classHash\":\"0x") != std::string::npos);
+  // storageRootHash must be null (no storage set).
+  CHECK(result.json.find("\"storageRootHash\":null") != std::string::npos);
+
+  // Without executor_state the handler must return an error.
+  req->executor_state = {};
+  CHECK(handle_jvm_get_contract_state(*req, "6").is_error);
 }
 
 TEST(JvmWorkchainCore, RpcGetReceiptsParsesRequest) {

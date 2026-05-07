@@ -23,6 +23,7 @@
 #include "jvm/core/storage-cell-host.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/logging.h"
+#include "vm/boc.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cellslice.h"
 
@@ -294,6 +295,8 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
         }
     }
 
+    // args is optional; absent = canonical empty args cell.
+    req.args = vm::CellBuilder().finalize();
     return req;
 }
 
@@ -312,10 +315,22 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
             true};
     }
 
-    // In v1 local execution is not wired (requires an installed JvmComputeRuntime
-    // and a block state snapshot).  Return the encoded descriptor so callers can
-    // submit it or forward it to the local runner.
-    std::string result = "{\"callDescriptor\":\"encoded\",\"contractId\":\""
+    // Serialize the descriptor cell to BOC so the caller can submit it
+    // as an external message body or pass it to the local runner.
+    // Local execution is not wired in v1 (requires an installed runtime and
+    // a block-state snapshot); the encoded descriptor is the return value.
+    auto boc = vm::std_boc_serialize(encoded, 0);
+    if (boc.is_error()) {
+        return JvmRpcResult{
+            json_rpc_err(id, -32602, "call descriptor boc serialization failed"),
+            true};
+    }
+    const auto& boc_bytes = boc.ok();
+    std::string result = "{\"callDescriptorBoc\":\""
+                       + hex_encode(reinterpret_cast<const uint8_t*>(
+                                        boc_bytes.data()),
+                                    boc_bytes.size())
+                       + "\",\"contractId\":\""
                        + hex_encode(req.contract_id) + "\"}";
     return JvmRpcResult{json_rpc_ok(id, result), false};
 }
@@ -351,17 +366,43 @@ JvmRpcResult handle_jvm_get_contract_state(
             true};
     }
 
-    // Return the storage root hash as a proxy for the contract storage;
-    // full slot enumeration requires an explicit index structure (v1 storage
-    // slots are hashed and not directly enumerable without an index).
+    // Storage root hash — v1 storage is a flat shared namespace; the hash
+    // covers all contracts.  Full per-contract slot enumeration requires an
+    // explicit index not present in v1.
     std::string storage_hash = "null";
     if (state.storage_root.not_null()) {
         auto h = state.storage_root->get_hash();
         storage_hash = "\"" + hex_encode(h.as_slice().ubegin(), 32) + "\"";
     }
+
+    // Look up the contract's class name and class hash from the manifest.
+    std::string class_name_json = "null";
+    std::string class_hash_json = "null";
+    if (state.class_state_root.not_null()) {
+        auto manifest_result =
+            parse_jvm_avata_class_manifest(state.class_state_root);
+        if (manifest_result.is_ok()) {
+            for (const auto& entry : manifest_result.ok()) {
+                if (entry.contract_id == req.contract_id) {
+                    class_name_json = "\"" + entry.class_name + "\"";
+                    // Find the class definition to get the class hash.
+                    auto def = find_jvm_avata_class_definition(
+                        state.class_state_root, entry.class_name);
+                    if (def.is_ok()) {
+                        class_hash_json =
+                            "\"" + hex_encode(def.ok().class_hash) + "\"";
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     std::string result = "{\"contractId\":\""
                        + hex_encode(req.contract_id)
-                       + "\",\"storageRootHash\":" + storage_hash + "}";
+                       + "\",\"className\":" + class_name_json
+                       + ",\"classHash\":" + class_hash_json
+                       + ",\"storageRootHash\":" + storage_hash + "}";
     return JvmRpcResult{json_rpc_ok(id, result), false};
 }
 
