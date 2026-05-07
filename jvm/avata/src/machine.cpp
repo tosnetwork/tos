@@ -894,6 +894,160 @@ void verifyApplicationMethodProfile(Thread* t,
   }
 }
 
+bool contractEntryObjectArgAllowed(const int8_t*& p, const char* name)
+{
+  unsigned length = literalLength(name);
+  for (unsigned i = 0; i < length; ++i) {
+    if (p[i] == 0 || p[i] != static_cast<int8_t>(name[i])) {
+      return false;
+    }
+  }
+
+  p += length;
+  return true;
+}
+
+bool contractEntryDescriptorAllowed(GcByteArray* spec)
+{
+  const int8_t* p = spec->body().begin();
+  if (*p != '(') {
+    return false;
+  }
+  ++p;
+
+  while (*p && *p != ')') {
+    if (*p == 'Z' || *p == 'I' || *p == 'J') {
+      ++p;
+      continue;
+    }
+
+    if (contractEntryObjectArgAllowed(p, "Ljava/lang/Address;")
+        || contractEntryObjectArgAllowed(p, "Ljava/lang/Uint256;")
+        || contractEntryObjectArgAllowed(p, "Ljava/lang/Bytes32;")
+        || contractEntryObjectArgAllowed(p, "Ljava/lang/Bytes4;")
+        || contractEntryObjectArgAllowed(p, "Ljava/lang/Bytes;")) {
+      continue;
+    }
+
+    return false;
+  }
+
+  if (*p != ')') {
+    return false;
+  }
+  ++p;
+
+  return p[0] == 'V' && p[1] == 0;
+}
+
+void verifyContractEntryMethodProfile(Thread* t,
+                                      unsigned flags,
+                                      GcByteArray* spec,
+                                      bool contractEntry)
+{
+  if (!contractEntry) {
+    return;
+  }
+
+  if ((flags & ACC_PUBLIC) == 0 || (flags & ACC_STATIC) == 0
+      || (flags & ACC_ABSTRACT) != 0) {
+    throwNew(t,
+             GcVerifyError::Type,
+             "ContractEntry methods must be public static concrete methods");
+  }
+
+  if (!contractEntryDescriptorAllowed(spec)) {
+    throwNew(t,
+             GcVerifyError::Type,
+             "ContractEntry methods must be static void ABI v1 entry points");
+  }
+}
+
+void skipRuntimeAnnotationElementValue(Thread* t, Stream& s);
+
+void skipRuntimeAnnotation(Thread* t, Stream& s)
+{
+  s.skip(2);  // type_index
+  unsigned pairCount = s.read2();
+  for (unsigned i = 0; i < pairCount; ++i) {
+    s.skip(2);  // element_name_index
+    skipRuntimeAnnotationElementValue(t, s);
+  }
+}
+
+void skipRuntimeAnnotationElementValue(Thread* t, Stream& s)
+{
+  unsigned tag = s.read1();
+  switch (tag) {
+  case 'B':
+  case 'C':
+  case 'D':
+  case 'F':
+  case 'I':
+  case 'J':
+  case 'S':
+  case 'Z':
+  case 's':
+  case 'c':
+    s.skip(2);
+    return;
+
+  case 'e':
+    s.skip(4);
+    return;
+
+  case '@':
+    skipRuntimeAnnotation(t, s);
+    return;
+
+  case '[': {
+    unsigned count = s.read2();
+    for (unsigned i = 0; i < count; ++i) {
+      skipRuntimeAnnotationElementValue(t, s);
+    }
+    return;
+  }
+
+  default:
+    throwNew(t, GcClassFormatError::Type);
+  }
+}
+
+bool parseRuntimeAnnotationsForContractEntry(Thread* t,
+                                             Stream& s,
+                                             GcSingleton* pool,
+                                             unsigned length)
+{
+  unsigned start = s.position();
+  unsigned end = start + length;
+  if (end < start) {
+    throwNew(t, GcClassFormatError::Type);
+  }
+
+  bool contractEntry = false;
+  unsigned annotationCount = s.read2();
+  for (unsigned i = 0; i < annotationCount; ++i) {
+    unsigned typeIndex = s.read2();
+    GcByteArray* typeName
+        = cast<GcByteArray>(t, singletonObject(t, pool, typeIndex - 1));
+    if (byteArrayEquals(typeName, "Ljava/lang/ContractEntry;")) {
+      contractEntry = true;
+    }
+
+    unsigned pairCount = s.read2();
+    for (unsigned j = 0; j < pairCount; ++j) {
+      s.skip(2);  // element_name_index
+      skipRuntimeAnnotationElementValue(t, s);
+    }
+  }
+
+  if (s.position() != end) {
+    throwNew(t, GcClassFormatError::Type);
+  }
+
+  return contractEntry;
+}
+
 void verifyClassInitializerProfile(Thread* t,
                                    unsigned flags,
                                    GcByteArray* spec,
@@ -2481,6 +2635,7 @@ void parseMethodTable(Thread* t,
 
       addendum = 0;
       code = 0;
+      bool contractEntry = false;
 
       unsigned attributeCount = s.read2();
       for (unsigned j = 0; j < attributeCount; ++j) {
@@ -2510,9 +2665,24 @@ void parseMethodTable(Thread* t,
           }
 
           addendum->setSignature(t, singletonObject(t, pool, s.read2() - 1));
+        } else if (vm::strcmp(
+                       reinterpret_cast<const int8_t*>(
+                           "RuntimeVisibleAnnotations"),
+                       attributeName->body().begin()) == 0
+                   || vm::strcmp(
+                          reinterpret_cast<const int8_t*>(
+                              "RuntimeInvisibleAnnotations"),
+                          attributeName->body().begin()) == 0) {
+          contractEntry = parseRuntimeAnnotationsForContractEntry(
+              t, s, pool, length) || contractEntry;
         } else {
           s.skip(length);
         }
+      }
+
+      if (class_->loader() != roots(t)->bootClassSpace()
+          && strictContractProfile) {
+        verifyContractEntryMethodProfile(t, flags, specBytes, contractEntry);
       }
 
       const char* specString = reinterpret_cast<const char*>(

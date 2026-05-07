@@ -715,6 +715,11 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   - ✅ Added `java.lang.ContractEntry` and `tools/javac` checks for callable ABI
     entry methods: only `public static void` methods with ABI v1 argument types
     can be annotated as contract entries.
+  - ✅ Added validator-side `@ContractEntry` annotation admission in
+    `machine.cpp`: the class loader parses runtime-visible and runtime-invisible
+    method annotations and rejects non-static, non-void, or unsupported-argument
+    entry methods. `VerifierProfile` covers one valid entry and three malformed
+    entry variants.
 - ✅ Added the local Avata contract runner wrapper at `jvm/avata/tools/java`.
   It fixes the boot classpath to the generated `rt.jar`, forwards normal Java
   classpath/main-class arguments to the Avata interpreter, sets the local

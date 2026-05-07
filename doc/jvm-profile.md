@@ -293,7 +293,8 @@ Required suites:
 
 - **Opcode conformance:** each Java 8 opcode, including edge cases.
 - **Verifier negative tests:** forbidden class files, attributes, references,
-  invalid StackMapTable/type states, duplicate ABI methods.
+  invalid StackMapTable/type states, malformed `@ContractEntry` ABI methods,
+  duplicate ABI methods.
 - **Deterministic replay:** same class bytes, inputs, config, and state produce
   byte-identical outputs across repeated runs.
 - **Fixed floating-point vectors:** pinned NaN, signed-zero, infinity, overflow,

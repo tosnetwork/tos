@@ -660,6 +660,64 @@ public class VerifierProfile {
     return out.toByteArray();
   }
 
+  private static byte[] makeContractEntryAnnotatedMethod(String className,
+                                                          int methodFlags,
+                                                          String methodSpec)
+      throws IOException {
+    List<PoolEntry> pool = new ArrayList<PoolEntry>();
+    int name = ConstantPool.addClass(pool, className);
+    int superName = ConstantPool.addClass(pool, "java/lang/Object");
+    int codeName = ConstantPool.addUtf8(pool, "Code");
+    int annotationsName =
+        ConstantPool.addUtf8(pool, "RuntimeInvisibleAnnotations");
+    int methodName = ConstantPool.addUtf8(pool, "entry");
+    int methodDescriptor = ConstantPool.addUtf8(pool, methodSpec);
+    int annotationDescriptor =
+        ConstantPool.addUtf8(pool, "Ljava/lang/ContractEntry;");
+
+    ByteArrayOutputStream code = new ByteArrayOutputStream();
+    Stream.write2(code, 0); // max stack
+    Stream.write2(code, 16); // max locals
+    Stream.write4(code, 1); // code length
+    Stream.write1(code, Assembler.return_);
+    Stream.write2(code, 0); // exception handler table length
+    Stream.write2(code, 0); // code attribute count
+    byte[] codeBytes = code.toByteArray();
+
+    ByteArrayOutputStream annotations = new ByteArrayOutputStream();
+    Stream.write2(annotations, 1); // num_annotations
+    Stream.write2(annotations, annotationDescriptor + 1);
+    Stream.write2(annotations, 0); // num_element_value_pairs
+    byte[] annotationBytes = annotations.toByteArray();
+
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    Stream.write4(out, 0xCAFEBABE);
+    Stream.write2(out, 0); // minor version
+    Stream.write2(out, 50); // major version
+    Stream.write2(out, pool.size() + 1);
+    for (PoolEntry e : pool) {
+      e.writeTo(out);
+    }
+    Stream.write2(out, Assembler.ACC_PUBLIC);
+    Stream.write2(out, name + 1);
+    Stream.write2(out, superName + 1);
+    Stream.write2(out, 0); // interfaces
+    Stream.write2(out, 0); // fields
+    Stream.write2(out, 1); // methods
+    Stream.write2(out, methodFlags);
+    Stream.write2(out, methodName + 1);
+    Stream.write2(out, methodDescriptor + 1);
+    Stream.write2(out, 2); // method attributes
+    Stream.write2(out, codeName + 1);
+    Stream.write4(out, codeBytes.length);
+    out.write(codeBytes);
+    Stream.write2(out, annotationsName + 1);
+    Stream.write4(out, annotationBytes.length);
+    out.write(annotationBytes);
+    Stream.write2(out, 0); // class attributes
+    return out.toByteArray();
+  }
+
   private static int invokeStaticInt(VMClass class_, String name, String spec) {
     VMMethod method = Classes.findMethod(class_, name, spec);
     if (method == null) {
@@ -1082,6 +1140,44 @@ public class VerifierProfile {
     if (invokeStaticInt(constants, "read", "()I") != 42) {
       throw new RuntimeException("static final constant read failed");
     }
+
+    define("VerifierProfile$ValidContractEntry",
+           makeContractEntryAnnotatedMethod(
+               "VerifierProfile$ValidContractEntry",
+               Assembler.ACC_PUBLIC | Assembler.ACC_STATIC,
+               "(ZIJLjava/lang/Address;Ljava/lang/Uint256;"
+                   + "Ljava/lang/Bytes32;Ljava/lang/Bytes4;"
+                   + "Ljava/lang/Bytes;)V"));
+
+    expectVerifyError("non-static ContractEntry", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$NonStaticContractEntry",
+               makeContractEntryAnnotatedMethod(
+                   "VerifierProfile$NonStaticContractEntry",
+                   Assembler.ACC_PUBLIC,
+                   "()V"));
+      }
+    });
+
+    expectVerifyError("non-void ContractEntry", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$NonVoidContractEntry",
+               makeContractEntryAnnotatedMethod(
+                   "VerifierProfile$NonVoidContractEntry",
+                   Assembler.ACC_PUBLIC | Assembler.ACC_STATIC,
+                   "()I"));
+      }
+    });
+
+    expectVerifyError("unsupported ContractEntry arg", new Thrower() {
+      public void run() throws Exception {
+        define("VerifierProfile$BadArgContractEntry",
+               makeContractEntryAnnotatedMethod(
+                   "VerifierProfile$BadArgContractEntry",
+                   Assembler.ACC_PUBLIC | Assembler.ACC_STATIC,
+                   "(Ljava/lang/String;)V"));
+      }
+    });
 
     // Class-file version tests.
     // Java 8 (major=52, minor=0) must be accepted.
