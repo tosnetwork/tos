@@ -1,11 +1,14 @@
 public class ContractEntryPoint {
+  @ContractEntry
   public static void ok() {
   }
 
+  @ContractEntry
   public static void fail() {
     throw new RuntimeException("contract failed");
   }
 
+  @ContractEntry
   public static void burn() {
     int sum = 0;
     for (int i = 0; i < 100; ++i) {
@@ -16,6 +19,7 @@ public class ContractEntryPoint {
     }
   }
 
+  @ContractEntry
   public static void args(boolean flag,
                           int value,
                           long wide,
@@ -43,6 +47,9 @@ public class ContractEntryPoint {
     if (bytes.length() != 3 || bytes.byteAt(0) != 7 || bytes.byteAt(2) != 9) {
       throw new RuntimeException("bytes arg mismatch");
     }
+  }
+
+  public static void helper() {
   }
 
   public static void main(String[] args) {

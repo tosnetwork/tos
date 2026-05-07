@@ -720,6 +720,9 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
     method annotations and rejects non-static, non-void, or unsupported-argument
     entry methods. `VerifierProfile` covers one valid entry and three malformed
     entry variants.
+  - ✅ Wired `@ContractEntry` into runtime resolution: annotated methods carry a
+    `ContractEntryFlag`, and `avata_resolve_contract_static_void()` rejects
+    unannotated static helpers even when a manifest names them.
 - ✅ Added the local Avata contract runner wrapper at `jvm/avata/tools/java`.
   It fixes the boot classpath to the generated `rt.jar`, forwards normal Java
   classpath/main-class arguments to the Avata interpreter, sets the local

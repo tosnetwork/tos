@@ -175,8 +175,9 @@ profile before returning success. That post-compile check catches bytecode
 fields, Java 8 lambda/`invokedynamic` output, and `@ContractEntry` methods
 that are not `public static void` ABI v1 entry points. The Avata class loader
 independently rechecks those `@ContractEntry` rules when application class bytes
-are defined, so consensus does not trust the developer wrapper. The local
-runner wrapper fixes the boot classpath to Avata `rt.jar` and rejects
+are defined, and the contract resolver rejects unannotated static helpers even
+if a manifest names them, so consensus does not trust the developer wrapper.
+The local runner wrapper fixes the boot classpath to Avata `rt.jar` and rejects
 bootclasspath/native library path overrides. Its `--gas` and `--memory` options
 start the standalone interpreter in contract-resource mode, so local runs can
 reproduce deterministic `OutOfGasError`/`OutOfMemoryError` failures before

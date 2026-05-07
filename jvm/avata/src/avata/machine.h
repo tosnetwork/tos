@@ -189,6 +189,7 @@ const unsigned SingletonFlag = 1 << 10;
 // method vmFlags:
 const unsigned ClassInitFlag = 1 << 0;
 const unsigned ConstructorFlag = 1 << 1;
+const unsigned ContractEntryFlag = 1 << 2;
 
 #ifndef JNI_VERSION_1_6
 #define JNI_VERSION_1_6 0x00010006

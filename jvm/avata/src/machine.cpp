@@ -2698,9 +2698,10 @@ void parseMethodTable(Thread* t,
                      &parameterFootprint,
                      &returnCode);
 
+      unsigned vmFlags = contractEntry ? ContractEntryFlag : 0;
       GcMethod* method = t->m->processor->makeMethod(
           t,
-          0,  // vm flags
+          vmFlags,
           returnCode,
           parameterCount,
           parameterFootprint,
@@ -6721,6 +6722,16 @@ extern "C" AVATA_CONTRACT_EXPORT int avata_resolve_contract_static_void(
     return status;
   }
   if (method == 0) {
+    return AVATA_CONTRACT_EXCEPTION;
+  }
+  GcVector* jniMethodTable = roots(t)->jNIMethodTable();
+  if (static_cast<uintptr_t>(method) == 0
+      || static_cast<uintptr_t>(method) > jniMethodTable->size()) {
+    return AVATA_CONTRACT_EXCEPTION;
+  }
+  GcMethod* contractMethod = cast<GcMethod>(
+      t, jniMethodTable->body()[static_cast<uintptr_t>(method) - 1]);
+  if ((contractMethod->vmFlags() & ContractEntryFlag) == 0) {
     return AVATA_CONTRACT_EXCEPTION;
   }
 

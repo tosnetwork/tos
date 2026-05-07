@@ -389,6 +389,7 @@ TEST(ContractStaticVoidInvocationAbi)
   AvataContractMethod failMethod = 0;
   AvataContractMethod burnMethod = 0;
   AvataContractMethod argsMethod = 0;
+  AvataContractMethod helperMethod = 0;
 
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
               static_cast<uint32_t>(
@@ -440,6 +441,15 @@ TEST(ContractStaticVoidInvocationAbi)
                       "Ljava/lang/Bytes;)V",
                       &argsMethod)));
   assertTrue(argsMethod != 0);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_EXCEPTION),
+              static_cast<uint32_t>(
+                  avata_resolve_contract_static_void(
+                      abiThread,
+                      "ContractEntryPoint",
+                      "helper",
+                      "()V",
+                      &helperMethod)));
+  assertTrue(helperMethod == 0);
 
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
               static_cast<uint32_t>(
@@ -616,6 +626,16 @@ TEST(ContractDefineClassAbi)
                       "()V",
                       &okMethod)));
   assertTrue(okMethod != 0);
+  AvataContractMethod helperMethod = 0;
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_EXCEPTION),
+              static_cast<uint32_t>(
+                  avata_resolve_contract_static_void(
+                      abiThread,
+                      "ContractEntryPoint",
+                      "helper",
+                      "()V",
+                      &helperMethod)));
+  assertTrue(helperMethod == 0);
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
               static_cast<uint32_t>(
                   avata_begin_contract_transaction_with_limits(
