@@ -712,6 +712,9 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   `<clinit>`, enum classes, native/synchronized/finalizer methods, unsupported
   class-file versions, stale `avata/*` classes, and `java/*` references outside
   the admitted profile before deployment.
+  - ✅ Added `java.lang.ContractEntry` and `tools/javac` checks for callable ABI
+    entry methods: only `public static void` methods with ABI v1 argument types
+    can be annotated as contract entries.
 - ✅ Added the local Avata contract runner wrapper at `jvm/avata/tools/java`.
   It fixes the boot classpath to the generated `rt.jar`, forwards normal Java
   classpath/main-class arguments to the Avata interpreter, sets the local

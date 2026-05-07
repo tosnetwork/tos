@@ -1123,6 +1123,58 @@ check-api-javac: $(build)/api.jar tools/javac
 		echo "api.jar check failed: tools/javac accepted invokedynamic lambda" >&2; \
 		exit 1; \
 	fi
+	@printf '%s\n' \
+		'public final class ContractEntryCompileCheck {' \
+		'  @ContractEntry' \
+		'  public static void transfer(boolean ok, int i, long l, Address a, Uint256 u, Bytes32 b32, Bytes4 b4, Bytes data) { }' \
+		'}' \
+		> $(build)/api-check/src/ContractEntryCompileCheck.java
+	AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
+		tools/javac \
+		-d $(build)/api-check/out \
+		$(build)/api-check/src/ContractEntryCompileCheck.java
+	@printf '%s\n' \
+		'public final class BadContractEntryInstanceCheck {' \
+		'  @ContractEntry' \
+		'  public void entry() { }' \
+		'}' \
+		> $(build)/api-check/src/BadContractEntryInstanceCheck.java
+	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
+		tools/javac \
+		-d $(build)/api-check/out \
+		$(build)/api-check/src/BadContractEntryInstanceCheck.java \
+		> $(build)/api-check/bad-entry-instance.log 2>&1; then \
+		echo "api.jar check failed: tools/javac accepted non-static ContractEntry method" >&2; \
+		exit 1; \
+	fi
+	@printf '%s\n' \
+		'public final class BadContractEntryReturnCheck {' \
+		'  @ContractEntry' \
+		'  public static int entry() { return 0; }' \
+		'}' \
+		> $(build)/api-check/src/BadContractEntryReturnCheck.java
+	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
+		tools/javac \
+		-d $(build)/api-check/out \
+		$(build)/api-check/src/BadContractEntryReturnCheck.java \
+		> $(build)/api-check/bad-entry-return.log 2>&1; then \
+		echo "api.jar check failed: tools/javac accepted non-void ContractEntry method" >&2; \
+		exit 1; \
+	fi
+	@printf '%s\n' \
+		'public final class BadContractEntryArgCheck {' \
+		'  @ContractEntry' \
+		'  public static void entry(String text) { }' \
+		'}' \
+		> $(build)/api-check/src/BadContractEntryArgCheck.java
+	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
+		tools/javac \
+		-d $(build)/api-check/out \
+		$(build)/api-check/src/BadContractEntryArgCheck.java \
+		> $(build)/api-check/bad-entry-arg.log 2>&1; then \
+		echo "api.jar check failed: tools/javac accepted unsupported ContractEntry argument" >&2; \
+		exit 1; \
+	fi
 
 .PHONY: check-api-java
 check-api-java: $(build)/api.jar $(build)/rt.jar $(executable) tools/javac tools/java

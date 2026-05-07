@@ -55,6 +55,7 @@ static const char* const kContractProfileAdmittedApiClasses[] = {
     "java/lang/ClassFormatError",
     "java/lang/Comparable",
     "java/lang/Contract",
+    "java/lang/ContractEntry",
     "java/lang/ContractRevertException",
     "java/lang/ContractViolationError",
     "java/lang/Crypto",

@@ -138,8 +138,9 @@ The supported standalone build is the slim `make` profile:
 `api.jar`, and fails if any forbidden package or shell class is
 reintroduced. It also verifies that `tools/javac` compiles against
 `api.jar`, rejects source-level imports of VM-private `java.internal.*`
-classes, and that `tools/java` can execute a compiled class with the local
-Avata interpreter and `rt.jar`.
+classes, rejects malformed `@ContractEntry` entry methods, and that
+`tools/java` can execute a compiled class with the local Avata interpreter and
+`rt.jar`.
 
 The CMake files mirror this by excluding the removed codegen targets.
 
@@ -171,11 +172,12 @@ the boot classpath, rejects user-supplied bootclasspath/source/target
 overrides, and checks generated `.class` files against the Avata contract
 profile before returning success. That post-compile check catches bytecode
 `javac` can emit but the contract verifier rejects, including mutable static
-fields and Java 8 lambda/`invokedynamic` output. The local runner wrapper fixes
-the boot classpath to Avata `rt.jar` and rejects bootclasspath/native library
-path overrides. Its `--gas` and `--memory` options start the standalone
-interpreter in contract-resource mode, so local runs can reproduce deterministic
-`OutOfGasError`/`OutOfMemoryError` failures before deployment.
+fields, Java 8 lambda/`invokedynamic` output, and `@ContractEntry` methods
+that are not `public static void` ABI v1 entry points. The local runner wrapper
+fixes the boot classpath to Avata `rt.jar` and rejects bootclasspath/native
+library path overrides. Its `--gas` and `--memory` options start the standalone
+interpreter in contract-resource mode, so local runs can reproduce
+deterministic `OutOfGasError`/`OutOfMemoryError` failures before deployment.
 
 The Avata tests cover the interpreter loop, class loading, exception handling,
 and the admitted runtime API profile. TOS cell codec, gas metering, and workchain

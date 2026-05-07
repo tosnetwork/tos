@@ -143,9 +143,9 @@ has three categories:
 - **Language-required Java classes:** `java.lang.Object`, `String`, `Class`,
   primitive wrappers, `Throwable`, core errors/exceptions, `Math`,
   and the small interfaces/classes needed for Java 8 source to compile and run.
-- **Contract APIs:** `tos.contract.*`, `tos.storage.*`, `tos.emit.*`, and other
-  chain-specific APIs for persistent state, ABI entry points, events, caller
-  context, value transfer, and deterministic chain data.
+- **Contract APIs:** chain-specific `java.lang` extensions for persistent
+  state, ABI entry points, events, caller context, value transfer, and
+  deterministic chain data.
 - **Compiler-required metadata classes:** small Java 8 source/tooling support
   types that are genuinely required by `javac` and the admitted class-file
   profile. Host-facing Java SE classes are deleted from `rt.jar` instead of
@@ -273,7 +273,9 @@ Provide two developer-facing tools:
   uses the TOS `api.jar` as boot classpath, and runs
   verifier/admission checks. The current wrapper pins the boot classpath and
   source/target level, then rejects generated class files outside the Avata
-  contract verifier profile before deployment.
+  contract verifier profile before deployment. It also admits only
+  `@ContractEntry` methods that are `public static void` and whose parameters
+  are ABI v1 value types.
 - `jvm/avata/tools/java`: local deterministic runner using the same Avata interpreter,
   `rt.jar`, gas model, fixed floating-point behavior, traps, and heap/state
   codec as validators. The wrapper exposes `--gas` and `--memory` limits that
@@ -316,8 +318,8 @@ criterion.
    floating-point and `invokedynamic`.
 4. Wire gas accounting into the interpreter and admitted runtime helpers.
 5. Turn host-observing APIs into verifier rejects or deterministic traps.
-6. ✅ Define the initial slim TOS `rt.jar` package list; next, add the
-   contract-facing `tos.*` APIs.
+6. ✅ Define the initial slim TOS `rt.jar` package list and add the
+   contract-facing `java.lang` APIs.
 7. ✅ Build the `jvm/avata/tools/javac` wrapper around `api.jar` and the
    `jvm/avata/tools/java` local runner around `rt.jar`; both are covered by
    `build-test`.

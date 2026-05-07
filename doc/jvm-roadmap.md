@@ -100,8 +100,8 @@ The first-principles compatibility boundary is:
 - **A TOS smart-contract runtime library**, not full OpenJDK 8 class-library
   compatibility. The shipped `rt.jar` is designed for deterministic contract
   execution and may include OpenJDK-shaped classes, Java language primitives,
-  and `tos.*` APIs, but it intentionally excludes or traps host-side Java APIs
-  that are not meaningful or safe on-chain.
+  and TOS contract APIs under `java.lang`, but it intentionally excludes or
+  traps host-side Java APIs that are not meaningful or safe on-chain.
 - **Familiar Java developer workflow** through TOS-provided `javac` and local
   `java`-style runner tooling. Developers should be able to write Java 8
   source, compile it to normal class files against the TOS `rt.jar`, and run the
@@ -149,9 +149,9 @@ The runtime class library is a TOS-pinned `rt.jar` built from the Avata/TOS
 classpath and extended with TOS APIs. OpenJDK/JDK8u class shapes may be used as
 semantic references, but they are not runtime build inputs for the consensus
 profile. Language-level classes remain under `java.lang` (`Object`, `String`,
-`Math`, `System`, errors, and related helpers). TOS domain APIs that are not
-language primitives live under `tos.*`, such as `tos.storage.*`,
-`tos.contract.*`, and `tos.emit.*`.
+`Math`, `System`, errors, and related helpers). The v1 TOS contract API is
+also packaged under `java.lang` because the workchain ships its own pinned
+`rt.jar`/`api.jar` rather than the OpenJDK class library.
 
 **Consensus runtime restrictions:**
 - `java.lang.Thread`, monitor wait/notify, executors, and other multi-threading
@@ -543,12 +543,12 @@ content hash.
   `callerAddress()`, `value()`, and `sendMessage(destAddr, value, body)`
 - `java.lang.OutOfGasError` and `java.lang.ContractViolationError`, both
   subclasses of `java.lang.Error`
-- `tos.contract.ContractEntry` — annotation type; marks a `public static`
+- `java.lang.ContractEntry` — annotation type; marks a `public static`
   method as callable from an inbound message (referenced by Phase 6 ABI)
-- `tos.storage.PersistentMap<K,V>` — ordered key-value map backed by the
+- `java.lang.PersistentMap<K,V>` — ordered key-value map backed by the
   cell tree; the primary persistent data structure for contracts
-- `tos.storage.PersistentList<T>` — append-only list backed by the cell tree
-- `tos.emit.EventLog` — emit a log entry staged in side effects
+- `java.lang.PersistentList<T>` — append-only list backed by the cell tree
+- `java.lang.Event` — emit a log entry staged in side effects
 
 The list above is the minimum class surface that must be audited explicitly; it
 is not the entire runtime library. Phase 3 must decide which Java-compatible
@@ -562,7 +562,7 @@ extend `java.lang.System` with chain context methods while still preserving
 normal Java class-file compatibility.
 
 Contracts are compiled with a custom Java 8 boot classpath containing the
-whitelisted `java.lang` runtime classes and `tos.*` APIs. The build tool must
+whitelisted `java.lang` runtime and contract APIs. The build tool must
 force class-file major version 52 and then run the same verifier/admission
 checks as the validator. This toolchain work is outside the consensus path and
 may be delivered separately from the validator binary, but consensus never
@@ -636,7 +636,7 @@ class loading from resetting or sharing contract state implicitly.
   - Decode: reconstruct storage overlays and future `Persistent*` wrappers from
     stored cell roots without restoring Java static fields
 - `jvm/core/persistent-map.cpp` / `persistent-list.cpp`:
-  - Native C++ implementations of `tos.storage.Persistent*` that operate
+  - Native C++ implementations of `java.lang.Persistent*` that operate
     directly on `vm::Cell` trees (no intermediate Java heap objects for stored
     data)
 - TL-B schema for `JvmExecutorState` cell (defined in Phase 0; implemented
@@ -914,7 +914,7 @@ performance profiling.
 | 0 | Design pinning, stub registry tests | 1–2 weeks |
 | 1 | Avata fork, opcode compatibility, determinism hardening | 8–14 weeks |
 | 2 | Framework integration (WorkchainEngine, ConfigParam, genesis) | 2–3 weeks |
-| 3 | TOS contract `rt.jar` + `tos.*` domain APIs | 8–12 weeks |
+| 3 | TOS contract `rt.jar` + `java.lang` domain APIs | 8–12 weeks |
 | **4** | **Heap serialization (cell codec)** | **3–5 months** |
 | 5 | Gas metering | 4–6 weeks |
 | 6 | Message ABI | 2–4 weeks |
@@ -923,7 +923,7 @@ performance profiling.
 | **Total** | | **~14–24 engineer-months** |
 
 Phase 4 (heap serialization) dominates the estimate. The v1 restricted-state
-model (persistent state flows only through `tos.storage.Persistent*` types)
+model (persistent state flows only through `java.lang.Persistent*` types)
 is the design decision that keeps Phase 4 in the 3–5 month range rather than
 the 12–18 month range that a general object-graph serializer would require. This
 restriction must not be relaxed without a full Phase 4 redesign.
@@ -1008,10 +1008,10 @@ jvm/
       java/lang/System.java
       java/lang/OutOfGasError.java
       java/lang/ContractViolationError.java
-      tos/contract/ContractEntry.java
-      tos/storage/PersistentMap.java
-      tos/storage/PersistentList.java
-      tos/emit/EventLog.java
+      java/lang/ContractEntry.java
+      java/lang/PersistentMap.java
+      java/lang/PersistentList.java
+      java/lang/Event.java
     build/              ← compiled .class files bundled into zerostate
   test/
     ...
