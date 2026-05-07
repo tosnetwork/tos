@@ -910,6 +910,7 @@ test-support-sources = \
 test-sources = \
 	$(test)/AllFloats.java \
 	$(test)/ArrayDequeTest.java \
+	$(test)/BitsetTest.java \
 	$(test)/DeterministicFloatTest.java \
 	$(test)/ArraysTest.java \
 	$(test)/Collections.java \
@@ -924,12 +925,14 @@ test-sources = \
 	$(test)/Integers.java \
 	$(test)/List.java \
 	$(test)/Longs.java \
+	$(test)/MonitorTest.java \
 	$(test)/CoreTrapProfile.java \
 	$(test)/NullPointer.java \
 	$(test)/QueueHelper.java \
 	$(test)/Simple.java \
 	$(test)/StackOverflow.java \
 	$(test)/StackTraceSourceFileTest.java \
+	$(test)/Streams.java \
 	$(test)/StringBuilderTest.java \
 	$(test)/Strings.java \
 	$(test)/StorageTest.java \
