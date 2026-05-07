@@ -11,6 +11,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -43,6 +44,14 @@ class JvmStorageCellHost {
     td::Status begin_transaction();
     td::Status commit_transaction();
     td::Status rollback_transaction();
+
+    // Enumerate key-value pairs in order.  The callback receives (slot, value)
+    // and should return true to continue or false to stop early.  Stops after
+    // limit entries; a limit of 0 means no entries are visited.
+    static constexpr std::size_t kEnumerateDefaultLimit = 100;
+    td::Status enumerate_slots(
+        const std::function<bool(const JvmStorageSlot&, const JvmStorageValue&)>& cb,
+        std::size_t limit = kEnumerateDefaultLimit) const;
 
  private:
     mutable vm::Dictionary dict_;

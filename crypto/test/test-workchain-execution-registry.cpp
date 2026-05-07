@@ -3449,3 +3449,157 @@ TEST(JvmWorkchainCore, JvmStateCellBocRoundTripPreservesComputeOutput) {
   CHECK(out_orig.new_data.not_null() && out_restored.new_data.not_null());
   CHECK(out_orig.new_data->get_hash() == out_restored.new_data->get_hash());
 }
+
+// ---------------------------------------------------------------------------
+// RPC local execution and storage enumeration
+// ---------------------------------------------------------------------------
+
+// jvm_callContract with a runtime and executorStateBoc performs a local
+// simulation and returns localResult alongside the call descriptor BOC.
+TEST(JvmWorkchainCore, RpcCallContractLocalExecution) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1;
+
+  // Build a minimal executor state cell.
+  JvmExecutorState state;
+  state.schema_version = kJvmExecutorStateSchemaVersion;
+  state.stdlib_hash = cfg.stdlib_hash;
+  auto state_cell = encode_jvm_executor_state(state);
+  CHECK(state_cell.not_null());
+  auto state_boc_r = vm::std_boc_serialize(state_cell, 0);
+  CHECK(!state_boc_r.is_error());
+  static constexpr char kH1[] = "0123456789abcdef";
+  std::string state_hex = "0x";
+  for (size_t i = 0; i < state_boc_r.ok().size(); ++i) {
+    auto b = static_cast<uint8_t>(state_boc_r.ok().data()[i]);
+    state_hex += kH1[(b >> 4) & 0xF];
+    state_hex += kH1[b & 0xF];
+  }
+
+  // WriteSlotRuntime writes one slot and reports 50 gas used.
+  JvmStorageSlot slot{};
+  slot[31] = 0x42;
+  const JvmStorageValue val{0xBE, 0xEF};
+  auto runtime = std::make_shared<WriteSlotRuntime>(slot, val);
+
+  std::string params = R"({
+    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "methodId": 12345,
+    "gasLimit": 1000,
+    "executorStateBoc": ")" + state_hex + R"("
+  })";
+
+  auto result = handle_jvm_rpc("jvm_callContract", params, "1", cfg,
+                               runtime.get());
+  CHECK(result.has_value() && !result->is_error);
+
+  // callDescriptorBoc must still be present.
+  CHECK(result->json.find("\"callDescriptorBoc\":\"0x") != std::string::npos);
+
+  // localResult must show success.
+  CHECK(result->json.find("\"success\":true") != std::string::npos);
+  CHECK(result->json.find("\"gasUsed\":50") != std::string::npos);
+
+  // newStateBoc must be a non-null hex string (the committed new state).
+  CHECK(result->json.find("\"newStateBoc\":\"0x") != std::string::npos);
+}
+
+// jvm_callContract with a failing runtime returns localResult.success=false
+// and no newStateBoc.
+TEST(JvmWorkchainCore, RpcCallContractLocalExecutionFailure) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1;
+
+  JvmExecutorState state;
+  state.schema_version = kJvmExecutorStateSchemaVersion;
+  state.stdlib_hash = cfg.stdlib_hash;
+  auto state_cell = encode_jvm_executor_state(state);
+  CHECK(state_cell.not_null());
+
+  auto state_boc_r2 = vm::std_boc_serialize(state_cell, 0);
+  CHECK(!state_boc_r2.is_error());
+  static constexpr char kH2[] = "0123456789abcdef";
+  std::string state_hex2 = "0x";
+  for (size_t i = 0; i < state_boc_r2.ok().size(); ++i) {
+    auto b = static_cast<uint8_t>(state_boc_r2.ok().data()[i]);
+    state_hex2 += kH2[(b >> 4) & 0xF];
+    state_hex2 += kH2[b & 0xF];
+  }
+
+  auto runtime = std::make_shared<FailingRuntime>();
+  std::string params = R"({
+    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "methodId": 99,
+    "gasLimit": 500,
+    "executorStateBoc": ")" + state_hex2 + R"("
+  })";
+
+  auto result = handle_jvm_rpc("jvm_callContract", params, "2", cfg,
+                               runtime.get());
+  CHECK(result.has_value() && !result->is_error);
+  CHECK(result->json.find("\"success\":false") != std::string::npos);
+  // No new state committed on failure.
+  CHECK(result->json.find("\"newStateBoc\":null") != std::string::npos);
+}
+
+// jvm_getContractState with executorStateBoc enumerates storage slots
+// and includes them in storageSlots.
+TEST(JvmWorkchainCore, RpcGetContractStateEnumeratesStorageSlots) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1;
+
+  // Build executor state with two storage entries.
+  JvmStorageSlot slot_a{};
+  slot_a[31] = 0x01;
+  JvmStorageSlot slot_b{};
+  slot_b[31] = 0x02;
+  const JvmStorageValue val_a{0xAA};
+  const JvmStorageValue val_b{0xBB, 0xCC};
+
+  JvmStorageCellHost storage;
+  CHECK(storage.begin_transaction().is_ok());
+  CHECK(storage.store(slot_a, val_a).is_ok());
+  CHECK(storage.store(slot_b, val_b).is_ok());
+  CHECK(storage.commit_transaction().is_ok());
+
+  JvmExecutorState state;
+  state.schema_version = kJvmExecutorStateSchemaVersion;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.storage_root = storage.root_cell();
+  auto state_cell = encode_jvm_executor_state(state);
+  CHECK(state_cell.not_null());
+  auto state_boc_r3 = vm::std_boc_serialize(state_cell, 0);
+  CHECK(!state_boc_r3.is_error());
+  static constexpr char kH3[] = "0123456789abcdef";
+  std::string state_hex3 = "0x";
+  for (size_t i = 0; i < state_boc_r3.ok().size(); ++i) {
+    auto b = static_cast<uint8_t>(state_boc_r3.ok().data()[i]);
+    state_hex3 += kH3[(b >> 4) & 0xF];
+    state_hex3 += kH3[b & 0xF];
+  }
+
+  std::string params = R"({
+    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000003",
+    "executorStateBoc": ")" + state_hex3 + R"("
+  })";
+
+  auto result = handle_jvm_rpc("jvm_getContractState", params, "3", cfg);
+  CHECK(result.has_value() && !result->is_error);
+
+  // storageSlots must be a JSON array with two entries.
+  CHECK(result->json.find("\"storageSlots\":[") != std::string::npos);
+  CHECK(result->json.find("\"storageTruncated\":false") != std::string::npos);
+  // Both slot values must appear in hex.
+  CHECK(result->json.find("\"0xaa\"") != std::string::npos
+     || result->json.find("\"0xAA\"") != std::string::npos
+     || result->json.find("0xaa") != std::string::npos);
+  CHECK(result->json.find("\"0xbbcc\"") != std::string::npos
+     || result->json.find("\"0xBBCC\"") != std::string::npos
+     || result->json.find("0xbbcc") != std::string::npos);
+}

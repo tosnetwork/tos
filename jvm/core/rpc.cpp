@@ -16,6 +16,8 @@
 */
 #include "jvm/core/rpc.h"
 
+#include "block/workchain-execution-dispatch.h"
+#include "jvm/core/avata-execution.h"
 #include "jvm/core/cell-codec.h"
 #include "jvm/core/class-manifest.h"
 #include "jvm/core/deploy-abi.h"
@@ -322,7 +324,9 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
 }
 
 JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
-                                      const std::string& id) {
+                                      const std::string& id,
+                                      const JvmConfig* config,
+                                      const JvmComputeRuntime* runtime) {
     // Build the call descriptor cell.
     JvmCallDescriptor descriptor;
     descriptor.contract_id = req.contract_id;
@@ -336,10 +340,7 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
             true};
     }
 
-    // Serialize the descriptor cell to BOC so the caller can submit it
-    // as an external message body or pass it to the local runner.
-    // Local execution is not wired in v1 (requires an installed runtime and
-    // a block-state snapshot); the encoded descriptor is the return value.
+    // Serialize the descriptor cell to BOC for the caller.
     auto boc = vm::std_boc_serialize(encoded, 0);
     if (boc.is_error()) {
         return JvmRpcResult{
@@ -347,12 +348,75 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
             true};
     }
     const auto& boc_bytes = boc.ok();
-    std::string result = "{\"callDescriptorBoc\":\""
-                       + hex_encode(reinterpret_cast<const uint8_t*>(
-                                        boc_bytes.data()),
-                                    boc_bytes.size())
-                       + "\",\"contractId\":\""
-                       + hex_encode(req.contract_id) + "\"}";
+    std::string descriptor_boc_hex = hex_encode(
+        reinterpret_cast<const uint8_t*>(boc_bytes.data()), boc_bytes.size());
+
+    // Optional local simulation: runs when a runtime and executor state are
+    // both supplied.  Result is appended as a localResult JSON object.
+    std::string local_result_json = "null";
+    if (runtime != nullptr && config != nullptr && req.current_state.not_null()) {
+        JvmExecutorState previous_state;
+        if (!decode_jvm_executor_state(req.current_state, previous_state)) {
+            return JvmRpcResult{
+                json_rpc_err(id, -32602, "executorStateBoc: malformed executor state"),
+                true};
+        }
+
+        block::WorkchainComputeInput input;
+        input.gas_limit = (req.gas_limit > 0) ? req.gas_limit
+                                               : config->max_gas_per_tx;
+        input.current_data = req.current_state;
+        input.inbound_body = vm::load_cell_slice_ref(encoded);
+
+        block::WorkchainComputeContext context;
+        context.workchain_id = 3;
+
+        // Use the stdlib_hash from the decoded state so build_jvm_workchain_output
+        // doesn't reject the output as incompatible.
+        JvmConfig local_config = *config;
+        local_config.stdlib_hash = previous_state.stdlib_hash;
+
+        auto invocation_result = runtime->run_contract(
+            input, context, local_config, previous_state);
+        if (invocation_result.is_error()) {
+            local_result_json = "{\"success\":false,\"outOfGas\":false,"
+                                "\"outOfMemory\":false,\"gasUsed\":0,"
+                                "\"vmLog\":\"runtime error: "
+                                + invocation_result.error().message().str()
+                                + "\",\"newStateBoc\":null}";
+        } else {
+            const auto& inv = invocation_result.ok();
+            auto output = build_jvm_workchain_output(
+                local_config, previous_state, input.gas_limit, inv);
+
+            std::string new_state_hex = "null";
+            if (output.is_ok() && output.ok().new_data.not_null()) {
+                auto new_boc = vm::std_boc_serialize(output.ok().new_data, 0);
+                if (new_boc.is_ok()) {
+                    new_state_hex = "\"" + hex_encode(
+                        reinterpret_cast<const uint8_t*>(new_boc.ok().data()),
+                        new_boc.ok().size()) + "\"";
+                }
+            }
+            const std::string vm_log = output.is_ok()
+                ? output.ok().vm_log
+                : inv.out_of_gas ? "JVM execution exhausted gas"
+                : inv.out_of_memory ? "JVM execution exhausted memory"
+                : "JVM execution failed";
+
+            local_result_json = std::string("{\"success\":") +
+                (inv.success ? "true" : "false") +
+                ",\"outOfGas\":" + (inv.out_of_gas ? "true" : "false") +
+                ",\"outOfMemory\":" + (inv.out_of_memory ? "true" : "false") +
+                ",\"gasUsed\":" + std::to_string(inv.gas_used) +
+                ",\"vmLog\":\"" + vm_log + "\"" +
+                ",\"newStateBoc\":" + new_state_hex + "}";
+        }
+    }
+
+    std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex
+                       + "\",\"contractId\":\"" + hex_encode(req.contract_id)
+                       + "\",\"localResult\":" + local_result_json + "}";
     return JvmRpcResult{json_rpc_ok(id, result), false};
 }
 
@@ -430,11 +494,49 @@ JvmRpcResult handle_jvm_get_contract_state(
         }
     }
 
+    // Enumerate storage slots (up to the default limit).  The storage dict is
+    // a flat shared namespace; the full key space is returned without filtering.
+    std::string slots_json = "null";
+    bool slots_truncated = false;
+    if (state.storage_root.not_null()) {
+        JvmStorageCellHost storage(state.storage_root);
+        std::string slots_buf = "[";
+        std::size_t slot_count = 0;
+        static constexpr std::size_t kSlotLimit =
+            JvmStorageCellHost::kEnumerateDefaultLimit;
+        auto enum_status = storage.enumerate_slots(
+            [&](const JvmStorageSlot& slot, const JvmStorageValue& value) {
+                if (slot_count > 0) slots_buf += ",";
+                slots_buf += "{\"key\":\"" + hex_encode(slot.data(), slot.size())
+                           + "\",\"value\":\""
+                           + hex_encode(value.data(), value.size()) + "\"}";
+                ++slot_count;
+                return true;
+            },
+            kSlotLimit + 1);  // fetch one extra to detect truncation
+        if (enum_status.is_ok()) {
+            if (slot_count > kSlotLimit) {
+                // Remove the extra entry; mark truncated.
+                auto last_comma = slots_buf.rfind(',');
+                if (last_comma != std::string::npos) {
+                    slots_buf.erase(last_comma);
+                }
+                slots_truncated = true;
+                --slot_count;
+            }
+            slots_buf += "]";
+            slots_json = slots_buf;
+        }
+    }
+
     std::string result = "{\"contractId\":\""
                        + hex_encode(req.contract_id)
                        + "\",\"className\":" + class_name_json
                        + ",\"classHash\":" + class_hash_json
-                       + ",\"storageRootHash\":" + storage_hash + "}";
+                       + ",\"storageRootHash\":" + storage_hash
+                       + ",\"storageSlots\":" + slots_json
+                       + ",\"storageTruncated\":"
+                       + (slots_truncated ? "true" : "false") + "}";
     return JvmRpcResult{json_rpc_ok(id, result), false};
 }
 
@@ -488,7 +590,8 @@ std::optional<JvmRpcResult> handle_jvm_rpc(
     const std::string& method,
     const std::string& params,
     const std::string& id,
-    const JvmConfig& config) {
+    const JvmConfig& config,
+    const JvmComputeRuntime* runtime) {
     if (method == "jvm_deployContract") {
         auto req = parse_jvm_deploy_contract_request(params);
         if (!req) {
@@ -506,7 +609,7 @@ std::optional<JvmRpcResult> handle_jvm_rpc(
                 json_rpc_err(id, -32602, "invalid jvm_callContract params"),
                 true};
         }
-        return handle_jvm_call_contract(*req, id);
+        return handle_jvm_call_contract(*req, id, &config, runtime);
     }
 
     if (method == "jvm_getContractState") {

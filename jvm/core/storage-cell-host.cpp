@@ -367,4 +367,36 @@ void configure_avata_storage_host(JvmStorageCellHost& storage,
     host.rollbackTransaction = storage_rollback_transaction_callback;
 }
 
+td::Status JvmStorageCellHost::enumerate_slots(
+    const std::function<bool(const JvmStorageSlot&, const JvmStorageValue&)>& cb,
+    std::size_t limit) const {
+    if (limit == 0) return td::Status::OK();
+
+    // Use get_minmax_key to seed the iteration at the smallest key, then
+    // advance with lookup_nearest_key(fetch_next=true, allow_eq=false).
+    JvmStorageSlot key_buf{};
+    td::Ref<vm::CellSlice> cs;
+    try {
+        cs = dict_.get_minmax_key(td::BitPtr{key_buf.data()}, 256);
+    } catch (...) {
+        return td::Status::Error("JVM storage enumeration start failed");
+    }
+
+    std::size_t count = 0;
+    while (cs.not_null() && count < limit) {
+        if (cs->size() != 0 || cs->size_refs() != 1) {
+            return td::Status::Error("JVM storage enumeration found malformed entry");
+        }
+        TRY_RESULT(value, decode_jvm_storage_value(cs->prefetch_ref(0)));
+        if (!cb(key_buf, value)) break;
+        ++count;
+        try {
+            cs = dict_.lookup_nearest_key(td::BitPtr{key_buf.data()}, 256, true, false);
+        } catch (...) {
+            return td::Status::Error("JVM storage enumeration advance failed");
+        }
+    }
+    return td::Status::OK();
+}
+
 }  // namespace jvm_workchain

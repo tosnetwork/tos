@@ -33,6 +33,7 @@
 
 #include "jvm/core/config-param.h"
 #include "jvm/core/deploy-abi.h"
+#include "jvm/core/dispatch-engine.h"
 #include "jvm/core/message-abi.h"
 #include "jvm/core/storage-cell-host.h"
 #include "vm/cells.h"
@@ -94,10 +95,14 @@ struct JvmCallContractRequest {
 std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
     const std::string& params_json);
 
-/// Encode the call as a JvmCallDescriptor cell suitable for submission or
-/// local execution.  The caller is responsible for wiring actual execution.
+/// Encode the call as a JvmCallDescriptor cell and return it as
+/// callDescriptorBoc.  When runtime is non-null and req.current_state is
+/// set, also runs a local simulation and appends a localResult object to
+/// the response containing gasUsed, success, vmLog, and newStateBoc.
 JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
-                                      const std::string& id = "null");
+                                      const std::string& id = "null",
+                                      const JvmConfig* config = nullptr,
+                                      const JvmComputeRuntime* runtime = nullptr);
 
 // ---------------------------------------------------------------------------
 // jvm_getContractState
@@ -150,11 +155,14 @@ JvmRpcResult handle_jvm_get_receipts(const JvmGetReceiptsRequest& req,
 /// @param params      raw JSON params array
 /// @param id          request id to echo back
 /// @param config      resolved ConfigParam 85 for the current block
+/// @param runtime     optional runtime; when non-null, jvm_callContract with
+///                    executorStateBoc will also perform a local simulation
 std::optional<JvmRpcResult> handle_jvm_rpc(
     const std::string& method,
     const std::string& params,
     const std::string& id,
-    const JvmConfig& config);
+    const JvmConfig& config,
+    const JvmComputeRuntime* runtime = nullptr);
 
 /// Returns true if method is handled by the JVM RPC facade.
 bool is_jvm_rpc_method(const std::string& method) noexcept;
