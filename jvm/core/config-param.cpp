@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <limits>
 
+#define AVATA_GAS_SCHEDULE_DEFINE_TABLE
+#include <avata/gas_schedule.h>
+#undef AVATA_GAS_SCHEDULE_DEFINE_TABLE
+
 #include "block/block-auto.h"
 #include "jvm/core/dispatch-engine.h"
 #include "td/utils/logging.h"
@@ -269,6 +273,41 @@ td::Result<JvmConfig> parse_jvm_config_cell(td::Ref<vm::Cell> cell) {
                                      cfg.helper_gas_costs.data(),
                                      kJvmContractHelperGasCostCount,
                                      "helper"));
+    return cfg;
+}
+
+JvmConfig JvmConfig::default_activation() noexcept {
+    JvmConfig cfg;
+    cfg.chain_id = 3;
+    cfg.gas_price = 1000;
+    cfg.max_gas_per_tx = 1000000;
+    cfg.max_class_bytes = 65536;
+    cfg.max_total_class_bytes = 1048576;
+    cfg.max_heap_bytes = 4194304;
+    cfg.max_storage_cells = 65536;
+    cfg.class_file_major = 52;
+    cfg.gas_schedule_version = 1;
+    // stdlib_hash stays zero-initialized until the stdlib archive is locked in
+
+    for (unsigned i = 0; i < kJvmOpcodeGasCostCount; ++i) {
+        cfg.opcode_gas_costs[i] = kTosDefaultOpcodeGasCosts[i];
+    }
+
+    // Matches DefaultContractHelperGasCosts in machine.cpp
+    cfg.helper_gas_costs[0]  = 20;   // STORAGE_LOAD
+    cfg.helper_gas_costs[1]  = 100;  // STORAGE_STORE_BASE
+    cfg.helper_gas_costs[2]  = 1;    // STORAGE_STORE_BYTE
+    cfg.helper_gas_costs[3]  = 50;   // STORAGE_CLEAR
+    cfg.helper_gas_costs[4]  = 1;    // ALLOCATION_OBJECT_WORD
+    cfg.helper_gas_costs[5]  = 8;    // ALLOCATION_ARRAY_BASE
+    cfg.helper_gas_costs[6]  = 1;    // ALLOCATION_ARRAY_ELEMENT
+    cfg.helper_gas_costs[7]  = 3;    // ARRAYCOPY_BASE
+    cfg.helper_gas_costs[8]  = 1;    // ARRAYCOPY_ELEMENT
+    cfg.helper_gas_costs[9]  = 2;    // NATIVE_CALL
+    cfg.helper_gas_costs[10] = 50;   // EVENT_BASE
+    cfg.helper_gas_costs[11] = 10;   // EVENT_TOPIC
+    cfg.helper_gas_costs[12] = 1;    // EVENT_BYTE
+
     return cfg;
 }
 

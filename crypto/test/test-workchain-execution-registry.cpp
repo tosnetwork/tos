@@ -3135,3 +3135,44 @@ TEST(JvmWorkchainCore, MultiInstanceIndependentStorageSlots) {
     CHECK(vb.has_value() && *vb == v2);
   }
 }
+
+// Verify that JvmConfig::default_activation() produces a config that
+// build_jvm_config_cell() encodes and parse_jvm_config_cell() round-trips
+// without loss.
+TEST(JvmWorkchainCore, JvmActivationConfigBuildsAndRoundTrips) {
+  using namespace jvm_workchain;
+
+  auto cfg = JvmConfig::default_activation();
+
+  // Sanity-check a few fields before encoding.
+  CHECK(cfg.chain_id == 3);
+  CHECK(cfg.gas_schedule_version == 1);
+  CHECK(cfg.class_file_major == 52);
+  CHECK(cfg.max_gas_per_tx == 1000000);
+  CHECK(cfg.max_heap_bytes == 4194304);
+  // Every opcode slot must be non-zero (zero is reserved as "invalid").
+  for (unsigned i = 0; i < kJvmOpcodeGasCostCount; ++i) {
+    CHECK(cfg.opcode_gas_costs[i] != 0);
+  }
+  for (unsigned i = 0; i < kJvmContractHelperGasCostCount; ++i) {
+    CHECK(cfg.helper_gas_costs[i] != 0);
+  }
+
+  // Build must succeed.
+  auto cell = build_jvm_config_cell(cfg);
+  CHECK(cell.not_null());
+
+  // Round-trip: parse must succeed and reproduce the original config.
+  auto parsed = parse_jvm_config_cell(cell).move_as_ok();
+  CHECK(parsed.chain_id == cfg.chain_id);
+  CHECK(parsed.gas_price == cfg.gas_price);
+  CHECK(parsed.max_gas_per_tx == cfg.max_gas_per_tx);
+  CHECK(parsed.max_class_bytes == cfg.max_class_bytes);
+  CHECK(parsed.max_total_class_bytes == cfg.max_total_class_bytes);
+  CHECK(parsed.max_heap_bytes == cfg.max_heap_bytes);
+  CHECK(parsed.max_storage_cells == cfg.max_storage_cells);
+  CHECK(parsed.class_file_major == cfg.class_file_major);
+  CHECK(parsed.gas_schedule_version == cfg.gas_schedule_version);
+  CHECK(parsed.opcode_gas_costs == cfg.opcode_gas_costs);
+  CHECK(parsed.helper_gas_costs == cfg.helper_gas_costs);
+}

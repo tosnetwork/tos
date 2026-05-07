@@ -38,6 +38,10 @@ struct JvmConfig {
     std::array<std::uint8_t, kJvmStdlibHashBytes> stdlib_hash{};
     std::array<std::uint64_t, kJvmOpcodeGasCostCount> opcode_gas_costs{};
     std::array<std::uint64_t, kJvmContractHelperGasCostCount> helper_gas_costs{};
+
+    // Returns the canonical v1 activation parameters (wc=3, gas_schedule_version=1).
+    // stdlib_hash is zero until the stdlib archive is locked in.
+    static JvmConfig default_activation() noexcept;
 };
 
 // Build the ConfigParam 12 WorkchainDescr cell for JVM v1.
