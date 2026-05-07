@@ -19,7 +19,9 @@ set(JVM_CORE_SRC
   event-host.cpp
   init.cpp
   message-abi.cpp
+  rpc.cpp
   storage-cell-host.cpp
+  zerostate.cpp
 )
 
 add_library(jvm_workchain_core STATIC ${JVM_CORE_SRC})

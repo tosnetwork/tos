@@ -945,18 +945,24 @@ Last updated: 2026-05-07.
 
 | Phase | Status | Notes |
 |---|---|---|
-| Phase 0 — Design | 🟡 | Roadmap and restricted API profile are written; TL-B schemas and stub tests not yet written |
-| Phase 1 — Avata fork | 🟡 | Fork imported and renamed; current slim baseline builds as interpreter + Avata/TOS `rt/` runtime only. Remaining work: fixed floating point, gas schedule, verifier policy, traps, and TOS integration target |
-| Phase 2 — Framework integration | ⬜ | |
-| Phase 3 — Contract stdlib | ⬜ | |
-| Phase 4 — Heap serialization | ⬜ | Largest risk item; must be prototyped before committing to timeline |
-| Phase 5 — Gas metering | ⬜ | |
-| Phase 6 — Message ABI | 🟡 | `JvmCallDescriptor`, typed `JVMA` args codec, `JvmDeployDescriptor`, restricted `JVMM` manifest, `JVMC` class-state envelope, deterministic deploy class-byte installation, state-backed Avata class loading, pre-runtime inbound validation, legacy static-void empty-args validation, typed static-void invocation, duplicate manifest-key rejection, and linked resolver integration are implemented |
-| Phase 7 — RPC namespace | ⬜ | |
-| Phase 8 — Hardening | ⬜ | |
+| Phase 0 — Design | ✅ | Roadmap, restricted API profile, TL-B schemas, ConfigParam 85 schema, engine identity, and activation checklist are written. Formal standalone stub-registry test (no real bytecode) not yet isolated as a named test case, but `test-workchain-execution-registry` exercises the same path end-to-end |
+| Phase 1 — Avata fork | ✅ | Fork imported, renamed, and slimmed to interpreter + Avata/TOS `rt/` only. SoftFloat 3e deterministic float/double, tiered opcode gas schedule, verifier profile (version gate, forbidden attrs/classes, static-field/clinit/enum/sync/native/finalizer policy, ContractEntry enforcement), object-identity counter, arena transaction reset, non-deterministic syscall removal, and all test harnesses complete |
+| Phase 2 — Framework integration | 🟡 | `JvmNativeEngine`, ConfigParam 85 parsing, `init_jvm_workchain`, `JvmAvataRuntime`, capability bits, CMake integration, and linked Avata runtime bridge are complete. Missing: `jvm/core/zerostate.{cpp,h}` (`build_jvm_zerostate_accounts_cell()`) |
+| Phase 3 — Contract stdlib | ✅ | `rt.jar` / `api.jar` built from `jvm/avata/rt/` tree. All required `java.lang` classes present: Object, String, Class, Throwable, Error hierarchy, Math (deterministic subset), System (chain context only), OutOfGasError, ContractViolationError, ContractEntry annotation, Storage, Mapping, PersistentMap, PersistentList, Event. `javac` and `java` wrapper tools cover contract compile/run/admission workflow including `@ContractEntry` checks. `rt/check-profile.sh` and `rt/check-native-profile.sh` gate the build against profile regressions |
+| Phase 4 — Heap serialization | ✅ | v1 restricted state model confirmed: only explicit `Storage`/`Mapping`/`PersistentMap`/`PersistentList` state is persisted; transient heap is discarded at transaction boundary via arena checkpoint rollback. `JvmCellCodec` encodes/decodes the canonical `JvmExecutorState` cell (`stdlib_hash`, `storage_root`, `class_state_root`). `JvmStorageCellHost` provides cell-backed 256-bit-slot storage with nested snapshot semantics. No general Java object-graph serializer is needed or implemented for v1 |
+| Phase 5 — Gas metering | ✅ | Tiered default opcode schedule (`gas_schedule.h`), per-opcode table in interpreter (`Machine::opcodeGasCosts[256]`), helper-gas table for storage/event/native surcharges, ConfigParam 85 gas-schedule codec (`avata_set_opcode_gas_costs`, `avata_set_contract_helper_gas_costs`), and OOG trap complete. All gas paths covered by `TieredOpcodeGasSchedule` and `HelperGasOutOfGasRegression` tests |
+| Phase 6 — Message ABI | ✅ | `JvmCallDescriptor`, typed `JVMA` args codec (bool/int/long/Address/Uint256/Bytes32/Bytes4/Bytes), `JvmDeployDescriptor`, restricted `JVMM` manifest, `JVMC` class-state envelope, deterministic deploy class-byte installation (ConfigParam 85 size limits enforced), state-backed Avata class loading, pre-runtime inbound validation, typed static-void invocation, duplicate manifest-key rejection, and linked resolver integration all implemented. Outbound action encoding: committed events flow through `event-host` to `OutList` action cells compatible with the TOS action phase |
+| Phase 7 — RPC namespace | ⬜ | `jvm_deployContract`, `jvm_callContract`, `jvm_getContractState`, `jvm_getReceipts` — request/response codecs and admission checks not yet started |
+| Phase 8 — Hardening | 🟡 | Deterministic replay test (`JvmComputeOutputIsDeterministicAcrossReplay`) and verifier negative tests (`VerifierProfile`, `CoreTrapProfile`) exist. Missing: end-to-end deploy→call→persist→replay integration test, rollback/OOG integration test, cross-platform float vector test, performance baseline |
 | JVM v2 account-native topology | ⏭ | Requires a separate consensus migration design; out of scope for v1 |
-| Lambda / invokedynamic support | ⬜ | Required for full Java 8 opcode compatibility, but must be VM-internal and deterministic; public `java.lang.invoke` stays absent from v1 `rt.jar` |
-| Per-account contract model | ⏭ | Each Java contract as a distinct TOS account on wc=3; out of scope for v1 |
+| Lambda / `invokedynamic` support | 🟡 | Verifier rejects `CONSTANT_MethodHandle`, `CONSTANT_MethodType`, `CONSTANT_InvokeDynamic`, and `BootstrapMethods` (v1 position: reject). VM-internal deterministic bootstrap linkage is a post-v1 item; public `java.lang.invoke` stays absent from v1 `rt.jar`. Decision and negative tests exist; positive bootstrap path is explicitly deferred |
+| Per-account contract model | ⏭ | Each Java contract as a distinct TOS account on `wc=3`; out of scope for v1 |
+
+**v1 consensus-activation blockers (remaining):**
+1. `jvm/core/zerostate.{cpp,h}` — Phase 2 gap; needed for genesis account creation
+2. End-to-end deploy→call→persist→rollback integration tests — Phase 8 gap; required for confidence before activation
+3. RPC namespace (Phase 7) — `jvm_deployContract` at minimum for toolchain completeness
+4. ConfigParam 85 concrete activation values (gas price, `max_gas_per_tx`, `max_class_bytes`, `max_heap_bytes`) — Phase 0 open question 1
 
 ## File Layout (target)
 

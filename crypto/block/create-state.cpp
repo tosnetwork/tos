@@ -60,6 +60,7 @@
 #include "block.h"
 #include "evm/core/init.h"  // build_evm_zerostate_accounts_cell (Phase C)
 #include "uno/core/init.h"  // build_uno_zerostate_accounts_cell (wc=2 exec seed)
+#include "jvm/core/zerostate.h"  // build_jvm_zerostate_accounts_cell (wc=3 exec seed)
 
 #include <evmc/evmc.hpp>
 #include <intx/intx.hpp>
@@ -607,6 +608,21 @@ void interpret_uno_zerostate_accounts_cell(vm::Stack& stack) {
   stack.push_cell(std::move(cell));
 }
 
+// Returns the wc=3 ShardAccounts cell pre-populated with the single JVM
+// executor account (at 0x00…01) as acc_uninit.  Used by genesis tooling so
+// wc=3 can route ext_in_msgs (JvmCallDescriptor / JvmDeployDescriptor) from
+// block 0 — without this the collator's ShardAccounts lookup returns null and
+// every inbound JVM tx is dropped before compute phase.
+//
+// Stack: ( -- accounts_cell )
+void interpret_jvm_zerostate_accounts_cell(vm::Stack& stack) {
+  Ref<vm::Cell> cell = jvm_workchain::build_jvm_zerostate_accounts_cell();
+  if (cell.is_null()) {
+    throw fift::IntError{"could not build JVM zerostate accounts cell"};
+  }
+  stack.push_cell(std::move(cell));
+}
+
 // Phase D (Hive bootstrap): returns a wc=1 ShardAccounts cell built from a
 // caller-supplied list of Ethereum-style genesis allocations. Used by
 // `translate-genesis.py` to convert a Hive `/genesis.json` file into a
@@ -908,6 +924,10 @@ void init_words_custom(fift::Dictionary& d) {
   // the single UNO executor account (0x00…01) as acc_uninit, so the collator
   // can route MineUno / Transfer ext_in_msgs from block 0.
   d.def_stack_word("uno-zerostate-accounts-cell ", interpret_uno_zerostate_accounts_cell);
+  // JVM workchain zerostate seeding. Pushes a ShardAccounts cell containing
+  // the single JVM executor account (0x00…01) as acc_uninit, so the collator
+  // can route JvmCallDescriptor / JvmDeployDescriptor ext_in_msgs from block 0.
+  d.def_stack_word("jvm-zerostate-accounts-cell ", interpret_jvm_zerostate_accounts_cell);
   d.def_stack_word("isShardState? ", interpret_is_shard_state);
   d.def_stack_word("isWorkchainDescr? ", interpret_is_workchain_descr);
   d.def_stack_word("CC+? ", interpret_add_extra_currencies);

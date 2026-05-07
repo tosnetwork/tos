@@ -34,7 +34,9 @@
 #include "jvm/core/dispatch-engine.h"
 #include "jvm/core/event-host.h"
 #include "jvm/core/message-abi.h"
+#include "jvm/core/rpc.h"
 #include "jvm/core/storage-cell-host.h"
+#include "jvm/core/zerostate.h"
 #include "td/utils/tests.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cellslice.h"
@@ -2707,4 +2709,364 @@ TEST(WorkchainExecutionRegistry, PreflightRejectsUnsupportedCustomAccountPolicie
   block::LocalWorkchainRoleSet roles;
   roles.required_workchains.insert(2);
   CHECK(registry.validate_required_workchains(workchains, config, roles).is_error());
+}
+
+// ---------------------------------------------------------------------------
+// JVM zerostate
+// ---------------------------------------------------------------------------
+
+TEST(JvmWorkchainCore, ZerostateAccountsCell) {
+  using namespace jvm_workchain;
+
+  // Cell must be non-null; internal CHECK in build_jvm_zerostate_accounts_cell
+  // already validates the resulting Account via block::gen::t_Account.validate_ref.
+  auto cell = build_jvm_zerostate_accounts_cell();
+  CHECK(cell.not_null());
+
+  // Determinism: building the cell twice must produce the same hash.
+  auto cell2 = build_jvm_zerostate_accounts_cell();
+  CHECK(cell2.not_null());
+  CHECK(cell->get_hash() == cell2->get_hash());
+
+  // The cell is a non-empty HashmapAugE(256) root; it must begin with bit 1
+  // (hme_root$1 tag).
+  vm::CellSlice cs = vm::load_cell_slice(cell);
+  CHECK(cs.prefetch_ulong(1) == 1);
+
+  // At least one reference must exist (the inner dict tree node).
+  CHECK(cs.size_refs() > 0 || cs.size() > 1);
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end deploy → call → persist integration test.
+//
+// Simulates three consecutive transactions against JvmNativeEngine, each
+// using a custom JvmComputeRuntime implementation:
+//   Tx 1 (deploy):  runtime writes v1 to slot 0xAB and commits.
+//   Tx 2 (call):    runtime inherits Tx1 storage, reads v1, writes v2, commits.
+//   Tx 3 (fail):    runtime reports failure — storage must not advance.
+//
+// Verifies:
+//   - new_data is non-null after a successful transaction.
+//   - The next transaction correctly inherits the prior storage root.
+//   - Ordinary heap values (local variables) do not persist; only explicit
+//     Storage writes survive transaction boundaries.
+//   - A failed invocation produces null new_data (rollback).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// JvmComputeRuntime that writes a fixed value to a storage slot.
+class WriteSlotRuntime final : public jvm_workchain::JvmComputeRuntime {
+ public:
+  explicit WriteSlotRuntime(jvm_workchain::JvmStorageSlot slot,
+                            jvm_workchain::JvmStorageValue value)
+      : slot_(slot), value_(value) {}
+
+  td::Result<jvm_workchain::JvmAvataInvocationResult> run_contract(
+      const block::WorkchainComputeInput& input,
+      const block::WorkchainComputeContext& /*ctx*/,
+      const jvm_workchain::JvmConfig& /*cfg*/,
+      const jvm_workchain::JvmExecutorState& state) const override {
+    using namespace jvm_workchain;
+
+    JvmStorageCellHost storage(state.storage_root);
+    CHECK(storage.begin_transaction().is_ok());
+    CHECK(storage.store(slot_, value_).is_ok());
+    CHECK(storage.commit_transaction().is_ok());
+
+    JvmAvataInvocationResult r;
+    r.success = true;
+    r.gas_used = 50;
+    r.gas_remaining = input.gas_limit - r.gas_used;
+    r.storage_root = storage.root_cell();
+    r.action_list = jvm_workchain::build_jvm_event_action_list({});
+    return r;
+  }
+
+ private:
+  jvm_workchain::JvmStorageSlot slot_;
+  jvm_workchain::JvmStorageValue value_;
+};
+
+// JvmComputeRuntime that verifies an expected prior value in a slot and then
+// overwrites it with a new value.
+class ReadThenWriteRuntime final : public jvm_workchain::JvmComputeRuntime {
+ public:
+  explicit ReadThenWriteRuntime(jvm_workchain::JvmStorageSlot slot,
+                                jvm_workchain::JvmStorageValue expected,
+                                jvm_workchain::JvmStorageValue write)
+      : slot_(slot), expected_(expected), write_(write) {}
+
+  td::Result<jvm_workchain::JvmAvataInvocationResult> run_contract(
+      const block::WorkchainComputeInput& input,
+      const block::WorkchainComputeContext& /*ctx*/,
+      const jvm_workchain::JvmConfig& /*cfg*/,
+      const jvm_workchain::JvmExecutorState& state) const override {
+    using namespace jvm_workchain;
+
+    JvmStorageCellHost storage(state.storage_root);
+    auto loaded = storage.load(slot_).move_as_ok();
+    CHECK(loaded.has_value());
+    CHECK(*loaded == expected_);
+
+    CHECK(storage.begin_transaction().is_ok());
+    CHECK(storage.store(slot_, write_).is_ok());
+    CHECK(storage.commit_transaction().is_ok());
+
+    JvmAvataInvocationResult r;
+    r.success = true;
+    r.gas_used = 30;
+    r.gas_remaining = input.gas_limit - r.gas_used;
+    r.storage_root = storage.root_cell();
+    r.action_list = jvm_workchain::build_jvm_event_action_list({});
+    return r;
+  }
+
+ private:
+  jvm_workchain::JvmStorageSlot slot_;
+  jvm_workchain::JvmStorageValue expected_;
+  jvm_workchain::JvmStorageValue write_;
+};
+
+// JvmComputeRuntime that always returns a failed (non-success) invocation.
+class FailingRuntime final : public jvm_workchain::JvmComputeRuntime {
+ public:
+  td::Result<jvm_workchain::JvmAvataInvocationResult> run_contract(
+      const block::WorkchainComputeInput& input,
+      const block::WorkchainComputeContext& /*ctx*/,
+      const jvm_workchain::JvmConfig& /*cfg*/,
+      const jvm_workchain::JvmExecutorState& /*state*/) const override {
+    jvm_workchain::JvmAvataInvocationResult r;
+    r.success = false;
+    r.gas_used = 10;
+    r.gas_remaining = input.gas_limit - r.gas_used;
+    return r;
+  }
+};
+
+td::Result<block::WorkchainComputeOutput> run_jvm_tx(
+    std::shared_ptr<const jvm_workchain::JvmComputeRuntime> runtime,
+    td::Ref<vm::Cell> current_data,
+    std::uint8_t call_marker,
+    const block::WorkchainExecutionDescriptor& descriptor,
+    const std::unique_ptr<block::Config>& config) {
+  block::WorkchainExecutionRegistry registry;
+  jvm_workchain::register_jvm_workchain_engine(registry, runtime);
+  auto exec = registry.resolve(descriptor, *config).move_as_ok();
+
+  block::WorkchainComputeInput input;
+  input.current_data = current_data;
+  input.inbound_body = make_jvm_call_body(call_marker);
+  input.gas_limit = 1000;
+
+  block::WorkchainComputeContext ctx;
+  ctx.workchain_id = 3;
+  ctx.descriptor = descriptor;
+  ctx.engine_config = exec.engine_config;
+
+  return exec.executor->run_compute(input, ctx);
+}
+
+}  // namespace
+
+TEST(JvmWorkchainCore, EndToEndDeployCallPersistAndRollback) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1;
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  JvmStorageSlot slot{};
+  slot[31] = 0xAB;
+  const JvmStorageValue v1{0x01};
+  const JvmStorageValue v2{0x02};
+
+  // Tx 1: initial write — current_data is null (uninitialised account).
+  auto out1 = run_jvm_tx(
+      std::make_shared<WriteSlotRuntime>(slot, v1),
+      td::Ref<vm::Cell>{}, 0x01, descriptor, config).move_as_ok();
+  CHECK(out1.completed && out1.accepted && out1.committed);
+  CHECK(out1.new_data.not_null());
+
+  JvmExecutorState state1;
+  CHECK(decode_jvm_executor_state(out1.new_data, state1));
+  {
+    JvmStorageCellHost check(state1.storage_root);
+    auto v = check.load(slot).move_as_ok();
+    CHECK(v.has_value() && *v == v1);
+  }
+
+  // Tx 2: inherits Tx1 state, reads v1, writes v2.
+  auto out2 = run_jvm_tx(
+      std::make_shared<ReadThenWriteRuntime>(slot, v1, v2),
+      out1.new_data, 0x02, descriptor, config).move_as_ok();
+  CHECK(out2.completed && out2.accepted && out2.committed);
+  CHECK(out2.new_data.not_null());
+
+  JvmExecutorState state2;
+  CHECK(decode_jvm_executor_state(out2.new_data, state2));
+  {
+    JvmStorageCellHost check(state2.storage_root);
+    auto v = check.load(slot).move_as_ok();
+    CHECK(v.has_value() && *v == v2);
+  }
+
+  // Tx 3: failing invocation — new_data must be null (no state committed).
+  auto out3 = run_jvm_tx(
+      std::make_shared<FailingRuntime>(),
+      out2.new_data, 0x03, descriptor, config).move_as_ok();
+  CHECK(out3.completed);
+  CHECK(out3.new_data.is_null());
+}
+
+// ---------------------------------------------------------------------------
+// JVM RPC codec tests
+// ---------------------------------------------------------------------------
+
+TEST(JvmWorkchainCore, RpcIsJvmMethod) {
+  using namespace jvm_workchain;
+  CHECK(is_jvm_rpc_method("jvm_deployContract"));
+  CHECK(is_jvm_rpc_method("jvm_callContract"));
+  CHECK(is_jvm_rpc_method("jvm_getContractState"));
+  CHECK(is_jvm_rpc_method("jvm_getReceipts"));
+  CHECK(!is_jvm_rpc_method("eth_chainId"));
+  CHECK(!is_jvm_rpc_method("jvm_unknown"));
+  CHECK(!is_jvm_rpc_method(""));
+}
+
+TEST(JvmWorkchainCore, RpcDeployContractParsesAndValidates) {
+  using namespace jvm_workchain;
+
+  // Valid deploy request: minimal Java magic header.
+  std::string good_params = R"({
+    "classBytes": "0xcafebabe00000034",
+    "className": "ContractEntryPoint",
+    "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "salt":     "0x0000000000000000000000000000000000000000000000000000000000000002"
+  })";
+  auto req = parse_jvm_deploy_contract_request(good_params);
+  CHECK(req.has_value());
+  CHECK(req->class_name == "ContractEntryPoint");
+  CHECK(!req->class_bytes.empty());
+
+  // Missing className — must fail.
+  std::string missing_name = R"({
+    "classBytes": "0xcafe",
+    "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001"
+  })";
+  CHECK(!parse_jvm_deploy_contract_request(missing_name).has_value());
+
+  // Missing classBytes — must fail.
+  std::string missing_bytes = R"({
+    "className": "Foo",
+    "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001"
+  })";
+  CHECK(!parse_jvm_deploy_contract_request(missing_bytes).has_value());
+
+  // Deployer with wrong length — must fail.
+  std::string bad_deployer = R"({
+    "classBytes": "0xcafe",
+    "className": "Foo",
+    "deployer": "0xdeadbeef"
+  })";
+  CHECK(!parse_jvm_deploy_contract_request(bad_deployer).has_value());
+}
+
+TEST(JvmWorkchainCore, RpcDeployContractAdmissionChecksClassSize) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.max_class_bytes = 4;  // tiny limit for test
+
+  JvmDeployContractRequest req;
+  req.class_name = "Test";
+  req.class_bytes = {0xca, 0xfe, 0xba, 0xbe, 0x00, 0x34};  // 6 bytes > 4 limit
+  req.deployer[31] = 1;
+
+  auto result = handle_jvm_deploy_contract(req, cfg);
+  CHECK(result.is_error);
+  CHECK(result.json.find("max_class_bytes") != std::string::npos);
+
+  // Exactly at limit: bytes that fit.
+  req.class_bytes = {0xca, 0xfe, 0xba, 0xbe};
+  cfg.max_class_bytes = 4;
+  // class_name "/" prefix is invalid — check shape validation.
+  req.class_name = "/BadName";
+  auto shape_err = handle_jvm_deploy_contract(req, cfg);
+  CHECK(shape_err.is_error);
+}
+
+TEST(JvmWorkchainCore, RpcCallContractParsesRequest) {
+  using namespace jvm_workchain;
+
+  std::string params = R"({
+    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "methodId": 305419896,
+    "gasLimit": 100000
+  })";
+  auto req = parse_jvm_call_contract_request(params);
+  CHECK(req.has_value());
+  CHECK(req->method_id == 305419896u);
+  CHECK(req->gas_limit == 100000u);
+  CHECK(req->contract_id[31] == 1);
+
+  // Missing contractId — must fail.
+  CHECK(!parse_jvm_call_contract_request(R"({"methodId":1})").has_value());
+}
+
+TEST(JvmWorkchainCore, RpcGetContractStateParsesRequest) {
+  using namespace jvm_workchain;
+
+  std::string params = R"({
+    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001"
+  })";
+  auto req = parse_jvm_get_contract_state_request(params);
+  CHECK(req.has_value());
+  CHECK(req->contract_id[31] == 1);
+
+  CHECK(!parse_jvm_get_contract_state_request(R"({})").has_value());
+}
+
+TEST(JvmWorkchainCore, RpcGetReceiptsParsesRequest) {
+  using namespace jvm_workchain;
+
+  std::string params = R"({
+    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "fromBlock": 100,
+    "toBlock": 200
+  })";
+  auto req = parse_jvm_get_receipts_request(params);
+  CHECK(req.has_value());
+  CHECK(req->from_block == 100);
+  CHECK(req->to_block == 200);
+
+  CHECK(!parse_jvm_get_receipts_request(R"({})").has_value());
+}
+
+TEST(JvmWorkchainCore, RpcDispatcherRoutesJvmMethods) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+
+  // Unknown jvm_* method returns nullopt (not this facade's business).
+  CHECK(!handle_jvm_rpc("jvm_unknown", "{}", "1", cfg).has_value());
+
+  // Non-JVM method returns nullopt.
+  CHECK(!handle_jvm_rpc("eth_chainId", "{}", "1", cfg).has_value());
+
+  // Valid method with missing params returns error result, not nullopt.
+  auto deploy_err = handle_jvm_rpc("jvm_deployContract", "{}", "1", cfg);
+  CHECK(deploy_err.has_value());
+  CHECK(deploy_err->is_error);
+
+  // getReceipts with minimal params succeeds.
+  std::string receipts_params = R"({
+    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001"
+  })";
+  auto receipts = handle_jvm_rpc("jvm_getReceipts", receipts_params, "2", cfg);
+  CHECK(receipts.has_value());
+  CHECK(!receipts->is_error);
+  CHECK(receipts->json.find("\"id\":2") != std::string::npos);
 }
