@@ -61,6 +61,8 @@ struct JvmDeployContractRequest {
     std::array<uint8_t, 32> deployer{};  ///< deployer address (32 bytes)
     std::array<uint8_t, 32> salt{};      ///< deployment salt (32 bytes)
     td::Ref<vm::Cell> init_args;         ///< JVMA typed init args cell (may be null)
+    td::Ref<vm::Cell> executor_state;    ///< optional; when set, class is installed
+                                         ///< and newStateBoc is returned
 };
 
 /// Parse a jvm_deployContract JSON params array.

@@ -3713,3 +3713,78 @@ TEST(JvmWorkchainCore, RpcGetContractStateEnumeratesStorageSlots) {
      || result->json.find("\"0xBBCC\"") != std::string::npos
      || result->json.find("0xbbcc") != std::string::npos);
 }
+
+// jvm_deployContract with executorStateBoc installs the class into the
+// executor state and returns newStateBoc alongside contractId and
+// deployDescriptorBoc.  The returned newStateBoc must decode back to an
+// executor state whose class_state_root contains the deployed class.
+TEST(JvmWorkchainCore, RpcDeployContractWithExecutorStateBocInstallsClass) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+
+  // Build a minimal (empty) executor state.
+  JvmExecutorState initial_state;
+  initial_state.schema_version = kJvmExecutorStateSchemaVersion;
+  initial_state.stdlib_hash = cfg.stdlib_hash;
+  auto state_cell = encode_jvm_executor_state(initial_state);
+  CHECK(state_cell.not_null());
+  auto state_boc_r = vm::std_boc_serialize(state_cell, 0);
+  CHECK(!state_boc_r.is_error());
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string state_hex = "0x";
+  for (size_t i = 0; i < state_boc_r.ok().size(); ++i) {
+    auto b = static_cast<uint8_t>(state_boc_r.ok().data()[i]);
+    state_hex += kHex[(b >> 4) & 0xF];
+    state_hex += kHex[b & 0xF];
+  }
+
+  std::string params = R"({
+    "classBytes": "0xcafebabe00000034",
+    "className": "ContractEntryPoint",
+    "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "salt":     "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "executorStateBoc": ")" + state_hex + R"("
+  })";
+
+  auto result = handle_jvm_rpc("jvm_deployContract", params, "1", cfg);
+  CHECK(result.has_value() && !result->is_error);
+
+  // All three fields must be present.
+  CHECK(result->json.find("\"contractId\":\"0x") != std::string::npos);
+  CHECK(result->json.find("\"deployDescriptorBoc\":\"0x") != std::string::npos);
+  auto ns_pos = result->json.find("\"newStateBoc\":\"0x");
+  CHECK(ns_pos != std::string::npos);
+
+  // Extract and round-trip newStateBoc.
+  auto hex_start = result->json.find("0x", ns_pos);
+  auto hex_end = result->json.find('"', hex_start + 2);
+  CHECK(hex_start != std::string::npos && hex_end != std::string::npos);
+  std::string new_boc_hex = result->json.substr(hex_start, hex_end - hex_start);
+  std::vector<uint8_t> new_boc_bytes;
+  for (size_t i = 2; i + 1 < new_boc_hex.size(); i += 2) {
+    auto nibble = [](char c) -> uint8_t {
+      if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+      if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+      return static_cast<uint8_t>(c - 'A' + 10);
+    };
+    new_boc_bytes.push_back(
+        static_cast<uint8_t>((nibble(new_boc_hex[i]) << 4)
+                             | nibble(new_boc_hex[i + 1])));
+  }
+  auto new_cell = vm::std_boc_deserialize(
+      td::Slice(reinterpret_cast<const char*>(new_boc_bytes.data()),
+                new_boc_bytes.size()));
+  CHECK(!new_cell.is_error() && new_cell.ok().not_null());
+
+  // The new state must decode and contain the installed class.
+  JvmExecutorState new_state;
+  CHECK(decode_jvm_executor_state(new_cell.ok(), new_state));
+  CHECK(new_state.class_state_root.not_null());
+
+  // Class definition must be findable by name.
+  auto def = find_jvm_avata_class_definition(
+      new_state.class_state_root, "ContractEntryPoint");
+  CHECK(!def.is_error());
+  CHECK(def.ok().class_name == "ContractEntryPoint");
+}

@@ -225,6 +225,14 @@ std::optional<JvmDeployContractRequest> parse_jvm_deploy_contract_request(
 
     // init_args is optional; absent = canonical empty args cell.
     req.init_args = vm::CellBuilder().finalize();
+
+    // executorStateBoc is optional; when present the handler installs the class
+    // into the supplied state and returns newStateBoc.
+    auto exec_state_hex = json_get_string(params_json, "executorStateBoc");
+    if (!exec_state_hex.empty()) {
+        req.executor_state = hex_boc_decode_cell(exec_state_hex);
+        if (req.executor_state.is_null()) return std::nullopt;
+    }
     return req;
 }
 
@@ -284,9 +292,45 @@ JvmRpcResult handle_jvm_deploy_contract(
             true};
     }
     const auto& contract_id = contract_id_result.ok();
+
+    // Optional local install: when executorStateBoc is supplied, install the
+    // class into the executor state and return the updated state as newStateBoc.
+    std::string new_state_hex = "null";
+    if (req.executor_state.not_null()) {
+        JvmExecutorState prev_state;
+        if (!decode_jvm_executor_state(req.executor_state, prev_state)) {
+            return JvmRpcResult{
+                json_rpc_err(id, -32602, "executorStateBoc: malformed executor state"),
+                true};
+        }
+        auto install_result = install_jvm_deploy_descriptor(
+            prev_state.class_state_root, descriptor, config);
+        if (install_result.is_error()) {
+            return JvmRpcResult{
+                json_rpc_err(id, -32602,
+                             "class install failed: "
+                             + install_result.error().message().str()),
+                true};
+        }
+        JvmExecutorState new_state = prev_state;
+        new_state.class_state_root = install_result.ok().class_state_root;
+        auto new_cell = encode_jvm_executor_state(new_state);
+        if (new_cell.is_null()) {
+            return JvmRpcResult{
+                json_rpc_err(id, -32602, "new executor state encoding failed"),
+                true};
+        }
+        auto new_boc = vm::std_boc_serialize(new_cell, 0);
+        if (new_boc.is_ok()) {
+            new_state_hex = "\"" + hex_encode(
+                reinterpret_cast<const uint8_t*>(new_boc.ok().data()),
+                new_boc.ok().size()) + "\"";
+        }
+    }
+
     std::string result = "{\"contractId\":\"" + hex_encode(contract_id)
                        + "\",\"deployDescriptorBoc\":\"" + descriptor_boc_hex
-                       + "\"}";
+                       + "\",\"newStateBoc\":" + new_state_hex + "}";
     return JvmRpcResult{json_rpc_ok(id, result), false};
 }
 
