@@ -912,6 +912,8 @@ test-sources = \
 	$(test)/ArrayDequeTest.java \
 	$(test)/BitsetTest.java \
 	$(test)/DeterministicFloatTest.java \
+	$(test)/FloatConformanceVector.java \
+	$(test)/PerfBaseline.java \
 	$(test)/ArraysTest.java \
 	$(test)/Collections.java \
 	$(test)/ContractLibraryPrimitives.java \
@@ -1031,7 +1033,7 @@ test: build-test run-test
 build-test: build check-native-profile check-rt-profile check-api-profile \
 	check-contract-profile-header check-api-javac check-api-java $(build)/run-tests.sh \
 	$(build)/run-determinism.sh $(build)/test.sh $(build)/determinism.sh \
-	$(unittest-executable)
+	$(unittest-executable) check-float-conformance
 
 .PHONY: check-native-profile
 check-native-profile: $(classpath-src)/check-native-profile.sh
@@ -1231,6 +1233,42 @@ check-api-java: $(build)/api.jar $(build)/rt.jar $(executable) tools/javac tools
 		echo "api.jar check failed: tools/java accepted java.library.path override" >&2; \
 		exit 1; \
 	fi
+
+.PHONY: check-float-conformance
+check-float-conformance: $(build)/test/FloatConformanceVector.class $(executable)
+	@echo "checking float conformance vector"
+	@cd $(build) && LD_LIBRARY_PATH=. ./avata \
+		-Djava.library.path=. -cp test:extra-dir FloatConformanceVector \
+		> float-conformance-actual.txt 2>/dev/null
+	@diff $(test)/float-conformance-reference.txt $(build)/float-conformance-actual.txt || { \
+		echo "FAIL: float conformance vector mismatch — platform divergence detected" >&2; \
+		exit 1; \
+	}
+	@echo "float conformance: ok"
+
+# Measure interpreter throughput for the representative PerfBaseline workload.
+# Not wired into build-test — run manually before and after changes to gate
+# performance regressions.  Reports gas consumed by OUTER_ITERS iterations;
+# a sudden change indicates an opcode-gas schedule or dispatch regression.
+.PHONY: perf-baseline
+perf-baseline: $(build)/test/PerfBaseline.class $(build)/rt.jar $(build)/api.jar $(executable)
+	@echo "running perf baseline — $(build)/test/PerfBaseline.class"
+	@echo "  (checksum must be stable; gas_remaining shows headroom against 10M budget)"
+	AVATA_BUILD_DIR=$(build) tools/java \
+		--gas 10000000 --memory 4194304 \
+		-cp $(build)/test PerfBaseline
+	@echo "perf-baseline: done (re-run before/after changes to catch regressions)"
+
+# Run this to update the reference when the SoftFloat engine or opcode
+# semantics intentionally change.  Commit the new reference after review.
+.PHONY: regen-float-conformance
+regen-float-conformance: $(build)/test/FloatConformanceVector.class $(executable)
+	@echo "regenerating float-conformance-reference.txt"
+	@cd $(build) && LD_LIBRARY_PATH=. ./avata \
+		-Djava.library.path=. -cp test:extra-dir FloatConformanceVector \
+		> float-conformance-reference-tmp.txt 2>/dev/null
+	@cp $(build)/float-conformance-reference-tmp.txt $(test)/float-conformance-reference.txt
+	@echo "written: $(test)/float-conformance-reference.txt"
 
 .PHONY: run-test
 run-test: build-test
