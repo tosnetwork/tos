@@ -1095,6 +1095,34 @@ check-api-javac: $(build)/api.jar tools/tos-javac
 		echo "api.jar check failed: tos-javac accepted bootclasspath override" >&2; \
 		exit 1; \
 	fi
+	@printf '%s\n' \
+		'public final class MutableStaticCompileCheck {' \
+		'  static int value;' \
+		'}' \
+		> $(build)/api-check/src/MutableStaticCompileCheck.java
+	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
+		tools/tos-javac \
+		-d $(build)/api-check/out \
+		$(build)/api-check/src/MutableStaticCompileCheck.java \
+		> $(build)/api-check/mutable-static.log 2>&1; then \
+		echo "api.jar check failed: tos-javac accepted mutable static field" >&2; \
+		exit 1; \
+	fi
+	@printf '%s\n' \
+		'public final class LambdaCompileCheck {' \
+		'  public static Runnable make() {' \
+		'    return () -> { };' \
+		'  }' \
+		'}' \
+		> $(build)/api-check/src/LambdaCompileCheck.java
+	@if AVATA_BUILD_DIR=$(build) AVATA_JAVAC="$(JAVA_HOME)/bin/javac" \
+		tools/tos-javac \
+		-d $(build)/api-check/out \
+		$(build)/api-check/src/LambdaCompileCheck.java \
+		> $(build)/api-check/lambda.log 2>&1; then \
+		echo "api.jar check failed: tos-javac accepted invokedynamic lambda" >&2; \
+		exit 1; \
+	fi
 
 .PHONY: run-test
 run-test: build-test

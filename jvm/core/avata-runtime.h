@@ -28,6 +28,7 @@ struct JvmLinkedAvataRuntimeOptions {
 struct JvmAvataCallTarget {
     void* thread{nullptr};
     void* invocation_user{nullptr};
+    std::shared_ptr<void> invocation_owner;
 };
 
 using JvmAvataResolveCallTarget =
@@ -60,8 +61,9 @@ class JvmAvataRuntime final : public JvmComputeRuntime {
 };
 
 // Build a JvmAvataExecutionApi backed by the linked Avata interpreter C ABI.
-// The call target resolver must resolve and pass an AvataContractMethod through
-// JvmAvataCallTarget::invocation_user.
+// The call target resolver must resolve and pass an invocation object through
+// JvmAvataCallTarget::invocation_user.  If that object owns decoded ABI
+// argument storage, keep it alive through JvmAvataCallTarget::invocation_owner.
 JvmAvataExecutionApi make_linked_jvm_avata_execution_api();
 
 td::Result<std::shared_ptr<const JvmComputeRuntime>>

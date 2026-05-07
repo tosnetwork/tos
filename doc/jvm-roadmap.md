@@ -722,6 +722,27 @@ bytes. `method_id` selects the public static entry method. `ArgsCell` encodes
 arguments using a compact binary encoding derived from the method descriptor
 signature.
 
+**Typed args (`JvmArgs`):**
+```
+jvm_args#4a564d41
+    schema_version:uint8  // 1
+    count:uint8
+    values:^(JvmArg chain)?
+    = JvmArgs;
+
+jvm_arg
+    type:uint8
+    has_next:bit
+    next:^(JvmArg)?
+    value:^BytesCell
+    = JvmArg;
+```
+
+V1 typed args are descriptor-checked against void-return method specs and admit
+only deterministic contract ABI values: `boolean`, `int`, `long`,
+`java.lang.Address`, `java.lang.Uint256`, `java.lang.Bytes32`,
+`java.lang.Bytes4`, and variable-length `java.lang.Bytes`.
+
 Only `public static` methods annotated with `@ContractEntry` are callable from
 inbound messages. Other methods may only be called from within the same
 transaction's execution.
@@ -729,8 +750,8 @@ transaction's execution.
 Class-load validation must reject duplicate `method_id` values among callable
 entry methods in the same class. The ABI must also define a deploy message:
 class bytes, constructor/initializer arguments, optional deployment salt, and
-the deterministic `contract_id = hash(deployer, class_hash, salt, init_args)`
-derivation.
+the deterministic `contract_id = sha256("TOS-JVM-CONTRACT-v1" || deployer ||
+class_hash || salt || init_args_cell_hash)` derivation.
 
 **Class manifest (`JvmAvataClassManifest`):**
 ```
@@ -751,14 +772,66 @@ jvm_manifest_entry
     = JvmManifestEntry;
 ```
 
+**Class state (`JvmAvataClassState`):**
+```
+jvm_class_state#4a564d43
+    schema_version:uint8  // 1
+    class_count:uint16
+    manifest:^JvmAvataClassManifest
+    classes:^(JvmClassDefinition chain)?
+    = JvmAvataClassState;
+
+jvm_class_definition
+    class_hash:bits256    // sha256(class_bytes)
+    has_next:bit
+    next:^(JvmClassDefinition)?
+    class_name:^StringCell
+    class_bytes:^BytesCell
+    = JvmClassDefinition;
+```
+
 Implementation status: `jvm/core/message-abi.*` implements the v1 call
 descriptor envelope and `JvmNativeEngine` rejects malformed inbound bodies
 before entering an installed runtime. `jvm/core/class-manifest.*` implements the
-v1 `class_state_root` manifest, rejects duplicate `(contract_id, method_id)`
-entries, and `JvmCellCodec` validates it when decoding executor state. The
-linked Avata runtime resolver uses that manifest to resolve a static-void Avata
-method before executing the gas/memory transaction. Deployment messages, class
-byte storage/loading from deploy state, and typed argument decoding remain open.
+v1 callable `JVMM` manifest and the `JVMC` class-state envelope. The manifest
+rejects duplicate `(contract_id, method_id)` entries, admits only ASCII Java
+internal class names, Java identifier method names, and supported static-void
+descriptors, and `JvmCellCodec` validates both manifest-only and `JVMC`
+class-state roots when decoding executor state. The linked Avata runtime
+resolver uses that manifest to resolve a static-void Avata method before
+executing the gas/memory transaction. Legacy `()V` entries still accept only the
+canonical empty args cell; parameterized entries must use the deterministic
+`JVMA` typed args cell.
+The deploy envelope, deterministic class-byte installation into `JVMC`, typed
+`ArgsCell` codec/descriptor validator, and typed Avata invocation bridge are
+implemented. The linked resolver now caches Avata VMs by `class_state_root`
+hash, installs `JVMC` class bytes into that isolated app class space through
+`avata_define_contract_class()`, resolves the static-void manifest entry, and
+passes decoded `boolean`, `int`, `long`, `Address`, `Uint256`, `Bytes32`,
+`Bytes4`, and `Bytes` arguments through the Avata C ABI.
+
+**Deploy descriptor (`JvmDeployDescriptor`):**
+```
+jvm_deploy#4a564d44
+    schema_version:uint8  // 1
+    deployer:bits256
+    salt:bits256
+    class_hash:bits256    // sha256(class_bytes)
+    class_name:^StringCell
+    class_bytes:^BytesCell
+    init_args:^ArgsCell
+    = JvmDeployDescriptor;
+```
+
+`jvm/core/deploy-abi.*` implements this envelope, validates `class_hash` against
+the supplied bytes, validates the class name, and derives the deterministic
+`contract_id`. `install_jvm_deploy_descriptor()` applies the descriptor to
+`class_state_root` by storing a verified class definition under `JVMC` while
+enforcing ConfigParam 85 class-store limits (`max_class_bytes` and
+`max_total_class_bytes`) through the installer overload used by deploy
+admission. Callable method ids remain the responsibility of the verified
+manifest/admission layer. Runtime resolution loads the installed class bytes
+from `JVMC` into the VM cache entry for that `class_state_root`.
 
 **Outbound action encoding:**
 Contract code may enqueue outbound messages by calling
@@ -878,7 +951,7 @@ Last updated: 2026-05-07.
 | Phase 3 — Contract stdlib | ⬜ | |
 | Phase 4 — Heap serialization | ⬜ | Largest risk item; must be prototyped before committing to timeline |
 | Phase 5 — Gas metering | ⬜ | |
-| Phase 6 — Message ABI | 🟡 | `JvmCallDescriptor`, `JvmAvataClassManifest`, pre-runtime inbound validation, duplicate manifest-key rejection, and linked resolver integration are implemented; deploy ABI, class byte loading, and typed args remain |
+| Phase 6 — Message ABI | 🟡 | `JvmCallDescriptor`, typed `JVMA` args codec, `JvmDeployDescriptor`, restricted `JVMM` manifest, `JVMC` class-state envelope, deterministic deploy class-byte installation, state-backed Avata class loading, pre-runtime inbound validation, legacy static-void empty-args validation, typed static-void invocation, duplicate manifest-key rejection, and linked resolver integration are implemented |
 | Phase 7 — RPC namespace | ⬜ | |
 | Phase 8 — Hardening | ⬜ | |
 | JVM v2 account-native topology | ⏭ | Requires a separate consensus migration design; out of scope for v1 |
@@ -913,9 +986,9 @@ jvm/
     persistent-map.cpp  ← native C++ PersistentMap
     persistent-list.cpp ← native C++ PersistentList
     message-abi.h
-    message-abi.cpp     ← JvmCallDescriptor encode/decode
+    message-abi.cpp     ← JvmCallDescriptor + typed JVMA args codec
     class-manifest.h
-    class-manifest.cpp  ← class_state_root JVMM manifest codec/resolver map
+    class-manifest.cpp  ← class_state_root JVMM/JVMC codec and resolver map
     gas-table.h
     config-param.cpp    ← ConfigParam 85 limits and gas schedule codec
     rpc.h
@@ -958,13 +1031,14 @@ The following questions must be answered before Phase 1 is considered complete:
    so allocation-heavy contracts fail deterministically before exhausting
    validator memory.
 
-2. **Class store retention limits.** Contract class files must be available to
+2. **Class store retention policy.** Contract class files must be available to
    the class loader during execution. In v1 the class store is part of the
    executor account's data cell (`class_store[class_hash]`). Deploying a new
    contract is therefore a transaction that updates the executor account's class
-   store and `contracts[contract_id]`. Phase 0 must set concrete limits for
-   `max_class_bytes`, `max_total_class_bytes`, eviction/pruning policy if any,
-   and whether identical `class_hash` entries are deduplicated.
+   store and `contracts[contract_id]`. The installer enforces
+   `max_class_bytes` and `max_total_class_bytes` from ConfigParam 85; Phase 0
+   must still set concrete activation values and define eviction/pruning policy
+   if any.
 
 3. **Cross-contract calls in v1.** The recommended v1 rule is no synchronous
    cross-contract calls: each inbound message targets exactly one `contract_id`,

@@ -28,6 +28,24 @@ enum {
 };
 
 enum {
+  AVATA_CONTRACT_ARG_BOOL = 1,
+  AVATA_CONTRACT_ARG_INT32 = 2,
+  AVATA_CONTRACT_ARG_INT64 = 3,
+  AVATA_CONTRACT_ARG_BYTES = 4,
+  AVATA_CONTRACT_ARG_ADDRESS = 5,
+  AVATA_CONTRACT_ARG_UINT256 = 6,
+  AVATA_CONTRACT_ARG_BYTES32 = 7,
+  AVATA_CONTRACT_ARG_BYTES4 = 8,
+  AVATA_CONTRACT_ARG_COUNT_LIMIT = 64
+};
+
+typedef struct AvataContractArg {
+  uint8_t type;
+  const uint8_t* bytes;
+  uint32_t bytes_length;
+} AvataContractArg;
+
+enum {
   AVATA_CONTRACT_HELPER_STORAGE_LOAD = 0,
   AVATA_CONTRACT_HELPER_STORAGE_STORE_BASE = 1,
   AVATA_CONTRACT_HELPER_STORAGE_STORE_BYTE = 2,
@@ -62,9 +80,21 @@ AVATA_CONTRACT_EXPORT int avata_resolve_contract_static_void(
     const char* method_spec,
     AvataContractMethod* resolved_method);
 
+AVATA_CONTRACT_EXPORT int avata_define_contract_class(
+    AvataThread* thread,
+    const char* class_name,
+    const uint8_t* class_bytes,
+    uint32_t class_bytes_length);
+
 AVATA_CONTRACT_EXPORT int avata_invoke_contract_static_void(
     AvataThread* thread,
     AvataContractMethod resolved_method);
+
+AVATA_CONTRACT_EXPORT int avata_invoke_contract_static_void_args(
+    AvataThread* thread,
+    AvataContractMethod resolved_method,
+    const AvataContractArg* args,
+    uint32_t arg_count);
 
 AVATA_CONTRACT_EXPORT int avata_contract_remaining_gas(
     AvataThread* thread,

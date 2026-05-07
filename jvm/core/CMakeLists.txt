@@ -14,6 +14,7 @@ set(JVM_CORE_SRC
   cell-codec.cpp
   class-manifest.cpp
   config-param.cpp
+  deploy-abi.cpp
   dispatch-engine.cpp
   event-host.cpp
   init.cpp

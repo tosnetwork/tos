@@ -3,11 +3,13 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: tos-javac [--avata-build-dir DIR] [--api JAR] [--javac JAVAC] <javac args...>
+usage: tos-javac [--avata-build-dir DIR] [--api JAR] [--javac JAVAC]
+                 [--javap JAVAP] <javac args...>
 
 Compiles contract Java source against Avata's api.jar. The wrapper
-forces Java 8 source/target level and refuses options that would replace the
-contract boot classpath.
+forces Java 8 source/target level, refuses options that would replace the
+contract boot classpath, and checks generated classes against the Avata
+contract verifier profile.
 EOF
 }
 
@@ -22,6 +24,7 @@ avata_dir=$(cd "$script_dir/.." && pwd)
 build_dir=${AVATA_BUILD_DIR:-}
 api_jar=${AVATA_API_JAR:-}
 javac_bin=${AVATA_JAVAC:-}
+javap_bin=${AVATA_JAVAP:-}
 user_args=()
 
 while (($#)); do
@@ -55,6 +58,15 @@ while (($#)); do
       ;;
     --javac=*)
       javac_bin=${1#*=}
+      shift
+      ;;
+    --javap)
+      (($# >= 2)) || die "--javap requires a value"
+      javap_bin=$2
+      shift 2
+      ;;
+    --javap=*)
+      javap_bin=${1#*=}
       shift
       ;;
     --)
@@ -103,5 +115,251 @@ if [[ -z "$javac_bin" ]]; then
   fi
 fi
 
-exec "$javac_bin" -encoding UTF-8 -source 1.8 -target 1.8 \
+if [[ -z "$javap_bin" ]]; then
+  javac_dir=$(cd "$(dirname "$javac_bin")" && pwd)
+  if [[ -x "$javac_dir/javap" ]]; then
+    javap_bin="$javac_dir/javap"
+  else
+    javap_bin=$(command -v javap) || die "javap not found"
+  fi
+fi
+
+[[ -x "$javac_bin" ]] || die "javac is not executable: $javac_bin"
+[[ -x "$javap_bin" ]] || die "javap is not executable: $javap_bin"
+
+profile_header=${AVATA_CONTRACT_PROFILE_HEADER:-$avata_dir/src/avata/contract-profile.h}
+[[ -f "$profile_header" ]] || die "missing contract profile header: $profile_header"
+
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/tos-javac.XXXXXX")
+trap 'rm -rf "$tmp_dir"' EXIT
+marker="$tmp_dir/compile-start"
+allowed_java="$tmp_dir/allowed-java-classes"
+touch "$marker"
+awk -F\" '/^    "/ { print $2 }' "$profile_header" > "$allowed_java"
+
+class_roots=()
+source_roots=()
+expect_d_arg=0
+for arg in "${user_args[@]}"; do
+  if ((expect_d_arg)); then
+    class_roots+=("$arg")
+    expect_d_arg=0
+    continue
+  fi
+  case "$arg" in
+    -d)
+      expect_d_arg=1
+      ;;
+    *.java)
+      source_dir=$(dirname "$arg")
+      source_roots+=("$source_dir")
+      ;;
+  esac
+done
+
+"$javac_bin" -encoding UTF-8 -source 1.8 -target 1.8 \
   -bootclasspath "$api_jar" "${user_args[@]}"
+
+if ((${#class_roots[@]} == 0)); then
+  class_roots=("${source_roots[@]}")
+fi
+if ((${#class_roots[@]} == 0)); then
+  class_roots=(".")
+fi
+
+declare -A seen_roots=()
+class_files=()
+for root in "${class_roots[@]}"; do
+  [[ -n "$root" ]] || continue
+  [[ -d "$root" ]] || continue
+  if [[ -n "${seen_roots[$root]:-}" ]]; then
+    continue
+  fi
+  seen_roots[$root]=1
+  while IFS= read -r -d '' class_file; do
+    class_files+=("$class_file")
+  done < <(find "$root" -type f -name '*.class' -newer "$marker" -print0)
+done
+
+check_class_file() {
+  local class_file=$1
+  local findings
+  if ! findings=$("$javap_bin" -verbose -private "$class_file" 2>&1 | awk \
+      -v class_file="$class_file" '
+FNR == NR {
+  allowed[$0] = 1;
+  next;
+}
+
+function reject(reason, detail) {
+  if (detail != "") {
+    printf "%s: %s: %s\n", class_file, reason, detail;
+  } else {
+    printf "%s: %s\n", class_file, reason;
+  }
+  failed = 1;
+}
+
+function profile_check(name, context) {
+  if (name ~ /^\[/) {
+    return;
+  }
+  if (name ~ /^java\// && !(name in allowed)) {
+    reject("forbidden Java API reference in " context, name);
+  }
+  if (name ~ /^avata\//) {
+    reject("stale avata namespace reference in " context, name);
+  }
+}
+
+function descriptor_check(desc, context, rest, name) {
+  rest = desc;
+  while (match(rest, /L[^;]+;/)) {
+    name = substr(rest, RSTART + 1, RLENGTH - 2);
+    profile_check(name, context);
+    rest = substr(rest, RSTART + RLENGTH);
+  }
+}
+
+function finish_field() {
+  if (field_active && field_static) {
+    if (!(field_final && field_constant &&
+          (field_descriptor ~ /^[ZBCSIJFD]$/ ||
+           field_descriptor == "Ljava/lang/String;"))) {
+      reject("forbidden static field", field_line);
+    }
+  }
+  field_active = 0;
+  field_static = 0;
+  field_final = 0;
+  field_constant = 0;
+  field_descriptor = "";
+  field_line = "";
+}
+
+/^  minor version:/ {
+  minor = $3 + 0;
+  if (minor == 65535) {
+    reject("forbidden preview class-file minor version", $3);
+  }
+}
+
+/^  major version:/ {
+  major = $3 + 0;
+  if (major < 45 || major > 52) {
+    reject("unsupported class-file major version", $3);
+  }
+}
+
+/^  this_class:/ {
+  name = $0;
+  sub(/^.*\/\/ /, "", name);
+  if (name ~ /^java\// || name ~ /^avata\//) {
+    reject("forbidden application class name", name);
+  }
+}
+
+/^[[:space:]]*#[0-9]+ = Class[[:space:]]/ {
+  name = $0;
+  sub(/^.*\/\/ /, "", name);
+  profile_check(name, "constant pool");
+}
+
+/^[[:space:]]*#[0-9]+ = (InvokeDynamic|MethodHandle|MethodType)[[:space:]]/ {
+  reject("forbidden invokedynamic/method-handle constant", $0);
+}
+
+/^BootstrapMethods:/ {
+  reject("forbidden BootstrapMethods attribute", "");
+}
+
+/^  static \{\};$/ {
+  finish_field();
+  reject("forbidden application class initializer", "static {}");
+  method_active = 1;
+  method_line = $0;
+  method_descriptor = "";
+  next;
+}
+
+/^  [^ ].*;$/ {
+  finish_field();
+  member = $0;
+  if (index(member, "(") == 0) {
+    field_active = 1;
+    field_line = member;
+    method_active = 0;
+  } else {
+    method_active = 1;
+    method_line = member;
+  }
+  next;
+}
+
+field_active && /^    descriptor:/ {
+  field_descriptor = $2;
+  descriptor_check(field_descriptor, "field descriptor");
+  next;
+}
+
+method_active && /^    descriptor:/ {
+  method_descriptor = $2;
+  descriptor_check(method_descriptor, "method descriptor");
+  next;
+}
+
+field_active && /^    flags:/ {
+  field_static = index($0, "ACC_STATIC") != 0;
+  field_final = index($0, "ACC_FINAL") != 0;
+  if (index($0, "ACC_ENUM") != 0) {
+    reject("forbidden enum field", field_line);
+  }
+  next;
+}
+
+method_active && /^    flags:/ {
+  if (index($0, "ACC_NATIVE") != 0) {
+    reject("forbidden native method", method_line);
+  }
+  if (index($0, "ACC_SYNCHRONIZED") != 0) {
+    reject("forbidden synchronized method", method_line);
+  }
+  if (index(method_line, " finalize()") != 0 &&
+      method_descriptor == "()V") {
+    reject("forbidden finalizer method", method_line);
+  }
+  if (index($0, "ACC_ENUM") != 0) {
+    reject("forbidden enum method", method_line);
+  }
+  next;
+}
+
+field_active && /^    ConstantValue:/ {
+  field_constant = 1;
+  next;
+}
+
+/^  flags:/ {
+  if (index($0, "ACC_ENUM") != 0) {
+    reject("forbidden enum class", "");
+  }
+  next;
+}
+
+/^    descriptor:/ {
+  descriptor_check($2, "descriptor");
+}
+
+END {
+  finish_field();
+  exit failed ? 1 : 0;
+}
+' "$allowed_java" -); then
+    printf '%s\n' "$findings" >&2
+    return 1
+  fi
+}
+
+for class_file in "${class_files[@]}"; do
+  check_class_file "$class_file"
+done

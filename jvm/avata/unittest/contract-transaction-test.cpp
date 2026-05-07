@@ -132,6 +132,42 @@ bool expectPendingException(vm::Thread* thread, vm::jclass expectedClass)
   return matches;
 }
 
+unsigned char* readFile(const char* path, size_t* length)
+{
+  *length = 0;
+  FILE* file = fopen(path, "rb");
+  if (file == 0) {
+    return 0;
+  }
+  if (fseek(file, 0, SEEK_END) != 0) {
+    fclose(file);
+    return 0;
+  }
+  long size = ftell(file);
+  if (size <= 0) {
+    fclose(file);
+    return 0;
+  }
+  if (fseek(file, 0, SEEK_SET) != 0) {
+    fclose(file);
+    return 0;
+  }
+
+  unsigned char* data = static_cast<unsigned char*>(malloc(size));
+  if (data == 0) {
+    fclose(file);
+    return 0;
+  }
+  size_t read = fread(data, 1, size, file);
+  fclose(file);
+  if (read != static_cast<size_t>(size)) {
+    free(data);
+    return 0;
+  }
+  *length = read;
+  return data;
+}
+
 }  // namespace
 
 TEST(ContractTransactionProfile)
@@ -352,6 +388,7 @@ TEST(ContractStaticVoidInvocationAbi)
   AvataContractMethod okMethod = 0;
   AvataContractMethod failMethod = 0;
   AvataContractMethod burnMethod = 0;
+  AvataContractMethod argsMethod = 0;
 
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
               static_cast<uint32_t>(
@@ -392,6 +429,17 @@ TEST(ContractStaticVoidInvocationAbi)
                       "()V",
                       &burnMethod)));
   assertTrue(burnMethod != 0);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_resolve_contract_static_void(
+                      abiThread,
+                      "ContractEntryPoint",
+                      "args",
+                      "(ZIJLjava/lang/Address;Ljava/lang/Uint256;"
+                      "Ljava/lang/Bytes32;Ljava/lang/Bytes4;"
+                      "Ljava/lang/Bytes;)V",
+                      &argsMethod)));
+  assertTrue(argsMethod != 0);
 
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
               static_cast<uint32_t>(
@@ -400,6 +448,75 @@ TEST(ContractStaticVoidInvocationAbi)
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
               static_cast<uint32_t>(
                   avata_invoke_contract_static_void(abiThread, okMethod)));
+  assertTrue(thread->vtable->ExceptionOccurred(thread) == 0);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(avata_end_contract_transaction(abiThread)));
+
+  uint8_t boolArg[] = {1};
+  uint8_t intArg[] = {0x80, 0, 0, 0};
+  uint8_t longArg[] = {0x80, 0, 0, 0, 0, 0, 0, 0};
+  uint8_t addressArg[36];
+  memset(addressArg, 0, sizeof(addressArg));
+  addressArg[0] = 0xff;
+  addressArg[1] = 0xff;
+  addressArg[2] = 0xff;
+  addressArg[3] = 0xff;
+  addressArg[35] = 0x7f;
+  uint8_t uint256Arg[32];
+  memset(uint256Arg, 0, sizeof(uint256Arg));
+  uint256Arg[31] = 42;
+  uint8_t bytes32Arg[32];
+  memset(bytes32Arg, 0, sizeof(bytes32Arg));
+  bytes32Arg[0] = 0x11;
+  bytes32Arg[31] = 0x22;
+  uint8_t bytes4Arg[] = {1, 2, 3, 4};
+  uint8_t bytesArg[] = {7, 8, 9};
+
+  AvataContractArg contractArgs[] = {
+      {AVATA_CONTRACT_ARG_BOOL, boolArg, sizeof(boolArg)},
+      {AVATA_CONTRACT_ARG_INT32, intArg, sizeof(intArg)},
+      {AVATA_CONTRACT_ARG_INT64, longArg, sizeof(longArg)},
+      {AVATA_CONTRACT_ARG_ADDRESS, addressArg, sizeof(addressArg)},
+      {AVATA_CONTRACT_ARG_UINT256, uint256Arg, sizeof(uint256Arg)},
+      {AVATA_CONTRACT_ARG_BYTES32, bytes32Arg, sizeof(bytes32Arg)},
+      {AVATA_CONTRACT_ARG_BYTES4, bytes4Arg, sizeof(bytes4Arg)},
+      {AVATA_CONTRACT_ARG_BYTES, bytesArg, sizeof(bytesArg)}};
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void_args(
+                      0, argsMethod, contractArgs, 8)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void_args(
+                      abiThread, 0, contractArgs, 8)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void_args(
+                      abiThread, argsMethod, 0, 8)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void_args(
+                      abiThread,
+                      argsMethod,
+                      contractArgs,
+                      AVATA_CONTRACT_ARG_COUNT_LIMIT + 1)));
+
+  uint8_t badBoolArg[] = {2};
+  AvataContractArg badArgs[] = {
+      {AVATA_CONTRACT_ARG_BOOL, badBoolArg, sizeof(badBoolArg)}};
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void_args(
+                      abiThread, argsMethod, badArgs, 1)));
+
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_begin_contract_transaction_with_limits(
+                      abiThread, 100000, 1024 * 1024)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void_args(
+                      abiThread, argsMethod, contractArgs, 8)));
   assertTrue(thread->vtable->ExceptionOccurred(thread) == 0);
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
               static_cast<uint32_t>(avata_end_contract_transaction(abiThread)));
@@ -426,6 +543,90 @@ TEST(ContractStaticVoidInvocationAbi)
   assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
               static_cast<uint32_t>(avata_end_contract_transaction(abiThread)));
 
+  assertEqual(static_cast<uint32_t>(JNI_OK),
+              static_cast<uint32_t>(machine->vtable->DestroyJavaVM(machine)));
+}
+
+TEST(ContractDefineClassAbi)
+{
+  vm::JavaVMOption options[2];
+  options[0].optionString = const_cast<char*>("-Xbootclasspath:rt.jar");
+  options[0].extraInfo = 0;
+  options[1].optionString = const_cast<char*>("-Xmx128m");
+  options[1].extraInfo = 0;
+
+  vm::JavaVMInitArgs args;
+  args.version = JNI_VERSION_1_6;
+  args.nOptions = 2;
+  args.options = options;
+  args.ignoreUnrecognized = JNI_TRUE;
+
+  vm::Machine* machine = 0;
+  vm::Thread* thread = 0;
+  assertEqual(static_cast<uint32_t>(JNI_OK),
+              static_cast<uint32_t>(
+                  JNI_CreateJavaVM(&machine, &thread, &args)));
+  assertTrue(machine != 0);
+  assertTrue(thread != 0);
+
+  size_t classSize = 0;
+  unsigned char* classBytes =
+      readFile("test/ContractEntryPoint.class", &classSize);
+  assertTrue(classBytes != 0);
+  assertTrue(classSize > 0);
+
+  AvataThread* abiThread = reinterpret_cast<AvataThread*>(thread);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
+              static_cast<uint32_t>(
+                  avata_define_contract_class(
+                      0, "ContractEntryPoint", classBytes, classSize)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_BAD_ARGUMENT),
+              static_cast<uint32_t>(
+                  avata_define_contract_class(
+                      abiThread, 0, classBytes, classSize)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_EXCEPTION),
+              static_cast<uint32_t>(
+                  avata_define_contract_class(
+                      abiThread,
+                      "WrongContractEntryPoint",
+                      classBytes,
+                      static_cast<uint32_t>(classSize))));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_define_contract_class(
+                      abiThread,
+                      "ContractEntryPoint",
+                      classBytes,
+                      static_cast<uint32_t>(classSize))));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_define_contract_class(
+                      abiThread,
+                      "ContractEntryPoint",
+                      classBytes,
+                      static_cast<uint32_t>(classSize))));
+
+  AvataContractMethod okMethod = 0;
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_resolve_contract_static_void(
+                      abiThread,
+                      "ContractEntryPoint",
+                      "ok",
+                      "()V",
+                      &okMethod)));
+  assertTrue(okMethod != 0);
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_begin_contract_transaction_with_limits(
+                      abiThread, 10000, 1024 * 1024)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(
+                  avata_invoke_contract_static_void(abiThread, okMethod)));
+  assertEqual(static_cast<uint32_t>(AVATA_CONTRACT_OK),
+              static_cast<uint32_t>(avata_end_contract_transaction(abiThread)));
+
+  free(classBytes);
   assertEqual(static_cast<uint32_t>(JNI_OK),
               static_cast<uint32_t>(machine->vtable->DestroyJavaVM(machine)));
 }

@@ -30,6 +30,7 @@
 #include "jvm/core/cell-codec.h"
 #include "jvm/core/class-manifest.h"
 #include "jvm/core/config-param.h"
+#include "jvm/core/deploy-abi.h"
 #include "jvm/core/dispatch-engine.h"
 #include "jvm/core/event-host.h"
 #include "jvm/core/message-abi.h"
@@ -421,6 +422,30 @@ td::Ref<vm::CellSlice> make_jvm_call_body(std::uint8_t marker = 1) {
   return vm::load_cell_slice_ref(make_jvm_call_cell(marker));
 }
 
+jvm_workchain::JvmDeployDescriptor make_test_jvm_deploy_descriptor(
+    std::uint8_t marker = 1) {
+  jvm_workchain::JvmDeployDescriptor descriptor;
+  descriptor.deployer[31] = marker;
+  descriptor.salt[31] = static_cast<std::uint8_t>(marker + 1);
+  descriptor.class_name = "ContractEntryPoint";
+  descriptor.class_bytes = jvm_workchain::JvmStorageValue{
+      0xca, 0xfe, 0xba, 0xbe, 0x00, marker};
+  descriptor.class_hash = jvm_workchain::compute_jvm_class_hash(
+      descriptor.class_bytes);
+  descriptor.init_args = make_empty_action_list();
+  return descriptor;
+}
+
+jvm_workchain::JvmAvataClassDefinition make_test_jvm_class_definition(
+    std::uint8_t marker = 1) {
+  auto descriptor = make_test_jvm_deploy_descriptor(marker);
+  jvm_workchain::JvmAvataClassDefinition definition;
+  definition.class_hash = descriptor.class_hash;
+  definition.class_name = descriptor.class_name;
+  definition.class_bytes = descriptor.class_bytes;
+  return definition;
+}
+
 jvm_workchain::JvmAvataClassManifestEntry make_test_jvm_class_manifest_entry(
     std::uint8_t marker = 1,
     const char* method_name = "ok") {
@@ -438,6 +463,15 @@ td::Ref<vm::Cell> make_jvm_class_manifest_cell(std::uint8_t marker = 1) {
   std::vector<jvm_workchain::JvmAvataClassManifestEntry> entries;
   entries.push_back(make_test_jvm_class_manifest_entry(marker));
   auto cell = jvm_workchain::encode_jvm_avata_class_manifest(entries);
+  CHECK(cell.not_null());
+  return cell;
+}
+
+td::Ref<vm::Cell> make_jvm_class_state_cell(std::uint8_t marker = 1) {
+  jvm_workchain::JvmAvataClassState state;
+  state.manifest_entries.push_back(make_test_jvm_class_manifest_entry(marker));
+  state.classes.push_back(make_test_jvm_class_definition(marker));
+  auto cell = jvm_workchain::encode_jvm_avata_class_state(state);
   CHECK(cell.not_null());
   return cell;
 }
@@ -867,7 +901,7 @@ TEST(JvmWorkchainCore, ExecutorStateCodecRoundTripsStorageRoot) {
   auto cfg = make_test_jvm_config();
   state.stdlib_hash = cfg.stdlib_hash;
   state.storage_root = storage.root_cell();
-  state.class_state_root = make_jvm_class_manifest_cell(0x51);
+  state.class_state_root = make_jvm_class_state_cell(0x51);
 
   auto encoded = encode_jvm_executor_state(state);
   CHECK(encoded.not_null());
@@ -879,6 +913,9 @@ TEST(JvmWorkchainCore, ExecutorStateCodecRoundTripsStorageRoot) {
   CHECK(decoded.storage_root.not_null());
   CHECK(decoded.class_state_root.not_null());
   check_jvm_class_manifest_marker(decoded.class_state_root, 0x51);
+  CHECK(parse_jvm_avata_class_state(decoded.class_state_root)
+            .move_as_ok()
+            .classes.size() == 1);
 
   JvmStorageCellHost decoded_storage(decoded.storage_root);
   auto loaded = decoded_storage.load(slot).move_as_ok();
@@ -937,6 +974,90 @@ TEST(JvmWorkchainCore, MessageAbiCallDescriptorRoundTripsAndRejectsMalformed) {
   CHECK(trailing_bits.store_ref_bool(descriptor.args));
   CHECK(parse_jvm_call_descriptor(
       vm::load_cell_slice_ref(trailing_bits.finalize())).is_error());
+
+  CHECK(validate_jvm_static_void_call_args("()V", descriptor.args).is_ok());
+  CHECK(validate_jvm_static_void_call_args("(I)V", descriptor.args).is_error());
+
+  JvmCallDescriptor non_empty_args = descriptor;
+  non_empty_args.args = make_marker_cell(0x7a);
+  auto non_empty_encoded = encode_jvm_call_descriptor(non_empty_args);
+  CHECK(non_empty_encoded.not_null());
+  auto parsed_non_empty_args = parse_jvm_call_descriptor(
+      vm::load_cell_slice_ref(non_empty_encoded)).move_as_ok();
+  CHECK(validate_jvm_static_void_call_args(
+            "()V", parsed_non_empty_args.args).is_error());
+
+  vm::CellBuilder ref_args;
+  CHECK(ref_args.store_ref_bool(descriptor.args));
+  CHECK(validate_jvm_static_void_call_args(
+            "()V", ref_args.finalize()).is_error());
+  CHECK(validate_jvm_static_void_call_args("()V", {}).is_error());
+}
+
+TEST(JvmWorkchainCore, MessageAbiTypedArgsCodecValidatesDescriptors) {
+  using namespace jvm_workchain;
+
+  JvmArgs args;
+  args.values.push_back(
+      JvmTypedArg{JvmArgType::Bool, JvmStorageValue{1}});
+  args.values.push_back(
+      JvmTypedArg{JvmArgType::Int32, JvmStorageValue{0, 0, 0, 42}});
+  args.values.push_back(
+      JvmTypedArg{JvmArgType::Int64,
+                  JvmStorageValue{0, 0, 0, 0, 0, 0, 0, 43}});
+  args.values.push_back(
+      JvmTypedArg{JvmArgType::Address, JvmStorageValue(36, 0x11)});
+  args.values.push_back(
+      JvmTypedArg{JvmArgType::Uint256, JvmStorageValue(32, 0x33)});
+  args.values.push_back(
+      JvmTypedArg{JvmArgType::Bytes32, JvmStorageValue(32, 0x22)});
+  args.values.push_back(
+      JvmTypedArg{JvmArgType::Bytes4, JvmStorageValue{1, 2, 3, 4}});
+  args.values.push_back(
+      JvmTypedArg{JvmArgType::Bytes, JvmStorageValue{7, 8, 9}});
+
+  auto encoded = encode_jvm_args(args);
+  CHECK(encoded.not_null());
+
+  auto parsed = parse_jvm_args(encoded).move_as_ok();
+  CHECK(parsed.schema_version == kJvmArgsSchemaVersion);
+  CHECK(parsed.values.size() == args.values.size());
+  CHECK(parsed.values[0].type == JvmArgType::Bool);
+  CHECK(parsed.values[7].bytes == (JvmStorageValue{7, 8, 9}));
+
+  auto types = parse_jvm_method_argument_types(
+      "(ZIJLjava/lang/Address;Ljava/lang/Uint256;Ljava/lang/Bytes32;"
+      "Ljava/lang/Bytes4;Ljava/lang/Bytes;)V")
+                   .move_as_ok();
+  CHECK(types.size() == args.values.size());
+  CHECK(types[0] == JvmArgType::Bool);
+  CHECK(types[1] == JvmArgType::Int32);
+  CHECK(types[2] == JvmArgType::Int64);
+  CHECK(types[3] == JvmArgType::Address);
+  CHECK(types[4] == JvmArgType::Uint256);
+  CHECK(types[5] == JvmArgType::Bytes32);
+  CHECK(types[6] == JvmArgType::Bytes4);
+  CHECK(types[7] == JvmArgType::Bytes);
+
+  CHECK(validate_jvm_typed_call_args(
+            "(ZIJLjava/lang/Address;Ljava/lang/Uint256;Ljava/lang/Bytes32;"
+            "Ljava/lang/Bytes4;Ljava/lang/Bytes;)V",
+            encoded)
+            .is_ok());
+  CHECK(validate_jvm_typed_call_args(
+            "(JLjava/lang/Address;Ljava/lang/Bytes32;Ljava/lang/Bytes;)V",
+            encoded)
+            .is_error());
+  CHECK(validate_jvm_typed_call_args("(Z)V", encoded).is_error());
+  CHECK(parse_jvm_method_argument_types("(F)V").is_error());
+  CHECK(parse_jvm_method_argument_types("(I)I").is_error());
+
+  JvmArgs bad_bool;
+  bad_bool.values.push_back(
+      JvmTypedArg{JvmArgType::Bool, JvmStorageValue{2}});
+  CHECK(encode_jvm_args(bad_bool).is_null());
+
+  CHECK(parse_jvm_args(make_marker_cell(0x01)).is_error());
 }
 
 TEST(JvmWorkchainCore, ClassManifestRoundTripsAndRejectsMalformed) {
@@ -945,6 +1066,7 @@ TEST(JvmWorkchainCore, ClassManifestRoundTripsAndRejectsMalformed) {
   std::vector<JvmAvataClassManifestEntry> entries;
   entries.push_back(make_test_jvm_class_manifest_entry(0x42, "ok"));
   entries.push_back(make_test_jvm_class_manifest_entry(0x43, "burn"));
+  entries[1].method_spec = "(ILjava/lang/Bytes;)V";
 
   auto encoded = encode_jvm_avata_class_manifest(entries);
   CHECK(encoded.not_null());
@@ -960,6 +1082,7 @@ TEST(JvmWorkchainCore, ClassManifestRoundTripsAndRejectsMalformed) {
   auto found = find_jvm_avata_class_manifest_entry(
       encoded, make_test_jvm_call_descriptor(0x43)).move_as_ok();
   CHECK(found.method_name == "burn");
+  CHECK(found.method_spec == "(ILjava/lang/Bytes;)V");
   CHECK(find_jvm_avata_class_manifest_entry(
             encoded, make_test_jvm_call_descriptor(0x44)).is_error());
 
@@ -974,9 +1097,170 @@ TEST(JvmWorkchainCore, ClassManifestRoundTripsAndRejectsMalformed) {
   bad_entry.contract_id = {};
   CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
 
+  bad_entry = entries[0];
+  bad_entry.class_name = "/ContractEntryPoint";
+  CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
+
+  bad_entry = entries[0];
+  bad_entry.class_name = "Contract.EntryPoint";
+  CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
+
+  bad_entry = entries[0];
+  bad_entry.method_name = "<init>";
+  CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
+
+  bad_entry = entries[0];
+  bad_entry.method_spec = "(F)V";
+  CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
+
   CHECK(encode_jvm_avata_class_manifest(
             std::vector<JvmAvataClassManifestEntry>{entries[0], entries[0]})
             .is_null());
+}
+
+TEST(JvmWorkchainCore, ClassStateStoresDeployBytesAndKeepsManifestResolver) {
+  using namespace jvm_workchain;
+
+  JvmAvataClassState state;
+  state.manifest_entries.push_back(make_test_jvm_class_manifest_entry(0x31));
+  state.classes.push_back(make_test_jvm_class_definition(0x31));
+
+  auto encoded = encode_jvm_avata_class_state(state);
+  CHECK(encoded.not_null());
+
+  auto manifest_entries = parse_jvm_avata_class_manifest(encoded).move_as_ok();
+  CHECK(manifest_entries.size() == 1);
+  CHECK(manifest_entries[0].method_name == "ok");
+  check_jvm_class_manifest_marker(encoded, 0x31);
+
+  auto parsed_state = parse_jvm_avata_class_state(encoded).move_as_ok();
+  CHECK(parsed_state.manifest_entries.size() == 1);
+  CHECK(parsed_state.classes.size() == 1);
+  CHECK(parsed_state.classes[0].class_name == "ContractEntryPoint");
+  CHECK(parsed_state.classes[0].class_hash == state.classes[0].class_hash);
+  CHECK(parsed_state.classes[0].class_bytes == state.classes[0].class_bytes);
+
+  auto definition = find_jvm_avata_class_definition(
+      encoded, "ContractEntryPoint").move_as_ok();
+  CHECK(definition.class_bytes == state.classes[0].class_bytes);
+  CHECK(parse_jvm_avata_class_state(make_jvm_class_manifest_cell(0x32))
+            .move_as_ok()
+            .classes.empty());
+
+  auto duplicate = state;
+  duplicate.classes.push_back(state.classes[0]);
+  CHECK(encode_jvm_avata_class_state(duplicate).is_null());
+
+  auto bad_hash = state;
+  bad_hash.classes[0].class_hash[0] ^= 0xff;
+  CHECK(encode_jvm_avata_class_state(bad_hash).is_null());
+
+  auto descriptor = make_test_jvm_deploy_descriptor(0x33);
+  auto installed = install_jvm_deploy_descriptor(
+      make_jvm_class_manifest_cell(0x33), descriptor).move_as_ok();
+  CHECK(installed.contract_id ==
+        derive_jvm_contract_id(descriptor).move_as_ok());
+
+  auto installed_state = parse_jvm_avata_class_state(
+      installed.class_state_root).move_as_ok();
+  CHECK(installed_state.manifest_entries.size() == 1);
+  CHECK(installed_state.classes.size() == 1);
+  CHECK(installed_state.classes[0].class_bytes == descriptor.class_bytes);
+
+  auto installed_again = install_jvm_deploy_descriptor(
+      installed.class_state_root, descriptor).move_as_ok();
+  CHECK(parse_jvm_avata_class_state(installed_again.class_state_root)
+            .move_as_ok()
+            .classes.size() == 1);
+
+  JvmClassStoreLimits exact_limits;
+  exact_limits.max_class_bytes =
+      static_cast<std::uint32_t>(descriptor.class_bytes.size());
+  exact_limits.max_total_class_bytes =
+      static_cast<std::uint32_t>(descriptor.class_bytes.size());
+  CHECK(install_jvm_deploy_descriptor(
+            make_jvm_class_manifest_cell(0x33), descriptor, exact_limits)
+            .is_ok());
+  auto config_limits = make_test_jvm_config();
+  config_limits.max_class_bytes =
+      static_cast<std::uint32_t>(descriptor.class_bytes.size());
+  config_limits.max_total_class_bytes =
+      static_cast<std::uint32_t>(descriptor.class_bytes.size());
+  CHECK(install_jvm_deploy_descriptor(
+            make_jvm_class_manifest_cell(0x33), descriptor, config_limits)
+            .is_ok());
+
+  JvmClassStoreLimits too_small_class = exact_limits;
+  --too_small_class.max_class_bytes;
+  CHECK(install_jvm_deploy_descriptor(
+            make_jvm_class_manifest_cell(0x33),
+            descriptor,
+            too_small_class)
+            .is_error());
+
+  auto second_descriptor = make_test_jvm_deploy_descriptor(0x34);
+  second_descriptor.class_name = "SecondContractEntryPoint";
+  auto first_with_limits = install_jvm_deploy_descriptor(
+      make_jvm_class_manifest_cell(0x33), descriptor, exact_limits)
+                               .move_as_ok();
+  CHECK(install_jvm_deploy_descriptor(
+            first_with_limits.class_state_root,
+            second_descriptor,
+            exact_limits)
+            .is_error());
+
+  auto conflicting = descriptor;
+  conflicting.class_bytes.push_back(0x99);
+  conflicting.class_hash = compute_jvm_class_hash(conflicting.class_bytes);
+  CHECK(install_jvm_deploy_descriptor(
+            installed.class_state_root, conflicting).is_error());
+}
+
+TEST(JvmWorkchainCore, DeployAbiRoundTripsAndDerivesContractId) {
+  using namespace jvm_workchain;
+
+  auto descriptor = make_test_jvm_deploy_descriptor(0x21);
+  auto encoded = encode_jvm_deploy_descriptor(descriptor);
+  CHECK(encoded.not_null());
+
+  auto parsed = parse_jvm_deploy_descriptor(
+      vm::load_cell_slice_ref(encoded)).move_as_ok();
+  CHECK(parsed.schema_version == kJvmDeployDescriptorSchemaVersion);
+  CHECK(parsed.deployer == descriptor.deployer);
+  CHECK(parsed.salt == descriptor.salt);
+  CHECK(parsed.class_hash == descriptor.class_hash);
+  CHECK(parsed.class_name == "ContractEntryPoint");
+  CHECK(parsed.class_bytes == descriptor.class_bytes);
+  CHECK(parsed.init_args.not_null());
+  CHECK(parsed.init_args->get_hash() == descriptor.init_args->get_hash());
+
+  auto contract_id = derive_jvm_contract_id(parsed).move_as_ok();
+  CHECK(contract_id != JvmContractId{});
+  CHECK(derive_jvm_contract_id(parsed).move_as_ok() == contract_id);
+
+  auto different_salt = parsed;
+  different_salt.salt[0] ^= 0x7f;
+  CHECK(derive_jvm_contract_id(different_salt).move_as_ok() != contract_id);
+
+  auto bad = descriptor;
+  bad.class_hash[0] ^= 0xff;
+  CHECK(encode_jvm_deploy_descriptor(bad).is_null());
+
+  bad = descriptor;
+  bad.class_bytes.clear();
+  bad.class_hash = compute_jvm_class_hash(bad.class_bytes);
+  CHECK(encode_jvm_deploy_descriptor(bad).is_null());
+
+  bad = descriptor;
+  bad.class_name = "Contract.EntryPoint";
+  CHECK(encode_jvm_deploy_descriptor(bad).is_null());
+
+  bad = descriptor;
+  bad.deployer = {};
+  CHECK(encode_jvm_deploy_descriptor(bad).is_null());
+
+  CHECK(parse_jvm_deploy_descriptor(
+            vm::load_cell_slice_ref(make_marker_cell(0x01))).is_error());
 }
 
 TEST(JvmWorkchainCore, LinkedAvataExecutionApiUsesInterpreterAbi) {

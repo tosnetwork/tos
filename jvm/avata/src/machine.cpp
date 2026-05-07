@@ -24,6 +24,8 @@
 #include <avata/util/runtime-array.h>
 #include <avata/util/math.h>
 
+#include <limits.h>
+
 #if defined(PLATFORM_WINDOWS)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -5973,6 +5975,36 @@ GcClass* defineClass(Thread* t,
   return c;
 }
 
+uint64_t defineContractClass(Thread* t, uintptr_t* arguments)
+{
+  const char* expectedName = reinterpret_cast<const char*>(arguments[0]);
+  const uint8_t* buffer = reinterpret_cast<const uint8_t*>(arguments[1]);
+  unsigned length = static_cast<unsigned>(arguments[2]);
+
+  GcClassSpace* loader = roots(t)->appClassSpace();
+  PROTECT(t, loader);
+
+  GcByteArray* spec = makeByteArray(t, strlen(expectedName) + 1);
+  memcpy(spec->body().begin(), expectedName, spec->length());
+  PROTECT(t, spec);
+
+  GcClass* existing = findLoadedClass(t, loader, spec);
+  if (existing) {
+    return reinterpret_cast<uintptr_t>(existing);
+  }
+
+  GcClass* class_ = parseClass(
+      t, loader, buffer, length, GcNoClassDefFoundError::Type, true);
+  PROTECT(t, class_);
+  if (!byteArrayEquals(class_->name(), expectedName)) {
+    throwNew(t, GcNoClassDefFoundError::Type, "%s", expectedName);
+    return 0;
+  }
+
+  saveLoadedClass(t, loader, class_);
+  return reinterpret_cast<uintptr_t>(class_);
+}
+
 void populateMultiArray(Thread* t,
                         object array,
                         int32_t* counts,
@@ -6094,6 +6126,358 @@ int avata_pending_contract_exception_status(Thread* t)
   return status;
 }
 
+bool avata_contract_arg_has_bytes(const AvataContractArg& arg)
+{
+  return arg.bytes_length == 0 || arg.bytes != 0;
+}
+
+uint32_t read_be32(const uint8_t* bytes)
+{
+  return (static_cast<uint32_t>(bytes[0]) << 24)
+         | (static_cast<uint32_t>(bytes[1]) << 16)
+         | (static_cast<uint32_t>(bytes[2]) << 8)
+         | static_cast<uint32_t>(bytes[3]);
+}
+
+uint64_t read_be64(const uint8_t* bytes)
+{
+  uint64_t value = 0;
+  for (unsigned i = 0; i < 8; ++i) {
+    value = (value << 8) | bytes[i];
+  }
+  return value;
+}
+
+jint read_be_jint(const uint8_t* bytes)
+{
+  uint32_t value = read_be32(bytes);
+  int64_t signedValue = value <= 0x7fffffffU
+                            ? static_cast<int64_t>(value)
+                            : static_cast<int64_t>(value) - 0x100000000LL;
+  return static_cast<jint>(signedValue);
+}
+
+jlong read_be_jlong(const uint8_t* bytes)
+{
+  uint64_t value = read_be64(bytes);
+  if (value <= 0x7fffffffffffffffULL) {
+    return static_cast<jlong>(value);
+  }
+  if (value == 0x8000000000000000ULL) {
+    return static_cast<jlong>(-9223372036854775807LL - 1);
+  }
+  return -static_cast<jlong>(~value + 1);
+}
+
+int make_java_byte_array(Thread* t,
+                         const uint8_t* bytes,
+                         uint32_t length,
+                         jbyteArray* out)
+{
+  if (out == 0 || length > static_cast<uint32_t>(INT32_MAX) ||
+      (length != 0 && bytes == 0)) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  *out = t->vtable->NewByteArray(t, static_cast<jsize>(length));
+  int status = avata_pending_contract_exception_status(t);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+  if (*out == 0) {
+    return AVATA_CONTRACT_EXCEPTION;
+  }
+
+  if (length != 0) {
+    t->vtable->SetByteArrayRegion(
+        t,
+        *out,
+        0,
+        static_cast<jsize>(length),
+        reinterpret_cast<const jbyte*>(bytes));
+    status = avata_pending_contract_exception_status(t);
+    if (status != AVATA_CONTRACT_OK) {
+      return status;
+    }
+  }
+
+  return AVATA_CONTRACT_OK;
+}
+
+uint64_t initialize_boot_class_run(Thread* t, uintptr_t* arguments)
+{
+  const char* class_name = reinterpret_cast<const char*>(arguments[0]);
+  unsigned length = static_cast<unsigned>(arguments[1]);
+
+  GcByteArray* name = makeByteArray(t, length + 1);
+  memcpy(name->body().begin(), class_name, length);
+  name->body()[length] = 0;
+  PROTECT(t, name);
+
+  GcClass* class_ = resolveClass(t, roots(t)->bootClassSpace(), name);
+  PROTECT(t, class_);
+
+  if (t->m->classpath->mayInitClasses()) {
+    initClass(t, class_);
+  }
+
+  return 1;
+}
+
+int initialize_boot_class(Thread* t, const char* class_name, unsigned length)
+{
+  uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(class_name),
+                           static_cast<uintptr_t>(length)};
+  uint64_t initialized = run(t, initialize_boot_class_run, arguments);
+  int status = avata_pending_contract_exception_status(t);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+  return initialized ? AVATA_CONTRACT_OK : AVATA_CONTRACT_EXCEPTION;
+}
+
+bool contract_arg_class_requires_preinit(const char* begin, unsigned length)
+{
+  const int8_t* name_begin = reinterpret_cast<const int8_t*>(begin);
+  const int8_t* name_end = name_begin + length;
+  return segmentEqualsCString(
+             name_begin,
+             name_end,
+             reinterpret_cast<const int8_t*>("java/lang/Address"))
+         || segmentEqualsCString(
+             name_begin,
+             name_end,
+             reinterpret_cast<const int8_t*>("java/lang/Uint256"))
+         || segmentEqualsCString(
+             name_begin,
+             name_end,
+             reinterpret_cast<const int8_t*>("java/lang/Bytes32"))
+         || segmentEqualsCString(
+             name_begin,
+             name_end,
+             reinterpret_cast<const int8_t*>("java/lang/Bytes4"))
+         || segmentEqualsCString(
+             name_begin,
+             name_end,
+             reinterpret_cast<const int8_t*>("java/lang/Bytes"));
+}
+
+int preinitialize_contract_arg_classes(Thread* t, const char* method_spec)
+{
+  if (method_spec == 0 || method_spec[0] != '(') {
+    return AVATA_CONTRACT_OK;
+  }
+
+  const char* p = method_spec + 1;
+  while (*p && *p != ')') {
+    while (*p == '[') {
+      ++p;
+    }
+    if (*p == 'L') {
+      const char* begin = p + 1;
+      const char* end = begin;
+      while (*end && *end != ';') {
+        ++end;
+      }
+      if (*end != ';') {
+        return AVATA_CONTRACT_OK;
+      }
+      unsigned length = static_cast<unsigned>(end - begin);
+      if (contract_arg_class_requires_preinit(begin, length)) {
+        static const char ContractHexName[] = "java/lang/ContractHex";
+        int status = initialize_boot_class(
+            t, ContractHexName, sizeof(ContractHexName) - 1);
+        if (status != AVATA_CONTRACT_OK) {
+          return status;
+        }
+        status = initialize_boot_class(t, begin, length);
+        if (status != AVATA_CONTRACT_OK) {
+          return status;
+        }
+      }
+      p = end + 1;
+    } else if (*p) {
+      ++p;
+    }
+  }
+
+  return AVATA_CONTRACT_OK;
+}
+
+uint64_t find_boot_jclass(Thread* t, uintptr_t* arguments)
+{
+  const char* class_name = reinterpret_cast<const char*>(arguments[0]);
+  GcByteArray* name = makeByteArray(t, "%s", class_name);
+  PROTECT(t, name);
+
+  GcClass* class_ = resolveClass(t, roots(t)->bootClassSpace(), name);
+  PROTECT(t, class_);
+
+  if (t->m->classpath->mayInitClasses()) {
+    initClass(t, class_);
+  }
+
+  return reinterpret_cast<uint64_t>(
+      makeLocalReference(t, getJClass(t, class_)));
+}
+
+int make_java_value_object(Thread* t,
+                           const char* class_name,
+                           const char* constructor_spec,
+                           const jvalue* constructor_args,
+                           jobject* out)
+{
+  if (out == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  *out = 0;
+  uintptr_t find_args[] = {reinterpret_cast<uintptr_t>(class_name)};
+  jclass class_ = reinterpret_cast<jclass>(
+      run(t, find_boot_jclass, find_args));
+  int status = avata_pending_contract_exception_status(t);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+  if (class_ == 0) {
+    return AVATA_CONTRACT_EXCEPTION;
+  }
+
+  jmethodID constructor =
+      t->vtable->GetMethodID(t, class_, "<init>", constructor_spec);
+  status = avata_pending_contract_exception_status(t);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+  if (constructor == 0) {
+    return AVATA_CONTRACT_EXCEPTION;
+  }
+
+  *out = t->vtable->NewObjectA(t, class_, constructor, constructor_args);
+  status = avata_pending_contract_exception_status(t);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+  if (*out == 0) {
+    return AVATA_CONTRACT_EXCEPTION;
+  }
+
+  return AVATA_CONTRACT_OK;
+}
+
+int make_byte_backed_value(Thread* t,
+                           const char* class_name,
+                           const uint8_t* bytes,
+                           uint32_t length,
+                           jvalue* out)
+{
+  jbyteArray array = 0;
+  int status = make_java_byte_array(t, bytes, length, &array);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+
+  jvalue constructor_args[1];
+  constructor_args[0].l = reinterpret_cast<jobject>(array);
+
+  jobject object = 0;
+  status = make_java_value_object(
+      t, class_name, "([B)V", constructor_args, &object);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+
+  out->l = object;
+  return AVATA_CONTRACT_OK;
+}
+
+int prepare_contract_arg(Thread* t,
+                         const AvataContractArg& arg,
+                         jvalue* out)
+{
+  if (out == 0 || !avata_contract_arg_has_bytes(arg)) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  switch (arg.type) {
+  case AVATA_CONTRACT_ARG_BOOL:
+    if (arg.bytes_length != 1 ||
+        (arg.bytes[0] != 0 && arg.bytes[0] != 1)) {
+      return AVATA_CONTRACT_BAD_ARGUMENT;
+    }
+    out->i = arg.bytes[0] != 0 ? 1 : 0;
+    return AVATA_CONTRACT_OK;
+
+  case AVATA_CONTRACT_ARG_INT32:
+    if (arg.bytes_length != 4) {
+      return AVATA_CONTRACT_BAD_ARGUMENT;
+    }
+    out->i = read_be_jint(arg.bytes);
+    return AVATA_CONTRACT_OK;
+
+  case AVATA_CONTRACT_ARG_INT64:
+    if (arg.bytes_length != 8) {
+      return AVATA_CONTRACT_BAD_ARGUMENT;
+    }
+    out->j = read_be_jlong(arg.bytes);
+    return AVATA_CONTRACT_OK;
+
+  case AVATA_CONTRACT_ARG_BYTES:
+    return make_byte_backed_value(
+        t, "java/lang/Bytes", arg.bytes, arg.bytes_length, out);
+
+  case AVATA_CONTRACT_ARG_ADDRESS: {
+    if (arg.bytes_length != 36) {
+      return AVATA_CONTRACT_BAD_ARGUMENT;
+    }
+
+    jbyteArray account_id = 0;
+    int status = make_java_byte_array(t, arg.bytes + 4, 32, &account_id);
+    if (status != AVATA_CONTRACT_OK) {
+      return status;
+    }
+
+    jvalue constructor_args[2];
+    constructor_args[0].i = read_be_jint(arg.bytes);
+    constructor_args[1].l = reinterpret_cast<jobject>(account_id);
+
+    jobject object = 0;
+    status = make_java_value_object(
+        t, "java/lang/Address", "(I[B)V", constructor_args, &object);
+    if (status != AVATA_CONTRACT_OK) {
+      return status;
+    }
+
+    out->l = object;
+    return AVATA_CONTRACT_OK;
+  }
+
+  case AVATA_CONTRACT_ARG_UINT256:
+    if (arg.bytes_length != 32) {
+      return AVATA_CONTRACT_BAD_ARGUMENT;
+    }
+    return make_byte_backed_value(
+        t, "java/lang/Uint256", arg.bytes, arg.bytes_length, out);
+
+  case AVATA_CONTRACT_ARG_BYTES32:
+    if (arg.bytes_length != 32) {
+      return AVATA_CONTRACT_BAD_ARGUMENT;
+    }
+    return make_byte_backed_value(
+        t, "java/lang/Bytes32", arg.bytes, arg.bytes_length, out);
+
+  case AVATA_CONTRACT_ARG_BYTES4:
+    if (arg.bytes_length != 4) {
+      return AVATA_CONTRACT_BAD_ARGUMENT;
+    }
+    return make_byte_backed_value(
+        t, "java/lang/Bytes4", arg.bytes, arg.bytes_length, out);
+
+  default:
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+}
+
 }  // namespace
 
 extern "C" AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction(
@@ -6170,7 +6554,45 @@ extern "C" AVATA_CONTRACT_EXPORT int avata_resolve_contract_static_void(
     return AVATA_CONTRACT_EXCEPTION;
   }
 
+  status = preinitialize_contract_arg_classes(t, method_spec);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+
   *resolved_method = static_cast<AvataContractMethod>(method);
+  return AVATA_CONTRACT_OK;
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_define_contract_class(
+    AvataThread* thread,
+    const char* class_name,
+    const uint8_t* class_bytes,
+    uint32_t class_bytes_length)
+{
+  if (thread == 0 || class_name == 0 || class_bytes == 0 ||
+      class_bytes_length == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->vtable == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  uintptr_t arguments[] = {reinterpret_cast<uintptr_t>(class_name),
+                           reinterpret_cast<uintptr_t>(class_bytes),
+                           static_cast<uintptr_t>(class_bytes_length)};
+
+  GcClass* class_ = reinterpret_cast<GcClass*>(
+      run(t, defineContractClass, arguments));
+  int status = avata_pending_contract_exception_status(t);
+  if (status != AVATA_CONTRACT_OK) {
+    return status;
+  }
+  if (class_ == 0) {
+    return AVATA_CONTRACT_EXCEPTION;
+  }
+
   return AVATA_CONTRACT_OK;
 }
 
@@ -6190,6 +6612,47 @@ extern "C" AVATA_CONTRACT_EXPORT int avata_invoke_contract_static_void(
   t->vtable->CallStaticVoidMethodA(
       t, 0, static_cast<jmethodID>(resolved_method), 0);
   return avata_pending_contract_exception_status(t);
+}
+
+extern "C" AVATA_CONTRACT_EXPORT int avata_invoke_contract_static_void_args(
+    AvataThread* thread,
+    AvataContractMethod resolved_method,
+    const AvataContractArg* args,
+    uint32_t arg_count)
+{
+  if (thread == 0 || resolved_method == 0 ||
+      (arg_count != 0 && args == 0) ||
+      arg_count > AVATA_CONTRACT_ARG_COUNT_LIMIT) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  Thread* t = reinterpret_cast<Thread*>(thread);
+  if (t->vtable == 0) {
+    return AVATA_CONTRACT_BAD_ARGUMENT;
+  }
+
+  const unsigned localFrameCapacity = 4 + (arg_count * 4);
+  if (!t->m->processor->pushLocalFrame(t, localFrameCapacity)) {
+    return AVATA_CONTRACT_OUT_OF_MEMORY;
+  }
+
+  RUNTIME_ARRAY(jvalue, values, arg_count == 0 ? 1 : arg_count);
+  for (uint32_t i = 0; i < arg_count; ++i) {
+    int status = prepare_contract_arg(t, args[i], RUNTIME_ARRAY_BODY(values) + i);
+    if (status != AVATA_CONTRACT_OK) {
+      t->m->processor->popLocalFrame(t);
+      return status;
+    }
+  }
+
+  t->vtable->CallStaticVoidMethodA(
+      t,
+      0,
+      static_cast<jmethodID>(resolved_method),
+      arg_count == 0 ? 0 : RUNTIME_ARRAY_BODY(values));
+  int status = avata_pending_contract_exception_status(t);
+  t->m->processor->popLocalFrame(t);
+  return status;
 }
 
 extern "C" AVATA_CONTRACT_EXPORT int avata_contract_remaining_gas(

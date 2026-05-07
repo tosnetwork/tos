@@ -164,8 +164,11 @@ jvm/avata/tools/tos-javac --avata-build-dir jvm/avata/build/linux-x86_64 \
 ```
 
 The wrapper forces Java 8 source/target settings, uses `api.jar` as
-the boot classpath, and rejects user-supplied bootclasspath/source/target
-overrides.
+the boot classpath, rejects user-supplied bootclasspath/source/target
+overrides, and checks generated `.class` files against the Avata contract
+profile before returning success. That post-compile check catches bytecode
+`javac` can emit but the contract verifier rejects, including mutable static
+fields and Java 8 lambda/`invokedynamic` output.
 
 The Avata tests cover the interpreter loop, class loading, exception handling,
 and the admitted runtime API profile. TOS cell codec, gas metering, and workchain

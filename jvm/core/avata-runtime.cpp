@@ -11,8 +11,12 @@
 #include "td/utils/logging.h"
 
 #include <cstdint>
+#include <limits>
+#include <map>
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace vm {
 class Machine;
@@ -72,8 +76,8 @@ namespace jvm_workchain {
 
 namespace {
 
-struct LinkedAvataRuntimeState {
-    ~LinkedAvataRuntimeState() {
+struct LinkedAvataVmState {
+    ~LinkedAvataVmState() {
         auto* machine_prefix =
             reinterpret_cast<AvataMachinePrefix*>(machine);
         if (machine_prefix != nullptr && machine_prefix->vtable != nullptr &&
@@ -89,11 +93,164 @@ struct LinkedAvataRuntimeState {
     std::vector<std::string> option_storage;
 };
 
+struct LinkedAvataRuntimeState {
+    JvmLinkedAvataRuntimeOptions options;
+    std::map<std::string, std::shared_ptr<LinkedAvataVmState>> vm_cache;
+};
+
+struct LinkedAvataInvocation {
+    AvataContractMethod method{0};
+    JvmArgs args;
+};
+
 int invoke_linked_static_void_contract(void* thread, void* invocation_user) {
-    return avata_invoke_contract_static_void(
+    auto* invocation = static_cast<LinkedAvataInvocation*>(invocation_user);
+    if (invocation == nullptr || invocation->method == 0) {
+        return AVATA_CONTRACT_BAD_ARGUMENT;
+    }
+
+    std::vector<AvataContractArg> args;
+    args.reserve(invocation->args.values.size());
+    for (const auto& value : invocation->args.values) {
+        if (value.bytes.size() >
+            std::numeric_limits<std::uint32_t>::max()) {
+            return AVATA_CONTRACT_BAD_ARGUMENT;
+        }
+        AvataContractArg arg;
+        arg.type = static_cast<std::uint8_t>(value.type);
+        arg.bytes = value.bytes.empty() ? nullptr : value.bytes.data();
+        arg.bytes_length = static_cast<std::uint32_t>(value.bytes.size());
+        args.push_back(arg);
+    }
+
+    return avata_invoke_contract_static_void_args(
         reinterpret_cast<AvataThread*>(thread),
-        static_cast<AvataContractMethod>(
-            reinterpret_cast<std::uintptr_t>(invocation_user)));
+        invocation->method,
+        args.empty() ? nullptr : args.data(),
+        static_cast<std::uint32_t>(args.size()));
+}
+
+td::Result<std::shared_ptr<LinkedAvataVmState>> create_linked_avata_vm(
+    const JvmLinkedAvataRuntimeOptions& options) {
+    auto state = std::make_shared<LinkedAvataVmState>();
+    state->option_storage.reserve(2 + options.extra_options.size() +
+                                  (options.classpath.empty() ? 0 : 1));
+    state->option_storage.push_back("-Xbootclasspath:" + options.boot_classpath);
+    if (!options.classpath.empty()) {
+        state->option_storage.push_back("-Djava.class.path=" +
+                                        options.classpath);
+    }
+    state->option_storage.push_back("-Xmx" + options.max_heap);
+    for (const auto& option : options.extra_options) {
+        if (!option.empty()) {
+            state->option_storage.push_back(option);
+        }
+    }
+
+    std::vector<AvataJavaVMOption> vm_options;
+    vm_options.reserve(state->option_storage.size());
+    for (auto& option : state->option_storage) {
+        AvataJavaVMOption vm_option;
+        vm_option.optionString = const_cast<char*>(option.c_str());
+        vm_option.extraInfo = nullptr;
+        vm_options.push_back(vm_option);
+    }
+
+    AvataJavaVMInitArgs args;
+    args.version = kAvataJniVersion16;
+    args.nOptions = static_cast<AvataJint>(vm_options.size());
+    args.options = vm_options.data();
+    args.ignoreUnrecognized = kAvataJniTrue;
+
+    const int status =
+        JNI_CreateJavaVM(&state->machine, &state->thread, &args);
+    if (status != kAvataJniOk || state->machine == nullptr ||
+        state->thread == nullptr) {
+        return td::Status::Error(
+            PSTRING() << "JVM linked Avata runtime VM creation failed with status "
+                      << status);
+    }
+    return state;
+}
+
+std::string class_state_cache_key(td::Ref<vm::Cell> class_state_root) {
+    auto hash = class_state_root->get_hash().as_slice();
+    return std::string(hash.data(), hash.size());
+}
+
+td::Status install_class_state_into_vm(
+    LinkedAvataVmState& vm_state,
+    td::Ref<vm::Cell> class_state_root) {
+    TRY_RESULT(class_state,
+               parse_jvm_avata_class_state(std::move(class_state_root)));
+    if (class_state.classes.empty()) {
+        return td::Status::OK();
+    }
+
+    std::vector<bool> installed(class_state.classes.size(), false);
+    std::size_t remaining = class_state.classes.size();
+    int last_status = AVATA_CONTRACT_OK;
+    while (remaining != 0) {
+        bool progressed = false;
+        for (std::size_t i = 0; i < class_state.classes.size(); ++i) {
+            if (installed[i]) {
+                continue;
+            }
+            const auto& definition = class_state.classes[i];
+            if (definition.class_bytes.size() >
+                std::numeric_limits<std::uint32_t>::max()) {
+                return td::Status::Error(
+                    "JVM class bytes exceed Avata ABI length");
+            }
+            const int status = avata_define_contract_class(
+                reinterpret_cast<AvataThread*>(vm_state.thread),
+                definition.class_name.c_str(),
+                definition.class_bytes.data(),
+                static_cast<std::uint32_t>(definition.class_bytes.size()));
+            if (status == AVATA_CONTRACT_OK) {
+                installed[i] = true;
+                --remaining;
+                progressed = true;
+            } else {
+                last_status = status;
+            }
+        }
+        if (!progressed) {
+            return td::Status::Error(
+                PSTRING()
+                << "JVM linked Avata class install failed with status "
+                << last_status);
+        }
+    }
+
+    return td::Status::OK();
+}
+
+td::Result<std::shared_ptr<LinkedAvataVmState>> get_vm_for_class_state(
+    LinkedAvataRuntimeState& state,
+    td::Ref<vm::Cell> class_state_root) {
+    const auto key = class_state_cache_key(class_state_root);
+    auto it = state.vm_cache.find(key);
+    if (it != state.vm_cache.end()) {
+        return it->second;
+    }
+
+    TRY_RESULT(vm_state, create_linked_avata_vm(state.options));
+    TRY_STATUS(install_class_state_into_vm(*vm_state, std::move(class_state_root)));
+    state.vm_cache.emplace(key, vm_state);
+    return vm_state;
+}
+
+td::Result<JvmArgs> decode_linked_invocation_args(
+    const std::string& method_spec,
+    td::Ref<vm::Cell> args) {
+    if (method_spec == kJvmStaticVoidMethodSpec &&
+        validate_jvm_static_void_call_args(method_spec, args).is_ok()) {
+        return JvmArgs{};
+    }
+
+    TRY_STATUS(validate_jvm_typed_call_args(method_spec, args));
+    return parse_jvm_args(std::move(args));
 }
 
 td::Result<JvmAvataCallTarget> linked_avata_resolve_call_target(
@@ -106,9 +263,9 @@ td::Result<JvmAvataCallTarget> linked_avata_resolve_call_target(
     (void)config;
 
     auto* state = static_cast<LinkedAvataRuntimeState*>(user);
-    if (state == nullptr || state->thread == nullptr) {
+    if (state == nullptr) {
         return td::Status::Error(
-            "JVM linked Avata resolver is missing VM thread");
+            "JVM linked Avata resolver is missing runtime state");
     }
     if (previous_state.class_state_root.is_null()) {
         return td::Status::Error(
@@ -119,10 +276,18 @@ td::Result<JvmAvataCallTarget> linked_avata_resolve_call_target(
     TRY_RESULT(entry,
                find_jvm_avata_class_manifest_entry(
                    previous_state.class_state_root, call));
+    TRY_RESULT(decoded_args,
+               decode_linked_invocation_args(entry.method_spec, call.args));
+    TRY_RESULT(vm_state,
+               get_vm_for_class_state(*state, previous_state.class_state_root));
+    if (vm_state->thread == nullptr) {
+        return td::Status::Error(
+            "JVM linked Avata resolver is missing VM thread");
+    }
 
     AvataContractMethod method = 0;
     const int status = avata_resolve_contract_static_void(
-        reinterpret_cast<AvataThread*>(state->thread),
+        reinterpret_cast<AvataThread*>(vm_state->thread),
         entry.class_name.c_str(),
         entry.method_name.c_str(),
         entry.method_spec.c_str(),
@@ -133,10 +298,14 @@ td::Result<JvmAvataCallTarget> linked_avata_resolve_call_target(
                       << status);
     }
 
+    auto invocation = std::make_shared<LinkedAvataInvocation>();
+    invocation->method = method;
+    invocation->args = std::move(decoded_args);
+
     JvmAvataCallTarget target;
-    target.thread = state->thread;
-    target.invocation_user = reinterpret_cast<void*>(
-        static_cast<std::uintptr_t>(method));
+    target.thread = vm_state->thread;
+    target.invocation_user = invocation.get();
+    target.invocation_owner = std::move(invocation);
     return target;
 }
 
@@ -233,43 +402,13 @@ make_linked_jvm_avata_runtime(const JvmLinkedAvataRuntimeOptions& options) {
     }
 
     auto state = std::make_shared<LinkedAvataRuntimeState>();
-    state->option_storage.reserve(2 + options.extra_options.size() +
-                                  (options.classpath.empty() ? 0 : 1));
-    state->option_storage.push_back("-Xbootclasspath:" + options.boot_classpath);
-    if (!options.classpath.empty()) {
-        state->option_storage.push_back("-Djava.class.path=" +
-                                        options.classpath);
-    }
-    state->option_storage.push_back("-Xmx" + options.max_heap);
-    for (const auto& option : options.extra_options) {
-        if (!option.empty()) {
-            state->option_storage.push_back(option);
-        }
-    }
+    state->options = options;
 
-    std::vector<AvataJavaVMOption> vm_options;
-    vm_options.reserve(state->option_storage.size());
-    for (auto& option : state->option_storage) {
-        AvataJavaVMOption vm_option;
-        vm_option.optionString = const_cast<char*>(option.c_str());
-        vm_option.extraInfo = nullptr;
-        vm_options.push_back(vm_option);
-    }
-
-    AvataJavaVMInitArgs args;
-    args.version = kAvataJniVersion16;
-    args.nOptions = static_cast<AvataJint>(vm_options.size());
-    args.options = vm_options.data();
-    args.ignoreUnrecognized = kAvataJniTrue;
-
-    const int status =
-        JNI_CreateJavaVM(&state->machine, &state->thread, &args);
-    if (status != kAvataJniOk || state->machine == nullptr ||
-        state->thread == nullptr) {
-        return td::Status::Error(
-            PSTRING() << "JVM linked Avata runtime VM creation failed with status "
-                      << status);
-    }
+    // Validate the boot runtime eagerly so init_jvm_workchain() still fails
+    // closed on an unusable rt.jar. Execution VMs are cached per class_state
+    // root to keep application classes isolated by deterministic state hash.
+    TRY_RESULT(probe_vm, create_linked_avata_vm(state->options));
+    (void)probe_vm;
 
     std::shared_ptr<const JvmComputeRuntime> runtime =
         std::make_shared<JvmAvataRuntime>(

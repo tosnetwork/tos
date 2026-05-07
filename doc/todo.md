@@ -348,9 +348,9 @@ Status legend: `✅` completed, unchecked items are still open.
       maps are admitted.
     - ✅ The storage/event/gas bridge, output assembly, linked interpreter ABI,
       and manifest-backed runtime resolver are now covered by
-      `test-workchain-execution-registry`. Remaining deploy work is no longer
-      this bridge layer; it is class-byte storage/loading from deploy state and
-      typed argument decoding.
+      `test-workchain-execution-registry`. Class-byte storage/loading from
+      `JVMC`, deploy descriptor installation, typed argument decoding, and
+      typed static-void invocation are covered by the same suite.
     - ✅ Added a narrow two-phase contract entry ABI in
       `include/avata/contract.h`: `avata_resolve_contract_static_void()`
       resolves a class/method outside the transaction arena and returns an
@@ -440,11 +440,15 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   - ✅ `jvm/core/class-manifest.*` defines the v1 `class_state_root` manifest
     (`JVMM`, schema 1). It maps `(contract_id, method_id)` to an Avata
     `class_name`, `method_name`, and `method_spec`, rejects malformed strings and
-    duplicate keys, and is now validated by `JvmCellCodec` when decoding
-    executor state.
-  - ✅ `make_linked_jvm_avata_runtime()` creates the linked Avata VM, keeps the
-    machine/thread alive for the process lifetime, resolves inbound
-    `JvmCallDescriptor` values through the manifest, and invokes the resolved
+    duplicate keys, restricts v1 entries to ASCII Java internal class names,
+    Java identifier method names, and supported static-void descriptors, and is
+    now validated by `JvmCellCodec` when decoding executor state.
+  - ✅ `make_linked_jvm_avata_runtime()` validates the linked Avata boot runtime
+    at initialization, then creates and caches execution VMs keyed by
+    `class_state_root` hash. Each cached VM has its own app class space, so
+    installed application classes are isolated by deterministic executor state.
+    The resolver loads `JVMC` class bytes into that VM before resolving inbound
+    `JvmCallDescriptor` values through the manifest and invoking the resolved
     static-void method through the existing gas/storage/event bridge.
   - ✅ `init_jvm_workchain()` now installs that linked runtime from
     `TOS_JVM_AVATA_RT_JAR` or the CMake Avata bridge default, optional
@@ -454,8 +458,38 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
 - ✅ Add the first inbound JVM message ABI codec:
   `jvm/core/message-abi.*` encodes and decodes the canonical v1
   `JvmCallDescriptor` (`contract_id`, `method_id`, `args`), rejects malformed
-  bodies before Avata runtime invocation, and is covered by
-  `test-workchain-execution-registry`.
+  bodies before Avata runtime invocation, validates that v1 linked `()V`
+  entrypoints receive the canonical empty args cell, and is covered by
+  `test-workchain-execution-registry`. The same module now also provides the
+  deterministic `JVMA` typed `ArgsCell` codec and descriptor validator for
+  `boolean`, `int`, `long`, `Address`, `Uint256`, `Bytes32`, `Bytes4`, and
+  variable `Bytes` arguments. The linked Avata invocation bridge now decodes
+  those `JVMA` cells and invokes matching static-void methods with typed
+  arguments through the Avata C ABI, while preserving canonical empty-cell
+  compatibility for legacy `()V` entries.
+- ✅ Add the first JVM deploy message ABI codec:
+  `jvm/core/deploy-abi.*` encodes and decodes the canonical v1
+  `JvmDeployDescriptor` (`deployer`, `salt`, `class_hash`, `class_name`,
+  `class_bytes`, `init_args`), verifies `class_hash == sha256(class_bytes)`,
+  validates the class-name shape, and derives
+  `contract_id = sha256("TOS-JVM-CONTRACT-v1" || deployer || class_hash || salt
+  || init_args_cell_hash)`.
+- ✅ Add the first deploy-to-class-state installer:
+  `jvm/core/class-manifest.*` now also defines the `JVMC` class-state envelope,
+  keeps the callable `JVMM` manifest as a nested ref, stores verified
+  `(class_name, class_hash, class_bytes)` definitions, accepts both legacy
+  manifest-only roots and `JVMC` roots at executor-state validation, and exposes
+  `install_jvm_deploy_descriptor()` for deterministic class-byte installation.
+  The installer now enforces `max_class_bytes` and `max_total_class_bytes`
+  through a `JvmConfig`/`JvmClassStoreLimits` overload, so deploy admission can
+  apply ConfigParam 85 class-store retention limits before updating
+  `class_state_root`.
+- ✅ Load state-backed contract classes into Avata:
+  Avata now exposes `avata_define_contract_class()`, covered by
+  `ContractDefineClassAbi`, and the linked resolver installs all class
+  definitions from `JVMC` into the per-`class_state_root` VM before method
+  resolution. Parameterized static-void invocation is now covered by the typed
+  `JVMA` bridge and `ContractStaticVoidInvocationAbi`.
 - ✅ Keep the JDK8u reference revision pinned in docs when behavior is copied or
   compared. Current local reference checkout: `~/jdk8u` at `24fbffc3f77f`.
 - ✅ Add cross-platform deterministic test runs: same bytecode, same inputs,
@@ -670,9 +704,13 @@ history, not as a promise that the current `rt.jar` exposes those APIs.
   against the checked-in header so `api.jar` and verifier policy cannot drift.
 - ✅ Added the initial `tos-javac` prototype at `jvm/avata/tools/tos-javac`.
   It forces Java 8 source/target settings, uses `api.jar` as the boot
-  classpath, rejects user bootclasspath/source/target overrides, and is covered
-  by `build-test`. Verifier/admission integration into the wrapper remains
-  open.
+  classpath, rejects user bootclasspath/source/target overrides, runs a
+  post-compile class-file admission check against the generated contract
+  profile, and is covered by `build-test`. The wrapper now rejects generated
+  lambda/`invokedynamic` bytecode, mutable static fields, application
+  `<clinit>`, enum classes, native/synchronized/finalizer methods, unsupported
+  class-file versions, stale `avata/*` classes, and `java/*` references outside
+  the admitted profile before deployment.
 - ✅ Host-API consensus hardening: `System` exposes only deterministic VM-managed
   streams and fixed property reads; `Runtime` is removed from the v1 `rt.jar`;
   `Thread` remains VM-internal and contract references are rejected. The earlier
