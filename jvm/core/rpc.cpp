@@ -52,14 +52,6 @@ std::string json_rpc_err(const std::string& id, int code, const std::string& msg
     return s;
 }
 
-JvmRpcResult ok(const std::string& id, const std::string& result) {
-    return JvmRpcResult{json_rpc_ok(id, result), false};
-}
-
-JvmRpcResult err(const std::string& id, int code, const std::string& msg) {
-    return JvmRpcResult{json_rpc_err(id, code, msg), true};
-}
-
 // Minimal hex encoding.
 std::string hex_encode(const uint8_t* data, size_t len) {
     static constexpr char kHex[] = "0123456789abcdef";
@@ -217,13 +209,14 @@ std::optional<JvmDeployContractRequest> parse_jvm_deploy_contract_request(
     }
 
     // init_args is optional; absent = canonical empty args cell.
-    req.init_args = {};
+    req.init_args = vm::CellBuilder().finalize();
     return req;
 }
 
 JvmRpcResult handle_jvm_deploy_contract(
     const JvmDeployContractRequest& req,
-    const JvmConfig& config) {
+    const JvmConfig& config,
+    const std::string& id) {
     // Build a descriptor for validation.
     JvmDeployDescriptor descriptor;
     descriptor.deployer = req.deployer;
@@ -237,7 +230,7 @@ JvmRpcResult handle_jvm_deploy_contract(
     // Admission: class name shape.
     if (!is_valid_class_name(req.class_name)) {
         return JvmRpcResult{
-            json_rpc_err("null", -32602, "invalid class name"),
+            json_rpc_err(id, -32602, "invalid class name"),
             true};
     }
 
@@ -245,7 +238,7 @@ JvmRpcResult handle_jvm_deploy_contract(
     if (config.max_class_bytes > 0
         && req.class_bytes.size() > config.max_class_bytes) {
         return JvmRpcResult{
-            json_rpc_err("null", -32602, "class bytes exceed max_class_bytes"),
+            json_rpc_err(id, -32602, "class bytes exceed max_class_bytes"),
             true};
     }
 
@@ -253,7 +246,7 @@ JvmRpcResult handle_jvm_deploy_contract(
     auto encoded = encode_jvm_deploy_descriptor(descriptor);
     if (encoded.is_null()) {
         return JvmRpcResult{
-            json_rpc_err("null", -32602, "deploy descriptor encoding failed"),
+            json_rpc_err(id, -32602, "deploy descriptor encoding failed"),
             true};
     }
 
@@ -261,13 +254,13 @@ JvmRpcResult handle_jvm_deploy_contract(
     auto contract_id_result = derive_jvm_contract_id(descriptor);
     if (contract_id_result.is_error()) {
         return JvmRpcResult{
-            json_rpc_err("null", -32602, "contract_id derivation failed"),
+            json_rpc_err(id, -32602, "contract_id derivation failed"),
             true};
     }
     const auto& contract_id = contract_id_result.ok();
     std::string result = "{\"contractId\":\""
                        + hex_encode(contract_id) + "\"}";
-    return JvmRpcResult{json_rpc_ok("null", result), false};
+    return JvmRpcResult{json_rpc_ok(id, result), false};
 }
 
 // -------------------------------------------------------------------------
@@ -304,7 +297,8 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
     return req;
 }
 
-JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req) {
+JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
+                                      const std::string& id) {
     // Build the call descriptor cell.
     JvmCallDescriptor descriptor;
     descriptor.contract_id = req.contract_id;
@@ -314,7 +308,7 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req) {
     auto encoded = encode_jvm_call_descriptor(descriptor);
     if (encoded.is_null()) {
         return JvmRpcResult{
-            json_rpc_err("null", -32602, "call descriptor encoding failed"),
+            json_rpc_err(id, -32602, "call descriptor encoding failed"),
             true};
     }
 
@@ -323,7 +317,7 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req) {
     // submit it or forward it to the local runner.
     std::string result = "{\"callDescriptor\":\"encoded\",\"contractId\":\""
                        + hex_encode(req.contract_id) + "\"}";
-    return JvmRpcResult{json_rpc_ok("null", result), false};
+    return JvmRpcResult{json_rpc_ok(id, result), false};
 }
 
 // -------------------------------------------------------------------------
@@ -342,17 +336,18 @@ std::optional<JvmGetContractStateRequest> parse_jvm_get_contract_state_request(
 }
 
 JvmRpcResult handle_jvm_get_contract_state(
-    const JvmGetContractStateRequest& req) {
+    const JvmGetContractStateRequest& req,
+    const std::string& id) {
     if (req.executor_state.is_null()) {
         return JvmRpcResult{
-            json_rpc_err("null", -32602, "executor state cell is required"),
+            json_rpc_err(id, -32602, "executor state cell is required"),
             true};
     }
 
     JvmExecutorState state;
     if (!decode_jvm_executor_state(req.executor_state, state)) {
         return JvmRpcResult{
-            json_rpc_err("null", -32602, "malformed executor state cell"),
+            json_rpc_err(id, -32602, "malformed executor state cell"),
             true};
     }
 
@@ -367,7 +362,7 @@ JvmRpcResult handle_jvm_get_contract_state(
     std::string result = "{\"contractId\":\""
                        + hex_encode(req.contract_id)
                        + "\",\"storageRootHash\":" + storage_hash + "}";
-    return JvmRpcResult{json_rpc_ok("null", result), false};
+    return JvmRpcResult{json_rpc_ok(id, result), false};
 }
 
 // -------------------------------------------------------------------------
@@ -394,14 +389,15 @@ std::optional<JvmGetReceiptsRequest> parse_jvm_get_receipts_request(
     return req;
 }
 
-JvmRpcResult handle_jvm_get_receipts(const JvmGetReceiptsRequest& req) {
+JvmRpcResult handle_jvm_get_receipts(const JvmGetReceiptsRequest& req,
+                                     const std::string& id) {
     // v1: event logs are committed into block side effects via the event-host
     // path.  Full receipt retrieval requires a block-state index; return an
     // empty list for now so the endpoint is functional.
     std::string result = "{\"contractId\":\""
                        + hex_encode(req.contract_id)
                        + "\",\"receipts\":[]}";
-    return JvmRpcResult{json_rpc_ok("null", result), false};
+    return JvmRpcResult{json_rpc_ok(id, result), false};
 }
 
 // -------------------------------------------------------------------------
@@ -427,14 +423,7 @@ std::optional<JvmRpcResult> handle_jvm_rpc(
                 json_rpc_err(id, -32602, "invalid jvm_deployContract params"),
                 true};
         }
-        auto result = handle_jvm_deploy_contract(*req, config);
-        // Re-encode with the actual request id.
-        if (result.is_error) {
-            return JvmRpcResult{
-                json_rpc_err(id, -32602, "jvm_deployContract admission failed"),
-                true};
-        }
-        return JvmRpcResult{json_rpc_ok(id, "{\"contractId\":\"see_result\"}"), false};
+        return handle_jvm_deploy_contract(*req, config, id);
     }
 
     if (method == "jvm_callContract") {
@@ -444,11 +433,7 @@ std::optional<JvmRpcResult> handle_jvm_rpc(
                 json_rpc_err(id, -32602, "invalid jvm_callContract params"),
                 true};
         }
-        auto result = handle_jvm_call_contract(*req);
-        return JvmRpcResult{
-            result.is_error ? json_rpc_err(id, -32602, "jvm_callContract failed")
-                            : json_rpc_ok(id, "{\"status\":\"encoded\"}"),
-            result.is_error};
+        return handle_jvm_call_contract(*req, id);
     }
 
     if (method == "jvm_getContractState") {
@@ -458,11 +443,7 @@ std::optional<JvmRpcResult> handle_jvm_rpc(
                 json_rpc_err(id, -32602, "invalid jvm_getContractState params"),
                 true};
         }
-        auto result = handle_jvm_get_contract_state(*req);
-        return JvmRpcResult{
-            result.is_error ? json_rpc_err(id, -32602, "jvm_getContractState failed")
-                            : json_rpc_ok(id, "{\"status\":\"ok\"}"),
-            result.is_error};
+        return handle_jvm_get_contract_state(*req, id);
     }
 
     if (method == "jvm_getReceipts") {
@@ -472,7 +453,7 @@ std::optional<JvmRpcResult> handle_jvm_rpc(
                 json_rpc_err(id, -32602, "invalid jvm_getReceipts params"),
                 true};
         }
-        return JvmRpcResult{json_rpc_ok(id, "{\"receipts\":[]}"), false};
+        return handle_jvm_get_receipts(*req, id);
     }
 
     return std::nullopt;

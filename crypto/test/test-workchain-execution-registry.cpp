@@ -3072,6 +3072,49 @@ TEST(JvmWorkchainCore, RpcDispatcherRoutesJvmMethods) {
   CHECK(receipts->json.find("\"id\":2") != std::string::npos);
 }
 
+// Verify that the dispatcher forwards the real sub-handler result (not a
+// placeholder) and threads the caller-supplied request id through correctly.
+TEST(JvmWorkchainCore, RpcDispatcherPropagatesRealResults) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+
+  // jvm_deployContract: contractId field must be a real 0x-prefixed hex hash,
+  // not the placeholder "see_result".
+  std::string deploy_params = R"({
+    "classBytes": "0xcafebabe00000034",
+    "className": "ContractEntryPoint",
+    "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "salt":     "0x0000000000000000000000000000000000000000000000000000000000000002"
+  })";
+  auto deploy = handle_jvm_rpc("jvm_deployContract", deploy_params, "42", cfg);
+  CHECK(deploy.has_value() && !deploy->is_error);
+  // id must be the caller-supplied value, not "null".
+  CHECK(deploy->json.find("\"id\":42") != std::string::npos);
+  // contractId must be a real hex value (66 chars: 0x + 64 hex digits).
+  auto cid_pos = deploy->json.find("\"contractId\":\"0x");
+  CHECK(cid_pos != std::string::npos);
+  // The hex string immediately follows "contractId":"0x — check it's 64 hex chars.
+  auto hex_start = deploy->json.find("0x", cid_pos) + 2;
+  unsigned hex_count = 0;
+  while (hex_start + hex_count < deploy->json.size()
+         && std::isxdigit(static_cast<unsigned char>(
+                deploy->json[hex_start + hex_count]))) {
+    ++hex_count;
+  }
+  CHECK(hex_count == 64);
+
+  // jvm_getReceipts: receipts field must be present and contractId correct.
+  std::string receipts_params = R"({
+    "contractId": "0xabcdef0000000000000000000000000000000000000000000000000000000001"
+  })";
+  auto receipts = handle_jvm_rpc("jvm_getReceipts", receipts_params, "7", cfg);
+  CHECK(receipts.has_value() && !receipts->is_error);
+  CHECK(receipts->json.find("\"id\":7") != std::string::npos);
+  CHECK(receipts->json.find("\"receipts\":[]") != std::string::npos);
+  CHECK(receipts->json.find("0xabcdef") != std::string::npos);
+}
+
 // ---------------------------------------------------------------------------
 // Multi-instance storage isolation
 // ---------------------------------------------------------------------------

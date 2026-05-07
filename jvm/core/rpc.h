@@ -74,7 +74,8 @@ std::optional<JvmDeployContractRequest> parse_jvm_deploy_contract_request(
 /// This is an admission convenience; consensus re-validates on execution.
 JvmRpcResult handle_jvm_deploy_contract(
     const JvmDeployContractRequest& req,
-    const JvmConfig& config);
+    const JvmConfig& config,
+    const std::string& id = "null");
 
 // ---------------------------------------------------------------------------
 // jvm_callContract
@@ -95,7 +96,8 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
 
 /// Encode the call as a JvmCallDescriptor cell suitable for submission or
 /// local execution.  The caller is responsible for wiring actual execution.
-JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req);
+JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
+                                      const std::string& id = "null");
 
 // ---------------------------------------------------------------------------
 // jvm_getContractState
@@ -112,7 +114,8 @@ std::optional<JvmGetContractStateRequest> parse_jvm_get_contract_state_request(
     const std::string& params_json);
 
 /// Return the decoded storage slots of the named contract as a JSON object.
-JvmRpcResult handle_jvm_get_contract_state(const JvmGetContractStateRequest& req);
+JvmRpcResult handle_jvm_get_contract_state(const JvmGetContractStateRequest& req,
+                                           const std::string& id = "null");
 
 // ---------------------------------------------------------------------------
 // jvm_getReceipts
@@ -131,7 +134,8 @@ std::optional<JvmGetReceiptsRequest> parse_jvm_get_receipts_request(
 
 /// Return event receipts in the given block range.  In v1 this scans staged
 /// event logs committed in block side effects.
-JvmRpcResult handle_jvm_get_receipts(const JvmGetReceiptsRequest& req);
+JvmRpcResult handle_jvm_get_receipts(const JvmGetReceiptsRequest& req,
+                                     const std::string& id = "null");
 
 // ---------------------------------------------------------------------------
 // Dispatcher
