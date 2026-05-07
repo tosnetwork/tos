@@ -118,6 +118,18 @@ bool hex_decode_bytes(const std::string& s, std::vector<uint8_t>& out) {
     return true;
 }
 
+// Decode a 0x-prefixed hex BOC string into a cell.
+// Returns an empty Ref on error (returns success for empty BOC as empty cell).
+td::Ref<vm::Cell> hex_boc_decode_cell(const std::string& s) {
+    std::vector<uint8_t> bytes;
+    if (!hex_decode_bytes(s, bytes)) return {};
+    if (bytes.empty()) return {};
+    auto result = vm::std_boc_deserialize(
+        td::Slice(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    if (result.is_error()) return {};
+    return result.move_as_ok();
+}
+
 // Very minimal JSON field extractor.  Not a general JSON parser —
 // only extracts top-level fields by key from a flat object.
 // Handles optional whitespace around ':' and value.
@@ -297,6 +309,15 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
 
     // args is optional; absent = canonical empty args cell.
     req.args = vm::CellBuilder().finalize();
+
+    // Optional: caller-supplied executor state as a hex-encoded BOC.
+    auto state_boc_hex = json_get_string(params_json, "executorStateBoc");
+    if (!state_boc_hex.empty()) {
+        req.current_state = hex_boc_decode_cell(state_boc_hex);
+        if (req.current_state.is_null()) {
+            return std::nullopt;  // malformed BOC
+        }
+    }
     return req;
 }
 
@@ -346,6 +367,17 @@ std::optional<JvmGetContractStateRequest> parse_jvm_get_contract_state_request(
     if (contract_id_hex.empty()
         || !hex_decode_32(contract_id_hex, req.contract_id)) {
         return std::nullopt;
+    }
+    // Optional: caller-supplied executor state as a hex-encoded BOC.
+    // When present, the handler can resolve className/classHash without a live
+    // block-state connection.  Absent means the caller must inject executor_state
+    // directly (e.g. from the node's block-state lookup via the register_rpc hook).
+    auto state_boc_hex = json_get_string(params_json, "executorStateBoc");
+    if (!state_boc_hex.empty()) {
+        req.executor_state = hex_boc_decode_cell(state_boc_hex);
+        if (req.executor_state.is_null()) {
+            return std::nullopt;  // malformed BOC
+        }
     }
     return req;
 }

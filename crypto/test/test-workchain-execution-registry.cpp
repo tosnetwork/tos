@@ -3035,6 +3035,31 @@ TEST(JvmWorkchainCore, RpcCallContractParsesRequest) {
     ++hex_len;
   }
   CHECK(hex_len >= 8);
+
+  // executorStateBoc is optional: when present it must decode into current_state.
+  constexpr uint8_t kMarker = 0x03;
+  JvmExecutorState exec_state;
+  exec_state.stdlib_hash = make_test_jvm_config().stdlib_hash;
+  exec_state.class_state_root = make_jvm_class_state_cell(kMarker);
+  auto state_cell = encode_jvm_executor_state(exec_state);
+  auto boc_r = vm::std_boc_serialize(state_cell, 0);
+  CHECK(!boc_r.is_error());
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string boc_hex = "0x";
+  for (size_t i = 0; i < boc_r.ok().size(); ++i) {
+    auto b = static_cast<uint8_t>(boc_r.ok().data()[i]);
+    boc_hex += kHex[(b >> 4) & 0xF];
+    boc_hex += kHex[b & 0xF];
+  }
+  std::string params_with_state = R"({"contractId":"0x0000000000000000000000000000000000000000000000000000000000000001","methodId":1,"gasLimit":0,"executorStateBoc":")" + boc_hex + "\"}";
+  auto req_with_state = parse_jvm_call_contract_request(params_with_state);
+  CHECK(req_with_state.has_value());
+  CHECK(req_with_state->current_state.not_null());
+  CHECK(req_with_state->current_state->get_hash() == state_cell->get_hash());
+
+  // Malformed executorStateBoc must cause parse to fail.
+  std::string params_bad_state = R"({"contractId":"0x0000000000000000000000000000000000000000000000000000000000000001","methodId":1,"executorStateBoc":"0xdeadbeef"})";
+  CHECK(!parse_jvm_call_contract_request(params_bad_state).has_value());
 }
 
 TEST(JvmWorkchainCore, RpcGetContractStateParsesRequest) {
@@ -3073,6 +3098,61 @@ TEST(JvmWorkchainCore, RpcGetContractStateParsesRequest) {
   // Without executor_state the handler must return an error.
   req->executor_state = {};
   CHECK(handle_jvm_get_contract_state(*req, "6").is_error);
+}
+
+// Verify that executorStateBoc in the JSON params round-trips correctly through
+// parse_jvm_get_contract_state_request: the hex BOC is decoded back to a cell
+// with the same hash as the original, and the handler can then resolve the
+// class name and hash from it without any out-of-band state injection.
+TEST(JvmWorkchainCore, RpcGetContractStateDecodesExecutorStateBocFromJson) {
+  using namespace jvm_workchain;
+
+  constexpr uint8_t kMarker = 0x02;
+
+  // Build an executor state cell and encode it to a hex BOC string.
+  JvmExecutorState exec_state;
+  exec_state.stdlib_hash = make_test_jvm_config().stdlib_hash;
+  exec_state.storage_root = {};
+  exec_state.class_state_root = make_jvm_class_state_cell(kMarker);
+  auto state_cell = encode_jvm_executor_state(exec_state);
+  CHECK(state_cell.not_null());
+
+  auto boc = vm::std_boc_serialize(state_cell, 0);
+  CHECK(!boc.is_error());
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string boc_hex = "0x";
+  for (size_t i = 0; i < boc.ok().size(); ++i) {
+    auto b = static_cast<uint8_t>(boc.ok().data()[i]);
+    boc_hex += kHex[(b >> 4) & 0xF];
+    boc_hex += kHex[b & 0xF];
+  }
+
+  auto contract_id = make_test_jvm_call_descriptor(kMarker).contract_id;
+  // Encode contract_id to 0x-prefixed hex.
+  std::string cid_hex = "0x";
+  for (auto b : contract_id) {
+    cid_hex += kHex[(b >> 4) & 0xF];
+    cid_hex += kHex[b & 0xF];
+  }
+
+  std::string params = "{\"contractId\":\"" + cid_hex
+                     + "\",\"executorStateBoc\":\"" + boc_hex + "\"}";
+  auto req = parse_jvm_get_contract_state_request(params);
+  CHECK(req.has_value());
+  // executor_state must be populated from the BOC — same cell hash.
+  CHECK(req->executor_state.not_null());
+  CHECK(req->executor_state->get_hash() == state_cell->get_hash());
+
+  // The handler must resolve className/classHash without any extra injection.
+  auto result = handle_jvm_get_contract_state(*req, "8");
+  CHECK(!result.is_error);
+  CHECK(result.json.find("\"className\":\"ContractEntryPoint\"") != std::string::npos);
+  CHECK(result.json.find("\"classHash\":\"0x") != std::string::npos);
+
+  // Malformed BOC must cause parse to return nullopt.
+  std::string bad_params = "{\"contractId\":\"" + cid_hex
+                          + "\",\"executorStateBoc\":\"0xdeadbeef\"}";
+  CHECK(!parse_jvm_get_contract_state_request(bad_params).has_value());
 }
 
 TEST(JvmWorkchainCore, RpcGetReceiptsParsesRequest) {
