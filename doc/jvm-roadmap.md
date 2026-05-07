@@ -962,7 +962,7 @@ Last updated: 2026-05-07.
 
 | Phase | Status | Notes |
 |---|---|---|
-| Phase 0 — Design | ✅ | Roadmap, restricted API profile, TL-B schemas, ConfigParam 85 schema, engine identity, and activation checklist are written. Formal standalone stub-registry test (no real bytecode) not yet isolated as a named test case, but `test-workchain-execution-registry` exercises the same path end-to-end |
+| Phase 0 — Design | ✅ | Roadmap, restricted API profile, TL-B schemas, ConfigParam 85 schema, engine identity, and activation checklist are written. All six pre-Phase-1 design questions answered (see "Design Decisions" section). `THIRD_PARTY_NOTICES.md` records Avata ISC and SoftFloat BSD-3-Clause licenses. Formal standalone stub-registry test (no real bytecode) not yet isolated as a named test case, but `test-workchain-execution-registry` exercises the same path end-to-end |
 | Phase 1 — Avata fork | ✅ | Fork imported, renamed, and slimmed to interpreter + Avata/TOS `rt/` only. SoftFloat 3e deterministic float/double, tiered opcode gas schedule, verifier profile (version gate, forbidden attrs/classes, static-field/clinit/enum/sync/native/finalizer policy, ContractEntry enforcement), object-identity counter, arena transaction reset, non-deterministic syscall removal, and all test harnesses complete |
 | Phase 2 — Framework integration | ✅ | `JvmNativeEngine`, ConfigParam 85 parsing, `init_jvm_workchain`, `JvmAvataRuntime`, capability bits, CMake integration, linked Avata runtime bridge, `build_jvm_zerostate_accounts_cell()` (`jvm/core/zerostate.{cpp,h}`), `JvmConfig::default_activation()` factory (chain_id=3, gas_schedule_version=1, tiered opcode costs, 13 helper costs), and `jvm-config-param-cell` Fift word in `create-state.cpp` complete. `ZerostateAccountsCell` and `JvmActivationConfigBuildsAndRoundTrips` tests pass |
 | Phase 3 — Contract stdlib | ✅ | `rt.jar` / `api.jar` built from `jvm/avata/rt/` tree. All required `java.lang` classes present: Object, String, Class, Throwable, Error hierarchy, Math (deterministic subset), System (chain context only), OutOfGasError, ContractViolationError, ContractEntry annotation, Storage, Mapping, PersistentMap, PersistentList, Event. `javac` and `java` wrapper tools cover contract compile/run/admission workflow including `@ContractEntry` checks. `rt/check-profile.sh` and `rt/check-native-profile.sh` gate the build against profile regressions |
@@ -982,64 +982,80 @@ Last updated: 2026-05-07.
 **v1 consensus-activation resolved:**
 - ConfigParam 85 concrete activation values: `JvmConfig::default_activation()` now encodes chain_id=3, gas_price=1000, max_gas_per_tx=1M, max_class_bytes=64 KiB, max_total_class_bytes=1 MiB, max_heap_bytes=4 MiB, max_storage_cells=65536, tiered opcode and helper costs from `gas_schedule.h`. Values are a baseline; governance can adjust via ConfigParam update before or after mainnet activation
 
-## File Layout (target)
+## File Layout (actual)
 
 ```
 jvm/
   avata/                ← forked Avata, pinned commit, stripped and determinized
-    PINNED_COMMIT
+    PINNED_COMMIT       ← upstream commit hash (0871979b…); TOS does not track upstream
+    LICENSE.txt         ← Avata ISC license
+    THIRD_PARTY_NOTICES.md ← SoftFloat BSD-3-Clause notice + Avata ISC notice
     CMakeLists.txt
     src/
-      interpret.cpp     ← interpreter loop with gas counter wired in
+      interpret.cpp     ← interpreter loop with gas counter and SoftFloat wired in
       machine.cpp
       heap.cpp
+      softfloat/berkeley/  ← Berkeley SoftFloat 3e (BSD-3-Clause)
       ...
+    include/avata/
+      contract.h        ← Avata contract execution C ABI (gas, invoke, define)
+      event.h           ← event host C ABI
+      storage.h         ← storage host C ABI
+      gas_schedule.h    ← tiered opcode + helper gas schedule types
+    rt/java/lang/       ← TOS contract runtime Java sources
+      Object.java, String.java, Math.java, System.java,
+      Throwable.java, Error.java hierarchy,
+      OutOfGasError.java, ContractViolationError.java,
+      ContractEntry.java, Storage.java, Mapping.java,
+      StorageCodec.java, PersistentMap.java, PersistentList.java,
+      Event.java, ABI.java, Address.java, Uint256.java,
+      Bytes.java, Bytes32.java, Bytes4.java, Crypto.java,
+      ERC20.java, ERC721.java, ERC1155.java, ERC6909.java,
+      Ownable.java, ReentrancyGuard.java, Pausable.java, ...
+    rt/check-profile.sh       ← gates rt.jar against profile regressions
+    rt/check-native-profile.sh
+    rt/generate-profile-header.sh
+    test/
+      ContractEntryPoint.java  ← @ContractEntry-annotated reference contract
+      ContractRuntimePrimitives.java
+      ContractLibraryPrimitives.java
+      StorageTest.java
+      DeterministicFloatTest.java
+      FloatConformanceVector.java   ← 160-line hex-bit float/double corpus
+      float-conformance-reference.txt  ← x86_64 reference output for CI diff
+      PerfBaseline.java         ← gas regression baseline (200 outer iters)
+      VerifierProfile.java, CoreTrapProfile.java, ContractStaticProfile.java
+      Strings.java, StringBuilderTest.java, Integers.java, Longs.java,
+      Floats.java, AllFloats.java, Exceptions.java, MonitorTest.java,
+      Switch.java, Tree.java, ArraysTest.java, ArrayDequeTest.java, ...
+      avata-execution.{h,cpp}   ← C++ JVM execution bridge tests
+      avata-runtime.{h,cpp}
+      cell-codec.{h,cpp}        ← C++ executor state codec tests
+      class-manifest.{h,cpp}
+    tools/
+      javac                ← TOS javac wrapper (pins api.jar boot classpath)
+      java                 ← TOS java wrapper (--gas, --memory resource mode)
   core/
-    dispatch-engine.h
-    dispatch-engine.cpp ← JvmNativeEngine, register_jvm_workchain_engine()
-    config-param.h
-    config-param.cpp    ← ConfigParam 12 descriptor + ConfigParam 85
-    zerostate.h
-    zerostate.cpp       ← build_jvm_zerostate_accounts_cell()
-    init.h
-    init.cpp            ← init_jvm_workchain()
-    compute-phase.h
-    compute-phase.cpp   ← jvm_run_compute_phase() called by JvmNativeEngine
-    cell-codec.h
-    cell-codec.cpp      ← JvmCellCodec encode/decode
-    persistent-map.cpp  ← native C++ PersistentMap
-    persistent-list.cpp ← native C++ PersistentList
-    message-abi.h
-    message-abi.cpp     ← JvmCallDescriptor + typed JVMA args codec
-    class-manifest.h
-    class-manifest.cpp  ← class_state_root JVMM/JVMC codec and resolver map
-    gas-table.h
-    config-param.cpp    ← ConfigParam 85 limits and gas schedule codec
-    rpc.h
-    rpc.cpp             ← jvm_* JSON-RPC handlers
-  rt/
-    PROFILE.md
-    THIRD_PARTY_NOTICES.md
-    src/
-      java/lang/Object.java
-      java/lang/Class.java
-      java/lang/String.java
-      java/lang/CharSequence.java
-      java/lang/Throwable.java
-      java/lang/Error.java
-      java/lang/RuntimeException.java
-      java/lang/Math.java
-      java/lang/System.java
-      java/lang/OutOfGasError.java
-      java/lang/ContractViolationError.java
-      java/lang/ContractEntry.java
-      java/lang/PersistentMap.java
-      java/lang/PersistentList.java
-      java/lang/Event.java
-    build/              ← compiled .class files bundled into zerostate
-  test/
-    ...
+    dispatch-engine.{h,cpp}   ← JvmNativeEngine, register_jvm_workchain_engine()
+    config-param.{h,cpp}      ← ConfigParam 12 descriptor + ConfigParam 85 codec
+    zerostate.{h,cpp}         ← build_jvm_zerostate_accounts_cell()
+    init.{h,cpp}              ← init_jvm_workchain()
+    avata-execution.{h,cpp}   ← execute_jvm_avata_transaction(), gas bridge
+    avata-runtime.{h,cpp}     ← JvmAvataRuntime, make_linked_jvm_avata_runtime()
+    cell-codec.{h,cpp}        ← JvmCellCodec encode/decode (JvmExecutorState)
+    message-abi.{h,cpp}       ← JvmCallDescriptor + typed JVMA args codec
+    class-manifest.{h,cpp}    ← JVMM/JVMC class-state codec and resolver map
+    deploy-abi.{h,cpp}        ← JvmDeployDescriptor + contract_id derivation
+    storage-cell-host.{h,cpp} ← JvmStorageCellHost (cell-backed 256-bit slots)
+    event-host.{h,cpp}        ← JvmEventHost + event payload codec
+    rpc.{h,cpp}               ← jvm_* JSON-RPC handlers + executorStateBoc parsing
 ```
+
+Note: `persistent-map.cpp` / `persistent-list.cpp` as separate C++ files are
+not needed: `PersistentMap` and `PersistentList` are implemented as Java classes
+in `rt/java/lang/` backed by the `Storage` abstraction, which in turn uses
+`JvmStorageCellHost`. The gas schedule is in `avata/include/avata/gas_schedule.h`
+and wired into ConfigParam 85 via `config-param.cpp`.
 
 ## Design Decisions (Resolved)
 
