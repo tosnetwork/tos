@@ -1247,17 +1247,41 @@ check-float-conformance: $(build)/test/FloatConformanceVector.class $(executable
 	@echo "float conformance: ok"
 
 # Measure interpreter throughput for the representative PerfBaseline workload.
-# Not wired into build-test — run manually before and after changes to gate
-# performance regressions.  Reports gas consumed by OUTER_ITERS iterations;
-# a sudden change indicates an opcode-gas schedule or dispatch regression.
+# The checksum is deterministic (no floating-point, no timing); check-perf-baseline
+# compares it against test/perf-baseline-reference.txt and fails the build if it
+# changes, signalling an opcode-gas or dispatch regression.
 .PHONY: perf-baseline
 perf-baseline: $(build)/test/PerfBaseline.class $(build)/rt.jar $(build)/api.jar $(executable)
 	@echo "running perf baseline — $(build)/test/PerfBaseline.class"
-	@echo "  (checksum must be stable; gas_remaining shows headroom against 10M budget)"
 	AVATA_BUILD_DIR=$(build) tools/java \
 		--gas 10000000 --memory 4194304 \
 		-cp $(build)/test PerfBaseline
-	@echo "perf-baseline: done (re-run before/after changes to catch regressions)"
+
+.PHONY: check-perf-baseline
+check-perf-baseline: $(build)/test/PerfBaseline.class $(build)/rt.jar $(build)/api.jar $(executable)
+	@echo "checking perf baseline checksum"
+	@AVATA_BUILD_DIR=$(build) tools/java \
+		--gas 10000000 --memory 4194304 \
+		-cp $(build)/test PerfBaseline \
+		> $(build)/perf-baseline-actual.txt 2>/dev/null
+	@diff $(test)/perf-baseline-reference.txt $(build)/perf-baseline-actual.txt || { \
+		echo "FAIL: perf baseline checksum changed — opcode-gas or dispatch regression" >&2; \
+		echo "  expected: $$(cat $(test)/perf-baseline-reference.txt)" >&2; \
+		echo "  actual:   $$(cat $(build)/perf-baseline-actual.txt)" >&2; \
+		echo "  if this is an intentional gas-schedule change, update test/perf-baseline-reference.txt" >&2; \
+		exit 1; \
+	}
+	@echo "perf-baseline: ok"
+
+# Regenerate reference when the gas schedule is intentionally changed.
+.PHONY: regen-perf-baseline
+regen-perf-baseline: $(build)/test/PerfBaseline.class $(build)/rt.jar $(build)/api.jar $(executable)
+	@echo "regenerating perf-baseline-reference.txt"
+	AVATA_BUILD_DIR=$(build) tools/java \
+		--gas 10000000 --memory 4194304 \
+		-cp $(build)/test PerfBaseline \
+		> $(test)/perf-baseline-reference.txt
+	@echo "perf-baseline-reference.txt updated — review and commit"
 
 # Run this to update the reference when the SoftFloat engine or opcode
 # semantics intentionally change.  Commit the new reference after review.
@@ -1275,6 +1299,7 @@ run-test: build-test
 ifneq ($(remote-test),true)
 	/bin/sh $(build)/run-tests.sh
 	/bin/sh $(build)/run-determinism.sh
+	$(MAKE) check-perf-baseline
 else
 	@echo "running tests on $(remote-test-user)@$(remote-test-host):$(remote-test-port), in $(remote-test-dir)"
 	rsync $(build) -rav --exclude '*.o' --rsh="ssh -p$(remote-test-port)" $(remote-test-user)@$(remote-test-host):$(remote-test-dir)

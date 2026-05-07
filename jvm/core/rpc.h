@@ -86,7 +86,7 @@ JvmRpcResult handle_jvm_deploy_contract(
 struct JvmCallContractRequest {
     std::array<uint8_t, 32> contract_id{};  ///< deployed contract instance
     uint32_t method_id{0};                  ///< ABI method id
-    td::Ref<vm::Cell> args;                 ///< JVMA typed args cell (may be null)
+    td::Ref<vm::Cell> args;       ///< JVMA typed args cell; from argsBoc or empty
     td::Ref<vm::Cell> current_state;        ///< JvmExecutorState cell to call against
     uint64_t gas_limit{0};                  ///< gas limit for the local call
 };

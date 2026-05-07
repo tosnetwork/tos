@@ -3240,6 +3240,116 @@ TEST(JvmWorkchainCore, RpcDispatcherPropagatesRealResults) {
   CHECK(receipts->json.find("0xabcdef") != std::string::npos);
 }
 
+// jvm_deployContract returns deployDescriptorBoc alongside contractId.
+// The BOC must deserialize to a valid JvmDeployDescriptor cell.
+TEST(JvmWorkchainCore, RpcDeployContractReturnsDescriptorBoc) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  std::string params = R"({
+    "classBytes": "0xcafebabe00000034",
+    "className": "ContractEntryPoint",
+    "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "salt":     "0x0000000000000000000000000000000000000000000000000000000000000002"
+  })";
+  auto result = handle_jvm_rpc("jvm_deployContract", params, "1", cfg);
+  CHECK(result.has_value() && !result->is_error);
+
+  // Both contractId and deployDescriptorBoc must be present.
+  CHECK(result->json.find("\"contractId\":\"0x") != std::string::npos);
+  auto boc_pos = result->json.find("\"deployDescriptorBoc\":\"0x");
+  CHECK(boc_pos != std::string::npos);
+
+  // Extract the deployDescriptorBoc hex and round-trip it through the decoder.
+  auto hex_start = result->json.find("0x", boc_pos);
+  auto hex_end = result->json.find('"', hex_start + 2);
+  CHECK(hex_start != std::string::npos && hex_end != std::string::npos);
+  std::string boc_hex = result->json.substr(hex_start, hex_end - hex_start);
+  // Must be a valid hex string with 0x prefix.
+  CHECK(boc_hex.size() > 2);
+  CHECK(boc_hex[0] == '0' && boc_hex[1] == 'x');
+  // Decode to bytes.
+  std::vector<uint8_t> boc_bytes;
+  for (size_t i = 2; i + 1 < boc_hex.size(); i += 2) {
+    auto nibble = [](char c) -> uint8_t {
+      if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+      if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+      return static_cast<uint8_t>(c - 'A' + 10);
+    };
+    boc_bytes.push_back(static_cast<uint8_t>((nibble(boc_hex[i]) << 4) | nibble(boc_hex[i+1])));
+  }
+  auto cell = vm::std_boc_deserialize(
+      td::Slice(reinterpret_cast<const char*>(boc_bytes.data()), boc_bytes.size()));
+  CHECK(!cell.is_error() && cell.ok().not_null());
+  // Must decode as a valid JvmDeployDescriptor.
+  auto desc = parse_jvm_deploy_descriptor(vm::load_cell_slice(cell.ok()));
+  CHECK(!desc.is_error());
+  CHECK(desc.ok().class_name == "ContractEntryPoint");
+}
+
+// jvm_callContract with argsBoc passes the args cell through to the local
+// simulation.  Verify that argsBoc round-trips: encode a JVMA args cell,
+// supply it as argsBoc, and confirm the local execution receives it correctly.
+TEST(JvmWorkchainCore, RpcCallContractArgsBocRoundTrips) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1;
+
+  // Build executor state.
+  JvmExecutorState state;
+  state.schema_version = kJvmExecutorStateSchemaVersion;
+  state.stdlib_hash = cfg.stdlib_hash;
+  auto state_cell = encode_jvm_executor_state(state);
+  CHECK(state_cell.not_null());
+  auto state_boc_r = vm::std_boc_serialize(state_cell, 0);
+  CHECK(!state_boc_r.is_error());
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string state_hex = "0x";
+  for (size_t i = 0; i < state_boc_r.ok().size(); ++i) {
+    auto b = static_cast<uint8_t>(state_boc_r.ok().data()[i]);
+    state_hex += kHex[(b >> 4) & 0xF];
+    state_hex += kHex[b & 0xF];
+  }
+
+  // Encode a non-empty JVMA typed args cell (one int arg = 42).
+  JvmArgs typed_args;
+  JvmTypedArg int_arg;
+  int_arg.type = JvmArgType::Int32;
+  int_arg.bytes = {0, 0, 0, 42};
+  typed_args.values.push_back(int_arg);
+  auto args_cell = encode_jvm_args(typed_args);
+  CHECK(args_cell.not_null());
+  auto args_boc_r = vm::std_boc_serialize(args_cell, 0);
+  CHECK(!args_boc_r.is_error());
+  std::string args_hex = "0x";
+  for (size_t i = 0; i < args_boc_r.ok().size(); ++i) {
+    auto b = static_cast<uint8_t>(args_boc_r.ok().data()[i]);
+    args_hex += kHex[(b >> 4) & 0xF];
+    args_hex += kHex[b & 0xF];
+  }
+
+  // Parse call request — argsBoc must populate req.args.
+  std::string params = R"({"contractId": "0x0000000000000000000000000000000000000000000000000000000000000001", "methodId": 1, "argsBoc": ")" + args_hex + R"("})";
+  auto req = parse_jvm_call_contract_request(params);
+  CHECK(req.has_value());
+  CHECK(req->args.not_null());
+  CHECK(req->args->get_hash() == args_cell->get_hash());
+
+  // Malformed argsBoc must cause parse to return nullopt.
+  std::string bad_params = R"({"contractId": "0x0000000000000000000000000000000000000000000000000000000000000001", "methodId": 1, "argsBoc": "0xdeadbeef"})";
+  CHECK(!parse_jvm_call_contract_request(bad_params).has_value());
+
+  // Absent argsBoc falls back to canonical empty args cell.
+  std::string no_args_params = R"({"contractId": "0x0000000000000000000000000000000000000000000000000000000000000001", "methodId": 1})";
+  auto no_args_req = parse_jvm_call_contract_request(no_args_params);
+  CHECK(no_args_req.has_value());
+  CHECK(no_args_req->args.not_null());
+  // Empty args cell: CellBuilder().finalize() has a specific hash.
+  auto empty_args = vm::CellBuilder().finalize();
+  CHECK(no_args_req->args->get_hash() == empty_args->get_hash());
+}
+
 // ---------------------------------------------------------------------------
 // Multi-instance storage isolation
 // ---------------------------------------------------------------------------

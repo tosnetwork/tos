@@ -265,6 +265,17 @@ JvmRpcResult handle_jvm_deploy_contract(
             true};
     }
 
+    // Serialize the deploy descriptor to BOC for the caller to submit.
+    auto boc = vm::std_boc_serialize(encoded, 0);
+    if (boc.is_error()) {
+        return JvmRpcResult{
+            json_rpc_err(id, -32602, "deploy descriptor boc serialization failed"),
+            true};
+    }
+    const auto& boc_bytes = boc.ok();
+    std::string descriptor_boc_hex = hex_encode(
+        reinterpret_cast<const uint8_t*>(boc_bytes.data()), boc_bytes.size());
+
     // Derive contract_id.
     auto contract_id_result = derive_jvm_contract_id(descriptor);
     if (contract_id_result.is_error()) {
@@ -273,8 +284,9 @@ JvmRpcResult handle_jvm_deploy_contract(
             true};
     }
     const auto& contract_id = contract_id_result.ok();
-    std::string result = "{\"contractId\":\""
-                       + hex_encode(contract_id) + "\"}";
+    std::string result = "{\"contractId\":\"" + hex_encode(contract_id)
+                       + "\",\"deployDescriptorBoc\":\"" + descriptor_boc_hex
+                       + "\"}";
     return JvmRpcResult{json_rpc_ok(id, result), false};
 }
 
@@ -311,6 +323,11 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
 
     // args is optional; absent = canonical empty args cell.
     req.args = vm::CellBuilder().finalize();
+    auto args_boc_hex = json_get_string(params_json, "argsBoc");
+    if (!args_boc_hex.empty()) {
+        req.args = hex_boc_decode_cell(args_boc_hex);
+        if (req.args.is_null()) return std::nullopt;  // malformed BOC
+    }
 
     // Optional: caller-supplied executor state as a hex-encoded BOC.
     auto state_boc_hex = json_get_string(params_json, "executorStateBoc");
