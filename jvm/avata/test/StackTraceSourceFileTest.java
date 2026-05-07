@@ -17,6 +17,9 @@ public class StackTraceSourceFileTest {
   private static final String GENERATED = "StackTraceSourceFileTest$Generated";
   private static final String HOST_PATH = "/tmp/validator/private/SecretContract.java";
   private static final String SANITIZED = "SecretContract.java";
+  private static final String WINDOWS_HOST_PATH = "C:\\Users\\validator\\contracts\\Foo.java";
+  private static final String WINDOWS_SANITIZED = "Foo.java";
+  private static final String PLAIN_FILENAME = "Simple.java";
 
   private static VMClass defineVM(String name, byte[] bytes) {
     return Classes.defineVMClass(
@@ -45,13 +48,13 @@ public class StackTraceSourceFileTest {
     return out.toByteArray();
   }
 
-  private static byte[] makeGeneratedClass() throws IOException {
+  private static byte[] makeGeneratedClass(String sourceFilePath) throws IOException {
     List<PoolEntry> pool = new ArrayList<PoolEntry>();
     int className = ConstantPool.addClass(pool, GENERATED);
     int superName = ConstantPool.addClass(pool, "java/lang/Object");
     int codeName = ConstantPool.addUtf8(pool, "Code");
     int sourceFileName = ConstantPool.addUtf8(pool, "SourceFile");
-    int sourceFileValue = ConstantPool.addUtf8(pool, HOST_PATH);
+    int sourceFileValue = ConstantPool.addUtf8(pool, sourceFilePath);
     int methodName = ConstantPool.addUtf8(pool, "boom");
     int methodSpec = ConstantPool.addUtf8(pool, "()V");
     int exceptionClass = ConstantPool.addClass(pool, "java/lang/RuntimeException");
@@ -87,6 +90,57 @@ public class StackTraceSourceFileTest {
     return out.toByteArray();
   }
 
+  private static byte[] makeGeneratedClass() throws IOException {
+    return makeGeneratedClass(HOST_PATH);
+  }
+
+  private static byte[] makeClassWithoutSourceFile() throws IOException {
+    List<PoolEntry> pool = new ArrayList<PoolEntry>();
+    int className = ConstantPool.addClass(pool, GENERATED);
+    int superName = ConstantPool.addClass(pool, "java/lang/Object");
+    int codeName = ConstantPool.addUtf8(pool, "Code");
+    int methodName = ConstantPool.addUtf8(pool, "boom");
+    int methodSpec = ConstantPool.addUtf8(pool, "()V");
+    int exceptionClass = ConstantPool.addClass(pool, "java/lang/RuntimeException");
+    int constructor = ConstantPool.addMethodRef(
+        pool, "java/lang/RuntimeException", "<init>", "()V");
+    byte[] code = throwRuntimeExceptionCode(exceptionClass, constructor);
+
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    Stream.write4(out, 0xCAFEBABE);
+    Stream.write2(out, 0); // minor version
+    Stream.write2(out, 50); // major version
+    Stream.write2(out, pool.size() + 1);
+    for (PoolEntry e : pool) {
+      e.writeTo(out);
+    }
+    Stream.write2(out, Assembler.ACC_PUBLIC);
+    Stream.write2(out, className + 1);
+    Stream.write2(out, superName + 1);
+    Stream.write2(out, 0); // interfaces
+    Stream.write2(out, 0); // fields
+    Stream.write2(out, 1); // methods
+    Stream.write2(out, Assembler.ACC_PUBLIC | Assembler.ACC_STATIC);
+    Stream.write2(out, methodName + 1);
+    Stream.write2(out, methodSpec + 1);
+    Stream.write2(out, 1); // method attributes
+    Stream.write2(out, codeName + 1);
+    Stream.write4(out, code.length);
+    out.write(code);
+    Stream.write2(out, 0); // no class attributes
+    return out.toByteArray();
+  }
+
+  private static String findFileName(StackTraceElement[] trace) {
+    for (int i = 0; i < trace.length; ++i) {
+      if (GENERATED.equals(trace[i].getClassName())
+          && "boom".equals(trace[i].getMethodName())) {
+        return trace[i].getFileName();
+      }
+    }
+    return "FRAME_MISSING";
+  }
+
   private static void check(boolean condition, String message) {
     if (!condition) {
       throw new RuntimeException(message);
@@ -94,29 +148,68 @@ public class StackTraceSourceFileTest {
   }
 
   public static void main(String[] args) throws Exception {
-    VMClass class_ = defineVM(GENERATED, makeGeneratedClass());
-    VMMethod method = Classes.findMethod(class_, "boom", "()V");
-    check(method != null, "generated method missing");
+    // Case 1: Unix-style absolute path must be stripped to basename.
+    {
+      VMClass class_ = defineVM(GENERATED, makeGeneratedClass());
+      VMMethod method = Classes.findMethod(class_, "boom", "()V");
+      check(method != null, "generated method missing");
 
-    try {
-      Classes.invokeVMMethod(method, null, new Object[0]);
-    } catch (RuntimeException expected) {
-      StackTraceElement[] trace = expected.getStackTrace();
-      for (int i = 0; i < trace.length; ++i) {
-        StackTraceElement e = trace[i];
-        if (GENERATED.equals(e.getClassName())
-            && "boom".equals(e.getMethodName())) {
-          String file = e.getFileName();
-          check(SANITIZED.equals(file), "unsanitized SourceFile: " + file);
-          check(file.indexOf('/') < 0 && file.indexOf('\\') < 0,
-                "SourceFile contains a path separator");
-          System.out.println("StackTraceSourceFileTest: all passed");
-          return;
-        }
+      try {
+        Classes.invokeVMMethod(method, null, new Object[0]);
+      } catch (RuntimeException expected) {
+        String file = findFileName(expected.getStackTrace());
+        check(SANITIZED.equals(file), "unix path: unsanitized SourceFile: " + file);
+        check(file.indexOf('/') < 0 && file.indexOf('\\') < 0,
+              "unix path: SourceFile contains a path separator");
       }
-      throw new RuntimeException("generated frame missing");
     }
 
-    throw new RuntimeException("expected generated exception");
+    // Case 2: Windows-style path with backslash separators must be stripped.
+    {
+      VMClass class_ = defineVM(GENERATED, makeGeneratedClass(WINDOWS_HOST_PATH));
+      VMMethod method = Classes.findMethod(class_, "boom", "()V");
+      check(method != null, "windows class method missing");
+
+      try {
+        Classes.invokeVMMethod(method, null, new Object[0]);
+      } catch (RuntimeException expected) {
+        String file = findFileName(expected.getStackTrace());
+        check(WINDOWS_SANITIZED.equals(file),
+              "windows path: unsanitized SourceFile: " + file);
+        check(file.indexOf('/') < 0 && file.indexOf('\\') < 0,
+              "windows path: SourceFile contains a path separator");
+      }
+    }
+
+    // Case 3: A plain filename with no separators must pass through unchanged.
+    {
+      VMClass class_ = defineVM(GENERATED, makeGeneratedClass(PLAIN_FILENAME));
+      VMMethod method = Classes.findMethod(class_, "boom", "()V");
+      check(method != null, "plain class method missing");
+
+      try {
+        Classes.invokeVMMethod(method, null, new Object[0]);
+      } catch (RuntimeException expected) {
+        String file = findFileName(expected.getStackTrace());
+        check(PLAIN_FILENAME.equals(file),
+              "plain filename: unexpected SourceFile: " + file);
+      }
+    }
+
+    // Case 4: No SourceFile attribute — fileName must be null, not an error.
+    {
+      VMClass class_ = defineVM(GENERATED, makeClassWithoutSourceFile());
+      VMMethod method = Classes.findMethod(class_, "boom", "()V");
+      check(method != null, "no-sourcefile class method missing");
+
+      try {
+        Classes.invokeVMMethod(method, null, new Object[0]);
+      } catch (RuntimeException expected) {
+        String file = findFileName(expected.getStackTrace());
+        check(file == null, "no SourceFile: expected null fileName, got: " + file);
+      }
+    }
+
+    System.out.println("StackTraceSourceFileTest: all passed");
   }
 }

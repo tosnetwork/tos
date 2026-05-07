@@ -3070,3 +3070,68 @@ TEST(JvmWorkchainCore, RpcDispatcherRoutesJvmMethods) {
   CHECK(!receipts->is_error);
   CHECK(receipts->json.find("\"id\":2") != std::string::npos);
 }
+
+// ---------------------------------------------------------------------------
+// Multi-instance storage isolation
+// ---------------------------------------------------------------------------
+
+// Prove that two contract instances (different slot keys representing different
+// namespace prefixes) coexist in the shared executor storage without clobbering
+// each other.  The canonical v1 isolation mechanism is Mapping.namespace() in
+// Java; this C++ test exercises the underlying storage cell-host layer.
+TEST(JvmWorkchainCore, MultiInstanceIndependentStorageSlots) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1;
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  JvmStorageSlot slot_a{};
+  slot_a[31] = 0xAA;
+  JvmStorageSlot slot_b{};
+  slot_b[31] = 0xBB;
+
+  const JvmStorageValue v1{0x11};
+  const JvmStorageValue v2{0x22};
+  const JvmStorageValue v3{0x33};
+
+  // Tx 1: instance A writes to slot_a.
+  auto out1 = run_jvm_tx(
+      std::make_shared<WriteSlotRuntime>(slot_a, v1),
+      td::Ref<vm::Cell>{}, 0x01, descriptor, config).move_as_ok();
+  CHECK(out1.committed && out1.new_data.not_null());
+
+  // Tx 2: instance B writes to slot_b, inheriting instance A's state.
+  auto out2 = run_jvm_tx(
+      std::make_shared<WriteSlotRuntime>(slot_b, v2),
+      out1.new_data, 0x02, descriptor, config).move_as_ok();
+  CHECK(out2.committed && out2.new_data.not_null());
+
+  // After both writes: both slots must coexist with correct values.
+  {
+    JvmExecutorState state;
+    CHECK(decode_jvm_executor_state(out2.new_data, state));
+    JvmStorageCellHost check(state.storage_root);
+    auto va = check.load(slot_a).move_as_ok();
+    auto vb = check.load(slot_b).move_as_ok();
+    CHECK(va.has_value() && *va == v1);
+    CHECK(vb.has_value() && *vb == v2);
+  }
+
+  // Tx 3: instance A overwrites slot_a — instance B's slot_b must be unchanged.
+  auto out3 = run_jvm_tx(
+      std::make_shared<WriteSlotRuntime>(slot_a, v3),
+      out2.new_data, 0x03, descriptor, config).move_as_ok();
+  CHECK(out3.committed && out3.new_data.not_null());
+
+  {
+    JvmExecutorState state;
+    CHECK(decode_jvm_executor_state(out3.new_data, state));
+    JvmStorageCellHost check(state.storage_root);
+    auto va = check.load(slot_a).move_as_ok();
+    auto vb = check.load(slot_b).move_as_ok();
+    CHECK(va.has_value() && *va == v3);
+    CHECK(vb.has_value() && *vb == v2);
+  }
+}
