@@ -22,6 +22,15 @@
 #define MH_OBJECT 1
 
 #define LC_SYMTAB 2
+#define LC_BUILD_VERSION 0x32
+#define PLATFORM_MACOS 1
+
+// X.Y.Z encoded as (X << 16) | (Y << 8) | Z. Apple Silicon ld64 rejects
+// objects without a build-version load command on macOS arm64; 11.0 is
+// the floor (first macOS to support arm64) and matches the deployment
+// target threaded through cflags/lflags in the makefile.
+#define MACOS_ARM64_MIN_VERSION ((11u << 16) | (0u << 8) | 0u)
+#define MACOS_ARM64_SDK_VERSION MACOS_ARM64_MIN_VERSION
 
 #define S_REGULAR 0
 
@@ -130,6 +139,15 @@ class MachOPlatform : public Platform {
     uint32_t strsize;
   };
 
+  struct BuildVersionCommand {
+    uint32_t cmd;
+    uint32_t cmdsize;
+    uint32_t platform;
+    uint32_t minos;
+    uint32_t sdk;
+    uint32_t ntools;
+  };
+
   static const unsigned BytesPerWord = sizeof(AddrTy);
   static const unsigned Segment = BytesPerWord == 8 ? 0x19 : 1;
   static const unsigned Magic = BytesPerWord == 8 ? 0xfeedfacf : 0xfeedface;
@@ -185,15 +203,28 @@ class MachOPlatform : public Platform {
       sectionName = "__text";
     }
 
+    // Modern ld64 (Xcode 12+) requires every Mach-O object to declare a
+    // platform/minOS via LC_BUILD_VERSION; without it the linker reports
+    // "no platform load command found ... assuming: macOS" and on Apple
+    // Silicon flat-out refuses some inputs. Older 32-bit and pre-Apple
+    // Silicon paths kept working with no build-version command, so emit
+    // it only for arm64 to leave the legacy outputs byte-identical.
+    const bool emitBuildVersion = (info.arch == PlatformInfo::Arm64);
+    const uint32_t buildVersionSize =
+        emitBuildVersion ? sizeof(BuildVersionCommand) : 0;
+    const uint32_t numCommands = emitBuildVersion ? 3 : 2;
+    const uint32_t commandsSize = sizeof(SegmentCommand) + sizeof(Section)
+                                  + buildVersionSize + sizeof(SymtabCommand);
+    const uint32_t headerAndCommands = sizeof(FileHeader) + commandsSize;
+
     FileHeader header = {
         V4(Magic),  // magic
         static_cast<cpu_type_t>(V4(cpuType)),
         static_cast<cpu_subtype_t>(V4(cpuSubType)),
-        V4(MH_OBJECT),  // filetype,
-        V4(2),          // ncmds
-        V4(sizeof(SegmentCommand) + sizeof(Section)
-           + sizeof(SymtabCommand)),  // sizeofcmds
-        {V4(0)}                       // flags
+        V4(MH_OBJECT),     // filetype,
+        V4(numCommands),   // ncmds
+        V4(commandsSize),  // sizeofcmds
+        {V4(0)}            // flags
     };
 
     AddrTy finalSize = pad(data.count);
@@ -204,14 +235,12 @@ class MachOPlatform : public Platform {
         "",                                            // segname
         VANY(static_cast<AddrTy>(0)),                  // vmaddr
         VANY(static_cast<AddrTy>(finalSize)),          // vmsize
-        VANY(static_cast<AddrTy>(sizeof(FileHeader) + sizeof(SegmentCommand)
-                                 + sizeof(Section)
-                                 + sizeof(SymtabCommand))),  // fileoff
-        VANY(static_cast<AddrTy>(finalSize)),                // filesize
-        static_cast<vm_prot_t>(V4(7)),                       // maxprot
-        static_cast<vm_prot_t>(V4(7)),                       // initprot
-        V4(1),                                               // nsects
-        V4(0)                                                // flags
+        VANY(static_cast<AddrTy>(headerAndCommands)),  // fileoff
+        VANY(static_cast<AddrTy>(finalSize)),          // filesize
+        static_cast<vm_prot_t>(V4(7)),                 // maxprot
+        static_cast<vm_prot_t>(V4(7)),                 // initprot
+        V4(1),                                         // nsects
+        V4(0)                                          // flags
     };
 
     strncpy(segment.segname, segmentName, sizeof(segment.segname));
@@ -221,18 +250,26 @@ class MachOPlatform : public Platform {
         "",                                    // segname
         VANY(static_cast<AddrTy>(0)),          // addr
         VANY(static_cast<AddrTy>(finalSize)),  // size
-        V4(sizeof(FileHeader) + sizeof(SegmentCommand) + sizeof(Section)
-           + sizeof(SymtabCommand)),  // offset
-        V4(log(alignment)),           // align
-        V4(0),                        // reloff
-        V4(0),                        // nreloc
-        V4(S_REGULAR),                // flags
-        V4(0),                        // reserved1
-        V4(0),                        // reserved2
+        V4(headerAndCommands),                 // offset
+        V4(log(alignment)),                    // align
+        V4(0),                                 // reloff
+        V4(0),                                 // nreloc
+        V4(S_REGULAR),                         // flags
+        V4(0),                                 // reserved1
+        V4(0),                                 // reserved2
     };
 
     strncpy(sect.segname, segmentName, sizeof(sect.segname));
     strncpy(sect.sectname, sectionName, sizeof(sect.sectname));
+
+    BuildVersionCommand buildVersion = {
+        V4(LC_BUILD_VERSION),              // cmd
+        V4(sizeof(BuildVersionCommand)),   // cmdsize
+        V4(PLATFORM_MACOS),                // platform
+        V4(MACOS_ARM64_MIN_VERSION),       // minos
+        V4(MACOS_ARM64_SDK_VERSION),       // sdk
+        V4(0),                             // ntools
+    };
 
     StringTable strings;
     strings.add("");
@@ -253,20 +290,21 @@ class MachOPlatform : public Platform {
     }
 
     SymtabCommand symbolTable = {
-        V4(LC_SYMTAB),              // cmd
-        V4(sizeof(SymtabCommand)),  // cmdsize
-        V4(sizeof(FileHeader) + sizeof(SegmentCommand) + sizeof(Section)
-           + sizeof(SymtabCommand) + finalSize),  // symoff
-        V4(symbols.count),                        // nsyms
-        V4(sizeof(FileHeader) + sizeof(SegmentCommand) + sizeof(Section)
-           + sizeof(SymtabCommand) + finalSize
-           + (sizeof(NList) * symbols.count)),  // stroff
-        V4(strings.length),                     // strsize
+        V4(LC_SYMTAB),                                  // cmd
+        V4(sizeof(SymtabCommand)),                      // cmdsize
+        V4(headerAndCommands + finalSize),              // symoff
+        V4(symbols.count),                              // nsyms
+        V4(headerAndCommands + finalSize
+           + (sizeof(NList) * symbols.count)),          // stroff
+        V4(strings.length),                             // strsize
     };
 
     out->writeChunk(&header, sizeof(header));
     out->writeChunk(&segment, sizeof(segment));
     out->writeChunk(&sect, sizeof(sect));
+    if (emitBuildVersion) {
+      out->writeChunk(&buildVersion, sizeof(buildVersion));
+    }
     out->writeChunk(&symbolTable, sizeof(symbolTable));
 
     out->writeChunk(data.items, data.count);

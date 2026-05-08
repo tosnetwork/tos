@@ -722,6 +722,20 @@ softfloat-cflags = $(optimization-cflags) -Wall -Wextra $(werror) \
 	-DSOFTFLOAT_FAST_DIV32TO16 -DSOFTFLOAT_FAST_DIV64TO32 \
 	$(softfloat-include-cflags)
 
+# Stamp softfloat objects with the same target triple as the rest of the
+# build. Without this, the host SDK's default deployment target ends up
+# baked into each softfloat .o, while the linker (driven by lflags) is
+# told to target an older OS — producing "object file was built for newer
+# 'macOS' version" warnings on every softfloat translation unit.
+ifeq ($(platform),macosx)
+	ifeq ($(arch),arm64)
+		softfloat-cflags += -arch arm64 -mmacosx-version-min=11.0
+	endif
+	ifeq ($(arch),x86_64)
+		softfloat-cflags += -arch x86_64
+	endif
+endif
+
 ifndef ms_cl_compiler
 ifneq ($(kernel),darwin)
 ifeq ($(arch),i386)
