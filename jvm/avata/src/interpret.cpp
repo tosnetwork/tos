@@ -2962,6 +2962,13 @@ loop:
   }
     goto loop;
 
+  case breakpoint:
+  case impdep2:
+    // Reserved opcodes (0xca / 0xff).  Gas was already charged (1 unit each)
+    // by the opcode gas table.  Treat as a no-op so a malformed class file
+    // cannot crash the validator process.
+    goto loop;
+
   default:
     abort(t);
   }

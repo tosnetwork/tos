@@ -1078,6 +1078,16 @@ TEST(TieredOpcodeGasSchedule)
   avata_get_opcode_gas_cost(abiThread, vm::monitorexit, &gasCost);
   assertEqual(static_cast<uint64_t>(TOS_GAS_MONITOR), gasCost);
 
+  /* Reserved opcodes (breakpoint=0xca, impdep2=0xff) must charge exactly 1 gas
+     so that hand-crafted class files containing them consume gas rather than
+     crashing the validator process.  The interpreter treats them as no-ops. */
+  avata_get_opcode_gas_cost(abiThread, vm::breakpoint, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_DEFAULT), gasCost);
+  assertEqual(static_cast<uint64_t>(1), gasCost);
+  avata_get_opcode_gas_cost(abiThread, vm::impdep2, &gasCost);
+  assertEqual(static_cast<uint64_t>(TOS_GAS_DEFAULT), gasCost);
+  assertEqual(static_cast<uint64_t>(1), gasCost);
+
   /* Ordering invariants: float > int, invoke > field, div > add */
   uint64_t a, b;
   avata_get_opcode_gas_cost(abiThread, vm::fadd, &a);
