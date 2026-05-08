@@ -20,11 +20,11 @@ java-version := $(host-java-version)
 endif
 
 build-arch := $(shell uname -m \
-	| sed 's/^i.86$$/i386/' \
-	| sed 's/^x86pc$$/i386/' \
-	| sed 's/amd64/x86_64/' \
-	| sed 's/^arm.*$$/arm/' \
-	| sed 's/aarch64/arm64/')
+	| sed -e 's/^i.86$$/i386/' \
+	      -e 's/^x86pc$$/i386/' \
+	      -e 's/amd64/x86_64/' \
+	      -e 's/^aarch64$$/arm64/' \
+	      -e '/^arm64/!s/^arm.*$$/arm/')
 
 build-platform := \
 	$(shell uname -s | tr [:upper:] [:lower:] \
@@ -92,8 +92,8 @@ ifeq ($(filter linux windows macosx ios freebsd,$(platform)),)
 endif
 
 ifeq ($(platform),macosx)
-	ifneq ($(filter arm arm64,$(arch)),)
-		x := $(error "please use ('arch=arm' or 'arch=arm64') 'platform=ios' to build for ios-arm")
+	ifeq ($(arch),arm)
+		x := $(error "32-bit arm is not supported on macosx; use 'platform=ios' for ios-arm or 'arch=arm64' for Apple Silicon")
 	endif
 endif
 
@@ -558,6 +558,13 @@ ifeq ($(kernel),darwin)
 				cflags += -arch x86_64
 				asmflags += -arch x86_64
 				lflags += -arch x86_64
+		endif
+
+		ifeq ($(arch),arm64)
+				classpath-extra-cflags += -arch arm64 -mmacosx-version-min=11.0
+				cflags += -arch arm64 -mmacosx-version-min=11.0
+				asmflags += -arch arm64 -mmacosx-version-min=11.0
+				lflags += -arch arm64 -mmacosx-version-min=11.0
 		endif
 	endif
 	cflags += -I$(JAVA_HOME)/include/darwin
