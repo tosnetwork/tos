@@ -1,4 +1,24 @@
-# TOS JVM / Avata Remaining Work
+# TOS JVM / Avata Work History
+
+> **Archival note** (2026-05-08).  All items in this document are
+> completed (✅) and the file is now a historical record of the work
+> done to bring the JVM workchain online.  Several completed entries
+> describe v1-era types and helpers (`JvmExecutorState`,
+> `class_state_root`, `JvmAvataClassManifest` / `JvmAvataClassState`
+> with magics `JVMM` / `JVMC`, `install_jvm_deploy_descriptor`,
+> SingletonExecutor at `0x0000…0001`, the v1 `JvmCallDescriptor` with a
+> `contract_id` field, etc.) — these reflect the pre-v2 SingletonExecutor
+> design that was implemented first and then superseded by the
+> account-native v2 topology.  Those v1 symbols have been removed from
+> the source tree.  For the current implemented spec see:
+>
+> - [`doc/jvm-roadmap.md`](jvm-roadmap.md) — phase-by-phase status
+> - [`doc/jvm-v2-account-topology.md`](jvm-v2-account-topology.md) — v2 reference
+> - [`doc/workchain-execution-registry.md`](workchain-execution-registry.md) — `EngineDefined` policy + `action_create_account`
+> - [`doc/ConfigParam.md`](ConfigParam.md) — ConfigParam 85 schema_version=2
+>
+> The §"v1 removal" block in `doc/jvm-roadmap.md` lists every v1 symbol
+> that was deleted.
 
 This document tracks the remaining work for the TOS JVM workchain runtime.
 `~/jdk8u` is the local OpenJDK 8u reference checkout used to compare JVM and
