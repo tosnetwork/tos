@@ -115,18 +115,18 @@ define a new bytecode dialect.
 **Supported compatibility surface:**
 - Class-file major version 52 (`Java SE 8`) using JVMS-compatible parsing,
   verification, linking, and exception semantics
-- All Java 8 bytecode opcodes in the engine decoder, including
-  `invokedynamic`, floating-point opcodes, `monitorenter`, and `monitorexit`.
-  The v1 contract verifier currently rejects `invokedynamic` class-file
-  structures until deterministic VM-internal bootstrap linkage is admitted.
+- All Java 8 bytecode opcodes in the engine decoder except `invokedynamic`,
+  floating-point opcodes, `monitorenter`, and `monitorexit`.
   Floating-point opcodes execute through the TOS deterministic fixed
   floating-point engine, not host CPU floating-point instructions.
-- Constant-pool parsing for Java 8 structures. The v1 profile rejects
-  `CONSTANT_InvokeDynamic`, `MethodHandle`, `MethodType`, and
-  `BootstrapMethods` before execution because public `java.lang.invoke` is not
-  part of the contract runtime.
-- Static, virtual, interface, and special method dispatch; dynamic dispatch is
-  a VM-internal future item, not a public method-handle API item.
+  `invokedynamic` is **permanently unsupported** — rejected at class-load time
+  and not planned for v2 or any future version (see "OpenJDK opcode
+  compatibility" below).
+- Constant-pool parsing for Java 8 structures. `CONSTANT_InvokeDynamic`,
+  `CONSTANT_MethodHandle`, `CONSTANT_MethodType`, and `BootstrapMethods` are
+  rejected at class load; `java.lang.invoke` is absent from `rt.jar` and
+  `api.jar` by design.
+- Static, virtual, interface, and special method dispatch.
 - Generics (compiler-erased; JVM-transparent)
 - Annotations parsed by the validator for contract metadata; runtime annotation
   reflection is available only if the deterministic runtime profile admits it
@@ -258,19 +258,18 @@ binding if v2 supersedes v1 before mainnet activation.
 
 ### OpenJDK opcode compatibility
 
-The JVM workchain commits to Java 8 opcode compatibility, including
-`invokedynamic`, but the contract runtime does not ship public
-`java.lang.invoke` classes. Avata's historical lambda support was removed from
-the v1 profile because it carried Java SE method-handle and bootstrap API
-surface into `rt.jar`. Future `invokedynamic` admission must be implemented as
-deterministic VM-internal linkage and verified without exposing
-`MethodHandle`, `MethodType`, `CallSite`, or `LambdaMetafactory` classes to
-contracts.
+The JVM workchain commits to Java 8 opcode compatibility for the opcodes
+defined in the JVMS. **`invokedynamic` is permanently excluded** — it is
+rejected at three independent layers (constant-pool entries, `BootstrapMethods`
+attribute, and opcode dispatch) and will not be admitted in v2 or any future
+version. A deterministic consensus VM cannot safely admit arbitrary bootstrap
+method linkage; the anonymous-inner-class pattern covers all practical contract
+use cases without it. `java.lang.invoke` is absent from `rt.jar` and `api.jar`
+by design.
 
-The compatibility promise is bytecode-level, not a promise to expose host
-capabilities. Bytecode that calls OpenJDK APIs with non-deterministic or
-host-observing behavior must still trap deterministically under the TOS runtime
-profile.
+The compatibility promise covers the remaining opcode set. Bytecode that calls
+OpenJDK APIs with non-deterministic or host-observing behaviour must still trap
+deterministically under the TOS runtime profile.
 
 ### Activation requires a capability gate
 
@@ -905,9 +904,10 @@ performance profiling.
 - Replay test: serialize a block to disk, reimport it, assert identical state
 - Gas exhaustion test: contract that runs out of gas mid-execution; assert state
   does not commit
-- OpenJDK opcode compatibility tests: lambdas/method references
-  (`invokedynamic`), floating-point arithmetic, `monitorenter`/`monitorexit`,
-  exceptions, arrays, interface dispatch, and class initialization
+- OpenJDK opcode compatibility tests: floating-point arithmetic,
+  `monitorenter`/`monitorexit`, exceptions, arrays, interface dispatch, and
+  class initialization (lambdas/`invokedynamic` are permanently unsupported —
+  no test needed)
 - Fixed floating-point conformance test: run the same float/double corpus on
   every supported OS/CPU target and assert byte-identical results, including
   NaN, signed zero, infinities, overflow, underflow, and subnormals
