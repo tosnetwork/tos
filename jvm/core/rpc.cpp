@@ -1,13 +1,14 @@
 /*
     JVM Workchain — JSON-RPC namespace implementation.
 
-    Phase 7 scaffold.  Implements request parsing, admission validation, and
-    response encoding for the four jvm_* endpoints.  Full node wiring waits on
-    WorkchainRuntimeServices::register_rpc; callers invoke handle_jvm_rpc()
-    directly for now.
+    Implements request parsing, admission validation, local simulation, and
+    response encoding for the four jvm_* endpoints.  Full-node routing lives in
+    validator-engine/json-rpc-server-jvm.cpp; tests can still invoke
+    handle_jvm_rpc() directly with an injected ConfigParam 85.
 
     Design constraints:
-    - These functions are non-consensus.  They must not call run_compute or
+    - These functions are non-consensus.  Optional local simulation uses an
+      injected runtime and returns newStateBoc to the caller; it must not
       modify block state.
     - jvm_deployContract admission is a convenience; consensus re-validates.
     - No threading, no shared state.  Every function is pure given its inputs.
@@ -494,9 +495,8 @@ std::optional<JvmGetContractStateRequest> parse_jvm_get_contract_state_request(
         return std::nullopt;
     }
     // Optional: caller-supplied executor state as a hex-encoded BOC.
-    // When present, the handler can resolve className/classHash without a live
-    // block-state connection.  Absent means the caller must inject executor_state
-    // directly (e.g. from the node's block-state lookup via the register_rpc hook).
+    // When present, the handler can resolve class metadata and storage slots
+    // from the supplied snapshot.
     auto state_boc_hex = json_get_string(params_json, "executorStateBoc");
     if (!state_boc_hex.empty()) {
         req.executor_state = hex_boc_decode_cell(state_boc_hex);
@@ -616,20 +616,32 @@ std::optional<JvmGetReceiptsRequest> parse_jvm_get_receipts_request(
 
     auto from_str = json_get_number_str(params_json, "fromBlock");
     if (!from_str.empty()) {
-        try { req.from_block = std::stoull(from_str); } catch (...) {}
+        if (from_str.front() == '-') return std::nullopt;
+        try {
+            req.from_block = std::stoull(from_str);
+        } catch (...) {
+            return std::nullopt;
+        }
     }
     auto to_str = json_get_number_str(params_json, "toBlock");
     if (!to_str.empty()) {
-        try { req.to_block = std::stoull(to_str); } catch (...) {}
+        if (to_str.front() == '-') return std::nullopt;
+        try {
+            req.to_block = std::stoull(to_str);
+        } catch (...) {
+            return std::nullopt;
+        }
     }
     return req;
 }
 
 JvmRpcResult handle_jvm_get_receipts(const JvmGetReceiptsRequest& req,
                                      const std::string& id) {
-    // v1: event logs are committed into block side effects via the event-host
-    // path.  Full receipt retrieval requires a block-state index; return an
-    // empty list for now so the endpoint is functional.
+    // Pure core fallback: full-node routing in validator-engine handles live
+    // receipt retrieval by scanning the singleton executor account history and
+    // decoding committed JVME event messages.  Unit tests that call this core
+    // facade directly have no block-state/liteserver connection, so they receive
+    // a well-formed empty result.
     std::string result = "{\"contractId\":\""
                        + hex_encode(req.contract_id)
                        + "\",\"receipts\":[]}";

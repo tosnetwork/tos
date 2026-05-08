@@ -16,10 +16,10 @@
     developer convenience.  Consensus re-validates on execution and never
     trusts the result of the RPC admission check.
 
-    Integration note: full node RPC integration waits on the
-    WorkchainRuntimeServices::register_rpc hook.  Until that hook lands, the
-    codec and admission logic here can be tested standalone and wired by the
-    caller (validator-engine, test harnesses) through handle_jvm_rpc().
+    Integration note: validator-engine wires these handlers into the full-node
+    JSON-RPC dispatcher via JsonRpcServer::handle_jvm_rpc_method().  Tests may
+    still call handle_jvm_rpc() directly with an injected ConfigParam 85 and
+    optional runtime.
 
     Source: TOS-specific integration point (Phase 7).
 */

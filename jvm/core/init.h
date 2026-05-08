@@ -10,7 +10,11 @@
 */
 #pragma once
 
+#include <memory>
+
 namespace jvm_workchain {
+
+class JvmComputeRuntime;
 
 /// Initialize non-consensus Avata process resources and register the JVM engine
 /// with the default WorkchainExecutionRegistry.
@@ -21,5 +25,10 @@ namespace jvm_workchain {
 /// TOS_JVM_AVATA_HEAP. If initialization fails, registration still succeeds
 /// with a null runtime and wc=3 compute fails closed.
 bool init_jvm_workchain(const char* db_root);
+
+/// Return the Avata-backed runtime installed by init_jvm_workchain(), if any.
+/// RPC local simulation uses this pointer; consensus execution still resolves
+/// through the registered WorkchainEngine.
+std::shared_ptr<const JvmComputeRuntime> current_jvm_compute_runtime();
 
 }  // namespace jvm_workchain

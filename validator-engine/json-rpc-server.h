@@ -323,6 +323,12 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void dispatch_method(std::string method, td::JsonObject &params,
                        std::string req_id, std::string source_ip,
                        td::Promise<HttpReturn> promise);
+  void handle_jvm_rpc_method(std::string method, std::string params_json,
+                             std::string req_id,
+                             td::Promise<HttpReturn> promise);
+  void handle_jvm_get_receipts_rpc_method(std::string params_json,
+                                          std::string req_id,
+                                          td::Promise<HttpReturn> promise);
 
   // Method handlers — existing
   void handle_sendBoc(td::JsonObject &params, std::string req_id,

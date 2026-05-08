@@ -3168,6 +3168,10 @@ TEST(JvmWorkchainCore, RpcGetReceiptsParsesRequest) {
   CHECK(req->from_block == 100);
   CHECK(req->to_block == 200);
 
+  CHECK(!parse_jvm_get_receipts_request(R"({
+    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "fromBlock": -1
+  })").has_value());
   CHECK(!parse_jvm_get_receipts_request(R"({})").has_value());
 }
 

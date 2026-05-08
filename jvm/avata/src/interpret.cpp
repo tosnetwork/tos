@@ -2962,20 +2962,12 @@ loop:
   }
     goto loop;
 
-  case breakpoint:
-  case impdep2:
-    // Named reserved opcodes (0xca / 0xff): fall through to the default
-    // no-op treatment below.
-
   default:
-    // Any opcode byte not matched above (including the 51 undefined values
-    // 0xcb–0xfd that have no JVMS name) reaches here.  Gas was already
-    // charged by the unified gas table before the switch (TOS_GAS_DEFAULT = 1
-    // for every reserved/undefined slot), so treat these as no-ops rather
-    // than crashing the validator process.  A malformed or hand-crafted class
-    // file containing any of these bytes executes safely and pays 1 gas per
-    // occurrence.
-    goto loop;
+    // Reserved and undefined opcodes (breakpoint 0xca, 0xcb–0xfd, impdep2
+    // 0xff) are rejected by verifyCodeOpcodes at class-load time, so reaching
+    // here indicates a VM-internal call path (boot class or JIT stub).  Abort
+    // to surface the bug rather than silently misbehaving.
+    abort(t);
   }
 
 wide:

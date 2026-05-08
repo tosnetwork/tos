@@ -19,6 +19,7 @@
 #include "json-rpc-server-internal.h"
 
 #include "evm/rpc/handlers.h"
+#include "jvm/core/rpc.h"
 #include "uno/rpc/handlers.h"
 
 #include <cstdlib>
@@ -1011,6 +1012,18 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     return;
   }
 
+  // JVM workchain JSON-RPC: route jvm_* methods through the full-node
+  // facade. The handler resolves live ConfigParam 85 before calling into
+  // jvm_workchain::handle_jvm_rpc().
+  if (jvm_workchain::is_jvm_rpc_method(method)) {
+    td::JsonBuilder jb;
+    jb.enter_value() << params_val;
+    auto params_str = jb.string_builder().as_cslice().str();
+    handle_jvm_rpc_method(std::move(method), std::move(params_str),
+                          std::move(req_id), std::move(promise));
+    return;
+  }
+
   // Ethereum JSON-RPC sends params as arrays.  Handle eth_* methods
   // with array params directly, before the object-params check. The
   // same dispatch covers the TOS-specific EVM read-only methods
@@ -1441,6 +1454,19 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_runGetMethodStd(params, std::move(req_id), std::move(promise));
   } else if (method == "sendBocReturnHashNoError") {
     handle_sendBocReturnHashNoError(params, std::move(req_id), std::move(promise));
+  }
+  // --- JVM Workchain: jvm_* JSON-RPC methods ---
+  else if (jvm_workchain::is_jvm_rpc_method(method)) {
+    td::JsonBuilder jb;
+    {
+      auto obj = jb.enter_object();
+      for (auto& kv : params.field_values_) {
+        obj(kv.first, kv.second);
+      }
+    }
+    auto params_str = jb.string_builder().as_cslice().str();
+    handle_jvm_rpc_method(std::move(method), std::move(params_str),
+                          std::move(req_id), std::move(promise));
   }
   // --- EVM Workchain: Ethereum JSON-RPC methods ---
   else if (evm_workchain::is_eth_rpc_method(method)) {

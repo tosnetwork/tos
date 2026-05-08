@@ -25,6 +25,11 @@ std::string getenv_or_empty(const char* name) {
     return value == nullptr ? std::string{} : std::string{value};
 }
 
+std::shared_ptr<const JvmComputeRuntime>& runtime_slot() {
+    static std::shared_ptr<const JvmComputeRuntime> runtime;
+    return runtime;
+}
+
 }  // namespace
 
 bool init_jvm_workchain(const char* /*db_root*/) {
@@ -49,9 +54,14 @@ bool init_jvm_workchain(const char* /*db_root*/) {
             << linked_runtime.error().message();
     }
 
+    runtime_slot() = runtime;
     register_jvm_workchain_engine(block::default_workchain_execution_registry(),
                                   std::move(runtime));
     return true;
+}
+
+std::shared_ptr<const JvmComputeRuntime> current_jvm_compute_runtime() {
+    return runtime_slot();
 }
 
 }  // namespace jvm_workchain

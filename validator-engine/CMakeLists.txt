@@ -9,6 +9,7 @@ set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
   json-rpc-server-runmethod.cpp
   json-rpc-server-send.cpp
   json-rpc-server-config.cpp
+  json-rpc-server-jvm.cpp
   json-rpc-server-token.cpp
   json-rpc-server-utils.cpp
   json-rpc-server-shared.cpp
@@ -48,6 +49,7 @@ target_link_libraries(test-json-rpc-cache metrics overlay tdutils tdactor adnl t
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
 target_link_libraries(test-json-rpc-cache evm_workchain)
 target_link_libraries(test-json-rpc-cache uno_workchain)
+target_link_libraries(test-json-rpc-cache jvm_workchain_core)
 if (JEMALLOC_FOUND)
   target_include_directories(test-json-rpc-cache PRIVATE ${JEMALLOC_INCLUDE_DIR})
   target_compile_definitions(test-json-rpc-cache PRIVATE -DTOS_USE_JEMALLOC=1)

@@ -184,7 +184,7 @@ Supporting `invokedynamic` in a consensus VM requires a deterministic
 VM-internal bootstrap mechanism that does not depend on any host runtime
 behaviour; this is deferred to a post-v1 design.
 
-### Reserved and undefined opcodes — no-op with 1 gas
+### Reserved and undefined opcodes — rejected at class-load time
 
 The Java 8 opcode space contains three categories of byte values that `javac`
 never emits in normal class files but that could appear in a hand-crafted or
@@ -196,24 +196,19 @@ maliciously modified class file:
 | 0xcb–0xfd (51 values) | Completely undefined in the JVMS |
 | `impdep2` (0xff) | Implementation-dependent; reserved by JVMS |
 
-The interpreter treats **all of these as no-ops that consume 1 gas unit** and
-continue execution.  The 1-gas cost comes from `TOS_GAS_DEFAULT` in the opcode
-gas table, charged by the unified gas-accounting path that runs before every
-opcode dispatch.  No exception is thrown; execution continues to the next
-bytecode.
+**All 53 of these byte values cause a `VerifyError` at class-load time** for
+application (contract) classes.  The check is performed by `verifyCodeOpcodes`
+in `machine.cpp`, which walks the complete bytecode of every method before any
+execution begins.  A class file containing any of these byte values is rejected
+during deployment and never reaches the interpreter.
 
-This is a deliberate safety design:
+Boot classes (the `rt/` standard library loaded from the trusted runtime image)
+are exempt, as they may legitimately use VM-internal opcodes.
 
-- Throwing `VerifyError` would be semantically cleaner, but is not strictly
-  necessary — `javac` never produces these opcodes, so only hand-crafted input
-  reaches this path.
-- Crashing the validator process (the previous behaviour via `abort()`) would
-  be a denial-of-service vulnerability: a malicious deployer could submit a
-  class file containing any of the 53 affected byte values to kill any
-  validator node that executes the contract.
-- The no-op treatment is safe because none of these opcodes have observable
-  side effects on contract state, and the gas charge ensures the attack cannot
-  be used to execute an unlimited number of them for free.
+The previous behaviour — treating these as runtime no-ops — was replaced
+because accepting them silently could mask malformed class files.  Rejecting at
+verification time is the correct JVMS-compliant approach: `javac` never emits
+these opcodes, and any class file that contains them is by definition invalid.
 
 ## Building
 

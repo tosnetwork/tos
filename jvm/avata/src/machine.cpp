@@ -2424,6 +2424,191 @@ void disassembleCode(const char* prefix, uint8_t* code, unsigned length)
   }
 }
 
+// Walk a method's bytecode body and throw VerifyError if any opcode position
+// contains a reserved or undefined byte value.  Called for application classes
+// only; boot classes may use VM-internal opcodes (impdep1 etc.).
+//
+// Instruction sizes follow JVMS §6.5.  Variable-length instructions
+// (tableswitch, lookupswitch) use the same alignment formula as the
+// interpreter: pad to 4-byte boundary relative to the start of the code array.
+void verifyCodeOpcodes(Thread* t, const uint8_t* code, unsigned length)
+{
+  // Helper: read a big-endian int32 and advance ip.
+  auto read32 = [](const uint8_t* c, unsigned& i) -> int32_t {
+    int32_t v = (static_cast<int32_t>(c[i]) << 24)
+              | (static_cast<int32_t>(c[i+1]) << 16)
+              | (static_cast<int32_t>(c[i+2]) << 8)
+              | static_cast<int32_t>(c[i+3]);
+    i += 4;
+    return v;
+  };
+
+  unsigned ip = 0;
+  while (ip < length) {
+    unsigned instr = code[ip++];
+    switch (instr) {
+
+    // ---- zero-operand opcodes ----
+    case nop: case aconst_null:
+    case iconst_m1: case iconst_0: case iconst_1: case iconst_2:
+    case iconst_3: case iconst_4: case iconst_5:
+    case lconst_0: case lconst_1:
+    case fconst_0: case fconst_1: case fconst_2:
+    case dconst_0: case dconst_1:
+    case iload_0: case iload_1: case iload_2: case iload_3:
+    case lload_0: case lload_1: case lload_2: case lload_3:
+    case fload_0: case fload_1: case fload_2: case fload_3:
+    case dload_0: case dload_1: case dload_2: case dload_3:
+    case aload_0: case aload_1: case aload_2: case aload_3:
+    case iaload: case laload: case faload: case daload: case aaload:
+    case baload: case caload: case saload:
+    case istore_0: case istore_1: case istore_2: case istore_3:
+    case lstore_0: case lstore_1: case lstore_2: case lstore_3:
+    case fstore_0: case fstore_1: case fstore_2: case fstore_3:
+    case dstore_0: case dstore_1: case dstore_2: case dstore_3:
+    case astore_0: case astore_1: case astore_2: case astore_3:
+    case iastore: case lastore: case fastore: case dastore: case aastore:
+    case bastore: case castore: case sastore:
+    case pop_: case pop2:
+    case vm::dup: case dup_x1: case dup_x2:
+    case vm::dup2: case dup2_x1: case dup2_x2:
+    case swap:
+    case iadd: case ladd: case vm::fadd: case dadd:
+    case isub: case lsub: case vm::fsub: case dsub:
+    case imul: case lmul: case vm::fmul: case dmul:
+    case idiv: case ldiv_: case vm::fdiv: case ddiv:
+    case irem: case lrem: case frem: case vm::drem:
+    case ineg: case lneg: case fneg: case dneg:
+    case ishl: case lshl: case ishr: case lshr: case iushr: case lushr:
+    case iand: case land: case ior: case lor: case ixor: case lxor:
+    case i2l: case i2f: case i2d:
+    case l2i: case l2f: case l2d:
+    case f2i: case f2l: case f2d:
+    case d2i: case d2l: case d2f:
+    case i2b: case i2c: case i2s:
+    case lcmp: case fcmpl: case fcmpg: case dcmpl: case dcmpg:
+    case ireturn: case lreturn: case freturn: case dreturn:
+    case areturn: case return_:
+    case arraylength: case athrow:
+    case monitorenter: case monitorexit:
+      break;
+
+    // ---- 1-byte operand ----
+    case bipush:
+    case ldc:
+    case iload: case lload: case fload: case dload: case aload:
+    case istore: case lstore: case fstore: case dstore: case astore:
+    case ret:
+    case newarray:
+      ip += 1;
+      break;
+
+    // ---- 2-byte operand ----
+    case sipush:
+    case ldc_w: case ldc2_w:
+    case getstatic: case putstatic: case getfield: case putfield:
+    case invokevirtual: case invokespecial: case invokestatic:
+    case new_: case anewarray: case checkcast: case instanceof:
+    case ifeq: case ifne: case iflt: case ifge: case ifgt: case ifle:
+    case if_icmpeq: case if_icmpne: case if_icmplt:
+    case if_icmpge: case if_icmpgt: case if_icmple:
+    case if_acmpeq: case if_acmpne:
+    case ifnull: case ifnonnull:
+    case goto_:
+    case jsr:
+      ip += 2;
+      break;
+
+    // ---- iinc: 2-byte operand (index + const) ----
+    case iinc:
+      ip += 2;
+      break;
+
+    // ---- 3-byte operand: multianewarray ----
+    case multianewarray:
+      ip += 3;
+      break;
+
+    // ---- 4-byte operand ----
+    case goto_w: case jsr_w:
+      ip += 4;
+      break;
+
+    // invokeinterface: index(2) + count(1) + 0(1) = 4 bytes
+    case invokeinterface:
+      ip += 4;
+      break;
+
+    // invokedynamic: already rejected at constant-pool level; reject here too.
+    case invokedynamic:
+      throwNew(t, GcVerifyError::Type);
+      return;
+
+    // ---- tableswitch ----
+    case tableswitch: {
+      // Pad to 4-byte boundary relative to code start (same as interpreter).
+      ip += 3;
+      ip -= (ip % 4);
+      // default offset (4), low (4), high (4).
+      read32(code, ip);
+      int32_t low  = read32(code, ip);
+      int32_t high = read32(code, ip);
+      if (high < low) {
+        throwNew(t, GcVerifyError::Type);
+        return;
+      }
+      ip += static_cast<unsigned>(high - low + 1) * 4;
+      break;
+    }
+
+    // ---- lookupswitch ----
+    case lookupswitch: {
+      ip += 3;
+      ip -= (ip % 4);
+      // default offset (4), npairs (4).
+      read32(code, ip);
+      int32_t npairs = read32(code, ip);
+      if (npairs < 0) {
+        throwNew(t, GcVerifyError::Type);
+        return;
+      }
+      ip += static_cast<unsigned>(npairs) * 8;
+      break;
+    }
+
+    // ---- wide prefix ----
+    case wide: {
+      if (ip >= length) {
+        throwNew(t, GcVerifyError::Type);
+        return;
+      }
+      unsigned sub = code[ip++];
+      switch (sub) {
+      case iload: case lload: case fload: case dload: case aload:
+      case istore: case lstore: case fstore: case dstore: case astore:
+      case ret:
+        ip += 2;
+        break;
+      case iinc:
+        ip += 4;
+        break;
+      default:
+        throwNew(t, GcVerifyError::Type);
+        return;
+      }
+      break;
+    }
+
+    // ---- reserved / undefined — reject ----
+    case breakpoint:  // 0xca — JVMS debugger reserved
+    case impdep2:     // 0xff — JVMS implementation reserved
+    default:          // 0xcb–0xfd — completely undefined in Java 8 JVMS
+      throwNew(t, GcVerifyError::Type);
+      return;
+    }
+  }
+}
+
 GcCode* parseCode(Thread* t, Stream& s, GcSingleton* pool)
 {
   PROTECT(t, pool);
@@ -2647,6 +2832,12 @@ void parseMethodTable(Thread* t,
         if (vm::strcmp(reinterpret_cast<const int8_t*>("Code"),
                        attributeName->body().begin()) == 0) {
           code = parseCode(t, s, pool);
+          if (class_->loader() != roots(t)->bootClassSpace() && code != 0) {
+            verifyCodeOpcodes(
+                t,
+                reinterpret_cast<const uint8_t*>(code->body().begin()),
+                code->length());
+          }
         } else if (vm::strcmp(reinterpret_cast<const int8_t*>("Exceptions"),
                               attributeName->body().begin()) == 0) {
           if (addendum == 0) {
