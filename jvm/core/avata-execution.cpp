@@ -242,7 +242,7 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
 
 td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output(
     const JvmConfig& config,
-    const JvmExecutorState& previous_state,
+    const JvmContractAccountState& previous_state,
     std::uint64_t gas_limit,
     const JvmAvataInvocationResult& invocation) {
     if (config.chain_id == 0 || config.gas_price == 0 ||
@@ -259,10 +259,11 @@ td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output(
         return td::Status::Error(
             "JVM output builder received invalid memory accounting");
     }
-    if (previous_state.schema_version != kJvmExecutorStateSchemaVersion ||
-        previous_state.stdlib_hash != config.stdlib_hash) {
+    if (previous_state.schema_version != kJvmContractAccountStateSchemaVersion ||
+        previous_state.stdlib_hash != config.stdlib_hash ||
+        previous_state.class_bytes.is_null()) {
         return td::Status::Error(
-            "JVM output builder received incompatible previous executor state");
+            "JVM output builder received incompatible previous account state");
     }
     if (invocation.success &&
         (invocation.out_of_gas || invocation.out_of_memory ||
@@ -306,92 +307,6 @@ td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output(
             "JVM output builder failed to build empty action list");
     }
 
-    JvmExecutorState next_state;
-    next_state.schema_version = kJvmExecutorStateSchemaVersion;
-    next_state.stdlib_hash = config.stdlib_hash;
-    next_state.storage_root = invocation.storage_root;
-    next_state.class_state_root = previous_state.class_state_root;
-    auto new_data = encode_jvm_executor_state(next_state);
-    if (new_data.is_null()) {
-        return td::Status::Error(
-            "JVM output builder failed to encode executor state");
-    }
-
-    out.engine_success = true;
-    out.committed = true;
-    out.new_data = std::move(new_data);
-    out.action_list = std::move(action_list);
-    out.vm_log = "JVM execution completed";
-    return out;
-}
-
-td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output_v2(
-    const JvmConfig& config,
-    const JvmContractAccountState& previous_state,
-    std::uint64_t gas_limit,
-    const JvmAvataInvocationResult& invocation) {
-    if (config.chain_id == 0 || config.gas_price == 0 ||
-        config.max_gas_per_tx == 0 || config.max_heap_bytes == 0) {
-        return td::Status::Error(
-            "JVM v2 output builder received unresolved ConfigParam 85");
-    }
-    if (gas_limit == 0 || gas_limit > config.max_gas_per_tx ||
-        invocation.gas_used > gas_limit) {
-        return td::Status::Error(
-            "JVM v2 output builder received invalid gas accounting");
-    }
-    if (invocation.memory_used > config.max_heap_bytes) {
-        return td::Status::Error(
-            "JVM v2 output builder received invalid memory accounting");
-    }
-    if (previous_state.schema_version != kJvmContractAccountStateSchemaVersion ||
-        previous_state.stdlib_hash != config.stdlib_hash ||
-        previous_state.class_bytes.is_null()) {
-        return td::Status::Error(
-            "JVM v2 output builder received incompatible previous account state");
-    }
-    if (invocation.success &&
-        (invocation.out_of_gas || invocation.out_of_memory ||
-         invocation.invocation_status != 0)) {
-        return td::Status::Error(
-            "JVM v2 output builder received inconsistent success status");
-    }
-
-    block::WorkchainComputeOutput out;
-    out.completed = true;
-    out.accepted = true;
-    out.skip_reason = block::ComputePhase::sk_none;
-    out.out_of_gas = invocation.out_of_gas;
-    out.exit_code = invocation.success ? 0 : invocation.invocation_status;
-    out.gas_used = invocation.gas_used;
-    out.gas_fees = jvm_gas_fees(config, invocation.gas_used);
-
-    if (!invocation.success) {
-        out.engine_success = false;
-        out.committed = false;
-        out.vm_log = invocation.out_of_gas
-            ? "JVM execution exhausted gas"
-            : (invocation.out_of_memory
-                   ? "JVM execution exhausted memory"
-                   : "JVM execution failed");
-        return out;
-    }
-
-    if (invocation.storage_root.is_null() ||
-        !validate_jvm_storage_root(invocation.storage_root)) {
-        return td::Status::Error(
-            "JVM v2 output builder received invalid committed storage root");
-    }
-
-    auto action_list = invocation.action_list;
-    if (action_list.is_null()) {
-        action_list = empty_jvm_action_list();
-    }
-    if (action_list.is_null()) {
-        return td::Status::Error(
-            "JVM v2 output builder failed to build empty action list");
-    }
-
     JvmContractAccountState next_state;
     next_state.schema_version = kJvmContractAccountStateSchemaVersion;
     next_state.stdlib_hash = config.stdlib_hash;
@@ -402,7 +317,7 @@ td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output_v2(
     auto new_data = encode_jvm_contract_account_state(next_state);
     if (new_data.is_null()) {
         return td::Status::Error(
-            "JVM v2 output builder failed to encode contract account state");
+            "JVM output builder failed to encode contract account state");
     }
 
     out.engine_success = true;

@@ -226,14 +226,6 @@ std::optional<JvmDeployContractRequest> parse_jvm_deploy_contract_request(
 
     // init_args is optional; absent = canonical empty args cell.
     req.init_args = vm::CellBuilder().finalize();
-
-    // executorStateBoc is optional; when present the handler installs the class
-    // into the supplied state and returns newStateBoc.
-    auto exec_state_hex = json_get_string(params_json, "executorStateBoc");
-    if (!exec_state_hex.empty()) {
-        req.executor_state = hex_boc_decode_cell(exec_state_hex);
-        if (req.executor_state.is_null()) return std::nullopt;
-    }
     return req;
 }
 
@@ -285,18 +277,9 @@ JvmRpcResult handle_jvm_deploy_contract(
     std::string descriptor_boc_hex = hex_encode(
         reinterpret_cast<const uint8_t*>(boc_bytes.data()), boc_bytes.size());
 
-    // Derive both the v1 contract_id (for clients still on the
-    // SingletonExecutor wire format) and the v2 wc=3 contract_address
-    // (the deterministic per-account address the deploy targets under
-    // the account-native topology).
-    auto contract_id_result = derive_jvm_contract_id(descriptor);
-    if (contract_id_result.is_error()) {
-        return JvmRpcResult{
-            json_rpc_err(id, -32602, "contract_id derivation failed"),
-            true};
-    }
-    const auto& contract_id = contract_id_result.ok();
-
+    // Derive the deterministic per-contract wc=3 account address.  The
+    // deployer wraps `descriptor` in StateInit and emits an
+    // `action_create_account` to materialize a new account at this address.
     auto contract_address_result = derive_jvm_contract_address(descriptor);
     if (contract_address_result.is_error()) {
         return JvmRpcResult{
@@ -305,46 +288,10 @@ JvmRpcResult handle_jvm_deploy_contract(
     }
     const auto& contract_address = contract_address_result.ok();
 
-    // Optional local install: when executorStateBoc is supplied, install the
-    // class into the executor state and return the updated state as newStateBoc.
-    std::string new_state_hex = "null";
-    if (req.executor_state.not_null()) {
-        JvmExecutorState prev_state;
-        if (!decode_jvm_executor_state(req.executor_state, prev_state)) {
-            return JvmRpcResult{
-                json_rpc_err(id, -32602, "executorStateBoc: malformed executor state"),
-                true};
-        }
-        auto install_result = install_jvm_deploy_descriptor(
-            prev_state.class_state_root, descriptor, config);
-        if (install_result.is_error()) {
-            return JvmRpcResult{
-                json_rpc_err(id, -32602,
-                             "class install failed: "
-                             + install_result.error().message().str()),
-                true};
-        }
-        JvmExecutorState new_state = prev_state;
-        new_state.class_state_root = install_result.ok().class_state_root;
-        auto new_cell = encode_jvm_executor_state(new_state);
-        if (new_cell.is_null()) {
-            return JvmRpcResult{
-                json_rpc_err(id, -32602, "new executor state encoding failed"),
-                true};
-        }
-        auto new_boc = vm::std_boc_serialize(new_cell, 0);
-        if (new_boc.is_ok()) {
-            new_state_hex = "\"" + hex_encode(
-                reinterpret_cast<const uint8_t*>(new_boc.ok().data()),
-                new_boc.ok().size()) + "\"";
-        }
-    }
-
-    std::string result = "{\"contractId\":\"" + hex_encode(contract_id)
-                       + "\",\"contractAddress\":\""
+    std::string result = "{\"contractAddress\":\""
                        + hex_encode(contract_address)
                        + "\",\"deployDescriptorBoc\":\"" + descriptor_boc_hex
-                       + "\",\"newStateBoc\":" + new_state_hex + "}";
+                       + "\"}";
     return JvmRpcResult{json_rpc_ok(id, result), false};
 }
 
@@ -356,9 +303,15 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
     const std::string& params_json) {
     JvmCallContractRequest req;
 
-    auto contract_id_hex = json_get_string(params_json, "contractId");
-    if (contract_id_hex.empty()
-        || !hex_decode_32(contract_id_hex, req.contract_id)) {
+    // Accept either "contractAddress" (v2 canonical name) or legacy
+    // "contractId" so older clients still work.
+    auto contract_address_hex =
+        json_get_string(params_json, "contractAddress");
+    if (contract_address_hex.empty()) {
+        contract_address_hex = json_get_string(params_json, "contractId");
+    }
+    if (contract_address_hex.empty()
+        || !hex_decode_32(contract_address_hex, req.contract_address)) {
         return std::nullopt;
     }
 
@@ -387,8 +340,13 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
         if (req.args.is_null()) return std::nullopt;  // malformed BOC
     }
 
-    // Optional: caller-supplied executor state as a hex-encoded BOC.
-    auto state_boc_hex = json_get_string(params_json, "executorStateBoc");
+    // Optional: caller-supplied per-account state as a hex-encoded BOC.
+    // Accept either the v2 `accountStateBoc` or the legacy
+    // `executorStateBoc` parameter name.
+    auto state_boc_hex = json_get_string(params_json, "accountStateBoc");
+    if (state_boc_hex.empty()) {
+        state_boc_hex = json_get_string(params_json, "executorStateBoc");
+    }
     if (!state_boc_hex.empty()) {
         req.current_state = hex_boc_decode_cell(state_boc_hex);
         if (req.current_state.is_null()) {
@@ -402,9 +360,10 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                                       const std::string& id,
                                       const JvmConfig* config,
                                       const JvmComputeRuntime* runtime) {
-    // Build the call descriptor cell.
+    // Build the call descriptor cell.  Under the account-native topology the
+    // destination address already names the contract, so the descriptor body
+    // carries only `method_id` and the typed args cell.
     JvmCallDescriptor descriptor;
-    descriptor.contract_id = req.contract_id;
     descriptor.method_id = req.method_id;
     descriptor.args = req.args;
 
@@ -426,14 +385,15 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
     std::string descriptor_boc_hex = hex_encode(
         reinterpret_cast<const uint8_t*>(boc_bytes.data()), boc_bytes.size());
 
-    // Optional local simulation: runs when a runtime and executor state are
+    // Optional local simulation: runs when a runtime and per-account state are
     // both supplied.  Result is appended as a localResult JSON object.
     std::string local_result_json = "null";
     if (runtime != nullptr && config != nullptr && req.current_state.not_null()) {
-        JvmExecutorState previous_state;
-        if (!decode_jvm_executor_state(req.current_state, previous_state)) {
+        JvmContractAccountState previous_state;
+        if (!decode_jvm_contract_account_state(req.current_state, previous_state)) {
             return JvmRpcResult{
-                json_rpc_err(id, -32602, "executorStateBoc: malformed executor state"),
+                json_rpc_err(id, -32602,
+                             "accountStateBoc: malformed contract account state"),
                 true};
         }
 
@@ -490,7 +450,8 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
     }
 
     std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex
-                       + "\",\"contractId\":\"" + hex_encode(req.contract_id)
+                       + "\",\"contractAddress\":\""
+                       + hex_encode(req.contract_address)
                        + "\",\"localResult\":" + local_result_json + "}";
     return JvmRpcResult{json_rpc_ok(id, result), false};
 }
@@ -502,18 +463,22 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
 std::optional<JvmGetContractStateRequest> parse_jvm_get_contract_state_request(
     const std::string& params_json) {
     JvmGetContractStateRequest req;
-    auto contract_id_hex = json_get_string(params_json, "contractId");
-    if (contract_id_hex.empty()
-        || !hex_decode_32(contract_id_hex, req.contract_id)) {
+    auto contract_address_hex =
+        json_get_string(params_json, "contractAddress");
+    if (contract_address_hex.empty()) {
+        contract_address_hex = json_get_string(params_json, "contractId");
+    }
+    if (contract_address_hex.empty()
+        || !hex_decode_32(contract_address_hex, req.contract_address)) {
         return std::nullopt;
     }
-    // Optional: caller-supplied executor state as a hex-encoded BOC.
-    // When present, the handler can resolve class metadata and storage slots
-    // from the supplied snapshot.
-    auto state_boc_hex = json_get_string(params_json, "executorStateBoc");
+    auto state_boc_hex = json_get_string(params_json, "accountStateBoc");
+    if (state_boc_hex.empty()) {
+        state_boc_hex = json_get_string(params_json, "executorStateBoc");
+    }
     if (!state_boc_hex.empty()) {
-        req.executor_state = hex_boc_decode_cell(state_boc_hex);
-        if (req.executor_state.is_null()) {
+        req.account_state = hex_boc_decode_cell(state_boc_hex);
+        if (req.account_state.is_null()) {
             return std::nullopt;  // malformed BOC
         }
     }
@@ -523,53 +488,40 @@ std::optional<JvmGetContractStateRequest> parse_jvm_get_contract_state_request(
 JvmRpcResult handle_jvm_get_contract_state(
     const JvmGetContractStateRequest& req,
     const std::string& id) {
-    if (req.executor_state.is_null()) {
+    if (req.account_state.is_null()) {
         return JvmRpcResult{
-            json_rpc_err(id, -32602, "executor state cell is required"),
+            json_rpc_err(id, -32602, "account state cell is required"),
             true};
     }
 
-    JvmExecutorState state;
-    if (!decode_jvm_executor_state(req.executor_state, state)) {
+    JvmContractAccountState state;
+    if (!decode_jvm_contract_account_state(req.account_state, state)) {
         return JvmRpcResult{
-            json_rpc_err(id, -32602, "malformed executor state cell"),
+            json_rpc_err(id, -32602, "malformed contract account state cell"),
             true};
     }
 
-    // Storage root hash — v1 storage is a flat shared namespace; the hash
-    // covers all contracts.  Full per-contract slot enumeration requires an
-    // explicit index not present in v1.
     std::string storage_hash = "null";
     if (state.storage_root.not_null()) {
         auto h = state.storage_root->get_hash();
         storage_hash = "\"" + hex_encode(h.as_slice().ubegin(), 32) + "\"";
     }
 
-    // Look up the contract's class name and class hash from the manifest.
+    // class_hash is pinned in the per-account state; the manifest's first
+    // entry (if any) supplies the class name for human readability.
     std::string class_name_json = "null";
-    std::string class_hash_json = "null";
-    if (state.class_state_root.not_null()) {
-        auto manifest_result =
-            parse_jvm_avata_class_manifest(state.class_state_root);
-        if (manifest_result.is_ok()) {
-            for (const auto& entry : manifest_result.ok()) {
-                if (entry.contract_id == req.contract_id) {
-                    class_name_json = "\"" + entry.class_name + "\"";
-                    // Find the class definition to get the class hash.
-                    auto def = find_jvm_avata_class_definition(
-                        state.class_state_root, entry.class_name);
-                    if (def.is_ok()) {
-                        class_hash_json =
-                            "\"" + hex_encode(def.ok().class_hash) + "\"";
-                    }
-                    break;
-                }
-            }
+    std::string class_hash_json =
+        "\"" + hex_encode(state.class_hash) + "\"";
+    if (state.manifest_root.not_null()) {
+        auto manifest_result = parse_jvm_method_manifest(state.manifest_root);
+        if (manifest_result.is_ok() && !manifest_result.ok().empty()) {
+            class_name_json =
+                "\"" + manifest_result.ok().front().class_name + "\"";
         }
     }
 
-    // Enumerate storage slots (up to the default limit).  The storage dict is
-    // a flat shared namespace; the full key space is returned without filtering.
+    // Enumerate storage slots (up to the default limit) for this single
+    // contract account; the storage dict is per-account and isolated.
     std::string slots_json = "null";
     bool slots_truncated = false;
     if (state.storage_root.not_null()) {
@@ -590,7 +542,6 @@ JvmRpcResult handle_jvm_get_contract_state(
             kSlotLimit + 1);  // fetch one extra to detect truncation
         if (enum_status.is_ok()) {
             if (slot_count > kSlotLimit) {
-                // Remove the extra entry; mark truncated.
                 auto last_comma = slots_buf.rfind(',');
                 if (last_comma != std::string::npos) {
                     slots_buf.erase(last_comma);
@@ -603,8 +554,8 @@ JvmRpcResult handle_jvm_get_contract_state(
         }
     }
 
-    std::string result = "{\"contractId\":\""
-                       + hex_encode(req.contract_id)
+    std::string result = "{\"contractAddress\":\""
+                       + hex_encode(req.contract_address)
                        + "\",\"className\":" + class_name_json
                        + ",\"classHash\":" + class_hash_json
                        + ",\"storageRootHash\":" + storage_hash
@@ -621,9 +572,13 @@ JvmRpcResult handle_jvm_get_contract_state(
 std::optional<JvmGetReceiptsRequest> parse_jvm_get_receipts_request(
     const std::string& params_json) {
     JvmGetReceiptsRequest req;
-    auto contract_id_hex = json_get_string(params_json, "contractId");
-    if (contract_id_hex.empty()
-        || !hex_decode_32(contract_id_hex, req.contract_id)) {
+    auto contract_address_hex =
+        json_get_string(params_json, "contractAddress");
+    if (contract_address_hex.empty()) {
+        contract_address_hex = json_get_string(params_json, "contractId");
+    }
+    if (contract_address_hex.empty()
+        || !hex_decode_32(contract_address_hex, req.contract_address)) {
         return std::nullopt;
     }
 
@@ -651,12 +606,12 @@ std::optional<JvmGetReceiptsRequest> parse_jvm_get_receipts_request(
 JvmRpcResult handle_jvm_get_receipts(const JvmGetReceiptsRequest& req,
                                      const std::string& id) {
     // Pure core fallback: full-node routing in validator-engine handles live
-    // receipt retrieval by scanning the singleton executor account history and
-    // decoding committed JVME event messages.  Unit tests that call this core
-    // facade directly have no block-state/liteserver connection, so they receive
-    // a well-formed empty result.
-    std::string result = "{\"contractId\":\""
-                       + hex_encode(req.contract_id)
+    // receipt retrieval by scanning the wc=3 account history at the supplied
+    // address and decoding committed JVME event messages.  Unit tests that
+    // call this core facade directly have no block-state/liteserver
+    // connection, so they receive a well-formed empty result.
+    std::string result = "{\"contractAddress\":\""
+                       + hex_encode(req.contract_address)
                        + "\",\"receipts\":[]}";
     return JvmRpcResult{json_rpc_ok(id, result), false};
 }

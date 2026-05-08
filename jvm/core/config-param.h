@@ -19,12 +19,10 @@ namespace jvm_workchain {
 
 constexpr std::uint32_t kJvmConfigMagic = 0x4a564d43;  // "JVMC"
 constexpr unsigned kJvmConfigMagicBits = 32;
-// schema_version bumped to 2 for the JVM v2 account-native topology.  The v2
-// wire format drops `max_total_class_bytes` (the v1 SingletonExecutor's
-// shared class store has no analog under per-account topology — Cell DB
-// hash dedup handles physical sharing automatically).  The C++ struct
-// keeps the field for the v1 install path, which still uses it as a v1-
-// specific governance limit on the shared class store cell.
+// schema_version=2 is the account-native topology wire format.  The
+// SingletonExecutor's shared class-store has no analog under per-account
+// topology — Cell DB hash dedup handles physical sharing automatically —
+// so `max_total_class_bytes` is no longer carried in ConfigParam 85.
 constexpr std::uint8_t kJvmConfigSchemaVersion = 2;
 constexpr unsigned kJvmOpcodeGasCostCount = 256;
 constexpr unsigned kJvmContractHelperGasCostCount = 13;
@@ -36,7 +34,6 @@ struct JvmConfig {
     std::uint64_t gas_price{0};
     std::uint64_t max_gas_per_tx{0};
     std::uint32_t max_class_bytes{0};
-    std::uint32_t max_total_class_bytes{0};
     std::uint32_t max_heap_bytes{0};
     std::uint32_t max_storage_cells{0};
     std::uint16_t class_file_major{52};

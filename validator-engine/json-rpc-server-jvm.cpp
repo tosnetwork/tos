@@ -141,7 +141,11 @@ td::Result<td::Ref<vm::Cell>> jvm_message_body_cell(
 
 bool jvm_transaction_matches_contract(
     td::Ref<vm::Cell> tx_root,
-    const jvm_workchain::JvmContractId& contract_id) {
+    const jvm_workchain::JvmContractId& /*contract_address*/) {
+  // Under the account-native topology each contract is its own wc=3
+  // account, so every transaction at the account already belongs to that
+  // contract.  We still accept only inbound JVI2 call bodies so non-call
+  // transactions (deploys, raw transfers) don't appear as receipts.
   block::gen::Transaction::Record tx;
   if (!tlb::unpack_cell(tx_root, tx)) {
     return false;
@@ -157,8 +161,7 @@ bool jvm_transaction_matches_contract(
   if (body_r.is_error()) {
     return false;
   }
-  auto call_r = jvm_workchain::parse_jvm_call_descriptor(body_r.move_as_ok());
-  return call_r.is_ok() && call_r.ok().contract_id == contract_id;
+  return jvm_workchain::parse_jvm_call_descriptor(body_r.move_as_ok()).is_ok();
 }
 
 std::uint64_t jvm_transaction_lt(td::Ref<vm::Cell> tx_root) {
@@ -542,7 +545,7 @@ void JsonRpcServer::handle_jvm_get_receipts_rpc_method(
     td::StringBuilder sb;
     sb << "{\"jsonrpc\":\"2.0\",\"id\":" << s->req_id
        << ",\"result\":{\"contractId\":\""
-       << jvm_rpc_contract_id_hex(s->req.contract_id)
+       << jvm_rpc_contract_id_hex(s->req.contract_address)
        << "\",\"fromBlock\":" << s->req.from_block
        << ",\"toBlock\":" << s->to_block
        << ",\"scannedTransactions\":" << s->scanned
@@ -655,7 +658,7 @@ void JsonRpcServer::handle_jvm_get_receipts_rpc_method(
 
         std::vector<std::string> tx_receipts;
         append_jvm_receipts_from_transaction(
-            roots[i], block_id, slot->req.contract_id, tx_receipts,
+            roots[i], block_id, slot->req.contract_address, tx_receipts,
             slot->receipts.size(), slot->truncated);
         if (!tx_receipts.empty()) {
           slot->receipts.insert(slot->receipts.begin(), tx_receipts.begin(),

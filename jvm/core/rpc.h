@@ -4,12 +4,15 @@
     Provides jvm_* JSON-RPC endpoints for the JVM workchain.  These are
     non-consensus surfaces and must not affect compute.
 
-    Implemented endpoints:
-      jvm_deployContract  — validate class bytes and build an external message
-                            targeting the executor account; returns contract_id
-      jvm_callContract    — read-only local call against installed state
-      jvm_getContractState — return decoded storage of a deployed contract
-      jvm_getReceipts     — return event logs for a given block range
+    Implemented endpoints (account-native topology):
+      jvm_deployContract    — validate class bytes and build a deploy
+                              descriptor cell + per-contract wc=3
+                              `contractAddress` derived from the descriptor
+      jvm_callContract      — encode a JVI2 call descriptor and optionally
+                              simulate it locally against an account state
+      jvm_getContractState  — return decoded storage of a single per-contract
+                              wc=3 account
+      jvm_getReceipts       — return event logs for a given block range
 
     Admission note: jvm_deployContract pre-validates class bytes against the
     Java 8 verifier profile and ConfigParam 85 class-store limits as a
@@ -20,8 +23,6 @@
     JSON-RPC dispatcher via JsonRpcServer::handle_jvm_rpc_method().  Tests may
     still call handle_jvm_rpc() directly with an injected ConfigParam 85 and
     optional runtime.
-
-    Source: TOS-specific integration point (Phase 7).
 */
 #pragma once
 
@@ -31,6 +32,7 @@
 #include <string_view>
 #include <vector>
 
+#include "jvm/core/cell-codec.h"
 #include "jvm/core/config-param.h"
 #include "jvm/core/deploy-abi.h"
 #include "jvm/core/dispatch-engine.h"
@@ -61,8 +63,6 @@ struct JvmDeployContractRequest {
     std::array<uint8_t, 32> deployer{};  ///< deployer address (32 bytes)
     std::array<uint8_t, 32> salt{};      ///< deployment salt (32 bytes)
     td::Ref<vm::Cell> init_args;         ///< JVMA typed init args cell (may be null)
-    td::Ref<vm::Cell> executor_state;    ///< optional; when set, class is installed
-                                         ///< and newStateBoc is returned
 };
 
 /// Parse a jvm_deployContract JSON params array.
@@ -71,8 +71,9 @@ std::optional<JvmDeployContractRequest> parse_jvm_deploy_contract_request(
     const std::string& params_json);
 
 /// Validate class_bytes against the Java 8 profile and ConfigParam 85 limits,
-/// derive contract_id, and encode an external message cell targeting the
-/// singleton executor account.  Returns an error result if validation fails.
+/// derive the deterministic per-contract wc=3 address, and return the deploy
+/// descriptor BOC.  The deployer wraps the descriptor in StateInit and emits
+/// `action_create_account` to materialize a new account at that address.
 ///
 /// This is an admission convenience; consensus re-validates on execution.
 JvmRpcResult handle_jvm_deploy_contract(
@@ -86,10 +87,10 @@ JvmRpcResult handle_jvm_deploy_contract(
 
 /// Parsed request for jvm_callContract (read-only local call).
 struct JvmCallContractRequest {
-    std::array<uint8_t, 32> contract_id{};  ///< deployed contract instance
-    uint32_t method_id{0};                  ///< ABI method id
+    std::array<uint8_t, 32> contract_address{};  ///< destination wc=3 account
+    uint32_t method_id{0};                       ///< ABI method id
     td::Ref<vm::Cell> args;       ///< JVMA typed args cell; from argsBoc or empty
-    td::Ref<vm::Cell> current_state;        ///< JvmExecutorState cell to call against
+    td::Ref<vm::Cell> current_state;  ///< per-account JvmContractAccountState cell
     uint64_t gas_limit{0};                  ///< gas limit for the local call
 };
 
@@ -112,8 +113,8 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
 
 /// Parsed request for jvm_getContractState.
 struct JvmGetContractStateRequest {
-    std::array<uint8_t, 32> contract_id{};
-    td::Ref<vm::Cell> executor_state;  ///< JvmExecutorState cell from block state
+    std::array<uint8_t, 32> contract_address{};
+    td::Ref<vm::Cell> account_state;  ///< per-account JvmContractAccountState cell
 };
 
 /// Parse a jvm_getContractState JSON params array.
@@ -130,7 +131,7 @@ JvmRpcResult handle_jvm_get_contract_state(const JvmGetContractStateRequest& req
 
 /// Parsed request for jvm_getReceipts.
 struct JvmGetReceiptsRequest {
-    std::array<uint8_t, 32> contract_id{};
+    std::array<uint8_t, 32> contract_address{};
     uint64_t from_block{0};
     uint64_t to_block{0};
 };

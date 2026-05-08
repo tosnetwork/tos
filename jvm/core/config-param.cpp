@@ -179,9 +179,6 @@ td::Ref<vm::Cell> build_jvm_workchain_descr(
 }
 
 td::Ref<vm::Cell> build_jvm_config_cell(const JvmConfig& cfg) {
-    // v2 wire schema: `max_total_class_bytes` is no longer encoded.  The
-    // struct field can still be set by callers that need the v1 install
-    // limit, but the wire validator no longer requires it.
     if (cfg.schema_version != kJvmConfigSchemaVersion ||
         cfg.class_file_major != 52 ||
         cfg.chain_id == 0 ||
@@ -248,10 +245,6 @@ td::Result<JvmConfig> parse_jvm_config_cell(td::Ref<vm::Cell> cell) {
         !cs.fetch_bytes(cfg.stdlib_hash.data(), cfg.stdlib_hash.size())) {
         return td::Status::Error("JVM ConfigParam 85 is truncated");
     }
-    // v2 schema does not carry `max_total_class_bytes`; the struct field is
-    // left at zero and only consulted by the v1 SingletonExecutor install
-    // path, which constructs `JvmClassStoreLimits` explicitly when needed.
-    cfg.max_total_class_bytes = 0;
     if (cfg.chain_id == 0 ||
         cfg.gas_price == 0 ||
         cfg.max_gas_per_tx == 0 ||
@@ -285,12 +278,6 @@ JvmConfig JvmConfig::default_activation() noexcept {
     cfg.gas_price = 1000;
     cfg.max_gas_per_tx = 1000000;
     cfg.max_class_bytes = 65536;
-    // max_total_class_bytes is no longer on the v2 wire format.  Set the
-    // struct field to a baseline value (1 MiB) so v1 install-path callers
-    // that read it via the JvmConfig convenience overload still see a
-    // non-zero limit.  Governance can adjust on the v1 install side
-    // independently.
-    cfg.max_total_class_bytes = 1048576;
     cfg.max_heap_bytes = 4194304;
     cfg.max_storage_cells = 65536;
     cfg.class_file_major = 52;

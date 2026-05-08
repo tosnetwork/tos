@@ -111,17 +111,11 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
 // This is intentionally separate from execute_jvm_avata_transaction() so tests
 // can lock the consensus output shape before the real interpreter target is
 // linked into JvmNativeEngine.
+// Build the canonical compute output for a single per-contract wc=3 account
+// by re-encoding the next `JvmContractAccountState` with the invocation's
+// storage_root (class_hash, class_bytes, manifest_root are pinned at deploy
+// time and not modified by run_compute).
 td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output(
-    const JvmConfig& config,
-    const JvmExecutorState& previous_state,
-    std::uint64_t gas_limit,
-    const JvmAvataInvocationResult& invocation);
-
-// v2 per-account variant.  Builds the canonical compute output for a single
-// per-contract wc=3 account by re-encoding the next `JvmContractAccountState`
-// with the invocation's storage_root (class_hash, class_bytes, manifest_root
-// are pinned at deploy time and not modified by run_compute).
-td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output_v2(
     const JvmConfig& config,
     const JvmContractAccountState& previous_state,
     std::uint64_t gas_limit,

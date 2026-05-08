@@ -1,13 +1,11 @@
 /*
-    JVM Workchain — cell codec for the executor-state and per-account
-    envelopes.
+    JVM Workchain — per-account contract state envelope.
 
-    v1 (`JvmExecutorState`, magic JVMS) routes every wc=3 contract through a
-    SingletonExecutor account holding a shared storage trie and a global class
-    manifest. v2 (`JvmContractAccountState`, magic JVAC) makes each contract a
-    real wc=3 account with its own class bytes, per-account method manifest,
-    and isolated storage. Both codecs coexist while the engine migrates;
-    Phase D removes the v1 path.
+    Each JVM contract is a real wc=3 account at a deterministic 256-bit
+    address with its own class bytes, per-account method manifest, and
+    isolated storage.  This codec defines the canonical
+    `JvmContractAccountState` cell (magic JVAC) carried in `account.data`
+    plus a `StateInit{code, data}` builder used by `action_create_account`.
 */
 #pragma once
 
@@ -19,34 +17,6 @@
 #include "vm/cells.h"
 
 namespace jvm_workchain {
-
-constexpr std::uint32_t kJvmExecutorStateMagic = 0x4a564d53;  // "JVMS"
-constexpr unsigned kJvmExecutorStateMagicBits = 32;
-constexpr std::uint8_t kJvmExecutorStateSchemaVersion = 1;
-
-struct JvmExecutorState {
-    std::uint8_t schema_version{kJvmExecutorStateSchemaVersion};
-    std::array<std::uint8_t, kJvmStdlibHashBytes> stdlib_hash{};
-    td::Ref<vm::Cell> storage_root;
-    td::Ref<vm::Cell> class_state_root;
-};
-
-// Layout:
-//   jvm_executor_state#4a564d53
-//     schema_version:uint8 (=1)
-//     stdlib_hash:bits256
-//     storage_root:(Maybe ^Cell)
-//     class_state_root:(Maybe ^Cell)
-//     = JvmExecutorState;
-td::Ref<vm::Cell> encode_jvm_executor_state(const JvmExecutorState& state);
-
-// Decode the canonical v1 executor-state envelope.  Rejects null/special cells,
-// wrong magic/schema, non-canonical Maybe refs, and trailing bits/refs.
-bool decode_jvm_executor_state(td::Ref<vm::Cell> cell, JvmExecutorState& out);
-
-// -------------------------------------------------------------------------
-// JVM v2: per-account contract state envelope
-// -------------------------------------------------------------------------
 
 constexpr std::uint32_t kJvmContractAccountStateMagic = 0x4a564143;  // "JVAC"
 constexpr unsigned kJvmContractAccountStateMagicBits = 32;

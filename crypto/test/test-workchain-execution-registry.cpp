@@ -374,7 +374,6 @@ jvm_workchain::JvmConfig make_test_jvm_config() {
   cfg.gas_price = 1;
   cfg.max_gas_per_tx = 1000000;
   cfg.max_class_bytes = 65536;
-  cfg.max_total_class_bytes = 1024 * 1024;
   cfg.max_heap_bytes = 4 * 1024 * 1024;
   cfg.max_storage_cells = 100000;
   cfg.class_file_major = 52;
@@ -406,31 +405,11 @@ std::unique_ptr<block::Config> make_config_with_jvm_param(
   return config.move_as_ok();
 }
 
-jvm_workchain::JvmCallDescriptor make_test_jvm_call_descriptor(
-    std::uint8_t marker = 1) {
+td::Ref<vm::CellSlice> make_jvm_call_body(std::uint32_t method_id) {
   jvm_workchain::JvmCallDescriptor descriptor;
-  descriptor.contract_id[31] = marker;
-  descriptor.method_id = 0x01020300u + marker;
-  descriptor.args = make_empty_action_list();
-  return descriptor;
-}
-
-td::Ref<vm::Cell> make_jvm_call_cell(std::uint8_t marker = 1) {
-  auto cell = jvm_workchain::encode_jvm_call_descriptor(
-      make_test_jvm_call_descriptor(marker));
-  CHECK(cell.not_null());
-  return cell;
-}
-
-td::Ref<vm::CellSlice> make_jvm_call_body(std::uint8_t marker = 1) {
-  return vm::load_cell_slice_ref(make_jvm_call_cell(marker));
-}
-
-td::Ref<vm::CellSlice> make_jvm_call_body_v2(std::uint32_t method_id) {
-  jvm_workchain::JvmCallDescriptorV2 descriptor;
   descriptor.method_id = method_id;
   descriptor.args = make_empty_action_list();
-  auto cell = jvm_workchain::encode_jvm_call_descriptor_v2(descriptor);
+  auto cell = jvm_workchain::encode_jvm_call_descriptor(descriptor);
   CHECK(cell.not_null());
   return vm::load_cell_slice_ref(cell);
 }
@@ -447,55 +426,6 @@ jvm_workchain::JvmDeployDescriptor make_test_jvm_deploy_descriptor(
       descriptor.class_bytes);
   descriptor.init_args = make_empty_action_list();
   return descriptor;
-}
-
-jvm_workchain::JvmAvataClassDefinition make_test_jvm_class_definition(
-    std::uint8_t marker = 1) {
-  auto descriptor = make_test_jvm_deploy_descriptor(marker);
-  jvm_workchain::JvmAvataClassDefinition definition;
-  definition.class_hash = descriptor.class_hash;
-  definition.class_name = descriptor.class_name;
-  definition.class_bytes = descriptor.class_bytes;
-  return definition;
-}
-
-jvm_workchain::JvmAvataClassManifestEntry make_test_jvm_class_manifest_entry(
-    std::uint8_t marker = 1,
-    const char* method_name = "ok") {
-  auto descriptor = make_test_jvm_call_descriptor(marker);
-  jvm_workchain::JvmAvataClassManifestEntry entry;
-  entry.contract_id = descriptor.contract_id;
-  entry.method_id = descriptor.method_id;
-  entry.class_name = "ContractEntryPoint";
-  entry.method_name = method_name;
-  entry.method_spec = "()V";
-  return entry;
-}
-
-td::Ref<vm::Cell> make_jvm_class_manifest_cell(std::uint8_t marker = 1) {
-  std::vector<jvm_workchain::JvmAvataClassManifestEntry> entries;
-  entries.push_back(make_test_jvm_class_manifest_entry(marker));
-  auto cell = jvm_workchain::encode_jvm_avata_class_manifest(entries);
-  CHECK(cell.not_null());
-  return cell;
-}
-
-td::Ref<vm::Cell> make_jvm_class_state_cell(std::uint8_t marker = 1) {
-  jvm_workchain::JvmAvataClassState state;
-  state.manifest_entries.push_back(make_test_jvm_class_manifest_entry(marker));
-  state.classes.push_back(make_test_jvm_class_definition(marker));
-  auto cell = jvm_workchain::encode_jvm_avata_class_state(state);
-  CHECK(cell.not_null());
-  return cell;
-}
-
-void check_jvm_class_manifest_marker(td::Ref<vm::Cell> root,
-                                     std::uint8_t marker) {
-  auto entry = jvm_workchain::find_jvm_avata_class_manifest_entry(
-      std::move(root), make_test_jvm_call_descriptor(marker)).move_as_ok();
-  CHECK(entry.class_name == "ContractEntryPoint");
-  CHECK(entry.method_name == "ok");
-  CHECK(entry.method_spec == "()V");
 }
 
 jvm_workchain::JvmAvataExecutionApi make_test_jvm_execution_api() {
@@ -769,41 +699,11 @@ class MockJvmRuntime final : public jvm_workchain::JvmComputeRuntime {
       const block::WorkchainComputeInput& input,
       const block::WorkchainComputeContext& context,
       const jvm_workchain::JvmConfig& config,
-      const jvm_workchain::JvmExecutorState& previous_state) const override {
-    using namespace jvm_workchain;
-
-    called = true;
-    CHECK(context.workchain_id == 3);
-    CHECK(input.gas_limit == 1000);
-    CHECK(config.chain_id == 85);
-    CHECK(previous_state.stdlib_hash == config.stdlib_hash);
-
-    JvmStorageCellHost storage(previous_state.storage_root);
-    JvmStorageSlot slot{};
-    slot[31] = 0x77;
-    CHECK(storage.store(slot, JvmStorageValue{8, 9, 10}).is_ok());
-
-    JvmAvataInvocationResult result;
-    result.invocation_status = 0;
-    result.success = true;
-    result.gas_used = 123;
-    result.gas_remaining = input.gas_limit - result.gas_used;
-    result.memory_used = 456;
-    result.storage_root = storage.root_cell();
-    result.action_list = build_jvm_event_action_list(std::vector<JvmEvent>{});
-    CHECK(result.action_list.not_null());
-    return result;
-  }
-
-  td::Result<jvm_workchain::JvmAvataInvocationResult> run_contract_v2(
-      const block::WorkchainComputeInput& input,
-      const block::WorkchainComputeContext& context,
-      const jvm_workchain::JvmConfig& config,
       const jvm_workchain::JvmContractAccountState& previous_state)
       const override {
     using namespace jvm_workchain;
 
-    called_v2 = true;
+    called = true;
     CHECK(context.workchain_id == 3);
     CHECK(input.gas_limit == 1000);
     CHECK(config.chain_id == 85);
@@ -829,35 +729,7 @@ class MockJvmRuntime final : public jvm_workchain::JvmComputeRuntime {
   }
 
   mutable bool called{false};
-  mutable bool called_v2{false};
 };
-
-struct FakeJvmAvataRuntimeResolver {
-  FakeJvmExecutionThread* thread{nullptr};
-  bool called{false};
-};
-
-td::Result<jvm_workchain::JvmAvataCallTarget> fake_jvm_resolve_call_target(
-    const block::WorkchainComputeInput& input,
-    const block::WorkchainComputeContext& context,
-    const jvm_workchain::JvmConfig& config,
-    const jvm_workchain::JvmExecutorState& previous_state,
-    void* user) {
-  auto* resolver = static_cast<FakeJvmAvataRuntimeResolver*>(user);
-  if (resolver == nullptr || resolver->thread == nullptr) {
-    return td::Status::Error("fake JVM resolver is missing thread");
-  }
-
-  resolver->called = true;
-  CHECK(context.workchain_id == 3);
-  CHECK(input.gas_limit == 1000);
-  CHECK(config.chain_id == 85);
-  CHECK(previous_state.stdlib_hash == config.stdlib_hash);
-
-  jvm_workchain::JvmAvataCallTarget target;
-  target.thread = resolver->thread;
-  return target;
-}
 
 }  // namespace
 
@@ -934,50 +806,6 @@ TEST(JvmWorkchainCore, StorageHostCallbackKeepsEmptyValueDistinctFromMissing) {
   CHECK(value != nullptr);
   CHECK(value_length == 0);
   host.freeValue(host.user, value);
-}
-
-TEST(JvmWorkchainCore, ExecutorStateCodecRoundTripsStorageRoot) {
-  using namespace jvm_workchain;
-
-  JvmStorageCellHost storage;
-  JvmStorageSlot slot{};
-  slot[0] = 42;
-  CHECK(storage.store(slot, JvmStorageValue{5, 6, 7, 8}).is_ok());
-
-  JvmExecutorState state;
-  auto cfg = make_test_jvm_config();
-  state.stdlib_hash = cfg.stdlib_hash;
-  state.storage_root = storage.root_cell();
-  state.class_state_root = make_jvm_class_state_cell(0x51);
-
-  auto encoded = encode_jvm_executor_state(state);
-  CHECK(encoded.not_null());
-
-  JvmExecutorState decoded;
-  CHECK(decode_jvm_executor_state(encoded, decoded));
-  CHECK(decoded.schema_version == kJvmExecutorStateSchemaVersion);
-  CHECK(decoded.stdlib_hash == state.stdlib_hash);
-  CHECK(decoded.storage_root.not_null());
-  CHECK(decoded.class_state_root.not_null());
-  check_jvm_class_manifest_marker(decoded.class_state_root, 0x51);
-  CHECK(parse_jvm_avata_class_state(decoded.class_state_root)
-            .move_as_ok()
-            .classes.size() == 1);
-
-  JvmStorageCellHost decoded_storage(decoded.storage_root);
-  auto loaded = decoded_storage.load(slot).move_as_ok();
-  CHECK(loaded.has_value());
-  CHECK(*loaded == (JvmStorageValue{5, 6, 7, 8}));
-
-  vm::CellBuilder wrong_magic;
-  wrong_magic.store_long(0, 32);
-  CHECK(!decode_jvm_executor_state(wrong_magic.finalize(), decoded));
-  CHECK(!decode_jvm_executor_state({}, decoded));
-
-  state.class_state_root = make_marker_cell(0x51);
-  encoded = encode_jvm_executor_state(state);
-  CHECK(encoded.not_null());
-  CHECK(!decode_jvm_executor_state(encoded, decoded));
 }
 
 TEST(JvmWorkchainCore, ContractAccountStateCodecRoundTripsClassBytesAndStorage) {
@@ -1113,31 +941,37 @@ TEST(JvmWorkchainCore, EncodeJvmStateInitCellPassesTlbValidation) {
   CHECK(decoded.class_hash == state.class_hash);
 }
 
-TEST(JvmWorkchainCore, MessageAbiCallDescriptorV2DropsContractIdAndRoundTrips) {
+TEST(JvmWorkchainCore, MessageAbiCallDescriptorRoundTripsAndOmitsContractId) {
   using namespace jvm_workchain;
 
-  JvmCallDescriptorV2 descriptor;
+  JvmCallDescriptor descriptor;
   descriptor.method_id = 0xdeadbeef;
   descriptor.args = make_empty_action_list();
 
-  auto encoded = encode_jvm_call_descriptor_v2(descriptor);
+  auto encoded = encode_jvm_call_descriptor(descriptor);
   CHECK(encoded.not_null());
 
-  auto parsed = parse_jvm_call_descriptor_v2(vm::load_cell_slice_ref(encoded));
+  auto parsed = parse_jvm_call_descriptor(vm::load_cell_slice_ref(encoded));
   CHECK(parsed.is_ok());
-  CHECK(parsed.ok().schema_version == kJvmCallDescriptorV2SchemaVersion);
+  CHECK(parsed.ok().schema_version == kJvmCallDescriptorSchemaVersion);
   CHECK(parsed.ok().method_id == descriptor.method_id);
   CHECK(parsed.ok().args.not_null());
 
-  // A v1 cell must not parse as v2 (different magic).
-  auto v1_cell = make_jvm_call_cell(0x42);
-  CHECK(parse_jvm_call_descriptor_v2(vm::load_cell_slice_ref(v1_cell)).is_error());
+  // A cell with the wrong magic must fail parse.
+  vm::CellBuilder wrong_magic_cb;
+  wrong_magic_cb.store_long(0x4a564d49, 32);  // legacy "JVMI" magic
+  wrong_magic_cb.store_long(1, 8);
+  wrong_magic_cb.store_zeroes(256);
+  wrong_magic_cb.store_long(0, 32);
+  wrong_magic_cb.store_ref(make_empty_action_list());
+  CHECK(parse_jvm_call_descriptor(
+            vm::load_cell_slice_ref(wrong_magic_cb.finalize())).is_error());
 
   // Truncated body fails parse.
   vm::CellBuilder bad;
-  bad.store_long(kJvmCallDescriptorV2Magic, 32);
-  bad.store_long(kJvmCallDescriptorV2SchemaVersion, 8);
-  CHECK(parse_jvm_call_descriptor_v2(
+  bad.store_long(kJvmCallDescriptorMagic, 32);
+  bad.store_long(kJvmCallDescriptorSchemaVersion, 8);
+  CHECK(parse_jvm_call_descriptor(
             vm::load_cell_slice_ref(bad.finalize())).is_error());
 }
 
@@ -1150,12 +984,6 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressIsDeterministicAndSensitive) {
   auto b = derive_jvm_contract_address(desc);
   CHECK(a.is_ok() && b.is_ok());
   CHECK(a.ok() == b.ok());
-
-  // The v1 contract_id and v2 contract_address must differ for the same
-  // descriptor (different domain tag).
-  auto v1 = derive_jvm_contract_id(desc);
-  CHECK(v1.is_ok());
-  CHECK(v1.ok() != a.ok());
 
   // Salt sensitivity: same class, different salt → different address.
   auto desc2 = desc;
@@ -1237,357 +1065,6 @@ TEST(JvmWorkchainCore, MethodManifestRoundTripsAndRejectsDuplicates) {
   vm::CellBuilder wrong_magic;
   wrong_magic.store_long(0, 32);
   CHECK(parse_jvm_method_manifest(wrong_magic.finalize()).is_error());
-}
-
-TEST(JvmWorkchainCore, MessageAbiCallDescriptorRoundTripsAndRejectsMalformed) {
-  using namespace jvm_workchain;
-
-  auto descriptor = make_test_jvm_call_descriptor(0x42);
-  auto encoded = encode_jvm_call_descriptor(descriptor);
-  CHECK(encoded.not_null());
-
-  auto parsed = parse_jvm_call_descriptor(
-      vm::load_cell_slice_ref(encoded)).move_as_ok();
-  CHECK(parsed.schema_version == kJvmCallDescriptorSchemaVersion);
-  CHECK(parsed.contract_id == descriptor.contract_id);
-  CHECK(parsed.method_id == descriptor.method_id);
-  CHECK(parsed.args.not_null());
-
-  CHECK(parse_jvm_call_descriptor(td::Ref<vm::CellSlice>{}).is_error());
-  CHECK(parse_jvm_call_descriptor(
-      vm::load_cell_slice_ref(make_marker_cell(0x01))).is_error());
-
-  JvmCallDescriptor zero_contract = descriptor;
-  zero_contract.contract_id = {};
-  CHECK(encode_jvm_call_descriptor(zero_contract).is_null());
-
-  vm::CellBuilder missing_args;
-  CHECK(missing_args.store_ulong_rchk_bool(kJvmCallDescriptorMagic, 32));
-  CHECK(missing_args.store_ulong_rchk_bool(kJvmCallDescriptorSchemaVersion, 8));
-  CHECK(missing_args.store_bytes_bool(descriptor.contract_id.data(),
-                                      descriptor.contract_id.size()));
-  CHECK(missing_args.store_ulong_rchk_bool(descriptor.method_id, 32));
-  CHECK(parse_jvm_call_descriptor(
-      vm::load_cell_slice_ref(missing_args.finalize())).is_error());
-
-  vm::CellBuilder trailing_bits;
-  CHECK(trailing_bits.store_ulong_rchk_bool(kJvmCallDescriptorMagic, 32));
-  CHECK(trailing_bits.store_ulong_rchk_bool(kJvmCallDescriptorSchemaVersion, 8));
-  CHECK(trailing_bits.store_bytes_bool(descriptor.contract_id.data(),
-                                      descriptor.contract_id.size()));
-  CHECK(trailing_bits.store_ulong_rchk_bool(descriptor.method_id, 32));
-  CHECK(trailing_bits.store_ulong_rchk_bool(1, 1));
-  CHECK(trailing_bits.store_ref_bool(descriptor.args));
-  CHECK(parse_jvm_call_descriptor(
-      vm::load_cell_slice_ref(trailing_bits.finalize())).is_error());
-
-  CHECK(validate_jvm_static_void_call_args("()V", descriptor.args).is_ok());
-  CHECK(validate_jvm_static_void_call_args("(I)V", descriptor.args).is_error());
-
-  JvmCallDescriptor non_empty_args = descriptor;
-  non_empty_args.args = make_marker_cell(0x7a);
-  auto non_empty_encoded = encode_jvm_call_descriptor(non_empty_args);
-  CHECK(non_empty_encoded.not_null());
-  auto parsed_non_empty_args = parse_jvm_call_descriptor(
-      vm::load_cell_slice_ref(non_empty_encoded)).move_as_ok();
-  CHECK(validate_jvm_static_void_call_args(
-            "()V", parsed_non_empty_args.args).is_error());
-
-  vm::CellBuilder ref_args;
-  CHECK(ref_args.store_ref_bool(descriptor.args));
-  CHECK(validate_jvm_static_void_call_args(
-            "()V", ref_args.finalize()).is_error());
-  CHECK(validate_jvm_static_void_call_args("()V", {}).is_error());
-}
-
-TEST(JvmWorkchainCore, MessageAbiTypedArgsCodecValidatesDescriptors) {
-  using namespace jvm_workchain;
-
-  JvmArgs args;
-  args.values.push_back(
-      JvmTypedArg{JvmArgType::Bool, JvmStorageValue{1}});
-  args.values.push_back(
-      JvmTypedArg{JvmArgType::Int32, JvmStorageValue{0, 0, 0, 42}});
-  args.values.push_back(
-      JvmTypedArg{JvmArgType::Int64,
-                  JvmStorageValue{0, 0, 0, 0, 0, 0, 0, 43}});
-  args.values.push_back(
-      JvmTypedArg{JvmArgType::Address, JvmStorageValue(36, 0x11)});
-  args.values.push_back(
-      JvmTypedArg{JvmArgType::Uint256, JvmStorageValue(32, 0x33)});
-  args.values.push_back(
-      JvmTypedArg{JvmArgType::Bytes32, JvmStorageValue(32, 0x22)});
-  args.values.push_back(
-      JvmTypedArg{JvmArgType::Bytes4, JvmStorageValue{1, 2, 3, 4}});
-  args.values.push_back(
-      JvmTypedArg{JvmArgType::Bytes, JvmStorageValue{7, 8, 9}});
-
-  auto encoded = encode_jvm_args(args);
-  CHECK(encoded.not_null());
-
-  auto parsed = parse_jvm_args(encoded).move_as_ok();
-  CHECK(parsed.schema_version == kJvmArgsSchemaVersion);
-  CHECK(parsed.values.size() == args.values.size());
-  CHECK(parsed.values[0].type == JvmArgType::Bool);
-  CHECK(parsed.values[7].bytes == (JvmStorageValue{7, 8, 9}));
-
-  auto types = parse_jvm_method_argument_types(
-      "(ZIJLjava/lang/Address;Ljava/lang/Uint256;Ljava/lang/Bytes32;"
-      "Ljava/lang/Bytes4;Ljava/lang/Bytes;)V")
-                   .move_as_ok();
-  CHECK(types.size() == args.values.size());
-  CHECK(types[0] == JvmArgType::Bool);
-  CHECK(types[1] == JvmArgType::Int32);
-  CHECK(types[2] == JvmArgType::Int64);
-  CHECK(types[3] == JvmArgType::Address);
-  CHECK(types[4] == JvmArgType::Uint256);
-  CHECK(types[5] == JvmArgType::Bytes32);
-  CHECK(types[6] == JvmArgType::Bytes4);
-  CHECK(types[7] == JvmArgType::Bytes);
-
-  CHECK(validate_jvm_typed_call_args(
-            "(ZIJLjava/lang/Address;Ljava/lang/Uint256;Ljava/lang/Bytes32;"
-            "Ljava/lang/Bytes4;Ljava/lang/Bytes;)V",
-            encoded)
-            .is_ok());
-  CHECK(validate_jvm_typed_call_args(
-            "(JLjava/lang/Address;Ljava/lang/Bytes32;Ljava/lang/Bytes;)V",
-            encoded)
-            .is_error());
-  CHECK(validate_jvm_typed_call_args("(Z)V", encoded).is_error());
-  CHECK(parse_jvm_method_argument_types("(F)V").is_error());
-  CHECK(parse_jvm_method_argument_types("(I)I").is_error());
-
-  JvmArgs bad_bool;
-  bad_bool.values.push_back(
-      JvmTypedArg{JvmArgType::Bool, JvmStorageValue{2}});
-  CHECK(encode_jvm_args(bad_bool).is_null());
-
-  CHECK(parse_jvm_args(make_marker_cell(0x01)).is_error());
-}
-
-TEST(JvmWorkchainCore, ClassManifestRoundTripsAndRejectsMalformed) {
-  using namespace jvm_workchain;
-
-  std::vector<JvmAvataClassManifestEntry> entries;
-  entries.push_back(make_test_jvm_class_manifest_entry(0x42, "ok"));
-  entries.push_back(make_test_jvm_class_manifest_entry(0x43, "burn"));
-  entries[1].method_spec = "(ILjava/lang/Bytes;)V";
-
-  auto encoded = encode_jvm_avata_class_manifest(entries);
-  CHECK(encoded.not_null());
-
-  auto parsed = parse_jvm_avata_class_manifest(encoded).move_as_ok();
-  CHECK(parsed.size() == 2);
-  CHECK(parsed[0].contract_id == entries[0].contract_id);
-  CHECK(parsed[0].method_id == entries[0].method_id);
-  CHECK(parsed[0].class_name == "ContractEntryPoint");
-  CHECK(parsed[0].method_name == "ok");
-  CHECK(parsed[0].method_spec == "()V");
-
-  auto found = find_jvm_avata_class_manifest_entry(
-      encoded, make_test_jvm_call_descriptor(0x43)).move_as_ok();
-  CHECK(found.method_name == "burn");
-  CHECK(found.method_spec == "(ILjava/lang/Bytes;)V");
-  CHECK(find_jvm_avata_class_manifest_entry(
-            encoded, make_test_jvm_call_descriptor(0x44)).is_error());
-
-  CHECK(parse_jvm_avata_class_manifest({}).is_error());
-  CHECK(parse_jvm_avata_class_manifest(make_marker_cell(0x01)).is_error());
-
-  auto bad_entry = entries[0];
-  bad_entry.class_name.clear();
-  CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
-
-  bad_entry = entries[0];
-  bad_entry.contract_id = {};
-  CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
-
-  bad_entry = entries[0];
-  bad_entry.class_name = "/ContractEntryPoint";
-  CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
-
-  bad_entry = entries[0];
-  bad_entry.class_name = "Contract.EntryPoint";
-  CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
-
-  bad_entry = entries[0];
-  bad_entry.method_name = "<init>";
-  CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
-
-  bad_entry = entries[0];
-  bad_entry.method_spec = "(F)V";
-  CHECK(encode_jvm_avata_class_manifest({bad_entry}).is_null());
-
-  CHECK(encode_jvm_avata_class_manifest(
-            std::vector<JvmAvataClassManifestEntry>{entries[0], entries[0]})
-            .is_null());
-}
-
-TEST(JvmWorkchainCore, ClassStateStoresDeployBytesAndKeepsManifestResolver) {
-  using namespace jvm_workchain;
-
-  JvmAvataClassState state;
-  state.manifest_entries.push_back(make_test_jvm_class_manifest_entry(0x31));
-  state.classes.push_back(make_test_jvm_class_definition(0x31));
-
-  auto encoded = encode_jvm_avata_class_state(state);
-  CHECK(encoded.not_null());
-
-  auto manifest_entries = parse_jvm_avata_class_manifest(encoded).move_as_ok();
-  CHECK(manifest_entries.size() == 1);
-  CHECK(manifest_entries[0].method_name == "ok");
-  check_jvm_class_manifest_marker(encoded, 0x31);
-
-  auto parsed_state = parse_jvm_avata_class_state(encoded).move_as_ok();
-  CHECK(parsed_state.manifest_entries.size() == 1);
-  CHECK(parsed_state.classes.size() == 1);
-  CHECK(parsed_state.classes[0].class_name == "ContractEntryPoint");
-  CHECK(parsed_state.classes[0].class_hash == state.classes[0].class_hash);
-  CHECK(parsed_state.classes[0].class_bytes == state.classes[0].class_bytes);
-
-  auto definition = find_jvm_avata_class_definition(
-      encoded, "ContractEntryPoint").move_as_ok();
-  CHECK(definition.class_bytes == state.classes[0].class_bytes);
-  CHECK(parse_jvm_avata_class_state(make_jvm_class_manifest_cell(0x32))
-            .move_as_ok()
-            .classes.empty());
-
-  auto duplicate = state;
-  duplicate.classes.push_back(state.classes[0]);
-  CHECK(encode_jvm_avata_class_state(duplicate).is_null());
-
-  auto bad_hash = state;
-  bad_hash.classes[0].class_hash[0] ^= 0xff;
-  CHECK(encode_jvm_avata_class_state(bad_hash).is_null());
-
-  auto descriptor = make_test_jvm_deploy_descriptor(0x33);
-  auto installed = install_jvm_deploy_descriptor(
-      make_jvm_class_manifest_cell(0x33), descriptor).move_as_ok();
-  CHECK(installed.contract_id ==
-        derive_jvm_contract_id(descriptor).move_as_ok());
-
-  auto installed_state = parse_jvm_avata_class_state(
-      installed.class_state_root).move_as_ok();
-  CHECK(installed_state.manifest_entries.size() == 1);
-  CHECK(installed_state.classes.size() == 1);
-  CHECK(installed_state.classes[0].class_bytes == descriptor.class_bytes);
-
-  auto installed_again = install_jvm_deploy_descriptor(
-      installed.class_state_root, descriptor).move_as_ok();
-  CHECK(parse_jvm_avata_class_state(installed_again.class_state_root)
-            .move_as_ok()
-            .classes.size() == 1);
-
-  JvmClassStoreLimits exact_limits;
-  exact_limits.max_class_bytes =
-      static_cast<std::uint32_t>(descriptor.class_bytes.size());
-  exact_limits.max_total_class_bytes =
-      static_cast<std::uint32_t>(descriptor.class_bytes.size());
-  CHECK(install_jvm_deploy_descriptor(
-            make_jvm_class_manifest_cell(0x33), descriptor, exact_limits)
-            .is_ok());
-  auto config_limits = make_test_jvm_config();
-  config_limits.max_class_bytes =
-      static_cast<std::uint32_t>(descriptor.class_bytes.size());
-  config_limits.max_total_class_bytes =
-      static_cast<std::uint32_t>(descriptor.class_bytes.size());
-  CHECK(install_jvm_deploy_descriptor(
-            make_jvm_class_manifest_cell(0x33), descriptor, config_limits)
-            .is_ok());
-
-  JvmClassStoreLimits too_small_class = exact_limits;
-  --too_small_class.max_class_bytes;
-  CHECK(install_jvm_deploy_descriptor(
-            make_jvm_class_manifest_cell(0x33),
-            descriptor,
-            too_small_class)
-            .is_error());
-
-  auto second_descriptor = make_test_jvm_deploy_descriptor(0x34);
-  second_descriptor.class_name = "SecondContractEntryPoint";
-  auto first_with_limits = install_jvm_deploy_descriptor(
-      make_jvm_class_manifest_cell(0x33), descriptor, exact_limits)
-                               .move_as_ok();
-  CHECK(install_jvm_deploy_descriptor(
-            first_with_limits.class_state_root,
-            second_descriptor,
-            exact_limits)
-            .is_error());
-
-  auto conflicting = descriptor;
-  conflicting.class_bytes.push_back(0x99);
-  conflicting.class_hash = compute_jvm_class_hash(conflicting.class_bytes);
-  CHECK(install_jvm_deploy_descriptor(
-            installed.class_state_root, conflicting).is_error());
-}
-
-TEST(JvmWorkchainCore, DeployAbiRoundTripsAndDerivesContractId) {
-  using namespace jvm_workchain;
-
-  auto descriptor = make_test_jvm_deploy_descriptor(0x21);
-  auto encoded = encode_jvm_deploy_descriptor(descriptor);
-  CHECK(encoded.not_null());
-
-  auto parsed = parse_jvm_deploy_descriptor(
-      vm::load_cell_slice_ref(encoded)).move_as_ok();
-  CHECK(parsed.schema_version == kJvmDeployDescriptorSchemaVersion);
-  CHECK(parsed.deployer == descriptor.deployer);
-  CHECK(parsed.salt == descriptor.salt);
-  CHECK(parsed.class_hash == descriptor.class_hash);
-  CHECK(parsed.class_name == "ContractEntryPoint");
-  CHECK(parsed.class_bytes == descriptor.class_bytes);
-  CHECK(parsed.init_args.not_null());
-  CHECK(parsed.init_args->get_hash() == descriptor.init_args->get_hash());
-
-  auto contract_id = derive_jvm_contract_id(parsed).move_as_ok();
-  CHECK(contract_id != JvmContractId{});
-  CHECK(derive_jvm_contract_id(parsed).move_as_ok() == contract_id);
-
-  auto different_salt = parsed;
-  different_salt.salt[0] ^= 0x7f;
-  CHECK(derive_jvm_contract_id(different_salt).move_as_ok() != contract_id);
-
-  auto bad = descriptor;
-  bad.class_hash[0] ^= 0xff;
-  CHECK(encode_jvm_deploy_descriptor(bad).is_null());
-
-  bad = descriptor;
-  bad.class_bytes.clear();
-  bad.class_hash = compute_jvm_class_hash(bad.class_bytes);
-  CHECK(encode_jvm_deploy_descriptor(bad).is_null());
-
-  bad = descriptor;
-  bad.class_name = "Contract.EntryPoint";
-  CHECK(encode_jvm_deploy_descriptor(bad).is_null());
-
-  bad = descriptor;
-  bad.deployer = {};
-  CHECK(encode_jvm_deploy_descriptor(bad).is_null());
-
-  CHECK(parse_jvm_deploy_descriptor(
-            vm::load_cell_slice_ref(make_marker_cell(0x01))).is_error());
-}
-
-TEST(JvmWorkchainCore, LinkedAvataExecutionApiUsesInterpreterAbi) {
-  using namespace jvm_workchain;
-
-  auto api = make_linked_jvm_avata_execution_api();
-  CHECK(api.ok_status == AVATA_CONTRACT_OK);
-  CHECK(api.out_of_gas_status == AVATA_CONTRACT_OUT_OF_GAS);
-  CHECK(api.out_of_memory_status == AVATA_CONTRACT_OUT_OF_MEMORY);
-  CHECK(api.gas_api.set_opcode_gas_costs != nullptr);
-  CHECK(api.gas_api.set_contract_helper_gas_costs != nullptr);
-  CHECK(api.set_storage_host != nullptr);
-  CHECK(api.clear_storage_host != nullptr);
-  CHECK(api.set_event_host != nullptr);
-  CHECK(api.clear_event_host != nullptr);
-  CHECK(api.begin_contract_transaction_with_limits != nullptr);
-  CHECK(api.end_contract_transaction != nullptr);
-  CHECK(api.contract_remaining_gas != nullptr);
-  CHECK(api.contract_memory_used != nullptr);
-  CHECK(api.invoke_contract != nullptr);
-  CHECK(api.invoke_contract(nullptr, nullptr) == AVATA_CONTRACT_BAD_ARGUMENT);
 }
 
 TEST(JvmWorkchainCore, GasBridgeInstallsConfigParam85Tables) {
@@ -1825,141 +1302,6 @@ TEST(JvmWorkchainCore, AvataTransactionClassifiesOutOfGasAndFailsClosed) {
             &bad_gas_report, cfg, 1000, storage, api, nullptr).is_error());
   CHECK(bad_gas_report.ended);
   CHECK(fake_jvm_storage_host == nullptr);
-}
-
-TEST(JvmWorkchainCore, AvataInvocationBuildsSuccessfulComputeOutput) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 7;
-  auto api = make_test_jvm_execution_api();
-  JvmStorageCellHost storage;
-  JvmEventHost events;
-  FakeJvmExecutionThread thread;
-  thread.remaining_gas = 900;
-  thread.memory_used = 1234;
-
-  JvmExecutorState previous_state;
-  previous_state.stdlib_hash = cfg.stdlib_hash;
-  previous_state.storage_root = storage.root_cell();
-  previous_state.class_state_root = make_jvm_class_manifest_cell(0x44);
-
-  auto invocation = execute_jvm_avata_transaction(
-      &thread, cfg, 1000, storage, api, nullptr, &events).move_as_ok();
-  auto output = build_jvm_workchain_output(
-      cfg, previous_state, 1000, invocation).move_as_ok();
-
-  CHECK(output.completed);
-  CHECK(output.accepted);
-  CHECK(output.committed);
-  CHECK(output.engine_success);
-  CHECK(!output.out_of_gas);
-  CHECK(output.skip_reason == block::ComputePhase::sk_none);
-  CHECK(output.exit_code == 0);
-  CHECK(output.gas_used == 100);
-  CHECK(output.gas_fees.not_null());
-  CHECK(td::cmp(output.gas_fees, td::make_refint(700)) == 0);
-  CHECK(output.new_data.not_null());
-  CHECK(output.action_list.not_null());
-  CHECK(block::gen::OutList{1}.validate_ref(output.action_list));
-
-  JvmExecutorState decoded;
-  CHECK(decode_jvm_executor_state(output.new_data, decoded));
-  CHECK(decoded.stdlib_hash == cfg.stdlib_hash);
-  CHECK(decoded.storage_root.not_null());
-  CHECK(decoded.class_state_root.not_null());
-
-  JvmStorageCellHost decoded_storage(decoded.storage_root);
-  JvmStorageSlot slot{};
-  slot[31] = 9;
-  auto loaded = decoded_storage.load(slot).move_as_ok();
-  CHECK(loaded.has_value());
-  CHECK(*loaded == (JvmStorageValue{1, 2, 3}));
-
-  check_jvm_class_manifest_marker(decoded.class_state_root, 0x44);
-
-  invocation.action_list = {};
-  invocation.events.clear();
-  auto no_event_output = build_jvm_workchain_output(
-      cfg, previous_state, 1000, invocation).move_as_ok();
-  CHECK(no_event_output.action_list.not_null());
-  CHECK(block::gen::OutList{0}.validate_ref(no_event_output.action_list));
-
-  previous_state.stdlib_hash[0] ^= 0xff;
-  CHECK(build_jvm_workchain_output(
-            cfg, previous_state, 1000, invocation).is_error());
-}
-
-TEST(JvmWorkchainCore, AvataInvocationBuildsFailedComputeOutput) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 3;
-  auto api = make_test_jvm_execution_api();
-  JvmStorageCellHost storage;
-  JvmEventHost events;
-  FakeJvmExecutionThread thread;
-  thread.invoke_status = 7;
-  thread.remaining_gas = 750;
-  thread.memory_used = 64;
-
-  JvmExecutorState previous_state;
-  previous_state.stdlib_hash = cfg.stdlib_hash;
-  previous_state.storage_root = storage.root_cell();
-  previous_state.class_state_root = make_jvm_class_manifest_cell(0x55);
-
-  auto invocation = execute_jvm_avata_transaction(
-      &thread, cfg, 1000, storage, api, nullptr, &events).move_as_ok();
-  auto output = build_jvm_workchain_output(
-      cfg, previous_state, 1000, invocation).move_as_ok();
-
-  CHECK(output.completed);
-  CHECK(output.accepted);
-  CHECK(!output.committed);
-  CHECK(!output.engine_success);
-  CHECK(!output.out_of_gas);
-  CHECK(output.skip_reason == block::ComputePhase::sk_none);
-  CHECK(output.exit_code == 7);
-  CHECK(output.gas_used == 250);
-  CHECK(output.gas_fees.not_null());
-  CHECK(td::cmp(output.gas_fees, td::make_refint(750)) == 0);
-  CHECK(output.new_data.is_null());
-  CHECK(output.action_list.is_null());
-}
-
-TEST(JvmWorkchainCore, AvataInvocationBuildsOutOfGasComputeOutput) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 5;
-  auto api = make_test_jvm_execution_api();
-  JvmStorageCellHost storage;
-  FakeJvmExecutionThread thread;
-  thread.invoke_status = api.out_of_gas_status;
-  thread.remaining_gas = 0;
-  thread.memory_used = 32;
-
-  JvmExecutorState previous_state;
-  previous_state.stdlib_hash = cfg.stdlib_hash;
-  previous_state.storage_root = storage.root_cell();
-
-  auto invocation = execute_jvm_avata_transaction(
-      &thread, cfg, 1000, storage, api, nullptr).move_as_ok();
-  auto output = build_jvm_workchain_output(
-      cfg, previous_state, 1000, invocation).move_as_ok();
-
-  CHECK(output.completed);
-  CHECK(output.accepted);
-  CHECK(!output.committed);
-  CHECK(!output.engine_success);
-  CHECK(output.out_of_gas);
-  CHECK(output.skip_reason == block::ComputePhase::sk_none);
-  CHECK(output.exit_code == api.out_of_gas_status);
-  CHECK(output.gas_used == 1000);
-  CHECK(output.gas_fees.not_null());
-  CHECK(td::cmp(output.gas_fees, td::make_refint(5000)) == 0);
-  CHECK(output.new_data.is_null());
-  CHECK(output.action_list.is_null());
 }
 
 TEST(WorkchainExecutionRegistry, NormalizesBasicAndExtendedSelectors) {
@@ -2256,84 +1598,7 @@ TEST(WorkchainExecutionRegistry, JvmEngineAccountPolicyIsEngineDefined) {
   CHECK(policy.accepts_internal_inbound);
 }
 
-TEST(WorkchainExecutionRegistry, JvmEngineRunsInstalledRuntimeAdapter) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 7;
-  auto config = make_config_with_jvm_param(cfg);
-
-  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
-
-  block::WorkchainExecutionRegistry missing_runtime_registry;
-  register_jvm_workchain_engine(missing_runtime_registry);
-  auto missing_runtime_execution =
-      missing_runtime_registry.resolve(descriptor, *config).move_as_ok();
-
-  block::WorkchainComputeInput missing_runtime_input;
-  missing_runtime_input.inbound_body = make_jvm_call_body(0x01);
-  missing_runtime_input.gas_limit = 1000;
-
-  block::WorkchainComputeContext missing_runtime_context;
-  missing_runtime_context.workchain_id = 3;
-  missing_runtime_context.descriptor = descriptor;
-  missing_runtime_context.engine_config = missing_runtime_execution.engine_config;
-  auto missing_runtime_output = missing_runtime_execution.executor->run_compute(
-      missing_runtime_input, missing_runtime_context).move_as_ok();
-  CHECK(missing_runtime_output.completed);
-  CHECK(!missing_runtime_output.accepted);
-  CHECK(missing_runtime_output.skip_reason == block::ComputePhase::sk_bad_state);
-
-  auto runtime = std::make_shared<MockJvmRuntime>();
-  block::WorkchainExecutionRegistry registry;
-  register_jvm_workchain_engine(registry, runtime);
-  auto execution = registry.resolve(descriptor, *config).move_as_ok();
-  CHECK(block::resolved_workchain_execution_is_custom(execution));
-
-  JvmStorageCellHost storage;
-  JvmExecutorState previous_state;
-  previous_state.stdlib_hash = cfg.stdlib_hash;
-  previous_state.storage_root = storage.root_cell();
-  previous_state.class_state_root = make_jvm_class_manifest_cell(0x66);
-
-  block::WorkchainComputeInput input;
-  input.current_data = encode_jvm_executor_state(previous_state);
-  input.inbound_body = make_jvm_call_body(0x02);
-  input.gas_limit = 1000;
-
-  block::WorkchainComputeContext context;
-  context.workchain_id = 3;
-  context.descriptor = descriptor;
-  context.engine_config = execution.engine_config;
-
-  auto output = execution.executor->run_compute(input, context).move_as_ok();
-  CHECK(runtime->called);
-  CHECK(output.completed);
-  CHECK(output.accepted);
-  CHECK(output.committed);
-  CHECK(output.engine_success);
-  CHECK(output.gas_used == 123);
-  CHECK(output.gas_fees.not_null());
-  CHECK(td::cmp(output.gas_fees, td::make_refint(861)) == 0);
-  CHECK(output.action_list.not_null());
-  CHECK(block::gen::OutList{0}.validate_ref(output.action_list));
-
-  JvmExecutorState decoded;
-  CHECK(decode_jvm_executor_state(output.new_data, decoded));
-  CHECK(decoded.stdlib_hash == cfg.stdlib_hash);
-  CHECK(decoded.class_state_root.not_null());
-
-  check_jvm_class_manifest_marker(decoded.class_state_root, 0x66);
-
-  JvmStorageCellHost decoded_storage(decoded.storage_root);
-  JvmStorageSlot slot{};
-  slot[31] = 0x77;
-  auto loaded = decoded_storage.load(slot).move_as_ok();
-  CHECK(loaded.has_value());
-  CHECK(*loaded == (JvmStorageValue{8, 9, 10}));
-}
-
-TEST(WorkchainExecutionRegistry, JvmEngineDispatchesV2AccountStateToRuntime) {
+TEST(WorkchainExecutionRegistry, JvmEngineDispatchesAccountStateToRuntime) {
   // A wc=3 inbound that carries `JvmContractAccountState` (JVAC) as
   // current_data and a v2 `JvmCallDescriptor` body must be dispatched through
   // `JvmComputeRuntime::run_contract_v2`, not the v1 path.  The output
@@ -2380,7 +1645,7 @@ TEST(WorkchainExecutionRegistry, JvmEngineDispatchesV2AccountStateToRuntime) {
   block::WorkchainComputeInput input;
   input.current_data = encode_jvm_contract_account_state(previous_state);
   CHECK(input.current_data.not_null());
-  input.inbound_body = make_jvm_call_body_v2(method_entry.method_id);
+  input.inbound_body = make_jvm_call_body(method_entry.method_id);
   input.gas_limit = 1000;
 
   block::WorkchainComputeContext context;
@@ -2389,8 +1654,7 @@ TEST(WorkchainExecutionRegistry, JvmEngineDispatchesV2AccountStateToRuntime) {
   context.engine_config = execution.engine_config;
 
   auto output = execution.executor->run_compute(input, context).move_as_ok();
-  CHECK(runtime->called_v2);
-  CHECK(!runtime->called);  // v1 path must NOT have been entered
+  CHECK(runtime->called);
   CHECK(output.completed);
   CHECK(output.accepted);
   CHECK(output.committed);
@@ -2419,7 +1683,7 @@ TEST(WorkchainExecutionRegistry, JvmEngineDispatchesV2AccountStateToRuntime) {
   CHECK(*seed_loaded == (JvmStorageValue{0x01}));
 }
 
-TEST(WorkchainExecutionRegistry, JvmEngineV2RejectsMalformedAccountState) {
+TEST(WorkchainExecutionRegistry, JvmEngineRejectsMalformedAccountState) {
   // If `current_data` carries the JVAC magic but the rest of the cell is
   // junk, the engine must skip with sk_bad_state — without ever calling
   // either runtime path.  Regression guard for the magic-based dispatch.
@@ -2441,7 +1705,7 @@ TEST(WorkchainExecutionRegistry, JvmEngineV2RejectsMalformedAccountState) {
   cb.store_long(0, 8);  // wrong schema_version
   block::WorkchainComputeInput input;
   input.current_data = cb.finalize();
-  input.inbound_body = make_jvm_call_body_v2(0x1);
+  input.inbound_body = make_jvm_call_body(0x1);
   input.gas_limit = 1000;
 
   block::WorkchainComputeContext context;
@@ -2454,10 +1718,9 @@ TEST(WorkchainExecutionRegistry, JvmEngineV2RejectsMalformedAccountState) {
   CHECK(!output.accepted);
   CHECK(output.skip_reason == block::ComputePhase::sk_bad_state);
   CHECK(!runtime->called);
-  CHECK(!runtime->called_v2);
 }
 
-TEST(WorkchainExecutionRegistry, JvmV2EndToEndDeployCallSequence) {
+TEST(WorkchainExecutionRegistry, JvmEndToEndDeployCallSequence) {
   // End-to-end v2 sequence using the engine + a mock runtime: simulate a
   // deploy that yields the initial account state, then two calls that
   // mutate storage, with the engine round-tripping JVAC cells through
@@ -2522,10 +1785,10 @@ TEST(WorkchainExecutionRegistry, JvmV2EndToEndDeployCallSequence) {
   // a state1 cell with a different storage_root.
   block::WorkchainComputeInput call1;
   call1.current_data = state0_cell;
-  call1.inbound_body = make_jvm_call_body_v2(method_entry.method_id);
+  call1.inbound_body = make_jvm_call_body(method_entry.method_id);
   call1.gas_limit = 1000;
   auto out1 = execution.executor->run_compute(call1, context).move_as_ok();
-  CHECK(runtime->called_v2);
+  CHECK(runtime->called);
   CHECK(out1.committed);
   CHECK(out1.new_data.not_null());
   CHECK(out1.new_data->get_hash() != state0_cell->get_hash());
@@ -2538,13 +1801,13 @@ TEST(WorkchainExecutionRegistry, JvmV2EndToEndDeployCallSequence) {
 
   // Call 2: feed state1, expect another storage advance.  class_hash /
   // class_bytes / manifest must remain pinned.
-  runtime->called_v2 = false;
+  runtime->called = false;
   block::WorkchainComputeInput call2;
   call2.current_data = out1.new_data;
-  call2.inbound_body = make_jvm_call_body_v2(method_entry.method_id);
+  call2.inbound_body = make_jvm_call_body(method_entry.method_id);
   call2.gas_limit = 1000;
   auto out2 = execution.executor->run_compute(call2, context).move_as_ok();
-  CHECK(runtime->called_v2);
+  CHECK(runtime->called);
   CHECK(out2.committed);
   JvmContractAccountState state2;
   CHECK(decode_jvm_contract_account_state(out2.new_data, state2));
@@ -2554,212 +1817,11 @@ TEST(WorkchainExecutionRegistry, JvmV2EndToEndDeployCallSequence) {
 
   // Determinism: re-running call 1 from state0 produces the same new_data
   // (the engine is a pure function of state + input).
-  runtime->called_v2 = false;
+  runtime->called = false;
   auto out1_again = execution.executor->run_compute(call1, context).move_as_ok();
-  CHECK(runtime->called_v2);
+  CHECK(runtime->called);
   CHECK(out1_again.new_data.not_null());
   CHECK(out1_again.new_data->get_hash() == out1.new_data->get_hash());
-}
-
-TEST(WorkchainExecutionRegistry, JvmEngineRejectsMalformedInboundAbiBeforeRuntime) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  auto config = make_config_with_jvm_param(cfg);
-  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
-
-  auto runtime = std::make_shared<MockJvmRuntime>();
-  block::WorkchainExecutionRegistry registry;
-  register_jvm_workchain_engine(registry, runtime);
-  auto execution = registry.resolve(descriptor, *config).move_as_ok();
-
-  JvmStorageCellHost storage;
-  JvmExecutorState previous_state;
-  previous_state.stdlib_hash = cfg.stdlib_hash;
-  previous_state.storage_root = storage.root_cell();
-
-  block::WorkchainComputeInput input;
-  input.current_data = encode_jvm_executor_state(previous_state);
-  input.inbound_body = vm::load_cell_slice_ref(make_marker_cell(0x22));
-  input.gas_limit = 1000;
-
-  block::WorkchainComputeContext context;
-  context.workchain_id = 3;
-  context.descriptor = descriptor;
-  context.engine_config = execution.engine_config;
-
-  auto output = execution.executor->run_compute(input, context).move_as_ok();
-  CHECK(output.completed);
-  CHECK(!output.accepted);
-  CHECK(output.skip_reason == block::ComputePhase::sk_bad_state);
-  CHECK(!runtime->called);
-}
-
-TEST(WorkchainExecutionRegistry, JvmEngineRunsAvataRuntimeExecutionBridge) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 11;
-  auto config = make_config_with_jvm_param(cfg);
-  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
-
-  FakeJvmExecutionThread thread;
-  thread.remaining_gas = 777;
-  thread.memory_used = 2048;
-  FakeJvmAvataRuntimeResolver resolver;
-  resolver.thread = &thread;
-
-  auto runtime = std::make_shared<JvmAvataRuntime>(
-      make_test_jvm_execution_api(),
-      fake_jvm_resolve_call_target,
-      &resolver);
-  block::WorkchainExecutionRegistry registry;
-  register_jvm_workchain_engine(registry, runtime);
-  auto execution = registry.resolve(descriptor, *config).move_as_ok();
-
-  JvmStorageCellHost storage;
-  JvmExecutorState previous_state;
-  previous_state.stdlib_hash = cfg.stdlib_hash;
-  previous_state.storage_root = storage.root_cell();
-
-  block::WorkchainComputeInput input;
-  input.current_data = encode_jvm_executor_state(previous_state);
-  input.inbound_body = make_jvm_call_body(0x03);
-  input.gas_limit = 1000;
-
-  block::WorkchainComputeContext context;
-  context.workchain_id = 3;
-  context.descriptor = descriptor;
-  context.engine_config = execution.engine_config;
-
-  auto output = execution.executor->run_compute(input, context).move_as_ok();
-  CHECK(resolver.called);
-  CHECK(output.completed);
-  CHECK(output.accepted);
-  CHECK(output.committed);
-  CHECK(output.engine_success);
-  CHECK(!output.out_of_gas);
-  CHECK(output.gas_used == 223);
-  CHECK(output.gas_fees.not_null());
-  CHECK(td::cmp(output.gas_fees, td::make_refint(2453)) == 0);
-  CHECK(output.action_list.not_null());
-  CHECK(block::gen::OutList{1}.validate_ref(output.action_list));
-  CHECK(fake_jvm_storage_host == nullptr);
-  CHECK(fake_jvm_event_host == nullptr);
-
-  JvmExecutorState decoded;
-  CHECK(decode_jvm_executor_state(output.new_data, decoded));
-  JvmStorageCellHost decoded_storage(decoded.storage_root);
-  JvmStorageSlot slot{};
-  slot[31] = 9;
-  auto loaded = decoded_storage.load(slot).move_as_ok();
-  CHECK(loaded.has_value());
-  CHECK(*loaded == (JvmStorageValue{1, 2, 3}));
-}
-
-TEST(WorkchainExecutionRegistry, JvmComputeOutputIsDeterministicAcrossReplay) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 13;
-  auto config = make_config_with_jvm_param(cfg);
-  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
-
-  FakeJvmAvataRuntimeResolver resolver;
-  auto runtime = std::make_shared<JvmAvataRuntime>(
-      make_test_jvm_execution_api(),
-      fake_jvm_resolve_call_target,
-      &resolver);
-  block::WorkchainExecutionRegistry registry;
-  register_jvm_workchain_engine(registry, runtime);
-  auto execution = registry.resolve(descriptor, *config).move_as_ok();
-
-  auto run_once = [&]() {
-    FakeJvmExecutionThread thread;
-    thread.remaining_gas = 701;
-    thread.memory_used = 333;
-    resolver.thread = &thread;
-    resolver.called = false;
-
-    JvmStorageCellHost storage;
-    JvmExecutorState previous_state;
-    previous_state.stdlib_hash = cfg.stdlib_hash;
-    previous_state.storage_root = storage.root_cell();
-    previous_state.class_state_root = make_jvm_class_manifest_cell(0x06);
-
-    block::WorkchainComputeInput input;
-    input.current_data = encode_jvm_executor_state(previous_state);
-    input.inbound_body = make_jvm_call_body(0x06);
-    input.gas_limit = 1000;
-
-    block::WorkchainComputeContext context;
-    context.workchain_id = 3;
-    context.descriptor = descriptor;
-    context.engine_config = execution.engine_config;
-
-    auto output = execution.executor->run_compute(input, context).move_as_ok();
-    CHECK(resolver.called);
-    return output;
-  };
-
-  auto first = run_once();
-  auto second = run_once();
-
-  CHECK(first.completed == second.completed);
-  CHECK(first.accepted == second.accepted);
-  CHECK(first.committed == second.committed);
-  CHECK(first.engine_success == second.engine_success);
-  CHECK(first.out_of_gas == second.out_of_gas);
-  CHECK(first.skip_reason == second.skip_reason);
-  CHECK(first.exit_code == second.exit_code);
-  CHECK(first.gas_used == second.gas_used);
-  CHECK(td::cmp(first.gas_fees, second.gas_fees) == 0);
-  CHECK(first.vm_log == second.vm_log);
-  CHECK(first.new_data.not_null());
-  CHECK(second.new_data.not_null());
-  CHECK(first.new_data->get_hash() == second.new_data->get_hash());
-  CHECK(first.action_list.not_null());
-  CHECK(second.action_list.not_null());
-  CHECK(first.action_list->get_hash() == second.action_list->get_hash());
-}
-
-TEST(WorkchainExecutionRegistry, JvmAvataRuntimeFailsClosedOnBadTargets) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-
-  JvmStorageCellHost storage;
-  JvmExecutorState state;
-  state.stdlib_hash = cfg.stdlib_hash;
-  state.storage_root = storage.root_cell();
-
-  block::WorkchainComputeInput input;
-  input.inbound_body = make_jvm_call_body(0x04);
-  input.gas_limit = 1000;
-
-  block::WorkchainComputeContext context;
-  context.workchain_id = 3;
-
-  JvmAvataRuntime missing_resolver(make_test_jvm_execution_api(), nullptr);
-  CHECK(missing_resolver.run_contract(input, context, cfg, state).is_error());
-
-  FakeJvmAvataRuntimeResolver resolver;
-  JvmAvataRuntime missing_thread(
-      make_test_jvm_execution_api(),
-      fake_jvm_resolve_call_target,
-      &resolver);
-  CHECK(missing_thread.run_contract(input, context, cfg, state).is_error());
-
-  FakeJvmExecutionThread thread;
-  resolver.thread = &thread;
-  JvmAvataRuntime runtime(
-      make_test_jvm_execution_api(),
-      fake_jvm_resolve_call_target,
-      &resolver);
-
-  state.storage_root = make_marker_cell(0x99);
-  CHECK(runtime.run_contract(input, context, cfg, state).is_error());
-  CHECK(!resolver.called);
 }
 
 TEST(WorkchainExecutionRegistry, EvmRevertCommitsHostStateButReportsEngineFailure) {
@@ -3348,172 +2410,6 @@ TEST(JvmWorkchainCore, ZerostateAccountsCellIsEmpty) {
 //   - A failed invocation produces null new_data (rollback).
 // ---------------------------------------------------------------------------
 
-namespace {
-
-// JvmComputeRuntime that writes a fixed value to a storage slot.
-class WriteSlotRuntime final : public jvm_workchain::JvmComputeRuntime {
- public:
-  explicit WriteSlotRuntime(jvm_workchain::JvmStorageSlot slot,
-                            jvm_workchain::JvmStorageValue value)
-      : slot_(slot), value_(value) {}
-
-  td::Result<jvm_workchain::JvmAvataInvocationResult> run_contract(
-      const block::WorkchainComputeInput& input,
-      const block::WorkchainComputeContext& /*ctx*/,
-      const jvm_workchain::JvmConfig& /*cfg*/,
-      const jvm_workchain::JvmExecutorState& state) const override {
-    using namespace jvm_workchain;
-
-    JvmStorageCellHost storage(state.storage_root);
-    CHECK(storage.begin_transaction().is_ok());
-    CHECK(storage.store(slot_, value_).is_ok());
-    CHECK(storage.commit_transaction().is_ok());
-
-    JvmAvataInvocationResult r;
-    r.success = true;
-    r.gas_used = 50;
-    r.gas_remaining = input.gas_limit - r.gas_used;
-    r.storage_root = storage.root_cell();
-    r.action_list = jvm_workchain::build_jvm_event_action_list({});
-    return r;
-  }
-
- private:
-  jvm_workchain::JvmStorageSlot slot_;
-  jvm_workchain::JvmStorageValue value_;
-};
-
-// JvmComputeRuntime that verifies an expected prior value in a slot and then
-// overwrites it with a new value.
-class ReadThenWriteRuntime final : public jvm_workchain::JvmComputeRuntime {
- public:
-  explicit ReadThenWriteRuntime(jvm_workchain::JvmStorageSlot slot,
-                                jvm_workchain::JvmStorageValue expected,
-                                jvm_workchain::JvmStorageValue write)
-      : slot_(slot), expected_(expected), write_(write) {}
-
-  td::Result<jvm_workchain::JvmAvataInvocationResult> run_contract(
-      const block::WorkchainComputeInput& input,
-      const block::WorkchainComputeContext& /*ctx*/,
-      const jvm_workchain::JvmConfig& /*cfg*/,
-      const jvm_workchain::JvmExecutorState& state) const override {
-    using namespace jvm_workchain;
-
-    JvmStorageCellHost storage(state.storage_root);
-    auto loaded = storage.load(slot_).move_as_ok();
-    CHECK(loaded.has_value());
-    CHECK(*loaded == expected_);
-
-    CHECK(storage.begin_transaction().is_ok());
-    CHECK(storage.store(slot_, write_).is_ok());
-    CHECK(storage.commit_transaction().is_ok());
-
-    JvmAvataInvocationResult r;
-    r.success = true;
-    r.gas_used = 30;
-    r.gas_remaining = input.gas_limit - r.gas_used;
-    r.storage_root = storage.root_cell();
-    r.action_list = jvm_workchain::build_jvm_event_action_list({});
-    return r;
-  }
-
- private:
-  jvm_workchain::JvmStorageSlot slot_;
-  jvm_workchain::JvmStorageValue expected_;
-  jvm_workchain::JvmStorageValue write_;
-};
-
-// JvmComputeRuntime that always returns a failed (non-success) invocation.
-class FailingRuntime final : public jvm_workchain::JvmComputeRuntime {
- public:
-  td::Result<jvm_workchain::JvmAvataInvocationResult> run_contract(
-      const block::WorkchainComputeInput& input,
-      const block::WorkchainComputeContext& /*ctx*/,
-      const jvm_workchain::JvmConfig& /*cfg*/,
-      const jvm_workchain::JvmExecutorState& /*state*/) const override {
-    jvm_workchain::JvmAvataInvocationResult r;
-    r.success = false;
-    r.gas_used = 10;
-    r.gas_remaining = input.gas_limit - r.gas_used;
-    return r;
-  }
-};
-
-td::Result<block::WorkchainComputeOutput> run_jvm_tx(
-    std::shared_ptr<const jvm_workchain::JvmComputeRuntime> runtime,
-    td::Ref<vm::Cell> current_data,
-    std::uint8_t call_marker,
-    const block::WorkchainExecutionDescriptor& descriptor,
-    const std::unique_ptr<block::Config>& config) {
-  block::WorkchainExecutionRegistry registry;
-  jvm_workchain::register_jvm_workchain_engine(registry, runtime);
-  auto exec = registry.resolve(descriptor, *config).move_as_ok();
-
-  block::WorkchainComputeInput input;
-  input.current_data = current_data;
-  input.inbound_body = make_jvm_call_body(call_marker);
-  input.gas_limit = 1000;
-
-  block::WorkchainComputeContext ctx;
-  ctx.workchain_id = 3;
-  ctx.descriptor = descriptor;
-  ctx.engine_config = exec.engine_config;
-
-  return exec.executor->run_compute(input, ctx);
-}
-
-}  // namespace
-
-TEST(JvmWorkchainCore, EndToEndDeployCallPersistAndRollback) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 1;
-  auto config = make_config_with_jvm_param(cfg);
-  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
-
-  JvmStorageSlot slot{};
-  slot[31] = 0xAB;
-  const JvmStorageValue v1{0x01};
-  const JvmStorageValue v2{0x02};
-
-  // Tx 1: initial write — current_data is null (uninitialised account).
-  auto out1 = run_jvm_tx(
-      std::make_shared<WriteSlotRuntime>(slot, v1),
-      td::Ref<vm::Cell>{}, 0x01, descriptor, config).move_as_ok();
-  CHECK(out1.completed && out1.accepted && out1.committed);
-  CHECK(out1.new_data.not_null());
-
-  JvmExecutorState state1;
-  CHECK(decode_jvm_executor_state(out1.new_data, state1));
-  {
-    JvmStorageCellHost check(state1.storage_root);
-    auto v = check.load(slot).move_as_ok();
-    CHECK(v.has_value() && *v == v1);
-  }
-
-  // Tx 2: inherits Tx1 state, reads v1, writes v2.
-  auto out2 = run_jvm_tx(
-      std::make_shared<ReadThenWriteRuntime>(slot, v1, v2),
-      out1.new_data, 0x02, descriptor, config).move_as_ok();
-  CHECK(out2.completed && out2.accepted && out2.committed);
-  CHECK(out2.new_data.not_null());
-
-  JvmExecutorState state2;
-  CHECK(decode_jvm_executor_state(out2.new_data, state2));
-  {
-    JvmStorageCellHost check(state2.storage_root);
-    auto v = check.load(slot).move_as_ok();
-    CHECK(v.has_value() && *v == v2);
-  }
-
-  // Tx 3: failing invocation — new_data must be null (no state committed).
-  auto out3 = run_jvm_tx(
-      std::make_shared<FailingRuntime>(),
-      out2.new_data, 0x03, descriptor, config).move_as_ok();
-  CHECK(out3.completed);
-  CHECK(out3.new_data.is_null());
-}
 
 // ---------------------------------------------------------------------------
 // JVM RPC codec tests
@@ -3592,12 +2488,9 @@ TEST(JvmWorkchainCore, RpcDeployContractAdmissionChecksClassSize) {
   CHECK(shape_err.is_error);
 }
 
-TEST(JvmWorkchainCore, RpcDeployContractReturnsBothContractIdAndContractAddress) {
-  // The v2 deploy result must surface BOTH the legacy v1 `contractId`
-  // (manifest key under SingletonExecutor) and the new v2
-  // `contractAddress` (deterministic wc=3 account address derived by
-  // `derive_jvm_contract_address`).  Clients on the v1 wire format keep
-  // working; v2 clients use `contractAddress` to drive
+TEST(JvmWorkchainCore, RpcDeployContractReturnsContractAddress) {
+  // The deploy result surfaces the deterministic wc=3 `contractAddress`
+  // from `derive_jvm_contract_address` so the client can drive
   // `action_create_account` to the right per-account address.
   using namespace jvm_workchain;
 
@@ -3612,12 +2505,9 @@ TEST(JvmWorkchainCore, RpcDeployContractReturnsBothContractIdAndContractAddress)
 
   auto result = handle_jvm_deploy_contract(req, cfg);
   CHECK(!result.is_error);
-
-  // Both fields appear in the response JSON.
-  CHECK(result.json.find("\"contractId\":") != std::string::npos);
   CHECK(result.json.find("\"contractAddress\":") != std::string::npos);
 
-  // Compute the expected v2 address and verify it is what the RPC reports.
+  // Compute the expected address and verify it is what the RPC reports.
   JvmDeployDescriptor descriptor;
   descriptor.deployer = req.deployer;
   descriptor.salt = req.salt;
@@ -3633,189 +2523,12 @@ TEST(JvmWorkchainCore, RpcDeployContractReturnsBothContractIdAndContractAddress)
     expected_addr_hex += buf;
   }
   CHECK(result.json.find(expected_addr_hex) != std::string::npos);
-
-  // The v1 contract_id and v2 contract_address differ for the same
-  // descriptor (different domain tag).
-  auto expected_id = derive_jvm_contract_id(descriptor).move_as_ok();
-  CHECK(expected_id != expected_address);
-}
-
-TEST(JvmWorkchainCore, RpcCallContractParsesRequest) {
-  using namespace jvm_workchain;
-
-  std::string params = R"({
-    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001",
-    "methodId": 305419896,
-    "gasLimit": 100000
-  })";
-  auto req = parse_jvm_call_contract_request(params);
-  CHECK(req.has_value());
-  CHECK(req->method_id == 305419896u);
-  CHECK(req->gas_limit == 100000u);
-  CHECK(req->contract_id[31] == 1);
-  // args must be initialised to a canonical empty cell, not null.
-  CHECK(req->args.not_null());
-
-  // Missing contractId — must fail.
-  CHECK(!parse_jvm_call_contract_request(R"({"methodId":1})").has_value());
-
-  // Handler must return a real BOC-encoded call descriptor, not a placeholder.
-  auto result = handle_jvm_call_contract(*req, "99");
-  CHECK(!result.is_error);
-  // id must be threaded through correctly.
-  CHECK(result.json.find("\"id\":99") != std::string::npos);
-  // Response must contain callDescriptorBoc field with a 0x-prefixed hex value.
-  auto boc_pos = result.json.find("\"callDescriptorBoc\":\"0x");
-  CHECK(boc_pos != std::string::npos);
-  // BOC must be non-trivially long (at minimum a few bytes for the descriptor).
-  auto hex_start = result.json.find("0x", boc_pos) + 2;
-  unsigned hex_len = 0;
-  while (hex_start + hex_len < result.json.size()
-         && std::isxdigit(static_cast<unsigned char>(
-                result.json[hex_start + hex_len]))) {
-    ++hex_len;
-  }
-  CHECK(hex_len >= 8);
-
-  // executorStateBoc is optional: when present it must decode into current_state.
-  constexpr uint8_t kMarker = 0x03;
-  JvmExecutorState exec_state;
-  exec_state.stdlib_hash = make_test_jvm_config().stdlib_hash;
-  exec_state.class_state_root = make_jvm_class_state_cell(kMarker);
-  auto state_cell = encode_jvm_executor_state(exec_state);
-  auto boc_r = vm::std_boc_serialize(state_cell, 0);
-  CHECK(!boc_r.is_error());
-  static constexpr char kHex[] = "0123456789abcdef";
-  std::string boc_hex = "0x";
-  for (size_t i = 0; i < boc_r.ok().size(); ++i) {
-    auto b = static_cast<uint8_t>(boc_r.ok().data()[i]);
-    boc_hex += kHex[(b >> 4) & 0xF];
-    boc_hex += kHex[b & 0xF];
-  }
-  std::string params_with_state = R"({"contractId":"0x0000000000000000000000000000000000000000000000000000000000000001","methodId":1,"gasLimit":0,"executorStateBoc":")" + boc_hex + "\"}";
-  auto req_with_state = parse_jvm_call_contract_request(params_with_state);
-  CHECK(req_with_state.has_value());
-  CHECK(req_with_state->current_state.not_null());
-  CHECK(req_with_state->current_state->get_hash() == state_cell->get_hash());
-
-  // Malformed executorStateBoc must cause parse to fail.
-  std::string params_bad_state = R"({"contractId":"0x0000000000000000000000000000000000000000000000000000000000000001","methodId":1,"executorStateBoc":"0xdeadbeef"})";
-  CHECK(!parse_jvm_call_contract_request(params_bad_state).has_value());
-}
-
-TEST(JvmWorkchainCore, RpcGetContractStateParsesRequest) {
-  using namespace jvm_workchain;
-
-  std::string params = R"({
-    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001"
-  })";
-  auto req = parse_jvm_get_contract_state_request(params);
-  CHECK(req.has_value());
-  CHECK(req->contract_id[31] == 1);
-
-  CHECK(!parse_jvm_get_contract_state_request(R"({})").has_value());
-
-  // When executor_state contains a class state rooted at the queried
-  // contract_id, the handler must populate className and classHash.
-  constexpr uint8_t kMarker = 0x01;
-  req->contract_id = make_test_jvm_call_descriptor(kMarker).contract_id;
-
-  JvmExecutorState exec_state;
-  exec_state.stdlib_hash = make_test_jvm_config().stdlib_hash;
-  exec_state.storage_root = {};
-  exec_state.class_state_root = make_jvm_class_state_cell(kMarker);
-  req->executor_state = encode_jvm_executor_state(exec_state);
-
-  auto result = handle_jvm_get_contract_state(*req, "5");
-  CHECK(!result.is_error);
-  CHECK(result.json.find("\"id\":5") != std::string::npos);
-  // className must be the class registered for this contract_id.
-  CHECK(result.json.find("\"className\":\"ContractEntryPoint\"") != std::string::npos);
-  // classHash must be a 0x-prefixed 64-hex-char value (non-null).
-  CHECK(result.json.find("\"classHash\":\"0x") != std::string::npos);
-  // storageRootHash must be null (no storage set).
-  CHECK(result.json.find("\"storageRootHash\":null") != std::string::npos);
-
-  // Without executor_state the handler must return an error.
-  req->executor_state = {};
-  CHECK(handle_jvm_get_contract_state(*req, "6").is_error);
 }
 
 // Verify that executorStateBoc in the JSON params round-trips correctly through
 // parse_jvm_get_contract_state_request: the hex BOC is decoded back to a cell
 // with the same hash as the original, and the handler can then resolve the
 // class name and hash from it without any out-of-band state injection.
-TEST(JvmWorkchainCore, RpcGetContractStateDecodesExecutorStateBocFromJson) {
-  using namespace jvm_workchain;
-
-  constexpr uint8_t kMarker = 0x02;
-
-  // Build an executor state cell and encode it to a hex BOC string.
-  JvmExecutorState exec_state;
-  exec_state.stdlib_hash = make_test_jvm_config().stdlib_hash;
-  exec_state.storage_root = {};
-  exec_state.class_state_root = make_jvm_class_state_cell(kMarker);
-  auto state_cell = encode_jvm_executor_state(exec_state);
-  CHECK(state_cell.not_null());
-
-  auto boc = vm::std_boc_serialize(state_cell, 0);
-  CHECK(!boc.is_error());
-  static constexpr char kHex[] = "0123456789abcdef";
-  std::string boc_hex = "0x";
-  for (size_t i = 0; i < boc.ok().size(); ++i) {
-    auto b = static_cast<uint8_t>(boc.ok().data()[i]);
-    boc_hex += kHex[(b >> 4) & 0xF];
-    boc_hex += kHex[b & 0xF];
-  }
-
-  auto contract_id = make_test_jvm_call_descriptor(kMarker).contract_id;
-  // Encode contract_id to 0x-prefixed hex.
-  std::string cid_hex = "0x";
-  for (auto b : contract_id) {
-    cid_hex += kHex[(b >> 4) & 0xF];
-    cid_hex += kHex[b & 0xF];
-  }
-
-  std::string params = "{\"contractId\":\"" + cid_hex
-                     + "\",\"executorStateBoc\":\"" + boc_hex + "\"}";
-  auto req = parse_jvm_get_contract_state_request(params);
-  CHECK(req.has_value());
-  // executor_state must be populated from the BOC — same cell hash.
-  CHECK(req->executor_state.not_null());
-  CHECK(req->executor_state->get_hash() == state_cell->get_hash());
-
-  // The handler must resolve className/classHash without any extra injection.
-  auto result = handle_jvm_get_contract_state(*req, "8");
-  CHECK(!result.is_error);
-  CHECK(result.json.find("\"className\":\"ContractEntryPoint\"") != std::string::npos);
-  CHECK(result.json.find("\"classHash\":\"0x") != std::string::npos);
-
-  // Malformed BOC must cause parse to return nullopt.
-  std::string bad_params = "{\"contractId\":\"" + cid_hex
-                          + "\",\"executorStateBoc\":\"0xdeadbeef\"}";
-  CHECK(!parse_jvm_get_contract_state_request(bad_params).has_value());
-}
-
-TEST(JvmWorkchainCore, RpcGetReceiptsParsesRequest) {
-  using namespace jvm_workchain;
-
-  std::string params = R"({
-    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001",
-    "fromBlock": 100,
-    "toBlock": 200
-  })";
-  auto req = parse_jvm_get_receipts_request(params);
-  CHECK(req.has_value());
-  CHECK(req->from_block == 100);
-  CHECK(req->to_block == 200);
-
-  CHECK(!parse_jvm_get_receipts_request(R"({
-    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001",
-    "fromBlock": -1
-  })").has_value());
-  CHECK(!parse_jvm_get_receipts_request(R"({})").has_value());
-}
-
 TEST(JvmWorkchainCore, RpcDispatcherRoutesJvmMethods) {
   using namespace jvm_workchain;
 
@@ -3849,8 +2562,8 @@ TEST(JvmWorkchainCore, RpcDispatcherPropagatesRealResults) {
 
   auto cfg = make_test_jvm_config();
 
-  // jvm_deployContract: contractId field must be a real 0x-prefixed hex hash,
-  // not the placeholder "see_result".
+  // jvm_deployContract: contractAddress field must be a real 0x-prefixed
+  // hex hash, not the placeholder "see_result".
   std::string deploy_params = R"({
     "classBytes": "0xcafebabe00000034",
     "className": "ContractEntryPoint",
@@ -3861,10 +2574,10 @@ TEST(JvmWorkchainCore, RpcDispatcherPropagatesRealResults) {
   CHECK(deploy.has_value() && !deploy->is_error);
   // id must be the caller-supplied value, not "null".
   CHECK(deploy->json.find("\"id\":42") != std::string::npos);
-  // contractId must be a real hex value (66 chars: 0x + 64 hex digits).
-  auto cid_pos = deploy->json.find("\"contractId\":\"0x");
+  // contractAddress must be a real hex value (66 chars: 0x + 64 hex digits).
+  auto cid_pos = deploy->json.find("\"contractAddress\":\"0x");
   CHECK(cid_pos != std::string::npos);
-  // The hex string immediately follows "contractId":"0x — check it's 64 hex chars.
+  // The hex string immediately follows "contractAddress":"0x — check 64 hex chars.
   auto hex_start = deploy->json.find("0x", cid_pos) + 2;
   unsigned hex_count = 0;
   while (hex_start + hex_count < deploy->json.size()
@@ -3887,114 +2600,9 @@ TEST(JvmWorkchainCore, RpcDispatcherPropagatesRealResults) {
 
 // jvm_deployContract returns deployDescriptorBoc alongside contractId.
 // The BOC must deserialize to a valid JvmDeployDescriptor cell.
-TEST(JvmWorkchainCore, RpcDeployContractReturnsDescriptorBoc) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  std::string params = R"({
-    "classBytes": "0xcafebabe00000034",
-    "className": "ContractEntryPoint",
-    "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001",
-    "salt":     "0x0000000000000000000000000000000000000000000000000000000000000002"
-  })";
-  auto result = handle_jvm_rpc("jvm_deployContract", params, "1", cfg);
-  CHECK(result.has_value() && !result->is_error);
-
-  // Both contractId and deployDescriptorBoc must be present.
-  CHECK(result->json.find("\"contractId\":\"0x") != std::string::npos);
-  auto boc_pos = result->json.find("\"deployDescriptorBoc\":\"0x");
-  CHECK(boc_pos != std::string::npos);
-
-  // Extract the deployDescriptorBoc hex and round-trip it through the decoder.
-  auto hex_start = result->json.find("0x", boc_pos);
-  auto hex_end = result->json.find('"', hex_start + 2);
-  CHECK(hex_start != std::string::npos && hex_end != std::string::npos);
-  std::string boc_hex = result->json.substr(hex_start, hex_end - hex_start);
-  // Must be a valid hex string with 0x prefix.
-  CHECK(boc_hex.size() > 2);
-  CHECK(boc_hex[0] == '0' && boc_hex[1] == 'x');
-  // Decode to bytes.
-  std::vector<uint8_t> boc_bytes;
-  for (size_t i = 2; i + 1 < boc_hex.size(); i += 2) {
-    auto nibble = [](char c) -> uint8_t {
-      if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
-      if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
-      return static_cast<uint8_t>(c - 'A' + 10);
-    };
-    boc_bytes.push_back(static_cast<uint8_t>((nibble(boc_hex[i]) << 4) | nibble(boc_hex[i+1])));
-  }
-  auto cell = vm::std_boc_deserialize(
-      td::Slice(reinterpret_cast<const char*>(boc_bytes.data()), boc_bytes.size()));
-  CHECK(!cell.is_error() && cell.ok().not_null());
-  // Must decode as a valid JvmDeployDescriptor.
-  auto desc = parse_jvm_deploy_descriptor(vm::load_cell_slice(cell.ok()));
-  CHECK(!desc.is_error());
-  CHECK(desc.ok().class_name == "ContractEntryPoint");
-}
-
 // jvm_callContract with argsBoc passes the args cell through to the local
 // simulation.  Verify that argsBoc round-trips: encode a JVMA args cell,
 // supply it as argsBoc, and confirm the local execution receives it correctly.
-TEST(JvmWorkchainCore, RpcCallContractArgsBocRoundTrips) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 1;
-
-  // Build executor state.
-  JvmExecutorState state;
-  state.schema_version = kJvmExecutorStateSchemaVersion;
-  state.stdlib_hash = cfg.stdlib_hash;
-  auto state_cell = encode_jvm_executor_state(state);
-  CHECK(state_cell.not_null());
-  auto state_boc_r = vm::std_boc_serialize(state_cell, 0);
-  CHECK(!state_boc_r.is_error());
-  static constexpr char kHex[] = "0123456789abcdef";
-  std::string state_hex = "0x";
-  for (size_t i = 0; i < state_boc_r.ok().size(); ++i) {
-    auto b = static_cast<uint8_t>(state_boc_r.ok().data()[i]);
-    state_hex += kHex[(b >> 4) & 0xF];
-    state_hex += kHex[b & 0xF];
-  }
-
-  // Encode a non-empty JVMA typed args cell (one int arg = 42).
-  JvmArgs typed_args;
-  JvmTypedArg int_arg;
-  int_arg.type = JvmArgType::Int32;
-  int_arg.bytes = {0, 0, 0, 42};
-  typed_args.values.push_back(int_arg);
-  auto args_cell = encode_jvm_args(typed_args);
-  CHECK(args_cell.not_null());
-  auto args_boc_r = vm::std_boc_serialize(args_cell, 0);
-  CHECK(!args_boc_r.is_error());
-  std::string args_hex = "0x";
-  for (size_t i = 0; i < args_boc_r.ok().size(); ++i) {
-    auto b = static_cast<uint8_t>(args_boc_r.ok().data()[i]);
-    args_hex += kHex[(b >> 4) & 0xF];
-    args_hex += kHex[b & 0xF];
-  }
-
-  // Parse call request — argsBoc must populate req.args.
-  std::string params = R"({"contractId": "0x0000000000000000000000000000000000000000000000000000000000000001", "methodId": 1, "argsBoc": ")" + args_hex + R"("})";
-  auto req = parse_jvm_call_contract_request(params);
-  CHECK(req.has_value());
-  CHECK(req->args.not_null());
-  CHECK(req->args->get_hash() == args_cell->get_hash());
-
-  // Malformed argsBoc must cause parse to return nullopt.
-  std::string bad_params = R"({"contractId": "0x0000000000000000000000000000000000000000000000000000000000000001", "methodId": 1, "argsBoc": "0xdeadbeef"})";
-  CHECK(!parse_jvm_call_contract_request(bad_params).has_value());
-
-  // Absent argsBoc falls back to canonical empty args cell.
-  std::string no_args_params = R"({"contractId": "0x0000000000000000000000000000000000000000000000000000000000000001", "methodId": 1})";
-  auto no_args_req = parse_jvm_call_contract_request(no_args_params);
-  CHECK(no_args_req.has_value());
-  CHECK(no_args_req->args.not_null());
-  // Empty args cell: CellBuilder().finalize() has a specific hash.
-  auto empty_args = vm::CellBuilder().finalize();
-  CHECK(no_args_req->args->get_hash() == empty_args->get_hash());
-}
-
 // ---------------------------------------------------------------------------
 // Multi-instance storage isolation
 // ---------------------------------------------------------------------------
@@ -4003,63 +2611,6 @@ TEST(JvmWorkchainCore, RpcCallContractArgsBocRoundTrips) {
 // namespace prefixes) coexist in the shared executor storage without clobbering
 // each other.  The canonical v1 isolation mechanism is Mapping.namespace() in
 // Java; this C++ test exercises the underlying storage cell-host layer.
-TEST(JvmWorkchainCore, MultiInstanceIndependentStorageSlots) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 1;
-  auto config = make_config_with_jvm_param(cfg);
-  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
-
-  JvmStorageSlot slot_a{};
-  slot_a[31] = 0xAA;
-  JvmStorageSlot slot_b{};
-  slot_b[31] = 0xBB;
-
-  const JvmStorageValue v1{0x11};
-  const JvmStorageValue v2{0x22};
-  const JvmStorageValue v3{0x33};
-
-  // Tx 1: instance A writes to slot_a.
-  auto out1 = run_jvm_tx(
-      std::make_shared<WriteSlotRuntime>(slot_a, v1),
-      td::Ref<vm::Cell>{}, 0x01, descriptor, config).move_as_ok();
-  CHECK(out1.committed && out1.new_data.not_null());
-
-  // Tx 2: instance B writes to slot_b, inheriting instance A's state.
-  auto out2 = run_jvm_tx(
-      std::make_shared<WriteSlotRuntime>(slot_b, v2),
-      out1.new_data, 0x02, descriptor, config).move_as_ok();
-  CHECK(out2.committed && out2.new_data.not_null());
-
-  // After both writes: both slots must coexist with correct values.
-  {
-    JvmExecutorState state;
-    CHECK(decode_jvm_executor_state(out2.new_data, state));
-    JvmStorageCellHost check(state.storage_root);
-    auto va = check.load(slot_a).move_as_ok();
-    auto vb = check.load(slot_b).move_as_ok();
-    CHECK(va.has_value() && *va == v1);
-    CHECK(vb.has_value() && *vb == v2);
-  }
-
-  // Tx 3: instance A overwrites slot_a — instance B's slot_b must be unchanged.
-  auto out3 = run_jvm_tx(
-      std::make_shared<WriteSlotRuntime>(slot_a, v3),
-      out2.new_data, 0x03, descriptor, config).move_as_ok();
-  CHECK(out3.committed && out3.new_data.not_null());
-
-  {
-    JvmExecutorState state;
-    CHECK(decode_jvm_executor_state(out3.new_data, state));
-    JvmStorageCellHost check(state.storage_root);
-    auto va = check.load(slot_a).move_as_ok();
-    auto vb = check.load(slot_b).move_as_ok();
-    CHECK(va.has_value() && *va == v3);
-    CHECK(vb.has_value() && *vb == v2);
-  }
-}
-
 // Verify that JvmConfig::default_activation() produces a config that
 // build_jvm_config_cell() encodes and parse_jvm_config_cell() round-trips
 // without loss.
@@ -4087,14 +2638,11 @@ TEST(JvmWorkchainCore, JvmActivationConfigBuildsAndRoundTrips) {
   CHECK(cell.not_null());
 
   // Round-trip: parse must succeed and reproduce the original config.  The
-  // v2 wire schema does NOT carry `max_total_class_bytes`, so the parsed
-  // struct field is intentionally zero regardless of the input.
   auto parsed = parse_jvm_config_cell(cell).move_as_ok();
   CHECK(parsed.chain_id == cfg.chain_id);
   CHECK(parsed.gas_price == cfg.gas_price);
   CHECK(parsed.max_gas_per_tx == cfg.max_gas_per_tx);
   CHECK(parsed.max_class_bytes == cfg.max_class_bytes);
-  CHECK(parsed.max_total_class_bytes == 0);  // dropped from v2 wire schema
   CHECK(parsed.max_heap_bytes == cfg.max_heap_bytes);
   CHECK(parsed.max_storage_cells == cfg.max_storage_cells);
   CHECK(parsed.class_file_major == cfg.class_file_major);
@@ -4105,333 +2653,25 @@ TEST(JvmWorkchainCore, JvmActivationConfigBuildsAndRoundTrips) {
 
 // Verify that an out-of-memory invocation produces a correct compute output:
 // not committed, not out_of_gas, vm_log identifies OOM, new_data is null.
-TEST(JvmWorkchainCore, AvataInvocationBuildsOutOfMemoryComputeOutput) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 3;
-  auto api = make_test_jvm_execution_api();
-  JvmStorageCellHost storage;
-  FakeJvmExecutionThread thread;
-  thread.invoke_status = api.out_of_memory_status;
-  thread.remaining_gas = 800;
-  thread.memory_used = cfg.max_heap_bytes;  // at limit — not exceeding
-
-  JvmExecutorState previous_state;
-  previous_state.stdlib_hash = cfg.stdlib_hash;
-  previous_state.storage_root = storage.root_cell();
-
-  auto invocation = execute_jvm_avata_transaction(
-      &thread, cfg, 1000, storage, api, nullptr).move_as_ok();
-  CHECK(!invocation.success);
-  CHECK(!invocation.out_of_gas);
-  CHECK(invocation.out_of_memory);
-
-  auto output = build_jvm_workchain_output(
-      cfg, previous_state, 1000, invocation).move_as_ok();
-
-  CHECK(output.completed);
-  CHECK(output.accepted);
-  CHECK(!output.committed);
-  CHECK(!output.engine_success);
-  CHECK(!output.out_of_gas);
-  CHECK(output.skip_reason == block::ComputePhase::sk_none);
-  CHECK(output.exit_code == api.out_of_memory_status);
-  CHECK(output.gas_used == 200);  // 1000 - 800
-  CHECK(output.vm_log == "JVM execution exhausted memory");
-  CHECK(output.new_data.is_null());
-  CHECK(output.action_list.is_null());
-}
-
 // Verify that memory_used exceeding max_heap_bytes causes
 // execute_jvm_avata_transaction to return an error rather than a result.
 // This is the post-invocation config guard that prevents a misbehaving Avata
 // thread from reporting usage above the arena limit.
-TEST(JvmWorkchainCore, MaxHeapBytesExceededReturnsError) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  auto api = make_test_jvm_execution_api();
-  JvmStorageCellHost storage;
-  FakeJvmExecutionThread thread;
-  // Avata reports "success" but claims it used more memory than the limit.
-  thread.invoke_status = api.ok_status;
-  thread.remaining_gas = 900;
-  thread.memory_used = cfg.max_heap_bytes + 1;
-
-  CHECK(execute_jvm_avata_transaction(
-            &thread, cfg, 1000, storage, api, nullptr).is_error());
-}
-
 // Verify that the executor-state cell serializes to bytes (BOC) and back
 // without loss, and that re-running compute against the deserialized cell
 // produces an identical result.  This is the "serialize to disk / reimport"
 // replay test from Phase 8.
-TEST(JvmWorkchainCore, JvmStateCellBocRoundTripPreservesComputeOutput) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 1;
-  auto config = make_config_with_jvm_param(cfg);
-  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
-
-  JvmStorageSlot slot{};
-  slot[31] = 0xCC;
-  const JvmStorageValue value{0x55};
-
-  // Tx 1: write a known value into storage.
-  auto out1 = run_jvm_tx(
-      std::make_shared<WriteSlotRuntime>(slot, value),
-      td::Ref<vm::Cell>{}, 0x11, descriptor, config).move_as_ok();
-  CHECK(out1.committed && out1.new_data.not_null());
-
-  // BOC round-trip: serialize new_data to bytes, deserialize back.
-  auto boc = vm::std_boc_serialize(out1.new_data).move_as_ok();
-  auto restored = vm::std_boc_deserialize(boc.as_slice()).move_as_ok();
-  CHECK(restored.not_null());
-
-  // Cell identity: deserialized cell must have the same hash as the original.
-  CHECK(restored->get_hash() == out1.new_data->get_hash());
-
-  // Functional identity: running compute from the deserialized cell must
-  // produce the same storage content as running it from the original cell.
-  auto out_orig = run_jvm_tx(
-      std::make_shared<WriteSlotRuntime>(slot, JvmStorageValue{0xDD}),
-      out1.new_data, 0x12, descriptor, config).move_as_ok();
-  auto out_restored = run_jvm_tx(
-      std::make_shared<WriteSlotRuntime>(slot, JvmStorageValue{0xDD}),
-      restored, 0x12, descriptor, config).move_as_ok();
-
-  CHECK(out_orig.committed && out_restored.committed);
-  CHECK(out_orig.new_data.not_null() && out_restored.new_data.not_null());
-  CHECK(out_orig.new_data->get_hash() == out_restored.new_data->get_hash());
-}
-
 // ---------------------------------------------------------------------------
 // RPC local execution and storage enumeration
 // ---------------------------------------------------------------------------
 
 // jvm_callContract with a runtime and executorStateBoc performs a local
 // simulation and returns localResult alongside the call descriptor BOC.
-TEST(JvmWorkchainCore, RpcCallContractLocalExecution) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 1;
-
-  // Build a minimal executor state cell.
-  JvmExecutorState state;
-  state.schema_version = kJvmExecutorStateSchemaVersion;
-  state.stdlib_hash = cfg.stdlib_hash;
-  auto state_cell = encode_jvm_executor_state(state);
-  CHECK(state_cell.not_null());
-  auto state_boc_r = vm::std_boc_serialize(state_cell, 0);
-  CHECK(!state_boc_r.is_error());
-  static constexpr char kH1[] = "0123456789abcdef";
-  std::string state_hex = "0x";
-  for (size_t i = 0; i < state_boc_r.ok().size(); ++i) {
-    auto b = static_cast<uint8_t>(state_boc_r.ok().data()[i]);
-    state_hex += kH1[(b >> 4) & 0xF];
-    state_hex += kH1[b & 0xF];
-  }
-
-  // WriteSlotRuntime writes one slot and reports 50 gas used.
-  JvmStorageSlot slot{};
-  slot[31] = 0x42;
-  const JvmStorageValue val{0xBE, 0xEF};
-  auto runtime = std::make_shared<WriteSlotRuntime>(slot, val);
-
-  std::string params = R"({
-    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000001",
-    "methodId": 12345,
-    "gasLimit": 1000,
-    "executorStateBoc": ")" + state_hex + R"("
-  })";
-
-  auto result = handle_jvm_rpc("jvm_callContract", params, "1", cfg,
-                               runtime.get());
-  CHECK(result.has_value() && !result->is_error);
-
-  // callDescriptorBoc must still be present.
-  CHECK(result->json.find("\"callDescriptorBoc\":\"0x") != std::string::npos);
-
-  // localResult must show success.
-  CHECK(result->json.find("\"success\":true") != std::string::npos);
-  CHECK(result->json.find("\"gasUsed\":50") != std::string::npos);
-
-  // newStateBoc must be a non-null hex string (the committed new state).
-  CHECK(result->json.find("\"newStateBoc\":\"0x") != std::string::npos);
-}
-
 // jvm_callContract with a failing runtime returns localResult.success=false
 // and no newStateBoc.
-TEST(JvmWorkchainCore, RpcCallContractLocalExecutionFailure) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 1;
-
-  JvmExecutorState state;
-  state.schema_version = kJvmExecutorStateSchemaVersion;
-  state.stdlib_hash = cfg.stdlib_hash;
-  auto state_cell = encode_jvm_executor_state(state);
-  CHECK(state_cell.not_null());
-
-  auto state_boc_r2 = vm::std_boc_serialize(state_cell, 0);
-  CHECK(!state_boc_r2.is_error());
-  static constexpr char kH2[] = "0123456789abcdef";
-  std::string state_hex2 = "0x";
-  for (size_t i = 0; i < state_boc_r2.ok().size(); ++i) {
-    auto b = static_cast<uint8_t>(state_boc_r2.ok().data()[i]);
-    state_hex2 += kH2[(b >> 4) & 0xF];
-    state_hex2 += kH2[b & 0xF];
-  }
-
-  auto runtime = std::make_shared<FailingRuntime>();
-  std::string params = R"({
-    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000002",
-    "methodId": 99,
-    "gasLimit": 500,
-    "executorStateBoc": ")" + state_hex2 + R"("
-  })";
-
-  auto result = handle_jvm_rpc("jvm_callContract", params, "2", cfg,
-                               runtime.get());
-  CHECK(result.has_value() && !result->is_error);
-  CHECK(result->json.find("\"success\":false") != std::string::npos);
-  // No new state committed on failure.
-  CHECK(result->json.find("\"newStateBoc\":null") != std::string::npos);
-}
-
 // jvm_getContractState with executorStateBoc enumerates storage slots
 // and includes them in storageSlots.
-TEST(JvmWorkchainCore, RpcGetContractStateEnumeratesStorageSlots) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-  cfg.gas_price = 1;
-
-  // Build executor state with two storage entries.
-  JvmStorageSlot slot_a{};
-  slot_a[31] = 0x01;
-  JvmStorageSlot slot_b{};
-  slot_b[31] = 0x02;
-  const JvmStorageValue val_a{0xAA};
-  const JvmStorageValue val_b{0xBB, 0xCC};
-
-  JvmStorageCellHost storage;
-  CHECK(storage.begin_transaction().is_ok());
-  CHECK(storage.store(slot_a, val_a).is_ok());
-  CHECK(storage.store(slot_b, val_b).is_ok());
-  CHECK(storage.commit_transaction().is_ok());
-
-  JvmExecutorState state;
-  state.schema_version = kJvmExecutorStateSchemaVersion;
-  state.stdlib_hash = cfg.stdlib_hash;
-  state.storage_root = storage.root_cell();
-  auto state_cell = encode_jvm_executor_state(state);
-  CHECK(state_cell.not_null());
-  auto state_boc_r3 = vm::std_boc_serialize(state_cell, 0);
-  CHECK(!state_boc_r3.is_error());
-  static constexpr char kH3[] = "0123456789abcdef";
-  std::string state_hex3 = "0x";
-  for (size_t i = 0; i < state_boc_r3.ok().size(); ++i) {
-    auto b = static_cast<uint8_t>(state_boc_r3.ok().data()[i]);
-    state_hex3 += kH3[(b >> 4) & 0xF];
-    state_hex3 += kH3[b & 0xF];
-  }
-
-  std::string params = R"({
-    "contractId": "0x0000000000000000000000000000000000000000000000000000000000000003",
-    "executorStateBoc": ")" + state_hex3 + R"("
-  })";
-
-  auto result = handle_jvm_rpc("jvm_getContractState", params, "3", cfg);
-  CHECK(result.has_value() && !result->is_error);
-
-  // storageSlots must be a JSON array with two entries.
-  CHECK(result->json.find("\"storageSlots\":[") != std::string::npos);
-  CHECK(result->json.find("\"storageTruncated\":false") != std::string::npos);
-  // Both slot values must appear in hex.
-  CHECK(result->json.find("\"0xaa\"") != std::string::npos
-     || result->json.find("\"0xAA\"") != std::string::npos
-     || result->json.find("0xaa") != std::string::npos);
-  CHECK(result->json.find("\"0xbbcc\"") != std::string::npos
-     || result->json.find("\"0xBBCC\"") != std::string::npos
-     || result->json.find("0xbbcc") != std::string::npos);
-}
-
 // jvm_deployContract with executorStateBoc installs the class into the
 // executor state and returns newStateBoc alongside contractId and
 // deployDescriptorBoc.  The returned newStateBoc must decode back to an
 // executor state whose class_state_root contains the deployed class.
-TEST(JvmWorkchainCore, RpcDeployContractWithExecutorStateBocInstallsClass) {
-  using namespace jvm_workchain;
-
-  auto cfg = make_test_jvm_config();
-
-  // Build a minimal (empty) executor state.
-  JvmExecutorState initial_state;
-  initial_state.schema_version = kJvmExecutorStateSchemaVersion;
-  initial_state.stdlib_hash = cfg.stdlib_hash;
-  auto state_cell = encode_jvm_executor_state(initial_state);
-  CHECK(state_cell.not_null());
-  auto state_boc_r = vm::std_boc_serialize(state_cell, 0);
-  CHECK(!state_boc_r.is_error());
-  static constexpr char kHex[] = "0123456789abcdef";
-  std::string state_hex = "0x";
-  for (size_t i = 0; i < state_boc_r.ok().size(); ++i) {
-    auto b = static_cast<uint8_t>(state_boc_r.ok().data()[i]);
-    state_hex += kHex[(b >> 4) & 0xF];
-    state_hex += kHex[b & 0xF];
-  }
-
-  std::string params = R"({
-    "classBytes": "0xcafebabe00000034",
-    "className": "ContractEntryPoint",
-    "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001",
-    "salt":     "0x0000000000000000000000000000000000000000000000000000000000000002",
-    "executorStateBoc": ")" + state_hex + R"("
-  })";
-
-  auto result = handle_jvm_rpc("jvm_deployContract", params, "1", cfg);
-  CHECK(result.has_value() && !result->is_error);
-
-  // All three fields must be present.
-  CHECK(result->json.find("\"contractId\":\"0x") != std::string::npos);
-  CHECK(result->json.find("\"deployDescriptorBoc\":\"0x") != std::string::npos);
-  auto ns_pos = result->json.find("\"newStateBoc\":\"0x");
-  CHECK(ns_pos != std::string::npos);
-
-  // Extract and round-trip newStateBoc.
-  auto hex_start = result->json.find("0x", ns_pos);
-  auto hex_end = result->json.find('"', hex_start + 2);
-  CHECK(hex_start != std::string::npos && hex_end != std::string::npos);
-  std::string new_boc_hex = result->json.substr(hex_start, hex_end - hex_start);
-  std::vector<uint8_t> new_boc_bytes;
-  for (size_t i = 2; i + 1 < new_boc_hex.size(); i += 2) {
-    auto nibble = [](char c) -> uint8_t {
-      if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
-      if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
-      return static_cast<uint8_t>(c - 'A' + 10);
-    };
-    new_boc_bytes.push_back(
-        static_cast<uint8_t>((nibble(new_boc_hex[i]) << 4)
-                             | nibble(new_boc_hex[i + 1])));
-  }
-  auto new_cell = vm::std_boc_deserialize(
-      td::Slice(reinterpret_cast<const char*>(new_boc_bytes.data()),
-                new_boc_bytes.size()));
-  CHECK(!new_cell.is_error() && new_cell.ok().not_null());
-
-  // The new state must decode and contain the installed class.
-  JvmExecutorState new_state;
-  CHECK(decode_jvm_executor_state(new_cell.ok(), new_state));
-  CHECK(new_state.class_state_root.not_null());
-
-  // Class definition must be findable by name.
-  auto def = find_jvm_avata_class_definition(
-      new_state.class_state_root, "ContractEntryPoint");
-  CHECK(!def.is_error());
-  CHECK(def.ok().class_name == "ContractEntryPoint");
-}

@@ -38,13 +38,7 @@ struct JvmDeployDescriptor {
 
 JvmClassHash compute_jvm_class_hash(const JvmStorageValue& class_bytes);
 
-// Deterministic v1 contract id:
-// sha256("TOS-JVM-CONTRACT-v1" || deployer || class_hash || salt ||
-//        init_args_cell_hash)
-td::Result<JvmContractId> derive_jvm_contract_id(
-    const JvmDeployDescriptor& descriptor);
-
-// JVM v2: deterministic per-contract wc=3 account address.
+// Deterministic per-contract wc=3 account address:
 //
 //   addr = sha256(
 //       "TOS-JVM-CONTRACT-v2"

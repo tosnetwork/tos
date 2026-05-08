@@ -31,18 +31,10 @@ struct JvmAvataCallTarget {
     std::shared_ptr<void> invocation_owner;
 };
 
-using JvmAvataResolveCallTarget =
-    td::Result<JvmAvataCallTarget> (*)(
-        const block::WorkchainComputeInput& input,
-        const block::WorkchainComputeContext& context,
-        const JvmConfig& config,
-        const JvmExecutorState& previous_state,
-        void* user);
-
-// v2 per-account resolver: looks up the call target through the
+// Per-account resolver: looks up the call target through the
 // `manifest_root` carried by `JvmContractAccountState`, and loads
-// `class_bytes` from the same state instead of a global class store.
-using JvmAvataResolveCallTargetV2 =
+// `class_bytes` from the same state.
+using JvmAvataResolveCallTarget =
     td::Result<JvmAvataCallTarget> (*)(
         const block::WorkchainComputeInput& input,
         const block::WorkchainComputeContext& context,
@@ -55,16 +47,9 @@ class JvmAvataRuntime final : public JvmComputeRuntime {
     JvmAvataRuntime(JvmAvataExecutionApi api,
                     JvmAvataResolveCallTarget resolve_call_target,
                     void* resolve_user = nullptr,
-                    std::shared_ptr<void> resolve_owner = nullptr,
-                    JvmAvataResolveCallTargetV2 resolve_call_target_v2 = nullptr);
+                    std::shared_ptr<void> resolve_owner = nullptr);
 
     td::Result<JvmAvataInvocationResult> run_contract(
-        const block::WorkchainComputeInput& input,
-        const block::WorkchainComputeContext& context,
-        const JvmConfig& config,
-        const JvmExecutorState& previous_state) const override;
-
-    td::Result<JvmAvataInvocationResult> run_contract_v2(
         const block::WorkchainComputeInput& input,
         const block::WorkchainComputeContext& context,
         const JvmConfig& config,
@@ -73,7 +58,6 @@ class JvmAvataRuntime final : public JvmComputeRuntime {
  private:
     JvmAvataExecutionApi api_;
     JvmAvataResolveCallTarget resolve_call_target_{nullptr};
-    JvmAvataResolveCallTargetV2 resolve_call_target_v2_{nullptr};
     void* resolve_user_{nullptr};
     std::shared_ptr<void> resolve_owner_;
     mutable std::mutex mutex_;

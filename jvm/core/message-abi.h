@@ -1,9 +1,10 @@
 /*
     JVM Workchain — inbound message ABI codec.
 
-    The v1 compute path accepts a single contract-call descriptor. Deployment
-    and richer argument decoding build on this cell envelope instead of letting
-    raw inbound bodies reach the Avata runtime unchecked.
+    The compute path accepts a single contract-call descriptor.  Each
+    inbound wc=3 message names the destination contract directly via its
+    account address; the descriptor body therefore carries only the
+    method id and a typed args cell.
 */
 #pragma once
 
@@ -17,22 +18,16 @@
 
 namespace jvm_workchain {
 
-constexpr std::uint32_t kJvmCallDescriptorMagic = 0x4a564d49;  // "JVMI"
-constexpr std::uint8_t kJvmCallDescriptorSchemaVersion = 1;
+constexpr std::uint32_t kJvmCallDescriptorMagic = 0x4a564932;  // "JVI2"
+constexpr std::uint8_t kJvmCallDescriptorSchemaVersion = 2;
 constexpr unsigned kJvmContractIdBytes = 32;
 constexpr const char* kJvmStaticVoidMethodSpec = "()V";
 constexpr std::uint32_t kJvmArgsMagic = 0x4a564d41;  // "JVMA"
 constexpr std::uint8_t kJvmArgsSchemaVersion = 1;
 constexpr std::size_t kJvmArgsMaxCount = 64;
 
+// Generic 32-byte deployer / salt / address-like value.
 using JvmContractId = std::array<std::uint8_t, kJvmContractIdBytes>;
-
-struct JvmCallDescriptor {
-    std::uint8_t schema_version{kJvmCallDescriptorSchemaVersion};
-    JvmContractId contract_id{};
-    std::uint32_t method_id{0};
-    td::Ref<vm::Cell> args;
-};
 
 enum class JvmArgType : std::uint8_t {
     Bool = 1,
@@ -55,10 +50,15 @@ struct JvmArgs {
     std::vector<JvmTypedArg> values;
 };
 
+struct JvmCallDescriptor {
+    std::uint8_t schema_version{kJvmCallDescriptorSchemaVersion};
+    std::uint32_t method_id{0};
+    td::Ref<vm::Cell> args;
+};
+
 // Layout:
-//   jvm_call#4a564d49
-//     schema_version:uint8 (=1)
-//     contract_id:bits256
+//   jvm_call#4a564932
+//     schema_version:uint8 (=2)
 //     method_id:uint32
 //     args:^Cell
 //     = JvmCallDescriptor;
@@ -69,39 +69,6 @@ td::Result<JvmCallDescriptor> parse_jvm_call_descriptor(
     td::Ref<vm::CellSlice> body);
 
 td::Result<JvmCallDescriptor> parse_jvm_call_descriptor(vm::CellSlice body);
-
-// -------------------------------------------------------------------------
-// JVM v2: per-account call descriptor.
-//
-// Drops `contract_id` because under the v2 account-native topology each JVM
-// contract is its own wc=3 account: the inbound message destination already
-// names the contract.  Magic and schema_version are bumped so v1 and v2 cells
-// can be distinguished even if a node receives a stale v1 body.
-// -------------------------------------------------------------------------
-
-constexpr std::uint32_t kJvmCallDescriptorV2Magic = 0x4a564932;  // "JVI2"
-constexpr std::uint8_t kJvmCallDescriptorV2SchemaVersion = 2;
-
-struct JvmCallDescriptorV2 {
-    std::uint8_t schema_version{kJvmCallDescriptorV2SchemaVersion};
-    std::uint32_t method_id{0};
-    td::Ref<vm::Cell> args;
-};
-
-// Layout:
-//   jvm_call_v2#4a564932
-//     schema_version:uint8 (=2)
-//     method_id:uint32
-//     args:^Cell
-//     = JvmCallDescriptorV2;
-td::Ref<vm::Cell> encode_jvm_call_descriptor_v2(
-    const JvmCallDescriptorV2& descriptor);
-
-td::Result<JvmCallDescriptorV2> parse_jvm_call_descriptor_v2(
-    td::Ref<vm::CellSlice> body);
-
-td::Result<JvmCallDescriptorV2> parse_jvm_call_descriptor_v2(
-    vm::CellSlice body);
 
 td::Ref<vm::Cell> encode_jvm_args(const JvmArgs& args);
 

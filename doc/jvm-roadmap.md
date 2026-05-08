@@ -984,9 +984,9 @@ topology" rows below).
 | Phase 6 — Message ABI | ✅ | `JvmCallDescriptor`, typed `JVMA` args codec (bool/int/long/Address/Uint256/Bytes32/Bytes4/Bytes), `JvmDeployDescriptor`, restricted `JVMM` manifest, `JVMC` class-state envelope, deterministic deploy class-byte installation (ConfigParam 85 size limits enforced), state-backed Avata class loading, pre-runtime inbound validation, typed static-void invocation, duplicate manifest-key rejection, and linked resolver integration all implemented. Outbound action encoding: committed events flow through `event-host` to `OutList` action cells compatible with the TOS action phase |
 | Phase 7 — RPC namespace | ✅ | `jvm_deployContract`, `jvm_callContract`, `jvm_getContractState`, `jvm_getReceipts` — request/response codecs and admission checks in `jvm/core/rpc.{h,cpp}`. Full-node routing is wired through `validator-engine/json-rpc-server-jvm.cpp`: `JsonRpcServer` recognizes `jvm_*`, fetches live ConfigParam 85 from the latest masterchain config proof for stateful/deploy/call paths, passes the installed Avata runtime from `current_jvm_compute_runtime()`, loads the wc=3 singleton executor account data when `jvm_callContract`/`jvm_getContractState` omit `executorStateBoc`, and returns raw JVM JSON-RPC responses. `jvm_deployContract` returns `deployDescriptorBoc` and `contractId`; when `executorStateBoc` is present it installs the class into the executor state via `install_jvm_deploy_descriptor` and returns `newStateBoc`. `jvm_callContract` accepts optional `argsBoc`; when runtime + executor state are present it runs local simulation and appends `localResult` {success, outOfGas, outOfMemory, gasUsed, vmLog, newStateBoc}. `jvm_getContractState` enumerates storage slots (up to 100) from the selected executor state and returns `storageSlots` + `storageTruncated`. `jvm_getReceipts` now resolves the singleton executor account, pages through its transaction history, filters transactions by inbound `contractId`, decodes committed JVME event messages from transaction out-msgs, and returns bounded chronological receipts with `truncated`/`scannedTransactions` metadata |
 | Phase 8 — Hardening | ✅ | `EndToEndDeployCallPersistAndRollback` (3-tx deploy→call→rollback flow), `MultiInstanceIndependentStorageSlots`, `JvmActivationConfigBuildsAndRoundTrips`, `AvataInvocationBuildsOutOfMemoryComputeOutput` (OOM path: not committed, correct vm_log), `MaxHeapBytesExceededReturnsError` (post-invocation config guard), `JvmStateCellBocRoundTripPreservesComputeOutput` (BOC serialize→deserialize replay), and deterministic in-memory replay test all exist. Verifier negative tests (`VerifierProfile`, `CoreTrapProfile`), float determinism (`DeterministicFloatTest`), and path-sanitization tests (`StackTraceSourceFileTest`: unix/windows/plain/no-SourceFile) all pass. Float conformance vector (`FloatConformanceVector.java` + `float-conformance-reference.txt`): 160-line hex-bit reference covering all float/double opcodes and edge cases (NaN, ±0, ±Inf, subnormals, conversions, array round-trips); verified by `check-float-conformance` on every build. Performance baseline (`PerfBaseline.java`): deterministic checksum gated by `check-perf-baseline` makefile target (wired into `run-test`); reference stored in `test/perf-baseline-reference.txt`; `regen-perf-baseline` updates it when the gas schedule intentionally changes. Cross-platform float-vector parity verified: `check-float-conformance` produces a byte-identical 160-line reference vector on both Linux x86_64 and macOS arm64 (Apple Silicon) — sha256 `9f7f29d26a55def0abb74db60402fb0ff634dc08b7057e9eb20cf76a52234d4a` on both hosts. SoftFloat 3e is therefore confirmed deterministic across the two real validator host architectures; no WASM validator target exists in TOS today (the `USE_EMSCRIPTEN` option only builds FunC/Fift), so no third platform is in scope for v1 |
-| JVM v2 account-native topology | 🟡 | In progress. Host plumbing (Phase A), v2 cell layouts (Phase B), v2 deterministic address derivation (Phase C), engine `EngineDefined` policy + magic-based v1/v2 dispatch (Phase D), Avata runtime per-account class loading (Phase E), ConfigParam 85 schema_version=2 with `max_total_class_bytes` dropped from wire (Phase F), v2 zerostate (Phase G), and v2 deploy RPC returning both `contractId` and `contractAddress` (Phase H minimum) all landed and exercised by `JvmV2EndToEndDeployCallSequence` plus targeted v2 codec tests. Remaining for the cleanup pass: full RPC rename (`contract_id` field → `contract_address`) in `JvmCallContractRequest`/`JvmGetContractStateRequest`/`JvmGetReceiptsRequest`, plus deletion of v1 codecs/tests/dispatch path |
+| JVM v2 account-native topology | ✅ | Each Java contract is a real wc=3 account at a deterministic 256-bit address. Host plumbing (Phase A — `EngineDefined` policy + `action_create_account#4a435241` TLB + handler), per-account state cell `JvmContractAccountState` (JVAC, schema=2), call descriptor `JvmCallDescriptor` (JVI2), per-account method manifest `JvmMethodManifest` (JVM2), `derive_jvm_contract_address("TOS-JVM-CONTRACT-v2")`, `encode_jvm_state_init_cell`, ConfigParam 85 schema=2 (no `max_total_class_bytes`), empty wc=3 zerostate, deploy RPC returning `contractAddress`, full v1 path removed (no `JvmExecutorState` / global `class_state_root` / `derive_jvm_contract_id` / `JvmAvataClassDefinition` / `install_jvm_deploy_descriptor` / SingletonExecutor `account_policy`). 44/44 tests pass; covered by `JvmEndToEndDeployCallSequence`, `JvmEngineDispatchesAccountStateToRuntime`, `ContractAccountStateCodecRoundTripsClassBytesAndStorage`, `DeriveJvmContractAddressIsDeterministicAndSensitive`, `MethodManifestRoundTripsAndRejectsDuplicates`, `EncodeJvmStateInitCellPassesTlbValidation`, `EngineDefinedPolicyValidates`, `RpcDeployContractReturnsContractAddress`, `ZerostateAccountsCellIsEmpty`, plus the existing storage / events / config / Avata-transaction / EVM+Uno tests |
 | Lambda / `invokedynamic` support | ⛔ | **Not supported in any version.** `invokedynamic` is rejected at three independent layers: (1) `CONSTANT_MethodHandle`, `CONSTANT_MethodType`, and `CONSTANT_InvokeDynamic` constant-pool entries throw `VerifyError` at class load; (2) the `BootstrapMethods` attribute is in the forbidden attribute list; (3) the `invokedynamic` opcode throws `VerifyError` in the interpreter as a fallback. `java.lang.invoke` is absent from `rt.jar` and `api.jar`. Lambda expressions and method references compiled by `javac` are rejected. The equivalent pattern — anonymous inner classes — is fully supported. There is no plan to support `invokedynamic` in v2 or any future version: a deterministic consensus VM cannot safely admit arbitrary bootstrap method linkage, and the anonymous-inner-class pattern covers all practical contract use cases without it. Decision and rationale documented in `jvm/avata/README.md` |
-| Per-account contract model | 🟡 | Same scope as JVM v2 account-native topology above; tracked as one row in this table going forward |
+| Per-account contract model | ✅ | Same scope as JVM v2 account-native topology above; tracked as one row in this table going forward |
 
 **v1 consensus-activation blockers (remaining):** none — all known v1 blockers are resolved; see below.
 
@@ -1172,20 +1172,56 @@ its result JSON.  v1 clients keep working; v2 clients use
 per-account address.  Covered by
 `RpcDeployContractReturnsBothContractIdAndContractAddress`.
 
-### Remaining v2 work (deferred to v1 cleanup pass)
+### v1 removal
 
-- **Full RPC rename**: rename `contract_id` field to `contract_address`
-  inside `JvmCallContractRequest`, `JvmGetContractStateRequest`,
-  `JvmGetReceiptsRequest`, plus the `validator-engine/json-rpc-server-jvm.cpp`
-  call sites.  Wire compatibility (the JSON parameter name) can stay
-  `"contractId"` until v1 RPC is dropped, since the 32-byte value's
-  semantic shape is unchanged.
-- **v1 removal**: delete `JvmExecutorState` codec, the global
-  `class_state_root` install path, the v1 `JvmCallDescriptor` (with
-  `contract_id`), the v1 manifest entry shape, the singleton-executor
-  branch in `run_compute`, the v1 RPC wire format, and the ~30 v1-only
-  test cases.  Done as a single tested cleanup pass once mainnet
-  activation is gated to v2.
+The v1 SingletonExecutor path is fully gone:
+
+- `JvmExecutorState` codec and `kJvmExecutorState*` constants — removed
+- `derive_jvm_contract_id` (TOS-JVM-CONTRACT-v1) — removed
+- `JvmAvataClassManifestEntry` (with `contract_id`),
+  `JvmAvataClassDefinition`, `JvmAvataClassState` (JVMM/JVMC),
+  `install_jvm_deploy_descriptor`, `JvmClassStoreLimits` — removed
+- v1 `JvmCallDescriptor` (with `contract_id`, magic JVMI) — removed; the
+  current descriptor uses magic JVI2, schema_version=2, and no
+  `contract_id` field
+- v1 `build_jvm_workchain_output(JvmExecutorState)` — removed; only the
+  per-account variant remains
+- v1 `linked_avata_resolve_call_target`, `install_class_state_into_vm`,
+  `get_vm_for_class_state` in `avata-runtime.cpp` — removed; the per-
+  account resolver and `class_hash`-keyed VM cache are the only paths
+- `JvmConfig.max_total_class_bytes` field — removed (no shared class
+  store under per-account topology; Cell DB hash dedup handles bytecode
+  sharing automatically)
+- v1 RPC fields (`contract_id`, `executor_state` on requests) — renamed
+  to `contract_address` / `account_state`; legacy JSON parameter names
+  (`contractId`, `executorStateBoc`) are still accepted as aliases for a
+  transition period
+- ~30 v1-only test cases — removed (`ExecutorStateCodecRoundTripsStorageRoot`,
+  `MessageAbiCallDescriptorRoundTripsAndRejectsMalformed` v1 variant,
+  `ClassManifestRoundTripsAndRejectsMalformed`,
+  `ClassStateStoresDeployBytesAndKeepsManifestResolver`,
+  `DeployAbiRoundTripsAndDerivesContractId`,
+  `LinkedAvataExecutionApiUsesInterpreterAbi`,
+  `AvataInvocationBuildsSuccessfulComputeOutput` and
+  `…Failed`/`…OutOfGas`/`…OutOfMemory` v1 builders,
+  `JvmEngineRunsInstalledRuntimeAdapter`,
+  `JvmEngineRejectsMalformedInboundAbiBeforeRuntime`,
+  `JvmEngineRunsAvataRuntimeExecutionBridge`,
+  `JvmComputeOutputIsDeterministicAcrossReplay`,
+  `JvmAvataRuntimeFailsClosedOnBadTargets`,
+  `EndToEndDeployCallPersistAndRollback` v1,
+  `MultiInstanceIndependentStorageSlots`,
+  `JvmStateCellBocRoundTripPreservesComputeOutput`,
+  `MaxHeapBytesExceededReturnsError`, and the v1 RPC test suite)
+- v2-suffixed names dropped now that v1 is gone:
+  `JvmCallDescriptorV2 → JvmCallDescriptor`,
+  `kJvmCallDescriptorV2Magic → kJvmCallDescriptorMagic`,
+  `linked_avata_resolve_call_target_v2 → linked_avata_resolve_call_target`,
+  `build_jvm_workchain_output_v2 → build_jvm_workchain_output`,
+  `JvmEngineDispatchesV2AccountStateToRuntime →
+  JvmEngineDispatchesAccountStateToRuntime`, etc.
+
+44/44 tests pass on the cleaned tree; full project build green.
 
 ## File Layout (actual)
 

@@ -172,26 +172,6 @@ JvmClassHash compute_jvm_class_hash(const JvmStorageValue& class_bytes) {
     return out;
 }
 
-td::Result<JvmContractId> derive_jvm_contract_id(
-    const JvmDeployDescriptor& descriptor) {
-    TRY_STATUS(validate_deploy_descriptor(descriptor));
-
-    std::string material = "TOS-JVM-CONTRACT-v1";
-    append_bytes(material, descriptor.deployer.data(),
-                 descriptor.deployer.size());
-    append_bytes(material, descriptor.class_hash.data(),
-                 descriptor.class_hash.size());
-    append_bytes(material, descriptor.salt.data(), descriptor.salt.size());
-    auto init_hash = descriptor.init_args->get_hash().as_slice();
-    material.append(init_hash.data(), init_hash.size());
-
-    JvmContractId out{};
-    td::sha256(td::Slice(material),
-               td::MutableSlice(reinterpret_cast<char*>(out.data()),
-                                out.size()));
-    return out;
-}
-
 td::Result<JvmContractId> derive_jvm_contract_address(
     const JvmDeployDescriptor& descriptor) {
     TRY_STATUS(validate_deploy_descriptor(descriptor));
