@@ -1,13 +1,22 @@
 # JVM Workchain Roadmap
 
-Status: working design — Avata slim baseline in progress
-Date: 2026-05-05
+Status: **implemented** — Phases 0–8 + JVM v2 account-native topology landed
+Date: 2026-05-08
 
-This document describes the plan to add a third non-TVM workchain to TOS: a JVM
-execution domain (`wc=3`). It covers engine selection rationale, design
-constraints, per-phase work breakdown, and estimated effort. It does not
-constitute an implemented spec; each phase must be preceded by a detailed design
-review before code is written.
+This document is now both the historical roadmap and the implemented spec
+for `wc=3` (Avata JVM).  It covers engine selection rationale, design
+constraints, per-phase work breakdown, and the as-built v2 account-native
+state model that supersedes the original v1 SingletonExecutor design.
+For the dense as-built reference see
+[`doc/jvm-v2-account-topology.md`](jvm-v2-account-topology.md); for the
+host-side `EngineDefined` policy + `action_create_account` see
+[`doc/workchain-execution-registry.md`](workchain-execution-registry.md);
+for ConfigParam 85 schema_version=2 see
+[`doc/ConfigParam.md`](ConfigParam.md).
+
+The phase-by-phase narrative below records the v1 design that was
+implemented first and then collapsed into v2 as part of pre-launch
+cleanup.  v1 code has been removed from the tree (see §"v1 removal").
 
 All workchain integration rules defined in
 `doc/workchain-execution-registry.md` apply to this workchain without exception.
@@ -133,11 +142,11 @@ define a new bytecode dialect.
 - Single-dimensional and multi-dimensional arrays of primitives and references
 - Object inheritance and interfaces
 - Exception handling (`athrow`, `try/catch/finally`)
-- No application class initialization (`<clinit>`) in the v1 contract profile;
+- No application class initialization (`<clinit>`) in the contract profile;
   static entry/helper methods remain allowed, but hidden initializer execution
   is rejected by the verifier
 - No application enum classes (`ACC_ENUM`). Java enum classes synthesize static
-  state and are outside the v1 profile.
+  state and are outside the contract profile.
 - No application `ACC_SYNCHRONIZED` or `ACC_NATIVE` methods. Synchronized
   blocks still compile to `monitorenter`/`monitorexit` and use deterministic
   single-thread monitor semantics; native entry points are limited to audited
@@ -149,7 +158,7 @@ The runtime class library is a TOS-pinned `rt.jar` built from the Avata/TOS
 classpath and extended with TOS APIs. OpenJDK/JDK8u class shapes may be used as
 semantic references, but they are not runtime build inputs for the consensus
 profile. Language-level classes remain under `java.lang` (`Object`, `String`,
-`Math`, `System`, errors, and related helpers). The v1 TOS contract API is
+`Math`, `System`, errors, and related helpers). The TOS contract API is
 also packaged under `java.lang` because the workchain ships its own pinned
 `rt.jar`/`api.jar` rather than the OpenJDK class library.
 
@@ -159,7 +168,7 @@ also packaged under `java.lang` because the workchain ships its own pinned
   The opcodes `monitorenter` / `monitorexit` still execute with deterministic
   single-thread monitor semantics for Java compatibility.
 - Host IO, networking, filesystem, processes, native libraries, and database
-  APIs must not access validator-local resources. In the v1 `rt.jar`, broad
+  APIs must not access validator-local resources. In `rt.jar`, broad
   host-facing Java SE packages are absent by default: `java.net`, host-backed
   `java.nio`, `java.security`, `java.text`, `java.math`,
   `java.util.concurrent`, `java.util.logging`, `java.util.regex`,
@@ -211,10 +220,10 @@ This rules out:
 - Any object-address leakage to contract code. Default `Object.hashCode`,
   `System.identityHashCode`, `toString` identity suffixes, and any native object
   pointer exposure must either be absent or derived from deterministic
-  per-transaction object ids. The v1 contract heap should not expose Java GC
+  per-transaction object ids. The contract heap does not expose Java GC
   semantics; allocation is accounted against a bounded transaction-local memory
   budget and the transaction heap is discarded at the transaction boundary.
-- Host-dependent floating-point behavior. v1 supports Java 8 floating opcodes,
+- Host-dependent floating-point behavior. Java 8 floating opcodes are supported,
   but they must run through the TOS fixed floating-point implementation with
   pinned strictfp-equivalent semantics, not host-dependent x87/SSE/ARM behavior.
 
@@ -286,16 +295,21 @@ height trigger in the current dispatch path.
 | Workchain ID | `wc=3` |
 | ConfigParam 12 format | `wfmt_basic` |
 | `vm_version` (engine selector) | `0x4a564d31` (`"JVM1"`) |
-| `vm_mode` | Reserved; `0` for JVM v1 |
+| `vm_mode` | Reserved; `0` |
+| Account policy | `EngineDefined` + `admits_engine_create_account_actions=true` |
 | Activation code marker | `0x4a` (`'J'`) |
-| Engine ConfigParam | ConfigParam 85 (JVM v1 chain parameters) |
+| Engine ConfigParam | ConfigParam 85 (schema_version=2) |
 
-The `(format, selector)` key `{Basic, 0x4a564d31}` identifies this engine in
-the registry. `vm_mode = 0` is valid for JVM v1, matching Uno's reserved-mode
-pattern. JVM chain identity and gas/class limits live in ConfigParam 85, not in
-`vm_mode`. A future JVM v2 that changes descriptor semantics must use either a
-new selector or a documented migration boundary; it must not silently reinterpret
-the v1 descriptor.
+The `(format, selector)` key `{Basic, 0x4a564d31}` identifies this engine
+in the registry.  The literal selector name `"JVM1"` is preserved for
+descriptor stability; the v2 in `JvmContractAccountState` /
+`JvmCallDescriptor` schema_version refers to the wire format of the
+state and call envelopes, not the engine selector itself.  `vm_mode = 0`
+is the only valid mode, matching Uno's reserved-mode pattern.  JVM
+chain identity and gas/class limits live in ConfigParam 85, not in
+`vm_mode`.  A future engine revision that changes descriptor semantics
+must use either a new selector or a documented migration boundary; it
+must not silently reinterpret the existing descriptor.
 
 Production descriptors are built by `jvm_workchain::build_jvm_workchain_descr()`.
 The builder must also add ConfigParam 85 to the config dictionary and update
@@ -360,8 +374,8 @@ format and the message ABI at the TL-B / binary level.
 - This document updated with any design changes discovered during review
 - Registry integration tests for a stub JVM engine (registers, resolves,
   respects required-workchain preflight; no actual bytecode execution)
-- TL-B schema for `JvmExecutorState` cell layout and `JvmCallDescriptor`
-  message body
+- TL-B schema for `JvmContractAccountState` (JVAC) per-account state cell
+  and `JvmCallDescriptor` (JVI2) inbound message body
 - ConfigParam 85 schema, slot reservation note in `doc/ConfigParam.md`, and
   governance activation checklist for adding it to mandatory/critical params if
   the implementation chooses to require presence for active `wc=3`
@@ -373,8 +387,8 @@ format and the message ABI at the TL-B / binary level.
   optional OpenJDK/JDK8u semantic references, TOS extensions, and deterministic
   replacements for host-observing APIs
 - Persisted value profile: exact allowed storage value types and
-  `PersistentMap` / `PersistentList` key-value encodings. Arbitrary Java object
-  graphs and Java static fields are not persisted in v1.
+  `PersistentMap` / `PersistentList` key-value encodings.  Arbitrary Java
+  object graphs and Java static fields are not persisted.
 - Node capability plan: add a JVM bit next to
   `kTosNodeCapabilityWorkchainEvm` / `kTosNodeCapabilityWorkchainUno`, and
   require `validate_required_workchains` coverage before activation
@@ -418,14 +432,14 @@ for consensus execution. No TOS integration yet; tested standalone.
   admitted persistent state into cells.
 - Complete Java 8 opcode support in the interpreter, including deterministic
   VM-internal `invokedynamic` linkage, floating-point opcodes, and monitor
-  opcodes. Public `java.lang.invoke` remains outside the v1 runtime profile.
+  opcodes. Public `java.lang.invoke` remains outside the runtime profile.
 - Add the TOS fixed floating-point engine for Java `float`/`double` opcodes:
   strictfp-equivalent binary32/binary64 arithmetic with pinned rounding,
   NaN/signed-zero/infinity/subnormal behavior, plus conformance tests for all
   supported platforms
 - Add class-load-time validation for unsupported class-file versions and
   deterministic runtime traps for forbidden host-observing packages/classes.
-  In the v1 classpath, broad host packages such as `java.net` and host-backed
+  In the classpath, broad host packages such as `java.net` and host-backed
   `java.nio` are absent; minimal `java.io` is descriptor/string/byte-array
   only; non-admitted whole classes/packages such as `java.lang.invoke`,
   `sun.misc.Unsafe`, `java.internal.Machine`, and `java.internal.Traces` are absent from
@@ -457,7 +471,7 @@ behavior that could cause inter-validator divergence.
 
 **Key risk:** Avata VM surface area. Class resolution, exceptions, JNI/native
 stubs, object identity, and heap allocation must all be reduced to deterministic
-consensus-safe behavior. The v1 target is a per-transaction arena with explicit
+consensus-safe behavior. The target is a per-transaction arena with explicit
 memory counters, not Java-observable garbage collection. Gas and memory limits
 must be sized together so a single transaction cannot exhaust validator memory.
 
@@ -477,21 +491,29 @@ placeholder result for tests only. A production binary must fail closed if
   - `JvmNativeEngine` implementing `WorkchainEngine`
   - `engine_key()` returns `{Basic, 0x4a564d31}`
   - `validate_and_resolve_config()` reads and validates ConfigParam 85
-  - `account_policy()` returns `SingletonExecutor(0x0000...0001)` with
-    activation code `0x4a`
-  - `run_compute()` test stub: deserialize nothing, execute nothing, return a
-    deterministic not-ready result until the production Avata resolver is
-    installed
+  - `account_policy()` returns `EngineDefined` with
+    `admits_engine_create_account_actions=true` and activation code
+    `0x4a`; the host accepts any wc=3 address and lets the engine emit
+    `action_create_account` to materialize per-contract accounts at the
+    deterministic `derive_jvm_contract_address` output
+  - `run_compute()` decodes the per-account `JvmContractAccountState`
+    from `input.current_data` (skip with `sk_no_state` if null), checks
+    `stdlib_hash` against ConfigParam 85, and dispatches to the
+    installed Avata resolver
 - `jvm/core/config-param.h` / `.cpp`:
   - `build_jvm_workchain_descr()` (ConfigParam 12 descriptor)
-  - `build_jvm_config_cell()` / `parse_jvm_config_cell()` (ConfigParam 85)
+  - `build_jvm_config_cell()` / `parse_jvm_config_cell()` (ConfigParam
+    85, schema_version=2)
   - ConfigParam 85 fields: `chain_id`, `schema_version`, `gas_price`,
-    `max_gas_per_tx`, `max_class_bytes`, `max_total_class_bytes`,
-    `max_heap_bytes`, `max_storage_cells`, `class_file_major = 52`,
-    `gas_schedule_version`, and `stdlib_hash`
+    `max_gas_per_tx`, `max_class_bytes`, `max_heap_bytes`,
+    `max_storage_cells`, `class_file_major = 52`, `gas_schedule_version`,
+    and `stdlib_hash` — `max_total_class_bytes` is NOT carried (no
+    shared class store under per-account topology)
 - `jvm/core/zerostate.h` / `.cpp`:
-  - `build_jvm_zerostate_accounts_cell()`: creates singleton executor account
-    with empty `JvmExecutorState` data cell and activation code marker `0x4a`
+  - `build_jvm_zerostate_accounts_cell()`: returns the canonical empty
+    `HashmapAugE(256, aug_ShardAccounts)` cell — wc=3 has no preexisting
+    accounts at genesis; per-contract accounts materialize later via
+    `action_create_account`
 - `jvm/core/init.h` / `.cpp`:
   - `init_jvm_workchain(db_root)`: initializes non-consensus Avata process
     resources, creates the linked Avata runtime from
@@ -538,9 +560,9 @@ content hash.
 - `java.lang.Throwable`, `java.lang.Error`, `java.lang.RuntimeException`, and
   the narrow exception types emitted by the verifier/runtime
 - `java.lang.Math` — only the deterministic arithmetic helper subset is
-  admitted in v1. `Math.random`, host-libm transcendental functions, and
+  admitted. `Math.random`, host-libm transcendental functions, and
   float/double string parse/format helpers stay out until pinned software
-  implementations exist. `StrictMath` is not shipped in the v1 profile.
+  implementations exist. `StrictMath` is not shipped in the profile.
 - `java.lang.System` — no time, environment, properties, or IO streams; exposes
   only deterministic chain APIs: `blockNumber()`,
   `blockTimestamp()`, `randSeed()` (from `context.rand_seed`),
@@ -601,13 +623,13 @@ cell codec must define a canonical serialization of the contract heap that is:
 - replayable (cell → heap reconstructs exactly the object graph needed for
   execution, including all field values and array contents)
 
-**Recommended approach for v1:** restrict the heap surface that is serialized.
+**Approach:** restrict the heap surface that is serialized.
 Rather than attempting a general object-graph serializer, require that all
 persistent contract state flow through `Storage`, `Mapping`, and future
 cell-backed persistent containers. Application classes may not declare static
 fields except compile-time `static final` primitive/String constants with
 `ConstantValue`; javac features that synthesize mutable static state, including
-enum constants, are outside the v1 contract profile. The contract heap between
+enum constants, are outside the contract profile. The contract heap between
 calls is then reduced to:
 - storage cells addressed by explicit slot keys
 - cell roots for future `Persistent*` containers
@@ -619,7 +641,7 @@ Phase 0, and cell-backed persistent roots. Ordinary object references, arrays
 of references, and mutable heap objects are transient only.
 
 This eliminates the general object-graph serialization problem at the cost of
-restricting contracts to a structured state model. It is the correct v1
+restricting contracts to a structured state model. It is the correct
 tradeoff; unrestricted cross-transaction heap persistence can be addressed in
 v2 with a full object-graph serializer once the execution model is proven.
 
@@ -643,29 +665,24 @@ class loading from resetting or sharing contract state implicitly.
   - Native C++ implementations of `java.lang.Persistent*` that operate
     directly on `vm::Cell` trees (no intermediate Java heap objects for stored
     data)
-- TL-B schema for `JvmExecutorState` cell (defined in Phase 0; implemented
-  here).
-  A magic tag is required, following the pattern of `UnoConfig` (`#26554E4F`):
+- TL-B schema for the per-account state cell `JvmContractAccountState`
+  (magic `JVAC`, schema_version=2):
   ```
-  // magic = 0x4a564d31 ("JVM1")
-  jvm_executor_state#4a564d31
-      schema_version:uint8
-      class_store:(HashmapE 256 ^JvmClassCell)
-      contracts:(HashmapE 256 ^JvmContractState)
-      = JvmExecutorState;
-
-  jvm_class_cell#_ class_hash:bits256
-                    class_bytes:^Cell
-                    verifier_profile_hash:bits256
-                    = JvmClassCell;
-
-  jvm_contract_state#_ class_hash:bits256
-                       storage_root:^Cell
-                       = JvmContractState;
+  jvm_contract_account#4a564143
+    schema_version:uint8 (=2)
+    stdlib_hash:bits256
+    class_hash:bits256
+    class_bytes:^Cell                             // JvmStorageValue-encoded
+    storage_root:(Maybe ^Cell)
+    manifest_root:(Maybe ^Cell)
+    = JvmContractAccountState;
   ```
-  The `contracts` map key is `contract_id`. The `class_store` map key is
-  `class_hash`. `storage_root` is the canonical root of the explicit
-  contract-storage tree; Java static fields are not encoded in v1 state.
+  One cell per wc=3 account, stored in `account.data`; the matching
+  `account.code` is the activation marker (single byte `0x4a`).
+  `class_bytes` is held as a `^Cell` so the underlying cell DB
+  physically deduplicates contracts that share identical bytecode
+  (verified at `crypto/vm/db/CellStorage.cpp:267`).  Java static fields
+  are not encoded.
 
 **Effort:** 3–5 months
 
@@ -712,19 +729,21 @@ carried in `input.inbound_body`, and the encoding for outbound messages
 
 **Inbound call descriptor (`JvmCallDescriptor`):**
 ```
-jvm_call#4a564d49
-    schema_version:uint8  // 1
-    contract_id:bits256
+jvm_call#4a564932
+    schema_version:uint8  // 2
     method_id:uint32      // first 4 bytes of keccak(method_sig)
     args:^ArgsCell
     = JvmCallDescriptor;
 ```
 
-`contract_id` identifies the deployed contract instance. The executor state maps
-that id to a `class_hash`, and the `class_hash` selects the verified class
-bytes. `method_id` selects the public static entry method. `ArgsCell` encodes
-arguments using a compact binary encoding derived from the method descriptor
-signature.
+The destination wc=3 account address already names the contract, so the
+descriptor body carries only `method_id` + the typed args cell.  The
+account's per-account `manifest_root` maps `method_id` to
+`(class_name, method_name, method_spec)`; the resolver loads the
+contract's `class_bytes` from the same per-account state cell.
+`method_id` selects the public static entry method.  `ArgsCell` encodes
+arguments using a compact binary encoding derived from the method
+descriptor signature.
 
 **Typed args (`JvmArgs`):**
 ```
@@ -742,7 +761,7 @@ jvm_arg
     = JvmArg;
 ```
 
-V1 typed args are descriptor-checked against void-return method specs and admit
+Typed args are descriptor-checked against void-return method specs and admit
 only deterministic contract ABI values: `boolean`, `int`, `long`,
 `java.lang.Address`, `java.lang.Uint256`, `java.lang.Bytes32`,
 `java.lang.Bytes4`, and variable-length `java.lang.Bytes`.
@@ -752,72 +771,62 @@ inbound messages. Other methods may only be called from within the same
 transaction's execution.
 
 Class-load validation must reject duplicate `method_id` values among callable
-entry methods in the same class. The ABI must also define a deploy message:
-class bytes, constructor/initializer arguments, optional deployment salt, and
-the deterministic `contract_id = sha256("TOS-JVM-CONTRACT-v1" || deployer ||
-class_hash || salt || init_args_cell_hash)` derivation.
+entry methods in the same class. The ABI also defines a deploy descriptor
+(see below) and the deterministic per-contract address
+`contract_address = sha256("TOS-JVM-CONTRACT-v2" || deployer ||
+class_hash || salt || init_args_cell_hash)` (`derive_jvm_contract_address`).
 
-**Class manifest (`JvmAvataClassManifest`):**
+**Per-account method manifest (`JvmMethodManifest`):**
 ```
-jvm_manifest#4a564d4d
+jvm_method_manifest#4a564d32
     schema_version:uint8  // 1
     count:uint16
-    entries:^(JvmManifestEntry chain)
-    = JvmAvataClassManifest;
+    entries:^(JvmMethodManifestEntry chain)?
+    = JvmMethodManifest;
 
-jvm_manifest_entry
-    contract_id:bits256
+jvm_method_manifest_entry
     method_id:uint32
     has_next:bit
-    next:^(JvmManifestEntry)?
+    next:^(JvmMethodManifestEntry)?
     class_name:^StringCell
     method_name:^StringCell
     method_spec:^StringCell
-    = JvmManifestEntry;
+    = JvmMethodManifestEntry;
 ```
 
-**Class state (`JvmAvataClassState`):**
-```
-jvm_class_state#4a564d43
-    schema_version:uint8  // 1
-    class_count:uint16
-    manifest:^JvmAvataClassManifest
-    classes:^(JvmClassDefinition chain)?
-    = JvmAvataClassState;
+The destination wc=3 address already names the contract, so the manifest
+entry no longer carries `contract_id`.  The manifest is per-account
+(stored in `JvmContractAccountState.manifest_root`), keyed by `method_id`
+only, and is immutable after deploy.
 
-jvm_class_definition
-    class_hash:bits256    // sha256(class_bytes)
-    has_next:bit
-    next:^(JvmClassDefinition)?
-    class_name:^StringCell
-    class_bytes:^BytesCell
-    = JvmClassDefinition;
-```
-
-Implementation status: `jvm/core/message-abi.*` implements the v1 call
+Implementation status: `jvm/core/message-abi.*` implements the JVI2 call
 descriptor envelope and `JvmNativeEngine` rejects malformed inbound bodies
-before entering an installed runtime. `jvm/core/class-manifest.*` implements the
-v1 callable `JVMM` manifest and the `JVMC` class-state envelope. The manifest
-rejects duplicate `(contract_id, method_id)` entries, admits only ASCII Java
-internal class names, Java identifier method names, and supported static-void
-descriptors, and `JvmCellCodec` validates both manifest-only and `JVMC`
-class-state roots when decoding executor state. The linked Avata runtime
-resolver uses that manifest to resolve a static-void Avata method before
-executing the gas/memory transaction. Legacy `()V` entries still accept only the
-canonical empty args cell; parameterized entries must use the deterministic
-`JVMA` typed args cell.
-The deploy envelope, deterministic class-byte installation into `JVMC`, typed
-`ArgsCell` codec/descriptor validator, and typed Avata invocation bridge are
-implemented. The linked resolver now caches Avata VMs by `class_state_root`
-hash, installs `JVMC` class bytes into that isolated app class space through
-`avata_define_contract_class()`, resolves the static-void manifest entry, and
-passes decoded `boolean`, `int`, `long`, `Address`, `Uint256`, `Bytes32`,
-`Bytes4`, and `Bytes` arguments through the Avata C ABI.
+before entering an installed runtime.  `jvm/core/class-manifest.*`
+implements the per-account `JvmMethodManifest` (JVM2): the encoder
+rejects duplicate `method_id` entries, admits only ASCII Java internal
+class names, Java identifier method names, and supported static-void
+descriptors.  The linked Avata runtime resolver
+(`linked_avata_resolve_call_target` in `jvm/core/avata-runtime.cpp`)
+looks up the manifest entry by `method_id`, loads `class_bytes` from
+`JvmContractAccountState.class_bytes`, and resolves a static-void Avata
+method before executing the gas/memory transaction.  Static-void `()V`
+entries accept only the canonical empty args cell; parameterized
+entries must use the deterministic `JVMA` typed args cell.
+The deploy envelope, typed `ArgsCell` codec/descriptor validator, and
+typed Avata invocation bridge are implemented.  The linked resolver
+caches Avata VMs by the contract's `class_hash` (32 B); two contract
+accounts that deploy the same class share one cached VM, mirroring
+the cell-DB physical dedup of `class_bytes` itself.  The resolver
+installs the per-account class bytes through
+`avata_define_contract_class()`, resolves the static-void manifest
+entry, and passes decoded `boolean`, `int`, `long`, `Address`,
+`Uint256`, `Bytes32`, `Bytes4`, and `Bytes` arguments through the
+Avata C ABI.
 
 **Deploy descriptor (`JvmDeployDescriptor`):**
 ```
 jvm_deploy#4a564d44
-    schema_version:uint8  // 1
+    schema_version:uint8  // 2
     deployer:bits256
     salt:bits256
     class_hash:bits256    // sha256(class_bytes)
@@ -827,15 +836,17 @@ jvm_deploy#4a564d44
     = JvmDeployDescriptor;
 ```
 
-`jvm/core/deploy-abi.*` implements this envelope, validates `class_hash` against
-the supplied bytes, validates the class name, and derives the deterministic
-`contract_id`. `install_jvm_deploy_descriptor()` applies the descriptor to
-`class_state_root` by storing a verified class definition under `JVMC` while
-enforcing ConfigParam 85 class-store limits (`max_class_bytes` and
-`max_total_class_bytes`) through the installer overload used by deploy
-admission. Callable method ids remain the responsibility of the verified
-manifest/admission layer. Runtime resolution loads the installed class bytes
-from `JVMC` into the VM cache entry for that `class_state_root`.
+`jvm/core/deploy-abi.*` implements this envelope, validates `class_hash`
+against the supplied bytes, validates the class name, and derives the
+deterministic per-contract wc=3 address via `derive_jvm_contract_address`.
+The deployer wraps the descriptor in a TLB `StateInit{code=0x4a marker,
+data=^JvmContractAccountState}` (`encode_jvm_state_init_cell`) and emits
+an `action_create_account#4a435241` whose `dest_addr` is that derived
+address.  ConfigParam 85 `max_class_bytes` is enforced at deploy.
+Callable method ids remain the responsibility of the verified
+manifest/admission layer.  Runtime resolution loads the per-account
+class bytes from `JvmContractAccountState.class_bytes` into the
+`class_hash`-keyed VM cache entry on first call to that contract.
 
 **Outbound action encoding:**
 Contract code may enqueue outbound messages by calling
@@ -850,42 +861,52 @@ the existing TVM action list model so the host action phase requires no changes.
 ### Phase 7 — RPC namespace
 
 **Goal:** Implement `jvm_*` JSON-RPC endpoints through the full-node RPC
-surface. The original `WorkchainRuntimeServices::register_rpc` hook remains a
-design target, but the current implementation mirrors the existing EVM/Uno
-pattern directly in `validator-engine`: `JsonRpcServer` dispatches `jvm_*`
-methods to `handle_jvm_rpc_method()`, which resolves live ConfigParam 85
-through liteserver and, for stateful local calls, loads the wc=3 singleton
-executor account data when the client does not supply `executorStateBoc`. These
-are non-consensus surfaces and must not mutate block state.
+surface. The original `WorkchainRuntimeServices::register_rpc` hook
+remains a design target, but the current implementation mirrors the
+existing EVM/Uno pattern directly in `validator-engine`: `JsonRpcServer`
+dispatches `jvm_*` methods to `handle_jvm_rpc_method()`, which resolves
+live ConfigParam 85 through liteserver and, for stateful methods, loads
+the per-contract wc=3 account at the request's `contractAddress` when
+the client does not supply `accountStateBoc`. These are non-consensus
+surfaces and must not mutate block state.
 
 **Endpoints:**
-- `jvm_deployContract`: submit a class file and initial state; builds an
-  external message targeting the executor account and returns the deterministic
-  `contract_id`. Params: `classBytes` (0x hex), `className`, `deployer` (0x-32),
-  `salt` (0x-32, optional).
-- `jvm_callContract`: build a `JvmCallDescriptor` cell and return it as a
-  hex-encoded BOC (`callDescriptorBoc`). The descriptor can be submitted as an
-  external message body or passed to the local runner. Params: `contractId`
-  (0x-32), `methodId` (uint32), `gasLimit` (optional), `executorStateBoc`
-  (optional hex BOC of the JvmExecutorState cell — when omitted, full-node RPC
-  loads the live singleton executor data from the latest masterchain snapshot).
+- `jvm_deployContract`: submit a class file and deploy descriptor;
+  derives the deterministic per-contract wc=3 address and returns it
+  as `contractAddress` together with `deployDescriptorBoc`.  The
+  client wraps the descriptor in `StateInit` and emits
+  `action_create_account` from a wc=3 sender to materialize the
+  contract account at that address.  Params: `classBytes` (0x hex),
+  `className`, `deployer` (0x-32), `salt` (0x-32, optional).
+- `jvm_callContract`: build a `JvmCallDescriptor` cell and return it
+  as a hex-encoded BOC (`callDescriptorBoc`).  The descriptor can be
+  submitted as an internal message body to the contract address or
+  passed to the local runner.  Params: `contractAddress` (0x-32;
+  legacy alias `contractId` accepted), `methodId` (uint32), `gasLimit`
+  (optional), `accountStateBoc` (optional hex BOC of the
+  `JvmContractAccountState` cell; legacy alias `executorStateBoc`
+  accepted — when omitted, full-node RPC loads the live wc=3 account
+  data at `contractAddress` from the latest masterchain snapshot).
 - `jvm_getContractState`: return `className`, `classHash`, and
-  `storageRootHash` for a deployed contract. Params: `contractId` (0x-32),
-  `executorStateBoc` (optional hex BOC). When omitted, full-node RPC loads the
-  live singleton executor data from the latest masterchain snapshot. The handler
-  resolves class metadata and enumerates up to 100 storage slots from the
-  selected state snapshot.
-- `jvm_getReceipts`: return event receipts for a given wc=3 shard block range.
-  Params:
-  `contractId` (0x-32), `fromBlock`, `toBlock`. Full-node RPC reads the wc=3
-  singleton executor account history, filters transactions by inbound
-  `contractId`, decodes committed JVME event payloads from transaction
-  out-msgs, and returns chronological receipt objects with bounded
-  `scannedTransactions` / `truncated` metadata.
+  `storageRootHash` for a deployed contract.  Params:
+  `contractAddress` (0x-32; legacy alias `contractId` accepted),
+  `accountStateBoc` (optional hex BOC).  When omitted, full-node RPC
+  loads the live per-account state at `contractAddress` from the
+  latest masterchain snapshot.  The handler reads class metadata from
+  `JvmContractAccountState` and enumerates up to 100 storage slots
+  from the per-account `storage_root`.
+- `jvm_getReceipts`: return event receipts for a given wc=3 block
+  range.  Params: `contractAddress` (0x-32; legacy alias `contractId`
+  accepted), `fromBlock`, `toBlock`.  Full-node RPC reads the wc=3
+  account history at `contractAddress`, decodes committed JVME event
+  payloads from transaction out-msgs, and returns chronological
+  receipt objects with bounded `scannedTransactions` / `truncated`
+  metadata.  No singleton-executor lookup; the receiving account
+  itself is the contract.
 
-Admission (`jvm_deployContract` pre-check) validates class name shape and
-ConfigParam 85 class-store size limits as a developer convenience; consensus
-compute re-validates on execution.
+Admission (`jvm_deployContract` pre-check) validates class name shape
+and ConfigParam 85 `max_class_bytes` as a developer convenience;
+consensus compute re-validates on execution.
 
 **Effort:** 2–4 weeks
 
@@ -945,7 +966,7 @@ performance profiling.
 | 8 | Hardening and integration testing | 6–8 weeks |
 | **Total** | | **~14–24 engineer-months** |
 
-Phase 4 (heap serialization) dominates the estimate. The v1 restricted-state
+Phase 4 (heap serialization) dominates the estimate. The restricted-state
 model (persistent state flows only through `java.lang.Persistent*` types)
 is the design decision that keeps Phase 4 in the 3–5 month range rather than
 the 12–18 month range that a general object-graph serializer would require. This
@@ -964,8 +985,8 @@ Legend:
 - ⬜ Not started
 - ⏭ Explicitly deferred
 
-Last updated: 2026-05-08 (v2 work in progress — see "JVM v2 account-native
-topology" rows below).
+Last updated: 2026-05-08.  All phases plus JVM v2 account-native topology
+landed; 56/56 tests pass on Linux x86_64.
 
 | Phase | Status | Notes |
 |---|---|---|
@@ -973,40 +994,48 @@ topology" rows below).
 | Phase 1 — Avata fork | ✅ | Fork imported, renamed, and slimmed to interpreter + Avata/TOS `rt/` only. SoftFloat 3e deterministic float/double, tiered opcode gas schedule, verifier profile (version gate, forbidden attrs/classes, static-field/clinit/enum/sync/native/finalizer policy, ContractEntry enforcement), object-identity counter, arena transaction reset, non-deterministic syscall removal, and all test harnesses complete. Reserved and undefined opcodes (`breakpoint` 0xca, undefined range 0xcb–0xfd, `impdep2` 0xff — 53 byte values total) are rejected at class-load time with `VerifyError` by `verifyCodeOpcodes` in `machine.cpp`; application class methods are bytecode-walked before any execution, eliminating a DoS vector where a hand-crafted class file could previously crash the validator process via `abort()` |
 | Phase 2 — Framework integration | ✅ | `JvmNativeEngine`, ConfigParam 85 parsing, `init_jvm_workchain`, `JvmAvataRuntime`, capability bits, CMake integration, linked Avata runtime bridge, `build_jvm_zerostate_accounts_cell()` (`jvm/core/zerostate.{cpp,h}`), `JvmConfig::default_activation()` factory (chain_id=3, gas_schedule_version=1, tiered opcode costs, 13 helper costs), and `jvm-config-param-cell` Fift word in `create-state.cpp` complete. `ZerostateAccountsCell` and `JvmActivationConfigBuildsAndRoundTrips` tests pass |
 | Phase 3 — Contract stdlib | ✅ | `rt.jar` / `api.jar` built from `jvm/avata/rt/` tree. All required `java.lang` classes present: Object, String, Class, Throwable, Error hierarchy, Math (deterministic subset), System (chain context only), OutOfGasError, ContractViolationError, ContractEntry annotation, Storage, Mapping, PersistentMap, PersistentList, Event. `javac` and `java` wrapper tools cover contract compile/run/admission workflow including `@ContractEntry` checks. `rt/check-profile.sh` and `rt/check-native-profile.sh` gate the build against profile regressions |
-| Phase 4 — Heap serialization | ✅ | v1 restricted state model confirmed: only explicit `Storage`/`Mapping`/`PersistentMap`/`PersistentList` state is persisted; transient heap is discarded at transaction boundary via arena checkpoint rollback (`checkpointContractHeap` / `resetContractHeap`). Mutable static fields are forbidden at class-load time (`VerifierProfile`: `makeStaticField` → VerifyError). `JvmCellCodec` encodes/decodes the canonical `JvmExecutorState` cell. `JvmStorageCellHost` provides cell-backed 256-bit-slot storage with nested snapshot semantics. No general Java object-graph serializer needed for v1 |
+| Phase 4 — Heap serialization | ✅ | Restricted persisted-state model: only explicit `Storage`/`Mapping`/`PersistentMap`/`PersistentList` state is persisted; transient heap is discarded at transaction boundary via arena checkpoint rollback (`checkpointContractHeap` / `resetContractHeap`). Mutable static fields are forbidden at class-load time (`VerifierProfile`: `makeStaticField` → VerifyError). `JvmCellCodec` encodes/decodes the canonical `JvmContractAccountState` (JVAC, schema_version=2) cell — one cell per wc=3 account, holding `class_hash`/`class_bytes`/`storage_root`/`manifest_root`. `JvmStorageCellHost` provides per-account cell-backed 256-bit-slot storage with nested snapshot semantics.  No general Java object-graph serializer needed |
 | Phase 5 — Gas metering | ✅ | Tiered default opcode schedule (`gas_schedule.h`), per-opcode table in interpreter (`Machine::opcodeGasCosts[256]`), helper-gas table for storage/event/native surcharges, ConfigParam 85 gas-schedule codec (`avata_set_opcode_gas_costs`, `avata_set_contract_helper_gas_costs`), and OOG trap complete. All gas paths covered by `TieredOpcodeGasSchedule` and `HelperGasOutOfGasRegression` tests |
-| Phase 6 — Message ABI | ✅ | `JvmCallDescriptor`, typed `JVMA` args codec (bool/int/long/Address/Uint256/Bytes32/Bytes4/Bytes), `JvmDeployDescriptor`, restricted `JVMM` manifest, `JVMC` class-state envelope, deterministic deploy class-byte installation (ConfigParam 85 size limits enforced), state-backed Avata class loading, pre-runtime inbound validation, typed static-void invocation, duplicate manifest-key rejection, and linked resolver integration all implemented. Outbound action encoding: committed events flow through `event-host` to `OutList` action cells compatible with the TOS action phase |
+| Phase 6 — Message ABI | ✅ | `JvmCallDescriptor` (JVI2, schema_version=2; carries only `method_id` + `args` since the wc=3 destination address already names the contract), typed `JVMA` args codec (bool/int/long/Address/Uint256/Bytes32/Bytes4/Bytes), `JvmDeployDescriptor` (schema_version=2 with explicit `manifest_root`), per-account `JvmMethodManifest` (JVM2, keyed by `method_id` only — duplicate ids rejected at encode/parse), `derive_jvm_contract_address("TOS-JVM-CONTRACT-v2")` for the deterministic per-contract wc=3 address, `encode_jvm_state_init_cell` for the canonical `StateInit{code=0x4a marker, data=^JVAC}` consumed by `action_create_account`, ConfigParam 85 `max_class_bytes` enforced at deploy, per-account class loading into Avata threads keyed by `class_hash`, pre-runtime inbound validation, typed static-void invocation, and linked resolver integration all implemented.  Outbound action encoding: committed events flow through `event-host` to `OutList` action cells compatible with the TOS action phase |
 | Phase 7 — RPC namespace | ✅ | `jvm_deployContract`, `jvm_callContract`, `jvm_getContractState`, `jvm_getReceipts` — request/response codecs and admission checks in `jvm/core/rpc.{h,cpp}`. Full-node routing is wired through `validator-engine/json-rpc-server-jvm.cpp`: `JsonRpcServer` recognizes `jvm_*`, fetches live ConfigParam 85 from the latest masterchain config proof, passes the installed Avata runtime from `current_jvm_compute_runtime()`, and for stateful methods loads the per-contract wc=3 account at the request's `contractAddress` when `accountStateBoc` is omitted. `jvm_deployContract` returns `deployDescriptorBoc` + `contractAddress` (the deterministic v2 wc=3 account address). `jvm_callContract` accepts optional `argsBoc`; when runtime + per-account state are present it runs local simulation and appends `localResult` {success, outOfGas, outOfMemory, gasUsed, vmLog, newStateBoc}. `jvm_getContractState` enumerates storage slots (up to 100) from the supplied per-account state and returns `storageSlots` + `storageTruncated`. `jvm_getReceipts` resolves the wc=3 account at the requested `contractAddress`, pages through its transaction history, decodes committed JVME event messages from transaction out-msgs, and returns bounded chronological receipts with `truncated`/`scannedTransactions` metadata. Legacy `contractId` / `executorStateBoc` JSON parameter names are accepted as aliases for `contractAddress` / `accountStateBoc` for transition. |
-| Phase 8 — Hardening | ✅ | `EndToEndDeployCallPersistAndRollback` (3-tx deploy→call→rollback flow), `MultiInstanceIndependentStorageSlots`, `JvmActivationConfigBuildsAndRoundTrips`, `AvataInvocationBuildsOutOfMemoryComputeOutput` (OOM path: not committed, correct vm_log), `MaxHeapBytesExceededReturnsError` (post-invocation config guard), `JvmStateCellBocRoundTripPreservesComputeOutput` (BOC serialize→deserialize replay), and deterministic in-memory replay test all exist. Verifier negative tests (`VerifierProfile`, `CoreTrapProfile`), float determinism (`DeterministicFloatTest`), and path-sanitization tests (`StackTraceSourceFileTest`: unix/windows/plain/no-SourceFile) all pass. Float conformance vector (`FloatConformanceVector.java` + `float-conformance-reference.txt`): 160-line hex-bit reference covering all float/double opcodes and edge cases (NaN, ±0, ±Inf, subnormals, conversions, array round-trips); verified by `check-float-conformance` on every build. Performance baseline (`PerfBaseline.java`): deterministic checksum gated by `check-perf-baseline` makefile target (wired into `run-test`); reference stored in `test/perf-baseline-reference.txt`; `regen-perf-baseline` updates it when the gas schedule intentionally changes. Cross-platform float-vector parity verified: `check-float-conformance` produces a byte-identical 160-line reference vector on both Linux x86_64 and macOS arm64 (Apple Silicon) — sha256 `9f7f29d26a55def0abb74db60402fb0ff634dc08b7057e9eb20cf76a52234d4a` on both hosts. SoftFloat 3e is therefore confirmed deterministic across the two real validator host architectures; no WASM validator target exists in TOS today (the `USE_EMSCRIPTEN` option only builds FunC/Fift), so no third platform is in scope for v1 |
-| JVM v2 account-native topology | ✅ | Each Java contract is a real wc=3 account at a deterministic 256-bit address. Host plumbing (Phase A — `EngineDefined` policy + `action_create_account#4a435241` TLB + handler), per-account state cell `JvmContractAccountState` (JVAC, schema=2), call descriptor `JvmCallDescriptor` (JVI2), per-account method manifest `JvmMethodManifest` (JVM2), `derive_jvm_contract_address("TOS-JVM-CONTRACT-v2")`, `encode_jvm_state_init_cell`, ConfigParam 85 schema=2 (no `max_total_class_bytes`), empty wc=3 zerostate, deploy RPC returning `contractAddress`, full v1 path removed (no `JvmExecutorState` / global `class_state_root` / `derive_jvm_contract_id` / `JvmAvataClassDefinition` / `install_jvm_deploy_descriptor` / SingletonExecutor `account_policy`). 44/44 tests pass; covered by `JvmEndToEndDeployCallSequence`, `JvmEngineDispatchesAccountStateToRuntime`, `ContractAccountStateCodecRoundTripsClassBytesAndStorage`, `DeriveJvmContractAddressIsDeterministicAndSensitive`, `MethodManifestRoundTripsAndRejectsDuplicates`, `EncodeJvmStateInitCellPassesTlbValidation`, `EngineDefinedPolicyValidates`, `RpcDeployContractReturnsContractAddress`, `ZerostateAccountsCellIsEmpty`, plus the existing storage / events / config / Avata-transaction / EVM+Uno tests |
+| Phase 8 — Hardening | ✅ | End-to-end coverage: `JvmEndToEndDeployCallSequence` (deploy→call→call→determinism replay), `MultiContractIsolatedStorageWithSharedClass` (per-account storage isolation + Cell DB physical class_bytes dedup), `JvmDeterminismReplay` (10-step engine replay with byte-identical new_data hashes), `JvmActivationConfigBuildsAndRoundTrips` (ConfigParam 85 schema=2 round-trip), `JvmEngineDispatchesAccountStateToRuntime` and `JvmEngineRejectsMalformedAccountState` (engine policy gate). Verifier negative tests (`VerifierProfile`, `CoreTrapProfile`), float determinism (`DeterministicFloatTest`), and path-sanitization tests (`StackTraceSourceFileTest`: unix/windows/plain/no-SourceFile) all pass. Float conformance vector (`FloatConformanceVector.java` + `float-conformance-reference.txt`): 160-line hex-bit reference covering all float/double opcodes and edge cases (NaN, ±0, ±Inf, subnormals, conversions, array round-trips); verified by `check-float-conformance` on every build. Performance baseline (`PerfBaseline.java`): deterministic checksum gated by `check-perf-baseline` makefile target (wired into `run-test`); reference stored in `test/perf-baseline-reference.txt`; `regen-perf-baseline` updates it when the gas schedule intentionally changes. Cross-platform float-vector parity verified: `check-float-conformance` produces a byte-identical 160-line reference vector on both Linux x86_64 and macOS arm64 (Apple Silicon) — sha256 `9f7f29d26a55def0abb74db60402fb0ff634dc08b7057e9eb20cf76a52234d4a` on both hosts. SoftFloat 3e is therefore confirmed deterministic across the two real validator host architectures; no WASM validator target exists in TOS today (the `USE_EMSCRIPTEN` option only builds FunC/Fift), so no third platform is in scope |
+| JVM v2 account-native topology | ✅ | Each Java contract is a real wc=3 account at a deterministic 256-bit address. Host plumbing (`EngineDefined` policy + `action_create_account#4a435241` TLB + handler), per-account state cell `JvmContractAccountState` (JVAC, schema=2), call descriptor `JvmCallDescriptor` (JVI2), per-account method manifest `JvmMethodManifest` (JVM2), `derive_jvm_contract_address("TOS-JVM-CONTRACT-v2")`, `encode_jvm_state_init_cell`, ConfigParam 85 schema=2 (no `max_total_class_bytes`), empty wc=3 zerostate, deploy RPC returning `contractAddress`, full v1 path removed (no `JvmExecutorState` / global `class_state_root` / `derive_jvm_contract_id` / `JvmAvataClassDefinition` / `install_jvm_deploy_descriptor` / SingletonExecutor `account_policy`). 56/56 tests pass; covered by `JvmEndToEndDeployCallSequence`, `JvmEngineDispatchesAccountStateToRuntime`, `ContractAccountStateCodecRoundTripsClassBytesAndStorage`, `DeriveJvmContractAddressIsDeterministicAndSensitive`, `DeriveJvmContractAddressFormulaMatchesSpec`, `MethodManifestRoundTripsAndRejectsDuplicates`, `EncodeJvmStateInitCellPassesTlbValidation`, `EngineDefinedPolicyValidates`, `RpcDeployContractReturnsContractAddress`, `RpcCallContractAcceptsAddressNotContractId`, `RpcGetContractStateFetchesPerAccount`, `MultiContractIsolatedStorageWithSharedClass`, `JvmDeterminismReplay`, `ActionCreateAccountTlbRoundTrip`, `ZerostateAccountsCellIsEmpty`, plus the existing storage / events / config / Avata-transaction / EVM+Uno tests |
 | Lambda / `invokedynamic` support | ⛔ | **Not supported in any version.** `invokedynamic` is rejected at three independent layers: (1) `CONSTANT_MethodHandle`, `CONSTANT_MethodType`, and `CONSTANT_InvokeDynamic` constant-pool entries throw `VerifyError` at class load; (2) the `BootstrapMethods` attribute is in the forbidden attribute list; (3) the `invokedynamic` opcode throws `VerifyError` in the interpreter as a fallback. `java.lang.invoke` is absent from `rt.jar` and `api.jar`. Lambda expressions and method references compiled by `javac` are rejected. The equivalent pattern — anonymous inner classes — is fully supported. There is no plan to support `invokedynamic` in v2 or any future version: a deterministic consensus VM cannot safely admit arbitrary bootstrap method linkage, and the anonymous-inner-class pattern covers all practical contract use cases without it. Decision and rationale documented in `jvm/avata/README.md` |
 | Per-account contract model | ✅ | Same scope as JVM v2 account-native topology above; tracked as one row in this table going forward |
 
-**v1 consensus-activation blockers (remaining):** none — all known v1 blockers are resolved; see below.
+**Mainnet-activation blockers:** none — all known blockers are resolved.
 
-**v1 consensus-activation resolved:**
+**Resolved during the run-up to v2:**
 - Cross-platform float conformance: `check-float-conformance` (160-line
   hex-bit reference covering all float/double opcodes and edge cases —
-  NaN, ±0, ±Inf, subnormals, conversions, array round-trips) is now
-  verified on both real validator host architectures. Linux x86_64 and
-  macOS arm64 (Apple Silicon) produce a byte-identical output vector
-  with sha256 `9f7f29d26a55def0abb74db60402fb0ff634dc08b7057e9eb20cf76a52234d4a`,
+  NaN, ±0, ±Inf, subnormals, conversions, array round-trips) is
+  verified on both real validator host architectures.  Linux x86_64
+  and macOS arm64 (Apple Silicon) produce a byte-identical output
+  vector with sha256 `9f7f29d26a55def0abb74db60402fb0ff634dc08b7057e9eb20cf76a52234d4a`,
   confirming that SoftFloat 3e is deterministic across architectures.
   No WASM full-validator build exists in TOS (the `USE_EMSCRIPTEN`
-  option targets FunC/Fift only), so no third platform is in scope
-  for v1. Apple Silicon native build of the Avata interpreter was
-  enabled as part of this verification — `jvm/avata/makefile` and
+  option targets FunC/Fift only), so no third platform is in scope.
+  Apple Silicon native build of the Avata interpreter was enabled as
+  part of this verification — `jvm/avata/makefile` and
   `jvm/avata/src/tools/object-writer/mach-o.cpp` carry the host
   arch-detection fix, the macosx-arm64 cflags/lflags, the
   `CPU_SUBTYPE_ARM64_ALL` (was `CPU_SUBTYPE_ARM_V8`) Mach-O subtype
-  fix, and the `LC_BUILD_VERSION` load command needed by modern
-  ld64.
-- Full-node JVM RPC wiring: `JsonRpcServer` now routes `jvm_*` requests through
-  `handle_jvm_rpc_method()`, resolves ConfigParam 85 from a liteserver config
-  proof, injects the Avata runtime installed by `init_jvm_workchain()`, and
-  loads live singleton executor data for stateful local RPC when no
-  `executorStateBoc` is supplied.
-- ConfigParam 85 concrete activation values: `JvmConfig::default_activation()` now encodes chain_id=3, gas_price=1000, max_gas_per_tx=1M, max_class_bytes=64 KiB, max_total_class_bytes=1 MiB, max_heap_bytes=4 MiB, max_storage_cells=65536, tiered opcode and helper costs from `gas_schedule.h`. Values are a baseline; governance can adjust via ConfigParam update before or after mainnet activation
+  fix, and the `LC_BUILD_VERSION` load command needed by modern ld64.
+- Full-node JVM RPC wiring: `JsonRpcServer` routes `jvm_*` requests
+  through `handle_jvm_rpc_method()`, resolves ConfigParam 85 from a
+  liteserver config proof, injects the Avata runtime installed by
+  `init_jvm_workchain()`, and for stateful methods loads the live
+  per-contract wc=3 account at the request's `contractAddress` when
+  no `accountStateBoc` is supplied.
+- ConfigParam 85 concrete activation values:
+  `JvmConfig::default_activation()` encodes chain_id=3, gas_price=1000,
+  max_gas_per_tx=1M, max_class_bytes=64 KiB, max_heap_bytes=4 MiB,
+  max_storage_cells=65536, tiered opcode and helper costs from
+  `gas_schedule.h`.  Values are a baseline; governance can adjust via
+  ConfigParam update before or after mainnet activation.
+- v2 account-native topology landed and v1 SingletonExecutor path
+  removed (see §"v1 removal" further below for the full list of
+  deleted symbols).
 
 ## JVM v2 Account-Native Topology
 
@@ -1274,8 +1303,8 @@ jvm/
     avata-runtime.{h,cpp}     ← JvmAvataRuntime, make_linked_jvm_avata_runtime()
     cell-codec.{h,cpp}        ← JvmCellCodec encode/decode (JvmContractAccountState, StateInit)
     message-abi.{h,cpp}       ← JvmCallDescriptor + typed JVMA args codec
-    class-manifest.{h,cpp}    ← JVMM/JVMC class-state codec and resolver map
-    deploy-abi.{h,cpp}        ← JvmDeployDescriptor + contract_id derivation
+    class-manifest.{h,cpp}    ← per-account JvmMethodManifest codec (JVM2)
+    deploy-abi.{h,cpp}        ← JvmDeployDescriptor + derive_jvm_contract_address
     storage-cell-host.{h,cpp} ← JvmStorageCellHost (cell-backed 256-bit slots)
     event-host.{h,cpp}        ← JvmEventHost + event payload codec
     rpc.{h,cpp}               ← jvm_* JSON-RPC handlers + accountStateBoc parsing
@@ -1292,7 +1321,7 @@ and wired into ConfigParam 85 via `config-param.cpp`.
 These questions were open during Phase 0–1 design and are now answered by the
 implementation. They are recorded here for traceability.
 
-1. **Persistent state and transaction arena boundary for v1.**
+1. **Persistent state and transaction arena boundary.**
    **Resolved.** Only explicit `Storage`/`Mapping`/`PersistentMap`/`PersistentList`
    state is persisted across transaction boundaries. The transaction-local arena
    is reset via `checkpointContractHeap` / `resetContractHeap` at each transaction
@@ -1303,44 +1332,55 @@ implementation. They are recorded here for traceability.
    `OutOfMemoryError` before exhausting validator memory.
 
 2. **Class store retention policy.**
-   **Resolved.** The class store (`JVMC` cell) is part of the executor account's
-   data cell, keyed by `class_hash`. The v1 retention policy is permanent: once
-   a class is installed it is not evicted. ConfigParam 85 enforces `max_class_bytes`
-   (64 KiB per class) and `max_total_class_bytes` (1 MiB total) as hard limits;
-   governance can adjust these limits before or after mainnet activation. No
-   eviction/pruning mechanism is defined for v1; class storage grows monotonically
-   within the configured cap.
+   **Resolved.** Each contract's `class_bytes` lives inline in its
+   per-account `JvmContractAccountState` cell.  Two contracts that
+   share identical bytecode share one Cell DB row physically (verified
+   at `crypto/vm/db/CellStorage.cpp:267`); no shared class-store
+   account is needed.  ConfigParam 85 enforces `max_class_bytes`
+   (64 KiB per class) at deploy time as a hard limit; governance can
+   adjust it before or after mainnet activation.  No
+   `max_total_class_bytes` is needed because there is no shared class
+   store under per-account topology.  When a contract account is
+   eventually deleted (out of scope for the current release), Cell DB
+   refcount accounting prunes its `class_bytes` row only after every
+   sharing account has been removed.
 
-3. **Cross-contract calls in v1.**
-   **Resolved (frozen).** No synchronous cross-contract calls in v1. Each inbound
-   message targets exactly one `contract_id`. Cross-contract interaction uses
-   asynchronous TOS messages via `java.lang.System.sendMessage(destAddr, value,
-   body)`. This rule is enforced by the execution model (a single `run_compute`
-   invocation handles one `contract_id`) and does not require an explicit verifier
-   check. Synchronous cross-contract calls can be added in v2 as a mediated
-   call-dispatch path if isolation can be preserved.
+3. **Cross-contract calls.**
+   **Resolved (frozen).** No synchronous cross-contract calls.  Each
+   inbound message targets exactly one wc=3 contract account.
+   Cross-contract interaction uses asynchronous TOS messages via
+   `java.lang.System.sendMessage(destAddr, value, body)`.  This rule
+   is enforced by the execution model (a single `run_compute`
+   invocation handles one contract) and does not require an explicit
+   verifier check.  Synchronous cross-contract calls can be added in a
+   future revision as a mediated call-dispatch path if isolation can
+   be preserved.
 
 4. **TOS native contract interop.**
-   **Resolved (frozen).** All cross-workchain and cross-contract interaction is
-   asynchronous in v1. A JVM contract cannot make synchronous read-only queries
-   to TVM contracts or other workchains. Synchronous reads from external state
-   would break the snapshot execution model. This decision is not expected to
-   change for v1 consensus; it may be revisited in a future workchain version
+   **Resolved (frozen).** All cross-workchain and cross-contract
+   interaction is asynchronous.  A JVM contract cannot make
+   synchronous read-only queries to TVM contracts or other workchains.
+   Synchronous reads from external state would break the snapshot
+   execution model.  This decision is not expected to change at the
+   consensus layer; it may be revisited in a future workchain version
    with explicit call-depth and re-entrancy semantics.
 
 5. **TOS runtime package boundary.**
-   **Resolved.** The admitted v1 package surface is defined by `rt/check-profile.sh`
-   and `rt/check-native-profile.sh`. The developer toolchain enforces the same
-   boundary via `tools/javac` (which wraps javac with the TOS `api.jar` boot
-   classpath) and the `check-api-javac` makefile target. Unsupported packages
-   (`java.net`, host-backed `java.nio`, `java.lang.Thread`, etc.) are absent from
-   `rt.jar`; remaining classes with forbidden host-observing methods trap
-   deterministically. `check-contract-profile-header` gates `src/avata/contract-profile.h`
-   against profile drift on every build.
+   **Resolved.** The admitted package surface is defined by
+   `rt/check-profile.sh` and `rt/check-native-profile.sh`. The
+   developer toolchain enforces the same boundary via `tools/javac`
+   (which wraps javac with the TOS `api.jar` boot classpath) and the
+   `check-api-javac` makefile target. Unsupported packages
+   (`java.net`, host-backed `java.nio`, `java.lang.Thread`, etc.) are
+   absent from `rt.jar`; remaining classes with forbidden host-observing
+   methods trap deterministically.  `check-contract-profile-header`
+   gates `src/avata/contract-profile.h` against profile drift on every
+   build.
 
 6. **`wc=3` vs new network.**
-   **Resolved (governance decision).** `wc=3` on the main TOS network is the
-   target. A separate devnet is not planned; the integration test suite and
-   determinism replay tests validate the design in-process before any mainnet
-   activation. Since TOS is pre-launch, both options remain available to
+   **Resolved (governance decision).** `wc=3` on the main TOS network
+   is the target. A separate devnet is not planned; the integration
+   test suite and determinism replay tests validate the design
+   in-process before any mainnet activation. Since TOS is pre-launch,
+   both options remain available to
    governance; this roadmap assumes mainnet `wc=3` as the default path.

@@ -1,7 +1,7 @@
 /*
     JVM Workchain — genesis ShardAccounts builder.
 
-    Under v2 account-native topology there is NO genesis JVM account: each
+    Under the account-native topology there is no genesis JVM account: each
     contract becomes its own wc=3 account at a deterministic address derived
     by `derive_jvm_contract_address`, materialized later via the host
     `action_create_account` (or a normal inbound message carrying StateInit).
@@ -11,8 +11,6 @@
     block.  This is called from the Fift word `jvm-zerostate-accounts-cell`
     in create-state.cpp and from genesis tooling that constructs the
     initial wc=3 block state.
-
-    The legacy v1 SingletonExecutor at 0x0000…0001 is no longer seeded.
 
     Source: TOS-specific integration point.
 */

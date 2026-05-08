@@ -1,10 +1,11 @@
 /*
     JVM Workchain — cell-backed Storage host adapter.
 
-    Avata's java.lang.Storage native API reads and writes 32-byte slots with
-    arbitrary byte values.  This adapter stores those slots in a TOS
-    Dictionary so the chain compute adapter can expose JvmExecutorState
-    storage_root through avata_set_storage_host().
+    Avata's java.lang.Storage native API reads and writes 32-byte slots
+    with arbitrary byte values.  This adapter stores those slots in a
+    TOS Dictionary so the chain compute adapter can expose the
+    per-contract `JvmContractAccountState.storage_root` through
+    avata_set_storage_host().
 */
 #pragma once
 

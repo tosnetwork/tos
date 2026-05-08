@@ -4,9 +4,10 @@
     JvmNativeEngine implements WorkchainEngine following the same pattern as
     EvmNativeEngine (evm/core/dispatch-engine.cpp) and UnoNativeEngine.
 
-    run_compute decodes the canonical JvmExecutorState and delegates actual
-    contract invocation to an installed JvmComputeRuntime. A production binary
-    without that runtime fails closed if wc=3 is active.
+    run_compute decodes the canonical per-account JvmContractAccountState
+    from `input.current_data` and delegates actual contract invocation to
+    an installed JvmComputeRuntime.  A production binary without that
+    runtime fails closed if wc=3 is active.
 
     Source: TOS-specific integration point.
 */

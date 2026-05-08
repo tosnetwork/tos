@@ -1,7 +1,7 @@
 /*
     JVM Workchain — genesis ShardAccounts builder.
 
-    Under v2 account-native topology there is no genesis JVM account; the
+    Under the account-native topology there is no genesis JVM account; the
     initial wc=3 ShardAccounts dict is empty and contracts are materialized
     later by the host `action_create_account` path.  This produces the
     canonical `hme_empty$0` cell.

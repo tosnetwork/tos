@@ -6,8 +6,10 @@
 
     Engine key: {Basic, 0x4a564d31} ("JVM1").
     Activation code marker: 0x4a ('J').
-    Singleton executor address: 0x0000...0001.
-    ConfigParam 85: JVM v1 chain parameters.
+    Account policy: EngineDefined + admits_engine_create_account_actions.
+    ConfigParam 85: JVM chain parameters (schema_version=2).
+    Per-contract addresses are derived by `derive_jvm_contract_address`
+    and materialized through the host `action_create_account` action.
 
     IMPORTANT: Do not add a hardcoded wc=3 branch in transaction.cpp.
     Registration happens through WorkchainExecutionRegistry::register_engine().
