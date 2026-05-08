@@ -144,6 +144,46 @@ classes, rejects malformed `@ContractEntry` entry methods, and that
 
 The CMake files mirror this by excluding the removed codegen targets.
 
+### No `invokedynamic` support — lambda expressions and method references are rejected
+
+`invokedynamic` and all associated constant-pool and attribute structures are
+**completely unsupported** in the v1 contract profile.  This is a hard
+rejection enforced at three independent layers:
+
+1. **Constant-pool resolution** — `CONSTANT_MethodHandle`, `CONSTANT_MethodType`,
+   and `CONSTANT_InvokeDynamic` entries throw `VerifyError` when the class is
+   loaded, before any method is executed.
+2. **Attribute validation** — the `BootstrapMethods` class-file attribute is in
+   the forbidden attribute list and causes `VerifyError` at load time.
+3. **Interpreter fallback** — the `invokedynamic` opcode unconditionally throws
+   `VerifyError` even if a class somehow bypassed the earlier checks.
+
+The practical consequence is that **Java lambda expressions and method
+references do not work in contract code**.  `javac` compiles both into
+`invokedynamic` bytecodes backed by a `BootstrapMethods` attribute that calls
+`LambdaMetafactory`.  The resulting class file is rejected at the first gate
+listed above before any method body runs.
+
+```java
+// ❌ Rejected — javac emits invokedynamic
+list.forEach(x -> process(x));
+Comparator<Integer> cmp = (a, b) -> a - b;
+Runnable r = this::doWork;
+
+// ✅ Supported — anonymous inner class; no invokedynamic
+list.forEach(new Consumer<Integer>() {
+    public void accept(Integer x) { process(x); }
+});
+Comparator<Integer> cmp = new Comparator<Integer>() {
+    public int compare(Integer a, Integer b) { return a - b; }
+};
+```
+
+`java.lang.invoke` is intentionally absent from `rt.jar` and `api.jar`.
+Supporting `invokedynamic` in a consensus VM requires a deterministic
+VM-internal bootstrap mechanism that does not depend on any host runtime
+behaviour; this is deferred to a post-v1 design.
+
 ## Building
 
 Standalone verification:
