@@ -29,14 +29,6 @@ namespace jvm_workchain {
 
 namespace {
 
-// Singleton executor address: 0x0000...0001, matching doc/jvm-roadmap.md.
-tos::StdSmcAddress singleton_executor_address() {
-    tos::StdSmcAddress addr;
-    addr.set_zero();
-    addr.data()[31] = 1;
-    return addr;
-}
-
 // JVM activation code cell: single byte 0x4a ('J').
 td::Ref<vm::Cell> jvm_activation_code_cell() {
     vm::CellBuilder cb;
@@ -69,6 +61,29 @@ block::WorkchainEngineKey jvm_engine_key() {
     return block::WorkchainEngineKey{
         block::WorkchainFormat::Basic,
         static_cast<std::int64_t>(static_cast<std::int32_t>(kJvmVmVersion))};
+}
+
+// Peek the leading 32-bit magic of a state cell without disturbing its
+// contents.  Returns 0 for null or special cells; the caller treats that as
+// "no v2 envelope present" and falls back to the v1 path.
+std::uint32_t jvm_state_magic_from_cell(const td::Ref<vm::Cell>& cell) {
+    if (cell.is_null()) {
+        return 0;
+    }
+    try {
+        bool special = false;
+        auto cs = vm::load_cell_slice_special(cell, special);
+        if (special) {
+            return 0;
+        }
+        unsigned long long magic = 0;
+        if (!cs.fetch_ulong_bool(32, magic)) {
+            return 0;
+        }
+        return static_cast<std::uint32_t>(magic);
+    } catch (...) {
+        return 0;
+    }
 }
 
 class JvmNativeEngine final : public block::WorkchainEngine {
@@ -104,12 +119,24 @@ class JvmNativeEngine final : public block::WorkchainEngine {
     block::AccountExecutionPolicy account_policy(
         const block::WorkchainExecutionDescriptor& /*descriptor*/,
         const block::WorkchainEngineConfig& /*engine_config*/) const override {
+        // JVM v2 account-native topology: each contract is its own wc=3
+        // account at a deterministic address derived by
+        // `derive_jvm_contract_address`.  The host accepts any address in
+        // wc=3 and lets the engine emit `action_create_account` to
+        // materialize new contract accounts (host plumbing in
+        // crypto/block/transaction.cpp Transaction::try_action_create_account).
+        //
+        // The legacy v1 SingletonExecutor at 0x0000…0001 is still reachable
+        // under EngineDefined because EngineDefined accepts any account in
+        // the workchain; existing v1 code paths and tests therefore keep
+        // working until they are migrated to the per-account model.
         block::AccountExecutionPolicy policy;
-        policy.kind = block::AccountExecutionPolicyKind::SingletonExecutor;
-        policy.singleton_address = singleton_executor_address();
+        policy.kind = block::AccountExecutionPolicyKind::EngineDefined;
+        policy.singleton_address.reset();
         policy.accepts_external_inbound = true;
         policy.accepts_internal_inbound = true;
         policy.may_activate_uninitialized_account = true;
+        policy.admits_engine_create_account_actions = true;
         policy.activation_code = jvm_activation_code_cell();
         return policy;
     }
@@ -125,14 +152,37 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             return skipped_output(block::ComputePhase::sk_bad_state,
                                   "JVM inbound body is missing");
         }
-        if (parse_jvm_call_descriptor(input.inbound_body).is_error()) {
-            return skipped_output(block::ComputePhase::sk_bad_state,
-                                  "JVM inbound body is not a valid call descriptor");
-        }
         if (input.gas_limit == 0 || input.gas_limit > cfg->config.max_gas_per_tx) {
             return skipped_output(block::ComputePhase::sk_no_gas,
                                   "JVM gas limit is outside ConfigParam 85 bounds",
                                   true);
+        }
+        if (runtime_ == nullptr) {
+            return skipped_output(block::ComputePhase::sk_bad_state,
+                                  "JVM Avata interpreter runtime is not installed");
+        }
+
+        // Distinguish v1 vs v2 by the magic of `current_data`.  An empty/null
+        // current_data is treated as a fresh v1 executor activation; v2 deploys
+        // arrive with a JVAC cell already produced by `action_create_account`.
+        const std::uint32_t state_magic =
+            jvm_state_magic_from_cell(input.current_data);
+
+        if (state_magic == kJvmContractAccountStateMagic) {
+            return run_compute_v2(input, context, *cfg);
+        }
+        return run_compute_v1(input, context, *cfg);
+    }
+
+ private:
+    td::Result<block::WorkchainComputeOutput> run_compute_v1(
+        const block::WorkchainComputeInput& input,
+        const block::WorkchainComputeContext& context,
+        const JvmEngineConfig& cfg) const {
+        if (parse_jvm_call_descriptor(input.inbound_body).is_error()) {
+            return skipped_output(
+                block::ComputePhase::sk_bad_state,
+                "JVM inbound body is not a valid v1 call descriptor");
         }
 
         JvmExecutorState state;
@@ -141,25 +191,51 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 return skipped_output(block::ComputePhase::sk_bad_state,
                                       "JVM executor state cell is malformed");
             }
-            if (!same_stdlib_hash(cfg->config, state)) {
-                return skipped_output(block::ComputePhase::sk_bad_state,
-                                      "JVM executor state stdlib hash does not match ConfigParam 85");
+            if (!same_stdlib_hash(cfg.config, state)) {
+                return skipped_output(
+                    block::ComputePhase::sk_bad_state,
+                    "JVM executor state stdlib hash does not match ConfigParam 85");
             }
         } else {
             state.schema_version = kJvmExecutorStateSchemaVersion;
-            state.stdlib_hash = cfg->config.stdlib_hash;
-        }
-
-        if (runtime_ == nullptr) {
-            return skipped_output(block::ComputePhase::sk_bad_state,
-                                  "JVM Avata interpreter runtime is not installed");
+            state.stdlib_hash = cfg.config.stdlib_hash;
         }
 
         TRY_RESULT(invocation,
-                   runtime_->run_contract(input, context, cfg->config, state));
+                   runtime_->run_contract(input, context, cfg.config, state));
         return build_jvm_workchain_output(
-            cfg->config, state, input.gas_limit, invocation);
+            cfg.config, state, input.gas_limit, invocation);
     }
+
+    td::Result<block::WorkchainComputeOutput> run_compute_v2(
+        const block::WorkchainComputeInput& input,
+        const block::WorkchainComputeContext& context,
+        const JvmEngineConfig& cfg) const {
+        if (parse_jvm_call_descriptor_v2(input.inbound_body).is_error()) {
+            return skipped_output(
+                block::ComputePhase::sk_bad_state,
+                "JVM inbound body is not a valid v2 call descriptor");
+        }
+
+        JvmContractAccountState state;
+        if (!decode_jvm_contract_account_state(input.current_data, state)) {
+            return skipped_output(
+                block::ComputePhase::sk_bad_state,
+                "JVM contract account state cell is malformed");
+        }
+        if (state.stdlib_hash != cfg.config.stdlib_hash) {
+            return skipped_output(
+                block::ComputePhase::sk_bad_state,
+                "JVM contract account stdlib hash does not match ConfigParam 85");
+        }
+
+        TRY_RESULT(invocation,
+                   runtime_->run_contract_v2(input, context, cfg.config, state));
+        return build_jvm_workchain_output_v2(
+            cfg.config, state, input.gas_limit, invocation);
+    }
+
+ public:
 
  private:
     std::shared_ptr<const JvmComputeRuntime> runtime_;

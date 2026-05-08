@@ -281,7 +281,11 @@ td::Status validate_account_execution_policy_supported(const AccountExecutionPol
     case AccountExecutionPolicyKind::ShardLocalExecutor:
       return td::Status::Error("shard-local executor policy is not implemented by the host");
     case AccountExecutionPolicyKind::EngineDefined:
-      return td::Status::Error("engine-defined account policy is not implemented by the host");
+      // Engine-defined policy: the engine owns address-space routing within
+      // its workchain. The host accepts any account in the workchain and
+      // optionally lets the engine emit `action_create_account` to
+      // materialize new accounts at deterministic addresses.
+      return td::Status::OK();
   }
   return td::Status::Error("unknown account execution policy kind");
 }

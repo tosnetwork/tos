@@ -44,6 +44,23 @@ JvmClassHash compute_jvm_class_hash(const JvmStorageValue& class_bytes);
 td::Result<JvmContractId> derive_jvm_contract_id(
     const JvmDeployDescriptor& descriptor);
 
+// JVM v2: deterministic per-contract wc=3 account address.
+//
+//   addr = sha256(
+//       "TOS-JVM-CONTRACT-v2"
+//    || deployer (32B, the wc=3 sender of the deploy action)
+//    || class_hash (32B, sha256 of class_bytes)
+//    || salt (32B)
+//    || init_args_cell.hash (32B)
+//   )
+//
+// The output is the 256-bit `tos::StdSmcAddress` part of the StdAddress
+// `{workchain=3, addr=...}`.  Because TOS workchain addresses are flat with
+// no reserved bits (`tos/tos-types.h:36-46`), the full sha256 output goes
+// straight into the address space.
+td::Result<JvmContractId> derive_jvm_contract_address(
+    const JvmDeployDescriptor& descriptor);
+
 td::Ref<vm::Cell> encode_jvm_deploy_descriptor(
     const JvmDeployDescriptor& descriptor);
 

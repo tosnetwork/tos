@@ -15,6 +15,7 @@
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include "block/block-auto.h"
+#include "block/block-parse.h"  // block::tlb::aug_ShardAccounts
 #include "block/evm-workchain-dispatch.h"
 #include "block/mc-config.h"
 #include "block/transaction.h"
@@ -425,6 +426,15 @@ td::Ref<vm::CellSlice> make_jvm_call_body(std::uint8_t marker = 1) {
   return vm::load_cell_slice_ref(make_jvm_call_cell(marker));
 }
 
+td::Ref<vm::CellSlice> make_jvm_call_body_v2(std::uint32_t method_id) {
+  jvm_workchain::JvmCallDescriptorV2 descriptor;
+  descriptor.method_id = method_id;
+  descriptor.args = make_empty_action_list();
+  auto cell = jvm_workchain::encode_jvm_call_descriptor_v2(descriptor);
+  CHECK(cell.not_null());
+  return vm::load_cell_slice_ref(cell);
+}
+
 jvm_workchain::JvmDeployDescriptor make_test_jvm_deploy_descriptor(
     std::uint8_t marker = 1) {
   jvm_workchain::JvmDeployDescriptor descriptor;
@@ -785,7 +795,41 @@ class MockJvmRuntime final : public jvm_workchain::JvmComputeRuntime {
     return result;
   }
 
+  td::Result<jvm_workchain::JvmAvataInvocationResult> run_contract_v2(
+      const block::WorkchainComputeInput& input,
+      const block::WorkchainComputeContext& context,
+      const jvm_workchain::JvmConfig& config,
+      const jvm_workchain::JvmContractAccountState& previous_state)
+      const override {
+    using namespace jvm_workchain;
+
+    called_v2 = true;
+    CHECK(context.workchain_id == 3);
+    CHECK(input.gas_limit == 1000);
+    CHECK(config.chain_id == 85);
+    CHECK(previous_state.stdlib_hash == config.stdlib_hash);
+    CHECK(previous_state.class_bytes.not_null());
+    CHECK(previous_state.manifest_root.not_null());
+
+    JvmStorageCellHost storage(previous_state.storage_root);
+    JvmStorageSlot slot{};
+    slot[31] = 0xa1;
+    CHECK(storage.store(slot, JvmStorageValue{0xde, 0xad}).is_ok());
+
+    JvmAvataInvocationResult result;
+    result.invocation_status = 0;
+    result.success = true;
+    result.gas_used = 123;
+    result.gas_remaining = input.gas_limit - result.gas_used;
+    result.memory_used = 456;
+    result.storage_root = storage.root_cell();
+    result.action_list = build_jvm_event_action_list(std::vector<JvmEvent>{});
+    CHECK(result.action_list.not_null());
+    return result;
+  }
+
   mutable bool called{false};
+  mutable bool called_v2{false};
 };
 
 struct FakeJvmAvataRuntimeResolver {
@@ -934,6 +978,265 @@ TEST(JvmWorkchainCore, ExecutorStateCodecRoundTripsStorageRoot) {
   encoded = encode_jvm_executor_state(state);
   CHECK(encoded.not_null());
   CHECK(!decode_jvm_executor_state(encoded, decoded));
+}
+
+TEST(JvmWorkchainCore, ContractAccountStateCodecRoundTripsClassBytesAndStorage) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+
+  // Storage with a value at slot[0]=42
+  JvmStorageCellHost storage;
+  JvmStorageSlot slot{};
+  slot[0] = 42;
+  CHECK(storage.store(slot, JvmStorageValue{1, 2, 3, 4}).is_ok());
+  auto storage_root = storage.root_cell();
+  CHECK(storage_root.not_null());
+
+  // class_bytes payload (held as a Cell ref so Cell DB physically dedups
+  // identical bytecode).
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x00, 0x10};
+  auto class_bytes_cell = encode_jvm_storage_value(class_bytes);
+  CHECK(class_bytes_cell.not_null());
+
+  // Single-method manifest.
+  JvmMethodManifestEntry entry;
+  entry.method_id = 0x01020304;
+  entry.class_name = "ContractEntryPoint";
+  entry.method_name = "ok";
+  entry.method_spec = "()V";
+  auto manifest_root = encode_jvm_method_manifest({entry});
+  CHECK(manifest_root.not_null());
+
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  state.class_bytes = class_bytes_cell;
+  state.storage_root = storage_root;
+  state.manifest_root = manifest_root;
+
+  auto encoded = encode_jvm_contract_account_state(state);
+  CHECK(encoded.not_null());
+
+  JvmContractAccountState decoded;
+  CHECK(decode_jvm_contract_account_state(encoded, decoded));
+  CHECK(decoded.schema_version == kJvmContractAccountStateSchemaVersion);
+  CHECK(decoded.stdlib_hash == state.stdlib_hash);
+  CHECK(decoded.class_hash == state.class_hash);
+  CHECK(decoded.class_bytes.not_null());
+  CHECK(decoded.class_bytes->get_hash() == class_bytes_cell->get_hash());
+  CHECK(decoded.storage_root.not_null());
+  CHECK(decoded.manifest_root.not_null());
+
+  // Storage values survive the round trip.
+  JvmStorageCellHost decoded_storage(decoded.storage_root);
+  auto loaded = decoded_storage.load(slot).move_as_ok();
+  CHECK(loaded.has_value());
+  CHECK(*loaded == (JvmStorageValue{1, 2, 3, 4}));
+
+  // Manifest can still be queried by method_id.
+  auto found = find_jvm_method_manifest_entry(decoded.manifest_root,
+                                              entry.method_id);
+  CHECK(found.is_ok());
+  CHECK(found.ok().class_name == "ContractEntryPoint");
+  CHECK(found.ok().method_name == "ok");
+  // Capture the round-tripped class_bytes hash before running negative tests
+  // (decode resets the out-state on failure, which would clobber `decoded`).
+  auto round_tripped_class_bytes_hash = decoded.class_bytes->get_hash();
+
+  // Reject envelopes with the wrong magic / null cells.  Use a separate
+  // `decoded_neg` because decode is documented to reset its out-arg on failure.
+  JvmContractAccountState decoded_neg;
+  vm::CellBuilder wrong_magic;
+  wrong_magic.store_long(0, 32);
+  CHECK(!decode_jvm_contract_account_state(wrong_magic.finalize(), decoded_neg));
+  CHECK(!decode_jvm_contract_account_state({}, decoded_neg));
+
+  // Reject zero class_hash at encode time.
+  {
+    JvmContractAccountState bad = state;
+    bad.class_hash = JvmClassHash{};
+    CHECK(encode_jvm_contract_account_state(bad).is_null());
+  }
+
+  // Cell DB physical dedup: two states sharing identical class_bytes share the
+  // same class_bytes Cell hash even when storage differs.
+  JvmContractAccountState other = state;
+  JvmStorageCellHost other_storage;
+  CHECK(other_storage.store(slot, JvmStorageValue{9, 9}).is_ok());
+  other.storage_root = other_storage.root_cell();
+  auto other_encoded = encode_jvm_contract_account_state(other);
+  CHECK(other_encoded.not_null());
+  CHECK(other_encoded->get_hash() != encoded->get_hash());
+  JvmContractAccountState other_decoded;
+  CHECK(decode_jvm_contract_account_state(other_encoded, other_decoded));
+  CHECK(other_decoded.class_bytes.not_null());
+  CHECK(other_decoded.class_bytes->get_hash() == round_tripped_class_bytes_hash);
+}
+
+TEST(JvmWorkchainCore, EncodeJvmStateInitCellPassesTlbValidation) {
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x12, 0x34};
+
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+
+  auto state_init = encode_jvm_state_init_cell(state);
+  CHECK(state_init.not_null());
+
+  // The cell must validate as a TLB StateInit at consensus level (this is the
+  // same validator the action phase uses to gate inbound StateInit-bearing
+  // messages).
+  CHECK(block::gen::t_StateInit.validate_ref(state_init));
+
+  // Decode the StateInit and verify the data ref decodes back to the same
+  // contract account state.
+  block::gen::StateInit::Record si;
+  CHECK(block::gen::t_StateInit.cell_unpack(state_init, si));
+  CHECK(si.code.not_null());
+  CHECK(si.data.not_null());
+
+  // si.data is `Maybe ^Cell`, so peel the Maybe and re-decode.
+  CHECK(si.data->prefetch_ulong(1) == 1);
+  auto data_cs = vm::CellSlice{*si.data};
+  CHECK(data_cs.fetch_ulong(1) == 1);
+  td::Ref<vm::Cell> data_ref;
+  CHECK(data_cs.fetch_ref_to(data_ref));
+  JvmContractAccountState decoded;
+  CHECK(decode_jvm_contract_account_state(data_ref, decoded));
+  CHECK(decoded.class_hash == state.class_hash);
+}
+
+TEST(JvmWorkchainCore, MessageAbiCallDescriptorV2DropsContractIdAndRoundTrips) {
+  using namespace jvm_workchain;
+
+  JvmCallDescriptorV2 descriptor;
+  descriptor.method_id = 0xdeadbeef;
+  descriptor.args = make_empty_action_list();
+
+  auto encoded = encode_jvm_call_descriptor_v2(descriptor);
+  CHECK(encoded.not_null());
+
+  auto parsed = parse_jvm_call_descriptor_v2(vm::load_cell_slice_ref(encoded));
+  CHECK(parsed.is_ok());
+  CHECK(parsed.ok().schema_version == kJvmCallDescriptorV2SchemaVersion);
+  CHECK(parsed.ok().method_id == descriptor.method_id);
+  CHECK(parsed.ok().args.not_null());
+
+  // A v1 cell must not parse as v2 (different magic).
+  auto v1_cell = make_jvm_call_cell(0x42);
+  CHECK(parse_jvm_call_descriptor_v2(vm::load_cell_slice_ref(v1_cell)).is_error());
+
+  // Truncated body fails parse.
+  vm::CellBuilder bad;
+  bad.store_long(kJvmCallDescriptorV2Magic, 32);
+  bad.store_long(kJvmCallDescriptorV2SchemaVersion, 8);
+  CHECK(parse_jvm_call_descriptor_v2(
+            vm::load_cell_slice_ref(bad.finalize())).is_error());
+}
+
+TEST(JvmWorkchainCore, DeriveJvmContractAddressIsDeterministicAndSensitive) {
+  using namespace jvm_workchain;
+
+  auto desc = make_test_jvm_deploy_descriptor(0x77);
+
+  auto a = derive_jvm_contract_address(desc);
+  auto b = derive_jvm_contract_address(desc);
+  CHECK(a.is_ok() && b.is_ok());
+  CHECK(a.ok() == b.ok());
+
+  // The v1 contract_id and v2 contract_address must differ for the same
+  // descriptor (different domain tag).
+  auto v1 = derive_jvm_contract_id(desc);
+  CHECK(v1.is_ok());
+  CHECK(v1.ok() != a.ok());
+
+  // Salt sensitivity: same class, different salt → different address.
+  auto desc2 = desc;
+  desc2.salt[0] ^= 0xff;
+  auto c = derive_jvm_contract_address(desc2);
+  CHECK(c.is_ok());
+  CHECK(c.ok() != a.ok());
+
+  // class_hash sensitivity (perturb class_bytes; class_hash is recomputed
+  // because validate_deploy_descriptor enforces hash == sha256(bytes)).
+  auto desc3 = desc;
+  desc3.class_bytes.back() ^= 0xaa;
+  desc3.class_hash = compute_jvm_class_hash(desc3.class_bytes);
+  auto d = derive_jvm_contract_address(desc3);
+  CHECK(d.is_ok());
+  CHECK(d.ok() != a.ok());
+
+  // deployer sensitivity.
+  auto desc4 = desc;
+  // Avoid clobbering the leading non-zero deployer byte (validate rejects zero
+  // deployers); flip a low byte instead.
+  desc4.deployer[30] ^= 0x01;
+  auto e = derive_jvm_contract_address(desc4);
+  CHECK(e.is_ok());
+  CHECK(e.ok() != a.ok());
+
+  // init_args sensitivity (cell-hash).
+  auto desc5 = desc;
+  desc5.init_args = make_marker_cell(0x42);
+  auto f = derive_jvm_contract_address(desc5);
+  CHECK(f.is_ok());
+  CHECK(f.ok() != a.ok());
+}
+
+TEST(JvmWorkchainCore, MethodManifestRoundTripsAndRejectsDuplicates) {
+  using namespace jvm_workchain;
+
+  std::vector<JvmMethodManifestEntry> entries;
+  for (std::uint32_t i = 0; i < 3; ++i) {
+    JvmMethodManifestEntry e;
+    e.method_id = 0x10000000u + i;
+    e.class_name = "ContractEntryPoint";
+    e.method_name = "method_" + std::to_string(i);
+    e.method_spec = "()V";
+    entries.push_back(e);
+  }
+
+  auto encoded = encode_jvm_method_manifest(entries);
+  CHECK(encoded.not_null());
+
+  auto parsed = parse_jvm_method_manifest(encoded);
+  CHECK(parsed.is_ok());
+  CHECK(parsed.ok().size() == entries.size());
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    CHECK(parsed.ok()[i].method_id == entries[i].method_id);
+    CHECK(parsed.ok()[i].method_name == entries[i].method_name);
+  }
+
+  // Lookup by method_id finds each entry; missing id fails.
+  for (const auto& e : entries) {
+    auto found = find_jvm_method_manifest_entry(encoded, e.method_id);
+    CHECK(found.is_ok());
+    CHECK(found.ok().method_name == e.method_name);
+  }
+  CHECK(find_jvm_method_manifest_entry(encoded, 0xdeadbeef).is_error());
+
+  // Empty manifest is allowed and round-trips.
+  auto empty = encode_jvm_method_manifest({});
+  CHECK(empty.not_null());
+  CHECK(parse_jvm_method_manifest(empty).move_as_ok().empty());
+
+  // Duplicate method_id is rejected at encode time.
+  std::vector<JvmMethodManifestEntry> dup = entries;
+  dup.push_back(entries[0]);
+  CHECK(encode_jvm_method_manifest(dup).is_null());
+
+  // Wrong magic / null root is rejected at parse time.
+  CHECK(parse_jvm_method_manifest({}).is_error());
+  vm::CellBuilder wrong_magic;
+  wrong_magic.store_long(0, 32);
+  CHECK(parse_jvm_method_manifest(wrong_magic.finalize()).is_error());
 }
 
 TEST(JvmWorkchainCore, MessageAbiCallDescriptorRoundTripsAndRejectsMalformed) {
@@ -1844,6 +2147,28 @@ TEST(WorkchainExecutionRegistry, RejectsExecutionDescriptorTransitionsWithoutMig
       old_workchains, new_workchains).is_error());
 }
 
+TEST(WorkchainExecutionRegistry, EngineDefinedPolicyValidates) {
+  // EngineDefined was previously a stub that always returned an error;
+  // JVM v2 needs it to validate so per-account contract topology is
+  // accepted by the host. The capability flag
+  // `admits_engine_create_account_actions` is a free-standing extension
+  // and must not affect validation either way.
+  block::AccountExecutionPolicy policy;
+  policy.kind = block::AccountExecutionPolicyKind::EngineDefined;
+  policy.singleton_address.reset();
+  policy.admits_engine_create_account_actions = false;
+  CHECK(block::validate_account_execution_policy_supported(policy).is_ok());
+  policy.admits_engine_create_account_actions = true;
+  CHECK(block::validate_account_execution_policy_supported(policy).is_ok());
+
+  // Other unimplemented variants must still fail closed (regression
+  // guard: the EngineDefined fix should not silently accept the
+  // shard-local stub).
+  block::AccountExecutionPolicy shard_local;
+  shard_local.kind = block::AccountExecutionPolicyKind::ShardLocalExecutor;
+  CHECK(block::validate_account_execution_policy_supported(shard_local).is_error());
+}
+
 TEST(WorkchainExecutionRegistry, EvmAndUnoDescriptorEnginesValidateConfig) {
   auto config = make_empty_config();
   block::WorkchainExecutionRegistry registry;
@@ -1903,6 +2228,32 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoDescriptorEnginesValidateConfig) {
 
   auto jvm_missing_config = make_basic_descriptor(3, jvm_workchain::kJvmVmVersion, 0);
   CHECK(registry.resolve(jvm_missing_config, config).is_error());
+}
+
+TEST(WorkchainExecutionRegistry, JvmEngineAccountPolicyIsEngineDefined) {
+  // JVM v2 declares EngineDefined + admits_engine_create_account_actions so
+  // the host accepts any wc=3 address and lets the engine emit
+  // `action_create_account` to materialize per-contract accounts.  Regression
+  // guard: under v1 this returned SingletonExecutor with the 0x0000…0001
+  // address.
+  using namespace jvm_workchain;
+
+  auto jvm_cfg = make_test_jvm_config();
+  auto config = make_config_with_jvm_param(jvm_cfg);
+
+  block::WorkchainExecutionRegistry registry;
+  register_jvm_workchain_engine(registry);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+  auto execution = registry.resolve(descriptor, *config).move_as_ok();
+  auto policy = execution.executor->account_policy(execution.descriptor,
+                                                   *execution.engine_config);
+  CHECK(policy.kind == block::AccountExecutionPolicyKind::EngineDefined);
+  CHECK(!policy.singleton_address.has_value());
+  CHECK(policy.admits_engine_create_account_actions);
+  CHECK(policy.activation_code.not_null());
+  CHECK(policy.may_activate_uninitialized_account);
+  CHECK(policy.accepts_external_inbound);
+  CHECK(policy.accepts_internal_inbound);
 }
 
 TEST(WorkchainExecutionRegistry, JvmEngineRunsInstalledRuntimeAdapter) {
@@ -1980,6 +2331,234 @@ TEST(WorkchainExecutionRegistry, JvmEngineRunsInstalledRuntimeAdapter) {
   auto loaded = decoded_storage.load(slot).move_as_ok();
   CHECK(loaded.has_value());
   CHECK(*loaded == (JvmStorageValue{8, 9, 10}));
+}
+
+TEST(WorkchainExecutionRegistry, JvmEngineDispatchesV2AccountStateToRuntime) {
+  // A wc=3 inbound that carries `JvmContractAccountState` (JVAC) as
+  // current_data and a v2 `JvmCallDescriptor` body must be dispatched through
+  // `JvmComputeRuntime::run_contract_v2`, not the v1 path.  The output
+  // re-encodes a JVAC cell with the new storage_root and preserves the
+  // pinned class_hash / class_bytes / manifest_root.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  block::WorkchainExecutionRegistry registry;
+  register_jvm_workchain_engine(registry, runtime);
+  auto execution = registry.resolve(descriptor, *config).move_as_ok();
+
+  // Build a per-account state with realistic class_bytes + single-method
+  // manifest.  The mock runtime writes an extra storage slot at 0xa1 to
+  // exercise the storage round-trip.
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x00, 0x10};
+  auto class_bytes_cell = encode_jvm_storage_value(class_bytes);
+  CHECK(class_bytes_cell.not_null());
+
+  JvmMethodManifestEntry method_entry;
+  method_entry.method_id = 0xdeadbeef;
+  method_entry.class_name = "ContractEntryPoint";
+  method_entry.method_name = "ok";
+  method_entry.method_spec = "()V";
+  auto manifest_root = encode_jvm_method_manifest({method_entry});
+  CHECK(manifest_root.not_null());
+
+  JvmStorageCellHost initial_storage;
+  JvmStorageSlot seed_slot{};
+  seed_slot[0] = 0xaa;
+  CHECK(initial_storage.store(seed_slot, JvmStorageValue{0x01}).is_ok());
+
+  JvmContractAccountState previous_state;
+  previous_state.stdlib_hash = cfg.stdlib_hash;
+  previous_state.class_hash = compute_jvm_class_hash(class_bytes);
+  previous_state.class_bytes = class_bytes_cell;
+  previous_state.storage_root = initial_storage.root_cell();
+  previous_state.manifest_root = manifest_root;
+
+  block::WorkchainComputeInput input;
+  input.current_data = encode_jvm_contract_account_state(previous_state);
+  CHECK(input.current_data.not_null());
+  input.inbound_body = make_jvm_call_body_v2(method_entry.method_id);
+  input.gas_limit = 1000;
+
+  block::WorkchainComputeContext context;
+  context.workchain_id = 3;
+  context.descriptor = descriptor;
+  context.engine_config = execution.engine_config;
+
+  auto output = execution.executor->run_compute(input, context).move_as_ok();
+  CHECK(runtime->called_v2);
+  CHECK(!runtime->called);  // v1 path must NOT have been entered
+  CHECK(output.completed);
+  CHECK(output.accepted);
+  CHECK(output.committed);
+  CHECK(output.engine_success);
+  CHECK(output.gas_used == 123);
+  CHECK(output.action_list.not_null());
+
+  JvmContractAccountState decoded;
+  CHECK(decode_jvm_contract_account_state(output.new_data, decoded));
+  CHECK(decoded.class_hash == previous_state.class_hash);
+  CHECK(decoded.class_bytes->get_hash() == class_bytes_cell->get_hash());
+  CHECK(decoded.manifest_root.not_null());
+  CHECK(decoded.manifest_root->get_hash() == manifest_root->get_hash());
+  CHECK(decoded.stdlib_hash == cfg.stdlib_hash);
+
+  // The mock writes slot[31]=0xa1 = {0xde,0xad}; the seed slot at [0]=0xaa
+  // must still be present (storage merges, not replaces).
+  JvmStorageCellHost decoded_storage(decoded.storage_root);
+  JvmStorageSlot mock_slot{};
+  mock_slot[31] = 0xa1;
+  auto mock_loaded = decoded_storage.load(mock_slot).move_as_ok();
+  CHECK(mock_loaded.has_value());
+  CHECK(*mock_loaded == (JvmStorageValue{0xde, 0xad}));
+  auto seed_loaded = decoded_storage.load(seed_slot).move_as_ok();
+  CHECK(seed_loaded.has_value());
+  CHECK(*seed_loaded == (JvmStorageValue{0x01}));
+}
+
+TEST(WorkchainExecutionRegistry, JvmEngineV2RejectsMalformedAccountState) {
+  // If `current_data` carries the JVAC magic but the rest of the cell is
+  // junk, the engine must skip with sk_bad_state — without ever calling
+  // either runtime path.  Regression guard for the magic-based dispatch.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  block::WorkchainExecutionRegistry registry;
+  register_jvm_workchain_engine(registry, runtime);
+  auto execution = registry.resolve(descriptor, *config).move_as_ok();
+
+  // current_data is a cell that begins with the JVAC magic but is otherwise
+  // truncated.
+  vm::CellBuilder cb;
+  cb.store_long(kJvmContractAccountStateMagic, 32);
+  cb.store_long(0, 8);  // wrong schema_version
+  block::WorkchainComputeInput input;
+  input.current_data = cb.finalize();
+  input.inbound_body = make_jvm_call_body_v2(0x1);
+  input.gas_limit = 1000;
+
+  block::WorkchainComputeContext context;
+  context.workchain_id = 3;
+  context.descriptor = descriptor;
+  context.engine_config = execution.engine_config;
+
+  auto output = execution.executor->run_compute(input, context).move_as_ok();
+  CHECK(output.completed);
+  CHECK(!output.accepted);
+  CHECK(output.skip_reason == block::ComputePhase::sk_bad_state);
+  CHECK(!runtime->called);
+  CHECK(!runtime->called_v2);
+}
+
+TEST(WorkchainExecutionRegistry, JvmV2EndToEndDeployCallSequence) {
+  // End-to-end v2 sequence using the engine + a mock runtime: simulate a
+  // deploy that yields the initial account state, then two calls that
+  // mutate storage, with the engine round-tripping JVAC cells through
+  // input.current_data / output.new_data each time.  Verifies:
+  //   * `derive_jvm_contract_address` is deterministic
+  //   * the engine dispatches v2 cells to run_contract_v2
+  //   * class_hash / class_bytes / manifest_root are pinned across calls
+  //   * storage_root advances between calls
+  //   * a different salt produces a different address (isolation invariant)
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  block::WorkchainExecutionRegistry registry;
+  register_jvm_workchain_engine(registry, runtime);
+  auto execution = registry.resolve(descriptor, *config).move_as_ok();
+
+  // Build a deploy descriptor and verify the v2 address derivation.
+  auto deploy_desc = make_test_jvm_deploy_descriptor(0xa5);
+  auto address_a = derive_jvm_contract_address(deploy_desc).move_as_ok();
+  auto address_b = derive_jvm_contract_address(deploy_desc).move_as_ok();
+  CHECK(address_a == address_b);  // determinism
+
+  // Different salt yields a different per-account address (storage is
+  // therefore isolated; this is the v2 alternative to v1's contract_id key).
+  auto deploy_desc_other_salt = deploy_desc;
+  deploy_desc_other_salt.salt[0] ^= 0xff;
+  auto address_c =
+      derive_jvm_contract_address(deploy_desc_other_salt).move_as_ok();
+  CHECK(address_c != address_a);
+
+  // Build the initial account state that `action_create_account` would
+  // install for this deploy descriptor (this is the v2 analog of
+  // install_jvm_deploy_descriptor in v1).
+  auto class_bytes_cell = encode_jvm_storage_value(deploy_desc.class_bytes);
+  CHECK(class_bytes_cell.not_null());
+  JvmMethodManifestEntry method_entry;
+  method_entry.method_id = 0xb00b1e5;
+  method_entry.class_name = deploy_desc.class_name;
+  method_entry.method_name = "ok";
+  method_entry.method_spec = "()V";
+  auto manifest_root = encode_jvm_method_manifest({method_entry});
+  CHECK(manifest_root.not_null());
+
+  JvmContractAccountState state0;
+  state0.stdlib_hash = cfg.stdlib_hash;
+  state0.class_hash = deploy_desc.class_hash;
+  state0.class_bytes = class_bytes_cell;
+  state0.storage_root = JvmStorageCellHost{}.root_cell();
+  state0.manifest_root = manifest_root;
+  auto state0_cell = encode_jvm_contract_account_state(state0);
+  CHECK(state0_cell.not_null());
+
+  block::WorkchainComputeContext context;
+  context.workchain_id = 3;
+  context.descriptor = descriptor;
+  context.engine_config = execution.engine_config;
+
+  // Call 1: feed state0, expect engine to dispatch to v2 path and produce
+  // a state1 cell with a different storage_root.
+  block::WorkchainComputeInput call1;
+  call1.current_data = state0_cell;
+  call1.inbound_body = make_jvm_call_body_v2(method_entry.method_id);
+  call1.gas_limit = 1000;
+  auto out1 = execution.executor->run_compute(call1, context).move_as_ok();
+  CHECK(runtime->called_v2);
+  CHECK(out1.committed);
+  CHECK(out1.new_data.not_null());
+  CHECK(out1.new_data->get_hash() != state0_cell->get_hash());
+
+  JvmContractAccountState state1;
+  CHECK(decode_jvm_contract_account_state(out1.new_data, state1));
+  CHECK(state1.class_hash == state0.class_hash);
+  CHECK(state1.class_bytes->get_hash() == class_bytes_cell->get_hash());
+  CHECK(state1.manifest_root->get_hash() == manifest_root->get_hash());
+
+  // Call 2: feed state1, expect another storage advance.  class_hash /
+  // class_bytes / manifest must remain pinned.
+  runtime->called_v2 = false;
+  block::WorkchainComputeInput call2;
+  call2.current_data = out1.new_data;
+  call2.inbound_body = make_jvm_call_body_v2(method_entry.method_id);
+  call2.gas_limit = 1000;
+  auto out2 = execution.executor->run_compute(call2, context).move_as_ok();
+  CHECK(runtime->called_v2);
+  CHECK(out2.committed);
+  JvmContractAccountState state2;
+  CHECK(decode_jvm_contract_account_state(out2.new_data, state2));
+  CHECK(state2.class_hash == state0.class_hash);
+  CHECK(state2.class_bytes->get_hash() == class_bytes_cell->get_hash());
+  CHECK(state2.manifest_root->get_hash() == manifest_root->get_hash());
+
+  // Determinism: re-running call 1 from state0 produces the same new_data
+  // (the engine is a pure function of state + input).
+  runtime->called_v2 = false;
+  auto out1_again = execution.executor->run_compute(call1, context).move_as_ok();
+  CHECK(runtime->called_v2);
+  CHECK(out1_again.new_data.not_null());
+  CHECK(out1_again.new_data->get_hash() == out1.new_data->get_hash());
 }
 
 TEST(WorkchainExecutionRegistry, JvmEngineRejectsMalformedInboundAbiBeforeRuntime) {
@@ -2661,7 +3240,10 @@ TEST(WorkchainExecutionRegistry, UnsupportedCustomAccountPoliciesAbortBeforeComp
         return false;
       },
       true,
-      block::AccountExecutionPolicyKind::EngineDefined));
+      // EngineDefined is now a supported variant (used by JVM v2). Use the
+      // still-unimplemented ShardLocalExecutor to exercise the
+      // abort-before-compute path.
+      block::AccountExecutionPolicyKind::ShardLocalExecutor));
 
   auto addr = singleton_executor_address();
   block::Account account(2, addr.bits());
@@ -2716,11 +3298,14 @@ TEST(WorkchainExecutionRegistry, PreflightRejectsUnsupportedCustomAccountPolicie
 // JVM zerostate
 // ---------------------------------------------------------------------------
 
-TEST(JvmWorkchainCore, ZerostateAccountsCell) {
+TEST(JvmWorkchainCore, ZerostateAccountsCellIsEmpty) {
+  // Under v2 account-native topology the wc=3 genesis shard ships with no
+  // preexisting accounts; contracts materialize later via the host
+  // `action_create_account` path.  The cell must therefore decode as an
+  // empty HashmapAugE(256) — leading bit is 0 (`hme_empty$0`) with no
+  // child refs and the dict iterator visits zero entries.
   using namespace jvm_workchain;
 
-  // Cell must be non-null; internal CHECK in build_jvm_zerostate_accounts_cell
-  // already validates the resulting Account via block::gen::t_Account.validate_ref.
   auto cell = build_jvm_zerostate_accounts_cell();
   CHECK(cell.not_null());
 
@@ -2729,13 +3314,21 @@ TEST(JvmWorkchainCore, ZerostateAccountsCell) {
   CHECK(cell2.not_null());
   CHECK(cell->get_hash() == cell2->get_hash());
 
-  // The cell is a non-empty HashmapAugE(256) root; it must begin with bit 1
-  // (hme_root$1 tag).
   vm::CellSlice cs = vm::load_cell_slice(cell);
-  CHECK(cs.prefetch_ulong(1) == 1);
+  CHECK(cs.prefetch_ulong(1) == 0);  // hme_empty$0
+  CHECK(cs.size_refs() == 0);
 
-  // At least one reference must exist (the inner dict tree node).
-  CHECK(cs.size_refs() > 0 || cs.size() > 1);
+  // Round-trip through AugmentedDictionary: zero entries.
+  vm::AugmentedDictionary accounts_dict(vm::load_cell_slice_ref(cell), 256,
+                                        block::tlb::aug_ShardAccounts);
+  std::size_t entries = 0;
+  accounts_dict.check_for_each([&entries](td::Ref<vm::CellSlice>,
+                                          td::ConstBitPtr,
+                                          int) -> bool {
+    ++entries;
+    return true;
+  });
+  CHECK(entries == 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -2997,6 +3590,54 @@ TEST(JvmWorkchainCore, RpcDeployContractAdmissionChecksClassSize) {
   req.class_name = "/BadName";
   auto shape_err = handle_jvm_deploy_contract(req, cfg);
   CHECK(shape_err.is_error);
+}
+
+TEST(JvmWorkchainCore, RpcDeployContractReturnsBothContractIdAndContractAddress) {
+  // The v2 deploy result must surface BOTH the legacy v1 `contractId`
+  // (manifest key under SingletonExecutor) and the new v2
+  // `contractAddress` (deterministic wc=3 account address derived by
+  // `derive_jvm_contract_address`).  Clients on the v1 wire format keep
+  // working; v2 clients use `contractAddress` to drive
+  // `action_create_account` to the right per-account address.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+
+  JvmDeployContractRequest req;
+  req.class_name = "ContractEntryPoint";
+  req.class_bytes = {0xca, 0xfe, 0xba, 0xbe, 0x00, 0x34};
+  req.deployer[31] = 0x77;
+  req.salt[31] = 0x55;
+  req.init_args = make_empty_action_list();
+
+  auto result = handle_jvm_deploy_contract(req, cfg);
+  CHECK(!result.is_error);
+
+  // Both fields appear in the response JSON.
+  CHECK(result.json.find("\"contractId\":") != std::string::npos);
+  CHECK(result.json.find("\"contractAddress\":") != std::string::npos);
+
+  // Compute the expected v2 address and verify it is what the RPC reports.
+  JvmDeployDescriptor descriptor;
+  descriptor.deployer = req.deployer;
+  descriptor.salt = req.salt;
+  descriptor.class_name = req.class_name;
+  descriptor.class_bytes = req.class_bytes;
+  descriptor.class_hash = compute_jvm_class_hash(descriptor.class_bytes);
+  descriptor.init_args = req.init_args;
+  auto expected_address = derive_jvm_contract_address(descriptor).move_as_ok();
+  std::string expected_addr_hex = "0x";
+  for (auto b : expected_address) {
+    char buf[3];
+    std::snprintf(buf, sizeof(buf), "%02x", static_cast<unsigned>(b));
+    expected_addr_hex += buf;
+  }
+  CHECK(result.json.find(expected_addr_hex) != std::string::npos);
+
+  // The v1 contract_id and v2 contract_address differ for the same
+  // descriptor (different domain tag).
+  auto expected_id = derive_jvm_contract_id(descriptor).move_as_ok();
+  CHECK(expected_id != expected_address);
 }
 
 TEST(JvmWorkchainCore, RpcCallContractParsesRequest) {
@@ -3445,13 +4086,15 @@ TEST(JvmWorkchainCore, JvmActivationConfigBuildsAndRoundTrips) {
   auto cell = build_jvm_config_cell(cfg);
   CHECK(cell.not_null());
 
-  // Round-trip: parse must succeed and reproduce the original config.
+  // Round-trip: parse must succeed and reproduce the original config.  The
+  // v2 wire schema does NOT carry `max_total_class_bytes`, so the parsed
+  // struct field is intentionally zero regardless of the input.
   auto parsed = parse_jvm_config_cell(cell).move_as_ok();
   CHECK(parsed.chain_id == cfg.chain_id);
   CHECK(parsed.gas_price == cfg.gas_price);
   CHECK(parsed.max_gas_per_tx == cfg.max_gas_per_tx);
   CHECK(parsed.max_class_bytes == cfg.max_class_bytes);
-  CHECK(parsed.max_total_class_bytes == cfg.max_total_class_bytes);
+  CHECK(parsed.max_total_class_bytes == 0);  // dropped from v2 wire schema
   CHECK(parsed.max_heap_bytes == cfg.max_heap_bytes);
   CHECK(parsed.max_storage_cells == cfg.max_storage_cells);
   CHECK(parsed.class_file_major == cfg.class_file_major);

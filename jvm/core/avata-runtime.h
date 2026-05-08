@@ -39,12 +39,24 @@ using JvmAvataResolveCallTarget =
         const JvmExecutorState& previous_state,
         void* user);
 
+// v2 per-account resolver: looks up the call target through the
+// `manifest_root` carried by `JvmContractAccountState`, and loads
+// `class_bytes` from the same state instead of a global class store.
+using JvmAvataResolveCallTargetV2 =
+    td::Result<JvmAvataCallTarget> (*)(
+        const block::WorkchainComputeInput& input,
+        const block::WorkchainComputeContext& context,
+        const JvmConfig& config,
+        const JvmContractAccountState& previous_state,
+        void* user);
+
 class JvmAvataRuntime final : public JvmComputeRuntime {
  public:
     JvmAvataRuntime(JvmAvataExecutionApi api,
                     JvmAvataResolveCallTarget resolve_call_target,
                     void* resolve_user = nullptr,
-                    std::shared_ptr<void> resolve_owner = nullptr);
+                    std::shared_ptr<void> resolve_owner = nullptr,
+                    JvmAvataResolveCallTargetV2 resolve_call_target_v2 = nullptr);
 
     td::Result<JvmAvataInvocationResult> run_contract(
         const block::WorkchainComputeInput& input,
@@ -52,9 +64,16 @@ class JvmAvataRuntime final : public JvmComputeRuntime {
         const JvmConfig& config,
         const JvmExecutorState& previous_state) const override;
 
+    td::Result<JvmAvataInvocationResult> run_contract_v2(
+        const block::WorkchainComputeInput& input,
+        const block::WorkchainComputeContext& context,
+        const JvmConfig& config,
+        const JvmContractAccountState& previous_state) const override;
+
  private:
     JvmAvataExecutionApi api_;
     JvmAvataResolveCallTarget resolve_call_target_{nullptr};
+    JvmAvataResolveCallTargetV2 resolve_call_target_v2_{nullptr};
     void* resolve_user_{nullptr};
     std::shared_ptr<void> resolve_owner_;
     mutable std::mutex mutex_;

@@ -1,17 +1,18 @@
 /*
-    JVM Workchain — genesis account builder.
+    JVM Workchain — genesis ShardAccounts builder.
 
-    build_jvm_zerostate_accounts_cell() produces the ShardAccounts dict cell
-    for the wc=3 genesis shard block.  The result contains exactly one entry:
-    the singleton executor account at 0x0000…0001, seeded as acc_uninit (no
-    StateInit) with zero balance.  The first inbound external message activates
-    it via the normal AccountExecutionPolicy activation_code path, which
-    installs the 0x4a ('J') code-marker cell.
+    Under v2 account-native topology there is NO genesis JVM account: each
+    contract becomes its own wc=3 account at a deterministic address derived
+    by `derive_jvm_contract_address`, materialized later via the host
+    `action_create_account` (or a normal inbound message carrying StateInit).
 
-    This mirrors build_uno_zerostate_accounts_cell() (uno/core/init.h) for
-    wc=2 and build_evm_zerostate_accounts_cell() (evm/core/init.h) for wc=1.
-    It is called from the Fift word `jvm-zerostate` in create-state.cpp and
-    from genesis tooling that constructs the initial wc=3 block state.
+    `build_jvm_zerostate_accounts_cell()` therefore produces an empty
+    ShardAccounts dict cell (`hme_empty$0`) for the wc=3 genesis shard
+    block.  This is called from the Fift word `jvm-zerostate-accounts-cell`
+    in create-state.cpp and from genesis tooling that constructs the
+    initial wc=3 block state.
+
+    The legacy v1 SingletonExecutor at 0x0000…0001 is no longer seeded.
 
     Source: TOS-specific integration point.
 */
@@ -21,17 +22,11 @@
 
 namespace jvm_workchain {
 
-/// Build the ShardAccounts cell for the wc=3 genesis shard.
+/// Build the (empty) ShardAccounts cell for the wc=3 genesis shard.
 ///
-/// Contains exactly one account:
-///   addr    = MsgAddressInt{wc=3, account_id = 0x0000…0001}
-///   state   = account_uninit$00
-///   balance = 0
-///
-/// The activation code marker (0x4a 'J') is not embedded here; it is
-/// installed during the first transaction by the AccountExecutionPolicy
-/// machinery.  Returns null on internal cell-builder failure (should never
-/// happen with valid TLB constants).
+/// Always returns a non-null cell shaped as `hme_empty$0` (HashmapAugE 256
+/// SimpleAccount).  Returns null only on internal cell-builder failure
+/// (should never happen at runtime).
 td::Ref<vm::Cell> build_jvm_zerostate_accounts_cell();
 
 }  // namespace jvm_workchain

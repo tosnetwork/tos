@@ -97,4 +97,47 @@ td::Result<JvmDeployInstallResult> install_jvm_deploy_descriptor(
     const JvmDeployDescriptor& descriptor,
     const JvmConfig& config);
 
+// -------------------------------------------------------------------------
+// JVM v2: per-account method manifest.
+//
+// Under the v2 account-native topology the destination address already names
+// the contract, so the manifest entry no longer carries `contract_id`. One
+// account holds one class, and the manifest is the list of @ContractEntry
+// methods on that class indexed by method_id.
+// -------------------------------------------------------------------------
+
+constexpr std::uint32_t kJvmMethodManifestMagic = 0x4a564d32;  // "JVM2"
+constexpr std::uint8_t kJvmMethodManifestSchemaVersion = 1;
+constexpr std::size_t kJvmMethodManifestMaxEntries = 1024;
+
+struct JvmMethodManifestEntry {
+    std::uint32_t method_id{0};
+    std::string class_name;
+    std::string method_name;
+    std::string method_spec;
+};
+
+// Layout (linked-list spine, mirrors the v1 manifest encoding so that audit
+// tooling can reuse the same string-cell helpers):
+//   jvm_method_manifest#4a564d32
+//     schema_version:uint8 (=1)
+//     count:uint16
+//     entries:^(JvmMethodManifestEntryNode chain)?
+//   jvm_method_manifest_entry
+//     method_id:uint32
+//     has_next:bit
+//     next:^(JvmMethodManifestEntryNode)?
+//     class_name:^StringCell
+//     method_name:^StringCell
+//     method_spec:^StringCell
+td::Ref<vm::Cell> encode_jvm_method_manifest(
+    const std::vector<JvmMethodManifestEntry>& entries);
+
+td::Result<std::vector<JvmMethodManifestEntry>> parse_jvm_method_manifest(
+    td::Ref<vm::Cell> root);
+
+td::Result<JvmMethodManifestEntry> find_jvm_method_manifest_entry(
+    td::Ref<vm::Cell> root,
+    std::uint32_t method_id);
+
 }  // namespace jvm_workchain

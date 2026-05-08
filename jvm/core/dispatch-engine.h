@@ -19,7 +19,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "jvm/core/avata-execution.h"
+#include "jvm/core/avata-execution.h"  // transitively pulls cell-codec.h
 
 namespace block {
 class WorkchainExecutionRegistry;
@@ -41,11 +41,27 @@ class JvmComputeRuntime {
  public:
     virtual ~JvmComputeRuntime() = default;
 
+    // v1 path: SingletonExecutor with shared `class_state_root` and storage.
+    // Kept for in-progress v1 callers and the test suite.  v2 callers should
+    // implement `run_contract_v2` instead.
     virtual td::Result<JvmAvataInvocationResult> run_contract(
         const block::WorkchainComputeInput& input,
         const block::WorkchainComputeContext& context,
         const JvmConfig& config,
         const JvmExecutorState& previous_state) const = 0;
+
+    // v2 path: per-account state with inline `class_bytes`, dedicated
+    // `manifest_root`, and isolated `storage_root`.  Default returns
+    // "not implemented" so legacy v1 runtimes (and test mocks) keep
+    // compiling while the per-account adapter is brought up.
+    virtual td::Result<JvmAvataInvocationResult> run_contract_v2(
+        const block::WorkchainComputeInput& /*input*/,
+        const block::WorkchainComputeContext& /*context*/,
+        const JvmConfig& /*config*/,
+        const JvmContractAccountState& /*previous_state*/) const {
+        return td::Status::Error(
+            "JVM v2 per-account runtime path is not yet implemented");
+    }
 };
 
 /// Register the JVM native engine with a WorkchainExecutionRegistry.

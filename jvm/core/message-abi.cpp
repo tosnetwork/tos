@@ -321,6 +321,83 @@ td::Result<JvmCallDescriptor> parse_jvm_call_descriptor(vm::CellSlice body) {
     }
 }
 
+namespace {
+
+td::Status validate_descriptor_v2(const JvmCallDescriptorV2& descriptor) {
+    if (descriptor.schema_version != kJvmCallDescriptorV2SchemaVersion) {
+        return td::Status::Error(
+            "JVM call descriptor v2 has unsupported schema");
+    }
+    if (!validate_plain_cell(descriptor.args)) {
+        return td::Status::Error(
+            "JVM call descriptor v2 args ref is missing or special");
+    }
+    return td::Status::OK();
+}
+
+}  // namespace
+
+td::Ref<vm::Cell> encode_jvm_call_descriptor_v2(
+    const JvmCallDescriptorV2& descriptor) {
+    if (validate_descriptor_v2(descriptor).is_error()) {
+        return {};
+    }
+    vm::CellBuilder cb;
+    if (!cb.store_ulong_rchk_bool(kJvmCallDescriptorV2Magic, 32) ||
+        !cb.store_ulong_rchk_bool(descriptor.schema_version, 8) ||
+        !cb.store_ulong_rchk_bool(descriptor.method_id, 32) ||
+        !cb.store_ref_bool(descriptor.args)) {
+        return {};
+    }
+    return cb.finalize();
+}
+
+td::Result<JvmCallDescriptorV2> parse_jvm_call_descriptor_v2(
+    td::Ref<vm::CellSlice> body) {
+    if (body.is_null()) {
+        return td::Status::Error("JVM call descriptor v2 body is missing");
+    }
+    return parse_jvm_call_descriptor_v2(*body);
+}
+
+td::Result<JvmCallDescriptorV2> parse_jvm_call_descriptor_v2(
+    vm::CellSlice body) {
+    try {
+        JvmCallDescriptorV2 descriptor;
+        std::uint32_t magic = 0;
+        if (!fetch_u32(body, magic) || magic != kJvmCallDescriptorV2Magic) {
+            return td::Status::Error("JVM call descriptor v2 has wrong magic");
+        }
+        if (!fetch_u8(body, descriptor.schema_version) ||
+            descriptor.schema_version != kJvmCallDescriptorV2SchemaVersion) {
+            return td::Status::Error(
+                "JVM call descriptor v2 has unsupported schema");
+        }
+        if (!fetch_u32(body, descriptor.method_id)) {
+            return td::Status::Error("JVM call descriptor v2 is truncated");
+        }
+        if (body.size() != 0 || body.size_refs() != 1) {
+            return td::Status::Error(
+                "JVM call descriptor v2 must carry exactly one args ref");
+        }
+        descriptor.args = body.fetch_ref();
+        if (!body.empty_ext()) {
+            return td::Status::Error(
+                "JVM call descriptor v2 has trailing data");
+        }
+        TRY_STATUS(validate_descriptor_v2(descriptor));
+        return descriptor;
+    } catch (vm::VmError&) {
+        return td::Status::Error(
+            "JVM call descriptor v2 decode hit vm::VmError");
+    } catch (vm::VmVirtError&) {
+        return td::Status::Error(
+            "JVM call descriptor v2 decode hit vm::VmVirtError");
+    } catch (...) {
+        return td::Status::Error("JVM call descriptor v2 decode failed");
+    }
+}
+
 td::Ref<vm::Cell> encode_jvm_args(const JvmArgs& args) {
     if (validate_args(args).is_error()) {
         return {};

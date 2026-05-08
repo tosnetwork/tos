@@ -285,7 +285,10 @@ JvmRpcResult handle_jvm_deploy_contract(
     std::string descriptor_boc_hex = hex_encode(
         reinterpret_cast<const uint8_t*>(boc_bytes.data()), boc_bytes.size());
 
-    // Derive contract_id.
+    // Derive both the v1 contract_id (for clients still on the
+    // SingletonExecutor wire format) and the v2 wc=3 contract_address
+    // (the deterministic per-account address the deploy targets under
+    // the account-native topology).
     auto contract_id_result = derive_jvm_contract_id(descriptor);
     if (contract_id_result.is_error()) {
         return JvmRpcResult{
@@ -293,6 +296,14 @@ JvmRpcResult handle_jvm_deploy_contract(
             true};
     }
     const auto& contract_id = contract_id_result.ok();
+
+    auto contract_address_result = derive_jvm_contract_address(descriptor);
+    if (contract_address_result.is_error()) {
+        return JvmRpcResult{
+            json_rpc_err(id, -32602, "contract_address derivation failed"),
+            true};
+    }
+    const auto& contract_address = contract_address_result.ok();
 
     // Optional local install: when executorStateBoc is supplied, install the
     // class into the executor state and return the updated state as newStateBoc.
@@ -330,6 +341,8 @@ JvmRpcResult handle_jvm_deploy_contract(
     }
 
     std::string result = "{\"contractId\":\"" + hex_encode(contract_id)
+                       + "\",\"contractAddress\":\""
+                       + hex_encode(contract_address)
                        + "\",\"deployDescriptorBoc\":\"" + descriptor_boc_hex
                        + "\",\"newStateBoc\":" + new_state_hex + "}";
     return JvmRpcResult{json_rpc_ok(id, result), false};

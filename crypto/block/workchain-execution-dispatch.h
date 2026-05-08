@@ -116,6 +116,12 @@ struct AccountExecutionPolicy {
   bool accepts_internal_inbound{true};
   bool may_activate_uninitialized_account{true};
 
+  // Engine-driven account creation. When true, the engine may emit
+  // `action_create_account` from its action list to materialize a new
+  // account in this workchain at a deterministic address. Only honored
+  // for `kind == EngineDefined`.
+  bool admits_engine_create_account_actions{false};
+
   td::Ref<vm::Cell> activation_code;
 };
 
