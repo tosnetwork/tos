@@ -571,12 +571,11 @@ Root cell layout:
 | Field | Type | Description |
 |-------|------|-------------|
 | `magic` | uint32 | `0x4a564d43` (`"JVMC"`) |
-| `schema_version` | uint8 | **1** |
+| `schema_version` | uint8 | **2** (account-native topology wire format) |
 | `chain_id` | uint32 | JVM workchain chain id; must be non-zero |
 | `gas_price` | uint64 | nanotomi price per JVM gas unit |
 | `max_gas_per_tx` | uint64 | hard per-transaction gas limit |
 | `max_class_bytes` | uint32 | max byte size for one admitted contract class |
-| `max_total_class_bytes` | uint32 | max aggregate class bytes per contract package |
 | `max_heap_bytes` | uint32 | deterministic transaction heap/memory limit |
 | `max_storage_cells` | uint32 | max account-state cell budget |
 | `class_file_major` | uint16 | **52** for Java 8 class files |
@@ -603,9 +602,27 @@ canonical `avata_interpreter` target and `make_linked_jvm_avata_execution_api()`
 maps the bridge to the Avata C ABI. `init_jvm_workchain()` now installs a
 linked Avata runtime from `TOS_JVM_AVATA_RT_JAR` or the CMake-generated
 `rt.jar` default, optional `TOS_JVM_AVATA_CONTRACT_CLASSPATH`, and
-`TOS_JVM_AVATA_HEAP`. The runtime resolves inbound calls through the
-`class_state_root` manifest. If VM creation fails, wc=3 registration remains
-fail-closed with a null runtime.
+`TOS_JVM_AVATA_HEAP`. The runtime resolves inbound calls through the per-account
+method manifest stored in `JvmContractAccountState.manifest_root`. If VM creation
+fails, wc=3 registration remains fail-closed with a null runtime.
+
+**Schema version: breaking change at v2.** `schema_version=2` is the
+account-native topology wire format. The v1 layout carried an extra
+`max_total_class_bytes:uint32` between `max_class_bytes` and `max_heap_bytes`
+to bound the aggregate footprint of the singleton-executor's shared class store;
+under v2 each contract is its own wc=3 account and bytecode sharing is handled
+by Cell DB physical hash dedup (see `crypto/vm/db/CellStorage.cpp:267`), so the
+field has been removed. `parse_jvm_config_cell` rejects any cell whose
+`schema_version != 2` (`jvm/core/config-param.cpp:233-235`); a node holding a
+v1 ConfigParam 85 cell will fail to resolve the wc=3 engine and fall closed.
+This is a chain-config breaking change, acceptable because the previous schema
+was never on mainnet.
+
+**Migration note.** Nodes and genesis tooling must regenerate ConfigParam 85
+from `JvmConfig::default_activation()` (`jvm/core/config-param.cpp:275-307`),
+which now omits `max_total_class_bytes` and emits `schema_version=2`. Operators
+maintaining a hand-rolled `JvmConfig` builder must drop the
+`max_total_class_bytes` initializer and re-run `build_jvm_config_cell`.
 
 ## Negative (Internal) Parameters
 

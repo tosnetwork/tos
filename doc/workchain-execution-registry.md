@@ -630,6 +630,139 @@ own zerostate. Reusing the EVM v1 descriptor while changing state topology would
 violate the core rule that the same descriptor/config/input must produce the
 same compute output.
 
+## EngineDefined Policy and `action_create_account`
+
+JVM v2 ships an account-native topology: every JVM contract is its own
+`wc=3` account at a deterministic address derived by the engine, not a
+singleton executor. Two pieces of host-side machinery support this and
+are available to any future engine that needs the same shape.
+
+### `AccountExecutionPolicyKind::EngineDefined`
+
+The four policy kinds carried by `AccountExecutionPolicy`
+(`crypto/block/workchain-execution-dispatch.h:104-109`) are now:
+
+| Kind | Inbound routing | Status | Used by |
+|---|---|---|---|
+| `AnyAccount` | Any address; host owns dispatch | implemented | TVM (`wc=0`) |
+| `SingletonExecutor` | Only `singleton_address` | implemented | EVM (`wc=1`), Uno (`wc=2`) |
+| `ShardLocalExecutor` | Reserved for parallel-EVM topology | unimplemented stub; rejected by `validate_account_execution_policy_supported` | none |
+| `EngineDefined` | Any address in workchain; engine owns address-space routing | implemented | JVM (`wc=3`) |
+
+`EngineDefined` is structurally similar to `AnyAccount` for inbound
+routing: `account_allowed_by_policy`
+(`crypto/block/transaction.cpp:107-119`) returns `true` for any address
+under both kinds. The semantic distinction is that `EngineDefined`
+declares the engine itself owns the address-space layout (deterministic
+address derivation, account materialization rules) and additionally
+opts into engine-driven account creation through a new boolean on
+`AccountExecutionPolicy`:
+
+```cpp
+struct AccountExecutionPolicy {
+  AccountExecutionPolicyKind kind{AccountExecutionPolicyKind::AnyAccount};
+  std::optional<tos::StdSmcAddress> singleton_address;
+
+  bool accepts_external_inbound{true};
+  bool accepts_internal_inbound{true};
+  bool may_activate_uninitialized_account{true};
+
+  // Engine-driven account creation. When true, the engine may emit
+  // `action_create_account` from its action list to materialize a new
+  // account in this workchain at a deterministic address. Only honored
+  // for `kind == EngineDefined`.
+  bool admits_engine_create_account_actions{false};
+
+  td::Ref<vm::Cell> activation_code;
+};
+```
+
+`validate_account_execution_policy_supported`
+(`crypto/block/workchain-execution-dispatch.cpp:272-291`) accepts
+`EngineDefined` unconditionally; the host treats address-space routing
+as engine-owned for this kind. JVM declares this policy at
+`jvm/core/dispatch-engine.cpp:92-110` with
+`admits_engine_create_account_actions = true`.
+
+Validator migration: nodes that previously supported only `AnyAccount`
+and `SingletonExecutor` need no source change. The host accepts
+`EngineDefined` automatically once the JVM engine module is linked and
+registered.
+
+### `action_create_account#4a435241`
+
+A new TLB action variant in `crypto/block/block.tlb:420-424`:
+
+```
+action_create_account#4a435241 mode:(## 8)
+  dest_addr:bits256
+  state_init:^StateInit
+  value:Tomis
+  body:(Maybe ^Cell) = OutAction;
+```
+
+Fields:
+
+- `mode` — send mode forwarded to the underlying `action_send_msg`;
+  same semantics as a normal `SENDRAWMSG` mode.
+- `dest_addr` — 256-bit address of the new account in the source's
+  workchain. Engines are expected to choose this deterministically
+  (e.g. JVM derives it from the deployer + state init).
+- `state_init` — `StateInit` cell installed on the new account. The
+  account materializes via the existing `acc_uninit -> acc_active`
+  TBlkch path when its first inbound message is delivered.
+- `value` — Tomis transferred from the source to fund the new
+  account's storage stake plus the inbound message.
+- `body` — optional payload delivered as the body of the activating
+  internal message; absent when the engine only needs to materialize
+  the account.
+
+Honored only when the source's `AccountExecutionPolicy.kind ==
+EngineDefined` and `admits_engine_create_account_actions == true`.
+`Transaction::try_action_create_account`
+(`crypto/block/transaction.cpp:2601-2725`) wraps the request as an
+internal message of the form
+
+```
+MessageRelaxed{
+  info = int_msg_info{
+    src  = addr_none (filled in by check_replace_src_addr),
+    dest = addr_std$10 wc:int8=cur_workchain addr:bits256=dest_addr,
+    value
+  },
+  init = Just (Right ^state_init),
+  body = body
+}
+```
+
+then re-emits it as `action_send_msg{0x0ec3c86d, mode, ^msg}` and
+dispatches through `try_action_send_msg`. All forward-fee accounting,
+mode handling, outbound-queue placement, and bounce semantics are
+shared with the existing send path; there is no bespoke fee math. The
+receiving account pays its storage stake when it activates.
+
+Synchronicity: account *materialization* is visible to the next
+transaction in the same block — the inbound activation message rides
+the normal outbound queue. Method *invocation* on the new account
+remains async; the optional `body` is delivered as a regular internal
+message, not executed inline.
+
+Error codes returned by `try_action_create_account`:
+
+- `34` if the source's policy does not admit the action
+  (`admits_engine_create_account_actions == false`).
+- `34` if the source workchain id is outside the int8 addressable
+  range (`addr_std$10` only encodes `int8` workchain ids; engines
+  outside that range must hand-build `addr_var` and use plain
+  `action_send_msg`).
+- otherwise the error code forwarded from `try_action_send_msg`.
+
+The action does not extend the workchain-execution interface itself:
+it is a host-side action variant gated by an engine-policy flag, so
+engines that opt in only emit it in their `action_list` output. No
+engine that does not set `admits_engine_create_account_actions = true`
+can produce a valid `action_create_account` action.
+
 ## Admission and Mempool
 
 External-message admission, mempool filters, fee estimation, and RPC prechecks
