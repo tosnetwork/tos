@@ -279,6 +279,12 @@ No validator may be assigned to `wc=3` before advertising JVM execution
 capability. The JVM workchain must not be active in mainnet genesis; it is a
 post-genesis governance activation.
 
+The JVM activation point is the masterchain block where the accepted
+`ConfigParam 12` update becomes active with the `wc=3` descriptor marked
+`active=true`, with ConfigParam 85 already present in the same config snapshot.
+`enabled_since` records activation metadata but is not an automatic delayed
+height trigger in the current dispatch path.
+
 ## Engine Identity
 
 | Field | Value |

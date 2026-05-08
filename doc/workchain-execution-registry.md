@@ -697,6 +697,48 @@ is an absent engine or an incompatible descriptor revision.
 A new workchain engine or engine-breaking descriptor update must be activated
 like any other consensus feature.
 
+### Staged workchain activation
+
+Independent workchains do not have to become active at the same masterchain
+height. EVM (`wc=1`), Uno (`wc=2`), JVM (`wc=3`), and future engines may be
+activated in separate `ConfigParam 12` updates as long as every validator that
+can be assigned to the target shard has already upgraded to a binary containing
+the matching engine.
+
+The current implementation gates execution on the active masterchain
+configuration, not on a local runtime flag:
+
+- if a workchain descriptor is absent from `ConfigParam 12`, generic routing
+  treats the workchain as unavailable;
+- if the descriptor is present with `active=false`, the registry does not
+  resolve an execution engine for it;
+- if the descriptor is present with `active=true`, the registry resolves the
+  engine from `(format, selector)` and validates engine-specific parameters;
+- `accept_msgs=false` can keep a workchain from accepting new inbound messages
+  even when its descriptor is otherwise present.
+
+The practical activation point is therefore the masterchain block where the
+accepted config update becomes part of the active `ConfigParam 12` value.
+`enabled_since` is preserved in the descriptor for auditability and compatibility
+with the TL-B schema, but it is not a standalone delayed-height scheduler in the
+current dispatch path. If governance wants a config update to be accepted in
+advance and automatically become active at a future height, that requires an
+explicit scheduler/election rule and tests for the delayed activation boundary.
+
+A staged launch may either omit a future workchain from `ConfigParam 12` until
+its launch update, or pre-register its descriptor with `active=false` and
+`accept_msgs=false`. If a descriptor is pre-registered, its consensus identity
+fields must already be final: engine selector, descriptor version, `vm_mode`,
+address shape, and zerostate hashes should not change before activation unless
+a migration rule explicitly permits it.
+
+Engine-specific config must be staged before or in the same update that makes
+the workchain active. For current engines:
+
+- EVM (`wc=1`) binds its chain id through `ConfigParam 12` `vm_mode`.
+- Uno (`wc=2`) depends on Uno chain parameters in `ConfigParam 84`.
+- JVM (`wc=3`) depends on JVM chain parameters in `ConfigParam 85`.
+
 The activation flow should include:
 
 1. a descriptor or global-version proposal that declares the new execution
@@ -728,7 +770,10 @@ ConfigParam read from the block-transition config snapshot:
 Generic validation owns only generic shape:
 
 - descriptor cell parses correctly
-- workchain is active only after `enabled_since`
+- descriptor presence plus `active=true` controls whether the registry resolves
+  an execution engine in the current implementation
+- `enabled_since` is recorded consistently with the activation proposal, but
+  does not by itself delay execution without a separate scheduler rule
 - split depths and zerostate hashes are well-formed
 - `(format, selector)` maps to exactly one registered engine
 

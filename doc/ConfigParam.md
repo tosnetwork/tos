@@ -124,17 +124,46 @@ Each `WorkchainDescr` entry (keyed by workchain ID):
 
 | Field | Type | Value (wc 0) | Description |
 |-------|------|-------------|-------------|
-| `enabled_since` | uint32 | (genesis time) | When workchain was enabled |
+| `enabled_since` | uint32 | (genesis/config update time) | Recorded activation metadata; not a standalone delayed-height gate in the current implementation |
 | `monitor_min_split` | uint8 | 0 | Minimum split depth for monitoring |
 | `min_split` | uint8 | 0 | Minimum shard split depth |
 | `max_split` | uint8 | 0 | Maximum shard split depth |
 | `basic` | bit | 1 | Basic workchain flag |
-| `active` | Bool | true | Workchain is active |
-| `accept_msgs` | Bool | true | Accepts messages |
+| `active` | Bool | true | Workchain participates in execution routing |
+| `accept_msgs` | Bool | true | Accepts new inbound messages |
 | `zerostate_root_hash` | bits256 | (computed) | Root hash of workchain zero state |
 | `zerostate_file_hash` | bits256 | (computed) | File hash of workchain zero state |
 | `version` | uint32 | 0 | Workchain descriptor version |
 | `format` | wfmt_basic / wfmt_ext | wfmt_basic | Workchain VM format selector |
+
+### Activation Semantics
+
+`ConfigParam 12` is the consensus source of truth for ordinary workchain
+activation. The current execution registry treats a workchain as unavailable
+when its descriptor is absent or when the descriptor has `active=false`. Once an
+accepted masterchain config update installs a descriptor with `active=true`, the
+registry resolves the engine from `(format, selector)` and validates the
+engine-specific config snapshot. `accept_msgs=false` prevents new inbound
+messages even if the descriptor is present.
+
+`enabled_since` is stored in the descriptor and should match the intended
+activation metadata, but current routing does not use it as an automatic
+future-height scheduler. A staged launch is performed by separate config
+updates: for example, activate EVM (`wc=1`), Uno (`wc=2`), and JVM (`wc=3`) at
+different masterchain heights by adding or enabling each descriptor in separate
+`ConfigParam 12` proposals. If exact future-height activation after prior
+proposal acceptance is required, that must be implemented as an explicit
+scheduler/election rule rather than relying on `enabled_since` alone.
+
+Future workchains may be omitted from `ConfigParam 12` until their launch, or
+pre-registered with `active=false` and `accept_msgs=false`. Pre-registered
+descriptors must keep their consensus identity fields stable until activation:
+engine selector, descriptor version, `vm_mode`, address-length shape, and
+zerostate hashes should not change without an explicit migration rule.
+
+Engine-specific parameters must be present before or in the same update that
+makes the workchain active. EVM stores its chain id in `vm_mode`; Uno uses
+ConfigParam 84; JVM uses ConfigParam 85.
 
 ### Workchain VM Format
 
@@ -159,7 +188,7 @@ The workchain id `1` is the next slot after masterchain (`-1`) and basechain (`0
 Two paths:
 
 1. **Zerostate (clean network)**: edit `crypto/smartcont/gen-zerostate.fif` to register the EVM workchain alongside the basechain at genesis. New zerostate generation includes `wc=1`.
-2. **Governance proposal (existing network)**: submit a ConfigParam 12 update containing the new descriptor. Validators that have the `evm_workchain` module compiled into their `validator-engine` binary begin processing wc=1 messages on the next epoch.
+2. **Governance proposal (existing network)**: submit a ConfigParam 12 update containing the new descriptor. Validators that have the `evm_workchain` module compiled into their `validator-engine` binary begin processing wc=1 messages once the accepted update becomes part of the active masterchain config, subject to validator assignment and scheduler rules.
 
 See `doc/Validator-Local.md#evm-workchain-workchain-1` for end-to-end activation steps in a local 4-node testnet.
 
