@@ -850,11 +850,14 @@ the existing TVM action list model so the host action phase requires no changes.
 
 ### Phase 7 — RPC namespace
 
-**Goal:** Implement `jvm_*` JSON-RPC endpoints through the target
-`WorkchainRuntimeServices::register_rpc` hook once it lands. If that runtime
-services hook is still only a design target, mirror the existing EVM/Uno RPC
-registration pattern but keep it outside consensus dispatch. These are
-non-consensus surfaces and must not affect compute.
+**Goal:** Implement `jvm_*` JSON-RPC endpoints through the full-node RPC
+surface. The original `WorkchainRuntimeServices::register_rpc` hook remains a
+design target, but the current implementation mirrors the existing EVM/Uno
+pattern directly in `validator-engine`: `JsonRpcServer` dispatches `jvm_*`
+methods to `handle_jvm_rpc_method()`, which resolves live ConfigParam 85
+through liteserver and, for stateful local calls, loads the wc=3 singleton
+executor account data when the client does not supply `executorStateBoc`. These
+are non-consensus surfaces and must not mutate block state.
 
 **Endpoints:**
 - `jvm_deployContract`: submit a class file and initial state; builds an
@@ -865,15 +868,14 @@ non-consensus surfaces and must not affect compute.
   hex-encoded BOC (`callDescriptorBoc`). The descriptor can be submitted as an
   external message body or passed to the local runner. Params: `contractId`
   (0x-32), `methodId` (uint32), `gasLimit` (optional), `executorStateBoc`
-  (optional hex BOC of the JvmExecutorState cell — when supplied, the caller can
-  perform local execution against a specific chain state snapshot without a live
-  node connection).
+  (optional hex BOC of the JvmExecutorState cell — when omitted, full-node RPC
+  loads the live singleton executor data from the latest masterchain snapshot).
 - `jvm_getContractState`: return `className`, `classHash`, and
   `storageRootHash` for a deployed contract. Params: `contractId` (0x-32),
-  `executorStateBoc` (optional hex BOC — when supplied by the client, the
-  handler resolves className/classHash without a live block-state connection;
-  when absent, the caller must inject `executor_state` directly via the
-  `register_rpc` hook path).
+  `executorStateBoc` (optional hex BOC). When omitted, full-node RPC loads the
+  live singleton executor data from the latest masterchain snapshot. The handler
+  resolves class metadata and enumerates up to 100 storage slots from the
+  selected state snapshot.
 - `jvm_getReceipts`: return event receipts for a given block range. Params:
   `contractId` (0x-32), `fromBlock`, `toBlock`. v1 returns an empty list;
   full receipt retrieval requires a block-state index to be added in the host.
@@ -969,17 +971,21 @@ Last updated: 2026-05-07.
 | Phase 4 — Heap serialization | ✅ | v1 restricted state model confirmed: only explicit `Storage`/`Mapping`/`PersistentMap`/`PersistentList` state is persisted; transient heap is discarded at transaction boundary via arena checkpoint rollback (`checkpointContractHeap` / `resetContractHeap`). Mutable static fields are forbidden at class-load time (`VerifierProfile`: `makeStaticField` → VerifyError). `JvmCellCodec` encodes/decodes the canonical `JvmExecutorState` cell. `JvmStorageCellHost` provides cell-backed 256-bit-slot storage with nested snapshot semantics. No general Java object-graph serializer needed for v1 |
 | Phase 5 — Gas metering | ✅ | Tiered default opcode schedule (`gas_schedule.h`), per-opcode table in interpreter (`Machine::opcodeGasCosts[256]`), helper-gas table for storage/event/native surcharges, ConfigParam 85 gas-schedule codec (`avata_set_opcode_gas_costs`, `avata_set_contract_helper_gas_costs`), and OOG trap complete. All gas paths covered by `TieredOpcodeGasSchedule` and `HelperGasOutOfGasRegression` tests |
 | Phase 6 — Message ABI | ✅ | `JvmCallDescriptor`, typed `JVMA` args codec (bool/int/long/Address/Uint256/Bytes32/Bytes4/Bytes), `JvmDeployDescriptor`, restricted `JVMM` manifest, `JVMC` class-state envelope, deterministic deploy class-byte installation (ConfigParam 85 size limits enforced), state-backed Avata class loading, pre-runtime inbound validation, typed static-void invocation, duplicate manifest-key rejection, and linked resolver integration all implemented. Outbound action encoding: committed events flow through `event-host` to `OutList` action cells compatible with the TOS action phase |
-| Phase 7 — RPC namespace | 🟡 | `jvm_deployContract`, `jvm_callContract`, `jvm_getContractState`, `jvm_getReceipts` — request/response codecs and admission checks in `jvm/core/rpc.{h,cpp}`. Standalone wiring via `handle_jvm_rpc()`. `jvm_deployContract` returns `deployDescriptorBoc` (hex-encoded JvmDeployDescriptor cell BOC) and `contractId`; when `executorStateBoc` is present it installs the class into the executor state via `install_jvm_deploy_descriptor` and returns `newStateBoc` (the updated state with the class registered). `jvm_callContract` accepts optional `argsBoc` (pre-encoded JVMA typed args cell) and optional `JvmComputeRuntime*`; when runtime + `executorStateBoc` are present it runs a local simulation and appends `localResult` {success, outOfGas, outOfMemory, gasUsed, vmLog, newStateBoc}. `jvm_getContractState` enumerates storage slots (up to 100) from `executorStateBoc` and returns `storageSlots` + `storageTruncated`. Together these form a complete offline deploy→call workflow without a live node. Full node hook (`WorkchainRuntimeServices::register_rpc`) pending once that hook lands |
+| Phase 7 — RPC namespace | 🟡 | `jvm_deployContract`, `jvm_callContract`, `jvm_getContractState`, `jvm_getReceipts` — request/response codecs and admission checks in `jvm/core/rpc.{h,cpp}`. Full-node routing is wired through `validator-engine/json-rpc-server-jvm.cpp`: `JsonRpcServer` recognizes `jvm_*`, fetches live ConfigParam 85 from the latest masterchain config proof, passes the installed Avata runtime from `current_jvm_compute_runtime()`, loads the wc=3 singleton executor account data when `jvm_callContract`/`jvm_getContractState` omit `executorStateBoc`, and returns the raw JVM JSON-RPC response. `jvm_deployContract` returns `deployDescriptorBoc` and `contractId`; when `executorStateBoc` is present it installs the class into the executor state via `install_jvm_deploy_descriptor` and returns `newStateBoc`. `jvm_callContract` accepts optional `argsBoc`; when runtime + executor state are present it runs local simulation and appends `localResult` {success, outOfGas, outOfMemory, gasUsed, vmLog, newStateBoc}. `jvm_getContractState` enumerates storage slots (up to 100) from the selected executor state and returns `storageSlots` + `storageTruncated`. Remaining Phase 7 follow-up: `jvm_getReceipts` still needs a block-state receipt index instead of returning an empty list |
 | Phase 8 — Hardening | ✅ | `EndToEndDeployCallPersistAndRollback` (3-tx deploy→call→rollback flow), `MultiInstanceIndependentStorageSlots`, `JvmActivationConfigBuildsAndRoundTrips`, `AvataInvocationBuildsOutOfMemoryComputeOutput` (OOM path: not committed, correct vm_log), `MaxHeapBytesExceededReturnsError` (post-invocation config guard), `JvmStateCellBocRoundTripPreservesComputeOutput` (BOC serialize→deserialize replay), and deterministic in-memory replay test all exist. Verifier negative tests (`VerifierProfile`, `CoreTrapProfile`), float determinism (`DeterministicFloatTest`), and path-sanitization tests (`StackTraceSourceFileTest`: unix/windows/plain/no-SourceFile) all pass. Float conformance vector (`FloatConformanceVector.java` + `float-conformance-reference.txt`): 160-line hex-bit reference covering all float/double opcodes and edge cases (NaN, ±0, ±Inf, subnormals, conversions, array round-trips); verified by `check-float-conformance` on every build. Performance baseline (`PerfBaseline.java`): deterministic checksum gated by `check-perf-baseline` makefile target (wired into `run-test`); reference stored in `test/perf-baseline-reference.txt`; `regen-perf-baseline` updates it when the gas schedule intentionally changes. Cross-platform float vector comparison requires running `check-float-conformance` on ARM/WASM validators — infrastructure is in place |
 | JVM v2 account-native topology | ⏭ | Deferred for engineering scope, not for migration reasons (TOS is pre-launch; there is no on-chain state to migrate). The real blockers are: (1) `WorkchainExecutionRegistry` needs a new account-creation policy beyond `SingletonExecutor`; (2) a class-store deduplication/reference-counting design is required when multiple contracts share the same class bytes; (3) the v1 singleton execution path should be validated first before adding per-account complexity. Can be designed as the initial account model if v1 is not activated before this work is complete |
-| Lambda / `invokedynamic` support | 🟡 | Verifier rejects `CONSTANT_MethodHandle`, `CONSTANT_MethodType`, `CONSTANT_InvokeDynamic`, and `BootstrapMethods` (v1 position: reject). VM-internal deterministic bootstrap linkage is a post-v1 item; public `java.lang.invoke` stays absent from v1 `rt.jar`. Decision and negative tests exist; end-to-end wrapper test (`check-api-javac` lambda compile → rejection) confirmed. Positive bootstrap path is explicitly deferred |
+| Lambda / `invokedynamic` support | ⛔ | **Not supported in any version.** `invokedynamic` is rejected at three independent layers: (1) `CONSTANT_MethodHandle`, `CONSTANT_MethodType`, and `CONSTANT_InvokeDynamic` constant-pool entries throw `VerifyError` at class load; (2) the `BootstrapMethods` attribute is in the forbidden attribute list; (3) the `invokedynamic` opcode throws `VerifyError` in the interpreter as a fallback. `java.lang.invoke` is absent from `rt.jar` and `api.jar`. Lambda expressions and method references compiled by `javac` are rejected. The equivalent pattern — anonymous inner classes — is fully supported. There is no plan to support `invokedynamic` in v2 or any future version: a deterministic consensus VM cannot safely admit arbitrary bootstrap method linkage, and the anonymous-inner-class pattern covers all practical contract use cases without it |
 | Per-account contract model | ⏭ | Each Java contract as a distinct TOS account on `wc=3`; same scope as JVM v2 account-native topology above |
 
 **v1 consensus-activation blockers (remaining):**
-1. Full node RPC wiring — Phase 7 scaffold done; `WorkchainRuntimeServices::register_rpc` hook integration pending (blocked on that hook landing in the host)
-2. Cross-platform float conformance — `check-float-conformance` infrastructure and reference file are in place; needs execution on ARM/WASM validator targets to confirm platform-identical results
+1. Cross-platform float conformance — `check-float-conformance` infrastructure and reference file are in place; needs execution on ARM/WASM validator targets to confirm platform-identical results
 
 **v1 consensus-activation resolved:**
+- Full-node JVM RPC wiring: `JsonRpcServer` now routes `jvm_*` requests through
+  `handle_jvm_rpc_method()`, resolves ConfigParam 85 from a liteserver config
+  proof, injects the Avata runtime installed by `init_jvm_workchain()`, and
+  loads live singleton executor data for stateful local RPC when no
+  `executorStateBoc` is supplied.
 - ConfigParam 85 concrete activation values: `JvmConfig::default_activation()` now encodes chain_id=3, gas_price=1000, max_gas_per_tx=1M, max_class_bytes=64 KiB, max_total_class_bytes=1 MiB, max_heap_bytes=4 MiB, max_storage_cells=65536, tiered opcode and helper costs from `gas_schedule.h`. Values are a baseline; governance can adjust via ConfigParam update before or after mainnet activation
 
 ## File Layout (actual)
