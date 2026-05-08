@@ -15,6 +15,74 @@ namespace jvm_workchain {
 
 namespace {
 
+// Reject any byte sequence that is not well-formed UTF-8.  Manifest
+// strings are spliced into JSON RPC responses (className / methodName /
+// methodSpec) and the JSON spec requires UTF-8: a malformed sequence
+// would let an attacker emit a response that strict clients refuse to
+// parse — i.e. an RPC-response DoS.  Rather than trying to escape
+// malformed bytes downstream, we keep the manifest's wire shape strict
+// and reject it at decode time so all consumers see well-formed text.
+//
+// Rules (RFC 3629):
+//   * 0x00..0x7F                                          — 1 byte
+//   * 0xC2..0xDF, then 0x80..0xBF                         — 2 bytes
+//   * 0xE0,      then 0xA0..0xBF, then 0x80..0xBF         — 3 bytes
+//   * 0xE1..0xEC, then 0x80..0xBF, then 0x80..0xBF        — 3 bytes
+//   * 0xED,      then 0x80..0x9F, then 0x80..0xBF         — 3 bytes
+//                (excludes UTF-16 surrogate halves U+D800..U+DFFF)
+//   * 0xEE..0xEF, then 0x80..0xBF, then 0x80..0xBF        — 3 bytes
+//   * 0xF0,      then 0x90..0xBF, then 0x80..0xBF, then 0x80..0xBF
+//   * 0xF1..0xF3, then 0x80..0xBF (×3)                    — 4 bytes
+//   * 0xF4,      then 0x80..0x8F, then 0x80..0xBF (×2)    — 4 bytes
+// Anything else (including overlong forms, 0xC0/0xC1, 0xF5+, surrogates)
+// is rejected.
+bool is_well_formed_utf8(const std::string& value) {
+    const auto* p = reinterpret_cast<const std::uint8_t*>(value.data());
+    const std::size_t n = value.size();
+    std::size_t i = 0;
+    while (i < n) {
+        std::uint8_t b0 = p[i];
+        if (b0 < 0x80u) {
+            ++i;
+            continue;
+        }
+        std::uint8_t lo = 0, hi = 0;  // valid range for the FIRST cont byte
+        std::size_t extra = 0;
+        if (b0 >= 0xC2u && b0 <= 0xDFu) {
+            extra = 1; lo = 0x80u; hi = 0xBFu;
+        } else if (b0 == 0xE0u) {
+            extra = 2; lo = 0xA0u; hi = 0xBFu;
+        } else if (b0 >= 0xE1u && b0 <= 0xECu) {
+            extra = 2; lo = 0x80u; hi = 0xBFu;
+        } else if (b0 == 0xEDu) {
+            extra = 2; lo = 0x80u; hi = 0x9Fu;
+        } else if (b0 >= 0xEEu && b0 <= 0xEFu) {
+            extra = 2; lo = 0x80u; hi = 0xBFu;
+        } else if (b0 == 0xF0u) {
+            extra = 3; lo = 0x90u; hi = 0xBFu;
+        } else if (b0 >= 0xF1u && b0 <= 0xF3u) {
+            extra = 3; lo = 0x80u; hi = 0xBFu;
+        } else if (b0 == 0xF4u) {
+            extra = 3; lo = 0x80u; hi = 0x8Fu;
+        } else {
+            return false;  // 0x80..0xC1, 0xF5..0xFF: never a valid leader
+        }
+        if (i + extra >= n) {
+            return false;  // truncated sequence
+        }
+        if (p[i + 1] < lo || p[i + 1] > hi) {
+            return false;
+        }
+        for (std::size_t k = 2; k <= extra; ++k) {
+            if (p[i + k] < 0x80u || p[i + k] > 0xBFu) {
+                return false;
+            }
+        }
+        i += extra + 1;
+    }
+    return true;
+}
+
 td::Status validate_method_manifest_string(const std::string& value,
                                             const char* field) {
     if (value.empty()) {
@@ -28,6 +96,11 @@ td::Status validate_method_manifest_string(const std::string& value,
     if (value.find('\0') != std::string::npos) {
         return td::Status::Error(
             PSLICE() << "JVM method manifest " << field << " contains NUL");
+    }
+    if (!is_well_formed_utf8(value)) {
+        return td::Status::Error(
+            PSLICE() << "JVM method manifest " << field
+                     << " is not well-formed UTF-8");
     }
     return td::Status::OK();
 }

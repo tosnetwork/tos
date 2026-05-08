@@ -311,6 +311,12 @@ td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output(
     next_state.schema_version = kJvmContractAccountStateSchemaVersion;
     next_state.stdlib_hash = config.stdlib_hash;
     next_state.class_hash = previous_state.class_hash;
+    // Forward `address_commit` so the engine's address-binding gate keeps
+    // accepting subsequent calls on the same account.  Only `storage_root`
+    // is allowed to change between calls; `class_hash`, `class_bytes`,
+    // `manifest_root`, `stdlib_hash`, and `address_commit` are pinned at
+    // deploy time.
+    next_state.address_commit = previous_state.address_commit;
     next_state.class_bytes = previous_state.class_bytes;
     next_state.storage_root = invocation.storage_root;
     next_state.manifest_root = previous_state.manifest_root;

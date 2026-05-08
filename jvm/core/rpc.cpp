@@ -430,6 +430,8 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
         block::WorkchainComputeInput input;
         input.gas_limit = (req.gas_limit > 0) ? req.gas_limit
                                                : config->max_gas_per_tx;
+        std::memcpy(input.account_addr.data(), req.contract_address.data(),
+                    req.contract_address.size());
         input.current_data = req.current_state;
         input.inbound_body = vm::load_cell_slice_ref(encoded);
 
@@ -447,6 +449,27 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                 "\"outOfMemory\":false,\"gasUsed\":0,"
                 "\"vmLog\":\"accountStateBoc stdlib_hash does not match "
                 "ConfigParam 85\",\"newStateBoc\":null}";
+            std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex
+                               + "\",\"contractAddress\":\""
+                               + hex_encode(req.contract_address)
+                               + "\",\"localResult\":" + local_result_json + "}";
+            return JvmRpcResult{json_rpc_ok(id, result), false};
+        }
+        // Mirror the consensus address-binding gate too: if the supplied
+        // accountStateBoc does not actually correspond to the requested
+        // contractAddress, consensus would reject with sk_bad_state.
+        // Without this, RPC simulation would happily run any state under
+        // any address — which lets an attacker confuse clients into
+        // believing a contract exists at a victim's deterministic address.
+        const auto bound_addr = derive_jvm_contract_address_from_state(
+            previous_state.address_commit, previous_state.class_hash);
+        if (std::memcmp(req.contract_address.data(), bound_addr.data(),
+                        bound_addr.size()) != 0) {
+            local_result_json =
+                "{\"success\":false,\"outOfGas\":false,"
+                "\"outOfMemory\":false,\"gasUsed\":0,"
+                "\"vmLog\":\"accountStateBoc does not bind to "
+                "contractAddress\",\"newStateBoc\":null}";
             std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex
                                + "\",\"contractAddress\":\""
                                + hex_encode(req.contract_address)

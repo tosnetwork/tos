@@ -840,6 +840,11 @@ TEST(JvmWorkchainCore, ContractAccountStateCodecRoundTripsClassBytesAndStorage) 
   JvmContractAccountState state;
   state.stdlib_hash = cfg.stdlib_hash;
   state.class_hash = compute_jvm_class_hash(class_bytes);
+  // Distinct sentinel so the round-trip check below detects any silent
+  // truncation / drop of the address_commit field.
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x80 + i);
+  }
   state.class_bytes = class_bytes_cell;
   state.storage_root = storage_root;
   state.manifest_root = manifest_root;
@@ -852,6 +857,7 @@ TEST(JvmWorkchainCore, ContractAccountStateCodecRoundTripsClassBytesAndStorage) 
   CHECK(decoded.schema_version == kJvmContractAccountStateSchemaVersion);
   CHECK(decoded.stdlib_hash == state.stdlib_hash);
   CHECK(decoded.class_hash == state.class_hash);
+  CHECK(decoded.address_commit == state.address_commit);
   CHECK(decoded.class_bytes.not_null());
   CHECK(decoded.class_bytes->get_hash() == class_bytes_cell->get_hash());
   CHECK(decoded.storage_root.not_null());
@@ -1104,6 +1110,50 @@ TEST(JvmWorkchainCore, MethodManifestRoundTripsAndRejectsDuplicates) {
   vm::CellBuilder wrong_magic;
   wrong_magic.store_long(0, 32);
   CHECK(parse_jvm_method_manifest(wrong_magic.finalize()).is_error());
+}
+
+TEST(JvmWorkchainCore, MethodManifestRejectsMalformedUtf8Strings) {
+  // Manifest strings get spliced into JSON RPC responses (className /
+  // methodName / methodSpec).  The JSON spec requires UTF-8, so a
+  // malformed byte sequence in any of those fields would let an
+  // attacker emit a response that strict clients refuse to parse —
+  // i.e., an RPC-response DoS.  Regression for the round-2 LOW
+  // finding: validate_method_manifest_string now rejects malformed
+  // UTF-8 at consensus level, before the manifest is ever encoded.
+  using namespace jvm_workchain;
+
+  auto with_class_name = [](std::string name) {
+    JvmMethodManifestEntry e;
+    e.method_id = 0x42;
+    e.class_name = std::move(name);
+    e.method_name = "ok";
+    e.method_spec = "()V";
+    return e;
+  };
+
+  // Valid ASCII / valid UTF-8 round-trip.
+  CHECK(encode_jvm_method_manifest({with_class_name("Hello")}).not_null());
+  CHECK(encode_jvm_method_manifest({with_class_name("Héllo")}).not_null());
+  CHECK(encode_jvm_method_manifest({with_class_name("日本語")}).not_null());
+  CHECK(encode_jvm_method_manifest({with_class_name("a\xF0\x9F\x98\x80z")})
+            .not_null());  // U+1F600 (4-byte)
+
+  // Lone continuation byte.
+  CHECK(encode_jvm_method_manifest({with_class_name("\x80")}).is_null());
+  // Overlong / forbidden leader bytes.
+  CHECK(encode_jvm_method_manifest({with_class_name("\xC0\xAF")}).is_null());
+  CHECK(encode_jvm_method_manifest({with_class_name("\xC1\x80")}).is_null());
+  CHECK(encode_jvm_method_manifest({with_class_name("\xF5\x80\x80\x80")})
+            .is_null());
+  CHECK(encode_jvm_method_manifest({with_class_name("\xFF")}).is_null());
+  // Truncated 2/3/4-byte sequence.
+  CHECK(encode_jvm_method_manifest({with_class_name("\xC3")}).is_null());
+  CHECK(encode_jvm_method_manifest({with_class_name("\xE0\xA0")}).is_null());
+  CHECK(encode_jvm_method_manifest({with_class_name("\xF0\x90\x80")}).is_null());
+  // UTF-16 surrogate half (U+D800) encoded as 0xED 0xA0 0x80 — invalid in UTF-8.
+  CHECK(encode_jvm_method_manifest({with_class_name("\xED\xA0\x80")}).is_null());
+  // Overlong NUL via 0xC0 0x80 — rejected (and 0xC0 is forbidden anyway).
+  CHECK(encode_jvm_method_manifest({with_class_name("\xC0\x80")}).is_null());
 }
 
 TEST(JvmWorkchainCore, GasBridgeInstallsConfigParam85Tables) {
@@ -1807,11 +1857,21 @@ TEST(WorkchainExecutionRegistry, JvmEngineDispatchesAccountStateToRuntime) {
   JvmContractAccountState previous_state;
   previous_state.stdlib_hash = cfg.stdlib_hash;
   previous_state.class_hash = compute_jvm_class_hash(class_bytes);
+  // Engine address-binding gate: the wc=3 account address must equal
+  // sha256("TOS-JVM-CONTRACT-v2" || state.address_commit || state.class_hash).
+  // For tests built without a deploy descriptor, populate a synthetic
+  // address_commit and derive the matching account_addr.
+  for (std::size_t i = 0; i < previous_state.address_commit.size(); ++i) {
+    previous_state.address_commit[i] = static_cast<std::uint8_t>(0x40 + i);
+  }
   previous_state.class_bytes = class_bytes_cell;
   previous_state.storage_root = initial_storage.root_cell();
   previous_state.manifest_root = manifest_root;
 
   block::WorkchainComputeInput input;
+  auto expected_addr = derive_jvm_contract_address_from_state(
+      previous_state.address_commit, previous_state.class_hash);
+  std::memcpy(input.account_addr.data(), expected_addr.data(), 32);
   input.current_data = encode_jvm_contract_account_state(previous_state);
   CHECK(input.current_data.not_null());
   input.inbound_body = make_jvm_call_body(method_entry.method_id);
@@ -1889,6 +1949,74 @@ TEST(WorkchainExecutionRegistry, JvmEngineRejectsMalformedAccountState) {
   CHECK(!runtime->called);
 }
 
+TEST(WorkchainExecutionRegistry,
+     JvmEngineRejectsAccountStateWithMismatchedAddress) {
+  // Address-binding gate (round 2 fix): the host's custom-engine branch
+  // unpacks `StateInit.data` for every acc_uninit wc=3 transaction and
+  // deliberately skips `check_in_msg_state_hash` because v2 addresses are
+  // derived from the deploy descriptor, not from `hash(StateInit)`.  The
+  // engine therefore must verify on every run_compute that
+  //   account_addr == sha256("TOS-JVM-CONTRACT-v2"
+  //                          || state.address_commit
+  //                          || state.class_hash)
+  // otherwise an attacker could squat any victim's deterministic but
+  // not-yet-active address with attacker bytecode.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  block::WorkchainExecutionRegistry registry;
+  register_jvm_workchain_engine(registry, runtime);
+  auto execution = registry.resolve(descriptor, *config).move_as_ok();
+
+  // Build a well-formed JVAC state.
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x99};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x55 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  block::WorkchainComputeContext context;
+  context.workchain_id = 3;
+  context.descriptor = descriptor;
+  context.engine_config = execution.engine_config;
+
+  // Wrong account_addr (does not match address_commit + class_hash).
+  block::WorkchainComputeInput bad;
+  bad.account_addr.set_zero();  // sha256(domain || commit || class_hash) != 0
+  bad.current_data = state_cell;
+  bad.inbound_body = make_jvm_call_body(0x42);
+  bad.gas_limit = 1000;
+  auto bad_out = execution.executor->run_compute(bad, context).move_as_ok();
+  CHECK(bad_out.completed);
+  CHECK(!bad_out.accepted);
+  CHECK(bad_out.skip_reason == block::ComputePhase::sk_bad_state);
+  CHECK(!runtime->called);
+
+  // Correct account_addr (matches the binding) — runtime is invoked.
+  runtime->called = false;
+  block::WorkchainComputeInput ok;
+  auto bound_addr = derive_jvm_contract_address_from_state(
+      state.address_commit, state.class_hash);
+  std::memcpy(ok.account_addr.data(), bound_addr.data(), 32);
+  ok.current_data = state_cell;
+  ok.inbound_body = make_jvm_call_body(0x42);
+  ok.gas_limit = 1000;
+  auto ok_out = execution.executor->run_compute(ok, context).move_as_ok();
+  CHECK(ok_out.completed);
+  CHECK(runtime->called);
+}
+
 TEST(WorkchainExecutionRegistry, JvmEndToEndDeployCallSequence) {
   // End-to-end v2 sequence using the engine + a mock runtime: simulate a
   // deploy that yields the initial account state, then two calls that
@@ -1939,6 +2067,13 @@ TEST(WorkchainExecutionRegistry, JvmEndToEndDeployCallSequence) {
   JvmContractAccountState state0;
   state0.stdlib_hash = cfg.stdlib_hash;
   state0.class_hash = deploy_desc.class_hash;
+  // The engine's address-binding gate requires
+  // input.account_addr == sha256("TOS-JVM-CONTRACT-v2" ||
+  //                              state.address_commit || state.class_hash).
+  // The deploy descriptor pins both pieces, so the JVAC state and
+  // input.account_addr must agree by construction.
+  state0.address_commit = compute_jvm_address_commit(
+      deploy_desc.deployer, deploy_desc.salt, deploy_desc.init_args);
   state0.class_bytes = class_bytes_cell;
   state0.storage_root = JvmStorageCellHost{}.root_cell();
   state0.manifest_root = manifest_root;
@@ -1953,6 +2088,7 @@ TEST(WorkchainExecutionRegistry, JvmEndToEndDeployCallSequence) {
   // Call 1: feed state0, expect engine to dispatch to v2 path and produce
   // a state1 cell with a different storage_root.
   block::WorkchainComputeInput call1;
+  std::memcpy(call1.account_addr.data(), address_a.data(), 32);
   call1.current_data = state0_cell;
   call1.inbound_body = make_jvm_call_body(method_entry.method_id);
   call1.gas_limit = 1000;
@@ -1972,6 +2108,7 @@ TEST(WorkchainExecutionRegistry, JvmEndToEndDeployCallSequence) {
   // class_bytes / manifest must remain pinned.
   runtime->called = false;
   block::WorkchainComputeInput call2;
+  std::memcpy(call2.account_addr.data(), address_a.data(), 32);
   call2.current_data = out1.new_data;
   call2.inbound_body = make_jvm_call_body(method_entry.method_id);
   call2.gas_limit = 1000;
@@ -2851,11 +2988,16 @@ TEST(JvmWorkchainCore, JvmActivationConfigBuildsAndRoundTrips) {
 
 TEST(JvmWorkchainCore, DeriveJvmContractAddressFormulaMatchesSpec) {
   // Lock the v2 address derivation formula:
-  //   addr = sha256("TOS-JVM-CONTRACT-v2"
-  //               || deployer (32B) || class_hash (32B)
-  //               || salt (32B)     || init_args_cell.hash (32B))
-  // This regression guards against any future tweak to the input layout
-  // that would silently break existing deterministic addresses.
+  //   address_commit = sha256(deployer (32B) || salt (32B)
+  //                           || init_args_cell.hash (32B))
+  //   addr           = sha256("TOS-JVM-CONTRACT-v2"
+  //                           || address_commit (32B) || class_hash (32B))
+  //
+  // The two-step formula keeps the address-binding gate cheap to verify
+  // on every `run_compute` (the engine only has `state.address_commit`
+  // and `state.class_hash`, not the original deploy descriptor).  This
+  // regression guards against any future tweak to the input layout that
+  // would silently break existing deterministic addresses.
   using namespace jvm_workchain;
 
   JvmDeployDescriptor descriptor;
@@ -2870,19 +3012,38 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressFormulaMatchesSpec) {
   descriptor.init_args = make_empty_action_list();
   descriptor.class_hash = compute_jvm_class_hash(descriptor.class_bytes);
 
-  // Hand-compute the expected address.
-  std::string material = "TOS-JVM-CONTRACT-v2";
-  material.append(reinterpret_cast<const char*>(descriptor.deployer.data()),
-                  descriptor.deployer.size());
-  material.append(reinterpret_cast<const char*>(descriptor.class_hash.data()),
-                  descriptor.class_hash.size());
-  material.append(reinterpret_cast<const char*>(descriptor.salt.data()),
-                  descriptor.salt.size());
+  // Hand-compute address_commit = sha256(deployer || salt ||
+  //                                       init_args_cell.hash).
+  std::string commit_material;
+  commit_material.append(
+      reinterpret_cast<const char*>(descriptor.deployer.data()),
+      descriptor.deployer.size());
+  commit_material.append(
+      reinterpret_cast<const char*>(descriptor.salt.data()),
+      descriptor.salt.size());
   auto init_hash = descriptor.init_args->get_hash().as_slice();
-  material.append(init_hash.data(), init_hash.size());
+  commit_material.append(init_hash.data(), init_hash.size());
+
+  std::array<std::uint8_t, 32> expected_commit{};
+  td::sha256(td::Slice(commit_material),
+             td::MutableSlice(reinterpret_cast<char*>(expected_commit.data()),
+                              expected_commit.size()));
+
+  // compute_jvm_address_commit must produce the same value.
+  auto computed_commit = compute_jvm_address_commit(
+      descriptor.deployer, descriptor.salt, descriptor.init_args);
+  CHECK(computed_commit == expected_commit);
+
+  // Hand-compute the expected address from the commit + class_hash.
+  std::string addr_material = "TOS-JVM-CONTRACT-v2";
+  addr_material.append(reinterpret_cast<const char*>(expected_commit.data()),
+                       expected_commit.size());
+  addr_material.append(
+      reinterpret_cast<const char*>(descriptor.class_hash.data()),
+      descriptor.class_hash.size());
 
   std::array<std::uint8_t, 32> expected{};
-  td::sha256(td::Slice(material),
+  td::sha256(td::Slice(addr_material),
              td::MutableSlice(reinterpret_cast<char*>(expected.data()),
                               expected.size()));
 
@@ -2893,6 +3054,13 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressFormulaMatchesSpec) {
   // Re-derivation is stable.
   auto again = derive_jvm_contract_address(descriptor).move_as_ok();
   CHECK(again == actual);
+
+  // derive_jvm_contract_address_from_state(commit, class_hash) reconstructs
+  // the same address — this is the helper the engine uses on every
+  // `run_compute` to verify the address-binding gate.
+  auto from_state = derive_jvm_contract_address_from_state(
+      computed_commit, descriptor.class_hash);
+  CHECK(from_state == actual);
 }
 
 // ---------------------------------------------------------------------------
@@ -3336,11 +3504,20 @@ TEST(WorkchainExecutionRegistry, JvmDeterminismReplay) {
   JvmContractAccountState state0;
   state0.stdlib_hash = cfg.stdlib_hash;
   state0.class_hash = compute_jvm_class_hash(class_bytes);
+  // Synthetic address_commit so the engine's address-binding gate
+  // accepts the JVAC state.  account_addr below is computed from this
+  // commit + class_hash via the same helper the engine uses.
+  for (std::size_t i = 0; i < state0.address_commit.size(); ++i) {
+    state0.address_commit[i] = static_cast<std::uint8_t>(0x71 + i);
+  }
   state0.class_bytes = class_bytes_cell;
   state0.storage_root = JvmStorageCellHost{}.root_cell();
   state0.manifest_root = manifest_root;
   auto state0_cell = encode_jvm_contract_account_state(state0);
   CHECK(state0_cell.not_null());
+
+  auto bound_addr = derive_jvm_contract_address_from_state(
+      state0.address_commit, state0.class_hash);
 
   block::WorkchainComputeContext context;
   context.workchain_id = 3;
@@ -3349,6 +3526,7 @@ TEST(WorkchainExecutionRegistry, JvmDeterminismReplay) {
 
   auto run = [&](td::Ref<vm::Cell> in_state, std::uint32_t method_id) {
     block::WorkchainComputeInput input;
+    std::memcpy(input.account_addr.data(), bound_addr.data(), 32);
     input.current_data = in_state;
     input.inbound_body = make_jvm_call_body(method_id);
     input.gas_limit = 1000;

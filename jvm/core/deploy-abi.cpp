@@ -172,24 +172,44 @@ JvmClassHash compute_jvm_class_hash(const JvmStorageValue& class_bytes) {
     return out;
 }
 
-td::Result<JvmContractId> derive_jvm_contract_address(
-    const JvmDeployDescriptor& descriptor) {
-    TRY_STATUS(validate_deploy_descriptor(descriptor));
-
-    std::string material = "TOS-JVM-CONTRACT-v2";
-    append_bytes(material, descriptor.deployer.data(),
-                 descriptor.deployer.size());
-    append_bytes(material, descriptor.class_hash.data(),
-                 descriptor.class_hash.size());
-    append_bytes(material, descriptor.salt.data(), descriptor.salt.size());
-    auto init_hash = descriptor.init_args->get_hash().as_slice();
+JvmAddressCommit compute_jvm_address_commit(
+    const JvmContractId& deployer, const JvmContractId& salt,
+    td::Ref<vm::Cell> init_args) {
+    std::string material;
+    append_bytes(material, deployer.data(), deployer.size());
+    append_bytes(material, salt.data(), salt.size());
+    auto init_hash = init_args->get_hash().as_slice();
     material.append(init_hash.data(), init_hash.size());
+
+    JvmAddressCommit out{};
+    td::sha256(td::Slice(material),
+               td::MutableSlice(reinterpret_cast<char*>(out.data()),
+                                out.size()));
+    return out;
+}
+
+JvmContractId derive_jvm_contract_address_from_state(
+    const JvmAddressCommit& address_commit,
+    const JvmClassHash& class_hash) {
+    std::string material = "TOS-JVM-CONTRACT-v2";
+    append_bytes(material, address_commit.data(), address_commit.size());
+    append_bytes(material, class_hash.data(), class_hash.size());
 
     JvmContractId out{};
     td::sha256(td::Slice(material),
                td::MutableSlice(reinterpret_cast<char*>(out.data()),
                                 out.size()));
     return out;
+}
+
+td::Result<JvmContractId> derive_jvm_contract_address(
+    const JvmDeployDescriptor& descriptor) {
+    TRY_STATUS(validate_deploy_descriptor(descriptor));
+
+    auto address_commit = compute_jvm_address_commit(
+        descriptor.deployer, descriptor.salt, descriptor.init_args);
+    return derive_jvm_contract_address_from_state(address_commit,
+                                                  descriptor.class_hash);
 }
 
 td::Ref<vm::Cell> encode_jvm_deploy_descriptor(

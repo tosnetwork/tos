@@ -21,10 +21,20 @@ namespace jvm_workchain {
 constexpr std::uint32_t kJvmDeployDescriptorMagic = 0x4a564d44;  // "JVMD"
 constexpr std::uint8_t kJvmDeployDescriptorSchemaVersion = 1;
 constexpr unsigned kJvmClassHashBytes = 32;
+constexpr unsigned kJvmAddressCommitBytes = 32;
 constexpr std::size_t kJvmDeployClassNameMaxBytes = 512;
 constexpr std::size_t kJvmDeployClassBytesMaxBytes = kJvmStorageValueMaxBytes;
 
 using JvmClassHash = std::array<std::uint8_t, kJvmClassHashBytes>;
+
+// 32-byte commitment that binds a JVAC state cell to its wc=3 account
+// address.  `address_commit = sha256(deployer || salt ||
+// init_args_cell.hash)`; the account address is
+// `sha256("TOS-JVM-CONTRACT-v2" || address_commit || class_hash)`.
+// Stored inside JVAC so the engine can verify on every `run_compute`
+// that the decoded state actually corresponds to the account address
+// it was loaded from.
+using JvmAddressCommit = std::array<std::uint8_t, kJvmAddressCommitBytes>;
 
 struct JvmDeployDescriptor {
     std::uint8_t schema_version{kJvmDeployDescriptorSchemaVersion};
@@ -38,15 +48,23 @@ struct JvmDeployDescriptor {
 
 JvmClassHash compute_jvm_class_hash(const JvmStorageValue& class_bytes);
 
-// Deterministic per-contract wc=3 account address:
+// `address_commit = sha256(deployer || salt || init_args_cell.hash)`.
+// Captures everything about a deploy that does not become part of
+// `class_hash`, in a single bits256 word.  The engine stores this inside
+// JVAC and verifies on every run.
+JvmAddressCommit compute_jvm_address_commit(
+    const JvmContractId& deployer, const JvmContractId& salt,
+    td::Ref<vm::Cell> init_args);
+
+// Deterministic per-contract wc=3 account address.  Two-step formula
+// keeps the address-binding gate cheap to verify on every `run_compute`
+// (the engine only needs `state.address_commit` and `state.class_hash`,
+// not the original deploy descriptor):
 //
-//   addr = sha256(
-//       "TOS-JVM-CONTRACT-v2"
-//    || deployer (32B, the wc=3 sender of the deploy action)
-//    || class_hash (32B, sha256 of class_bytes)
-//    || salt (32B)
-//    || init_args_cell.hash (32B)
-//   )
+//   address_commit = sha256(deployer || salt || init_args_cell.hash)
+//   addr           = sha256("TOS-JVM-CONTRACT-v2"
+//                           || address_commit
+//                           || class_hash)
 //
 // The output is the 256-bit `tos::StdSmcAddress` part of the StdAddress
 // `{workchain=3, addr=...}`.  Because TOS workchain addresses are flat with
@@ -54,6 +72,14 @@ JvmClassHash compute_jvm_class_hash(const JvmStorageValue& class_bytes);
 // straight into the address space.
 td::Result<JvmContractId> derive_jvm_contract_address(
     const JvmDeployDescriptor& descriptor);
+
+// Reconstruct the same address from a parsed JVAC state, for the
+// engine-side address-binding check at `run_compute` time.  Equivalent
+// to `derive_jvm_contract_address(descriptor)` whenever
+// `address_commit == compute_jvm_address_commit(deployer, salt,
+// init_args)` and `class_hash == compute_jvm_class_hash(class_bytes)`.
+JvmContractId derive_jvm_contract_address_from_state(
+    const JvmAddressCommit& address_commit, const JvmClassHash& class_hash);
 
 td::Ref<vm::Cell> encode_jvm_deploy_descriptor(
     const JvmDeployDescriptor& descriptor);

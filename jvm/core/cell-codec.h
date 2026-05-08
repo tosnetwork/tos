@@ -29,6 +29,12 @@ struct JvmContractAccountState {
     std::uint8_t schema_version{kJvmContractAccountStateSchemaVersion};
     std::array<std::uint8_t, kJvmStdlibHashBytes> stdlib_hash{};
     JvmClassHash class_hash{};
+    // address_commit = sha256(deployer || salt || init_args_cell_hash).
+    // The wc=3 account address is sha256("TOS-JVM-CONTRACT-v2" ||
+    // address_commit || class_hash); the engine verifies this on every
+    // run_compute so an attacker cannot squat a victim's deterministic
+    // address with attacker bytecode (the address-binding gate).
+    JvmAddressCommit address_commit{};
     // class_bytes is held as a Cell ref so the Cell DB physically deduplicates
     // contracts that share identical bytecode (verified: CellStorage keys by
     // hash with refcount accounting; see crypto/vm/db/CellStorage.cpp:267).
@@ -42,10 +48,20 @@ struct JvmContractAccountState {
 //     schema_version:uint8 (=2)
 //     stdlib_hash:bits256
 //     class_hash:bits256
+//     address_commit:bits256
 //     class_bytes:^Cell
 //     storage_root:(Maybe ^Cell)
 //     manifest_root:(Maybe ^Cell)
 //     = JvmContractAccountState;
+//
+// Address-binding invariant: after a successful decode, the decoded state's
+// `(address_commit, class_hash)` MUST satisfy
+//     account_addr == sha256("TOS-JVM-CONTRACT-v2" || address_commit ||
+//                             class_hash)
+// otherwise the engine rejects the run_compute (`run_contract` checks via
+// `derive_jvm_contract_address_from_state`).  This is why an attacker
+// cannot squat a victim's deterministic but not-yet-active address by
+// sending an arbitrary StateInit there.
 td::Ref<vm::Cell> encode_jvm_contract_account_state(
     const JvmContractAccountState& state);
 

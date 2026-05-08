@@ -65,6 +65,9 @@ td::Ref<vm::Cell> encode_jvm_contract_account_state(
                              static_cast<unsigned>(state.stdlib_hash.size())) ||
         !cb.store_bytes_bool(state.class_hash.data(),
                              static_cast<unsigned>(state.class_hash.size())) ||
+        !cb.store_bytes_bool(state.address_commit.data(),
+                             static_cast<unsigned>(
+                                 state.address_commit.size())) ||
         !cb.store_ref_bool(state.class_bytes) ||
         !store_maybe_ref(cb, state.storage_root) ||
         !store_maybe_ref(cb, state.manifest_root)) {
@@ -105,6 +108,9 @@ bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,
                             static_cast<unsigned>(out.stdlib_hash.size())) ||
             !cs.fetch_bytes(out.class_hash.data(),
                             static_cast<unsigned>(out.class_hash.size())) ||
+            !cs.fetch_bytes(out.address_commit.data(),
+                            static_cast<unsigned>(
+                                out.address_commit.size())) ||
             cs.size_refs() == 0 ||
             !cs.fetch_ref_to(out.class_bytes) ||
             !fetch_maybe_ref(cs, out.storage_root) ||
