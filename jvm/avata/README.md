@@ -184,18 +184,23 @@ Supporting `invokedynamic` in a consensus VM requires a deterministic
 VM-internal bootstrap mechanism that does not depend on any host runtime
 behaviour; this is deferred to a post-v1 design.
 
-### Reserved opcodes `breakpoint` (0xca) and `impdep2` (0xff) — no-op with 1 gas
+### Reserved and undefined opcodes — no-op with 1 gas
 
-The JVMS reserves two opcodes that `javac` never emits in normal class files:
-`breakpoint` (0xca, used by debuggers) and `impdep2` (0xff,
-implementation-defined).  A hand-crafted or maliciously modified class file
-could embed either opcode in a method body.
+The Java 8 opcode space contains three categories of byte values that `javac`
+never emits in normal class files but that could appear in a hand-crafted or
+maliciously modified class file:
 
-The interpreter treats both as **no-ops that consume 1 gas unit** and continue
-execution.  The 1-gas cost comes from `TOS_GAS_DEFAULT` in the opcode gas table,
-charged by the same unified gas-accounting path that runs before every opcode
-dispatch.  No exception is thrown; execution continues normally after the
-opcode.
+| Range | Description |
+|---|---|
+| `breakpoint` (0xca) | JVM debugger breakpoint; reserved by JVMS |
+| 0xcb–0xfd (51 values) | Completely undefined in the JVMS |
+| `impdep2` (0xff) | Implementation-dependent; reserved by JVMS |
+
+The interpreter treats **all of these as no-ops that consume 1 gas unit** and
+continue execution.  The 1-gas cost comes from `TOS_GAS_DEFAULT` in the opcode
+gas table, charged by the unified gas-accounting path that runs before every
+opcode dispatch.  No exception is thrown; execution continues to the next
+bytecode.
 
 This is a deliberate safety design:
 
@@ -204,10 +209,11 @@ This is a deliberate safety design:
   reaches this path.
 - Crashing the validator process (the previous behaviour via `abort()`) would
   be a denial-of-service vulnerability: a malicious deployer could submit a
-  class file that kills any validator node that executes it.
-- The no-op treatment is safe because neither opcode has observable side effects
-  on the contract state, and the gas charge ensures the attack cannot be used
-  to execute an unlimited number of these opcodes for free.
+  class file containing any of the 53 affected byte values to kill any
+  validator node that executes the contract.
+- The no-op treatment is safe because none of these opcodes have observable
+  side effects on contract state, and the gas charge ensures the attack cannot
+  be used to execute an unlimited number of them for free.
 
 ## Building
 

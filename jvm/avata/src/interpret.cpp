@@ -2964,13 +2964,18 @@ loop:
 
   case breakpoint:
   case impdep2:
-    // Reserved opcodes (0xca / 0xff).  Gas was already charged (1 unit each)
-    // by the opcode gas table.  Treat as a no-op so a malformed class file
-    // cannot crash the validator process.
-    goto loop;
+    // Named reserved opcodes (0xca / 0xff): fall through to the default
+    // no-op treatment below.
 
   default:
-    abort(t);
+    // Any opcode byte not matched above (including the 51 undefined values
+    // 0xcb–0xfd that have no JVMS name) reaches here.  Gas was already
+    // charged by the unified gas table before the switch (TOS_GAS_DEFAULT = 1
+    // for every reserved/undefined slot), so treat these as no-ops rather
+    // than crashing the validator process.  A malformed or hand-crafted class
+    // file containing any of these bytes executes safely and pays 1 gas per
+    // occurrence.
+    goto loop;
   }
 
 wide:
