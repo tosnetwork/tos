@@ -43,11 +43,30 @@ constexpr td::int32 kJvmReceiptPageSize = 64;
 constexpr std::uint64_t kJvmReceiptMaxScannedTransactions = 4096;
 constexpr std::size_t kJvmReceiptMaxResults = 1024;
 
-tos::StdSmcAddress jvm_singleton_executor_address() {
-  tos::StdSmcAddress addr;
-  addr.set_zero();
-  addr.data()[31] = 1;
-  return addr;
+// Extract the per-contract wc=3 account address from a v2 jvm_callContract or
+// jvm_getContractState request body.  Returns std::nullopt if the params are
+// malformed or the field is absent.
+std::optional<tos::StdSmcAddress> jvm_rpc_contract_address(
+    const std::string& method, const std::string& params_json) {
+  if (method == "jvm_callContract") {
+    auto req = jvm_workchain::parse_jvm_call_contract_request(params_json);
+    if (!req.has_value()) {
+      return std::nullopt;
+    }
+    tos::StdSmcAddress addr;
+    std::memcpy(addr.data(), req->contract_address.data(), 32);
+    return addr;
+  }
+  if (method == "jvm_getContractState") {
+    auto req = jvm_workchain::parse_jvm_get_contract_state_request(params_json);
+    if (!req.has_value()) {
+      return std::nullopt;
+    }
+    tos::StdSmcAddress addr;
+    std::memcpy(addr.data(), req->contract_address.data(), 32);
+    return addr;
+  }
+  return std::nullopt;
 }
 
 std::string jvm_rpc_hex_encode(td::Slice bytes) {
@@ -63,9 +82,12 @@ std::string jvm_rpc_hex_encode(td::Slice bytes) {
   return out;
 }
 
-bool jvm_rpc_needs_live_executor_state(const std::string& method,
-                                       const std::string& params_json) {
+// True if the method needs the full-node to load the live per-account state
+// (no `accountStateBoc` / legacy `executorStateBoc` in the params).
+bool jvm_rpc_needs_live_account_state(const std::string& method,
+                                      const std::string& params_json) {
   return (method == "jvm_callContract" || method == "jvm_getContractState")
+      && params_json.find("\"accountStateBoc\"") == std::string::npos
       && params_json.find("\"executorStateBoc\"") == std::string::npos;
 }
 
@@ -249,8 +271,8 @@ void append_jvm_receipts_from_transaction(
   }
 }
 
-std::string inject_executor_state_boc(std::string params_json,
-                                      const std::string& state_boc_hex) {
+std::string inject_account_state_boc(std::string params_json,
+                                     const std::string& state_boc_hex) {
   auto pos = params_json.rfind('}');
   if (pos == std::string::npos) {
     return params_json;
@@ -262,7 +284,7 @@ std::string inject_executor_state_boc(std::string params_json,
   }
   const bool empty_object = before > 0 && params_json[before - 1] == '{';
   std::string field = empty_object ? "" : ",";
-  field += "\"executorStateBoc\":\"" + state_boc_hex + "\"";
+  field += "\"accountStateBoc\":\"" + state_boc_hex + "\"";
   params_json.insert(pos, field);
   return params_json;
 }
@@ -393,17 +415,27 @@ void JsonRpcServer::handle_jvm_rpc_method(std::string method,
       }
       auto jvm_cfg = jvm_cfg_r.move_as_ok();
 
-      if (!jvm_rpc_needs_live_executor_state(slot->method, slot->params_json)) {
+      if (!jvm_rpc_needs_live_account_state(slot->method, slot->params_json)) {
         dispatch_with_config_and_params(jvm_cfg, slot->params_json);
         return;
       }
 
-      block::StdAddress executor_addr(3, jvm_singleton_executor_address());
+      // Each JVM contract is its own wc=3 account at a deterministic
+      // 256-bit address (`derive_jvm_contract_address`).  Pull the address
+      // from the request and load THAT account, not a singleton executor.
+      auto contract_address_opt =
+          jvm_rpc_contract_address(slot->method, slot->params_json);
+      if (!contract_address_opt.has_value()) {
+        settle_error(slot, -32602,
+                     "JVM RPC missing or malformed contractAddress");
+        return;
+      }
+      block::StdAddress account_addr(3, *contract_address_opt);
       auto account_inner = tos::serialize_tl_object(
           tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
               std::move(f->id_),
               tos::create_tl_object<tos::lite_api::liteServer_accountId>(
-                  executor_addr.workchain, executor_addr.addr)),
+                  account_addr.workchain, account_addr.addr)),
           true);
       auto account_query = tos::serialize_tl_object(
           tos::create_tl_object<tos::lite_api::liteServer_query>(
@@ -416,11 +448,11 @@ void JsonRpcServer::handle_jvm_rpc_method(std::string method,
           td::PromiseCreator::lambda(
               [slot, settle_error, dispatch_with_config_and_params =
                    std::move(dispatch_with_config_and_params),
-               jvm_cfg = std::move(jvm_cfg), executor_addr](
+               jvm_cfg = std::move(jvm_cfg), account_addr](
                   td::Result<td::BufferSlice> account_res) mutable {
         if (account_res.is_error()) {
           settle_error(slot, -32603,
-                       PSTRING() << "JVM executor account state query failed: "
+                       PSTRING() << "JVM contract account state query failed: "
                                  << account_res.error());
           return;
         }
@@ -429,31 +461,31 @@ void JsonRpcServer::handle_jvm_rpc_method(std::string method,
                 account_res.move_as_ok(), true);
         if (account_r.is_error()) {
           settle_error(slot, -32603,
-                       PSTRING() << "parse JVM executor account state: "
+                       PSTRING() << "parse JVM contract account state: "
                                  << account_r.error());
           return;
         }
         auto account = account_r.move_as_ok();
-        auto parsed_r = ParsedAccountState::parse(account, executor_addr);
+        auto parsed_r = ParsedAccountState::parse(account, account_addr);
         if (parsed_r.is_error()) {
           settle_error(slot, -32603,
-                       PSTRING() << "parse JVM executor account: "
+                       PSTRING() << "parse JVM contract account: "
                                  << parsed_r.error());
           return;
         }
         auto parsed = parsed_r.move_as_ok();
         if (parsed.data_cell.is_null()) {
-          settle_error(slot, -32603, "JVM executor account has no data cell");
+          settle_error(slot, -32603, "JVM contract account has no data cell");
           return;
         }
         auto boc_r = vm::std_boc_serialize(parsed.data_cell, 0);
         if (boc_r.is_error()) {
           settle_error(slot, -32603,
-                       PSTRING() << "serialize JVM executor state BOC: "
+                       PSTRING() << "serialize JVM contract account state BOC: "
                                  << boc_r.error());
           return;
         }
-        auto params_with_state = inject_executor_state_boc(
+        auto params_with_state = inject_account_state_boc(
             slot->params_json, jvm_rpc_hex_encode(boc_r.ok().as_slice()));
         dispatch_with_config_and_params(jvm_cfg, params_with_state);
       }));
@@ -544,7 +576,7 @@ void JsonRpcServer::handle_jvm_get_receipts_rpc_method(
 
     td::StringBuilder sb;
     sb << "{\"jsonrpc\":\"2.0\",\"id\":" << s->req_id
-       << ",\"result\":{\"contractId\":\""
+       << ",\"result\":{\"contractAddress\":\""
        << jvm_rpc_contract_id_hex(s->req.contract_address)
        << "\",\"fromBlock\":" << s->req.from_block
        << ",\"toBlock\":" << s->to_block
@@ -581,11 +613,13 @@ void JsonRpcServer::handle_jvm_get_receipts_rpc_method(
       return;
     }
 
+    tos::StdSmcAddress contract_addr;
+    std::memcpy(contract_addr.data(), slot->req.contract_address.data(), 32);
     auto tx_inner = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_getTransactions>(
             kJvmReceiptPageSize,
             tos::create_tl_object<tos::lite_api::liteServer_accountId>(
-                3, jvm_singleton_executor_address()),
+                3, contract_addr),
             static_cast<td::int64>(from_lt), from_hash),
         true);
     auto tx_query = tos::serialize_tl_object(
@@ -710,12 +744,15 @@ void JsonRpcServer::handle_jvm_get_receipts_rpc_method(
     }
     auto mc = mc_r.move_as_ok();
 
-    block::StdAddress executor_addr(3, jvm_singleton_executor_address());
+    tos::StdSmcAddress receipts_addr_inner;
+    std::memcpy(receipts_addr_inner.data(),
+                slot->req.contract_address.data(), 32);
+    block::StdAddress account_addr(3, receipts_addr_inner);
     auto account_inner = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
             std::move(mc->last_),
             tos::create_tl_object<tos::lite_api::liteServer_accountId>(
-                executor_addr.workchain, executor_addr.addr)),
+                account_addr.workchain, account_addr.addr)),
         true);
     auto account_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(
@@ -726,11 +763,11 @@ void JsonRpcServer::handle_jvm_get_receipts_rpc_method(
         self_id, &JsonRpcServer::send_liteserver_query,
         std::move(account_query),
         td::PromiseCreator::lambda(
-            [slot, executor_addr, settle_error, finish, fetch_page](
+            [slot, account_addr, settle_error, finish, fetch_page](
                 td::Result<td::BufferSlice> account_res) mutable {
       if (account_res.is_error()) {
         settle_error(slot, -32603,
-                     PSTRING() << "JVM executor account state query failed: "
+                     PSTRING() << "JVM contract account state query failed: "
                                << account_res.error());
         return;
       }
@@ -739,12 +776,12 @@ void JsonRpcServer::handle_jvm_get_receipts_rpc_method(
               account_res.move_as_ok(), true);
       if (account_r.is_error()) {
         settle_error(slot, -32603,
-                     PSTRING() << "parse JVM executor account state: "
+                     PSTRING() << "parse JVM contract account state: "
                                << account_r.error());
         return;
       }
       auto account = account_r.move_as_ok();
-      auto parsed_r = ParsedAccountState::parse(account, executor_addr);
+      auto parsed_r = ParsedAccountState::parse(account, account_addr);
       if (parsed_r.is_error()) {
         settle_error(slot, -32603,
                      PSTRING() << "parse JVM executor account: "

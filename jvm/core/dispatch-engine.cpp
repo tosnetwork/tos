@@ -92,17 +92,12 @@ class JvmNativeEngine final : public block::WorkchainEngine {
     block::AccountExecutionPolicy account_policy(
         const block::WorkchainExecutionDescriptor& /*descriptor*/,
         const block::WorkchainEngineConfig& /*engine_config*/) const override {
-        // JVM v2 account-native topology: each contract is its own wc=3
+        // Account-native topology: each JVM contract is its own wc=3
         // account at a deterministic address derived by
         // `derive_jvm_contract_address`.  The host accepts any address in
         // wc=3 and lets the engine emit `action_create_account` to
         // materialize new contract accounts (host plumbing in
         // crypto/block/transaction.cpp Transaction::try_action_create_account).
-        //
-        // The legacy v1 SingletonExecutor at 0x0000…0001 is still reachable
-        // under EngineDefined because EngineDefined accepts any account in
-        // the workchain; existing v1 code paths and tests therefore keep
-        // working until they are migrated to the per-account model.
         block::AccountExecutionPolicy policy;
         policy.kind = block::AccountExecutionPolicyKind::EngineDefined;
         policy.singleton_address.reset();
