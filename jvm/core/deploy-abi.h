@@ -56,30 +56,55 @@ JvmAddressCommit compute_jvm_address_commit(
     const JvmContractId& deployer, const JvmContractId& salt,
     td::Ref<vm::Cell> init_args);
 
+// Type-tagged 32-byte hash of a `manifest_root` cell ref (zero if null).
+// Used in the engine's address-binding gate.  Manifest is immutable
+// post-deploy, so the hash binds to the address forever.
+using JvmManifestRootHash = std::array<std::uint8_t, 32>;
+JvmManifestRootHash compute_jvm_manifest_root_hash(
+    td::Ref<vm::Cell> manifest_root);
+
 // Deterministic per-contract wc=3 account address.  Two-step formula
 // keeps the address-binding gate cheap to verify on every `run_compute`
-// (the engine only needs `state.address_commit` and `state.class_hash`,
-// not the original deploy descriptor):
+// (the engine only needs `state.address_commit`, `state.class_hash`,
+// and `state.manifest_root`, not the original deploy descriptor):
 //
-//   address_commit = sha256(deployer || salt || init_args_cell.hash)
-//   addr           = sha256("TOS-JVM-CONTRACT-v2"
-//                           || address_commit
-//                           || class_hash)
+//   address_commit     = sha256(deployer || salt || init_args_cell.hash)
+//   manifest_root_hash = sha256-cell-hash(manifest_root) or zero if null
+//   addr               = sha256("TOS-JVM-CONTRACT-v2"
+//                               || address_commit
+//                               || class_hash
+//                               || manifest_root_hash)
+//
+// `manifest_root_hash` joins `class_hash` as an immutable per-account
+// commitment so an attacker who knows a victim's deploy tuple cannot
+// race them to the deterministic address with a JVAC carrying the same
+// (address_commit, class_hash) but a different manifest (which would
+// otherwise let the attacker redirect method_id → method dispatch).
+//
+// Initial `storage_root` is constrained separately: at first activation
+// (`WorkchainComputeInput::msg_state_used == true`) the engine rejects
+// any non-empty `state.storage_root`.  This blocks the parallel
+// "pre-load attacker storage" attack without needing storage_root in
+// the address derivation (which would break subsequent calls when
+// storage legitimately mutates).
 //
 // The output is the 256-bit `tos::StdSmcAddress` part of the StdAddress
 // `{workchain=3, addr=...}`.  Because TOS workchain addresses are flat with
 // no reserved bits (`tos/tos-types.h:36-46`), the full sha256 output goes
 // straight into the address space.
 td::Result<JvmContractId> derive_jvm_contract_address(
-    const JvmDeployDescriptor& descriptor);
+    const JvmDeployDescriptor& descriptor,
+    td::Ref<vm::Cell> manifest_root = {});
 
 // Reconstruct the same address from a parsed JVAC state, for the
 // engine-side address-binding check at `run_compute` time.  Equivalent
-// to `derive_jvm_contract_address(descriptor)` whenever
+// to `derive_jvm_contract_address(descriptor, manifest_root)` whenever
 // `address_commit == compute_jvm_address_commit(deployer, salt,
-// init_args)` and `class_hash == compute_jvm_class_hash(class_bytes)`.
+// init_args)`, `class_hash == compute_jvm_class_hash(class_bytes)`, and
+// `manifest_root_hash == compute_jvm_manifest_root_hash(manifest_root)`.
 JvmContractId derive_jvm_contract_address_from_state(
-    const JvmAddressCommit& address_commit, const JvmClassHash& class_hash);
+    const JvmAddressCommit& address_commit, const JvmClassHash& class_hash,
+    const JvmManifestRootHash& manifest_root_hash);
 
 td::Ref<vm::Cell> encode_jvm_deploy_descriptor(
     const JvmDeployDescriptor& descriptor);

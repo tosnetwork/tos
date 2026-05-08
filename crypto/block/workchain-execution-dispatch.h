@@ -152,6 +152,15 @@ struct WorkchainComputeInput {
   td::Ref<vm::CellSlice> inbound_body;
   tos::LogicalTime msg_lt{0};
   std::uint64_t gas_limit{0};
+  // True iff `current_data` was populated by unpacking the inbound
+  // message's StateInit.data (the host-side first-activation path in
+  // `prepare_compute_phase`); false on subsequent calls when
+  // `current_data` came from the prior tx's account.data.  Engines use
+  // this to apply stricter validation on the first decode of a state
+  // cell — TVM uses `check_in_msg_state_hash`; custom engines (e.g.
+  // JVM v2) use it to enforce activation invariants their address
+  // derivation cannot capture (e.g., empty initial storage_root).
+  bool msg_state_used{false};
 };
 
 struct WorkchainComputeOutput {

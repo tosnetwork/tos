@@ -2099,6 +2099,11 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     input.inbound_body = in_msg_body;
     input.msg_lt = start_lt;
     input.gas_limit = cp.gas_limit;
+    // Tell the engine whether `current_data` came from unpacking the
+    // inbound StateInit (first activation) so it can enforce stricter
+    // invariants on the first decode (e.g., JVM v2 requires empty
+    // initial storage_root).
+    input.msg_state_used = use_msg_state;
 
     block::WorkchainComputeContext context;
     context.workchain_id = account.workchain;

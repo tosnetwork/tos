@@ -151,25 +151,53 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 "JVM contract account stdlib hash does not match ConfigParam 85");
         }
         // Address-binding gate: the wc=3 account address must equal
-        // `sha256("TOS-JVM-CONTRACT-v2" || state.address_commit ||
-        // state.class_hash)`.  Without this check an attacker could deliver
-        // any well-formed StateInit to a victim's deterministic but
-        // not-yet-active address (the host-side custom-engine branch
-        // unpacks `StateInit.data` for every acc_uninit wc=3 transaction
-        // and skips `check_in_msg_state_hash` because v2 addresses are
+        //   sha256("TOS-JVM-CONTRACT-v2"
+        //          || state.address_commit
+        //          || state.class_hash
+        //          || sha256-cell-hash(state.manifest_root))
+        //
+        // Without this check an attacker could deliver any well-formed
+        // StateInit to a victim's deterministic but not-yet-active
+        // address (the host-side custom-engine branch unpacks
+        // `StateInit.data` for every acc_uninit wc=3 transaction and
+        // skips `check_in_msg_state_hash` because v2 addresses are
         // derived from the deploy descriptor, not from `hash(StateInit)`).
-        // Since the address is `H(domain || address_commit || class_hash)`,
-        // the only way to land at a chosen victim address is a sha256
+        // Since the address is the sha256 of the four bound fields, the
+        // only way to land at a chosen victim address is a sha256
         // pre-image; rejecting any state whose `(address_commit,
-        // class_hash)` does not produce `account_addr` therefore prevents
-        // the squat.
+        // class_hash, manifest_root_hash)` does not produce
+        // `account_addr` therefore prevents both the bytecode-squat and
+        // the manifest-swap (method_id redirect) attacks.
+        //
+        // Manifest is immutable post-deploy (build_jvm_workchain_output
+        // forwards previous_state.manifest_root unchanged), so this
+        // binding holds on every subsequent call.
+        const auto manifest_hash = compute_jvm_manifest_root_hash(
+            state.manifest_root);
         const auto expected_addr = derive_jvm_contract_address_from_state(
-            state.address_commit, state.class_hash);
+            state.address_commit, state.class_hash, manifest_hash);
         if (std::memcmp(input.account_addr.data(), expected_addr.data(),
                         expected_addr.size()) != 0) {
             return skipped_output(
                 block::ComputePhase::sk_bad_state,
                 "JVM contract account state does not bind to account address");
+        }
+        // First-activation invariant: storage_root must be empty/null.
+        // Without this, an attacker who knows the victim's deploy tuple
+        // (deployer/salt/init_args/class_bytes/manifest) could pre-load
+        // attacker-favorable storage at the victim's deterministic
+        // address (e.g. write `owner = attacker` before the contract
+        // even runs once).  The address-binding gate alone cannot
+        // prevent this because storage_root legitimately mutates after
+        // first activation; the host-supplied `msg_state_used` flag is
+        // the only signal that distinguishes "first decode of a
+        // StateInit-derived state" from "decode of an engine-produced
+        // state."
+        if (input.msg_state_used && state.storage_root.not_null()) {
+            return skipped_output(
+                block::ComputePhase::sk_bad_state,
+                "JVM contract account state has non-empty storage_root at "
+                "first activation");
         }
 
         TRY_RESULT(invocation,

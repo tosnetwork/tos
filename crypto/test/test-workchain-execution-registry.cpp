@@ -1870,12 +1870,15 @@ TEST(WorkchainExecutionRegistry, JvmEngineDispatchesAccountStateToRuntime) {
 
   block::WorkchainComputeInput input;
   auto expected_addr = derive_jvm_contract_address_from_state(
-      previous_state.address_commit, previous_state.class_hash);
+      previous_state.address_commit, previous_state.class_hash,
+      compute_jvm_manifest_root_hash(previous_state.manifest_root));
   std::memcpy(input.account_addr.data(), expected_addr.data(), 32);
   input.current_data = encode_jvm_contract_account_state(previous_state);
   CHECK(input.current_data.not_null());
   input.inbound_body = make_jvm_call_body(method_entry.method_id);
   input.gas_limit = 1000;
+  // This is a "subsequent call" test (the previous_state already has
+  // seeded storage), so msg_state_used remains false.
 
   block::WorkchainComputeContext context;
   context.workchain_id = 3;
@@ -2007,13 +2010,86 @@ TEST(WorkchainExecutionRegistry,
   runtime->called = false;
   block::WorkchainComputeInput ok;
   auto bound_addr = derive_jvm_contract_address_from_state(
-      state.address_commit, state.class_hash);
+      state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
   std::memcpy(ok.account_addr.data(), bound_addr.data(), 32);
   ok.current_data = state_cell;
   ok.inbound_body = make_jvm_call_body(0x42);
   ok.gas_limit = 1000;
   auto ok_out = execution.executor->run_compute(ok, context).move_as_ok();
   CHECK(ok_out.completed);
+  CHECK(runtime->called);
+
+  // Manifest-swap rejected (different manifest root → expected_addr
+  // shifts; account_addr no longer matches).
+  runtime->called = false;
+  JvmContractAccountState attacker_state = state;
+  JvmMethodManifestEntry attacker_entry;
+  attacker_entry.method_id = 0x42;
+  attacker_entry.class_name = "AttackerEntryPoint";
+  attacker_entry.method_name = "ok";
+  attacker_entry.method_spec = "()V";
+  attacker_state.manifest_root =
+      encode_jvm_method_manifest({attacker_entry});
+  CHECK(attacker_state.manifest_root->get_hash()
+        != state.manifest_root->get_hash());
+  auto attacker_state_cell =
+      encode_jvm_contract_account_state(attacker_state);
+  CHECK(attacker_state_cell.not_null());
+  block::WorkchainComputeInput swap;
+  // Aim at the LEGITIMATE address (what the attacker actually wants
+  // to squat) — the swapped manifest must shift expected_addr away.
+  std::memcpy(swap.account_addr.data(), bound_addr.data(), 32);
+  swap.current_data = attacker_state_cell;
+  swap.inbound_body = make_jvm_call_body(0x42);
+  swap.gas_limit = 1000;
+  auto swap_out = execution.executor->run_compute(swap, context).move_as_ok();
+  CHECK(swap_out.completed);
+  CHECK(!swap_out.accepted);
+  CHECK(swap_out.skip_reason == block::ComputePhase::sk_bad_state);
+  CHECK(!runtime->called);
+
+  // First-activation invariant: msg_state_used==true with non-empty
+  // storage_root must reject.  An attacker would otherwise pre-load
+  // attacker-favorable storage at the victim's deterministic address.
+  runtime->called = false;
+  JvmStorageCellHost preload;
+  JvmStorageSlot owner_slot{};
+  CHECK(preload.store(owner_slot, JvmStorageValue{0xAA, 0xAA}).is_ok());
+  JvmContractAccountState preload_state = state;
+  preload_state.storage_root = preload.root_cell();
+  CHECK(preload_state.storage_root.not_null());
+  auto preload_cell =
+      encode_jvm_contract_account_state(preload_state);
+  CHECK(preload_cell.not_null());
+  // Recompute the bound address against this state's manifest (same as
+  // legitimate, since manifest_root unchanged) — only storage_root
+  // differs.  account_addr would otherwise match.
+  block::WorkchainComputeInput first_act;
+  std::memcpy(first_act.account_addr.data(), bound_addr.data(), 32);
+  first_act.current_data = preload_cell;
+  first_act.inbound_body = make_jvm_call_body(0x42);
+  first_act.gas_limit = 1000;
+  first_act.msg_state_used = true;
+  auto first_act_out =
+      execution.executor->run_compute(first_act, context).move_as_ok();
+  CHECK(first_act_out.completed);
+  CHECK(!first_act_out.accepted);
+  CHECK(first_act_out.skip_reason == block::ComputePhase::sk_bad_state);
+  CHECK(!runtime->called);
+
+  // Same preload accepted on a SUBSEQUENT call (msg_state_used==false)
+  // because storage legitimately mutates after activation.
+  runtime->called = false;
+  block::WorkchainComputeInput later;
+  std::memcpy(later.account_addr.data(), bound_addr.data(), 32);
+  later.current_data = preload_cell;
+  later.inbound_body = make_jvm_call_body(0x42);
+  later.gas_limit = 1000;
+  // later.msg_state_used = false (default)
+  auto later_out =
+      execution.executor->run_compute(later, context).move_as_ok();
+  CHECK(later_out.completed);
   CHECK(runtime->called);
 }
 
@@ -2037,18 +2113,32 @@ TEST(WorkchainExecutionRegistry, JvmEndToEndDeployCallSequence) {
   register_jvm_workchain_engine(registry, runtime);
   auto execution = registry.resolve(descriptor, *config).move_as_ok();
 
+  // Build the manifest first because the v2 address derivation now binds
+  // manifest_root.hash too.
+  JvmMethodManifestEntry method_entry;
+  method_entry.method_id = 0xb00b1e5;
+  auto deploy_desc_for_class = make_test_jvm_deploy_descriptor(0xa5);
+  method_entry.class_name = deploy_desc_for_class.class_name;
+  method_entry.method_name = "ok";
+  method_entry.method_spec = "()V";
+  auto manifest_root = encode_jvm_method_manifest({method_entry});
+  CHECK(manifest_root.not_null());
+
   // Build a deploy descriptor and verify the v2 address derivation.
-  auto deploy_desc = make_test_jvm_deploy_descriptor(0xa5);
-  auto address_a = derive_jvm_contract_address(deploy_desc).move_as_ok();
-  auto address_b = derive_jvm_contract_address(deploy_desc).move_as_ok();
+  auto deploy_desc = deploy_desc_for_class;
+  auto address_a =
+      derive_jvm_contract_address(deploy_desc, manifest_root).move_as_ok();
+  auto address_b =
+      derive_jvm_contract_address(deploy_desc, manifest_root).move_as_ok();
   CHECK(address_a == address_b);  // determinism
 
   // Different salt yields a different per-account address (storage is
   // therefore isolated; this is the v2 alternative to v1's contract_id key).
   auto deploy_desc_other_salt = deploy_desc;
   deploy_desc_other_salt.salt[0] ^= 0xff;
-  auto address_c =
-      derive_jvm_contract_address(deploy_desc_other_salt).move_as_ok();
+  auto address_c = derive_jvm_contract_address(deploy_desc_other_salt,
+                                                manifest_root)
+                       .move_as_ok();
   CHECK(address_c != address_a);
 
   // Build the initial account state that `action_create_account` would
@@ -2056,26 +2146,24 @@ TEST(WorkchainExecutionRegistry, JvmEndToEndDeployCallSequence) {
   // install_jvm_deploy_descriptor in v1).
   auto class_bytes_cell = encode_jvm_storage_value(deploy_desc.class_bytes);
   CHECK(class_bytes_cell.not_null());
-  JvmMethodManifestEntry method_entry;
-  method_entry.method_id = 0xb00b1e5;
-  method_entry.class_name = deploy_desc.class_name;
-  method_entry.method_name = "ok";
-  method_entry.method_spec = "()V";
-  auto manifest_root = encode_jvm_method_manifest({method_entry});
-  CHECK(manifest_root.not_null());
 
   JvmContractAccountState state0;
   state0.stdlib_hash = cfg.stdlib_hash;
   state0.class_hash = deploy_desc.class_hash;
   // The engine's address-binding gate requires
-  // input.account_addr == sha256("TOS-JVM-CONTRACT-v2" ||
-  //                              state.address_commit || state.class_hash).
-  // The deploy descriptor pins both pieces, so the JVAC state and
-  // input.account_addr must agree by construction.
+  //   input.account_addr == sha256("TOS-JVM-CONTRACT-v2"
+  //                                || state.address_commit
+  //                                || state.class_hash
+  //                                || sha256-cell-hash(state.manifest_root))
+  // so the JVAC state and input.account_addr must agree by construction.
   state0.address_commit = compute_jvm_address_commit(
       deploy_desc.deployer, deploy_desc.salt, deploy_desc.init_args);
   state0.class_bytes = class_bytes_cell;
-  state0.storage_root = JvmStorageCellHost{}.root_cell();
+  // Empty initial storage_root — the engine's first-activation invariant
+  // requires this on `msg_state_used == true`.  Subsequent calls below
+  // pass `msg_state_used == false` (default) so a non-null storage_root
+  // is allowed there.
+  state0.storage_root = {};
   state0.manifest_root = manifest_root;
   auto state0_cell = encode_jvm_contract_account_state(state0);
   CHECK(state0_cell.not_null());
@@ -2821,7 +2909,15 @@ TEST(JvmWorkchainCore, RpcDeployContractReturnsContractAddress) {
   descriptor.class_bytes = req.class_bytes;
   descriptor.class_hash = compute_jvm_class_hash(descriptor.class_bytes);
   descriptor.init_args = req.init_args;
-  auto expected_address = derive_jvm_contract_address(descriptor).move_as_ok();
+  // The RPC's deploy handler builds an empty manifest_root for callers
+  // that don't supply manifest_entries.  derive_jvm_contract_address now
+  // binds manifest_root.hash too, so the test must compute the same
+  // empty-manifest root to match.
+  auto expected_manifest_root = encode_jvm_method_manifest({});
+  CHECK(expected_manifest_root.not_null());
+  auto expected_address =
+      derive_jvm_contract_address(descriptor, expected_manifest_root)
+          .move_as_ok();
   std::string expected_addr_hex = "0x";
   for (auto b : expected_address) {
     char buf[3];
@@ -2988,16 +3084,19 @@ TEST(JvmWorkchainCore, JvmActivationConfigBuildsAndRoundTrips) {
 
 TEST(JvmWorkchainCore, DeriveJvmContractAddressFormulaMatchesSpec) {
   // Lock the v2 address derivation formula:
-  //   address_commit = sha256(deployer (32B) || salt (32B)
-  //                           || init_args_cell.hash (32B))
-  //   addr           = sha256("TOS-JVM-CONTRACT-v2"
-  //                           || address_commit (32B) || class_hash (32B))
+  //   address_commit     = sha256(deployer (32B) || salt (32B)
+  //                               || init_args_cell.hash (32B))
+  //   manifest_root_hash = sha256-cell-hash(manifest_root) or zero
+  //   addr               = sha256("TOS-JVM-CONTRACT-v2"
+  //                               || address_commit (32B)
+  //                               || class_hash (32B)
+  //                               || manifest_root_hash (32B))
   //
-  // The two-step formula keeps the address-binding gate cheap to verify
-  // on every `run_compute` (the engine only has `state.address_commit`
-  // and `state.class_hash`, not the original deploy descriptor).  This
-  // regression guards against any future tweak to the input layout that
-  // would silently break existing deterministic addresses.
+  // The four-input formula keeps the address-binding gate cheap to
+  // verify on every `run_compute` while binding both the bytecode
+  // (class_hash) and the ABI dispatch table (manifest_root) to the
+  // address.  Regression guards against any future tweak to the input
+  // layout that would silently break existing deterministic addresses.
   using namespace jvm_workchain;
 
   JvmDeployDescriptor descriptor;
@@ -3011,6 +3110,14 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressFormulaMatchesSpec) {
   descriptor.class_name = "P/Q";
   descriptor.init_args = make_empty_action_list();
   descriptor.class_hash = compute_jvm_class_hash(descriptor.class_bytes);
+
+  JvmMethodManifestEntry entry;
+  entry.method_id = 0x77;
+  entry.class_name = "P/Q";
+  entry.method_name = "ok";
+  entry.method_spec = "()V";
+  auto manifest_root = encode_jvm_method_manifest({entry});
+  CHECK(manifest_root.not_null());
 
   // Hand-compute address_commit = sha256(deployer || salt ||
   //                                       init_args_cell.hash).
@@ -3034,32 +3141,66 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressFormulaMatchesSpec) {
       descriptor.deployer, descriptor.salt, descriptor.init_args);
   CHECK(computed_commit == expected_commit);
 
-  // Hand-compute the expected address from the commit + class_hash.
+  // compute_jvm_manifest_root_hash must equal manifest_root->get_hash().
+  auto computed_manifest_hash =
+      compute_jvm_manifest_root_hash(manifest_root);
+  auto raw_manifest_hash = manifest_root->get_hash().as_slice();
+  for (std::size_t i = 0; i < computed_manifest_hash.size(); ++i) {
+    CHECK(computed_manifest_hash[i]
+          == static_cast<std::uint8_t>(raw_manifest_hash[i]));
+  }
+
+  // Null manifest → zero hash.
+  JvmManifestRootHash zero_hash{};
+  CHECK(compute_jvm_manifest_root_hash({}) == zero_hash);
+
+  // Hand-compute the expected address from the commit + class_hash +
+  // manifest_root_hash.
   std::string addr_material = "TOS-JVM-CONTRACT-v2";
   addr_material.append(reinterpret_cast<const char*>(expected_commit.data()),
                        expected_commit.size());
   addr_material.append(
       reinterpret_cast<const char*>(descriptor.class_hash.data()),
       descriptor.class_hash.size());
+  addr_material.append(
+      reinterpret_cast<const char*>(computed_manifest_hash.data()),
+      computed_manifest_hash.size());
 
   std::array<std::uint8_t, 32> expected{};
   td::sha256(td::Slice(addr_material),
              td::MutableSlice(reinterpret_cast<char*>(expected.data()),
                               expected.size()));
 
-  auto actual = derive_jvm_contract_address(descriptor).move_as_ok();
+  auto actual =
+      derive_jvm_contract_address(descriptor, manifest_root).move_as_ok();
   for (std::size_t i = 0; i < actual.size(); ++i) {
     CHECK(actual[i] == expected[i]);
   }
   // Re-derivation is stable.
-  auto again = derive_jvm_contract_address(descriptor).move_as_ok();
+  auto again =
+      derive_jvm_contract_address(descriptor, manifest_root).move_as_ok();
   CHECK(again == actual);
 
-  // derive_jvm_contract_address_from_state(commit, class_hash) reconstructs
-  // the same address — this is the helper the engine uses on every
-  // `run_compute` to verify the address-binding gate.
+  // Different manifest → different address (manifest binds to the
+  // address; this is the round-3 fix against ABI swap at first
+  // activation).
+  JvmMethodManifestEntry other_entry;
+  other_entry.method_id = 0x77;
+  other_entry.class_name = "P/Q";
+  other_entry.method_name = "evil";
+  other_entry.method_spec = "()V";
+  auto other_manifest = encode_jvm_method_manifest({other_entry});
+  CHECK(other_manifest.not_null());
+  auto other_addr =
+      derive_jvm_contract_address(descriptor, other_manifest).move_as_ok();
+  CHECK(other_addr != actual);
+
+  // derive_jvm_contract_address_from_state(commit, class_hash,
+  // manifest_root_hash) reconstructs the same address — this is the
+  // helper the engine uses on every `run_compute` to verify the
+  // address-binding gate.
   auto from_state = derive_jvm_contract_address_from_state(
-      computed_commit, descriptor.class_hash);
+      computed_commit, descriptor.class_hash, computed_manifest_hash);
   CHECK(from_state == actual);
 }
 
@@ -3517,7 +3658,8 @@ TEST(WorkchainExecutionRegistry, JvmDeterminismReplay) {
   CHECK(state0_cell.not_null());
 
   auto bound_addr = derive_jvm_contract_address_from_state(
-      state0.address_commit, state0.class_hash);
+      state0.address_commit, state0.class_hash,
+      compute_jvm_manifest_root_hash(state0.manifest_root));
 
   block::WorkchainComputeContext context;
   context.workchain_id = 3;

@@ -3,6 +3,8 @@
 */
 #include "jvm/core/deploy-abi.h"
 
+#include <algorithm>
+#include <cstring>
 #include <utility>
 
 #include "td/utils/crypto.h"
@@ -188,12 +190,28 @@ JvmAddressCommit compute_jvm_address_commit(
     return out;
 }
 
+JvmManifestRootHash compute_jvm_manifest_root_hash(
+    td::Ref<vm::Cell> manifest_root) {
+    JvmManifestRootHash out{};
+    if (manifest_root.not_null()) {
+        auto h = manifest_root->get_hash().as_slice();
+        // Cell hashes are 32 bytes; copy verbatim so the binding hashes
+        // the canonical Cell DB key for this manifest.
+        std::memcpy(out.data(), h.data(),
+                    std::min<std::size_t>(out.size(), h.size()));
+    }
+    return out;
+}
+
 JvmContractId derive_jvm_contract_address_from_state(
     const JvmAddressCommit& address_commit,
-    const JvmClassHash& class_hash) {
+    const JvmClassHash& class_hash,
+    const JvmManifestRootHash& manifest_root_hash) {
     std::string material = "TOS-JVM-CONTRACT-v2";
     append_bytes(material, address_commit.data(), address_commit.size());
     append_bytes(material, class_hash.data(), class_hash.size());
+    append_bytes(material, manifest_root_hash.data(),
+                 manifest_root_hash.size());
 
     JvmContractId out{};
     td::sha256(td::Slice(material),
@@ -203,13 +221,16 @@ JvmContractId derive_jvm_contract_address_from_state(
 }
 
 td::Result<JvmContractId> derive_jvm_contract_address(
-    const JvmDeployDescriptor& descriptor) {
+    const JvmDeployDescriptor& descriptor,
+    td::Ref<vm::Cell> manifest_root) {
     TRY_STATUS(validate_deploy_descriptor(descriptor));
 
     auto address_commit = compute_jvm_address_commit(
         descriptor.deployer, descriptor.salt, descriptor.init_args);
+    auto manifest_hash = compute_jvm_manifest_root_hash(manifest_root);
     return derive_jvm_contract_address_from_state(address_commit,
-                                                  descriptor.class_hash);
+                                                  descriptor.class_hash,
+                                                  manifest_hash);
 }
 
 td::Ref<vm::Cell> encode_jvm_deploy_descriptor(

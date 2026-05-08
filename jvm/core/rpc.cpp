@@ -307,10 +307,24 @@ JvmRpcResult handle_jvm_deploy_contract(
     std::string descriptor_boc_hex = hex_encode(
         reinterpret_cast<const uint8_t*>(boc_bytes.data()), boc_bytes.size());
 
+    // Build the manifest_root the deployer commits to.  Empty manifest
+    // is represented by a manifest_root with zero entries (which encodes
+    // to a non-null cell — its hash is bound into the address).
+    auto manifest_root = encode_jvm_method_manifest(req.manifest_entries);
+    if (manifest_root.is_null()) {
+        return JvmRpcResult{
+            json_rpc_err(id, -32602, "manifest encoding failed"),
+            true};
+    }
+
     // Derive the deterministic per-contract wc=3 account address.  The
     // deployer wraps `descriptor` in StateInit and emits an
     // `action_create_account` to materialize a new account at this address.
-    auto contract_address_result = derive_jvm_contract_address(descriptor);
+    // The address derivation now also binds `manifest_root.hash` so the
+    // deployer's chosen ABI dispatch table is committed to at deploy time
+    // (round-3 fix against ABI-swap squat at first activation).
+    auto contract_address_result =
+        derive_jvm_contract_address(descriptor, manifest_root);
     if (contract_address_result.is_error()) {
         return JvmRpcResult{
             json_rpc_err(id, -32602, "contract_address derivation failed"),
@@ -461,8 +475,11 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
         // Without this, RPC simulation would happily run any state under
         // any address — which lets an attacker confuse clients into
         // believing a contract exists at a victim's deterministic address.
+        const auto bound_manifest_hash = compute_jvm_manifest_root_hash(
+            previous_state.manifest_root);
         const auto bound_addr = derive_jvm_contract_address_from_state(
-            previous_state.address_commit, previous_state.class_hash);
+            previous_state.address_commit, previous_state.class_hash,
+            bound_manifest_hash);
         if (std::memcmp(req.contract_address.data(), bound_addr.data(),
                         bound_addr.size()) != 0) {
             local_result_json =

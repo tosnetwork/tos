@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "jvm/core/cell-codec.h"
+#include "jvm/core/class-manifest.h"
 #include "jvm/core/config-param.h"
 #include "jvm/core/deploy-abi.h"
 #include "jvm/core/dispatch-engine.h"
@@ -63,6 +64,12 @@ struct JvmDeployContractRequest {
     std::array<uint8_t, 32> deployer{};  ///< deployer address (32 bytes)
     std::array<uint8_t, 32> salt{};      ///< deployment salt (32 bytes)
     td::Ref<vm::Cell> init_args;         ///< JVMA typed init args cell (may be null)
+    /// Per-account method manifest the deployer commits to at deploy
+    /// time.  Bound into the v2 address derivation so an attacker who
+    /// knows the rest of the deploy tuple cannot squat the address with
+    /// a different ABI dispatch table.  May be empty for contracts that
+    /// expose no callable methods.
+    std::vector<JvmMethodManifestEntry> manifest_entries;
 };
 
 /// Parse a jvm_deployContract JSON params array.
