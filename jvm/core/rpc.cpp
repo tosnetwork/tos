@@ -73,6 +73,36 @@ std::string hex_encode(const std::array<uint8_t, 32>& arr) {
     return hex_encode(arr.data(), arr.size());
 }
 
+// Conservatively escape a UTF-8 string for emission as a JSON string
+// literal.  The cell-codec admits manifest strings that may contain `"`,
+// `\`, and control bytes; emitting them raw allows attacker-controlled
+// account state to inject fields into our RPC response JSON.
+std::string json_escape_string(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 2);
+    for (unsigned char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    static constexpr char kHex[] = "0123456789abcdef";
+                    out += "\\u00";
+                    out += kHex[(c >> 4) & 0xF];
+                    out += kHex[c & 0xF];
+                } else {
+                    out += static_cast<char>(c);
+                }
+        }
+    }
+    return out;
+}
+
 // Decode a 0x-prefixed hex string into a 32-byte array.
 // Returns false if the input is malformed or wrong length.
 bool hex_decode_32(const std::string& s, std::array<uint8_t, 32>& out) {
@@ -406,13 +436,26 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
         block::WorkchainComputeContext context;
         context.workchain_id = 3;
 
-        // Use the stdlib_hash from the decoded state so build_jvm_workchain_output
-        // doesn't reject the output as incompatible.
-        JvmConfig local_config = *config;
-        local_config.stdlib_hash = previous_state.stdlib_hash;
+        // Mirror the consensus stdlib_hash gate in dispatch-engine.cpp: if
+        // the per-account `stdlib_hash` does not match ConfigParam 85,
+        // consensus will reject this state, so RPC simulation must too —
+        // otherwise a full-node returns a successful simulation for state
+        // that on-chain execution would skip with `sk_bad_state`.
+        if (previous_state.stdlib_hash != config->stdlib_hash) {
+            local_result_json =
+                "{\"success\":false,\"outOfGas\":false,"
+                "\"outOfMemory\":false,\"gasUsed\":0,"
+                "\"vmLog\":\"accountStateBoc stdlib_hash does not match "
+                "ConfigParam 85\",\"newStateBoc\":null}";
+            std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex
+                               + "\",\"contractAddress\":\""
+                               + hex_encode(req.contract_address)
+                               + "\",\"localResult\":" + local_result_json + "}";
+            return JvmRpcResult{json_rpc_ok(id, result), false};
+        }
 
         auto invocation_result = runtime->run_contract(
-            input, context, local_config, previous_state);
+            input, context, *config, previous_state);
         if (invocation_result.is_error()) {
             local_result_json = "{\"success\":false,\"outOfGas\":false,"
                                 "\"outOfMemory\":false,\"gasUsed\":0,"
@@ -422,7 +465,7 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
         } else {
             const auto& inv = invocation_result.ok();
             auto output = build_jvm_workchain_output(
-                local_config, previous_state, input.gas_limit, inv);
+                *config, previous_state, input.gas_limit, inv);
 
             std::string new_state_hex = "null";
             if (output.is_ok() && output.ok().new_data.not_null()) {
@@ -516,7 +559,8 @@ JvmRpcResult handle_jvm_get_contract_state(
         auto manifest_result = parse_jvm_method_manifest(state.manifest_root);
         if (manifest_result.is_ok() && !manifest_result.ok().empty()) {
             class_name_json =
-                "\"" + manifest_result.ok().front().class_name + "\"";
+                "\"" + json_escape_string(manifest_result.ok().front().class_name)
+                + "\"";
         }
     }
 

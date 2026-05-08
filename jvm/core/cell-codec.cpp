@@ -5,6 +5,8 @@
 
 #include "jvm/core/dispatch-engine.h"  // for kJvmActivationCode
 #include "jvm/core/storage-cell-host.h"
+#include "td/utils/Slice.h"
+#include "td/utils/crypto.h"  // td::sha256
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
 #include "vm/excno.hpp"
@@ -114,6 +116,32 @@ bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,
         if (jvm_class_hash_is_zero(out.class_hash) ||
             out.class_bytes.is_null() ||
             !validate_jvm_storage_root(out.storage_root)) {
+            out = JvmContractAccountState{};
+            return false;
+        }
+        // Bind `class_hash` to `class_bytes`: a malicious caller could
+        // otherwise hand us an account state whose declared class_hash
+        // belongs to a different (already-cached) contract while the
+        // class_bytes ref carries attacker bytecode.  The Avata VM cache
+        // keys by class_hash and only installs class_bytes on a cache
+        // miss, so a poisoned cache entry would let attacker bytecode
+        // execute under the victim's class identity in any later call.
+        // Recomputing sha256 here makes that impossible.
+        auto class_bytes_decoded = decode_jvm_storage_value(out.class_bytes);
+        if (class_bytes_decoded.is_error()) {
+            out = JvmContractAccountState{};
+            return false;
+        }
+        const auto& class_bytes_raw = class_bytes_decoded.ok();
+        JvmClassHash recomputed{};
+        if (!class_bytes_raw.empty()) {
+            td::sha256(td::Slice(reinterpret_cast<const char*>(
+                                    class_bytes_raw.data()),
+                                 class_bytes_raw.size()),
+                       td::MutableSlice(reinterpret_cast<char*>(recomputed.data()),
+                                        recomputed.size()));
+        }
+        if (recomputed != out.class_hash) {
             out = JvmContractAccountState{};
             return false;
         }

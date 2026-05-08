@@ -2062,6 +2062,34 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       return true;
     }
 
+    // Custom-engine activation from an inbound StateInit.  The TVM path
+    // below (`unpack_msg_state` after line 2125) populates `new_data` from
+    // `state.data` for uninit/frozen TVM accounts; the custom branch must
+    // do the same so engines that key consensus on the per-account state
+    // cell (e.g. JVM v2 keying on `JvmContractAccountState`) can decode
+    // the StateInit's data ref instead of seeing a null `current_data`.
+    // We deliberately skip the TVM `check_in_msg_state_hash` check —
+    // that rule (`addr == hash(StateInit)`) is TVM-specific and would
+    // reject legitimate JVM v2 deploys whose address comes from
+    // `derive_jvm_contract_address`.  Custom engines own their own
+    // activation invariants.
+    if (acc_status == Account::acc_uninit && in_msg_state.not_null() &&
+        new_data.is_null()) {
+      block::gen::StateInit::Record si;
+      if (tlb::unpack_cell(in_msg_state, si)) {
+        if (si.code->size_refs() > 0) {
+          new_code = si.code->prefetch_ref();
+        }
+        if (si.data->size_refs() > 0) {
+          new_data = si.data->prefetch_ref();
+        }
+        if (si.library->size_refs() > 0) {
+          new_library = si.library->prefetch_ref();
+        }
+        use_msg_state = true;
+      }
+    }
+
     block::WorkchainComputeInput input;
     input.account_addr = account.addr;
     input.current_code = new_code;

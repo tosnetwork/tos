@@ -903,6 +903,44 @@ TEST(JvmWorkchainCore, ContractAccountStateCodecRoundTripsClassBytesAndStorage) 
   CHECK(other_decoded.class_bytes->get_hash() == round_tripped_class_bytes_hash);
 }
 
+TEST(JvmWorkchainCore, DecodeRejectsClassHashMismatchedToClassBytes) {
+  // Regression for the VM-cache-poisoning vulnerability: an attacker
+  // submitting an `accountStateBoc` whose declared `class_hash` is a
+  // legitimate victim contract's hash but whose `class_bytes` define
+  // attacker bytecode under the victim class name could (before this
+  // check) seed `LinkedAvataRuntimeState::vm_cache` with attacker code
+  // under the victim's hash, since `get_vm_for_account` keys the cache
+  // by `class_hash` and only installs `class_bytes` on miss.  Decode
+  // must therefore recompute sha256(class_bytes) and reject any
+  // mismatch.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  JvmStorageValue victim_bytes{0xca, 0xfe, 0xba, 0xbe, 0x00, 0x10};
+  JvmStorageValue attacker_bytes{0xde, 0xad, 0xbe, 0xef};
+
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  // Declare the legitimate hash...
+  state.class_hash = compute_jvm_class_hash(victim_bytes);
+  // ...but put attacker bytes in the cell.
+  state.class_bytes = encode_jvm_storage_value(attacker_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+
+  auto encoded = encode_jvm_contract_account_state(state);
+  CHECK(encoded.not_null());
+
+  JvmContractAccountState decoded;
+  CHECK(!decode_jvm_contract_account_state(encoded, decoded));
+
+  // Sanity: when class_hash matches class_bytes, the same shape decodes.
+  state.class_hash = compute_jvm_class_hash(attacker_bytes);
+  encoded = encode_jvm_contract_account_state(state);
+  CHECK(encoded.not_null());
+  CHECK(decode_jvm_contract_account_state(encoded, decoded));
+}
+
 TEST(JvmWorkchainCore, EncodeJvmStateInitCellPassesTlbValidation) {
   using namespace jvm_workchain;
 
@@ -3107,6 +3145,95 @@ TEST(JvmWorkchainCore, RpcGetContractStateFetchesPerAccount) {
     expected_hash_hex += buf;
   }
   CHECK(result.json.find(expected_hash_hex) != std::string::npos);
+}
+
+TEST(JvmWorkchainCore, RpcGetContractStateEscapesClassNameJson) {
+  // Regression for the JSON-injection finding: manifest strings admit
+  // `"` and `\` (only NUL / oversize / empty are rejected at validation
+  // time), so a malicious accountStateBoc whose first manifest entry
+  // has a class_name like `A","x":"` must not be reflected verbatim
+  // into the response body.  json_escape_string in rpc.cpp wraps the
+  // emit so the response stays well-formed JSON.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x99};
+
+  JvmMethodManifestEntry entry;
+  entry.method_id = 0x42;
+  entry.class_name = "A\",\"injected\":true,\"x\":\"";
+  entry.method_name = "ok";
+  entry.method_spec = "()V";
+  auto manifest_root = encode_jvm_method_manifest({entry});
+  CHECK(manifest_root.not_null());
+
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = manifest_root;
+
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  JvmGetContractStateRequest req;
+  std::array<std::uint8_t, 32> addr{};
+  addr[31] = 0xab;
+  req.contract_address = addr;
+  req.account_state = state_cell;
+
+  auto result = handle_jvm_get_contract_state(req);
+  CHECK(!result.is_error);
+  // The unescaped attacker payload `","injected":true,"x":"` must NOT
+  // appear in the response — it would close the className value early
+  // and inject sibling fields.
+  CHECK(result.json.find("\",\"injected\":true") == std::string::npos);
+  // The escaped form `\"` is what we expect to see instead.
+  CHECK(result.json.find("\\\"") != std::string::npos);
+}
+
+TEST(JvmWorkchainCore, RpcCallContractRejectsAccountStateWithBadStdlibHash) {
+  // Regression for the stdlib_hash bypass: consensus rejects a JVM
+  // account state whose stdlib_hash differs from ConfigParam 85 with
+  // sk_bad_state.  RPC simulation must mirror that — otherwise a
+  // full-node returns a successful localResult for state that on-chain
+  // execution would skip.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  // Use a runtime that would *succeed* if it ever ran — so the only
+  // way the test passes is the stdlib_hash gate firing first.
+  auto runtime = std::make_shared<MockJvmRuntime>();
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x55};
+  JvmContractAccountState state;
+  // Deliberately wrong stdlib_hash (consensus would reject):
+  state.stdlib_hash = {};
+  state.stdlib_hash[0] = 0x99;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  JvmCallContractRequest req;
+  req.contract_address.fill(0);
+  req.contract_address[31] = 0xcd;
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 1000;
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  // The localResult must report failure with the stdlib_hash mismatch
+  // reason.  And, critically, the runtime must NOT have been invoked —
+  // otherwise the bypass is still live.
+  CHECK(result.json.find("\"success\":false") != std::string::npos);
+  CHECK(result.json.find("stdlib_hash") != std::string::npos);
+  CHECK(!runtime->called);
 }
 
 // ---------------------------------------------------------------------------
