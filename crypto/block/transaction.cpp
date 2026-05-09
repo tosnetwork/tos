@@ -1952,6 +1952,16 @@ bool Transaction::run_precompiled_contract(const ComputePhaseConfig& cfg, precom
     // unfreezes — RPC consumers and replay tooling saw
     // inconsistent records.
     cp.account_activated = true;
+    // Round 83 LOW fix: same metadata-consistency issue for
+    // `cp.msg_state_used`.  The custom-engine path threads
+    // `output.msg_state_used` back via apply_custom_compute_output;
+    // TVM/precompiled paths never wrote the field, so a TVM
+    // deploy or unfreeze that successfully consumed the inbound
+    // StateInit serialized `msg_state_used=false` even though
+    // the executor ran against the unpacked StateInit.  Mirror
+    // the local `use_msg_state` into the cp record for
+    // serialization symmetry.
+    cp.msg_state_used = use_msg_state;
   }
   if (cfg.with_vm_log) {
     cp.vm_log = PSTRING() << "Running precompiled smart contract " << impl.get_name()
@@ -2451,6 +2461,16 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // unfreezes — RPC consumers and replay tooling saw
     // inconsistent records.
     cp.account_activated = true;
+    // Round 83 LOW fix: same metadata-consistency issue for
+    // `cp.msg_state_used`.  The custom-engine path threads
+    // `output.msg_state_used` back via apply_custom_compute_output;
+    // TVM/precompiled paths never wrote the field, so a TVM
+    // deploy or unfreeze that successfully consumed the inbound
+    // StateInit serialized `msg_state_used=false` even though
+    // the executor ran against the unpacked StateInit.  Mirror
+    // the local `use_msg_state` into the cp record for
+    // serialization symmetry.
+    cp.msg_state_used = use_msg_state;
   }
   if (precompiled) {
     cp.gas_used = precompiled.value().gas_usage;
