@@ -417,19 +417,24 @@ td::Result<std::vector<JvmArgType>> parse_jvm_method_argument_types(
     return types;
 }
 
-td::Status validate_jvm_typed_call_args(const std::string& method_spec,
-                                        td::Ref<vm::Cell> args) {
+td::Status validate_jvm_typed_args_against_spec(
+    const std::string& method_spec, const JvmArgs& parsed_args) {
     TRY_RESULT(expected_types, parse_jvm_method_argument_types(method_spec));
-    TRY_RESULT(decoded_args, parse_jvm_args(std::move(args)));
-    if (decoded_args.values.size() != expected_types.size()) {
+    if (parsed_args.values.size() != expected_types.size()) {
         return td::Status::Error("JVM typed args count mismatch");
     }
     for (std::size_t i = 0; i < expected_types.size(); ++i) {
-        if (decoded_args.values[i].type != expected_types[i]) {
+        if (parsed_args.values[i].type != expected_types[i]) {
             return td::Status::Error("JVM typed arg type mismatch");
         }
     }
     return td::Status::OK();
+}
+
+td::Status validate_jvm_typed_call_args(const std::string& method_spec,
+                                        td::Ref<vm::Cell> args) {
+    TRY_RESULT(decoded_args, parse_jvm_args(std::move(args)));
+    return validate_jvm_typed_args_against_spec(method_spec, decoded_args);
 }
 
 td::Status validate_jvm_static_void_call_args(

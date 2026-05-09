@@ -80,6 +80,16 @@ td::Result<std::vector<JvmArgType>> parse_jvm_method_argument_types(
 td::Status validate_jvm_typed_call_args(const std::string& method_spec,
                                         td::Ref<vm::Cell> args);
 
+/// Round 61 MEDIUM fix: validate already-parsed args against the
+/// method spec WITHOUT re-parsing the cell.  Pre-fix
+/// `validate_jvm_typed_call_args` itself called `parse_jvm_args` and
+/// the resolver in `decode_linked_invocation_args` then called it
+/// again, doubling the byte-decode work for typed `Bytes` arguments
+/// before any Avata gas charge.  Callers that already hold a
+/// `JvmArgs` should prefer this overload.
+td::Status validate_jvm_typed_args_against_spec(
+    const std::string& method_spec, const JvmArgs& parsed_args);
+
 // Legacy static-void calls without parameters use the canonical empty args
 // cell. Parameterized static-void calls use validate_jvm_typed_call_args().
 td::Status validate_jvm_static_void_call_args(

@@ -308,8 +308,15 @@ td::Result<JvmArgs> decode_linked_invocation_args(
         return JvmArgs{};
     }
 
-    TRY_STATUS(validate_jvm_typed_call_args(method_spec, args));
-    return parse_jvm_args(std::move(args));
+    // Round 61 MEDIUM fix: parse the typed args ONCE.  Pre-fix
+    // `validate_jvm_typed_call_args` itself called `parse_jvm_args`
+    // and we then called it again here, doubling the byte-decode
+    // work (memcpy of every typed `Bytes` argument's payload chain)
+    // before any Avata gas was charged.  Now parse once and reuse
+    // the parsed result for type validation.
+    TRY_RESULT(decoded_args, parse_jvm_args(std::move(args)));
+    TRY_STATUS(validate_jvm_typed_args_against_spec(method_spec, decoded_args));
+    return decoded_args;
 }
 
 td::Status install_account_class_into_vm(
@@ -491,13 +498,54 @@ td::Result<JvmAvataInvocationResult> JvmAvataRuntime::run_contract(
 
     JvmStorageCellHost storage(previous_state.storage_root);
     JvmEventHost events;
-    return execute_jvm_avata_transaction(target.thread,
-                                         config,
-                                         input.gas_limit,
-                                         storage,
-                                         api_,
-                                         target.invocation_user,
-                                         &events);
+    // Round 61 MEDIUM fix: bill the contract for the per-byte
+    // validator-CPU work spent decoding + materializing typed
+    // `Bytes` arguments BEFORE Avata gas accounting started.  The
+    // resolver above ran `decode_linked_invocation_args` (which
+    // memcpys each typed value's payload chain) and, at runtime
+    // entry, the Avata `make_byte_backed_value` path further
+    // allocates and copies a Java `byte[]` per argument — work
+    // proportional to the args' total byte count for which Avata's
+    // metered execution does NOT charge.  Sum the decoded arg
+    // payload bytes and add them to the result's gas_used after
+    // execute_jvm_avata_transaction returns.  Same pattern as the
+    // round-39 storage walk billing: dispatch-engine.cpp's round-40
+    // affordable-gas cap catches the overflow and rejects with
+    // `sk_no_gas` if the total exceeds what the account can pay.
+    std::uint64_t arg_bytes_charge = 0;
+    if (target.invocation_owner != nullptr) {
+        auto* inv =
+            static_cast<LinkedAvataInvocation*>(target.invocation_user);
+        if (inv != nullptr) {
+            for (const auto& v : inv->args.values) {
+                if (arg_bytes_charge >
+                    std::numeric_limits<std::uint64_t>::max() - v.bytes.size()) {
+                    arg_bytes_charge =
+                        std::numeric_limits<std::uint64_t>::max();
+                    break;
+                }
+                arg_bytes_charge += v.bytes.size();
+            }
+        }
+    }
+    auto exec_res = execute_jvm_avata_transaction(target.thread,
+                                                  config,
+                                                  input.gas_limit,
+                                                  storage,
+                                                  api_,
+                                                  target.invocation_user,
+                                                  &events);
+    if (exec_res.is_error()) {
+        return exec_res.move_as_error();
+    }
+    auto result = exec_res.move_as_ok();
+    if (result.gas_used >
+        std::numeric_limits<std::uint64_t>::max() - arg_bytes_charge) {
+        result.gas_used = std::numeric_limits<std::uint64_t>::max();
+    } else {
+        result.gas_used += arg_bytes_charge;
+    }
+    return result;
 }
 
 JvmAvataExecutionApi make_linked_jvm_avata_execution_api() {
