@@ -3663,6 +3663,14 @@ static std::optional<silkworm::Transaction> decode_stored_tx_rlp(const StoredTra
     auto res = silkworm::rlp::decode_transaction(view, txn,
                                                  silkworm::rlp::Eip2718Wrapping::kBoth);
     if (!res) return std::nullopt;
+    // Round 86 LOW fix: mirror the round-85 leftover-byte gate from
+    // decode_evm_transaction.  Pre-round-85 a stored or hydrated
+    // raw_rlp could carry a trailing byte (`0x02 || canonical_rlp
+    // || 0x00`) and `debug_getRawBlock` would re-encode the
+    // canonical form, dropping the trailing byte and producing a
+    // different hash than the stored tx-hash key — RPC-only, but
+    // still a debug/dump consistency divergence.
+    if (!view.empty()) return std::nullopt;
     return txn;
 }
 

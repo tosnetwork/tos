@@ -149,6 +149,21 @@ uint64_t EvmState::allocate_next_block_number(std::optional<StoredBlock>& parent
 
 void EvmState::store_block(const StoredBlock& block) {
     std::unique_lock lock(mutex_);
+    // Round 86 MEDIUM fix: erase any prior hash → number mapping for
+    // this block height before installing the new block.  Pre-fix,
+    // when a block at height N was rewritten with a different hash,
+    // the old `hash_to_block_[old_hash]` entry stayed alive and
+    // `get_block_by_hash_copy(old_hash)` returned the NEW block at
+    // height N — RPC handlers like
+    // `eth_getBlockTransactionCountByHash`,
+    // `eth_getTransactionByBlockHashAndIndex`, and
+    // `eth_getRawTransactionByBlockHashAndIndex` (which do not
+    // re-verify the hash) thus served the new block under the old
+    // hash.
+    auto prev_it = blocks_.find(block.number);
+    if (prev_it != blocks_.end()) {
+        hash_to_block_.erase(prev_it->second.hash);
+    }
     blocks_[block.number] = block;
     hash_to_block_[block.hash] = block.number;
     // Head tracking: every successful store_block advances block_number_ so
