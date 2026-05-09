@@ -4338,6 +4338,158 @@ TEST(JvmWorkchainCore, RpcCallContractRejectsRuntimeJarMismatch) {
   CHECK(!runtime->called);
 }
 
+TEST(JvmWorkchainCore, RpcCallContractAppliesBalanceAffordabilityCap) {
+  // Round 42 MEDIUM fix: live RPC must mirror the consensus
+  // affordability cap (`balance / gas_price`).  Pre-fix the
+  // validator-engine fetched the on-chain balance and threw it away,
+  // so a request with `gasLimit=3000` against an account whose
+  // `balance=2000`, `gas_price=1` would simulate `success=true` while
+  // consensus capped at 2000 gas, ran out, and rejected with sk_no_gas.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1;
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  // Affordability cap = balance/gas_price = 2000.  Mock sees 2000.
+  // But the runtime returns success without exceeding it — the test
+  // pin is that the cap *happens*, not that the runtime fails.
+  runtime->mock_expected_gas_limit = 2000;
+  runtime->mock_gas_used = 100;
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x42};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x21 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x43 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  auto bound = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 3000;        // requested above the affordability cap
+  req.account_balance = 2000;  // live account balance hint
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  // The mock asserts input.gas_limit == 2000 — if the cap didn't
+  // fire, the mock would have seen 3000 and crashed the test.
+  CHECK(runtime->called);
+  CHECK(result.json.find("\"success\":true") != std::string::npos);
+}
+
+TEST(JvmWorkchainCore, RpcCallContractAppliesAffordabilityCapBeforeFloor) {
+  // Round 42 MEDIUM fix (continued): if the balance can't even cover
+  // the admission floor, the RPC must reject with sk_no_gas pre-runtime
+  // — matching consensus's order (cap then floor check, line ~247 in
+  // dispatch-engine.cpp).
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1;
+  auto runtime = std::make_shared<MockJvmRuntime>();
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x42};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x21 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x43 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  auto bound = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 5000;       // requested high
+  req.account_balance = 100;  // can't even pay the 1024-gas floor
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  CHECK(result.json.find("\"success\":false") != std::string::npos);
+  CHECK(result.json.find("\"outOfGas\":true") != std::string::npos);
+  CHECK(result.json.find("admission floor") != std::string::npos);
+  // Runtime must NOT have been called — the affordability cap
+  // dropped the budget below the floor pre-runtime.
+  CHECK(!runtime->called);
+}
+
+TEST(JvmWorkchainCore, RpcCallContractCapsToMaxGasBeforeFloor) {
+  // Round 42 LOW fix: if `max_gas_per_tx < kJvmAdmissionGasFloor`
+  // (a misconfiguration permitted by ConfigParam 85's only-non-zero
+  // validation) consensus rejects pre-runtime because effective_gas_limit
+  // < floor.  Pre-Round-42 the RPC checked the floor against the
+  // un-capped `input.gas_limit`, allowing `gasLimit=2000` to slip past
+  // the floor check, get capped to 512, and run the runtime — producing
+  // a successful localResult that consensus could not produce.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.max_gas_per_tx = 512;  // intentionally below the admission floor
+  auto runtime = std::make_shared<MockJvmRuntime>();
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x42};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x21 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x43 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  auto bound = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 2000;  // above floor pre-cap, below floor post-cap
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  CHECK(result.json.find("\"success\":false") != std::string::npos);
+  CHECK(result.json.find("\"outOfGas\":true") != std::string::npos);
+  CHECK(result.json.find("admission floor") != std::string::npos);
+  CHECK(!runtime->called);
+}
+
 TEST(JvmWorkchainCore, RpcCallContractMirrorsConsensusWalkGasCap) {
   // Round 41 MEDIUM fix: handle_jvm_call_contract must mirror the
   // consensus round-39 storage-walk gas billing AND the round-40

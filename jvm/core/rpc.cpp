@@ -515,6 +515,20 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
         req.gas_limit = v;
     }
 
+    // accountBalance is optional (round-42 hint).  When present it must
+    // parse as an unsigned 64-bit integer in tomis.
+    if (params_json.find("\"accountBalance\"") != std::string::npos) {
+        auto balance_str = json_get_number_str(params_json, "accountBalance");
+        std::uint64_t v = 0;
+        if (balance_str.empty() ||
+            !parse_strict_uint(balance_str,
+                                std::numeric_limits<std::uint64_t>::max(),
+                                20, v)) {
+            return std::nullopt;
+        }
+        req.account_balance = v;
+    }
+
     // args is optional; absent = canonical empty args cell.
     req.args = vm::CellBuilder().finalize();
     auto args_boc_hex = json_get_string(params_json, "argsBoc");
@@ -676,18 +690,45 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                                + "\",\"localResult\":" + local_result_json + "}";
             return JvmRpcResult{json_rpc_ok(id, result), false};
         }
-        // Round-36 fix: mirror the engine's round-35 admission gas
-        // floor.  Public full-node RPC otherwise accepts any
-        // `gasLimit` and runs the resolver / class-loading work
-        // before AVATA gas accounting starts, exactly the surface
-        // round 35 closed on-chain.  Reject simulation when the
-        // requested gas is below the floor.
-        if (input.gas_limit < kJvmAdmissionGasFloor) {
+        // Round-37 fix (kept), Round-42 fix (re-ordered + balance cap):
+        // Apply consensus's gas-cap order before the admission floor
+        // check so RPC matches dispatch-engine.cpp exactly:
+        //   1. cap to `max_gas_per_tx`
+        //   2. cap to `balance / gas_price` (when balance hint provided)
+        //   3. reject if zero
+        //   4. reject if below `kJvmAdmissionGasFloor`
+        // Pre-Round-42, RPC checked the floor against the un-capped
+        // `input.gas_limit`, so a config with `max_gas_per_tx < 1024`
+        // would let RPC simulate a successful call where consensus
+        // rejects pre-runtime — and the live RPC path threw away the
+        // account balance entirely, so balance-derived rejections
+        // never showed up in localResult.
+        if (config->max_gas_per_tx > 0
+            && input.gas_limit > config->max_gas_per_tx) {
+            input.gas_limit = config->max_gas_per_tx;
+        }
+        // Round-42 fix: mirror the engine's round-31 affordability cap
+        // when the live RPC path injects the account's balance.  The
+        // validator-engine fetches the on-chain account balance and
+        // populates `req.account_balance` so RPC simulation matches the
+        // consensus path's `balance/gas_price` cap.  When the balance
+        // hint is absent (caller-supplied state without balance), the
+        // cap reduces to `min(input.gas_limit, max_gas_per_tx)` and the
+        // simulation is balance-blind — clients that need affordability
+        // semantics must pass `accountBalance`.
+        if (config->gas_price > 0 && req.account_balance > 0) {
+            std::uint64_t affordable =
+                req.account_balance / config->gas_price;
+            if (affordable < input.gas_limit) {
+                input.gas_limit = affordable;
+            }
+        }
+        if (input.gas_limit == 0) {
             local_result_json =
                 "{\"success\":false,\"outOfGas\":true,"
                 "\"outOfMemory\":false,\"gasUsed\":0,"
-                "\"vmLog\":\"requested gasLimit is below the JVM "
-                "admission floor (consensus would reject)\","
+                "\"vmLog\":\"effective gasLimit is zero after balance / "
+                "max_gas_per_tx caps (consensus would reject)\","
                 "\"newStateBoc\":null}";
             std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex
                                + "\",\"contractAddress\":\""
@@ -695,17 +736,24 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                                + "\",\"localResult\":" + local_result_json + "}";
             return JvmRpcResult{json_rpc_ok(id, result), false};
         }
-        // Round-37 fix: mirror the engine's round-36 max-gas cap.
-        // Consensus caps `input.gas_limit` to `max_gas_per_tx`
-        // (typically 1M) before runtime; the RPC simulation should
-        // do the same so a `gasLimit = 30M` request returns the
-        // same semantics on-chain and locally.  Pre-fix the runtime
-        // path rejected `gas_limit > max_gas_per_tx` with an error
-        // that surfaced as a runtime failure in the localResult,
-        // diverging from on-chain behavior.
-        if (config->max_gas_per_tx > 0
-            && input.gas_limit > config->max_gas_per_tx) {
-            input.gas_limit = config->max_gas_per_tx;
+        // Round-36 fix: mirror the engine's round-35 admission gas
+        // floor.  Public full-node RPC otherwise accepts any
+        // `gasLimit` and runs the resolver / class-loading work
+        // before AVATA gas accounting starts, exactly the surface
+        // round 35 closed on-chain.  Reject simulation when the
+        // (capped) gas budget is below the floor.
+        if (input.gas_limit < kJvmAdmissionGasFloor) {
+            local_result_json =
+                "{\"success\":false,\"outOfGas\":true,"
+                "\"outOfMemory\":false,\"gasUsed\":0,"
+                "\"vmLog\":\"effective gasLimit is below the JVM "
+                "admission floor (consensus would reject)\","
+                "\"newStateBoc\":null}";
+            std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex
+                               + "\",\"contractAddress\":\""
+                               + hex_encode(req.contract_address)
+                               + "\",\"localResult\":" + local_result_json + "}";
+            return JvmRpcResult{json_rpc_ok(id, result), false};
         }
 
         auto invocation_result = runtime->run_contract(

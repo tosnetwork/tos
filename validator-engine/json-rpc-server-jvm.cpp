@@ -289,6 +289,33 @@ std::string inject_account_state_boc(std::string params_json,
   return params_json;
 }
 
+// Round 42 MEDIUM fix: inject the live account's balance as a JSON-
+// number `accountBalance` field.  `handle_jvm_call_contract` uses this
+// to mirror the consensus affordability cap (`balance/gas_price`) —
+// without it the live RPC simulation would diverge from on-chain
+// execution any time the caller's balance is the binding constraint.
+// `balance` is an int64 from `ParsedAccountState`; we clamp negatives
+// to zero and serialize as decimal.
+std::string inject_account_balance(std::string params_json,
+                                   td::int64 balance) {
+  auto pos = params_json.rfind('}');
+  if (pos == std::string::npos) {
+    return params_json;
+  }
+  auto before = pos;
+  while (before > 0 &&
+         std::isspace(static_cast<unsigned char>(params_json[before - 1]))) {
+    --before;
+  }
+  const bool empty_object = before > 0 && params_json[before - 1] == '{';
+  const std::uint64_t clamped =
+      balance > 0 ? static_cast<std::uint64_t>(balance) : 0;
+  std::string field = empty_object ? "" : ",";
+  field += "\"accountBalance\":" + std::to_string(clamped);
+  params_json.insert(pos, field);
+  return params_json;
+}
+
 }  // namespace
 
 void JsonRpcServer::handle_jvm_rpc_method(std::string method,
@@ -487,6 +514,10 @@ void JsonRpcServer::handle_jvm_rpc_method(std::string method,
         }
         auto params_with_state = inject_account_state_boc(
             slot->params_json, jvm_rpc_hex_encode(boc_r.ok().as_slice()));
+        // Round 42: also forward the live balance so RPC simulation
+        // applies the consensus `balance/gas_price` affordability cap.
+        params_with_state =
+            inject_account_balance(params_with_state, parsed.balance);
         dispatch_with_config_and_params(jvm_cfg, params_with_state);
       }));
     }));

@@ -99,6 +99,14 @@ struct JvmCallContractRequest {
     td::Ref<vm::Cell> args;       ///< JVMA typed args cell; from argsBoc or empty
     td::Ref<vm::Cell> current_state;  ///< per-account JvmContractAccountState cell
     uint64_t gas_limit{0};                  ///< gas limit for the local call
+    /// Optional hint: the destination account's balance in tomis.  When
+    /// > 0, RPC simulation applies the consensus affordability cap
+    /// (`balance / config.gas_price`) so balance-derived `sk_no_gas`
+    /// rejections show up locally.  The validator-engine live path
+    /// fetches the on-chain balance and injects it as `accountBalance`;
+    /// callers passing `accountStateBoc` directly may also include this
+    /// hint.  0 (default) means balance-blind simulation.
+    uint64_t account_balance{0};
 };
 
 /// Parse a jvm_callContract JSON params array.
