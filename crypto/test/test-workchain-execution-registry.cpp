@@ -2818,12 +2818,14 @@ TEST(WorkchainExecutionRegistry, CustomComputeGasFeesAreChargedToAccount) {
 }
 
 TEST(WorkchainExecutionRegistry,
-     CustomComputeRejectsTransactionIfBalanceCannotPayGasFees) {
-  // Round-29 fix: when the custom engine reports gas_fees > balance,
-  // the FAIL_UNLESS in the host's charging block triggers and
-  // prepare_compute_phase returns false (transaction rejected as
-  // malformed).  Pre-fix the host silently let the transaction
-  // proceed, leaving validator CPU unbilled.
+     CustomComputeMarksRejectedWhenBalanceCannotPayGasFees) {
+  // Round-29/30 fix: when the custom engine reports gas_fees >
+  // balance, the host marks the compute phase as rejected
+  // (sk_no_gas, accepted=false, success=false) so the collator's
+  // external-rejection path (error code -701) handles it
+  // gracefully.  Round 29 returned `false` from
+  // prepare_compute_phase, which mapped to fatal collator error
+  // -669 — a user-triggerable condition crashing block production.
   auto config = make_empty_config();
   block::WorkchainSet workchains;
   workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
@@ -2867,9 +2869,23 @@ TEST(WorkchainExecutionRegistry,
   compute_cfg.workchain_execution_registry = &registry;
   compute_cfg.global_version = 14;
 
-  // FAIL_UNLESS in the charging block returns false from
-  // prepare_compute_phase.
-  CHECK(!tx.prepare_compute_phase(compute_cfg));
+  // prepare_compute_phase returns true (graceful), but the compute
+  // phase is marked rejected so the collator sees accepted=false
+  // and treats the external as -701.
+  CHECK(tx.prepare_compute_phase(compute_cfg));
+  CHECK(tx.compute_phase != nullptr);
+  CHECK(!tx.compute_phase->accepted);
+  CHECK(!tx.compute_phase->success);
+  CHECK(tx.compute_phase->skip_reason == block::ComputePhase::sk_no_gas);
+  CHECK(tx.compute_phase->gas_fees.not_null());
+  CHECK(td::sgn(tx.compute_phase->gas_fees) == 0);
+  // Engine's new_data is dropped because the host couldn't bill.
+  CHECK(tx.compute_phase->new_data.is_null());
+  // Account balance and total_fees are unchanged (no charge).
+  CHECK(tx.balance.tomis.not_null());
+  CHECK(td::sgn(tx.balance.tomis) == 0);
+  CHECK(tx.total_fees.tomis.not_null());
+  CHECK(td::sgn(tx.total_fees.tomis) == 0);
 }
 
 TEST(WorkchainExecutionRegistry, RejectsSuccessfulCustomComputeWithoutActionList) {

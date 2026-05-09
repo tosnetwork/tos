@@ -2148,24 +2148,52 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // gas_fees is non-negative (validate_custom_compute_output
     // checks).
     //
-    // If the account cannot cover the fees, the operator-= on
-    // CurrencyCollection invalidates `balance` (clears tomis to
-    // null) per its existing semantics; we detect this and fail
-    // the transaction.  Mirroring the TVM precondition that an
-    // accepted transaction can pay its compute cost.
-    if (cp.accepted) {
-      if (account.is_special) {
+    // Round-30 fix: when the account cannot cover the fees, treat
+    // the compute phase as rejected (sk_no_gas, accepted=false)
+    // rather than returning false from prepare_compute_phase.
+    // Returning false bubbles up as collator error -669 (fatal),
+    // which would let an external message with `gas_fees > balance`
+    // crash block production; the rejected-external path (-701)
+    // is the right semantic.  We pre-check the balance before
+    // mutating it so `CurrencyCollection::operator-=` can't
+    // invalidate the collection on underflow.
+    if (cp.accepted && !account.is_special) {
+      const bool can_pay =
+          cp.gas_fees.not_null() && balance.tomis.not_null()
+          && td::cmp(balance.tomis, cp.gas_fees) >= 0;
+      if (!can_pay) {
+        // Drop engine outcomes — host cannot honor a result it
+        // can't bill.  Clear new_data / actions so the
+        // `if (output.committed)` block below leaves the account
+        // state and queue untouched.  Set sk_no_gas so the
+        // collator's "if (!cp.accepted) return -701" path fires
+        // for external messages, matching TVM's reject-for-
+        // insufficient-gas semantics.
+        cp.accepted = false;
+        cp.success = false;
+        cp.skip_reason = ComputePhase::sk_no_gas;
+        cp.out_of_gas = true;
         cp.gas_fees = td::zero_refint();
-      } else {
-        total_fees += cp.gas_fees;
-        balance -= cp.gas_fees;
+        cp.new_data = {};
+        cp.actions = {};
+        cp.vm_log = "custom workchain compute rejected: gas_fees exceed "
+                    "account balance";
+        return true;
       }
-      if (!balance.is_valid() || td::sgn(balance.tomis) < 0) {
-        LOG(ERROR) << "custom workchain gas_fees exceed account balance; "
-                      "transaction rejected";
-        compute_phase.reset();
-        return false;
-      }
+      total_fees += cp.gas_fees;
+      balance -= cp.gas_fees;
+    } else if (cp.accepted && account.is_special) {
+      cp.gas_fees = td::zero_refint();
+    }
+    if (cp.accepted &&
+        (!balance.is_valid() || td::sgn(balance.tomis) < 0)) {
+      // Defensive: round-29's pre-check above should have caught
+      // this, but if a future code change ever lets it through, we
+      // still fail closed rather than dereferencing a null tomis
+      // in downstream FAIL_UNLESS.
+      LOG(ERROR) << "custom workchain charging produced invalid balance";
+      compute_phase.reset();
+      return false;
     }
 
     if (output.committed) {
