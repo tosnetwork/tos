@@ -706,6 +706,21 @@ size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
         return 0;
     }
 
+    // Round 89 MEDIUM fix: now that canonical hashes are loaded, drop
+    // any orphan blocks that the round-88 cache-walk admitted while
+    // CellEvmState::canonical_hash returned nullopt.
+    // populate_state_from_shard_accounts ran above and seeded
+    // canonical_; reconcile_blocks_with_canonical evicts hydrated
+    // blocks whose hash disagrees, plus their per-block log
+    // sidecars and hash → number entries.
+    auto orphans_dropped =
+        g_evm_state->reconcile_blocks_with_canonical();
+    if (orphans_dropped > 0) {
+        LOG(WARNING) << "evm-workchain: dropped " << orphans_dropped
+                     << " same-height orphan blocks during hydration "
+                     << "reconciliation";
+    }
+
     g_evm_state->mark_initial_hydration_done();
     return count;
 }

@@ -330,6 +330,31 @@ void EvmState::reset_block_logs(uint64_t block_number) {
     block_logs_.erase(block_number);
 }
 
+std::size_t EvmState::reconcile_blocks_with_canonical() {
+    std::unique_lock lock(mutex_);
+    if (!backend_) {
+        return 0;
+    }
+    std::size_t dropped = 0;
+    for (auto it = blocks_.begin(); it != blocks_.end(); ) {
+        const uint64_t bn = it->first;
+        const auto canonical = backend_->canonical_hash(
+            static_cast<silkworm::BlockNum>(bn));
+        if (canonical.has_value() && *canonical != it->second.hash) {
+            // Orphan: cached block at this height disagrees with the
+            // canonical chain.  Drop it (and the per-block sidecars
+            // that were hydrated under the same orphan attribution).
+            hash_to_block_.erase(it->second.hash);
+            block_logs_.erase(bn);
+            it = blocks_.erase(it);
+            ++dropped;
+        } else {
+            ++it;
+        }
+    }
+    return dropped;
+}
+
 static bool matches_address(const silkworm::Log& log,
                              const std::vector<evmc::address>& addresses) {
     if (addresses.empty()) return true;

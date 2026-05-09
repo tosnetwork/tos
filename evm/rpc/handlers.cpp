@@ -897,6 +897,70 @@ static bool is_logs_for_block_canonical(uint64_t block_num) {
                           canonical.state_root);
 }
 
+// Round 89 MEDIUM fix: receipt-side mirror of `is_stored_tx_canonical`.
+// `eth_getBlockReceipts` and `debug_getRawReceipts` iterate per-tx
+// receipts via `get_receipt_copy()` without a stamp gate, so a stale
+// receipt hydrated from the cache DB after a same-height rewrite (the
+// rewrite's `put_receipt` failed transiently or was skipped) could be
+// served under the canonical block.  This helper mirrors
+// `is_stored_tx_canonical` exactly, just keyed by the persisted
+// receipt cell rather than the transaction cell.
+static bool is_stored_receipt_canonical(const evmc::bytes32& tx_hash,
+                                         uint64_t block_number) {
+    StoredBlock canonical = global_evm_state().get_block_copy(block_number);
+    if (canonical.number != block_number) {
+        return false;
+    }
+    bool canonical_hash_is_zero = true;
+    for (auto b : canonical.hash.bytes) {
+        if (b != 0) { canonical_hash_is_zero = false; break; }
+    }
+    if (canonical_hash_is_zero) {
+        return false;
+    }
+    auto* cache = evm_rpc_cache_db();
+    if (cache == nullptr) {
+        return true;
+    }
+    td::Bits256 tx_hash_bits;
+    std::memcpy(tx_hash_bits.data(), tx_hash.bytes, 32);
+    auto cell_r = cache->get_receipt(tx_hash_bits);
+    if (cell_r.is_error()) {
+        return false;
+    }
+    auto cell = cell_r.move_as_ok();
+    if (cell.is_null()) {
+        return true;
+    }
+    StoredReceipt decoded;
+    EvmCacheRecordStamp stamp;
+    if (!decode_persisted_receipt(cell, decoded, stamp)) {
+        return false;
+    }
+    return stamp_is_fresh(stamp,
+                          kEvmCacheWorkchainId,
+                          kEvmCacheCodecSchemaVersion,
+                          canonical.hash,
+                          canonical.state_root);
+}
+
+// Round 89 LOW fix: derive the EIP-2718 transaction type for tx-side
+// JSON serializers (format_block_json full=true,
+// handle_get_transaction_by_hash, format_transaction_json).  Pre-fix
+// these sites hard-coded `"type":"0x0"`, so every typed tx (1, 2,
+// 3, 4) reported as legacy on RPC even after round-88 fixed the
+// receipt-side emission.  Use the receipt's persisted type when
+// available — receipt.type is set by the consensus compute path on
+// every accepted tx — and fall back to legacy for pending txs that
+// have not yet been receipted.
+static silkworm::TransactionType receipt_type_for_tx(
+    const evmc::bytes32& tx_hash) {
+    if (auto r = global_evm_state().get_receipt_copy(tx_hash)) {
+        return r->type;
+    }
+    return silkworm::TransactionType::kLegacy;
+}
+
 // Compute Ethereum logs bloom (2048-bit / 256-byte) into caller-provided buffer.
 // For each log: hash(address) and hash(each topic) contribute 3 bits each to the bloom.
 // Reference: ~/s/silkworm/core/types/bloom.cpp
@@ -2170,7 +2234,10 @@ static std::string format_block_json(const StoredBlock& blk, bool full_transacti
                 r += "\"blockNumber\":" + to_hex_quantity(blk.number) + ",";
                 r += "\"blockHash\":" + to_hex_data(blk.hash.bytes, 32) + ",";
                 r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
-                r += "\"type\":\"0x0\",\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"}";
+                // Round 89 LOW fix: emit canonical EIP-2718 type.
+                r += "\"type\":" + to_hex_quantity(
+                        static_cast<uint64_t>(receipt_type_for_tx(th)))
+                     + ",\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"}";
             } else {
                 r += to_hex_data(th.bytes, 32);
             }
@@ -2422,7 +2489,10 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
     r += "\"blockNumber\":" + to_hex_quantity(tx->block_number) + ",";
     r += "\"blockHash\":" + lookup_block_hash_hex(tx->block_number) + ",";
     r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(tx->tx_index)) + ",";
-    r += "\"type\":\"0x0\",";
+    // Round 89 LOW fix: emit canonical EIP-2718 type.
+    r += "\"type\":" + to_hex_quantity(
+            static_cast<uint64_t>(receipt_type_for_tx(tx_hash)))
+         + ",";
     r += "\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"";
     r += "}";
 
@@ -2705,6 +2775,15 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
         const auto& tx_hash = blk.transaction_hashes[i];
         auto receipt = global_evm_state().get_receipt_copy(tx_hash);
         if (!receipt) continue;
+        // Round 89 MEDIUM fix: gate the per-tx receipt against
+        // canonical state, mirroring eth_getTransactionReceipt.
+        // Pre-fix a stale RAM receipt (same-height rewrite where
+        // put_receipt failed transiently and the cache hydration
+        // re-loaded the orphaned pre-rewrite receipt on restart)
+        // could be emitted under the canonical block.
+        if (!is_stored_receipt_canonical(tx_hash, receipt->block_number)) {
+            continue;
+        }
 
         arr += "{";
         arr += "\"transactionHash\":" + to_hex_data(tx_hash.bytes, 32) + ",";
@@ -2978,7 +3057,10 @@ static std::string format_transaction_json(const evmc::bytes32& tx_hash, const S
     r += "\"blockNumber\":" + to_hex_quantity(tx.block_number) + ",";
     r += "\"blockHash\":" + lookup_block_hash_hex(tx.block_number) + ",";
     r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(tx.tx_index)) + ",";
-    r += "\"type\":\"0x0\",";
+    // Round 89 LOW fix: emit canonical EIP-2718 type.
+    r += "\"type\":" + to_hex_quantity(
+            static_cast<uint64_t>(receipt_type_for_tx(tx_hash)))
+         + ",";
     r += "\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"";
     r += "}";
     return r;
@@ -3752,6 +3834,16 @@ static RpcResult handle_debug_get_raw_receipts(const std::string& params, const 
         const auto& th = blk.transaction_hashes[i];
         auto r = global_evm_state().get_receipt_copy(th);
         if (!r) { out += "null"; continue; }
+        // Round 89 MEDIUM fix: gate per-tx receipt against canonical
+        // state.  Same rationale as eth_getBlockReceipts above —
+        // a stale RAM receipt hydrated from an orphaned cache DB
+        // entry could be encoded into the raw block dump.  Emit
+        // null for that slot so downstream tooling doesn't trust
+        // the encoded receipt.
+        if (!is_stored_receipt_canonical(th, r->block_number)) {
+            out += "null";
+            continue;
+        }
 
         // Round 88 LOW fix: prefer the persisted StoredReceipt::type
         // over a tx-RLP re-decode.  Pre-fix the helper defaulted to

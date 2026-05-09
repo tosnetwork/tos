@@ -193,6 +193,18 @@ class EvmState {
     /// txs.
     void reset_block_logs(uint64_t block_number);
 
+    /// Round 89 MEDIUM fix: drop hydrated blocks that disagree with
+    /// the canonical chain after canonical hashes are loaded.
+    /// `init_evm_workchain` walks the cache DB BEFORE
+    /// `populate_state_from_shard_accounts` populates
+    /// CellEvmState's canonical_ map, so the round-88 hydration
+    /// gate sees `canonical_hash(N) == nullopt` for every cached
+    /// block and admits orphans.  Call this AFTER canonical
+    /// hashes are loaded to evict orphan blocks (and their
+    /// per-block logs) from RAM.  Returns the number of orphan
+    /// entries dropped.
+    std::size_t reconcile_blocks_with_canonical();
+
     std::vector<IndexedLog> get_logs(
         uint64_t from_block, uint64_t to_block,
         const std::vector<evmc::address>& addresses = {},
