@@ -1936,6 +1936,16 @@ bool Transaction::run_precompiled_contract(const ComputePhaseConfig& cfg, precom
   cp.gas_used = gas_usage;
   cp.accepted = result.accepted;
   cp.success = (cp.accepted && result.committed);
+  // Round 84 LOW fix: set `cp.msg_state_used` to reflect whether
+  // the precompiled executor ran against the unpacked inbound
+  // StateInit, NOT whether activation succeeded.  Pre-fix
+  // (round 83) this lived inside the activation branch, so an
+  // ACCEPT-then-throw sequence (success=false, accepted=true)
+  // serialized msg_state_used=false even though the executor
+  // had already consumed the unpacked StateInit.  The flag's
+  // semantics are "did compute use inbound StateInit", not
+  // "did the deploy commit".
+  cp.msg_state_used = use_msg_state;
   LOG(INFO) << "Running precompiled smart contract " << impl.get_name() << ": exit_code=" << result.exit_code
             << " accepted=" << result.accepted << " success=" << cp.success << " gas_used=" << gas_usage
             << " time=" << time_tvm.real << "s cpu_time=" << time_tvm.cpu;
@@ -1952,16 +1962,6 @@ bool Transaction::run_precompiled_contract(const ComputePhaseConfig& cfg, precom
     // unfreezes — RPC consumers and replay tooling saw
     // inconsistent records.
     cp.account_activated = true;
-    // Round 83 LOW fix: same metadata-consistency issue for
-    // `cp.msg_state_used`.  The custom-engine path threads
-    // `output.msg_state_used` back via apply_custom_compute_output;
-    // TVM/precompiled paths never wrote the field, so a TVM
-    // deploy or unfreeze that successfully consumed the inbound
-    // StateInit serialized `msg_state_used=false` even though
-    // the executor ran against the unpacked StateInit.  Mirror
-    // the local `use_msg_state` into the cp record for
-    // serialization symmetry.
-    cp.msg_state_used = use_msg_state;
   }
   if (cfg.with_vm_log) {
     cp.vm_log = PSTRING() << "Running precompiled smart contract " << impl.get_name()
@@ -2448,6 +2448,16 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   cp.gas_used = std::min<long long>(gas.gas_consumed(), gas.gas_limit);
   cp.accepted = (gas.gas_credit == 0);
   cp.success = (cp.accepted && vm.committed());
+  // Round 84 LOW fix: set `cp.msg_state_used` to reflect whether
+  // the TVM ran against the unpacked inbound StateInit, NOT
+  // whether activation succeeded.  Pre-fix (round 83) this lived
+  // inside the activation branch, so an ACCEPT-then-throw
+  // sequence (success=false, accepted=true) serialized
+  // msg_state_used=false even though TVM had consumed the
+  // unpacked StateInit's code/data.  The flag's semantics are
+  // "did compute use inbound StateInit", not "did the deploy
+  // commit".
+  cp.msg_state_used = use_msg_state;
   if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
@@ -2461,16 +2471,6 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // unfreezes — RPC consumers and replay tooling saw
     // inconsistent records.
     cp.account_activated = true;
-    // Round 83 LOW fix: same metadata-consistency issue for
-    // `cp.msg_state_used`.  The custom-engine path threads
-    // `output.msg_state_used` back via apply_custom_compute_output;
-    // TVM/precompiled paths never wrote the field, so a TVM
-    // deploy or unfreeze that successfully consumed the inbound
-    // StateInit serialized `msg_state_used=false` even though
-    // the executor ran against the unpacked StateInit.  Mirror
-    // the local `use_msg_state` into the cp record for
-    // serialization symmetry.
-    cp.msg_state_used = use_msg_state;
   }
   if (precompiled) {
     cp.gas_used = precompiled.value().gas_usage;
