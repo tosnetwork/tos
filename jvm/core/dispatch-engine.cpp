@@ -407,9 +407,26 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 block::ComputePhase::sk_bad_state,
                 "JVM runtime invocation failed");
         }
-        return build_jvm_workchain_output(
+        // Round-33 fix: build_jvm_workchain_output can also return
+        // td::Status::Error — most notably when the committed
+        // storage_root exceeds ConfigParam-85's max_storage_cells
+        // (round-12).  That's a user-controlled condition (a contract
+        // can write distinct slots until the cap), so the error must
+        // not propagate up to prepare_compute_phase as fatal -669.
+        // Convert to sk_bad_state.
+        auto output_res = build_jvm_workchain_output(
             cfg->config, state, effective_gas_limit,
             invocation_res.move_as_ok());
+        if (output_res.is_error()) {
+            LOG(DEBUG)
+                << "JVM output builder returned error "
+                   "(treated as sk_bad_state): "
+                << output_res.error().message();
+            return skipped_output(
+                block::ComputePhase::sk_bad_state,
+                "JVM output builder failed");
+        }
+        return output_res.move_as_ok();
     }
 
 

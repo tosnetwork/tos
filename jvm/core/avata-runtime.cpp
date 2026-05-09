@@ -106,6 +106,19 @@ struct LinkedAvataVmState {
     std::vector<std::string> option_storage;
 };
 
+// Round-33 fix: bound the per-class Avata VM cache.  Pre-fix the
+// `class_hash` -> VM map was unbounded; a sender able to cause many
+// distinct deploys / calls (each one with a fresh class_hash) could
+// force unbounded persistent VM growth and repeat the unmetered
+// class-load work on every miss.  When the cache is full we evict
+// an arbitrary existing entry rather than reject — JVMs share the
+// same rt.jar so eviction is safe; the only cost is re-loading
+// `class_bytes` if the same class_hash recurs.  Setting this to
+// 256 keeps memory bounded (few hundred MiB at the worst case)
+// while still amortizing class-load across calls for the typical
+// few-active-contracts workload.
+constexpr std::size_t kJvmAvataVmCacheMaxEntries = 256;
+
 struct LinkedAvataRuntimeState {
     JvmLinkedAvataRuntimeOptions options;
     std::map<std::string, std::shared_ptr<LinkedAvataVmState>> vm_cache;
@@ -357,6 +370,15 @@ td::Result<std::shared_ptr<LinkedAvataVmState>> get_vm_for_account(
                decode_jvm_storage_value(previous_state.class_bytes));
     TRY_STATUS(
         install_account_class_into_vm(*vm_state, class_name, class_bytes));
+    // Round-33 fix: bound the cache to prevent unbounded growth from
+    // distinct class_hashes.  Evict an arbitrary existing entry
+    // (begin() in std::map is the smallest-keyed entry; we don't
+    // need LRU semantics — eviction just amortizes class-load cost
+    // across callers, and any evicted contract that recurs simply
+    // re-installs at next-call cost).
+    if (state.vm_cache.size() >= kJvmAvataVmCacheMaxEntries) {
+        state.vm_cache.erase(state.vm_cache.begin());
+    }
     state.vm_cache.emplace(key, vm_state);
     return vm_state;
 }
