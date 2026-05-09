@@ -2368,6 +2368,17 @@ static RpcResult handle_get_block_by_number(const std::string& params, const std
             }
             return {make_result(id, "null"), false};
         }
+        // Round 93 MEDIUM fix: even when the in-RAM block is
+        // canonical-fresh, surface -32010 when a durable
+        // incomplete marker is set for this height.  Pre-fix the
+        // marker check only fired on the cache-miss / stale
+        // branches, so a partial commit (block_cache_writes_ok
+        // succeeded but logs/tx writes failed) silently served a
+        // populated block whose sidecar indexes were missing.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, format_block_json(blk, full_transactions)), false};
     }
     if (is_evm_rpc_block_indexing_incomplete(bn)) {
@@ -2620,6 +2631,16 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     // Look up the stored transaction to re-execute with tracing
     auto stored_tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!stored_tx) {
+        // Round 93 LOW fix: surface -32010 when the tx is known
+        // accepted-but-unindexed.  Pre-fix `debug_traceTransaction`
+        // returned `transaction not found` for both unknown and
+        // marker-tagged tx hashes — admin tooling and replay
+        // workflows could not distinguish "unknown" from "we
+        // accepted it but the cache is incomplete".
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_error(id, -32000, "transaction not found"), true};
     }
 
@@ -3137,6 +3158,16 @@ static RpcResult handle_get_block_tx_count_by_number(const std::string& params, 
         }
         return {make_result(id, "\"0x0\""), false};
     }
+    // Round 93 MEDIUM fix: also gate on the durable block-marker
+    // when has_block returns true.  A partial cache commit (block
+    // record landed but per-tx records failed) leaves the marker
+    // set; serving a tx count that doesn't match what
+    // eth_getTransactionByBlockNumberAndIndex can deliver is a
+    // canonicality divergence.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
     auto blk = global_evm_state().get_block_copy(bn);
     return {make_result(id, to_hex_quantity(static_cast<uint64_t>(blk.transaction_hashes.size()))), false};
 }
@@ -3168,6 +3199,13 @@ static RpcResult handle_get_tx_by_block_number_and_index(const std::string& para
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, "null"), false};
+    }
+    // Round 93 MEDIUM fix: gate on the durable block-marker even
+    // when has_block returns true.  Same rationale as
+    // handle_get_block_tx_count_by_number above.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
     auto blk = global_evm_state().get_block_copy(bn);
     if (tx_index >= blk.transaction_hashes.size()) {
@@ -3780,6 +3818,13 @@ static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& 
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, "null"), false};
+    }
+    // Round 93 MEDIUM fix: gate on the durable block-marker even
+    // when has_block returns true.  Same rationale as
+    // handle_get_block_tx_count_by_number above.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
     auto blk = global_evm_state().get_block_copy(bn);
 

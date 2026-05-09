@@ -426,6 +426,15 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
                 LOG(WARNING) << "evm-rpc-cache: put_logs_for_block failed for #"
                              << fx.receipt.block_number << ": "
                              << put_status.message();
+                // Round 93 MEDIUM fix: gate the tx marker clear on
+                // log persistence too.  Pre-fix a put_logs_for_block
+                // failure left the per-block log batch absent (so
+                // restart hydration produced `[]`), but the marker
+                // was still cleared, and `eth_getLogs` /
+                // `is_logs_for_block_canonical` treated the
+                // empty cell as canonical — log loss masquerading
+                // as "no logs in this block".
+                tx_cache_writes_ok = false;
             }
         }
     }
@@ -476,6 +485,14 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
         // so subsequent reads surface -32010.
         if (block_cache_writes_ok) {
             clear_rpc_block_indexing_incomplete(fx.block.number);
+        } else {
+            // Round 93 MEDIUM fix: when there was no pre-existing
+            // block marker (the normal post-accept happy path),
+            // failing cache writes left no marker for subsequent
+            // reads to surface -32010 with.  Create one explicitly
+            // so the contractual guarantee survives a partial
+            // commit.
+            mark_rpc_block_indexing_incomplete(fx.block.number);
         }
 
         auto& sub_mgr = global_subscription_manager();
@@ -497,8 +514,14 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     // tx cache writes succeeded.  When writes failed the marker
     // stays so RPC consumers see -32010 instead of a stale partial
     // record on the next read or after restart.
+    //
+    // Round 93 MEDIUM fix: when there was no pre-existing tx
+    // marker (the normal happy path) and cache writes failed,
+    // create a fresh marker so the -32010 contract survives.
     if (tx_cache_writes_ok) {
         clear_rpc_indexing_incomplete(fx.tx_hash);
+    } else {
+        mark_rpc_indexing_incomplete(fx.tx_hash);
     }
 }
 
