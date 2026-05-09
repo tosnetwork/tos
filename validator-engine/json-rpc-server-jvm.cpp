@@ -84,12 +84,19 @@ std::string jvm_rpc_hex_encode(td::Slice bytes) {
 }
 
 // True if the method needs the full-node to load the live per-account state
-// (no `accountStateBoc` / legacy `executorStateBoc` in the params).
+// (no top-level `accountStateBoc` / legacy `executorStateBoc` in the
+// params).  Round 47 MEDIUM fix: use the depth-aware top-level lookup
+// from jvm/core/rpc.h so a nested `{"x":{"accountStateBoc":...}}` no
+// longer suppresses the live fetch (which would have let the parser
+// then read the attacker-controlled nested BOC bytes as the account
+// state).
 bool jvm_rpc_needs_live_account_state(const std::string& method,
                                       const std::string& params_json) {
   return (method == "jvm_callContract" || method == "jvm_getContractState")
-      && params_json.find("\"accountStateBoc\"") == std::string::npos
-      && params_json.find("\"executorStateBoc\"") == std::string::npos;
+      && !jvm_workchain::is_top_level_json_field_present(
+              params_json, "accountStateBoc")
+      && !jvm_workchain::is_top_level_json_field_present(
+              params_json, "executorStateBoc");
 }
 
 std::string jvm_rpc_hex_encode_bytes(const std::uint8_t* data,

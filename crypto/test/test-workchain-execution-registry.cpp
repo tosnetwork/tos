@@ -4774,6 +4774,69 @@ TEST(JvmWorkchainCore, StripTopLevelJsonFieldHandlesNestedAndDuplicates) {
   }
 }
 
+TEST(JvmWorkchainCore, RpcParserIgnoresNestedTopLevelKeys) {
+  // Round 47 MEDIUM fix: `parse_jvm_call_contract_request` and the
+  // validator-engine live-state gate must ignore nested copies of
+  // `accountStateBoc` / `executorStateBoc` / `accountBalance` /
+  // `gasLimit`.  Pre-fix the raw `find()` first-match scanner would
+  // pick a nested copy: a request like
+  //   {"contractAddress":"...","methodId":1,"x":{"accountStateBoc":"0x00"}}
+  // looked to the gate as if the caller supplied state (so the live
+  // path skipped its fetch+inject) AND the parser then read the
+  // nested BOC as the state.
+  using namespace jvm_workchain;
+
+  // (1) The depth-aware top-level lookup correctly says "no" for
+  // a nested `accountStateBoc` and "yes" for a top-level one.
+  CHECK(!is_top_level_json_field_present(
+      R"({"x":{"accountStateBoc":"0x00"}})", "accountStateBoc"));
+  CHECK(is_top_level_json_field_present(
+      R"({"accountStateBoc":"0x00"})", "accountStateBoc"));
+  CHECK(is_top_level_json_field_present(
+      R"({"a":1,"accountStateBoc":"0x00"})", "accountStateBoc"));
+
+  // (2) The full request parser uses the depth-aware lookup, so a
+  // nested `accountStateBoc` is NOT consumed as the state BOC.
+  std::string nested_request = R"({
+    "contractAddress":"0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "methodId":1,
+    "x":{"accountStateBoc":"0x00"}
+  })";
+  auto parsed = parse_jvm_call_contract_request(nested_request);
+  CHECK(parsed.has_value());
+  // current_state must remain null — the nested BOC must not be
+  // read as the per-account state.
+  CHECK(parsed->current_state.is_null());
+
+  // (3) Same depth-awareness for `accountBalance` (an attacker
+  // could otherwise nest a high balance to bypass the affordability
+  // cap when validator-engine omits live balance injection).
+  std::string nested_balance = R"({
+    "contractAddress":"0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "methodId":1,
+    "x":{"accountBalance":18446744073709551615}
+  })";
+  auto parsed_balance = parse_jvm_call_contract_request(nested_balance);
+  CHECK(parsed_balance.has_value());
+  CHECK(!parsed_balance->account_balance.has_value());
+
+  // (4) Same depth-awareness for `gasLimit`.
+  std::string nested_gas = R"({
+    "contractAddress":"0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "methodId":1,
+    "x":{"gasLimit":99999999}
+  })";
+  auto parsed_gas = parse_jvm_call_contract_request(nested_gas);
+  CHECK(parsed_gas.has_value());
+  CHECK(parsed_gas->gas_limit == 0);
+
+  // (5) The depth-aware lookup also handles a string value containing
+  // the literal key text — must NOT match.
+  CHECK(!is_top_level_json_field_present(
+      R"({"vmLog":"the accountStateBoc field is wrong"})",
+      "accountStateBoc"));
+}
+
 TEST(JvmWorkchainCore, RpcCallContractRuntimeErrorBillsAdmissionFloor) {
   // Round 45 LOW fix: when the runtime returns Status::Error (e.g.,
   // unknown method_id, malformed typed args) consensus bills the

@@ -202,4 +202,16 @@ bool is_jvm_rpc_method(const std::string& method) noexcept;
 std::string strip_top_level_json_field(std::string params_json,
                                        const std::string& key);
 
+/// Round 47 MEDIUM fix: returns true iff a top-level (depth==1) key
+/// `key` is present in the flat JSON object `json`.  Walks once,
+/// depth-aware and string-escape-aware, so nested copies (e.g.
+/// inside `{"x":{"key":...}}`) are NOT treated as present.  Used by
+/// the validator-engine live-state gate to decide whether the caller
+/// has actually supplied an `accountStateBoc` (in which case live
+/// fetch is skipped) or whether to fetch live state — a nested copy
+/// would otherwise let an attacker suppress the live fetch and force
+/// the parser to read attacker-controlled BOC bytes.
+bool is_top_level_json_field_present(const std::string& json,
+                                     const std::string& key);
+
 }  // namespace jvm_workchain

@@ -164,15 +164,76 @@ td::Ref<vm::Cell> hex_boc_decode_cell(const std::string& s) {
     return result.move_as_ok();
 }
 
+// Round 47 MEDIUM fix: locate a top-level (depth==1) field key in a
+// flat JSON object.  Returns the offset of the opening `"` of the
+// matching key, or `std::string::npos` if no such top-level key
+// exists.  Walks once, tracking string-escape and brace/bracket
+// depth, so a nested key (e.g. inside `{"x":{"accountStateBoc":...}}`)
+// does NOT match.
+//
+// Pre-Round-47 the helpers below used raw `find()`, which let a
+// nested field (or even a string value containing the key text) be
+// chosen as the parser's first match.  For `accountStateBoc` /
+// `executorStateBoc` / `accountBalance` this was a security bug — a
+// caller could embed a nested copy and either suppress the live
+// fetch (validator-engine gate) or shadow the server-injected value
+// (parser).  The depth-aware locator restores the contract that the
+// rest of this minimal parser already documents: "flat top-level
+// object only".
+std::size_t find_top_level_field(const std::string& json,
+                                 const std::string& key) {
+    std::string needle = "\"" + key + "\"";
+    std::size_t i = 0;
+    int depth = 0;
+    bool in_string = false;
+    bool escape = false;
+    while (i < json.size()) {
+        char c = json[i];
+        if (escape) { escape = false; ++i; continue; }
+        if (in_string) {
+            if (c == '\\') escape = true;
+            else if (c == '"') in_string = false;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            if (depth == 1
+                && i + needle.size() <= json.size()
+                && json.compare(i, needle.size(), needle) == 0) {
+                std::size_t j = i + needle.size();
+                while (j < json.size() &&
+                       (json[j] == ' ' || json[j] == '\t' ||
+                        json[j] == '\n' || json[j] == '\r')) {
+                    ++j;
+                }
+                if (j < json.size() && json[j] == ':') {
+                    return i;
+                }
+            }
+            in_string = true;
+            ++i;
+            continue;
+        }
+        if (c == '{' || c == '[') ++depth;
+        else if (c == '}' || c == ']') --depth;
+        ++i;
+    }
+    return std::string::npos;
+}
+
 // Very minimal JSON field extractor.  Not a general JSON parser —
 // only extracts top-level fields by key from a flat object.
 // Handles optional whitespace around ':' and value.
+//
+// Round 47 MEDIUM fix: uses `find_top_level_field` so the lookup is
+// depth-aware; nested copies of `key` are no longer found, removing
+// the shadow-attack class for security-sensitive optional fields
+// like `accountStateBoc`, `executorStateBoc`, `accountBalance`.
 std::string json_get_string(const std::string& json, const std::string& key) {
-    auto needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
+    auto pos = find_top_level_field(json, key);
     if (pos == std::string::npos) return {};
-    // Skip past the key and optional whitespace to find ':'
-    auto idx = pos + needle.size();
+    auto needle_size = key.size() + 2;  // surrounding `"..."`
+    auto idx = pos + needle_size;
     while (idx < json.size() && (json[idx] == ' ' || json[idx] == '\t'
                                  || json[idx] == '\n' || json[idx] == '\r')) {
         ++idx;
@@ -191,10 +252,10 @@ std::string json_get_string(const std::string& json, const std::string& key) {
 }
 
 std::string json_get_number_str(const std::string& json, const std::string& key) {
-    auto needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
+    auto pos = find_top_level_field(json, key);
     if (pos == std::string::npos) return {};
-    auto idx = pos + needle.size();
+    auto needle_size = key.size() + 2;
+    auto idx = pos + needle_size;
     while (idx < json.size() && (json[idx] == ' ' || json[idx] == '\t'
                                  || json[idx] == '\n' || json[idx] == '\r')) {
         ++idx;
@@ -285,6 +346,12 @@ bool is_valid_class_name(const std::string& name) {
 // -------------------------------------------------------------------------
 // JSON helpers exposed for the validator-engine live path
 // -------------------------------------------------------------------------
+
+bool is_top_level_json_field_present(const std::string& json,
+                                     const std::string& key) {
+    return find_top_level_field(json, key) != std::string::npos;
+}
+
 
 // Round 45 MEDIUM fix: remove a top-level field from a JSON object
 // before the live path injects its own value.  Without this, a
@@ -450,7 +517,7 @@ std::optional<JvmDeployContractRequest> parse_jvm_deploy_contract_request(
     // populated faithfully — clients that omit it deploy an
     // empty-manifest contract; clients that supply it commit to the
     // exact ABI dispatch table at deploy time.
-    if (params_json.find("\"manifestEntries\"") != std::string::npos) {
+    if (is_top_level_json_field_present(params_json, "manifestEntries")) {
         std::string mutable_copy = params_json;
         auto decoded = td::json_decode(td::MutableSlice(mutable_copy));
         if (decoded.is_error() ||
@@ -635,7 +702,7 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
     }
 
     // gasLimit is optional, but if the key is present it must parse.
-    if (params_json.find("\"gasLimit\"") != std::string::npos) {
+    if (is_top_level_json_field_present(params_json, "gasLimit")) {
         auto gas_str = json_get_number_str(params_json, "gasLimit");
         std::uint64_t v = 0;
         if (gas_str.empty() ||
@@ -654,7 +721,7 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
     // affordability cap (which evaluates to 0 → reject pre-runtime),
     // matching consensus.  Pre-fix, `0` was indistinguishable from
     // "absent" and the cap was skipped.
-    if (params_json.find("\"accountBalance\"") != std::string::npos) {
+    if (is_top_level_json_field_present(params_json, "accountBalance")) {
         auto balance_str = json_get_number_str(params_json, "accountBalance");
         std::uint64_t v = 0;
         if (balance_str.empty() ||
@@ -1186,7 +1253,7 @@ std::optional<JvmGetReceiptsRequest> parse_jvm_get_receipts_request(
         return std::nullopt;
     }
 
-    if (params_json.find("\"fromBlock\"") != std::string::npos) {
+    if (is_top_level_json_field_present(params_json, "fromBlock")) {
         auto from_str = json_get_number_str(params_json, "fromBlock");
         std::uint64_t v = 0;
         if (from_str.empty() ||
@@ -1197,7 +1264,7 @@ std::optional<JvmGetReceiptsRequest> parse_jvm_get_receipts_request(
         }
         req.from_block = v;
     }
-    if (params_json.find("\"toBlock\"") != std::string::npos) {
+    if (is_top_level_json_field_present(params_json, "toBlock")) {
         auto to_str = json_get_number_str(params_json, "toBlock");
         std::uint64_t v = 0;
         if (to_str.empty() ||
