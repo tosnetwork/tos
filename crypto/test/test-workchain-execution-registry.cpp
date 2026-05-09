@@ -415,21 +415,23 @@ td::Ref<vm::CellSlice> make_jvm_call_body(std::uint32_t method_id) {
   return vm::load_cell_slice_ref(cell);
 }
 
-// Build a minimal int_msg_info wc=3 → wc=3 message cell with the
-// supplied src address (32-byte addr_std).  Used in JVM v2 first-
+// Build a minimal int_msg_info wc=<workchain> → wc=3 message cell with
+// the supplied src address (32-byte addr_std).  Used in JVM v2 first-
 // activation tests to satisfy the round-14 gate that requires
-// `msg.src.addr == state.deployer`.
-td::Ref<vm::Cell> make_jvm_int_msg_with_src(
-    const std::array<std::uint8_t, 32>& src_addr) {
+// `msg.src.addr == state.deployer` and the round-15 gate that requires
+// `msg.src.workchain == 3`.
+td::Ref<vm::Cell> make_jvm_int_msg_with_src_at_wc(
+    const std::array<std::uint8_t, 32>& src_addr,
+    int src_workchain) {
   vm::CellBuilder cb;
   // CommonMsgInfo: int_msg_info$0
   CHECK(cb.store_long_bool(0, 1));
   // ihr_disabled, bounce, bounced (3 bits, all 0)
   CHECK(cb.store_long_bool(0, 3));
-  // src: addr_std$10 anycast=Nothing workchain=3 address=<src_addr>
+  // src: addr_std$10 anycast=Nothing workchain=<src_workchain> address=<src_addr>
   CHECK(cb.store_long_bool(0b10, 2));   // addr_std$10
   CHECK(cb.store_long_bool(0, 1));       // anycast: Nothing
-  CHECK(cb.store_long_bool(3, 8));       // workchain_id=3 (signed int8)
+  CHECK(cb.store_long_bool(src_workchain, 8));  // workchain_id (signed int8)
   CHECK(cb.store_bytes_bool(src_addr.data(), 32));
   // dest: addr_std$10 anycast=Nothing workchain=3 address=<zero>
   CHECK(cb.store_long_bool(0b10, 2));
@@ -452,6 +454,11 @@ td::Ref<vm::Cell> make_jvm_int_msg_with_src(
   // body: Either X ^X — left (inline empty)
   CHECK(cb.store_long_bool(0, 1));
   return cb.finalize();
+}
+
+td::Ref<vm::Cell> make_jvm_int_msg_with_src(
+    const std::array<std::uint8_t, 32>& src_addr) {
+  return make_jvm_int_msg_with_src_at_wc(src_addr, 3);
 }
 
 jvm_workchain::JvmDeployDescriptor make_test_jvm_deploy_descriptor(
@@ -2328,6 +2335,26 @@ TEST(WorkchainExecutionRegistry,
   CHECK(frontrun_out.completed);
   CHECK(!frontrun_out.accepted);
   CHECK(frontrun_out.skip_reason == block::ComputePhase::sk_bad_state);
+  CHECK(!runtime->called);
+
+  // Cross-workchain bypass rejected (round-15 fix): attacker uses the
+  // SAME 32-byte address as state.deployer but sends from wc=0
+  // instead of wc=3.  Pre-round-15 the engine compared only the 32
+  // bytes and accepted; round-15 also requires src.workchain == 3.
+  runtime->called = false;
+  block::WorkchainComputeInput cross_wc;
+  std::memcpy(cross_wc.account_addr.data(), bound_addr.data(), 32);
+  cross_wc.current_data = state_cell;
+  cross_wc.inbound_body = make_jvm_call_body(0x42);
+  cross_wc.inbound_message =
+      make_jvm_int_msg_with_src_at_wc(state.deployer, 0);  // wc=0
+  cross_wc.gas_limit = 1000;
+  cross_wc.msg_state_used = true;
+  auto cross_wc_out =
+      execution.executor->run_compute(cross_wc, context).move_as_ok();
+  CHECK(cross_wc_out.completed);
+  CHECK(!cross_wc_out.accepted);
+  CHECK(cross_wc_out.skip_reason == block::ComputePhase::sk_bad_state);
   CHECK(!runtime->called);
 
   // Same preload accepted on a SUBSEQUENT call (msg_state_used==false)
