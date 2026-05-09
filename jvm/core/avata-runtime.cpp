@@ -625,8 +625,18 @@ inline std::uint32_t le32(const std::uint8_t* p) {
 // scan for `Class-Path:` is reliable — a compressed manifest entry
 // would hide the literal inside a deflated stream and bypass the
 // scan.  Round-24 confirmed this gap with `jar cfm` (default
-// deflate) producing an archive whose raw bytes don't match
-// `Class-Path:` while the inflated manifest does.
+// deflate).
+//
+// Round-25: parser-disagreement defense.  Avata's loader does NOT
+// trust EOCD `cd_total_entries`; it walks consecutive central-
+// directory headers until a non-entry signature
+// (jvm/avata/src/finder.cpp).  An attacker can therefore set
+// `cd_total_entries=1` with a benign STORED first entry and a
+// deflated duplicate `META-INF/MANIFEST.MF` immediately after; if
+// our walker stops at the EOCD count, it misses the second entry.
+// We mirror Avata: walk by signature, verify every entry is STORED,
+// and additionally cross-check that the EOCD count and size match
+// the actual walked entries (so no parser disagreement is allowed).
 bool jar_all_entries_stored(td::Slice bytes) {
     // End-of-central-directory (EOCD) signature 0x06054b50.  Search
     // the last 65557 bytes (max EOCD size including comment).
@@ -651,20 +661,32 @@ bool jar_all_entries_stored(td::Slice bytes) {
     //   sig(4) disk(2) cd_disk(2) cd_entries_disk(2)
     //   cd_total_entries(2) cd_size(4) cd_offset(4) comment_len(2)
     if (eocd_off + 22 > n) return false;
-    const std::uint16_t cd_entries = le16(p + eocd_off + 10);
-    const std::uint32_t cd_size = le32(p + eocd_off + 12);
+    const std::uint16_t cd_entries_claimed = le16(p + eocd_off + 10);
+    const std::uint32_t cd_size_claimed = le32(p + eocd_off + 12);
     const std::uint32_t cd_offset = le32(p + eocd_off + 16);
     if (static_cast<std::uint64_t>(cd_offset)
-            + static_cast<std::uint64_t>(cd_size) > n) {
+            + static_cast<std::uint64_t>(cd_size_claimed) > n) {
         return false;
     }
-    // Iterate central directory entries.  Each entry header is at
-    // least 46 bytes; signature 0x02014b50.  Compression method is
-    // at offset 10 (uint16 LE).
+    if (cd_offset > eocd_off) {
+        return false;
+    }
+
+    // Walk every central-directory header from `cd_offset` until we
+    // see a non-entry signature, mirroring Avata's loader.  Reject
+    // if any entry is non-STORED (method != 0), if any header is
+    // truncated, or if the actual entry count / total size disagrees
+    // with the EOCD-claimed values (parser disagreement is the
+    // round-25 attack).
     std::size_t off = cd_offset;
-    for (std::uint16_t i = 0; i < cd_entries; ++i) {
+    std::uint32_t walked = 0;
+    while (off + 4 <= n) {
+        const std::uint32_t sig = le32(p + off);
+        if (sig != 0x02014b50u) {
+            // First non-entry signature ends the central directory.
+            break;
+        }
         if (off + 46 > n) return false;
-        if (le32(p + off) != 0x02014b50u) return false;
         const std::uint16_t method = le16(p + off + 10);
         if (method != 0) {
             return false;
@@ -672,8 +694,26 @@ bool jar_all_entries_stored(td::Slice bytes) {
         const std::uint16_t name_len = le16(p + off + 28);
         const std::uint16_t extra_len = le16(p + off + 30);
         const std::uint16_t comment_len = le16(p + off + 32);
-        off += 46u + name_len + extra_len + comment_len;
-        if (off > n) return false;
+        const std::size_t entry_size =
+            46u + name_len + extra_len + comment_len;
+        if (off + entry_size > n) return false;
+        off += entry_size;
+        ++walked;
+        if (walked == 0xFFFFu) {
+            // EOCD's 16-bit count cannot represent more than 65535
+            // entries (Zip64 would be needed); reject to avoid
+            // ambiguity.
+            return false;
+        }
+    }
+    // Must end exactly at the EOCD's stated central-directory
+    // boundary, AND the actual walked count must match the claimed
+    // count.  Either disagreement is the round-25 attack vector.
+    if (walked != cd_entries_claimed) {
+        return false;
+    }
+    if (off != cd_offset + cd_size_claimed) {
+        return false;
     }
     return true;
 }
