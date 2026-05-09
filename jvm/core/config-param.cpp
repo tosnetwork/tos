@@ -302,6 +302,7 @@ JvmConfig JvmConfig::default_activation() noexcept {
     cfg.helper_gas_costs[10] = 50;   // EVENT_BASE
     cfg.helper_gas_costs[11] = 10;   // EVENT_TOPIC
     cfg.helper_gas_costs[12] = 1;    // EVENT_BYTE
+    cfg.helper_gas_costs[13] = 1;    // STORAGE_LOAD_BYTE (round 53)
 
     return cfg;
 }

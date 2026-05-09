@@ -25,7 +25,17 @@ constexpr unsigned kJvmConfigMagicBits = 32;
 // so `max_total_class_bytes` is no longer carried in ConfigParam 85.
 constexpr std::uint8_t kJvmConfigSchemaVersion = 2;
 constexpr unsigned kJvmOpcodeGasCostCount = 256;
-constexpr unsigned kJvmContractHelperGasCostCount = 13;
+// Round 53 MEDIUM fix: bumped from 13 to 14 to add
+// AVATA_CONTRACT_HELPER_STORAGE_LOAD_BYTE.  Pre-fix Storage.load
+// charged a single fixed cost regardless of value size, letting a
+// contract that had seeded a large slot force validators to decode +
+// copy up to 1 MiB per call for ~20 gas.  Now mirrored to
+// STORAGE_STORE_BYTE so load and store bill symmetrically per byte.
+// IMPORTANT: this changes the ConfigParam-85 wire layout; the
+// `JvmConfig::helper_gas_costs` array now serializes 14 entries
+// instead of 13.  Pre-launch only, so no migration is needed, but
+// existing serialized configs will be invalid.
+constexpr unsigned kJvmContractHelperGasCostCount = 14;
 constexpr unsigned kJvmStdlibHashBytes = 32;
 
 struct JvmConfig {

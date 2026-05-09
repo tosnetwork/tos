@@ -59,7 +59,16 @@ enum {
   AVATA_CONTRACT_HELPER_EVENT_BASE = 10,
   AVATA_CONTRACT_HELPER_EVENT_TOPIC = 11,
   AVATA_CONTRACT_HELPER_EVENT_BYTE = 12,
-  AVATA_CONTRACT_HELPER_GAS_COST_COUNT = 13
+  // Round 53 MEDIUM fix: per-byte cost charged on Storage.load after
+  // the host returns the decoded value's size.  Pre-fix `Storage.load`
+  // charged only the fixed `STORAGE_LOAD` (~20 gas) but the host
+  // decoded + malloc'd + memcpy'd a value chain up to
+  // `kJvmStorageValueMaxBytes` (1 MiB) — validators did O(N) work
+  // for O(1) gas, a CPU-DoS vector once a contract had seeded a
+  // large slot.  Now mirrored to STORAGE_STORE_BYTE so load and
+  // store bill symmetrically per byte.
+  AVATA_CONTRACT_HELPER_STORAGE_LOAD_BYTE = 13,
+  AVATA_CONTRACT_HELPER_GAS_COST_COUNT = 14
 };
 
 AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction(

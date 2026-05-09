@@ -339,6 +339,26 @@ jbyteArray loadFromActiveStorageHost(JNIEnv* e,
     return 0;
   }
 
+  // Round 53 MEDIUM fix: charge per-byte gas for the validator's
+  // decode + malloc + memcpy work proportional to the loaded value
+  // size.  Pre-fix `Storage.load` charged only the fixed
+  // `STORAGE_LOAD` cost (~20 gas) regardless of value size, so a
+  // contract that had seeded a large slot once could repeatedly
+  // call `Storage.contains` / `Storage.load` for ~20 gas while
+  // forcing validators to walk and copy up to 1 MiB per call.  We
+  // charge AFTER the host returns the value because cheap pre-load
+  // size discovery would require parallel host plumbing; charging
+  // post-hoc still drains the contract's gas budget after at most
+  // one full-size load (kJvmStorageValueMaxBytes = 1 MiB), bounding
+  // validator work per "drain budget" attack.
+  if (valueLength != 0
+      && !chargeHelperGas(e,
+                          AVATA_CONTRACT_HELPER_STORAGE_LOAD_BYTE,
+                          static_cast<uint64_t>(valueLength))) {
+    freeActiveStorageValue(value);
+    return 0;
+  }
+
   jbyteArray result = newByteArray(e, value, static_cast<jsize>(valueLength));
   freeActiveStorageValue(value);
   return result;

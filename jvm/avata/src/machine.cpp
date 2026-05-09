@@ -4411,7 +4411,12 @@ const uint64_t DefaultContractHelperGasCosts[
     2,    // AVATA_CONTRACT_HELPER_NATIVE_CALL
     50,   // AVATA_CONTRACT_HELPER_EVENT_BASE
     10,   // AVATA_CONTRACT_HELPER_EVENT_TOPIC
-    1     // AVATA_CONTRACT_HELPER_EVENT_BYTE
+    1,    // AVATA_CONTRACT_HELPER_EVENT_BYTE
+    // Round 53 MEDIUM fix: per-byte cost on Storage.load.  1 gas/byte
+    // mirrors STORAGE_STORE_BYTE so load and store charge symmetric
+    // bandwidth for the validator-CPU work proportional to the value
+    // size.
+    1     // AVATA_CONTRACT_HELPER_STORAGE_LOAD_BYTE
 };
 
 }  // namespace
