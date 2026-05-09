@@ -611,8 +611,19 @@ td::Result<std::uint64_t> peek_jvm_args_total_bytes(
             // Walk the value's chunk chain summing byte counts only
             // (no byte memcpy).  Mirrors `decode_jvm_storage_value`'s
             // structural walk; bounded by `kJvmStorageValueMaxBytes`.
+            //
+            // Round 70 MEDIUM fix: track `value_byte_total` for THIS
+            // value's chain separately from `local_total` (the
+            // cumulative across-args total).  `decode_jvm_storage_value`
+            // enforces `kJvmStorageValueMaxBytes` PER decoded value,
+            // not across all args — pre-fix the peek capped on
+            // cumulative bytes, so two args of 700 KiB summing to
+            // 1.4 MiB caused the peek to error at 1 MiB while the
+            // real decoder accepted both.  Reset the per-value count
+            // at each value chain.
             auto chunk = value_ref;
             bool chain_done = false;
+            std::uint64_t value_byte_total = 0;
             for (std::size_t chunks = 0;
                  !chain_done && chunks <=
                      kJvmStorageValueMaxBytes / kJvmStorageValueChunkBytes + 1;
@@ -634,20 +645,13 @@ td::Result<std::uint64_t> peek_jvm_args_total_bytes(
                     return fail("JVM args value cell is not byte-aligned");
                 }
                 const unsigned byte_count = (bits - 1) / 8;
-                // Round 69 LOW fix: mirror the storage-value
-                // decoder's cap rejection BEFORE adding bytes.  The
-                // real `decode_jvm_storage_value` rejects on
-                // `out.size() + byte_count > kJvmStorageValueMaxBytes`
-                // without copying the offending chunk, so for the
-                // partial-walked count to match what the decoder
-                // would have memcpy'd, we apply the same gate here
-                // before incrementing `local_total`.  Pre-fix the
-                // peeker added `byte_count` first, then aborted on
-                // the next chunk, over-billing by up to ~127 bytes
-                // per arg vs. the actual decoder cost.
-                if (local_total + byte_count > kJvmStorageValueMaxBytes) {
+                // Round 69/70 fix: per-value cap matches
+                // `decode_jvm_storage_value` exactly.
+                if (value_byte_total + byte_count >
+                    kJvmStorageValueMaxBytes) {
                     return fail("JVM args value exceeds maximum size");
                 }
+                value_byte_total += byte_count;
                 if (local_total >
                     std::numeric_limits<std::uint64_t>::max() - byte_count) {
                     local_total = std::numeric_limits<std::uint64_t>::max();
