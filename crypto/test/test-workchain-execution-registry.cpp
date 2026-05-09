@@ -1088,6 +1088,70 @@ TEST(JvmWorkchainCore, EncodeJvmStateInitCellPassesTlbValidation) {
   CHECK(decoded.class_hash == state.class_hash);
 }
 
+TEST(JvmWorkchainCore, DecodeJvmStorageValueRejectsZeroByteContinuation) {
+  // Round 56 LOW fix: a non-canonical chain of `has_next=1`
+  // continuation cells with `byte_count==0` would walk past the
+  // byte-budget gate (`out.size() + 0 > effective_cap` never
+  // fired) up to the cell-tree depth limit (~1024) before the
+  // decoder reached a final payload cell.  Decoder must reject any
+  // non-final cell with `byte_count == 0`.
+  using namespace jvm_workchain;
+
+  // Build a hand-crafted "next=1" cell with zero payload bytes,
+  // pointing at a normal final cell.  Canonical encoding never
+  // produces this shape — `encode_jvm_storage_value` emits an
+  // empty cell only as the lone cell for the empty value.
+  vm::CellBuilder final_cell;
+  // 1-byte payload + has_next=0
+  std::uint8_t b = 0xab;
+  CHECK(final_cell.store_bytes_bool(&b, 1));
+  CHECK(final_cell.store_ulong_rchk_bool(0, 1));
+  auto final_ref = final_cell.finalize();
+
+  vm::CellBuilder zero_cont;
+  // 0-byte payload + has_next=1 + ref
+  CHECK(zero_cont.store_ulong_rchk_bool(1, 1));
+  CHECK(zero_cont.store_ref_bool(std::move(final_ref)));
+  auto zero_cont_ref = zero_cont.finalize();
+
+  // Decode must reject (non-canonical zero-byte continuation).
+  auto r = decode_jvm_storage_value(zero_cont_ref);
+  CHECK(r.is_error());
+  CHECK(r.error().message().str().find("non-canonical zero-byte continuation")
+        != std::string::npos);
+
+  // Also reject when sandwiched between two non-empty cells.
+  vm::CellBuilder middle_zero;
+  // Build: head(1 byte, next=1, ref→ zero_cont(0 bytes, next=1, ref→ final))
+  vm::CellBuilder zero_mid;
+  CHECK(zero_mid.store_ulong_rchk_bool(1, 1));
+  // Need a fresh final ref since we moved the previous one.
+  vm::CellBuilder final2;
+  CHECK(final2.store_bytes_bool(&b, 1));
+  CHECK(final2.store_ulong_rchk_bool(0, 1));
+  CHECK(zero_mid.store_ref_bool(final2.finalize()));
+  auto zero_mid_ref = zero_mid.finalize();
+
+  vm::CellBuilder head;
+  CHECK(head.store_bytes_bool(&b, 1));
+  CHECK(head.store_ulong_rchk_bool(1, 1));
+  CHECK(head.store_ref_bool(std::move(zero_mid_ref)));
+  auto head_ref = head.finalize();
+  auto r2 = decode_jvm_storage_value(head_ref);
+  CHECK(r2.is_error());
+  CHECK(r2.error().message().str().find("non-canonical zero-byte continuation")
+        != std::string::npos);
+
+  // The canonical empty-value encoding (single cell, no payload,
+  // has_next=0) must still decode.
+  vm::CellBuilder empty_cell;
+  CHECK(empty_cell.store_ulong_rchk_bool(0, 1));
+  auto empty_ref = empty_cell.finalize();
+  auto r_empty = decode_jvm_storage_value(empty_ref);
+  CHECK(r_empty.is_ok());
+  CHECK(r_empty.ok().empty());
+}
+
 TEST(JvmWorkchainCore, DecodeJvmStorageValueRejectsSubChunkCap) {
   // Round 55 MEDIUM fix: pre-Round-55 the bail-out check
   //   `out.size() > effective_cap - byte_count`
