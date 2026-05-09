@@ -620,6 +620,7 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // burn most of max_gas_per_tx, write one extra slot to
         // trigger output-builder rejection, and pay only the floor.
         const std::uint64_t invocation_gas_used = invocation.gas_used;
+        const bool invocation_committed = invocation.success;
         auto output_res = build_jvm_workchain_output(
             cfg->config, state, effective_gas_limit, std::move(invocation),
             /*storage_walk_already_billed=*/storage_walk_performed);
@@ -634,7 +635,24 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 cfg->config,
                 invocation_gas_used);
         }
-        return output_res.move_as_ok();
+        auto output = output_res.move_as_ok();
+        // Round 50 LOW fix: forward the host's first-activation
+        // signal into the serialized compute phase.  The host sets
+        // `input.msg_state_used = true` when it unpacked
+        // `StateInit.data` from the inbound message to activate an
+        // `acc_uninit` account (transaction.cpp prepare_compute_phase
+        // round-14 plumbing); without copying it here the output's
+        // default `false` is what the wire records, so block
+        // explorers / light clients / audit replays cannot tell that
+        // a JVM contract activation happened on this transaction.
+        // `account_activated` mirrors the same signal: a successful
+        // first-activation compute genuinely transitions
+        // acc_uninit→acc_active.  For subsequent calls
+        // (`msg_state_used = false`) the defaults stay correct.
+        output.msg_state_used = input.msg_state_used;
+        output.account_activated =
+            input.msg_state_used && invocation_committed;
+        return output;
     }
 
 

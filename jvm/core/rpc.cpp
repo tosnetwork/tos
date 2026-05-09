@@ -733,6 +733,25 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
         req.account_balance = v;
     }
 
+    // accountAffordableGas is optional (round-50 hint).  Pre-divided
+    // affordability cap.  When present, RPC uses it directly as the
+    // cap.  Validator-engine sets this for live-state requests so
+    // accounts with 256-bit balances above `UINT64_MAX` still get a
+    // correct cap (computed in `RefInt256`), instead of overflowing
+    // and leaving the RPC balance-blind.
+    if (is_top_level_json_field_present(params_json,
+                                        "accountAffordableGas")) {
+        auto gas_str = json_get_number_str(params_json, "accountAffordableGas");
+        std::uint64_t v = 0;
+        if (gas_str.empty() ||
+            !parse_strict_uint(gas_str,
+                                std::numeric_limits<std::uint64_t>::max(),
+                                20, v)) {
+            return std::nullopt;
+        }
+        req.account_affordable_gas = v;
+    }
+
     // args is optional; absent = canonical empty args cell.
     req.args = vm::CellBuilder().finalize();
     auto args_boc_hex = json_get_string(params_json, "argsBoc");
@@ -914,18 +933,34 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
         // Round-42 fix: mirror the engine's round-31 affordability cap
         // when the live RPC path injects the account's balance.  The
         // validator-engine fetches the on-chain account balance and
-        // populates `req.account_balance` so RPC simulation matches the
-        // consensus path's `balance/gas_price` cap.  When the balance
+        // populates the affordability hint so RPC simulation matches
+        // the consensus path's `balance/gas_price` cap.  When the
         // hint is absent (caller-supplied state without balance), the
-        // cap reduces to `min(input.gas_limit, max_gas_per_tx)` and the
-        // simulation is balance-blind — clients that need affordability
-        // semantics must pass `accountBalance`.
+        // cap reduces to `min(input.gas_limit, max_gas_per_tx)` and
+        // the simulation is balance-blind — clients that need
+        // affordability semantics must pass `accountBalance` /
+        // `accountAffordableGas`.
         //
-        // Round 43 MEDIUM fix: the predicate now uses `has_value()`
+        // Round 43 MEDIUM fix: the predicate uses `has_value()`
         // rather than `> 0`, so a live zero-balance account triggers
-        // the cap (affordable=0 → reject pre-runtime) instead of being
-        // treated as "no hint" and skipping the cap.
-        if (config->gas_price > 0 && req.account_balance.has_value()) {
+        // the cap (affordable=0 → reject pre-runtime) instead of
+        // being treated as "no hint" and skipping the cap.
+        //
+        // Round 50 MEDIUM fix: prefer the pre-divided
+        // `account_affordable_gas` when present.  Validator-engine
+        // sets it from a 256-bit `balance / gas_price` computation,
+        // so accounts whose balance overflows `uint64_t` still get a
+        // correct cap.  Pre-fix RPC computed `balance / gas_price`
+        // itself with `req.account_balance` (uint64), and a balance
+        // overflowing uint64 caused the live path to omit injection
+        // entirely (stay balance-blind), letting RPC simulate success
+        // for accounts consensus would have rejected pre-runtime.
+        if (req.account_affordable_gas.has_value()) {
+            const std::uint64_t affordable = *req.account_affordable_gas;
+            if (affordable < input.gas_limit) {
+                input.gas_limit = affordable;
+            }
+        } else if (config->gas_price > 0 && req.account_balance.has_value()) {
             std::uint64_t affordable =
                 *req.account_balance / config->gas_price;
             if (affordable < input.gas_limit) {

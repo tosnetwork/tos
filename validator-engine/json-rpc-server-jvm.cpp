@@ -325,8 +325,9 @@ std::string inject_account_state_boc(std::string params_json,
 // that don't fit `int64` to UINT64_MAX (treated as "very high
 // balance, no constraint") rather than letting `to_long()` return a
 // negative sentinel that the old version clamped to zero.
-std::string inject_account_balance(std::string params_json,
-                                   std::uint64_t balance) {
+std::string inject_top_level_field(std::string params_json,
+                                   const std::string& field_name,
+                                   const std::string& json_value_literal) {
   auto open = params_json.find('{');
   if (open == std::string::npos) {
     return params_json;
@@ -336,16 +337,26 @@ std::string inject_account_balance(std::string params_json,
          std::isspace(static_cast<unsigned char>(params_json[idx]))) {
     ++idx;
   }
-  // If the next non-whitespace char is `}`, the object is empty —
-  // inject without a leading comma; otherwise inject with a trailing
-  // comma so the existing first field still parses.
   const bool empty_object = idx < params_json.size() && params_json[idx] == '}';
-  std::string field = "\"accountBalance\":" + std::to_string(balance);
+  std::string field = "\"" + field_name + "\":" + json_value_literal;
   if (!empty_object) {
     field += ",";
   }
   params_json.insert(open + 1, field);
   return params_json;
+}
+
+// Round 50 MEDIUM fix: inject the pre-divided affordability cap (in
+// gas units).  The validator-engine computes this from the live
+// 256-bit balance and `gas_price`, so RPC simulation matches consensus
+// even when the true balance exceeds `UINT64_MAX`.  Replaces the
+// pre-Round-50 `inject_account_balance` helper, which injected the
+// raw balance and let RPC divide by `gas_price` itself.
+std::string inject_account_affordable_gas(std::string params_json,
+                                          std::uint64_t affordable_gas) {
+  return inject_top_level_field(std::move(params_json),
+                                "accountAffordableGas",
+                                std::to_string(affordable_gas));
 }
 
 // Round 43 LOW fix: extract the live account balance as a `uint64_t`.
@@ -354,22 +365,21 @@ std::string inject_account_balance(std::string params_json,
 // negative to 0 — so a balance > INT64_MAX was treated as "no hint",
 // a behavior consensus did not match.
 //
-// Round 44 LOW fix: return `std::nullopt` when the balance overflows
-// `uint64_t`.  Pre-Round-44 we returned `UINT64_MAX`, then RPC divided
-// by `gas_price`; for huge balance + huge gas_price the quotient could
-// fall below the admission floor and falsely reject locally even
-// though consensus (which divides 256-bit `balance` by `gas_price`
-// before clamping) computes a perfectly affordable amount.  Returning
-// `nullopt` makes the validator-engine omit the `accountBalance`
-// field; RPC then defers to `max_gas_per_tx` (balance-blind for the
-// affordability cap).  This is a UX divergence from consensus, but a
-// safe-side one: RPC will simulate at higher gas than consensus could
-// afford only when the consensus cap is < kJvmAdmissionGasFloor, in
-// which case consensus rejects pre-runtime — RPC is conservatively
-// "balance-blind", not "balance-cap-bypass".
-std::optional<std::uint64_t> extract_account_balance_uint64(
-    const tos::lite_api::liteServer_accountState& account) {
-  if (account.state_.empty()) {
+// Round 50 MEDIUM fix: compute the affordability cap directly using
+// 256-bit `RefInt256` math (`balance / gas_price`) and return the
+// quotient as `uint64_t` (clamped to `UINT64_MAX` only when the
+// quotient itself overflows uint64, which means the cap is "no
+// constraint").  Pre-Round-50 the helper returned the raw uint64
+// balance and let RPC divide; balances > UINT64_MAX returned
+// `nullopt`, the validator-engine omitted injection, and the RPC
+// stayed balance-blind — letting it simulate success for accounts
+// whose true affordable gas was below `kJvmAdmissionGasFloor` (which
+// consensus would reject pre-runtime).  Now we always inject the
+// cap when we can compute it.
+std::optional<std::uint64_t> extract_account_affordable_gas(
+    const tos::lite_api::liteServer_accountState& account,
+    std::uint64_t gas_price) {
+  if (account.state_.empty() || gas_price == 0) {
     return 0;
   }
   auto state_r = vm::std_boc_deserialize(account.state_.as_slice());
@@ -390,10 +400,15 @@ std::optional<std::uint64_t> extract_account_balance_uint64(
   if (coins.is_null()) {
     return 0;
   }
-  if (!coins->fits_bits(64, /*sign=*/false)) {
-    return std::nullopt;  // overflow → omit `accountBalance` injection
+  // Divide in 256-bit math, then clamp the QUOTIENT to uint64.
+  auto affordable = coins / td::make_refint(gas_price);
+  if (affordable.is_null()) {
+    return 0;
   }
-  return static_cast<std::uint64_t>(coins->to_long());
+  if (!affordable->fits_bits(64, /*sign=*/false)) {
+    return std::numeric_limits<std::uint64_t>::max();
+  }
+  return static_cast<std::uint64_t>(affordable->to_long());
 }
 
 }  // namespace
@@ -597,39 +612,33 @@ void JsonRpcServer::handle_jvm_rpc_method(std::string method,
         // server's values.  The live path is authoritative: a request
         // arriving on the public live endpoint must simulate against
         // the real on-chain state and balance, never the caller's
-        // forged hint.  Without this, the round-44 nullopt path
-        // (overflow → omit `accountBalance` injection) reopened the
-        // shadow attack: an attacker could include
-        // `"accountBalance":2000` in their request, the live path
-        // would skip injection, and RPC's parser would honour the
-        // attacker's value — bypassing the affordability cap that
-        // consensus would otherwise enforce.
+        // forged hint.  Round 50 also strips
+        // `accountAffordableGas` for the same reason.
         auto scrubbed = strip_top_level_field(slot->params_json,
                                               "accountStateBoc");
         scrubbed = strip_top_level_field(std::move(scrubbed),
                                          "executorStateBoc");
         scrubbed = strip_top_level_field(std::move(scrubbed),
                                          "accountBalance");
+        scrubbed = strip_top_level_field(std::move(scrubbed),
+                                         "accountAffordableGas");
         auto params_with_state = inject_account_state_boc(
             std::move(scrubbed), jvm_rpc_hex_encode(boc_r.ok().as_slice()));
-        // Round 42: also forward the live balance so RPC simulation
-        // applies the consensus `balance/gas_price` affordability cap.
-        // Round 43: re-extract via `extract_account_balance_uint64`
-        // which preserves the full 64 unsigned bits instead of using
-        // `ParsedAccountState::balance` (int64) which silently lost
-        // the high bit.
-        // Round 44 LOW fix: skip injection when the balance overflows
-        // `uint64_t`.  Otherwise the affordability cap divides
-        // `UINT64_MAX / gas_price` and may falsely reject locally for
-        // accounts whose true `balance / gas_price` is large enough.
-        // The round-45 scrub above ensures that omitting injection on
-        // overflow does NOT let the caller's `accountBalance` shadow
-        // the (absent) server value.
-        const auto live_balance =
-            extract_account_balance_uint64(*account);
-        if (live_balance.has_value()) {
+        // Round 50 MEDIUM fix: compute the affordability cap directly
+        // in 256-bit math (`balance / gas_price`) and inject it as a
+        // pre-divided gas-units value.  Pre-fix the live path injected
+        // the raw `accountBalance` and let RPC divide; balances above
+        // `UINT64_MAX` returned `nullopt` (round 44), the validator-
+        // engine omitted injection, and the RPC stayed balance-blind —
+        // letting it simulate `success=true` for accounts whose true
+        // affordable gas was below `kJvmAdmissionGasFloor` (which
+        // consensus rejects pre-runtime).
+        const auto affordable_gas =
+            extract_account_affordable_gas(*account, jvm_cfg.gas_price);
+        if (affordable_gas.has_value()) {
             params_with_state =
-                inject_account_balance(params_with_state, *live_balance);
+                inject_account_affordable_gas(params_with_state,
+                                              *affordable_gas);
         }
         dispatch_with_config_and_params(jvm_cfg, params_with_state);
       }));

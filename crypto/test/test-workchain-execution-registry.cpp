@@ -4842,6 +4842,186 @@ TEST(JvmWorkchainCore, RpcParserIgnoresNestedTopLevelKeys) {
       "accountStateBoc"));
 }
 
+TEST(JvmWorkchainCore, RpcCallContractAffordableGasOverridesBalance) {
+  // Round 50 MEDIUM fix: when validator-engine's live path injects
+  // the pre-divided `accountAffordableGas`, RPC uses it directly as
+  // the cap instead of dividing `accountBalance / gas_price` itself.
+  // This lets balances above `UINT64_MAX` still produce a correct
+  // cap (computed by validator-engine in 256-bit math).  Pre-fix,
+  // such balances returned `nullopt` from the extractor, the live
+  // path omitted injection, and RPC stayed balance-blind.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1000;
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  // Affordable gas hint = 100 → cap below admission floor → reject
+  // pre-runtime.  The mock should NEVER be called; if it is, that
+  // proves the cap didn't fire.
+  runtime->mock_expected_gas_limit = 0;  // would assert if called
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x50};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x21 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x43 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  auto bound = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 5000;
+  // Authoritative pre-divided cap (e.g. validator-engine extracted
+  // `balance=100*1000` against `gas_price=1000`).  Below the
+  // admission floor, so RPC must reject pre-runtime.
+  req.account_affordable_gas = 100;
+  // Set a wildly-different `accountBalance` to verify it is NOT
+  // honoured when `accountAffordableGas` is present.  If the cap
+  // logic accidentally divides this balance, it would compute
+  // 1e9/1000 = 1_000_000 (above the floor) and incorrectly run.
+  req.account_balance = std::uint64_t{1'000'000'000};
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  CHECK(result.json.find("\"success\":false") != std::string::npos);
+  CHECK(result.json.find("\"outOfGas\":true") != std::string::npos);
+  CHECK(result.json.find("admission floor") != std::string::npos);
+  CHECK(!runtime->called);
+}
+
+TEST(JvmWorkchainCore, RpcCallContractAffordableGasZeroRejects) {
+  // Round 50 MEDIUM fix continued: a live zero-affordable-gas account
+  // (e.g. balance < gas_price) must still trigger the zero-cap
+  // reject path, mirroring the round-43 zero-balance behaviour.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto runtime = std::make_shared<MockJvmRuntime>();
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x50};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x21 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x43 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  auto bound = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 5000;
+  req.account_affordable_gas = std::uint64_t{0};
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  CHECK(result.json.find("\"success\":false") != std::string::npos);
+  CHECK(result.json.find("\"outOfGas\":true") != std::string::npos);
+  CHECK(result.json.find("effective gasLimit is zero") != std::string::npos);
+  CHECK(!runtime->called);
+}
+
+TEST(WorkchainExecutionRegistry, JvmSubsequentCallReportsMsgStateUsedFalse) {
+  // Round 50 LOW fix half 1: subsequent (non-activation) JVM calls
+  // must report `msg_state_used = false` and `account_activated =
+  // false` on the wire.  Pre-Round-50 build_jvm_workchain_output
+  // never set these fields, so the host copied default `false`
+  // values into ComputePhase — which happens to match the expected
+  // serialization for non-activation calls only by accident.  This
+  // test pins the non-activation contract.
+  //
+  // The first-activation half (msg_state_used = true → output sets
+  // both to true) requires the engine's StateInit-binding invariants
+  // (round-14 first-activation gates) which need a fully-formed
+  // inbound int_msg_info matching state.deployer, beyond this unit
+  // test's scope.  The engine's `output.msg_state_used =
+  // input.msg_state_used` plumbing is mechanically correct — see
+  // dispatch-engine.cpp run_compute.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  block::WorkchainExecutionRegistry registry;
+  register_jvm_workchain_engine(registry, runtime);
+  auto execution = registry.resolve(descriptor, *config).move_as_ok();
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x55, 0x00};
+  auto class_bytes_cell = encode_jvm_storage_value(class_bytes);
+  auto manifest_root = encode_jvm_method_manifest({});
+
+  JvmContractAccountState previous_state;
+  previous_state.stdlib_hash = cfg.stdlib_hash;
+  previous_state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < previous_state.address_commit.size(); ++i) {
+    previous_state.address_commit[i] = static_cast<std::uint8_t>(0x40 + i);
+  }
+  for (std::size_t i = 0; i < previous_state.deployer.size(); ++i) {
+    previous_state.deployer[i] = static_cast<std::uint8_t>(0x60 + i);
+  }
+  previous_state.class_bytes = class_bytes_cell;
+  previous_state.storage_root = JvmStorageCellHost{}.root_cell();
+  previous_state.manifest_root = manifest_root;
+
+  auto bound_addr = derive_jvm_contract_address_from_state(
+      previous_state.deployer, previous_state.address_commit,
+      previous_state.class_hash,
+      compute_jvm_manifest_root_hash(previous_state.manifest_root));
+
+  block::WorkchainComputeInput input;
+  std::memcpy(input.account_addr.data(), bound_addr.data(), 32);
+  input.current_data = encode_jvm_contract_account_state(previous_state);
+  CHECK(input.current_data.not_null());
+  input.inbound_body = make_jvm_call_body(0xdeadbeef);
+  input.gas_limit = 2000;
+  input.msg_state_used = false;  // subsequent (non-activation) call
+
+  block::WorkchainComputeContext context;
+  context.workchain_id = 3;
+  context.descriptor = descriptor;
+  context.engine_config = execution.engine_config;
+
+  auto output = execution.executor->run_compute(input, context).move_as_ok();
+  CHECK(output.completed);
+  CHECK(output.accepted);
+  CHECK(output.committed);
+  CHECK(output.engine_success);
+  // Round 50 fix: subsequent calls correctly report false for both
+  // fields (matching the wire's default).
+  CHECK(!output.msg_state_used);
+  CHECK(!output.account_activated);
+}
+
 TEST(JvmWorkchainCore, RpcCallContractRuntimeErrorBillsAdmissionFloor) {
   // Round 45 LOW fix: when the runtime returns Status::Error (e.g.,
   // unknown method_id, malformed typed args) consensus bills the

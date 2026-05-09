@@ -105,11 +105,25 @@ struct JvmCallContractRequest {
     /// balance-derived `sk_no_gas` rejections show up locally — even
     /// when the live balance is zero (round 43 fix: zero balance must
     /// be distinguishable from "no hint", because consensus rejects
-    /// pre-runtime when `effective_gas_limit == 0`).  The
-    /// validator-engine live path always injects the live balance;
-    /// callers passing `accountStateBoc` directly may also include this
-    /// hint.  Absence (default) means balance-blind simulation.
+    /// pre-runtime when `effective_gas_limit == 0`).  Callers passing
+    /// `accountStateBoc` directly may include this hint when their
+    /// balance fits `uint64_t`.  Absence (default) means balance-blind
+    /// simulation.
     std::optional<uint64_t> account_balance;
+    /// Round 50 MEDIUM fix: optional pre-divided affordability cap in
+    /// gas units (= floor(balance / gas_price) clamped to
+    /// `UINT64_MAX`).  The validator-engine live path computes this in
+    /// 256-bit `RefInt256` math from the on-chain balance and the
+    /// configured `gas_price`, then injects it as
+    /// `accountAffordableGas`.  Pre-fix the live path injected the
+    /// balance directly, but balances above `UINT64_MAX` returned
+    /// `nullopt` (round 44) and the RPC stayed balance-blind, letting
+    /// it simulate `success=true` for accounts whose true affordable
+    /// gas was below `kJvmAdmissionGasFloor` and that consensus would
+    /// reject pre-runtime.  When this field is present it is
+    /// authoritative — RPC uses it directly as the affordability cap
+    /// instead of dividing `account_balance` by `gas_price` itself.
+    std::optional<uint64_t> account_affordable_gas;
 };
 
 /// Parse a jvm_callContract JSON params array.
