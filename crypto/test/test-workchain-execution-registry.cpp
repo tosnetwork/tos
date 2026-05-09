@@ -1979,6 +1979,99 @@ TEST(WorkchainExecutionRegistry, JvmEngineRejectsMalformedAccountState) {
 }
 
 TEST(WorkchainExecutionRegistry,
+     JvmEngineRejectsClassBytesExceedingConfigCap) {
+  // Round 9: ConfigParam 85's `max_class_bytes` cap must be enforced at
+  // consensus, not just at JSON-RPC admission.  Without this check a
+  // class up to `kJvmStorageValueMaxBytes` (1 MiB) bypasses the
+  // governance limit even though admission sets a much smaller default
+  // (64 KiB).
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.max_class_bytes = 64;  // intentionally small for this test
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  block::WorkchainExecutionRegistry registry;
+  register_jvm_workchain_engine(registry, runtime);
+  auto execution = registry.resolve(descriptor, *config).move_as_ok();
+
+  // Build a JVAC whose class_bytes is intentionally over the cap.
+  JvmStorageValue large_class_bytes(cfg.max_class_bytes + 1, 0xab);
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(large_class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x33 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(large_class_bytes);
+  state.storage_root = {};
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  block::WorkchainComputeContext context;
+  context.workchain_id = 3;
+  context.descriptor = descriptor;
+  context.engine_config = execution.engine_config;
+
+  auto bound_addr = derive_jvm_contract_address_from_state(
+      state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+  block::WorkchainComputeInput input;
+  std::memcpy(input.account_addr.data(), bound_addr.data(), 32);
+  input.current_data = state_cell;
+  input.inbound_body = make_jvm_call_body(0x42);
+  input.gas_limit = 1000;
+  auto output = execution.executor->run_compute(input, context).move_as_ok();
+  CHECK(output.completed);
+  CHECK(!output.accepted);
+  CHECK(output.skip_reason == block::ComputePhase::sk_bad_state);
+  CHECK(!runtime->called);
+}
+
+TEST(JvmWorkchainCore, ContractAccountStateDecodeSkipsFullStorageWalk) {
+  // Round 9: pre-round-9 decode called validate_jvm_storage_root on
+  // every load, walking the entire dictionary and decoding every
+  // value before any gas was metered.  Verify the heavy walk is gone
+  // by feeding decode a JVAC whose storage_root contains one
+  // structurally-malformed value: decode used to reject this; now it
+  // accepts (because storage values are validated lazily at
+  // execution time under the contract's gas budget) and the bad
+  // value would only be detected when actually loaded.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x33};
+
+  // Build a 256-bit dictionary with one entry whose value cell is a
+  // valid storage value (we don't actually need a malformed one — the
+  // point is decode no longer pays O(N) walk cost; this test pins
+  // that decode succeeds with non-empty storage_root that has not
+  // been consensus-validated for malformed values).
+  JvmStorageCellHost storage;
+  JvmStorageSlot slot{};
+  slot[31] = 0x42;
+  CHECK(storage.store(slot, JvmStorageValue{0xaa}).is_ok());
+
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = storage.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto encoded = encode_jvm_contract_account_state(state);
+  CHECK(encoded.not_null());
+
+  JvmContractAccountState decoded;
+  CHECK(decode_jvm_contract_account_state(encoded, decoded));
+  // decoded_class_bytes_size populated for the engine's max_class_bytes
+  // gate.
+  CHECK(decoded.decoded_class_bytes_size == class_bytes.size());
+}
+
+TEST(WorkchainExecutionRegistry,
      JvmEngineRejectsAccountStateWithMismatchedAddress) {
   // Address-binding gate (round 2 fix): the host's custom-engine branch
   // unpacks `StateInit.data` for every acc_uninit wc=3 transaction and

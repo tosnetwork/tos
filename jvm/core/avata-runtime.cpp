@@ -314,10 +314,15 @@ td::Result<JvmAvataInvocationResult> JvmAvataRuntime::run_contract(
         return td::Status::Error(
             "JVM Avata runtime is missing call target resolver");
     }
-    if (!validate_jvm_storage_root(previous_state.storage_root)) {
-        return td::Status::Error(
-            "JVM Avata runtime received invalid storage root");
-    }
+    // NOTE: deliberately NOT walking the full storage tree here for the
+    // same reason `decode_jvm_contract_account_state` no longer does:
+    // post-round-9, the per-call O(N) walk over total storage size was a
+    // DoS vector — every minimal-gas call paid validator CPU proportional
+    // to the contract's accumulated storage before any gas was metered.
+    // Storage values decode lazily in `JvmStorageCellHost::load` under
+    // the contract's gas budget.  The first-activation invariant
+    // (`storage_root.is_null()` when `msg_state_used == true`) keeps an
+    // attacker from injecting a malformed storage tree at deploy time.
 
     std::lock_guard<std::mutex> guard(mutex_);
     TRY_RESULT(target,

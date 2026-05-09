@@ -150,6 +150,20 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 block::ComputePhase::sk_bad_state,
                 "JVM contract account stdlib hash does not match ConfigParam 85");
         }
+        // ConfigParam 85's `max_class_bytes` cap must be enforced at
+        // consensus, not just at the JSON-RPC admission layer.
+        // Pre-round-9 the consensus path skipped this check, which let
+        // a class up to `kJvmStorageValueMaxBytes` (1 MiB) bypass the
+        // governance limit and inflate per-call sha256 / class-load
+        // cost.  `decoded_class_bytes_size` is populated by
+        // `decode_jvm_contract_account_state`, so this is O(1) here.
+        if (cfg->config.max_class_bytes > 0 &&
+            state.decoded_class_bytes_size >
+                cfg->config.max_class_bytes) {
+            return skipped_output(
+                block::ComputePhase::sk_bad_state,
+                "JVM contract class_bytes exceeds ConfigParam 85 max_class_bytes");
+        }
         // Address-binding gate: the wc=3 account address must equal
         //   sha256("TOS-JVM-CONTRACT-v2"
         //          || state.address_commit

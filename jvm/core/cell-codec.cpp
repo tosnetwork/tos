@@ -120,11 +120,21 @@ bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,
             return false;
         }
         if (jvm_class_hash_is_zero(out.class_hash) ||
-            out.class_bytes.is_null() ||
-            !validate_jvm_storage_root(out.storage_root)) {
+            out.class_bytes.is_null()) {
             out = JvmContractAccountState{};
             return false;
         }
+        // NOTE: deliberately NOT walking the full storage tree here.
+        // Pre-round-9, decode called `validate_jvm_storage_root(...)`
+        // which iterated the entire dictionary and decoded every value
+        // before any gas was metered.  That made per-call validator CPU
+        // proportional to the total contract storage size (DoS via
+        // grow-then-no-op).  Storage values are validated lazily in
+        // `JvmStorageCellHost::load` during execution under the contract's
+        // gas budget; the structural shape of the dictionary is checked
+        // by `vm::Dictionary` construction at use time.  Initial state
+        // cannot embed a malformed storage tree because the round-3
+        // first-activation invariant requires `storage_root.is_null()`.
         // Bind `class_hash` to `class_bytes`: a malicious caller could
         // otherwise hand us an account state whose declared class_hash
         // belongs to a different (already-cached) contract while the
@@ -151,6 +161,10 @@ bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,
             out = JvmContractAccountState{};
             return false;
         }
+        // Surface the decoded byte length so the engine can cheaply
+        // enforce ConfigParam 85's `max_class_bytes` without a second
+        // decode pass.
+        out.decoded_class_bytes_size = class_bytes_raw.size();
         return true;
     } catch (vm::VmError&) {
         out = JvmContractAccountState{};

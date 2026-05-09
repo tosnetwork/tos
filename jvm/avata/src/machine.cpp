@@ -25,6 +25,7 @@
 #include <avata/util/math.h>
 
 #include <limits.h>
+#include <limits>
 
 #if defined(PLATFORM_WINDOWS)
 #define WIN32_LEAN_AND_MEAN
@@ -2433,14 +2434,34 @@ void disassembleCode(const char* prefix, uint8_t* code, unsigned length)
 // interpreter: pad to 4-byte boundary relative to the start of the code array.
 void verifyCodeOpcodes(Thread* t, const uint8_t* code, unsigned length)
 {
-  // Helper: read a big-endian int32 and advance ip.
-  auto read32 = [](const uint8_t* c, unsigned& i) -> int32_t {
+  // Bounded read of a big-endian int32 — sets `bad` and returns 0 if
+  // there are fewer than 4 bytes left.  The caller MUST check `bad`
+  // and abort before using the value.  Pre-round-9 a plain
+  // `read32(code, ip)` indexed past `length` for truncated operands
+  // of `tableswitch` / `lookupswitch`, allowing OOB reads.
+  bool bad = false;
+  auto read32 = [&](const uint8_t* c, unsigned& i) -> int32_t {
+    if (length < i || length - i < 4) {
+      bad = true;
+      return 0;
+    }
     int32_t v = (static_cast<int32_t>(c[i]) << 24)
               | (static_cast<int32_t>(c[i+1]) << 16)
               | (static_cast<int32_t>(c[i+2]) << 8)
               | static_cast<int32_t>(c[i+3]);
     i += 4;
     return v;
+  };
+  // Helper: ensure `n` bytes remain at `ip` before advancing.  Returns
+  // false (and arms `bad`) if the operand would run past the code
+  // array.  Used after the leading opcode byte is consumed for fixed-
+  // width operands.
+  auto need = [&](unsigned i, unsigned n) -> bool {
+    if (length < i || length - i < n) {
+      bad = true;
+      return false;
+    }
+    return true;
   };
 
   unsigned ip = 0;
@@ -2500,6 +2521,7 @@ void verifyCodeOpcodes(Thread* t, const uint8_t* code, unsigned length)
     case istore: case lstore: case fstore: case dstore: case astore:
     case ret:
     case newarray:
+      if (!need(ip, 1)) { throwNew(t, GcVerifyError::Type); return; }
       ip += 1;
       break;
 
@@ -2516,26 +2538,31 @@ void verifyCodeOpcodes(Thread* t, const uint8_t* code, unsigned length)
     case ifnull: case ifnonnull:
     case goto_:
     case jsr:
+      if (!need(ip, 2)) { throwNew(t, GcVerifyError::Type); return; }
       ip += 2;
       break;
 
     // ---- iinc: 2-byte operand (index + const) ----
     case iinc:
+      if (!need(ip, 2)) { throwNew(t, GcVerifyError::Type); return; }
       ip += 2;
       break;
 
     // ---- 3-byte operand: multianewarray ----
     case multianewarray:
+      if (!need(ip, 3)) { throwNew(t, GcVerifyError::Type); return; }
       ip += 3;
       break;
 
     // ---- 4-byte operand ----
     case goto_w: case jsr_w:
+      if (!need(ip, 4)) { throwNew(t, GcVerifyError::Type); return; }
       ip += 4;
       break;
 
     // invokeinterface: index(2) + count(1) + 0(1) = 4 bytes
     case invokeinterface:
+      if (!need(ip, 4)) { throwNew(t, GcVerifyError::Type); return; }
       ip += 4;
       break;
 
@@ -2553,11 +2580,26 @@ void verifyCodeOpcodes(Thread* t, const uint8_t* code, unsigned length)
       read32(code, ip);
       int32_t low  = read32(code, ip);
       int32_t high = read32(code, ip);
-      if (high < low) {
+      if (bad || high < low) {
         throwNew(t, GcVerifyError::Type);
         return;
       }
-      ip += static_cast<unsigned>(high - low + 1) * 4;
+      // Guard the (high - low + 1) * 4 jump-table size against integer
+      // overflow and against running past the code array.
+      const int64_t span = static_cast<int64_t>(high)
+                              - static_cast<int64_t>(low) + 1;
+      if (span <= 0 || span > static_cast<int64_t>(length)) {
+        throwNew(t, GcVerifyError::Type);
+        return;
+      }
+      const uint64_t jump_bytes =
+          static_cast<uint64_t>(span) * 4u;
+      if (!need(ip, static_cast<unsigned>(jump_bytes)) ||
+          jump_bytes > std::numeric_limits<unsigned>::max()) {
+        throwNew(t, GcVerifyError::Type);
+        return;
+      }
+      ip += static_cast<unsigned>(jump_bytes);
       break;
     }
 
@@ -2568,11 +2610,18 @@ void verifyCodeOpcodes(Thread* t, const uint8_t* code, unsigned length)
       // default offset (4), npairs (4).
       read32(code, ip);
       int32_t npairs = read32(code, ip);
-      if (npairs < 0) {
+      if (bad || npairs < 0) {
         throwNew(t, GcVerifyError::Type);
         return;
       }
-      ip += static_cast<unsigned>(npairs) * 8;
+      const uint64_t pair_bytes =
+          static_cast<uint64_t>(npairs) * 8u;
+      if (pair_bytes > std::numeric_limits<unsigned>::max() ||
+          !need(ip, static_cast<unsigned>(pair_bytes))) {
+        throwNew(t, GcVerifyError::Type);
+        return;
+      }
+      ip += static_cast<unsigned>(pair_bytes);
       break;
     }
 

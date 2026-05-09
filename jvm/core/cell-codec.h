@@ -41,6 +41,12 @@ struct JvmContractAccountState {
     td::Ref<vm::Cell> class_bytes;
     td::Ref<vm::Cell> storage_root;
     td::Ref<vm::Cell> manifest_root;  // per-account method-id → method spec
+    // Decoded class_bytes size in bytes — populated by
+    // `decode_jvm_contract_account_state` after the sha256 binding check.
+    // Allows the engine to cheaply enforce ConfigParam 85's
+    // `max_class_bytes` cap without a second decode pass.  Not part of
+    // the wire format; the encoder never reads it.
+    std::size_t decoded_class_bytes_size{0};
 };
 
 // Layout:
