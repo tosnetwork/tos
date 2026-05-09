@@ -253,23 +253,32 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                         block::ComputePhase::sk_bad_state,
                         "JVM first activation: inbound src is not addr_std");
                 }
-                // Round 15 fix: also verify src.workchain_id == 3 (the
-                // wc this engine serves) and that src.anycast is
-                // Nothing.  Without this, an attacker in a different
-                // workchain whose 32-byte address happened to match
-                // (or could be coerced to match — e.g. via an anycast-
-                // shaped addr_std) the victim's deployer.addr would
-                // satisfy the round-14 32-byte auth even though the
-                // address derivation only commits to the deployer's
-                // 32-byte id.  Restricting the deployer to wc=3 makes
-                // the binding cryptographically tight: forging a
-                // matching src requires a sha256 pre-image on the
-                // 32-byte deployer field of the address derivation.
-                if (src.workchain_id != 3) {
+                // Round 15 + 16 fix: also verify src.workchain_id ==
+                // context.workchain_id (the wc this engine instance
+                // serves) and that src.anycast is Nothing.  Without
+                // this, an attacker in a different workchain whose
+                // 32-byte address happened to match (or could be
+                // coerced to match via an anycast-shaped addr_std)
+                // the victim's deployer.addr would satisfy the
+                // round-14 32-byte auth even though the address
+                // derivation only commits to the deployer's 32-byte
+                // id.  Restricting the deployer's workchain to the
+                // executing workchain makes the binding
+                // cryptographically tight: forging a matching src
+                // requires a sha256 pre-image on the 32-byte
+                // deployer field of the address derivation.
+                //
+                // Round 16 swapped the hard-coded `3` for
+                // `context.workchain_id` so the same engine binary
+                // wired to a non-wc=3 testnet workchain would still
+                // require src in that workchain (the registry
+                // routes by descriptor engine key, not by wc id, so
+                // wc-hardcoding here was a future-proofing hole).
+                if (src.workchain_id != context.workchain_id) {
                     return skipped_output(
                         block::ComputePhase::sk_bad_state,
                         "JVM first activation: inbound src.workchain "
-                        "must be 3");
+                        "does not match the executing workchain");
                 }
                 // anycast is Maybe Anycast.  size() == 1 means Nothing
                 // (the prefix bit is 0 with no payload); larger means
