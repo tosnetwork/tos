@@ -64,8 +64,28 @@ extract_evm_payload(vm::CellSlice& body) noexcept {
         return std::nullopt;
     }
     unsigned has_next = static_cast<unsigned>(body.fetch_ulong(1));
-    if (has_next == 1) {
-        if (!body.have_refs()) return std::nullopt;
+    // Round 72 MEDIUM fix: enforce exact-shape after the
+    // Maybe-tag.  Pre-fix `extract_evm_payload` accepted trailing
+    // refs (and trailing bits via the relaxed `have_refs()` check)
+    // in both branches: with `has_next == 0` it ignored any refs;
+    // with `has_next == 1` it read only the first ref and ignored
+    // subsequent refs.  This let an attacker pad an external EVM
+    // message body with arbitrary cell subtrees that the host
+    // sized + validated under the same Ethereum tx hash, an
+    // unmetered DoS / canonicality surface.
+    //
+    // Canonical shape per `build_evm_external_message`:
+    //   has_next == 0  →  no trailing bits, no refs.
+    //   has_next == 1  →  exactly one ref (the next chunk), no
+    //                     trailing bits.
+    if (has_next == 0) {
+        if (body.size() != 0 || body.size_refs() != 0) {
+            return std::nullopt;
+        }
+    } else {
+        if (body.size() != 0 || body.size_refs() != 1) {
+            return std::nullopt;
+        }
         auto next = body.fetch_ref();
         auto more = decode_evm_bytecode(next);
         if (more.empty()) return std::nullopt;
