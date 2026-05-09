@@ -589,6 +589,32 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 /*msg_state_used=*/input.msg_state_used);
         }
         auto invocation = invocation_res.move_as_ok();
+        // Round 62 MEDIUM fix: cap the runtime-reported gas at
+        // `effective_gas_limit` BEFORE the storage-walk branch.  The
+        // runtime now post-charges argument bytes (round-61) directly
+        // into `invocation.gas_used`, so a no-storage-mutate call
+        // with large typed `Bytes` arguments could push gas_used past
+        // the cap before this engine even reaches the round-40
+        // walk-gas cap (which sits inside the storage-walk branch and
+        // therefore did not fire for non-mutating calls).  Without
+        // this gate, `build_jvm_workchain_output` rejected the result
+        // with "gas_used > gas_limit", dispatch converted to
+        // sk_bad_state with the over-cap amount, and the host's
+        // round-30 charging block zeroed the fee when balance fell
+        // short — a free-CPU loop for attacker payloads.  Bill the
+        // cap here and reject with sk_no_gas to mirror round-40's
+        // post-walk cap.
+        if (invocation.gas_used > effective_gas_limit) {
+            LOG(DEBUG) << "JVM runtime gas_used (incl. arg bytes) exceeded "
+                          "the affordable cap; billing the cap and rejecting "
+                          "(sk_no_gas)";
+            return skipped_output_billed(
+                block::ComputePhase::sk_no_gas,
+                "JVM runtime gas exceeded affordable cap",
+                cfg->config, effective_gas_limit,
+                /*out_of_gas=*/true,
+                /*msg_state_used=*/input.msg_state_used);
+        }
         // Round-39 fix: bill the contract for the unique-cell walk
         // the host performs to enforce ConfigParam-85's
         // max_storage_cells.  Pre-fix the walk happened inside

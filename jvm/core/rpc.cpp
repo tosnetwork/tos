@@ -1030,6 +1030,19 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                                 + "\",\"newStateBoc\":null}";
         } else {
             auto inv = invocation_result.move_as_ok();
+            // Round 62 MEDIUM fix: mirror the consensus round-62
+            // pre-walk cap.  The runtime now post-charges argument
+            // bytes (round-61) directly into `inv.gas_used`, so a
+            // no-storage-mutate call with large typed `Bytes` args
+            // could push gas_used past `input.gas_limit` before the
+            // round-41 walk-gas cap (which sits inside the
+            // storage-walk branch) fires.  Without this RPC mirror,
+            // simulation reports success while consensus rejects
+            // with sk_no_gas at the cap.
+            bool runtime_gas_cap_exceeded = false;
+            if (inv.gas_used > input.gas_limit) {
+                runtime_gas_cap_exceeded = true;
+            }
             // Round 41 MEDIUM fix: mirror the consensus round-39 storage
             // walk gas billing AND round-40 affordable-cap reject in the
             // RPC local-simulation.  Pre-fix, a storage-mutating call
@@ -1092,7 +1105,18 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                 }
             }
 
-            if (walk_cap_exceeded) {
+            // Round 62: cap fires first if the runtime-reported gas
+            // (already including round-61 arg-bytes) exceeds the
+            // request's gas_limit.  Walk-cap and max-cells checks
+            // only run for storage-mutating calls, so they cannot
+            // catch a no-mutate large-arg overflow.
+            if (runtime_gas_cap_exceeded) {
+                local_result_json = std::string("{\"success\":false,")
+                    + "\"outOfGas\":true,\"outOfMemory\":false,"
+                    + "\"gasUsed\":" + std::to_string(input.gas_limit) +
+                    ",\"vmLog\":\"JVM runtime gas exceeded affordable "
+                    "cap\",\"newStateBoc\":null}";
+            } else if (walk_cap_exceeded) {
                 local_result_json = std::string("{\"success\":false,")
                     + "\"outOfGas\":true,\"outOfMemory\":false,"
                     + "\"gasUsed\":" + std::to_string(input.gas_limit) +
