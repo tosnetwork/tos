@@ -676,6 +676,25 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                                + "\",\"localResult\":" + local_result_json + "}";
             return JvmRpcResult{json_rpc_ok(id, result), false};
         }
+        // Round-36 fix: mirror the engine's round-35 admission gas
+        // floor.  Public full-node RPC otherwise accepts any
+        // `gasLimit` and runs the resolver / class-loading work
+        // before AVATA gas accounting starts, exactly the surface
+        // round 35 closed on-chain.  Reject simulation when the
+        // requested gas is below the floor.
+        if (input.gas_limit < kJvmAdmissionGasFloor) {
+            local_result_json =
+                "{\"success\":false,\"outOfGas\":true,"
+                "\"outOfMemory\":false,\"gasUsed\":0,"
+                "\"vmLog\":\"requested gasLimit is below the JVM "
+                "admission floor (consensus would reject)\","
+                "\"newStateBoc\":null}";
+            std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex
+                               + "\",\"contractAddress\":\""
+                               + hex_encode(req.contract_address)
+                               + "\",\"localResult\":" + local_result_json + "}";
+            return JvmRpcResult{json_rpc_ok(id, result), false};
+        }
 
         auto invocation_result = runtime->run_contract(
             input, context, *config, previous_state);

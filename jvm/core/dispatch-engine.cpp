@@ -127,11 +127,21 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             return skipped_output(block::ComputePhase::sk_bad_state,
                                   "JVM inbound body is missing");
         }
-        if (input.gas_limit == 0 || input.gas_limit > cfg->config.max_gas_per_tx) {
+        if (input.gas_limit == 0) {
             return skipped_output(block::ComputePhase::sk_no_gas,
-                                  "JVM gas limit is outside ConfigParam 85 bounds",
+                                  "JVM gas limit is zero",
                                   true);
         }
+        // Round-36 fix: the host's `compute_gas_limits` for custom
+        // engines passes Param 21's gas_limit (typically 30M for
+        // non-masterchain workchains) without consulting JVM's
+        // `max_gas_per_tx` (typically 1M).  Pre-fix the engine
+        // rejected any `input.gas_limit > max_gas_per_tx`, which
+        // means under the canonical activation config (Param 21 = 30M,
+        // ConfigParam 85 max_gas_per_tx = 1M) every JVM transaction
+        // is rejected before runtime.  Cap to JVM's max instead of
+        // rejecting; the host already takes `gas_used <= effective
+        // gas limit` and bills accordingly.
         if (runtime_ == nullptr) {
             return skipped_output(block::ComputePhase::sk_bad_state,
                                   "JVM Avata interpreter runtime is not installed");
@@ -148,7 +158,9 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // RefInt256 from the host.  affordable=0 (balance can't even
         // pay one gas unit) routes through the host's round-30
         // sk_no_gas reject path.
-        std::uint64_t effective_gas_limit = input.gas_limit;
+        std::uint64_t effective_gas_limit =
+            std::min<std::uint64_t>(input.gas_limit,
+                                     cfg->config.max_gas_per_tx);
         if (cfg->config.gas_price > 0
             && input.account_balance.tomis.not_null()) {
             auto affordable_int =
