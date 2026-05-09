@@ -2191,11 +2191,16 @@ TEST(WorkchainExecutionRegistry, JvmEngineCapsWalkGasOverflowingAffordableLimit)
   CHECK(output.completed);
   // skipped_output_billed: accepted=true so the host actually debits
   // the fees; committed=false so no state transition; engine_success
-  // false because the call was rejected.
+  // false because the call was rejected.  Round 49 fix: the engine
+  // emits this on the executed-but-failed wire branch
+  // (skip_reason=sk_none, exit_code=-100 for sk_no_gas-class) so the
+  // serialized `tr_phase_compute_vm$1` form carries the gas fields.
+  // Pre-fix the wire would have lost them via tr_compute_phase_skipped.
   CHECK(output.accepted);
   CHECK(!output.committed);
   CHECK(!output.engine_success);
-  CHECK(output.skip_reason == block::ComputePhase::sk_no_gas);
+  CHECK(output.skip_reason == block::ComputePhase::sk_none);
+  CHECK(output.exit_code == -100);
   CHECK(output.out_of_gas);
   // gas_used capped at effective_gas_limit (= 2000), NOT the runtime-
   // reported 2000 + walk_gas.  Pre-fix, gas_used would have been

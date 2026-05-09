@@ -60,14 +60,42 @@ block::WorkchainComputeOutput skipped_output(int skip_reason,
     return out;
 }
 
-// Round-37 fix: skipped output that bills the admission floor.
-// Used when the engine reaches `sk_bad_state` AFTER the runtime
-// (or output builder) has already done resolver / class-load /
-// execution work — the admission floor (round-34) covers that
-// work even though no useful contract logic ran.  Pre-runtime
-// rejects (sk_no_gas / sk_bad_state from decode/binding gates)
-// continue to use `skipped_output` with zero fees because no
-// resolver work happened there.
+// Round-37 fix: billed compute-failure output.  Used when the engine
+// reaches a rejection AFTER the runtime (or output builder) has
+// already done resolver / class-load / execution work — the
+// admission floor (round-34) covers that work even though no useful
+// contract logic ran.  Pre-runtime rejects (sk_no_gas / sk_bad_state
+// from decode / binding gates) continue to use `skipped_output` with
+// zero fees because no resolver work happened there.
+//
+// Round 49 MEDIUM fix: emit this as an executed-but-failed compute
+// (`tr_phase_compute_vm$1`) rather than a "skipped" compute
+// (`tr_compute_phase_skipped`).  The wire format
+// (crypto/block/transaction.cpp serialize_compute_phase, line
+// ~4385) only carries `gas_used` / `gas_fees` on the executed
+// branch; the skipped branch is just a 2-bit reason code.  Pre-fix
+// `skipped_output_billed` set `skip_reason != sk_none`, which made
+// the host charge the fees but the on-chain transaction record
+// (and any block-explorer / light-client / audit tool replaying
+// the BOC) reported "compute skipped" with no gas — an externally
+// visible accounting divergence between balance debits and the
+// transaction's compute phase.
+//
+// The fix encodes the original skip reason via `exit_code`:
+//   sk_no_gas    → -100  (out-of-gas-class rejection, e.g. round-40
+//                          walk-gas cap or round-30 host insufficient
+//                          balance — though the host's reject path
+//                          still uses skipped_output with
+//                          accepted=false; this billed shape is for
+//                          the engine-side cap firing *before* the
+//                          host gets to charge)
+//   sk_bad_state → -101  (state / output-builder rejection, e.g.
+//                          round-12 max_storage_cells, round-32
+//                          runtime resolver error, round-37 admission
+//                          floor on engine-side malformed args)
+//   anything else → -200 (catch-all; not currently produced)
+// Negative codes keep these clearly separate from any positive
+// TVM-style exit code a future evolution might use.
 block::WorkchainComputeOutput skipped_output_billed(
     int skip_reason,
     std::string vm_log,
@@ -84,8 +112,22 @@ block::WorkchainComputeOutput skipped_output_billed(
     // transitions apply".  Mirrors TVM's treatment of compute-
     // failed-but-gas-used.
     out.accepted = true;
-    out.skip_reason = skip_reason;
+    // Round 49 fix: emit on the executed branch (skip_reason ==
+    // sk_none) so wire serialization carries the gas fields.
+    out.skip_reason = block::ComputePhase::sk_none;
+    out.engine_success = false;
     out.out_of_gas = out_of_gas;
+    switch (skip_reason) {
+        case block::ComputePhase::sk_no_gas:
+            out.exit_code = -100;
+            break;
+        case block::ComputePhase::sk_bad_state:
+            out.exit_code = -101;
+            break;
+        default:
+            out.exit_code = -200;
+            break;
+    }
     // Round-38 fix: bill `max(invocation.gas_used, floor)` on
     // output-builder rejects, not just the floor.  The runtime
     // executed real work; under-billing lets a contract near
