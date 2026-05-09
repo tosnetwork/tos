@@ -4077,6 +4077,54 @@ TEST(JvmWorkchainCore, RpcCallContractRejectsAccountStateExceedingMaxClassBytes)
   CHECK(!runtime->called);
 }
 
+TEST(JvmWorkchainCore, RpcCallContractRejectsRuntimeJarMismatch) {
+  // Round 18 MEDIUM fix: handle_jvm_call_contract must mirror the
+  // round-17 consensus rt.jar gate.  Without it, a full node could
+  // run a successful localResult for a state+config pair that
+  // on-chain consensus would skip.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  // Override runtime hash to NOT match cfg.stdlib_hash.
+  std::array<std::uint8_t, 32> wrong_jar_hash{};
+  wrong_jar_hash[0] = 0xee;
+  runtime->mock_rt_jar_hash = wrong_jar_hash;
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x99};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x55 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x77 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = {};
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  auto bound = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 1000;
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  CHECK(result.json.find("\"success\":false") != std::string::npos);
+  CHECK(result.json.find("rt.jar") != std::string::npos);
+  CHECK(!runtime->called);
+}
+
 // ---------------------------------------------------------------------------
 // Multi-contract per-account isolation with shared class
 // ---------------------------------------------------------------------------

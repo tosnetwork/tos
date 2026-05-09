@@ -38,7 +38,16 @@ bool init_jvm_workchain(const char* /*db_root*/) {
     if (options.boot_classpath.empty()) {
         options.boot_classpath = TOS_AVATA_DEFAULT_RT_JAR;
     }
-    options.classpath = getenv_or_empty("TOS_JVM_AVATA_CONTRACT_CLASSPATH");
+    // Round-18 fix: deliberately leave `options.classpath` empty.
+    // Pre-fix `TOS_JVM_AVATA_CONTRACT_CLASSPATH` was honored, which
+    // let an operator inject local jars/directories that affect
+    // execution but are NOT bound to ConfigParam 85's stdlib_hash —
+    // a consensus-divergence vector.  Contract bytecode reaches the
+    // VM exclusively via `class_bytes` in JVAC (loaded through
+    // `avata_load_class_bytes`), so the application classpath must
+    // not contribute to class resolution.  The runtime will also
+    // emit `-Djava.class.path=` (empty) to override Avata's default
+    // of `.` (current working directory).
     auto heap = getenv_or_empty("TOS_JVM_AVATA_HEAP");
     if (!heap.empty()) {
         options.max_heap = std::move(heap);

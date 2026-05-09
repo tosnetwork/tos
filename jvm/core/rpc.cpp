@@ -608,6 +608,29 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                                + "\",\"localResult\":" + local_result_json + "}";
             return JvmRpcResult{json_rpc_ok(id, result), false};
         }
+        // Round 18 MEDIUM fix: mirror the consensus rt.jar hash gate
+        // (round-17 fix in dispatch-engine.cpp).  Without this, a
+        // full node could return a successful localResult for a
+        // state+config pair that on-chain consensus would skip
+        // because the validator's loaded rt.jar disagrees with
+        // ConfigParam 85's stdlib_hash.
+        std::array<std::uint8_t, 32> cfg_stdlib_hash_array{};
+        std::memcpy(cfg_stdlib_hash_array.data(),
+                    config->stdlib_hash.data(),
+                    cfg_stdlib_hash_array.size());
+        if (runtime->rt_jar_hash() != cfg_stdlib_hash_array) {
+            local_result_json =
+                "{\"success\":false,\"outOfGas\":false,"
+                "\"outOfMemory\":false,\"gasUsed\":0,"
+                "\"vmLog\":\"validator rt.jar does not match ConfigParam "
+                "85 stdlib_hash; consensus would reject this call\","
+                "\"newStateBoc\":null}";
+            std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex
+                               + "\",\"contractAddress\":\""
+                               + hex_encode(req.contract_address)
+                               + "\",\"localResult\":" + local_result_json + "}";
+            return JvmRpcResult{json_rpc_ok(id, result), false};
+        }
         // Mirror the consensus address-binding gate too: if the supplied
         // accountStateBoc does not actually correspond to the requested
         // contractAddress, consensus would reject with sk_bad_state.

@@ -101,7 +101,51 @@ struct LinkedAvataVmState {
 struct LinkedAvataRuntimeState {
     JvmLinkedAvataRuntimeOptions options;
     std::map<std::string, std::shared_ptr<LinkedAvataVmState>> vm_cache;
+    // Hash of the boot classpath bytes captured at runtime startup
+    // (round-17).  Round-18 also uses this to defend against rt.jar
+    // changing on disk between startup and lazy VM creation: every
+    // cache-miss VM creation re-hashes the boot classpath and rejects
+    // if it disagrees with this captured value.
+    std::array<std::uint8_t, 32> rt_jar_hash{};
 };
+
+// Hash the `:`-separated boot classpath, feeding each entry's file
+// bytes (in listed order) through sha256.  Empty entries are skipped
+// to mirror Avata's own tokenizer behavior.  Used both at runtime
+// startup and on every lazy VM creation to ensure the bytes that
+// `JNI_CreateJavaVM` will read still match ConfigParam 85's
+// `stdlib_hash` commitment.
+td::Result<std::array<std::uint8_t, 32>> hash_boot_classpath(
+    const std::string& boot_classpath) {
+    std::array<std::uint8_t, 32> out{};
+    td::Sha256State sha;
+    sha.init();
+    std::string remaining = boot_classpath;
+    while (!remaining.empty()) {
+        auto colon = remaining.find(':');
+        std::string entry = (colon == std::string::npos)
+                                ? remaining
+                                : remaining.substr(0, colon);
+        remaining = (colon == std::string::npos)
+                        ? std::string{}
+                        : remaining.substr(colon + 1);
+        if (entry.empty()) {
+            continue;
+        }
+        auto data = td::read_file(entry);
+        if (data.is_error()) {
+            return td::Status::Error(
+                PSLICE() << "JVM Avata runtime cannot hash boot classpath "
+                            "entry "
+                         << entry << ": " << data.error().message());
+        }
+        const auto bytes = data.move_as_ok();
+        sha.feed(td::Slice(bytes.data(), bytes.size()));
+    }
+    sha.extract(td::MutableSlice(reinterpret_cast<char*>(out.data()),
+                                  out.size()));
+    return out;
+}
 
 struct LinkedAvataInvocation {
     AvataContractMethod method{0};
@@ -138,13 +182,17 @@ int invoke_linked_static_void_contract(void* thread, void* invocation_user) {
 td::Result<std::shared_ptr<LinkedAvataVmState>> create_linked_avata_vm(
     const JvmLinkedAvataRuntimeOptions& options) {
     auto state = std::make_shared<LinkedAvataVmState>();
-    state->option_storage.reserve(2 + options.extra_options.size() +
-                                  (options.classpath.empty() ? 0 : 1));
+    state->option_storage.reserve(3 + options.extra_options.size());
     state->option_storage.push_back("-Xbootclasspath:" + options.boot_classpath);
-    if (!options.classpath.empty()) {
-        state->option_storage.push_back("-Djava.class.path=" +
-                                        options.classpath);
-    }
+    // Round-18 fix: ALWAYS emit `-Djava.class.path=...` so Avata cannot
+    // fall back to its default of "." (the current working directory),
+    // which would let local jars/directories influence FindClass
+    // results.  Contract bytecode only reaches the VM via JVAC
+    // `class_bytes` + `avata_load_class_bytes`; the application
+    // classpath should not contribute.  When `options.classpath` is
+    // empty we still emit the option with no value so the override
+    // takes effect.
+    state->option_storage.push_back("-Djava.class.path=" + options.classpath);
     state->option_storage.push_back("-Xmx" + options.max_heap);
     for (const auto& option : options.extra_options) {
         if (!option.empty()) {
@@ -227,6 +275,21 @@ td::Result<std::shared_ptr<LinkedAvataVmState>> get_vm_for_account(
     auto it = state.vm_cache.find(key);
     if (it != state.vm_cache.end()) {
         return it->second;
+    }
+    // Round-18 fix: re-hash the boot classpath on every cache-miss
+    // VM creation and verify it still matches the startup hash.
+    // Without this, an attacker (or an operator's misconfigured CD
+    // pipeline) could swap rt.jar on disk between
+    // `make_linked_jvm_avata_runtime` and the first lazy VM creation,
+    // and the new VM would load different bytes silently while
+    // `runtime->rt_jar_hash()` still reports the stale startup hash.
+    TRY_RESULT(current_jar_hash,
+               hash_boot_classpath(state.options.boot_classpath));
+    if (current_jar_hash != state.rt_jar_hash) {
+        return td::Status::Error(
+            "JVM Avata runtime: boot classpath bytes on disk no longer "
+            "match the startup hash; refusing to instantiate a VM that "
+            "would diverge from ConfigParam 85 stdlib_hash");
     }
     TRY_RESULT(vm_state, create_linked_avata_vm(state.options));
     TRY_RESULT(class_bytes,
@@ -406,39 +469,12 @@ make_linked_jvm_avata_runtime(const JvmLinkedAvataRuntimeOptions& options) {
     (void)probe_vm;
 
     // Hash the rt.jar so the engine can verify it matches ConfigParam
-    // 85's `stdlib_hash` on every run_compute.  The boot_classpath may
-    // be a single file or a `:`-separated list; we hash each file in
-    // listed order and feed the concatenation through sha256, matching
-    // the on-chain commitment a chain governance flow would produce.
-    std::array<std::uint8_t, 32> rt_jar_hash{};
-    {
-        td::Sha256State sha;
-        sha.init();
-        std::string remaining = options.boot_classpath;
-        while (!remaining.empty()) {
-            auto colon = remaining.find(':');
-            std::string entry =
-                (colon == std::string::npos) ? remaining
-                                              : remaining.substr(0, colon);
-            remaining = (colon == std::string::npos)
-                            ? std::string{}
-                            : remaining.substr(colon + 1);
-            if (entry.empty()) {
-                continue;
-            }
-            auto data = td::read_file(entry);
-            if (data.is_error()) {
-                return td::Status::Error(
-                    PSLICE() << "JVM linked Avata runtime cannot hash boot "
-                                "classpath entry "
-                             << entry << ": " << data.error().message());
-            }
-            const auto bytes = data.move_as_ok();
-            sha.feed(td::Slice(bytes.data(), bytes.size()));
-        }
-        sha.extract(td::MutableSlice(reinterpret_cast<char*>(rt_jar_hash.data()),
-                                     rt_jar_hash.size()));
-    }
+    // 85's `stdlib_hash` on every run_compute.  Round-18: the same
+    // helper runs on every lazy VM creation in `get_vm_for_account`,
+    // so a rt.jar swap between startup and first contract call is
+    // also caught.
+    TRY_RESULT(rt_jar_hash, hash_boot_classpath(options.boot_classpath));
+    state->rt_jar_hash = rt_jar_hash;
 
     std::shared_ptr<const JvmComputeRuntime> runtime =
         std::make_shared<JvmAvataRuntime>(
