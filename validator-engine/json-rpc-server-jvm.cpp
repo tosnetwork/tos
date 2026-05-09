@@ -43,6 +43,15 @@ namespace {
 constexpr td::int32 kJvmReceiptPageSize = 64;
 constexpr std::uint64_t kJvmReceiptMaxScannedTransactions = 4096;
 constexpr std::size_t kJvmReceiptMaxResults = 1024;
+// Round 57 MEDIUM fix: cap the cumulative response body for
+// `jvm_getReceipts`.  Pre-fix only the per-tx and result-count caps
+// applied; an attacker who emitted many large-payload events
+// (each up to ~512 KiB hex-encoded to ~1 MiB) could force one
+// public call to allocate ~1 GiB of JSON for the
+// `kJvmReceiptMaxResults = 1024` event ceiling.  1 MiB is a
+// reasonable single-response budget that bounds full-node memory
+// while leaving room for typical event-heavy contract histories.
+constexpr std::size_t kJvmReceiptResponseByteBudget = 1024 * 1024;
 
 // Extract the per-contract wc=3 account address from a v2 jvm_callContract or
 // jvm_getContractState request body.  Returns std::nullopt if the params are
@@ -241,6 +250,7 @@ void append_jvm_receipts_from_transaction(
     const jvm_workchain::JvmContractId& contract_id,
     std::vector<std::string>& receipts,
     std::size_t existing_receipt_count,
+    std::size_t& cumulative_response_bytes,
     bool& truncated) {
   if (truncated || !jvm_transaction_matches_contract(tx_root, contract_id)) {
     return;
@@ -273,8 +283,20 @@ void append_jvm_receipts_from_transaction(
     if (event_r.is_error()) {
       continue;
     }
-    receipts.push_back(jvm_receipt_event_json(
-        event_r.move_as_ok(), ext_info, tx_root, block_id, local_log_index));
+    auto receipt_json = jvm_receipt_event_json(
+        event_r.move_as_ok(), ext_info, tx_root, block_id, local_log_index);
+    // Round 57 MEDIUM fix: also gate on the cumulative response
+    // bytes (sum of receipt_json sizes).  Pre-fix only the per-tx
+    // and result-count caps applied, so an attacker who emitted
+    // many large-payload events could force one public call to
+    // allocate ~1 GiB of JSON.
+    if (cumulative_response_bytes + receipt_json.size() >
+        kJvmReceiptResponseByteBudget) {
+      truncated = true;
+      return;
+    }
+    cumulative_response_bytes += receipt_json.size();
+    receipts.push_back(std::move(receipt_json));
     ++local_log_index;
   }
 }
@@ -701,6 +723,10 @@ void JsonRpcServer::handle_jvm_get_receipts_rpc_method(
     bool truncated{false};
     bool settled{false};
     std::vector<std::string> receipts;
+    // Round 57 MEDIUM fix: cumulative size of receipt JSON strings
+    // already accumulated.  Used by `append_jvm_receipts_from_transaction`
+    // to gate against `kJvmReceiptResponseByteBudget`.
+    std::size_t cumulative_response_bytes{0};
   };
 
   auto slot = std::make_shared<Slot>();
@@ -846,7 +872,8 @@ void JsonRpcServer::handle_jvm_get_receipts_rpc_method(
         std::vector<std::string> tx_receipts;
         append_jvm_receipts_from_transaction(
             roots[i], block_id, slot->req.contract_address, tx_receipts,
-            slot->receipts.size(), slot->truncated);
+            slot->receipts.size(), slot->cumulative_response_bytes,
+            slot->truncated);
         if (!tx_receipts.empty()) {
           slot->receipts.insert(slot->receipts.begin(), tx_receipts.begin(),
                                 tx_receipts.end());

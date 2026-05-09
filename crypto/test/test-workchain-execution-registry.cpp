@@ -1089,12 +1089,12 @@ TEST(JvmWorkchainCore, EncodeJvmStateInitCellPassesTlbValidation) {
 }
 
 TEST(JvmWorkchainCore, DecodeJvmStorageValueRejectsZeroByteContinuation) {
-  // Round 56 LOW fix: a non-canonical chain of `has_next=1`
-  // continuation cells with `byte_count==0` would walk past the
-  // byte-budget gate (`out.size() + 0 > effective_cap` never
-  // fired) up to the cell-tree depth limit (~1024) before the
-  // decoder reached a final payload cell.  Decoder must reject any
-  // non-final cell with `byte_count == 0`.
+  // Round 56/57 fix: non-canonical continuation cells must be
+  // rejected.  Round 56 closed the `byte_count == 0` case; Round 57
+  // tightened to require `byte_count == kJvmStorageValueChunkBytes`
+  // (127) for every non-final cell, so an attacker cannot build a
+  // chain of 1..126-byte cells that walks the decoder more cells
+  // per byte than the canonical encoding.
   using namespace jvm_workchain;
 
   // Build a hand-crafted "next=1" cell with zero payload bytes,
@@ -1117,7 +1117,7 @@ TEST(JvmWorkchainCore, DecodeJvmStorageValueRejectsZeroByteContinuation) {
   // Decode must reject (non-canonical zero-byte continuation).
   auto r = decode_jvm_storage_value(zero_cont_ref);
   CHECK(r.is_error());
-  CHECK(r.error().message().str().find("non-canonical zero-byte continuation")
+  CHECK(r.error().message().str().find("non-canonical continuation chunk size")
         != std::string::npos);
 
   // Also reject when sandwiched between two non-empty cells.
@@ -1139,7 +1139,7 @@ TEST(JvmWorkchainCore, DecodeJvmStorageValueRejectsZeroByteContinuation) {
   auto head_ref = head.finalize();
   auto r2 = decode_jvm_storage_value(head_ref);
   CHECK(r2.is_error());
-  CHECK(r2.error().message().str().find("non-canonical zero-byte continuation")
+  CHECK(r2.error().message().str().find("non-canonical continuation chunk size")
         != std::string::npos);
 
   // The canonical empty-value encoding (single cell, no payload,
@@ -1150,6 +1150,27 @@ TEST(JvmWorkchainCore, DecodeJvmStorageValueRejectsZeroByteContinuation) {
   auto r_empty = decode_jvm_storage_value(empty_ref);
   CHECK(r_empty.is_ok());
   CHECK(r_empty.ok().empty());
+
+  // Round 57 MEDIUM: 1-byte non-final cell (canonical chunks are
+  // 127 bytes) must also reject.  Builds: head(1 byte, next=1,
+  // ref→ final(1 byte, next=0)).  Pre-Round-57 this decoded as a
+  // 2-byte payload, walking 2 cells for 2 bytes — non-canonical.
+  vm::CellBuilder final_one;
+  std::uint8_t fb = 0xee;
+  CHECK(final_one.store_bytes_bool(&fb, 1));
+  CHECK(final_one.store_ulong_rchk_bool(0, 1));
+  auto final_one_ref = final_one.finalize();
+
+  vm::CellBuilder short_cont;
+  std::uint8_t hb = 0xdd;
+  CHECK(short_cont.store_bytes_bool(&hb, 1));
+  CHECK(short_cont.store_ulong_rchk_bool(1, 1));
+  CHECK(short_cont.store_ref_bool(std::move(final_one_ref)));
+  auto short_cont_ref = short_cont.finalize();
+  auto r_short = decode_jvm_storage_value(short_cont_ref);
+  CHECK(r_short.is_error());
+  CHECK(r_short.error().message().str().find(
+            "non-canonical continuation chunk size") != std::string::npos);
 }
 
 TEST(JvmWorkchainCore, DecodeJvmStorageValueRejectsSubChunkCap) {

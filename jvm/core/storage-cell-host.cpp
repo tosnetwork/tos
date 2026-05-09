@@ -246,23 +246,25 @@ td::Result<JvmStorageValue> decode_jvm_storage_value(td::Ref<vm::Cell> root,
             if (cs.size() != 0 || cs.size_refs() != 1) {
                 return td::Status::Error("JVM storage value has malformed next ref");
             }
-            // Round 56 LOW fix: reject non-canonical zero-byte
-            // continuation cells.  Canonical `encode_jvm_storage_value`
-            // emits a zero-byte cell only as the SOLE cell for the
-            // empty value (`encode_empty_value` → `has_next=0`); every
-            // continuation cell of a non-empty value carries
-            // `byte_count == kJvmStorageValueChunkBytes` (or the final
-            // remainder).  Pre-fix an attacker-supplied chain could
-            // chain ~1024 zero-byte continuations (the cell-tree depth
-            // limit) before delivering any payload, forcing the
-            // decoder to walk every cell while the byte-budget gate
-            // (`out.size() + 0 > effective_cap`) never fired.  Reject
-            // here so decode work stays proportional to bytes
-            // accepted, matching the Round 54/55 cap intent.
-            if (byte_count == 0) {
+            // Round 56 LOW fix / Round 57 MEDIUM fix: reject any
+            // non-canonical continuation chunk.  Canonical
+            // `encode_jvm_storage_value` always packs a non-final
+            // cell with EXACTLY `kJvmStorageValueChunkBytes` (127)
+            // bytes; only the final cell may carry fewer.  Round 56
+            // closed the zero-byte case; this also rejects any
+            // `1..126` byte continuation, so an attacker cannot
+            // build a long chain of 1-byte cells that walks the
+            // decoder many cells per byte while the byte-budget
+            // gate (`out.size() + byte_count > cap`) advances only
+            // 1 byte per step.  Without this gate, a 512-byte
+            // manifest string could be encoded as 512 linked cells
+            // and force ~512 cell reads per pre-gas manifest
+            // lookup, amplifying validator-CPU work above the
+            // admission floor billing.
+            if (byte_count != kJvmStorageValueChunkBytes) {
                 return td::Status::Error(
-                    "JVM storage value has non-canonical zero-byte "
-                    "continuation");
+                    "JVM storage value has non-canonical "
+                    "continuation chunk size");
             }
             cell = cs.fetch_ref();
         }
