@@ -640,6 +640,18 @@ td::Result<std::uint64_t> peek_jvm_args_total_bytes(td::Ref<vm::Cell> root) {
                     return td::Status::Error(
                         "JVM args value continuation missing ref");
                 }
+                // Round 67 LOW fix: enforce canonical 127-byte
+                // non-final chunks, mirroring round-57's
+                // `decode_jvm_storage_value` rule.  Pre-fix
+                // `peek_jvm_args_total_bytes` would walk a chain
+                // of 1-byte continuation cells to the depth bound
+                // before the real decoder (which has the same gate)
+                // would have rejected on the first cell.
+                if (byte_count != kJvmStorageValueChunkBytes) {
+                    return td::Status::Error(
+                        "JVM args value has non-canonical "
+                        "continuation chunk size");
+                }
                 chunk = value_cs.fetch_ref();
             }
             if (!chain_done) {

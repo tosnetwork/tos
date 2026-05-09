@@ -1005,6 +1005,23 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
             return JvmRpcResult{json_rpc_ok(id, result), false};
         }
 
+        // Round 67 LOW fix: pre-compute `arg_bytes` so the
+        // runtime-error branch can bill the same way consensus
+        // does.  Mirrors round 66's dispatch-engine pre-compute.
+        std::uint64_t error_path_arg_bytes = 0;
+        {
+            auto call_descriptor_res =
+                parse_jvm_call_descriptor(
+                    vm::CellSlice{*input.inbound_body});
+            if (call_descriptor_res.is_ok()
+                && call_descriptor_res.ok().args.not_null()) {
+                auto bytes_res = peek_jvm_args_total_bytes(
+                    call_descriptor_res.ok().args);
+                if (bytes_res.is_ok()) {
+                    error_path_arg_bytes = bytes_res.ok();
+                }
+            }
+        }
         auto invocation_result = runtime->run_contract(
             input, context, *config, previous_state);
         if (invocation_result.is_error()) {
@@ -1021,9 +1038,21 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
             // message containing `"`, `\`, or any control character
             // could close the field early and inject sibling fields
             // (e.g. a forged `newStateBoc`) into the response object.
+            //
+            // Round 67 LOW fix: bill `min(max(floor, arg_bytes),
+            // input.gas_limit)` to mirror the round-66/67 consensus
+            // bill on the resolver/runtime-error path.  Pre-fix RPC
+            // always reported `gasUsed:1024` regardless of arg
+            // payload size.
+            std::uint64_t error_billed =
+                std::max<std::uint64_t>(kJvmAdmissionGasFloor,
+                                        error_path_arg_bytes);
+            if (error_billed > input.gas_limit) {
+                error_billed = input.gas_limit;
+            }
             local_result_json = "{\"success\":false,\"outOfGas\":false,"
                                 "\"outOfMemory\":false,\"gasUsed\":"
-                                + std::to_string(kJvmAdmissionGasFloor)
+                                + std::to_string(error_billed)
                                 + ",\"vmLog\":\"runtime error: "
                                 + json_escape_string(
                                     invocation_result.error().message().str())

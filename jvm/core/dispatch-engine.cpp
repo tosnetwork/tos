@@ -613,9 +613,20 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             // `parse_jvm_args` before the resolver returned an
             // error.  Mirrors the runtime's round-61 success-path
             // post-charge of arg bytes.
-            const std::uint64_t error_billed =
+            //
+            // Round 67 MEDIUM fix: also cap the billed amount at
+            // `effective_gas_limit`.  Pre-fix, an arg_bytes value
+            // above `balance / gas_price` made the host's round-30
+            // charging block see `gas_fees > balance` and zero the
+            // fee — the attacker repeated pre-Avata arg-decode
+            // work for free.  Capping mirrors the round-40 walk-cap
+            // and round-62 runtime-cap reject pattern.
+            std::uint64_t error_billed =
                 std::max<std::uint64_t>(kJvmAdmissionGasFloor,
                                         error_path_arg_bytes);
+            if (error_billed > effective_gas_limit) {
+                error_billed = effective_gas_limit;
+            }
             return skipped_output_billed(
                 block::ComputePhase::sk_bad_state,
                 "JVM runtime invocation failed",
