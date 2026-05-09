@@ -84,6 +84,18 @@ td::Result<JvmArgs> parse_jvm_args(td::Ref<vm::Cell> root);
 td::Result<std::vector<JvmArgType>> peek_jvm_args_types(
     td::Ref<vm::Cell> root);
 
+/// Round 66 MEDIUM fix: walk the args structure summing each
+/// typed value's payload byte count, WITHOUT memcpying the
+/// payload bytes.  Returns the total byte count across all args.
+/// Used by `dispatch-engine.cpp` to charge resolver-error paths
+/// for the byte-decode work that already happened in
+/// `parse_jvm_args` before the resolver returned an error.  Walks
+/// the value-ref chunk chain summing `byte_count` per cell, the
+/// same way `decode_jvm_storage_value` accumulates `out.size()`,
+/// but avoids the byte fetch.
+td::Result<std::uint64_t> peek_jvm_args_total_bytes(
+    td::Ref<vm::Cell> root);
+
 td::Result<std::vector<JvmArgType>> parse_jvm_method_argument_types(
     const std::string& method_spec);
 

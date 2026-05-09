@@ -565,6 +565,33 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // reserved for node-local invariant/config failures (e.g.,
         // missing engine config), which we already handle explicitly
         // earlier in this function.
+        // Round 66 MEDIUM fix: pre-compute total argument bytes so
+        // the resolver-error path can bill them.  Pre-fix the
+        // round-61 arg-bytes charge happened INSIDE the runtime
+        // AFTER `execute_jvm_avata_transaction` returned, so a
+        // resolver failure (e.g. method not in class) short-
+        // circuited before the charge — `parse_jvm_args` had
+        // already memcpy'd the full payload (up to ~1 MiB), but
+        // dispatch billed only `kJvmAdmissionGasFloor`.
+        // `peek_jvm_args_total_bytes` walks the chunk chain
+        // summing byte counts WITHOUT memcpy, returning the same
+        // total the runtime's round-61 post-charge would compute.
+        // For the success path the runtime's round-61 charge
+        // already added these bytes to `invocation.gas_used`, so
+        // we don't re-add here.  Only the error path uses this.
+        std::uint64_t error_path_arg_bytes = 0;
+        {
+            auto call_descriptor_res =
+                parse_jvm_call_descriptor(input.inbound_body);
+            if (call_descriptor_res.is_ok() &&
+                call_descriptor_res.ok().args.not_null()) {
+                auto bytes_res = peek_jvm_args_total_bytes(
+                    call_descriptor_res.ok().args);
+                if (bytes_res.is_ok()) {
+                    error_path_arg_bytes = bytes_res.ok();
+                }
+            }
+        }
         auto invocation_res = runtime_->run_contract(
             effective_input, context, cfg->config, state);
         if (invocation_res.is_error()) {
@@ -580,11 +607,20 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             // resolution and consume validator CPU for free.  The
             // runtime never produced a JvmAvataInvocationResult, so
             // we bill the floor only.
+            //
+            // Round 66 MEDIUM fix: bill `max(floor, arg_bytes)` to
+            // cover the byte-decode work that already happened in
+            // `parse_jvm_args` before the resolver returned an
+            // error.  Mirrors the runtime's round-61 success-path
+            // post-charge of arg bytes.
+            const std::uint64_t error_billed =
+                std::max<std::uint64_t>(kJvmAdmissionGasFloor,
+                                        error_path_arg_bytes);
             return skipped_output_billed(
                 block::ComputePhase::sk_bad_state,
                 "JVM runtime invocation failed",
                 cfg->config,
-                /*gas_used=*/kJvmAdmissionGasFloor,
+                /*gas_used=*/error_billed,
                 /*out_of_gas=*/false,
                 /*msg_state_used=*/input.msg_state_used);
         }

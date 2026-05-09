@@ -2089,6 +2089,30 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     const td::Ref<vm::Cell> pre_state_init_new_code = new_code;
     const td::Ref<vm::Cell> pre_state_init_new_data = new_data;
     const td::Ref<vm::Cell> pre_state_init_new_library = new_library;
+    // Round 66 MEDIUM fix: reject external messages that attach a
+    // `StateInit` to an already-active custom-engine account.
+    // External import fees are zeroed for custom workchains
+    // (line ~1127), and the custom branch only unpacks StateInit
+    // when `acc_status == acc_uninit` — so a sender targeting an
+    // active account could pad the inbound message with a large
+    // valid `StateInit.{code,data,library}` shape and force the
+    // host to validate / parse / size the ignored payload at no
+    // gas cost.  The ignored StateInit also pollutes the
+    // transaction record's input-message field.  Reject here so
+    // active-account inbounds with attached StateInit fail closed
+    // (matches the policy intent that StateInit only applies to
+    // uninitialized accounts; TVM enforces this via
+    // `check_in_msg_state_hash` which is intentionally skipped on
+    // the custom branch).
+    if (acc_status != Account::acc_uninit && in_msg_state.not_null()) {
+      cp.skip_reason = ComputePhase::sk_bad_state;
+      cp.success = false;
+      cp.accepted = false;
+      cp.gas_fees = td::zero_refint();
+      cp.vm_log = "custom workchain rejected inbound StateInit attached "
+                  "to active account";
+      return true;
+    }
     if (acc_status == Account::acc_uninit && in_msg_state.not_null() &&
         new_data.is_null()) {
       block::gen::StateInit::Record si;
