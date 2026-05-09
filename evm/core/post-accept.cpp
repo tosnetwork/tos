@@ -522,6 +522,14 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
         clear_rpc_indexing_incomplete(fx.tx_hash);
     } else {
         mark_rpc_indexing_incomplete(fx.tx_hash);
+        // Round 94 HIGH fix: a tx/receipt/log cache failure leaves
+        // the per-block index partial too — by-block handlers
+        // (eth_getBlockByNumber, eth_getBlockReceipts, eth_getLogs,
+        // by-index tx lookups) need a block marker to surface
+        // -32010 instead of serving the gappy block.  Pre-fix only
+        // the per-tx marker was set, so the round-93 happy-path
+        // block-marker checks couldn't fire for this case.
+        mark_rpc_block_indexing_incomplete(fx.receipt.block_number);
     }
 }
 
@@ -1278,6 +1286,18 @@ RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
             continue;
         }
         ++stats.log_blocks_written;
+
+        // Round 94 MEDIUM fix: clear durable incomplete markers
+        // for the repaired block + its txs.  Pre-fix the rebuild
+        // path rewrote every cache record but never cleared the
+        // markers post-write, so a previously-failed cache write
+        // left the block / tx returning -32010 even after a
+        // successful rebuild.  Clear only after every record
+        // for this block succeeded.
+        clear_rpc_block_indexing_incomplete(block.number);
+        for (const auto& tx_hash : block.transaction_hashes) {
+            clear_rpc_indexing_incomplete(tx_hash);
+        }
 
         if (block_number == UINT64_MAX) break;
     }

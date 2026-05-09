@@ -2471,6 +2471,19 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
     std::string arr = "[";
     bool first = true;
     for (uint64_t bn = from_block; bn <= to_block; ++bn) {
+        // Round 94 HIGH fix: surface -32010 when the block is
+        // marked accepted-but-unindexed.  Pre-fix eth_getLogs was
+        // block-keyed and silently dropped the block's logs when
+        // is_logs_for_block_canonical failed, so a partial cache
+        // commit (round-93's put_logs_for_block failure) caused
+        // log loss instead of the contractual indexing-incomplete
+        // surface.  is_logs_for_block_canonical also treats a
+        // missing log cell as canonical, so the marker must be
+        // checked explicitly here.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         if (!is_logs_for_block_canonical(bn)) {
             // Cache stamp disagrees with canonical (or canonical has
             // no block at this height) — drop this block's logs from
@@ -2642,6 +2655,17 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_error(id, -32000, "transaction not found"), true};
+    }
+    // Round 94 LOW fix: also gate on per-tx and per-block markers
+    // when the tx is present.  A partial cache commit (tx record
+    // landed but receipt/log sidecars failed) leaves the tx
+    // marker set; tracing the tx is still possible but the
+    // surrounding state may be inconsistent — surface -32010 to
+    // match the contract instead of returning a trace.
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(stored_tx->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
 
     // Reconstruct the transaction
@@ -2849,6 +2873,13 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, "[]"), false};
+    }
+    // Round 94 MEDIUM fix: gate on the durable block-marker even
+    // when has_block returns true.  Same rationale as the other
+    // round-93 happy-path block-marker checks.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
 
     // Build receipts array
@@ -3181,6 +3212,11 @@ static RpcResult handle_get_block_tx_count_by_hash(const std::string& params, co
     if (blk.number == 0 && blk.hash == evmc::bytes32{}) {
         return {make_result(id, "null"), false};
     }
+    // Round 94 MEDIUM fix: gate on the durable block-marker.
+    if (is_evm_rpc_block_indexing_incomplete(blk.number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
     return {make_result(id, to_hex_quantity(static_cast<uint64_t>(blk.transaction_hashes.size()))), false};
 }
 
@@ -3249,6 +3285,11 @@ static RpcResult handle_get_tx_by_block_hash_and_index(const std::string& params
     if (blk.number == 0 && blk.hash == evmc::bytes32{}) {
         return {make_result(id, "null"), false};
     }
+    // Round 94 MEDIUM fix: gate on the durable block-marker.
+    if (is_evm_rpc_block_indexing_incomplete(blk.number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
     if (tx_index >= blk.transaction_hashes.size()) {
         return {make_result(id, "null"), false};
     }
@@ -3302,6 +3343,16 @@ static RpcResult handle_get_block_by_hash(const std::string& params, const std::
         if (std::memcmp(blk.hash.bytes, block_hash.bytes, 32) != 0 ||
             !block_cache_record_is_fresh(global_evm_state(), blk)) {
             return {make_result(id, "null"), false};
+        }
+        // Round 94 MEDIUM fix: gate on the durable block-marker
+        // even when the by-hash lookup is canonical-fresh.  A
+        // partial cache commit (block_by_number landed but
+        // block_by_hash failed, or any tx/log sidecar failed)
+        // leaves the marker set; eth_getBlockByHash should
+        // surface -32010 like the round-93 number-keyed handlers.
+        if (is_evm_rpc_block_indexing_incomplete(blk.number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, format_block_json(blk, full_transactions)), false};
     }
@@ -3775,6 +3826,11 @@ static RpcResult handle_get_raw_tx_by_block_hash_and_index(const std::string& pa
     if (blk.hash == evmc::bytes32{} && blk.number == 0) {
         return {make_result(id, "null"), false};
     }
+    // Round 94 MEDIUM fix: gate on the durable block-marker.
+    if (is_evm_rpc_block_indexing_incomplete(blk.number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
 
     // Parse index (second hex param)
     auto first_pos = params.find("0x");
@@ -3954,6 +4010,12 @@ static RpcResult handle_debug_get_raw_header(const std::string& params, const st
         }
         return {make_result(id, "null"), false};
     }
+    // Round 94 MEDIUM fix: gate on the durable block-marker even
+    // when has_block returns true.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
     auto blk = global_evm_state().get_block_copy(bn);
     auto header = build_silkworm_header(blk);
     silkworm::Bytes out;
@@ -3970,6 +4032,11 @@ static RpcResult handle_debug_get_raw_block(const std::string& params, const std
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, "null"), false};
+    }
+    // Round 94 MEDIUM fix: gate on the durable block-marker.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
     auto blk = global_evm_state().get_block_copy(bn);
 
@@ -4023,6 +4090,11 @@ static RpcResult handle_debug_get_raw_receipts(const std::string& params, const 
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, "[]"), false};
+    }
+    // Round 94 MEDIUM fix: gate on the durable block-marker.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
     auto blk = global_evm_state().get_block_copy(bn);
 
