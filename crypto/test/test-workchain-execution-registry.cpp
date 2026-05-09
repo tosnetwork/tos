@@ -4593,6 +4593,69 @@ TEST(JvmWorkchainCore, RpcCallContractReportsConsensusGasUsedFloor) {
   CHECK(result.json.find("\"gasUsed\":1024") != std::string::npos);
 }
 
+TEST(JvmWorkchainCore, RpcCallContractDetectsMaxStorageCellsAfterWalkBypass) {
+  // Round 44 MEDIUM fix: the round-43 optimization that lets RPC pass
+  // `storage_walk_already_billed=true` to `build_jvm_workchain_output`
+  // skipped the builder's defensive `max_storage_cells` walk.  RPC was
+  // discarding the dispatch-style `stat_result` (its own walk's error
+  // status), so a contract committing a storage_root above the cap
+  // simulated `success=true` while consensus rejected with sk_bad_state.
+  // Round 44 captures the stat_result and reports the same rejection
+  // shape RPC would have shown pre-Round-43.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.max_storage_cells = 1;  // intentionally tiny so the walk overflows
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  runtime->mock_expected_gas_limit = 2000;
+  runtime->mock_gas_used = 100;
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x44};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x21 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x43 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+
+  // Pre-existing storage with a few cells so the mock's mutation
+  // forces the walk to exceed `max_storage_cells=1`.
+  JvmStorageCellHost initial_storage;
+  for (std::uint8_t i = 1; i <= 4; ++i) {
+    JvmStorageSlot slot{};
+    slot[0] = i;
+    CHECK(initial_storage.store(slot, JvmStorageValue{i, i, i}).is_ok());
+  }
+  state.storage_root = initial_storage.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  auto bound = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 2000;
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  CHECK(runtime->called);
+  // Consensus dispatch returns sk_bad_state with a max_storage_cells
+  // message; RPC must mirror that shape.
+  CHECK(result.json.find("\"success\":false") != std::string::npos);
+  CHECK(result.json.find("max_storage_cells") != std::string::npos);
+  CHECK(result.json.find("\"newStateBoc\":null") != std::string::npos);
+}
+
 TEST(JvmWorkchainCore, RpcCallContractMirrorsConsensusWalkGasCap) {
   // Round 41 MEDIUM fix: handle_jvm_call_contract must mirror the
   // consensus round-39 storage-walk gas billing AND the round-40

@@ -331,18 +331,26 @@ std::string inject_account_balance(std::string params_json,
   return params_json;
 }
 
-// Round 43 LOW fix: extract the live account balance as a `uint64_t`,
-// clamping values that don't fit 64 unsigned bits to `UINT64_MAX`.
+// Round 43 LOW fix: extract the live account balance as a `uint64_t`.
 // Pre-fix `ParsedAccountState::balance` (int64) silently lost the
 // high bit, and `inject_account_balance` then clamped the resulting
 // negative to 0 — so a balance > INT64_MAX was treated as "no hint",
-// a behavior consensus did not match.  Returning UINT64_MAX (capped)
-// instead means the affordability cap never artificially rejects in
-// RPC for a genuinely huge balance; the consensus path's
-// `affordable = balance / gas_price` arithmetic is performed on
-// 256-bit `RefInt256`, so consensus continues to reject correctly
-// when gas_price is also huge.
-std::uint64_t extract_account_balance_uint64(
+// a behavior consensus did not match.
+//
+// Round 44 LOW fix: return `std::nullopt` when the balance overflows
+// `uint64_t`.  Pre-Round-44 we returned `UINT64_MAX`, then RPC divided
+// by `gas_price`; for huge balance + huge gas_price the quotient could
+// fall below the admission floor and falsely reject locally even
+// though consensus (which divides 256-bit `balance` by `gas_price`
+// before clamping) computes a perfectly affordable amount.  Returning
+// `nullopt` makes the validator-engine omit the `accountBalance`
+// field; RPC then defers to `max_gas_per_tx` (balance-blind for the
+// affordability cap).  This is a UX divergence from consensus, but a
+// safe-side one: RPC will simulate at higher gas than consensus could
+// afford only when the consensus cap is < kJvmAdmissionGasFloor, in
+// which case consensus rejects pre-runtime — RPC is conservatively
+// "balance-blind", not "balance-cap-bypass".
+std::optional<std::uint64_t> extract_account_balance_uint64(
     const tos::lite_api::liteServer_accountState& account) {
   if (account.state_.empty()) {
     return 0;
@@ -366,7 +374,7 @@ std::uint64_t extract_account_balance_uint64(
     return 0;
   }
   if (!coins->fits_bits(64, /*sign=*/false)) {
-    return std::numeric_limits<std::uint64_t>::max();
+    return std::nullopt;  // overflow → omit `accountBalance` injection
   }
   return static_cast<std::uint64_t>(coins->to_long());
 }
@@ -572,14 +580,19 @@ void JsonRpcServer::handle_jvm_rpc_method(std::string method,
         // Round 42: also forward the live balance so RPC simulation
         // applies the consensus `balance/gas_price` affordability cap.
         // Round 43: re-extract via `extract_account_balance_uint64`
-        // which preserves the full 64 unsigned bits (clamping 256-bit
-        // overflow to UINT64_MAX) instead of using
-        // `ParsedAccountState::balance` (int64) which silently lost the
-        // high bit.
-        const std::uint64_t live_balance =
+        // which preserves the full 64 unsigned bits instead of using
+        // `ParsedAccountState::balance` (int64) which silently lost
+        // the high bit.
+        // Round 44 LOW fix: skip injection when the balance overflows
+        // `uint64_t`.  Otherwise the affordability cap divides
+        // `UINT64_MAX / gas_price` and may falsely reject locally for
+        // accounts whose true `balance / gas_price` is large enough.
+        const auto live_balance =
             extract_account_balance_uint64(*account);
-        params_with_state =
-            inject_account_balance(params_with_state, live_balance);
+        if (live_balance.has_value()) {
+            params_with_state =
+                inject_account_balance(params_with_state, *live_balance);
+        }
         dispatch_with_config_and_params(jvm_cfg, params_with_state);
       }));
     }));

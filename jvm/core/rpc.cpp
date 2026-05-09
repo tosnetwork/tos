@@ -793,6 +793,14 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
             // dispatch-engine.cpp (kJvmStorageWalkGasPerCell shared via
             // avata-execution.h).
             bool walk_cap_exceeded = false;
+            // Round 44 MEDIUM fix: also track the `max_storage_cells`
+            // exceedance result.  Round 43 made build_output skip its
+            // defensive walk when dispatch already walked, but RPC was
+            // discarding the stat_result — so a contract that committed
+            // a storage_root above `max_storage_cells` simulated
+            // success here while consensus rejected with sk_bad_state
+            // via the dispatch's stat-error branch.
+            bool walk_max_cells_exceeded = false;
             // Round 43 LOW: track whether the RPC walk happened so
             // build_jvm_workchain_output can skip its redundant walk.
             bool storage_walk_performed = false;
@@ -807,7 +815,8 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                     storage_walk_performed = true;
                     vm::CellStorageStat stat(static_cast<unsigned long long>(
                         config->max_storage_cells));
-                    (void)stat.add_used_storage(inv.storage_root, true);
+                    auto stat_result =
+                        stat.add_used_storage(inv.storage_root, true);
                     const std::uint64_t walk_gas =
                         stat.cells * kJvmStorageWalkGasPerCell;
                     if (inv.gas_used >
@@ -819,6 +828,12 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                     }
                     if (inv.gas_used > input.gas_limit) {
                         walk_cap_exceeded = true;
+                    } else if (stat_result.is_error()) {
+                        // Mirrors dispatch's sk_bad_state branch.  The
+                        // cap-check fires first because consensus also
+                        // bills the affordable cap on overflow before
+                        // reporting max_storage_cells.
+                        walk_max_cells_exceeded = true;
                     }
                 }
             }
@@ -829,6 +844,17 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                     + "\"gasUsed\":" + std::to_string(input.gas_limit) +
                     ",\"vmLog\":\"JVM storage walk gas exceeded affordable "
                     "cap\",\"newStateBoc\":null}";
+            } else if (walk_max_cells_exceeded) {
+                // Bill `max(post-walk gas, kJvmAdmissionGasFloor)` to
+                // mirror consensus's `skipped_output_billed(sk_bad_state)`.
+                const std::uint64_t billed = std::max<std::uint64_t>(
+                    inv.gas_used, kJvmAdmissionGasFloor);
+                local_result_json = std::string("{\"success\":false,")
+                    + "\"outOfGas\":false,\"outOfMemory\":false,"
+                    + "\"gasUsed\":" + std::to_string(billed) +
+                    ",\"vmLog\":\"JVM committed storage_root exceeds "
+                    "ConfigParam 85 max_storage_cells\","
+                    "\"newStateBoc\":null}";
             } else {
                 auto output = build_jvm_workchain_output(
                     *config, previous_state, input.gas_limit, inv,
@@ -866,8 +892,17 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                 // for accounts that consumed less than 1024 gas — the
                 // localResult said `gasUsed=100` while consensus billed
                 // 1024.
+                //
+                // Round 44 LOW fix: also apply the floor on the error
+                // path.  When build_output rejects (e.g. malformed
+                // post-runtime state), consensus bills
+                // `max(inv.gas_used, kJvmAdmissionGasFloor)` via
+                // `skipped_output_billed`; pre-fix RPC reported the
+                // raw `inv.gas_used` here too.
                 const std::uint64_t reported_gas_used =
-                    output_ok ? output.ok().gas_used : inv.gas_used;
+                    output_ok ? output.ok().gas_used
+                              : std::max<std::uint64_t>(
+                                    inv.gas_used, kJvmAdmissionGasFloor);
                 local_result_json = std::string("{\"success\":") +
                     (effective_success ? "true" : "false") +
                     ",\"outOfGas\":" + (inv.out_of_gas ? "true" : "false") +
