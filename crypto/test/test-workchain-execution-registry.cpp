@@ -2048,7 +2048,10 @@ TEST(WorkchainExecutionRegistry, JvmEngineDispatchesAccountStateToRuntime) {
   CHECK(output.accepted);
   CHECK(output.committed);
   CHECK(output.engine_success);
-  CHECK(output.gas_used == 123);
+  // Round-34: gas_used is bumped to the JVM admission floor (1024)
+  // when the runtime reports < 1024 gas used.  The mock returns 123
+  // gas used, so the floor takes over.
+  CHECK(output.gas_used == 1024);
   CHECK(output.action_list.not_null());
 
   JvmContractAccountState decoded;
