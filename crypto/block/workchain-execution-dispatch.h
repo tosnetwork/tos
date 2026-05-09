@@ -147,6 +147,15 @@ struct WorkchainComputeInput {
   tos::StdSmcAddress account_addr;
   td::Ref<vm::Cell> current_code;
   td::Ref<vm::Cell> current_data;
+  // Round 59 LOW fix: the active account's `library` cell.  TVM
+  // executes precompiled libraries from this slot; custom-engine
+  // workchains (e.g. JVM v2) inspect it to enforce per-engine
+  // invariants on first activation (the JVM activation marker is
+  // single-byte 0x4a; the canonical JVM account has no library, so
+  // the engine rejects any non-null `current_library` on
+  // `msg_state_used == true`, which would otherwise persist
+  // attacker-controlled cell bytes in `account.library` indefinitely).
+  td::Ref<vm::Cell> current_library;
   block::CurrencyCollection account_balance;
   td::Ref<vm::Cell> inbound_message;
   td::Ref<vm::CellSlice> inbound_body;

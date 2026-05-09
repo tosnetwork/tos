@@ -430,13 +430,6 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             // activation inbound here; the host will fall back to
             // its policy `activation_code` (i.e. the marker) since
             // the engine emits no `new_code`.
-            //
-            // Note: `StateInit.library` is similarly attacker-
-            // controlled but is not currently plumbed via
-            // `WorkchainComputeInput`; the host preserves it
-            // verbatim.  Adding a library invariant here requires
-            // first plumbing `current_library` through the input —
-            // tracked separately from this fix's scope.
             if (input.current_code.not_null()
                 && input.current_code->get_hash() !=
                        jvm_activation_code_cell()->get_hash()) {
@@ -444,6 +437,21 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                     block::ComputePhase::sk_bad_state,
                     "JVM first activation: StateInit.code is not the "
                     "canonical activation marker");
+            }
+            // Round 59 LOW fix: same threat for `StateInit.library`.
+            // Pre-fix the host copied `si.library` into
+            // `new_library` and committed it verbatim into
+            // `account.library`.  Canonical JVM accounts have no
+            // library (TVM precompile semantics don't apply), so
+            // any non-null inbound library is non-canonical bytes
+            // that pollute the on-chain state record.  Reject here.
+            // `current_library` was plumbed through
+            // `WorkchainComputeInput` in this round.
+            if (input.current_library.not_null()) {
+                return skipped_output(
+                    block::ComputePhase::sk_bad_state,
+                    "JVM first activation: StateInit.library must "
+                    "be empty");
             }
             if (input.inbound_message.is_null()) {
                 return skipped_output(

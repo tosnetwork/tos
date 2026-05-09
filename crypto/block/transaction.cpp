@@ -2094,6 +2094,13 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     input.account_addr = account.addr;
     input.current_code = new_code;
     input.current_data = new_data;
+    // Round 59 LOW fix: forward the active library so custom-engine
+    // workchains (JVM v2) can reject attacker-supplied
+    // `StateInit.library` on first activation — pre-fix the host
+    // copied `si.library` into `new_library`, ran compute, and
+    // committed the library bytes verbatim into `account.library`
+    // even though the JVM engine has no library semantics.
+    input.current_library = new_library;
     input.account_balance = balance;
     input.inbound_message = in_msg;
     input.inbound_body = in_msg_body;
