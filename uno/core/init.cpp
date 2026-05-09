@@ -1764,10 +1764,33 @@ void init_uno_workchain(const std::string& db_root) {
 td::Ref<vm::Cell> build_uno_zerostate_accounts_cell() {
     using td::make_refint;
 
-    // 1. AccountStorage = last_trans_lt:0 balance:zero state:account_uninit$00
+    // 1. AccountStorage = last_trans_lt:0 balance:bootstrap state:account_uninit$00
+    //
+    // Round 77 HIGH fix: seed the wc=2 singleton with a non-zero
+    // bootstrap balance so the chain has liveness after Round 75/76.
+    // Pre-fix the zerostate stored `balance:zero`; combined with
+    // Round 75 (cp.gas_fees > 0 on accepted Uno paths) and Round 76
+    // (host-rollback prevention via affordability pre-check), the
+    // very first external Transfer / MineUno is rejected by
+    // `affordable_or_reject` because `gas_used * kUnoGasPriceNano >
+    // 0 == balance.tomis` and the singleton can never activate.
+    //
+    // The chain has no built-in mechanism to credit the singleton
+    // (shielded txs carry no value; there is no block-subsidy hook
+    // wired to wc=2).  A multi-launch funding mechanism is out of
+    // scope for this security review; pre-fund with a generous but
+    // bounded amount so testnet/mainnet bring-up has working
+    // wc=2 admission until governance lands a permanent funding
+    // mechanism.  10^15 nanotomis (~10^6 TOS at the current
+    // 10^9-nanotomis-per-TOS denomination) covers ~10^10 typical
+    // Transfer fees at the round-75 rate (gas_used~10^4 *
+    // kUnoGasPriceNano=10).
+    constexpr std::uint64_t kUnoSingletonBootstrapBalanceNano =
+        1'000'000'000'000'000ULL;  // 10^15 nano-tomis = ~10^6 TOS
     vm::CellBuilder as_cb;
     as_cb.store_long_bool(0, 64);                                 // last_trans_lt
-    bool ok = block::CurrencyCollection{make_refint(0)}.store(as_cb);  // balance
+    bool ok = block::CurrencyCollection{
+        make_refint(kUnoSingletonBootstrapBalanceNano)}.store(as_cb);
     CHECK(ok);
     as_cb.store_long_bool(0, 2);                                  // account_uninit$00
     auto storage_cell = as_cb.finalize();

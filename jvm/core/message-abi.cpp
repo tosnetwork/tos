@@ -532,7 +532,8 @@ td::Result<std::vector<JvmArgType>> peek_jvm_args_types(
 
 td::Result<std::uint64_t> peek_jvm_args_total_bytes(
     td::Ref<vm::Cell> root,
-    std::uint64_t* partial_walked_on_error) {
+    std::uint64_t* partial_walked_on_error,
+    std::uint64_t max_bytes_budget) {
     // Round 68 MEDIUM fix: track the running byte total in a single
     // local; on every error return path, if `partial_walked_on_error`
     // is non-null, write the running count so callers can bill the
@@ -659,6 +660,19 @@ td::Result<std::uint64_t> peek_jvm_args_total_bytes(
                     local_total += byte_count;
                 }
                 total = local_total;
+                // Round 77 LOW fix: bail out as soon as the running
+                // byte total crosses the caller-supplied budget.
+                // Pre-fix the walker traversed the full chunk chain
+                // even when the eventual consensus reject was
+                // already inevitable.  `partial_walked_on_error`
+                // captures the count at exit; the dispatch /
+                // RPC gates use either the success ok() value or
+                // this partial, so the early exit reports the same
+                // billing total without doing the rest of the walk.
+                if (max_bytes_budget != 0 &&
+                    local_total > max_bytes_budget) {
+                    return fail("JVM args exceed peek byte budget");
+                }
                 // Skip the byte_count payload bytes without copying.
                 if (!value_cs.advance(byte_count * 8u)) {
                     return fail("JVM args value cell payload truncated");

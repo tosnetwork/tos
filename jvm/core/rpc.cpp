@@ -1018,12 +1018,47 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
             if (call_descriptor_res.is_ok()
                 && call_descriptor_res.ok().args.not_null()) {
                 std::uint64_t partial_walked = 0;
+                // Round 77 LOW fix: same structural walk cap as
+                // dispatch-engine — pass `input.gas_limit` so the
+                // walker bails the moment the running total crosses
+                // the cap the pre-walk gate below would reject at.
                 auto bytes_res = peek_jvm_args_total_bytes(
-                    call_descriptor_res.ok().args, &partial_walked);
+                    call_descriptor_res.ok().args, &partial_walked,
+                    /*max_bytes_budget=*/input.gas_limit);
                 error_path_arg_bytes =
                     bytes_res.is_ok() ? bytes_res.ok() : partial_walked;
             }
         }
+        // Round 77 MEDIUM fix: mirror the round-76 dispatch-engine
+        // pre-walk affordability gate.  Pre-fix RPC entered
+        // `runtime->run_contract` even when `max(floor, arg_bytes)`
+        // already exceeded `input.gas_limit`, so the resolver
+        // memcpy'd every typed `Bytes` arg payload (up to ~1 MiB
+        // each) and reported a localResult that diverged from the
+        // consensus pre-walk reject.  This is both an RPC/consensus
+        // divergence AND a public full-node simulation DoS.  When
+        // the projected billing exceeds the cap, emit the cap-
+        // billed localResult that mirrors the consensus sk_no_gas
+        // wire shape and skip the runtime call entirely.
+        bool pre_walk_gate_short_circuit = false;
+        if (error_path_arg_bytes > 0) {
+            const std::uint64_t pre_walk_billed =
+                std::max<std::uint64_t>(kJvmAdmissionGasFloor,
+                                        error_path_arg_bytes);
+            if (pre_walk_billed > input.gas_limit) {
+                local_result_json =
+                    "{\"success\":false,\"outOfGas\":true,"
+                    "\"outOfMemory\":false,\"gasUsed\":"
+                    + std::to_string(input.gas_limit)
+                    + ",\"vmLog\":\"runtime error: JVM arg bytes exceed "
+                      "affordable gas cap\",\"newStateBoc\":null}";
+                pre_walk_gate_short_circuit = true;
+            }
+        }
+        if (pre_walk_gate_short_circuit) {
+            // local_result_json already set above; jump past the
+            // runtime invocation and its branches.
+        } else {
         auto invocation_result = runtime->run_contract(
             input, context, *config, previous_state);
         if (invocation_result.is_error()) {
@@ -1236,6 +1271,7 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                     ",\"newStateBoc\":" + new_state_hex + "}";
             }
         }
+        }  // end of else (pre_walk_gate_short_circuit) — Round 77
     }
 
     std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex

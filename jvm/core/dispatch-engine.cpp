@@ -592,8 +592,16 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 // have already memcpy'd those prefix bytes before
                 // failing at the same point — bill them.
                 std::uint64_t partial_walked = 0;
+                // Round 77 LOW fix: cap the structural walk at the
+                // affordable gas limit.  When the running byte total
+                // exceeds `effective_gas_limit`, peek bails early and
+                // writes the partial through `partial_walked`.  The
+                // pre-walk gate below treats the partial identically
+                // to a successful return (`max(floor, total) > cap`
+                // → reject), so we never need the rest of the walk.
                 auto bytes_res = peek_jvm_args_total_bytes(
-                    call_descriptor_res.ok().args, &partial_walked);
+                    call_descriptor_res.ok().args, &partial_walked,
+                    /*max_bytes_budget=*/effective_gas_limit);
                 error_path_arg_bytes =
                     bytes_res.is_ok() ? bytes_res.ok() : partial_walked;
             }

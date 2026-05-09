@@ -102,9 +102,21 @@ td::Result<std::vector<JvmArgType>> peek_jvm_args_types(
 /// the same chunk, so callers should bill the partial total
 /// instead of `0` to avoid a free-CPU loop on attacker-crafted
 /// malformed args.
+/// Round 77 LOW fix: optional `max_bytes_budget` lets the caller cap
+/// the structural walk at a known affordability bound (e.g.
+/// `effective_gas_limit`).  When the running byte total would exceed
+/// the budget, the function returns an error early; the partial
+/// total written through `partial_walked_on_error` reflects the
+/// count at exit.  Pre-fix the walker traversed the entire chunk
+/// chain even when consensus would reject `max(floor, total) >
+/// effective_gas_limit` — wasted validator CPU proportional to
+/// attacker-supplied payload size rather than the affordable cap.
+/// Pass `0` to disable the cap (default; preserves existing
+/// callers' semantics).
 td::Result<std::uint64_t> peek_jvm_args_total_bytes(
     td::Ref<vm::Cell> root,
-    std::uint64_t* partial_walked_on_error = nullptr);
+    std::uint64_t* partial_walked_on_error = nullptr,
+    std::uint64_t max_bytes_budget = 0);
 
 td::Result<std::vector<JvmArgType>> parse_jvm_method_argument_types(
     const std::string& method_spec);
