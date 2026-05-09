@@ -246,7 +246,8 @@ td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output(
     const JvmConfig& config,
     const JvmContractAccountState& previous_state,
     std::uint64_t gas_limit,
-    const JvmAvataInvocationResult& invocation) {
+    const JvmAvataInvocationResult& invocation,
+    bool storage_walk_already_billed) {
     if (config.chain_id == 0 || config.gas_price == 0 ||
         config.max_gas_per_tx == 0 || config.max_heap_bytes == 0) {
         return td::Status::Error(
@@ -334,7 +335,7 @@ td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output(
     // storage.  We only walk when `invocation.storage_root` differs from
     // `previous_state.storage_root` — calls that don't mutate storage
     // skip the walk entirely.
-    if (config.max_storage_cells > 0) {
+    if (config.max_storage_cells > 0 && !storage_walk_already_billed) {
         const bool storage_changed =
             previous_state.storage_root.is_null() ||
             invocation.storage_root->get_hash()

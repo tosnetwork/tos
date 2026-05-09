@@ -20,6 +20,7 @@
 
 #include "auto/tl/lite_api.hpp"
 #include "block/block-auto.h"
+#include "block/block-parse.h"
 #include "block/check-proof.h"
 #include "block/mc-config.h"
 #include "jvm/core/config-param.h"
@@ -294,26 +295,80 @@ std::string inject_account_state_boc(std::string params_json,
 // to mirror the consensus affordability cap (`balance/gas_price`) —
 // without it the live RPC simulation would diverge from on-chain
 // execution any time the caller's balance is the binding constraint.
-// `balance` is an int64 from `ParsedAccountState`; we clamp negatives
-// to zero and serialize as decimal.
+//
+// Round 43 MEDIUM fix: insert the field at the START of the JSON
+// object (right after `{`) instead of the end.  `json_get_number_str`
+// returns the FIRST occurrence; appending let a malicious caller
+// shadow the injected value with their own attacker-controlled
+// `accountBalance` placed earlier in the request.  Inserting first
+// means the parser always sees the injected value first.
+//
+// Round 43 LOW fix: take the balance as `td::uint64` so the call site
+// can re-extract from the raw `RefInt256` and clamp 256-bit values
+// that don't fit `int64` to UINT64_MAX (treated as "very high
+// balance, no constraint") rather than letting `to_long()` return a
+// negative sentinel that the old version clamped to zero.
 std::string inject_account_balance(std::string params_json,
-                                   td::int64 balance) {
-  auto pos = params_json.rfind('}');
-  if (pos == std::string::npos) {
+                                   std::uint64_t balance) {
+  auto open = params_json.find('{');
+  if (open == std::string::npos) {
     return params_json;
   }
-  auto before = pos;
-  while (before > 0 &&
-         std::isspace(static_cast<unsigned char>(params_json[before - 1]))) {
-    --before;
+  auto idx = open + 1;
+  while (idx < params_json.size() &&
+         std::isspace(static_cast<unsigned char>(params_json[idx]))) {
+    ++idx;
   }
-  const bool empty_object = before > 0 && params_json[before - 1] == '{';
-  const std::uint64_t clamped =
-      balance > 0 ? static_cast<std::uint64_t>(balance) : 0;
-  std::string field = empty_object ? "" : ",";
-  field += "\"accountBalance\":" + std::to_string(clamped);
-  params_json.insert(pos, field);
+  // If the next non-whitespace char is `}`, the object is empty —
+  // inject without a leading comma; otherwise inject with a trailing
+  // comma so the existing first field still parses.
+  const bool empty_object = idx < params_json.size() && params_json[idx] == '}';
+  std::string field = "\"accountBalance\":" + std::to_string(balance);
+  if (!empty_object) {
+    field += ",";
+  }
+  params_json.insert(open + 1, field);
   return params_json;
+}
+
+// Round 43 LOW fix: extract the live account balance as a `uint64_t`,
+// clamping values that don't fit 64 unsigned bits to `UINT64_MAX`.
+// Pre-fix `ParsedAccountState::balance` (int64) silently lost the
+// high bit, and `inject_account_balance` then clamped the resulting
+// negative to 0 — so a balance > INT64_MAX was treated as "no hint",
+// a behavior consensus did not match.  Returning UINT64_MAX (capped)
+// instead means the affordability cap never artificially rejects in
+// RPC for a genuinely huge balance; the consensus path's
+// `affordable = balance / gas_price` arithmetic is performed on
+// 256-bit `RefInt256`, so consensus continues to reject correctly
+// when gas_price is also huge.
+std::uint64_t extract_account_balance_uint64(
+    const tos::lite_api::liteServer_accountState& account) {
+  if (account.state_.empty()) {
+    return 0;
+  }
+  auto state_r = vm::std_boc_deserialize(account.state_.as_slice());
+  if (state_r.is_error()) {
+    return 0;
+  }
+  auto state_cell = state_r.move_as_ok();
+  block::gen::Account::Record_account ar;
+  if (!tlb::unpack_cell(state_cell, ar)) {
+    return 0;
+  }
+  block::gen::AccountStorage::Record storage;
+  if (!tlb::csr_unpack(ar.storage, storage)) {
+    return 0;
+  }
+  auto balance_cs = storage.balance.write();
+  auto coins = block::tlb::t_Tomis.as_integer_skip(balance_cs);
+  if (coins.is_null()) {
+    return 0;
+  }
+  if (!coins->fits_bits(64, /*sign=*/false)) {
+    return std::numeric_limits<std::uint64_t>::max();
+  }
+  return static_cast<std::uint64_t>(coins->to_long());
 }
 
 }  // namespace
@@ -516,8 +571,15 @@ void JsonRpcServer::handle_jvm_rpc_method(std::string method,
             slot->params_json, jvm_rpc_hex_encode(boc_r.ok().as_slice()));
         // Round 42: also forward the live balance so RPC simulation
         // applies the consensus `balance/gas_price` affordability cap.
+        // Round 43: re-extract via `extract_account_balance_uint64`
+        // which preserves the full 64 unsigned bits (clamping 256-bit
+        // overflow to UINT64_MAX) instead of using
+        // `ParsedAccountState::balance` (int64) which silently lost the
+        // high bit.
+        const std::uint64_t live_balance =
+            extract_account_balance_uint64(*account);
         params_with_state =
-            inject_account_balance(params_with_state, parsed.balance);
+            inject_account_balance(params_with_state, live_balance);
         dispatch_with_config_and_params(jvm_cfg, params_with_state);
       }));
     }));

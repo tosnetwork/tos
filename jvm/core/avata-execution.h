@@ -134,10 +134,18 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
 // by re-encoding the next `JvmContractAccountState` with the invocation's
 // storage_root (class_hash, class_bytes, manifest_root are pinned at deploy
 // time and not modified by run_compute).
+// Round 43 LOW fix: when the caller (dispatch-engine.cpp) has already
+// performed the `max_storage_cells` walk and billed the contract for
+// it, set `storage_walk_already_billed = true` so this builder skips
+// the redundant walk.  Pre-fix, validators walked the storage root
+// twice on every successful storage-mutating call but the contract
+// only paid for one walk, breaking proportionality between
+// validator-CPU and gas charged.
 td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output(
     const JvmConfig& config,
     const JvmContractAccountState& previous_state,
     std::uint64_t gas_limit,
-    const JvmAvataInvocationResult& invocation);
+    const JvmAvataInvocationResult& invocation,
+    bool storage_walk_already_billed = false);
 
 }  // namespace jvm_workchain

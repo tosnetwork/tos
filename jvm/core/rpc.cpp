@@ -516,7 +516,12 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
     }
 
     // accountBalance is optional (round-42 hint).  When present it must
-    // parse as an unsigned 64-bit integer in tomis.
+    // parse as an unsigned 64-bit integer in tomis.  Round 43 MEDIUM
+    // fix: track presence explicitly via `std::optional` so a live
+    // zero-balance account (`accountBalance:0`) triggers the
+    // affordability cap (which evaluates to 0 → reject pre-runtime),
+    // matching consensus.  Pre-fix, `0` was indistinguishable from
+    // "absent" and the cap was skipped.
     if (params_json.find("\"accountBalance\"") != std::string::npos) {
         auto balance_str = json_get_number_str(params_json, "accountBalance");
         std::uint64_t v = 0;
@@ -716,9 +721,14 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
         // cap reduces to `min(input.gas_limit, max_gas_per_tx)` and the
         // simulation is balance-blind — clients that need affordability
         // semantics must pass `accountBalance`.
-        if (config->gas_price > 0 && req.account_balance > 0) {
+        //
+        // Round 43 MEDIUM fix: the predicate now uses `has_value()`
+        // rather than `> 0`, so a live zero-balance account triggers
+        // the cap (affordable=0 → reject pre-runtime) instead of being
+        // treated as "no hint" and skipping the cap.
+        if (config->gas_price > 0 && req.account_balance.has_value()) {
             std::uint64_t affordable =
-                req.account_balance / config->gas_price;
+                *req.account_balance / config->gas_price;
             if (affordable < input.gas_limit) {
                 input.gas_limit = affordable;
             }
@@ -783,6 +793,9 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
             // dispatch-engine.cpp (kJvmStorageWalkGasPerCell shared via
             // avata-execution.h).
             bool walk_cap_exceeded = false;
+            // Round 43 LOW: track whether the RPC walk happened so
+            // build_jvm_workchain_output can skip its redundant walk.
+            bool storage_walk_performed = false;
             if (config->max_storage_cells > 0
                 && inv.success
                 && inv.storage_root.not_null()) {
@@ -791,6 +804,7 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                     || inv.storage_root->get_hash()
                            != previous_state.storage_root->get_hash();
                 if (storage_changed) {
+                    storage_walk_performed = true;
                     vm::CellStorageStat stat(static_cast<unsigned long long>(
                         config->max_storage_cells));
                     (void)stat.add_used_storage(inv.storage_root, true);
@@ -817,7 +831,8 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                     "cap\",\"newStateBoc\":null}";
             } else {
                 auto output = build_jvm_workchain_output(
-                    *config, previous_state, input.gas_limit, inv);
+                    *config, previous_state, input.gas_limit, inv,
+                    /*storage_walk_already_billed=*/storage_walk_performed);
 
                 std::string new_state_hex = "null";
                 if (output.is_ok() && output.ok().new_data.not_null()) {
@@ -844,11 +859,20 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                 // round 12 added.
                 const bool output_ok = output.is_ok();
                 const bool effective_success = inv.success && output_ok;
+                // Round 43 LOW fix: report the consensus-charged gas
+                // (which `build_jvm_workchain_output` floors to
+                // `kJvmAdmissionGasFloor` on success) rather than the
+                // raw runtime-reported gas.  Pre-fix RPC under-reported
+                // for accounts that consumed less than 1024 gas — the
+                // localResult said `gasUsed=100` while consensus billed
+                // 1024.
+                const std::uint64_t reported_gas_used =
+                    output_ok ? output.ok().gas_used : inv.gas_used;
                 local_result_json = std::string("{\"success\":") +
                     (effective_success ? "true" : "false") +
                     ",\"outOfGas\":" + (inv.out_of_gas ? "true" : "false") +
                     ",\"outOfMemory\":" + (inv.out_of_memory ? "true" : "false") +
-                    ",\"gasUsed\":" + std::to_string(inv.gas_used) +
+                    ",\"gasUsed\":" + std::to_string(reported_gas_used) +
                     ",\"vmLog\":\"" + vm_log + "\"" +
                     ",\"newStateBoc\":" + new_state_hex + "}";
             }

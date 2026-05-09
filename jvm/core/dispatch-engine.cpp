@@ -504,6 +504,11 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // billing on either success or error.
         // kJvmStorageWalkGasPerCell now lives in avata-execution.h so
         // rpc.cpp's local-simulation can mirror this billing identically.
+        // Round 43 LOW: track whether dispatch performed the walk
+        // successfully, so build_jvm_workchain_output can skip the
+        // duplicate walk it used to do (validator-CPU was 2x what
+        // the contract paid for).
+        bool storage_walk_performed = false;
         if (cfg->config.max_storage_cells > 0
             && invocation.success
             && invocation.storage_root.not_null()) {
@@ -512,6 +517,7 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 || invocation.storage_root->get_hash()
                        != state.storage_root->get_hash();
             if (storage_changed) {
+                storage_walk_performed = true;
                 vm::CellStorageStat stat(static_cast<unsigned long long>(
                     cfg->config.max_storage_cells));
                 auto stat_result =
@@ -573,7 +579,8 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // trigger output-builder rejection, and pay only the floor.
         const std::uint64_t invocation_gas_used = invocation.gas_used;
         auto output_res = build_jvm_workchain_output(
-            cfg->config, state, effective_gas_limit, std::move(invocation));
+            cfg->config, state, effective_gas_limit, std::move(invocation),
+            /*storage_walk_already_billed=*/storage_walk_performed);
         if (output_res.is_error()) {
             LOG(DEBUG)
                 << "JVM output builder returned error "
