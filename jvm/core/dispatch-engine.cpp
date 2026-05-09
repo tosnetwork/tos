@@ -101,9 +101,20 @@ block::WorkchainComputeOutput skipped_output_billed(
     std::string vm_log,
     const JvmConfig& config,
     std::uint64_t gas_used = kJvmAdmissionGasFloor,
-    bool out_of_gas = false) {
+    bool out_of_gas = false,
+    bool msg_state_used = false) {
     block::WorkchainComputeOutput out;
     out.completed = true;
+    // Round 51 LOW fix: forward the host's first-activation signal
+    // even on the billed reject path.  Pre-Round-51 only the
+    // build_jvm_workchain_output success path set
+    // `output.msg_state_used`; failed first-activation rejects
+    // (e.g. unknown method_id under msg_state_used=true) returned
+    // here with the default `false`, so the wire-format
+    // tr_phase_compute_vm$1.msg_state_used lied about whether the
+    // transaction consumed StateInit.  account_activated stays
+    // `false` because activation requires a committed compute output.
+    out.msg_state_used = msg_state_used;
     // accepted=true is required for the host's round-30 charging
     // block to actually debit the admission floor.  The compute is
     // semantically "the message was accepted by the contract layer
@@ -526,7 +537,10 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             return skipped_output_billed(
                 block::ComputePhase::sk_bad_state,
                 "JVM runtime invocation failed",
-                cfg->config);
+                cfg->config,
+                /*gas_used=*/kJvmAdmissionGasFloor,
+                /*out_of_gas=*/false,
+                /*msg_state_used=*/input.msg_state_used);
         }
         auto invocation = invocation_res.move_as_ok();
         // Round-39 fix: bill the contract for the unique-cell walk
@@ -595,7 +609,8 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                         block::ComputePhase::sk_no_gas,
                         "JVM storage walk gas exceeded affordable cap",
                         cfg->config, effective_gas_limit,
-                        /*out_of_gas=*/true);
+                        /*out_of_gas=*/true,
+                        /*msg_state_used=*/input.msg_state_used);
                 }
                 if (stat_result.is_error()) {
                     LOG(DEBUG) << "JVM storage walk hit max_storage_cells "
@@ -604,7 +619,9 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                     return skipped_output_billed(
                         block::ComputePhase::sk_bad_state,
                         "JVM committed storage_root exceeds max_storage_cells",
-                        cfg->config, invocation.gas_used);
+                        cfg->config, invocation.gas_used,
+                        /*out_of_gas=*/false,
+                        /*msg_state_used=*/input.msg_state_used);
                 }
             }
         }
@@ -633,7 +650,9 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 block::ComputePhase::sk_bad_state,
                 "JVM output builder failed",
                 cfg->config,
-                invocation_gas_used);
+                invocation_gas_used,
+                /*out_of_gas=*/false,
+                /*msg_state_used=*/input.msg_state_used);
         }
         auto output = output_res.move_as_ok();
         // Round 50 LOW fix: forward the host's first-activation
