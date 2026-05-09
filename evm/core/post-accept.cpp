@@ -326,13 +326,28 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
             // forces the fall-through.
             block_hash_matches = (existing_block.hash == fx.block.hash);
         }
-        if (block_hash_matches) {
+        // Round 96 HIGH fix: when the fast path detects a retry of
+        // the same (tx, block) but a marker is set, fall through to
+        // re-run the cache writes.  Pre-fix the dedup gate returned
+        // immediately after clearing the tx marker even when the
+        // durable cache still lacked the record (the original
+        // failure that set the marker).  After 24h marker prune
+        // the resulting state had no record AND no marker, so RPC
+        // returned silent null on an accepted tx.  When either
+        // marker is set, treat this as a repair retry: continue
+        // through the cache-write block.
+        const bool needs_repair =
+            is_evm_rpc_indexing_incomplete(fx.tx_hash) ||
+            (fx.has_block &&
+             is_evm_rpc_block_indexing_incomplete(fx.block.number));
+        if (block_hash_matches && !needs_repair) {
             clear_rpc_indexing_incomplete(fx.tx_hash);
             return;
         }
-        // Fall through: same-height rewrite needs the receipt /
-        // transaction / block records refreshed under the new
-        // hash so the round-86 erase-old-hash path runs.
+        // Fall through: either same-height rewrite (block hash
+        // mismatch) needs the records refreshed under the new
+        // hash, OR a marker indicates the prior cache write
+        // failed and needs another attempt.
     }
     // Round 92 MEDIUM fix: do NOT clear the tx incomplete marker
     // here.  Pre-fix the marker was cleared before
@@ -535,12 +550,21 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
                                     fx.block.hash);
             }
         }
-    } else if (!fx.logs.empty() && tx_cache_writes_ok) {
+    } else if (!fx.logs.empty() && tx_cache_writes_ok &&
+               // Round 96 MEDIUM fix: also skip when the block
+               // already carries a marker from an earlier tx.
+               // Pre-fix this branch fired for a non-final
+               // mid-block tx even when tx0's failed cache writes
+               // had already raised the block marker, so
+               // subscribers received log events for a block whose
+               // ordinary RPC returns -32010.
+               !is_evm_rpc_block_indexing_incomplete(fx.receipt.block_number)) {
         // Round 95 MEDIUM fix: same-canonicality gate for mid-
         // block tx subscription notifications.  Skip the log
         // delivery when this tx's cache writes failed — the
         // logs index for the block is partial and ordinary RPC
         // will surface -32010.
+        //
         // Mid-block tx with logs but no block summary still notifies
         // log subscribers; mirrors legacy behaviour where
         // notify_logs fired on every store_logs invocation.
