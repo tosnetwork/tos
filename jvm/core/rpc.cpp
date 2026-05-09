@@ -256,6 +256,83 @@ std::optional<JvmDeployContractRequest> parse_jvm_deploy_contract_request(
 
     // init_args is optional; absent = canonical empty args cell.
     req.init_args = vm::CellBuilder().finalize();
+
+    // manifestEntries is optional; absent = empty manifest.  When
+    // present, it must be a JSON array of objects with shape
+    //   {"methodId":<u32>, "className":"...", "methodName":"...",
+    //    "methodSpec":"..."}
+    // The address derivation binds manifest_root.hash, so this MUST be
+    // populated faithfully — clients that omit it deploy an
+    // empty-manifest contract; clients that supply it commit to the
+    // exact ABI dispatch table at deploy time.
+    if (params_json.find("\"manifestEntries\"") != std::string::npos) {
+        std::string mutable_copy = params_json;
+        auto decoded = td::json_decode(td::MutableSlice(mutable_copy));
+        if (decoded.is_error() ||
+            decoded.ok().type() != td::JsonValue::Type::Object) {
+            return std::nullopt;
+        }
+        const auto& root = decoded.ok().get_object();
+        const td::JsonValue* entries_field = nullptr;
+        // Find the manifestEntries field via the public field_values_
+        // (no explicit getter; we just scan).
+        for (const auto& kv : root.field_values_) {
+            if (kv.first == td::Slice("manifestEntries")) {
+                entries_field = &kv.second;
+                break;
+            }
+        }
+        if (entries_field != nullptr) {
+            if (entries_field->type() != td::JsonValue::Type::Array) {
+                return std::nullopt;
+            }
+            const auto& arr = entries_field->get_array();
+            req.manifest_entries.reserve(arr.size());
+            for (const auto& elem : arr) {
+                if (elem.type() != td::JsonValue::Type::Object) {
+                    return std::nullopt;
+                }
+                const auto& obj = elem.get_object();
+                JvmMethodManifestEntry entry;
+                bool found_method_id = false;
+                for (const auto& kv : obj.field_values_) {
+                    if (kv.first == td::Slice("methodId")) {
+                        if (kv.second.type() != td::JsonValue::Type::Number) {
+                            return std::nullopt;
+                        }
+                        try {
+                            entry.method_id = static_cast<std::uint32_t>(
+                                std::stoul(
+                                    kv.second.get_number().str()));
+                        } catch (...) {
+                            return std::nullopt;
+                        }
+                        found_method_id = true;
+                    } else if (kv.first == td::Slice("className")) {
+                        if (kv.second.type() != td::JsonValue::Type::String) {
+                            return std::nullopt;
+                        }
+                        entry.class_name = kv.second.get_string().str();
+                    } else if (kv.first == td::Slice("methodName")) {
+                        if (kv.second.type() != td::JsonValue::Type::String) {
+                            return std::nullopt;
+                        }
+                        entry.method_name = kv.second.get_string().str();
+                    } else if (kv.first == td::Slice("methodSpec")) {
+                        if (kv.second.type() != td::JsonValue::Type::String) {
+                            return std::nullopt;
+                        }
+                        entry.method_spec = kv.second.get_string().str();
+                    }
+                }
+                if (!found_method_id || entry.class_name.empty() ||
+                    entry.method_name.empty() || entry.method_spec.empty()) {
+                    return std::nullopt;
+                }
+                req.manifest_entries.push_back(std::move(entry));
+            }
+        }
+    }
     return req;
 }
 

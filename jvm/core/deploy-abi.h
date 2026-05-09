@@ -92,9 +92,16 @@ JvmManifestRootHash compute_jvm_manifest_root_hash(
 // `{workchain=3, addr=...}`.  Because TOS workchain addresses are flat with
 // no reserved bits (`tos/tos-types.h:36-46`), the full sha256 output goes
 // straight into the address space.
+// `manifest_root` MUST be the manifest cell the deployer commits to;
+// pass an explicit `td::Ref<vm::Cell>{}` (null) only if the caller has
+// validated that the deployed JVAC's manifest_root is also null
+// (manifest_root_hash == zero in that case).  No default — making
+// callers thread this parameter explicitly is what prevents the
+// "default-empty manifest mismatches non-null encoded empty manifest"
+// integration bug.
 td::Result<JvmContractId> derive_jvm_contract_address(
     const JvmDeployDescriptor& descriptor,
-    td::Ref<vm::Cell> manifest_root = {});
+    td::Ref<vm::Cell> manifest_root);
 
 // Reconstruct the same address from a parsed JVAC state, for the
 // engine-side address-binding check at `run_compute` time.  Equivalent

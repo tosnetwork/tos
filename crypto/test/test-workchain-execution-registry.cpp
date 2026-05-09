@@ -1024,16 +1024,17 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressIsDeterministicAndSensitive) {
   using namespace jvm_workchain;
 
   auto desc = make_test_jvm_deploy_descriptor(0x77);
+  auto manifest = encode_jvm_method_manifest({});  // canonical empty manifest
 
-  auto a = derive_jvm_contract_address(desc);
-  auto b = derive_jvm_contract_address(desc);
+  auto a = derive_jvm_contract_address(desc, manifest);
+  auto b = derive_jvm_contract_address(desc, manifest);
   CHECK(a.is_ok() && b.is_ok());
   CHECK(a.ok() == b.ok());
 
   // Salt sensitivity: same class, different salt → different address.
   auto desc2 = desc;
   desc2.salt[0] ^= 0xff;
-  auto c = derive_jvm_contract_address(desc2);
+  auto c = derive_jvm_contract_address(desc2, manifest);
   CHECK(c.is_ok());
   CHECK(c.ok() != a.ok());
 
@@ -1042,7 +1043,7 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressIsDeterministicAndSensitive) {
   auto desc3 = desc;
   desc3.class_bytes.back() ^= 0xaa;
   desc3.class_hash = compute_jvm_class_hash(desc3.class_bytes);
-  auto d = derive_jvm_contract_address(desc3);
+  auto d = derive_jvm_contract_address(desc3, manifest);
   CHECK(d.is_ok());
   CHECK(d.ok() != a.ok());
 
@@ -1051,16 +1052,36 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressIsDeterministicAndSensitive) {
   // Avoid clobbering the leading non-zero deployer byte (validate rejects zero
   // deployers); flip a low byte instead.
   desc4.deployer[30] ^= 0x01;
-  auto e = derive_jvm_contract_address(desc4);
+  auto e = derive_jvm_contract_address(desc4, manifest);
   CHECK(e.is_ok());
   CHECK(e.ok() != a.ok());
 
   // init_args sensitivity (cell-hash).
   auto desc5 = desc;
   desc5.init_args = make_marker_cell(0x42);
-  auto f = derive_jvm_contract_address(desc5);
+  auto f = derive_jvm_contract_address(desc5, manifest);
   CHECK(f.is_ok());
   CHECK(f.ok() != a.ok());
+
+  // manifest sensitivity (round-3 binding): different manifest → different
+  // address even when the rest of the descriptor is identical.
+  JvmMethodManifestEntry entry;
+  entry.method_id = 0x42;
+  entry.class_name = "ContractEntryPoint";
+  entry.method_name = "ok";
+  entry.method_spec = "()V";
+  auto other_manifest = encode_jvm_method_manifest({entry});
+  auto g = derive_jvm_contract_address(desc, other_manifest);
+  CHECK(g.is_ok());
+  CHECK(g.ok() != a.ok());
+
+  // Null manifest yields the all-zero manifest_root_hash, which is
+  // distinct from the canonical empty-manifest cell hash.  Forcing
+  // callers to pass manifest_root explicitly (no default) is what
+  // prevents confusing these two.
+  auto h = derive_jvm_contract_address(desc, td::Ref<vm::Cell>{});
+  CHECK(h.is_ok());
+  CHECK(h.ok() != a.ok());
 }
 
 TEST(JvmWorkchainCore, MethodManifestRoundTripsAndRejectsDuplicates) {
@@ -1628,7 +1649,11 @@ TEST(WorkchainExecutionRegistry, ActionCreateAccountTlbRoundTrip) {
   CHECK(state_init.not_null());
   CHECK(block::gen::t_StateInit.validate_ref(state_init));
 
-  auto contract_address = derive_jvm_contract_address(descriptor).move_as_ok();
+  // Pass the same manifest_root the JVAC is built with so the address
+  // binds to it.
+  auto contract_address =
+      derive_jvm_contract_address(descriptor, state.manifest_root)
+          .move_as_ok();
   td::BitArray<256> dest_addr;
   std::memcpy(dest_addr.data(), contract_address.data(), 32);
 
@@ -1701,7 +1726,8 @@ TEST(WorkchainExecutionRegistry, ActionCreateAccountRequiresPolicyAdmission) {
   auto state_init = encode_jvm_state_init_cell(state);
   CHECK(state_init.not_null());
 
-  auto contract_address = derive_jvm_contract_address(desc).move_as_ok();
+  auto contract_address =
+      derive_jvm_contract_address(desc, state.manifest_root).move_as_ok();
   td::BitArray<256> dest_addr;
   std::memcpy(dest_addr.data(), contract_address.data(), 32);
 
@@ -2856,6 +2882,64 @@ TEST(JvmWorkchainCore, RpcDeployContractParsesAndValidates) {
     "deployer": "0xdeadbeef"
   })";
   CHECK(!parse_jvm_deploy_contract_request(bad_deployer).has_value());
+
+  // manifestEntries parsed faithfully (round-4 fix): without this,
+  // non-empty manifests cannot be deployed because the RPC would
+  // always derive the empty-manifest address.
+  std::string with_manifest = R"({
+    "classBytes": "0xcafebabe00000034",
+    "className": "ContractEntryPoint",
+    "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "salt":     "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "manifestEntries": [
+      {"methodId": 66, "className": "ContractEntryPoint",
+       "methodName": "transfer", "methodSpec": "(I)I"},
+      {"methodId": 99, "className": "ContractEntryPoint",
+       "methodName": "balance", "methodSpec": "()I"}
+    ]
+  })";
+  auto with_man = parse_jvm_deploy_contract_request(with_manifest);
+  CHECK(with_man.has_value());
+  CHECK(with_man->manifest_entries.size() == 2);
+  CHECK(with_man->manifest_entries[0].method_id == 66);
+  CHECK(with_man->manifest_entries[0].method_name == "transfer");
+  CHECK(with_man->manifest_entries[0].method_spec == "(I)I");
+  CHECK(with_man->manifest_entries[1].method_id == 99);
+  CHECK(with_man->manifest_entries[1].method_name == "balance");
+
+  // Manifest entry missing methodId — must fail.
+  std::string bad_manifest = R"({
+    "classBytes": "0xcafebabe",
+    "className": "Foo",
+    "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "manifestEntries": [{"className":"X","methodName":"y","methodSpec":"()V"}]
+  })";
+  CHECK(!parse_jvm_deploy_contract_request(bad_manifest).has_value());
+
+  // manifestEntries with non-empty content must change the derived
+  // contractAddress vs. the empty-manifest case (round-3/4 binding).
+  auto cfg = make_test_jvm_config();
+  auto good_no_manifest = parse_jvm_deploy_contract_request(good_params);
+  CHECK(good_no_manifest.has_value());
+  auto without_addr_result =
+      handle_jvm_deploy_contract(*good_no_manifest, cfg);
+  auto with_addr_result = handle_jvm_deploy_contract(*with_man, cfg);
+  CHECK(!without_addr_result.is_error);
+  CHECK(!with_addr_result.is_error);
+  // The two results' contractAddress must differ.
+  auto extract_addr = [](const std::string& json) {
+    auto needle = std::string("\"contractAddress\":\"");
+    auto pos = json.find(needle);
+    if (pos == std::string::npos) return std::string();
+    pos += needle.size();
+    auto end = json.find('"', pos);
+    return json.substr(pos, end - pos);
+  };
+  auto addr_without = extract_addr(without_addr_result.json);
+  auto addr_with = extract_addr(with_addr_result.json);
+  CHECK(!addr_without.empty());
+  CHECK(!addr_with.empty());
+  CHECK(addr_without != addr_with);
 }
 
 TEST(JvmWorkchainCore, RpcDeployContractAdmissionChecksClassSize) {
@@ -3561,8 +3645,9 @@ TEST(JvmWorkchainCore, MultiContractIsolatedStorageWithSharedClass) {
   auto desc_b = desc_a;
   desc_b.salt[0] ^= 0xff;  // only difference
 
-  auto addr_a = derive_jvm_contract_address(desc_a).move_as_ok();
-  auto addr_b = derive_jvm_contract_address(desc_b).move_as_ok();
+  auto manifest = encode_jvm_method_manifest({});
+  auto addr_a = derive_jvm_contract_address(desc_a, manifest).move_as_ok();
+  auto addr_b = derive_jvm_contract_address(desc_b, manifest).move_as_ok();
   CHECK(addr_a != addr_b);
 
   JvmStorageCellHost storage_a;
