@@ -3505,6 +3505,35 @@ TEST(JvmWorkchainCore, RpcCallContractAcceptsAddressNotContractId) {
   // No address at all — must fail.
   std::string missing_addr = R"({"methodId": 1})";
   CHECK(!parse_jvm_call_contract_request(missing_addr).has_value());
+
+  // methodId range / format validation (round-6 fix): the call path
+  // must reject the same malformed values the deploy path already
+  // rejects (round 5).  Otherwise tooling can produce a callDescriptor
+  // for a different method than requested.
+  auto with_bad = [](const std::string& method_id_token,
+                      const std::string& gas_token = "") {
+    std::string p = R"({"contractAddress": ")";
+    p += "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+    p += "\",\"methodId\":";
+    p += method_id_token;
+    if (!gas_token.empty()) {
+      p += ",\"gasLimit\":";
+      p += gas_token;
+    }
+    p += "}";
+    return parse_jvm_call_contract_request(p);
+  };
+  CHECK(!with_bad("-1").has_value());
+  CHECK(!with_bad("1.5").has_value());
+  CHECK(!with_bad("1e2").has_value());
+  CHECK(!with_bad("4294967296").has_value());
+  // Boundary OK.
+  CHECK(with_bad("0").has_value());
+  CHECK(with_bad("4294967295").has_value());
+  // gasLimit also strict: rejects negatives, decimals, exponent forms.
+  CHECK(!with_bad("1", "-1").has_value());
+  CHECK(!with_bad("1", "1.5").has_value());
+  CHECK(with_bad("1", "1000000").has_value());
 }
 
 TEST(JvmWorkchainCore, RpcGetContractStateFetchesPerAccount) {

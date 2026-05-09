@@ -209,7 +209,46 @@ std::string json_get_number_str(const std::string& json, const std::string& key)
     while (end < json.size() && (std::isdigit(json[end]) || json[end] == '-')) {
         ++end;
     }
+    // Reject numbers whose JSON token does not end on a valid delimiter:
+    // anything other than whitespace, `,`, `}`, `]`, or end-of-string
+    // means the original token contained `.`, `e`, `E`, or a stray
+    // character.  Returning an empty string forces the caller to treat
+    // the number as malformed (rather than silently truncating "1.5"
+    // to "1" or "1e2" to "1").
+    if (end < json.size()) {
+        char c = json[end];
+        if (c != ' ' && c != '\t' && c != '\n' && c != '\r' &&
+            c != ',' && c != '}' && c != ']') {
+            return {};
+        }
+    }
     return json.substr(idx, end - idx);
+}
+
+// Strict unsigned-integer parser: accepts only 1..max_digits ASCII
+// digits (no sign, decimal point, exponent), rejects values outside
+// [0, max_value].  Replaces std::stoul/std::stoull which silently:
+//   * accept "-1" as ULONG_MAX (the cast then wraps to UINT32_MAX),
+//   * stop mid-token on "1.5" / "1e2" (returns 1),
+//   * succeed on "4294967296" then wrap during the uint32 cast.
+// Returns false on any of those.
+bool parse_strict_uint(const std::string& s, std::uint64_t max_value,
+                       std::size_t max_digits, std::uint64_t& out) {
+    if (s.empty() || s.size() > max_digits) {
+        return false;
+    }
+    std::uint64_t v = 0;
+    for (char c : s) {
+        if (c < '0' || c > '9') {
+            return false;
+        }
+        v = v * 10 + static_cast<std::uint64_t>(c - '0');
+    }
+    if (v > max_value) {
+        return false;
+    }
+    out = v;
+    return true;
 }
 
 // -------------------------------------------------------------------------
@@ -301,32 +340,14 @@ std::optional<JvmDeployContractRequest> parse_jvm_deploy_contract_request(
                         if (kv.second.type() != td::JsonValue::Type::Number) {
                             return std::nullopt;
                         }
-                        // Strict uint32 parse: digits only, full token
-                        // consumed, fits in uint32_t.  std::stoul silently
-                        // accepts "-1" (becomes ULONG_MAX, casts to
-                        // UINT32_MAX), "1.5" / "1e2" (stops mid-token),
-                        // and "4294967296" (overflows uint32 → 0 after
-                        // cast).  None of those should produce a valid
-                        // method id.
-                        const auto num_str = kv.second.get_number().str();
-                        if (num_str.empty() ||
-                            num_str.size() > 10 /* UINT32_MAX has 10 digits */) {
+                        std::uint64_t v = 0;
+                        if (!parse_strict_uint(
+                                kv.second.get_number().str(),
+                                std::numeric_limits<std::uint32_t>::max(),
+                                10, v)) {
                             return std::nullopt;
                         }
-                        std::uint64_t parsed = 0;
-                        for (char c : num_str) {
-                            if (c < '0' || c > '9') {
-                                return std::nullopt;
-                            }
-                            parsed = parsed * 10 +
-                                static_cast<std::uint64_t>(c - '0');
-                        }
-                        if (parsed >
-                            static_cast<std::uint64_t>(
-                                std::numeric_limits<std::uint32_t>::max())) {
-                            return std::nullopt;
-                        }
-                        entry.method_id = static_cast<std::uint32_t>(parsed);
+                        entry.method_id = static_cast<std::uint32_t>(v);
                         found_method_id = true;
                     } else if (kv.first == td::Slice("className")) {
                         if (kv.second.type() != td::JsonValue::Type::String) {
@@ -458,19 +479,27 @@ std::optional<JvmCallContractRequest> parse_jvm_call_contract_request(
 
     auto method_id_str = json_get_number_str(params_json, "methodId");
     if (method_id_str.empty()) return std::nullopt;
-    try {
-        req.method_id = static_cast<uint32_t>(std::stoul(method_id_str));
-    } catch (...) {
-        return std::nullopt;
-    }
-
-    auto gas_str = json_get_number_str(params_json, "gasLimit");
-    if (!gas_str.empty()) {
-        try {
-            req.gas_limit = std::stoull(gas_str);
-        } catch (...) {
+    {
+        std::uint64_t v = 0;
+        if (!parse_strict_uint(method_id_str,
+                                std::numeric_limits<std::uint32_t>::max(),
+                                10, v)) {
             return std::nullopt;
         }
+        req.method_id = static_cast<std::uint32_t>(v);
+    }
+
+    // gasLimit is optional, but if the key is present it must parse.
+    if (params_json.find("\"gasLimit\"") != std::string::npos) {
+        auto gas_str = json_get_number_str(params_json, "gasLimit");
+        std::uint64_t v = 0;
+        if (gas_str.empty() ||
+            !parse_strict_uint(gas_str,
+                                std::numeric_limits<std::uint64_t>::max(),
+                                20 /* uint64 max has 20 digits */, v)) {
+            return std::nullopt;
+        }
+        req.gas_limit = v;
     }
 
     // args is optional; absent = canonical empty args cell.
@@ -763,23 +792,27 @@ std::optional<JvmGetReceiptsRequest> parse_jvm_get_receipts_request(
         return std::nullopt;
     }
 
-    auto from_str = json_get_number_str(params_json, "fromBlock");
-    if (!from_str.empty()) {
-        if (from_str.front() == '-') return std::nullopt;
-        try {
-            req.from_block = std::stoull(from_str);
-        } catch (...) {
+    if (params_json.find("\"fromBlock\"") != std::string::npos) {
+        auto from_str = json_get_number_str(params_json, "fromBlock");
+        std::uint64_t v = 0;
+        if (from_str.empty() ||
+            !parse_strict_uint(from_str,
+                                std::numeric_limits<std::uint64_t>::max(),
+                                20, v)) {
             return std::nullopt;
         }
+        req.from_block = v;
     }
-    auto to_str = json_get_number_str(params_json, "toBlock");
-    if (!to_str.empty()) {
-        if (to_str.front() == '-') return std::nullopt;
-        try {
-            req.to_block = std::stoull(to_str);
-        } catch (...) {
+    if (params_json.find("\"toBlock\"") != std::string::npos) {
+        auto to_str = json_get_number_str(params_json, "toBlock");
+        std::uint64_t v = 0;
+        if (to_str.empty() ||
+            !parse_strict_uint(to_str,
+                                std::numeric_limits<std::uint64_t>::max(),
+                                20, v)) {
             return std::nullopt;
         }
+        req.to_block = v;
     }
     return req;
 }
