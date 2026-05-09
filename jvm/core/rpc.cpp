@@ -1071,7 +1071,15 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
             // Round 43 LOW: track whether the RPC walk happened so
             // build_jvm_workchain_output can skip its redundant walk.
             bool storage_walk_performed = false;
-            if (config->max_storage_cells > 0
+            // Round 63 MEDIUM fix: skip the storage walk when the
+            // runtime gas already exceeded the cap.  Pre-fix the
+            // walk ran (potentially up to `max_storage_cells` cells)
+            // even though the localResult was already destined for
+            // the runtime-cap reject branch — wasted full-node CPU
+            // that consensus skips at the equivalent dispatch-engine
+            // bail-out.
+            if (!runtime_gas_cap_exceeded
+                && config->max_storage_cells > 0
                 && inv.success
                 && inv.storage_root.not_null()) {
                 const bool storage_changed =

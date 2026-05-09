@@ -303,8 +303,16 @@ td::Result<std::shared_ptr<LinkedAvataVmState>> create_linked_avata_vm(
 td::Result<JvmArgs> decode_linked_invocation_args(
     const std::string& method_spec,
     td::Ref<vm::Cell> args) {
-    if (method_spec == kJvmStaticVoidMethodSpec &&
-        validate_jvm_static_void_call_args(method_spec, args).is_ok()) {
+    // Round 63 MEDIUM fix: for a static-void spec, propagate the
+    // validation result directly instead of falling through to the
+    // typed-args decode.  Pre-fix the fall-through path called
+    // `parse_jvm_args` (full byte memcpy of every typed value)
+    // before catching the count mismatch in
+    // `validate_jvm_typed_args_against_spec`, leaking unbilled
+    // resolver work for an attacker who attached a large `Bytes`
+    // payload to a `()V` call.
+    if (method_spec == kJvmStaticVoidMethodSpec) {
+        TRY_STATUS(validate_jvm_static_void_call_args(method_spec, args));
         return JvmArgs{};
     }
 

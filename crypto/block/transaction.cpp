@@ -2073,6 +2073,22 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // reject legitimate JVM v2 deploys whose address comes from
     // `derive_jvm_contract_address`.  Custom engines own their own
     // activation invariants.
+    // Round 63 HIGH fix: snapshot the pre-unpack values so we can
+    // roll back when the engine rejects the activation.  Pre-fix the
+    // unpack mutated `new_code/new_data/new_library` unconditionally;
+    // a rejected first-activation (compute returned `committed=false`)
+    // left those fields populated with attacker-supplied
+    // `StateInit.{code,data,library}` cells, and `commit()` then wrote
+    // them back into the in-memory `Account`.  A subsequent same-
+    // block internal message to the same address would seed
+    // `new_data` from `account.data` with `msg_state_used=false`,
+    // letting the engine treat the stale rejected state as a
+    // legitimate subsequent call — bypassing first-activation
+    // invariants (storage_root empty, deployer-source binding,
+    // round-58/59 code/library marker checks).
+    const td::Ref<vm::Cell> pre_state_init_new_code = new_code;
+    const td::Ref<vm::Cell> pre_state_init_new_data = new_data;
+    const td::Ref<vm::Cell> pre_state_init_new_library = new_library;
     if (acc_status == Account::acc_uninit && in_msg_state.not_null() &&
         new_data.is_null()) {
       block::gen::StateInit::Record si;
@@ -2217,6 +2233,15 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
         acc_status = Account::acc_active;
         was_activated = true;
       }
+    } else {
+      // Round 63 HIGH fix: roll back the StateInit-unpacked new_*
+      // values when compute did not commit.  Without this rollback
+      // they would leak into `commit()` -> Account, letting a
+      // subsequent same-block tx see attacker-supplied stale state
+      // and bypass first-activation invariants.
+      new_code = pre_state_init_new_code;
+      new_data = pre_state_init_new_data;
+      new_library = pre_state_init_new_library;
     }
 
     return true;
