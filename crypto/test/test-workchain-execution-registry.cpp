@@ -4670,6 +4670,110 @@ TEST(JvmWorkchainCore, RpcCallContractDetectsMaxStorageCellsAfterWalkBypass) {
   CHECK(result.json.find("\"newStateBoc\":null") != std::string::npos);
 }
 
+TEST(JvmWorkchainCore, StripTopLevelJsonFieldHandlesNestedAndDuplicates) {
+  // Round 46 fixes:
+  //   LOW — nested object/array values for the scrubbed key were
+  //         half-removed by the round-45 helper and corrupted the
+  //         JSON.
+  //   MED — duplicate scrubbed keys triggered O(n²) `find` + `erase`
+  //         scans, which a public RPC caller could exploit within
+  //         the 4 MiB JSON-RPC body cap.
+  // The replacement is a single forward-pass O(n) walk, depth-aware
+  // for nested objects/arrays and string-escape-aware so neither
+  // `"className":"foo accountBalance bar"` nor `"\"accountBalance\""`
+  // fool the matcher.
+  using namespace jvm_workchain;
+
+  // Scalar-only flat object — happy path.
+  {
+    auto out = strip_top_level_json_field(
+        R"({"contractAddress":"0xab","accountBalance":2,"methodId":1})",
+        "accountBalance");
+    CHECK(out == R"({"contractAddress":"0xab","methodId":1})");
+  }
+
+  // Last-field scrub: trailing comma in input, no trailing comma in output.
+  {
+    auto out = strip_top_level_json_field(
+        R"({"a":1,"accountBalance":2})", "accountBalance");
+    CHECK(out == R"({"a":1})");
+  }
+
+  // First-field scrub: strip the trailing comma to keep JSON well-formed.
+  {
+    auto out = strip_top_level_json_field(
+        R"({"accountBalance":2,"a":1})", "accountBalance");
+    CHECK(out == R"({"a":1})");
+  }
+
+  // Empty object: identity.
+  {
+    auto out = strip_top_level_json_field(R"({})", "accountBalance");
+    CHECK(out == R"({})");
+  }
+
+  // Sole field: empty object after strip.
+  {
+    auto out = strip_top_level_json_field(
+        R"({"accountBalance":2})", "accountBalance");
+    CHECK(out == R"({})");
+  }
+
+  // Round 46 LOW — nested object value MUST be removed wholesale.
+  {
+    auto out = strip_top_level_json_field(
+        R"({"a":1,"accountBalance":{"n":1},"b":2})", "accountBalance");
+    CHECK(out == R"({"a":1,"b":2})");
+  }
+
+  // Round 46 LOW — nested array value MUST be removed wholesale.
+  {
+    auto out = strip_top_level_json_field(
+        R"({"a":1,"accountBalance":[1,2,3],"b":2})", "accountBalance");
+    CHECK(out == R"({"a":1,"b":2})");
+  }
+
+  // Round 46 MEDIUM — duplicate scalar keys are all removed in one pass.
+  {
+    auto out = strip_top_level_json_field(
+        R"({"a":1,"accountBalance":1,"accountBalance":2,"accountBalance":3,"b":4})",
+        "accountBalance");
+    CHECK(out == R"({"a":1,"b":4})");
+  }
+
+  // String-escape-aware: a literal backslash-quote in a value must NOT
+  // be mistaken for a key boundary.
+  {
+    auto out = strip_top_level_json_field(
+        R"({"className":"foo\"accountBalance\"bar","accountBalance":42})",
+        "accountBalance");
+    CHECK(out == R"({"className":"foo\"accountBalance\"bar"})");
+  }
+
+  // Key inside an ordinary (non-escaped) string value MUST be ignored.
+  {
+    auto out = strip_top_level_json_field(
+        R"({"vmLog":"the accountBalance is too low","accountBalance":3})",
+        "accountBalance");
+    CHECK(out == R"({"vmLog":"the accountBalance is too low"})");
+  }
+
+  // Nested object containing the same key as a sub-field: the nested
+  // copy must be preserved (depth gate).
+  {
+    auto out = strip_top_level_json_field(
+        R"({"a":{"accountBalance":5},"accountBalance":7})", "accountBalance");
+    CHECK(out == R"({"a":{"accountBalance":5}})");
+  }
+
+  // Field absent: identity.
+  {
+    auto out = strip_top_level_json_field(
+        R"({"a":1,"b":2})", "accountBalance");
+    CHECK(out == R"({"a":1,"b":2})");
+  }
+}
+
 TEST(JvmWorkchainCore, RpcCallContractRuntimeErrorBillsAdmissionFloor) {
   // Round 45 LOW fix: when the runtime returns Status::Error (e.g.,
   // unknown method_id, malformed typed args) consensus bills the

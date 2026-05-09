@@ -188,4 +188,18 @@ std::optional<JvmRpcResult> handle_jvm_rpc(
 /// Returns true if method is handled by the JVM RPC facade.
 bool is_jvm_rpc_method(const std::string& method) noexcept;
 
+// ---------------------------------------------------------------------------
+// JSON helpers exposed for the validator-engine live path
+// ---------------------------------------------------------------------------
+
+/// Round 45/46 fix: remove a top-level field from a JSON object.  Walks
+/// the input once (O(n)), tracks string-escape and brace/bracket depth,
+/// and only matches keys at the top level of the outer object.  Used by
+/// the validator-engine live path before injecting the server's
+/// authoritative `accountStateBoc` / `accountBalance` so callers cannot
+/// shadow them; exposed in this header so the test binary can pin the
+/// scrubber's contract directly.
+std::string strip_top_level_json_field(std::string params_json,
+                                       const std::string& key);
+
 }  // namespace jvm_workchain

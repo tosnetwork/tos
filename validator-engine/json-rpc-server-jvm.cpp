@@ -272,92 +272,14 @@ void append_jvm_receipts_from_transaction(
   }
 }
 
-// Round 45 MEDIUM fix: remove a top-level field from a flat JSON
-// object before the live path injects its own value.  Without this,
-// a caller can supply a field (e.g. `accountStateBoc`,
-// `accountBalance`) whose first-occurrence beats the
-// server-injected value at the front of the object — re-opening the
-// shadowing class for paths the round-43 prepend fix didn't cover
-// (e.g. when overflow forces validator-engine to OMIT injection,
-// caller-supplied `accountBalance` wins).
-//
-// This is a minimal scrubber matching the same minimal JSON shape the
-// rest of jvm/core/rpc.cpp parses: flat top-level object, no nested
-// objects/arrays as values for the stripped key, string values
-// double-quoted, number values plain ASCII digits.  Anything more
-// complex falls through unchanged (safer to over-keep than to corrupt
-// the JSON).
+// The implementation now lives in jvm/core/rpc.cpp as
+// `jvm_workchain::strip_top_level_json_field` so the test binary can
+// pin its contract directly.  Keep this thin local alias for call-site
+// readability; it forwards to the shared implementation.
 std::string strip_top_level_field(std::string params_json,
                                   const std::string& key) {
-  std::string needle = "\"" + key + "\"";
-  while (true) {
-    auto pos = params_json.find(needle);
-    if (pos == std::string::npos) {
-      return params_json;
-    }
-    // Walk past the key + optional whitespace + ':'
-    auto idx = pos + needle.size();
-    while (idx < params_json.size() &&
-           std::isspace(static_cast<unsigned char>(params_json[idx]))) {
-      ++idx;
-    }
-    if (idx >= params_json.size() || params_json[idx] != ':') {
-      // Not actually a field key — bail to avoid corrupting JSON.
-      return params_json;
-    }
-    ++idx;
-    while (idx < params_json.size() &&
-           std::isspace(static_cast<unsigned char>(params_json[idx]))) {
-      ++idx;
-    }
-    // Find the end of the value: either matching `"` for string, or
-    // first `,` / `}` for plain value.
-    std::size_t value_end = idx;
-    if (idx < params_json.size() && params_json[idx] == '"') {
-      ++value_end;
-      while (value_end < params_json.size() &&
-             params_json[value_end] != '"') {
-        if (params_json[value_end] == '\\' &&
-            value_end + 1 < params_json.size()) {
-          ++value_end;  // skip escaped char
-        }
-        ++value_end;
-      }
-      if (value_end < params_json.size()) {
-        ++value_end;  // include closing `"`
-      }
-    } else {
-      while (value_end < params_json.size() &&
-             params_json[value_end] != ',' &&
-             params_json[value_end] != '}') {
-        ++value_end;
-      }
-    }
-    // Compute the slice to remove: include a preceding `,` (so the
-    // remaining list is still well-formed) when the field is not the
-    // first; otherwise include the trailing `,` if any.
-    std::size_t remove_start = pos;
-    std::size_t remove_end = value_end;
-    auto before = pos;
-    while (before > 0 &&
-           std::isspace(static_cast<unsigned char>(params_json[before - 1]))) {
-      --before;
-    }
-    if (before > 0 && params_json[before - 1] == ',') {
-      remove_start = before - 1;
-    } else {
-      // First field — also strip the trailing comma if present.
-      auto after = value_end;
-      while (after < params_json.size() &&
-             std::isspace(static_cast<unsigned char>(params_json[after]))) {
-        ++after;
-      }
-      if (after < params_json.size() && params_json[after] == ',') {
-        remove_end = after + 1;
-      }
-    }
-    params_json.erase(remove_start, remove_end - remove_start);
-  }
+  return jvm_workchain::strip_top_level_json_field(std::move(params_json),
+                                                    key);
 }
 
 std::string inject_account_state_boc(std::string params_json,

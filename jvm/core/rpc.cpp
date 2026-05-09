@@ -283,6 +283,138 @@ bool is_valid_class_name(const std::string& name) {
 }  // namespace
 
 // -------------------------------------------------------------------------
+// JSON helpers exposed for the validator-engine live path
+// -------------------------------------------------------------------------
+
+// Round 45 MEDIUM fix: remove a top-level field from a JSON object
+// before the live path injects its own value.  Without this, a
+// caller can supply a field (e.g. `accountStateBoc`,
+// `accountBalance`) whose first-occurrence beats the
+// server-injected value at the front of the object — re-opening the
+// shadowing class for paths the round-43 prepend fix didn't cover
+// (e.g. when overflow forces validator-engine to OMIT injection,
+// caller-supplied `accountBalance` wins).
+//
+// Round 46 fixes:
+//   LOW  — make the scrubber depth-aware so nested object/array
+//          values for the scrubbed key (e.g. `"accountBalance":
+//          {"n":1}`) don't get half-removed and corrupt the JSON.
+//   MED  — switch from a `find` + `erase` loop (O(n²) on duplicate
+//          scrubbed keys, since each erase is a memmove from the
+//          middle and find restarts from 0) to a single forward-pass
+//          O(n) walk that builds the scrubbed result in one buffer.
+//
+// This still matches the flat-top-level-object shape the rest of
+// jvm/core/rpc.cpp parses: only top-level (depth==1) field-name
+// occurrences are scrubbed; matches inside nested structures are
+// preserved.  String escapes are honoured so `"\"accountBalance\""`
+// inside a string value will not be mistaken for a key.
+std::string strip_top_level_json_field(std::string params_json,
+                                        const std::string& key) {
+    auto skip_value = [&](std::size_t i) -> std::size_t {
+        int depth = 0;
+        bool in_string = false;
+        bool escape = false;
+        while (i < params_json.size()) {
+            char c = params_json[i];
+            if (escape) { escape = false; ++i; continue; }
+            if (in_string) {
+                if (c == '\\') escape = true;
+                else if (c == '"') in_string = false;
+                ++i;
+                continue;
+            }
+            if (c == '"') { in_string = true; ++i; continue; }
+            if (c == '{' || c == '[') { ++depth; ++i; continue; }
+            if (c == '}' || c == ']') {
+                if (depth == 0) return i;
+                --depth;
+                ++i;
+                continue;
+            }
+            if (c == ',' && depth == 0) return i;
+            ++i;
+        }
+        return i;
+    };
+
+    std::string needle = "\"" + key + "\"";
+    std::string out;
+    out.reserve(params_json.size());
+
+    std::size_t i = 0;
+    int obj_depth = 0;
+    bool in_string = false;
+    bool escape = false;
+
+    while (i < params_json.size()) {
+        char c = params_json[i];
+        if (escape) {
+            out.push_back(c);
+            escape = false;
+            ++i;
+            continue;
+        }
+        if (in_string) {
+            out.push_back(c);
+            if (c == '\\') escape = true;
+            else if (c == '"') in_string = false;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            if (obj_depth == 1
+                && i + needle.size() <= params_json.size()
+                && params_json.compare(i, needle.size(), needle) == 0) {
+                std::size_t j = i + needle.size();
+                while (j < params_json.size() &&
+                       std::isspace(static_cast<unsigned char>(params_json[j]))) {
+                    ++j;
+                }
+                if (j < params_json.size() && params_json[j] == ':') {
+                    ++j;
+                    while (j < params_json.size() &&
+                           std::isspace(static_cast<unsigned char>(params_json[j]))) {
+                        ++j;
+                    }
+                    std::size_t value_end = skip_value(j);
+                    std::size_t before = out.size();
+                    while (before > 0 &&
+                           std::isspace(static_cast<unsigned char>(out[before - 1]))) {
+                        --before;
+                    }
+                    if (before > 0 && out[before - 1] == ',') {
+                        out.erase(before - 1, out.size() - (before - 1));
+                        i = value_end;
+                    } else {
+                        std::size_t k = value_end;
+                        while (k < params_json.size() &&
+                               std::isspace(static_cast<unsigned char>(params_json[k]))) {
+                            ++k;
+                        }
+                        if (k < params_json.size() && params_json[k] == ',') {
+                            i = k + 1;
+                        } else {
+                            i = value_end;
+                        }
+                    }
+                    continue;
+                }
+            }
+            out.push_back(c);
+            in_string = true;
+            ++i;
+            continue;
+        }
+        if (c == '{' || c == '[') ++obj_depth;
+        else if (c == '}' || c == ']') --obj_depth;
+        out.push_back(c);
+        ++i;
+    }
+    return out;
+}
+
+// -------------------------------------------------------------------------
 // jvm_deployContract
 // -------------------------------------------------------------------------
 
