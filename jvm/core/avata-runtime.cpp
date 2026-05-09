@@ -708,6 +708,43 @@ bool jar_all_entries_stored(td::Slice bytes) {
         const std::uint16_t name_len = le16(p + off + 28);
         const std::uint16_t extra_len = le16(p + off + 30);
         const std::uint16_t comment_len = le16(p + off + 32);
+        // Round-27 fix: validate the central entry's local-header
+        // offset and data range.  Avata's loader uses
+        // `localHeaderOffset` and the central `compressed_size` to
+        // map entry data; a crafted archive can pass the EOCD/CD
+        // anchor checks but point a central entry's local-header
+        // offset near/beyond EOF, causing an out-of-bounds read or
+        // crash on probe/load.  Validate each central entry's local
+        // header structurally before handing the file to Avata.
+        const std::uint32_t comp_size_central = le32(p + off + 20);
+        const std::uint32_t local_off = le32(p + off + 42);
+        if (local_off + 30u > n) {
+            return false;
+        }
+        if (le32(p + local_off) != 0x04034b50u) {
+            return false;
+        }
+        const std::uint16_t local_method = le16(p + local_off + 8);
+        if (local_method != 0) {
+            return false;
+        }
+        const std::uint16_t local_name_len = le16(p + local_off + 26);
+        const std::uint16_t local_extra_len = le16(p + local_off + 28);
+        const std::uint64_t local_header_total =
+            static_cast<std::uint64_t>(local_off) + 30u +
+            local_name_len + local_extra_len;
+        if (local_header_total > n) {
+            return false;
+        }
+        if (local_header_total
+                + static_cast<std::uint64_t>(comp_size_central) > n) {
+            return false;
+        }
+        // Central directory must place its local header before the
+        // central directory itself (canonical layout).
+        if (local_off >= cd_offset) {
+            return false;
+        }
         const std::size_t entry_size =
             46u + name_len + extra_len + comment_len;
         if (off + entry_size > n) return false;
