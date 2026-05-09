@@ -2136,6 +2136,38 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     }
     apply_custom_compute_output(cp, output);
 
+    // Round-29: charge the custom workchain's reported gas_fees from
+    // the account, mirroring the TVM and precompiled paths above.
+    // Pre-fix the custom branch only COPIED `output.gas_fees` into
+    // `cp.gas_fees` and never adjusted `total_fees` or `balance`,
+    // so a custom-engine contract (e.g. JVM v2) consumed validator
+    // CPU without the account paying the recorded fee — the bypass
+    // is reachable from a zero-balance account because
+    // `compute_gas_limits` deliberately skips balance-based gas
+    // buying for custom engines.  The custom engine's returned
+    // gas_fees is non-negative (validate_custom_compute_output
+    // checks).
+    //
+    // If the account cannot cover the fees, the operator-= on
+    // CurrencyCollection invalidates `balance` (clears tomis to
+    // null) per its existing semantics; we detect this and fail
+    // the transaction.  Mirroring the TVM precondition that an
+    // accepted transaction can pay its compute cost.
+    if (cp.accepted) {
+      if (account.is_special) {
+        cp.gas_fees = td::zero_refint();
+      } else {
+        total_fees += cp.gas_fees;
+        balance -= cp.gas_fees;
+      }
+      if (!balance.is_valid() || td::sgn(balance.tomis) < 0) {
+        LOG(ERROR) << "custom workchain gas_fees exceed account balance; "
+                      "transaction rejected";
+        compute_phase.reset();
+        return false;
+      }
+    }
+
     if (output.committed) {
       if (cp.new_data.not_null()) {
         new_data = cp.new_data;

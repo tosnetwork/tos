@@ -2750,7 +2750,15 @@ TEST(WorkchainExecutionRegistry, EvmAndUnoAcceptNullCurrentCodeBeforeActivation)
   run_with_null_code(uno);
 }
 
-TEST(WorkchainExecutionRegistry, CustomComputeGasFeesAreCopiedIntoTransactionComputePhase) {
+TEST(WorkchainExecutionRegistry, CustomComputeGasFeesAreChargedToAccount) {
+  // Round-29 fix: the custom-compute path now mirrors TVM/precompiled
+  // and actually charges `output.gas_fees` from the account.  The
+  // pre-fix behavior (only copy fees into cp.gas_fees, never debit
+  // balance or accumulate total_fees) let custom-engine contracts
+  // consume validator CPU without paying.  Test verifies:
+  //   * gas_fees=42 is copied into cp.gas_fees,
+  //   * the account balance is debited by 42, and
+  //   * the transaction's total_fees rises by 42.
   auto config = make_empty_config();
   block::WorkchainSet workchains;
   workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
@@ -2778,7 +2786,9 @@ TEST(WorkchainExecutionRegistry, CustomComputeGasFeesAreCopiedIntoTransactionCom
   block::Account account(2, addr.bits());
   account.status = block::Account::acc_nonexist;
   account.orig_status = block::Account::acc_nonexist;
-  account.balance = block::CurrencyCollection::zero();
+  // Fund the account with 1000 tomis so the round-29 charging block
+  // can actually debit gas_fees=42 without underflow.
+  account.balance = block::CurrencyCollection(td::make_refint(1000));
 
   auto msg = build_external_message(2, addr, make_marker_cell(0x01));
   block::transaction::Transaction tx(account, block::transaction::Transaction::tr_ord, 1, 100, msg);
@@ -2798,6 +2808,68 @@ TEST(WorkchainExecutionRegistry, CustomComputeGasFeesAreCopiedIntoTransactionCom
   CHECK(tx.compute_phase != nullptr);
   CHECK(tx.compute_phase->gas_fees.not_null());
   CHECK(td::cmp(tx.compute_phase->gas_fees, td::make_refint(42)) == 0);
+  // Balance after charging.  account starts with 1000; gas_fees=42
+  // is debited.  Need to read tx.balance which is the balance the
+  // transaction holds during execution.
+  CHECK(tx.balance.tomis.not_null());
+  CHECK(td::cmp(tx.balance.tomis, td::make_refint(958)) == 0);
+  CHECK(tx.total_fees.tomis.not_null());
+  CHECK(td::cmp(tx.total_fees.tomis, td::make_refint(42)) == 0);
+}
+
+TEST(WorkchainExecutionRegistry,
+     CustomComputeRejectsTransactionIfBalanceCannotPayGasFees) {
+  // Round-29 fix: when the custom engine reports gas_fees > balance,
+  // the FAIL_UNLESS in the host's charging block triggers and
+  // prepare_compute_phase returns false (transaction rejected as
+  // malformed).  Pre-fix the host silently let the transaction
+  // proceed, leaving validator CPU unbilled.
+  auto config = make_empty_config();
+  block::WorkchainSet workchains;
+  workchains.emplace(2, make_basic_workchain_info(2, kUnoVmVersion, 0));
+
+  block::WorkchainExecutionRegistry registry;
+  registry.register_engine(std::make_unique<MockUnoEngine>(
+      [](block::ComputePhase& cp,
+         td::Ref<vm::Cell> state_data,
+         vm::CellSlice& /*in_msg_body*/,
+         uint64_t /*gas_limit*/,
+         uint64_t /*block_seqno*/,
+         uint64_t /*timestamp*/,
+         const uint8_t /*rand_seed*/[32]) {
+        CHECK(state_data.is_null());
+        cp.accepted = true;
+        cp.success = true;
+        cp.gas_used = 11;
+        cp.gas_fees = td::make_refint(1000);  // > zero balance
+        cp.new_data = make_marker_cell(0xB1);
+        cp.actions = make_empty_action_list();
+        return true;
+      }));
+
+  auto addr = singleton_executor_address();
+  block::Account account(2, addr.bits());
+  account.status = block::Account::acc_nonexist;
+  account.orig_status = block::Account::acc_nonexist;
+  account.balance = block::CurrencyCollection::zero();  // zero!
+
+  auto msg = build_external_message(2, addr, make_marker_cell(0x01));
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_ord, 1, 100, msg);
+
+  block::ActionPhaseConfig action_cfg;
+  action_cfg.workchains = &workchains;
+  CHECK(tx.unpack_input_msg(false, &action_cfg));
+
+  block::ComputePhaseConfig compute_cfg;
+  compute_cfg.gas_limit = 100;
+  compute_cfg.block_transition_config = &config;
+  compute_cfg.workchain_descriptors = &workchains;
+  compute_cfg.workchain_execution_registry = &registry;
+  compute_cfg.global_version = 14;
+
+  // FAIL_UNLESS in the charging block returns false from
+  // prepare_compute_phase.
+  CHECK(!tx.prepare_compute_phase(compute_cfg));
 }
 
 TEST(WorkchainExecutionRegistry, RejectsSuccessfulCustomComputeWithoutActionList) {
