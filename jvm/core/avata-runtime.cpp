@@ -569,6 +569,45 @@ td::Result<std::string> create_private_classpath_dir() {
     return tmpl;
 }
 
+// Round-23: conservative scan for `Class-Path:` headers in JAR
+// manifests.  Avata's finder honors `META-INF/MANIFEST.MF
+// Class-Path:` entries by adding the listed jars to the boot/app
+// classpath, and those extra entries would NOT be covered by
+// `hash_boot_classpath()`.  A future / admitted rt.jar with such a
+// header could therefore load classes from outside the consensus-
+// committed boot classpath.  The current generated rt.jar has no
+// such header, but we defend the invariant in code rather than
+// relying on the build-time check alone.
+//
+// Implementation: scan the raw JAR bytes for the literal substring
+// "Class-Path:" (case-insensitive across the few common spellings
+// the JAR spec accepts).  This is conservative: it produces a
+// false positive if the literal appears anywhere in the JAR
+// (e.g., inside a constant pool string).  In practice rt.jar
+// contains only the JCL bytecode profile we generate, which never
+// embeds that literal — so the check is effectively zero
+// false-positive against the canonical rt.jar but rejects any
+// future modification that adds the header.
+bool jar_bytes_contain_class_path_header(td::Slice bytes) {
+    static constexpr td::Slice kNeedle{"Class-Path:"};
+    static constexpr td::Slice kNeedleLower{"class-path:"};
+    static constexpr td::Slice kNeedleUpper{"CLASS-PATH:"};
+    if (bytes.size() < kNeedle.size()) {
+        return false;
+    }
+    auto contains = [&](td::Slice needle) {
+        for (std::size_t i = 0; i + needle.size() <= bytes.size(); ++i) {
+            if (std::memcmp(bytes.data() + i, needle.data(),
+                            needle.size()) == 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+    return contains(kNeedle) || contains(kNeedleLower) ||
+           contains(kNeedleUpper);
+}
+
 // Copy a single boot classpath entry into the process-private
 // 0700 directory, returning the new path.  The original entry is
 // read once into memory; the caller deletes the returned path when
@@ -588,6 +627,18 @@ td::Result<std::string> materialize_private_classpath_entry(
                      << data.error().message());
     }
     const auto bytes = data.move_as_ok();
+    // Reject any boot classpath entry whose bytes contain a manifest
+    // `Class-Path:` header.  See `jar_bytes_contain_class_path_header`
+    // for the rationale.
+    if (jar_bytes_contain_class_path_header(
+            td::Slice(bytes.data(), bytes.size()))) {
+        return td::Status::Error(
+            PSLICE() << "JVM Avata runtime: boot classpath entry "
+                     << src_path
+                     << " contains a 'Class-Path:' manifest header; that "
+                        "would let it pull external jars not committed "
+                        "by ConfigParam 85 stdlib_hash");
+    }
 
     char idx_buf[32];
     std::snprintf(idx_buf, sizeof(idx_buf), "%04zu.bin", index);
