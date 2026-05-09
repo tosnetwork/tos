@@ -231,7 +231,12 @@ std::string json_get_number_str(const std::string& json, const std::string& key)
 //   * accept "-1" as ULONG_MAX (the cast then wraps to UINT32_MAX),
 //   * stop mid-token on "1.5" / "1e2" (returns 1),
 //   * succeed on "4294967296" then wrap during the uint32 cast.
-// Returns false on any of those.
+// Overflow during accumulation is detected on every step rather than
+// post-loop so that with max_value == UINT64_MAX the wrap is caught
+// before it loses the original magnitude (e.g. 20-digit input
+// "99999999999999999999" wraps to 7766279631452241919 in a 64-bit
+// accumulator and the post-loop `v > max_value` check could never
+// fire).
 bool parse_strict_uint(const std::string& s, std::uint64_t max_value,
                        std::size_t max_digits, std::uint64_t& out) {
     if (s.empty() || s.size() > max_digits) {
@@ -242,10 +247,18 @@ bool parse_strict_uint(const std::string& s, std::uint64_t max_value,
         if (c < '0' || c > '9') {
             return false;
         }
-        v = v * 10 + static_cast<std::uint64_t>(c - '0');
-    }
-    if (v > max_value) {
-        return false;
+        const std::uint64_t digit = static_cast<std::uint64_t>(c - '0');
+        // v * 10 must not exceed max_value, AND v * 10 + digit must
+        // also not.  Equivalent to: v > (max_value - digit) / 10.
+        // We split the check so it's clear.
+        if (v > max_value / 10) {
+            return false;
+        }
+        v *= 10;
+        if (v > max_value - digit) {
+            return false;
+        }
+        v += digit;
     }
     out = v;
     return true;

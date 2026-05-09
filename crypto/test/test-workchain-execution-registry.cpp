@@ -3534,6 +3534,13 @@ TEST(JvmWorkchainCore, RpcCallContractAcceptsAddressNotContractId) {
   CHECK(!with_bad("1", "-1").has_value());
   CHECK(!with_bad("1", "1.5").has_value());
   CHECK(with_bad("1", "1000000").has_value());
+  // Round-7 fix: gasLimit values above UINT64_MAX must reject without
+  // wrapping (the accumulator caught the overflow during the loop).
+  // 18446744073709551616 = UINT64_MAX + 1; 99999999999999999999 = 20 9s.
+  CHECK(!with_bad("1", "18446744073709551616").has_value());
+  CHECK(!with_bad("1", "99999999999999999999").has_value());
+  // Boundary OK at UINT64_MAX itself.
+  CHECK(with_bad("1", "18446744073709551615").has_value());
 }
 
 TEST(JvmWorkchainCore, RpcGetContractStateFetchesPerAccount) {
