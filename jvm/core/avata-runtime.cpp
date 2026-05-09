@@ -569,25 +569,23 @@ td::Result<std::string> create_private_classpath_dir() {
     return tmpl;
 }
 
-// Round-23: conservative scan for `Class-Path:` headers in JAR
-// manifests.  Avata's finder honors `META-INF/MANIFEST.MF
-// Class-Path:` entries by adding the listed jars to the boot/app
-// classpath, and those extra entries would NOT be covered by
-// `hash_boot_classpath()`.  A future / admitted rt.jar with such a
-// header could therefore load classes from outside the consensus-
-// committed boot classpath.  The current generated rt.jar has no
-// such header, but we defend the invariant in code rather than
-// relying on the build-time check alone.
+// Round-23/24: defend against `META-INF/MANIFEST.MF Class-Path:`
+// entries that would let the JAR loader pull in jars outside the
+// consensus-committed boot classpath.  Round 23 used a raw byte
+// scan, but that misses compressed (deflated) manifest entries
+// where the literal `Class-Path:` is hidden inside the compressed
+// stream.  Round 24 strengthens the check by:
+//   1. Parsing the ZIP central directory.
+//   2. Requiring every entry to use compression method 0 (STORED)
+//      so the raw byte scan works reliably.  Our canonical
+//      `jar c0f` build already produces stored-only archives.
+//   3. Then running the raw byte scan for the literal in any
+//      common case spelling.
 //
-// Implementation: scan the raw JAR bytes for the literal substring
-// "Class-Path:" (case-insensitive across the few common spellings
-// the JAR spec accepts).  This is conservative: it produces a
-// false positive if the literal appears anywhere in the JAR
-// (e.g., inside a constant pool string).  In practice rt.jar
-// contains only the JCL bytecode profile we generate, which never
-// embeds that literal — so the check is effectively zero
-// false-positive against the canonical rt.jar but rejects any
-// future modification that adds the header.
+// `validate_jar_no_compression_or_class_path` returns false if
+// either the central directory cannot be parsed, an entry uses a
+// non-stored compression method, or any byte run matches the
+// `Class-Path:` literal.  Conservative on all three axes.
 bool jar_bytes_contain_class_path_header(td::Slice bytes) {
     static constexpr td::Slice kNeedle{"Class-Path:"};
     static constexpr td::Slice kNeedleLower{"class-path:"};
@@ -606,6 +604,78 @@ bool jar_bytes_contain_class_path_header(td::Slice bytes) {
     };
     return contains(kNeedle) || contains(kNeedleLower) ||
            contains(kNeedleUpper);
+}
+
+// Read a 16-bit / 32-bit little-endian integer from `data`.  ZIP
+// is canonically little-endian.
+inline std::uint16_t le16(const std::uint8_t* p) {
+    return static_cast<std::uint16_t>(
+        static_cast<std::uint32_t>(p[0]) |
+        (static_cast<std::uint32_t>(p[1]) << 8));
+}
+inline std::uint32_t le32(const std::uint8_t* p) {
+    return static_cast<std::uint32_t>(p[0]) |
+           (static_cast<std::uint32_t>(p[1]) << 8) |
+           (static_cast<std::uint32_t>(p[2]) << 16) |
+           (static_cast<std::uint32_t>(p[3]) << 24);
+}
+
+// Walk the ZIP central directory and return false if any entry uses
+// a compression method other than 0 (stored).  Used so the raw byte
+// scan for `Class-Path:` is reliable — a compressed manifest entry
+// would hide the literal inside a deflated stream and bypass the
+// scan.  Round-24 confirmed this gap with `jar cfm` (default
+// deflate) producing an archive whose raw bytes don't match
+// `Class-Path:` while the inflated manifest does.
+bool jar_all_entries_stored(td::Slice bytes) {
+    // End-of-central-directory (EOCD) signature 0x06054b50.  Search
+    // the last 65557 bytes (max EOCD size including comment).
+    if (bytes.size() < 22) return false;
+    const std::uint8_t* p = reinterpret_cast<const std::uint8_t*>(bytes.data());
+    const std::size_t n = bytes.size();
+    const std::size_t scan_from =
+        (n > 65557) ? (n - 65557) : 0;
+    std::size_t eocd_off = std::string::npos;
+    for (std::size_t i = (n >= 22 ? n - 22 : 0); i + 4 <= n && i >= scan_from;
+         --i) {
+        if (le32(p + i) == 0x06054b50u) {
+            eocd_off = i;
+            break;
+        }
+        if (i == 0) break;
+    }
+    if (eocd_off == std::string::npos) {
+        return false;
+    }
+    // EOCD layout (22 bytes minimum):
+    //   sig(4) disk(2) cd_disk(2) cd_entries_disk(2)
+    //   cd_total_entries(2) cd_size(4) cd_offset(4) comment_len(2)
+    if (eocd_off + 22 > n) return false;
+    const std::uint16_t cd_entries = le16(p + eocd_off + 10);
+    const std::uint32_t cd_size = le32(p + eocd_off + 12);
+    const std::uint32_t cd_offset = le32(p + eocd_off + 16);
+    if (static_cast<std::uint64_t>(cd_offset)
+            + static_cast<std::uint64_t>(cd_size) > n) {
+        return false;
+    }
+    // Iterate central directory entries.  Each entry header is at
+    // least 46 bytes; signature 0x02014b50.  Compression method is
+    // at offset 10 (uint16 LE).
+    std::size_t off = cd_offset;
+    for (std::uint16_t i = 0; i < cd_entries; ++i) {
+        if (off + 46 > n) return false;
+        if (le32(p + off) != 0x02014b50u) return false;
+        const std::uint16_t method = le16(p + off + 10);
+        if (method != 0) {
+            return false;
+        }
+        const std::uint16_t name_len = le16(p + off + 28);
+        const std::uint16_t extra_len = le16(p + off + 30);
+        const std::uint16_t comment_len = le16(p + off + 32);
+        off += 46u + name_len + extra_len + comment_len;
+        if (off > n) return false;
+    }
+    return true;
 }
 
 // Copy a single boot classpath entry into the process-private
@@ -627,9 +697,24 @@ td::Result<std::string> materialize_private_classpath_entry(
                      << data.error().message());
     }
     const auto bytes = data.move_as_ok();
+    // Round-24: require the JAR's central directory to use only the
+    // STORED (uncompressed) method.  A deflated manifest would hide
+    // the `Class-Path:` literal inside the compressed stream and
+    // bypass the byte scan below.  Our canonical `jar c0f` build
+    // already produces stored-only archives.
+    if (!jar_all_entries_stored(td::Slice(bytes.data(), bytes.size()))) {
+        return td::Status::Error(
+            PSLICE() << "JVM Avata runtime: boot classpath entry "
+                     << src_path
+                     << " uses a compressed JAR entry; the consensus-bound "
+                        "rt.jar must be built with stored-only entries "
+                        "(`jar c0f`) so the manifest Class-Path scan can "
+                        "see literal headers");
+    }
     // Reject any boot classpath entry whose bytes contain a manifest
-    // `Class-Path:` header.  See `jar_bytes_contain_class_path_header`
-    // for the rationale.
+    // `Class-Path:` header.  Reliable now that all entries are
+    // STORED — see `jar_bytes_contain_class_path_header` for the
+    // rationale.
     if (jar_bytes_contain_class_path_header(
             td::Slice(bytes.data(), bytes.size()))) {
         return td::Status::Error(
