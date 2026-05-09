@@ -769,9 +769,15 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
         auto invocation_result = runtime->run_contract(
             input, context, *config, previous_state);
         if (invocation_result.is_error()) {
+            // Round 45 LOW fix: runtime invocation errors are billed
+            // by consensus through `skipped_output_billed(sk_bad_state,
+            // ..., kJvmAdmissionGasFloor)` (dispatch-engine.cpp round 37);
+            // pre-fix RPC reported `gasUsed:0` for the same condition,
+            // so localResult under-reported the on-chain charge.
             local_result_json = "{\"success\":false,\"outOfGas\":false,"
-                                "\"outOfMemory\":false,\"gasUsed\":0,"
-                                "\"vmLog\":\"runtime error: "
+                                "\"outOfMemory\":false,\"gasUsed\":"
+                                + std::to_string(kJvmAdmissionGasFloor)
+                                + ",\"vmLog\":\"runtime error: "
                                 + invocation_result.error().message().str()
                                 + "\",\"newStateBoc\":null}";
         } else {

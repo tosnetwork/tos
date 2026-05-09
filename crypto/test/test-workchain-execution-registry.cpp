@@ -787,6 +787,14 @@ class MockJvmRuntime final : public jvm_workchain::JvmComputeRuntime {
     slot[31] = 0xa1;
     CHECK(storage.store(slot, JvmStorageValue{0xde, 0xad}).is_ok());
 
+    // Round 45 regression: optionally force the runtime to return
+    // a Status::Error (mirrors a real-world resolver/typed-args
+    // failure) so tests can exercise the runtime-error gasUsed
+    // billing path.
+    if (mock_runtime_error) {
+      return td::Status::Error(*mock_runtime_error);
+    }
+
     JvmAvataInvocationResult result;
     result.invocation_status = 0;
     result.success = true;
@@ -808,6 +816,12 @@ class MockJvmRuntime final : public jvm_workchain::JvmComputeRuntime {
   // to 123.  Used to drive the post-walk gas past the affordability
   // cap (Round-40 regression).
   mutable std::optional<std::uint64_t> mock_gas_used;
+  // Round 45 regression: optional runtime error message.  When set,
+  // `run_contract` returns `td::Status::Error(*mock_runtime_error)`
+  // before producing any result.  Used to exercise consensus's
+  // round-37 floor-billing on runtime errors and the matching RPC
+  // round-45 fix.
+  mutable std::optional<std::string> mock_runtime_error;
 };
 
 }  // namespace
@@ -4654,6 +4668,54 @@ TEST(JvmWorkchainCore, RpcCallContractDetectsMaxStorageCellsAfterWalkBypass) {
   CHECK(result.json.find("\"success\":false") != std::string::npos);
   CHECK(result.json.find("max_storage_cells") != std::string::npos);
   CHECK(result.json.find("\"newStateBoc\":null") != std::string::npos);
+}
+
+TEST(JvmWorkchainCore, RpcCallContractRuntimeErrorBillsAdmissionFloor) {
+  // Round 45 LOW fix: when the runtime returns Status::Error (e.g.,
+  // unknown method_id, malformed typed args) consensus bills the
+  // admission floor via `skipped_output_billed(sk_bad_state, ...,
+  // kJvmAdmissionGasFloor)` (round 37 fix in dispatch-engine.cpp).
+  // Pre-fix RPC reported `gasUsed:0` for the same condition,
+  // so localResult under-reported the on-chain charge.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  runtime->mock_runtime_error = "synthetic resolver failure";
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x45};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x21 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x43 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  auto bound = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 2000;
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  CHECK(runtime->called);
+  CHECK(result.json.find("\"success\":false") != std::string::npos);
+  CHECK(result.json.find("\"gasUsed\":1024") != std::string::npos);
+  CHECK(result.json.find("synthetic resolver failure") != std::string::npos);
 }
 
 TEST(JvmWorkchainCore, RpcCallContractMirrorsConsensusWalkGasCap) {
