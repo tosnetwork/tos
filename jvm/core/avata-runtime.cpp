@@ -664,11 +664,25 @@ bool jar_all_entries_stored(td::Slice bytes) {
     const std::uint16_t cd_entries_claimed = le16(p + eocd_off + 10);
     const std::uint32_t cd_size_claimed = le32(p + eocd_off + 12);
     const std::uint32_t cd_offset = le32(p + eocd_off + 16);
+    const std::uint16_t comment_len = le16(p + eocd_off + 20);
+    // Round-26 fix: anchor `cd_offset` to the EOCD position.  Without
+    // this, an attacker can point `cd_offset` at bytes inside a
+    // STORED entry's body that LOOK like central-directory headers
+    // (and even satisfy the round-25 walk + count/size cross-check)
+    // while the real central directory lives elsewhere.  Avata's
+    // loader follows whatever `cd_offset` says, so the guard's view
+    // and the loader's view diverge whenever `cd_offset` does not
+    // point at the actual CD.  The canonical layout has the CD
+    // immediately followed by EOCD; require that exactly.
     if (static_cast<std::uint64_t>(cd_offset)
-            + static_cast<std::uint64_t>(cd_size_claimed) > n) {
+            + static_cast<std::uint64_t>(cd_size_claimed) != eocd_off) {
         return false;
     }
-    if (cd_offset > eocd_off) {
+    // Also pin the EOCD's own length: header (22) + comment must
+    // exactly equal the trailing bytes.  Otherwise garbage past the
+    // EOCD comment could later be parsed as a separate trailer or
+    // mask alternative metadata.
+    if (eocd_off + 22u + comment_len != n) {
         return false;
     }
 
@@ -706,13 +720,14 @@ bool jar_all_entries_stored(td::Slice bytes) {
             return false;
         }
     }
-    // Must end exactly at the EOCD's stated central-directory
-    // boundary, AND the actual walked count must match the claimed
-    // count.  Either disagreement is the round-25 attack vector.
+    // Must end exactly at the EOCD position (which the round-26
+    // anchor check above proved equals `cd_offset + cd_size_claimed`),
+    // AND the actual walked count must match the claimed count.
+    // Either disagreement is the round-25 / round-26 attack vector.
     if (walked != cd_entries_claimed) {
         return false;
     }
-    if (off != cd_offset + cd_size_claimed) {
+    if (off != eocd_off) {
         return false;
     }
     return true;
