@@ -181,6 +181,23 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 "JVM account balance cannot afford a single gas unit",
                 /*out_of_gas=*/true);
         }
+        // Round-35 fix: enforce the admission floor BEFORE any
+        // resolver / runtime work.  Round 34 added the floor in
+        // `build_jvm_workchain_output`'s success path, but a balance
+        // below `floor * gas_price` could still enter descriptor
+        // parsing, state decode, manifest lookup, args decode, VM
+        // cache/class loading, and method resolution — the host's
+        // post-execution charging block then discards the result
+        // with sk_no_gas zero-fee.  All that resolver work was
+        // unbilled.  Rejecting at the engine boundary closes that
+        // window: low-balance accounts pay the forward fee on the
+        // inbound message but never reach the resolver.
+        if (effective_gas_limit < kJvmAdmissionGasFloor) {
+            return skipped_output(
+                block::ComputePhase::sk_no_gas,
+                "JVM account balance cannot afford the admission gas floor",
+                /*out_of_gas=*/true);
+        }
         if (parse_jvm_call_descriptor(input.inbound_body).is_error()) {
             return skipped_output(
                 block::ComputePhase::sk_bad_state,

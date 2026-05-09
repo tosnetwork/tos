@@ -97,6 +97,16 @@ struct JvmAvataInvocationResult {
 // installation, and transaction resource accounting. The actual Java contract
 // entrypoint is supplied by invoke_contract until the Avata interpreter target
 // is linked into the workchain adapter.
+// Round-34/35: admission gas floor.  Every accepted JVM compute pays
+// at least this much gas, so the unmetered resolver / class-load work
+// that runs before Avata gas accounting is billed.  Round 35 also
+// uses this constant in `JvmNativeEngine::run_compute` to reject the
+// admission BEFORE running the runtime when the account cannot
+// afford the floor — otherwise low-balance accounts could repeatedly
+// trigger unbilled resolver work and only get rejected after the
+// host's post-execution charging block discards the result.
+constexpr std::uint64_t kJvmAdmissionGasFloor = 1024;
+
 td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
     void* avata_thread,
     const JvmConfig& config,

@@ -274,19 +274,18 @@ td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output(
             "JVM output builder received inconsistent success status");
     }
 
-    // Round-34: charge an admission gas floor on every accepted
+    // Round-34/35: charge an admission gas floor on every accepted
     // compute, so the resolver work that runs BEFORE Avata gas
     // accounting (manifest parse, args decode, class load on cache
-    // miss, method resolution) is paid for.  Without a floor, a
-    // very-low-gas successful call could leave that work entirely
-    // unbilled.  The forward fee on the inbound message is the
-    // network's primary anti-DoS, but a per-call floor provides
-    // deterministic billing for the unmetered resolver overhead.
+    // miss, method resolution) is paid for.  The floor is also
+    // enforced as a pre-runtime affordability gate in
+    // `JvmNativeEngine::run_compute` (round 35), so low-balance
+    // accounts cannot trigger unbilled resolver work.
     //
     // Floor is small enough to not bother normal contracts (typical
     // calls use 10k+ gas anyway) but high enough to cover worst-case
-    // 1024-entry manifest parsing.
-    constexpr std::uint64_t kJvmAdmissionGasFloor = 1024;
+    // 1024-entry manifest parsing.  Constant defined in
+    // avata-execution.h so both sides see the same value.
     const std::uint64_t effective_gas_used =
         std::max<std::uint64_t>(invocation.gas_used,
                                  kJvmAdmissionGasFloor);

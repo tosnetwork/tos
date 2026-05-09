@@ -772,7 +772,9 @@ class MockJvmRuntime final : public jvm_workchain::JvmComputeRuntime {
 
     called = true;
     CHECK(context.workchain_id == 3);
-    CHECK(input.gas_limit == 1000);
+    // Round-35: tests pass gas_limit=2000 (above the 1024 admission
+    // floor enforced in dispatch-engine.cpp pre-runtime).
+    CHECK(input.gas_limit == 2000);
     CHECK(config.chain_id == 85);
     CHECK(previous_state.stdlib_hash == config.stdlib_hash);
     CHECK(previous_state.class_bytes.not_null());
@@ -2033,7 +2035,7 @@ TEST(WorkchainExecutionRegistry, JvmEngineDispatchesAccountStateToRuntime) {
   input.current_data = encode_jvm_contract_account_state(previous_state);
   CHECK(input.current_data.not_null());
   input.inbound_body = make_jvm_call_body(method_entry.method_id);
-  input.gas_limit = 1000;
+  input.gas_limit = 2000;
   // This is a "subsequent call" test (the previous_state already has
   // seeded storage), so msg_state_used remains false.
 
@@ -2098,7 +2100,7 @@ TEST(WorkchainExecutionRegistry, JvmEngineRejectsMalformedAccountState) {
   block::WorkchainComputeInput input;
   input.current_data = cb.finalize();
   input.inbound_body = make_jvm_call_body(0x1);
-  input.gas_limit = 1000;
+  input.gas_limit = 2000;
 
   block::WorkchainComputeContext context;
   context.workchain_id = 3;
@@ -2168,7 +2170,7 @@ TEST(WorkchainExecutionRegistry,
   std::memcpy(input.account_addr.data(), bound_addr.data(), 32);
   input.current_data = state_cell;
   input.inbound_body = make_jvm_call_body(0x42);
-  input.gas_limit = 1000;
+  input.gas_limit = 2000;
   auto out = execution.executor->run_compute(input, context).move_as_ok();
   CHECK(out.completed);
   CHECK(!out.accepted);
@@ -2224,7 +2226,7 @@ TEST(WorkchainExecutionRegistry,
   std::memcpy(input.account_addr.data(), bound_addr.data(), 32);
   input.current_data = state_cell;
   input.inbound_body = make_jvm_call_body(0x42);
-  input.gas_limit = 1000;
+  input.gas_limit = 2000;
   auto output = execution.executor->run_compute(input, context).move_as_ok();
   CHECK(output.completed);
   CHECK(!output.accepted);
@@ -2322,7 +2324,7 @@ TEST(WorkchainExecutionRegistry,
   bad.account_addr.set_zero();  // sha256(domain || commit || class_hash) != 0
   bad.current_data = state_cell;
   bad.inbound_body = make_jvm_call_body(0x42);
-  bad.gas_limit = 1000;
+  bad.gas_limit = 2000;
   auto bad_out = execution.executor->run_compute(bad, context).move_as_ok();
   CHECK(bad_out.completed);
   CHECK(!bad_out.accepted);
@@ -2338,7 +2340,7 @@ TEST(WorkchainExecutionRegistry,
   std::memcpy(ok.account_addr.data(), bound_addr.data(), 32);
   ok.current_data = state_cell;
   ok.inbound_body = make_jvm_call_body(0x42);
-  ok.gas_limit = 1000;
+  ok.gas_limit = 2000;
   auto ok_out = execution.executor->run_compute(ok, context).move_as_ok();
   CHECK(ok_out.completed);
   CHECK(runtime->called);
@@ -2365,7 +2367,7 @@ TEST(WorkchainExecutionRegistry,
   std::memcpy(swap.account_addr.data(), bound_addr.data(), 32);
   swap.current_data = attacker_state_cell;
   swap.inbound_body = make_jvm_call_body(0x42);
-  swap.gas_limit = 1000;
+  swap.gas_limit = 2000;
   auto swap_out = execution.executor->run_compute(swap, context).move_as_ok();
   CHECK(swap_out.completed);
   CHECK(!swap_out.accepted);
@@ -2393,7 +2395,7 @@ TEST(WorkchainExecutionRegistry,
   first_act.current_data = preload_cell;
   first_act.inbound_body = make_jvm_call_body(0x42);
   first_act.inbound_message = make_jvm_int_msg_with_src(state.deployer);
-  first_act.gas_limit = 1000;
+  first_act.gas_limit = 2000;
   first_act.msg_state_used = true;
   auto first_act_out =
       execution.executor->run_compute(first_act, context).move_as_ok();
@@ -2415,7 +2417,7 @@ TEST(WorkchainExecutionRegistry,
   frontrun.current_data = state_cell;
   frontrun.inbound_body = make_jvm_call_body(0x42);
   frontrun.inbound_message = make_jvm_int_msg_with_src(attacker_addr);
-  frontrun.gas_limit = 1000;
+  frontrun.gas_limit = 2000;
   frontrun.msg_state_used = true;
   auto frontrun_out =
       execution.executor->run_compute(frontrun, context).move_as_ok();
@@ -2435,7 +2437,7 @@ TEST(WorkchainExecutionRegistry,
   cross_wc.inbound_body = make_jvm_call_body(0x42);
   cross_wc.inbound_message =
       make_jvm_int_msg_with_src_at_wc(state.deployer, 0);  // wc=0
-  cross_wc.gas_limit = 1000;
+  cross_wc.gas_limit = 2000;
   cross_wc.msg_state_used = true;
   auto cross_wc_out =
       execution.executor->run_compute(cross_wc, context).move_as_ok();
@@ -2452,7 +2454,7 @@ TEST(WorkchainExecutionRegistry,
   std::memcpy(later.account_addr.data(), bound_addr.data(), 32);
   later.current_data = preload_cell;
   later.inbound_body = make_jvm_call_body(0x42);
-  later.gas_limit = 1000;
+  later.gas_limit = 2000;
   // later.msg_state_used = false (default)
   auto later_out =
       execution.executor->run_compute(later, context).move_as_ok();
@@ -2547,7 +2549,7 @@ TEST(WorkchainExecutionRegistry, JvmEndToEndDeployCallSequence) {
   std::memcpy(call1.account_addr.data(), address_a.data(), 32);
   call1.current_data = state0_cell;
   call1.inbound_body = make_jvm_call_body(method_entry.method_id);
-  call1.gas_limit = 1000;
+  call1.gas_limit = 2000;
   auto out1 = execution.executor->run_compute(call1, context).move_as_ok();
   CHECK(runtime->called);
   CHECK(out1.committed);
@@ -2567,7 +2569,7 @@ TEST(WorkchainExecutionRegistry, JvmEndToEndDeployCallSequence) {
   std::memcpy(call2.account_addr.data(), address_a.data(), 32);
   call2.current_data = out1.new_data;
   call2.inbound_body = make_jvm_call_body(method_entry.method_id);
-  call2.gas_limit = 1000;
+  call2.gas_limit = 2000;
   auto out2 = execution.executor->run_compute(call2, context).move_as_ok();
   CHECK(runtime->called);
   CHECK(out2.committed);
@@ -4346,7 +4348,7 @@ TEST(WorkchainExecutionRegistry, JvmDeterminismReplay) {
     std::memcpy(input.account_addr.data(), bound_addr.data(), 32);
     input.current_data = in_state;
     input.inbound_body = make_jvm_call_body(method_id);
-    input.gas_limit = 1000;
+    input.gas_limit = 2000;
     return execution.executor->run_compute(input, context).move_as_ok();
   };
 
