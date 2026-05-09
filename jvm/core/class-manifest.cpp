@@ -152,7 +152,16 @@ td::Ref<vm::Cell> encode_string_cell(const std::string& value) {
 
 td::Result<std::string> decode_string_cell(td::Ref<vm::Cell> cell,
                                            const char* field_name) {
-    TRY_RESULT(bytes, decode_jvm_storage_value(std::move(cell)));
+    // Round 75 MEDIUM fix: cap the decoded byte budget at the manifest
+    // string limit BEFORE the storage walker copies the chunk chain
+    // into the result vector.  Pre-fix, `decode_jvm_storage_value`
+    // ran with the default 1 MiB cap, fully walked + copied the chain,
+    // and only then `validate_method_manifest_string` rejected at 512
+    // bytes — letting an external sender force ~1 MiB of validator
+    // work per resolver lookup before dispatch billed admission floor.
+    TRY_RESULT(bytes,
+               decode_jvm_storage_value(std::move(cell),
+                                        kJvmAvataManifestStringMaxBytes));
     std::string value(bytes.begin(), bytes.end());
     TRY_STATUS(validate_method_manifest_string(value, field_name));
     return value;

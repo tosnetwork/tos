@@ -132,7 +132,16 @@ td::Ref<vm::Cell> encode_string_cell(const std::string& value) {
 }
 
 td::Result<std::string> decode_string_cell(td::Ref<vm::Cell> cell) {
-    TRY_RESULT(bytes, decode_jvm_storage_value(std::move(cell)));
+    // Round 75 MEDIUM fix: cap the decoded byte budget at the deploy
+    // class-name limit BEFORE the storage walker copies the chunk
+    // chain.  Mirrors the matching fix in
+    // jvm/core/class-manifest.cpp::decode_string_cell — pre-fix the
+    // walker honoured only the 1 MiB default cap, fully decoded the
+    // payload, and only then `validate_deploy_class_name` rejected at
+    // 512 bytes.
+    TRY_RESULT(bytes,
+               decode_jvm_storage_value(std::move(cell),
+                                        kJvmDeployClassNameMaxBytes));
     std::string value(bytes.begin(), bytes.end());
     TRY_STATUS(validate_deploy_class_name(value));
     return value;
