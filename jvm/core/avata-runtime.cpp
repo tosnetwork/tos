@@ -15,6 +15,14 @@
 #include "td/utils/filesystem.h"
 #include "td/utils/logging.h"
 
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -107,6 +115,22 @@ struct LinkedAvataRuntimeState {
     // cache-miss VM creation re-hashes the boot classpath and rejects
     // if it disagrees with this captured value.
     std::array<std::uint8_t, 32> rt_jar_hash{};
+    // Round-19: paths to private chmod-0600 temp copies of every
+    // boot classpath entry, created at startup from the bytes we
+    // already read for hashing.  `options.boot_classpath` is
+    // rewritten to point at these copies, so the JVM's
+    // `JNI_CreateJavaVM`/`Finder` mapping cannot pull bytes that
+    // disagree with `rt_jar_hash` — the residual TOCTOU between
+    // the round-18 re-hash and the JVM's open() narrows to
+    // "attacker with our process UID can chmod and overwrite",
+    // which is equivalent to attaching a debugger.  These files
+    // are unlinked when the runtime state is destroyed.
+    std::vector<std::string> private_classpath_files;
+    ~LinkedAvataRuntimeState() {
+        for (const auto& path : private_classpath_files) {
+            (void)::unlink(path.c_str());
+        }
+    }
 };
 
 // Hash the `:`-separated boot classpath, feeding each entry's file
@@ -115,12 +139,27 @@ struct LinkedAvataRuntimeState {
 // startup and on every lazy VM creation to ensure the bytes that
 // `JNI_CreateJavaVM` will read still match ConfigParam 85's
 // `stdlib_hash` commitment.
+//
+// Round-19: length-prefix each entry so the hash is a canonical
+// commitment to (entry_count, entry_lengths, entry_bytes) rather
+// than the raw concatenation of bytes.  Without prefixes,
+// `[a, bc]` and `[ab, c]` would hash to the same value, which is
+// a domain-separation bug for multi-entry classpaths (the current
+// production config uses a single rt.jar so the same hash is
+// produced either way, but a future multi-entry config would
+// silently collide).  We also feed a fixed domain tag so the same
+// helper output cannot be confused with a sha256 over arbitrary
+// concatenated data.
 td::Result<std::array<std::uint8_t, 32>> hash_boot_classpath(
     const std::string& boot_classpath) {
     std::array<std::uint8_t, 32> out{};
     td::Sha256State sha;
     sha.init();
+    static constexpr td::Slice kDomain{
+        "TOS-JVM-AVATA-BOOTCLASSPATH-v1"};
+    sha.feed(kDomain);
     std::string remaining = boot_classpath;
+    std::uint64_t entry_count = 0;
     while (!remaining.empty()) {
         auto colon = remaining.find(':');
         std::string entry = (colon == std::string::npos)
@@ -140,8 +179,26 @@ td::Result<std::array<std::uint8_t, 32>> hash_boot_classpath(
                          << entry << ": " << data.error().message());
         }
         const auto bytes = data.move_as_ok();
+        // Length prefix (8-byte big-endian) before the entry bytes
+        // ensures unique encoding regardless of split between
+        // entries.
+        const std::uint64_t len = bytes.size();
+        std::uint8_t len_be[8];
+        for (int i = 0; i < 8; ++i) {
+            len_be[i] = static_cast<std::uint8_t>(len >> (56 - i * 8));
+        }
+        sha.feed(td::Slice(reinterpret_cast<const char*>(len_be), 8));
         sha.feed(td::Slice(bytes.data(), bytes.size()));
+        ++entry_count;
     }
+    // Trailing entry-count provides a second domain anchor against any
+    // attempt to swap entries while preserving total bytes.
+    std::uint8_t count_be[8];
+    for (int i = 0; i < 8; ++i) {
+        count_be[i] =
+            static_cast<std::uint8_t>(entry_count >> (56 - i * 8));
+    }
+    sha.feed(td::Slice(reinterpret_cast<const char*>(count_be), 8));
     sha.extract(td::MutableSlice(reinterpret_cast<char*>(out.data()),
                                   out.size()));
     return out;
@@ -448,6 +505,67 @@ JvmAvataExecutionApi make_linked_jvm_avata_execution_api() {
     return api;
 }
 
+// Copy a single boot classpath entry into a process-private file with
+// chmod 0600 in $TMPDIR (or /tmp), and return the new path.  The
+// original entry is read once into memory; the caller deletes the
+// returned path when the runtime state is torn down.  Used by
+// `make_linked_jvm_avata_runtime` to remove the round-19 TOCTOU
+// window between our hash and the JVM's `JNI_CreateJavaVM` mapping.
+td::Result<std::string> materialize_private_classpath_entry(
+    const std::string& src_path) {
+    auto data = td::read_file(src_path);
+    if (data.is_error()) {
+        return td::Status::Error(
+            PSLICE() << "JVM Avata runtime cannot read boot classpath "
+                        "entry "
+                     << src_path << " for private copy: "
+                     << data.error().message());
+    }
+    const auto bytes = data.move_as_ok();
+
+    const char* tmpdir_env = std::getenv("TMPDIR");
+    std::string tmpdir = (tmpdir_env != nullptr && *tmpdir_env != '\0')
+                             ? tmpdir_env
+                             : "/tmp";
+    std::string tmpl = tmpdir + "/tos-jvm-rtjar-XXXXXX";
+    // mkstemp creates the file with mode 0600 by default, modified by
+    // umask.  We explicitly fchmod 0600 below to nail it down.
+    int fd = ::mkstemp(&tmpl[0]);
+    if (fd < 0) {
+        return td::Status::Error(
+            PSLICE() << "JVM Avata runtime mkstemp failed for "
+                     << tmpl << ": " << std::strerror(errno));
+    }
+    if (::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+        ::close(fd);
+        ::unlink(tmpl.c_str());
+        return td::Status::Error(
+            PSLICE() << "JVM Avata runtime fchmod 0600 failed for "
+                     << tmpl << ": " << std::strerror(errno));
+    }
+    std::size_t written = 0;
+    while (written < bytes.size()) {
+        ssize_t n = ::write(fd, bytes.data() + written,
+                            bytes.size() - written);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            ::close(fd);
+            ::unlink(tmpl.c_str());
+            return td::Status::Error(
+                PSLICE() << "JVM Avata runtime write failed for "
+                         << tmpl << ": " << std::strerror(errno));
+        }
+        written += static_cast<std::size_t>(n);
+    }
+    if (::close(fd) != 0) {
+        ::unlink(tmpl.c_str());
+        return td::Status::Error(
+            PSLICE() << "JVM Avata runtime close failed for " << tmpl
+                     << ": " << std::strerror(errno));
+    }
+    return tmpl;
+}
+
 td::Result<std::shared_ptr<const JvmComputeRuntime>>
 make_linked_jvm_avata_runtime(const JvmLinkedAvataRuntimeOptions& options) {
     if (options.boot_classpath.empty()) {
@@ -462,6 +580,41 @@ make_linked_jvm_avata_runtime(const JvmLinkedAvataRuntimeOptions& options) {
     auto state = std::make_shared<LinkedAvataRuntimeState>();
     state->options = options;
 
+    // Round-19: copy each boot classpath entry into a process-private
+    // chmod-0600 temp file and rewrite `options.boot_classpath` to
+    // point at the copies.  This closes the residual TOCTOU window
+    // round-18 left between the per-VM-creation re-hash and the
+    // JVM's `JNI_CreateJavaVM` mapping.  The copies live in $TMPDIR
+    // (default /tmp) and are unlinked on `LinkedAvataRuntimeState`
+    // destruction.
+    {
+        std::string remaining = options.boot_classpath;
+        std::string rewritten;
+        while (!remaining.empty()) {
+            auto colon = remaining.find(':');
+            std::string entry = (colon == std::string::npos)
+                                    ? remaining
+                                    : remaining.substr(0, colon);
+            remaining = (colon == std::string::npos)
+                            ? std::string{}
+                            : remaining.substr(colon + 1);
+            if (entry.empty()) {
+                continue;
+            }
+            TRY_RESULT(private_path,
+                       materialize_private_classpath_entry(entry));
+            state->private_classpath_files.push_back(private_path);
+            if (!rewritten.empty()) rewritten += ':';
+            rewritten += private_path;
+        }
+        if (rewritten.empty()) {
+            return td::Status::Error(
+                "JVM linked Avata runtime: boot classpath had no "
+                "non-empty entries");
+        }
+        state->options.boot_classpath = rewritten;
+    }
+
     // Validate the boot runtime eagerly so init_jvm_workchain() still fails
     // closed on an unusable rt.jar.  Execution VMs are cached per class_hash
     // so contracts sharing identical bytecode share one cached VM.
@@ -472,8 +625,12 @@ make_linked_jvm_avata_runtime(const JvmLinkedAvataRuntimeOptions& options) {
     // 85's `stdlib_hash` on every run_compute.  Round-18: the same
     // helper runs on every lazy VM creation in `get_vm_for_account`,
     // so a rt.jar swap between startup and first contract call is
-    // also caught.
-    TRY_RESULT(rt_jar_hash, hash_boot_classpath(options.boot_classpath));
+    // also caught.  Round-19: we now hash the private copies (which
+    // we control) rather than the original `options.boot_classpath`,
+    // so an attacker who modifies the original after startup cannot
+    // affect what the JVM loads.
+    TRY_RESULT(rt_jar_hash,
+               hash_boot_classpath(state->options.boot_classpath));
     state->rt_jar_hash = rt_jar_hash;
 
     std::shared_ptr<const JvmComputeRuntime> runtime =
