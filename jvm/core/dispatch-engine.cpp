@@ -67,10 +67,12 @@ block::WorkchainComputeOutput skipped_output(int skip_reason,
 // rejects (sk_no_gas / sk_bad_state from decode/binding gates)
 // continue to use `skipped_output` with zero fees because no
 // resolver work happened there.
-block::WorkchainComputeOutput skipped_output_billed(int skip_reason,
-                                                     std::string vm_log,
-                                                     const JvmConfig& config,
-                                                     bool out_of_gas = false) {
+block::WorkchainComputeOutput skipped_output_billed(
+    int skip_reason,
+    std::string vm_log,
+    const JvmConfig& config,
+    std::uint64_t gas_used = kJvmAdmissionGasFloor,
+    bool out_of_gas = false) {
     block::WorkchainComputeOutput out;
     out.completed = true;
     // accepted=true is required for the host's round-30 charging
@@ -83,9 +85,15 @@ block::WorkchainComputeOutput skipped_output_billed(int skip_reason,
     out.accepted = true;
     out.skip_reason = skip_reason;
     out.out_of_gas = out_of_gas;
-    out.gas_used = kJvmAdmissionGasFloor;
-    out.gas_fees = td::make_refint(config.gas_price)
-                   * kJvmAdmissionGasFloor;
+    // Round-38 fix: bill `max(invocation.gas_used, floor)` on
+    // output-builder rejects, not just the floor.  The runtime
+    // executed real work; under-billing lets a contract near
+    // max_storage_cells burn most of max_gas_per_tx then trigger an
+    // output rejection (e.g., one slot over cap) and pay only the
+    // floor.
+    out.gas_used = std::max<std::uint64_t>(gas_used,
+                                            kJvmAdmissionGasFloor);
+    out.gas_fees = td::make_refint(config.gas_price) * out.gas_used;
     out.vm_log = std::move(vm_log);
     return out;
 }
@@ -469,24 +477,29 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             // the account must pay for it even though the call did
             // not commit.  Without this billing, a malicious caller
             // could repeatedly trigger malformed args / bad manifest
-            // resolution and consume validator CPU for free.
+            // resolution and consume validator CPU for free.  The
+            // runtime never produced a JvmAvataInvocationResult, so
+            // we bill the floor only.
             return skipped_output_billed(
                 block::ComputePhase::sk_bad_state,
                 "JVM runtime invocation failed",
                 cfg->config);
         }
+        auto invocation = invocation_res.move_as_ok();
         // Round-33 fix: build_jvm_workchain_output can also return
         // td::Status::Error — most notably when the committed
         // storage_root exceeds ConfigParam-85's max_storage_cells
         // (round-12).  That's a user-controlled condition (a contract
         // can write distinct slots until the cap), so the error must
         // not propagate up to prepare_compute_phase as fatal -669.
-        // Convert to sk_bad_state and bill the admission floor —
-        // execution did happen and produced state, even if the host
-        // rejects it (round-37).
+        // Convert to sk_bad_state and bill the actual gas the
+        // runtime used (round-38) — pre-fix this billed only the
+        // admission floor, letting a contract near max_storage_cells
+        // burn most of max_gas_per_tx, write one extra slot to
+        // trigger output-builder rejection, and pay only the floor.
+        const std::uint64_t invocation_gas_used = invocation.gas_used;
         auto output_res = build_jvm_workchain_output(
-            cfg->config, state, effective_gas_limit,
-            invocation_res.move_as_ok());
+            cfg->config, state, effective_gas_limit, std::move(invocation));
         if (output_res.is_error()) {
             LOG(DEBUG)
                 << "JVM output builder returned error "
@@ -495,7 +508,8 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             return skipped_output_billed(
                 block::ComputePhase::sk_bad_state,
                 "JVM output builder failed",
-                cfg->config);
+                cfg->config,
+                invocation_gas_used);
         }
         return output_res.move_as_ok();
     }
