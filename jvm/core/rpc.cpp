@@ -1008,6 +1008,8 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
         // Round 67 LOW fix: pre-compute `arg_bytes` so the
         // runtime-error branch can bill the same way consensus
         // does.  Mirrors round 66's dispatch-engine pre-compute.
+        // Round 68 MEDIUM fix: also capture the partial-walked
+        // count when peek errors mid-chain.
         std::uint64_t error_path_arg_bytes = 0;
         {
             auto call_descriptor_res =
@@ -1015,11 +1017,11 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                     vm::CellSlice{*input.inbound_body});
             if (call_descriptor_res.is_ok()
                 && call_descriptor_res.ok().args.not_null()) {
+                std::uint64_t partial_walked = 0;
                 auto bytes_res = peek_jvm_args_total_bytes(
-                    call_descriptor_res.ok().args);
-                if (bytes_res.is_ok()) {
-                    error_path_arg_bytes = bytes_res.ok();
-                }
+                    call_descriptor_res.ok().args, &partial_walked);
+                error_path_arg_bytes =
+                    bytes_res.is_ok() ? bytes_res.ok() : partial_walked;
             }
         }
         auto invocation_result = runtime->run_contract(

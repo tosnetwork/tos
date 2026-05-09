@@ -530,16 +530,30 @@ td::Result<std::vector<JvmArgType>> peek_jvm_args_types(
     }
 }
 
-td::Result<std::uint64_t> peek_jvm_args_total_bytes(td::Ref<vm::Cell> root) {
+td::Result<std::uint64_t> peek_jvm_args_total_bytes(
+    td::Ref<vm::Cell> root,
+    std::uint64_t* partial_walked_on_error) {
+    // Round 68 MEDIUM fix: track the running byte total in a single
+    // local; on every error return path, if `partial_walked_on_error`
+    // is non-null, write the running count so callers can bill the
+    // bytes the real decoder would have already memcpy'd before
+    // failing at the same point.
+    std::uint64_t total = 0;
+    const auto fail = [&](td::Slice msg) -> td::Status {
+        if (partial_walked_on_error != nullptr) {
+            *partial_walked_on_error = total;
+        }
+        return td::Status::Error(msg.str());
+    };
     if (root.is_null()) {
-        return td::Status::Error("JVM args root is null");
+        return fail("JVM args root is null");
     }
 
     try {
         bool special = false;
         auto cs = vm::load_cell_slice_special(root, special);
         if (special) {
-            return td::Status::Error("JVM args root is special");
+            return fail("JVM args root is special");
         }
         std::uint32_t magic = 0;
         unsigned count = 0;
@@ -548,38 +562,43 @@ td::Result<std::uint64_t> peek_jvm_args_total_bytes(td::Ref<vm::Cell> root) {
             !fetch_u8(cs, schema_version) ||
             schema_version != kJvmArgsSchemaVersion ||
             !cs.fetch_uint_to(8, count)) {
-            return td::Status::Error("JVM args root is malformed");
+            return fail("JVM args root is malformed");
         }
         if (count > kJvmArgsMaxCount) {
-            return td::Status::Error("JVM args have too many values");
+            return fail("JVM args have too many values");
         }
         if (count == 0) {
             return std::uint64_t{0};
         }
         if (cs.size() != 0 || cs.size_refs() != 1) {
-            return td::Status::Error("JVM args root has malformed refs");
+            return fail("JVM args root has malformed refs");
         }
-        std::uint64_t total = 0;
+        std::uint64_t local_total = 0;
         auto node = cs.fetch_ref();
         for (unsigned i = 0; i < count; ++i) {
+            // Re-sync `total` to `local_total` at each loop iteration
+            // so the `fail()` helper has the up-to-date partial when
+            // it captures it.  We also write back at the end of each
+            // arg's chunk walk.
+            total = local_total;
             if (node.is_null()) {
-                return td::Status::Error("JVM args node is null");
+                return fail("JVM args node is null");
             }
             bool node_special = false;
             auto node_cs = vm::load_cell_slice_special(node, node_special);
             if (node_special) {
-                return td::Status::Error("JVM args node is special");
+                return fail("JVM args node is special");
             }
             std::uint8_t type = 0;
             unsigned has_next = 0;
             if (!fetch_u8(node_cs, type) ||
                 !node_cs.fetch_uint_to(1, has_next) || has_next > 1) {
-                return td::Status::Error("JVM args node is truncated");
+                return fail("JVM args node is truncated");
             }
             const unsigned expected_refs = 1 + has_next;
             if (node_cs.size() != 0 ||
                 node_cs.size_refs() != expected_refs) {
-                return td::Status::Error("JVM args node has malformed refs");
+                return fail("JVM args node has malformed refs");
             }
             td::Ref<vm::Cell> next;
             if (has_next != 0) {
@@ -587,7 +606,7 @@ td::Result<std::uint64_t> peek_jvm_args_total_bytes(td::Ref<vm::Cell> root) {
             }
             auto value_ref = node_cs.fetch_ref();
             if (!node_cs.empty_ext()) {
-                return td::Status::Error("JVM args node has trailing data");
+                return fail("JVM args node has trailing data");
             }
             // Walk the value's chunk chain summing byte counts only
             // (no byte memcpy).  Mirrors `decode_jvm_storage_value`'s
@@ -598,47 +617,45 @@ td::Result<std::uint64_t> peek_jvm_args_total_bytes(td::Ref<vm::Cell> root) {
                  !chain_done && chunks <=
                      kJvmStorageValueMaxBytes / kJvmStorageValueChunkBytes + 1;
                  ++chunks) {
+                // Update `total` continuously so a `fail()` call
+                // inside the chunk loop sees the latest count.
+                total = local_total;
                 if (chunk.is_null()) {
-                    return td::Status::Error(
-                        "JVM args value chain ended early");
+                    return fail("JVM args value chain ended early");
                 }
                 bool value_special = false;
                 auto value_cs =
                     vm::load_cell_slice_special(chunk, value_special);
                 if (value_special) {
-                    return td::Status::Error(
-                        "JVM args value cell is special");
+                    return fail("JVM args value cell is special");
                 }
                 const unsigned bits = value_cs.size();
                 if (bits < 1 || ((bits - 1) % 8) != 0) {
-                    return td::Status::Error(
-                        "JVM args value cell is not byte-aligned");
+                    return fail("JVM args value cell is not byte-aligned");
                 }
                 const unsigned byte_count = (bits - 1) / 8;
-                if (total >
+                if (local_total >
                     std::numeric_limits<std::uint64_t>::max() - byte_count) {
-                    total = std::numeric_limits<std::uint64_t>::max();
+                    local_total = std::numeric_limits<std::uint64_t>::max();
                 } else {
-                    total += byte_count;
+                    local_total += byte_count;
                 }
+                total = local_total;
                 // Skip the byte_count payload bytes without copying.
                 if (!value_cs.advance(byte_count * 8u)) {
-                    return td::Status::Error(
-                        "JVM args value cell payload truncated");
+                    return fail("JVM args value cell payload truncated");
                 }
                 unsigned has_value_next = 0;
                 if (!value_cs.fetch_uint_to(1, has_value_next)
                     || has_value_next > 1) {
-                    return td::Status::Error(
-                        "JVM args value cell is truncated");
+                    return fail("JVM args value cell is truncated");
                 }
                 if (has_value_next == 0) {
                     chain_done = true;
                     break;
                 }
                 if (value_cs.size() != 0 || value_cs.size_refs() != 1) {
-                    return td::Status::Error(
-                        "JVM args value continuation missing ref");
+                    return fail("JVM args value continuation missing ref");
                 }
                 // Round 67 LOW fix: enforce canonical 127-byte
                 // non-final chunks, mirroring round-57's
@@ -648,28 +665,27 @@ td::Result<std::uint64_t> peek_jvm_args_total_bytes(td::Ref<vm::Cell> root) {
                 // before the real decoder (which has the same gate)
                 // would have rejected on the first cell.
                 if (byte_count != kJvmStorageValueChunkBytes) {
-                    return td::Status::Error(
-                        "JVM args value has non-canonical "
-                        "continuation chunk size");
+                    return fail("JVM args value has non-canonical "
+                                 "continuation chunk size");
                 }
                 chunk = value_cs.fetch_ref();
             }
             if (!chain_done) {
-                return td::Status::Error(
-                    "JVM args value chain too deep");
+                return fail("JVM args value chain too deep");
             }
             node = std::move(next);
         }
+        total = local_total;
         if (node.not_null()) {
-            return td::Status::Error("JVM args have trailing nodes");
+            return fail("JVM args have trailing nodes");
         }
         return total;
     } catch (vm::VmError&) {
-        return td::Status::Error("JVM args byte peek hit vm::VmError");
+        return fail("JVM args byte peek hit vm::VmError");
     } catch (vm::VmVirtError&) {
-        return td::Status::Error("JVM args byte peek hit vm::VmVirtError");
+        return fail("JVM args byte peek hit vm::VmVirtError");
     } catch (...) {
-        return td::Status::Error("JVM args byte peek failed");
+        return fail("JVM args byte peek failed");
     }
 }
 

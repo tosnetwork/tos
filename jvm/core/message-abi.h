@@ -93,8 +93,18 @@ td::Result<std::vector<JvmArgType>> peek_jvm_args_types(
 /// the value-ref chunk chain summing `byte_count` per cell, the
 /// same way `decode_jvm_storage_value` accumulates `out.size()`,
 /// but avoids the byte fetch.
+///
+/// Round 68 MEDIUM fix: optional `partial_walked_on_error` output
+/// receives the running byte total when the walker errors out
+/// mid-chain (e.g. malformed continuation tail after `N` canonical
+/// 127-byte chunks).  The real `decode_jvm_storage_value` would
+/// have already memcpy'd those `N * 127` bytes before failing on
+/// the same chunk, so callers should bill the partial total
+/// instead of `0` to avoid a free-CPU loop on attacker-crafted
+/// malformed args.
 td::Result<std::uint64_t> peek_jvm_args_total_bytes(
-    td::Ref<vm::Cell> root);
+    td::Ref<vm::Cell> root,
+    std::uint64_t* partial_walked_on_error = nullptr);
 
 td::Result<std::vector<JvmArgType>> parse_jvm_method_argument_types(
     const std::string& method_spec);

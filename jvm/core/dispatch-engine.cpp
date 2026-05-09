@@ -585,11 +585,17 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 parse_jvm_call_descriptor(input.inbound_body);
             if (call_descriptor_res.is_ok() &&
                 call_descriptor_res.ok().args.not_null()) {
+                // Round 68 MEDIUM fix: capture the partial walked
+                // count when the peek errors out mid-chain (e.g. a
+                // canonical 127-byte prefix followed by a malformed
+                // tail).  The real `decode_jvm_storage_value` will
+                // have already memcpy'd those prefix bytes before
+                // failing at the same point — bill them.
+                std::uint64_t partial_walked = 0;
                 auto bytes_res = peek_jvm_args_total_bytes(
-                    call_descriptor_res.ok().args);
-                if (bytes_res.is_ok()) {
-                    error_path_arg_bytes = bytes_res.ok();
-                }
+                    call_descriptor_res.ok().args, &partial_walked);
+                error_path_arg_bytes =
+                    bytes_res.is_ok() ? bytes_res.ok() : partial_walked;
             }
         }
         auto invocation_res = runtime_->run_contract(
