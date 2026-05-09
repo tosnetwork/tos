@@ -634,6 +634,20 @@ td::Result<std::uint64_t> peek_jvm_args_total_bytes(
                     return fail("JVM args value cell is not byte-aligned");
                 }
                 const unsigned byte_count = (bits - 1) / 8;
+                // Round 69 LOW fix: mirror the storage-value
+                // decoder's cap rejection BEFORE adding bytes.  The
+                // real `decode_jvm_storage_value` rejects on
+                // `out.size() + byte_count > kJvmStorageValueMaxBytes`
+                // without copying the offending chunk, so for the
+                // partial-walked count to match what the decoder
+                // would have memcpy'd, we apply the same gate here
+                // before incrementing `local_total`.  Pre-fix the
+                // peeker added `byte_count` first, then aborted on
+                // the next chunk, over-billing by up to ~127 bytes
+                // per arg vs. the actual decoder cost.
+                if (local_total + byte_count > kJvmStorageValueMaxBytes) {
+                    return fail("JVM args value exceeds maximum size");
+                }
                 if (local_total >
                     std::numeric_limits<std::uint64_t>::max() - byte_count) {
                     local_total = std::numeric_limits<std::uint64_t>::max();
