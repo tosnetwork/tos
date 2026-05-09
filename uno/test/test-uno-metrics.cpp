@@ -420,7 +420,10 @@ static void case_compute_phase_decode_error() {
     uint8_t rand_seed[32] = {0};
     bool ok = uw::run_compute_phase(
         cp, cs, /*gas_limit=*/1'000'000, state,
-        /*block_seqno=*/1, /*timestamp=*/0, rand_seed);
+        /*block_seqno=*/1, /*timestamp=*/0, rand_seed,
+        // Round 76 HIGH fix: pre-decode failure path doesn't touch
+        // gas_used, so balance is irrelevant — pass a large value.
+        td::make_refint(1ULL << 62));
     EXPECT_TRUE(ok, "run_compute_phase returned");
     EXPECT_TRUE(!cp.success, "decode error -> cp.success = false");
 

@@ -1597,7 +1597,8 @@ bool uno_run_compute_phase(
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]) {
+    const uint8_t rand_seed[32],
+    const td::RefInt256& balance_nanotomis) {
     // g_live must be non-null before any dereference. Null means
     // init_uno_workchain was never called, which is an infrastructure error,
     // not a valid compute skip.
@@ -1621,7 +1622,8 @@ bool uno_run_compute_phase(
     return run_compute_phase(
         cp, in_msg_body, gas_limit,
         *g_live,
-        block_seqno, timestamp, rand_seed);
+        block_seqno, timestamp, rand_seed,
+        balance_nanotomis);
 }
 
 // ---------------------------------------------------------------------------

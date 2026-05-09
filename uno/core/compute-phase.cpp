@@ -316,6 +316,37 @@ bool populate_serialization_failure_cp(block::ComputePhase& cp,
     return false;
 }
 
+// Round 76 HIGH fix: project gas_fees from gas_used and check against
+// the singleton balance.  Returns true when the balance can cover the
+// projected fees; on false the caller short-circuits and emits a
+// sk_no_gas / accepted=false cp without applying state mutations or
+// firing subscription side effects.
+//
+// Centralised so Transfer and MineUno paths share one canonical
+// affordability gate; the rate (`kUnoGasPriceNano`) lives next to
+// populate_reject_cp / populate_success_cp.
+bool affordable_or_reject(block::ComputePhase& cp,
+                          uint64_t gas_used,
+                          uint64_t gas_limit,
+                          const td::RefInt256& balance_nanotomis) {
+    if (gas_used == 0) {
+        return true;
+    }
+    const td::RefInt256 fees = td::make_refint(gas_used) * kUnoGasPriceNano;
+    if (balance_nanotomis.is_null() ||
+        td::cmp(balance_nanotomis, fees) < 0) {
+        cp.skip_reason = block::ComputePhase::sk_no_gas;
+        // Match the host's rejection shape: accepted=false, gas_used=0,
+        // gas_fees=0 so `apply_custom_compute_output` does not double-
+        // bill, and the collator's external-msg path returns -701.
+        populate_reject_cp(cp, VerifyResult::InsufficientFee, 0, gas_limit,
+                           /*accepted=*/false);
+        cp.vm_log = "uno: insufficient singleton balance for projected fees";
+        return false;
+    }
+    return true;
+}
+
 bool populate_success_cp(block::ComputePhase& cp,
                          UnoState& state,
                          uint64_t gas_used,
@@ -380,7 +411,8 @@ bool run_mine_uno_compute_phase(
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
     UnoState& state,
-    uint32_t  gen_utime) {
+    uint32_t  gen_utime,
+    const td::RefInt256& balance_nanotomis) {
 
     auto decoded = decode_mine_uno(in_msg_body);
     if (auto* err_ptr = std::get_if<MineUnoDecodeError>(&decoded)) {
@@ -396,6 +428,17 @@ bool run_mine_uno_compute_phase(
     }
     MineUno tx = std::move(std::get<MineUno>(decoded));
     const uint64_t gas_used = compute_gas_used_mine_uno(tx);
+
+    // Round 76 HIGH fix: pre-check the singleton balance BEFORE
+    // apply_mine_uno mutates state and BEFORE on_included_tx_from_compute
+    // fires subscription/output side effects.  When the host would
+    // later reset the cp to sk_no_gas, the side effects are
+    // unrecoverable from RPC consumers' point of view.
+    if (!affordable_or_reject(cp, gas_used, gas_limit, balance_nanotomis)) {
+        global_metrics_registry().inc_transfers_rejected(
+            RejectReason::InsufficientFee);
+        return true;
+    }
 
     VerifyResult vr = apply_mine_uno(state, tx, gen_utime);
     if (vr != VerifyResult::Ok) {
@@ -440,7 +483,8 @@ bool run_compute_phase(
     UnoState& state,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]) {
+    const uint8_t rand_seed[32],
+    const td::RefInt256& balance_nanotomis) {
     (void)rand_seed;
     (void)block_seqno;  // Uno uses state.current_block_seqno() for determinism.
 
@@ -470,7 +514,8 @@ bool run_compute_phase(
         return true;
     }
     if (disc == kTxKindMineUno) {
-        return run_mine_uno_compute_phase(cp, in_msg_body, gas_limit, state, gen_utime);
+        return run_mine_uno_compute_phase(cp, in_msg_body, gas_limit, state, gen_utime,
+                                          balance_nanotomis);
     }
     if (disc != kTransferVersion) {
         global_metrics_registry().inc_transfers_rejected(
@@ -510,6 +555,17 @@ bool run_compute_phase(
 
     Transfer tx = std::move(std::get<Transfer>(decoded));
     const uint64_t gas_used = compute_gas_used(tx);
+
+    // Round 76 HIGH fix: pre-check the singleton balance BEFORE
+    // verify_transfer (so an undercollateralised tx never reaches
+    // Plonky3 verification) and BEFORE apply_transfer (so we never
+    // fire on_included_tx_from_compute / stage_output_bytes side
+    // effects only to have the host roll the cp back to sk_no_gas).
+    if (!affordable_or_reject(cp, gas_used, gas_limit, balance_nanotomis)) {
+        global_metrics_registry().inc_transfers_rejected(
+            RejectReason::InsufficientFee);
+        return true;
+    }
 
     // --- Step 2: verify (no mutation) ---
     VerifyResult vr = verify_transfer(state, tx);

@@ -598,6 +598,36 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                     bytes_res.is_ok() ? bytes_res.ok() : partial_walked;
             }
         }
+        // Round 76 MEDIUM fix: pre-walk affordability gate.  The
+        // resolver inside `runtime_->run_contract` calls
+        // `decode_linked_invocation_args` which memcpys every typed
+        // `Bytes` arg payload (up to ~1 MiB each) BEFORE Avata's
+        // metered execution starts and BEFORE the round-61 arg-bytes
+        // post-charge runs.  If the projected billable work
+        // (`max(floor, arg_bytes)`) already exceeds the affordable
+        // cap, calling `run_contract` only burns validator CPU on
+        // payloads the account cannot pay for.  Reject upfront with
+        // `sk_no_gas` and bill the cap, mirroring the post-runtime
+        // round-62 cap reject.  Skip when error_path_arg_bytes is
+        // zero (no args / parse failure) so we still let the runtime
+        // surface the structural error.
+        if (error_path_arg_bytes > 0) {
+            const std::uint64_t pre_walk_billed =
+                std::max<std::uint64_t>(kJvmAdmissionGasFloor,
+                                        error_path_arg_bytes);
+            if (pre_walk_billed > effective_gas_limit) {
+                LOG(DEBUG)
+                    << "JVM arg bytes (" << error_path_arg_bytes
+                    << ") exceed affordable cap (" << effective_gas_limit
+                    << "); rejecting before resolver memcpy (sk_no_gas)";
+                return skipped_output_billed(
+                    block::ComputePhase::sk_no_gas,
+                    "JVM arg bytes exceed affordable gas cap",
+                    cfg->config, effective_gas_limit,
+                    /*out_of_gas=*/true,
+                    /*msg_state_used=*/input.msg_state_used);
+            }
+        }
         auto invocation_res = runtime_->run_contract(
             effective_input, context, cfg->config, state);
         if (invocation_res.is_error()) {

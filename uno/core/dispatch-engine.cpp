@@ -169,6 +169,19 @@ class UnoNativeEngine final : public block::WorkchainEngine {
         }
         block::ComputePhase cp{};
         vm::CellSlice body_cs{*input.inbound_body};
+        // Round 76 HIGH fix: forward the singleton-account balance into
+        // the compute phase so it can pre-reject txs whose Round-75
+        // gas_fees the singleton cannot afford.  Pre-fix, the compute
+        // phase happily applied a full Transfer + fired
+        // `on_included_tx_from_compute` side effects; the host then
+        // reset the cp to sk_no_gas because balance < cp.gas_fees,
+        // leaving in-memory g_live and the per-block outputs/tx-status
+        // index out of sync with canonical state until the next tx
+        // forced a `hydrate_from_cell_if_needed` resync.
+        const td::RefInt256 balance =
+            input.account_balance.tomis.not_null()
+                ? input.account_balance.tomis
+                : td::zero_refint();
         bool ok = uno_workchain::uno_run_compute_phase(
             cp,
             input.current_data,
@@ -176,7 +189,8 @@ class UnoNativeEngine final : public block::WorkchainEngine {
             input.gas_limit,
             context.block_seqno,
             context.now,
-            context.rand_seed.data());
+            context.rand_seed.data(),
+            balance);
         if (!ok) {
             return td::Status::Error("Uno compute phase failed");
         }

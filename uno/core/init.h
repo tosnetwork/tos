@@ -52,7 +52,12 @@ bool uno_run_compute_phase(
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]);
+    const uint8_t rand_seed[32],
+    // Round 76 HIGH fix: see the `run_compute_phase` declaration in
+    // compute-phase.h for the rationale.  Threaded through from the
+    // `UnoNativeEngine::run_compute` adapter so the compute phase can
+    // pre-reject txs whose fees the singleton cannot afford.
+    const td::RefInt256& balance_nanotomis);
 
 /// Access the global Uno state singleton. Created inside
 /// `init_uno_workchain`; owns the in-memory `UnoShardState` for this process.
