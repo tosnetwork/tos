@@ -3779,6 +3779,51 @@ TEST(JvmWorkchainCore, RpcCallContractRejectsAccountStateWithBadStdlibHash) {
   CHECK(!runtime->called);
 }
 
+TEST(JvmWorkchainCore, RpcCallContractRejectsAccountStateExceedingMaxClassBytes) {
+  // Round 10: RPC's local-simulation must mirror the consensus
+  // max_class_bytes gate (round-9 fix).  Without this, public
+  // full-nodes can be pushed into oversized class decode/load work
+  // for states that on-chain execution would skip with sk_bad_state.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.max_class_bytes = 32;  // small cap for this test
+  auto runtime = std::make_shared<MockJvmRuntime>();
+
+  JvmStorageValue oversized_class(cfg.max_class_bytes + 1, 0xab);
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(oversized_class);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x66 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(oversized_class);
+  state.storage_root = {};
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  // Use the address that the binding gate would compute for this
+  // (oversized) state, so the request reaches the new max_class_bytes
+  // gate (which sits AFTER the address-binding gate).
+  auto bound = derive_jvm_contract_address_from_state(
+      state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 1000;
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  CHECK(result.json.find("\"success\":false") != std::string::npos);
+  CHECK(result.json.find("max_class_bytes") != std::string::npos);
+  CHECK(!runtime->called);
+}
+
 // ---------------------------------------------------------------------------
 // Multi-contract per-account isolation with shared class
 // ---------------------------------------------------------------------------

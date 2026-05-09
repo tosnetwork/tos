@@ -2636,9 +2636,17 @@ void verifyCodeOpcodes(Thread* t, const uint8_t* code, unsigned length)
       case iload: case lload: case fload: case dload: case aload:
       case istore: case lstore: case fstore: case dstore: case astore:
       case ret:
+        // wide load/store/ret: 2-byte index operand.  Round 10 fix —
+        // pre-round-10 this advanced `ip` without `need()`, so a
+        // truncated `c4 15` (wide iload with missing operand) passed
+        // verification and the interpreter's codeReadInt16 then read
+        // out of bounds.
+        if (!need(ip, 2)) { throwNew(t, GcVerifyError::Type); return; }
         ip += 2;
         break;
       case iinc:
+        // wide iinc: 2-byte index + 2-byte signed increment.
+        if (!need(ip, 4)) { throwNew(t, GcVerifyError::Type); return; }
         ip += 4;
         break;
       default:

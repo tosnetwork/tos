@@ -632,6 +632,27 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                                + "\",\"localResult\":" + local_result_json + "}";
             return JvmRpcResult{json_rpc_ok(id, result), false};
         }
+        // Mirror the consensus max_class_bytes gate (round-9 fix in
+        // dispatch-engine.cpp): RPC simulation must reject states
+        // whose decoded class_bytes exceed the ConfigParam 85 cap so
+        // a full-node cannot be pushed into oversized class
+        // decode/load work that on-chain execution would skip with
+        // `sk_bad_state`.
+        if (config->max_class_bytes > 0 &&
+            previous_state.decoded_class_bytes_size >
+                config->max_class_bytes) {
+            local_result_json =
+                "{\"success\":false,\"outOfGas\":false,"
+                "\"outOfMemory\":false,\"gasUsed\":0,"
+                "\"vmLog\":\"accountStateBoc class_bytes exceeds "
+                "ConfigParam 85 max_class_bytes\","
+                "\"newStateBoc\":null}";
+            std::string result = "{\"callDescriptorBoc\":\"" + descriptor_boc_hex
+                               + "\",\"contractAddress\":\""
+                               + hex_encode(req.contract_address)
+                               + "\",\"localResult\":" + local_result_json + "}";
+            return JvmRpcResult{json_rpc_ok(id, result), false};
+        }
 
         auto invocation_result = runtime->run_contract(
             input, context, *config, previous_state);

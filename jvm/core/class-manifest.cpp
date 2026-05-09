@@ -3,6 +3,7 @@
 */
 #include "jvm/core/class-manifest.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "jvm/core/storage-cell-host.h"
@@ -123,12 +124,23 @@ td::Status validate_method_manifest_entries(
     }
     for (std::size_t i = 0; i < entries.size(); ++i) {
         TRY_STATUS(validate_method_manifest_entry(entries[i]));
-        for (std::size_t j = 0; j < i; ++j) {
-            if (entries[i].method_id == entries[j].method_id) {
-                return td::Status::Error(
-                    "JVM method manifest has duplicate method_id");
-            }
-        }
+    }
+    // Round 10: replaced the original O(n^2) nested-loop duplicate
+    // scan with an O(n log n) sort + linear pass.  At
+    // kJvmMethodManifestMaxEntries == 1024 the old loop did ~525k
+    // comparisons per parse; this drops the manifest pre-gas walk
+    // cost meaningfully and still rejects the same duplicate inputs.
+    // We sort indices instead of entries to avoid copying the
+    // potentially-large entry strings.
+    std::vector<std::uint32_t> ids;
+    ids.reserve(entries.size());
+    for (const auto& e : entries) {
+        ids.push_back(e.method_id);
+    }
+    std::sort(ids.begin(), ids.end());
+    if (std::adjacent_find(ids.begin(), ids.end()) != ids.end()) {
+        return td::Status::Error(
+            "JVM method manifest has duplicate method_id");
     }
     return td::Status::OK();
 }
