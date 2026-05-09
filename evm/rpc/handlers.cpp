@@ -3692,12 +3692,31 @@ static RpcResult handle_debug_get_raw_block(const std::string& params, const std
     silkworm::Block sw_block;
     sw_block.header = build_silkworm_header(blk);
     sw_block.transactions.reserve(blk.transaction_hashes.size());
+    // Round 87 LOW fix: when any stored tx fails to decode (pre-
+    // round-86 stored data with trailing bytes the new gate
+    // rejects, missing tx, etc.), return null instead of
+    // silently dropping the tx and serving a raw-block body
+    // whose tx count diverges from blk.transaction_hashes.
+    // Pre-fix `debug_getRawBlock` quietly produced a body with
+    // fewer transactions than the block claims; downstream
+    // tooling that re-encodes-then-hashes the body would see a
+    // mismatch with the stored block hash.
+    bool any_decode_failed = false;
     for (const auto& th : blk.transaction_hashes) {
         auto stored = global_evm_state().get_transaction_copy(th);
-        if (!stored) continue;
+        if (!stored) {
+            any_decode_failed = true;
+            break;
+        }
         auto decoded = decode_stored_tx_rlp(*stored);
-        if (!decoded) continue;
+        if (!decoded) {
+            any_decode_failed = true;
+            break;
+        }
         sw_block.transactions.push_back(std::move(*decoded));
+    }
+    if (any_decode_failed) {
+        return {make_result(id, "null"), false};
     }
     // ommers: empty (post-merge), already default-empty.
     // withdrawals: empty list (Shanghai+) — present so the BlockBody RLP

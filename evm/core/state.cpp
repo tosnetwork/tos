@@ -325,6 +325,11 @@ void EvmState::store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
     evict_oldest_log_blocks();
 }
 
+void EvmState::reset_block_logs(uint64_t block_number) {
+    std::unique_lock lock(mutex_);
+    block_logs_.erase(block_number);
+}
+
 static bool matches_address(const silkworm::Log& log,
                              const std::vector<evmc::address>& addresses) {
     if (addresses.empty()) return true;

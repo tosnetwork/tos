@@ -259,6 +259,30 @@ void clear_all_rpc_block_indexing_incomplete() noexcept {
 void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     auto& state = global_evm_state();
 
+    // Round 87 MEDIUM fix: when this side-effect record carries a
+    // block summary (fx.has_block) and the currently-stored block
+    // at this height has a DIFFERENT hash, we are re-running the
+    // post-accept path for a same-height rewrite.  The orthogonal
+    // per-block logs index would otherwise have stale entries from
+    // the prior rewrite — `store_block` erases the hash → number
+    // mapping but `store_logs` (called BEFORE `store_block` in
+    // this function) would simply append the new logs on top.
+    // Drop the stale logs for that height before re-processing.
+    // The block_logs_[N] vector is rebuilt as the rewrite's
+    // subsequent txs land via store_logs, and `apply_stashed_side_
+    // effects_for_messages` applies a block's txs in tx-index
+    // order so the has_block tx is processed first.
+    if (fx.has_block) {
+        auto existing_block = state.get_block_copy(fx.block.number);
+        // get_block_copy returns a default-constructed StoredBlock
+        // (hash=0) when missing.  Treat the all-zero hash as "no
+        // prior block at this height" rather than a rewrite.
+        if (existing_block.hash != evmc::bytes32{} &&
+            existing_block.hash != fx.block.hash) {
+            state.reset_block_logs(fx.block.number);
+        }
+    }
+
     // Idempotency dedupe: a node that runs both collator and validator
     // roles for the same block reaches this seam twice (once per role).
     // Snapshot compute is pure, so the second apply would write
@@ -281,8 +305,34 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     if (auto existing = state.get_receipt_copy(fx.tx_hash);
         existing.has_value() &&
         existing->block_number == fx.receipt.block_number) {
-        clear_rpc_indexing_incomplete(fx.tx_hash);
-        return;
+        // Round 87 MEDIUM fix: extend the dedup gate so a same-
+        // height rewrite (same tx_hash, same block_number, but
+        // different block hash) falls through to re-run the
+        // block-installation path.  Pre-fix this branch returned
+        // before `state.store_block(fx.block)` at line 379, so
+        // `eth_getBlockByNumber(N)` kept serving the OLD hash and
+        // `eth_getBlockByHash(new_hash)` returned null even though
+        // consensus had accepted the rewrite.  When fx carries a
+        // block (fx.has_block == true) compare against the
+        // currently-stored block at that height; only skip when
+        // the hash is identical.  Mid-block txs (no block context
+        // in fx) keep the prior idempotent skip semantics.
+        bool block_hash_matches = true;
+        if (fx.has_block) {
+            auto existing_block = state.get_block_copy(fx.block.number);
+            // get_block_copy returns a default-constructed
+            // StoredBlock (hash=0) when missing, which compares
+            // unequal to any real fx.block.hash and correctly
+            // forces the fall-through.
+            block_hash_matches = (existing_block.hash == fx.block.hash);
+        }
+        if (block_hash_matches) {
+            clear_rpc_indexing_incomplete(fx.tx_hash);
+            return;
+        }
+        // Fall through: same-height rewrite needs the receipt /
+        // transaction / block records refreshed under the new
+        // hash so the round-86 erase-old-hash path runs.
     }
     clear_rpc_indexing_incomplete(fx.tx_hash);
 
