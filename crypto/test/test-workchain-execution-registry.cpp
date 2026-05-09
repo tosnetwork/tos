@@ -5070,6 +5070,71 @@ TEST(JvmWorkchainCore, RpcCallContractRuntimeErrorBillsAdmissionFloor) {
   CHECK(result.json.find("synthetic resolver failure") != std::string::npos);
 }
 
+TEST(JvmWorkchainCore, RpcCallContractEscapesRuntimeErrorVmLog) {
+  // Round 52 LOW fix: a runtime error message containing `"`, `\`,
+  // or control characters could close the `vmLog` JSON field early
+  // and inject sibling fields (e.g. a forged `newStateBoc`) into
+  // the response.  Round 45 added a `mock_runtime_error` knob to
+  // the mock; we feed an injection attempt and verify the resulting
+  // `vmLog` is escaped, not raw.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  // Attempt to break out of the vmLog string and inject a forged
+  // `newStateBoc` field.  Pre-fix this concatenated raw, breaking
+  // the JSON.
+  runtime->mock_runtime_error =
+      std::string("oops\",\"newStateBoc\":\"0xdead");
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x52};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x21 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x43 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  auto bound = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 2000;
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  // Pre-fix the raw concat would have produced
+  //   "vmLog":"runtime error: oops","newStateBoc":"0xdead",...
+  // (closing the vmLog string early and injecting a forged
+  // `newStateBoc` field).  Post-fix the closing quote is escaped:
+  //   "vmLog":"runtime error: oops\",\"newStateBoc\":\"0xdead",...
+  // So the un-escaped injection substring `oops","newStateBoc":"`
+  // MUST NOT appear; the escaped form `oops\",\"newStateBoc\":\"`
+  // SHOULD appear.
+  CHECK(result.json.find("oops\",\"newStateBoc\":\"0xdead") ==
+        std::string::npos);
+  CHECK(result.json.find("oops\\\",\\\"newStateBoc\\\":\\\"0xdead") !=
+        std::string::npos);
+  // The canonical localResult `"newStateBoc":null` MUST still appear
+  // (the runtime-error branch always emits it).  Combined with the
+  // first assertion, this proves the only un-escaped `newStateBoc`
+  // is the legitimate one.
+  CHECK(result.json.find("\"newStateBoc\":null") != std::string::npos);
+}
+
 TEST(JvmWorkchainCore, RpcCallContractMirrorsConsensusWalkGasCap) {
   // Round 41 MEDIUM fix: handle_jvm_call_contract must mirror the
   // consensus round-39 storage-walk gas billing AND the round-40

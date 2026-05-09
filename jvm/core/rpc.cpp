@@ -1008,11 +1008,20 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
             // ..., kJvmAdmissionGasFloor)` (dispatch-engine.cpp round 37);
             // pre-fix RPC reported `gasUsed:0` for the same condition,
             // so localResult under-reported the on-chain charge.
+            //
+            // Round 52 LOW fix: escape the runtime error message via
+            // `json_escape_string` before embedding it in the
+            // localResult JSON.  Pre-fix the raw `error().message()`
+            // text was concatenated into `vmLog` directly, so a
+            // message containing `"`, `\`, or any control character
+            // could close the field early and inject sibling fields
+            // (e.g. a forged `newStateBoc`) into the response object.
             local_result_json = "{\"success\":false,\"outOfGas\":false,"
                                 "\"outOfMemory\":false,\"gasUsed\":"
                                 + std::to_string(kJvmAdmissionGasFloor)
                                 + ",\"vmLog\":\"runtime error: "
-                                + invocation_result.error().message().str()
+                                + json_escape_string(
+                                    invocation_result.error().message().str())
                                 + "\",\"newStateBoc\":null}";
         } else {
             auto inv = invocation_result.move_as_ok();
@@ -1143,12 +1152,19 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                     output_ok ? output.ok().gas_used
                               : std::max<std::uint64_t>(
                                     inv.gas_used, kJvmAdmissionGasFloor);
+                // Round 52 LOW fix: escape `vm_log` before embedding
+                // in the localResult JSON.  The string can come from
+                // `output.ok().vm_log` (engine-controlled, but built
+                // from string literals today) or from one of the
+                // inv.out_of_* fallback messages (also literal).
+                // Defensive escaping covers any future evolution
+                // that lets contract input flow into vm_log.
                 local_result_json = std::string("{\"success\":") +
                     (effective_success ? "true" : "false") +
                     ",\"outOfGas\":" + (inv.out_of_gas ? "true" : "false") +
                     ",\"outOfMemory\":" + (inv.out_of_memory ? "true" : "false") +
                     ",\"gasUsed\":" + std::to_string(reported_gas_used) +
-                    ",\"vmLog\":\"" + vm_log + "\"" +
+                    ",\"vmLog\":\"" + json_escape_string(vm_log) + "\"" +
                     ",\"newStateBoc\":" + new_state_hex + "}";
             }
         }
