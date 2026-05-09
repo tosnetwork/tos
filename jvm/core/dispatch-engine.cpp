@@ -526,6 +526,28 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 } else {
                     invocation.gas_used += walk_gas;
                 }
+                // Round-40 fix: cap the post-walk gas at
+                // `effective_gas_limit`.  Without this, a contract
+                // can fund itself for exactly `runtime_gas * gas_price`,
+                // execute that much, then mutate storage so the
+                // round-39 walk pushes `invocation.gas_used` above
+                // the limit.  The engine reports `gas_fees` exceeding
+                // balance, the host's round-30 charging block converts
+                // the call to sk_no_gas with `gas_fees = 0`, and no
+                // state commits — the contract repeats the work for
+                // free.  We cap to `effective_gas_limit` and treat
+                // the overflow as `sk_no_gas` with the cap as gas_used,
+                // so the host bills exactly the affordable amount.
+                if (invocation.gas_used > effective_gas_limit) {
+                    LOG(DEBUG) << "JVM storage walk pushed gas_used past "
+                                  "the affordable cap; billing the cap "
+                                  "and rejecting (sk_no_gas)";
+                    return skipped_output_billed(
+                        block::ComputePhase::sk_no_gas,
+                        "JVM storage walk gas exceeded affordable cap",
+                        cfg->config, effective_gas_limit,
+                        /*out_of_gas=*/true);
+                }
                 if (stat_result.is_error()) {
                     LOG(DEBUG) << "JVM storage walk hit max_storage_cells "
                                   "(treated as sk_bad_state, billing "

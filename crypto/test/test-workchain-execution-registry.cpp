@@ -773,8 +773,10 @@ class MockJvmRuntime final : public jvm_workchain::JvmComputeRuntime {
     called = true;
     CHECK(context.workchain_id == 3);
     // Round-35: tests pass gas_limit=2000 (above the 1024 admission
-    // floor enforced in dispatch-engine.cpp pre-runtime).
-    CHECK(input.gas_limit == 2000);
+    // floor enforced in dispatch-engine.cpp pre-runtime).  Round-40
+    // regression tests override this via `mock_expected_gas_limit`
+    // because the engine's affordability cap can shrink gas_limit.
+    CHECK(input.gas_limit == mock_expected_gas_limit.value_or(2000));
     CHECK(config.chain_id == 85);
     CHECK(previous_state.stdlib_hash == config.stdlib_hash);
     CHECK(previous_state.class_bytes.not_null());
@@ -788,7 +790,7 @@ class MockJvmRuntime final : public jvm_workchain::JvmComputeRuntime {
     JvmAvataInvocationResult result;
     result.invocation_status = 0;
     result.success = true;
-    result.gas_used = 123;
+    result.gas_used = mock_gas_used.value_or(123);
     result.gas_remaining = input.gas_limit - result.gas_used;
     result.memory_used = 456;
     result.storage_root = storage.root_cell();
@@ -798,6 +800,14 @@ class MockJvmRuntime final : public jvm_workchain::JvmComputeRuntime {
   }
 
   mutable bool called{false};
+  // Round-40 regression: optional override of the expected
+  // `input.gas_limit` value asserted above; defaults to 2000 to
+  // preserve existing-test behavior.
+  mutable std::optional<std::uint64_t> mock_expected_gas_limit;
+  // Optional override of the runtime-reported `gas_used`; defaults
+  // to 123.  Used to drive the post-walk gas past the affordability
+  // cap (Round-40 regression).
+  mutable std::optional<std::uint64_t> mock_gas_used;
 };
 
 }  // namespace
@@ -2075,6 +2085,116 @@ TEST(WorkchainExecutionRegistry, JvmEngineDispatchesAccountStateToRuntime) {
   auto seed_loaded = decoded_storage.load(seed_slot).move_as_ok();
   CHECK(seed_loaded.has_value());
   CHECK(*seed_loaded == (JvmStorageValue{0x01}));
+}
+
+TEST(WorkchainExecutionRegistry, JvmEngineCapsWalkGasOverflowingAffordableLimit) {
+  // Round-40 fix regression.  The round-39 storage-walk gas billing
+  // (`invocation.gas_used += stat.cells * 1`) can push the runtime's
+  // post-walk gas above `effective_gas_limit` — the affordability cap
+  // computed as `min(input.gas_limit, max_gas_per_tx, balance/gas_price)`.
+  // Pre-fix outcomes:
+  //   1. `build_jvm_workchain_output` rejected with "gas_used > gas_limit",
+  //      OR
+  //   2. the host's round-30 charging block saw `gas_fees > balance`,
+  //      converted the call to `sk_no_gas` with `gas_fees = 0`, and no
+  //      state committed — so the contract repeated runtime work plus
+  //      the validator-CPU walk for free.
+  // Round-40 caps the post-walk `gas_used` at `effective_gas_limit`
+  // and emits `skipped_output_billed(sk_no_gas, ..., cap, out_of_gas=true)`,
+  // billing exactly what the account can afford.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.gas_price = 1;  // 1 tomi per gas → balance = affordable gas budget
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  // Effective gas limit will be 2000 (= input.gas_limit, since balance
+  // 2000 / gas_price 1 == 2000 and max_gas_per_tx is large in the test
+  // config).  The mock will report runtime gas_used = 2000 (the entire
+  // budget), so any walk gas at all (>= 1) tips the total over the cap.
+  runtime->mock_expected_gas_limit = 2000;
+  runtime->mock_gas_used = 2000;
+  block::WorkchainExecutionRegistry registry;
+  register_jvm_workchain_engine(registry, runtime);
+  auto execution = registry.resolve(descriptor, *config).move_as_ok();
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x00, 0x40};
+  auto class_bytes_cell = encode_jvm_storage_value(class_bytes);
+
+  JvmMethodManifestEntry method_entry;
+  method_entry.method_id = 0x40404040;
+  method_entry.class_name = "ContractEntryPoint";
+  method_entry.method_name = "ok";
+  method_entry.method_spec = "()V";
+  auto manifest_root = encode_jvm_method_manifest({method_entry});
+
+  // Seed a few storage slots so the round-39 walk has cells to count.
+  // The mock writes one more slot, so storage_changed=true and walk runs.
+  JvmStorageCellHost initial_storage;
+  for (std::uint8_t i = 1; i <= 4; ++i) {
+    JvmStorageSlot slot{};
+    slot[0] = i;
+    CHECK(initial_storage.store(slot, JvmStorageValue{i, i, i}).is_ok());
+  }
+
+  JvmContractAccountState previous_state;
+  previous_state.stdlib_hash = cfg.stdlib_hash;
+  previous_state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < previous_state.address_commit.size(); ++i) {
+    previous_state.address_commit[i] = static_cast<std::uint8_t>(0x40 + i);
+  }
+  for (std::size_t i = 0; i < previous_state.deployer.size(); ++i) {
+    previous_state.deployer[i] = static_cast<std::uint8_t>(0x60 + i);
+  }
+  previous_state.class_bytes = class_bytes_cell;
+  previous_state.storage_root = initial_storage.root_cell();
+  previous_state.manifest_root = manifest_root;
+
+  block::WorkchainComputeInput input;
+  auto expected_addr = derive_jvm_contract_address_from_state(
+      previous_state.deployer, previous_state.address_commit,
+      previous_state.class_hash,
+      compute_jvm_manifest_root_hash(previous_state.manifest_root));
+  std::memcpy(input.account_addr.data(), expected_addr.data(), 32);
+  input.current_data = encode_jvm_contract_account_state(previous_state);
+  CHECK(input.current_data.not_null());
+  input.inbound_body = make_jvm_call_body(method_entry.method_id);
+  input.gas_limit = 2000;
+  // Balance covers exactly `runtime_gas * gas_price` (= 2000 * 1).
+  // The post-walk total (2000 + walk_gas) will exceed this cap.
+  input.account_balance =
+      block::CurrencyCollection(td::make_refint(2000));
+
+  block::WorkchainComputeContext context;
+  context.workchain_id = 3;
+  context.descriptor = descriptor;
+  context.engine_config = execution.engine_config;
+
+  auto output = execution.executor->run_compute(input, context).move_as_ok();
+  CHECK(runtime->called);
+  CHECK(output.completed);
+  // skipped_output_billed: accepted=true so the host actually debits
+  // the fees; committed=false so no state transition; engine_success
+  // false because the call was rejected.
+  CHECK(output.accepted);
+  CHECK(!output.committed);
+  CHECK(!output.engine_success);
+  CHECK(output.skip_reason == block::ComputePhase::sk_no_gas);
+  CHECK(output.out_of_gas);
+  // gas_used capped at effective_gas_limit (= 2000), NOT the runtime-
+  // reported 2000 + walk_gas.  Pre-fix, gas_used would have been
+  // 2000 + walk_gas, exceeding the limit and either bouncing through
+  // build_output's rejection or the host's gas_fees > balance branch
+  // (which billed zero).
+  CHECK(output.gas_used == 2000);
+  // gas_fees == cap * gas_price = 2000.  Pre-fix would have been zero
+  // (free runtime + walk work).
+  CHECK(output.gas_fees.not_null());
+  CHECK(td::cmp(output.gas_fees, td::make_refint(2000)) == 0);
+  // No state transition committed — new_data must be null/unset.
+  CHECK(output.new_data.is_null());
 }
 
 TEST(WorkchainExecutionRegistry, JvmEngineRejectsMalformedAccountState) {
