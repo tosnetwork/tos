@@ -167,11 +167,20 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 }
             }
         }
-        // After capping, gas_limit may be 0; the host's round-30
-        // charging block will then see gas_used=0, gas_fees=0, the
-        // engine returns no useful work, and the call ends up
-        // sk_no_gas via the normal "engine returned 0 useful gas"
-        // path.
+        // After capping, gas_limit may be 0 (balance < gas_price, so
+        // the account can't even pay one gas unit).  Short-circuit
+        // before invoking the runtime — execute_jvm_avata_transaction
+        // rejects gas_limit==0 with a td::Status::Error, which would
+        // propagate back through `run_compute` as a fatal collator
+        // error -669 (round-32 finding).  Return a skipped output
+        // with sk_no_gas so the host's round-30 charging block sees a
+        // clean reject and external messages map to graceful -701.
+        if (effective_gas_limit == 0) {
+            return skipped_output(
+                block::ComputePhase::sk_no_gas,
+                "JVM account balance cannot afford a single gas unit",
+                /*out_of_gas=*/true);
+        }
         if (parse_jvm_call_descriptor(input.inbound_body).is_error()) {
             return skipped_output(
                 block::ComputePhase::sk_bad_state,
@@ -375,11 +384,32 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // runtime so it never runs more gas than the account can pay.
         block::WorkchainComputeInput effective_input = input;
         effective_input.gas_limit = effective_gas_limit;
-        TRY_RESULT(invocation,
-                   runtime_->run_contract(effective_input, context,
-                                          cfg->config, state));
+        // Round-32 fix: convert user-controlled runtime errors into
+        // skipped compute outputs.  Pre-fix any `td::Status::Error`
+        // from `run_contract` (e.g., unknown method_id, typed ABI
+        // mismatch, malformed args, manifest resolution failure)
+        // propagated up through TRY_RESULT, then `prepare_compute_phase`
+        // returned false, then the collator mapped that to fatal
+        // error -669.  User-controlled inputs reaching that path is a
+        // liveness/DoS surface — the collator stops producing blocks
+        // on conditions a sender can trigger.  Treat all runtime
+        // errors as sk_bad_state.  `td::Status::Error` propagation is
+        // reserved for node-local invariant/config failures (e.g.,
+        // missing engine config), which we already handle explicitly
+        // earlier in this function.
+        auto invocation_res = runtime_->run_contract(
+            effective_input, context, cfg->config, state);
+        if (invocation_res.is_error()) {
+            LOG(DEBUG)
+                << "JVM runtime returned error (treated as sk_bad_state): "
+                << invocation_res.error().message();
+            return skipped_output(
+                block::ComputePhase::sk_bad_state,
+                "JVM runtime invocation failed");
+        }
         return build_jvm_workchain_output(
-            cfg->config, state, effective_gas_limit, invocation);
+            cfg->config, state, effective_gas_limit,
+            invocation_res.move_as_ok());
     }
 
 
