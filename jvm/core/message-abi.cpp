@@ -391,6 +391,26 @@ td::Result<JvmArgs> parse_jvm_args(td::Ref<vm::Cell> root) {
     }
 }
 
+// Round 65 MEDIUM fix: returns the canonical byte count for
+// fixed-width typed args (Bool/Int32/Int64/Address/Uint256/
+// Bytes32/Bytes4), or `std::nullopt` for variable-length types
+// (Bytes).  Used by `peek_jvm_args_types` to reject non-canonical
+// value cells (e.g. an Int32 arg whose value ref is a 1 MiB chunk
+// chain) before the full payload decode.
+std::optional<std::size_t> jvm_arg_fixed_byte_count(JvmArgType type) {
+    switch (type) {
+        case JvmArgType::Bool:    return 1;
+        case JvmArgType::Int32:   return 4;
+        case JvmArgType::Int64:   return 8;
+        case JvmArgType::Bytes:   return std::nullopt;
+        case JvmArgType::Address: return 36;
+        case JvmArgType::Uint256: return 32;
+        case JvmArgType::Bytes32: return 32;
+        case JvmArgType::Bytes4:  return 4;
+    }
+    return std::nullopt;
+}
+
 td::Result<std::vector<JvmArgType>> peek_jvm_args_types(
     td::Ref<vm::Cell> root) {
     if (root.is_null()) {
@@ -458,8 +478,40 @@ td::Result<std::vector<JvmArgType>> peek_jvm_args_types(
             if (has_next != 0) {
                 next = node_cs.fetch_ref();
             }
-            // Skip the value ref (we don't decode it here).
-            (void)node_cs.fetch_ref();
+            // Round 65 MEDIUM fix: peek the value ref's structural
+            // size for FIXED-WIDTH typed args (everything except
+            // `Bytes`).  Pre-fix the peek skipped the value ref
+            // entirely, so an attacker could send an `Int32` arg
+            // whose value ref points at a multi-MiB chunk chain;
+            // `parse_jvm_args` would memcpy the entire chain, then
+            // `validate_arg_value` would reject the wrong byte
+            // count, and dispatch billed only the admission floor.
+            // For canonical fixed-width values, the value cell is
+            // a single cell with `byte_count*8 + 1` bits (the +1 is
+            // the trailing has_next=0) and zero refs.  Reject any
+            // value cell that doesn't match that shape.
+            auto value_ref = node_cs.fetch_ref();
+            if (auto fixed = jvm_arg_fixed_byte_count(arg_type);
+                fixed.has_value()) {
+                if (value_ref.is_null()) {
+                    return td::Status::Error(
+                        "JVM args fixed-width value ref is null");
+                }
+                bool value_special = false;
+                auto value_cs =
+                    vm::load_cell_slice_special(value_ref, value_special);
+                if (value_special) {
+                    return td::Status::Error(
+                        "JVM args fixed-width value cell is special");
+                }
+                const unsigned expected_bits =
+                    static_cast<unsigned>(*fixed) * 8u + 1u;
+                if (value_cs.size() != expected_bits ||
+                    value_cs.size_refs() != 0) {
+                    return td::Status::Error(
+                        "JVM args fixed-width value has non-canonical size");
+                }
+            }
             if (!node_cs.empty_ext()) {
                 return td::Status::Error("JVM args node has trailing data");
             }
