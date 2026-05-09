@@ -609,9 +609,65 @@ td::Result<std::uint64_t> peek_jvm_args_total_bytes(
             if (!node_cs.empty_ext()) {
                 return fail("JVM args node has trailing data");
             }
-            // Walk the value's chunk chain summing byte counts only
-            // (no byte memcpy).  Mirrors `decode_jvm_storage_value`'s
-            // structural walk; bounded by `kJvmStorageValueMaxBytes`.
+            // Round 78 MEDIUM fix: mirror peek_jvm_args_types' cheap
+            // gates — validate `parse_arg_type(type)` and, for
+            // fixed-width types, require the canonical single-cell
+            // value shape (no chunk chain).  Pre-fix the peek walked
+            // a multi-MiB chunk chain attached to a fixed-width type
+            // (Int32, Address, ...) and reported the entire chain's
+            // byte count, so the round-76 pre-walk gate billed
+            // attacker payload bytes the resolver+decoder would
+            // never memcpy (decode_arg_node does memcpy then
+            // validate_arg_value rejects, but the round-64 path
+            // through peek_jvm_args_types in
+            // decode_linked_invocation_args rejects fixed-width
+            // shape mismatches BEFORE reaching parse_jvm_args).
+            // For fixed-width types, account exactly the canonical
+            // byte count (so over-billing tracks the work the
+            // resolver actually performs).
+            TRY_RESULT(arg_type, parse_arg_type(type));
+            if (auto fixed = jvm_arg_fixed_byte_count(arg_type);
+                fixed.has_value()) {
+                if (value_ref.is_null()) {
+                    return fail(
+                        "JVM args fixed-width value ref is null");
+                }
+                bool value_special = false;
+                auto value_cs =
+                    vm::load_cell_slice_special(value_ref, value_special);
+                if (value_special) {
+                    return fail(
+                        "JVM args fixed-width value cell is special");
+                }
+                const unsigned expected_bits =
+                    static_cast<unsigned>(*fixed) * 8u + 1u;
+                if (value_cs.size() != expected_bits ||
+                    value_cs.size_refs() != 0) {
+                    return fail(
+                        "JVM args fixed-width value has non-canonical size");
+                }
+                const std::uint64_t fixed_bytes =
+                    static_cast<std::uint64_t>(*fixed);
+                if (local_total >
+                    std::numeric_limits<std::uint64_t>::max() -
+                        fixed_bytes) {
+                    local_total =
+                        std::numeric_limits<std::uint64_t>::max();
+                } else {
+                    local_total += fixed_bytes;
+                }
+                total = local_total;
+                if (max_bytes_budget != 0 &&
+                    local_total > max_bytes_budget) {
+                    return fail("JVM args exceed peek byte budget");
+                }
+                node = std::move(next);
+                continue;
+            }
+            // Variable-length (Bytes) — walk the value's chunk chain
+            // summing byte counts only (no byte memcpy).  Mirrors
+            // `decode_jvm_storage_value`'s structural walk; bounded
+            // by `kJvmStorageValueMaxBytes`.
             //
             // Round 70 MEDIUM fix: track `value_byte_total` for THIS
             // value's chain separately from `local_total` (the

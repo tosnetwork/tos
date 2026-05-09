@@ -1046,11 +1046,17 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                 std::max<std::uint64_t>(kJvmAdmissionGasFloor,
                                         error_path_arg_bytes);
             if (pre_walk_billed > input.gas_limit) {
+                // Round 78 LOW fix: match the consensus vmLog
+                // exactly.  Pre-fix RPC prefixed the message with
+                // "runtime error: " while consensus (dispatch-
+                // engine.cpp:633) emits the bare phrase, so RPC
+                // simulation diverged from chain output on the
+                // pre-walk reject path.
                 local_result_json =
                     "{\"success\":false,\"outOfGas\":true,"
                     "\"outOfMemory\":false,\"gasUsed\":"
                     + std::to_string(input.gas_limit)
-                    + ",\"vmLog\":\"runtime error: JVM arg bytes exceed "
+                    + ",\"vmLog\":\"JVM arg bytes exceed "
                       "affordable gas cap\",\"newStateBoc\":null}";
                 pre_walk_gate_short_circuit = true;
             }
