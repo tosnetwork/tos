@@ -4338,6 +4338,74 @@ TEST(JvmWorkchainCore, RpcCallContractRejectsRuntimeJarMismatch) {
   CHECK(!runtime->called);
 }
 
+TEST(JvmWorkchainCore, RpcCallContractMirrorsConsensusWalkGasCap) {
+  // Round 41 MEDIUM fix: handle_jvm_call_contract must mirror the
+  // consensus round-39 storage-walk gas billing AND the round-40
+  // affordable-cap reject.  Pre-fix, a storage-mutating call whose
+  // runtime gas equals input.gas_limit would simulate `success=true`
+  // with `newStateBoc != null`, while consensus adds walk gas, sees
+  // the total exceed `effective_gas_limit`, and rejects with
+  // sk_no_gas — RPC told clients the tx would succeed when on-chain
+  // execution would burn the cap and discard state.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  // Make the mock consume the entire budget.  RPC has no balance,
+  // so the cap is just `input.gas_limit`.  Any walk gas at all (>= 1)
+  // tips the post-walk total over.
+  runtime->mock_expected_gas_limit = 2000;
+  runtime->mock_gas_used = 2000;
+
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x41};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x33 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x55 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+
+  // Seed the storage root so the walk has cells to count.  The mock
+  // writes one extra slot, triggering storage_changed=true.
+  JvmStorageCellHost initial_storage;
+  for (std::uint8_t i = 1; i <= 4; ++i) {
+    JvmStorageSlot slot{};
+    slot[0] = i;
+    CHECK(initial_storage.store(slot, JvmStorageValue{i, i, i}).is_ok());
+  }
+  state.storage_root = initial_storage.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  auto bound = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+
+  JvmCallContractRequest req;
+  std::memcpy(req.contract_address.data(), bound.data(), 32);
+  req.method_id = 0x42;
+  req.args = make_empty_action_list();
+  req.current_state = state_cell;
+  req.gas_limit = 2000;
+
+  auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
+  CHECK(!result.is_error);
+  // The runtime ran (the gates above passed), but the post-walk gas
+  // exceeded the cap and RPC must report failure with outOfGas=true,
+  // gasUsed=cap, newStateBoc=null — matching consensus.
+  CHECK(runtime->called);
+  CHECK(result.json.find("\"success\":false") != std::string::npos);
+  CHECK(result.json.find("\"outOfGas\":true") != std::string::npos);
+  CHECK(result.json.find("\"gasUsed\":2000") != std::string::npos);
+  CHECK(result.json.find("\"newStateBoc\":null") != std::string::npos);
+  CHECK(result.json.find("storage walk gas exceeded") != std::string::npos);
+}
+
 // ---------------------------------------------------------------------------
 // Multi-contract per-account isolation with shared class
 // ---------------------------------------------------------------------------

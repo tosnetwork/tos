@@ -502,7 +502,8 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // build_output takes invocation by const ref and we need to
         // read the walked-cell count back to dispatch-engine for
         // billing on either success or error.
-        constexpr std::uint64_t kJvmStorageWalkGasPerCell = 1;
+        // kJvmStorageWalkGasPerCell now lives in avata-execution.h so
+        // rpc.cpp's local-simulation can mirror this billing identically.
         if (cfg->config.max_storage_cells > 0
             && invocation.success
             && invocation.storage_root.not_null()) {

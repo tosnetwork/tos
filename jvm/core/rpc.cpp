@@ -717,42 +717,93 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                                 + invocation_result.error().message().str()
                                 + "\",\"newStateBoc\":null}";
         } else {
-            const auto& inv = invocation_result.ok();
-            auto output = build_jvm_workchain_output(
-                *config, previous_state, input.gas_limit, inv);
-
-            std::string new_state_hex = "null";
-            if (output.is_ok() && output.ok().new_data.not_null()) {
-                auto new_boc = vm::std_boc_serialize(output.ok().new_data, 0);
-                if (new_boc.is_ok()) {
-                    new_state_hex = "\"" + hex_encode(
-                        reinterpret_cast<const uint8_t*>(new_boc.ok().data()),
-                        new_boc.ok().size()) + "\"";
+            auto inv = invocation_result.move_as_ok();
+            // Round 41 MEDIUM fix: mirror the consensus round-39 storage
+            // walk gas billing AND round-40 affordable-cap reject in the
+            // RPC local-simulation.  Pre-fix, a storage-mutating call
+            // whose runtime gas equals `input.gas_limit` would simulate
+            // `success=true` with `newStateBoc != null`, while consensus
+            // adds walk gas, sees the total exceed `effective_gas_limit`,
+            // and rejects with sk_no_gas.  Public full-nodes therefore
+            // told clients a transaction would succeed when on-chain
+            // execution would burn the cap and discard state.
+            //
+            // RPC has no `account_balance` to derive an affordability
+            // cap, so the "effective gas limit" here is `input.gas_limit`
+            // (already capped to `max_gas_per_tx` above by the round-37
+            // mirror).  The walk + cap logic is otherwise identical to
+            // dispatch-engine.cpp (kJvmStorageWalkGasPerCell shared via
+            // avata-execution.h).
+            bool walk_cap_exceeded = false;
+            if (config->max_storage_cells > 0
+                && inv.success
+                && inv.storage_root.not_null()) {
+                const bool storage_changed =
+                    previous_state.storage_root.is_null()
+                    || inv.storage_root->get_hash()
+                           != previous_state.storage_root->get_hash();
+                if (storage_changed) {
+                    vm::CellStorageStat stat(static_cast<unsigned long long>(
+                        config->max_storage_cells));
+                    (void)stat.add_used_storage(inv.storage_root, true);
+                    const std::uint64_t walk_gas =
+                        stat.cells * kJvmStorageWalkGasPerCell;
+                    if (inv.gas_used >
+                        std::numeric_limits<std::uint64_t>::max() - walk_gas) {
+                        inv.gas_used =
+                            std::numeric_limits<std::uint64_t>::max();
+                    } else {
+                        inv.gas_used += walk_gas;
+                    }
+                    if (inv.gas_used > input.gas_limit) {
+                        walk_cap_exceeded = true;
+                    }
                 }
             }
-            const std::string vm_log = output.is_ok()
-                ? output.ok().vm_log
-                : inv.out_of_gas ? "JVM execution exhausted gas"
-                : inv.out_of_memory ? "JVM execution exhausted memory"
-                : "JVM execution failed";
 
-            // Round 14 MEDIUM fix: report `success=false` when
-            // `build_jvm_workchain_output` rejected the result (e.g.,
-            // max_storage_cells exceeded).  Pre-fix the RPC reflected
-            // `inv.success` directly, so a runtime-successful call
-            // whose committed storage exceeded the cap returned
-            // `success=true` with `newStateBoc=null` — RPC simulation
-            // diverged from on-chain consensus exactly on the cap that
-            // round 12 added.
-            const bool output_ok = output.is_ok();
-            const bool effective_success = inv.success && output_ok;
-            local_result_json = std::string("{\"success\":") +
-                (effective_success ? "true" : "false") +
-                ",\"outOfGas\":" + (inv.out_of_gas ? "true" : "false") +
-                ",\"outOfMemory\":" + (inv.out_of_memory ? "true" : "false") +
-                ",\"gasUsed\":" + std::to_string(inv.gas_used) +
-                ",\"vmLog\":\"" + vm_log + "\"" +
-                ",\"newStateBoc\":" + new_state_hex + "}";
+            if (walk_cap_exceeded) {
+                local_result_json = std::string("{\"success\":false,")
+                    + "\"outOfGas\":true,\"outOfMemory\":false,"
+                    + "\"gasUsed\":" + std::to_string(input.gas_limit) +
+                    ",\"vmLog\":\"JVM storage walk gas exceeded affordable "
+                    "cap\",\"newStateBoc\":null}";
+            } else {
+                auto output = build_jvm_workchain_output(
+                    *config, previous_state, input.gas_limit, inv);
+
+                std::string new_state_hex = "null";
+                if (output.is_ok() && output.ok().new_data.not_null()) {
+                    auto new_boc = vm::std_boc_serialize(output.ok().new_data, 0);
+                    if (new_boc.is_ok()) {
+                        new_state_hex = "\"" + hex_encode(
+                            reinterpret_cast<const uint8_t*>(new_boc.ok().data()),
+                            new_boc.ok().size()) + "\"";
+                    }
+                }
+                const std::string vm_log = output.is_ok()
+                    ? output.ok().vm_log
+                    : inv.out_of_gas ? "JVM execution exhausted gas"
+                    : inv.out_of_memory ? "JVM execution exhausted memory"
+                    : "JVM execution failed";
+
+                // Round 14 MEDIUM fix: report `success=false` when
+                // `build_jvm_workchain_output` rejected the result (e.g.,
+                // max_storage_cells exceeded).  Pre-fix the RPC reflected
+                // `inv.success` directly, so a runtime-successful call
+                // whose committed storage exceeded the cap returned
+                // `success=true` with `newStateBoc=null` — RPC simulation
+                // diverged from on-chain consensus exactly on the cap that
+                // round 12 added.
+                const bool output_ok = output.is_ok();
+                const bool effective_success = inv.success && output_ok;
+                local_result_json = std::string("{\"success\":") +
+                    (effective_success ? "true" : "false") +
+                    ",\"outOfGas\":" + (inv.out_of_gas ? "true" : "false") +
+                    ",\"outOfMemory\":" + (inv.out_of_memory ? "true" : "false") +
+                    ",\"gasUsed\":" + std::to_string(inv.gas_used) +
+                    ",\"vmLog\":\"" + vm_log + "\"" +
+                    ",\"newStateBoc\":" + new_state_hex + "}";
+            }
         }
     }
 

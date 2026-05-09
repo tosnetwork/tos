@@ -107,6 +107,15 @@ struct JvmAvataInvocationResult {
 // host's post-execution charging block discards the result.
 constexpr std::uint64_t kJvmAdmissionGasFloor = 1024;
 
+// Round-39: per-cell storage walk gas.  After the runtime reports
+// success, dispatch-engine charges this much gas for every unique
+// cell visited by the `max_storage_cells` walk so a contract near
+// the cap pays the validator-CPU cost of detecting overflow.
+// Round-40 caps the post-walk total at the affordability limit.
+// Shared between `dispatch-engine.cpp` (consensus) and `rpc.cpp`
+// (RPC local-simulation) so both paths bill identically.
+constexpr std::uint64_t kJvmStorageWalkGasPerCell = 1;
+
 td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
     void* avata_thread,
     const JvmConfig& config,
