@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -300,13 +301,32 @@ std::optional<JvmDeployContractRequest> parse_jvm_deploy_contract_request(
                         if (kv.second.type() != td::JsonValue::Type::Number) {
                             return std::nullopt;
                         }
-                        try {
-                            entry.method_id = static_cast<std::uint32_t>(
-                                std::stoul(
-                                    kv.second.get_number().str()));
-                        } catch (...) {
+                        // Strict uint32 parse: digits only, full token
+                        // consumed, fits in uint32_t.  std::stoul silently
+                        // accepts "-1" (becomes ULONG_MAX, casts to
+                        // UINT32_MAX), "1.5" / "1e2" (stops mid-token),
+                        // and "4294967296" (overflows uint32 → 0 after
+                        // cast).  None of those should produce a valid
+                        // method id.
+                        const auto num_str = kv.second.get_number().str();
+                        if (num_str.empty() ||
+                            num_str.size() > 10 /* UINT32_MAX has 10 digits */) {
                             return std::nullopt;
                         }
+                        std::uint64_t parsed = 0;
+                        for (char c : num_str) {
+                            if (c < '0' || c > '9') {
+                                return std::nullopt;
+                            }
+                            parsed = parsed * 10 +
+                                static_cast<std::uint64_t>(c - '0');
+                        }
+                        if (parsed >
+                            static_cast<std::uint64_t>(
+                                std::numeric_limits<std::uint32_t>::max())) {
+                            return std::nullopt;
+                        }
+                        entry.method_id = static_cast<std::uint32_t>(parsed);
                         found_method_id = true;
                     } else if (kv.first == td::Slice("className")) {
                         if (kv.second.type() != td::JsonValue::Type::String) {

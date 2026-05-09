@@ -2916,6 +2916,27 @@ TEST(JvmWorkchainCore, RpcDeployContractParsesAndValidates) {
   })";
   CHECK(!parse_jvm_deploy_contract_request(bad_manifest).has_value());
 
+  // methodId range / format validation (round-5 fix): values that
+  // std::stoul would silently truncate or wrap must be rejected.
+  auto with_bad_method_id = [](const char* method_id) {
+    std::string p = std::string(R"({
+      "classBytes": "0xcafebabe",
+      "className": "Foo",
+      "deployer": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "manifestEntries": [{"methodId":)") + method_id +
+        R"(,"className":"X","methodName":"y","methodSpec":"()V"}]
+    })";
+    return parse_jvm_deploy_contract_request(p);
+  };
+  CHECK(!with_bad_method_id("-1").has_value());           // negative
+  CHECK(!with_bad_method_id("1.5").has_value());          // decimal
+  CHECK(!with_bad_method_id("1e2").has_value());          // exponent
+  CHECK(!with_bad_method_id("4294967296").has_value());   // UINT32_MAX+1
+  CHECK(!with_bad_method_id("99999999999").has_value()); // huge
+  // Boundary cases that must succeed.
+  CHECK(with_bad_method_id("0").has_value());
+  CHECK(with_bad_method_id("4294967295").has_value());    // UINT32_MAX
+
   // manifestEntries with non-empty content must change the derived
   // contractAddress vs. the empty-manifest case (round-3/4 binding).
   auto cfg = make_test_jvm_config();
