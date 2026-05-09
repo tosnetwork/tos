@@ -718,7 +718,12 @@ bool jar_all_entries_stored(td::Slice bytes) {
         // header structurally before handing the file to Avata.
         const std::uint32_t comp_size_central = le32(p + off + 20);
         const std::uint32_t local_off = le32(p + off + 42);
-        if (local_off + 30u > n) {
+        // Round-28 fix: 32-bit additions of `local_off + 30u` can
+        // wrap when `local_off` is near UINT32_MAX, then the
+        // subsequent `p + local_off` dereferences out of bounds.
+        // Use subtraction-form bounds checks (no addition) before
+        // any pointer formation.
+        if (local_off > n || n - local_off < 30u) {
             return false;
         }
         if (le32(p + local_off) != 0x04034b50u) {
@@ -730,14 +735,23 @@ bool jar_all_entries_stored(td::Slice bytes) {
         }
         const std::uint16_t local_name_len = le16(p + local_off + 26);
         const std::uint16_t local_extra_len = le16(p + local_off + 28);
+        // 64-bit arithmetic for the cumulative local header span.
         const std::uint64_t local_header_total =
             static_cast<std::uint64_t>(local_off) + 30u +
             local_name_len + local_extra_len;
         if (local_header_total > n) {
             return false;
         }
+        // Round-28 fix: require local entry data to end before the
+        // CENTRAL DIRECTORY, not merely before the end of the
+        // archive.  Otherwise a malformed JAR can place compressed
+        // entry bytes that overlap the central-directory or EOCD
+        // span, producing a ZIP polyglot whose Avata-loaded data
+        // intersects metadata regions.  The canonical layout has
+        // locals strictly before the CD, the CD before EOCD.
         if (local_header_total
-                + static_cast<std::uint64_t>(comp_size_central) > n) {
+                + static_cast<std::uint64_t>(comp_size_central)
+            > cd_offset) {
             return false;
         }
         // Central directory must place its local header before the
