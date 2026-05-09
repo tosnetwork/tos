@@ -25,6 +25,22 @@ decode_evm_transaction(silkworm::ByteView raw_rlp) noexcept {
         return TxDecodeError{"RLP decode failed"};
     }
 
+    // Round 85 MEDIUM fix: enforce no trailing bytes after the
+    // canonical RLP body.  Silkworm's raw EIP-2718 typed branch
+    // delegates to `eip2718_decode(... Leftover::kAllow)`, so
+    // `0x02 || canonical_rlp || garbage` decoded as the same
+    // transaction.  Pre-fix, the same Ethereum tx hash had
+    // multiple distinct on-chain raw_rlp byte encodings, which
+    // yielded different TOS external message roots — bypassing
+    // root-based dedupe and producing RPC/raw-transaction
+    // poisoning where two cell trees committed the same
+    // canonical Ethereum transaction.  Legacy and string-wrapped
+    // typed paths already enforce this; the raw typed path was
+    // the gap.
+    if (!view.empty()) {
+        return TxDecodeError{"trailing bytes after RLP body"};
+    }
+
     // Recover sender from the ECDSA signature.
     auto sender_opt = txn.sender();
     if (!sender_opt.has_value()) {

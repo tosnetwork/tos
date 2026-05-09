@@ -1427,6 +1427,13 @@ try_derive_evm_tx_hash_from_message(const td::Ref<vm::Cell>& msg) noexcept {
     auto rc = silkworm::rlp::decode_transaction(
         view, txn, silkworm::rlp::Eip2718Wrapping::kBoth);
     if (!rc.has_value()) return std::nullopt;
+    // Round 85 MEDIUM fix: reject trailing bytes here too, mirroring
+    // decode_evm_transaction.  Pre-fix the post-accept hash derivation
+    // accepted `0x02 || canonical_rlp || garbage`, producing the same
+    // Ethereum tx hash for multiple TOS external messages (different
+    // cell-tree roots).  See evm/core/transaction.cpp for the full
+    // rationale.
+    if (!view.empty()) return std::nullopt;
 
     // Transaction::hash() = keccak256(rlp::encode(txn, wrap_eip2718=false)).
     // No sender recovery needed — decode populates everything the hash
