@@ -198,11 +198,27 @@ td::Result<JvmStorageValue> decode_jvm_storage_value(td::Ref<vm::Cell> root,
                 return td::Status::Error("JVM storage value cell is not byte-aligned");
             }
             const unsigned byte_count = (bits - 1) / 8;
+            // Round 55 MEDIUM fix: pre-Round-55 the bail-out check was
+            //   `out.size() > effective_cap - byte_count`
+            // which underflowed `effective_cap - byte_count` (size_t)
+            // to a huge value whenever `effective_cap < byte_count`,
+            // letting the decoder accept up to `byte_count` bytes
+            // even when the caller's cap was smaller than one chunk
+            // (max 127 bytes).  A `max_class_bytes = 64` config plus a
+            // single 65-byte chunk would silently fully decode +
+            // copy + sha256 the blob before the engine's later
+            // `decoded_class_bytes_size > max_class_bytes` rejection
+            // — reintroducing the unmetered work Round 54 was
+            // intended to avoid for sub-chunk caps.
+            //
+            // Use addition (out.size() + byte_count > cap) instead;
+            // both operands are bounded by kJvmStorageValueMaxBytes so
+            // there's no overflow risk in size_t.
             if (byte_count > kJvmStorageValueChunkBytes ||
-                out.size() > effective_cap - byte_count) {
-                // Round 54 MEDIUM fix: this branch now also fires when
-                // the running total would exceed the caller's tighter
-                // cap (e.g., `max_class_bytes` < kJvmStorageValueMaxBytes).
+                out.size() + byte_count > effective_cap) {
+                // Round 54 MEDIUM fix: this branch fires when the
+                // running total would exceed the caller's tighter cap
+                // (e.g., `max_class_bytes` < kJvmStorageValueMaxBytes).
                 // Bail BEFORE we copy the rest of the chunk, so an
                 // oversized payload only forces validator-CPU work
                 // proportional to chunks read up to the cap, not to the

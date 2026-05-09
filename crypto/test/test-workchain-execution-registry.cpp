@@ -1088,6 +1088,50 @@ TEST(JvmWorkchainCore, EncodeJvmStateInitCellPassesTlbValidation) {
   CHECK(decoded.class_hash == state.class_hash);
 }
 
+TEST(JvmWorkchainCore, DecodeJvmStorageValueRejectsSubChunkCap) {
+  // Round 55 MEDIUM fix: pre-Round-55 the bail-out check
+  //   `out.size() > effective_cap - byte_count`
+  // underflowed `size_t` whenever `effective_cap < byte_count`,
+  // letting the decoder accept up to one full 127-byte chunk even
+  // when the caller's cap was smaller.  A 65-byte payload with a
+  // 64-byte cap silently fully decoded.  Now uses additive form
+  // (`out.size() + byte_count > effective_cap`) which has no
+  // underflow and rejects correctly.
+  using namespace jvm_workchain;
+
+  // 65-byte payload encodes as a single 65-byte chunk.
+  JvmStorageValue v(65, 0xab);
+  auto root = encode_jvm_storage_value(v);
+  CHECK(root.not_null());
+
+  // Cap 64 bytes — must reject (was silently accepted pre-fix).
+  auto r64 = decode_jvm_storage_value(root, /*max_bytes=*/64);
+  CHECK(r64.is_error());
+
+  // Cap 65 bytes — must accept (exact boundary).
+  auto r65 = decode_jvm_storage_value(root, /*max_bytes=*/65);
+  CHECK(r65.is_ok());
+  CHECK(r65.ok().size() == 65);
+
+  // Cap 0 falls back to the legacy 1 MiB envelope cap (no extra
+  // restriction).
+  auto r0 = decode_jvm_storage_value(root, /*max_bytes=*/0);
+  CHECK(r0.is_ok());
+  CHECK(r0.ok().size() == 65);
+
+  // Many-chunk payload (300 bytes ≈ 3 chunks at 127 bytes each).
+  // Cap 127 bytes — must reject after the first chunk.
+  JvmStorageValue v300(300, 0xcd);
+  auto root300 = encode_jvm_storage_value(v300);
+  CHECK(root300.not_null());
+  auto r300_127 = decode_jvm_storage_value(root300, /*max_bytes=*/127);
+  CHECK(r300_127.is_error());
+  // Cap 300 bytes — must accept (exact boundary).
+  auto r300_300 = decode_jvm_storage_value(root300, /*max_bytes=*/300);
+  CHECK(r300_300.is_ok());
+  CHECK(r300_300.ok().size() == 300);
+}
+
 TEST(JvmWorkchainCore, DecodeContractAccountStateBailsOnOversizedClassBytes) {
   // Round 54 MEDIUM fix: when the caller forwards a tighter
   // `max_class_bytes` to `decode_jvm_contract_account_state`, an
@@ -4316,6 +4360,14 @@ TEST(JvmWorkchainCore, RpcCallContractRejectsAccountStateExceedingMaxClassBytes)
   // max_class_bytes gate (round-9 fix).  Without this, public
   // full-nodes can be pushed into oversized class decode/load work
   // for states that on-chain execution would skip with sk_bad_state.
+  //
+  // Round 54/55 MEDIUM fix: the rejection now happens INSIDE
+  // `decode_jvm_contract_account_state` (which forwards
+  // `cfg.max_class_bytes` to the storage-value walker that bails
+  // out before copying / hashing the oversized blob).  RPC's
+  // localResult therefore surfaces the JSON-RPC malformed-state
+  // error rather than the consensus-side "max_class_bytes"
+  // localResult message — both shapes prove the runtime never ran.
   using namespace jvm_workchain;
 
   auto cfg = make_test_jvm_config();
@@ -4353,9 +4405,13 @@ TEST(JvmWorkchainCore, RpcCallContractRejectsAccountStateExceedingMaxClassBytes)
   req.gas_limit = 1000;
 
   auto result = handle_jvm_call_contract(req, "1", &cfg, runtime.get());
-  CHECK(!result.is_error);
-  CHECK(result.json.find("\"success\":false") != std::string::npos);
-  CHECK(result.json.find("max_class_bytes") != std::string::npos);
+  // Round 54/55: the decoder rejects the oversized class up front,
+  // so this returns a JSON-RPC error (is_error=true) rather than a
+  // localResult.  The critical property is unchanged: the runtime
+  // must NOT have been invoked.
+  CHECK(result.is_error);
+  CHECK(result.json.find("malformed contract account state")
+        != std::string::npos);
   CHECK(!runtime->called);
 }
 

@@ -1282,7 +1282,19 @@ JvmRpcResult handle_jvm_get_contract_state(
             1024 * 1024;
         auto enum_status = storage.enumerate_slots(
             [&](const JvmStorageSlot& slot, const JvmStorageValue& value) {
-                if (slots_buf.size() > kSlotsResponseByteBudget) {
+                // Round 55 LOW fix: project the FULL appended size
+                // (key hex + value hex + envelope) BEFORE adding the
+                // slot, instead of checking `slots_buf.size()` after
+                // earlier appends.  Pre-fix a single 1 MiB value (~2
+                // MiB hex) could be appended on the first slot and
+                // blow past the budget while reporting
+                // `storageTruncated:false`.
+                const std::size_t projected = slots_buf.size()
+                    + (slot_count > 0 ? 1 : 0)              // comma
+                    + 9 /* {"key":" */ + slot.size() * 2
+                    + 11 /* ","value":" */ + value.size() * 2
+                    + 2 /* "} */;
+                if (projected > kSlotsResponseByteBudget) {
                     slots_truncated = true;
                     return false;
                 }
