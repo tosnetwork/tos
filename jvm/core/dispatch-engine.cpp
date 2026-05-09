@@ -22,6 +22,7 @@
 #include "jvm/core/message-abi.h"
 #include "td/utils/Status.h"
 #include "td/utils/logging.h"
+#include "vm/boc.h"
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cellslice.h"
@@ -486,6 +487,56 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 cfg->config);
         }
         auto invocation = invocation_res.move_as_ok();
+        // Round-39 fix: bill the contract for the unique-cell walk
+        // the host performs to enforce ConfigParam-85's
+        // max_storage_cells.  Pre-fix the walk happened inside
+        // `build_jvm_workchain_output` and consumed validator CPU
+        // proportional to total committed storage (up to the cap)
+        // without metering — a contract near max_storage_cells could
+        // do one cheap `Storage.store` to push over the cap, the
+        // validator walked ~65k cells to detect it, then
+        // build_output rejected and the contract paid only its tiny
+        // runtime gas.  Charge `cells_walked * 1` gas here so the
+        // attack pays for the validator CPU it consumed.  We do the
+        // walk in the engine instead of inside build_output because
+        // build_output takes invocation by const ref and we need to
+        // read the walked-cell count back to dispatch-engine for
+        // billing on either success or error.
+        constexpr std::uint64_t kJvmStorageWalkGasPerCell = 1;
+        if (cfg->config.max_storage_cells > 0
+            && invocation.success
+            && invocation.storage_root.not_null()) {
+            const bool storage_changed =
+                state.storage_root.is_null()
+                || invocation.storage_root->get_hash()
+                       != state.storage_root->get_hash();
+            if (storage_changed) {
+                vm::CellStorageStat stat(static_cast<unsigned long long>(
+                    cfg->config.max_storage_cells));
+                auto stat_result =
+                    stat.add_used_storage(invocation.storage_root, true);
+                const std::uint64_t walk_gas =
+                    stat.cells * kJvmStorageWalkGasPerCell;
+                // Saturating add to avoid wraparound on absurd
+                // walk counts.
+                if (invocation.gas_used >
+                    std::numeric_limits<std::uint64_t>::max() - walk_gas) {
+                    invocation.gas_used =
+                        std::numeric_limits<std::uint64_t>::max();
+                } else {
+                    invocation.gas_used += walk_gas;
+                }
+                if (stat_result.is_error()) {
+                    LOG(DEBUG) << "JVM storage walk hit max_storage_cells "
+                                  "(treated as sk_bad_state, billing "
+                               << invocation.gas_used << " gas)";
+                    return skipped_output_billed(
+                        block::ComputePhase::sk_bad_state,
+                        "JVM committed storage_root exceeds max_storage_cells",
+                        cfg->config, invocation.gas_used);
+                }
+            }
+        }
         // Round-33 fix: build_jvm_workchain_output can also return
         // td::Status::Error — most notably when the committed
         // storage_root exceeds ConfigParam-85's max_storage_cells
