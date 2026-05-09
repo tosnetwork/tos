@@ -6,6 +6,7 @@
 #include "block/transaction.h"
 #include "jvm/avata/include/avata/event.h"
 #include "jvm/avata/include/avata/storage.h"
+#include "vm/boc.h"
 
 #include <utility>
 
@@ -292,10 +293,46 @@ td::Result<block::WorkchainComputeOutput> build_jvm_workchain_output(
         return out;
     }
 
-    if (invocation.storage_root.is_null() ||
-        !validate_jvm_storage_root(invocation.storage_root)) {
+    if (invocation.storage_root.is_null()) {
         return td::Status::Error(
-            "JVM output builder received invalid committed storage root");
+            "JVM output builder received null committed storage root");
+    }
+    // Round 12: dropped the call to `validate_jvm_storage_root(...)` that
+    // used to walk every dictionary entry and decode every storage value
+    // here on the post-execution path.  That walk happened OUTSIDE Avata
+    // gas / memory accounting on every successful call, so a contract
+    // with large accumulated storage made even a no-op call expensive
+    // for validators (CPU proportional to total storage, not requested
+    // gas).  Storage values are produced by the engine itself via
+    // `JvmStorageCellHost::store` → `encode_jvm_storage_value`, so they
+    // are well-formed by construction at this point; the structural
+    // shape of the dictionary is checked by `vm::Dictionary` lookups at
+    // load time, also under the contract's gas budget.
+    //
+    // Round 12 also adds enforcement of ConfigParam 85's
+    // `max_storage_cells` (parsed since the v2 schema but never
+    // checked).  CellStorageStat with `limit_cells = config.max_storage_cells`
+    // performs a unique-cell walk with early termination, so the worst-
+    // case cost is bounded by the configured cap rather than by total
+    // storage.  We only walk when `invocation.storage_root` differs from
+    // `previous_state.storage_root` — calls that don't mutate storage
+    // skip the walk entirely.
+    if (config.max_storage_cells > 0) {
+        const bool storage_changed =
+            previous_state.storage_root.is_null() ||
+            invocation.storage_root->get_hash()
+                != previous_state.storage_root->get_hash();
+        if (storage_changed) {
+            vm::CellStorageStat stat(
+                static_cast<unsigned long long>(config.max_storage_cells));
+            auto stat_result =
+                stat.add_used_storage(invocation.storage_root, true);
+            if (stat_result.is_error()) {
+                return td::Status::Error(
+                    "JVM committed storage_root exceeds ConfigParam 85 "
+                    "max_storage_cells");
+            }
+        }
     }
 
     auto action_list = invocation.action_list;

@@ -1307,6 +1307,57 @@ TEST(JvmWorkchainCore, AvataTransactionCommitsSuccessfulStorageWrites) {
   CHECK(*loaded == (JvmStorageValue{1, 2, 3}));
 }
 
+TEST(JvmWorkchainCore, BuildJvmWorkchainOutputRejectsStorageOverMaxCells) {
+  // Round 12: ConfigParam 85's `max_storage_cells` cap is now enforced
+  // post-execution.  CellStorageStat with limit_cells terminates the
+  // walk early when the cap is exceeded, so the worst-case cost is
+  // bounded by the configured cap rather than total storage size.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  cfg.max_storage_cells = 1;  // intentionally tiny
+
+  // Build an invocation whose storage_root has more than 1 cell.
+  // Two distinct slots produce a tree with multiple cells (root +
+  // value cells + dictionary internal nodes).
+  JvmStorageCellHost storage;
+  JvmStorageSlot slot_a{};
+  slot_a[31] = 0x10;
+  CHECK(storage.store(slot_a, JvmStorageValue{0xaa, 0xbb, 0xcc}).is_ok());
+  JvmStorageSlot slot_b{};
+  slot_b[31] = 0x20;
+  CHECK(storage.store(slot_b, JvmStorageValue{0xdd, 0xee, 0xff}).is_ok());
+  CHECK(storage.root_cell().not_null());
+
+  // Previous state has empty storage so the change-detection check
+  // sees the storage as mutated and runs the cell-count gate.
+  JvmContractAccountState previous;
+  previous.stdlib_hash = cfg.stdlib_hash;
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x42};
+  previous.class_hash = compute_jvm_class_hash(class_bytes);
+  previous.class_bytes = encode_jvm_storage_value(class_bytes);
+  previous.storage_root = {};
+  previous.manifest_root = encode_jvm_method_manifest({});
+
+  JvmAvataInvocationResult invocation;
+  invocation.success = true;
+  invocation.storage_root = storage.root_cell();
+  invocation.action_list = {};
+  invocation.gas_used = 100;
+  invocation.gas_remaining = 900;
+  invocation.memory_used = 0;
+
+  auto result = build_jvm_workchain_output(cfg, previous, 1000, invocation);
+  CHECK(result.is_error());
+  CHECK(result.error().message().str().find("max_storage_cells")
+        != std::string::npos);
+
+  // With the cap raised, the same invocation succeeds.
+  cfg.max_storage_cells = 100;
+  auto ok_result = build_jvm_workchain_output(cfg, previous, 1000, invocation);
+  CHECK(ok_result.is_ok());
+}
+
 TEST(JvmWorkchainCore, AvataTransactionRollsBackFailedInvocation) {
   using namespace jvm_workchain;
 
