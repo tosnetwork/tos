@@ -842,13 +842,27 @@ void init_evm_workchain(const std::string& db_root) {
                              << (tx_decode_fails > 0 ? " (skipped " + std::to_string(tx_decode_fails) + " corrupt entries)" : "");
             }
 
-            size_t blocks_hydrated = 0, block_decode_fails = 0;
+            size_t blocks_hydrated = 0, block_decode_fails = 0,
+                   blocks_orphaned = 0;
             // Walk by-number first so chain-order iteration populates
             // hash_to_block_ alongside blocks_; the by-hash walk is then a
             // safety-net (no-op if both indexes were written together).
+            //
+            // Round 88 MEDIUM fix: during hydration, gate every cached
+            // block against the canonical chain via
+            // CellEvmState::canonical_hash(block_num).  Pre-fix the
+            // walker blindly stored any persisted block, so a node
+            // that died after a same-height rewrite RAM-mutated state
+            // but before `cache->put_block_by_number` finished left
+            // the OLD block-by-number entry in the cache DB.  Restart
+            // hydration would resurrect that orphaned block, and
+            // `eth_getBlockByNumber(N)` could serve the old hash even
+            // though canonical state had moved on.  When canonical
+            // state knows a hash for that height and it disagrees
+            // with the cached entry, drop the cached block.
             auto block_walk = evm_rpc_cache_db()->for_each_block_by_number(
-                [&blocks_hydrated, &block_decode_fails](
-                    uint64_t /*block_number*/, td::Ref<vm::Cell> cell) -> td::Status {
+                [&blocks_hydrated, &block_decode_fails, &blocks_orphaned](
+                    uint64_t block_number, td::Ref<vm::Cell> cell) -> td::Status {
                     StoredBlock b;
                     EvmCacheRecordStamp out_stamp;  // hydration trusts canonical state; stamp unused
                     if (!decode_persisted_block(cell, b, out_stamp)) {
@@ -856,6 +870,12 @@ void init_evm_workchain(const std::string& db_root) {
                         return td::Status::OK();
                     }
                     (void)out_stamp;
+                    auto canonical = g_evm_state->state().canonical_hash(
+                        static_cast<silkworm::BlockNum>(block_number));
+                    if (canonical.has_value() && *canonical != b.hash) {
+                        ++blocks_orphaned;
+                        return td::Status::OK();
+                    }
                     g_evm_state->store_block(b);
                     ++blocks_hydrated;
                     return td::Status::OK();
@@ -864,9 +884,15 @@ void init_evm_workchain(const std::string& db_root) {
                 LOG(ERROR) << "evm-workchain: rpc cache block walk failed: "
                            << block_walk.message();
             } else {
+                std::string suffix;
+                if (block_decode_fails > 0) {
+                    suffix += " (skipped " + std::to_string(block_decode_fails) + " corrupt entries)";
+                }
+                if (blocks_orphaned > 0) {
+                    suffix += " (skipped " + std::to_string(blocks_orphaned) + " same-height orphans)";
+                }
                 LOG(WARNING) << "evm-workchain: hydrated " << blocks_hydrated
-                             << " blocks from rpc cache db"
-                             << (block_decode_fails > 0 ? " (skipped " + std::to_string(block_decode_fails) + " corrupt entries)" : "");
+                             << " blocks from rpc cache db" << suffix;
             }
 
             // Logs walk: each entry is the full IndexedLog vector for a

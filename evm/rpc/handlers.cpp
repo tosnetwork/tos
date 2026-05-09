@@ -1257,7 +1257,11 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
     }
     r += "],";
     r += "\"logsBloom\":" + compute_logs_bloom_hex(receipt->logs) + ",";
-    r += "\"type\":\"0x0\",";
+    // Round 88 LOW fix: emit the persisted EIP-2718 receipt type
+    // instead of hard-coded "0x0".  Pre-fix every typed
+    // transaction (1, 2, 3, 4) reported as legacy, so RPC clients
+    // and indexers misclassified the receipt's tx type.
+    r += "\"type\":" + to_hex_quantity(static_cast<uint64_t>(receipt->type)) + ",";
     r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(receipt->tx_index)) + ",";
     r += "\"blockHash\":" + lookup_block_hash_hex(receipt->block_number);
     r += "}";
@@ -2734,7 +2738,10 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
         arr += "],";
         arr += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
         arr += "\"blockHash\":" + to_hex_data(blk.hash.bytes, 32) + ",";
-        arr += "\"type\":\"0x0\"";
+        // Round 88 LOW fix: emit persisted EIP-2718 receipt type
+        // instead of hard-coded "0x0".  Same rationale as
+        // eth_getTransactionReceipt above.
+        arr += "\"type\":" + to_hex_quantity(static_cast<uint64_t>(receipt->type));
         arr += "}";
     }
     arr += "]";
@@ -3746,16 +3753,14 @@ static RpcResult handle_debug_get_raw_receipts(const std::string& params, const 
         auto r = global_evm_state().get_receipt_copy(th);
         if (!r) { out += "null"; continue; }
 
-        // Recover the transaction's EIP-2718 type from its raw RLP so
-        // typed-receipt prefixes match the corresponding tx type. Falls
-        // back to legacy (no prefix) if the tx isn't indexed or fails to
-        // decode.
-        silkworm::TransactionType tx_type = silkworm::TransactionType::kLegacy;
-        if (auto stored_tx = global_evm_state().get_transaction_copy(th)) {
-            if (auto decoded = decode_stored_tx_rlp(*stored_tx)) {
-                tx_type = decoded->type;
-            }
-        }
+        // Round 88 LOW fix: prefer the persisted StoredReceipt::type
+        // over a tx-RLP re-decode.  Pre-fix the helper defaulted to
+        // legacy when the stored tx_rlp was missing or rejected by
+        // the round-86 leftover-byte gate, so a typed receipt could
+        // be RLP-encoded as a legacy receipt — diverging from the
+        // canonical tx type and from the type the receipt was
+        // produced for.
+        silkworm::TransactionType tx_type = r->type;
 
         silkworm::Receipt sw_receipt;
         sw_receipt.type = tx_type;
