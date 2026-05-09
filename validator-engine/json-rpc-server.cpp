@@ -1891,7 +1891,17 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
     return;
   }
 
-  // Build cache key: method|field1=val1&field2=val2 (sorted by name)
+  // Build cache key: method|<len>:<name><len>:<value>... (sorted by name)
+  //
+  // Round 81 LOW fix: length-prefix every name and value so an
+  // attacker cannot craft a parameter value containing the
+  // delimiter characters (`&`, `=`) and force two semantically
+  // distinct requests to alias to the same cache key.  Pre-fix
+  // the key was raw `method|name=value&name=value`; a request
+  // with `lt: "5&shard=6"` (which strtoll happily parses as 5)
+  // produced the same key as a separate `lt:"5", shard:"6&..."`
+  // request, so the second call could see the first call's cached
+  // response.  Length-prefixing makes the encoding bijective.
   td::StringBuilder sb;
   sb << method << "|";
   // params.field_values_ is public — iterate and serialize
@@ -1920,9 +1930,9 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
     kvs.emplace_back(fv.first.str(), std::move(val));
   }
   std::sort(kvs.begin(), kvs.end());
-  for (size_t i = 0; i < kvs.size(); i++) {
-    if (i > 0) sb << "&";
-    sb << kvs[i].first << "=" << kvs[i].second;
+  for (auto &kv : kvs) {
+    sb << kv.first.size() << ":" << kv.first
+       << kv.second.size() << ":" << kv.second;
   }
   std::string cache_key = sb.as_cslice().str();
 

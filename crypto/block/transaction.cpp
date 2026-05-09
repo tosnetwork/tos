@@ -2256,6 +2256,17 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
           (cp.new_data.not_null() || new_code.not_null())) {
         acc_status = Account::acc_active;
         was_activated = true;
+        // Round 81 LOW fix: keep `cp.account_activated` consistent
+        // with the host's acc_uninit→acc_active transition.  The
+        // engine's `output.account_activated` was copied earlier
+        // (apply_custom_compute_output) from `cp.account_activated`,
+        // which custom engines (e.g. Uno) cannot set since the
+        // activation is performed here, not in their compute phase.
+        // Pre-fix the canonical compute-phase metadata claimed
+        // `account_activated=false` even when this branch flipped
+        // the account to active — a transaction-record invariant
+        // mismatch visible to RPC consumers and replay tooling.
+        cp.account_activated = true;
       }
     } else {
       // Round 63 HIGH fix: roll back the StateInit-unpacked new_*
