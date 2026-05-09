@@ -1942,6 +1942,16 @@ bool Transaction::run_precompiled_contract(const ComputePhaseConfig& cfg, precom
   if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
+    // Round 82 LOW fix: keep `cp.account_activated` consistent
+    // with the host's acc_uninit/acc_frozen → acc_active
+    // transition for the TVM/precompiled path.  Round 81 fixed
+    // the same invariant on the custom-engine branch.  Pre-fix
+    // the canonical compute-phase metadata (serialized via
+    // `block.tlb` at transaction.cpp:4472) reported
+    // account_activated=false for ordinary TVM deploys and
+    // unfreezes — RPC consumers and replay tooling saw
+    // inconsistent records.
+    cp.account_activated = true;
   }
   if (cfg.with_vm_log) {
     cp.vm_log = PSTRING() << "Running precompiled smart contract " << impl.get_name()
@@ -2431,6 +2441,16 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
+    // Round 82 LOW fix: keep `cp.account_activated` consistent
+    // with the host's acc_uninit/acc_frozen → acc_active
+    // transition for the TVM/precompiled path.  Round 81 fixed
+    // the same invariant on the custom-engine branch.  Pre-fix
+    // the canonical compute-phase metadata (serialized via
+    // `block.tlb` at transaction.cpp:4472) reported
+    // account_activated=false for ordinary TVM deploys and
+    // unfreezes — RPC consumers and replay tooling saw
+    // inconsistent records.
+    cp.account_activated = true;
   }
   if (precompiled) {
     cp.gas_used = precompiled.value().gas_usage;

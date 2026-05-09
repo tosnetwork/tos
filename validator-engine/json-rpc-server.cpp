@@ -1891,7 +1891,7 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
     return;
   }
 
-  // Build cache key: method|<len>:<name><len>:<value>... (sorted by name)
+  // Build cache key: method|<type><len>:<name><type><len>:<value>...
   //
   // Round 81 LOW fix: length-prefix every name and value so an
   // attacker cannot craft a parameter value containing the
@@ -1902,39 +1902,79 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
   // produced the same key as a separate `lt:"5", shard:"6&..."`
   // request, so the second call could see the first call's cached
   // response.  Length-prefixing makes the encoding bijective.
-  td::StringBuilder sb;
-  sb << method << "|";
-  // params.field_values_ is public — iterate and serialize
-  std::vector<std::pair<std::string, std::string>> kvs;
-  kvs.reserve(params.field_values_.size());
-  for (auto &fv : params.field_values_) {
-    // Use field name and a simple string representation of the value
-    std::string val;
-    switch (fv.second.type()) {
+  //
+  // Round 82 LOW fix (a): keep only the FIRST occurrence of each
+  // duplicate field name.  td::JsonObject preserves duplicates,
+  // and the existing handlers read the first match — pre-fix the
+  // key sorted all (name,value) pairs, so two requests with
+  // `param:12,param:13` vs `param:13,param:12` both produced the
+  // same key after the sort.
+  //
+  // Round 82 LOW fix (b): include the JSON value type in the
+  // encoding so a string `"true"` cannot alias a boolean `true`.
+  // Pre-fix both encoded as `4:true`; with the cache aliasing,
+  // a request whose handler reads the boolean as a non-bool
+  // could be served the boolean variant's response.
+  //
+  // Round 82 MEDIUM fix (c): cap the per-request key size.
+  // JsonRpcResponseCache only budgets `response_json.size()`, not
+  // the key copy retained by the LRU map/list, so an attacker
+  // could pin multi-MiB attacker strings as keys (request body
+  // cap is 4 MiB; some methods like getMasterchainInfo ignore
+  // params).  When the key would exceed `kMaxCacheKeyBytes`,
+  // fall through to the uncached dispatch path.
+  constexpr std::size_t kMaxCacheKeyBytes = 4096;
+  auto encode_value = [](const td::JsonValue& v, std::string& out) {
+    switch (v.type()) {
       case td::JsonValue::Type::String:
-        val = fv.second.get_string().str();
+        out.push_back('s');
+        out.append(v.get_string().begin(), v.get_string().size());
         break;
-      case td::JsonValue::Type::Number:
-        val = fv.second.get_number().str();
+      case td::JsonValue::Type::Number: {
+        out.push_back('n');
+        auto num = v.get_number();
+        out.append(num.begin(), num.size());
         break;
+      }
       case td::JsonValue::Type::Boolean:
-        val = fv.second.get_boolean() ? "true" : "false";
+        out.push_back('b');
+        out.append(v.get_boolean() ? "1" : "0");
         break;
       case td::JsonValue::Type::Null:
-        val = "null";
+        out.push_back('z');
         break;
       default:
-        val = "?";
+        out.push_back('?');
         break;
     }
-    kvs.emplace_back(fv.first.str(), std::move(val));
+  };
+  td::StringBuilder sb;
+  sb << method << "|";
+  std::vector<std::pair<std::string, std::string>> kvs;
+  kvs.reserve(params.field_values_.size());
+  std::set<td::Slice> seen_names;
+  for (auto& fv : params.field_values_) {
+    if (!seen_names.insert(fv.first).second) {
+      continue;  // first-occurrence wins, mirroring handler semantics
+    }
+    std::string typed_val;
+    encode_value(fv.second, typed_val);
+    kvs.emplace_back(fv.first.str(), std::move(typed_val));
   }
   std::sort(kvs.begin(), kvs.end());
-  for (auto &kv : kvs) {
+  for (auto& kv : kvs) {
     sb << kv.first.size() << ":" << kv.first
        << kv.second.size() << ":" << kv.second;
   }
   std::string cache_key = sb.as_cslice().str();
+  if (cache_key.size() > kMaxCacheKeyBytes) {
+    // Skip cache for oversized keys — don't pin attacker payloads
+    // in the LRU when the per-entry budget only counts the
+    // response body.
+    dispatch_method(std::move(method), params, std::move(req_id),
+                    std::move(source_ip), std::move(promise));
+    return;
+  }
 
   // Check cache
   auto cached = cache_.lookup(cache_key);
