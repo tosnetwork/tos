@@ -17,6 +17,7 @@
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
 #include "jvm/core/cell-codec.h"
+#include "jvm/core/class-manifest.h"
 #include "jvm/core/config-param.h"
 #include "jvm/core/deploy-abi.h"
 #include "jvm/core/message-abi.h"
@@ -585,25 +586,90 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 parse_jvm_call_descriptor(input.inbound_body);
             if (call_descriptor_res.is_ok() &&
                 call_descriptor_res.ok().args.not_null()) {
-                // Round 68 MEDIUM fix: capture the partial walked
-                // count when the peek errors out mid-chain (e.g. a
-                // canonical 127-byte prefix followed by a malformed
-                // tail).  The real `decode_jvm_storage_value` will
-                // have already memcpy'd those prefix bytes before
-                // failing at the same point — bill them.
-                std::uint64_t partial_walked = 0;
-                // Round 77 LOW fix: cap the structural walk at the
-                // affordable gas limit.  When the running byte total
-                // exceeds `effective_gas_limit`, peek bails early and
-                // writes the partial through `partial_walked`.  The
-                // pre-walk gate below treats the partial identically
-                // to a successful return (`max(floor, total) > cap`
-                // → reject), so we never need the rest of the walk.
-                auto bytes_res = peek_jvm_args_total_bytes(
-                    call_descriptor_res.ok().args, &partial_walked,
-                    /*max_bytes_budget=*/effective_gas_limit);
-                error_path_arg_bytes =
-                    bytes_res.is_ok() ? bytes_res.ok() : partial_walked;
+                // Round 79 HIGH fix: mirror the resolver's order
+                // (jvm/core/avata-runtime.cpp `decode_linked_
+                // invocation_args`) before walking arg-byte
+                // payloads.  The resolver does manifest lookup,
+                // parses expected types from the method spec, and
+                // calls `peek_jvm_args_types` BEFORE
+                // `parse_jvm_args` ever memcpys a Bytes payload.
+                // An unknown method id, an arg-count mismatch, or
+                // a type mismatch is rejected cheaply with no
+                // payload memcpy.  Pre-fix, dispatch's
+                // `peek_jvm_args_total_bytes` walked the full Bytes
+                // chain even for these doomed calls, billed
+                // `effective_gas_limit` via the round-76 pre-walk
+                // gate, and forced bounded-but-unnecessary
+                // validator-CPU pre-walk work proportional to
+                // attacker-supplied payload size.  Skip the byte
+                // walk entirely (leave `error_path_arg_bytes=0`)
+                // when the resolver would reject before
+                // parse_jvm_args.
+                auto& descriptor = call_descriptor_res.ok();
+                bool resolver_will_decode_args = false;
+                if (state.manifest_root.not_null()) {
+                    auto entry_res = find_jvm_method_manifest_entry(
+                        state.manifest_root, descriptor.method_id);
+                    if (entry_res.is_ok()) {
+                        const auto& entry = entry_res.ok();
+                        // Static-void methods never decode typed
+                        // args, so peek_jvm_args_types is a wasted
+                        // call here — the resolver only checks the
+                        // empty-args canonical shape via
+                        // validate_jvm_static_void_call_args.
+                        if (entry.method_spec ==
+                                kJvmStaticVoidMethodSpec) {
+                            resolver_will_decode_args = false;
+                        } else {
+                            auto expected_types_res =
+                                parse_jvm_method_argument_types(
+                                    entry.method_spec);
+                            auto actual_types_res =
+                                peek_jvm_args_types(descriptor.args);
+                            if (expected_types_res.is_ok() &&
+                                actual_types_res.is_ok()) {
+                                const auto& expected =
+                                    expected_types_res.ok();
+                                const auto& actual =
+                                    actual_types_res.ok();
+                                if (expected.size() == actual.size()) {
+                                    bool types_match = true;
+                                    for (std::size_t i = 0;
+                                         i < expected.size(); ++i) {
+                                        if (expected[i] != actual[i]) {
+                                            types_match = false;
+                                            break;
+                                        }
+                                    }
+                                    resolver_will_decode_args =
+                                        types_match;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (resolver_will_decode_args) {
+                    // Round 68 MEDIUM fix: capture the partial walked
+                    // count when the peek errors out mid-chain (e.g. a
+                    // canonical 127-byte prefix followed by a malformed
+                    // tail).  The real `decode_jvm_storage_value` will
+                    // have already memcpy'd those prefix bytes before
+                    // failing at the same point — bill them.
+                    std::uint64_t partial_walked = 0;
+                    // Round 77 LOW fix: cap the structural walk at the
+                    // affordable gas limit.  When the running byte total
+                    // exceeds `effective_gas_limit`, peek bails early and
+                    // writes the partial through `partial_walked`.  The
+                    // pre-walk gate below treats the partial identically
+                    // to a successful return (`max(floor, total) > cap`
+                    // → reject), so we never need the rest of the walk.
+                    auto bytes_res = peek_jvm_args_total_bytes(
+                        descriptor.args, &partial_walked,
+                        /*max_bytes_budget=*/effective_gas_limit);
+                    error_path_arg_bytes =
+                        bytes_res.is_ok() ? bytes_res.ok()
+                                          : partial_walked;
+                }
             }
         }
         // Round 76 MEDIUM fix: pre-walk affordability gate.  The

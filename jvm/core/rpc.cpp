@@ -1017,16 +1017,66 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                     vm::CellSlice{*input.inbound_body});
             if (call_descriptor_res.is_ok()
                 && call_descriptor_res.ok().args.not_null()) {
-                std::uint64_t partial_walked = 0;
-                // Round 77 LOW fix: same structural walk cap as
-                // dispatch-engine — pass `input.gas_limit` so the
-                // walker bails the moment the running total crosses
-                // the cap the pre-walk gate below would reject at.
-                auto bytes_res = peek_jvm_args_total_bytes(
-                    call_descriptor_res.ok().args, &partial_walked,
-                    /*max_bytes_budget=*/input.gas_limit);
-                error_path_arg_bytes =
-                    bytes_res.is_ok() ? bytes_res.ok() : partial_walked;
+                // Round 79 HIGH fix: mirror the resolver order
+                // (avata-runtime.cpp `decode_linked_invocation_args`).
+                // See dispatch-engine.cpp for the full rationale —
+                // unknown method id / arg-count / type mismatches
+                // are rejected by the resolver before
+                // `parse_jvm_args` ever memcpys a Bytes payload, so
+                // the byte walk should be skipped (leaving
+                // error_path_arg_bytes=0) for those calls.
+                auto& descriptor = call_descriptor_res.ok();
+                bool resolver_will_decode_args = false;
+                if (previous_state.manifest_root.not_null()) {
+                    auto entry_res = find_jvm_method_manifest_entry(
+                        previous_state.manifest_root,
+                        descriptor.method_id);
+                    if (entry_res.is_ok()) {
+                        const auto& entry = entry_res.ok();
+                        if (entry.method_spec ==
+                                kJvmStaticVoidMethodSpec) {
+                            resolver_will_decode_args = false;
+                        } else {
+                            auto expected_types_res =
+                                parse_jvm_method_argument_types(
+                                    entry.method_spec);
+                            auto actual_types_res =
+                                peek_jvm_args_types(descriptor.args);
+                            if (expected_types_res.is_ok() &&
+                                actual_types_res.is_ok()) {
+                                const auto& expected =
+                                    expected_types_res.ok();
+                                const auto& actual =
+                                    actual_types_res.ok();
+                                if (expected.size() == actual.size()) {
+                                    bool types_match = true;
+                                    for (std::size_t i = 0;
+                                         i < expected.size(); ++i) {
+                                        if (expected[i] != actual[i]) {
+                                            types_match = false;
+                                            break;
+                                        }
+                                    }
+                                    resolver_will_decode_args =
+                                        types_match;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (resolver_will_decode_args) {
+                    std::uint64_t partial_walked = 0;
+                    // Round 77 LOW fix: same structural walk cap as
+                    // dispatch-engine — pass `input.gas_limit` so the
+                    // walker bails the moment the running total crosses
+                    // the cap the pre-walk gate below would reject at.
+                    auto bytes_res = peek_jvm_args_total_bytes(
+                        descriptor.args, &partial_walked,
+                        /*max_bytes_budget=*/input.gas_limit);
+                    error_path_arg_bytes =
+                        bytes_res.is_ok() ? bytes_res.ok()
+                                          : partial_walked;
+                }
             }
         }
         // Round 77 MEDIUM fix: mirror the round-76 dispatch-engine
