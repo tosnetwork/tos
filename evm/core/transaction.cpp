@@ -86,6 +86,23 @@ extract_evm_payload(vm::CellSlice& body) noexcept {
         if (body.size() != 0 || body.size_refs() != 1) {
             return std::nullopt;
         }
+        // Round 73 MEDIUM fix: enforce canonical chunk size on the
+        // FIRST (head) chunk too.  Pre-fix `extract_evm_payload`
+        // checked only trailing bits/refs but did not require the
+        // head's `data_bytes == kEvmBytecodeChunkBytes` for
+        // non-final chunks — the canonical encoder always packs
+        // non-final cells with exactly 127 bytes, but a non-canonical
+        // head with `data_bytes == 0` or `1..126` could chain to a
+        // canonical tail and still parse to the same EVM tx bytes.
+        // Two distinct cell-tree roots → same Ethereum tx hash;
+        // collator dedupes by root hash, so the same tx could be
+        // submitted twice with different cell shapes.  The
+        // round-72 `decode_evm_bytecode` gate already covered this
+        // for the recursive tail; this mirror covers the head
+        // parsed inline by `extract_evm_payload`.
+        if (data_bytes != kEvmBytecodeChunkBytes) {
+            return std::nullopt;
+        }
         auto next = body.fetch_ref();
         auto more = decode_evm_bytecode(next);
         if (more.empty()) return std::nullopt;
