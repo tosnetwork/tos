@@ -1707,9 +1707,31 @@ inline object allocateSmall(Thread* t, unsigned sizeInBytes)
   return o;
 }
 
+// Non-inline helper that charges ConfigParam-85 max_heap_bytes and
+// throws OutOfMemoryError when the contract would exceed it.  Lives in
+// machine.cpp because `throw_` and `roots()` aren't yet declared at
+// the point in this header where `allocate()` is defined.
+AVATA_EXPORT void chargeContractAllocationOrThrow(Thread* t,
+                                                   unsigned sizeInBytes);
+
 inline object allocate(Thread* t, unsigned sizeInBytes, bool objectMask)
 {
   stress(t);
+
+  // Charge ConfigParam-85 max_heap_bytes for EVERY allocation, not just
+  // ones that cross a thread-heap segment boundary.  Pre-round-12 the
+  // fast path in `allocateSmall()` (which serves objects from the
+  // current 64 KiB segment) skipped `chargeContractMemory()` entirely,
+  // and the slow path's `allocate3()` charged only the boundary-
+  // crossing allocation — leaving up to one full segment of
+  // unaccounted heap per call.  Charging at the top means each
+  // allocation is reflected in `contractMemoryUsed`, so
+  // `max_heap_bytes` is a true sandbox limit rather than an
+  // approximate one.
+  //
+  // chargeContractAllocationOrThrow is a no-op when contractActive is
+  // false, so non-contract callers see no behavior change.
+  chargeContractAllocationOrThrow(t, sizeInBytes);
 
   if (UNLIKELY(t->heapIndex + ceilingDivide(sizeInBytes, BytesPerWord)
                > ThreadHeapSizeInWords or t->m->exclusive)) {

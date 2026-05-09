@@ -4348,6 +4348,13 @@ bool chargeContractMemory(Thread* t, uint64_t bytes)
   return true;
 }
 
+void chargeContractAllocationOrThrow(Thread* t, unsigned sizeInBytes)
+{
+  if (UNLIKELY(!chargeContractMemory(t, pad(sizeInBytes)))) {
+    throw_(t, roots(t)->outOfMemoryError());
+  }
+}
+
 bool chargeContractHelperGas(Thread* t, unsigned helper, uint64_t units)
 {
   if (helper >= Machine::ContractHelperGasCostCount) {
@@ -4763,9 +4770,10 @@ object allocate3(Thread* t,
     throw_(t, roots(t)->outOfMemoryError());
   }
 
-  if (UNLIKELY(!chargeContractMemory(t, pad(sizeInBytes)))) {
-    throw_(t, roots(t)->outOfMemoryError());
-  }
+  // Round 12: contract-memory charge moved to the top of `allocate()`
+  // so it covers the fast path through `allocateSmall()` too.  Doing
+  // it here would double-charge the slow-path allocations that came
+  // through `allocate()`.
 
   ACQUIRE_RAW(t, t->m->stateLock);
 
