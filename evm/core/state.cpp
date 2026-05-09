@@ -340,10 +340,24 @@ std::size_t EvmState::reconcile_blocks_with_canonical() {
         const uint64_t bn = it->first;
         const auto canonical = backend_->canonical_hash(
             static_cast<silkworm::BlockNum>(bn));
-        if (canonical.has_value() && *canonical != it->second.hash) {
-            // Orphan: cached block at this height disagrees with the
-            // canonical chain.  Drop it (and the per-block sidecars
-            // that were hydrated under the same orphan attribution).
+        // Round 90 MEDIUM fix: fail closed when canonical_hash
+        // returns nullopt.  Pre-fix the gate only dropped on an
+        // explicit mismatch, so a cached block from an old/forked/
+        // future chain whose height has no canonical entry yet was
+        // kept, and `eth_blockNumber`, raw block/header, and
+        // freshness gates that self-validate against the same RAM
+        // map could treat it as canonical.  An absent canonical
+        // entry is not "fresh enough" — drop the cached block and
+        // let the post-accept rewrite path re-populate it once
+        // the canonical chain catches up.
+        bool is_orphan = canonical.has_value()
+                             ? (*canonical != it->second.hash)
+                             : true;
+        if (is_orphan) {
+            // Orphan: cached block at this height disagrees with (or
+            // has no entry in) the canonical chain.  Drop it and
+            // every per-block sidecar that was hydrated under the
+            // same orphan attribution.
             hash_to_block_.erase(it->second.hash);
             block_logs_.erase(bn);
             it = blocks_.erase(it);
@@ -351,6 +365,13 @@ std::size_t EvmState::reconcile_blocks_with_canonical() {
         } else {
             ++it;
         }
+    }
+    // Round 90 MEDIUM fix (continued): if reconciliation just dropped
+    // the previous head, recompute `block_number_` from the
+    // surviving blocks so `eth_blockNumber` and `latest` no longer
+    // advertise the orphan height.
+    if (dropped > 0) {
+        block_number_ = blocks_.empty() ? 0 : blocks_.rbegin()->first;
     }
     return dropped;
 }

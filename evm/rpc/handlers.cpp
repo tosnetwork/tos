@@ -944,6 +944,10 @@ static bool is_stored_receipt_canonical(const evmc::bytes32& tx_hash,
                           canonical.state_root);
 }
 
+// Forward declaration for receipt_type_for_tx fallback path.
+static std::optional<silkworm::Transaction> decode_stored_tx_rlp(
+    const StoredTransaction& tx);
+
 // Round 89 LOW fix: derive the EIP-2718 transaction type for tx-side
 // JSON serializers (format_block_json full=true,
 // handle_get_transaction_by_hash, format_transaction_json).  Pre-fix
@@ -951,12 +955,22 @@ static bool is_stored_receipt_canonical(const evmc::bytes32& tx_hash,
 // 3, 4) reported as legacy on RPC even after round-88 fixed the
 // receipt-side emission.  Use the receipt's persisted type when
 // available — receipt.type is set by the consensus compute path on
-// every accepted tx — and fall back to legacy for pending txs that
-// have not yet been receipted.
+// every accepted tx.
+//
+// Round 90 LOW fix: when no receipt is indexed yet (pending tx
+// hydrated from raw_rlp before the receipt cache wrote), decode
+// the stored raw_rlp and read its EIP-2718 type byte directly so
+// typed pending transactions don't briefly downcast to legacy on
+// RPC reads.
 static silkworm::TransactionType receipt_type_for_tx(
     const evmc::bytes32& tx_hash) {
     if (auto r = global_evm_state().get_receipt_copy(tx_hash)) {
         return r->type;
+    }
+    if (auto tx = global_evm_state().get_transaction_copy(tx_hash)) {
+        if (auto decoded = decode_stored_tx_rlp(*tx)) {
+            return decoded->type;
+        }
     }
     return silkworm::TransactionType::kLegacy;
 }
@@ -1224,6 +1238,21 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
             return {make_error(id, -32010,
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
+        return {make_result(id, "null"), false};
+    }
+
+    // Round 90 MEDIUM fix: route through is_stored_receipt_canonical
+    // so the cache-miss case (no persisted cell yet, or cache read
+    // error) still requires a non-zero canonical block hash at this
+    // height.  Pre-fix the existing gate below only fired when
+    // `cache->get_receipt` returned a non-null cell, so a cache-miss
+    // window during apply_block_side_effects (RAM receipt stored
+    // before the block summary) or a cache-read error fell through
+    // and emitted the receipt regardless of canonicality.  The new
+    // helper is identical to is_stored_tx_canonical's semantics:
+    // canonical block must exist at receipt->block_number, and any
+    // persisted stamp must match.
+    if (!is_stored_receipt_canonical(tx_hash, receipt->block_number)) {
         return {make_result(id, "null"), false};
     }
 
@@ -3486,9 +3515,28 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
         auto logs = global_evm_state().get_logs(from_block, to_block,
                                                  f.addresses, f.topics);
         f.next_poll_block = to_block + 1;
-        for (size_t i = 0; i < logs.size(); ++i) {
-            if (i > 0) arr += ",";
-            arr += format_log_json(logs[i]);
+        // Round 90 MEDIUM fix: gate every log through
+        // is_logs_for_block_canonical so a stale persisted log
+        // batch (same-height rewrite where put_logs_for_block
+        // failed transiently, or hydrated logs whose block was
+        // dropped) does not leak through eth_getFilterChanges.
+        // eth_getLogs already gates per-block; this mirror keeps
+        // the filter APIs canonicality-equivalent.  Cache the
+        // per-block result to avoid an O(logs * cache-lookup)
+        // hit on dense blocks.
+        std::map<uint64_t, bool> canonical_cache;
+        bool first_emitted = true;
+        for (const auto& log : logs) {
+            auto it = canonical_cache.find(log.block_number);
+            if (it == canonical_cache.end()) {
+                it = canonical_cache.emplace(
+                    log.block_number,
+                    is_logs_for_block_canonical(log.block_number)).first;
+            }
+            if (!it->second) continue;
+            if (!first_emitted) arr += ",";
+            arr += format_log_json(log);
+            first_emitted = false;
         }
     } else if (f.type == FilterType::Blocks) {
         // Return block hashes for new blocks. Security hardening round 7 (R7-H-14):
@@ -5627,9 +5675,22 @@ static RpcResult handle_get_filter_logs(const std::string& params, const std::st
     auto logs = global_evm_state().get_logs(f.query_from_block, to_block,
                                             f.addresses, f.topics);
     std::string arr = "[";
-    for (size_t i = 0; i < logs.size(); i++) {
-        if (i > 0) arr += ",";
-        arr += format_log_json(logs[i]);
+    // Round 90 MEDIUM fix: same canonical gate as
+    // eth_getFilterChanges and eth_getLogs.  See the
+    // is_logs_for_block_canonical helper for the rationale.
+    std::map<uint64_t, bool> canonical_cache;
+    bool first_emitted = true;
+    for (const auto& log : logs) {
+        auto cit = canonical_cache.find(log.block_number);
+        if (cit == canonical_cache.end()) {
+            cit = canonical_cache.emplace(
+                log.block_number,
+                is_logs_for_block_canonical(log.block_number)).first;
+        }
+        if (!cit->second) continue;
+        if (!first_emitted) arr += ",";
+        arr += format_log_json(log);
+        first_emitted = false;
     }
     arr += "]";
     return {make_result(id, arr), false};
