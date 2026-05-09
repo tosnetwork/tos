@@ -59,6 +59,37 @@ block::WorkchainComputeOutput skipped_output(int skip_reason,
     return out;
 }
 
+// Round-37 fix: skipped output that bills the admission floor.
+// Used when the engine reaches `sk_bad_state` AFTER the runtime
+// (or output builder) has already done resolver / class-load /
+// execution work — the admission floor (round-34) covers that
+// work even though no useful contract logic ran.  Pre-runtime
+// rejects (sk_no_gas / sk_bad_state from decode/binding gates)
+// continue to use `skipped_output` with zero fees because no
+// resolver work happened there.
+block::WorkchainComputeOutput skipped_output_billed(int skip_reason,
+                                                     std::string vm_log,
+                                                     const JvmConfig& config,
+                                                     bool out_of_gas = false) {
+    block::WorkchainComputeOutput out;
+    out.completed = true;
+    // accepted=true is required for the host's round-30 charging
+    // block to actually debit the admission floor.  The compute is
+    // semantically "the message was accepted by the contract layer
+    // (resolver / runtime ran), but the result is rejected
+    // (engine_success=false, committed=false) and no state
+    // transitions apply".  Mirrors TVM's treatment of compute-
+    // failed-but-gas-used.
+    out.accepted = true;
+    out.skip_reason = skip_reason;
+    out.out_of_gas = out_of_gas;
+    out.gas_used = kJvmAdmissionGasFloor;
+    out.gas_fees = td::make_refint(config.gas_price)
+                   * kJvmAdmissionGasFloor;
+    out.vm_log = std::move(vm_log);
+    return out;
+}
+
 block::WorkchainEngineKey jvm_engine_key() {
     // vm_version = 0x4a564d31 ("JVM1"), sign-extended to int64_t via int32_t.
     return block::WorkchainEngineKey{
@@ -432,9 +463,17 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             LOG(DEBUG)
                 << "JVM runtime returned error (treated as sk_bad_state): "
                 << invocation_res.error().message();
-            return skipped_output(
+            // Round-37 fix: bill the admission floor here.  Resolver
+            // work (manifest parse, args decode, class load, method
+            // resolve) ran before the runtime returned an error, so
+            // the account must pay for it even though the call did
+            // not commit.  Without this billing, a malicious caller
+            // could repeatedly trigger malformed args / bad manifest
+            // resolution and consume validator CPU for free.
+            return skipped_output_billed(
                 block::ComputePhase::sk_bad_state,
-                "JVM runtime invocation failed");
+                "JVM runtime invocation failed",
+                cfg->config);
         }
         // Round-33 fix: build_jvm_workchain_output can also return
         // td::Status::Error — most notably when the committed
@@ -442,7 +481,9 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // (round-12).  That's a user-controlled condition (a contract
         // can write distinct slots until the cap), so the error must
         // not propagate up to prepare_compute_phase as fatal -669.
-        // Convert to sk_bad_state.
+        // Convert to sk_bad_state and bill the admission floor —
+        // execution did happen and produced state, even if the host
+        // rejects it (round-37).
         auto output_res = build_jvm_workchain_output(
             cfg->config, state, effective_gas_limit,
             invocation_res.move_as_ok());
@@ -451,9 +492,10 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 << "JVM output builder returned error "
                    "(treated as sk_bad_state): "
                 << output_res.error().message();
-            return skipped_output(
+            return skipped_output_billed(
                 block::ComputePhase::sk_bad_state,
-                "JVM output builder failed");
+                "JVM output builder failed",
+                cfg->config);
         }
         return output_res.move_as_ok();
     }

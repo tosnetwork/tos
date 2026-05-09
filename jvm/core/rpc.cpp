@@ -695,6 +695,18 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                                + "\",\"localResult\":" + local_result_json + "}";
             return JvmRpcResult{json_rpc_ok(id, result), false};
         }
+        // Round-37 fix: mirror the engine's round-36 max-gas cap.
+        // Consensus caps `input.gas_limit` to `max_gas_per_tx`
+        // (typically 1M) before runtime; the RPC simulation should
+        // do the same so a `gasLimit = 30M` request returns the
+        // same semantics on-chain and locally.  Pre-fix the runtime
+        // path rejected `gas_limit > max_gas_per_tx` with an error
+        // that surfaced as a runtime failure in the localResult,
+        // diverging from on-chain behavior.
+        if (config->max_gas_per_tx > 0
+            && input.gas_limit > config->max_gas_per_tx) {
+            input.gas_limit = config->max_gas_per_tx;
+        }
 
         auto invocation_result = runtime->run_contract(
             input, context, *config, previous_state);
