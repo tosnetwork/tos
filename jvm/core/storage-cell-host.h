@@ -60,7 +60,20 @@ class JvmStorageCellHost {
 };
 
 td::Ref<vm::Cell> encode_jvm_storage_value(const JvmStorageValue& value);
-td::Result<JvmStorageValue> decode_jvm_storage_value(td::Ref<vm::Cell> root);
+
+/// Decode a `JvmStorageValue` from its on-cell encoding.  Walks the
+/// chunk chain summing bytes; bails out early if the running total
+/// exceeds `max_bytes` (defaults to `kJvmStorageValueMaxBytes`,
+/// preserving the legacy contract).  Round 54 MEDIUM fix: callers
+/// that know a tighter cap (e.g. ConfigParam-85's `max_class_bytes`)
+/// can pass it here so an oversized payload is rejected before the
+/// decoder copies its bytes / hashes them — pre-fix the engine
+/// fully decoded + sha256-hashed the entire 1 MiB blob, then
+/// rejected with a zero-billed `skipped_output`, letting external
+/// senders force unmetered validator-CPU work per submission.
+td::Result<JvmStorageValue> decode_jvm_storage_value(
+    td::Ref<vm::Cell> root,
+    std::size_t max_bytes = kJvmStorageValueMaxBytes);
 
 // Validate the full storage dictionary shape.  This is intended for import,
 // test, and defensive state-boundary checks; hot compute paths can bind the

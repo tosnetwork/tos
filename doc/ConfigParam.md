@@ -582,7 +582,7 @@ Root cell layout:
 | `gas_schedule_version` | uint8 | non-zero version of the embedded gas table |
 | `stdlib_hash` | bytes32 | hash commitment to the admitted `rt.jar` / API profile |
 | `opcode_gas_table` | ref | linked gas table with exactly 256 uint64 entries |
-| `helper_gas_table` | ref | linked gas table with exactly 13 uint64 helper entries |
+| `helper_gas_table` | ref | linked gas table with exactly 14 uint64 helper entries |
 
 Each gas-table cell stores `chunk:uint8` followed by `chunk` uint64 costs and,
 when more entries remain, one reference to the next cell. `chunk` must be in
@@ -591,8 +591,16 @@ when more entries remain, one reference to the next cell. `chunk` must be in
 Helper gas entries are ordered by the Avata ABI constants: storage load,
 storage store base, storage store byte, storage clear, object allocation word,
 array allocation base, array allocation element, `System.arraycopy()` base,
-`System.arraycopy()` element, native call, event base, event topic, and event
-data byte.
+`System.arraycopy()` element, native call, event base, event topic, event
+data byte, and storage load byte.
+
+The `storage load byte` entry (index 13) was added in Round 53 of the security
+review.  Pre-Round-53 `Storage.load` charged only the fixed `storage load`
+helper (~20 gas) regardless of value size, but the host walked the storage-
+value chain and `memcpy`'d the full payload (up to 1 MiB) into the JVM heap.
+A contract that had seeded a large slot once could repeatedly read it for
+~20 gas while validators paid O(N) bandwidth per call.  The new entry charges
+1 gas per loaded byte by default, mirroring `storage store byte`.
 
 **Activation**: validators parse and validate ConfigParam 85 through
 `jvm/core/config-param.cpp` during workchain-engine resolution. The

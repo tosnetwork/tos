@@ -96,8 +96,17 @@ td::Ref<vm::Cell> encode_jvm_contract_account_state(
 // bits/refs.  Does not validate the storage trie or the method manifest in
 // depth; callers re-validate those once they have a config + workchain
 // context.
+//
+// Round 54 MEDIUM fix: `max_class_bytes` (default 0 = no extra cap, fall
+// back to `kJvmStorageValueMaxBytes`) lets the caller forward
+// ConfigParam-85's `max_class_bytes` so the decoder bails out as soon as
+// the running class_bytes total would exceed the cap — pre-fix the
+// engine fully decoded + sha256-hashed up to a 1 MiB blob, then
+// rejected with a zero-billed `skipped_output`, letting external
+// senders force unmetered validator-CPU work per submission.
 bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,
-                                       JvmContractAccountState& out);
+                                       JvmContractAccountState& out,
+                                       std::size_t max_class_bytes = 0);
 
 // Build the canonical TLB `StateInit{code, data}` cell that materializes a
 // new wc=3 account whose initial state is `state`.  `code` is the JVM

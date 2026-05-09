@@ -810,7 +810,12 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
     std::string local_result_json = "null";
     if (runtime != nullptr && config != nullptr && req.current_state.not_null()) {
         JvmContractAccountState previous_state;
-        if (!decode_jvm_contract_account_state(req.current_state, previous_state)) {
+        // Round 54 MEDIUM fix: forward `config->max_class_bytes` so
+        // the decoder rejects oversized class blobs without copying
+        // and hashing them first.
+        if (!decode_jvm_contract_account_state(req.current_state,
+                                                previous_state,
+                                                config->max_class_bytes)) {
             return JvmRpcResult{
                 json_rpc_err(id, -32602,
                              "accountStateBoc: malformed contract account state"),
@@ -1208,7 +1213,8 @@ std::optional<JvmGetContractStateRequest> parse_jvm_get_contract_state_request(
 
 JvmRpcResult handle_jvm_get_contract_state(
     const JvmGetContractStateRequest& req,
-    const std::string& id) {
+    const std::string& id,
+    const JvmConfig* config) {
     if (req.account_state.is_null()) {
         return JvmRpcResult{
             json_rpc_err(id, -32602, "account state cell is required"),
@@ -1216,7 +1222,14 @@ JvmRpcResult handle_jvm_get_contract_state(
     }
 
     JvmContractAccountState state;
-    if (!decode_jvm_contract_account_state(req.account_state, state)) {
+    // Round 54 MEDIUM fix: cap the class_bytes decode at
+    // ConfigParam-85's `max_class_bytes` when the caller supplied a
+    // config (production validator path always does).
+    const std::size_t class_bytes_cap =
+        config != nullptr ? static_cast<std::size_t>(config->max_class_bytes)
+                          : 0;
+    if (!decode_jvm_contract_account_state(req.account_state, state,
+                                            class_bytes_cap)) {
         return JvmRpcResult{
             json_rpc_err(id, -32602, "malformed contract account state cell"),
             true};
@@ -1244,6 +1257,15 @@ JvmRpcResult handle_jvm_get_contract_state(
 
     // Enumerate storage slots (up to the default limit) for this single
     // contract account; the storage dict is per-account and isolated.
+    //
+    // Round 54 MEDIUM fix: also enforce a cumulative response-bytes
+    // budget.  Pre-fix the endpoint hex-encoded every slot's value
+    // (up to `kJvmStorageValueMaxBytes` = 1 MiB each) for the first
+    // 100 slots, so a contract that filled storage with 1 MiB values
+    // could force the validator/full-node to decode + hex-encode
+    // ~100 MiB and produce a ~200 MiB JSON response per call.
+    // Truncate enumeration once the running response-bytes total
+    // exceeds 1 MiB; surface `truncated:true` so callers know.
     std::string slots_json = "null";
     bool slots_truncated = false;
     if (state.storage_root.not_null()) {
@@ -1252,8 +1274,18 @@ JvmRpcResult handle_jvm_get_contract_state(
         std::size_t slot_count = 0;
         static constexpr std::size_t kSlotLimit =
             JvmStorageCellHost::kEnumerateDefaultLimit;
+        // 1 MiB total response budget for the slot list (before the
+        // surrounding JSON envelope).  Picked large enough that
+        // typical small-state queries never hit it, but small
+        // enough that one call cannot saturate validator memory.
+        static constexpr std::size_t kSlotsResponseByteBudget =
+            1024 * 1024;
         auto enum_status = storage.enumerate_slots(
             [&](const JvmStorageSlot& slot, const JvmStorageValue& value) {
+                if (slots_buf.size() > kSlotsResponseByteBudget) {
+                    slots_truncated = true;
+                    return false;
+                }
                 if (slot_count > 0) slots_buf += ",";
                 slots_buf += "{\"key\":\"" + hex_encode(slot.data(), slot.size())
                            + "\",\"value\":\""
@@ -1386,7 +1418,7 @@ std::optional<JvmRpcResult> handle_jvm_rpc(
                 json_rpc_err(id, -32602, "invalid jvm_getContractState params"),
                 true};
         }
-        return handle_jvm_get_contract_state(*req, id);
+        return handle_jvm_get_contract_state(*req, id, &config);
     }
 
     if (method == "jvm_getReceipts") {

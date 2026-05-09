@@ -310,7 +310,18 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         }
 
         JvmContractAccountState state;
-        if (!decode_jvm_contract_account_state(input.current_data, state)) {
+        // Round 54 MEDIUM fix: pass `cfg->config.max_class_bytes` so
+        // the decoder bails out as soon as the running class_bytes
+        // total exceeds the cap.  Pre-fix the decoder fully copied +
+        // sha256-hashed up to 1 MiB before this engine then rejected
+        // with `skipped_output(sk_bad_state)` — zero-billed
+        // validator-CPU work per submission.  Decode-failure here
+        // still hits the existing zero-billed reject; the win is
+        // that an attacker-controlled chunk chain larger than the
+        // cap no longer forces full-blob work.
+        if (!decode_jvm_contract_account_state(
+                input.current_data, state,
+                cfg->config.max_class_bytes)) {
             return skipped_output(
                 block::ComputePhase::sk_bad_state,
                 "JVM contract account state cell is malformed");

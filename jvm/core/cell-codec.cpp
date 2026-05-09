@@ -85,7 +85,8 @@ td::Ref<vm::Cell> encode_jvm_contract_account_state(
 }
 
 bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,
-                                       JvmContractAccountState& out) {
+                                       JvmContractAccountState& out,
+                                       std::size_t max_class_bytes) {
     out = JvmContractAccountState{};
     if (cell.is_null()) {
         return false;
@@ -148,7 +149,18 @@ bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,
         // binding gate use this canonical recomputed hash, so a
         // malicious caller cannot poison the VM cache by claiming an
         // alternate class_hash for the same class_bytes.
-        auto class_bytes_decoded = decode_jvm_storage_value(out.class_bytes);
+        // Round 54 MEDIUM fix: forward `max_class_bytes` so the
+        // storage-value walker bails out as soon as the running
+        // total would exceed the cap, avoiding the full 1 MiB
+        // memcpy + sha256 on oversized class blobs.  `max_class_bytes
+        // == 0` means no caller-supplied cap; fall back to the
+        // legacy 1 MiB envelope cap.
+        const std::size_t class_bytes_cap =
+            max_class_bytes == 0 ? kJvmStorageValueMaxBytes
+                                  : std::min(max_class_bytes,
+                                             kJvmStorageValueMaxBytes);
+        auto class_bytes_decoded =
+            decode_jvm_storage_value(out.class_bytes, class_bytes_cap);
         if (class_bytes_decoded.is_error()) {
             out = JvmContractAccountState{};
             return false;

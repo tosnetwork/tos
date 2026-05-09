@@ -1088,6 +1088,56 @@ TEST(JvmWorkchainCore, EncodeJvmStateInitCellPassesTlbValidation) {
   CHECK(decoded.class_hash == state.class_hash);
 }
 
+TEST(JvmWorkchainCore, DecodeContractAccountStateBailsOnOversizedClassBytes) {
+  // Round 54 MEDIUM fix: when the caller forwards a tighter
+  // `max_class_bytes` to `decode_jvm_contract_account_state`, an
+  // oversized `class_bytes` payload must be rejected without copying
+  // every byte and SHA-256 hashing the full blob.  Pre-fix the engine
+  // ran `decode_jvm_storage_value` (full memcpy) + `td::sha256` on up
+  // to 1 MiB before checking ConfigParam-85's `max_class_bytes`,
+  // letting external senders force unmetered validator-CPU work
+  // proportional to their submitted blob size.
+  using namespace jvm_workchain;
+
+  JvmStorageValue large_class_bytes(8 * 1024, 0xab);  // 8 KiB > 4 KiB cap
+  JvmContractAccountState state;
+  state.stdlib_hash = {};
+  state.stdlib_hash[0] = 0x99;
+  state.class_hash = compute_jvm_class_hash(large_class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x40 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x60 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(large_class_bytes);
+  state.storage_root = {};
+  state.manifest_root = encode_jvm_method_manifest({});
+
+  auto encoded = encode_jvm_contract_account_state(state);
+  CHECK(encoded.not_null());
+
+  // Decode with no cap (legacy behavior) — succeeds.
+  JvmContractAccountState decoded_no_cap;
+  CHECK(decode_jvm_contract_account_state(encoded, decoded_no_cap));
+  CHECK(decoded_no_cap.decoded_class_bytes_size == large_class_bytes.size());
+
+  // Decode with cap = 4 KiB — must reject (fast bail in the storage-
+  // value walker).  The state struct comes back fully zeroed.
+  JvmContractAccountState decoded_capped;
+  CHECK(!decode_jvm_contract_account_state(encoded, decoded_capped,
+                                            /*max_class_bytes=*/4 * 1024));
+  CHECK(decoded_capped.decoded_class_bytes_size == 0);
+  CHECK(decoded_capped.class_hash == JvmClassHash{});
+
+  // Decode with cap == exact size — succeeds.
+  JvmContractAccountState decoded_exact;
+  CHECK(decode_jvm_contract_account_state(
+      encoded, decoded_exact,
+      /*max_class_bytes=*/large_class_bytes.size()));
+  CHECK(decoded_exact.decoded_class_bytes_size == large_class_bytes.size());
+}
+
 TEST(JvmWorkchainCore, MessageAbiCallDescriptorRoundTripsAndOmitsContractId) {
   using namespace jvm_workchain;
 

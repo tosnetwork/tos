@@ -166,11 +166,17 @@ td::Ref<vm::Cell> encode_jvm_storage_value(const JvmStorageValue& value) {
     return next;
 }
 
-td::Result<JvmStorageValue> decode_jvm_storage_value(td::Ref<vm::Cell> root) {
+td::Result<JvmStorageValue> decode_jvm_storage_value(td::Ref<vm::Cell> root,
+                                                     std::size_t max_bytes) {
     JvmStorageValue out;
     if (root.is_null()) {
         return td::Status::Error("JVM storage value root is null");
     }
+    // Clamp `max_bytes` to the absolute cap so callers passing 0 (or a
+    // value above 1 MiB) still get bounded decode work.
+    const std::size_t effective_cap =
+        max_bytes == 0 ? kJvmStorageValueMaxBytes
+                       : std::min(max_bytes, kJvmStorageValueMaxBytes);
 
     try {
         auto cell = std::move(root);
@@ -193,7 +199,14 @@ td::Result<JvmStorageValue> decode_jvm_storage_value(td::Ref<vm::Cell> root) {
             }
             const unsigned byte_count = (bits - 1) / 8;
             if (byte_count > kJvmStorageValueChunkBytes ||
-                out.size() > kJvmStorageValueMaxBytes - byte_count) {
+                out.size() > effective_cap - byte_count) {
+                // Round 54 MEDIUM fix: this branch now also fires when
+                // the running total would exceed the caller's tighter
+                // cap (e.g., `max_class_bytes` < kJvmStorageValueMaxBytes).
+                // Bail BEFORE we copy the rest of the chunk, so an
+                // oversized payload only forces validator-CPU work
+                // proportional to chunks read up to the cap, not to the
+                // attacker-controlled total chain length.
                 return td::Status::Error("JVM storage value exceeds maximum size");
             }
 

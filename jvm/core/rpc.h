@@ -154,8 +154,13 @@ std::optional<JvmGetContractStateRequest> parse_jvm_get_contract_state_request(
     const std::string& params_json);
 
 /// Return the decoded storage slots of the named contract as a JSON object.
+/// Round 54 MEDIUM fix: takes the `config` so the state decoder can apply
+/// `max_class_bytes` and the storage enumerator can apply a per-response
+/// byte budget.  `nullptr` falls back to the legacy decode-without-cap +
+/// no response budget (test path only).
 JvmRpcResult handle_jvm_get_contract_state(const JvmGetContractStateRequest& req,
-                                           const std::string& id = "null");
+                                           const std::string& id = "null",
+                                           const JvmConfig* config = nullptr);
 
 // ---------------------------------------------------------------------------
 // jvm_getReceipts
