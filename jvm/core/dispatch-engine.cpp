@@ -27,6 +27,7 @@
 #include "vm/cellslice.h"
 
 #include <cstring>
+#include <limits>
 
 #include <memory>
 #include <string>
@@ -135,6 +136,42 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             return skipped_output(block::ComputePhase::sk_bad_state,
                                   "JVM Avata interpreter runtime is not installed");
         }
+        // Round-31 fix: cap the engine's gas budget by what the
+        // account can actually pay at the JVM's gas price.  Round 30
+        // turned the post-hoc balance check into a graceful -701
+        // rejection, but the engine still ran with the full host gas
+        // budget, letting a zero/low-balance account force validators
+        // to execute up to `max_gas_per_tx` work that the host then
+        // discards.  Compute `affordable = balance / gas_price` and
+        // pass `min(input.gas_limit, affordable)` to the runtime.
+        // gas_price is u64 from ConfigParam 85; balance.tomis is a
+        // RefInt256 from the host.  affordable=0 (balance can't even
+        // pay one gas unit) routes through the host's round-30
+        // sk_no_gas reject path.
+        std::uint64_t effective_gas_limit = input.gas_limit;
+        if (cfg->config.gas_price > 0
+            && input.account_balance.tomis.not_null()) {
+            auto affordable_int =
+                input.account_balance.tomis
+                / td::make_refint(cfg->config.gas_price);
+            if (affordable_int.not_null()) {
+                std::uint64_t affordable = 0;
+                if (affordable_int->fits_bits(64, /*sign=*/false)) {
+                    affordable = affordable_int->to_long();
+                } else {
+                    // balance/gas_price > UINT64_MAX → not constraining.
+                    affordable = std::numeric_limits<std::uint64_t>::max();
+                }
+                if (affordable < effective_gas_limit) {
+                    effective_gas_limit = affordable;
+                }
+            }
+        }
+        // After capping, gas_limit may be 0; the host's round-30
+        // charging block will then see gas_used=0, gas_fees=0, the
+        // engine returns no useful work, and the call ends up
+        // sk_no_gas via the normal "engine returned 0 useful gas"
+        // path.
         if (parse_jvm_call_descriptor(input.inbound_body).is_error()) {
             return skipped_output(
                 block::ComputePhase::sk_bad_state,
@@ -334,10 +371,15 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             }
         }
 
+        // Pass the affordability-capped gas limit through to the
+        // runtime so it never runs more gas than the account can pay.
+        block::WorkchainComputeInput effective_input = input;
+        effective_input.gas_limit = effective_gas_limit;
         TRY_RESULT(invocation,
-                   runtime_->run_contract(input, context, cfg->config, state));
+                   runtime_->run_contract(effective_input, context,
+                                          cfg->config, state));
         return build_jvm_workchain_output(
-            cfg->config, state, input.gas_limit, invocation);
+            cfg->config, state, effective_gas_limit, invocation);
     }
 
 
