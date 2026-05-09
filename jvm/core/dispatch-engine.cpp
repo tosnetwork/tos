@@ -13,6 +13,7 @@
 */
 #include "jvm/core/dispatch-engine.h"
 
+#include "block/block-auto.h"
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
 #include "jvm/core/cell-codec.h"
@@ -23,6 +24,7 @@
 #include "td/utils/logging.h"
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellBuilder.h"
+#include "vm/cellslice.h"
 
 #include <cstring>
 
@@ -189,29 +191,90 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         const auto manifest_hash = compute_jvm_manifest_root_hash(
             state.manifest_root);
         const auto expected_addr = derive_jvm_contract_address_from_state(
-            state.address_commit, state.class_hash, manifest_hash);
+            state.deployer, state.address_commit, state.class_hash,
+            manifest_hash);
         if (std::memcmp(input.account_addr.data(), expected_addr.data(),
                         expected_addr.size()) != 0) {
             return skipped_output(
                 block::ComputePhase::sk_bad_state,
                 "JVM contract account state does not bind to account address");
         }
-        // First-activation invariant: storage_root must be empty/null.
-        // Without this, an attacker who knows the victim's deploy tuple
-        // (deployer/salt/init_args/class_bytes/manifest) could pre-load
-        // attacker-favorable storage at the victim's deterministic
-        // address (e.g. write `owner = attacker` before the contract
-        // even runs once).  The address-binding gate alone cannot
-        // prevent this because storage_root legitimately mutates after
-        // first activation; the host-supplied `msg_state_used` flag is
-        // the only signal that distinguishes "first decode of a
-        // StateInit-derived state" from "decode of an engine-produced
-        // state."
-        if (input.msg_state_used && state.storage_root.not_null()) {
-            return skipped_output(
-                block::ComputePhase::sk_bad_state,
-                "JVM contract account state has non-empty storage_root at "
-                "first activation");
+        // First-activation invariants (msg_state_used == true): the
+        // host has just unpacked a StateInit-bearing message into
+        // `current_data`.  Two checks here, plus the address-binding
+        // gate above:
+        //   * `storage_root` must be empty/null — otherwise an attacker
+        //     who knows the victim's deploy tuple could pre-load
+        //     attacker-favorable storage (e.g. `owner = attacker`).
+        //   * The inbound message MUST be int_msg_info with src.addr
+        //     equal to `state.deployer` — otherwise an attacker who
+        //     saw the victim's pending deploy could copy the StateInit
+        //     and run their own first-call body on the same address
+        //     (round-14 front-run finding).
+        if (input.msg_state_used) {
+            if (state.storage_root.not_null()) {
+                return skipped_output(
+                    block::ComputePhase::sk_bad_state,
+                    "JVM contract account state has non-empty storage_root at "
+                    "first activation");
+            }
+            if (input.inbound_message.is_null()) {
+                return skipped_output(
+                    block::ComputePhase::sk_bad_state,
+                    "JVM first activation requires an inbound message");
+            }
+            try {
+                bool special = false;
+                auto msg_cs = vm::load_cell_slice_special(
+                    input.inbound_message, special);
+                if (special) {
+                    return skipped_output(
+                        block::ComputePhase::sk_bad_state,
+                        "JVM first activation: inbound_message is special");
+                }
+                int tag = block::gen::t_CommonMsgInfo.get_tag(msg_cs);
+                if (tag != block::gen::CommonMsgInfo::int_msg_info) {
+                    return skipped_output(
+                        block::ComputePhase::sk_bad_state,
+                        "JVM first activation requires an internal message "
+                        "(external first activation cannot authenticate "
+                        "the deployer)");
+                }
+                block::gen::CommonMsgInfo::Record_int_msg_info info;
+                if (!tlb::unpack(msg_cs, info)) {
+                    return skipped_output(
+                        block::ComputePhase::sk_bad_state,
+                        "JVM first activation: inbound int_msg_info "
+                        "is malformed");
+                }
+                block::gen::MsgAddressInt::Record_addr_std src;
+                if (!block::gen::csr_unpack(info.src, src)) {
+                    return skipped_output(
+                        block::ComputePhase::sk_bad_state,
+                        "JVM first activation: inbound src is not addr_std");
+                }
+                std::array<std::uint8_t, 32> src_bytes{};
+                std::memcpy(src_bytes.data(), src.address.data(), 32);
+                if (src_bytes != state.deployer) {
+                    return skipped_output(
+                        block::ComputePhase::sk_bad_state,
+                        "JVM first activation: inbound src.addr does not "
+                        "match state.deployer");
+                }
+            } catch (vm::VmError&) {
+                return skipped_output(
+                    block::ComputePhase::sk_bad_state,
+                    "JVM first activation: inbound_message decode hit VmError");
+            } catch (vm::VmVirtError&) {
+                return skipped_output(
+                    block::ComputePhase::sk_bad_state,
+                    "JVM first activation: inbound_message decode hit "
+                    "VmVirtError");
+            } catch (...) {
+                return skipped_output(
+                    block::ComputePhase::sk_bad_state,
+                    "JVM first activation: inbound_message decode failed");
+            }
         }
 
         TRY_RESULT(invocation,

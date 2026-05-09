@@ -53,18 +53,26 @@ td::Ref<vm::Cell> encode_jvm_contract_account_state(
     if (state.schema_version != kJvmContractAccountStateSchemaVersion) {
         return {};
     }
-    if (state.class_bytes.is_null() || jvm_class_hash_is_zero(state.class_hash)) {
+    // class_hash is no longer part of the wire format (round 14); the
+    // decoder recomputes it from class_bytes.  We just need a non-null
+    // class_bytes ref here.  An empty class_bytes payload would produce
+    // a zero class_hash on decode, which the decoder rejects.
+    if (state.class_bytes.is_null()) {
         return {};
     }
 
+    // class_hash is NOT written on the wire — see header comment.  We
+    // do still verify it's non-zero on the struct so callers don't
+    // accidentally produce a JVAC whose recomputed hash mismatches
+    // their expectation.
     vm::CellBuilder cb;
     if (!cb.store_ulong_rchk_bool(kJvmContractAccountStateMagic,
                                   kJvmContractAccountStateMagicBits) ||
         !cb.store_ulong_rchk_bool(state.schema_version, 8) ||
         !cb.store_bytes_bool(state.stdlib_hash.data(),
                              static_cast<unsigned>(state.stdlib_hash.size())) ||
-        !cb.store_bytes_bool(state.class_hash.data(),
-                             static_cast<unsigned>(state.class_hash.size())) ||
+        !cb.store_bytes_bool(state.deployer.data(),
+                             static_cast<unsigned>(state.deployer.size())) ||
         !cb.store_bytes_bool(state.address_commit.data(),
                              static_cast<unsigned>(
                                  state.address_commit.size())) ||
@@ -106,8 +114,8 @@ bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,
 
         if (!cs.fetch_bytes(out.stdlib_hash.data(),
                             static_cast<unsigned>(out.stdlib_hash.size())) ||
-            !cs.fetch_bytes(out.class_hash.data(),
-                            static_cast<unsigned>(out.class_hash.size())) ||
+            !cs.fetch_bytes(out.deployer.data(),
+                            static_cast<unsigned>(out.deployer.size())) ||
             !cs.fetch_bytes(out.address_commit.data(),
                             static_cast<unsigned>(
                                 out.address_commit.size())) ||
@@ -119,8 +127,7 @@ bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,
             out = JvmContractAccountState{};
             return false;
         }
-        if (jvm_class_hash_is_zero(out.class_hash) ||
-            out.class_bytes.is_null()) {
+        if (out.class_bytes.is_null()) {
             out = JvmContractAccountState{};
             return false;
         }
@@ -135,32 +142,32 @@ bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,
         // by `vm::Dictionary` construction at use time.  Initial state
         // cannot embed a malformed storage tree because the round-3
         // first-activation invariant requires `storage_root.is_null()`.
-        // Bind `class_hash` to `class_bytes`: a malicious caller could
-        // otherwise hand us an account state whose declared class_hash
-        // belongs to a different (already-cached) contract while the
-        // class_bytes ref carries attacker bytecode.  The Avata VM cache
-        // keys by class_hash and only installs class_bytes on a cache
-        // miss, so a poisoned cache entry would let attacker bytecode
-        // execute under the victim's class identity in any later call.
-        // Recomputing sha256 here makes that impossible.
+        // Compute class_hash from class_bytes (round-14: class_hash is
+        // no longer stored on the wire — see header comment for the
+        // bit-budget reason).  The Avata VM cache and the address-
+        // binding gate use this canonical recomputed hash, so a
+        // malicious caller cannot poison the VM cache by claiming an
+        // alternate class_hash for the same class_bytes.
         auto class_bytes_decoded = decode_jvm_storage_value(out.class_bytes);
         if (class_bytes_decoded.is_error()) {
             out = JvmContractAccountState{};
             return false;
         }
         const auto& class_bytes_raw = class_bytes_decoded.ok();
-        JvmClassHash recomputed{};
-        if (!class_bytes_raw.empty()) {
-            td::sha256(td::Slice(reinterpret_cast<const char*>(
-                                    class_bytes_raw.data()),
-                                 class_bytes_raw.size()),
-                       td::MutableSlice(reinterpret_cast<char*>(recomputed.data()),
-                                        recomputed.size()));
-        }
-        if (recomputed != out.class_hash) {
+        if (class_bytes_raw.empty()) {
+            // class_bytes must be non-empty so class_hash is non-zero
+            // (the engine address gate requires non-zero class_hash for
+            // a meaningful binding).
             out = JvmContractAccountState{};
             return false;
         }
+        JvmClassHash recomputed{};
+        td::sha256(td::Slice(reinterpret_cast<const char*>(
+                                class_bytes_raw.data()),
+                             class_bytes_raw.size()),
+                   td::MutableSlice(reinterpret_cast<char*>(recomputed.data()),
+                                    recomputed.size()));
+        out.class_hash = recomputed;
         // Surface the decoded byte length so the engine can cheaply
         // enforce ConfigParam 85's `max_class_bytes` without a second
         // decode pass.

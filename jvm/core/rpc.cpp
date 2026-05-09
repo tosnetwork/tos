@@ -617,8 +617,8 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
         const auto bound_manifest_hash = compute_jvm_manifest_root_hash(
             previous_state.manifest_root);
         const auto bound_addr = derive_jvm_contract_address_from_state(
-            previous_state.address_commit, previous_state.class_hash,
-            bound_manifest_hash);
+            previous_state.deployer, previous_state.address_commit,
+            previous_state.class_hash, bound_manifest_hash);
         if (std::memcmp(req.contract_address.data(), bound_addr.data(),
                         bound_addr.size()) != 0) {
             local_result_json =
@@ -682,8 +682,18 @@ JvmRpcResult handle_jvm_call_contract(const JvmCallContractRequest& req,
                 : inv.out_of_memory ? "JVM execution exhausted memory"
                 : "JVM execution failed";
 
+            // Round 14 MEDIUM fix: report `success=false` when
+            // `build_jvm_workchain_output` rejected the result (e.g.,
+            // max_storage_cells exceeded).  Pre-fix the RPC reflected
+            // `inv.success` directly, so a runtime-successful call
+            // whose committed storage exceeded the cap returned
+            // `success=true` with `newStateBoc=null` — RPC simulation
+            // diverged from on-chain consensus exactly on the cap that
+            // round 12 added.
+            const bool output_ok = output.is_ok();
+            const bool effective_success = inv.success && output_ok;
             local_result_json = std::string("{\"success\":") +
-                (inv.success ? "true" : "false") +
+                (effective_success ? "true" : "false") +
                 ",\"outOfGas\":" + (inv.out_of_gas ? "true" : "false") +
                 ",\"outOfMemory\":" + (inv.out_of_memory ? "true" : "false") +
                 ",\"gasUsed\":" + std::to_string(inv.gas_used) +

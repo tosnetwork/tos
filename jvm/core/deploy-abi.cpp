@@ -204,10 +204,12 @@ JvmManifestRootHash compute_jvm_manifest_root_hash(
 }
 
 JvmContractId derive_jvm_contract_address_from_state(
+    const JvmContractId& deployer,
     const JvmAddressCommit& address_commit,
     const JvmClassHash& class_hash,
     const JvmManifestRootHash& manifest_root_hash) {
     std::string material = "TOS-JVM-CONTRACT-v2";
+    append_bytes(material, deployer.data(), deployer.size());
     append_bytes(material, address_commit.data(), address_commit.size());
     append_bytes(material, class_hash.data(), class_hash.size());
     append_bytes(material, manifest_root_hash.data(),
@@ -228,7 +230,8 @@ td::Result<JvmContractId> derive_jvm_contract_address(
     auto address_commit = compute_jvm_address_commit(
         descriptor.deployer, descriptor.salt, descriptor.init_args);
     auto manifest_hash = compute_jvm_manifest_root_hash(manifest_root);
-    return derive_jvm_contract_address_from_state(address_commit,
+    return derive_jvm_contract_address_from_state(descriptor.deployer,
+                                                  address_commit,
                                                   descriptor.class_hash,
                                                   manifest_hash);
 }

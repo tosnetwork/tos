@@ -29,11 +29,20 @@ struct JvmContractAccountState {
     std::uint8_t schema_version{kJvmContractAccountStateSchemaVersion};
     std::array<std::uint8_t, kJvmStdlibHashBytes> stdlib_hash{};
     JvmClassHash class_hash{};
+    // 32-byte address of the wc=3 contract that emitted the
+    // `action_create_account` for this account.  Bound directly into
+    // the account address derivation so the engine can reject any
+    // first-activation message whose source != deployer (round-14
+    // front-run fix).  Without this, an attacker who saw a victim's
+    // pending deploy could copy the StateInit and run their own first
+    // call body on the same address.
+    JvmContractId deployer{};
     // address_commit = sha256(deployer || salt || init_args_cell_hash).
     // The wc=3 account address is sha256("TOS-JVM-CONTRACT-v2" ||
-    // address_commit || class_hash); the engine verifies this on every
-    // run_compute so an attacker cannot squat a victim's deterministic
-    // address with attacker bytecode (the address-binding gate).
+    // deployer || address_commit || class_hash || manifest_root_hash);
+    // the engine verifies this on every run_compute so an attacker
+    // cannot squat a victim's deterministic address with attacker
+    // bytecode (the address-binding gate).
     JvmAddressCommit address_commit{};
     // class_bytes is held as a Cell ref so the Cell DB physically deduplicates
     // contracts that share identical bytecode (verified: CellStorage keys by
@@ -53,12 +62,23 @@ struct JvmContractAccountState {
 //   jvm_contract_account#4a564143
 //     schema_version:uint8 (=2)
 //     stdlib_hash:bits256
-//     class_hash:bits256
+//     deployer:bits256
 //     address_commit:bits256
-//     class_bytes:^Cell
+//     class_bytes:^Cell                 -- class_hash is recomputed
+//                                          from this, not stored on
+//                                          the wire
 //     storage_root:(Maybe ^Cell)
 //     manifest_root:(Maybe ^Cell)
 //     = JvmContractAccountState;
+//
+// `class_hash` is intentionally NOT stored on the wire.  Pre-round-14
+// JVAC stored `class_hash` inline, but adding `deployer` (round-14)
+// pushed the root cell over the 1023-bit limit.  The decoder
+// recomputes `class_hash = sha256(decoded class_bytes)` and surfaces
+// it on the struct.  The encoder writes nothing for class_hash.
+// Address binding still uses class_hash because the recomputed value
+// is canonical (Cell DB keys class_bytes by hash, so two contracts
+// with the same class_bytes produce the same recomputed hash).
 //
 // Address-binding invariant: after a successful decode, the decoded state's
 // `(address_commit, class_hash)` MUST satisfy

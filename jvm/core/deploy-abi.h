@@ -63,30 +63,33 @@ using JvmManifestRootHash = std::array<std::uint8_t, 32>;
 JvmManifestRootHash compute_jvm_manifest_root_hash(
     td::Ref<vm::Cell> manifest_root);
 
-// Deterministic per-contract wc=3 account address.  Two-step formula
-// keeps the address-binding gate cheap to verify on every `run_compute`
-// (the engine only needs `state.address_commit`, `state.class_hash`,
-// and `state.manifest_root`, not the original deploy descriptor):
+// Deterministic per-contract wc=3 account address.  Five-input formula
+// keeps the address-binding gate cheap to verify on every `run_compute`:
 //
 //   address_commit     = sha256(deployer || salt || init_args_cell.hash)
 //   manifest_root_hash = sha256-cell-hash(manifest_root) or zero if null
 //   addr               = sha256("TOS-JVM-CONTRACT-v2"
+//                               || deployer
 //                               || address_commit
 //                               || class_hash
 //                               || manifest_root_hash)
 //
-// `manifest_root_hash` joins `class_hash` as an immutable per-account
-// commitment so an attacker who knows a victim's deploy tuple cannot
-// race them to the deterministic address with a JVAC carrying the same
-// (address_commit, class_hash) but a different manifest (which would
-// otherwise let the attacker redirect method_id → method dispatch).
+// `deployer` joins the four other commitments so the engine can
+// authenticate the source of the first-activation message
+// (`msg.src.addr == state.deployer`) without having to break
+// `address_commit`.  Without this binding an attacker who saw a
+// victim's pending deploy could copy the StateInit and run their own
+// first-call body on the same address (round-14 front-run finding).
+//
+// `manifest_root_hash` and `class_hash` are immutable per-account
+// commitments; redirecting method_id → method dispatch or swapping
+// the bytecode under the same address would change the resulting
+// address.
 //
 // Initial `storage_root` is constrained separately: at first activation
 // (`WorkchainComputeInput::msg_state_used == true`) the engine rejects
-// any non-empty `state.storage_root`.  This blocks the parallel
-// "pre-load attacker storage" attack without needing storage_root in
-// the address derivation (which would break subsequent calls when
-// storage legitimately mutates).
+// any non-empty `state.storage_root` AND requires the inbound message
+// source to equal `state.deployer` (the round-14 front-run gate).
 //
 // The output is the 256-bit `tos::StdSmcAddress` part of the StdAddress
 // `{workchain=3, addr=...}`.  Because TOS workchain addresses are flat with
@@ -106,10 +109,10 @@ td::Result<JvmContractId> derive_jvm_contract_address(
 // Reconstruct the same address from a parsed JVAC state, for the
 // engine-side address-binding check at `run_compute` time.  Equivalent
 // to `derive_jvm_contract_address(descriptor, manifest_root)` whenever
-// `address_commit == compute_jvm_address_commit(deployer, salt,
-// init_args)`, `class_hash == compute_jvm_class_hash(class_bytes)`, and
-// `manifest_root_hash == compute_jvm_manifest_root_hash(manifest_root)`.
+// the JVAC's `(deployer, address_commit, class_hash, manifest_root_hash)`
+// match the descriptor's inputs.
 JvmContractId derive_jvm_contract_address_from_state(
+    const JvmContractId& deployer,
     const JvmAddressCommit& address_commit, const JvmClassHash& class_hash,
     const JvmManifestRootHash& manifest_root_hash);
 

@@ -415,6 +415,45 @@ td::Ref<vm::CellSlice> make_jvm_call_body(std::uint32_t method_id) {
   return vm::load_cell_slice_ref(cell);
 }
 
+// Build a minimal int_msg_info wc=3 → wc=3 message cell with the
+// supplied src address (32-byte addr_std).  Used in JVM v2 first-
+// activation tests to satisfy the round-14 gate that requires
+// `msg.src.addr == state.deployer`.
+td::Ref<vm::Cell> make_jvm_int_msg_with_src(
+    const std::array<std::uint8_t, 32>& src_addr) {
+  vm::CellBuilder cb;
+  // CommonMsgInfo: int_msg_info$0
+  CHECK(cb.store_long_bool(0, 1));
+  // ihr_disabled, bounce, bounced (3 bits, all 0)
+  CHECK(cb.store_long_bool(0, 3));
+  // src: addr_std$10 anycast=Nothing workchain=3 address=<src_addr>
+  CHECK(cb.store_long_bool(0b10, 2));   // addr_std$10
+  CHECK(cb.store_long_bool(0, 1));       // anycast: Nothing
+  CHECK(cb.store_long_bool(3, 8));       // workchain_id=3 (signed int8)
+  CHECK(cb.store_bytes_bool(src_addr.data(), 32));
+  // dest: addr_std$10 anycast=Nothing workchain=3 address=<zero>
+  CHECK(cb.store_long_bool(0b10, 2));
+  CHECK(cb.store_long_bool(0, 1));
+  CHECK(cb.store_long_bool(3, 8));
+  CHECK(cb.store_zeroes_bool(256));
+  // value: Tomis (VarUInteger 16) — 0
+  CHECK(cb.store_long_bool(0, 4));
+  // value extra: ExtraCurrencyCollection (HashmapE 32 ...) — empty
+  CHECK(cb.store_long_bool(0, 1));
+  // ihr_fee / extra_flags: Tomis 0 / 0
+  CHECK(cb.store_long_bool(0, 4));
+  CHECK(cb.store_long_bool(0, 4));
+  // created_lt:uint64
+  CHECK(cb.store_long_bool(0, 64));
+  // created_at:uint32
+  CHECK(cb.store_long_bool(0, 32));
+  // init: Maybe — Nothing
+  CHECK(cb.store_long_bool(0, 1));
+  // body: Either X ^X — left (inline empty)
+  CHECK(cb.store_long_bool(0, 1));
+  return cb.finalize();
+}
+
 jvm_workchain::JvmDeployDescriptor make_test_jvm_deploy_descriptor(
     std::uint8_t marker = 1) {
   jvm_workchain::JvmDeployDescriptor descriptor;
@@ -887,10 +926,14 @@ TEST(JvmWorkchainCore, ContractAccountStateCodecRoundTripsClassBytesAndStorage) 
   CHECK(!decode_jvm_contract_account_state(wrong_magic.finalize(), decoded_neg));
   CHECK(!decode_jvm_contract_account_state({}, decoded_neg));
 
-  // Reject zero class_hash at encode time.
+  // Encoder no longer rejects zero class_hash on the struct (round-14
+  // moved class_hash off the wire and into a recomputed field).  But
+  // a null class_bytes is still rejected — an empty class_bytes
+  // payload would produce a zero class_hash on decode, which the
+  // decoder rejects.
   {
     JvmContractAccountState bad = state;
-    bad.class_hash = JvmClassHash{};
+    bad.class_bytes = {};
     CHECK(encode_jvm_contract_account_state(bad).is_null());
   }
 
@@ -909,28 +952,27 @@ TEST(JvmWorkchainCore, ContractAccountStateCodecRoundTripsClassBytesAndStorage) 
   CHECK(other_decoded.class_bytes->get_hash() == round_tripped_class_bytes_hash);
 }
 
-TEST(JvmWorkchainCore, DecodeRejectsClassHashMismatchedToClassBytes) {
-  // Regression for the VM-cache-poisoning vulnerability: an attacker
-  // submitting an `accountStateBoc` whose declared `class_hash` is a
-  // legitimate victim contract's hash but whose `class_bytes` define
-  // attacker bytecode under the victim class name could (before this
-  // check) seed `LinkedAvataRuntimeState::vm_cache` with attacker code
-  // under the victim's hash, since `get_vm_for_account` keys the cache
-  // by `class_hash` and only installs `class_bytes` on miss.  Decode
-  // must therefore recompute sha256(class_bytes) and reject any
-  // mismatch.
+TEST(JvmWorkchainCore, DecodeAlwaysSetsCanonicalClassHash) {
+  // Round 14 dropped `class_hash` from the JVAC wire format (the
+  // root cell would otherwise exceed 1023 bits with the new
+  // `deployer` field).  The decoder now always recomputes
+  // `class_hash = sha256(decoded class_bytes)` and surfaces it on
+  // the struct.  This trivially closes the original VM-cache-
+  // poisoning vulnerability: a malicious caller cannot declare a
+  // class_hash that disagrees with class_bytes, because the
+  // class_hash isn't transmitted at all — the engine and the
+  // Avata cache always see the canonical recomputed value.
   using namespace jvm_workchain;
 
   auto cfg = make_test_jvm_config();
-  JvmStorageValue victim_bytes{0xca, 0xfe, 0xba, 0xbe, 0x00, 0x10};
-  JvmStorageValue attacker_bytes{0xde, 0xad, 0xbe, 0xef};
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x00, 0x10};
 
   JvmContractAccountState state;
   state.stdlib_hash = cfg.stdlib_hash;
-  // Declare the legitimate hash...
-  state.class_hash = compute_jvm_class_hash(victim_bytes);
-  // ...but put attacker bytes in the cell.
-  state.class_bytes = encode_jvm_storage_value(attacker_bytes);
+  // Caller can leave class_hash unset / set wrong — encoder ignores
+  // it, decoder recomputes.
+  state.class_hash = JvmClassHash{};  // intentionally wrong
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
   state.storage_root = JvmStorageCellHost{}.root_cell();
   state.manifest_root = encode_jvm_method_manifest({});
 
@@ -938,13 +980,20 @@ TEST(JvmWorkchainCore, DecodeRejectsClassHashMismatchedToClassBytes) {
   CHECK(encoded.not_null());
 
   JvmContractAccountState decoded;
-  CHECK(!decode_jvm_contract_account_state(encoded, decoded));
-
-  // Sanity: when class_hash matches class_bytes, the same shape decodes.
-  state.class_hash = compute_jvm_class_hash(attacker_bytes);
-  encoded = encode_jvm_contract_account_state(state);
-  CHECK(encoded.not_null());
   CHECK(decode_jvm_contract_account_state(encoded, decoded));
+  // Decoded class_hash equals sha256(class_bytes), independent of
+  // what the caller set on the struct before encoding.
+  CHECK(decoded.class_hash == compute_jvm_class_hash(class_bytes));
+  CHECK(decoded.class_hash != JvmClassHash{});
+
+  // Empty class_bytes is rejected (would produce zero class_hash,
+  // which is invalid for the address-binding gate).
+  state.class_bytes = encode_jvm_storage_value(JvmStorageValue{});
+  encoded = encode_jvm_contract_account_state(state);
+  if (encoded.not_null()) {
+    JvmContractAccountState rejected;
+    CHECK(!decode_jvm_contract_account_state(encoded, rejected));
+  }
 }
 
 TEST(JvmWorkchainCore, EncodeJvmStateInitCellPassesTlbValidation) {
@@ -1941,13 +1990,17 @@ TEST(WorkchainExecutionRegistry, JvmEngineDispatchesAccountStateToRuntime) {
   for (std::size_t i = 0; i < previous_state.address_commit.size(); ++i) {
     previous_state.address_commit[i] = static_cast<std::uint8_t>(0x40 + i);
   }
+  for (std::size_t i = 0; i < previous_state.deployer.size(); ++i) {
+    previous_state.deployer[i] = static_cast<std::uint8_t>(0x60 + i);
+  }
   previous_state.class_bytes = class_bytes_cell;
   previous_state.storage_root = initial_storage.root_cell();
   previous_state.manifest_root = manifest_root;
 
   block::WorkchainComputeInput input;
   auto expected_addr = derive_jvm_contract_address_from_state(
-      previous_state.address_commit, previous_state.class_hash,
+      previous_state.deployer, previous_state.address_commit,
+      previous_state.class_hash,
       compute_jvm_manifest_root_hash(previous_state.manifest_root));
   std::memcpy(input.account_addr.data(), expected_addr.data(), 32);
   input.current_data = encode_jvm_contract_account_state(previous_state);
@@ -2056,6 +2109,9 @@ TEST(WorkchainExecutionRegistry,
   for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
     state.address_commit[i] = static_cast<std::uint8_t>(0x33 + i);
   }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0xb0 + i);
+  }
   state.class_bytes = encode_jvm_storage_value(large_class_bytes);
   state.storage_root = {};
   state.manifest_root = encode_jvm_method_manifest({});
@@ -2068,7 +2124,7 @@ TEST(WorkchainExecutionRegistry,
   context.engine_config = execution.engine_config;
 
   auto bound_addr = derive_jvm_contract_address_from_state(
-      state.address_commit, state.class_hash,
+      state.deployer, state.address_commit, state.class_hash,
       compute_jvm_manifest_root_hash(state.manifest_root));
   block::WorkchainComputeInput input;
   std::memcpy(input.account_addr.data(), bound_addr.data(), 32);
@@ -2153,6 +2209,9 @@ TEST(WorkchainExecutionRegistry,
   for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
     state.address_commit[i] = static_cast<std::uint8_t>(0x55 + i);
   }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x77 + i);
+  }
   state.class_bytes = encode_jvm_storage_value(class_bytes);
   state.storage_root = JvmStorageCellHost{}.root_cell();
   state.manifest_root = encode_jvm_method_manifest({});
@@ -2180,7 +2239,7 @@ TEST(WorkchainExecutionRegistry,
   runtime->called = false;
   block::WorkchainComputeInput ok;
   auto bound_addr = derive_jvm_contract_address_from_state(
-      state.address_commit, state.class_hash,
+      state.deployer, state.address_commit, state.class_hash,
       compute_jvm_manifest_root_hash(state.manifest_root));
   std::memcpy(ok.account_addr.data(), bound_addr.data(), 32);
   ok.current_data = state_cell;
@@ -2222,6 +2281,9 @@ TEST(WorkchainExecutionRegistry,
   // First-activation invariant: msg_state_used==true with non-empty
   // storage_root must reject.  An attacker would otherwise pre-load
   // attacker-favorable storage at the victim's deterministic address.
+  // Uses an int_msg whose src.addr matches state.deployer so the
+  // round-14 deployer-auth gate passes; the gate that fires here is
+  // the round-3 storage-empty invariant.
   runtime->called = false;
   JvmStorageCellHost preload;
   JvmStorageSlot owner_slot{};
@@ -2232,13 +2294,11 @@ TEST(WorkchainExecutionRegistry,
   auto preload_cell =
       encode_jvm_contract_account_state(preload_state);
   CHECK(preload_cell.not_null());
-  // Recompute the bound address against this state's manifest (same as
-  // legitimate, since manifest_root unchanged) — only storage_root
-  // differs.  account_addr would otherwise match.
   block::WorkchainComputeInput first_act;
   std::memcpy(first_act.account_addr.data(), bound_addr.data(), 32);
   first_act.current_data = preload_cell;
   first_act.inbound_body = make_jvm_call_body(0x42);
+  first_act.inbound_message = make_jvm_int_msg_with_src(state.deployer);
   first_act.gas_limit = 1000;
   first_act.msg_state_used = true;
   auto first_act_out =
@@ -2248,8 +2308,31 @@ TEST(WorkchainExecutionRegistry,
   CHECK(first_act_out.skip_reason == block::ComputePhase::sk_bad_state);
   CHECK(!runtime->called);
 
+  // Front-run rejected (round-14 fix): even though the StateInit is
+  // identical to the legitimate one (same address, address_commit,
+  // class_hash, manifest, deployer), an attacker whose msg.src.addr
+  // != state.deployer cannot run their first call body.
+  runtime->called = false;
+  std::array<std::uint8_t, 32> attacker_addr{};
+  attacker_addr[31] = 0xfe;
+  CHECK(attacker_addr != state.deployer);
+  block::WorkchainComputeInput frontrun;
+  std::memcpy(frontrun.account_addr.data(), bound_addr.data(), 32);
+  frontrun.current_data = state_cell;
+  frontrun.inbound_body = make_jvm_call_body(0x42);
+  frontrun.inbound_message = make_jvm_int_msg_with_src(attacker_addr);
+  frontrun.gas_limit = 1000;
+  frontrun.msg_state_used = true;
+  auto frontrun_out =
+      execution.executor->run_compute(frontrun, context).move_as_ok();
+  CHECK(frontrun_out.completed);
+  CHECK(!frontrun_out.accepted);
+  CHECK(frontrun_out.skip_reason == block::ComputePhase::sk_bad_state);
+  CHECK(!runtime->called);
+
   // Same preload accepted on a SUBSEQUENT call (msg_state_used==false)
-  // because storage legitimately mutates after activation.
+  // because storage legitimately mutates after activation, and the
+  // deployer-auth gate doesn't apply once the account is active.
   runtime->called = false;
   block::WorkchainComputeInput later;
   std::memcpy(later.account_addr.data(), bound_addr.data(), 32);
@@ -2328,6 +2411,7 @@ TEST(WorkchainExecutionRegistry, JvmEndToEndDeployCallSequence) {
   // so the JVAC state and input.account_addr must agree by construction.
   state0.address_commit = compute_jvm_address_commit(
       deploy_desc.deployer, deploy_desc.salt, deploy_desc.init_args);
+  state0.deployer = deploy_desc.deployer;
   state0.class_bytes = class_bytes_cell;
   // Empty initial storage_root — the engine's first-activation invariant
   // requires this on `msg_state_used == true`.  Subsequent calls below
@@ -3403,9 +3487,12 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressFormulaMatchesSpec) {
   JvmManifestRootHash zero_hash{};
   CHECK(compute_jvm_manifest_root_hash({}) == zero_hash);
 
-  // Hand-compute the expected address from the commit + class_hash +
-  // manifest_root_hash.
+  // Hand-compute the expected address from deployer + commit + class_hash
+  // + manifest_root_hash (round-14 added deployer to the derivation as the
+  // 5th input so the engine can authenticate the first-activation source).
   std::string addr_material = "TOS-JVM-CONTRACT-v2";
+  addr_material.append(reinterpret_cast<const char*>(descriptor.deployer.data()),
+                       descriptor.deployer.size());
   addr_material.append(reinterpret_cast<const char*>(expected_commit.data()),
                        expected_commit.size());
   addr_material.append(
@@ -3444,12 +3531,13 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressFormulaMatchesSpec) {
       derive_jvm_contract_address(descriptor, other_manifest).move_as_ok();
   CHECK(other_addr != actual);
 
-  // derive_jvm_contract_address_from_state(commit, class_hash,
+  // derive_jvm_contract_address_from_state(deployer, commit, class_hash,
   // manifest_root_hash) reconstructs the same address — this is the
   // helper the engine uses on every `run_compute` to verify the
   // address-binding gate.
   auto from_state = derive_jvm_contract_address_from_state(
-      computed_commit, descriptor.class_hash, computed_manifest_hash);
+      descriptor.deployer, computed_commit, descriptor.class_hash,
+      computed_manifest_hash);
   CHECK(from_state == actual);
 }
 
@@ -3848,6 +3936,9 @@ TEST(JvmWorkchainCore, RpcCallContractRejectsAccountStateExceedingMaxClassBytes)
   for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
     state.address_commit[i] = static_cast<std::uint8_t>(0x66 + i);
   }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x88 + i);
+  }
   state.class_bytes = encode_jvm_storage_value(oversized_class);
   state.storage_root = {};
   state.manifest_root = encode_jvm_method_manifest({});
@@ -3858,7 +3949,7 @@ TEST(JvmWorkchainCore, RpcCallContractRejectsAccountStateExceedingMaxClassBytes)
   // (oversized) state, so the request reaches the new max_class_bytes
   // gate (which sits AFTER the address-binding gate).
   auto bound = derive_jvm_contract_address_from_state(
-      state.address_commit, state.class_hash,
+      state.deployer, state.address_commit, state.class_hash,
       compute_jvm_manifest_root_hash(state.manifest_root));
 
   JvmCallContractRequest req;
@@ -3978,9 +4069,12 @@ TEST(WorkchainExecutionRegistry, JvmDeterminismReplay) {
   state0.class_hash = compute_jvm_class_hash(class_bytes);
   // Synthetic address_commit so the engine's address-binding gate
   // accepts the JVAC state.  account_addr below is computed from this
-  // commit + class_hash via the same helper the engine uses.
+  // commit + class_hash + deployer via the same helper the engine uses.
   for (std::size_t i = 0; i < state0.address_commit.size(); ++i) {
     state0.address_commit[i] = static_cast<std::uint8_t>(0x71 + i);
+  }
+  for (std::size_t i = 0; i < state0.deployer.size(); ++i) {
+    state0.deployer[i] = static_cast<std::uint8_t>(0x91 + i);
   }
   state0.class_bytes = class_bytes_cell;
   state0.storage_root = JvmStorageCellHost{}.root_cell();
@@ -3989,7 +4083,7 @@ TEST(WorkchainExecutionRegistry, JvmDeterminismReplay) {
   CHECK(state0_cell.not_null());
 
   auto bound_addr = derive_jvm_contract_address_from_state(
-      state0.address_commit, state0.class_hash,
+      state0.deployer, state0.address_commit, state0.class_hash,
       compute_jvm_manifest_root_hash(state0.manifest_root));
 
   block::WorkchainComputeContext context;
