@@ -483,7 +483,27 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
         // ONLY when the block cache writes succeeded (or no cache
         // DB is configured).  Otherwise leave the marker in place
         // so subsequent reads surface -32010.
+        //
+        // Round 95 HIGH fix: also leave the marker in place when
+        // ANY earlier tx in the same block was marked incomplete.
+        // The has_block tx may be the last in the block's
+        // apply-side-effects sequence, so an earlier failed tx
+        // already raised the block marker; clearing it now would
+        // erase the partial-commit signal even though the block's
+        // tx index is incomplete.  Sweep blk.transaction_hashes
+        // (already populated when fx.has_block) and keep the
+        // marker if any tx is still marked incomplete.
+        bool any_prior_tx_incomplete = false;
         if (block_cache_writes_ok) {
+            for (const auto& th : fx.block.transaction_hashes) {
+                if (th == fx.tx_hash) continue;
+                if (is_evm_rpc_indexing_incomplete(th)) {
+                    any_prior_tx_incomplete = true;
+                    break;
+                }
+            }
+        }
+        if (block_cache_writes_ok && !any_prior_tx_incomplete) {
             clear_rpc_block_indexing_incomplete(fx.block.number);
         } else {
             // Round 93 MEDIUM fix: when there was no pre-existing
@@ -495,14 +515,32 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
             mark_rpc_block_indexing_incomplete(fx.block.number);
         }
 
-        auto& sub_mgr = global_subscription_manager();
-        sub_mgr.notify_new_head(fx.block);
-        sub_mgr.notify_new_pending_transaction(fx.tx_hash);
-        if (!fx.logs.empty()) {
-            sub_mgr.notify_logs(fx.block.number, fx.tx_hash, fx.logs,
-                                fx.block.hash);
+        // Round 95 MEDIUM fix: skip subscription notifications
+        // when the block carries an incomplete marker (either
+        // pre-existing or newly created above).  Pre-fix
+        // notify_new_head / notify_logs fired even on partial
+        // commits, so subscription consumers received header /
+        // log events for a block whose ordinary RPC returns
+        // -32010.  Drop the deliveries so live subscribers see
+        // the same canonicality contract as poll-based RPC.
+        const bool block_index_complete =
+            block_cache_writes_ok && !any_prior_tx_incomplete &&
+            tx_cache_writes_ok;
+        if (block_index_complete) {
+            auto& sub_mgr = global_subscription_manager();
+            sub_mgr.notify_new_head(fx.block);
+            sub_mgr.notify_new_pending_transaction(fx.tx_hash);
+            if (!fx.logs.empty()) {
+                sub_mgr.notify_logs(fx.block.number, fx.tx_hash, fx.logs,
+                                    fx.block.hash);
+            }
         }
-    } else if (!fx.logs.empty()) {
+    } else if (!fx.logs.empty() && tx_cache_writes_ok) {
+        // Round 95 MEDIUM fix: same-canonicality gate for mid-
+        // block tx subscription notifications.  Skip the log
+        // delivery when this tx's cache writes failed — the
+        // logs index for the block is partial and ordinary RPC
+        // will surface -32010.
         // Mid-block tx with logs but no block summary still notifies
         // log subscribers; mirrors legacy behaviour where
         // notify_logs fired on every store_logs invocation.

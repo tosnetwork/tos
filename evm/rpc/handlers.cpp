@@ -1266,6 +1266,18 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
         }
         return {make_result(id, "null"), false};
     }
+    // Round 95 HIGH fix: also surface -32010 when the canonical
+    // gate passed but a marker is set.  is_stored_receipt_canonical
+    // accepts a missing cache cell (treats it as "live hot path
+    // hasn't persisted yet"), so a partial-commit RAM receipt
+    // could be served even though the marker explicitly said
+    // "indexing incomplete".  Check both markers in the happy
+    // path too.
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(receipt->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
 
     // Stamp freshness gate (plan §8.2): if a stamped record for this tx
     // exists in the persistent RPC cache, its stamp MUST still match the
@@ -2550,6 +2562,12 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
         }
         return {make_result(id, "null"), false};
     }
+    // Round 95 HIGH fix: gate the happy path on markers too.
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
 
     std::string r = "{";
     r += "\"hash\":" + to_hex_data(tx_hash.bytes, 32) + ",";
@@ -3655,6 +3673,17 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
         to_block = from_block + kMaxGetLogsBlockRange;
     }
 
+    // Round 95 MEDIUM fix: surface -32010 for any block in the
+    // filter range that carries a durable block-marker.  Mirrors
+    // the round-94 eth_getLogs gate so filter polls cannot
+    // bypass the indexing-incomplete contract that block-keyed
+    // RPCs honour.
+    for (uint64_t bn = from_block; bn <= to_block; ++bn) {
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+    }
     std::string arr = "[";
     if (f.type == FilterType::Logs) {
         auto logs = global_evm_state().get_logs(from_block, to_block,
@@ -3809,6 +3838,12 @@ static RpcResult handle_get_raw_transaction_by_hash(const std::string& params, c
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, "null"), false};
+    }
+    // Round 95 HIGH fix: gate the happy path on markers too.
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
     return {raw_tx_response(id, *tx), false};
 }
@@ -5898,6 +5933,15 @@ static RpcResult handle_get_filter_logs(const std::string& params, const std::st
                            "eth_getFilterLogs: scan window exceeds " +
                            std::to_string(kMaxGetLogsBlockRange) +
                            "; use eth_getLogs with an explicit range"), true};
+    }
+    // Round 95 MEDIUM fix: surface -32010 for any block in the
+    // filter range that carries a durable block-marker.  Mirrors
+    // eth_getLogs / eth_getFilterChanges.
+    for (uint64_t bn = f.query_from_block; bn <= to_block; ++bn) {
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
     }
     auto logs = global_evm_state().get_logs(f.query_from_block, to_block,
                                             f.addresses, f.topics);
