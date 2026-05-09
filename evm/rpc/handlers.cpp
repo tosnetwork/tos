@@ -3177,11 +3177,23 @@ static RpcResult handle_get_tx_by_block_number_and_index(const std::string& para
     const auto& tx_hash = blk.transaction_hashes[tx_index];
     auto tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!tx) {
+        // Round 92 MEDIUM fix: same -32010 surfacing as
+        // eth_getTransactionByHash for known accepted-but-
+        // unindexed txs.
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
     // Reorg / fork rollback gate: see is_stored_tx_canonical for rationale.
     if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
@@ -3206,6 +3218,12 @@ static RpcResult handle_get_tx_by_block_hash_and_index(const std::string& params
     const auto& tx_hash = blk.transaction_hashes[tx_index];
     auto tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!tx) {
+        // Round 92 MEDIUM fix: surface -32010 for known accepted-
+        // but-unindexed txs.
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
@@ -3214,6 +3232,11 @@ static RpcResult handle_get_tx_by_block_hash_and_index(const std::string& params
     // already validated by `get_block_by_hash_copy` above; this call only
     // re-checks the stamp freshness against canonical state.
     if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
@@ -3726,8 +3749,17 @@ static RpcResult handle_get_raw_tx_by_block_hash_and_index(const std::string& pa
     if (index >= blk.transaction_hashes.size()) {
         return {make_result(id, "null"), false};
     }
-    auto tx = global_evm_state().get_transaction_copy(blk.transaction_hashes[index]);
-    if (!tx) return {make_result(id, "null"), false};
+    const auto& tx_hash_idx = blk.transaction_hashes[index];
+    auto tx = global_evm_state().get_transaction_copy(tx_hash_idx);
+    if (!tx) {
+        // Round 92 MEDIUM fix: surface -32010 for known accepted-
+        // but-unindexed txs in by-index lookups.
+        if (is_evm_rpc_indexing_incomplete(tx_hash_idx)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
     return {raw_tx_response(id, *tx), false};
 }
 
@@ -3763,8 +3795,17 @@ static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& 
     if (index >= blk.transaction_hashes.size()) {
         return {make_result(id, "null"), false};
     }
-    auto tx = global_evm_state().get_transaction_copy(blk.transaction_hashes[index]);
-    if (!tx) return {make_result(id, "null"), false};
+    const auto& tx_hash_idx = blk.transaction_hashes[index];
+    auto tx = global_evm_state().get_transaction_copy(tx_hash_idx);
+    if (!tx) {
+        // Round 92 MEDIUM fix: surface -32010 for known accepted-
+        // but-unindexed txs in by-index lookups.
+        if (is_evm_rpc_indexing_incomplete(tx_hash_idx)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
     return {raw_tx_response(id, *tx), false};
 }
 
@@ -3859,7 +3900,15 @@ static std::optional<silkworm::Transaction> decode_stored_tx_rlp(const StoredTra
 
 static RpcResult handle_debug_get_raw_header(const std::string& params, const std::string& id) {
     uint64_t bn = parse_block_tag_param(params);
-    if (!global_evm_state().has_block(bn)) return {make_result(id, "null"), false};
+    if (!global_evm_state().has_block(bn)) {
+        // Round 92 MEDIUM fix: surface -32010 when the block is
+        // marked accepted-but-unindexed.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
     auto blk = global_evm_state().get_block_copy(bn);
     auto header = build_silkworm_header(blk);
     silkworm::Bytes out;
@@ -3869,7 +3918,14 @@ static RpcResult handle_debug_get_raw_header(const std::string& params, const st
 
 static RpcResult handle_debug_get_raw_block(const std::string& params, const std::string& id) {
     uint64_t bn = parse_block_tag_param(params);
-    if (!global_evm_state().has_block(bn)) return {make_result(id, "null"), false};
+    if (!global_evm_state().has_block(bn)) {
+        // Round 92 MEDIUM fix: same as debug_getRawHeader.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
     auto blk = global_evm_state().get_block_copy(bn);
 
     silkworm::Block sw_block;
@@ -3914,7 +3970,15 @@ static RpcResult handle_debug_get_raw_block(const std::string& params, const std
 
 static RpcResult handle_debug_get_raw_receipts(const std::string& params, const std::string& id) {
     uint64_t bn = parse_block_tag_param(params);
-    if (!global_evm_state().has_block(bn)) return {make_result(id, "[]"), false};
+    if (!global_evm_state().has_block(bn)) {
+        // Round 92 MEDIUM fix: surface -32010 instead of empty
+        // array when the block is marked accepted-but-unindexed.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "[]"), false};
+    }
     auto blk = global_evm_state().get_block_copy(bn);
 
     // The spec returns an array with one hex string per transaction:

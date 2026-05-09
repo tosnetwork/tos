@@ -334,7 +334,16 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
         // transaction / block records refreshed under the new
         // hash so the round-86 erase-old-hash path runs.
     }
-    clear_rpc_indexing_incomplete(fx.tx_hash);
+    // Round 92 MEDIUM fix: do NOT clear the tx incomplete marker
+    // here.  Pre-fix the marker was cleared before
+    // `cache->put_receipt` / `cache->put_transaction` ran, and a
+    // disk-full / read-only failure left the durable cache without
+    // the record while the marker was already gone — RPC
+    // consumers then saw silent null instead of the contractual
+    // -32010.  The marker is now cleared at the end of this
+    // function ONLY when both writes succeeded (or no cache DB is
+    // configured).
+    bool tx_cache_writes_ok = true;
 
     // Per-block canonical-identity stamp. Every cache entry produced for
     // this block (receipt, transaction, logs, block-by-number,
@@ -377,6 +386,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
             LOG(WARNING) << "evm-rpc-cache: put_receipt failed for "
                          << tx_hash_bits.to_hex() << ": "
                          << put_status.message();
+            tx_cache_writes_ok = false;
         }
     }
 
@@ -393,6 +403,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
             LOG(WARNING) << "evm-rpc-cache: put_transaction failed for "
                          << tx_hash_bits.to_hex() << ": "
                          << put_status.message();
+            tx_cache_writes_ok = false;
         }
     }
 
@@ -425,7 +436,15 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     // so a reader can detect a stale entry by comparing the cached value
     // against the current native commitment for that block_number.
     if (fx.has_block) {
-        clear_rpc_block_indexing_incomplete(fx.block.number);
+        // Round 92 MEDIUM fix: defer the block-marker clear until
+        // after cache writes succeed.  Pre-fix the marker was
+        // cleared before any cache write ran; a disk-full /
+        // read-only failure left the durable cache without the
+        // block record while the marker was already gone —
+        // restart hydration would then expose the partial state
+        // as `silent null` / `[]` instead of the contractual
+        // -32010.
+        bool block_cache_writes_ok = true;
         state.store_block(fx.block);
         {
             std::unique_lock lock(state.mutex());
@@ -440,6 +459,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
                 LOG(WARNING) << "evm-rpc-cache: put_block_by_number failed for #"
                              << fx.block.number << ": "
                              << put_n_status.message();
+                block_cache_writes_ok = false;
             }
             td::Bits256 hash_bits = bytes32_to_bits(fx.block.hash);
             auto put_h_status = cache->put_block_by_hash(hash_bits, cell);
@@ -447,7 +467,15 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
                 LOG(WARNING) << "evm-rpc-cache: put_block_by_hash failed for "
                              << hash_bits.to_hex() << ": "
                              << put_h_status.message();
+                block_cache_writes_ok = false;
             }
+        }
+        // Round 92 MEDIUM fix: clear the block incomplete marker
+        // ONLY when the block cache writes succeeded (or no cache
+        // DB is configured).  Otherwise leave the marker in place
+        // so subsequent reads surface -32010.
+        if (block_cache_writes_ok) {
+            clear_rpc_block_indexing_incomplete(fx.block.number);
         }
 
         auto& sub_mgr = global_subscription_manager();
@@ -464,6 +492,13 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
         auto& sub_mgr = global_subscription_manager();
         sub_mgr.notify_logs(fx.receipt.block_number, fx.tx_hash, fx.logs,
                             evmc::bytes32{});
+    }
+    // Round 92 MEDIUM fix: clear the tx incomplete marker only after
+    // tx cache writes succeeded.  When writes failed the marker
+    // stays so RPC consumers see -32010 instead of a stale partial
+    // record on the next read or after restart.
+    if (tx_cache_writes_ok) {
+        clear_rpc_indexing_incomplete(fx.tx_hash);
     }
 }
 
