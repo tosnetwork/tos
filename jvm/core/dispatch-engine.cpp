@@ -418,6 +418,33 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                     "JVM contract account state has non-empty storage_root at "
                     "first activation");
             }
+            // Round 58 LOW fix: the inbound `StateInit.code` is
+            // caller-controlled and the host's custom-engine branch
+            // (`Transaction::prepare_compute_phase`) preserves it on a
+            // committed activation.  JVM execution is dispatched by
+            // workchain id, not by code, so attacker-supplied code is
+            // never executed — but it persists on-chain in
+            // `account.code`, breaking the invariant that all wc=3
+            // JVM accounts carry the canonical activation marker
+            // (single byte 0x4a).  Reject any non-marker first-
+            // activation inbound here; the host will fall back to
+            // its policy `activation_code` (i.e. the marker) since
+            // the engine emits no `new_code`.
+            //
+            // Note: `StateInit.library` is similarly attacker-
+            // controlled but is not currently plumbed via
+            // `WorkchainComputeInput`; the host preserves it
+            // verbatim.  Adding a library invariant here requires
+            // first plumbing `current_library` through the input —
+            // tracked separately from this fix's scope.
+            if (input.current_code.not_null()
+                && input.current_code->get_hash() !=
+                       jvm_activation_code_cell()->get_hash()) {
+                return skipped_output(
+                    block::ComputePhase::sk_bad_state,
+                    "JVM first activation: StateInit.code is not the "
+                    "canonical activation marker");
+            }
             if (input.inbound_message.is_null()) {
                 return skipped_output(
                     block::ComputePhase::sk_bad_state,
