@@ -510,14 +510,49 @@ JvmAvataExecutionApi make_linked_jvm_avata_execution_api() {
 }
 
 // Create a process-private chmod-0700 directory under /tmp via
-// mkdtemp.  Round-21: the previous design relied on /tmp's sticky
-// bit alone, but the directory owner can still unlink children under
-// sticky-only permissions; on a host where /tmp is not root-owned,
-// the directory owner can therefore race our temp file.  mkdtemp
-// produces a directory we own with 0700 (mkdtemp guarantees 0700 on
-// Linux), so only our UID can list, write, or unlink anything inside.
+// mkdtemp.  Round-21 made the directory itself 0700, but the
+// PARENT (`/tmp`) must also be trusted: the parent's owner can
+// always rename or rmdir its children regardless of those
+// children's modes (sticky bit only blocks NON-owner unlinks),
+// and could then substitute an attacker-controlled directory or
+// symlink in our private path before we open files inside it.
+// Round-22 therefore validates /tmp itself: it must be a
+// directory, sticky (S_ISVTX), and owned by either uid 0 or our
+// own euid.  An operator who needs JVM v2 on a host where /tmp is
+// owned by some other uid (e.g., a container that maps /tmp to a
+// non-root user that isn't the validator's euid) must remount it
+// or run the validator under that uid.
 td::Result<std::string> create_private_classpath_dir() {
-    std::string tmpl = "/tmp/tos-jvm-rtjar-XXXXXX";
+    static constexpr const char* kTmpDir = "/tmp";
+    {
+        struct stat st{};
+        if (::stat(kTmpDir, &st) != 0) {
+            return td::Status::Error(
+                PSLICE() << "JVM Avata runtime cannot stat " << kTmpDir
+                         << ": " << std::strerror(errno));
+        }
+        if (!S_ISDIR(st.st_mode)) {
+            return td::Status::Error(
+                PSLICE() << "JVM Avata runtime: " << kTmpDir
+                         << " is not a directory");
+        }
+        if ((st.st_mode & S_ISVTX) == 0) {
+            return td::Status::Error(
+                PSLICE() << "JVM Avata runtime requires " << kTmpDir
+                         << " to have the sticky bit set; otherwise non-"
+                            "owner UIDs could unlink children");
+        }
+        const uid_t euid = ::geteuid();
+        if (st.st_uid != 0 && st.st_uid != euid) {
+            return td::Status::Error(
+                PSLICE() << "JVM Avata runtime requires " << kTmpDir
+                         << " to be owned by uid 0 or our euid (" << euid
+                         << "); a third-party owner could rename or rmdir "
+                            "our private directory");
+        }
+    }
+
+    std::string tmpl = std::string(kTmpDir) + "/tos-jvm-rtjar-XXXXXX";
     if (::mkdtemp(&tmpl[0]) == nullptr) {
         return td::Status::Error(
             PSLICE() << "JVM Avata runtime mkdtemp failed for "
