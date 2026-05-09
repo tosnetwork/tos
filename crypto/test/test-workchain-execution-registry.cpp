@@ -48,6 +48,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -742,6 +743,25 @@ class MockUnoEngine final : public block::WorkchainEngine {
 
 class MockJvmRuntime final : public jvm_workchain::JvmComputeRuntime {
  public:
+  // The engine's round-17 gate compares this against
+  // `cfg.stdlib_hash`.  The test config builder returns a fixed
+  // stdlib_hash; we mirror that here so tests pass the gate.  When a
+  // test wants to drive the gate (mismatch path), it sets
+  // `mock_rt_jar_hash` directly.
+  std::array<std::uint8_t, 32> rt_jar_hash() const override {
+    if (mock_rt_jar_hash) {
+      return *mock_rt_jar_hash;
+    }
+    // Default: matches make_test_jvm_config()'s stdlib_hash.
+    auto cfg = make_test_jvm_config();
+    std::array<std::uint8_t, 32> out{};
+    std::memcpy(out.data(), cfg.stdlib_hash.data(), out.size());
+    return out;
+  }
+  // Optional override for the rt.jar hash.  When set, the engine
+  // sees this value instead of the canonical test hash.
+  mutable std::optional<std::array<std::uint8_t, 32>> mock_rt_jar_hash;
+
   td::Result<jvm_workchain::JvmAvataInvocationResult> run_contract(
       const block::WorkchainComputeInput& input,
       const block::WorkchainComputeContext& context,
@@ -2086,6 +2106,70 @@ TEST(WorkchainExecutionRegistry, JvmEngineRejectsMalformedAccountState) {
   CHECK(output.completed);
   CHECK(!output.accepted);
   CHECK(output.skip_reason == block::ComputePhase::sk_bad_state);
+  CHECK(!runtime->called);
+}
+
+TEST(WorkchainExecutionRegistry,
+     JvmEngineRejectsRuntimeJarMismatchedToConfigStdlibHash) {
+  // Round 17 fix: ConfigParam 85's `stdlib_hash` is the consensus
+  // commitment to the rt.jar that every validator runs.  Without
+  // this gate, two validators with the same on-chain config could
+  // pass the existing `state.stdlib_hash == cfg.stdlib_hash` check
+  // and silently execute against different local rt.jar bytes —
+  // consensus divergence.  The engine therefore also compares
+  // `runtime->rt_jar_hash()` to `cfg.stdlib_hash` and fails closed
+  // on mismatch.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto config = make_config_with_jvm_param(cfg);
+  auto descriptor = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  auto runtime = std::make_shared<MockJvmRuntime>();
+  // Override the runtime's rt.jar hash to a value that does NOT
+  // match cfg.stdlib_hash.
+  std::array<std::uint8_t, 32> wrong_jar_hash{};
+  wrong_jar_hash[0] = 0xee;
+  runtime->mock_rt_jar_hash = wrong_jar_hash;
+
+  block::WorkchainExecutionRegistry registry;
+  register_jvm_workchain_engine(registry, runtime);
+  auto execution = registry.resolve(descriptor, *config).move_as_ok();
+
+  // Build a well-formed JVAC state.
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x99};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+    state.address_commit[i] = static_cast<std::uint8_t>(0x55 + i);
+  }
+  for (std::size_t i = 0; i < state.deployer.size(); ++i) {
+    state.deployer[i] = static_cast<std::uint8_t>(0x77 + i);
+  }
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = {};
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_cell = encode_jvm_contract_account_state(state);
+  CHECK(state_cell.not_null());
+
+  block::WorkchainComputeContext context;
+  context.workchain_id = 3;
+  context.descriptor = descriptor;
+  context.engine_config = execution.engine_config;
+
+  auto bound_addr = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+  block::WorkchainComputeInput input;
+  std::memcpy(input.account_addr.data(), bound_addr.data(), 32);
+  input.current_data = state_cell;
+  input.inbound_body = make_jvm_call_body(0x42);
+  input.gas_limit = 1000;
+  auto out = execution.executor->run_compute(input, context).move_as_ok();
+  CHECK(out.completed);
+  CHECK(!out.accepted);
+  CHECK(out.skip_reason == block::ComputePhase::sk_bad_state);
   CHECK(!runtime->called);
 }
 

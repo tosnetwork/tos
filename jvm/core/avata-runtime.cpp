@@ -8,6 +8,11 @@
 #include "jvm/avata/include/avata/storage.h"
 #include "jvm/core/class-manifest.h"
 #include "jvm/core/message-abi.h"
+#include "td/utils/Slice.h"
+#include "td/utils/Status.h"
+#include "td/utils/SharedSlice.h"
+#include "td/utils/crypto.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/logging.h"
 
 #include <cstdint>
@@ -298,11 +303,13 @@ JvmAvataRuntime::JvmAvataRuntime(
     JvmAvataExecutionApi api,
     JvmAvataResolveCallTarget resolve_call_target,
     void* resolve_user,
-    std::shared_ptr<void> resolve_owner)
+    std::shared_ptr<void> resolve_owner,
+    std::array<std::uint8_t, 32> rt_jar_hash)
     : api_(api)
     , resolve_call_target_(resolve_call_target)
     , resolve_user_(resolve_user)
-    , resolve_owner_(std::move(resolve_owner)) {
+    , resolve_owner_(std::move(resolve_owner))
+    , rt_jar_hash_(rt_jar_hash) {
 }
 
 td::Result<JvmAvataInvocationResult> JvmAvataRuntime::run_contract(
@@ -398,12 +405,48 @@ make_linked_jvm_avata_runtime(const JvmLinkedAvataRuntimeOptions& options) {
     TRY_RESULT(probe_vm, create_linked_avata_vm(state->options));
     (void)probe_vm;
 
+    // Hash the rt.jar so the engine can verify it matches ConfigParam
+    // 85's `stdlib_hash` on every run_compute.  The boot_classpath may
+    // be a single file or a `:`-separated list; we hash each file in
+    // listed order and feed the concatenation through sha256, matching
+    // the on-chain commitment a chain governance flow would produce.
+    std::array<std::uint8_t, 32> rt_jar_hash{};
+    {
+        td::Sha256State sha;
+        sha.init();
+        std::string remaining = options.boot_classpath;
+        while (!remaining.empty()) {
+            auto colon = remaining.find(':');
+            std::string entry =
+                (colon == std::string::npos) ? remaining
+                                              : remaining.substr(0, colon);
+            remaining = (colon == std::string::npos)
+                            ? std::string{}
+                            : remaining.substr(colon + 1);
+            if (entry.empty()) {
+                continue;
+            }
+            auto data = td::read_file(entry);
+            if (data.is_error()) {
+                return td::Status::Error(
+                    PSLICE() << "JVM linked Avata runtime cannot hash boot "
+                                "classpath entry "
+                             << entry << ": " << data.error().message());
+            }
+            const auto bytes = data.move_as_ok();
+            sha.feed(td::Slice(bytes.data(), bytes.size()));
+        }
+        sha.extract(td::MutableSlice(reinterpret_cast<char*>(rt_jar_hash.data()),
+                                     rt_jar_hash.size()));
+    }
+
     std::shared_ptr<const JvmComputeRuntime> runtime =
         std::make_shared<JvmAvataRuntime>(
             make_linked_jvm_avata_execution_api(),
             linked_avata_resolve_call_target,
             state.get(),
-            state);
+            state,
+            rt_jar_hash);
     return runtime;
 }
 

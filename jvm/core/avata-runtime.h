@@ -47,7 +47,8 @@ class JvmAvataRuntime final : public JvmComputeRuntime {
     JvmAvataRuntime(JvmAvataExecutionApi api,
                     JvmAvataResolveCallTarget resolve_call_target,
                     void* resolve_user = nullptr,
-                    std::shared_ptr<void> resolve_owner = nullptr);
+                    std::shared_ptr<void> resolve_owner = nullptr,
+                    std::array<std::uint8_t, 32> rt_jar_hash = {});
 
     td::Result<JvmAvataInvocationResult> run_contract(
         const block::WorkchainComputeInput& input,
@@ -55,11 +56,16 @@ class JvmAvataRuntime final : public JvmComputeRuntime {
         const JvmConfig& config,
         const JvmContractAccountState& previous_state) const override;
 
+    std::array<std::uint8_t, 32> rt_jar_hash() const override {
+        return rt_jar_hash_;
+    }
+
  private:
     JvmAvataExecutionApi api_;
     JvmAvataResolveCallTarget resolve_call_target_{nullptr};
     void* resolve_user_{nullptr};
     std::shared_ptr<void> resolve_owner_;
+    std::array<std::uint8_t, 32> rt_jar_hash_{};
     mutable std::mutex mutex_;
 };
 

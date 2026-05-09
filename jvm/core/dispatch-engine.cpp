@@ -152,6 +152,27 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 block::ComputePhase::sk_bad_state,
                 "JVM contract account stdlib hash does not match ConfigParam 85");
         }
+        // Round 17 fix: bind the loaded rt.jar to ConfigParam 85.
+        // Without this, two validators with identical on-chain
+        // ConfigParam 85 + state both pass the
+        // `state.stdlib_hash == cfg.stdlib_hash` gate above and then
+        // execute against possibly-different local rt.jar contents
+        // (silent consensus divergence).  `runtime_->rt_jar_hash()` is
+        // computed at runtime startup over the actual loaded boot
+        // classpath bytes; if it does not match the on-chain
+        // `stdlib_hash`, the validator's runtime is incompatible with
+        // consensus and we fail closed for every wc=3 transaction.
+        const auto runtime_jar_hash = runtime_->rt_jar_hash();
+        std::array<std::uint8_t, 32> cfg_stdlib_hash_array{};
+        std::memcpy(cfg_stdlib_hash_array.data(),
+                    cfg->config.stdlib_hash.data(),
+                    cfg_stdlib_hash_array.size());
+        if (runtime_jar_hash != cfg_stdlib_hash_array) {
+            return skipped_output(
+                block::ComputePhase::sk_bad_state,
+                "JVM Avata runtime rt.jar does not match ConfigParam 85 "
+                "stdlib_hash; refusing to run wc=3 transactions");
+        }
         // ConfigParam 85's `max_class_bytes` cap must be enforced at
         // consensus, not just at the JSON-RPC admission layer.
         // Pre-round-9 the consensus path skipped this check, which let

@@ -50,6 +50,19 @@ class JvmComputeRuntime {
         const block::WorkchainComputeContext& context,
         const JvmConfig& config,
         const JvmContractAccountState& previous_state) const = 0;
+
+    // Hash of the loaded boot classpath / rt.jar bytes.  ConfigParam
+    // 85's `stdlib_hash` is the consensus commitment to the runtime
+    // profile every validator must execute against.  The engine
+    // compares this getter's value to `cfg.stdlib_hash` on every
+    // `run_compute` and fails closed on mismatch — without this,
+    // two validators with the same on-chain ConfigParam 85 + state
+    // could pass the existing `state.stdlib_hash == cfg.stdlib_hash`
+    // gate but execute against different local jars (consensus
+    // divergence).  Returns 32 zero bytes when no runtime is
+    // installed; the engine's null-runtime check fails closed
+    // before this getter is consulted in practice.
+    virtual std::array<std::uint8_t, 32> rt_jar_hash() const = 0;
 };
 
 /// Register the JVM native engine with a WorkchainExecutionRegistry.
