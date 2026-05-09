@@ -523,11 +523,30 @@ td::Result<std::string> materialize_private_classpath_entry(
     }
     const auto bytes = data.move_as_ok();
 
-    const char* tmpdir_env = std::getenv("TMPDIR");
-    std::string tmpdir = (tmpdir_env != nullptr && *tmpdir_env != '\0')
-                             ? tmpdir_env
-                             : "/tmp";
-    std::string tmpl = tmpdir + "/tos-jvm-rtjar-XXXXXX";
+    // Round-20: deliberately do NOT honor `TMPDIR`.  An attacker who
+    // controls the env can point us at an attacker-owned non-sticky
+    // directory and race the unlink/recreate path between our hash
+    // and JVM mapping.  System `/tmp` is conventionally root-owned
+    // and chmod 1777 (sticky), which prevents non-owner unlinks of
+    // our 0600 file.  We additionally stat /tmp to confirm sticky
+    // bit and reject startup if absent.
+    static constexpr const char* kTmpDir = "/tmp";
+    {
+        struct stat st{};
+        if (::stat(kTmpDir, &st) != 0) {
+            return td::Status::Error(
+                PSLICE() << "JVM Avata runtime cannot stat " << kTmpDir
+                         << ": " << std::strerror(errno));
+        }
+        if (!S_ISDIR(st.st_mode) || (st.st_mode & S_ISVTX) == 0) {
+            return td::Status::Error(
+                PSLICE() << "JVM Avata runtime requires " << kTmpDir
+                         << " to be a sticky directory (chmod 1777); "
+                            "private rt.jar copies would otherwise be "
+                            "unlinkable by other UIDs");
+        }
+    }
+    std::string tmpl = std::string(kTmpDir) + "/tos-jvm-rtjar-XXXXXX";
     // mkstemp creates the file with mode 0600 by default, modified by
     // umask.  We explicitly fchmod 0600 below to nail it down.
     int fd = ::mkstemp(&tmpl[0]);
@@ -575,6 +594,38 @@ make_linked_jvm_avata_runtime(const JvmLinkedAvataRuntimeOptions& options) {
     if (options.max_heap.empty()) {
         return td::Status::Error(
             "JVM linked Avata runtime requires a max heap option");
+    }
+
+    // Round-20: reject security-sensitive caller-supplied options at
+    // the runtime boundary so a future internal caller cannot
+    // accidentally override the private-copy boot classpath or
+    // re-enable the application classpath that round-18 closed.
+    // The current production caller (`init_jvm_workchain`) leaves
+    // both empty so this is not reachable today, but defending the
+    // invariant in code is cheap.
+    if (!options.classpath.empty()) {
+        return td::Status::Error(
+            "JVM linked Avata runtime: caller-supplied classpath is not "
+            "allowed (would re-enable application classpath that round-18 "
+            "explicitly closes); contracts must reach the VM only via JVAC "
+            "class_bytes");
+    }
+    for (const auto& opt : options.extra_options) {
+        // Reject any option that could shadow the private rt.jar copy
+        // or revive a default app classpath:
+        //   -Xbootclasspath, -Xbootclasspath/a, -Xbootclasspath/p
+        //   -Djava.class.path
+        const auto starts_with = [&](const std::string& prefix) {
+            return opt.size() >= prefix.size()
+                   && opt.compare(0, prefix.size(), prefix) == 0;
+        };
+        if (starts_with("-Xbootclasspath") ||
+            starts_with("-Djava.class.path")) {
+            return td::Status::Error(
+                PSLICE() << "JVM linked Avata runtime: extra_options entry '"
+                         << opt << "' would shadow the consensus-bound rt.jar; "
+                         << "rejected");
+        }
     }
 
     auto state = std::make_shared<LinkedAvataRuntimeState>();
