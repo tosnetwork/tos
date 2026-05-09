@@ -681,7 +681,21 @@ size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
     // singleton before canonical shard state hydration, but the process still
     // needs to hydrate from wc=1 ShardAccounts exactly once.
     if (!g_evm_state->needs_initial_hydration()) return 0;
-    if (shard_accounts.is_empty()) return 0;
+    if (shard_accounts.is_empty()) {
+        // Round 91 MEDIUM fix: even when shard_accounts is empty
+        // (no canonical state yet), run reconciliation to drop
+        // blocks that the early cache walk admitted under the
+        // round-88 nullopt fail-open.  Without this, cached
+        // entries from an old/forked chain stay in RAM and
+        // `block_number_` keeps advertising a height that has
+        // no canonical backing.
+        auto orphans_dropped = g_evm_state->reconcile_blocks_with_canonical();
+        if (orphans_dropped > 0) {
+            LOG(WARNING) << "evm-workchain: dropped " << orphans_dropped
+                         << " orphan blocks (empty shard accounts)";
+        }
+        return 0;
+    }
 
     auto count = populate_state_from_shard_accounts(*g_evm_state, shard_accounts);
 
@@ -703,6 +717,14 @@ size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
         // No executor account present yet (the shard state we were given
         // does not yet carry an EVM account). Leave the hydration flag
         // unset so a later, more complete shard state can still hydrate.
+        // Round 91 MEDIUM fix: same rationale as the empty-shard
+        // branch above — reconcile so cached blocks without
+        // canonical backing don't keep advertising stale heights.
+        auto orphans_dropped = g_evm_state->reconcile_blocks_with_canonical();
+        if (orphans_dropped > 0) {
+            LOG(WARNING) << "evm-workchain: dropped " << orphans_dropped
+                         << " orphan blocks (no EVM executor account)";
+        }
         return 0;
     }
 

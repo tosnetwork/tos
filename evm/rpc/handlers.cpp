@@ -1253,6 +1253,17 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
     // canonical block must exist at receipt->block_number, and any
     // persisted stamp must match.
     if (!is_stored_receipt_canonical(tx_hash, receipt->block_number)) {
+        // Round 91 MEDIUM fix: when the canonical gate fails
+        // because the block summary hasn't landed yet, surface
+        // the durable indexing-incomplete marker instead of
+        // silent null.  Pre-fix this branch returned null without
+        // checking the marker, so a known accepted-but-unindexed
+        // receipt looked indistinguishable from "tx unknown".
+        if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+            is_evm_rpc_block_indexing_incomplete(receipt->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
@@ -2491,6 +2502,13 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
 
     auto tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!tx) {
+        // Round 91 MEDIUM fix: surface the durable indexing-incomplete
+        // marker before returning null so a known accepted-but-
+        // unindexed tx doesn't look identical to "tx unknown".
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
@@ -2499,6 +2517,13 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
     // a cache miss so the canonical-state path can rewrite the affected
     // window at its own cadence.
     if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        // Round 91 MEDIUM fix: same indexing-incomplete check as
+        // above for the canonical-gate-failure path.
+        if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
@@ -2794,6 +2819,14 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
     // Get the block to find its transaction hashes
     auto blk = global_evm_state().get_block_copy(bn);
     if (!global_evm_state().has_block(bn)) {
+        // Round 91 MEDIUM fix: surface the durable indexing-
+        // incomplete marker before returning the empty array so a
+        // known accepted-but-unindexed block doesn't look like an
+        // empty / non-existent block.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "[]"), false};
     }
 
@@ -3647,9 +3680,22 @@ static RpcResult handle_get_raw_transaction_by_hash(const std::string& params, c
     std::memcpy(tx_hash.bytes, hash_bytes.data(), 32);
 
     auto tx = global_evm_state().get_transaction_copy(tx_hash);
-    if (!tx) return {make_result(id, "null"), false};
+    if (!tx) {
+        // Round 91 MEDIUM fix: same indexing-incomplete check as
+        // eth_getTransactionByHash.
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
     // Reorg / fork rollback gate: see is_stored_tx_canonical for rationale.
     if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
     return {raw_tx_response(id, *tx), false};
