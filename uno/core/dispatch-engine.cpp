@@ -122,6 +122,51 @@ class UnoNativeEngine final : public block::WorkchainEngine {
             out.gas_fees = td::zero_refint();
             return out;
         }
+        // Round 64 CRITICAL fix: Uno has no canonical first-
+        // activation gate.  Pre-fix the host's custom-engine branch
+        // unpacked any inbound `StateInit.data` into
+        // `input.current_data` before this engine ran, so the very
+        // first caller to the wc=2 singleton executor (`acc_uninit`
+        // in the documented zerostate) could supply an arbitrary
+        // attacker-chosen `UnoShardState` and the engine would
+        // commit it as the initial state — an attacker-controlled
+        // state-init front-run that bypasses the genesis empty
+        // shard state.  Reject any compute where the host supplied
+        // `StateInit.data` (`msg_state_used == true`).  Subsequent
+        // calls (msg_state_used == false) continue to thread
+        // `current_data` from the prior tx's persisted account
+        // state as before; first-activation must come from the
+        // canonical zerostate, not from inbound StateInit.
+        if (input.msg_state_used) {
+            block::WorkchainComputeOutput out;
+            out.completed = true;
+            out.skip_reason = block::ComputePhase::sk_bad_state;
+            out.gas_fees = td::zero_refint();
+            return out;
+        }
+        // Round 64 CRITICAL fix: also reject any inbound that
+        // carries a non-canonical `StateInit.code` or
+        // `StateInit.library`.  Uno has no library semantics and
+        // its activation marker is the singleton-executor cell
+        // (`get_uno_code_marker_cell()`).  Pre-fix the host
+        // copied attacker-supplied code/library into Account state
+        // verbatim (same class as Round 58/59 for JVM).
+        if (input.current_code.not_null()
+            && input.current_code->get_hash() !=
+                   get_uno_code_marker_cell()->get_hash()) {
+            block::WorkchainComputeOutput out;
+            out.completed = true;
+            out.skip_reason = block::ComputePhase::sk_bad_state;
+            out.gas_fees = td::zero_refint();
+            return out;
+        }
+        if (input.current_library.not_null()) {
+            block::WorkchainComputeOutput out;
+            out.completed = true;
+            out.skip_reason = block::ComputePhase::sk_bad_state;
+            out.gas_fees = td::zero_refint();
+            return out;
+        }
         block::ComputePhase cp{};
         vm::CellSlice body_cs{*input.inbound_body};
         bool ok = uno_workchain::uno_run_compute_phase(

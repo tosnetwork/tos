@@ -74,6 +74,16 @@ td::Ref<vm::Cell> encode_jvm_args(const JvmArgs& args);
 
 td::Result<JvmArgs> parse_jvm_args(td::Ref<vm::Cell> root);
 
+/// Round 64 MEDIUM fix: peek the args header + per-node type tags
+/// WITHOUT decoding the value-ref byte payloads.  Walks the linked
+/// node chain summing types only — O(N) cells touched but no
+/// memcpy of the typed `Bytes` payload chains, which can each be
+/// up to `kJvmStorageValueMaxBytes` (1 MiB).  Used by the resolver
+/// to fail fast on count or type mismatch before paying the full
+/// decode cost.
+td::Result<std::vector<JvmArgType>> peek_jvm_args_types(
+    td::Ref<vm::Cell> root);
+
 td::Result<std::vector<JvmArgType>> parse_jvm_method_argument_types(
     const std::string& method_spec);
 

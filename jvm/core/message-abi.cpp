@@ -391,6 +391,93 @@ td::Result<JvmArgs> parse_jvm_args(td::Ref<vm::Cell> root) {
     }
 }
 
+td::Result<std::vector<JvmArgType>> peek_jvm_args_types(
+    td::Ref<vm::Cell> root) {
+    if (root.is_null()) {
+        return td::Status::Error("JVM args root is null");
+    }
+
+    try {
+        bool special = false;
+        auto cs = vm::load_cell_slice_special(root, special);
+        if (special) {
+            return td::Status::Error("JVM args root is special");
+        }
+
+        std::uint32_t magic = 0;
+        unsigned count = 0;
+        std::uint8_t schema_version = 0;
+        if (!fetch_u32(cs, magic) || magic != kJvmArgsMagic ||
+            !fetch_u8(cs, schema_version) ||
+            schema_version != kJvmArgsSchemaVersion ||
+            !cs.fetch_uint_to(8, count)) {
+            return td::Status::Error("JVM args root is malformed");
+        }
+        if (count > kJvmArgsMaxCount) {
+            return td::Status::Error("JVM args have too many values");
+        }
+        std::vector<JvmArgType> types;
+        if (count == 0) {
+            if (!cs.empty_ext()) {
+                return td::Status::Error(
+                    "JVM empty args root has trailing data");
+            }
+            return types;
+        }
+        if (cs.size() != 0 || cs.size_refs() != 1) {
+            return td::Status::Error("JVM args root has malformed refs");
+        }
+
+        types.reserve(count);
+        auto node = cs.fetch_ref();
+        for (unsigned i = 0; i < count; ++i) {
+            if (node.is_null()) {
+                return td::Status::Error("JVM args node is null");
+            }
+            bool node_special = false;
+            auto node_cs = vm::load_cell_slice_special(node, node_special);
+            if (node_special) {
+                return td::Status::Error("JVM args node is special");
+            }
+            std::uint8_t type = 0;
+            unsigned has_next = 0;
+            if (!fetch_u8(node_cs, type) ||
+                !node_cs.fetch_uint_to(1, has_next) || has_next > 1) {
+                return td::Status::Error("JVM args node is truncated");
+            }
+            const unsigned expected_refs = 1 + has_next;
+            if (node_cs.size() != 0 ||
+                node_cs.size_refs() != expected_refs) {
+                return td::Status::Error("JVM args node has malformed refs");
+            }
+            TRY_RESULT(arg_type, parse_arg_type(type));
+            types.push_back(arg_type);
+            // Advance to next node WITHOUT touching the value ref —
+            // that's where the byte payload chain lives.
+            td::Ref<vm::Cell> next;
+            if (has_next != 0) {
+                next = node_cs.fetch_ref();
+            }
+            // Skip the value ref (we don't decode it here).
+            (void)node_cs.fetch_ref();
+            if (!node_cs.empty_ext()) {
+                return td::Status::Error("JVM args node has trailing data");
+            }
+            node = std::move(next);
+        }
+        if (node.not_null()) {
+            return td::Status::Error("JVM args have trailing nodes");
+        }
+        return types;
+    } catch (vm::VmError&) {
+        return td::Status::Error("JVM args peek hit vm::VmError");
+    } catch (vm::VmVirtError&) {
+        return td::Status::Error("JVM args peek hit vm::VmVirtError");
+    } catch (...) {
+        return td::Status::Error("JVM args peek failed");
+    }
+}
+
 td::Result<std::vector<JvmArgType>> parse_jvm_method_argument_types(
     const std::string& method_spec) {
     if (method_spec.size() < 3 || method_spec[0] != '(') {

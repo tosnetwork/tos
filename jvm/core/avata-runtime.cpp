@@ -316,15 +316,38 @@ td::Result<JvmArgs> decode_linked_invocation_args(
         return JvmArgs{};
     }
 
+    // Round 64 MEDIUM fix: peek the args' header + per-node type
+    // tags WITHOUT decoding the value-ref byte payloads.  Validate
+    // count and types against the method spec FIRST.  Pre-fix the
+    // typed path called `parse_jvm_args` (which memcpys every
+    // typed value's payload chain — up to ~1 MiB per arg) and
+    // only afterward checked count/types in
+    // `validate_jvm_typed_args_against_spec`.  An attacker calling
+    // `(I)V` with a large `Bytes` arg, or a malformed arg count,
+    // forced unbilled validator-CPU O(arg_bytes) before the
+    // resolver returned a count/type-mismatch error and dispatch
+    // billed only the admission floor.  The peek walk is bounded
+    // by `kJvmArgsMaxCount` cells touched and reads no payload
+    // bytes.
+    TRY_RESULT(expected_types,
+               parse_jvm_method_argument_types(method_spec));
+    TRY_RESULT(actual_types, peek_jvm_args_types(args));
+    if (actual_types.size() != expected_types.size()) {
+        return td::Status::Error("JVM typed args count mismatch");
+    }
+    for (std::size_t i = 0; i < expected_types.size(); ++i) {
+        if (actual_types[i] != expected_types[i]) {
+            return td::Status::Error("JVM typed arg type mismatch");
+        }
+    }
+
     // Round 61 MEDIUM fix: parse the typed args ONCE.  Pre-fix
     // `validate_jvm_typed_call_args` itself called `parse_jvm_args`
     // and we then called it again here, doubling the byte-decode
     // work (memcpy of every typed `Bytes` argument's payload chain)
     // before any Avata gas was charged.  Now parse once and reuse
-    // the parsed result for type validation.
-    TRY_RESULT(decoded_args, parse_jvm_args(std::move(args)));
-    TRY_STATUS(validate_jvm_typed_args_against_spec(method_spec, decoded_args));
-    return decoded_args;
+    // the parsed result.
+    return parse_jvm_args(std::move(args));
 }
 
 td::Status install_account_class_into_vm(
