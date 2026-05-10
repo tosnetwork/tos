@@ -257,23 +257,42 @@ td::Ref<vm::Cell> encode_jvm_deploy_descriptor(
         return {};
     }
 
-    vm::CellBuilder cb;
-    if (!cb.store_ulong_rchk_bool(kJvmDeployDescriptorMagic, 32) ||
-        !cb.store_ulong_rchk_bool(descriptor.schema_version, 8) ||
-        !cb.store_bytes_bool(descriptor.deployer.data(),
-                             static_cast<unsigned>(
-                                 descriptor.deployer.size())) ||
-        !cb.store_bytes_bool(descriptor.salt.data(),
-                             static_cast<unsigned>(descriptor.salt.size())) ||
-        !cb.store_bytes_bool(descriptor.class_hash.data(),
-                             static_cast<unsigned>(
-                                 descriptor.class_hash.size())) ||
-        !cb.store_ref_bool(std::move(class_name)) ||
-        !cb.store_ref_bool(std::move(class_bytes)) ||
-        !cb.store_ref_bool(descriptor.init_args)) {
+    // Round 164 (claude review) MEDIUM fix: wrap encoding in
+    // try/catch, mirroring round 119/120 fixes on cell-codec.cpp /
+    // message-abi.cpp / event-host.cpp / class-manifest.cpp.  The
+    // descriptor wraps caller-supplied init_args as a ref — an
+    // attacker who submits a near-max-depth init_args cell can
+    // push the parent's depth past vm::CellTraits::max_depth and
+    // CellBuilder::finalize throws CellWriteError, escaping
+    // handle_jvm_deploy_contract.  Pre-fix this propagated out of
+    // the JSON-RPC handler and dropped the validator-engine
+    // connection.  Convert to a clean null return so the caller
+    // surfaces "deploy descriptor encoding failed" -32602.
+    try {
+        vm::CellBuilder cb;
+        if (!cb.store_ulong_rchk_bool(kJvmDeployDescriptorMagic, 32) ||
+            !cb.store_ulong_rchk_bool(descriptor.schema_version, 8) ||
+            !cb.store_bytes_bool(descriptor.deployer.data(),
+                                 static_cast<unsigned>(
+                                     descriptor.deployer.size())) ||
+            !cb.store_bytes_bool(descriptor.salt.data(),
+                                 static_cast<unsigned>(descriptor.salt.size())) ||
+            !cb.store_bytes_bool(descriptor.class_hash.data(),
+                                 static_cast<unsigned>(
+                                     descriptor.class_hash.size())) ||
+            !cb.store_ref_bool(std::move(class_name)) ||
+            !cb.store_ref_bool(std::move(class_bytes)) ||
+            !cb.store_ref_bool(descriptor.init_args)) {
+            return {};
+        }
+        return cb.finalize();
+    } catch (vm::VmError&) {
+        return {};
+    } catch (vm::VmVirtError&) {
+        return {};
+    } catch (...) {
         return {};
     }
-    return cb.finalize();
 }
 
 td::Result<JvmDeployDescriptor> parse_jvm_deploy_descriptor(
