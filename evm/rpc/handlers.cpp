@@ -759,15 +759,14 @@ static bool parse_hex_address(const std::string& params, evmc::address& out) {
 // Overlong / delimiter-injected inputs reject because hex would have
 // continued past the end of the well-formed JSON string.
 //
-// Round 106 LOW fix: when the input begins with `"`, treat it as the
-// raw body of a JSON string that contained an escape (e.g.
-// `\"0x6869`) and reject — the caller passed an extracted string
-// whose content starts with a literal `"`, NOT the quoted-substring
-// form.  Pre-fix the parser fell through to `find("\"0x")` and
-// matched the embedded escaped quote, accepting `"0x6869` as
-// `0x6869`.
+// Round 107 fix-of-fix: revert the round-106 hex[0]=='"' reject —
+// parse_topics_array passes quoted substrings whose first char IS
+// the opening JSON quote, so the prior reject broke every log
+// topic filter.  The escape-spoof attack (`\"0x6869`) is now
+// closed at the extract_array_element_string_n level (round 106's
+// escape rejection); parse_hex_bytes can stay permissive for the
+// quoted-substring form.
 static bool parse_hex_bytes(const std::string& hex, silkworm::Bytes& out) {
-    if (!hex.empty() && hex[0] == '"') return false;
     auto try_at = [&](std::size_t pos) {
         std::size_t len = 0;
         while (pos + len < hex.size()) {
