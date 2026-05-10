@@ -2799,6 +2799,14 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
         return {make_error(id, -32010,
                            "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
+    // Round 110 LOW fix: gate on canonical-tx membership too.
+    // Pre-fix, a stale tx record from an old same-height block
+    // (no markers set) was traced even though the public tx RPC
+    // would null it.  Apply the same is_stored_tx_canonical
+    // gate the by-hash + by-index handlers use.
+    if (!is_stored_tx_canonical(tx_hash, stored_tx->block_number)) {
+        return {make_error(id, -32000, "transaction not found"), true};
+    }
 
     // Reconstruct the transaction
     silkworm::Transaction txn;
