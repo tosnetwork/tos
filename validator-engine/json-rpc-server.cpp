@@ -1048,6 +1048,15 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   // and rate-limit policy are validator-engine concerns; the underlying
   // accessor is bound by `init_uno_workchain` in uno/core/init.cpp.
   if (method == "uno_getMineState") {
+    // Round 163 (claude review) MEDIUM fix: gate uno_getMineState
+    // with the per-IP token bucket.  Pre-fix this read fast-path
+    // bypassed the gate entirely, allowing a single IP to flood
+    // the validator-engine thread pool with live-state reads.
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     promise.set_value(
         handle_uno_get_mine_state(std::move(req_id), opts_.cors_origin));
     return;
@@ -1105,6 +1114,15 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   // Uno workchain JSON-RPC: same array-params convention as eth_*.
   if (params_val.type() == td::JsonValue::Type::Array &&
       uno_workchain::is_uno_rpc_method(method)) {
+    // Round 163 (claude review) MEDIUM fix: gate the uno_* array-
+    // params read path.  Pre-fix this branch went straight to
+    // handle_uno_rpc without consuming a per-IP token, mirroring
+    // the gap closed in round 154 for the jvm_* branch.
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     td::JsonBuilder jb;
     jb.enter_value() << params_val;
     std::string params_str = jb.string_builder().as_cslice().str();
@@ -1408,27 +1426,33 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     return;
   }
 
-  // Round 155 + 156 MEDIUM fix: legacy submission family used to
-  // bypass the per-IP rate gate.  Each fans out to a
-  // liteServer_sendMessage submission, so a single IP could
-  // exhaust validator-side ext-message admission while every
-  // other client was throttled.  Apply the gate up front,
-  // matching the round-153/154 fixes for eth_sendRawTransaction
-  // and uno_send* / jvm_*.
-  //
-  // Round 156 correction: sendBocReturnHashNoError DOES submit
-  // (json-rpc-server-send.cpp:1594-1598 wraps liteServer_send
-  // Message and dispatches it); the round-155 comment that called
-  // it a read-side variant was wrong.  Adding it to the gate.
-  if (method == "sendBoc" || method == "sendBocReturnHash" ||
-      method == "sendBocReturnHashNoError" ||
-      method == "sendQuery" || method == "submitSignedTransaction") {
-    if (!evm_workchain::consume_per_ip_token(source_ip)) {
-      promise.set_value(make_eth_json_error(
-          -32005, "rate limit exceeded (per-IP)", req_id));
-      return;
-    }
+  // Round 163 (claude review) MEDIUM fix: gate ALL legacy-TonAPI
+  // methods at the dispatch_method boundary.  Pre-fix only the
+  // submission family (sendBoc/sendQuery/etc.) was per-IP rate-
+  // limited; read-heavy methods (estimateFee, runGetMethod,
+  // getAddressInformation, getTransactions, ...) fanned out to
+  // liteserver queries on every call with no per-IP throttle,
+  // letting a single IP saturate the validator-engine thread
+  // pool / liteserver fanout.  EVM and JVM paths already gate
+  // every method at this boundary (handle_eth_rpc:6739 +
+  // process_single_object_request:1067); this brings legacy
+  // TonAPI to the same baseline.  An empty source_ip (REST
+  // pre-round-156 / in-process callers) bypasses the gate by
+  // design in consume_per_ip_token, so test fixtures remain
+  // unaffected.
+  if (!evm_workchain::consume_per_ip_token(source_ip)) {
+    promise.set_value(make_eth_json_error(
+        -32005, "rate limit exceeded (per-IP)", req_id));
+    return;
   }
+
+  // Round 163 consolidation: round-155/156's explicit per-method
+  // legacy-submission gate (sendBoc / sendBocReturnHash /
+  // sendBocReturnHashNoError / sendQuery / submitSignedTransaction)
+  // is now redundant with the dispatch_method-wide per-IP gate
+  // added above and has been removed; the wider gate already
+  // covers these methods plus every legacy TonAPI read method
+  // that previously bypassed rate limiting.
   // Existing methods
   if (method == "sendBoc") {
     handle_sendBoc(params, std::move(req_id), std::move(promise));
