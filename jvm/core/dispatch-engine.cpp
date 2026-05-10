@@ -419,45 +419,6 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                     "JVM contract account state has non-empty storage_root at "
                     "first activation");
             }
-            // Round 115 MEDIUM fix: validate the full manifest at
-            // first activation.  Round 114 made
-            // find_jvm_method_manifest_entry a streaming lookup
-            // (cuts unmetered work for non-matching entries) under
-            // the assumption that deploy-time validation enforces
-            // count cap, dedup, and tail invariants.  But the
-            // inbound StateInit.data path lets a caller hand-build
-            // a manifest with trailing nodes / duplicate ids /
-            // count mismatch that the streaming lookup would
-            // happily traverse.  Run parse_jvm_method_manifest
-            // here so a malformed manifest never lands in
-            // persisted state.  The cost (full decode + dedup)
-            // is paid ONCE at first activation, not on every
-            // call — subsequent invocations trust the persisted
-            // root.
-            //
-            // Round 116 MEDIUM fix: bill the validation work via
-            // skipped_output_billed (accepted=true) so the
-            // attacker's contract account is charged the
-            // admission floor capped at effective_gas_limit when
-            // a malformed manifest is rejected.  Pre-fix the
-            // skipped_output path was zero-billed, letting an
-            // attacker burn validator CPU for free on
-            // hand-crafted ~1.5 MiB malformed manifests.
-            if (state.manifest_root.not_null()) {
-                auto manifest_check = parse_jvm_method_manifest(
-                    state.manifest_root);
-                if (manifest_check.is_error()) {
-                    const std::uint64_t billed = std::min<std::uint64_t>(
-                        kJvmAdmissionGasFloor, effective_gas_limit);
-                    return skipped_output_billed(
-                        block::ComputePhase::sk_bad_state,
-                        "JVM first activation: manifest_root is malformed",
-                        cfg->config,
-                        billed,
-                        /*out_of_gas=*/false,
-                        /*msg_state_used=*/input.msg_state_used);
-                }
-            }
             // Round 58 LOW fix: the inbound `StateInit.code` is
             // caller-controlled and the host's custom-engine branch
             // (`Transaction::prepare_compute_phase`) preserves it on a
@@ -585,6 +546,52 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 return skipped_output(
                     block::ComputePhase::sk_bad_state,
                     "JVM first activation: inbound_message decode failed");
+            }
+            // Round 115 MEDIUM fix: validate the full manifest at
+            // first activation so a malformed manifest never lands
+            // in persisted state.  See round-114 for the streaming
+            // lookup that depends on this validation.
+            //
+            // Round 116 MEDIUM fix: bill the validation work via
+            // skipped_output_billed (accepted=true).
+            //
+            // Round 117 MEDIUM fix: (a) move this check AFTER the
+            // cheap canonicality / auth / source gates above, so a
+            // malformed StateInit (wrong code/library, wrong src,
+            // anycast, wrong workchain, malformed inbound) doesn't
+            // pay the full ~1.5 MiB manifest decode cost only for
+            // the cheap reject to throw away the result.  (b) Bill
+            // proportional to the manifest's declared entry count
+            // so a max-size 1024-entry malformed manifest pays
+            // commensurate gas instead of just the admission
+            // floor.
+            if (state.manifest_root.not_null()) {
+                auto manifest_check = parse_jvm_method_manifest(
+                    state.manifest_root);
+                if (manifest_check.is_error()) {
+                    // Use cell tree size as a proxy for actual
+                    // decode work — bounded by max_class_bytes-
+                    // adjacent caps but tracks attacker payload.
+                    vm::CellStorageStat stat(static_cast<unsigned long long>(
+                        kJvmStorageValueMaxBytes));
+                    auto stat_status =
+                        stat.add_used_storage(state.manifest_root, true);
+                    (void)stat_status;
+                    const std::uint64_t walked_bytes =
+                        static_cast<std::uint64_t>(stat.bits / 8u + stat.cells);
+                    const std::uint64_t scaled_bill =
+                        std::max<std::uint64_t>(kJvmAdmissionGasFloor,
+                                                walked_bytes);
+                    const std::uint64_t billed = std::min<std::uint64_t>(
+                        scaled_bill, effective_gas_limit);
+                    return skipped_output_billed(
+                        block::ComputePhase::sk_bad_state,
+                        "JVM first activation: manifest_root is malformed",
+                        cfg->config,
+                        billed,
+                        /*out_of_gas=*/false,
+                        /*msg_state_used=*/input.msg_state_used);
+                }
             }
         }
 
