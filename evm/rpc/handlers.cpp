@@ -3266,22 +3266,34 @@ static bool parse_hash_param(const std::string& params, evmc::bytes32& out) {
 //
 // Round 101 LOW fix: when the first param is a named block tag
 // (e.g. "latest", "pending"), the params string only contains ONE
-// `"0x` occurrence — the index itself.  Pre-fix this branch
-// returned nullopt because it required two `"0x` occurrences,
-// rejecting valid calls like `["latest", "0x0"]` with -32602.
-// When only one `"0x` is present, treat it as the index;
-// otherwise use the second occurrence (the classic [block, index]
-// form).
+// `"0x` occurrence — the index itself.  In that case the lone
+// hex value IS the index.
+//
+// Round 102 LOW fix: a context-free fallback to "use the only
+// `"0x`" misinterpreted single-param calls — `["0x0"]` (missing
+// the required second param) was treated as block_number=0 by
+// parse_block_number_param AND tx_index=0 here, returning a
+// real tx instead of -32602.  Detect "first param is named tag"
+// explicitly; otherwise a missing second hex IS an error.
 static std::optional<uint64_t> parse_second_hex_param(const std::string& params) {
+    const bool first_is_named_tag =
+        params.find("\"latest\"") != std::string::npos ||
+        params.find("\"pending\"") != std::string::npos ||
+        params.find("\"safe\"") != std::string::npos ||
+        params.find("\"finalized\"") != std::string::npos ||
+        params.find("\"earliest\"") != std::string::npos;
     auto first = params.find("\"0x");
     if (first == std::string::npos) return std::nullopt;
-    auto second = params.find("\"0x", first + 3);
     std::size_t hex_pos;
-    if (second == std::string::npos) {
-        // Only one `"0x` — the first param was a named tag like
-        // "latest"; the lone hex value is the index.
-        hex_pos = first + 1;  // skip the leading `"` of the match
+    if (first_is_named_tag) {
+        // Lone `"0x is the index (the named tag had no hex).
+        hex_pos = first + 1;
     } else {
+        auto second = params.find("\"0x", first + 3);
+        if (second == std::string::npos) {
+            // Two hex params were required but only one is present.
+            return std::nullopt;
+        }
         hex_pos = second + 1;
     }
     auto end_quote = params.find('"', hex_pos);
@@ -4036,15 +4048,12 @@ static RpcResult handle_get_raw_tx_by_block_hash_and_index(const std::string& pa
 
 static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& params, const std::string& id) {
     // params: ["0x<blockNumber>" or "latest", "0x<index>"]
-    uint64_t bn = global_evm_state().block_number();
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string bn_str = params.substr(pos, end - pos);
-        if (bn_str != "latest" && bn_str != "pending" && bn_str != "safe" && bn_str != "finalized") {
-            bn = parse_hex_uint64(bn_str);
-        }
-    }
+    // Round 102 LOW fix: use the shared parse_block_number_param
+    // helper instead of inline-scanning for `0x`.  Pre-fix, when the
+    // first param was a named tag like `latest`, this code found the
+    // `0x` of the *index* and parsed it as the block number, so
+    // `["latest","0x5"]` resolved to block 5 / index 5.
+    uint64_t bn = parse_block_number_param(params);
     if (!global_evm_state().has_block(bn)) {
         if (is_evm_rpc_block_indexing_incomplete(bn)) {
             return {make_error(id, -32010,
