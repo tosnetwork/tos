@@ -163,6 +163,19 @@ td::Status JvmEventHost::emit(const std::vector<JvmEventTopic>& topics,
         data.size() > kJvmEventDataMaxBytes) {
         return td::Status::Error("JVM event exceeds configured limits");
     }
+    // Round 150 MEDIUM fix: cap the per-tx event count so the
+    // linked action-list spine in build_jvm_event_action_list
+    // cannot push depth past vm::CellTraits::max_depth.  See the
+    // header comment on kJvmEventCountMax for the depth budget.
+    // Pre-fix the only emit-time check was per-event size; 16+
+    // max-sized events forced the late action-list encode to
+    // null-return, surfacing as sk_bad_state with floor-only
+    // billing despite the runtime + copy work already spent.
+    if (events_.size() >= kJvmEventCountMax) {
+        return td::Status::Error(
+            "JVM event count exceeds per-tx limit of " +
+            std::to_string(kJvmEventCountMax));
+    }
 
     JvmEvent event;
     event.topics = topics;

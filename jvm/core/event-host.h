@@ -39,6 +39,25 @@ constexpr std::size_t kJvmEventMaxTopics = 4;
 // caller's own gas budget.
 constexpr std::size_t kJvmEventDataMaxBytes =
     (vm::CellTraits::max_depth - 16) * kJvmStorageValueChunkBytes;
+
+// Round 150 MEDIUM fix: cap the per-tx event count so the linked
+// action-list spine in build_jvm_event_action_list cannot exceed
+// vm::CellTraits::max_depth.  Depth model: each event payload is
+// itself a chunk chain of up to (max_depth - 16) = 1008 cells.
+// Each action-list node refs the prior list node and the event
+// message, adding one to depth per event.  For N events of
+// max-depth payloads the list-root depth is 1008 + N + 2 (the
+// +2 covers the message header + payload wrapper cells).  To
+// keep us comfortably under max_depth = 1024 even when every
+// event hits the per-event size cap, gate the per-tx event
+// count at kJvmEventCountMax = 12 (yields max list-root depth
+// of 1022, leaving a 2-cell margin for downstream wrappers).
+// Pre-fix the only check was per-event size; a contract emitting
+// 16+ max-sized events succeeded through Avata execution and
+// the late build_jvm_event_action_list null-return turned the
+// call into sk_bad_state with kJvmAdmissionGasFloor billing —
+// repeatable underbilled validator memory + copy work.
+constexpr std::size_t kJvmEventCountMax = 12;
 constexpr std::uint32_t kJvmEventPayloadMagic = 0x4a564d45;  // "JVME"
 constexpr std::uint8_t kJvmEventPayloadSchemaVersion = 1;
 
