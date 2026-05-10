@@ -579,9 +579,23 @@ void CatChainReceiverImpl::read_db_from(CatChainBlockHash id) {
   db_root_block_ = id;
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), id](td::Result<DbType::GetResult> R) {
-    R.ensure();
+    // Round 166 (claude review) LOW fix: replace bare .ensure() / CHECK
+    // on the catchain root-block DB fetch with explicit LOG(FATAL) lines
+    // that name the offending key.  Round 142 wired the same operator-
+    // visibility style inside read_block_from_db; this closes the
+    // matching gap in the DB-fetch lambda that feeds it.  A failed Get
+    // or NotFound at this layer means the saved root pointer references
+    // a record that is no longer in CatChainDb — catastrophic, but the
+    // operator needs to see WHY.
+    if (R.is_error()) {
+      LOG(FATAL) << "catchain-receiver: DB get failed for root block "
+                 << id << ": " << R.error().message();
+    }
     DbType::GetResult g = R.move_as_ok();
-    CHECK(g.status == td::KeyValue::GetStatus::Ok);
+    if (g.status != td::KeyValue::GetStatus::Ok) {
+      LOG(FATAL) << "catchain-receiver: DB has no record for root block "
+                 << id << " (refusing to proceed on missing root)";
+    }
 
     td::actor::send_closure(SelfId, &CatChainReceiverImpl::read_block_from_db, id, std::move(g.value));
   });
@@ -659,9 +673,22 @@ void CatChainReceiverImpl::read_block_from_db(CatChainBlockHash id, td::BufferSl
     if (!dep_block || !dep_block->initialized()) {
       pending_in_db_++;
       auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), dep](td::Result<DbType::GetResult> R) {
-        R.ensure();
+        // Round 166 (claude review) LOW fix: same operator-visibility
+        // upgrade as the root-fetch lambda above.  A parent block's
+        // dep hash that does not resolve in CatChainDb means the
+        // DB has a dangling reference — catastrophic, but the
+        // operator must see WHICH dep was missing.
+        if (R.is_error()) {
+          LOG(FATAL) << "catchain-receiver: DB get failed for dep block "
+                     << dep << ": " << R.error().message();
+        }
         DbType::GetResult g = R.move_as_ok();
-        CHECK(g.status == td::KeyValue::GetStatus::Ok);
+        if (g.status != td::KeyValue::GetStatus::Ok) {
+          LOG(FATAL) << "catchain-receiver: DB has no record for dep block "
+                     << dep
+                     << " (referenced by a stored parent but absent from "
+                        "CatChainDb)";
+        }
 
         td::actor::send_closure(SelfId, &CatChainReceiverImpl::read_block_from_db, dep, std::move(g.value));
       });
