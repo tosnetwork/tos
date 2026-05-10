@@ -803,6 +803,14 @@ static bool parse_hex_bytes32(const std::string& hex, evmc::bytes32& out) {
 // Forward declarations
 static std::vector<std::vector<evmc::bytes32>> parse_topics_array(const std::string& params);
 static uint64_t parse_block_number_param(const std::string& params);
+static std::optional<std::string> extract_array_element_n(
+    const std::string& params, std::size_t n);
+static std::optional<std::string> extract_array_element_string_n(
+    const std::string& params, std::size_t n);
+static bool parse_first_hash_bytes(const std::string& params,
+                                    silkworm::Bytes& out);
+static bool parse_first_hex_bytes_param(const std::string& params,
+                                         silkworm::Bytes& out);
 
 // Look up the real block hash for a given block number, return hex or zeros if not found.
 static std::string lookup_block_hash_hex(uint64_t block_num) {
@@ -1137,8 +1145,9 @@ static RpcResult handle_get_code(const std::string& params, const std::string& i
 // JsonRpcServer::handle_eth_sendRawTransaction() which submits
 // to the ExtMessagePool asynchronously.
 static RpcResult handle_send_raw_transaction(const std::string& params, const std::string& id) {
+    // Round 105 LOW fix: positional first-element extraction.
     silkworm::Bytes raw_tx;
-    if (!parse_hex_bytes(params, raw_tx)) {
+    if (!parse_first_hex_bytes_param(params, raw_tx)) {
         return {make_error(id, -32602, "invalid hex transaction data"), true};
     }
 
@@ -1278,9 +1287,9 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
 }
 
 static RpcResult handle_get_transaction_receipt(const std::string& params, const std::string& id) {
-    // Parse tx hash from params
+    // Parse tx hash from params (round 105 LOW fix: positional)
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_error(id, -32602, "invalid transaction hash"), true};
     }
 
@@ -2431,42 +2440,15 @@ static RpcResult handle_get_block_by_number(const std::string& params, const std
     // and named tags → head; any other malformed first param
     // falls back to head, mirroring legacy lenient behavior.
     uint64_t bn = parse_block_number_param(params);
+    // Round 105 LOW fix: extract the second positional element as
+    // a literal `true` / `false` boolean.  Pre-fix the search was
+    // scoped to "after the first comma" but still found `true`
+    // anywhere in the tail (e.g. inside `{"shadow":true}`).  The
+    // positional extractor returns the element verbatim so we can
+    // string-match exactly.
     bool full_transactions = false;
-    // Parse fullTransactions boolean (second positional param) by
-    // scanning AFTER the first array element.  Pre-fix
-    // `params.find("true")` matched anywhere — nested objects
-    // with `true` flipped the flag.
-    if (auto lb = params.find('['); lb != std::string::npos) {
-        // Skip past the first JSON value: walk up to the comma at
-        // the array's top level.
-        std::size_t i = lb + 1;
-        int depth = 0;
-        bool in_string = false;
-        bool found_comma = false;
-        while (i < params.size()) {
-            char c = params[i];
-            if (in_string) {
-                if (c == '\\' && i + 1 < params.size()) {
-                    i += 2;
-                    continue;
-                }
-                if (c == '"') in_string = false;
-            } else {
-                if (c == '"') in_string = true;
-                else if (c == '{' || c == '[') ++depth;
-                else if (c == '}' || c == ']') {
-                    if (depth == 0) break;
-                    --depth;
-                }
-                else if (c == ',' && depth == 0) {
-                    found_comma = true;
-                    ++i;
-                    break;
-                }
-            }
-            ++i;
-        }
-        if (found_comma && params.find("true", i) != std::string::npos) {
+    if (auto el2 = extract_array_element_n(params, 1); el2.has_value()) {
+        if (*el2 == "true") {
             full_transactions = true;
         }
     }
@@ -2650,8 +2632,9 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
 }
 
 static RpcResult handle_get_transaction_by_hash(const std::string& params, const std::string& id) {
+    // Round 105 LOW fix: positional hash extraction.
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_error(id, -32602, "invalid transaction hash"), true};
     }
     evmc::bytes32 tx_hash;
@@ -2772,9 +2755,9 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
                            "debug_traceTransaction already running"), true};
     }
 
-    // Parse tx hash
+    // Parse tx hash (round 105 LOW fix: positional)
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_error(id, -32602, "invalid transaction hash"), true};
     }
     evmc::bytes32 tx_hash;
@@ -3090,12 +3073,17 @@ static RpcResult handle_get_storage_at(const std::string& params, const std::str
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
 
-    // Parse storage slot (second hex param after the address)
+    // Parse storage slot (second positional param).
+    // Round 105 LOW fix: extract the SECOND positional JSON-string
+    // element rather than scanning the whole params blob for the
+    // second `0x`.  Pre-fix, an object second param like
+    // `{"slot":"0x01"}` was accepted and the slot value silently
+    // came from the nested string.
     evmc::bytes32 slot{};
-    auto second_0x = params.find("0x", params.find("0x") + 1);
-    if (second_0x != std::string::npos) {
+    if (auto slot_str = extract_array_element_string_n(params, 1);
+        slot_str.has_value()) {
         silkworm::Bytes slot_bytes;
-        if (parse_hex_bytes(params.substr(second_0x - 1), slot_bytes) && slot_bytes.size() <= 32) {
+        if (parse_hex_bytes(*slot_str, slot_bytes) && slot_bytes.size() <= 32) {
             // Left-pad to 32 bytes
             size_t offset = 32 - slot_bytes.size();
             std::memcpy(slot.bytes + offset, slot_bytes.data(), slot_bytes.size());
@@ -3269,6 +3257,84 @@ static std::optional<std::string> extract_first_array_string(
     return params.substr(start, end - start);
 }
 
+// Round 105 LOW fix helper: extract the Nth (0-indexed) top-level
+// JSON-array element from a `params` string.  Walks the array
+// structure tracking depth and string boundaries so nested objects
+// / arrays don't count as positional separators.  Returns the
+// substring covering the element (without surrounding whitespace,
+// without the trailing comma).  Returns nullopt if the index is
+// out of range or params doesn't begin with an array.
+static std::optional<std::string> extract_array_element_n(
+    const std::string& params, std::size_t n) {
+    auto lb = params.find('[');
+    if (lb == std::string::npos) return std::nullopt;
+    std::size_t i = lb + 1;
+    std::size_t current = 0;
+    while (i < params.size()) {
+        // Skip leading whitespace before this element.
+        while (i < params.size() &&
+               (params[i] == ' ' || params[i] == '\t' ||
+                params[i] == '\n' || params[i] == '\r')) {
+            ++i;
+        }
+        if (i >= params.size()) return std::nullopt;
+        if (params[i] == ']') return std::nullopt;
+        std::size_t start = i;
+        // Walk the element body to its end (top-level `,` or `]`).
+        int depth = 0;
+        bool in_string = false;
+        for (; i < params.size(); ++i) {
+            char c = params[i];
+            if (in_string) {
+                if (c == '\\' && i + 1 < params.size()) {
+                    ++i;
+                    continue;
+                }
+                if (c == '"') in_string = false;
+            } else {
+                if (c == '"') in_string = true;
+                else if (c == '{' || c == '[') ++depth;
+                else if (c == '}' || c == ']') {
+                    if (depth == 0) break;
+                    --depth;
+                }
+                else if (c == ',' && depth == 0) break;
+            }
+        }
+        std::size_t end = i;
+        // Trim trailing whitespace from the element.
+        while (end > start &&
+               (params[end - 1] == ' ' || params[end - 1] == '\t' ||
+                params[end - 1] == '\n' || params[end - 1] == '\r')) {
+            --end;
+        }
+        if (current == n) {
+            return params.substr(start, end - start);
+        }
+        ++current;
+        if (i < params.size() && params[i] == ',') {
+            ++i;
+            continue;
+        }
+        // End of array reached.
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+// Round 105 LOW fix helper: extract the Nth element AS a JSON
+// string body (between the surrounding `"` chars).  Returns
+// nullopt if the element is not a JSON string.
+static std::optional<std::string> extract_array_element_string_n(
+    const std::string& params, std::size_t n) {
+    auto el = extract_array_element_n(params, n);
+    if (!el.has_value()) return std::nullopt;
+    if (el->size() < 2 || (*el)[0] != '"' || el->back() != '"') {
+        return std::nullopt;
+    }
+    return el->substr(1, el->size() - 2);
+}
+
 // Parse a block number tag from the first param in an array:
 //   ["latest"] / ["earliest"] / ["safe"] / ["finalized"] / ["pending"] / ["0x1"]
 // Returns the resolved uint64_t block number.
@@ -3302,13 +3368,48 @@ static uint64_t parse_block_number_param(const std::string& params) {
 }
 
 // Parse a 32-byte hash from the first hex param in the params string.
+//
+// Round 105 LOW fix: extract the FIRST positional JSON-string
+// element rather than scanning the whole params blob.  Pre-fix
+// methods like `eth_getTransactionByHash` accepted nested objects
+// `{"hash":"0x..."}` because parse_hex_bytes scanned globally for
+// `"0x` and matched the inner string.
 static bool parse_hash_param(const std::string& params, evmc::bytes32& out) {
+    auto first_str = extract_array_element_string_n(params, 0);
+    if (!first_str.has_value()) return false;
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_hex_bytes(*first_str, hash_bytes) || hash_bytes.size() != 32) {
         return false;
     }
     std::memcpy(out.bytes, hash_bytes.data(), 32);
     return true;
+}
+
+// Parse the first positional element as 32-byte raw bytes.  Used by
+// hash-by-hash RPCs (eth_getTransactionByHash etc.).  Mirrors
+// parse_hash_param exactly but writes into a silkworm::Bytes
+// container so callers that already use that type don't have to
+// memcpy.
+static bool parse_first_hash_bytes(const std::string& params,
+                                    silkworm::Bytes& out) {
+    auto first_str = extract_array_element_string_n(params, 0);
+    if (!first_str.has_value()) return false;
+    if (!parse_hex_bytes(*first_str, out) || out.size() != 32) {
+        return false;
+    }
+    return true;
+}
+
+// Parse the first positional element as a variable-length hex byte
+// string.  Used by handlers like eth_sendRawTransaction and
+// web3_sha3 whose first param is a hex data string of arbitrary
+// length.  Pre-fix these scanned the whole params blob and would
+// accept nested object hex.
+static bool parse_first_hex_bytes_param(const std::string& params,
+                                         silkworm::Bytes& out) {
+    auto first_str = extract_array_element_string_n(params, 0);
+    if (!first_str.has_value()) return false;
+    return parse_hex_bytes(*first_str, out);
 }
 
 // Parse the second hex param (transaction index) from params like ["0x1", "0x0"].
@@ -3339,65 +3440,38 @@ static bool parse_hash_param(const std::string& params, evmc::bytes32& out) {
 // element.  Walk past the first positional element's end (the
 // top-level comma after the array's opening `[`) before
 // searching for the second `"0x`.
+// Round 105 LOW fix: require the second positional element to be
+// an actual JSON string.  Pre-fix, parse_second_hex_param walked
+// past the first element's top-level comma and then searched for
+// `"0x` anywhere — but a nested object second param like
+// `{"shadow":"0x0"}` still matched the inner hex string.  Use the
+// strict positional-element extractor and validate the element is
+// `"0x..."` (a JSON-string-quoted hex quantity).
 static std::optional<uint64_t> parse_second_hex_param(const std::string& params) {
-    auto first_str = extract_first_array_string(params);
-    bool first_is_named_tag = false;
+    auto first_str = extract_array_element_string_n(params, 0);
     if (first_str.has_value()) {
         const auto& s = *first_str;
-        first_is_named_tag = (s == "latest" || s == "pending" ||
-                              s == "safe" || s == "finalized" ||
-                              s == "earliest");
-    }
-    // Walk the params string to find the position immediately
-    // after the first positional element (i.e., right after the
-    // top-level comma following the `[`).  Nested strings and
-    // braces during the walk don't count as positional separators.
-    auto find_after_first_positional = [&]() -> std::size_t {
-        auto lb = params.find('[');
-        if (lb == std::string::npos) return std::string::npos;
-        std::size_t i = lb + 1;
-        int depth = 0;
-        bool in_string = false;
-        while (i < params.size()) {
-            char c = params[i];
-            if (in_string) {
-                if (c == '\\' && i + 1 < params.size()) {
-                    i += 2;
-                    continue;
-                }
-                if (c == '"') in_string = false;
-            } else {
-                if (c == '"') in_string = true;
-                else if (c == '{' || c == '[') ++depth;
-                else if (c == '}' || c == ']') {
-                    if (depth == 0) break;
-                    --depth;
-                }
-                else if (c == ',' && depth == 0) {
-                    return i + 1;
-                }
-            }
-            ++i;
+        if (s == "latest" || s == "pending" || s == "safe" ||
+            s == "finalized" || s == "earliest") {
+            // Single-positional-element form: index is the lone hex.
+            // Wait — the call has TWO positional params (block, index)
+            // even when block is a tag.  Fall through to extract
+            // element 1.
         }
-        return std::string::npos;
-    };
-    std::size_t hex_pos;
-    if (first_is_named_tag) {
-        // Single-`"0x` form: the lone hex IS the index.
-        auto p = params.find("\"0x");
-        if (p == std::string::npos) return std::nullopt;
-        hex_pos = p + 1;
-    } else {
-        const std::size_t after = find_after_first_positional();
-        if (after == std::string::npos) return std::nullopt;
-        auto p = params.find("\"0x", after);
-        if (p == std::string::npos) return std::nullopt;
-        hex_pos = p + 1;
     }
-    auto end_quote = params.find('"', hex_pos);
-    if (end_quote == std::string::npos) return std::nullopt;
-    std::string hex_str = params.substr(hex_pos, end_quote - hex_pos);
-    auto strict_res = parse_hex_uint64_strict(hex_str);
+    auto second_str = extract_array_element_string_n(params, 1);
+    if (!second_str.has_value()) return std::nullopt;
+    const std::string body = "0x" + (
+        second_str->size() >= 2 && (*second_str)[0] == '0' &&
+        ((*second_str)[1] == 'x' || (*second_str)[1] == 'X')
+            ? second_str->substr(2)
+            : *second_str);
+    // The above forms a `"0x..."` body; round-trip via strict.
+    if (second_str->size() < 2 || (*second_str)[0] != '0' ||
+        ((*second_str)[1] != 'x' && (*second_str)[1] != 'X')) {
+        return std::nullopt;
+    }
+    auto strict_res = parse_hex_uint64_strict(*second_str);
     if (strict_res.is_error()) return std::nullopt;
     return strict_res.move_as_ok();
 }
@@ -3580,14 +3654,23 @@ static RpcResult handle_get_tx_by_block_hash_and_index(const std::string& params
 }
 
 static RpcResult handle_get_block_by_hash(const std::string& params, const std::string& id) {
+    // Round 105 LOW fix: positional hash extraction.
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_result(id, "null"), false};
     }
     evmc::bytes32 block_hash;
     std::memcpy(block_hash.bytes, hash_bytes.data(), 32);
 
-    bool full_transactions = (params.find("true") != std::string::npos);
+    // Round 105 LOW fix: extract the second positional element so
+    // a nested object like `{"shadow":true}` cannot flip the
+    // full-transactions flag.
+    bool full_transactions = false;
+    if (auto el2 = extract_array_element_n(params, 1); el2.has_value()) {
+        if (*el2 == "true") {
+            full_transactions = true;
+        }
+    }
 
     auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
     if (blk.number != 0 || blk.hash != evmc::bytes32{}) {
@@ -4046,8 +4129,9 @@ static RpcResult handle_uncle_by_block_number_and_index(const std::string&, cons
 // --- web3_sha3: keccak256 of input bytes ---
 
 static RpcResult handle_web3_sha3(const std::string& params, const std::string& id) {
+    // Round 105 LOW fix: positional first-element extraction.
     silkworm::Bytes data;
-    if (!parse_hex_bytes(params, data)) {
+    if (!parse_first_hex_bytes_param(params, data)) {
         return {make_error(id, -32602, "invalid hex input"), true};
     }
     auto h = ethash::keccak256(data.data(), data.size());
@@ -4064,8 +4148,9 @@ static std::string raw_tx_response(const std::string& id, const StoredTransactio
 }
 
 static RpcResult handle_get_raw_transaction_by_hash(const std::string& params, const std::string& id) {
+    // Round 105 LOW fix: positional hash extraction.
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_error(id, -32602, "invalid transaction hash"), true};
     }
     evmc::bytes32 tx_hash;
@@ -4101,8 +4186,9 @@ static RpcResult handle_get_raw_transaction_by_hash(const std::string& params, c
 
 static RpcResult handle_get_raw_tx_by_block_hash_and_index(const std::string& params, const std::string& id) {
     // params: ["0x<blockHash>", "0x<index>"]
+    // Round 105 LOW fix: positional hash extraction.
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_error(id, -32602, "invalid block hash"), true};
     }
     evmc::bytes32 block_hash;
