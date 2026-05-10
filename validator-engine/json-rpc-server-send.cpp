@@ -1692,9 +1692,24 @@ void JsonRpcServer::handle_eth_sendRawTransaction_with_chain_id(
   // proven to be a DoS surface when enough pile up).
   //   - Post-EIP-155 legacy txs carry chain_id in v.
   //   - EIP-2930 / 1559 / 4844 typed txs embed chain_id explicitly.
-  //   - Pre-EIP-155 legacy txs omit chain_id (std::nullopt) — we accept
-  //     those because they're not bound to any specific chain.
-  if (decoded.txn.chain_id.has_value() && *decoded.txn.chain_id != chain_id) {
+  //   - Pre-EIP-155 legacy txs omit chain_id (std::nullopt).
+  //
+  // Round 127 MEDIUM fix: also reject the chain_id=nullopt case here
+  // so the RPC layer surfaces a clean -32000 instead of silently
+  // accepting an unprotected legacy signature that the consensus
+  // gate now rejects.  Mirrors the executor.cpp gate.  Closes a
+  // cross-chain replay vector where any pre-EIP-155 signature minted
+  // on another EVM network could be replayed on TOS EVM with no
+  // chain-id binding.
+  if (!decoded.txn.chain_id.has_value()) {
+    promise.set_value(make_eth_json_error(
+        -32000,
+        "pre-EIP-155 legacy transactions are not supported "
+        "(chain_id binding required)",
+        req_id));
+    return;
+  }
+  if (*decoded.txn.chain_id != chain_id) {
     std::ostringstream msg;
     msg << "invalid chain id: got " << *decoded.txn.chain_id
         << ", expected 0x" << std::hex << chain_id << std::dec;

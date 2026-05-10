@@ -192,12 +192,27 @@ static ExecutionResult run_evm(
         // also accepts ext_in_msgs via `sendBoc` / liteServer that bypass
         // the RPC. Without this check a foreign-chain tx (signed for
         // mainnet, replayed onto TOS-EVM with the same key/nonce) would
-        // execute on wc=1 and bypass EIP-155 replay protection. Pre-EIP-155
-        // legacy txs (chain_id = nullopt) remain accepted — by spec they
-        // are not bound to any chain and Silkworm only enforces the equality
-        // when `chain_id.has_value()`.
-        if (txn.chain_id.has_value() &&
-            *txn.chain_id != intx::uint256{config.chain_id}) {
+        // execute on wc=1 and bypass EIP-155 replay protection.
+        //
+        // Round 127 MEDIUM fix: reject pre-EIP-155 legacy txs
+        // (chain_id = nullopt) outright.  Pre-fix Silkworm only
+        // enforced equality when chain_id.has_value(), so an
+        // unprotected legacy signature minted for any historical
+        // EVM context (e.g. a long-tail mainnet account that
+        // signed before EIP-155 was activated) was replayable on
+        // TOS EVM with no chain-id binding at all.  TOS EVM is a
+        // new chain — there is no compatibility benefit to
+        // accepting unprotected signatures, and rejecting them
+        // closes a cross-chain replay vector with no legitimate
+        // user impact.
+        if (!txn.chain_id.has_value()) {
+            result.error_message =
+                "pre-EIP-155 legacy transactions are not supported "
+                "(chain_id binding required)";
+            result.gas_used = 0;
+            return result;
+        }
+        if (*txn.chain_id != intx::uint256{config.chain_id}) {
             result.error_message = "wrong chain id";
             result.gas_used = 0;
             return result;
