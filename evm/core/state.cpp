@@ -313,6 +313,19 @@ void EvmState::store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
                           uint32_t tx_index) {
     std::unique_lock lock(mutex_);
     auto& block_log_vec = block_logs_[block_number];
+    // Round 97 HIGH fix: idempotency.  Pre-fix store_logs unconditionally
+    // appended every call; the round-96 marker-repair fall-through
+    // therefore appended a second copy of the same accepted tx's
+    // logs after the first apply already stored them, producing
+    // duplicate entries with inflated logIndex on every retry.
+    // Skip when this tx_hash already contributed logs at this
+    // height; the canonical record is whatever the first apply
+    // stored.
+    for (const auto& existing : block_log_vec) {
+        if (existing.tx_hash == tx_hash) {
+            return;
+        }
+    }
     for (uint32_t i = 0; i < logs.size(); ++i) {
         block_log_vec.push_back(IndexedLog{
             .block_number = block_number,
