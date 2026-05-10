@@ -568,6 +568,21 @@ void ArchiveManager::get_persistent_state(BlockIdExt block_id, BlockIdExt master
 void ArchiveManager::get_persistent_state_slice(BlockIdExt block_id, BlockIdExt masterchain_block_id,
                                                 PersistentStateType type, td::int64 offset, td::int64 max_size,
                                                 td::Promise<td::BufferSlice> promise) {
+  // Round 143 LOW (deferred): persistent-state slices are served
+  // from the registered path without recomputing a file/content
+  // hash.  Unlike get_zero_state, which gates on file_hash equality
+  // before returning, get_persistent_state_slice trusts perm_states_
+  // membership and the on-disk path — corruption introduced AFTER
+  // registration is not caught here, so a serving node could ship
+  // raw mismatched bytes to peers under the requested state
+  // identity.  Receiver-side validation catches actual corruption
+  // at apply/import time, so this is bounded to a serving-hygiene
+  // issue and not a peer-poisoning vector beyond bandwidth waste.
+  // Closing it cleanly requires durable per-file content-hash
+  // tracking (BlockIdExt's state_root_hash is over the parsed cell,
+  // not the serialized BoC, so we'd need to either store the
+  // file_hash at write time or accept full-state hashing on serve);
+  // tracked as a separate follow-up rather than papered over here.
   auto id = create_persistent_state_id(block_id, masterchain_block_id, type);
   auto hash = id.hash();
   if (perm_states_.find({masterchain_block_id.seqno(), hash}) == perm_states_.end()) {
