@@ -8,8 +8,11 @@
     Source: TOS-specific integration point.
 */
 #include "uno/core/dispatch-engine.h"
+#include "uno/core/config-param.h"
 #include "uno/core/init.h"
+#include "uno/core/workchain.h"
 
+#include "block/mc-config.h"
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/Status.h"
@@ -82,7 +85,7 @@ class UnoNativeEngine final : public block::WorkchainEngine {
 
     td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
         const block::WorkchainExecutionDescriptor& descriptor,
-        const block::Config& /*block_transition_config*/) const override {
+        const block::Config& block_transition_config) const override {
         if (!block::workchain_engine_key_is_uno(
                 block::workchain_engine_key_from_descriptor(descriptor))) {
             return td::Status::Error("Uno engine received non-Uno descriptor");
@@ -90,10 +93,34 @@ class UnoNativeEngine final : public block::WorkchainEngine {
         if (descriptor.vm_mode != 0) {
             return td::Status::Error("Uno v1 descriptor requires vm_mode=0");
         }
+        // Round 128 MEDIUM fix: install ConfigParam 84 from the
+        // masterchain config the first time this engine validates a
+        // descriptor.  Pre-fix init_uno_workchain never read
+        // ConfigParam 84, so the process-global g_uno_config stayed
+        // at the static testnet default.  Chain-id checks
+        // (parallel-verify.cpp:172, mine_uno.cpp:410) compared
+        // against that default while the configured (e.g. mainnet)
+        // chain-id was rejected as BadChainId — and tx fields tied
+        // to fee_per_byte_nano / anchor_window_size / etc. used
+        // testnet values regardless of governance.
+        // install_uno_config is one-shot by design (matching the
+        // documented "no mid-block reconfig" semantics): the first
+        // validate_and_resolve_config call wins.  Absence of
+        // ConfigParam 84 falls through to the default, preserving
+        // existing dev/test behavior where the param is not set.
+        auto config_cell =
+            block_transition_config.get_config_param(kUnoConfigParamIdx);
+        if (config_cell.not_null()) {
+            UnoConfig parsed{};
+            if (parse_uno_config_cell(config_cell, parsed)) {
+                install_uno_config(parsed);
+            }
+        }
         // Uno v1 reads chain_id from the process-global g_uno_config set by
-        // install_uno_config at startup. vm_mode=0 is reserved for Uno v1, so
-        // a future Uno v2 descriptor should encode chain_id in vm_mode and
-        // route it through UnoEngineConfig here, matching EvmNativeEngine.
+        // install_uno_config at startup or via the round-128 path above.
+        // vm_mode=0 is reserved for Uno v1, so a future Uno v2 descriptor
+        // should encode chain_id in vm_mode and route it through
+        // UnoEngineConfig here, matching EvmNativeEngine.
         std::shared_ptr<const block::WorkchainEngineConfig> result =
             std::make_shared<UnoEngineConfig>();
         return result;
