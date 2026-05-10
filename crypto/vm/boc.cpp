@@ -852,7 +852,30 @@ td::Result<long long> BagOfCells::deserialize(const td::Slice& data, int max_roo
   }
   if (info.has_index) {
     index_ptr = data.substr(info.index_offset).ubegin();
-    // TODO: should we validate index here
+    // Round 160 LOW fix: validate that the last cell's end offset
+    // equals info.data_size, matching the canonical-form check
+    // the non-indexed parser performs below.  Pre-fix, an indexed
+    // BoC could declare data_size larger than the actual
+    // cumulative cell-end offsets, leaving trailing bytes in the
+    // data area that the parser ignored — yielding multiple
+    // valid BoC encodings of the same cell tree (BoC malleability
+    // for evidence systems / consensus paths that require
+    // canonical bytes).  When info.has_cache_bits, the cache
+    // flag is packed into the offset's LSB; mask it out.
+    if (info.cell_count > 0) {
+      unsigned long long last_offset = info.read_offset(
+          index_ptr +
+          static_cast<long>(info.cell_count - 1) * info.offset_byte_size);
+      if (info.has_cache_bits) {
+        last_offset >>= 1;
+      }
+      if (last_offset != info.data_size) {
+        return td::Status::Error(
+            PSLICE() << "invalid bag-of-cells: indexed last cell end offset "
+                     << last_offset << " differs from declared data_size "
+                     << info.data_size);
+      }
+    }
   } else {
     index_ptr = nullptr;
     unsigned long long cur = 0;
@@ -1518,6 +1541,19 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
         offset_table[start + i + 1] = raw;
       }
       done += want_aligned;
+    }
+    // Round 160 LOW fix: validate that the indexed offset table
+    // ends at info.data_size, mirroring the non-indexed walk's
+    // cur-vs-data_size check below.  Same canonical-form gap as
+    // in the one-shot deserialize path.
+    if (info.cell_count > 0 &&
+        offset_table[static_cast<std::size_t>(info.cell_count)] !=
+            info.data_size) {
+      return td::Status::Error(
+          PSLICE() << "std_boc_deserialize_from_file_bounded: indexed last "
+                      "cell end offset "
+                   << offset_table[static_cast<std::size_t>(info.cell_count)]
+                   << " != declared data_size " << info.data_size);
     }
   } else {
     // Synthesize the offset table by scanning cell descriptors. Each
