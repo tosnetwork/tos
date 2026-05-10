@@ -355,11 +355,94 @@ td::Result<std::vector<JvmMethodManifestEntry>> parse_jvm_method_manifest(
 td::Result<JvmMethodManifestEntry> find_jvm_method_manifest_entry(
     td::Ref<vm::Cell> root,
     std::uint32_t method_id) {
-    TRY_RESULT(entries, parse_jvm_method_manifest(std::move(root)));
-    for (const auto& entry : entries) {
-        if (entry.method_id == method_id) {
-            return entry;
+    // Round 114 MEDIUM fix: streaming lookup.  Pre-fix, this called
+    // parse_jvm_method_manifest which decodes EVERY entry's three
+    // capped 512-byte strings (class_name / method_name /
+    // method_spec) before searching.  At max 1024 entries that's
+    // ~1.5 MiB of validator-CPU work, paid only at the admission
+    // floor when the dispatch resolver-order mirror (round 79) ran
+    // BEFORE arg-byte billing.  An attacker could repeatedly trigger
+    // unknown-method_id calls and force the full manifest decode
+    // every time.  Walk the chain decoding only the method_id of
+    // each entry; decode the matching entry's strings only when
+    // found.  Manifest validation (count cap, dedup) was performed
+    // at deploy time via parse_jvm_method_manifest in the install
+    // path, so trusting the persisted manifest layout here is
+    // safe.
+    if (root.is_null()) {
+        return td::Status::Error("JVM method manifest root is null");
+    }
+    bool special = false;
+    auto cs = vm::load_cell_slice_special(root, special);
+    if (special) {
+        return td::Status::Error("JVM method manifest root is special");
+    }
+    std::uint32_t magic = 0;
+    if (!fetch_u32(cs, magic) || magic != kJvmMethodManifestMagic) {
+        return td::Status::Error("JVM method manifest root has wrong magic");
+    }
+    std::uint8_t schema_version = 0;
+    if (!fetch_u8(cs, schema_version) ||
+        schema_version != kJvmMethodManifestSchemaVersion) {
+        return td::Status::Error(
+            "JVM method manifest root has unsupported schema");
+    }
+    std::uint16_t count = 0;
+    if (!fetch_u16(cs, count)) {
+        return td::Status::Error("JVM method manifest root is truncated");
+    }
+    if (count > kJvmMethodManifestMaxEntries) {
+        return td::Status::Error(
+            "JVM method manifest root has too many entries");
+    }
+    const unsigned expected_refs = (count == 0) ? 0u : 1u;
+    if (cs.size() != 0 || cs.size_refs() != expected_refs) {
+        return td::Status::Error(
+            "JVM method manifest root has malformed refs");
+    }
+    if (count == 0) {
+        return td::Status::Error("JVM method manifest has no matching entry");
+    }
+    auto next_ref = cs.fetch_ref();
+    if (!cs.empty_ext()) {
+        return td::Status::Error(
+            "JVM method manifest root has trailing data");
+    }
+
+    for (std::uint16_t i = 0; i < count; ++i) {
+        if (next_ref.is_null()) {
+            return td::Status::Error(
+                "JVM method manifest chain ended early");
         }
+        bool node_special = false;
+        auto node_cs = vm::load_cell_slice_special(next_ref, node_special);
+        if (node_special) {
+            return td::Status::Error("JVM method manifest node is special");
+        }
+        std::uint32_t entry_method_id = 0;
+        unsigned has_next = 0;
+        if (!fetch_u32(node_cs, entry_method_id) ||
+            !node_cs.fetch_uint_to(1, has_next) || has_next > 1) {
+            return td::Status::Error(
+                "JVM method manifest node is truncated");
+        }
+        const unsigned node_expected_refs = 3 + has_next;
+        if (node_cs.size() != 0 || node_cs.size_refs() != node_expected_refs) {
+            return td::Status::Error(
+                "JVM method manifest node has malformed refs");
+        }
+        if (entry_method_id == method_id) {
+            // Decode this entry's strings only.
+            td::Ref<vm::Cell> unused_next;
+            return decode_method_manifest_node(std::move(next_ref),
+                                                unused_next);
+        }
+        // Skip to the next entry without decoding strings.
+        td::Ref<vm::Cell> next_chain;
+        if (has_next != 0) {
+            next_chain = node_cs.fetch_ref();
+        }
+        next_ref = std::move(next_chain);
     }
     return td::Status::Error("JVM method manifest has no matching entry");
 }
