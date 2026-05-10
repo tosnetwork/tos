@@ -705,54 +705,80 @@ static bool parse_hex_byte(char c, uint8_t& out) {
     return false;
 }
 
+// Strict address parser.  Accepts either:
+//   - an extracted JSON string body of exactly "0x" + 40 hex digits
+//     (no surrounding quotes), OR
+//   - a JSON-shaped substring containing `"0x` + 40 hex + `"`.
+// Round 99 MEDIUM fix: pre-fix the parser scanned for the first `0x`
+// in the input and decoded 20 bytes regardless of trailing data, so
+// `0x0000…0001ff` (21-byte) and `"0x0000…0001,suffix"` both
+// truncated to the first 20 bytes.  The quoted form is required by
+// raw-params callers; the unquoted form is required by callers that
+// already ran extract_json_string_value (which strips the surrounding
+// quotes).
 static bool parse_hex_address(const std::string& params, evmc::address& out) {
-    // Find the first 0x in the params string
-    auto pos = params.find("0x");
-    if (pos == std::string::npos || pos + 42 > params.size()) return false;
-    pos += 2;  // skip "0x"
-    for (int i = 0; i < 20; ++i) {
-        uint8_t hi, lo;
-        if (!parse_hex_byte(params[pos + i*2], hi) || !parse_hex_byte(params[pos + i*2 + 1], lo))
-            return false;
-        out.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
-    }
-    // Round 98 MEDIUM fix: reject any trailing hex past the 40-nibble
-    // address.  Pre-fix the parser stopped after 20 bytes and silently
-    // accepted overlong inputs (e.g. `0x0000…0001ff` 21-byte) by
-    // truncating to the first 20 bytes — eth_getBalance, eth_getCode,
-    // eth_getStorageAt, eth_call / eth_estimateGas / eth_createAccessList
-    // and log-filter address parsing all flow through this helper, so
-    // a malformed address aliased to a different valid account.  An
-    // address terminator is whitespace, quote, comma, ']', '}', or
-    // end-of-string; anything else (including additional hex
-    // characters) is a malformed input and must reject.
-    const std::size_t after = pos + 40;
-    if (after < params.size()) {
-        const char c = params[after];
-        if (c != '"' && c != ',' && c != ']' && c != '}' &&
-            c != ' ' && c != '\t' && c != '\n' && c != '\r') {
-            return false;
+    auto decode_at = [&](std::size_t hex_pos) {
+        for (int i = 0; i < 20; ++i) {
+            uint8_t hi, lo;
+            if (!parse_hex_byte(params[hex_pos + i*2], hi) ||
+                !parse_hex_byte(params[hex_pos + i*2 + 1], lo)) {
+                return false;
+            }
+            out.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
         }
+        return true;
+    };
+    // Unquoted-extracted form: exactly "0x" + 40 hex, length 42.
+    if (params.size() == 42 && params[0] == '0' &&
+        (params[1] == 'x' || params[1] == 'X')) {
+        return decode_at(2);
     }
-    return true;
+    // Quoted-substring form: `"0x` + 40 hex + `"` (anywhere in the
+    // input).  Anchoring on the opening `"0x` and requiring the
+    // closing `"` is the only structural way to distinguish a
+    // well-formed address string from one containing a JSON
+    // delimiter (`,` / `]` / `}` / whitespace) inside.
+    auto pos = params.find("\"0x");
+    if (pos == std::string::npos) return false;
+    pos += 3;  // skip `"0x
+    if (pos + 41 > params.size()) return false;  // need 40 hex + `"`
+    if (!decode_at(pos)) return false;
+    return params[pos + 40] == '"';
 }
 
+// Strict bytes parser.  Accepts either:
+//   - an extracted JSON string body of "0x" + N hex digits (no
+//     surrounding quotes), OR
+//   - a JSON-shaped substring containing `"0x` + N hex + `"`.
+// Pre-fix the parser stopped at the first JSON delimiter inside the
+// input, so `"0x<32 hex>,suffix"` truncated to the first 32 bytes.
 static bool parse_hex_bytes(const std::string& hex, silkworm::Bytes& out) {
-    auto pos = hex.find("0x");
-    if (pos == std::string::npos) return false;
-    pos += 2;
-    size_t len = 0;
-    // Find end of hex string (until quote or end)
-    while (pos + len < hex.size() && hex[pos + len] != '"' && hex[pos + len] != ',' && hex[pos + len] != '}') ++len;
-    if (len % 2 != 0) return false;
-    out.resize(len / 2);
-    for (size_t i = 0; i < len / 2; ++i) {
-        uint8_t hi, lo;
-        if (!parse_hex_byte(hex[pos + i*2], hi) || !parse_hex_byte(hex[pos + i*2 + 1], lo))
-            return false;
-        out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    auto decode_range = [&](std::size_t pos, std::size_t len) {
+        if (len % 2 != 0) return false;
+        out.resize(len / 2);
+        for (std::size_t i = 0; i < len / 2; ++i) {
+            uint8_t hi, lo;
+            if (!parse_hex_byte(hex[pos + i*2], hi) ||
+                !parse_hex_byte(hex[pos + i*2 + 1], lo)) {
+                return false;
+            }
+            out[i] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+        return true;
+    };
+    // Unquoted-extracted form: "0x" + N hex.
+    if (hex.size() >= 2 && hex[0] == '0' &&
+        (hex[1] == 'x' || hex[1] == 'X')) {
+        return decode_range(2, hex.size() - 2);
     }
-    return true;
+    // Quoted-substring form.
+    auto pos = hex.find("\"0x");
+    if (pos == std::string::npos) return false;
+    pos += 3;  // skip `"0x`
+    std::size_t len = 0;
+    while (pos + len < hex.size() && hex[pos + len] != '"') ++len;
+    if (pos + len >= hex.size()) return false;  // unterminated
+    return decode_range(pos, len);
 }
 
 static bool parse_hex_bytes32(const std::string& hex, evmc::bytes32& out) {
@@ -2479,6 +2505,22 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
         return {make_error(id, -32005, "query exceeds max block range of " +
                            std::to_string(kMaxGetLogsBlockRange)), true};
     }
+    // Round 99 HIGH fix: cap to_block at the current chain head so
+    // pathological inputs like fromBlock = toBlock = 0xffffffff_ffffffff
+    // bypass the range check above (to_block > from_block is false at
+    // equality) and fall into the for-loop below where `bn <= to_block`
+    // never terminates after `bn` wraps past UINT64_MAX.
+    {
+        const uint64_t head = global_evm_state().block_number();
+        if (to_block > head) {
+            to_block = head;
+        }
+        // Reversed range after capping (e.g., from_block > head) →
+        // empty result without scanning.
+        if (from_block > to_block) {
+            return {make_result(id, "[]"), false};
+        }
+    }
 
     // Parse address (single string or array of strings)
     addresses = parse_address_param(params);
@@ -3179,14 +3221,23 @@ static bool parse_hash_param(const std::string& params, evmc::bytes32& out) {
 
 // Parse the second hex param (transaction index) from params like ["0x1", "0x0"].
 static uint64_t parse_second_hex_param(const std::string& params) {
-    // Find first 0x, skip past it, then find the second 0x
-    auto first = params.find("0x");
+    // Round 99 LOW fix: anchor on `"0x` so a malformed value
+    // containing a JSON delimiter inside the string (e.g.
+    // `"0x0,nothex"`) does not silently truncate to the prefix.
+    // Pre-fix the parser scanned for `,` / `]` / `}` / `"` and
+    // accepted whatever hex preceded them, so by-index handlers
+    // accepted `"0x0,foo"` as index 0.
+    auto first = params.find("\"0x");
     if (first == std::string::npos) return 0;
-    auto second = params.find("0x", first + 2);
+    auto second = params.find("\"0x", first + 3);
     if (second == std::string::npos) return 0;
-    auto end = params.find_first_of("\",]}", second);
-    std::string hex_str = params.substr(second, end - second);
-    return parse_hex_uint64(hex_str);
+    second += 1;  // skip the leading `"` of the matched pattern
+    auto end_quote = params.find('"', second);
+    if (end_quote == std::string::npos) return 0;
+    std::string hex_str = params.substr(second, end_quote - second);
+    auto strict_res = parse_hex_uint64_strict(hex_str);
+    if (strict_res.is_error()) return 0;
+    return strict_res.move_as_ok();
 }
 
 // Format a full transaction object JSON (same as handle_get_transaction_by_hash output).
@@ -3674,6 +3725,13 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
         to_block = f.query_to_block;
     }
 
+    // Round 99 HIGH fix: cap to_block at the chain head BEFORE
+    // any later range clamp so a fixed_to_block of UINT64_MAX
+    // (or any value past head) cannot bypass the kMaxGetLogsBlockRange
+    // gate (which is conditional on to_block > from_block).
+    if (to_block > current_block) {
+        to_block = current_block;
+    }
     if (from_block > to_block) {
         return {make_result(id, "[]"), false};
     }
@@ -3886,13 +3944,10 @@ static RpcResult handle_get_raw_tx_by_block_hash_and_index(const std::string& pa
     }
 
     // Parse index (second hex param)
-    auto first_pos = params.find("0x");
-    if (first_pos == std::string::npos) return {make_result(id, "null"), false};
-    auto second_pos = params.find("0x", first_pos + 1);
-    uint64_t index = 0;
-    if (second_pos != std::string::npos) {
-        index = std::strtoull(params.c_str() + second_pos + 2, nullptr, 16);
-    }
+    // Round 99 LOW fix: route through the strict parser via
+    // parse_second_hex_param so a malformed `"0x0,nothex"` index
+    // does not silently truncate to the digit prefix.
+    uint64_t index = parse_second_hex_param(params);
     if (index >= blk.transaction_hashes.size()) {
         return {make_result(id, "null"), false};
     }
@@ -3938,14 +3993,9 @@ static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& 
     auto blk = global_evm_state().get_block_copy(bn);
 
     // index: second hex param
-    uint64_t index = 0;
-    auto first_pos = params.find("0x");
-    if (first_pos != std::string::npos) {
-        auto second_pos = params.find("0x", first_pos + 1);
-        if (second_pos != std::string::npos) {
-            index = std::strtoull(params.c_str() + second_pos + 2, nullptr, 16);
-        }
-    }
+    // Round 99 LOW fix: same strict parsing as
+    // handle_get_raw_tx_by_block_hash_and_index above.
+    uint64_t index = parse_second_hex_param(params);
     if (index >= blk.transaction_hashes.size()) {
         return {make_result(id, "null"), false};
     }
@@ -5936,6 +5986,16 @@ static RpcResult handle_get_filter_logs(const std::string& params, const std::st
     }
     f.last_access = static_cast<uint64_t>(std::time(nullptr));
     uint64_t to_block = f.has_fixed_to_block ? f.query_to_block : global_evm_state().block_number();
+    // Round 99 HIGH fix: cap to_block at the chain head so a
+    // fixed_to_block of UINT64_MAX cannot bypass the
+    // kMaxGetLogsBlockRange gate and force the per-block scan loop
+    // to wrap around UINT64_MAX.
+    {
+        const uint64_t head = global_evm_state().block_number();
+        if (to_block > head) {
+            to_block = head;
+        }
+    }
     if (f.query_from_block > to_block) {
         return {make_result(id, "[]"), false};
     }
