@@ -499,4 +499,81 @@ td::Result<JvmMethodManifestEntry> find_jvm_method_manifest_entry(
     return td::Status::Error("JVM method manifest has no matching entry");
 }
 
+td::Result<std::string> peek_jvm_method_manifest_first_class_name(
+    td::Ref<vm::Cell> root) {
+    if (root.is_null()) {
+        return td::Status::Error("JVM method manifest root is null");
+    }
+    bool special = false;
+    auto cs = vm::load_cell_slice_special(root, special);
+    if (special) {
+        return td::Status::Error("JVM method manifest root is special");
+    }
+    std::uint32_t magic = 0;
+    if (!fetch_u32(cs, magic) || magic != kJvmMethodManifestMagic) {
+        return td::Status::Error("JVM method manifest root has wrong magic");
+    }
+    std::uint8_t schema_version = 0;
+    if (!fetch_u8(cs, schema_version) ||
+        schema_version != kJvmMethodManifestSchemaVersion) {
+        return td::Status::Error(
+            "JVM method manifest root has unsupported schema");
+    }
+    std::uint16_t count = 0;
+    if (!fetch_u16(cs, count)) {
+        return td::Status::Error("JVM method manifest root is truncated");
+    }
+    if (count > kJvmMethodManifestMaxEntries) {
+        return td::Status::Error(
+            "JVM method manifest root has too many entries");
+    }
+    const unsigned expected_refs = (count == 0) ? 0u : 1u;
+    if (cs.size() != 0 || cs.size_refs() != expected_refs) {
+        return td::Status::Error(
+            "JVM method manifest root has malformed refs");
+    }
+    if (count == 0) {
+        return std::string{};
+    }
+    auto first_ref = cs.fetch_ref();
+    if (!cs.empty_ext()) {
+        return td::Status::Error(
+            "JVM method manifest root has trailing data");
+    }
+    if (first_ref.is_null()) {
+        return td::Status::Error("JVM method manifest first node is null");
+    }
+    bool node_special = false;
+    auto node_cs = vm::load_cell_slice_special(first_ref, node_special);
+    if (node_special) {
+        return td::Status::Error("JVM method manifest node is special");
+    }
+    std::uint32_t entry_method_id = 0;
+    unsigned has_next = 0;
+    if (!fetch_u32(node_cs, entry_method_id) ||
+        !node_cs.fetch_uint_to(1, has_next) || has_next > 1) {
+        return td::Status::Error(
+            "JVM method manifest node is truncated");
+    }
+    const unsigned node_expected_refs = 3 + has_next;
+    if (node_cs.size() != 0 || node_cs.size_refs() != node_expected_refs) {
+        return td::Status::Error(
+            "JVM method manifest node has malformed refs");
+    }
+    if (has_next != 0) {
+        // Discard the chain ref — we never walk past the first entry.
+        (void)node_cs.fetch_ref();
+    }
+    auto class_name_ref = node_cs.fetch_ref();
+    // Discard method_name and method_spec refs — caller only wants the
+    // class_name for human-readable display.
+    (void)node_cs.fetch_ref();
+    (void)node_cs.fetch_ref();
+    if (!node_cs.empty_ext()) {
+        return td::Status::Error(
+            "JVM method manifest node has trailing data");
+    }
+    return decode_string_cell(std::move(class_name_ref), "class_name");
+}
+
 }  // namespace jvm_workchain

@@ -1421,15 +1421,24 @@ JvmRpcResult handle_jvm_get_contract_state(
 
     // class_hash is pinned in the per-account state; the manifest's first
     // entry (if any) supplies the class name for human readability.
+    //
+    // Round 125 MEDIUM fix: this is a public, unauthenticated read-only
+    // RPC.  Pre-fix the human-readability extraction called
+    // parse_jvm_method_manifest, which decodes + sorts + dedup-validates
+    // every entry — turning a single jvm_getContractState request with
+    // a crafted accountStateBoc into ~10 MiB of validator CPU at zero
+    // cost (the address-binding gate added in round 123 only restricts
+    // contractAddress, not the manifest's size).  Streaming peek here
+    // bounds the work to one entry's class_name decode (~4 KiB max).
     std::string class_name_json = "null";
     std::string class_hash_json =
         "\"" + hex_encode(state.class_hash) + "\"";
     if (state.manifest_root.not_null()) {
-        auto manifest_result = parse_jvm_method_manifest(state.manifest_root);
-        if (manifest_result.is_ok() && !manifest_result.ok().empty()) {
+        auto first_class_name =
+            peek_jvm_method_manifest_first_class_name(state.manifest_root);
+        if (first_class_name.is_ok() && !first_class_name.ok().empty()) {
             class_name_json =
-                "\"" + json_escape_string(manifest_result.ok().front().class_name)
-                + "\"";
+                "\"" + json_escape_string(first_class_name.ok()) + "\"";
         }
     }
 

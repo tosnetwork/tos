@@ -65,30 +65,50 @@ td::Result<std::uint16_t> peek_jvm_method_manifest_count(
     td::Ref<vm::Cell> root);
 
 // Strict upper bound on parse_jvm_method_manifest's cost per
-// declared entry.  Per-entry work touches each of the three
-// kJvmAvataManifestStringMaxBytes-capped (=512) strings up to
-// FOUR times:
-//   (1) decode_jvm_storage_value chunk walk + memcpy
-//   (2) validate_method_manifest_string inside decode_string_cell
-//   (3) validate_method_manifest_entry inside decode_method_
-//       manifest_node
-//   (4) validate_method_manifest_entries' second pass at the end
-// of parse_jvm_method_manifest, which calls validate_method_
-// manifest_entry again for every entry plus an O(n log n) sort
-// over the method_id list.  3 * 512 * 4 = 6144 bytes; the
-// constant is rounded up to a power of two to give a comfortable
-// margin for per-cell decode overhead and sort cost.
+// declared entry.  Per-entry the parser touches each of the
+// three kJvmAvataManifestStringMaxBytes-capped (=512) strings
+// the following number of times:
+//   (1) decode_jvm_storage_value chunk walk + memcpy →
+//       512 bytes WRITE per string
+//   (2) std::string copy at decode_string_cell:165 →
+//       512 bytes WRITE per string
+//   (3) validate_method_manifest_string inside
+//       decode_string_cell (NUL scan + UTF-8 scan) →
+//       1024 bytes READ per string
+//   (4) validate_method_manifest_entry inside
+//       decode_method_manifest_node calls validate_method_
+//       manifest_string again → 1024 bytes READ per string
+//   (5) validate_method_manifest_entries' final pass at the
+//       end of parse_jvm_method_manifest calls validate_method_
+//       manifest_entry once more → 1024 bytes READ per string
+// Total per string = 4096 bytes; per entry (3 strings) = 12288
+// bytes.  Plus an O(n log n) method_id sort and dedup linear
+// pass at the end.  Rounded up to 16384 (2^14) so the gas proxy
+// is a strict upper bound with margin for per-cell decode
+// overhead and the sort/dedup epilogue.
 //
-// Round 124 MEDIUM fix: round 123 used 3 * 512 + 64 = 1600
-// which only covered (1).  That underestimated actual parse work
-// by ~4x, so a 1024-entry manifest combined with an unknown-
-// method call (or a malformed manifest that fails at the final
-// validate_method_manifest_entries pass) under-billed validator
-// CPU by the same ratio.
-constexpr std::uint64_t kJvmManifestParseBytesPerEntry = 8192u;
+// Round 125 MEDIUM fix: round 124 used 8192 which still only
+// covered (1)+(2)+(3) (~6 KiB) and underestimated the two
+// downstream re-validation passes that hit each string twice
+// more.  At kJvmMethodManifestMaxEntries=1024 this is the
+// difference between 8 MiB and 12 MiB of unbilled validator CPU.
+constexpr std::uint64_t kJvmManifestParseBytesPerEntry = 16384u;
 
 td::Result<JvmMethodManifestEntry> find_jvm_method_manifest_entry(
     td::Ref<vm::Cell> root,
     std::uint32_t method_id);
+
+// Round 125 MEDIUM fix: streaming peek of the first entry's
+// class_name only.  Used by the JSON-RPC `jvm_getContractState`
+// human-readable display path, which previously called
+// parse_jvm_method_manifest just to get this one field — turning
+// any caller-supplied accountStateBoc into a public, gasless
+// O(N * 4 KiB) decode/validate trigger.  This helper walks just
+// the manifest root header + the first node and decodes only the
+// class_name string ref, with the same string validation
+// (decode_string_cell) but without sort/dedup/full chain walk.
+// Returns an empty string when count == 0.
+td::Result<std::string> peek_jvm_method_manifest_first_class_name(
+    td::Ref<vm::Cell> root);
 
 }  // namespace jvm_workchain

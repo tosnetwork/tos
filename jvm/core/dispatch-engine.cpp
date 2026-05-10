@@ -870,6 +870,29 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                 /*msg_state_used=*/input.msg_state_used);
         }
         auto invocation = invocation_res.move_as_ok();
+        // Round 125 MEDIUM fix: charge the first-activation manifest
+        // decode work on the success path too.  Pre-fix the round-118
+        // wiring of `manifest_decode_bytes` only flowed through
+        // `error_path_arg_bytes` (used by the error/reject billing
+        // below) — so a successful first-activation call to a cheap
+        // method on a contract carrying a max-sized valid manifest
+        // skipped the decode bill entirely.  An attacker could
+        // therefore deploy with a 1024-entry manifest, call a no-op
+        // method, and force ~12 MiB of validator-CPU manifest parse
+        // work for only the runtime's tiny `gas_used + floor` charge.
+        // Adding the decode bytes here means the round-62 cap below
+        // and the host's gas-cap reject path now correctly classify
+        // such calls as exceeding their affordable budget.
+        if (input.msg_state_used && manifest_decode_bytes > 0) {
+            if (invocation.gas_used >
+                std::numeric_limits<std::uint64_t>::max() -
+                    manifest_decode_bytes) {
+                invocation.gas_used =
+                    std::numeric_limits<std::uint64_t>::max();
+            } else {
+                invocation.gas_used += manifest_decode_bytes;
+            }
+        }
         // Round 62 MEDIUM fix: cap the runtime-reported gas at
         // `effective_gas_limit` BEFORE the storage-walk branch.  The
         // runtime now post-charges argument bytes (round-61) directly
