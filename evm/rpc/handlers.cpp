@@ -3263,15 +3263,30 @@ static bool parse_hash_param(const std::string& params, evmc::bytes32& out) {
 // distinguish "valid index 0" from "invalid input".  Pre-fix this
 // returned 0 in both cases, letting `"0x0,nothex"` masquerade as
 // index 0.
+//
+// Round 101 LOW fix: when the first param is a named block tag
+// (e.g. "latest", "pending"), the params string only contains ONE
+// `"0x` occurrence — the index itself.  Pre-fix this branch
+// returned nullopt because it required two `"0x` occurrences,
+// rejecting valid calls like `["latest", "0x0"]` with -32602.
+// When only one `"0x` is present, treat it as the index;
+// otherwise use the second occurrence (the classic [block, index]
+// form).
 static std::optional<uint64_t> parse_second_hex_param(const std::string& params) {
     auto first = params.find("\"0x");
     if (first == std::string::npos) return std::nullopt;
     auto second = params.find("\"0x", first + 3);
-    if (second == std::string::npos) return std::nullopt;
-    second += 1;  // skip the leading `"` of the matched pattern
-    auto end_quote = params.find('"', second);
+    std::size_t hex_pos;
+    if (second == std::string::npos) {
+        // Only one `"0x` — the first param was a named tag like
+        // "latest"; the lone hex value is the index.
+        hex_pos = first + 1;  // skip the leading `"` of the match
+    } else {
+        hex_pos = second + 1;
+    }
+    auto end_quote = params.find('"', hex_pos);
     if (end_quote == std::string::npos) return std::nullopt;
-    std::string hex_str = params.substr(second, end_quote - second);
+    std::string hex_str = params.substr(hex_pos, end_quote - hex_pos);
     auto strict_res = parse_hex_uint64_strict(hex_str);
     if (strict_res.is_error()) return std::nullopt;
     return strict_res.move_as_ok();
