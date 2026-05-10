@@ -572,8 +572,23 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                     // Use cell tree size as a proxy for actual
                     // decode work — bounded by max_class_bytes-
                     // adjacent caps but tracks attacker payload.
-                    vm::CellStorageStat stat(static_cast<unsigned long long>(
-                        kJvmStorageValueMaxBytes));
+                    //
+                    // Round 122 MEDIUM fix: cap the stat's cell
+                    // limit by effective_gas_limit so the walk
+                    // can't exceed what the bill is clamped to.
+                    // Pre-fix the stat walked up to
+                    // kJvmStorageValueMaxBytes (~1 MiB) cells but
+                    // the bill was clamped to effective_gas_limit
+                    // (as low as kJvmAdmissionGasFloor=1024) on
+                    // poorly-funded accounts — validator CPU
+                    // scaled with attacker payload while the bill
+                    // capped at floor.
+                    const unsigned long long stat_cell_cap =
+                        std::min<unsigned long long>(
+                            effective_gas_limit,
+                            static_cast<unsigned long long>(
+                                kJvmStorageValueMaxBytes));
+                    vm::CellStorageStat stat(stat_cell_cap);
                     auto stat_status =
                         stat.add_used_storage(state.manifest_root, true);
                     (void)stat_status;
@@ -636,8 +651,19 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // unbilled.
         std::uint64_t manifest_decode_bytes = 0;
         if (input.msg_state_used && state.manifest_root.not_null()) {
-            vm::CellStorageStat stat(static_cast<unsigned long long>(
-                kJvmStorageValueMaxBytes));
+            // Round 122 MEDIUM fix: same asymmetry as the malformed-
+            // manifest reject above.  Walking more cells than
+            // effective_gas_limit is wasted CPU because the resolver-
+            // error bill is clamped to that limit anyway.  Capping
+            // the stat's cell limit closes the validator-CPU /
+            // billed-gas asymmetry on the success-then-resolver-
+            // error path.
+            const unsigned long long stat_cell_cap =
+                std::min<unsigned long long>(
+                    effective_gas_limit,
+                    static_cast<unsigned long long>(
+                        kJvmStorageValueMaxBytes));
+            vm::CellStorageStat stat(stat_cell_cap);
             auto stat_status =
                 stat.add_used_storage(state.manifest_root, true);
             (void)stat_status;
