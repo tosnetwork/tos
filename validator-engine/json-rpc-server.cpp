@@ -1007,11 +1007,28 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   // harness uses with its own `g_submit_ext` callback; in production the
   // interceptor below shadows it so wallets always go through the actor
   // pipe.
+  // Round 154 MEDIUM fix: apply the EVM per-IP rate gate to uno_send*
+  // fast paths too.  The per-IP gate is shared infrastructure (per-
+  // IP token bucket attribution) and applies equally to any
+  // submission method that fans out to live state queries.  Pre-
+  // fix uno_sendMineUno + uno_sendTransfer used only the global
+  // g_send_mine_uno_limiter / g_sendtx_limiter buckets, so a
+  // single IP could drain those buckets and starve other clients.
   if (method == "uno_sendMineUno") {
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     handle_uno_sendMineUno(params_val, std::move(req_id), std::move(promise));
     return;
   }
   if (method == "uno_sendTransfer") {
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     handle_uno_sendTransfer(params_val, std::move(req_id), std::move(promise));
     return;
   }
@@ -1029,7 +1046,20 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   // JVM workchain JSON-RPC: route jvm_* methods through the full-node
   // facade. The handler resolves live ConfigParam 85 before calling into
   // jvm_workchain::handle_jvm_rpc().
+  //
+  // Round 154 MEDIUM fix: apply the per-IP rate gate to JVM
+  // methods too.  Pre-fix jvm_callContract / jvm_getContractState
+  // / jvm_getReceipts each fanned out to liteserver queries
+  // (masterchain info + ConfigParam 85 + account state) on every
+  // request without a per-IP throttle, and jvm_callContract could
+  // additionally run local JVM simulation.  The same per-IP token
+  // bucket that gates EVM read-only methods applies here.
   if (jvm_workchain::is_jvm_rpc_method(method)) {
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     td::JsonBuilder jb;
     jb.enter_value() << params_val;
     auto params_str = jb.string_builder().as_cslice().str();
@@ -1471,6 +1501,13 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   }
   // --- JVM Workchain: jvm_* JSON-RPC methods ---
   else if (jvm_workchain::is_jvm_rpc_method(method)) {
+    // Round 154 MEDIUM fix: per-IP gate, mirroring the array-
+    // params route in process_body.
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     td::JsonBuilder jb;
     {
       auto obj = jb.enter_object();

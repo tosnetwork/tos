@@ -271,8 +271,15 @@ td::Status HttpConnection::continue_payload_read(td::ChainBufferReader &input) {
 
 td::Status HttpConnection::receive_payload(td::ChainBufferReader &input) {
   CHECK(reading_payload_);
-  continue_payload_read(input);
-  return td::Status::OK();
+  // Round 154 HIGH fix: propagate continue_payload_read errors to
+  // the caller so the connection actually tears down on a body-
+  // limit reject.  Pre-fix this method swallowed the error and
+  // returned OK, so the round-153 chunked-body cap that returns
+  // Status::Error from HttpPayload::parse left the connection
+  // alive — the JSON-RPC BodyWaiter never fired and the round-153
+  // HIGH was not actually closed at the connection lifecycle
+  // level.
+  return continue_payload_read(input);
 }
 
 }  // namespace http
