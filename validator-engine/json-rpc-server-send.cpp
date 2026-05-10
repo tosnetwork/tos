@@ -1341,6 +1341,20 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
   }
 
   auto addr = addr_r.move_as_ok();
+  // Round 145 MEDIUM fix: same workchain int8 range check
+  // round 144 added to build_external_message_cell + handle_
+  // sendQuery, applied here for handle_estimateFee.  Pre-fix
+  // estimateFee accepted "128:<hex>" through parse_address_param
+  // and reached GenericAccount::create_ext_message at line 1492,
+  // tripping the addr_std encode CHECK and aborting the daemon.
+  if (addr.workchain < -128 || addr.workchain > 127) {
+    promise.set_value(make_json_error(
+        -32602,
+        PSTRING() << "Invalid 'address': workchain " << addr.workchain
+                  << " is out of the addr_std int8 range [-128, 127]",
+        req_id));
+    return;
+  }
   auto body_cell = body_r.move_as_ok();
   auto init_code = init_code_r.move_as_ok();
   auto init_data = init_data_r.move_as_ok();

@@ -2506,10 +2506,22 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
     std::vector<std::vector<evmc::bytes32>> topics;
 
     // Parse fromBlock
+    // Round 145 LOW fix: route fromBlock / toBlock through the
+    // strict hex parser so malformed quantities (empty "0x",
+    // non-hex chars, overflow) return -32602 invalid params
+    // instead of silently coercing to block 0.  parse_hex_uint64
+    // is the lenient parser that returns 0 on error; not
+    // appropriate for filter range bounds where the caller is
+    // explicitly asking for a specific block.
     std::string fb_hex = extract_json_string_value(params, "fromBlock");
     bool has_from = !fb_hex.empty();
     if (has_from && fb_hex != "latest" && fb_hex != "pending" && fb_hex != "earliest") {
-        from_block = parse_hex_uint64(fb_hex);
+        auto r = parse_hex_uint64_strict(fb_hex);
+        if (r.is_error()) {
+            return {make_error(id, -32602,
+                "invalid 'fromBlock': " + r.error().message().str()), true};
+        }
+        from_block = r.move_as_ok();
     } else if (has_from && fb_hex == "earliest") {
         from_block = 0;
     } else if (has_from && (fb_hex == "latest" || fb_hex == "pending")) {
@@ -2520,8 +2532,16 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
     std::string tb_hex = extract_json_string_value(params, "toBlock");
     bool has_to = !tb_hex.empty();
     if (has_to && tb_hex != "latest" && tb_hex != "pending") {
-        if (tb_hex == "earliest") to_block = 0;
-        else to_block = parse_hex_uint64(tb_hex);
+        if (tb_hex == "earliest") {
+            to_block = 0;
+        } else {
+            auto r = parse_hex_uint64_strict(tb_hex);
+            if (r.is_error()) {
+                return {make_error(id, -32602,
+                    "invalid 'toBlock': " + r.error().message().str()), true};
+            }
+            to_block = r.move_as_ok();
+        }
     }
 
     // Spec validation: blockHash is mutually exclusive with from/to.
@@ -3905,10 +3925,19 @@ static std::optional<RpcResult> parse_log_filter_for_subscription(
     out.has_fixed_to_block = false;
     out.future_only = true;
 
+    // Round 145 LOW fix: same strict-parser routing as eth_getLogs
+    // — malformed fromBlock/toBlock quantities now return -32602
+    // instead of silently coercing to block 0 (lenient
+    // parse_hex_uint64).
     std::string fb_hex = extract_json_string_value(params, "fromBlock");
     bool has_from = !fb_hex.empty();
     if (has_from && fb_hex != "latest" && fb_hex != "pending" && fb_hex != "earliest") {
-        out.from_block = parse_hex_uint64(fb_hex);
+        auto r = parse_hex_uint64_strict(fb_hex);
+        if (r.is_error()) {
+            return RpcResult{make_error(id, -32602,
+                "invalid 'fromBlock': " + r.error().message().str()), true};
+        }
+        out.from_block = r.move_as_ok();
         out.future_only = false;
     } else if (has_from && fb_hex == "earliest") {
         out.from_block = 0;
@@ -3921,8 +3950,16 @@ static std::optional<RpcResult> parse_log_filter_for_subscription(
     std::string tb_hex = extract_json_string_value(params, "toBlock");
     bool has_to = !tb_hex.empty();
     if (has_to && tb_hex != "latest" && tb_hex != "pending") {
-        if (tb_hex == "earliest") out.to_block = 0;
-        else out.to_block = parse_hex_uint64(tb_hex);
+        if (tb_hex == "earliest") {
+            out.to_block = 0;
+        } else {
+            auto r = parse_hex_uint64_strict(tb_hex);
+            if (r.is_error()) {
+                return RpcResult{make_error(id, -32602,
+                    "invalid 'toBlock': " + r.error().message().str()), true};
+            }
+            out.to_block = r.move_as_ok();
+        }
         out.has_fixed_to_block = true;
     }
 
