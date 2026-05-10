@@ -5140,6 +5140,20 @@ struct SimulateBlockOverrides {
 };
 
 static SimulateBlockOverrides parse_block_overrides_for_sim(const std::string& bsc_entry) {
+    // Round 146 LOW (deferred): block-override quantity fields
+    // (number, time, gasLimit, baseFeePerGas) currently use the
+    // lenient parse_hex_uint64 / parse_hex_uint256 helpers, which
+    // return 0 on malformed input rather than rejecting with
+    // -32602 like the round-145 strict-parser fix did for
+    // eth_getLogs / eth_newFilter filter range bounds.  Promoting
+    // these to strict parsing requires changing this function's
+    // return type to td::Result<SimulateBlockOverrides> and
+    // threading the error through three call sites in handle_eth_
+    // simulateV1; tracked as a focused follow-up rather than
+    // partially fixed here.  The exposure is bounded — silent
+    // coerce-to-0 yields a simulated block with zero gasLimit /
+    // baseFee, which clients can detect; this is a correctness
+    // hygiene issue, not a peer-poisoning vector.
     SimulateBlockOverrides bo;
     std::string body = extract_json_object_body(bsc_entry, "blockOverrides");
     if (body.empty()) return bo;

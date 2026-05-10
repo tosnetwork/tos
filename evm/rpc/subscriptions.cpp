@@ -32,6 +32,22 @@ uint64_t SubscriptionManager::subscribe(SubscriptionType type,
     return id;
 }
 
+// Round 146 LOW (deferred): subscription IDs are global across
+// all clients of the JSON-RPC server.  Any client that knows or
+// guesses another client's sub_id can call eth_unsubscribe to
+// cancel it, or eth_getSubscription / poll() to drain its
+// queued events.  Closing this cleanly requires plumbing a
+// per-connection / per-session owner through the JSON-RPC
+// dispatch layer (HTTP keep-alive sessions don't carry stable
+// identity by default; WS connections do).  Tracked as a
+// dedicated follow-up rather than retrofitted with a partial
+// guard here.  Mitigating context: sub_ids are 64-bit
+// monotonically-incrementing counters, so guessing is bounded
+// by the rate at which subscriptions are issued, and the only
+// data exposed is what the issuer was already subscribing to —
+// there is no privilege escalation, just a cross-client
+// availability hazard.  Same shape applies to uno/rpc/
+// subscriptions.cpp.
 bool SubscriptionManager::unsubscribe(uint64_t sub_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     return subscriptions_.erase(sub_id) > 0;
