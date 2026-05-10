@@ -142,26 +142,62 @@ td::Ref<vm::Cell> encode_jvm_storage_value(const JvmStorageValue& value) {
     const std::size_t chunks =
         (value.size() + kJvmStorageValueChunkBytes - 1) /
         kJvmStorageValueChunkBytes;
-    for (std::size_t i = chunks; i-- > 0;) {
-        const std::size_t start = i * kJvmStorageValueChunkBytes;
-        const std::size_t end =
-            std::min(start + kJvmStorageValueChunkBytes, value.size());
-        const std::size_t len = end - start;
+    // Round 119 HIGH fix: pre-check chunk count against
+    // vm::CellTraits::max_depth (1024).  Each chunk's cell holds a
+    // ref to the next chunk; the resulting chain depth equals
+    // chunk_count, and CellBuilder::finalize() THROWS
+    // CellWriteError when depth >= max_depth.  At
+    // kJvmStorageValueMaxBytes = 1 MiB and chunk size = 127, a
+    // value above 1024 * 127 = 130048 bytes would build a chain
+    // exceeding the cell-tree depth limit and the unhandled
+    // exception could escape the consensus execution path.
+    // Reject up-front so we return a clean null instead.  Reserve
+    // a small margin so callers that wrap the cell in another
+    // ref (e.g. JVAC encode) still fit under the depth cap.
+    constexpr std::size_t kMaxStorageValueChunks =
+        vm::CellTraits::max_depth - 16;  // 16-cell wrapper margin
+    if (chunks > kMaxStorageValueChunks) {
+        return {};
+    }
+    // Round 119 HIGH fix: wrap the chunk-building in try/catch.
+    // The pre-check above bounds chunks at 1008 (max_depth - 16),
+    // so finalize() depth shouldn't overflow — but
+    // CellBuilder::finalize() can also throw on other invariant
+    // failures (depth bookkeeping, hash overflow), and an
+    // uncaught exception out of encode_jvm_storage_value would
+    // escape the consensus execution path and abort the
+    // validator on storage::store callbacks.
+    try {
+        for (std::size_t i = chunks; i-- > 0;) {
+            const std::size_t start = i * kJvmStorageValueChunkBytes;
+            const std::size_t end =
+                std::min(start + kJvmStorageValueChunkBytes, value.size());
+            const std::size_t len = end - start;
 
-        vm::CellBuilder cb;
-        if (!cb.store_bytes_bool(value.data() + start,
-                                 static_cast<unsigned>(len))) {
-            return {};
-        }
-        if (next.not_null()) {
-            if (!cb.store_ulong_rchk_bool(1, 1) ||
-                !cb.store_ref_bool(std::move(next))) {
+            vm::CellBuilder cb;
+            if (!cb.store_bytes_bool(value.data() + start,
+                                     static_cast<unsigned>(len))) {
                 return {};
             }
-        } else if (!cb.store_ulong_rchk_bool(0, 1)) {
-            return {};
+            if (next.not_null()) {
+                if (!cb.store_ulong_rchk_bool(1, 1) ||
+                    !cb.store_ref_bool(std::move(next))) {
+                    return {};
+                }
+            } else if (!cb.store_ulong_rchk_bool(0, 1)) {
+                return {};
+            }
+            next = cb.finalize();
+            if (next.is_null()) {
+                return {};
+            }
         }
-        next = cb.finalize();
+    } catch (vm::VmError&) {
+        return {};
+    } catch (vm::VmVirtError&) {
+        return {};
+    } catch (...) {
+        return {};
     }
     return next;
 }

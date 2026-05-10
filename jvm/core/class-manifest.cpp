@@ -251,6 +251,17 @@ td::Ref<vm::Cell> encode_jvm_method_manifest(
         return {};
     }
 
+    // Round 119 MEDIUM fix: wrap encoding in try/catch.  The
+    // manifest is built as a linked spine: each entry node refs
+    // the next, so chain depth = entries.size().  At
+    // kJvmMethodManifestMaxEntries = 1024, root depth is 1025 —
+    // above vm::CellTraits::max_depth = 1024 — and
+    // CellBuilder::finalize() throws CellWriteError.  Pre-fix
+    // jvm_deployContract called this directly and the public RPC
+    // dispatch did not catch the exception, making the deploy
+    // RPC a DoS vector.  Catch + return null so the caller
+    // surfaces a clean error.
+    try {
     td::Ref<vm::Cell> next;
     for (std::size_t i = entries.size(); i-- > 0;) {
         auto class_name = encode_string_cell(entries[i].class_name);
@@ -274,6 +285,9 @@ td::Ref<vm::Cell> encode_jvm_method_manifest(
             return {};
         }
         next = node.finalize();
+        if (next.is_null()) {
+            return {};
+        }
     }
 
     vm::CellBuilder root;
@@ -286,6 +300,13 @@ td::Ref<vm::Cell> encode_jvm_method_manifest(
         return {};
     }
     return root.finalize();
+    } catch (vm::VmError&) {
+        return {};
+    } catch (vm::VmVirtError&) {
+        return {};
+    } catch (...) {
+        return {};
+    }
 }
 
 td::Result<std::vector<JvmMethodManifestEntry>> parse_jvm_method_manifest(
