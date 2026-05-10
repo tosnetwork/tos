@@ -64,14 +64,28 @@ td::Result<std::vector<JvmMethodManifestEntry>> parse_jvm_method_manifest(
 td::Result<std::uint16_t> peek_jvm_method_manifest_count(
     td::Ref<vm::Cell> root);
 
-// Conservative upper bound on parse_jvm_method_manifest's cost
-// per declared entry.  Each entry decodes 3 strings up to
-// kJvmAvataManifestStringMaxBytes bytes (= 512) plus a small
-// envelope; the +64 covers the per-entry header, four refs, and
-// the per-cell decode/copy overhead.  Used as a conservative gas
-// proxy in dispatch's first-activation manifest gate.
-constexpr std::uint64_t kJvmManifestParseBytesPerEntry =
-    3u * kJvmAvataManifestStringMaxBytes + 64u;
+// Strict upper bound on parse_jvm_method_manifest's cost per
+// declared entry.  Per-entry work touches each of the three
+// kJvmAvataManifestStringMaxBytes-capped (=512) strings up to
+// FOUR times:
+//   (1) decode_jvm_storage_value chunk walk + memcpy
+//   (2) validate_method_manifest_string inside decode_string_cell
+//   (3) validate_method_manifest_entry inside decode_method_
+//       manifest_node
+//   (4) validate_method_manifest_entries' second pass at the end
+// of parse_jvm_method_manifest, which calls validate_method_
+// manifest_entry again for every entry plus an O(n log n) sort
+// over the method_id list.  3 * 512 * 4 = 6144 bytes; the
+// constant is rounded up to a power of two to give a comfortable
+// margin for per-cell decode overhead and sort cost.
+//
+// Round 124 MEDIUM fix: round 123 used 3 * 512 + 64 = 1600
+// which only covered (1).  That underestimated actual parse work
+// by ~4x, so a 1024-entry manifest combined with an unknown-
+// method call (or a malformed manifest that fails at the final
+// validate_method_manifest_entries pass) under-billed validator
+// CPU by the same ratio.
+constexpr std::uint64_t kJvmManifestParseBytesPerEntry = 8192u;
 
 td::Result<JvmMethodManifestEntry> find_jvm_method_manifest_entry(
     td::Ref<vm::Cell> root,
