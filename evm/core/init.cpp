@@ -747,6 +747,27 @@ size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
     return count;
 }
 
+size_t hydrate_global_state_if_empty_from_shard_state_root(
+    td::Ref<vm::Cell> shard_state_root) noexcept try {
+    if (!g_evm_state || shard_state_root.is_null()) return 0;
+    if (!g_evm_state->needs_initial_hydration()) return 0;
+    block::gen::ShardStateUnsplit::Record state;
+    if (!tlb::unpack_cell(std::move(shard_state_root), state) ||
+        state.accounts.is_null()) {
+        return 0;
+    }
+    vm::AugmentedDictionary accounts_dict{
+        vm::load_cell_slice_ref(state.accounts), 256,
+        block::tlb::aug_ShardAccounts};
+    return hydrate_global_state_if_empty(accounts_dict);
+} catch (vm::VmError&) {
+    return 0;
+} catch (vm::VmVirtError&) {
+    return 0;
+} catch (...) {
+    return 0;
+}
+
 void init_evm_workchain(const std::string& db_root) {
     // db_root historically pointed at the legacy evm-state.boc sidecar
     // location (removed in Phase B — canonical state lives in wc=1

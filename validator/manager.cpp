@@ -1313,9 +1313,30 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
                                  << R.move_as_error();
                   } else {
                     auto prev_state = R.move_as_ok();
+                    auto prev_state_root = prev_state.not_null()
+                                               ? prev_state->root_cell()
+                                               : td::Ref<vm::Cell>{};
+                    // Round 96 HIGH fix: use the previous shard
+                    // state to hydrate EVM canonical account state
+                    // (eth_getBalance / eth_getCode / eth_getStorageAt
+                    // back-end) on first apply.  Pre-fix
+                    // init_evm_workchain left g_evm_state empty —
+                    // hydrate_global_state_if_empty was never invoked
+                    // anywhere in production, so RPC reads against
+                    // canonical state returned defaults.  The helper
+                    // is idempotent (gated on needs_initial_hydration)
+                    // so subsequent blocks no-op.
+                    auto hydrated_count =
+                        evm_workchain::hydrate_global_state_if_empty_from_shard_state_root(
+                            prev_state_root);
+                    if (hydrated_count > 0) {
+                      LOG(WARNING) << "evm post-accept: hydrated "
+                                   << hydrated_count
+                                   << " canonical EVM accounts from previous shard state";
+                    }
                     have_replay_state =
                         evm_workchain::extract_evm_executor_account_data_from_shard_state(
-                            prev_state.not_null() ? prev_state->root_cell() : td::Ref<vm::Cell>{},
+                            prev_state_root,
                             evm_executor_addr.data(), initial_account_data);
                     if (!have_replay_state) {
                       LOG(WARNING) << "evm post-accept: previous shard state does not expose EVM executor account data; "

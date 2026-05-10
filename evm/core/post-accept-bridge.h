@@ -69,4 +69,13 @@ bool extract_evm_executor_account_data_from_shard_state(
     const unsigned char executor_addr[32],
     td::Ref<vm::Cell>& account_data_out) noexcept;
 
+/// Round 96 HIGH fix: hydrate canonical EVM account state on first
+/// apply.  Validator integration sites typically have a previous
+/// shard state Cell ref but don't separately decode the accounts
+/// dictionary.  See evm/core/init.h for full rationale.  Returns the
+/// hydrated account count, or 0 on extraction failure / already
+/// hydrated / empty input.
+size_t hydrate_global_state_if_empty_from_shard_state_root(
+    td::Ref<vm::Cell> shard_state_root) noexcept;
+
 }  // namespace evm_workchain
