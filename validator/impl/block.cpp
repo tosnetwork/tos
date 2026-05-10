@@ -19,6 +19,8 @@
 */
 #include "block.hpp"
 
+#include "block/block-db.h"  // block::compute_file_hash
+
 namespace tos {
 
 namespace validator {
@@ -62,6 +64,36 @@ td::Status BlockQ::init() {
   root_ = res3.move_as_ok();
   if (root_.is_null()) {
     return td::Status::Error(-668, "cannot extract root cell out of a shardchain block BoC");
+  }
+  // Round 138 MEDIUM fix: enforce that the supplied bytes
+  // actually hash to the BlockIdExt the caller claimed.  Pre-fix
+  // BlockQ::init only validated structural BoC shape; the
+  // archive load path (RootDb::get_block_data → ArchiveSlice::
+  // get_file → create_block(id, bytes)) returned the block bytes
+  // it found at the given fileref offset without integrity-
+  // checking them against the requested BlockIdExt.  A single
+  // archive corruption / mis-indexed write could let
+  // liteServer_getBlock(idA) return dataB to clients and let
+  // liteServer_getBlockHeader(idA) hit a fatal CHECK on the same
+  // mismatch.  Same integrity-gate class as round 136's
+  // CellLoader::load fix.
+  auto actual_root_hash = root_->get_hash();
+  if (actual_root_hash.as_slice() != id_.root_hash.as_slice()) {
+    return td::Status::Error(
+        -668,
+        PSLICE() << "BlockData integrity error: bytes for "
+                 << id_.to_str() << " produce root hash 0x"
+                 << actual_root_hash.to_hex()
+                 << " (expected 0x" << id_.root_hash.to_hex() << ")");
+  }
+  auto actual_file_hash = block::compute_file_hash(data_);
+  if (actual_file_hash != id_.file_hash) {
+    return td::Status::Error(
+        -668,
+        PSLICE() << "BlockData integrity error: bytes for "
+                 << id_.to_str() << " produce file hash 0x"
+                 << actual_file_hash.to_hex()
+                 << " (expected 0x" << id_.file_hash.to_hex() << ")");
   }
   return td::Status::OK();
 }
