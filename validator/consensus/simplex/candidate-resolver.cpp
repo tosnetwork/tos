@@ -255,8 +255,26 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
     // Load all candidate metadata entries we have.
     auto candidates = bus.db->get_by_prefix(tl::db_key_candidateResolver_candidateInfo::ID);
+    size_t skipped_keys = 0;
     for (auto &[key_str, value_str] : candidates) {
-      auto key = fetch_tl_object<tl::db_key_candidateResolver_candidateInfo>(key_str, true).move_as_ok();
+      // Round 168 (claude review) LOW fix: log-and-skip on a
+      // malformed TL key instead of aborting via .move_as_ok().
+      // Same operator-visibility class as round 140's fix on the
+      // candidate VALUE deserialize path lower in this file: a
+      // corrupted DB record whose key parse fails turned into a
+      // silent SIGABRT during load_from_db, with no operator-readable
+      // context.  Skip the bad record and surface a count.
+      auto key_r = fetch_tl_object<tl::db_key_candidateResolver_candidateInfo>(
+          key_str, true);
+      if (key_r.is_error()) {
+        LOG(WARNING) << "Simplex candidate-resolver: skipping malformed "
+                        "candidateInfo key in DB ("
+                     << key_str.size() << " bytes): "
+                     << key_r.error().message();
+        ++skipped_keys;
+        continue;
+      }
+      auto key = key_r.move_as_ok();
       CandidateId id = CandidateId::from_tl(key->candidateId_);
       auto &state = state_[id];
 
@@ -264,6 +282,10 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
         ++candidate_count;
         state.candidate_in_db = true;
       }
+    }
+    if (skipped_keys > 0) {
+      LOG(WARNING) << "Simplex candidate-resolver: skipped " << skipped_keys
+                   << " malformed candidateInfo keys during DB load";
     }
 
     LOG(INFO) << "Loaded " << notar_certs_count << " notarization certificates and " << candidate_count

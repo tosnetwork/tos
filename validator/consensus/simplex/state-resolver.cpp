@@ -33,11 +33,37 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     genesis_ = std::move(awaiter);
 
     auto data = owning_bus()->db->get_by_prefix(tos_api::consensus_simplex_db_key_finalizedBlock::ID);
+    size_t skipped = 0;
     for (auto& [key_str, _] : data) {
-      auto key = fetch_tl_object<tos_api::consensus_simplex_db_key_finalizedBlock>(key_str, true).ensure().move_as_ok();
+      // Round 168 (claude review) LOW fix: log-and-skip on a
+      // malformed TL key instead of aborting via .ensure().move_as_ok().
+      // The DB iterator returns every record whose key starts with
+      // the finalizedBlock prefix, but a truncated / corrupted write
+      // could leave a record whose key bytes do not parse as the
+      // expected TL type — the pre-fix path turned that single bad
+      // record into a silent SIGABRT during start_up with no
+      // operator-readable context.  Same operator-visibility class
+      // as rounds 142 / 166 (simplex init_votes / catchain-receiver
+      // DB lambdas).  Skip the record and surface a count in the
+      // load log so the operator can correlate.
+      auto key_r = fetch_tl_object<tos_api::consensus_simplex_db_key_finalizedBlock>(
+          key_str, true);
+      if (key_r.is_error()) {
+        LOG(WARNING) << "Simplex state-resolver: skipping malformed "
+                        "finalizedBlock key in DB ("
+                     << key_str.size() << " bytes): "
+                     << key_r.error().message();
+        ++skipped;
+        continue;
+      }
+      auto key = key_r.move_as_ok();
       finalized_blocks_[CandidateId::from_tl(key->candidateId_)].done = true;
     }
-    LOG(INFO) << "Loaded " << data.size() << " finalized blocks from DB";
+    if (skipped > 0) {
+      LOG(WARNING) << "Simplex state-resolver: skipped " << skipped
+                   << " malformed finalizedBlock keys during DB load";
+    }
+    LOG(INFO) << "Loaded " << (data.size() - skipped) << " finalized blocks from DB";
   }
 
   void tear_down() override {
