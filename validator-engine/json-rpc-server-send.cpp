@@ -43,6 +43,7 @@
 #include "evm/core/workchain.h"
 #include "evm/core/block-context.h"  // make_evm_chain_config
 #include "evm/rpc/handlers.h"        // try_consume_evm_rpc_token
+#include <silkworm/core/crypto/secp256k1n.hpp>
 #include <silkworm/core/protocol/validation.hpp>
 #include <sstream>
 
@@ -1743,6 +1744,26 @@ void JsonRpcServer::handle_eth_sendRawTransaction_with_chain_id(
     auto cfg = evm_workchain::make_evm_chain_config(chain_id);
     const auto rev = cfg.revision(/*block_num=*/UINT64_MAX,
                                    /*block_time=*/static_cast<uint64_t>(std::time(nullptr)));
+    // Round 133 MEDIUM fix: enforce EIP-2 low-S signature
+    // canonicality at the RPC admission boundary, mirroring the
+    // consensus check in evm/core/executor.cpp.  Pre-fix
+    // pre_validate_common_base / _forks did NOT call
+    // is_valid_signature; the higher-level
+    // pre_validate_transaction does, but neither path runs it.
+    // Without this gate, anyone observing a valid signed tx
+    // could flip s → n - s, recompute v, and submit a malleated
+    // copy that recovers the same sender but has a different
+    // tx hash.  TOS EVM activates Homestead from block 0, so
+    // high-S signatures are non-canonical here.
+    if (!silkworm::is_valid_signature(decoded.txn.r, decoded.txn.s,
+                                       rev >= EVMC_HOMESTEAD)) {
+      promise.set_value(make_eth_json_error(
+          -32000,
+          "invalid secp256k1 signature (non-canonical r/s; "
+          "EIP-2 low-S required)",
+          req_id));
+      return;
+    }
     // pre_validate_common_base runs the type-/chain-/intrinsic-gas suite.
     auto vr_base = silkworm::protocol::pre_validate_common_base(
         decoded.txn, rev, cfg.chain_id);

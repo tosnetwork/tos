@@ -20,6 +20,7 @@
 #include <optional>
 #include <utility>
 
+#include <silkworm/core/crypto/secp256k1n.hpp>
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
 #include <silkworm/core/protocol/param.hpp>
@@ -246,6 +247,39 @@ static ExecutionResult run_evm(
         // because `pre_validate_common_forks` invokes
         // `SILKWORM_ASSERT(blob_gas_price)` for type-3 txs (we pass
         // `nullopt` for blob_gas_price — there is no blob mempool).
+        // Round 133 MEDIUM fix: enforce EIP-2 low-S signature
+        // canonicality.  Pre-fix sender recovery accepted both
+        // (r, s) and (r, n - s) as valid signatures of the same
+        // transaction, so anyone observing a valid signed tx could
+        // flip s to its complement, recompute v, and produce a
+        // different transaction hash with the same sender, nonce,
+        // and action — classic Ethereum tx malleability that EIP-2
+        // closed in Homestead.  TOS EVM activates Homestead from
+        // block 0, so high-S signatures are non-canonical here.
+        // Silkworm's pre_validate_common_base / _forks do NOT check
+        // signature validity; that lives in the higher-level
+        // pre_validate_transaction, which neither the consensus
+        // executor nor the RPC admission path calls.  Inline the
+        // check directly so consensus and the RPC fast-path both
+        // reject malleated copies up front.
+        //
+        // The gate skips when both r and s are zero — that is the
+        // signature-less internal-tx / set_sender path used by host
+        // engines to inject already-authenticated calls (sender_
+        // pre-cached on the Transaction).  A wire-arrived tx that
+        // has reached this point has r and s in [1, n-1] because
+        // sender recovery would otherwise have failed at line 174,
+        // returning "sender not recovered".  External callers
+        // therefore cannot bypass EIP-2 by setting r=0 or s=0.
+        if ((txn.r != 0 || txn.s != 0) &&
+            !silkworm::is_valid_signature(txn.r, txn.s,
+                                           rev >= EVMC_HOMESTEAD)) {
+            result.error_message =
+                "invalid secp256k1 signature (non-canonical r/s; "
+                "EIP-2 low-S required)";
+            result.gas_used = 0;
+            return result;
+        }
         if (auto vr_base = silkworm::protocol::pre_validate_common_base(
                 txn, rev, config.chain_id);
             vr_base != silkworm::ValidationResult::kOk) {
