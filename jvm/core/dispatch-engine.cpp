@@ -434,13 +434,28 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             // is paid ONCE at first activation, not on every
             // call — subsequent invocations trust the persisted
             // root.
+            //
+            // Round 116 MEDIUM fix: bill the validation work via
+            // skipped_output_billed (accepted=true) so the
+            // attacker's contract account is charged the
+            // admission floor capped at effective_gas_limit when
+            // a malformed manifest is rejected.  Pre-fix the
+            // skipped_output path was zero-billed, letting an
+            // attacker burn validator CPU for free on
+            // hand-crafted ~1.5 MiB malformed manifests.
             if (state.manifest_root.not_null()) {
                 auto manifest_check = parse_jvm_method_manifest(
                     state.manifest_root);
                 if (manifest_check.is_error()) {
-                    return skipped_output(
+                    const std::uint64_t billed = std::min<std::uint64_t>(
+                        kJvmAdmissionGasFloor, effective_gas_limit);
+                    return skipped_output_billed(
                         block::ComputePhase::sk_bad_state,
-                        "JVM first activation: manifest_root is malformed");
+                        "JVM first activation: manifest_root is malformed",
+                        cfg->config,
+                        billed,
+                        /*out_of_gas=*/false,
+                        /*msg_state_used=*/input.msg_state_used);
                 }
             }
             // Round 58 LOW fix: the inbound `StateInit.code` is
