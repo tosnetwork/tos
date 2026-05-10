@@ -156,16 +156,24 @@ td::Ref<vm::Cell> build_uno_workchain_descr(
 // Runtime config accessor
 // ---------------------------------------------------------------------------
 
-/// Returns the currently-loaded UnoConfig. Populated by
-/// `install_uno_config(cfg)` at node startup (called from `init_uno_workchain`
-/// once the masterchain ConfigParam 84 is read). Until then, returns a
-/// default-constructed UnoConfig with testnet defaults.
-const UnoConfig& current_uno_config() noexcept;
+/// Returns a snapshot of the currently-loaded UnoConfig.  Populated by
+/// `install_uno_config(cfg)` from `validate_and_resolve_config` on every
+/// dispatch (round 129 dropped the original one-shot install guard;
+/// round 130 switched the storage to atomic<shared_ptr> for thread
+/// safety).  Until the first install, returns a default-constructed
+/// UnoConfig with testnet defaults.
+///
+/// Returns by value; backing storage is an atomic shared_ptr so the
+/// snapshot is stable for the caller even if a concurrent install
+/// races.
+UnoConfig current_uno_config() noexcept;
 
-/// Install a new UnoConfig at process scope. Called exactly once at startup
-/// (masterchain ConfigParam 84 load). Re-installing after block production
-/// has started is undefined — fee floors would change mid-flight and tx
-/// validation would desync across validators.
+/// Install a new UnoConfig at process scope.  Round 129+: called per
+/// dispatch from `UnoNativeEngine::validate_and_resolve_config` so a
+/// masterchain ConfigParam 84 governance update propagates to all
+/// downstream readers.  Round 130: backed by
+/// std::atomic<std::shared_ptr<const UnoConfig>> so concurrent readers
+/// (RPC, ext-message admission, parallel-verify) never tear.
 void install_uno_config(UnoConfig cfg) noexcept;
 
 }  // namespace uno_workchain

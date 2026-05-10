@@ -44,7 +44,10 @@
 // forward-declare the three config-param entry points we actually call.
 namespace uno_workchain {
 struct UnoConfig;  // full type lives in config-param.h
-const UnoConfig& current_uno_config() noexcept;
+// Round 130: signature changed from `const UnoConfig&` to `UnoConfig`
+// (returns by value via atomic shared_ptr load).  Forward declaration
+// updated to match.
+UnoConfig current_uno_config() noexcept;
 // The handful of UnoConfig fields we consult. Kept locally as an opaque
 // view into the process-global config to avoid the header conflict.
 struct UnoConfigView {
