@@ -979,6 +979,20 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
 
   // eth_sendRawTransaction: route to async handler (submits to ExtMessagePool)
   if (method == "eth_sendRawTransaction") {
+    // Round 153 MEDIUM fix: apply the EVM per-IP rate gate before
+    // dispatch.  Pre-fix the eth_sendRawTransaction fast-path
+    // bypassed the per-IP gate that handle_eth_rpc enforces for
+    // every other EVM method (handlers.cpp:6739) and only checked
+    // the global token bucket inside handle_eth_sendRawTransaction.
+    // A single IP could submit many small invalid raw-tx requests
+    // ("eth_sendRawTransaction(['0xzz'])") and consume the global
+    // bucket, starving other clients' EVM RPC.  Mirror the gate
+    // here before the route.
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     handle_eth_sendRawTransaction(params_val, std::move(req_id), std::move(promise));
     return;
   }

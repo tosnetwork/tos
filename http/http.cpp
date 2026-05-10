@@ -291,6 +291,25 @@ td::Status HttpPayload::parse(td::ChainBufferReader &input) {
           state_ = ParseState::reading_trailer;
           break;
         }
+        // Round 153 HIGH fix: enforce the same body-size cap on
+        // chunked transfer-encoding that round 152 added for
+        // Content-Length.  Pre-fix Transfer-Encoding requests had
+        // no aggregate cap — only the per-watermark pause and the
+        // never-firing JSON-RPC application "too large" path —
+        // so an attacker could stream chunks totaling > 4 MiB
+        // without ever sending the terminating 0\r\n\r\n,
+        // pinning ~4 MiB of buffer per connection.  high_watermark_
+        // equals max_payload_size for this payload type
+        // (HttpRequest::high_watermark == max_payload_size after
+        // round 152), so checking the running total against it
+        // gives a deterministic "too large" reject the same way
+        // Content-Length does.
+        if (ready_bytes_ > high_watermark_ ||
+            size > high_watermark_ - ready_bytes_) {
+          return td::Status::Error(
+              PSLICE() << "chunked request body exceeds max payload size "
+                       << high_watermark_);
+        }
         cur_chunk_size_ = size;
         state_ = ParseState::reading_chunk_data;
       } break;
