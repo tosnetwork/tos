@@ -87,8 +87,17 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
   if (data.size() > limits.max_size) {
     return td::Status::Error("external message too large, rejecting");
   }
+  // Round 167 (claude review) LOW fix: pass max_roots=1 so the
+  // header-parse step rejects a multi-root BoC up front instead of
+  // letting BagOfCells::deserialize allocate the full roots vector
+  // (up to the default cap of 16384 entries, ~256 KiB) and parse
+  // every declared cell before we discover the wrong root_count on
+  // the next line.  std_boc_deserialize already uses max_roots=1
+  // for the same reason (crypto/vm/boc.cpp:992); the direct
+  // BagOfCells caller here was bypassing that early-reject and
+  // amplifying max-size-bound DoS pressure per accepted ext-msg.
   vm::BagOfCells boc;
-  auto res = boc.deserialize(data.as_slice());
+  auto res = boc.deserialize(data.as_slice(), 1);
   if (res.is_error()) {
     return res.move_as_error();
   }
