@@ -58,7 +58,16 @@ td::Status HttpOutboundConnection::receive(td::ChainBufferReader &input) {
 
   auto payload = cur_response_->create_empty_payload().move_as_ok();
   promise_.set_value(std::make_pair(std::move(cur_response_), payload));
-  read_payload(std::move(payload));
+  // Round 156 MEDIUM fix: propagate the initial read_payload result
+  // for outbound responses too.  Pre-fix this caller silently dropped
+  // the Status, so a malicious upstream that included response
+  // headers and an oversize chunk header in the same TCP write
+  // tripped the round-152/153 size cap inside HttpPayload::parse,
+  // got Status::Error → propagated through read_payload, and was
+  // discarded here — leaving the outbound connection in an error
+  // state without tearing down at the original reject point.
+  // Mirrors the inbound fix in http-inbound-connection.cpp.
+  TRY_STATUS(read_payload(std::move(payload)));
 
   if (!reading_payload_) {
     return td::Status::OK();

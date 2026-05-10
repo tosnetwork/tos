@@ -758,20 +758,24 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
       class PostRestWaiter : public http::HttpPayload::Callback {
        public:
         PostRestWaiter(td::actor::ActorId<JsonRpcServer> server, PayloadPtr payload,
-                       std::string method, td::Promise<HttpReturn> promise)
+                       std::string method, std::string source_ip,
+                       td::Promise<HttpReturn> promise)
             : server_(server), payload_(std::move(payload)),
-              method_(std::move(method)), promise_(std::move(promise)) {}
+              method_(std::move(method)), source_ip_(std::move(source_ip)),
+              promise_(std::move(promise)) {}
         void run(size_t) override {}
         void completed() override {
           if (fired_) return;  // one-shot guard
           fired_ = true;
           td::actor::send_closure(server_, &JsonRpcServer::on_post_rest_body_ready,
-                                  std::move(payload_), std::move(method_), std::move(promise_));
+                                  std::move(payload_), std::move(method_),
+                                  std::move(source_ip_), std::move(promise_));
         }
        private:
         td::actor::ActorId<JsonRpcServer> server_;
         PayloadPtr payload_;
         std::string method_;
+        std::string source_ip_;
         td::Promise<HttpReturn> promise_;
         bool fired_{false};
       };
@@ -783,11 +787,17 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
                                             "null", opts_.cors_origin));
           return;
         }
+        // Round 156 MEDIUM fix: thread source_ip through REST POST so
+        // POST /sendBoc and friends hit the per-IP rate gate that
+        // round-155 added on the JSON-RPC side.  Pre-fix the REST
+        // adapter passed std::string() and consume_per_ip_token
+        // bypassed the gate for any empty-source-ip caller.
         process_rest_post_body(body_r.move_as_ok(), std::move(rest_method),
-                               std::move(promise));
+                               std::move(source_ip), std::move(promise));
       } else {
         payload->add_callback(std::make_unique<PostRestWaiter>(
-            actor_id(this), payload, std::move(rest_method), std::move(promise)));
+            actor_id(this), payload, std::move(rest_method),
+            std::move(source_ip), std::move(promise)));
       }
       return;
     }
@@ -1309,6 +1319,7 @@ void JsonRpcServer::finalize_batch(std::shared_ptr<BatchState> state) {
 // ─── POST REST body processing (body = params JSON, no jsonrpc envelope) ──
 
 void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string method,
+                                            std::string source_ip,
                                             td::Promise<HttpReturn> promise) {
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s callback chain. Breaks the deadlock.
@@ -1318,21 +1329,24 @@ void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string meth
                                       opts_.cors_origin));
     return;
   }
-  process_rest_post_body(body_r.move_as_ok(), std::move(method), std::move(promise));
+  process_rest_post_body(body_r.move_as_ok(), std::move(method),
+                         std::move(source_ip), std::move(promise));
 }
 
 void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string method,
+                                           std::string source_ip,
                                            td::Promise<HttpReturn> promise) {
+  // Round 156 MEDIUM fix: REST POST now carries source_ip so per-IP
+  // rate gates fire on POST /sendBoc and friends.  Pre-fix this
+  // adapter passed std::string() and consume_per_ip_token bypassed
+  // the gate for any caller with no source attribution; that
+  // bypassed the round-155 JSON-RPC-layer protection for all REST
+  // submissions.
   if (body.empty()) {
     // Empty body → empty params
     td::JsonObject empty_obj;
-    // REST adapters are not the eth_* JSON-RPC dispatcher; they predate the
-    // per-IP rate gate and their callers (Python tests, REST-only clients)
-    // don't carry an X-Forwarded-For attribution. Bypass the gate by
-    // passing an empty source IP — the global / per-method limits still
-    // apply to any methods that hit them.
     cached_dispatch_method(std::move(method), empty_obj, "null",
-                           std::string(), std::move(promise));
+                           std::move(source_ip), std::move(promise));
     return;
   }
   auto json_r = td::json_decode(body.as_slice());
@@ -1348,7 +1362,7 @@ void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string met
     return;
   }
   cached_dispatch_method(std::move(method), json.get_object(), "null",
-                         std::string(), std::move(promise));
+                         std::move(source_ip), std::move(promise));
 }
 
 // ─── Method dispatch ──────────────────────────────────────────────────────
@@ -1394,17 +1408,20 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     return;
   }
 
-  // Round 155 MEDIUM fix: legacy submission family (sendBoc /
-  // sendBocReturnHash / sendQuery / submitSignedTransaction) used
-  // to bypass the per-IP rate gate.  Each fans out to a
+  // Round 155 + 156 MEDIUM fix: legacy submission family used to
+  // bypass the per-IP rate gate.  Each fans out to a
   // liteServer_sendMessage submission, so a single IP could
   // exhaust validator-side ext-message admission while every
   // other client was throttled.  Apply the gate up front,
   // matching the round-153/154 fixes for eth_sendRawTransaction
-  // and uno_send* / jvm_*.  sendBocReturnHashNoError is a
-  // read-side variant that doesn't actually submit (returns the
-  // hash for client preview), so it's intentionally omitted.
+  // and uno_send* / jvm_*.
+  //
+  // Round 156 correction: sendBocReturnHashNoError DOES submit
+  // (json-rpc-server-send.cpp:1594-1598 wraps liteServer_send
+  // Message and dispatches it); the round-155 comment that called
+  // it a read-side variant was wrong.  Adding it to the gate.
   if (method == "sendBoc" || method == "sendBocReturnHash" ||
+      method == "sendBocReturnHashNoError" ||
       method == "sendQuery" || method == "submitSignedTransaction") {
     if (!evm_workchain::consume_per_ip_token(source_ip)) {
       promise.set_value(make_eth_json_error(

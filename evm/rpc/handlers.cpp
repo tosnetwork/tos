@@ -412,6 +412,27 @@ static std::atomic<EvmRpcProfile> g_evm_rpc_profile{EvmRpcProfile::ValidatorMini
 // state-machine invariants, so there is no data dependency that needs
 // a stronger fence.
 static std::atomic<bool> g_profile_heavy_readonly_enabled{false};
+
+// Round 156 LOW fix: constant-time string compare used by the
+// debug_* token check below.  Pre-fix the auth comparison was
+// `provided_token != expected_token` (short-circuit on first
+// mismatching byte), which leaks token-prefix length via response
+// timing.  This helper duplicates the json-rpc-server.cpp
+// constant_time_compare; kept TU-local to avoid header-cycle
+// churn.
+static bool constant_time_compare_strings(const std::string& a,
+                                           const char* b) {
+    const std::size_t bn = (b != nullptr) ? std::strlen(b) : 0;
+    if (a.size() != bn) {
+        return false;
+    }
+    volatile unsigned char result = 0;
+    for (std::size_t i = 0; i < bn; ++i) {
+        result |= static_cast<unsigned char>(a[i]) ^
+                  static_cast<unsigned char>(b[i]);
+    }
+    return result == 0;
+}
 static std::atomic<bool> g_profile_debug_rpc_enabled{false};
 
 static void reset_rpc_buckets_locked() {
@@ -2775,7 +2796,8 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
         return {make_error(id, -32601,
                            "debug_traceTransaction requires TOS_EVM_DEBUG_RPC_TOKEN"), true};
     }
-    if (std::strlen(expected_token) < 16 || provided_token != expected_token) {
+    if (std::strlen(expected_token) < 16 ||
+        !constant_time_compare_strings(provided_token, expected_token)) {
         return {make_error(id, -32001,
                            "debug_traceTransaction unauthorized"), true};
     }
@@ -6562,7 +6584,8 @@ static RpcResult handle_debug_rebuild_rpc_cache(const std::string& params,
         return {make_error(id, -32601,
                            "debug_rebuildRpcCache requires TOS_EVM_DEBUG_RPC_TOKEN"), true};
     }
-    if (std::strlen(expected_token) < 16 || provided_token != expected_token) {
+    if (std::strlen(expected_token) < 16 ||
+        !constant_time_compare_strings(provided_token, expected_token)) {
         return {make_error(id, -32001,
                            "debug_rebuildRpcCache unauthorized"), true};
     }
