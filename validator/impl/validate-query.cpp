@@ -3793,6 +3793,26 @@ bool ValidateQuery::unpack_dispatch_queue_update() {
     // implies "new <= collator_soft" implies collator should have
     // serviced messages.  Fire the check on either
     // new <= chain_defer or old <= chain_defer.
+    //
+    // Round 148 LOW (deferred): there is a residual zone the
+    // round-147 fix does not cover.  The collator's actual skip
+    // decision uses the queue size IMMEDIATELY AFTER
+    // out_msg_queue_cleanup() and BEFORE dispatch processing
+    // (collator.cpp:2455 → 4514), which equals old -
+    // cleanup_drops.  If old > chain_defer, post-cleanup <=
+    // chain_defer (collator must service dispatch), and later
+    // tick/tock/transaction phases add enough out-messages that
+    // final new > chain_defer too, then both old and new exceed
+    // chain_defer and this validator gate skips the progress
+    // check even though the collator was required to service it.
+    // Closing this cleanly requires either (a) committing the
+    // post-cleanup queue size in the block or (b) reconstructing
+    // cleanup_drops from the OutMsgDescr / DispatchQueue diffs
+    // that validate-query already iterates.  Both are larger
+    // refactors; tracked as a follow-up.  Exposure is
+    // liveness/fairness only (not state-integrity), and the
+    // attack window requires a specific cleanup_drops + post-
+    // cleanup-add ratio.
     const auto chain_defer_limit =
         compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
     const bool need_dispatch_progress_check =
