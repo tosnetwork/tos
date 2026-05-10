@@ -105,9 +105,15 @@ td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
         }
       });
   http_callback_->receive_request(std::move(cur_request_), payload, std::move(P));
-  read_payload(std::move(payload));
-
-  return td::Status::OK();
+  // Round 155 HIGH fix: propagate the initial read_payload error so the
+  // connection closes when the chunked-body cap (round-153/154) rejects
+  // the very first chunk (i.e. the body parse begins on the same TCP
+  // write as the headers).  Pre-fix this caller dropped the Status
+  // and returned OK, so an oversize chunk header in the same write
+  // as the request headers left the connection open waiting for
+  // more bytes — the round-154 receive_payload propagation only
+  // covered the second-and-subsequent reads.
+  return read_payload(std::move(payload));
 }
 
 void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, std::shared_ptr<HttpPayload> payload) {

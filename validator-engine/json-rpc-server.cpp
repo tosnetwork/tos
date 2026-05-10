@@ -1394,6 +1394,24 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     return;
   }
 
+  // Round 155 MEDIUM fix: legacy submission family (sendBoc /
+  // sendBocReturnHash / sendQuery / submitSignedTransaction) used
+  // to bypass the per-IP rate gate.  Each fans out to a
+  // liteServer_sendMessage submission, so a single IP could
+  // exhaust validator-side ext-message admission while every
+  // other client was throttled.  Apply the gate up front,
+  // matching the round-153/154 fixes for eth_sendRawTransaction
+  // and uno_send* / jvm_*.  sendBocReturnHashNoError is a
+  // read-side variant that doesn't actually submit (returns the
+  // hash for client preview), so it's intentionally omitted.
+  if (method == "sendBoc" || method == "sendBocReturnHash" ||
+      method == "sendQuery" || method == "submitSignedTransaction") {
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id));
+      return;
+    }
+  }
   // Existing methods
   if (method == "sendBoc") {
     handle_sendBoc(params, std::move(req_id), std::move(promise));

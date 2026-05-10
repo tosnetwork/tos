@@ -814,6 +814,21 @@ void ValidatorManagerImpl::add_ext_server_id(adnl::AdnlNodeIdShort id) {
     }
     void receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                        td::Promise<td::BufferSlice> promise) override {
+      // Round 155 MEDIUM (deferred): the ADNL source `src` is dropped
+      // here, so the lite-client liteServer_sendMessage path forwards
+      // unattributed data into ExtMessagePool::check_add_external_
+      // message with `td::optional<PublicKeyHash>{}`.  ExtMessagePool's
+      // per-peer limiter only runs when source_peer is set, so a
+      // single ADNL client can submit unique liteServer.sendMessage
+      // queries indefinitely without per-source throttling.  Closing
+      // this requires plumbing the AdnlNodeIdShort through
+      // run_ext_query → LiteQuery::perform_sendMessage →
+      // new_external_message_query so the source is preserved at
+      // ExtMessagePool admission.  Tracked as a focused follow-up;
+      // exposure is bounded by the per-IP gate the JSON-RPC layer
+      // enforces (round 153/154/155) on the dominant submission
+      // path, while the ADNL/lite-server submission path remains
+      // a DoS surface for direct lite-client connections.
       td::actor::send_closure(id_, &ValidatorManagerImpl::run_ext_query, std::move(data), std::move(promise));
     }
 
