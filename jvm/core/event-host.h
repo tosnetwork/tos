@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "jvm/core/storage-cell-host.h"  // kJvmStorageValueChunkBytes
 #include "td/utils/Status.h"
 #include "vm/cells.h"
 
@@ -22,7 +23,22 @@ namespace jvm_workchain {
 
 constexpr std::size_t kJvmEventTopicBytes = 32;
 constexpr std::size_t kJvmEventMaxTopics = 4;
-constexpr std::size_t kJvmEventDataMaxBytes = 1024 * 1024;
+// Round 149 MEDIUM fix: cap event data at the maximum size the
+// downstream encode_jvm_storage_value (which builds the chunk
+// chain stored under the event payload) can actually represent.
+// The encoder reserves a 16-cell wrapper margin under
+// vm::CellTraits::max_depth (1024), so it accepts at most
+// (1024 - 16) * 127 = 128016 bytes.  Pre-fix kJvmEventDataMaxBytes
+// was 1 MiB, so payloads in (128016, 1048576] bytes were copied
+// through Avata execution, accepted by the event host snapshot,
+// and only failed at build_jvm_event_action_list — converting a
+// successful contract call into sk_bad_state and billing only
+// kJvmAdmissionGasFloor for unbounded validator memory/copy
+// work.  Sizing this constant to the encoder's effective limit
+// makes the event host reject the payload up-front under the
+// caller's own gas budget.
+constexpr std::size_t kJvmEventDataMaxBytes =
+    (vm::CellTraits::max_depth - 16) * kJvmStorageValueChunkBytes;
 constexpr std::uint32_t kJvmEventPayloadMagic = 0x4a564d45;  // "JVME"
 constexpr std::uint8_t kJvmEventPayloadSchemaVersion = 1;
 
