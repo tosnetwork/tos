@@ -3633,6 +3633,17 @@ static RpcResult handle_get_tx_by_block_number_and_index(const std::string& para
         }
         return {make_result(id, "null"), false};
     }
+    // Round 109 LOW fix: gate the happy-path return on tx +
+    // block markers, matching eth_getTransactionByHash.  Pre-fix,
+    // the by-index handler returned a stored tx even when the
+    // tx marker had been independently set (e.g. block + tx
+    // markers diverged because they're cleared/pruned
+    // independently).
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
 
     return {make_result(id, format_transaction_json(tx_hash, *tx)), false};
 }
@@ -3684,6 +3695,13 @@ static RpcResult handle_get_tx_by_block_hash_and_index(const std::string& params
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, "null"), false};
+    }
+    // Round 109 LOW fix: happy-path marker gate (matches
+    // handle_get_tx_by_block_number_and_index).
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
 
     return {make_result(id, format_transaction_json(tx_hash, *tx)), false};
@@ -4263,6 +4281,19 @@ static RpcResult handle_get_raw_tx_by_block_hash_and_index(const std::string& pa
         }
         return {make_result(id, "null"), false};
     }
+    // Round 109 LOW fix: raw by-index paths previously skipped both
+    // the canonical-tx gate and the success-path tx-marker check.
+    // Mirror the by-hash raw handler's protection.
+    if (!is_stored_tx_canonical(tx_hash_idx, tx->block_number) ||
+        is_evm_rpc_indexing_incomplete(tx_hash_idx) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash_idx) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
     return {raw_tx_response(id, *tx), false};
 }
 
@@ -4307,6 +4338,19 @@ static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& 
         // Round 92 MEDIUM fix: surface -32010 for known accepted-
         // but-unindexed txs in by-index lookups.
         if (is_evm_rpc_indexing_incomplete(tx_hash_idx)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
+    // Round 109 LOW fix: gate raw by-index path on tx canonicality
+    // + per-tx marker (mirrors handle_get_raw_tx_by_block_hash_and_
+    // index above).
+    if (!is_stored_tx_canonical(tx_hash_idx, tx->block_number) ||
+        is_evm_rpc_indexing_incomplete(tx_hash_idx) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash_idx) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
             return {make_error(id, -32010,
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
