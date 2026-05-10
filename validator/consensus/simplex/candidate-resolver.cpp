@@ -280,7 +280,36 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     if (state.candidate_in_db) {
       auto contents_key = create_serialize_tl_object<tl::db_key_candidate>(id.to_tl());
       auto data = bus.db->get(std::move(contents_key)).value();
-      state.candidate_and_cert.candidate = Candidate::deserialize(data, bus).move_as_ok();
+      // Round 140 MEDIUM fix: validate that the deserialized
+      // candidate's id matches the requested id, mirroring the
+      // network-path gate at CandidateAndCert::from_tl above.
+      // Pre-fix this DB resume path used .move_as_ok() and
+      // accepted whatever was decoded; a corrupted /
+      // mis-indexed db_key_candidate(idA) → bytes-for-idB
+      // record let to_tl() at line 69 trip a CHECK on the
+      // mismatch, turning a single bad DB record into a
+      // remote-triggerable validator abort.  Now we deserialize
+      // into a temporary, log-and-skip on either deserialize
+      // failure or id mismatch.  The candidate stays in
+      // candidate_in_db state but is not surfaced to to_tl
+      // until a fresh network/local store overwrites it.
+      auto candidate_res = Candidate::deserialize(data, bus);
+      if (candidate_res.is_error()) {
+        LOG(WARNING) << "Simplex candidate-resolver: db record for "
+                     << id << " failed to deserialize: "
+                     << candidate_res.error().message();
+        co_return false;
+      }
+      auto candidate = candidate_res.move_as_ok();
+      if (candidate->id != id) {
+        LOG(WARNING) << "Simplex candidate-resolver: db record for "
+                     << id
+                     << " contains a candidate for a different id "
+                     << candidate->id
+                     << " (refusing to surface mismatched bytes)";
+        co_return false;
+      }
+      state.candidate_and_cert.candidate = std::move(candidate);
     }
 
     co_return false;
