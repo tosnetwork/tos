@@ -716,6 +716,24 @@ static bool parse_hex_address(const std::string& params, evmc::address& out) {
             return false;
         out.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
     }
+    // Round 98 MEDIUM fix: reject any trailing hex past the 40-nibble
+    // address.  Pre-fix the parser stopped after 20 bytes and silently
+    // accepted overlong inputs (e.g. `0x0000…0001ff` 21-byte) by
+    // truncating to the first 20 bytes — eth_getBalance, eth_getCode,
+    // eth_getStorageAt, eth_call / eth_estimateGas / eth_createAccessList
+    // and log-filter address parsing all flow through this helper, so
+    // a malformed address aliased to a different valid account.  An
+    // address terminator is whitespace, quote, comma, ']', '}', or
+    // end-of-string; anything else (including additional hex
+    // characters) is a malformed input and must reject.
+    const std::size_t after = pos + 40;
+    if (after < params.size()) {
+        const char c = params[after];
+        if (c != '"' && c != ',' && c != ']' && c != '}' &&
+            c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+            return false;
+        }
+    }
     return true;
 }
 
