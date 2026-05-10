@@ -23,6 +23,7 @@
 #include "td/utils/overloaded.h"
 
 #include "archive-manager.hpp"
+#include "block/block-db.h"  // block::compute_file_hash
 #include "files-async.hpp"
 
 namespace tos {
@@ -490,7 +491,35 @@ void ArchiveManager::get_zero_state(BlockIdExt block_id, td::Promise<td::BufferS
   }
 
   auto path = db_root_ + "/archive/states/" + id.filename_short();
-  td::actor::create_actor<db::ReadFile>("readfile", path, 0, -1, 0, std::move(promise)).release();
+  // Round 139 MEDIUM fix: verify the read bytes' file_hash matches
+  // block_id.file_hash before returning to the caller.  Pre-fix
+  // get_zero_state returned whatever was on disk under the ZeroState
+  // fileref name with no integrity check, so a corrupted /
+  // mis-indexed archive write could let liteServer_getState and
+  // tosNode_downloadZeroState serve mismatched bytes under the
+  // claimed BlockIdExt hashes.  Same integrity-gate class as
+  // round 136 (CellLoader::load) and round 138 (BlockQ::init).
+  auto check = td::PromiseCreator::lambda(
+      [block_id, promise = std::move(promise)](
+          td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_error(R.move_as_error());
+          return;
+        }
+        auto data = R.move_as_ok();
+        auto actual = block::compute_file_hash(data);
+        if (actual != block_id.file_hash) {
+          promise.set_error(td::Status::Error(
+              ErrorCode::error,
+              PSLICE() << "zerostate integrity error: bytes for "
+                       << block_id.to_str() << " produce file hash 0x"
+                       << actual.to_hex() << " (expected 0x"
+                       << block_id.file_hash.to_hex() << ")"));
+          return;
+        }
+        promise.set_value(std::move(data));
+      });
+  td::actor::create_actor<db::ReadFile>("readfile", path, 0, -1, 0, std::move(check)).release();
 }
 
 void ArchiveManager::check_zero_state(BlockIdExt block_id, td::Promise<bool> promise) {
