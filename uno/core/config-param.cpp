@@ -230,6 +230,28 @@ bool parse_uno_config_cell(td::Ref<vm::Cell> cell, UnoConfig& out) {
     if (!cs.fetch_long_bool(32, v)) return false;
     out.expiry_window_blocks = static_cast<uint32_t>(v);
 
+    // Round 165 (claude review) LOW fix: reject trailing data / refs.
+    // Pre-fix this parser silently ignored any bits or refs past the
+    // last declared field.  Today the writer `build_uno_config_cell`
+    // emits exactly the declared shape and the masterchain config
+    // dict stores the same cell bytes for every node, so a same-
+    // version network won't split on a malformed proposal.  But the
+    // forward-compat surface is wide: a future schema version that
+    // appends fields after `expiry_window_blocks` would read those
+    // bytes while pre-fix nodes would silently ignore them, causing
+    // a quiet divergence at the moment the new fields start
+    // influencing behaviour.  JVM's ConfigParam 85 parser already
+    // checks `empty_ext()` for the same reason
+    // (jvm/core/config-param.cpp:107); mirror that here so any
+    // governance proposal that doesn't match the canonical shape is
+    // rejected at install time, not silently widened.
+    if (!cs.empty_ext()) {
+        LOG(ERROR) << "uno/config: ConfigParam 84 has trailing data "
+                   << "(bits=" << cs.size() << " refs=" << cs.size_refs()
+                   << ")";
+        return false;
+    }
+
     // Minimal sanity checks so a malformed config does not wedge consensus.
     if (out.max_spends_per_tx == 0 || out.max_outputs_per_tx == 0) {
         LOG(ERROR) << "uno/config: invalid zero spend/output limits";
