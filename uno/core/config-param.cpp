@@ -100,21 +100,32 @@ UnoConfigView current_uno_config_view() noexcept {
 }
 
 void install_uno_config(UnoConfig cfg) noexcept {
+    // Round 129 HIGH fix: removed the one-shot guard.  Pre-fix the
+    // first install_uno_config call won and any subsequent attempt
+    // (e.g. an updated masterchain ConfigParam 84) was silently
+    // ignored.  Combined with the round-128 wiring that calls this
+    // from validate_and_resolve_config per descriptor, that meant a
+    // validator started before a governance update kept the old
+    // ConfigParam 84 forever, while a validator started after the
+    // update saw the new one — a hard consensus divergence (e.g. on
+    // chain_id, min_fee_nano, or max_spends_per_tx).  ConfigParam 84
+    // is now read per-block from the masterchain config; updates
+    // propagate to downstream readers on the next dispatch.  The
+    // mutex still serializes writes; readers of g_uno_config still
+    // observe a non-torn copy in practice on x86 because the
+    // dispatcher hands a parsed config to run_compute on the same
+    // thread, but a follow-up architectural pass should plumb the
+    // parsed UnoConfig through the WorkchainEngineConfig (matching
+    // JVM/EVM) instead of relying on a process global.
     std::lock_guard<std::mutex> lock(g_config_mutex);
-    if (g_uno_config_installed) {
-        LOG(WARNING) << "uno/config: install_uno_config called twice; ignoring "
-                     << "replacement (chain_id=0x" << std::hex << cfg.chain_id
-                     << std::dec << ")";
-        return;
-    }
     g_uno_config = std::move(cfg);
     g_uno_config_installed = true;
-    g_uno_chain_id.store(g_uno_config.chain_id, std::memory_order_relaxed);
-    LOG(WARNING) << "uno/config: installed chain_id=0x" << std::hex
-                 << g_uno_config.chain_id << std::dec
-                 << ", min_fee=" << g_uno_config.min_fee_nano
-                 << ", max_spends=" << int(g_uno_config.max_spends_per_tx)
-                 << ", anchor_window=" << g_uno_config.anchor_window_size;
+    g_uno_chain_id.store(g_uno_config.chain_id, std::memory_order_release);
+    LOG(INFO) << "uno/config: installed chain_id=0x" << std::hex
+              << g_uno_config.chain_id << std::dec
+              << ", min_fee=" << g_uno_config.min_fee_nano
+              << ", max_spends=" << int(g_uno_config.max_spends_per_tx)
+              << ", anchor_window=" << g_uno_config.anchor_window_size;
 }
 
 // ---------------------------------------------------------------------------

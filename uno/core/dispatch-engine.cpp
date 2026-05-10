@@ -93,28 +93,38 @@ class UnoNativeEngine final : public block::WorkchainEngine {
         if (descriptor.vm_mode != 0) {
             return td::Status::Error("Uno v1 descriptor requires vm_mode=0");
         }
-        // Round 128 MEDIUM fix: install ConfigParam 84 from the
-        // masterchain config the first time this engine validates a
-        // descriptor.  Pre-fix init_uno_workchain never read
-        // ConfigParam 84, so the process-global g_uno_config stayed
-        // at the static testnet default.  Chain-id checks
-        // (parallel-verify.cpp:172, mine_uno.cpp:410) compared
-        // against that default while the configured (e.g. mainnet)
-        // chain-id was rejected as BadChainId — and tx fields tied
-        // to fee_per_byte_nano / anchor_window_size / etc. used
-        // testnet values regardless of governance.
-        // install_uno_config is one-shot by design (matching the
-        // documented "no mid-block reconfig" semantics): the first
-        // validate_and_resolve_config call wins.  Absence of
-        // ConfigParam 84 falls through to the default, preserving
-        // existing dev/test behavior where the param is not set.
+        // Round 128 + 129 fix: install ConfigParam 84 from the
+        // masterchain config on every descriptor validation so a
+        // governance update propagates to all subsequent dispatches
+        // (round 129 dropped the one-shot install guard for this).
+        // Pre-fix init_uno_workchain never read ConfigParam 84,
+        // so the process-global g_uno_config stayed at the static
+        // testnet default — chain-id checks (parallel-verify.cpp,
+        // mine_uno.cpp) compared against that default while the
+        // configured (e.g. mainnet) chain-id was rejected as
+        // BadChainId; tx fields tied to fee_per_byte_nano /
+        // anchor_window_size / etc. used testnet values regardless
+        // of governance.
+        //
+        // Round 129 MEDIUM fix: malformed-but-present ConfigParam
+        // 84 must error here, not fall through to default.  Pre-fix
+        // a misconfigured chain (wrong magic, version mismatch,
+        // invalid tree_depth) silently used the testnet default,
+        // letting the validator accept txs valid under defaults
+        // while the rest of the network rejected them.  Absence of
+        // the param still falls through to the default to preserve
+        // existing dev/test workflows.
         auto config_cell =
             block_transition_config.get_config_param(kUnoConfigParamIdx);
         if (config_cell.not_null()) {
             UnoConfig parsed{};
-            if (parse_uno_config_cell(config_cell, parsed)) {
-                install_uno_config(parsed);
+            if (!parse_uno_config_cell(config_cell, parsed)) {
+                return td::Status::Error(
+                    "Uno engine: ConfigParam 84 cell is present but "
+                    "malformed (refusing to fall through to testnet "
+                    "default)");
             }
+            install_uno_config(parsed);
         }
         // Uno v1 reads chain_id from the process-global g_uno_config set by
         // install_uno_config at startup or via the round-128 path above.
