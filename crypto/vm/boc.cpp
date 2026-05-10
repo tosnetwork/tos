@@ -875,6 +875,16 @@ td::Result<long long> BagOfCells::deserialize(const td::Slice& data, int max_roo
                      << last_offset << " differs from declared data_size "
                      << info.data_size);
       }
+    } else if (info.data_size != 0) {
+      // Round 162 (claude review) follow-up: cell_count == 0 with
+      // non-zero data_size is also non-canonical — the non-indexed
+      // branch below would reject this same shape because its
+      // cells_slice would be non-empty.  Keep the two parser paths
+      // symmetric.
+      return td::Status::Error(
+          PSLICE() << "invalid bag-of-cells: indexed cell_count is 0 but "
+                      "declared data_size is "
+                   << info.data_size);
     }
   } else {
     index_ptr = nullptr;

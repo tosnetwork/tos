@@ -415,28 +415,37 @@ class StaticBagOfCellsDbLazyImpl : public StaticBagOfCellsDb {
     // canonicality binding.  When info.has_cache_bits the cache
     // flag is packed into the offset LSB; shift it out before
     // comparing.
-    if (info_.has_index && info_.cell_count > 0) {
-      char arr[8];
-      TRY_RESULT(off_view, data_.view(
-          td::MutableSlice(arr, info_.offset_byte_size),
-          info_.index_offset +
-              static_cast<td::int64>(info_.cell_count - 1) *
-                  info_.offset_byte_size));
-      if (off_view.size() != static_cast<size_t>(info_.offset_byte_size)) {
+    if (info_.has_index) {
+      if (info_.cell_count > 0) {
+        char arr[8];
+        TRY_RESULT(off_view, data_.view(
+            td::MutableSlice(arr, info_.offset_byte_size),
+            info_.index_offset +
+                static_cast<td::int64>(info_.cell_count - 1) *
+                    info_.offset_byte_size));
+        if (off_view.size() != static_cast<size_t>(info_.offset_byte_size)) {
+          return td::Status::Error(
+              "bag-of-cells: failed to read indexed last-cell offset");
+        }
+        unsigned long long last_offset =
+            info_.read_offset(off_view.ubegin());
+        if (info_.has_cache_bits) {
+          last_offset >>= 1;
+        }
+        if (last_offset != info_.data_size) {
+          return td::Status::Error(
+              PSLICE()
+              << "bag-of-cells: indexed last cell end offset "
+              << last_offset
+              << " differs from declared data_size " << info_.data_size);
+        }
+      } else if (info_.data_size != 0) {
+        // Round 162 (claude review): cell_count == 0 with non-zero
+        // data_size is non-canonical; mirror boc.cpp.
         return td::Status::Error(
-            "bag-of-cells: failed to read indexed last-cell offset");
-      }
-      unsigned long long last_offset =
-          info_.read_offset(off_view.ubegin());
-      if (info_.has_cache_bits) {
-        last_offset >>= 1;
-      }
-      if (last_offset != info_.data_size) {
-        return td::Status::Error(
-            PSLICE()
-            << "bag-of-cells: indexed last cell end offset "
-            << last_offset
-            << " differs from declared data_size " << info_.data_size);
+            PSLICE() << "bag-of-cells: indexed cell_count is 0 but "
+                        "declared data_size is "
+                     << info_.data_size);
       }
     }
     has_info_ = true;
