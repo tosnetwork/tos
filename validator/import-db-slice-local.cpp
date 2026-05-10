@@ -499,11 +499,21 @@ td::actor::Task<td::Unit> ArchiveImporterLocal::apply_blocks_async(
   }
   auto handles = co_await td::actor::all(std::move(tasks_1));
 
-  std::vector<td::actor::StartedTask<td::Unit>> tasks_2;
+  // Round 158 MEDIUM fix: phase 2 (add_handle_to_archive) advances
+  // ArchiveSlice's last_seqno strictly forward and is documented at
+  // apply_block_async_2 as "must run in order".  Pre-fix this used
+  // td::actor::all, which schedules all tasks concurrently — on a
+  // multi-threaded actor scheduler a later block could call
+  // add_handle_to_archive before its predecessor, causing the
+  // earlier block's lt-db element to be silently skipped (the
+  // predecessor would see itself as already covered by the
+  // already-advanced last_seqno).  Subsequent get_block_by_seqno
+  // / lt-db lookups for that block then fail despite the block
+  // being imported.  Run phase 2 sequentially; phases 1, 3, 4
+  // remain parallel.
   for (const auto &handle : handles) {
-    tasks_2.push_back(apply_block_async_2(handle).start());
+    co_await apply_block_async_2(handle);
   }
-  co_await td::actor::all(std::move(tasks_2));
 
   std::vector<td::actor::StartedTask<td::Unit>> tasks_3;
   for (const auto &handle : handles) {

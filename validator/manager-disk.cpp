@@ -285,7 +285,17 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
             }
           });
 
-          td::actor::send_closure(db, &Db::get_key_block_proof, block_id, std::move(P));
+          // Round 158 LOW fix: fallback should query the proof-LINK
+          // table, not the full-proof table again.  The full-proof
+          // path above already failed (R.is_error()); re-querying it
+          // here just repeats the same miss.  The live manager at
+          // manager.cpp:507 correctly fanouts to
+          // Db::get_key_block_proof_link.  Without this fix, an
+          // archive containing fileref::ProofLink{K} but no full
+          // fileref::Proof{K} would never serve the proof link via
+          // the disk-manager path (downloadKeyBlockProofLink /
+          // prepareKeyBlockProof(allow_partial=true)).
+          td::actor::send_closure(db, &Db::get_key_block_proof_link, block_id, std::move(P));
         } else {
           auto B = R.move_as_ok()->export_as_proof_link().move_as_ok();
           promise.set_value(B->data());
