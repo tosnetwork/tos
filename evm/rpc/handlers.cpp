@@ -6810,6 +6810,27 @@ std::optional<RpcResult> handle_eth_rpc(
                 " disabled by node profile"), true};
         }
     }
+    // Round 152 MEDIUM fix: gate the debug_getRaw* family behind the
+    // same AdminLocal profile.  Pre-fix only debug_traceTransaction,
+    // debug_rebuildRpcCache, and debug_rpcCacheHealth were gated;
+    // debug_getRawTransaction, debug_getRawHeader, debug_getRawBlock,
+    // and debug_getRawReceipts were dispatched on every profile.
+    // debug_getRawBlock and debug_getRawReceipts walk every tx /
+    // receipt in the named block and RLP/hex-encode the result —
+    // admin-style dump work that should not be exposed to public
+    // clients.  All four are conventional admin-only debug methods
+    // by Ethereum precedent; gating them matches operator
+    // expectations.
+    if (method == "debug_getRawTransaction" ||
+        method == "debug_getRawHeader" ||
+        method == "debug_getRawBlock" ||
+        method == "debug_getRawReceipts") {
+        if (!g_profile_debug_rpc_enabled.load(std::memory_order_relaxed)) {
+            return RpcResult{make_error(id, -32601,
+                std::string(method) +
+                " disabled by node profile"), true};
+        }
+    }
 
     // --- Production hardening: rate limiting ---
     if (g_rate_limit_enabled) {

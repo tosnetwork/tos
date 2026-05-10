@@ -194,6 +194,22 @@ td::Status HttpRequest::add_header(HttpHeader header) {
     if (found_transfer_encoding_ || found_content_length_) {
       return td::Status::Error("duplicate Content-Length/Transfer-Encoding");
     }
+    // Round 152 HIGH fix: reject Content-Length > max_payload_size at
+    // header parse time so a deterministic 4xx exits the connection
+    // immediately.  Pre-fix the HTTP request reader paused once
+    // ready_bytes() > high_watermark (also 1 MiB) without rejecting;
+    // the JSON-RPC application layer's kJsonRpcMaxRequestBodyBytes
+    // was 4 MiB, so bodies in (1 MiB, 4 MiB] never completed and
+    // never reached the application's "too large" path.  An attacker
+    // could pin many sockets with ~1 MiB POSTs and never let them
+    // complete, exhausting connection slots without sending malformed
+    // input.  This gate keeps the wire layer self-consistent with
+    // its declared max.
+    if (len > max_payload_size()) {
+      return td::Status::Error(
+          PSLICE() << "Content-Length " << len
+                   << " exceeds max payload size " << max_payload_size());
+    }
     content_length_ = len;
     found_content_length_ = true;
   } else if (lc_name == "transfer-encoding") {
@@ -929,6 +945,15 @@ td::Status HttpResponse::add_header(HttpHeader header) {
     TRY_RESULT(len, td::to_integer_safe<td::uint32>(S));
     if (found_transfer_encoding_ || found_content_length_) {
       return td::Status::Error("duplicate Content-Length/Transfer-Encoding");
+    }
+    // Round 152 HIGH fix: same Content-Length sanity gate as the
+    // request-side path above.  Defensive against a malicious peer
+    // serving an oversize response on an outbound HTTP client
+    // connection.
+    if (len > max_payload_size()) {
+      return td::Status::Error(
+          PSLICE() << "Content-Length " << len
+                   << " exceeds max payload size " << max_payload_size());
     }
     content_length_ = len;
     found_content_length_ = true;

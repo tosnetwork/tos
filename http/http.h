@@ -188,19 +188,28 @@ class HttpRequest {
     return 16 << 10;
   }
 
+  // Round 152 HIGH fix: bumped from 1 MiB to 4 MiB to match
+  // kJsonRpcMaxRequestBodyBytes in validator-engine/json-rpc-server.
+  // cpp.  Pre-fix a legitimate uno_sendTransfer payload (~2.3 MiB
+  // hex+JSON for a 4/4 worst-case shape) exceeded the HTTP-layer
+  // payload max but the JSON-RPC layer accepted it; bodies in
+  // (1 MiB, 4 MiB] never completed because the HTTP reader paused
+  // at the prior 1 MiB watermark and the application "too large"
+  // path never fired — pinning connections.  The new
+  // Content-Length gate in HttpRequest::add_header rejects requests
+  // above this max up front, so an attacker can't pin connections
+  // with arbitrary Content-Length anymore.
   static constexpr size_t max_payload_size() {
-    return 1 << 20;
+    return 4 << 20;  // 4 MiB
   }
 
   static constexpr size_t low_watermark() {
     return 1 << 16;  // 64 KiB
   }
-  // High watermark = max_payload_size (1 MiB). Prevents reader backpressure
-  // for request bodies up to the declared max. The previous 128 KiB value
-  // hung the HTTP parser on requests > 128 KiB (e.g. uno_sendMineUno BoCs,
-  // which carry a ~250 KiB STARK proof hex-encoded to ~500 KiB).
+  // High watermark = max_payload_size (4 MiB). Prevents reader backpressure
+  // for request bodies up to the declared max.
   static constexpr size_t high_watermark() {
-    return 1 << 20;  // 1 MiB
+    return 4 << 20;  // 4 MiB
   }
 
   static td::Result<std::unique_ptr<HttpRequest>> create(std::string method, std::string url,
