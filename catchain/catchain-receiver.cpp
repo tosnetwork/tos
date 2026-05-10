@@ -592,14 +592,32 @@ void CatChainReceiverImpl::read_db_from(CatChainBlockHash id) {
 void CatChainReceiverImpl::read_block_from_db(CatChainBlockHash id, td::BufferSlice data) {
   pending_in_db_--;
 
+  // Round 142 MEDIUM fix: replace bare .ensure() / CHECK aborts on
+  // DB-loaded catchain block records with explicit LOG(FATAL) lines
+  // that name the offending key.  Pre-fix a single corrupted RocksDB
+  // record (malformed TL, wrong bytes under a key, bad signature,
+  // wrong incarnation, missing source) crashed the catchain receiver
+  // with no operator-readable reason.  Halting on corruption is the
+  // correct safety response — these signature/identity checks gate
+  // all downstream consensus — but operators must see WHY.  Same
+  // operator-visibility class as round 137's CellLoader::load
+  // FATAL wiring.
   auto F = fetch_tl_prefix<tos_api::catchain_block>(data, true);
-  F.ensure();
+  if (F.is_error()) {
+    LOG(FATAL) << "catchain-receiver: DB record for block hash "
+               << id << " has malformed TL prefix: "
+               << F.error().message();
+  }
 
   auto block = F.move_as_ok();
   td::BufferSlice payload = std::move(data);
 
   CatChainBlockHash block_id = CatChainReceivedBlock::block_hash(this, block, payload);
-  CHECK(block_id == id);
+  if (block_id != id) {
+    LOG(FATAL) << "catchain-receiver: DB record for block hash "
+               << id << " contains a block whose recomputed hash is "
+               << block_id << " (refusing to proceed on corrupt DB)";
+  }
 
   CatChainReceivedBlock *B = get_block(id);
   if (B && B->initialized()) {
@@ -611,11 +629,24 @@ void CatChainReceiverImpl::read_block_from_db(CatChainBlockHash id, td::BufferSl
   }
 
   CatChainReceiverSource *source = get_source(block->src_);
-  CHECK(source != nullptr);
+  if (source == nullptr) {
+    LOG(FATAL) << "catchain-receiver: DB record for block hash "
+               << id << " names source idx " << block->src_
+               << " which is not in the current source set";
+  }
 
-  CHECK(block->incarnation_ == incarnation_);
+  if (block->incarnation_ != incarnation_) {
+    LOG(FATAL) << "catchain-receiver: DB record for block hash "
+               << id << " has incarnation " << block->incarnation_
+               << " but current incarnation is " << incarnation_;
+  }
 
-  validate_block_sync(block, payload).ensure();
+  auto vbs = validate_block_sync(block, payload);
+  if (vbs.is_error()) {
+    LOG(FATAL) << "catchain-receiver: DB record for block hash "
+               << id << " failed signature/structure validation: "
+               << vbs.message();
+  }
 
   B = create_block(std::move(block), td::SharedSlice{payload.as_slice()});
   CHECK(B);
