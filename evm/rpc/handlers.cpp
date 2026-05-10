@@ -3223,29 +3223,63 @@ static RpcResult handle_max_priority_fee(const std::string& id) {
 // Block explorer RPC helpers
 // ---------------------------------------------------------------------------
 
+// Round 103 LOW fix helper: extract the string value of the FIRST
+// JSON-array element from a `params` string like
+// `["latest","0x0"]` or `[{"to":"..."}]`.  Returns the inner
+// characters of the first `"..."` if the first element is a JSON
+// string; nullopt otherwise (object / array / number / null).
+// Pre-fix, the helpers below scanned the whole `params` string for
+// named tags / `"0x` and matched anywhere — including nested
+// strings like `{"to":"latest"}` — which let callers spoof
+// positional meaning.
+static std::optional<std::string> extract_first_array_string(
+    const std::string& params) {
+    auto lb = params.find('[');
+    if (lb == std::string::npos) return std::nullopt;
+    std::size_t i = lb + 1;
+    while (i < params.size() &&
+           (params[i] == ' ' || params[i] == '\t' ||
+            params[i] == '\n' || params[i] == '\r')) {
+        ++i;
+    }
+    if (i >= params.size()) return std::nullopt;
+    if (params[i] != '"') return std::nullopt;  // non-string first element
+    std::size_t start = i + 1;
+    auto end = params.find('"', start);
+    if (end == std::string::npos) return std::nullopt;
+    return params.substr(start, end - start);
+}
+
 // Parse a block number tag from the first param in an array:
 //   ["latest"] / ["earliest"] / ["safe"] / ["finalized"] / ["pending"] / ["0x1"]
 // Returns the resolved uint64_t block number.
 static uint64_t parse_block_number_param(const std::string& params) {
-    uint64_t bn = global_evm_state().block_number();
-    // Check for named tags first
-    if (params.find("\"latest\"") != std::string::npos ||
-        params.find("\"pending\"") != std::string::npos ||
-        params.find("\"safe\"") != std::string::npos ||
-        params.find("\"finalized\"") != std::string::npos) {
-        return bn;
+    const uint64_t head = global_evm_state().block_number();
+    // Round 103 LOW fix: tag-detection now scans ONLY the first
+    // positional JSON-string element, not the whole params blob, so
+    // a nested `{"to":"latest"}` cannot spoof the tag.
+    auto first_str = extract_first_array_string(params);
+    if (!first_str.has_value()) {
+        return head;
     }
-    if (params.find("\"earliest\"") != std::string::npos) {
+    if (*first_str == "latest" || *first_str == "pending" ||
+        *first_str == "safe" || *first_str == "finalized") {
+        return head;
+    }
+    if (*first_str == "earliest") {
         return 0;
     }
-    // Otherwise parse hex
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string hex_str = params.substr(pos, end - pos);
-        return parse_hex_uint64(hex_str);
+    // Round 103 LOW fix: route through parse_hex_uint64_strict so
+    // malformed `"0xzz"` rejects rather than aliasing to 0, and
+    // oversized hex doesn't silently saturate to UINT64_MAX.
+    auto strict_res = parse_hex_uint64_strict(*first_str);
+    if (strict_res.is_error()) {
+        // Malformed first param; fall back to head (legacy behavior
+        // for bogus tags).  The caller's downstream gates surface
+        // -32010 / null / -32602 as appropriate.
+        return head;
     }
-    return bn;
+    return strict_res.move_as_ok();
 }
 
 // Parse a 32-byte hash from the first hex param in the params string.
@@ -3275,13 +3309,19 @@ static bool parse_hash_param(const std::string& params, evmc::bytes32& out) {
 // parse_block_number_param AND tx_index=0 here, returning a
 // real tx instead of -32602.  Detect "first param is named tag"
 // explicitly; otherwise a missing second hex IS an error.
+//
+// Round 103 LOW fix: scan only the FIRST positional JSON-string
+// element for the named tag, not the whole params blob, so a
+// nested `{"to":"latest"}` cannot spoof the tag.
 static std::optional<uint64_t> parse_second_hex_param(const std::string& params) {
-    const bool first_is_named_tag =
-        params.find("\"latest\"") != std::string::npos ||
-        params.find("\"pending\"") != std::string::npos ||
-        params.find("\"safe\"") != std::string::npos ||
-        params.find("\"finalized\"") != std::string::npos ||
-        params.find("\"earliest\"") != std::string::npos;
+    auto first_str = extract_first_array_string(params);
+    bool first_is_named_tag = false;
+    if (first_str.has_value()) {
+        const auto& s = *first_str;
+        first_is_named_tag = (s == "latest" || s == "pending" ||
+                              s == "safe" || s == "finalized" ||
+                              s == "earliest");
+    }
     auto first = params.find("\"0x");
     if (first == std::string::npos) return std::nullopt;
     std::size_t hex_pos;
