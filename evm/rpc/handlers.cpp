@@ -758,7 +758,16 @@ static bool parse_hex_address(const std::string& params, evmc::address& out) {
 // a quoted substring, or a raw-params substring starting at `0x`.
 // Overlong / delimiter-injected inputs reject because hex would have
 // continued past the end of the well-formed JSON string.
+//
+// Round 106 LOW fix: when the input begins with `"`, treat it as the
+// raw body of a JSON string that contained an escape (e.g.
+// `\"0x6869`) and reject — the caller passed an extracted string
+// whose content starts with a literal `"`, NOT the quoted-substring
+// form.  Pre-fix the parser fell through to `find("\"0x")` and
+// matched the embedded escaped quote, accepting `"0x6869` as
+// `0x6869`.
 static bool parse_hex_bytes(const std::string& hex, silkworm::Bytes& out) {
+    if (!hex.empty() && hex[0] == '"') return false;
     auto try_at = [&](std::size_t pos) {
         std::size_t len = 0;
         while (pos + len < hex.size()) {
@@ -811,6 +820,8 @@ static bool parse_first_hash_bytes(const std::string& params,
                                     silkworm::Bytes& out);
 static bool parse_first_hex_bytes_param(const std::string& params,
                                          silkworm::Bytes& out);
+static bool parse_first_address_param(const std::string& params,
+                                       evmc::address& out);
 
 // Look up the real block hash for a given block number, return hex or zeros if not found.
 static std::string lookup_block_hash_hex(uint64_t block_num) {
@@ -1083,7 +1094,7 @@ static RpcResult handle_gas_price(const std::string& id) {
 
 static RpcResult handle_get_balance(const std::string& params, const std::string& id) {
     evmc::address addr{};
-    if (!parse_hex_address(params, addr)) {
+    if (!parse_first_address_param(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
     auto& state = global_evm_state();
@@ -1095,7 +1106,7 @@ static RpcResult handle_get_balance(const std::string& params, const std::string
 
 static RpcResult handle_get_transaction_count(const std::string& params, const std::string& id) {
     evmc::address addr{};
-    if (!parse_hex_address(params, addr)) {
+    if (!parse_first_address_param(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
     auto& state = global_evm_state();
@@ -1107,7 +1118,7 @@ static RpcResult handle_get_transaction_count(const std::string& params, const s
 
 static RpcResult handle_get_code(const std::string& params, const std::string& id) {
     evmc::address addr{};
-    if (!parse_hex_address(params, addr)) {
+    if (!parse_first_address_param(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
     auto& state = global_evm_state();
@@ -3069,7 +3080,7 @@ static RpcResult handle_syncing(const std::string& id) {
 static RpcResult handle_get_storage_at(const std::string& params, const std::string& id) {
     // params: [address, slot, block]
     evmc::address addr{};
-    if (!parse_hex_address(params, addr)) {
+    if (!parse_first_address_param(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
 
@@ -3325,6 +3336,14 @@ static std::optional<std::string> extract_array_element_n(
 // Round 105 LOW fix helper: extract the Nth element AS a JSON
 // string body (between the surrounding `"` chars).  Returns
 // nullopt if the element is not a JSON string.
+//
+// Round 106 LOW fix: also reject strings containing JSON escapes
+// (`\"`, `\\`, `\n`, etc.).  Pre-fix the body returned the raw
+// text including backslashes, and downstream parsers like
+// parse_hex_bytes happily matched the embedded `"0x` past an
+// escaped quote (`\"0x6869"` → 0x6869).  RPC inputs requiring
+// hex / address values never contain JSON escapes in practice,
+// so rejecting any escape is conservative but safe.
 static std::optional<std::string> extract_array_element_string_n(
     const std::string& params, std::size_t n) {
     auto el = extract_array_element_n(params, n);
@@ -3332,7 +3351,11 @@ static std::optional<std::string> extract_array_element_string_n(
     if (el->size() < 2 || (*el)[0] != '"' || el->back() != '"') {
         return std::nullopt;
     }
-    return el->substr(1, el->size() - 2);
+    auto body = el->substr(1, el->size() - 2);
+    if (body.find('\\') != std::string::npos) {
+        return std::nullopt;
+    }
+    return body;
 }
 
 // Parse a block number tag from the first param in an array:
@@ -3410,6 +3433,20 @@ static bool parse_first_hex_bytes_param(const std::string& params,
     auto first_str = extract_array_element_string_n(params, 0);
     if (!first_str.has_value()) return false;
     return parse_hex_bytes(*first_str, out);
+}
+
+// Round 106 LOW fix: parse the first positional element as a
+// 20-byte EVM address.  Used by address-first RPCs
+// (eth_getBalance, eth_getTransactionCount, eth_getCode, the
+// address half of eth_getStorageAt).  Pre-fix these called
+// parse_hex_address(params, ...) which scanned the whole params
+// blob for `"0x` and accepted addresses nested inside object
+// values like `[{"shadow":"0x..."},"latest"]`.
+static bool parse_first_address_param(const std::string& params,
+                                       evmc::address& out) {
+    auto first_str = extract_array_element_string_n(params, 0);
+    if (!first_str.has_value()) return false;
+    return parse_hex_address(*first_str, out);
 }
 
 // Parse the second hex param (transaction index) from params like ["0x1", "0x0"].
