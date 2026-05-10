@@ -802,6 +802,7 @@ static bool parse_hex_bytes32(const std::string& hex, evmc::bytes32& out) {
 
 // Forward declarations
 static std::vector<std::vector<evmc::bytes32>> parse_topics_array(const std::string& params);
+static uint64_t parse_block_number_param(const std::string& params);
 
 // Look up the real block hash for a given block number, return hex or zeros if not found.
 static std::string lookup_block_hash_hex(uint64_t block_num) {
@@ -2422,27 +2423,52 @@ static bool block_cache_record_is_fresh(const EvmState& state,
 }
 
 static RpcResult handle_get_block_by_number(const std::string& params, const std::string& id) {
-    uint64_t bn = global_evm_state().block_number();
+    // Round 104 LOW fix: route through parse_block_number_param so
+    // (a) the named-tag detection scans only the first positional
+    // element (no nested-string spoofing), and (b) malformed hex
+    // strict-rejects rather than aliasing to head via parse_hex_
+    // uint64.  parse_block_number_param handles "earliest" → 0
+    // and named tags → head; any other malformed first param
+    // falls back to head, mirroring legacy lenient behavior.
+    uint64_t bn = parse_block_number_param(params);
     bool full_transactions = false;
-
-    // Parse block number from params
-    std::string bn_str = extract_json_string_value(params, "");
-    if (bn_str.empty()) {
-        // Try array format: ["0x1", false]
-        auto pos = params.find("0x");
-        if (pos != std::string::npos) {
-            auto end = params.find_first_of("\",]}", pos);
-            bn_str = params.substr(pos, end - pos);
+    // Parse fullTransactions boolean (second positional param) by
+    // scanning AFTER the first array element.  Pre-fix
+    // `params.find("true")` matched anywhere — nested objects
+    // with `true` flipped the flag.
+    if (auto lb = params.find('['); lb != std::string::npos) {
+        // Skip past the first JSON value: walk up to the comma at
+        // the array's top level.
+        std::size_t i = lb + 1;
+        int depth = 0;
+        bool in_string = false;
+        bool found_comma = false;
+        while (i < params.size()) {
+            char c = params[i];
+            if (in_string) {
+                if (c == '\\' && i + 1 < params.size()) {
+                    i += 2;
+                    continue;
+                }
+                if (c == '"') in_string = false;
+            } else {
+                if (c == '"') in_string = true;
+                else if (c == '{' || c == '[') ++depth;
+                else if (c == '}' || c == ']') {
+                    if (depth == 0) break;
+                    --depth;
+                }
+                else if (c == ',' && depth == 0) {
+                    found_comma = true;
+                    ++i;
+                    break;
+                }
+            }
+            ++i;
         }
-    }
-    if (!bn_str.empty() && bn_str != "latest" && bn_str != "pending" &&
-        bn_str != "safe" && bn_str != "finalized") {
-        if (bn_str == "earliest") bn = 0;
-        else bn = parse_hex_uint64(bn_str);
-    }
-    // Parse fullTransactions boolean (second param)
-    if (params.find("true") != std::string::npos) {
-        full_transactions = true;
+        if (found_comma && params.find("true", i) != std::string::npos) {
+            full_transactions = true;
+        }
     }
 
     auto blk = global_evm_state().get_block_copy(bn);
@@ -2963,16 +2989,9 @@ static RpcResult handle_eth_get_subscription(const std::string& params, const st
 }
 
 static RpcResult handle_get_block_receipts(const std::string& params, const std::string& id) {
-    // Parse block number
-    uint64_t bn = global_evm_state().block_number();
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string bn_str = params.substr(pos, end - pos);
-        if (bn_str != "latest" && bn_str != "pending") {
-            bn = parse_hex_uint64(bn_str);
-        }
-    }
+    // Round 104 LOW fix: use parse_block_number_param so a nested
+    // `{"shadow":"0x0"}` cannot override the first positional tag.
+    uint64_t bn = parse_block_number_param(params);
 
     // Get the block to find its transaction hashes
     auto blk = global_evm_state().get_block_copy(bn);
@@ -3313,6 +3332,13 @@ static bool parse_hash_param(const std::string& params, evmc::bytes32& out) {
 // Round 103 LOW fix: scan only the FIRST positional JSON-string
 // element for the named tag, not the whole params blob, so a
 // nested `{"to":"latest"}` cannot spoof the tag.
+//
+// Round 104 LOW fix: when the first positional element is an
+// object/array (not a string), the second positional element's
+// `"0x` could collide with a nested hex string inside the first
+// element.  Walk past the first positional element's end (the
+// top-level comma after the array's opening `[`) before
+// searching for the second `"0x`.
 static std::optional<uint64_t> parse_second_hex_param(const std::string& params) {
     auto first_str = extract_first_array_string(params);
     bool first_is_named_tag = false;
@@ -3322,19 +3348,51 @@ static std::optional<uint64_t> parse_second_hex_param(const std::string& params)
                               s == "safe" || s == "finalized" ||
                               s == "earliest");
     }
-    auto first = params.find("\"0x");
-    if (first == std::string::npos) return std::nullopt;
+    // Walk the params string to find the position immediately
+    // after the first positional element (i.e., right after the
+    // top-level comma following the `[`).  Nested strings and
+    // braces during the walk don't count as positional separators.
+    auto find_after_first_positional = [&]() -> std::size_t {
+        auto lb = params.find('[');
+        if (lb == std::string::npos) return std::string::npos;
+        std::size_t i = lb + 1;
+        int depth = 0;
+        bool in_string = false;
+        while (i < params.size()) {
+            char c = params[i];
+            if (in_string) {
+                if (c == '\\' && i + 1 < params.size()) {
+                    i += 2;
+                    continue;
+                }
+                if (c == '"') in_string = false;
+            } else {
+                if (c == '"') in_string = true;
+                else if (c == '{' || c == '[') ++depth;
+                else if (c == '}' || c == ']') {
+                    if (depth == 0) break;
+                    --depth;
+                }
+                else if (c == ',' && depth == 0) {
+                    return i + 1;
+                }
+            }
+            ++i;
+        }
+        return std::string::npos;
+    };
     std::size_t hex_pos;
     if (first_is_named_tag) {
-        // Lone `"0x is the index (the named tag had no hex).
-        hex_pos = first + 1;
+        // Single-`"0x` form: the lone hex IS the index.
+        auto p = params.find("\"0x");
+        if (p == std::string::npos) return std::nullopt;
+        hex_pos = p + 1;
     } else {
-        auto second = params.find("\"0x", first + 3);
-        if (second == std::string::npos) {
-            // Two hex params were required but only one is present.
-            return std::nullopt;
-        }
-        hex_pos = second + 1;
+        const std::size_t after = find_after_first_positional();
+        if (after == std::string::npos) return std::nullopt;
+        auto p = params.find("\"0x", after);
+        if (p == std::string::npos) return std::nullopt;
+        hex_pos = p + 1;
     }
     auto end_quote = params.find('"', hex_pos);
     if (end_quote == std::string::npos) return std::nullopt;
@@ -4149,16 +4207,13 @@ static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& 
 // current head) or any 0x-prefixed hex block number. Returns the resolved
 // block number.
 static uint64_t parse_block_tag_param(const std::string& params) {
-    uint64_t bn = global_evm_state().block_number();
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string s = params.substr(pos, end - pos);
-        if (s != "latest" && s != "pending" && s != "safe" && s != "finalized") {
-            bn = parse_hex_uint64(s);
-        }
-    }
-    return bn;
+    // Round 104 LOW fix: route through parse_block_number_param so
+    // the named-tag detection (latest / pending / safe / finalized
+    // / earliest) scans ONLY the first positional element, malformed
+    // hex doesn't alias to head via parse_hex_uint64, and "earliest"
+    // is recognized.  Pre-fix this helper used a whole-blob `0x`
+    // scan and missed both "earliest" and the nested-string spoof.
+    return parse_block_number_param(params);
 }
 
 // Map our `StoredBlock` (the indexed-for-RPC view) to the silkworm
