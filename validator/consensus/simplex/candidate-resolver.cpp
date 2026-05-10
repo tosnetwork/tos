@@ -344,7 +344,22 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     co_await try_load_candidate_data_from_db(id, state);
 
     if (bus.validator_set.size() == 1) {
-      CHECK(state.candidate_and_cert.is_complete());
+      // Round 141 LOW fix: round-140 made try_load_candidate_data_
+      // from_db skip mismatched DB candidates instead of feeding
+      // them into to_tl, but the singleton path still assumed the
+      // load was authoritative.  In a one-validator group there is
+      // no peer to resolve from, so a corrupted db_key_candidate
+      // record now genuinely cannot be recovered — LOG(FATAL) with
+      // a clear reason is the right exit, replacing the bare
+      // CHECK(state.candidate_and_cert.is_complete()) that would
+      // otherwise abort with no context.
+      if (!state.candidate_and_cert.is_complete()) {
+        LOG(FATAL) << "Simplex candidate-resolver: singleton group "
+                      "cannot resolve candidate "
+                   << id
+                   << " — DB record is missing or corrupted and there "
+                      "is no peer to fall back to";
+      }
       co_return td::Unit{};
     }
 
