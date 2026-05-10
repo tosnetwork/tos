@@ -251,17 +251,31 @@ td::Result<JvmArgType> parse_descriptor_argument(
 
 td::Ref<vm::Cell> encode_jvm_call_descriptor(
     const JvmCallDescriptor& descriptor) {
+    // Round 120 HIGH fix: wrap encoding in try/catch so a
+    // caller-supplied argsBoc with depth at vm::CellTraits::
+    // max_depth doesn't make CellBuilder::finalize() throw
+    // CellWriteError out of jvm_callContract.  Pre-fix the
+    // validator-engine RPC dispatch did not catch this and the
+    // public RPC was a DoS vector.
     if (validate_descriptor(descriptor).is_error()) {
         return {};
     }
-    vm::CellBuilder cb;
-    if (!cb.store_ulong_rchk_bool(kJvmCallDescriptorMagic, 32) ||
-        !cb.store_ulong_rchk_bool(descriptor.schema_version, 8) ||
-        !cb.store_ulong_rchk_bool(descriptor.method_id, 32) ||
-        !cb.store_ref_bool(descriptor.args)) {
+    try {
+        vm::CellBuilder cb;
+        if (!cb.store_ulong_rchk_bool(kJvmCallDescriptorMagic, 32) ||
+            !cb.store_ulong_rchk_bool(descriptor.schema_version, 8) ||
+            !cb.store_ulong_rchk_bool(descriptor.method_id, 32) ||
+            !cb.store_ref_bool(descriptor.args)) {
+            return {};
+        }
+        return cb.finalize();
+    } catch (vm::VmError&) {
+        return {};
+    } catch (vm::VmVirtError&) {
+        return {};
+    } catch (...) {
         return {};
     }
-    return cb.finalize();
 }
 
 td::Result<JvmCallDescriptor> parse_jvm_call_descriptor(

@@ -50,6 +50,14 @@ bool jvm_class_hash_is_zero(const JvmClassHash& h) {
 
 td::Ref<vm::Cell> encode_jvm_contract_account_state(
     const JvmContractAccountState& state) {
+    // Round 120 HIGH fix: wrap encoding in try/catch.  Pre-fix,
+    // a successful execution that produced a near-max-depth
+    // storage_root (e.g. via a Patricia path with many fork
+    // ancestors plus a large value) made build_jvm_workchain_
+    // output → encode_jvm_contract_account_state →
+    // CellBuilder::finalize() throw CellWriteError, escaping
+    // consensus execution.  Catch and return null so the caller
+    // surfaces a clean error.
     if (state.schema_version != kJvmContractAccountStateSchemaVersion) {
         return {};
     }
@@ -65,23 +73,31 @@ td::Ref<vm::Cell> encode_jvm_contract_account_state(
     // do still verify it's non-zero on the struct so callers don't
     // accidentally produce a JVAC whose recomputed hash mismatches
     // their expectation.
-    vm::CellBuilder cb;
-    if (!cb.store_ulong_rchk_bool(kJvmContractAccountStateMagic,
-                                  kJvmContractAccountStateMagicBits) ||
-        !cb.store_ulong_rchk_bool(state.schema_version, 8) ||
-        !cb.store_bytes_bool(state.stdlib_hash.data(),
-                             static_cast<unsigned>(state.stdlib_hash.size())) ||
-        !cb.store_bytes_bool(state.deployer.data(),
-                             static_cast<unsigned>(state.deployer.size())) ||
-        !cb.store_bytes_bool(state.address_commit.data(),
-                             static_cast<unsigned>(
-                                 state.address_commit.size())) ||
-        !cb.store_ref_bool(state.class_bytes) ||
-        !store_maybe_ref(cb, state.storage_root) ||
-        !store_maybe_ref(cb, state.manifest_root)) {
+    try {
+        vm::CellBuilder cb;
+        if (!cb.store_ulong_rchk_bool(kJvmContractAccountStateMagic,
+                                      kJvmContractAccountStateMagicBits) ||
+            !cb.store_ulong_rchk_bool(state.schema_version, 8) ||
+            !cb.store_bytes_bool(state.stdlib_hash.data(),
+                                 static_cast<unsigned>(state.stdlib_hash.size())) ||
+            !cb.store_bytes_bool(state.deployer.data(),
+                                 static_cast<unsigned>(state.deployer.size())) ||
+            !cb.store_bytes_bool(state.address_commit.data(),
+                                 static_cast<unsigned>(
+                                     state.address_commit.size())) ||
+            !cb.store_ref_bool(state.class_bytes) ||
+            !store_maybe_ref(cb, state.storage_root) ||
+            !store_maybe_ref(cb, state.manifest_root)) {
+            return {};
+        }
+        return cb.finalize();
+    } catch (vm::VmError&) {
+        return {};
+    } catch (vm::VmVirtError&) {
+        return {};
+    } catch (...) {
         return {};
     }
-    return cb.finalize();
 }
 
 bool decode_jvm_contract_account_state(td::Ref<vm::Cell> cell,

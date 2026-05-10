@@ -304,23 +304,37 @@ td::Ref<vm::Cell> encode_jvm_event_message(const JvmEvent& event) {
 
 td::Ref<vm::Cell> build_jvm_event_action_list(
     const std::vector<JvmEvent>& events) {
-    td::Ref<vm::Cell> list = empty_cell();
-    for (const auto& event : events) {
-        auto msg = encode_jvm_event_message(event);
-        if (msg.is_null()) {
-            return {};
-        }
+    // Round 120 HIGH fix: wrap in try/catch.  16 events with
+    // max-depth payloads cross vm::CellTraits::max_depth at
+    // CellBuilder::finalize(), throwing CellWriteError.  This is
+    // reached from avata-execution.cpp before a td::Status can be
+    // returned; converting to a null result lets the caller surface
+    // a clean error.
+    try {
+        td::Ref<vm::Cell> list = empty_cell();
+        for (const auto& event : events) {
+            auto msg = encode_jvm_event_message(event);
+            if (msg.is_null()) {
+                return {};
+            }
 
-        vm::CellBuilder cb;
-        if (!cb.store_ref_bool(list) ||
-            !cb.store_ulong_rchk_bool(0x0ec3c86d, 32) ||
-            !cb.store_ulong_rchk_bool(0, 8) ||
-            !cb.store_ref_bool(std::move(msg))) {
-            return {};
+            vm::CellBuilder cb;
+            if (!cb.store_ref_bool(list) ||
+                !cb.store_ulong_rchk_bool(0x0ec3c86d, 32) ||
+                !cb.store_ulong_rchk_bool(0, 8) ||
+                !cb.store_ref_bool(std::move(msg))) {
+                return {};
+            }
+            list = cb.finalize();
         }
-        list = cb.finalize();
+        return list;
+    } catch (vm::VmError&) {
+        return {};
+    } catch (vm::VmVirtError&) {
+        return {};
+    } catch (...) {
+        return {};
     }
-    return list;
 }
 
 }  // namespace jvm_workchain
