@@ -419,6 +419,30 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                     "JVM contract account state has non-empty storage_root at "
                     "first activation");
             }
+            // Round 115 MEDIUM fix: validate the full manifest at
+            // first activation.  Round 114 made
+            // find_jvm_method_manifest_entry a streaming lookup
+            // (cuts unmetered work for non-matching entries) under
+            // the assumption that deploy-time validation enforces
+            // count cap, dedup, and tail invariants.  But the
+            // inbound StateInit.data path lets a caller hand-build
+            // a manifest with trailing nodes / duplicate ids /
+            // count mismatch that the streaming lookup would
+            // happily traverse.  Run parse_jvm_method_manifest
+            // here so a malformed manifest never lands in
+            // persisted state.  The cost (full decode + dedup)
+            // is paid ONCE at first activation, not on every
+            // call — subsequent invocations trust the persisted
+            // root.
+            if (state.manifest_root.not_null()) {
+                auto manifest_check = parse_jvm_method_manifest(
+                    state.manifest_root);
+                if (manifest_check.is_error()) {
+                    return skipped_output(
+                        block::ComputePhase::sk_bad_state,
+                        "JVM first activation: manifest_root is malformed");
+                }
+            }
             // Round 58 LOW fix: the inbound `StateInit.code` is
             // caller-controlled and the host's custom-engine branch
             // (`Transaction::prepare_compute_phase`) preserves it on a
