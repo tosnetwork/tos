@@ -585,6 +585,19 @@ static td::Result<td::Ref<vm::Cell>> build_external_message_cell(const InitialIn
   if (!addr.parse_addr(td::Slice(in.address))) {
     return td::Status::Error("Invalid address");
   }
+  // Round 144 MEDIUM fix: addr_std uses an int8 workchain field
+  // (range [-128, 127]).  StdAddress::parse_addr accepts the
+  // wider int32 form, so an address like "128:<hex>" parsed
+  // successfully and then GenericAccount::create_ext_message
+  // hit MsgAddressInt::pack rejection followed by
+  // CHECK(res.not_null()) — turning a single crafted address
+  // into a daemon abort.  Reject out-of-int8 workchains here
+  // before the addr_std encode.
+  if (addr.workchain < -128 || addr.workchain > 127) {
+    return td::Status::Error(
+        PSTRING() << "Invalid address: workchain " << addr.workchain
+                  << " is out of the addr_std int8 range [-128, 127]");
+  }
   auto body_r = parse_optional_boc_string(in.body_b64, "body");
   if (body_r.is_error()) return body_r.move_as_error();
   if (body_r.ok().is_null()) return td::Status::Error("Missing 'body'");
@@ -1134,6 +1147,21 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
     return;
   }
   auto addr = addr_r.move_as_ok();
+  // Round 144 MEDIUM fix: addr_std uses an int8 workchain field
+  // (range [-128, 127]).  parse_address_param accepts the wider
+  // int32 form, so an address like "128:<hex>" parsed and then
+  // store_long(addr.workchain, 8) at the addr_std encode below
+  // truncated silently — emitting a structurally malformed
+  // message that downstream consensus would reject after
+  // unpaid CPU work.  Reject out-of-int8 workchains here.
+  if (addr.workchain < -128 || addr.workchain > 127) {
+    promise.set_value(make_json_error(
+        -32602,
+        PSTRING() << "Invalid 'address': workchain " << addr.workchain
+                  << " is out of the addr_std int8 range [-128, 127]",
+        req_id));
+    return;
+  }
 
   // Parse message body (base64 BOC)
   auto body_r = params.get_required_string_field("body");

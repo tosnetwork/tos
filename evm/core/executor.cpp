@@ -60,9 +60,29 @@ std::optional<std::string> prevalidate_evm_transaction_admission_locked(
     const auto& sender = *sender_opt;
     const auto rev = config.revision(block.header.number, block.header.timestamp);
 
-    if (txn.chain_id.has_value() &&
-        *txn.chain_id != intx::uint256{config.chain_id}) {
+    // Round 144 LOW fix: mirror the round-127 (chain_id binding)
+    // and round-133 (EIP-2 low-S signature) gates here so the
+    // cheap-admission path rejects pre-EIP-155 / high-S txs
+    // BEFORE the EVM compute phase forces EIP-4788 / EIP-2935
+    // system-call work in compute-phase.cpp.  The full executor
+    // re-checks both later, so missing them here is not a
+    // consensus acceptance bypass — it's an unpaid-CPU
+    // amplification vector for raw-BOC submissions that bypass
+    // the JSON-RPC eth_sendRawTransaction admission path.  Only
+    // gate signatures when r/s are non-zero; the (0,0) case is
+    // the internal-tx / set_sender path used by host engines.
+    if (!txn.chain_id.has_value()) {
+        return "pre-EIP-155 legacy transactions are not supported "
+               "(chain_id binding required)";
+    }
+    if (*txn.chain_id != intx::uint256{config.chain_id}) {
         return "wrong chain id";
+    }
+    if ((txn.r != 0 || txn.s != 0) &&
+        !silkworm::is_valid_signature(txn.r, txn.s,
+                                       rev >= EVMC_HOMESTEAD)) {
+        return "invalid secp256k1 signature (non-canonical r/s; "
+               "EIP-2 low-S required)";
     }
 
     if (txn.type == silkworm::TransactionType::kBlob) {
