@@ -1160,8 +1160,25 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
         if (!effective_need_data) {
           stats_.sync_with_db_only_ref.inc();
         }
-        auto load_result =
-            cell_loader_->load(info.cell->get_hash().as_slice(), effective_need_data, *this).move_as_ok();
+        // Round 137 LOW fix: round-136 made CellLoader::load return
+        // Status::Error on key/value hash mismatch instead of
+        // silently substituting a foreign cell.  The pre-round-136
+        // .move_as_ok() inside this lazy ext-cell sync path turned
+        // any such error into a raw process abort with no log.
+        // Surface the corruption explicitly via LOG(FATAL) — a
+        // hash mismatch in CellDb is unrecoverable and operator
+        // alert is the correct response.  state.update is a lambda
+        // with no error channel; logging-then-abort is the cleanest
+        // exit available without a wider refactor of the lazy load
+        // surface.
+        auto load_result_res =
+            cell_loader_->load(info.cell->get_hash().as_slice(),
+                               effective_need_data, *this);
+        if (load_result_res.is_error()) {
+          LOG(FATAL) << "CellDb V2 lazy ext-cell sync: "
+                     << load_result_res.error().message();
+        }
+        auto load_result = load_result_res.move_as_ok();
 
         state.sync_with_db = true;
         if (load_result.status == CellLoader::LoadResult::NotFound) {
