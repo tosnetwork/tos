@@ -4328,8 +4328,18 @@ TEST(JvmWorkchainCore, RpcGetContractStateFetchesPerAccount) {
     }
   }
 
-  std::string contract_address_hex =
-      "0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+  // Round 123 MEDIUM fix: jvm_getContractState now mirrors the
+  // consensus address-binding gate, so the test must use the
+  // address derived from this state instead of an arbitrary one.
+  auto bound_addr = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+  std::string contract_address_hex = "0x";
+  for (auto b : bound_addr) {
+    char buf[3];
+    std::snprintf(buf, sizeof(buf), "%02x", static_cast<unsigned>(b));
+    contract_address_hex += buf;
+  }
 
   std::string params = "{\"contractAddress\":\"" + contract_address_hex
                      + "\",\"accountStateBoc\":\"" + state_hex + "\"}";
@@ -4382,9 +4392,12 @@ TEST(JvmWorkchainCore, RpcGetContractStateEscapesClassNameJson) {
   CHECK(state_cell.not_null());
 
   JvmGetContractStateRequest req;
-  std::array<std::uint8_t, 32> addr{};
-  addr[31] = 0xab;
-  req.contract_address = addr;
+  // Round 123 MEDIUM fix: address-binding gate also applies to
+  // this test — derive the bound address from the state.
+  auto bound_addr = derive_jvm_contract_address_from_state(
+      state.deployer, state.address_commit, state.class_hash,
+      compute_jvm_manifest_root_hash(state.manifest_root));
+  req.contract_address = bound_addr;
   req.account_state = state_cell;
 
   auto result = handle_jvm_get_contract_state(req);

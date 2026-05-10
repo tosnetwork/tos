@@ -54,6 +54,25 @@ td::Ref<vm::Cell> encode_jvm_method_manifest(
 td::Result<std::vector<JvmMethodManifestEntry>> parse_jvm_method_manifest(
     td::Ref<vm::Cell> root);
 
+// Round 123 MEDIUM fix: cheap count peek used to pre-bound the
+// validator-CPU/gas asymmetry that round 122 only partially
+// closed.  Reads ONLY the manifest root header (magic, schema,
+// count) without walking the chain or decoding any entry strings.
+// Lets dispatch reject manifests whose declared size exceeds the
+// caller's affordable gas before paying the ~1.5 KiB-per-entry
+// string-decode cost.
+td::Result<std::uint16_t> peek_jvm_method_manifest_count(
+    td::Ref<vm::Cell> root);
+
+// Conservative upper bound on parse_jvm_method_manifest's cost
+// per declared entry.  Each entry decodes 3 strings up to
+// kJvmAvataManifestStringMaxBytes bytes (= 512) plus a small
+// envelope; the +64 covers the per-entry header, four refs, and
+// the per-cell decode/copy overhead.  Used as a conservative gas
+// proxy in dispatch's first-activation manifest gate.
+constexpr std::uint64_t kJvmManifestParseBytesPerEntry =
+    3u * kJvmAvataManifestStringMaxBytes + 64u;
+
 td::Result<JvmMethodManifestEntry> find_jvm_method_manifest_entry(
     td::Ref<vm::Cell> root,
     std::uint32_t method_id);

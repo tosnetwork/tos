@@ -309,6 +309,37 @@ td::Ref<vm::Cell> encode_jvm_method_manifest(
     }
 }
 
+td::Result<std::uint16_t> peek_jvm_method_manifest_count(
+    td::Ref<vm::Cell> root) {
+    if (root.is_null()) {
+        return td::Status::Error("JVM method manifest root is null");
+    }
+    bool special = false;
+    auto cs = vm::load_cell_slice_special(root, special);
+    if (special) {
+        return td::Status::Error("JVM method manifest root is special");
+    }
+    std::uint32_t magic = 0;
+    if (!fetch_u32(cs, magic) || magic != kJvmMethodManifestMagic) {
+        return td::Status::Error("JVM method manifest root has wrong magic");
+    }
+    std::uint8_t schema_version = 0;
+    if (!fetch_u8(cs, schema_version) ||
+        schema_version != kJvmMethodManifestSchemaVersion) {
+        return td::Status::Error(
+            "JVM method manifest root has unsupported schema");
+    }
+    std::uint16_t count = 0;
+    if (!fetch_u16(cs, count)) {
+        return td::Status::Error("JVM method manifest root is truncated");
+    }
+    if (count > kJvmMethodManifestMaxEntries) {
+        return td::Status::Error(
+            "JVM method manifest root has too many entries");
+    }
+    return count;
+}
+
 td::Result<std::vector<JvmMethodManifestEntry>> parse_jvm_method_manifest(
     td::Ref<vm::Cell> root) {
     if (root.is_null()) {

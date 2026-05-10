@@ -1390,6 +1390,29 @@ JvmRpcResult handle_jvm_get_contract_state(
             true};
     }
 
+    // Round 123 MEDIUM fix: mirror the consensus address-binding gate
+    // (dispatch-engine.cpp:397) and the round-18 jvm_callContract gate
+    // (rpc.cpp ~line 882) here.  Pre-fix this endpoint accepted any
+    // accountStateBoc under any contractAddress and echoed
+    // req.contract_address back in the response — letting an attacker
+    // confuse clients into believing a contract with attacker-chosen
+    // class_hash / storage exists at a victim's deterministic address.
+    {
+        const auto bound_manifest_hash =
+            compute_jvm_manifest_root_hash(state.manifest_root);
+        const auto bound_addr = derive_jvm_contract_address_from_state(
+            state.deployer, state.address_commit, state.class_hash,
+            bound_manifest_hash);
+        if (std::memcmp(req.contract_address.data(), bound_addr.data(),
+                        bound_addr.size()) != 0) {
+            return JvmRpcResult{
+                json_rpc_err(id, -32602,
+                             "accountStateBoc does not bind to "
+                             "contractAddress"),
+                true};
+        }
+    }
+
     std::string storage_hash = "null";
     if (state.storage_root.not_null()) {
         auto h = state.storage_root->get_hash();

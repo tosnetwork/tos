@@ -566,37 +566,53 @@ class JvmNativeEngine final : public block::WorkchainEngine {
             // commensurate gas instead of just the admission
             // floor.
             if (state.manifest_root.not_null()) {
+                // Round 123 MEDIUM fix: pre-gate on cheap count
+                // peek BEFORE parse_jvm_method_manifest does its
+                // ~1.5 KiB-per-entry string decode.  Pre-fix the
+                // round-122 stat-walk cap only bounded the
+                // separate stat call; parse_jvm_method_manifest
+                // ran first and decoded all entries' three 512-
+                // byte strings unconditionally.  A 1024-entry
+                // manifest forced ~1.5 MiB of validator-CPU work
+                // while the bill clamped at the admission floor
+                // on poorly-funded first activations.  The new
+                // gate rejects up-front when the declared count
+                // implies more decode work than the affordable
+                // gas budget can recover.
+                auto count_res = peek_jvm_method_manifest_count(
+                    state.manifest_root);
+                if (count_res.is_error()) {
+                    return skipped_output_billed(
+                        block::ComputePhase::sk_bad_state,
+                        "JVM first activation: manifest_root header is "
+                        "malformed",
+                        cfg->config,
+                        kJvmAdmissionGasFloor,
+                        /*out_of_gas=*/false,
+                        /*msg_state_used=*/input.msg_state_used);
+                }
+                const std::uint64_t parse_work_bytes =
+                    static_cast<std::uint64_t>(count_res.ok())
+                    * kJvmManifestParseBytesPerEntry;
+                if (parse_work_bytes > effective_gas_limit) {
+                    return skipped_output_billed(
+                        block::ComputePhase::sk_bad_state,
+                        "JVM first activation: manifest decode exceeds "
+                        "affordable gas budget",
+                        cfg->config,
+                        effective_gas_limit,
+                        /*out_of_gas=*/true,
+                        /*msg_state_used=*/input.msg_state_used);
+                }
                 auto manifest_check = parse_jvm_method_manifest(
                     state.manifest_root);
                 if (manifest_check.is_error()) {
-                    // Use cell tree size as a proxy for actual
-                    // decode work — bounded by max_class_bytes-
-                    // adjacent caps but tracks attacker payload.
-                    //
-                    // Round 122 MEDIUM fix: cap the stat's cell
-                    // limit by effective_gas_limit so the walk
-                    // can't exceed what the bill is clamped to.
-                    // Pre-fix the stat walked up to
-                    // kJvmStorageValueMaxBytes (~1 MiB) cells but
-                    // the bill was clamped to effective_gas_limit
-                    // (as low as kJvmAdmissionGasFloor=1024) on
-                    // poorly-funded accounts — validator CPU
-                    // scaled with attacker payload while the bill
-                    // capped at floor.
-                    const unsigned long long stat_cell_cap =
-                        std::min<unsigned long long>(
-                            effective_gas_limit,
-                            static_cast<unsigned long long>(
-                                kJvmStorageValueMaxBytes));
-                    vm::CellStorageStat stat(stat_cell_cap);
-                    auto stat_status =
-                        stat.add_used_storage(state.manifest_root, true);
-                    (void)stat_status;
-                    const std::uint64_t walked_bytes =
-                        static_cast<std::uint64_t>(stat.bits / 8u + stat.cells);
+                    // The pre-gate guaranteed parse_work_bytes <=
+                    // effective_gas_limit, so this min is mostly
+                    // defensive; the max enforces the floor.
                     const std::uint64_t scaled_bill =
                         std::max<std::uint64_t>(kJvmAdmissionGasFloor,
-                                                walked_bytes);
+                                                parse_work_bytes);
                     const std::uint64_t billed = std::min<std::uint64_t>(
                         scaled_bill, effective_gas_limit);
                     return skipped_output_billed(
@@ -651,24 +667,26 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // unbilled.
         std::uint64_t manifest_decode_bytes = 0;
         if (input.msg_state_used && state.manifest_root.not_null()) {
-            // Round 122 MEDIUM fix: same asymmetry as the malformed-
-            // manifest reject above.  Walking more cells than
-            // effective_gas_limit is wasted CPU because the resolver-
-            // error bill is clamped to that limit anyway.  Capping
-            // the stat's cell limit closes the validator-CPU /
-            // billed-gas asymmetry on the success-then-resolver-
-            // error path.
-            const unsigned long long stat_cell_cap =
-                std::min<unsigned long long>(
-                    effective_gas_limit,
-                    static_cast<unsigned long long>(
-                        kJvmStorageValueMaxBytes));
-            vm::CellStorageStat stat(stat_cell_cap);
-            auto stat_status =
-                stat.add_used_storage(state.manifest_root, true);
-            (void)stat_status;
-            manifest_decode_bytes =
-                static_cast<std::uint64_t>(stat.bits / 8u + stat.cells);
+            // Round 123 MEDIUM fix: bill resolver-error paths by
+            // declared entry count, not by a separate
+            // CellStorageStat walk.  Pre-fix the stat walk
+            // (rounds 117/118/122) underestimated the actual
+            // parse_jvm_method_manifest cost (which decodes
+            // three 512-byte strings per entry) so a max-sized
+            // valid manifest combined with an unknown-method
+            // call could still under-bill the validator's
+            // ~1.5 MiB string decode.  The malformed-manifest
+            // pre-gate above (also round 123) already ensured
+            // count * kJvmManifestParseBytesPerEntry <=
+            // effective_gas_limit, so this is bounded by
+            // construction and matches the actual parse cost.
+            auto count_res = peek_jvm_method_manifest_count(
+                state.manifest_root);
+            if (count_res.is_ok()) {
+                manifest_decode_bytes =
+                    static_cast<std::uint64_t>(count_res.ok())
+                    * kJvmManifestParseBytesPerEntry;
+            }
         }
         std::uint64_t error_path_arg_bytes = manifest_decode_bytes;
         {
