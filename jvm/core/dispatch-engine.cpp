@@ -626,7 +626,25 @@ class JvmNativeEngine final : public block::WorkchainEngine {
         // For the success path the runtime's round-61 charge
         // already added these bytes to `invocation.gas_used`, so
         // we don't re-add here.  Only the error path uses this.
-        std::uint64_t error_path_arg_bytes = 0;
+        // Round 118 MEDIUM fix: track manifest decode work even on
+        // the success path so subsequent runtime-error / pre-walk
+        // rejects bill the validator-CPU work the resolver
+        // actually performed.  Pre-fix a max-sized but VALID
+        // manifest combined with an unknown-method_id call was
+        // decoded fully (~1.5 MiB), then rejected with only
+        // `max(floor, arg_bytes)` — the manifest decode work was
+        // unbilled.
+        std::uint64_t manifest_decode_bytes = 0;
+        if (input.msg_state_used && state.manifest_root.not_null()) {
+            vm::CellStorageStat stat(static_cast<unsigned long long>(
+                kJvmStorageValueMaxBytes));
+            auto stat_status =
+                stat.add_used_storage(state.manifest_root, true);
+            (void)stat_status;
+            manifest_decode_bytes =
+                static_cast<std::uint64_t>(stat.bits / 8u + stat.cells);
+        }
+        std::uint64_t error_path_arg_bytes = manifest_decode_bytes;
         {
             auto call_descriptor_res =
                 parse_jvm_call_descriptor(input.inbound_body);
@@ -712,9 +730,25 @@ class JvmNativeEngine final : public block::WorkchainEngine {
                     auto bytes_res = peek_jvm_args_total_bytes(
                         descriptor.args, &partial_walked,
                         /*max_bytes_budget=*/effective_gas_limit);
-                    error_path_arg_bytes =
+                    // Round 118 MEDIUM fix: include manifest decode
+                    // work alongside arg bytes, capped to the
+                    // overall affordable cap below.  Pre-fix, a
+                    // valid max-sized manifest combined with an
+                    // unknown-method_id call paid only
+                    // `max(floor, arg_bytes)` even though the
+                    // resolver had decoded the entire manifest.
+                    const std::uint64_t arg_bytes =
                         bytes_res.is_ok() ? bytes_res.ok()
                                           : partial_walked;
+                    if (manifest_decode_bytes >
+                        std::numeric_limits<std::uint64_t>::max() -
+                            arg_bytes) {
+                        error_path_arg_bytes =
+                            std::numeric_limits<std::uint64_t>::max();
+                    } else {
+                        error_path_arg_bytes =
+                            manifest_decode_bytes + arg_bytes;
+                    }
                 }
             }
         }
