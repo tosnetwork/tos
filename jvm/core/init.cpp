@@ -1,0 +1,76 @@
+/*
+    JVM workchain initialization.
+*/
+#include "jvm/core/init.h"
+
+#include "block/workchain-execution-dispatch.h"
+#include "jvm/core/avata-runtime.h"
+#include "jvm/core/dispatch-engine.h"
+#include "td/utils/logging.h"
+
+#include <cstdlib>
+#include <memory>
+#include <utility>
+
+#ifndef TOS_AVATA_DEFAULT_RT_JAR
+#define TOS_AVATA_DEFAULT_RT_JAR ""
+#endif
+
+namespace jvm_workchain {
+
+namespace {
+
+std::string getenv_or_empty(const char* name) {
+    const char* value = std::getenv(name);
+    return value == nullptr ? std::string{} : std::string{value};
+}
+
+std::shared_ptr<const JvmComputeRuntime>& runtime_slot() {
+    static std::shared_ptr<const JvmComputeRuntime> runtime;
+    return runtime;
+}
+
+}  // namespace
+
+bool init_jvm_workchain(const char* /*db_root*/) {
+    JvmLinkedAvataRuntimeOptions options;
+    options.boot_classpath = getenv_or_empty("TOS_JVM_AVATA_RT_JAR");
+    if (options.boot_classpath.empty()) {
+        options.boot_classpath = TOS_AVATA_DEFAULT_RT_JAR;
+    }
+    // Round-18 fix: deliberately leave `options.classpath` empty.
+    // Pre-fix `TOS_JVM_AVATA_CONTRACT_CLASSPATH` was honored, which
+    // let an operator inject local jars/directories that affect
+    // execution but are NOT bound to ConfigParam 85's stdlib_hash —
+    // a consensus-divergence vector.  Contract bytecode reaches the
+    // VM exclusively via `class_bytes` in JVAC (loaded through
+    // `avata_load_class_bytes`), so the application classpath must
+    // not contribute to class resolution.  The runtime will also
+    // emit `-Djava.class.path=` (empty) to override Avata's default
+    // of `.` (current working directory).
+    auto heap = getenv_or_empty("TOS_JVM_AVATA_HEAP");
+    if (!heap.empty()) {
+        options.max_heap = std::move(heap);
+    }
+
+    std::shared_ptr<const JvmComputeRuntime> runtime;
+    auto linked_runtime = make_linked_jvm_avata_runtime(options);
+    if (linked_runtime.is_ok()) {
+        runtime = linked_runtime.move_as_ok();
+    } else {
+        LOG(WARNING)
+            << "jvm-workchain: Avata runtime init failed; wc=3 will fail closed: "
+            << linked_runtime.error().message();
+    }
+
+    runtime_slot() = runtime;
+    register_jvm_workchain_engine(block::default_workchain_execution_registry(),
+                                  std::move(runtime));
+    return true;
+}
+
+std::shared_ptr<const JvmComputeRuntime> current_jvm_compute_runtime() {
+    return runtime_slot();
+}
+
+}  // namespace jvm_workchain

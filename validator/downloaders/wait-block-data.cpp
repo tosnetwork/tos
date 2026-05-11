@@ -229,7 +229,27 @@ void WaitBlockData::force_read_from_db() {
 }
 
 void WaitBlockData::got_static_file(td::BufferSlice data) {
-  CHECK(td::sha256_bits256(data.as_slice()) == handle_->id().file_hash);
+  // Round 141 MEDIUM fix: convert the file-hash CHECK into a
+  // structured error.  Pre-fix arbitrary bytes placed at
+  // static/<expected_file_hash> trip a validator abort here
+  // because StaticFilesDb::load_file() returns whatever is on
+  // disk without verifying the content matches the requested
+  // file hash.  Round 138 closed this same class in BlockQ::
+  // init for the regular block path, but the static / hardfork
+  // download path arrived through this special branch.  Now we
+  // surface the mismatch as an abort_query so the validator
+  // logs the corruption and returns a structured error to the
+  // wait-block-data caller instead of crashing.
+  auto actual_hash = td::sha256_bits256(data.as_slice());
+  if (actual_hash != handle_->id().file_hash) {
+    abort_query(td::Status::Error(
+        PSLICE() << "static file integrity error: bytes for "
+                 << handle_->id().to_str()
+                 << " produce file hash 0x" << actual_hash.to_hex()
+                 << " (expected 0x" << handle_->id().file_hash.to_hex()
+                 << ")"));
+    return;
+  }
 
   auto R = create_block(handle_->id(), std::move(data));
   if (R.is_error()) {

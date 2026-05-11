@@ -451,6 +451,10 @@ struct Transaction {
   td::optional<AccountStorageStat> new_account_storage_stat;
   td::optional<td::Bits256> new_storage_dict_hash;
   bool gas_limit_overridden{false};
+  // Set by prepare_compute_phase from the engine's AccountExecutionPolicy.
+  // When true, the action phase honors `action_create_account` from this
+  // transaction's action list.
+  bool admits_engine_create_account_actions{false};
   std::vector<Ref<vm::Cell>> storage_stat_updates;
   td::RealCpuTimer::Time time_tvm, time_storage_stat;
   Transaction(const Account& _account, int ttype, tos::LogicalTime req_start_lt, tos::UnixTime _now,
@@ -490,6 +494,7 @@ struct Transaction {
   int try_action_change_library(vm::CellSlice& cs, ActionPhase& ap, const ActionPhaseConfig& cfg);
   int try_action_send_msg(const vm::CellSlice& cs, ActionPhase& ap, const ActionPhaseConfig& cfg, int redoing = 0);
   int try_action_reserve_currency(vm::CellSlice& cs, ActionPhase& ap, const ActionPhaseConfig& cfg);
+  int try_action_create_account(vm::CellSlice& cs, ActionPhase& ap, const ActionPhaseConfig& cfg);
   bool check_replace_src_addr(Ref<vm::CellSlice>& src_addr) const;
   bool check_rewrite_dest_addr(Ref<vm::CellSlice>& dest_addr, const ActionPhaseConfig& cfg, bool* is_mc = nullptr,
                                bool allow_anycast = true) const;

@@ -129,19 +129,71 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
     auto votes = bus.db->get_by_prefix(tl::db_key_vote::ID);
 
     for (auto& [key_str, value_str] : votes) {
-      auto key = fetch_tl_object<tl::db_key_vote>(key_str, true).move_as_ok();
-      saved_votes.insert(key->vote_hash_);
+      // Round 142 MEDIUM fix: validate that the parsed value's
+      // inner-tl-hash matches the key's vote_hash_ before
+      // replaying into the consensus pool.  Pre-fix init_votes
+      // trusted the key→value pairing implicitly and used
+      // .move_as_ok() on the parsed cert; a corrupted RocksDB
+      // record where db_key_vote(hash_A) → db_cert(certB) (with
+      // sha256(certB_tl) == hash_B != hash_A) replayed both the
+      // saved_votes hash_A and the cert payload for B, and
+      // Pool::start_up()'s CertificateBundle::store() then
+      // tripped CHECK(rc) at pool.cpp:908 on the duplicate.  Now
+      // we recompute the inner hash and skip-with-warning on
+      // mismatch.  This is the same integrity-gate class as
+      // round 136 (CellLoader::load) and round 140
+      // (candidate-resolver DB resume).
+      auto key_r = fetch_tl_object<tl::db_key_vote>(key_str, true);
+      if (key_r.is_error()) {
+        LOG(WARNING) << "Simplex db init_votes: malformed vote key: "
+                     << key_r.error().message();
+        continue;
+      }
+      auto key = key_r.move_as_ok();
 
-      auto value = fetch_tl_object<tl::db_Vote>(value_str, true).move_as_ok();
+      auto value_r = fetch_tl_object<tl::db_Vote>(value_str, true);
+      if (value_r.is_error()) {
+        LOG(WARNING) << "Simplex db init_votes: malformed vote value "
+                        "for key vote_hash 0x"
+                     << key->vote_hash_.to_hex() << ": "
+                     << value_r.error().message();
+        continue;
+      }
+      auto value = value_r.move_as_ok();
 
+      bool hash_ok = false;
+      Bits256 actual_hash;
       auto our_vote_fn = [&](tl::db_ourVote& vote) {
-        our_votes.push_back(OurVote{vote.seqno_, Vote::from_tl(*vote.vote_)});
+        if (vote.vote_) {
+          actual_hash = sha256_bits256(serialize_tl_object(vote.vote_, true));
+          hash_ok = (actual_hash == key->vote_hash_);
+        }
       };
       auto cert_fn = [&](tl::db_cert& vote) {
+        if (vote.cert_) {
+          actual_hash = sha256_bits256(serialize_tl_object(vote.cert_, true));
+          hash_ok = (actual_hash == key->vote_hash_);
+        }
+      };
+      tos_api::downcast_call(*value, td::overloaded(our_vote_fn, cert_fn));
+      if (!hash_ok) {
+        LOG(WARNING) << "Simplex db init_votes: hash binding error for "
+                        "key vote_hash 0x"
+                     << key->vote_hash_.to_hex()
+                     << " (value parses but inner hash is 0x"
+                     << actual_hash.to_hex() << "); skipping";
+        continue;
+      }
+
+      saved_votes.insert(key->vote_hash_);
+
+      auto append_our_vote = [&](tl::db_ourVote& vote) {
+        our_votes.push_back(OurVote{vote.seqno_, Vote::from_tl(*vote.vote_)});
+      };
+      auto append_cert = [&](tl::db_cert& vote) {
         certs.push_back(Certificate<Vote>::from_tl(std::move(*vote.cert_), bus).move_as_ok());
       };
-
-      tos_api::downcast_call(*value, td::overloaded(our_vote_fn, cert_fn));
+      tos_api::downcast_call(*value, td::overloaded(append_our_vote, append_cert));
     }
     std::sort(our_votes.begin(), our_votes.end());
     if (!our_votes.empty()) {

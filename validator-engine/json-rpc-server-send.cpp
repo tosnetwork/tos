@@ -43,6 +43,7 @@
 #include "evm/core/workchain.h"
 #include "evm/core/block-context.h"  // make_evm_chain_config
 #include "evm/rpc/handlers.h"        // try_consume_evm_rpc_token
+#include <silkworm/core/crypto/secp256k1n.hpp>
 #include <silkworm/core/protocol/validation.hpp>
 #include <sstream>
 
@@ -583,6 +584,19 @@ static td::Result<td::Ref<vm::Cell>> build_external_message_cell(const InitialIn
   block::StdAddress addr;
   if (!addr.parse_addr(td::Slice(in.address))) {
     return td::Status::Error("Invalid address");
+  }
+  // Round 144 MEDIUM fix: addr_std uses an int8 workchain field
+  // (range [-128, 127]).  StdAddress::parse_addr accepts the
+  // wider int32 form, so an address like "128:<hex>" parsed
+  // successfully and then GenericAccount::create_ext_message
+  // hit MsgAddressInt::pack rejection followed by
+  // CHECK(res.not_null()) — turning a single crafted address
+  // into a daemon abort.  Reject out-of-int8 workchains here
+  // before the addr_std encode.
+  if (addr.workchain < -128 || addr.workchain > 127) {
+    return td::Status::Error(
+        PSTRING() << "Invalid address: workchain " << addr.workchain
+                  << " is out of the addr_std int8 range [-128, 127]");
   }
   auto body_r = parse_optional_boc_string(in.body_b64, "body");
   if (body_r.is_error()) return body_r.move_as_error();
@@ -1133,6 +1147,21 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
     return;
   }
   auto addr = addr_r.move_as_ok();
+  // Round 144 MEDIUM fix: addr_std uses an int8 workchain field
+  // (range [-128, 127]).  parse_address_param accepts the wider
+  // int32 form, so an address like "128:<hex>" parsed and then
+  // store_long(addr.workchain, 8) at the addr_std encode below
+  // truncated silently — emitting a structurally malformed
+  // message that downstream consensus would reject after
+  // unpaid CPU work.  Reject out-of-int8 workchains here.
+  if (addr.workchain < -128 || addr.workchain > 127) {
+    promise.set_value(make_json_error(
+        -32602,
+        PSTRING() << "Invalid 'address': workchain " << addr.workchain
+                  << " is out of the addr_std int8 range [-128, 127]",
+        req_id));
+    return;
+  }
 
   // Parse message body (base64 BOC)
   auto body_r = params.get_required_string_field("body");
@@ -1312,6 +1341,20 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
   }
 
   auto addr = addr_r.move_as_ok();
+  // Round 145 MEDIUM fix: same workchain int8 range check
+  // round 144 added to build_external_message_cell + handle_
+  // sendQuery, applied here for handle_estimateFee.  Pre-fix
+  // estimateFee accepted "128:<hex>" through parse_address_param
+  // and reached GenericAccount::create_ext_message at line 1492,
+  // tripping the addr_std encode CHECK and aborting the daemon.
+  if (addr.workchain < -128 || addr.workchain > 127) {
+    promise.set_value(make_json_error(
+        -32602,
+        PSTRING() << "Invalid 'address': workchain " << addr.workchain
+                  << " is out of the addr_std int8 range [-128, 127]",
+        req_id));
+    return;
+  }
   auto body_cell = body_r.move_as_ok();
   auto init_code = init_code_r.move_as_ok();
   auto init_data = init_data_r.move_as_ok();
@@ -1692,9 +1735,24 @@ void JsonRpcServer::handle_eth_sendRawTransaction_with_chain_id(
   // proven to be a DoS surface when enough pile up).
   //   - Post-EIP-155 legacy txs carry chain_id in v.
   //   - EIP-2930 / 1559 / 4844 typed txs embed chain_id explicitly.
-  //   - Pre-EIP-155 legacy txs omit chain_id (std::nullopt) — we accept
-  //     those because they're not bound to any specific chain.
-  if (decoded.txn.chain_id.has_value() && *decoded.txn.chain_id != chain_id) {
+  //   - Pre-EIP-155 legacy txs omit chain_id (std::nullopt).
+  //
+  // Round 127 MEDIUM fix: also reject the chain_id=nullopt case here
+  // so the RPC layer surfaces a clean -32000 instead of silently
+  // accepting an unprotected legacy signature that the consensus
+  // gate now rejects.  Mirrors the executor.cpp gate.  Closes a
+  // cross-chain replay vector where any pre-EIP-155 signature minted
+  // on another EVM network could be replayed on TOS EVM with no
+  // chain-id binding.
+  if (!decoded.txn.chain_id.has_value()) {
+    promise.set_value(make_eth_json_error(
+        -32000,
+        "pre-EIP-155 legacy transactions are not supported "
+        "(chain_id binding required)",
+        req_id));
+    return;
+  }
+  if (*decoded.txn.chain_id != chain_id) {
     std::ostringstream msg;
     msg << "invalid chain id: got " << *decoded.txn.chain_id
         << ", expected 0x" << std::hex << chain_id << std::dec;
@@ -1728,6 +1786,26 @@ void JsonRpcServer::handle_eth_sendRawTransaction_with_chain_id(
     auto cfg = evm_workchain::make_evm_chain_config(chain_id);
     const auto rev = cfg.revision(/*block_num=*/UINT64_MAX,
                                    /*block_time=*/static_cast<uint64_t>(std::time(nullptr)));
+    // Round 133 MEDIUM fix: enforce EIP-2 low-S signature
+    // canonicality at the RPC admission boundary, mirroring the
+    // consensus check in evm/core/executor.cpp.  Pre-fix
+    // pre_validate_common_base / _forks did NOT call
+    // is_valid_signature; the higher-level
+    // pre_validate_transaction does, but neither path runs it.
+    // Without this gate, anyone observing a valid signed tx
+    // could flip s → n - s, recompute v, and submit a malleated
+    // copy that recovers the same sender but has a different
+    // tx hash.  TOS EVM activates Homestead from block 0, so
+    // high-S signatures are non-canonical here.
+    if (!silkworm::is_valid_signature(decoded.txn.r, decoded.txn.s,
+                                       rev >= EVMC_HOMESTEAD)) {
+      promise.set_value(make_eth_json_error(
+          -32000,
+          "invalid secp256k1 signature (non-canonical r/s; "
+          "EIP-2 low-S required)",
+          req_id));
+      return;
+    }
     // pre_validate_common_base runs the type-/chain-/intrinsic-gas suite.
     auto vr_base = silkworm::protocol::pre_validate_common_base(
         decoded.txn, rev, cfg.chain_id);

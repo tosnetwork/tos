@@ -14,6 +14,7 @@ namespace {
 constexpr std::int32_t kTvmVmVersion = -1;
 constexpr std::int32_t kEvmVmVersion = 0x45564D;    // "EVM"
 constexpr std::int32_t kUnoVmVersion = 0x554E4F31;  // "UNO1"
+constexpr std::int32_t kJvmVmVersion = 0x4a564d31;  // "JVM1"
 
 struct TvmEngineConfig final : public WorkchainEngineConfig {
 };
@@ -68,6 +69,10 @@ bool workchain_engine_key_is_uno(const WorkchainEngineKey& key) {
   return key == uno_workchain_engine_key();
 }
 
+bool workchain_engine_key_is_jvm(const WorkchainEngineKey& key) {
+  return key == jvm_workchain_engine_key();
+}
+
 WorkchainEngineKey tvm_workchain_engine_key() {
   return {WorkchainFormat::Basic, kTvmVmVersion};
 }
@@ -78,6 +83,10 @@ WorkchainEngineKey evm_workchain_engine_key() {
 
 WorkchainEngineKey uno_workchain_engine_key() {
   return {WorkchainFormat::Basic, kUnoVmVersion};
+}
+
+WorkchainEngineKey jvm_workchain_engine_key() {
+  return {WorkchainFormat::Basic, kJvmVmVersion};
 }
 
 td::Result<WorkchainExecutionDescriptor> normalize_workchain_descriptor(const WorkchainInfo& info) {
@@ -272,7 +281,11 @@ td::Status validate_account_execution_policy_supported(const AccountExecutionPol
     case AccountExecutionPolicyKind::ShardLocalExecutor:
       return td::Status::Error("shard-local executor policy is not implemented by the host");
     case AccountExecutionPolicyKind::EngineDefined:
-      return td::Status::Error("engine-defined account policy is not implemented by the host");
+      // Engine-defined policy: the engine owns address-space routing within
+      // its workchain. The host accepts any account in the workchain and
+      // optionally lets the engine emit `action_create_account` to
+      // materialize new accounts at deterministic addresses.
+      return td::Status::OK();
   }
   return td::Status::Error("unknown account execution policy kind");
 }
@@ -292,6 +305,9 @@ td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry
   }
   if (registry.has_engine(uno_workchain_engine_key())) {
     flags |= kTosNodeCapabilityWorkchainUno;
+  }
+  if (registry.has_engine(jvm_workchain_engine_key())) {
+    flags |= kTosNodeCapabilityWorkchainJvm;
   }
   return flags;
 }

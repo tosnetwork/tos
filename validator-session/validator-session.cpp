@@ -736,7 +736,20 @@ void ValidatorSessionImpl::try_approve_block(const SentBlock *block) {
     if (!ensure_candidate_unique(block->get_src_idx(), cur_round_, SentBlock::get_block_id(block))) {
       return;
     }
-    auto T = td::Timestamp::at(round_started_at_.at() + description().get_delay(block->get_src_idx()) +
+    // Round 134 LOW fix: get_delay() expects a priority
+    // (0..round_candidates-1), not a validator src_idx.  Mirror the
+    // priority computation a few lines above (line 727) so the P2P
+    // candidate-fetch fallback delay is the same scale as the
+    // initial-broadcast delay.  Pre-fix, a high-src-idx producer's
+    // P2P fallback fired far past the round's attempt window
+    // (`round_attempt_duration * max_round_attempts`), so a Byzantine
+    // broadcaster that withheld its candidate from a subset of
+    // validators could prevent timely fallback fetches and degrade
+    // approval liveness.
+    auto T = td::Timestamp::at(round_started_at_.at() +
+                               description().get_delay(
+                                   description().get_node_priority(
+                                       block->get_src_idx(), cur_round_)) +
                                REQUEST_BROADCAST_P2P_DELAY);
     auto it = blocks_.find(block_id);
 

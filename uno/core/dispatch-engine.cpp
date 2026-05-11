@@ -8,8 +8,11 @@
     Source: TOS-specific integration point.
 */
 #include "uno/core/dispatch-engine.h"
+#include "uno/core/config-param.h"
 #include "uno/core/init.h"
+#include "uno/core/workchain.h"
 
+#include "block/mc-config.h"
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/Status.h"
@@ -82,7 +85,7 @@ class UnoNativeEngine final : public block::WorkchainEngine {
 
     td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
         const block::WorkchainExecutionDescriptor& descriptor,
-        const block::Config& /*block_transition_config*/) const override {
+        const block::Config& block_transition_config) const override {
         if (!block::workchain_engine_key_is_uno(
                 block::workchain_engine_key_from_descriptor(descriptor))) {
             return td::Status::Error("Uno engine received non-Uno descriptor");
@@ -90,10 +93,42 @@ class UnoNativeEngine final : public block::WorkchainEngine {
         if (descriptor.vm_mode != 0) {
             return td::Status::Error("Uno v1 descriptor requires vm_mode=0");
         }
+        // Round 128 + 129 + 130 fix: read ConfigParam 84 from the
+        // masterchain config on every descriptor validation and
+        // ALWAYS install — even when the param is absent we install
+        // the default UnoConfig.  Pre-round-130 the absent branch
+        // left g_uno_config at whatever was previously installed,
+        // so a present→absent governance transition kept stale
+        // values in a still-running validator while a fresh
+        // validator booted with defaults — the same divergence
+        // class round 129 closed for missing-update.  Now both
+        // present-with-update and present→absent transitions
+        // converge on the masterchain's current view.
+        //
+        // Round 129 MEDIUM fix preserved: malformed-but-present
+        // ConfigParam 84 errors here instead of falling through to
+        // the default, so a misconfigured chain refuses to run
+        // rather than silently disagreeing with the rest of the
+        // network.
+        auto config_cell =
+            block_transition_config.get_config_param(kUnoConfigParamIdx);
+        UnoConfig parsed{};
+        if (config_cell.not_null()) {
+            if (!parse_uno_config_cell(config_cell, parsed)) {
+                return td::Status::Error(
+                    "Uno engine: ConfigParam 84 cell is present but "
+                    "malformed (refusing to fall through to testnet "
+                    "default)");
+            }
+        }
+        // `parsed` is either the just-decoded ConfigParam 84 cell or
+        // a default-constructed UnoConfig (testnet defaults).
+        install_uno_config(parsed);
         // Uno v1 reads chain_id from the process-global g_uno_config set by
-        // install_uno_config at startup. vm_mode=0 is reserved for Uno v1, so
-        // a future Uno v2 descriptor should encode chain_id in vm_mode and
-        // route it through UnoEngineConfig here, matching EvmNativeEngine.
+        // install_uno_config at startup or via the round-128 path above.
+        // vm_mode=0 is reserved for Uno v1, so a future Uno v2 descriptor
+        // should encode chain_id in vm_mode and route it through
+        // UnoEngineConfig here, matching EvmNativeEngine.
         std::shared_ptr<const block::WorkchainEngineConfig> result =
             std::make_shared<UnoEngineConfig>();
         return result;
@@ -122,8 +157,66 @@ class UnoNativeEngine final : public block::WorkchainEngine {
             out.gas_fees = td::zero_refint();
             return out;
         }
+        // Round 64 CRITICAL fix: Uno has no canonical first-
+        // activation gate.  Pre-fix the host's custom-engine branch
+        // unpacked any inbound `StateInit.data` into
+        // `input.current_data` before this engine ran, so the very
+        // first caller to the wc=2 singleton executor (`acc_uninit`
+        // in the documented zerostate) could supply an arbitrary
+        // attacker-chosen `UnoShardState` and the engine would
+        // commit it as the initial state — an attacker-controlled
+        // state-init front-run that bypasses the genesis empty
+        // shard state.  Reject any compute where the host supplied
+        // `StateInit.data` (`msg_state_used == true`).  Subsequent
+        // calls (msg_state_used == false) continue to thread
+        // `current_data` from the prior tx's persisted account
+        // state as before; first-activation must come from the
+        // canonical zerostate, not from inbound StateInit.
+        if (input.msg_state_used) {
+            block::WorkchainComputeOutput out;
+            out.completed = true;
+            out.skip_reason = block::ComputePhase::sk_bad_state;
+            out.gas_fees = td::zero_refint();
+            return out;
+        }
+        // Round 64 CRITICAL fix: also reject any inbound that
+        // carries a non-canonical `StateInit.code` or
+        // `StateInit.library`.  Uno has no library semantics and
+        // its activation marker is the singleton-executor cell
+        // (`get_uno_code_marker_cell()`).  Pre-fix the host
+        // copied attacker-supplied code/library into Account state
+        // verbatim (same class as Round 58/59 for JVM).
+        if (input.current_code.not_null()
+            && input.current_code->get_hash() !=
+                   get_uno_code_marker_cell()->get_hash()) {
+            block::WorkchainComputeOutput out;
+            out.completed = true;
+            out.skip_reason = block::ComputePhase::sk_bad_state;
+            out.gas_fees = td::zero_refint();
+            return out;
+        }
+        if (input.current_library.not_null()) {
+            block::WorkchainComputeOutput out;
+            out.completed = true;
+            out.skip_reason = block::ComputePhase::sk_bad_state;
+            out.gas_fees = td::zero_refint();
+            return out;
+        }
         block::ComputePhase cp{};
         vm::CellSlice body_cs{*input.inbound_body};
+        // Round 76 HIGH fix: forward the singleton-account balance into
+        // the compute phase so it can pre-reject txs whose Round-75
+        // gas_fees the singleton cannot afford.  Pre-fix, the compute
+        // phase happily applied a full Transfer + fired
+        // `on_included_tx_from_compute` side effects; the host then
+        // reset the cp to sk_no_gas because balance < cp.gas_fees,
+        // leaving in-memory g_live and the per-block outputs/tx-status
+        // index out of sync with canonical state until the next tx
+        // forced a `hydrate_from_cell_if_needed` resync.
+        const td::RefInt256 balance =
+            input.account_balance.tomis.not_null()
+                ? input.account_balance.tomis
+                : td::zero_refint();
         bool ok = uno_workchain::uno_run_compute_phase(
             cp,
             input.current_data,
@@ -131,7 +224,8 @@ class UnoNativeEngine final : public block::WorkchainEngine {
             input.gas_limit,
             context.block_seqno,
             context.now,
-            context.rand_seed.data());
+            context.rand_seed.data(),
+            balance);
         if (!ok) {
             return td::Status::Error("Uno compute phase failed");
         }

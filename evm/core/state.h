@@ -183,6 +183,27 @@ class EvmState {
     void store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
                     const std::vector<silkworm::Log>& logs,
                     uint32_t tx_index = 0);
+    /// Round 87 MEDIUM fix: drop the per-block log accumulator for
+    /// `block_number` so a same-height rewrite starts fresh.
+    /// `store_block` already erases the prior hash mapping; this
+    /// helper covers the orthogonal logs index that store_block
+    /// alone cannot clear without losing the just-appended new
+    /// logs (post-accept calls store_logs BEFORE store_block).
+    /// Callers must invoke this before re-applying the rewrite's
+    /// txs.
+    void reset_block_logs(uint64_t block_number);
+
+    /// Round 89 MEDIUM fix: drop hydrated blocks that disagree with
+    /// the canonical chain after canonical hashes are loaded.
+    /// `init_evm_workchain` walks the cache DB BEFORE
+    /// `populate_state_from_shard_accounts` populates
+    /// CellEvmState's canonical_ map, so the round-88 hydration
+    /// gate sees `canonical_hash(N) == nullopt` for every cached
+    /// block and admits orphans.  Call this AFTER canonical
+    /// hashes are loaded to evict orphan blocks (and their
+    /// per-block logs) from RAM.  Returns the number of orphan
+    /// entries dropped.
+    std::size_t reconcile_blocks_with_canonical();
 
     std::vector<IndexedLog> get_logs(
         uint64_t from_block, uint64_t to_block,

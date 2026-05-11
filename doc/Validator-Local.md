@@ -24,6 +24,20 @@ tos-lite-client -C /data/tos-global.json -v 0 -c "getconfig 12" -c "quit" \
 #   vm_version:1431195441  → wc=2 UNO1     (0x554E4F31)
 ```
 
+Production deployments may deliberately use a staged workchain rollout instead
+of this local-testnet all-at-genesis layout. EVM (`wc=1`), Uno (`wc=2`), and JVM
+(`wc=3`) can be activated in separate `ConfigParam 12` updates at different
+masterchain heights. The effective switch is the block where the accepted config
+update becomes active and the descriptor is present with `active=true`; the
+current runtime does not use `enabled_since` as an automatic future-height
+scheduler. Before each activation, all validators that may be assigned to the
+target shard must already run a binary containing the matching engine, must have
+the matching workchain zerostate/static files available, and must have any
+engine-specific params staged (`vm_mode` chain id for EVM, ConfigParam 84 for
+Uno, ConfigParam 85 for JVM). See
+[workchain-execution-registry.md](workchain-execution-registry.md#staged-workchain-activation)
+and [ConfigParam.md](ConfigParam.md#activation-semantics).
+
 Per-chain details are at [EVM Workchain (Workchain 1)](#evm-workchain-workchain-1) and [UNO Workchain (Workchain 2)](#uno-workchain-workchain-2) below.
 
 ## Architecture

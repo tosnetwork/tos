@@ -208,6 +208,22 @@ std::string decode_evm_bytecode(td::Ref<vm::Cell> root) {
                 return {};
             }
             unsigned data_bytes = (bits - 1) / 8;
+            // Round 72 MEDIUM fix: enforce canonical chunk shape so
+            // multiple cell roots can't represent the same bytecode.
+            // `encode_evm_bytecode` always packs non-final chunks
+            // with EXACTLY `kEvmBytecodeChunkBytes` (127) bytes; only
+            // the final chunk may be shorter, but it must still
+            // contain at least one byte (the encoder rejects empty
+            // input via the `code.empty()` guard).  Pre-fix the
+            // decoder accepted zero-byte chunks and short non-final
+            // chunks, so `(zero-byte continuation cell)→(canonical
+            // chain)` parsed back to the same bytes as the canonical
+            // chain, breaking the code-hash invariant
+            // (`decode_and_verify_code_root` only checks
+            // `keccak(decoded_bytes)`, not cell-root identity).
+            //
+            // We don't yet know if this is a final chunk; defer the
+            // canonical-size check until after reading `has_next`.
             if (data_bytes > 0) {
                 size_t off = out.size();
                 if (data_bytes > kEvmMaxRuntimeCodeBytes ||
@@ -223,8 +239,16 @@ std::string decode_evm_bytecode(td::Ref<vm::Cell> root) {
             unsigned has_next = static_cast<unsigned>(cs.fetch_ulong(1));
             if (has_next == 0) {
                 if (cs.size_refs() != 0) return {};
+                // Round 72 MEDIUM fix: final chunk must carry at
+                // least one byte (encoder always emits non-empty
+                // code).  Allows full chunk-byte range 1..127.
+                if (data_bytes == 0) return {};
                 return out;
             }
+            // Round 72 MEDIUM fix: non-final chunks must be exactly
+            // 127 bytes (canonical encoding).  Reject zero-byte
+            // and short non-final chunks.
+            if (data_bytes != kEvmBytecodeChunkBytes) return {};
             if (cs.size_refs() != 1) return {};
             cell = cs.prefetch_ref(0);
         }

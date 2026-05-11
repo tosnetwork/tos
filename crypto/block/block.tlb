@@ -409,6 +409,19 @@ libref_hash$0 lib_hash:bits256 = LibRef;
 libref_ref$1 library:^Cell = LibRef;
 action_change_library#26fa1dd4 mode:(## 7)
   libref:LibRef = OutAction;
+//
+// JVM v2 (and any future EngineDefined workchain): emit a synchronous
+// account-creation request from a transaction's action list. The host
+// materializes a new acc_active account at `dest_addr` in the
+// current workchain, charges the sender for storage stake + fwd fee,
+// and (when `body` is present) enqueues an internal message to the new
+// account. Honored only when the source policy declares
+// `admits_engine_create_account_actions`.
+action_create_account#4a435241 mode:(## 8)
+  dest_addr:bits256
+  state_init:^StateInit
+  value:Tomis
+  body:(Maybe ^Cell) = OutAction;
 
 out_list_node$_ prev:^Cell action:OutAction = OutListNode;
 //

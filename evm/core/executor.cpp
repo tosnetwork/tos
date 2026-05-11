@@ -20,6 +20,7 @@
 #include <optional>
 #include <utility>
 
+#include <silkworm/core/crypto/secp256k1n.hpp>
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
 #include <silkworm/core/protocol/param.hpp>
@@ -59,9 +60,29 @@ std::optional<std::string> prevalidate_evm_transaction_admission_locked(
     const auto& sender = *sender_opt;
     const auto rev = config.revision(block.header.number, block.header.timestamp);
 
-    if (txn.chain_id.has_value() &&
-        *txn.chain_id != intx::uint256{config.chain_id}) {
+    // Round 144 LOW fix: mirror the round-127 (chain_id binding)
+    // and round-133 (EIP-2 low-S signature) gates here so the
+    // cheap-admission path rejects pre-EIP-155 / high-S txs
+    // BEFORE the EVM compute phase forces EIP-4788 / EIP-2935
+    // system-call work in compute-phase.cpp.  The full executor
+    // re-checks both later, so missing them here is not a
+    // consensus acceptance bypass — it's an unpaid-CPU
+    // amplification vector for raw-BOC submissions that bypass
+    // the JSON-RPC eth_sendRawTransaction admission path.  Only
+    // gate signatures when r/s are non-zero; the (0,0) case is
+    // the internal-tx / set_sender path used by host engines.
+    if (!txn.chain_id.has_value()) {
+        return "pre-EIP-155 legacy transactions are not supported "
+               "(chain_id binding required)";
+    }
+    if (*txn.chain_id != intx::uint256{config.chain_id}) {
         return "wrong chain id";
+    }
+    if ((txn.r != 0 || txn.s != 0) &&
+        !silkworm::is_valid_signature(txn.r, txn.s,
+                                       rev >= EVMC_HOMESTEAD)) {
+        return "invalid secp256k1 signature (non-canonical r/s; "
+               "EIP-2 low-S required)";
     }
 
     if (txn.type == silkworm::TransactionType::kBlob) {
@@ -192,12 +213,27 @@ static ExecutionResult run_evm(
         // also accepts ext_in_msgs via `sendBoc` / liteServer that bypass
         // the RPC. Without this check a foreign-chain tx (signed for
         // mainnet, replayed onto TOS-EVM with the same key/nonce) would
-        // execute on wc=1 and bypass EIP-155 replay protection. Pre-EIP-155
-        // legacy txs (chain_id = nullopt) remain accepted — by spec they
-        // are not bound to any chain and Silkworm only enforces the equality
-        // when `chain_id.has_value()`.
-        if (txn.chain_id.has_value() &&
-            *txn.chain_id != intx::uint256{config.chain_id}) {
+        // execute on wc=1 and bypass EIP-155 replay protection.
+        //
+        // Round 127 MEDIUM fix: reject pre-EIP-155 legacy txs
+        // (chain_id = nullopt) outright.  Pre-fix Silkworm only
+        // enforced equality when chain_id.has_value(), so an
+        // unprotected legacy signature minted for any historical
+        // EVM context (e.g. a long-tail mainnet account that
+        // signed before EIP-155 was activated) was replayable on
+        // TOS EVM with no chain-id binding at all.  TOS EVM is a
+        // new chain — there is no compatibility benefit to
+        // accepting unprotected signatures, and rejecting them
+        // closes a cross-chain replay vector with no legitimate
+        // user impact.
+        if (!txn.chain_id.has_value()) {
+            result.error_message =
+                "pre-EIP-155 legacy transactions are not supported "
+                "(chain_id binding required)";
+            result.gas_used = 0;
+            return result;
+        }
+        if (*txn.chain_id != intx::uint256{config.chain_id}) {
             result.error_message = "wrong chain id";
             result.gas_used = 0;
             return result;
@@ -231,6 +267,39 @@ static ExecutionResult run_evm(
         // because `pre_validate_common_forks` invokes
         // `SILKWORM_ASSERT(blob_gas_price)` for type-3 txs (we pass
         // `nullopt` for blob_gas_price — there is no blob mempool).
+        // Round 133 MEDIUM fix: enforce EIP-2 low-S signature
+        // canonicality.  Pre-fix sender recovery accepted both
+        // (r, s) and (r, n - s) as valid signatures of the same
+        // transaction, so anyone observing a valid signed tx could
+        // flip s to its complement, recompute v, and produce a
+        // different transaction hash with the same sender, nonce,
+        // and action — classic Ethereum tx malleability that EIP-2
+        // closed in Homestead.  TOS EVM activates Homestead from
+        // block 0, so high-S signatures are non-canonical here.
+        // Silkworm's pre_validate_common_base / _forks do NOT check
+        // signature validity; that lives in the higher-level
+        // pre_validate_transaction, which neither the consensus
+        // executor nor the RPC admission path calls.  Inline the
+        // check directly so consensus and the RPC fast-path both
+        // reject malleated copies up front.
+        //
+        // The gate skips when both r and s are zero — that is the
+        // signature-less internal-tx / set_sender path used by host
+        // engines to inject already-authenticated calls (sender_
+        // pre-cached on the Transaction).  A wire-arrived tx that
+        // has reached this point has r and s in [1, n-1] because
+        // sender recovery would otherwise have failed at line 174,
+        // returning "sender not recovered".  External callers
+        // therefore cannot bypass EIP-2 by setting r=0 or s=0.
+        if ((txn.r != 0 || txn.s != 0) &&
+            !silkworm::is_valid_signature(txn.r, txn.s,
+                                           rev >= EVMC_HOMESTEAD)) {
+            result.error_message =
+                "invalid secp256k1 signature (non-canonical r/s; "
+                "EIP-2 low-S required)";
+            result.gas_used = 0;
+            return result;
+        }
         if (auto vr_base = silkworm::protocol::pre_validate_common_base(
                 txn, rev, config.chain_id);
             vr_base != silkworm::ValidationResult::kOk) {

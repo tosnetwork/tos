@@ -66,11 +66,26 @@ td::Result<td::Ref<BlockData>> create_block(ReceivedBlock data) {
 }
 
 td::Result<td::Ref<Proof>> create_proof(BlockIdExt masterchain_block_id, td::BufferSlice proof) {
-  return Ref<ProofQ>{true, masterchain_block_id, std::move(proof)};
+  // Round 139 MEDIUM fix: validate that the supplied proof bytes
+  // actually bind to the claimed block_id (proof_for matches and
+  // the virtualized Merkle proof's root hash matches
+  // block_id.root_hash) before any caller can read .data().
+  // Pre-fix the validation lived only in get_virtual_root() and
+  // raw download paths (e.g. ValidatorManagerImpl::get_block_proof
+  // returning B->data()) bypassed it — archive corruption could
+  // serve mismatched proof bytes for any block id.  Same
+  // integrity-gate class as round 136's CellLoader::load and round
+  // 138's BlockQ::init.
+  Ref<ProofQ> res{true, masterchain_block_id, std::move(proof)};
+  TRY_STATUS(res.write().get_virtual_root().move_as_status());
+  return td::Ref<Proof>{std::move(res)};
 }
 
 td::Result<td::Ref<ProofLink>> create_proof_link(BlockIdExt block_id, td::BufferSlice proof_link) {
-  return Ref<ProofLinkQ>{true, block_id, std::move(proof_link)};
+  // Round 139 MEDIUM fix: same integrity gate as create_proof above.
+  Ref<ProofLinkQ> res{true, block_id, std::move(proof_link)};
+  TRY_STATUS(res.write().get_virtual_root().move_as_status());
+  return td::Ref<ProofLink>{std::move(res)};
 }
 
 td::Result<td::Ref<ShardState>> create_shard_state(BlockIdExt block_id, td::BufferSlice data) {

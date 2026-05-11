@@ -19,6 +19,7 @@
 #include "json-rpc-server-internal.h"
 
 #include "evm/rpc/handlers.h"
+#include "jvm/core/rpc.h"
 #include "uno/rpc/handlers.h"
 
 #include <cstdlib>
@@ -757,20 +758,24 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
       class PostRestWaiter : public http::HttpPayload::Callback {
        public:
         PostRestWaiter(td::actor::ActorId<JsonRpcServer> server, PayloadPtr payload,
-                       std::string method, td::Promise<HttpReturn> promise)
+                       std::string method, std::string source_ip,
+                       td::Promise<HttpReturn> promise)
             : server_(server), payload_(std::move(payload)),
-              method_(std::move(method)), promise_(std::move(promise)) {}
+              method_(std::move(method)), source_ip_(std::move(source_ip)),
+              promise_(std::move(promise)) {}
         void run(size_t) override {}
         void completed() override {
           if (fired_) return;  // one-shot guard
           fired_ = true;
           td::actor::send_closure(server_, &JsonRpcServer::on_post_rest_body_ready,
-                                  std::move(payload_), std::move(method_), std::move(promise_));
+                                  std::move(payload_), std::move(method_),
+                                  std::move(source_ip_), std::move(promise_));
         }
        private:
         td::actor::ActorId<JsonRpcServer> server_;
         PayloadPtr payload_;
         std::string method_;
+        std::string source_ip_;
         td::Promise<HttpReturn> promise_;
         bool fired_{false};
       };
@@ -782,11 +787,17 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
                                             "null", opts_.cors_origin));
           return;
         }
+        // Round 156 MEDIUM fix: thread source_ip through REST POST so
+        // POST /sendBoc and friends hit the per-IP rate gate that
+        // round-155 added on the JSON-RPC side.  Pre-fix the REST
+        // adapter passed std::string() and consume_per_ip_token
+        // bypassed the gate for any empty-source-ip caller.
         process_rest_post_body(body_r.move_as_ok(), std::move(rest_method),
-                               std::move(promise));
+                               std::move(source_ip), std::move(promise));
       } else {
         payload->add_callback(std::make_unique<PostRestWaiter>(
-            actor_id(this), payload, std::move(rest_method), std::move(promise)));
+            actor_id(this), payload, std::move(rest_method),
+            std::move(source_ip), std::move(promise)));
       }
       return;
     }
@@ -978,6 +989,20 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
 
   // eth_sendRawTransaction: route to async handler (submits to ExtMessagePool)
   if (method == "eth_sendRawTransaction") {
+    // Round 153 MEDIUM fix: apply the EVM per-IP rate gate before
+    // dispatch.  Pre-fix the eth_sendRawTransaction fast-path
+    // bypassed the per-IP gate that handle_eth_rpc enforces for
+    // every other EVM method (handlers.cpp:6739) and only checked
+    // the global token bucket inside handle_eth_sendRawTransaction.
+    // A single IP could submit many small invalid raw-tx requests
+    // ("eth_sendRawTransaction(['0xzz'])") and consume the global
+    // bucket, starving other clients' EVM RPC.  Mirror the gate
+    // here before the route.
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     handle_eth_sendRawTransaction(params_val, std::move(req_id), std::move(promise));
     return;
   }
@@ -992,11 +1017,28 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   // harness uses with its own `g_submit_ext` callback; in production the
   // interceptor below shadows it so wallets always go through the actor
   // pipe.
+  // Round 154 MEDIUM fix: apply the EVM per-IP rate gate to uno_send*
+  // fast paths too.  The per-IP gate is shared infrastructure (per-
+  // IP token bucket attribution) and applies equally to any
+  // submission method that fans out to live state queries.  Pre-
+  // fix uno_sendMineUno + uno_sendTransfer used only the global
+  // g_send_mine_uno_limiter / g_sendtx_limiter buckets, so a
+  // single IP could drain those buckets and starve other clients.
   if (method == "uno_sendMineUno") {
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     handle_uno_sendMineUno(params_val, std::move(req_id), std::move(promise));
     return;
   }
   if (method == "uno_sendTransfer") {
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     handle_uno_sendTransfer(params_val, std::move(req_id), std::move(promise));
     return;
   }
@@ -1006,8 +1048,42 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   // and rate-limit policy are validator-engine concerns; the underlying
   // accessor is bound by `init_uno_workchain` in uno/core/init.cpp.
   if (method == "uno_getMineState") {
+    // Round 163 (claude review) MEDIUM fix: gate uno_getMineState
+    // with the per-IP token bucket.  Pre-fix this read fast-path
+    // bypassed the gate entirely, allowing a single IP to flood
+    // the validator-engine thread pool with live-state reads.
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     promise.set_value(
         handle_uno_get_mine_state(std::move(req_id), opts_.cors_origin));
+    return;
+  }
+
+  // JVM workchain JSON-RPC: route jvm_* methods through the full-node
+  // facade. The handler resolves live ConfigParam 85 before calling into
+  // jvm_workchain::handle_jvm_rpc().
+  //
+  // Round 154 MEDIUM fix: apply the per-IP rate gate to JVM
+  // methods too.  Pre-fix jvm_callContract / jvm_getContractState
+  // / jvm_getReceipts each fanned out to liteserver queries
+  // (masterchain info + ConfigParam 85 + account state) on every
+  // request without a per-IP throttle, and jvm_callContract could
+  // additionally run local JVM simulation.  The same per-IP token
+  // bucket that gates EVM read-only methods applies here.
+  if (jvm_workchain::is_jvm_rpc_method(method)) {
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
+    td::JsonBuilder jb;
+    jb.enter_value() << params_val;
+    auto params_str = jb.string_builder().as_cslice().str();
+    handle_jvm_rpc_method(std::move(method), std::move(params_str),
+                          std::move(req_id), std::move(promise));
     return;
   }
 
@@ -1038,6 +1114,15 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   // Uno workchain JSON-RPC: same array-params convention as eth_*.
   if (params_val.type() == td::JsonValue::Type::Array &&
       uno_workchain::is_uno_rpc_method(method)) {
+    // Round 163 (claude review) MEDIUM fix: gate the uno_* array-
+    // params read path.  Pre-fix this branch went straight to
+    // handle_uno_rpc without consuming a per-IP token, mirroring
+    // the gap closed in round 154 for the jvm_* branch.
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
     td::JsonBuilder jb;
     jb.enter_value() << params_val;
     std::string params_str = jb.string_builder().as_cslice().str();
@@ -1252,6 +1337,7 @@ void JsonRpcServer::finalize_batch(std::shared_ptr<BatchState> state) {
 // ─── POST REST body processing (body = params JSON, no jsonrpc envelope) ──
 
 void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string method,
+                                            std::string source_ip,
                                             td::Promise<HttpReturn> promise) {
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s callback chain. Breaks the deadlock.
@@ -1261,21 +1347,24 @@ void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string meth
                                       opts_.cors_origin));
     return;
   }
-  process_rest_post_body(body_r.move_as_ok(), std::move(method), std::move(promise));
+  process_rest_post_body(body_r.move_as_ok(), std::move(method),
+                         std::move(source_ip), std::move(promise));
 }
 
 void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string method,
+                                           std::string source_ip,
                                            td::Promise<HttpReturn> promise) {
+  // Round 156 MEDIUM fix: REST POST now carries source_ip so per-IP
+  // rate gates fire on POST /sendBoc and friends.  Pre-fix this
+  // adapter passed std::string() and consume_per_ip_token bypassed
+  // the gate for any caller with no source attribution; that
+  // bypassed the round-155 JSON-RPC-layer protection for all REST
+  // submissions.
   if (body.empty()) {
     // Empty body → empty params
     td::JsonObject empty_obj;
-    // REST adapters are not the eth_* JSON-RPC dispatcher; they predate the
-    // per-IP rate gate and their callers (Python tests, REST-only clients)
-    // don't carry an X-Forwarded-For attribution. Bypass the gate by
-    // passing an empty source IP — the global / per-method limits still
-    // apply to any methods that hit them.
     cached_dispatch_method(std::move(method), empty_obj, "null",
-                           std::string(), std::move(promise));
+                           std::move(source_ip), std::move(promise));
     return;
   }
   auto json_r = td::json_decode(body.as_slice());
@@ -1291,7 +1380,7 @@ void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string met
     return;
   }
   cached_dispatch_method(std::move(method), json.get_object(), "null",
-                         std::string(), std::move(promise));
+                         std::move(source_ip), std::move(promise));
 }
 
 // ─── Method dispatch ──────────────────────────────────────────────────────
@@ -1337,6 +1426,33 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     return;
   }
 
+  // Round 163 (claude review) MEDIUM fix: gate ALL legacy-TonAPI
+  // methods at the dispatch_method boundary.  Pre-fix only the
+  // submission family (sendBoc/sendQuery/etc.) was per-IP rate-
+  // limited; read-heavy methods (estimateFee, runGetMethod,
+  // getAddressInformation, getTransactions, ...) fanned out to
+  // liteserver queries on every call with no per-IP throttle,
+  // letting a single IP saturate the validator-engine thread
+  // pool / liteserver fanout.  EVM and JVM paths already gate
+  // every method at this boundary (handle_eth_rpc:6739 +
+  // process_single_object_request:1067); this brings legacy
+  // TonAPI to the same baseline.  An empty source_ip (REST
+  // pre-round-156 / in-process callers) bypasses the gate by
+  // design in consume_per_ip_token, so test fixtures remain
+  // unaffected.
+  if (!evm_workchain::consume_per_ip_token(source_ip)) {
+    promise.set_value(make_eth_json_error(
+        -32005, "rate limit exceeded (per-IP)", req_id));
+    return;
+  }
+
+  // Round 163 consolidation: round-155/156's explicit per-method
+  // legacy-submission gate (sendBoc / sendBocReturnHash /
+  // sendBocReturnHashNoError / sendQuery / submitSignedTransaction)
+  // is now redundant with the dispatch_method-wide per-IP gate
+  // added above and has been removed; the wider gate already
+  // covers these methods plus every legacy TonAPI read method
+  // that previously bypassed rate limiting.
   // Existing methods
   if (method == "sendBoc") {
     handle_sendBoc(params, std::move(req_id), std::move(promise));
@@ -1441,6 +1557,26 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_runGetMethodStd(params, std::move(req_id), std::move(promise));
   } else if (method == "sendBocReturnHashNoError") {
     handle_sendBocReturnHashNoError(params, std::move(req_id), std::move(promise));
+  }
+  // --- JVM Workchain: jvm_* JSON-RPC methods ---
+  else if (jvm_workchain::is_jvm_rpc_method(method)) {
+    // Round 154 MEDIUM fix: per-IP gate, mirroring the array-
+    // params route in process_body.
+    if (!evm_workchain::consume_per_ip_token(source_ip)) {
+      promise.set_value(make_eth_json_error(
+          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
+      return;
+    }
+    td::JsonBuilder jb;
+    {
+      auto obj = jb.enter_object();
+      for (auto& kv : params.field_values_) {
+        obj(kv.first, kv.second);
+      }
+    }
+    auto params_str = jb.string_builder().as_cslice().str();
+    handle_jvm_rpc_method(std::move(method), std::move(params_str),
+                          std::move(req_id), std::move(promise));
   }
   // --- EVM Workchain: Ethereum JSON-RPC methods ---
   else if (evm_workchain::is_eth_rpc_method(method)) {
@@ -1865,40 +2001,90 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
     return;
   }
 
-  // Build cache key: method|field1=val1&field2=val2 (sorted by name)
-  td::StringBuilder sb;
-  sb << method << "|";
-  // params.field_values_ is public — iterate and serialize
-  std::vector<std::pair<std::string, std::string>> kvs;
-  kvs.reserve(params.field_values_.size());
-  for (auto &fv : params.field_values_) {
-    // Use field name and a simple string representation of the value
-    std::string val;
-    switch (fv.second.type()) {
+  // Build cache key: method|<type><len>:<name><type><len>:<value>...
+  //
+  // Round 81 LOW fix: length-prefix every name and value so an
+  // attacker cannot craft a parameter value containing the
+  // delimiter characters (`&`, `=`) and force two semantically
+  // distinct requests to alias to the same cache key.  Pre-fix
+  // the key was raw `method|name=value&name=value`; a request
+  // with `lt: "5&shard=6"` (which strtoll happily parses as 5)
+  // produced the same key as a separate `lt:"5", shard:"6&..."`
+  // request, so the second call could see the first call's cached
+  // response.  Length-prefixing makes the encoding bijective.
+  //
+  // Round 82 LOW fix (a): keep only the FIRST occurrence of each
+  // duplicate field name.  td::JsonObject preserves duplicates,
+  // and the existing handlers read the first match — pre-fix the
+  // key sorted all (name,value) pairs, so two requests with
+  // `param:12,param:13` vs `param:13,param:12` both produced the
+  // same key after the sort.
+  //
+  // Round 82 LOW fix (b): include the JSON value type in the
+  // encoding so a string `"true"` cannot alias a boolean `true`.
+  // Pre-fix both encoded as `4:true`; with the cache aliasing,
+  // a request whose handler reads the boolean as a non-bool
+  // could be served the boolean variant's response.
+  //
+  // Round 82 MEDIUM fix (c): cap the per-request key size.
+  // JsonRpcResponseCache only budgets `response_json.size()`, not
+  // the key copy retained by the LRU map/list, so an attacker
+  // could pin multi-MiB attacker strings as keys (request body
+  // cap is 4 MiB; some methods like getMasterchainInfo ignore
+  // params).  When the key would exceed `kMaxCacheKeyBytes`,
+  // fall through to the uncached dispatch path.
+  constexpr std::size_t kMaxCacheKeyBytes = 4096;
+  auto encode_value = [](const td::JsonValue& v, std::string& out) {
+    switch (v.type()) {
       case td::JsonValue::Type::String:
-        val = fv.second.get_string().str();
+        out.push_back('s');
+        out.append(v.get_string().begin(), v.get_string().size());
         break;
-      case td::JsonValue::Type::Number:
-        val = fv.second.get_number().str();
+      case td::JsonValue::Type::Number: {
+        out.push_back('n');
+        auto num = v.get_number();
+        out.append(num.begin(), num.size());
         break;
+      }
       case td::JsonValue::Type::Boolean:
-        val = fv.second.get_boolean() ? "true" : "false";
+        out.push_back('b');
+        out.append(v.get_boolean() ? "1" : "0");
         break;
       case td::JsonValue::Type::Null:
-        val = "null";
+        out.push_back('z');
         break;
       default:
-        val = "?";
+        out.push_back('?');
         break;
     }
-    kvs.emplace_back(fv.first.str(), std::move(val));
+  };
+  td::StringBuilder sb;
+  sb << method << "|";
+  std::vector<std::pair<std::string, std::string>> kvs;
+  kvs.reserve(params.field_values_.size());
+  std::set<td::Slice> seen_names;
+  for (auto& fv : params.field_values_) {
+    if (!seen_names.insert(fv.first).second) {
+      continue;  // first-occurrence wins, mirroring handler semantics
+    }
+    std::string typed_val;
+    encode_value(fv.second, typed_val);
+    kvs.emplace_back(fv.first.str(), std::move(typed_val));
   }
   std::sort(kvs.begin(), kvs.end());
-  for (size_t i = 0; i < kvs.size(); i++) {
-    if (i > 0) sb << "&";
-    sb << kvs[i].first << "=" << kvs[i].second;
+  for (auto& kv : kvs) {
+    sb << kv.first.size() << ":" << kv.first
+       << kv.second.size() << ":" << kv.second;
   }
   std::string cache_key = sb.as_cslice().str();
+  if (cache_key.size() > kMaxCacheKeyBytes) {
+    // Skip cache for oversized keys — don't pin attacker payloads
+    // in the LRU when the per-entry budget only counts the
+    // response body.
+    dispatch_method(std::move(method), params, std::move(req_id),
+                    std::move(source_ip), std::move(promise));
+    return;
+  }
 
   // Check cache
   auto cached = cache_.lookup(cache_key);

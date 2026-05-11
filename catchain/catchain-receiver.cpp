@@ -579,9 +579,23 @@ void CatChainReceiverImpl::read_db_from(CatChainBlockHash id) {
   db_root_block_ = id;
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), id](td::Result<DbType::GetResult> R) {
-    R.ensure();
+    // Round 166 (claude review) LOW fix: replace bare .ensure() / CHECK
+    // on the catchain root-block DB fetch with explicit LOG(FATAL) lines
+    // that name the offending key.  Round 142 wired the same operator-
+    // visibility style inside read_block_from_db; this closes the
+    // matching gap in the DB-fetch lambda that feeds it.  A failed Get
+    // or NotFound at this layer means the saved root pointer references
+    // a record that is no longer in CatChainDb — catastrophic, but the
+    // operator needs to see WHY.
+    if (R.is_error()) {
+      LOG(FATAL) << "catchain-receiver: DB get failed for root block "
+                 << id << ": " << R.error().message();
+    }
     DbType::GetResult g = R.move_as_ok();
-    CHECK(g.status == td::KeyValue::GetStatus::Ok);
+    if (g.status != td::KeyValue::GetStatus::Ok) {
+      LOG(FATAL) << "catchain-receiver: DB has no record for root block "
+                 << id << " (refusing to proceed on missing root)";
+    }
 
     td::actor::send_closure(SelfId, &CatChainReceiverImpl::read_block_from_db, id, std::move(g.value));
   });
@@ -592,14 +606,32 @@ void CatChainReceiverImpl::read_db_from(CatChainBlockHash id) {
 void CatChainReceiverImpl::read_block_from_db(CatChainBlockHash id, td::BufferSlice data) {
   pending_in_db_--;
 
+  // Round 142 MEDIUM fix: replace bare .ensure() / CHECK aborts on
+  // DB-loaded catchain block records with explicit LOG(FATAL) lines
+  // that name the offending key.  Pre-fix a single corrupted RocksDB
+  // record (malformed TL, wrong bytes under a key, bad signature,
+  // wrong incarnation, missing source) crashed the catchain receiver
+  // with no operator-readable reason.  Halting on corruption is the
+  // correct safety response — these signature/identity checks gate
+  // all downstream consensus — but operators must see WHY.  Same
+  // operator-visibility class as round 137's CellLoader::load
+  // FATAL wiring.
   auto F = fetch_tl_prefix<tos_api::catchain_block>(data, true);
-  F.ensure();
+  if (F.is_error()) {
+    LOG(FATAL) << "catchain-receiver: DB record for block hash "
+               << id << " has malformed TL prefix: "
+               << F.error().message();
+  }
 
   auto block = F.move_as_ok();
   td::BufferSlice payload = std::move(data);
 
   CatChainBlockHash block_id = CatChainReceivedBlock::block_hash(this, block, payload);
-  CHECK(block_id == id);
+  if (block_id != id) {
+    LOG(FATAL) << "catchain-receiver: DB record for block hash "
+               << id << " contains a block whose recomputed hash is "
+               << block_id << " (refusing to proceed on corrupt DB)";
+  }
 
   CatChainReceivedBlock *B = get_block(id);
   if (B && B->initialized()) {
@@ -611,11 +643,24 @@ void CatChainReceiverImpl::read_block_from_db(CatChainBlockHash id, td::BufferSl
   }
 
   CatChainReceiverSource *source = get_source(block->src_);
-  CHECK(source != nullptr);
+  if (source == nullptr) {
+    LOG(FATAL) << "catchain-receiver: DB record for block hash "
+               << id << " names source idx " << block->src_
+               << " which is not in the current source set";
+  }
 
-  CHECK(block->incarnation_ == incarnation_);
+  if (block->incarnation_ != incarnation_) {
+    LOG(FATAL) << "catchain-receiver: DB record for block hash "
+               << id << " has incarnation " << block->incarnation_
+               << " but current incarnation is " << incarnation_;
+  }
 
-  validate_block_sync(block, payload).ensure();
+  auto vbs = validate_block_sync(block, payload);
+  if (vbs.is_error()) {
+    LOG(FATAL) << "catchain-receiver: DB record for block hash "
+               << id << " failed signature/structure validation: "
+               << vbs.message();
+  }
 
   B = create_block(std::move(block), td::SharedSlice{payload.as_slice()});
   CHECK(B);
@@ -628,9 +673,22 @@ void CatChainReceiverImpl::read_block_from_db(CatChainBlockHash id, td::BufferSl
     if (!dep_block || !dep_block->initialized()) {
       pending_in_db_++;
       auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), dep](td::Result<DbType::GetResult> R) {
-        R.ensure();
+        // Round 166 (claude review) LOW fix: same operator-visibility
+        // upgrade as the root-fetch lambda above.  A parent block's
+        // dep hash that does not resolve in CatChainDb means the
+        // DB has a dangling reference — catastrophic, but the
+        // operator must see WHICH dep was missing.
+        if (R.is_error()) {
+          LOG(FATAL) << "catchain-receiver: DB get failed for dep block "
+                     << dep << ": " << R.error().message();
+        }
         DbType::GetResult g = R.move_as_ok();
-        CHECK(g.status == td::KeyValue::GetStatus::Ok);
+        if (g.status != td::KeyValue::GetStatus::Ok) {
+          LOG(FATAL) << "catchain-receiver: DB has no record for dep block "
+                     << dep
+                     << " (referenced by a stored parent but absent from "
+                        "CatChainDb)";
+        }
 
         td::actor::send_closure(SelfId, &CatChainReceiverImpl::read_block_from_db, dep, std::move(g.value));
       });

@@ -335,7 +335,15 @@ static std::optional<SignedRawTransaction> make_signed_raw_transfer(
     txn.r = intx::be::unsafe::load<intx::uint256>(sig_bytes);
     txn.s = intx::be::unsafe::load<intx::uint256>(sig_bytes + 32);
     txn.odd_y_parity = (recovery_id == 1);
-    txn.set_v(intx::uint256{kEvmChainId * 2 + 35 + recovery_id});
+    // Round 133 fix: libsecp256k1's recoverable signing does not
+    // always emit a low-S signature, but TOS EVM consensus and RPC
+    // now reject high-S transactions per EIP-2.  Normalize here so
+    // test fixtures produce signatures that admission accepts.
+    if (txn.s > silkworm::kSecp256k1Halfn) {
+        txn.s = silkworm::kSecp256k1n - txn.s;
+        txn.odd_y_parity = !txn.odd_y_parity;
+    }
+    txn.set_v(intx::uint256{kEvmChainId * 2 + 35 + (txn.odd_y_parity ? 1 : 0)});
 
     silkworm::Bytes raw_rlp;
     silkworm::rlp::encode(raw_rlp, txn);
@@ -2532,8 +2540,15 @@ static void test_signed_transaction() {
     txn.s = intx::be::unsafe::load<intx::uint256>(sig_bytes + 32);
     // EIP-155: v = chain_id * 2 + 35 + recovery_id
     txn.odd_y_parity = (recovery_id == 1);
+    // Round 133 fix: normalize to low-S so consensus / RPC admission
+    // (which now enforce EIP-2) accept the signature.  See the
+    // sign_legacy_transaction helper above for the rationale.
+    if (txn.s > silkworm::kSecp256k1Halfn) {
+        txn.s = silkworm::kSecp256k1n - txn.s;
+        txn.odd_y_parity = !txn.odd_y_parity;
+    }
     // For legacy: set_v computes from chain_id
-    txn.set_v(intx::uint256{kEvmChainId * 2 + 35 + recovery_id});
+    txn.set_v(intx::uint256{kEvmChainId * 2 + 35 + (txn.odd_y_parity ? 1 : 0)});
 
     printf("  r: %s\n", intx::hex(txn.r).c_str());
     printf("  s: %s\n", intx::hex(txn.s).c_str());

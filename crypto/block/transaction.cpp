@@ -111,8 +111,9 @@ bool account_allowed_by_policy(const block::AccountExecutionPolicy& policy, cons
     case block::AccountExecutionPolicyKind::SingletonExecutor:
       return policy.singleton_address.has_value() &&
              std::memcmp(addr.data(), policy.singleton_address.value().data(), 32) == 0;
-    case block::AccountExecutionPolicyKind::ShardLocalExecutor:
     case block::AccountExecutionPolicyKind::EngineDefined:
+      return true;
+    case block::AccountExecutionPolicyKind::ShardLocalExecutor:
       return false;
   }
   return false;
@@ -1935,12 +1936,32 @@ bool Transaction::run_precompiled_contract(const ComputePhaseConfig& cfg, precom
   cp.gas_used = gas_usage;
   cp.accepted = result.accepted;
   cp.success = (cp.accepted && result.committed);
+  // Round 84 LOW fix: set `cp.msg_state_used` to reflect whether
+  // the precompiled executor ran against the unpacked inbound
+  // StateInit, NOT whether activation succeeded.  Pre-fix
+  // (round 83) this lived inside the activation branch, so an
+  // ACCEPT-then-throw sequence (success=false, accepted=true)
+  // serialized msg_state_used=false even though the executor
+  // had already consumed the unpacked StateInit.  The flag's
+  // semantics are "did compute use inbound StateInit", not
+  // "did the deploy commit".
+  cp.msg_state_used = use_msg_state;
   LOG(INFO) << "Running precompiled smart contract " << impl.get_name() << ": exit_code=" << result.exit_code
             << " accepted=" << result.accepted << " success=" << cp.success << " gas_used=" << gas_usage
             << " time=" << time_tvm.real << "s cpu_time=" << time_tvm.cpu;
   if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
+    // Round 82 LOW fix: keep `cp.account_activated` consistent
+    // with the host's acc_uninit/acc_frozen → acc_active
+    // transition for the TVM/precompiled path.  Round 81 fixed
+    // the same invariant on the custom-engine branch.  Pre-fix
+    // the canonical compute-phase metadata (serialized via
+    // `block.tlb` at transaction.cpp:4472) reported
+    // account_activated=false for ordinary TVM deploys and
+    // unfreezes — RPC consumers and replay tooling saw
+    // inconsistent records.
+    cp.account_activated = true;
   }
   if (cfg.with_vm_log) {
     cp.vm_log = PSTRING() << "Running precompiled smart contract " << impl.get_name()
@@ -2040,6 +2061,8 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       compute_phase.reset();
       return false;
     }
+    admits_engine_create_account_actions =
+        custom_plan.policy.admits_engine_create_account_actions;
     if (in_msg_extern && !custom_plan.descriptor.accept_msgs) {
       cp.skip_reason = ComputePhase::sk_bad_state;
       return true;
@@ -2059,15 +2082,95 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       return true;
     }
 
+    // Custom-engine activation from an inbound StateInit.  The TVM path
+    // below (`unpack_msg_state` after line 2125) populates `new_data` from
+    // `state.data` for uninit/frozen TVM accounts; the custom branch must
+    // do the same so engines that key consensus on the per-account state
+    // cell (e.g. JVM v2 keying on `JvmContractAccountState`) can decode
+    // the StateInit's data ref instead of seeing a null `current_data`.
+    // We deliberately skip the TVM `check_in_msg_state_hash` check —
+    // that rule (`addr == hash(StateInit)`) is TVM-specific and would
+    // reject legitimate JVM v2 deploys whose address comes from
+    // `derive_jvm_contract_address`.  Custom engines own their own
+    // activation invariants.
+    // Round 63 HIGH fix: snapshot the pre-unpack values so we can
+    // roll back when the engine rejects the activation.  Pre-fix the
+    // unpack mutated `new_code/new_data/new_library` unconditionally;
+    // a rejected first-activation (compute returned `committed=false`)
+    // left those fields populated with attacker-supplied
+    // `StateInit.{code,data,library}` cells, and `commit()` then wrote
+    // them back into the in-memory `Account`.  A subsequent same-
+    // block internal message to the same address would seed
+    // `new_data` from `account.data` with `msg_state_used=false`,
+    // letting the engine treat the stale rejected state as a
+    // legitimate subsequent call — bypassing first-activation
+    // invariants (storage_root empty, deployer-source binding,
+    // round-58/59 code/library marker checks).
+    const td::Ref<vm::Cell> pre_state_init_new_code = new_code;
+    const td::Ref<vm::Cell> pre_state_init_new_data = new_data;
+    const td::Ref<vm::Cell> pre_state_init_new_library = new_library;
+    // Round 66 MEDIUM fix: reject external messages that attach a
+    // `StateInit` to an already-active custom-engine account.
+    // External import fees are zeroed for custom workchains
+    // (line ~1127), and the custom branch only unpacks StateInit
+    // when `acc_status == acc_uninit` — so a sender targeting an
+    // active account could pad the inbound message with a large
+    // valid `StateInit.{code,data,library}` shape and force the
+    // host to validate / parse / size the ignored payload at no
+    // gas cost.  The ignored StateInit also pollutes the
+    // transaction record's input-message field.  Reject here so
+    // active-account inbounds with attached StateInit fail closed
+    // (matches the policy intent that StateInit only applies to
+    // uninitialized accounts; TVM enforces this via
+    // `check_in_msg_state_hash` which is intentionally skipped on
+    // the custom branch).
+    if (acc_status != Account::acc_uninit && in_msg_state.not_null()) {
+      cp.skip_reason = ComputePhase::sk_bad_state;
+      cp.success = false;
+      cp.accepted = false;
+      cp.gas_fees = td::zero_refint();
+      cp.vm_log = "custom workchain rejected inbound StateInit attached "
+                  "to active account";
+      return true;
+    }
+    if (acc_status == Account::acc_uninit && in_msg_state.not_null() &&
+        new_data.is_null()) {
+      block::gen::StateInit::Record si;
+      if (tlb::unpack_cell(in_msg_state, si)) {
+        if (si.code->size_refs() > 0) {
+          new_code = si.code->prefetch_ref();
+        }
+        if (si.data->size_refs() > 0) {
+          new_data = si.data->prefetch_ref();
+        }
+        if (si.library->size_refs() > 0) {
+          new_library = si.library->prefetch_ref();
+        }
+        use_msg_state = true;
+      }
+    }
+
     block::WorkchainComputeInput input;
     input.account_addr = account.addr;
     input.current_code = new_code;
     input.current_data = new_data;
+    // Round 59 LOW fix: forward the active library so custom-engine
+    // workchains (JVM v2) can reject attacker-supplied
+    // `StateInit.library` on first activation — pre-fix the host
+    // copied `si.library` into `new_library`, ran compute, and
+    // committed the library bytes verbatim into `account.library`
+    // even though the JVM engine has no library semantics.
+    input.current_library = new_library;
     input.account_balance = balance;
     input.inbound_message = in_msg;
     input.inbound_body = in_msg_body;
     input.msg_lt = start_lt;
     input.gas_limit = cp.gas_limit;
+    // Tell the engine whether `current_data` came from unpacking the
+    // inbound StateInit (first activation) so it can enforce stricter
+    // invariants on the first decode (e.g., JVM v2 requires empty
+    // initial storage_root).
+    input.msg_state_used = use_msg_state;
 
     block::WorkchainComputeContext context;
     context.workchain_id = account.workchain;
@@ -2100,6 +2203,66 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     }
     apply_custom_compute_output(cp, output);
 
+    // Round-29: charge the custom workchain's reported gas_fees from
+    // the account, mirroring the TVM and precompiled paths above.
+    // Pre-fix the custom branch only COPIED `output.gas_fees` into
+    // `cp.gas_fees` and never adjusted `total_fees` or `balance`,
+    // so a custom-engine contract (e.g. JVM v2) consumed validator
+    // CPU without the account paying the recorded fee — the bypass
+    // is reachable from a zero-balance account because
+    // `compute_gas_limits` deliberately skips balance-based gas
+    // buying for custom engines.  The custom engine's returned
+    // gas_fees is non-negative (validate_custom_compute_output
+    // checks).
+    //
+    // Round-30 fix: when the account cannot cover the fees, treat
+    // the compute phase as rejected (sk_no_gas, accepted=false)
+    // rather than returning false from prepare_compute_phase.
+    // Returning false bubbles up as collator error -669 (fatal),
+    // which would let an external message with `gas_fees > balance`
+    // crash block production; the rejected-external path (-701)
+    // is the right semantic.  We pre-check the balance before
+    // mutating it so `CurrencyCollection::operator-=` can't
+    // invalidate the collection on underflow.
+    if (cp.accepted && !account.is_special) {
+      const bool can_pay =
+          cp.gas_fees.not_null() && balance.tomis.not_null()
+          && td::cmp(balance.tomis, cp.gas_fees) >= 0;
+      if (!can_pay) {
+        // Drop engine outcomes — host cannot honor a result it
+        // can't bill.  Clear new_data / actions so the
+        // `if (output.committed)` block below leaves the account
+        // state and queue untouched.  Set sk_no_gas so the
+        // collator's "if (!cp.accepted) return -701" path fires
+        // for external messages, matching TVM's reject-for-
+        // insufficient-gas semantics.
+        cp.accepted = false;
+        cp.success = false;
+        cp.skip_reason = ComputePhase::sk_no_gas;
+        cp.out_of_gas = true;
+        cp.gas_fees = td::zero_refint();
+        cp.new_data = {};
+        cp.actions = {};
+        cp.vm_log = "custom workchain compute rejected: gas_fees exceed "
+                    "account balance";
+        return true;
+      }
+      total_fees += cp.gas_fees;
+      balance -= cp.gas_fees;
+    } else if (cp.accepted && account.is_special) {
+      cp.gas_fees = td::zero_refint();
+    }
+    if (cp.accepted &&
+        (!balance.is_valid() || td::sgn(balance.tomis) < 0)) {
+      // Defensive: round-29's pre-check above should have caught
+      // this, but if a future code change ever lets it through, we
+      // still fail closed rather than dereferencing a null tomis
+      // in downstream FAIL_UNLESS.
+      LOG(ERROR) << "custom workchain charging produced invalid balance";
+      compute_phase.reset();
+      return false;
+    }
+
     if (output.committed) {
       if (cp.new_data.not_null()) {
         new_data = cp.new_data;
@@ -2113,7 +2276,27 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
           (cp.new_data.not_null() || new_code.not_null())) {
         acc_status = Account::acc_active;
         was_activated = true;
+        // Round 81 LOW fix: keep `cp.account_activated` consistent
+        // with the host's acc_uninit→acc_active transition.  The
+        // engine's `output.account_activated` was copied earlier
+        // (apply_custom_compute_output) from `cp.account_activated`,
+        // which custom engines (e.g. Uno) cannot set since the
+        // activation is performed here, not in their compute phase.
+        // Pre-fix the canonical compute-phase metadata claimed
+        // `account_activated=false` even when this branch flipped
+        // the account to active — a transaction-record invariant
+        // mismatch visible to RPC consumers and replay tooling.
+        cp.account_activated = true;
       }
+    } else {
+      // Round 63 HIGH fix: roll back the StateInit-unpacked new_*
+      // values when compute did not commit.  Without this rollback
+      // they would leak into `commit()` -> Account, letting a
+      // subsequent same-block tx see attacker-supplied stale state
+      // and bypass first-activation invariants.
+      new_code = pre_state_init_new_code;
+      new_data = pre_state_init_new_data;
+      new_library = pre_state_init_new_library;
     }
 
     return true;
@@ -2265,9 +2448,29 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   cp.gas_used = std::min<long long>(gas.gas_consumed(), gas.gas_limit);
   cp.accepted = (gas.gas_credit == 0);
   cp.success = (cp.accepted && vm.committed());
+  // Round 84 LOW fix: set `cp.msg_state_used` to reflect whether
+  // the TVM ran against the unpacked inbound StateInit, NOT
+  // whether activation succeeded.  Pre-fix (round 83) this lived
+  // inside the activation branch, so an ACCEPT-then-throw
+  // sequence (success=false, accepted=true) serialized
+  // msg_state_used=false even though TVM had consumed the
+  // unpacked StateInit's code/data.  The flag's semantics are
+  // "did compute use inbound StateInit", not "did the deploy
+  // commit".
+  cp.msg_state_used = use_msg_state;
   if (compute_phase_can_activate_account(cp.success, cp.accepted, cfg.global_version) && use_msg_state) {
     was_activated = true;
     acc_status = Account::acc_active;
+    // Round 82 LOW fix: keep `cp.account_activated` consistent
+    // with the host's acc_uninit/acc_frozen → acc_active
+    // transition for the TVM/precompiled path.  Round 81 fixed
+    // the same invariant on the custom-engine branch.  Pre-fix
+    // the canonical compute-phase metadata (serialized via
+    // `block.tlb` at transaction.cpp:4472) reported
+    // account_activated=false for ordinary TVM deploys and
+    // unfreezes — RPC consumers and replay tooling saw
+    // inconsistent records.
+    cp.account_activated = true;
   }
   if (precompiled) {
     cp.gas_used = precompiled.value().gas_usage;
@@ -2473,6 +2676,9 @@ bool Transaction::prepare_action_phase(const ActionPhaseConfig& cfg) {
       case block::gen::OutAction::action_change_library:
         err_code = try_action_change_library(cs, ap, cfg);
         break;
+      case block::gen::OutAction::action_create_account:
+        err_code = try_action_create_account(cs, ap, cfg);
+        break;
     }
     if (err_code == -666) {
       return false;
@@ -2567,6 +2773,155 @@ int Transaction::try_action_set_code(vm::CellSlice& cs, ActionPhase& ap, const A
   ap.code_changed = true;
   ap.spec_actions++;
   return 0;
+}
+
+/**
+ * Engine-driven account creation. Honored only when the source's
+ * AccountExecutionPolicy is `EngineDefined` AND
+ * `admits_engine_create_account_actions` is true (set by
+ * `prepare_compute_phase` from the resolved policy). The action
+ * synthesizes an internal `MessageRelaxed` carrying the supplied
+ * `state_init` (and optional `body`) and dispatches it through
+ * `try_action_send_msg`, so all fee, validation, and outbound-queue
+ * logic is reused. The new account is materialized when the message
+ * is delivered (existing acc_uninit -> acc_active TLB path); for
+ * deploys emitted earlier in the same block this is the next
+ * transaction.
+ *
+ * @param cs The CellSlice containing the action data serialized as
+ *           action_create_account TLB-scheme.
+ * @param ap The action phase object.
+ * @param cfg The action phase configuration.
+ *
+ * @returns 0 on success; 34 if policy gate denies the action or the
+ *          source workchain is not addressable as addr_std;
+ *          forwarded error code from the underlying send-msg path
+ *          otherwise.
+ */
+int Transaction::try_action_create_account(vm::CellSlice& cs, ActionPhase& ap, const ActionPhaseConfig& cfg) {
+  block::gen::OutAction::Record_action_create_account rec;
+  if (!tlb::unpack_exact(cs, rec)) {
+    return -1;
+  }
+  // Policy gate: only honored when the engine declares the capability.
+  if (!admits_engine_create_account_actions) {
+    return 34;
+  }
+  // addr_std$10 only supports an int8 workchain id; engines outside that
+  // range must fall back to action_send_msg with hand-built addr_var.
+  if (account.workchain < -128 || account.workchain >= 128) {
+    return 34;
+  }
+  // Build dest = MsgAddressInt addr_std$10 anycast=Nothing wc:int8 addr:bits256
+  vm::CellBuilder dest_cb;
+  Ref<vm::Cell> dest_cell;
+  if (!(dest_cb.store_long_bool(4, 3)                          // 100: addr_std$10 anycast=Nothing
+        && dest_cb.store_long_rchk_bool(account.workchain, 8)  // workchain_id:int8
+        && dest_cb.store_bits_bool(rec.dest_addr.cbits(), 256) // address:bits256
+        && dest_cb.finalize_to(dest_cell))) {
+    return 34;
+  }
+  // Build src as addr_none$00; check_replace_src_addr inside try_action_send_msg
+  // will fill in our address.
+  vm::CellBuilder src_cb;
+  Ref<vm::Cell> src_cell;
+  if (!(src_cb.store_long_bool(0, 2) && src_cb.finalize_to(src_cell))) {
+    return 34;
+  }
+  // Build value:CurrencyCollection { tomis:Tomis extra:HashmapE-as-Maybe }
+  // rec.value is a CellSlice of Tomis (VarUInteger 16); append it then store
+  // an empty extra map.
+  vm::CellBuilder value_cb;
+  Ref<vm::Cell> value_cell;
+  if (!(value_cb.append_cellslice_bool(rec.value)  // tomis
+        && value_cb.store_long_bool(0, 1)          // extra: Nothing
+        && value_cb.finalize_to(value_cell))) {
+    return 34;
+  }
+  // Zero-Tomis VarUInteger 16: 4-bit length prefix = 0 (no value bytes).
+  vm::CellBuilder zero_cb;
+  Ref<vm::Cell> zero_cell;
+  if (!(zero_cb.store_long_bool(0, 4) && zero_cb.finalize_to(zero_cell))) {
+    return 34;
+  }
+  Ref<vm::CellSlice> zero_grams = vm::load_cell_slice_ref(zero_cell);
+
+  block::gen::CommonMsgInfoRelaxed::Record_int_msg_info info;
+  info.ihr_disabled = true;
+  info.bounce = false;
+  info.bounced = false;
+  info.src = vm::load_cell_slice_ref(std::move(src_cell));
+  info.dest = vm::load_cell_slice_ref(std::move(dest_cell));
+  info.value = vm::load_cell_slice_ref(std::move(value_cell));
+  info.fwd_fee = zero_grams;
+  info.extra_flags = zero_grams;
+  info.created_lt = 0;
+  info.created_at = 0;
+
+  Ref<vm::CellSlice> info_csr;
+  if (!tlb::csr_pack(info_csr, info)) {
+    return 34;
+  }
+
+  // init:(Maybe (Either StateInit ^StateInit)) -> Just (Right ^state_init): bits "11" + ref.
+  vm::CellBuilder init_cb;
+  if (!(init_cb.store_long_bool(3, 2) && init_cb.store_ref_bool(rec.state_init))) {
+    return 34;
+  }
+  Ref<vm::CellSlice> init_csr = init_cb.as_cellslice_ref();
+
+  // body:(Either X ^X). rec.body is Maybe ^Cell:
+  //   Nothing -> emit Left empty (1-bit "0").
+  //   Just ^c -> emit Right ^c (1-bit "1" + ref).
+  vm::CellBuilder body_cb;
+  vm::CellSlice rec_body{*rec.body};
+  bool body_just = (rec_body.size() > 0 && rec_body.fetch_long(1) == 1);
+  if (body_just) {
+    Ref<vm::Cell> body_ref;
+    if (!rec_body.fetch_ref_to(body_ref)) {
+      return 34;
+    }
+    if (!(body_cb.store_long_bool(1, 1) && body_cb.store_ref_bool(std::move(body_ref)))) {
+      return 34;
+    }
+  } else {
+    if (!body_cb.store_long_bool(0, 1)) {
+      return 34;
+    }
+  }
+  Ref<vm::CellSlice> body_csr = body_cb.as_cellslice_ref();
+
+  block::gen::MessageRelaxed::Record msg;
+  msg.info = info_csr;
+  msg.init = init_csr;
+  msg.body = body_csr;
+
+  vm::CellBuilder msg_cb;
+  Ref<vm::Cell> msg_cell;
+  if (!tlb::type_pack(msg_cb, block::gen::t_MessageRelaxed_Any, msg) ||
+      !msg_cb.finalize_to(msg_cell)) {
+    return 34;
+  }
+
+  // Wrap into action_send_msg{tag, mode, ^msg_cell} so try_action_send_msg
+  // can unpack it via OutAction::Record_action_send_msg.
+  vm::CellBuilder act_cb;
+  Ref<vm::Cell> act_cell;
+  if (!(act_cb.store_long_bool(0x0ec3c86d, 32)            // action_send_msg tag
+        && act_cb.store_long_rchk_bool(rec.mode, 8)       // mode:## 8
+        && act_cb.store_ref_bool(std::move(msg_cell))     // out_msg:^Cell
+        && act_cb.finalize_to(act_cell))) {
+    return 34;
+  }
+  vm::CellSlice act_cs = vm::load_cell_slice(act_cell);
+  int err = try_action_send_msg(act_cs, ap, cfg);
+  if (err == -2) {
+    err = try_action_send_msg(act_cs, ap, cfg, 1);
+    if (err == -2) {
+      err = try_action_send_msg(act_cs, ap, cfg, 2);
+    }
+  }
+  return err;
 }
 
 /**

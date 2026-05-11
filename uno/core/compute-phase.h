@@ -192,7 +192,19 @@ bool run_compute_phase(
     UnoState& state,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]);
+    const uint8_t rand_seed[32],
+    // Round 76 HIGH fix: singleton-account balance at the start of this
+    // tx, in nanotomis.  When the projected gas_fees exceed the
+    // singleton's balance, the host's compute-phase charging block
+    // (transaction.cpp `Transaction::prepare_compute_phase` custom-
+    // engine branch) rolls the cp back to `sk_no_gas` and clears
+    // `new_data`.  Pre-fix, by the time the host rolled back, this
+    // function had already mutated `g_live` (apply_transfer +
+    // record_included_tx) and fired subscription/output side
+    // effects, leaving non-canonical state visible to RPC consumers
+    // until the next tx's `hydrate_from_cell_if_needed` resync.
+    // The pre-check below short-circuits the path BEFORE any apply.
+    const td::RefInt256& balance_nanotomis);
 
 // ---------------------------------------------------------------------------
 // Batch entry point — §13 P.3 parallel verify.

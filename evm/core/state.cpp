@@ -149,6 +149,21 @@ uint64_t EvmState::allocate_next_block_number(std::optional<StoredBlock>& parent
 
 void EvmState::store_block(const StoredBlock& block) {
     std::unique_lock lock(mutex_);
+    // Round 86 MEDIUM fix: erase any prior hash → number mapping for
+    // this block height before installing the new block.  Pre-fix,
+    // when a block at height N was rewritten with a different hash,
+    // the old `hash_to_block_[old_hash]` entry stayed alive and
+    // `get_block_by_hash_copy(old_hash)` returned the NEW block at
+    // height N — RPC handlers like
+    // `eth_getBlockTransactionCountByHash`,
+    // `eth_getTransactionByBlockHashAndIndex`, and
+    // `eth_getRawTransactionByBlockHashAndIndex` (which do not
+    // re-verify the hash) thus served the new block under the old
+    // hash.
+    auto prev_it = blocks_.find(block.number);
+    if (prev_it != blocks_.end()) {
+        hash_to_block_.erase(prev_it->second.hash);
+    }
     blocks_[block.number] = block;
     hash_to_block_[block.hash] = block.number;
     // Head tracking: every successful store_block advances block_number_ so
@@ -298,6 +313,19 @@ void EvmState::store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
                           uint32_t tx_index) {
     std::unique_lock lock(mutex_);
     auto& block_log_vec = block_logs_[block_number];
+    // Round 97 HIGH fix: idempotency.  Pre-fix store_logs unconditionally
+    // appended every call; the round-96 marker-repair fall-through
+    // therefore appended a second copy of the same accepted tx's
+    // logs after the first apply already stored them, producing
+    // duplicate entries with inflated logIndex on every retry.
+    // Skip when this tx_hash already contributed logs at this
+    // height; the canonical record is whatever the first apply
+    // stored.
+    for (const auto& existing : block_log_vec) {
+        if (existing.tx_hash == tx_hash) {
+            return;
+        }
+    }
     for (uint32_t i = 0; i < logs.size(); ++i) {
         block_log_vec.push_back(IndexedLog{
             .block_number = block_number,
@@ -308,6 +336,57 @@ void EvmState::store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
         });
     }
     evict_oldest_log_blocks();
+}
+
+void EvmState::reset_block_logs(uint64_t block_number) {
+    std::unique_lock lock(mutex_);
+    block_logs_.erase(block_number);
+}
+
+std::size_t EvmState::reconcile_blocks_with_canonical() {
+    std::unique_lock lock(mutex_);
+    if (!backend_) {
+        return 0;
+    }
+    std::size_t dropped = 0;
+    for (auto it = blocks_.begin(); it != blocks_.end(); ) {
+        const uint64_t bn = it->first;
+        const auto canonical = backend_->canonical_hash(
+            static_cast<silkworm::BlockNum>(bn));
+        // Round 90 MEDIUM fix: fail closed when canonical_hash
+        // returns nullopt.  Pre-fix the gate only dropped on an
+        // explicit mismatch, so a cached block from an old/forked/
+        // future chain whose height has no canonical entry yet was
+        // kept, and `eth_blockNumber`, raw block/header, and
+        // freshness gates that self-validate against the same RAM
+        // map could treat it as canonical.  An absent canonical
+        // entry is not "fresh enough" — drop the cached block and
+        // let the post-accept rewrite path re-populate it once
+        // the canonical chain catches up.
+        bool is_orphan = canonical.has_value()
+                             ? (*canonical != it->second.hash)
+                             : true;
+        if (is_orphan) {
+            // Orphan: cached block at this height disagrees with (or
+            // has no entry in) the canonical chain.  Drop it and
+            // every per-block sidecar that was hydrated under the
+            // same orphan attribution.
+            hash_to_block_.erase(it->second.hash);
+            block_logs_.erase(bn);
+            it = blocks_.erase(it);
+            ++dropped;
+        } else {
+            ++it;
+        }
+    }
+    // Round 90 MEDIUM fix (continued): if reconciliation just dropped
+    // the previous head, recompute `block_number_` from the
+    // surviving blocks so `eth_blockNumber` and `latest` no longer
+    // advertise the orphan height.
+    if (dropped > 0) {
+        block_number_ = blocks_.empty() ? 0 : blocks_.rbegin()->first;
+    }
+    return dropped;
 }
 
 static bool matches_address(const silkworm::Log& log,

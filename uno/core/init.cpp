@@ -44,7 +44,10 @@
 // forward-declare the three config-param entry points we actually call.
 namespace uno_workchain {
 struct UnoConfig;  // full type lives in config-param.h
-const UnoConfig& current_uno_config() noexcept;
+// Round 130: signature changed from `const UnoConfig&` to `UnoConfig`
+// (returns by value via atomic shared_ptr load).  Forward declaration
+// updated to match.
+UnoConfig current_uno_config() noexcept;
 // The handful of UnoConfig fields we consult. Kept locally as an opaque
 // view into the process-global config to avoid the header conflict.
 struct UnoConfigView {
@@ -1597,7 +1600,8 @@ bool uno_run_compute_phase(
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]) {
+    const uint8_t rand_seed[32],
+    const td::RefInt256& balance_nanotomis) {
     // g_live must be non-null before any dereference. Null means
     // init_uno_workchain was never called, which is an infrastructure error,
     // not a valid compute skip.
@@ -1621,7 +1625,8 @@ bool uno_run_compute_phase(
     return run_compute_phase(
         cp, in_msg_body, gas_limit,
         *g_live,
-        block_seqno, timestamp, rand_seed);
+        block_seqno, timestamp, rand_seed,
+        balance_nanotomis);
 }
 
 // ---------------------------------------------------------------------------
@@ -1762,10 +1767,33 @@ void init_uno_workchain(const std::string& db_root) {
 td::Ref<vm::Cell> build_uno_zerostate_accounts_cell() {
     using td::make_refint;
 
-    // 1. AccountStorage = last_trans_lt:0 balance:zero state:account_uninit$00
+    // 1. AccountStorage = last_trans_lt:0 balance:bootstrap state:account_uninit$00
+    //
+    // Round 77 HIGH fix: seed the wc=2 singleton with a non-zero
+    // bootstrap balance so the chain has liveness after Round 75/76.
+    // Pre-fix the zerostate stored `balance:zero`; combined with
+    // Round 75 (cp.gas_fees > 0 on accepted Uno paths) and Round 76
+    // (host-rollback prevention via affordability pre-check), the
+    // very first external Transfer / MineUno is rejected by
+    // `affordable_or_reject` because `gas_used * kUnoGasPriceNano >
+    // 0 == balance.tomis` and the singleton can never activate.
+    //
+    // The chain has no built-in mechanism to credit the singleton
+    // (shielded txs carry no value; there is no block-subsidy hook
+    // wired to wc=2).  A multi-launch funding mechanism is out of
+    // scope for this security review; pre-fund with a generous but
+    // bounded amount so testnet/mainnet bring-up has working
+    // wc=2 admission until governance lands a permanent funding
+    // mechanism.  10^15 nanotomis (~10^6 TOS at the current
+    // 10^9-nanotomis-per-TOS denomination) covers ~10^10 typical
+    // Transfer fees at the round-75 rate (gas_used~10^4 *
+    // kUnoGasPriceNano=10).
+    constexpr std::uint64_t kUnoSingletonBootstrapBalanceNano =
+        1'000'000'000'000'000ULL;  // 10^15 nano-tomis = ~10^6 TOS
     vm::CellBuilder as_cb;
     as_cb.store_long_bool(0, 64);                                 // last_trans_lt
-    bool ok = block::CurrencyCollection{make_refint(0)}.store(as_cb);  // balance
+    bool ok = block::CurrencyCollection{
+        make_refint(kUnoSingletonBootstrapBalanceNano)}.store(as_cb);
     CHECK(ok);
     as_cb.store_long_bool(0, 2);                                  // account_uninit$00
     auto storage_cell = as_cb.finalize();

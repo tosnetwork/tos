@@ -52,15 +52,18 @@ std::string workchain_engine_key_to_string(const WorkchainEngineKey& key);
 WorkchainEngineKey tvm_workchain_engine_key();
 WorkchainEngineKey evm_workchain_engine_key();
 WorkchainEngineKey uno_workchain_engine_key();
+WorkchainEngineKey jvm_workchain_engine_key();
 bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key);
 bool workchain_engine_key_is_evm(const WorkchainEngineKey& key);
 bool workchain_engine_key_is_uno(const WorkchainEngineKey& key);
+bool workchain_engine_key_is_jvm(const WorkchainEngineKey& key);
 
 // Network-advertised local engine capability bits for tosNode.capabilities.flags.
 // These are node capabilities, not consensus state. They let peers/operators
 // see which descriptor-selected engines this binary has registered.
 static constexpr td::uint32 kTosNodeCapabilityWorkchainEvm = 1u << 0;
 static constexpr td::uint32 kTosNodeCapabilityWorkchainUno = 1u << 1;
+static constexpr td::uint32 kTosNodeCapabilityWorkchainJvm = 1u << 2;
 
 struct WorkchainExecutionDescriptor {
   tos::WorkchainId workchain_id{tos::workchainInvalid};
@@ -113,6 +116,12 @@ struct AccountExecutionPolicy {
   bool accepts_internal_inbound{true};
   bool may_activate_uninitialized_account{true};
 
+  // Engine-driven account creation. When true, the engine may emit
+  // `action_create_account` from its action list to materialize a new
+  // account in this workchain at a deterministic address. Only honored
+  // for `kind == EngineDefined`.
+  bool admits_engine_create_account_actions{false};
+
   td::Ref<vm::Cell> activation_code;
 };
 
@@ -138,11 +147,29 @@ struct WorkchainComputeInput {
   tos::StdSmcAddress account_addr;
   td::Ref<vm::Cell> current_code;
   td::Ref<vm::Cell> current_data;
+  // Round 59 LOW fix: the active account's `library` cell.  TVM
+  // executes precompiled libraries from this slot; custom-engine
+  // workchains (e.g. JVM v2) inspect it to enforce per-engine
+  // invariants on first activation (the JVM activation marker is
+  // single-byte 0x4a; the canonical JVM account has no library, so
+  // the engine rejects any non-null `current_library` on
+  // `msg_state_used == true`, which would otherwise persist
+  // attacker-controlled cell bytes in `account.library` indefinitely).
+  td::Ref<vm::Cell> current_library;
   block::CurrencyCollection account_balance;
   td::Ref<vm::Cell> inbound_message;
   td::Ref<vm::CellSlice> inbound_body;
   tos::LogicalTime msg_lt{0};
   std::uint64_t gas_limit{0};
+  // True iff `current_data` was populated by unpacking the inbound
+  // message's StateInit.data (the host-side first-activation path in
+  // `prepare_compute_phase`); false on subsequent calls when
+  // `current_data` came from the prior tx's account.data.  Engines use
+  // this to apply stricter validation on the first decode of a state
+  // cell — TVM uses `check_in_msg_state_hash`; custom engines (e.g.
+  // JVM v2) use it to enforce activation invariants their address
+  // derivation cannot capture (e.g., empty initial storage_root).
+  bool msg_state_used{false};
 };
 
 struct WorkchainComputeOutput {

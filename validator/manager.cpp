@@ -814,6 +814,21 @@ void ValidatorManagerImpl::add_ext_server_id(adnl::AdnlNodeIdShort id) {
     }
     void receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                        td::Promise<td::BufferSlice> promise) override {
+      // Round 155 MEDIUM (deferred): the ADNL source `src` is dropped
+      // here, so the lite-client liteServer_sendMessage path forwards
+      // unattributed data into ExtMessagePool::check_add_external_
+      // message with `td::optional<PublicKeyHash>{}`.  ExtMessagePool's
+      // per-peer limiter only runs when source_peer is set, so a
+      // single ADNL client can submit unique liteServer.sendMessage
+      // queries indefinitely without per-source throttling.  Closing
+      // this requires plumbing the AdnlNodeIdShort through
+      // run_ext_query → LiteQuery::perform_sendMessage →
+      // new_external_message_query so the source is preserved at
+      // ExtMessagePool admission.  Tracked as a focused follow-up;
+      // exposure is bounded by the per-IP gate the JSON-RPC layer
+      // enforces (round 153/154/155) on the dominant submission
+      // path, while the ADNL/lite-server submission path remains
+      // a DoS surface for direct lite-client connections.
       td::actor::send_closure(id_, &ValidatorManagerImpl::run_ext_query, std::move(data), std::move(promise));
     }
 
@@ -1313,9 +1328,30 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
                                  << R.move_as_error();
                   } else {
                     auto prev_state = R.move_as_ok();
+                    auto prev_state_root = prev_state.not_null()
+                                               ? prev_state->root_cell()
+                                               : td::Ref<vm::Cell>{};
+                    // Round 96 HIGH fix: use the previous shard
+                    // state to hydrate EVM canonical account state
+                    // (eth_getBalance / eth_getCode / eth_getStorageAt
+                    // back-end) on first apply.  Pre-fix
+                    // init_evm_workchain left g_evm_state empty —
+                    // hydrate_global_state_if_empty was never invoked
+                    // anywhere in production, so RPC reads against
+                    // canonical state returned defaults.  The helper
+                    // is idempotent (gated on needs_initial_hydration)
+                    // so subsequent blocks no-op.
+                    auto hydrated_count =
+                        evm_workchain::hydrate_global_state_if_empty_from_shard_state_root(
+                            prev_state_root);
+                    if (hydrated_count > 0) {
+                      LOG(WARNING) << "evm post-accept: hydrated "
+                                   << hydrated_count
+                                   << " canonical EVM accounts from previous shard state";
+                    }
                     have_replay_state =
                         evm_workchain::extract_evm_executor_account_data_from_shard_state(
-                            prev_state.not_null() ? prev_state->root_cell() : td::Ref<vm::Cell>{},
+                            prev_state_root,
                             evm_executor_addr.data(), initial_account_data);
                     if (!have_replay_state) {
                       LOG(WARNING) << "evm post-accept: previous shard state does not expose EVM executor account data; "

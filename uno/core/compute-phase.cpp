@@ -213,6 +213,23 @@ constexpr uint64_t kPerSpendCost       = 2'000;
 constexpr uint64_t kPerOutputCost      = 2'000;
 constexpr int      kExitCodeRejectBase = 100;  // 100 + VerifyResult
 
+// Round 75 HIGH fix: gas_used → gas_fees (nanotomis) conversion rate.
+// Pre-fix every accepted Uno compute path reported `cp.gas_fees` as
+// null, which the wc=2 dispatch adapter (`uno/core/dispatch-engine.cpp:70`)
+// mapped to `td::zero_refint()`.  The host then debited zero from the
+// singleton executor's balance for any tx whose body decoded but whose
+// verify (verify_transfer / apply_mine_uno) failed, even though the
+// transaction was billed gas_used > 0 and the validator had already
+// performed the Plonky3 verification work.  An attacker could repeat
+// "valid envelope, invalid Plonky3 proof" Transfers and force every
+// validator to verify an attacker-chosen proof for free.
+//
+// Charging `gas_fees = gas_used * kUnoGasPriceNano` plugs the leak.
+// With the current cost constants a typical Transfer (~10 000 gas) bills
+// 100 000 nano-units which matches `kDefaultMinFeeNano`, so successful
+// Transfers do not cross-subsidise more than the existing min-fee floor.
+constexpr uint64_t kUnoGasPriceNano    = 10;
+
 uint64_t compute_gas_used(const Transfer& tx) noexcept {
     return kFixedVerifyCost
          + kPerByteCost   * tx.wire_size_bytes
@@ -274,6 +291,17 @@ void populate_reject_cp(block::ComputePhase& cp,
     cp.vm_init_state_hash.set_zero();
     cp.vm_final_state_hash.set_zero();
     cp.vm_log = std::string("uno: reject ") + verify_result_name(vr);
+    // Round 75 HIGH fix: bill the singleton executor for accepted-but-
+    // failed verification work.  `accepted=false` paths leave gas_fees
+    // null so the host's compute-phase charging block (transaction.cpp
+    // `Transaction::prepare_compute_phase` custom-engine branch) skips
+    // them; `accepted=true` paths must report a non-zero fee so the
+    // host actually debits it from balance.
+    if (accepted && gas_used > 0) {
+        cp.gas_fees = td::make_refint(gas_used) * kUnoGasPriceNano;
+    } else {
+        cp.gas_fees = td::zero_refint();
+    }
 }
 
 bool populate_serialization_failure_cp(block::ComputePhase& cp,
@@ -286,6 +314,37 @@ bool populate_serialization_failure_cp(block::ComputePhase& cp,
     cp.vm_log = std::string("uno: state serialization failed during ") + phase +
                 ": " + reason;
     return false;
+}
+
+// Round 76 HIGH fix: project gas_fees from gas_used and check against
+// the singleton balance.  Returns true when the balance can cover the
+// projected fees; on false the caller short-circuits and emits a
+// sk_no_gas / accepted=false cp without applying state mutations or
+// firing subscription side effects.
+//
+// Centralised so Transfer and MineUno paths share one canonical
+// affordability gate; the rate (`kUnoGasPriceNano`) lives next to
+// populate_reject_cp / populate_success_cp.
+bool affordable_or_reject(block::ComputePhase& cp,
+                          uint64_t gas_used,
+                          uint64_t gas_limit,
+                          const td::RefInt256& balance_nanotomis) {
+    if (gas_used == 0) {
+        return true;
+    }
+    const td::RefInt256 fees = td::make_refint(gas_used) * kUnoGasPriceNano;
+    if (balance_nanotomis.is_null() ||
+        td::cmp(balance_nanotomis, fees) < 0) {
+        cp.skip_reason = block::ComputePhase::sk_no_gas;
+        // Match the host's rejection shape: accepted=false, gas_used=0,
+        // gas_fees=0 so `apply_custom_compute_output` does not double-
+        // bill, and the collator's external-msg path returns -701.
+        populate_reject_cp(cp, VerifyResult::InsufficientFee, 0, gas_limit,
+                           /*accepted=*/false);
+        cp.vm_log = "uno: insufficient singleton balance for projected fees";
+        return false;
+    }
+    return true;
 }
 
 bool populate_success_cp(block::ComputePhase& cp,
@@ -335,6 +394,13 @@ bool populate_success_cp(block::ComputePhase& cp,
     cp.vm_steps   = 1;
     cp.vm_init_state_hash.set_zero();
     cp.vm_final_state_hash.set_zero();
+    // Round 75 HIGH fix: mirror the populate_reject_cp accepting path.
+    // Pre-fix, the singleton executor balance was never debited for
+    // successful Transfers either — the bug was symmetric, the
+    // accepted-failure path just made it the cheapest attack.
+    cp.gas_fees = (gas_used > 0)
+                      ? td::make_refint(gas_used) * kUnoGasPriceNano
+                      : td::zero_refint();
     return true;
 }
 
@@ -345,7 +411,8 @@ bool run_mine_uno_compute_phase(
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
     UnoState& state,
-    uint32_t  gen_utime) {
+    uint32_t  gen_utime,
+    const td::RefInt256& balance_nanotomis) {
 
     auto decoded = decode_mine_uno(in_msg_body);
     if (auto* err_ptr = std::get_if<MineUnoDecodeError>(&decoded)) {
@@ -361,6 +428,17 @@ bool run_mine_uno_compute_phase(
     }
     MineUno tx = std::move(std::get<MineUno>(decoded));
     const uint64_t gas_used = compute_gas_used_mine_uno(tx);
+
+    // Round 76 HIGH fix: pre-check the singleton balance BEFORE
+    // apply_mine_uno mutates state and BEFORE on_included_tx_from_compute
+    // fires subscription/output side effects.  When the host would
+    // later reset the cp to sk_no_gas, the side effects are
+    // unrecoverable from RPC consumers' point of view.
+    if (!affordable_or_reject(cp, gas_used, gas_limit, balance_nanotomis)) {
+        global_metrics_registry().inc_transfers_rejected(
+            RejectReason::InsufficientFee);
+        return true;
+    }
 
     VerifyResult vr = apply_mine_uno(state, tx, gen_utime);
     if (vr != VerifyResult::Ok) {
@@ -405,7 +483,8 @@ bool run_compute_phase(
     UnoState& state,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]) {
+    const uint8_t rand_seed[32],
+    const td::RefInt256& balance_nanotomis) {
     (void)rand_seed;
     (void)block_seqno;  // Uno uses state.current_block_seqno() for determinism.
 
@@ -435,7 +514,8 @@ bool run_compute_phase(
         return true;
     }
     if (disc == kTxKindMineUno) {
-        return run_mine_uno_compute_phase(cp, in_msg_body, gas_limit, state, gen_utime);
+        return run_mine_uno_compute_phase(cp, in_msg_body, gas_limit, state, gen_utime,
+                                          balance_nanotomis);
     }
     if (disc != kTransferVersion) {
         global_metrics_registry().inc_transfers_rejected(
@@ -476,6 +556,17 @@ bool run_compute_phase(
     Transfer tx = std::move(std::get<Transfer>(decoded));
     const uint64_t gas_used = compute_gas_used(tx);
 
+    // Round 76 HIGH fix: pre-check the singleton balance BEFORE
+    // verify_transfer (so an undercollateralised tx never reaches
+    // Plonky3 verification) and BEFORE apply_transfer (so we never
+    // fire on_included_tx_from_compute / stage_output_bytes side
+    // effects only to have the host roll the cp back to sk_no_gas).
+    if (!affordable_or_reject(cp, gas_used, gas_limit, balance_nanotomis)) {
+        global_metrics_registry().inc_transfers_rejected(
+            RejectReason::InsufficientFee);
+        return true;
+    }
+
     // --- Step 2: verify (no mutation) ---
     VerifyResult vr = verify_transfer(state, tx);
 
@@ -486,17 +577,14 @@ bool run_compute_phase(
 
         LOG(INFO) << "uno-workchain: reject tx=" << tx.tx_hash.to_hex()
                   << " reason=" << verify_result_name(vr);
-        cp.success    = false;
-        cp.accepted   = true;
-        cp.gas_used   = gas_used;
-        cp.gas_limit  = gas_limit;
-        cp.gas_credit = 0;
-        cp.gas_max    = gas_limit;
-        cp.exit_code  = kExitCodeRejectBase + static_cast<int>(vr);
-        cp.vm_steps   = 1;
-        cp.vm_init_state_hash.set_zero();
-        cp.vm_final_state_hash.set_zero();
-        cp.vm_log = std::string("uno: reject ") + verify_result_name(vr);
+        // Round 75 HIGH fix: route through populate_reject_cp so the
+        // accepted-but-failed Transfer path bills the singleton
+        // executor for its Plonky3 verification work.  Pre-fix this
+        // inline block left `cp.gas_fees` null and the host debited
+        // zero from balance.  populate_reject_cp now sets gas_fees =
+        // gas_used * kUnoGasPriceNano whenever accepted=true.
+        populate_reject_cp(cp, vr, gas_used, gas_limit,
+                           /*accepted=*/true);
 
         // Verify-before-mutate invariant (§4.3): no state delta on reject.
         // We still set new_data so the host chain's state hash cycles on the

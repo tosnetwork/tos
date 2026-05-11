@@ -276,7 +276,14 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
   auto P = td::PromiseCreator::lambda(
       [promise = std::move(promise), block_id, db = db_.get()](td::Result<td::Ref<Proof>> R) mutable {
         if (R.is_error()) {
-          auto P = td::PromiseCreator::lambda([promise = std::move(promise)](td::Result<td::Ref<Proof>> R) mutable {
+          // Round 158 + 159 LOW fix: fallback queries the proof-LINK
+          // table, not the full-proof table again.  Round 158 fixed
+          // the call-site target but kept the inner lambda's
+          // result type as Result<Ref<Proof>>; Db::get_key_block_
+          // proof_link returns Result<Ref<ProofLink>>, so the lambda
+          // result type must match.  The live manager at
+          // manager.cpp:498-508 uses ProofLink here.
+          auto P = td::PromiseCreator::lambda([promise = std::move(promise)](td::Result<td::Ref<ProofLink>> R) mutable {
             if (R.is_error()) {
               promise.set_error(R.move_as_error());
             } else {
@@ -285,7 +292,7 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
             }
           });
 
-          td::actor::send_closure(db, &Db::get_key_block_proof, block_id, std::move(P));
+          td::actor::send_closure(db, &Db::get_key_block_proof_link, block_id, std::move(P));
         } else {
           auto B = R.move_as_ok()->export_as_proof_link().move_as_ok();
           promise.set_value(B->data());

@@ -229,7 +229,29 @@ td::Result<CellLoader::LoadResult> CellLoader::load(td::Slice hash, td::Slice va
   res.refcnt_ = refcnt_cell.refcnt;
   res.cell_ = std::move(refcnt_cell.cell);
   res.stored_boc_ = refcnt_cell.stored_boc_;
-  //CHECK(res.cell_->get_hash() == hash);
+  // Round 136 MEDIUM fix: enforce that the cell parsed out of the
+  // RocksDB value actually hashes to the key it was stored under.
+  // Pre-fix this CHECK was commented out, so a corrupted or
+  // incorrectly-written CellDb record could silently substitute a
+  // foreign cell for any block/state hash — DynamicBagOfCellsDbV2
+  // would index the result by the loaded cell's own hash and
+  // RootDb::get_block_state would wrap it without re-checking
+  // root_hash, breaking the storage layer's integrity invariant.
+  // Returning a structured Status::Error lets the caller surface
+  // the corruption cleanly (validators FATAL on hydration mismatch
+  // already; this matches that policy at the load boundary).
+  //
+  // need_data == false skips the cell-bytes parse; in that case
+  // res.cell_ is null and the hash is not yet resolvable.
+  if (res.cell_.not_null() && res.cell_->get_hash().as_slice() != hash) {
+    return td::Status::Error(
+        PSLICE() << "CellDb integrity error: cell parsed out of value "
+                    "for key 0x"
+                 << td::base64url_encode(hash)
+                 << " hashes to 0x"
+                 << td::base64url_encode(res.cell_->get_hash().as_slice())
+                 << "; refusing to substitute a foreign cell");
+  }
 
   return res;
 }

@@ -114,12 +114,15 @@ class HttpConnection : public td::actor::Actor, public td::ObserverBase {
     return 1 << 16;  // 64 KiB
   }
   // Socket reader pauses above this. Must be ≥ HttpRequest::max_payload_size
-  // (= 1 MiB) or else continue_payload_read() in http-connection.cpp:252
-  // returns early and the BodyWaiter in json-rpc-server.cpp never sees the
-  // full body on requests that exceed fd_high_watermark (e.g. a 250 KiB
-  // MineUno BoC hex-encoded to ~500 KiB JSON). Matches HttpRequest watermark.
+  // or else continue_payload_read() in http-connection.cpp:252 returns
+  // early and the BodyWaiter in json-rpc-server.cpp never sees the full
+  // body on requests that exceed fd_high_watermark.  Round 152 HIGH fix:
+  // bumped from 1 MiB to 4 MiB to match HttpRequest::max_payload_size /
+  // kJsonRpcMaxRequestBodyBytes.  An oversize Content-Length is now
+  // rejected in HttpRequest::add_header so the buffer-up-to-watermark
+  // case won't pin a connection.
   static constexpr size_t fd_high_watermark() {
-    return 1 << 20;  // 1 MiB
+    return 4 << 20;  // 4 MiB
   }
   static constexpr size_t chunk_size() {
     return 1 << 10;

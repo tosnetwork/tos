@@ -259,6 +259,30 @@ void clear_all_rpc_block_indexing_incomplete() noexcept {
 void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     auto& state = global_evm_state();
 
+    // Round 87 MEDIUM fix: when this side-effect record carries a
+    // block summary (fx.has_block) and the currently-stored block
+    // at this height has a DIFFERENT hash, we are re-running the
+    // post-accept path for a same-height rewrite.  The orthogonal
+    // per-block logs index would otherwise have stale entries from
+    // the prior rewrite — `store_block` erases the hash → number
+    // mapping but `store_logs` (called BEFORE `store_block` in
+    // this function) would simply append the new logs on top.
+    // Drop the stale logs for that height before re-processing.
+    // The block_logs_[N] vector is rebuilt as the rewrite's
+    // subsequent txs land via store_logs, and `apply_stashed_side_
+    // effects_for_messages` applies a block's txs in tx-index
+    // order so the has_block tx is processed first.
+    if (fx.has_block) {
+        auto existing_block = state.get_block_copy(fx.block.number);
+        // get_block_copy returns a default-constructed StoredBlock
+        // (hash=0) when missing.  Treat the all-zero hash as "no
+        // prior block at this height" rather than a rewrite.
+        if (existing_block.hash != evmc::bytes32{} &&
+            existing_block.hash != fx.block.hash) {
+            state.reset_block_logs(fx.block.number);
+        }
+    }
+
     // Idempotency dedupe: a node that runs both collator and validator
     // roles for the same block reaches this seam twice (once per role).
     // Snapshot compute is pure, so the second apply would write
@@ -281,10 +305,60 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     if (auto existing = state.get_receipt_copy(fx.tx_hash);
         existing.has_value() &&
         existing->block_number == fx.receipt.block_number) {
-        clear_rpc_indexing_incomplete(fx.tx_hash);
-        return;
+        // Round 87 MEDIUM fix: extend the dedup gate so a same-
+        // height rewrite (same tx_hash, same block_number, but
+        // different block hash) falls through to re-run the
+        // block-installation path.  Pre-fix this branch returned
+        // before `state.store_block(fx.block)` at line 379, so
+        // `eth_getBlockByNumber(N)` kept serving the OLD hash and
+        // `eth_getBlockByHash(new_hash)` returned null even though
+        // consensus had accepted the rewrite.  When fx carries a
+        // block (fx.has_block == true) compare against the
+        // currently-stored block at that height; only skip when
+        // the hash is identical.  Mid-block txs (no block context
+        // in fx) keep the prior idempotent skip semantics.
+        bool block_hash_matches = true;
+        if (fx.has_block) {
+            auto existing_block = state.get_block_copy(fx.block.number);
+            // get_block_copy returns a default-constructed
+            // StoredBlock (hash=0) when missing, which compares
+            // unequal to any real fx.block.hash and correctly
+            // forces the fall-through.
+            block_hash_matches = (existing_block.hash == fx.block.hash);
+        }
+        // Round 96 HIGH fix: when the fast path detects a retry of
+        // the same (tx, block) but a marker is set, fall through to
+        // re-run the cache writes.  Pre-fix the dedup gate returned
+        // immediately after clearing the tx marker even when the
+        // durable cache still lacked the record (the original
+        // failure that set the marker).  After 24h marker prune
+        // the resulting state had no record AND no marker, so RPC
+        // returned silent null on an accepted tx.  When either
+        // marker is set, treat this as a repair retry: continue
+        // through the cache-write block.
+        const bool needs_repair =
+            is_evm_rpc_indexing_incomplete(fx.tx_hash) ||
+            (fx.has_block &&
+             is_evm_rpc_block_indexing_incomplete(fx.block.number));
+        if (block_hash_matches && !needs_repair) {
+            clear_rpc_indexing_incomplete(fx.tx_hash);
+            return;
+        }
+        // Fall through: either same-height rewrite (block hash
+        // mismatch) needs the records refreshed under the new
+        // hash, OR a marker indicates the prior cache write
+        // failed and needs another attempt.
     }
-    clear_rpc_indexing_incomplete(fx.tx_hash);
+    // Round 92 MEDIUM fix: do NOT clear the tx incomplete marker
+    // here.  Pre-fix the marker was cleared before
+    // `cache->put_receipt` / `cache->put_transaction` ran, and a
+    // disk-full / read-only failure left the durable cache without
+    // the record while the marker was already gone — RPC
+    // consumers then saw silent null instead of the contractual
+    // -32010.  The marker is now cleared at the end of this
+    // function ONLY when both writes succeeded (or no cache DB is
+    // configured).
+    bool tx_cache_writes_ok = true;
 
     // Per-block canonical-identity stamp. Every cache entry produced for
     // this block (receipt, transaction, logs, block-by-number,
@@ -327,6 +401,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
             LOG(WARNING) << "evm-rpc-cache: put_receipt failed for "
                          << tx_hash_bits.to_hex() << ": "
                          << put_status.message();
+            tx_cache_writes_ok = false;
         }
     }
 
@@ -343,6 +418,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
             LOG(WARNING) << "evm-rpc-cache: put_transaction failed for "
                          << tx_hash_bits.to_hex() << ": "
                          << put_status.message();
+            tx_cache_writes_ok = false;
         }
     }
 
@@ -365,6 +441,15 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
                 LOG(WARNING) << "evm-rpc-cache: put_logs_for_block failed for #"
                              << fx.receipt.block_number << ": "
                              << put_status.message();
+                // Round 93 MEDIUM fix: gate the tx marker clear on
+                // log persistence too.  Pre-fix a put_logs_for_block
+                // failure left the per-block log batch absent (so
+                // restart hydration produced `[]`), but the marker
+                // was still cleared, and `eth_getLogs` /
+                // `is_logs_for_block_canonical` treated the
+                // empty cell as canonical — log loss masquerading
+                // as "no logs in this block".
+                tx_cache_writes_ok = false;
             }
         }
     }
@@ -375,7 +460,15 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     // so a reader can detect a stale entry by comparing the cached value
     // against the current native commitment for that block_number.
     if (fx.has_block) {
-        clear_rpc_block_indexing_incomplete(fx.block.number);
+        // Round 92 MEDIUM fix: defer the block-marker clear until
+        // after cache writes succeed.  Pre-fix the marker was
+        // cleared before any cache write ran; a disk-full /
+        // read-only failure left the durable cache without the
+        // block record while the marker was already gone —
+        // restart hydration would then expose the partial state
+        // as `silent null` / `[]` instead of the contractual
+        // -32010.
+        bool block_cache_writes_ok = true;
         state.store_block(fx.block);
         {
             std::unique_lock lock(state.mutex());
@@ -390,6 +483,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
                 LOG(WARNING) << "evm-rpc-cache: put_block_by_number failed for #"
                              << fx.block.number << ": "
                              << put_n_status.message();
+                block_cache_writes_ok = false;
             }
             td::Bits256 hash_bits = bytes32_to_bits(fx.block.hash);
             auto put_h_status = cache->put_block_by_hash(hash_bits, cell);
@@ -397,23 +491,107 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
                 LOG(WARNING) << "evm-rpc-cache: put_block_by_hash failed for "
                              << hash_bits.to_hex() << ": "
                              << put_h_status.message();
+                block_cache_writes_ok = false;
             }
         }
-
-        auto& sub_mgr = global_subscription_manager();
-        sub_mgr.notify_new_head(fx.block);
-        sub_mgr.notify_new_pending_transaction(fx.tx_hash);
-        if (!fx.logs.empty()) {
-            sub_mgr.notify_logs(fx.block.number, fx.tx_hash, fx.logs,
-                                fx.block.hash);
+        // Round 92 MEDIUM fix: clear the block incomplete marker
+        // ONLY when the block cache writes succeeded (or no cache
+        // DB is configured).  Otherwise leave the marker in place
+        // so subsequent reads surface -32010.
+        //
+        // Round 95 HIGH fix: also leave the marker in place when
+        // ANY earlier tx in the same block was marked incomplete.
+        // The has_block tx may be the last in the block's
+        // apply-side-effects sequence, so an earlier failed tx
+        // already raised the block marker; clearing it now would
+        // erase the partial-commit signal even though the block's
+        // tx index is incomplete.  Sweep blk.transaction_hashes
+        // (already populated when fx.has_block) and keep the
+        // marker if any tx is still marked incomplete.
+        bool any_prior_tx_incomplete = false;
+        if (block_cache_writes_ok) {
+            for (const auto& th : fx.block.transaction_hashes) {
+                if (th == fx.tx_hash) continue;
+                if (is_evm_rpc_indexing_incomplete(th)) {
+                    any_prior_tx_incomplete = true;
+                    break;
+                }
+            }
         }
-    } else if (!fx.logs.empty()) {
+        if (block_cache_writes_ok && !any_prior_tx_incomplete) {
+            clear_rpc_block_indexing_incomplete(fx.block.number);
+        } else {
+            // Round 93 MEDIUM fix: when there was no pre-existing
+            // block marker (the normal post-accept happy path),
+            // failing cache writes left no marker for subsequent
+            // reads to surface -32010 with.  Create one explicitly
+            // so the contractual guarantee survives a partial
+            // commit.
+            mark_rpc_block_indexing_incomplete(fx.block.number);
+        }
+
+        // Round 95 MEDIUM fix: skip subscription notifications
+        // when the block carries an incomplete marker (either
+        // pre-existing or newly created above).  Pre-fix
+        // notify_new_head / notify_logs fired even on partial
+        // commits, so subscription consumers received header /
+        // log events for a block whose ordinary RPC returns
+        // -32010.  Drop the deliveries so live subscribers see
+        // the same canonicality contract as poll-based RPC.
+        const bool block_index_complete =
+            block_cache_writes_ok && !any_prior_tx_incomplete &&
+            tx_cache_writes_ok;
+        if (block_index_complete) {
+            auto& sub_mgr = global_subscription_manager();
+            sub_mgr.notify_new_head(fx.block);
+            sub_mgr.notify_new_pending_transaction(fx.tx_hash);
+            if (!fx.logs.empty()) {
+                sub_mgr.notify_logs(fx.block.number, fx.tx_hash, fx.logs,
+                                    fx.block.hash);
+            }
+        }
+    } else if (!fx.logs.empty() && tx_cache_writes_ok &&
+               // Round 96 MEDIUM fix: also skip when the block
+               // already carries a marker from an earlier tx.
+               // Pre-fix this branch fired for a non-final
+               // mid-block tx even when tx0's failed cache writes
+               // had already raised the block marker, so
+               // subscribers received log events for a block whose
+               // ordinary RPC returns -32010.
+               !is_evm_rpc_block_indexing_incomplete(fx.receipt.block_number)) {
+        // Round 95 MEDIUM fix: same-canonicality gate for mid-
+        // block tx subscription notifications.  Skip the log
+        // delivery when this tx's cache writes failed — the
+        // logs index for the block is partial and ordinary RPC
+        // will surface -32010.
+        //
         // Mid-block tx with logs but no block summary still notifies
         // log subscribers; mirrors legacy behaviour where
         // notify_logs fired on every store_logs invocation.
         auto& sub_mgr = global_subscription_manager();
         sub_mgr.notify_logs(fx.receipt.block_number, fx.tx_hash, fx.logs,
                             evmc::bytes32{});
+    }
+    // Round 92 MEDIUM fix: clear the tx incomplete marker only after
+    // tx cache writes succeeded.  When writes failed the marker
+    // stays so RPC consumers see -32010 instead of a stale partial
+    // record on the next read or after restart.
+    //
+    // Round 93 MEDIUM fix: when there was no pre-existing tx
+    // marker (the normal happy path) and cache writes failed,
+    // create a fresh marker so the -32010 contract survives.
+    if (tx_cache_writes_ok) {
+        clear_rpc_indexing_incomplete(fx.tx_hash);
+    } else {
+        mark_rpc_indexing_incomplete(fx.tx_hash);
+        // Round 94 HIGH fix: a tx/receipt/log cache failure leaves
+        // the per-block index partial too — by-block handlers
+        // (eth_getBlockByNumber, eth_getBlockReceipts, eth_getLogs,
+        // by-index tx lookups) need a block marker to surface
+        // -32010 instead of serving the gappy block.  Pre-fix only
+        // the per-tx marker was set, so the round-93 happy-path
+        // block-marker checks couldn't fire for this case.
+        mark_rpc_block_indexing_incomplete(fx.receipt.block_number);
     }
 }
 
@@ -1171,6 +1349,18 @@ RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
         }
         ++stats.log_blocks_written;
 
+        // Round 94 MEDIUM fix: clear durable incomplete markers
+        // for the repaired block + its txs.  Pre-fix the rebuild
+        // path rewrote every cache record but never cleared the
+        // markers post-write, so a previously-failed cache write
+        // left the block / tx returning -32010 even after a
+        // successful rebuild.  Clear only after every record
+        // for this block succeeded.
+        clear_rpc_block_indexing_incomplete(block.number);
+        for (const auto& tx_hash : block.transaction_hashes) {
+            clear_rpc_indexing_incomplete(tx_hash);
+        }
+
         if (block_number == UINT64_MAX) break;
     }
 
@@ -1427,6 +1617,13 @@ try_derive_evm_tx_hash_from_message(const td::Ref<vm::Cell>& msg) noexcept {
     auto rc = silkworm::rlp::decode_transaction(
         view, txn, silkworm::rlp::Eip2718Wrapping::kBoth);
     if (!rc.has_value()) return std::nullopt;
+    // Round 85 MEDIUM fix: reject trailing bytes here too, mirroring
+    // decode_evm_transaction.  Pre-fix the post-accept hash derivation
+    // accepted `0x02 || canonical_rlp || garbage`, producing the same
+    // Ethereum tx hash for multiple TOS external messages (different
+    // cell-tree roots).  See evm/core/transaction.cpp for the full
+    // rationale.
+    if (!view.empty()) return std::nullopt;
 
     // Transaction::hash() = keccak256(rlp::encode(txn, wrap_eip2718=false)).
     // No sender recovery needed — decode populates everything the hash

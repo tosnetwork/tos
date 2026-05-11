@@ -198,21 +198,47 @@ void RootDb::store_block_candidate(BlockCandidate candidate, td::Promise<td::Uni
 
 void RootDb::get_block_candidate(PublicKey source, BlockIdExt id, FileHash collated_data_file_hash,
                                  td::Promise<BlockCandidate> promise) {
-  auto P = td::PromiseCreator::lambda([promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
-    if (R.is_error()) {
-      promise.set_error(R.move_as_error());
-    } else {
-      auto f = fetch_tl_object<tos_api::db_candidate>(R.move_as_ok(), true);
-      f.ensure();
-      auto val = f.move_as_ok();
-      auto hash = sha256_bits256(val->collated_data_);
+  // Round 143 LOW fix: rebind the parsed payload's source/id/
+  // collated_hash to the caller's requested tuple before
+  // returning.  Pre-fix get_block_candidate trusted the archive
+  // index to map fileref::Candidate{source,id,hash} → bytes
+  // and returned source/id/hash decoded from the bytes; a
+  // corrupted temp-archive index swap (key for candidate A
+  // pointing at candidate B's package payload) silently
+  // returned candidate B under the caller's claimed lookup.
+  // Same integrity-gate class as round 138 (BlockQ::init).
+  auto P = td::PromiseCreator::lambda(
+      [source, id, collated_data_file_hash,
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_error(R.move_as_error());
+          return;
+        }
+        auto f = fetch_tl_object<tos_api::db_candidate>(R.move_as_ok(), true);
+        if (f.is_error()) {
+          promise.set_error(f.move_as_error());
+          return;
+        }
+        auto val = f.move_as_ok();
+        auto hash = sha256_bits256(val->collated_data_);
 
-      auto key = tos::PublicKey{val->source_};
-      auto e_key = Ed25519_PublicKey{key.ed25519_value().raw()};
-      promise.set_value(BlockCandidate{e_key, create_block_id(val->id_), hash, std::move(val->data_),
-                                       std::move(val->collated_data_)});
-    }
-  });
+        auto key = tos::PublicKey{val->source_};
+        auto e_key = Ed25519_PublicKey{key.ed25519_value().raw()};
+        auto decoded_id = create_block_id(val->id_);
+        if (key != source || decoded_id != id ||
+            hash != collated_data_file_hash) {
+          promise.set_error(td::Status::Error(
+              PSLICE() << "candidate archive integrity error: "
+                          "requested (source, id, collated_hash) != "
+                          "decoded ("
+                       << decoded_id.to_str() << ", collated_hash 0x"
+                       << hash.to_hex() << ")"));
+          return;
+        }
+        promise.set_value(BlockCandidate{e_key, decoded_id, hash,
+                                          std::move(val->data_),
+                                          std::move(val->collated_data_)});
+      });
   td::actor::send_closure(archive_db_, &ArchiveManager::get_temp_file_short,
                           fileref::Candidate{source, id, collated_data_file_hash}, std::move(P));
 }

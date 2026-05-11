@@ -23,6 +23,7 @@
 #include "td/utils/overloaded.h"
 
 #include "archive-manager.hpp"
+#include "block/block-db.h"  // block::compute_file_hash
 #include "files-async.hpp"
 
 namespace tos {
@@ -490,7 +491,35 @@ void ArchiveManager::get_zero_state(BlockIdExt block_id, td::Promise<td::BufferS
   }
 
   auto path = db_root_ + "/archive/states/" + id.filename_short();
-  td::actor::create_actor<db::ReadFile>("readfile", path, 0, -1, 0, std::move(promise)).release();
+  // Round 139 MEDIUM fix: verify the read bytes' file_hash matches
+  // block_id.file_hash before returning to the caller.  Pre-fix
+  // get_zero_state returned whatever was on disk under the ZeroState
+  // fileref name with no integrity check, so a corrupted /
+  // mis-indexed archive write could let liteServer_getState and
+  // tosNode_downloadZeroState serve mismatched bytes under the
+  // claimed BlockIdExt hashes.  Same integrity-gate class as
+  // round 136 (CellLoader::load) and round 138 (BlockQ::init).
+  auto check = td::PromiseCreator::lambda(
+      [block_id, promise = std::move(promise)](
+          td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_error(R.move_as_error());
+          return;
+        }
+        auto data = R.move_as_ok();
+        auto actual = block::compute_file_hash(data);
+        if (actual != block_id.file_hash) {
+          promise.set_error(td::Status::Error(
+              ErrorCode::error,
+              PSLICE() << "zerostate integrity error: bytes for "
+                       << block_id.to_str() << " produce file hash 0x"
+                       << actual.to_hex() << " (expected 0x"
+                       << block_id.file_hash.to_hex() << ")"));
+          return;
+        }
+        promise.set_value(std::move(data));
+      });
+  td::actor::create_actor<db::ReadFile>("readfile", path, 0, -1, 0, std::move(check)).release();
 }
 
 void ArchiveManager::check_zero_state(BlockIdExt block_id, td::Promise<bool> promise) {
@@ -539,6 +568,21 @@ void ArchiveManager::get_persistent_state(BlockIdExt block_id, BlockIdExt master
 void ArchiveManager::get_persistent_state_slice(BlockIdExt block_id, BlockIdExt masterchain_block_id,
                                                 PersistentStateType type, td::int64 offset, td::int64 max_size,
                                                 td::Promise<td::BufferSlice> promise) {
+  // Round 143 LOW (deferred): persistent-state slices are served
+  // from the registered path without recomputing a file/content
+  // hash.  Unlike get_zero_state, which gates on file_hash equality
+  // before returning, get_persistent_state_slice trusts perm_states_
+  // membership and the on-disk path — corruption introduced AFTER
+  // registration is not caught here, so a serving node could ship
+  // raw mismatched bytes to peers under the requested state
+  // identity.  Receiver-side validation catches actual corruption
+  // at apply/import time, so this is bounded to a serving-hygiene
+  // issue and not a peer-poisoning vector beyond bandwidth waste.
+  // Closing it cleanly requires durable per-file content-hash
+  // tracking (BlockIdExt's state_root_hash is over the parsed cell,
+  // not the serialized BoC, so we'd need to either store the
+  // file_hash at write time or accept full-state hashing on serve);
+  // tracked as a separate follow-up rather than papered over here.
   auto id = create_persistent_state_id(block_id, masterchain_block_id, type);
   auto hash = id.hash();
   if (perm_states_.find({masterchain_block_id.seqno(), hash}) == perm_states_.end()) {

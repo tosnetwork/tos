@@ -681,7 +681,21 @@ size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
     // singleton before canonical shard state hydration, but the process still
     // needs to hydrate from wc=1 ShardAccounts exactly once.
     if (!g_evm_state->needs_initial_hydration()) return 0;
-    if (shard_accounts.is_empty()) return 0;
+    if (shard_accounts.is_empty()) {
+        // Round 91 MEDIUM fix: even when shard_accounts is empty
+        // (no canonical state yet), run reconciliation to drop
+        // blocks that the early cache walk admitted under the
+        // round-88 nullopt fail-open.  Without this, cached
+        // entries from an old/forked chain stay in RAM and
+        // `block_number_` keeps advertising a height that has
+        // no canonical backing.
+        auto orphans_dropped = g_evm_state->reconcile_blocks_with_canonical();
+        if (orphans_dropped > 0) {
+            LOG(WARNING) << "evm-workchain: dropped " << orphans_dropped
+                         << " orphan blocks (empty shard accounts)";
+        }
+        return 0;
+    }
 
     auto count = populate_state_from_shard_accounts(*g_evm_state, shard_accounts);
 
@@ -703,11 +717,55 @@ size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
         // No executor account present yet (the shard state we were given
         // does not yet carry an EVM account). Leave the hydration flag
         // unset so a later, more complete shard state can still hydrate.
+        // Round 91 MEDIUM fix: same rationale as the empty-shard
+        // branch above — reconcile so cached blocks without
+        // canonical backing don't keep advertising stale heights.
+        auto orphans_dropped = g_evm_state->reconcile_blocks_with_canonical();
+        if (orphans_dropped > 0) {
+            LOG(WARNING) << "evm-workchain: dropped " << orphans_dropped
+                         << " orphan blocks (no EVM executor account)";
+        }
         return 0;
+    }
+
+    // Round 89 MEDIUM fix: now that canonical hashes are loaded, drop
+    // any orphan blocks that the round-88 cache-walk admitted while
+    // CellEvmState::canonical_hash returned nullopt.
+    // populate_state_from_shard_accounts ran above and seeded
+    // canonical_; reconcile_blocks_with_canonical evicts hydrated
+    // blocks whose hash disagrees, plus their per-block log
+    // sidecars and hash → number entries.
+    auto orphans_dropped =
+        g_evm_state->reconcile_blocks_with_canonical();
+    if (orphans_dropped > 0) {
+        LOG(WARNING) << "evm-workchain: dropped " << orphans_dropped
+                     << " same-height orphan blocks during hydration "
+                     << "reconciliation";
     }
 
     g_evm_state->mark_initial_hydration_done();
     return count;
+}
+
+size_t hydrate_global_state_if_empty_from_shard_state_root(
+    td::Ref<vm::Cell> shard_state_root) noexcept try {
+    if (!g_evm_state || shard_state_root.is_null()) return 0;
+    if (!g_evm_state->needs_initial_hydration()) return 0;
+    block::gen::ShardStateUnsplit::Record state;
+    if (!tlb::unpack_cell(std::move(shard_state_root), state) ||
+        state.accounts.is_null()) {
+        return 0;
+    }
+    vm::AugmentedDictionary accounts_dict{
+        vm::load_cell_slice_ref(state.accounts), 256,
+        block::tlb::aug_ShardAccounts};
+    return hydrate_global_state_if_empty(accounts_dict);
+} catch (vm::VmError&) {
+    return 0;
+} catch (vm::VmVirtError&) {
+    return 0;
+} catch (...) {
+    return 0;
 }
 
 void init_evm_workchain(const std::string& db_root) {
@@ -842,13 +900,27 @@ void init_evm_workchain(const std::string& db_root) {
                              << (tx_decode_fails > 0 ? " (skipped " + std::to_string(tx_decode_fails) + " corrupt entries)" : "");
             }
 
-            size_t blocks_hydrated = 0, block_decode_fails = 0;
+            size_t blocks_hydrated = 0, block_decode_fails = 0,
+                   blocks_orphaned = 0;
             // Walk by-number first so chain-order iteration populates
             // hash_to_block_ alongside blocks_; the by-hash walk is then a
             // safety-net (no-op if both indexes were written together).
+            //
+            // Round 88 MEDIUM fix: during hydration, gate every cached
+            // block against the canonical chain via
+            // CellEvmState::canonical_hash(block_num).  Pre-fix the
+            // walker blindly stored any persisted block, so a node
+            // that died after a same-height rewrite RAM-mutated state
+            // but before `cache->put_block_by_number` finished left
+            // the OLD block-by-number entry in the cache DB.  Restart
+            // hydration would resurrect that orphaned block, and
+            // `eth_getBlockByNumber(N)` could serve the old hash even
+            // though canonical state had moved on.  When canonical
+            // state knows a hash for that height and it disagrees
+            // with the cached entry, drop the cached block.
             auto block_walk = evm_rpc_cache_db()->for_each_block_by_number(
-                [&blocks_hydrated, &block_decode_fails](
-                    uint64_t /*block_number*/, td::Ref<vm::Cell> cell) -> td::Status {
+                [&blocks_hydrated, &block_decode_fails, &blocks_orphaned](
+                    uint64_t block_number, td::Ref<vm::Cell> cell) -> td::Status {
                     StoredBlock b;
                     EvmCacheRecordStamp out_stamp;  // hydration trusts canonical state; stamp unused
                     if (!decode_persisted_block(cell, b, out_stamp)) {
@@ -856,6 +928,12 @@ void init_evm_workchain(const std::string& db_root) {
                         return td::Status::OK();
                     }
                     (void)out_stamp;
+                    auto canonical = g_evm_state->state().canonical_hash(
+                        static_cast<silkworm::BlockNum>(block_number));
+                    if (canonical.has_value() && *canonical != b.hash) {
+                        ++blocks_orphaned;
+                        return td::Status::OK();
+                    }
                     g_evm_state->store_block(b);
                     ++blocks_hydrated;
                     return td::Status::OK();
@@ -864,9 +942,15 @@ void init_evm_workchain(const std::string& db_root) {
                 LOG(ERROR) << "evm-workchain: rpc cache block walk failed: "
                            << block_walk.message();
             } else {
+                std::string suffix;
+                if (block_decode_fails > 0) {
+                    suffix += " (skipped " + std::to_string(block_decode_fails) + " corrupt entries)";
+                }
+                if (blocks_orphaned > 0) {
+                    suffix += " (skipped " + std::to_string(blocks_orphaned) + " same-height orphans)";
+                }
                 LOG(WARNING) << "evm-workchain: hydrated " << blocks_hydrated
-                             << " blocks from rpc cache db"
-                             << (block_decode_fails > 0 ? " (skipped " + std::to_string(block_decode_fails) + " corrupt entries)" : "");
+                             << " blocks from rpc cache db" << suffix;
             }
 
             // Logs walk: each entry is the full IndexedLog vector for a

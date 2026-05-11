@@ -313,9 +313,33 @@ bool extract_nth_uint(const std::string& params, size_t n, uint64_t& out) {
             }
             continue;
         }
+        // Round 112 LOW fix: reject signed prefix, fractions, and
+        // exponent forms.  Pre-fix `-1` skipped over the `-` and
+        // accepted `1`; `1.5` accepted `1` and silently dropped
+        // `.5`; `1e9` accepted `1` and dropped `e9`.  Multi-arg
+        // methods then shifted positional values (e.g.
+        // `uno_getOutputsAtBlock([10.9,0,1])` parsed as
+        // seqno=10, from_index=9, limit=0).  Validate the
+        // immediately-preceding char is a JSON-array structural
+        // token (`[`, `,`, whitespace) so a leading `-` rejects;
+        // also reject `.` / `e` / `E` immediately after the digit
+        // run.
         if (std::isdigit(static_cast<unsigned char>(c))) {
+            // Reject leading `-` (signed) by checking the prior
+            // non-whitespace char.
+            for (size_t back = pos; back > 0; --back) {
+                char p = params[back - 1];
+                if (p == ' ' || p == '\t' || p == '\n' || p == '\r') continue;
+                if (p == '-' || p == '+') return false;
+                break;
+            }
             size_t start = pos;
             while (pos < params.size() && std::isdigit(static_cast<unsigned char>(params[pos]))) ++pos;
+            // Reject fractional / exponent forms.
+            if (pos < params.size()) {
+                char nxt = params[pos];
+                if (nxt == '.' || nxt == 'e' || nxt == 'E') return false;
+            }
             if (seen == n) {
                 try {
                     out = std::stoull(params.substr(start, pos - start));

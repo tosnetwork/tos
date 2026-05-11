@@ -114,6 +114,40 @@ class EvmNativeEngine final : public block::WorkchainEngine {
             out.gas_fees = td::zero_refint();
             return out;
         }
+        // Round 65 MEDIUM fix (defense-in-depth): mirror Uno's
+        // round-64 first-activation gate.  EVM's standard zerostate
+        // already activates the wc=1 singleton, so this gate is
+        // latent on the canonical chain.  But the engine policy
+        // still allows `may_activate_uninitialized_account = true`,
+        // so a fresh-deploy or migration that leaves the singleton
+        // uninitialized would otherwise let the first caller supply
+        // arbitrary `StateInit.{data,code,library}` and have the
+        // host commit it — same class as the Uno round-64 finding.
+        // Reject any inbound that carries a StateInit unpacked into
+        // `current_data` / `current_code` / `current_library`.
+        if (input.msg_state_used) {
+            block::WorkchainComputeOutput out;
+            out.completed = true;
+            out.skip_reason = block::ComputePhase::sk_bad_state;
+            out.gas_fees = td::zero_refint();
+            return out;
+        }
+        if (input.current_code.not_null()
+            && input.current_code->get_hash() !=
+                   get_evm_code_marker_cell_local()->get_hash()) {
+            block::WorkchainComputeOutput out;
+            out.completed = true;
+            out.skip_reason = block::ComputePhase::sk_bad_state;
+            out.gas_fees = td::zero_refint();
+            return out;
+        }
+        if (input.current_library.not_null()) {
+            block::WorkchainComputeOutput out;
+            out.completed = true;
+            out.skip_reason = block::ComputePhase::sk_bad_state;
+            out.gas_fees = td::zero_refint();
+            return out;
+        }
         block::ComputePhase cp{};
         vm::CellSlice body_cs{*input.inbound_body};
         bool ok = run_evm_compute_phase_snapshot(

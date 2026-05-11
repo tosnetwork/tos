@@ -194,6 +194,22 @@ td::Status HttpRequest::add_header(HttpHeader header) {
     if (found_transfer_encoding_ || found_content_length_) {
       return td::Status::Error("duplicate Content-Length/Transfer-Encoding");
     }
+    // Round 152 HIGH fix: reject Content-Length > max_payload_size at
+    // header parse time so a deterministic 4xx exits the connection
+    // immediately.  Pre-fix the HTTP request reader paused once
+    // ready_bytes() > high_watermark (also 1 MiB) without rejecting;
+    // the JSON-RPC application layer's kJsonRpcMaxRequestBodyBytes
+    // was 4 MiB, so bodies in (1 MiB, 4 MiB] never completed and
+    // never reached the application's "too large" path.  An attacker
+    // could pin many sockets with ~1 MiB POSTs and never let them
+    // complete, exhausting connection slots without sending malformed
+    // input.  This gate keeps the wire layer self-consistent with
+    // its declared max.
+    if (len > max_payload_size()) {
+      return td::Status::Error(
+          PSLICE() << "Content-Length " << len
+                   << " exceeds max payload size " << max_payload_size());
+    }
     content_length_ = len;
     found_content_length_ = true;
   } else if (lc_name == "transfer-encoding") {
@@ -274,6 +290,25 @@ td::Status HttpPayload::parse(td::ChainBufferReader &input) {
         if (size == 0) {
           state_ = ParseState::reading_trailer;
           break;
+        }
+        // Round 153 HIGH fix: enforce the same body-size cap on
+        // chunked transfer-encoding that round 152 added for
+        // Content-Length.  Pre-fix Transfer-Encoding requests had
+        // no aggregate cap — only the per-watermark pause and the
+        // never-firing JSON-RPC application "too large" path —
+        // so an attacker could stream chunks totaling > 4 MiB
+        // without ever sending the terminating 0\r\n\r\n,
+        // pinning ~4 MiB of buffer per connection.  high_watermark_
+        // equals max_payload_size for this payload type
+        // (HttpRequest::high_watermark == max_payload_size after
+        // round 152), so checking the running total against it
+        // gives a deterministic "too large" reject the same way
+        // Content-Length does.
+        if (ready_bytes_ > high_watermark_ ||
+            size > high_watermark_ - ready_bytes_) {
+          return td::Status::Error(
+              PSLICE() << "chunked request body exceeds max payload size "
+                       << high_watermark_);
         }
         cur_chunk_size_ = size;
         state_ = ParseState::reading_chunk_data;
@@ -929,6 +964,15 @@ td::Status HttpResponse::add_header(HttpHeader header) {
     TRY_RESULT(len, td::to_integer_safe<td::uint32>(S));
     if (found_transfer_encoding_ || found_content_length_) {
       return td::Status::Error("duplicate Content-Length/Transfer-Encoding");
+    }
+    // Round 152 HIGH fix: same Content-Length sanity gate as the
+    // request-side path above.  Defensive against a malicious peer
+    // serving an oversize response on an outbound HTTP client
+    // connection.
+    if (len > max_payload_size()) {
+      return td::Status::Error(
+          PSLICE() << "Content-Length " << len
+                   << " exceeds max payload size " << max_payload_size());
     }
     content_length_ = len;
     found_content_length_ = true;

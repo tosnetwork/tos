@@ -85,6 +85,21 @@ size_t populate_state_from_shard_accounts(
 /// validator library's include surface).
 size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts);
 
+/// Round 96 HIGH fix: convenience wrapper that takes a raw
+/// ShardStateUnsplit root cell, unpacks its accounts dictionary,
+/// and forwards to `hydrate_global_state_if_empty(...)`.  Validator
+/// integration sites (e.g. apply-block-side-effects walk in
+/// validator/manager.cpp) typically have a `td::Ref<vm::Cell>` for
+/// the previous shard state and don't separately decode the
+/// accounts dictionary; calling this from there fixes the
+/// pre-existing integration gap where `init_evm_workchain` left
+/// `g_evm_state` permanently un-hydrated for canonical account
+/// data (eth_getBalance / eth_getCode / eth_getStorageAt).
+/// Returns the count from the underlying hydrate, or 0 on
+/// extraction failure.
+size_t hydrate_global_state_if_empty_from_shard_state_root(
+    td::Ref<vm::Cell> shard_state_root) noexcept;
+
 /// Audit Q1 (tos16 P0 follow-up): canonical hydration corruption flag.
 ///
 /// `populate_state_from_shard_accounts` is called from a `size_t`-

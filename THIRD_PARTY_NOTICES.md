@@ -71,6 +71,23 @@ acknowledging those prior technical foundations.
 - `lib/evmone/instructions_traits.hpp` — gas cost (5) and traits entry
   for `OP_CLZ` at `EVMC_OSAKA`.
 
+## `jvm/avata/src/softfloat/berkeley/`
+
+- **Project:** Berkeley SoftFloat Release 3e — software IEEE-754
+  floating-point arithmetic
+- **Upstream:** https://www.jhauser.us/arithmetic/SoftFloat.html
+- **License:** BSD-style 3-clause license (see
+  `jvm/avata/src/softfloat/berkeley/COPYING.txt`)
+- **Copyright:** © 2011-2017 The Regents of the University of California
+
+**Modifications by TOS Blockchain Teams:**
+
+- `platform.h` — constrained the build to Avata's little-endian GCC/Clang
+  consensus profile.
+- `jvm/avata/src/softfloat/tos_softfloat_fmod.c` — derived from SoftFloat
+  f32/f64 remainder logic and changed quotient selection to Java `%`
+  semantics (round quotient toward zero).
+
 ## Other vendored dependencies (unmodified)
 
 The components below are distributed under their respective licenses

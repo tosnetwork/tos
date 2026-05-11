@@ -41,8 +41,15 @@ td::Result<Ref<IhrMessageQ>> IhrMessageQ::create_ihr_message(td::BufferSlice dat
   if (data.size() > max_ihr_msg_size) {
     return td::Status::Error("IHR message too large, rejecting");
   }
+  // Round 167 (claude review) LOW fix: pass max_roots=3 so the
+  // header-parse step rejects a BoC declaring more than the
+  // expected three roots up front, instead of letting
+  // BagOfCells::deserialize allocate the full roots vector (up to
+  // the default cap of 16384 entries) and parse every declared
+  // cell before we discover the wrong root_count on the next line.
+  // Mirrors the matching fix in external-message.cpp.
   vm::BagOfCells boc;
-  auto res = boc.deserialize(data.as_slice());
+  auto res = boc.deserialize(data.as_slice(), 3);
   if (res.is_error()) {
     return res.move_as_error();
   }

@@ -412,6 +412,27 @@ static std::atomic<EvmRpcProfile> g_evm_rpc_profile{EvmRpcProfile::ValidatorMini
 // state-machine invariants, so there is no data dependency that needs
 // a stronger fence.
 static std::atomic<bool> g_profile_heavy_readonly_enabled{false};
+
+// Round 156 LOW fix: constant-time string compare used by the
+// debug_* token check below.  Pre-fix the auth comparison was
+// `provided_token != expected_token` (short-circuit on first
+// mismatching byte), which leaks token-prefix length via response
+// timing.  This helper duplicates the json-rpc-server.cpp
+// constant_time_compare; kept TU-local to avoid header-cycle
+// churn.
+static bool constant_time_compare_strings(const std::string& a,
+                                           const char* b) {
+    const std::size_t bn = (b != nullptr) ? std::strlen(b) : 0;
+    if (a.size() != bn) {
+        return false;
+    }
+    volatile unsigned char result = 0;
+    for (std::size_t i = 0; i < bn; ++i) {
+        result |= static_cast<unsigned char>(a[i]) ^
+                  static_cast<unsigned char>(b[i]);
+    }
+    return result == 0;
+}
 static std::atomic<bool> g_profile_debug_rpc_enabled{false};
 
 static void reset_rpc_buckets_locked() {
@@ -705,36 +726,98 @@ static bool parse_hex_byte(char c, uint8_t& out) {
     return false;
 }
 
+// Strict address parser.  After the leading "0x" + 40 hex digits, the
+// next character must be EITHER end-of-input OR a JSON closing quote
+// `"`.  Callers may pass:
+//   - an extracted JSON string body (`0x...01`, ending at end-of-input)
+//   - a quoted JSON substring (`"0x...01"`, the `"` closes the string)
+//   - a raw-params substring starting at `0x` (`0x...01","next"]`,
+//     the `"` closes the address's JSON string)
+//
+// Pre-fix (rounds 98/99) the parser was either too permissive (scanned
+// for the first `0x` and decoded 20 bytes regardless of trailing) or
+// too strict (required exactly 42 chars or required a `"0x` quote
+// prefix) — both extremes broke real call sites.  The unified rule is:
+// an address ends at the JSON string boundary, and the only valid
+// boundary character is `"` (or end-of-input for the unquoted
+// extracted form).  Overlong inputs like `0x...01ff` (next is hex) or
+// `0x...01,deadbeef` (next is `,`, which would only appear inside a
+// JSON string value) are rejected.
 static bool parse_hex_address(const std::string& params, evmc::address& out) {
-    // Find the first 0x in the params string
-    auto pos = params.find("0x");
-    if (pos == std::string::npos || pos + 42 > params.size()) return false;
-    pos += 2;  // skip "0x"
-    for (int i = 0; i < 20; ++i) {
-        uint8_t hi, lo;
-        if (!parse_hex_byte(params[pos + i*2], hi) || !parse_hex_byte(params[pos + i*2 + 1], lo))
-            return false;
-        out.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
+    auto decode_at = [&](std::size_t hex_pos) {
+        for (int i = 0; i < 20; ++i) {
+            uint8_t hi, lo;
+            if (!parse_hex_byte(params[hex_pos + i*2], hi) ||
+                !parse_hex_byte(params[hex_pos + i*2 + 1], lo)) {
+                return false;
+            }
+            out.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+        return true;
+    };
+    auto try_at = [&](std::size_t hex_pos) {
+        if (hex_pos + 40 > params.size()) return false;
+        if (!decode_at(hex_pos)) return false;
+        // After 40 hex chars: end-of-input OR closing quote.
+        return hex_pos + 40 == params.size() || params[hex_pos + 40] == '"';
+    };
+    // Unquoted-extracted form: input begins with "0x" (extract_json_
+    // string_value strips quotes).
+    if (params.size() >= 2 && params[0] == '0' &&
+        (params[1] == 'x' || params[1] == 'X')) {
+        if (try_at(2)) return true;
     }
-    return true;
+    // Quoted form: input contains `"0x` somewhere.
+    auto pos = params.find("\"0x");
+    if (pos == std::string::npos) return false;
+    return try_at(pos + 3);
 }
 
+// Strict bytes parser.  After the leading "0x" + greedy hex run, the
+// next character must be end-of-input OR a JSON closing quote.  Same
+// rationale as parse_hex_address — callers may pass an extracted body,
+// a quoted substring, or a raw-params substring starting at `0x`.
+// Overlong / delimiter-injected inputs reject because hex would have
+// continued past the end of the well-formed JSON string.
+//
+// Round 107 fix-of-fix: revert the round-106 hex[0]=='"' reject —
+// parse_topics_array passes quoted substrings whose first char IS
+// the opening JSON quote, so the prior reject broke every log
+// topic filter.  The escape-spoof attack (`\"0x6869`) is now
+// closed at the extract_array_element_string_n level (round 106's
+// escape rejection); parse_hex_bytes can stay permissive for the
+// quoted-substring form.
 static bool parse_hex_bytes(const std::string& hex, silkworm::Bytes& out) {
-    auto pos = hex.find("0x");
-    if (pos == std::string::npos) return false;
-    pos += 2;
-    size_t len = 0;
-    // Find end of hex string (until quote or end)
-    while (pos + len < hex.size() && hex[pos + len] != '"' && hex[pos + len] != ',' && hex[pos + len] != '}') ++len;
-    if (len % 2 != 0) return false;
-    out.resize(len / 2);
-    for (size_t i = 0; i < len / 2; ++i) {
-        uint8_t hi, lo;
-        if (!parse_hex_byte(hex[pos + i*2], hi) || !parse_hex_byte(hex[pos + i*2 + 1], lo))
-            return false;
-        out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    auto try_at = [&](std::size_t pos) {
+        std::size_t len = 0;
+        while (pos + len < hex.size()) {
+            uint8_t tmp;
+            if (!parse_hex_byte(hex[pos + len], tmp)) break;
+            ++len;
+        }
+        if (len % 2 != 0) return false;
+        // After the hex run: end-of-input OR closing quote.
+        const bool boundary_ok =
+            pos + len == hex.size() || hex[pos + len] == '"';
+        if (!boundary_ok) return false;
+        out.resize(len / 2);
+        for (std::size_t i = 0; i < len / 2; ++i) {
+            uint8_t hi, lo;
+            parse_hex_byte(hex[pos + i*2], hi);
+            parse_hex_byte(hex[pos + i*2 + 1], lo);
+            out[i] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+        return true;
+    };
+    // Unquoted-extracted form.
+    if (hex.size() >= 2 && hex[0] == '0' &&
+        (hex[1] == 'x' || hex[1] == 'X')) {
+        if (try_at(2)) return true;
     }
-    return true;
+    // Quoted form.
+    auto pos = hex.find("\"0x");
+    if (pos == std::string::npos) return false;
+    return try_at(pos + 3);
 }
 
 static bool parse_hex_bytes32(const std::string& hex, evmc::bytes32& out) {
@@ -748,6 +831,17 @@ static bool parse_hex_bytes32(const std::string& hex, evmc::bytes32& out) {
 
 // Forward declarations
 static std::vector<std::vector<evmc::bytes32>> parse_topics_array(const std::string& params);
+static uint64_t parse_block_number_param(const std::string& params);
+static std::optional<std::string> extract_array_element_n(
+    const std::string& params, std::size_t n);
+static std::optional<std::string> extract_array_element_string_n(
+    const std::string& params, std::size_t n);
+static bool parse_first_hash_bytes(const std::string& params,
+                                    silkworm::Bytes& out);
+static bool parse_first_hex_bytes_param(const std::string& params,
+                                         silkworm::Bytes& out);
+static bool parse_first_address_param(const std::string& params,
+                                       evmc::address& out);
 
 // Look up the real block hash for a given block number, return hex or zeros if not found.
 static std::string lookup_block_hash_hex(uint64_t block_num) {
@@ -897,6 +991,84 @@ static bool is_logs_for_block_canonical(uint64_t block_num) {
                           canonical.state_root);
 }
 
+// Round 89 MEDIUM fix: receipt-side mirror of `is_stored_tx_canonical`.
+// `eth_getBlockReceipts` and `debug_getRawReceipts` iterate per-tx
+// receipts via `get_receipt_copy()` without a stamp gate, so a stale
+// receipt hydrated from the cache DB after a same-height rewrite (the
+// rewrite's `put_receipt` failed transiently or was skipped) could be
+// served under the canonical block.  This helper mirrors
+// `is_stored_tx_canonical` exactly, just keyed by the persisted
+// receipt cell rather than the transaction cell.
+static bool is_stored_receipt_canonical(const evmc::bytes32& tx_hash,
+                                         uint64_t block_number) {
+    StoredBlock canonical = global_evm_state().get_block_copy(block_number);
+    if (canonical.number != block_number) {
+        return false;
+    }
+    bool canonical_hash_is_zero = true;
+    for (auto b : canonical.hash.bytes) {
+        if (b != 0) { canonical_hash_is_zero = false; break; }
+    }
+    if (canonical_hash_is_zero) {
+        return false;
+    }
+    auto* cache = evm_rpc_cache_db();
+    if (cache == nullptr) {
+        return true;
+    }
+    td::Bits256 tx_hash_bits;
+    std::memcpy(tx_hash_bits.data(), tx_hash.bytes, 32);
+    auto cell_r = cache->get_receipt(tx_hash_bits);
+    if (cell_r.is_error()) {
+        return false;
+    }
+    auto cell = cell_r.move_as_ok();
+    if (cell.is_null()) {
+        return true;
+    }
+    StoredReceipt decoded;
+    EvmCacheRecordStamp stamp;
+    if (!decode_persisted_receipt(cell, decoded, stamp)) {
+        return false;
+    }
+    return stamp_is_fresh(stamp,
+                          kEvmCacheWorkchainId,
+                          kEvmCacheCodecSchemaVersion,
+                          canonical.hash,
+                          canonical.state_root);
+}
+
+// Forward declaration for receipt_type_for_tx fallback path.
+static std::optional<silkworm::Transaction> decode_stored_tx_rlp(
+    const StoredTransaction& tx);
+
+// Round 89 LOW fix: derive the EIP-2718 transaction type for tx-side
+// JSON serializers (format_block_json full=true,
+// handle_get_transaction_by_hash, format_transaction_json).  Pre-fix
+// these sites hard-coded `"type":"0x0"`, so every typed tx (1, 2,
+// 3, 4) reported as legacy on RPC even after round-88 fixed the
+// receipt-side emission.  Use the receipt's persisted type when
+// available — receipt.type is set by the consensus compute path on
+// every accepted tx.
+//
+// Round 90 LOW fix: when no receipt is indexed yet (pending tx
+// hydrated from raw_rlp before the receipt cache wrote), decode
+// the stored raw_rlp and read its EIP-2718 type byte directly so
+// typed pending transactions don't briefly downcast to legacy on
+// RPC reads.
+static silkworm::TransactionType receipt_type_for_tx(
+    const evmc::bytes32& tx_hash) {
+    if (auto r = global_evm_state().get_receipt_copy(tx_hash)) {
+        return r->type;
+    }
+    if (auto tx = global_evm_state().get_transaction_copy(tx_hash)) {
+        if (auto decoded = decode_stored_tx_rlp(*tx)) {
+            return decoded->type;
+        }
+    }
+    return silkworm::TransactionType::kLegacy;
+}
+
 // Compute Ethereum logs bloom (2048-bit / 256-byte) into caller-provided buffer.
 // For each log: hash(address) and hash(each topic) contribute 3 bits each to the bloom.
 // Reference: ~/s/silkworm/core/types/bloom.cpp
@@ -942,7 +1114,7 @@ static RpcResult handle_gas_price(const std::string& id) {
 
 static RpcResult handle_get_balance(const std::string& params, const std::string& id) {
     evmc::address addr{};
-    if (!parse_hex_address(params, addr)) {
+    if (!parse_first_address_param(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
     auto& state = global_evm_state();
@@ -954,7 +1126,7 @@ static RpcResult handle_get_balance(const std::string& params, const std::string
 
 static RpcResult handle_get_transaction_count(const std::string& params, const std::string& id) {
     evmc::address addr{};
-    if (!parse_hex_address(params, addr)) {
+    if (!parse_first_address_param(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
     auto& state = global_evm_state();
@@ -966,7 +1138,7 @@ static RpcResult handle_get_transaction_count(const std::string& params, const s
 
 static RpcResult handle_get_code(const std::string& params, const std::string& id) {
     evmc::address addr{};
-    if (!parse_hex_address(params, addr)) {
+    if (!parse_first_address_param(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
     auto& state = global_evm_state();
@@ -1004,8 +1176,9 @@ static RpcResult handle_get_code(const std::string& params, const std::string& i
 // JsonRpcServer::handle_eth_sendRawTransaction() which submits
 // to the ExtMessagePool asynchronously.
 static RpcResult handle_send_raw_transaction(const std::string& params, const std::string& id) {
+    // Round 105 LOW fix: positional first-element extraction.
     silkworm::Bytes raw_tx;
-    if (!parse_hex_bytes(params, raw_tx)) {
+    if (!parse_first_hex_bytes_param(params, raw_tx)) {
         return {make_error(id, -32602, "invalid hex transaction data"), true};
     }
 
@@ -1145,9 +1318,9 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
 }
 
 static RpcResult handle_get_transaction_receipt(const std::string& params, const std::string& id) {
-    // Parse tx hash from params
+    // Parse tx hash from params (round 105 LOW fix: positional)
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_error(id, -32602, "invalid transaction hash"), true};
     }
 
@@ -1161,6 +1334,44 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, "null"), false};
+    }
+
+    // Round 90 MEDIUM fix: route through is_stored_receipt_canonical
+    // so the cache-miss case (no persisted cell yet, or cache read
+    // error) still requires a non-zero canonical block hash at this
+    // height.  Pre-fix the existing gate below only fired when
+    // `cache->get_receipt` returned a non-null cell, so a cache-miss
+    // window during apply_block_side_effects (RAM receipt stored
+    // before the block summary) or a cache-read error fell through
+    // and emitted the receipt regardless of canonicality.  The new
+    // helper is identical to is_stored_tx_canonical's semantics:
+    // canonical block must exist at receipt->block_number, and any
+    // persisted stamp must match.
+    if (!is_stored_receipt_canonical(tx_hash, receipt->block_number)) {
+        // Round 91 MEDIUM fix: when the canonical gate fails
+        // because the block summary hasn't landed yet, surface
+        // the durable indexing-incomplete marker instead of
+        // silent null.  Pre-fix this branch returned null without
+        // checking the marker, so a known accepted-but-unindexed
+        // receipt looked indistinguishable from "tx unknown".
+        if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+            is_evm_rpc_block_indexing_incomplete(receipt->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
+    // Round 95 HIGH fix: also surface -32010 when the canonical
+    // gate passed but a marker is set.  is_stored_receipt_canonical
+    // accepts a missing cache cell (treats it as "live hot path
+    // hasn't persisted yet"), so a partial-commit RAM receipt
+    // could be served even though the marker explicitly said
+    // "indexing incomplete".  Check both markers in the happy
+    // path too.
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(receipt->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
 
     // Stamp freshness gate (plan §8.2): if a stamped record for this tx
@@ -1257,7 +1468,11 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
     }
     r += "],";
     r += "\"logsBloom\":" + compute_logs_bloom_hex(receipt->logs) + ",";
-    r += "\"type\":\"0x0\",";
+    // Round 88 LOW fix: emit the persisted EIP-2718 receipt type
+    // instead of hard-coded "0x0".  Pre-fix every typed
+    // transaction (1, 2, 3, 4) reported as legacy, so RPC clients
+    // and indexers misclassified the receipt's tx type.
+    r += "\"type\":" + to_hex_quantity(static_cast<uint64_t>(receipt->type)) + ",";
     r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(receipt->tx_index)) + ",";
     r += "\"blockHash\":" + lookup_block_hash_hex(receipt->block_number);
     r += "}";
@@ -1372,6 +1587,31 @@ static td::Result<uint64_t> parse_hex_uint64_strict(const std::string& s) {
     // is_valid_0x_hex already guaranteed every char from index 2 is a
     // valid hex digit, so strtoull cannot fail on partial input.
     return std::strtoull(s.c_str() + 2, nullptr, 16);
+}
+
+// Round 100 LOW fix: strict first-hex-string extraction from a raw
+// JSON params string.  Anchors on `"0x`, scans hex digits up to the
+// closing `"`, validates the whole run, and returns the parsed u64.
+// Used by filter-id and similar handlers where the value lives in a
+// JSON string and `strtoull(..., nullptr, 16)` would silently
+// truncate at the first non-hex character — accepting `"0x1,nothex"`
+// as id=1.
+static td::Result<uint64_t> parse_first_hex_uint64_strict(
+    const std::string& params) {
+    auto pos = params.find("\"0x");
+    if (pos == std::string::npos) {
+        return td::Status::Error("missing hex quantity");
+    }
+    pos += 3;  // skip `"0x
+    std::size_t end = pos;
+    while (end < params.size() && params[end] != '"') {
+        ++end;
+    }
+    if (end >= params.size()) {
+        return td::Status::Error("unterminated hex quantity string");
+    }
+    const std::string hex_body = "0x" + params.substr(pos, end - pos);
+    return parse_hex_uint64_strict(hex_body);
 }
 
 // Strict uint256 hex quantity parser. Accepts "0x" + 1..64 hex digits.
@@ -2166,7 +2406,10 @@ static std::string format_block_json(const StoredBlock& blk, bool full_transacti
                 r += "\"blockNumber\":" + to_hex_quantity(blk.number) + ",";
                 r += "\"blockHash\":" + to_hex_data(blk.hash.bytes, 32) + ",";
                 r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
-                r += "\"type\":\"0x0\",\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"}";
+                // Round 89 LOW fix: emit canonical EIP-2718 type.
+                r += "\"type\":" + to_hex_quantity(
+                        static_cast<uint64_t>(receipt_type_for_tx(th)))
+                     + ",\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"}";
             } else {
                 r += to_hex_data(th.bytes, 32);
             }
@@ -2220,27 +2463,25 @@ static bool block_cache_record_is_fresh(const EvmState& state,
 }
 
 static RpcResult handle_get_block_by_number(const std::string& params, const std::string& id) {
-    uint64_t bn = global_evm_state().block_number();
+    // Round 104 LOW fix: route through parse_block_number_param so
+    // (a) the named-tag detection scans only the first positional
+    // element (no nested-string spoofing), and (b) malformed hex
+    // strict-rejects rather than aliasing to head via parse_hex_
+    // uint64.  parse_block_number_param handles "earliest" → 0
+    // and named tags → head; any other malformed first param
+    // falls back to head, mirroring legacy lenient behavior.
+    uint64_t bn = parse_block_number_param(params);
+    // Round 105 LOW fix: extract the second positional element as
+    // a literal `true` / `false` boolean.  Pre-fix the search was
+    // scoped to "after the first comma" but still found `true`
+    // anywhere in the tail (e.g. inside `{"shadow":true}`).  The
+    // positional extractor returns the element verbatim so we can
+    // string-match exactly.
     bool full_transactions = false;
-
-    // Parse block number from params
-    std::string bn_str = extract_json_string_value(params, "");
-    if (bn_str.empty()) {
-        // Try array format: ["0x1", false]
-        auto pos = params.find("0x");
-        if (pos != std::string::npos) {
-            auto end = params.find_first_of("\",]}", pos);
-            bn_str = params.substr(pos, end - pos);
+    if (auto el2 = extract_array_element_n(params, 1); el2.has_value()) {
+        if (*el2 == "true") {
+            full_transactions = true;
         }
-    }
-    if (!bn_str.empty() && bn_str != "latest" && bn_str != "pending" &&
-        bn_str != "safe" && bn_str != "finalized") {
-        if (bn_str == "earliest") bn = 0;
-        else bn = parse_hex_uint64(bn_str);
-    }
-    // Parse fullTransactions boolean (second param)
-    if (params.find("true") != std::string::npos) {
-        full_transactions = true;
     }
 
     auto blk = global_evm_state().get_block_copy(bn);
@@ -2256,6 +2497,17 @@ static RpcResult handle_get_block_by_number(const std::string& params, const std
                                    "EVM RPC indexing incomplete; retry after cache repair"), true};
             }
             return {make_result(id, "null"), false};
+        }
+        // Round 93 MEDIUM fix: even when the in-RAM block is
+        // canonical-fresh, surface -32010 when a durable
+        // incomplete marker is set for this height.  Pre-fix the
+        // marker check only fired on the cache-miss / stale
+        // branches, so a partial commit (block_cache_writes_ok
+        // succeeded but logs/tx writes failed) silently served a
+        // populated block whose sidecar indexes were missing.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, format_block_json(blk, full_transactions)), false};
     }
@@ -2275,10 +2527,22 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
     std::vector<std::vector<evmc::bytes32>> topics;
 
     // Parse fromBlock
+    // Round 145 LOW fix: route fromBlock / toBlock through the
+    // strict hex parser so malformed quantities (empty "0x",
+    // non-hex chars, overflow) return -32602 invalid params
+    // instead of silently coercing to block 0.  parse_hex_uint64
+    // is the lenient parser that returns 0 on error; not
+    // appropriate for filter range bounds where the caller is
+    // explicitly asking for a specific block.
     std::string fb_hex = extract_json_string_value(params, "fromBlock");
     bool has_from = !fb_hex.empty();
     if (has_from && fb_hex != "latest" && fb_hex != "pending" && fb_hex != "earliest") {
-        from_block = parse_hex_uint64(fb_hex);
+        auto r = parse_hex_uint64_strict(fb_hex);
+        if (r.is_error()) {
+            return {make_error(id, -32602,
+                "invalid 'fromBlock': " + r.error().message().str()), true};
+        }
+        from_block = r.move_as_ok();
     } else if (has_from && fb_hex == "earliest") {
         from_block = 0;
     } else if (has_from && (fb_hex == "latest" || fb_hex == "pending")) {
@@ -2289,8 +2553,16 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
     std::string tb_hex = extract_json_string_value(params, "toBlock");
     bool has_to = !tb_hex.empty();
     if (has_to && tb_hex != "latest" && tb_hex != "pending") {
-        if (tb_hex == "earliest") to_block = 0;
-        else to_block = parse_hex_uint64(tb_hex);
+        if (tb_hex == "earliest") {
+            to_block = 0;
+        } else {
+            auto r = parse_hex_uint64_strict(tb_hex);
+            if (r.is_error()) {
+                return {make_error(id, -32602,
+                    "invalid 'toBlock': " + r.error().message().str()), true};
+            }
+            to_block = r.move_as_ok();
+        }
     }
 
     // Spec validation: blockHash is mutually exclusive with from/to.
@@ -2327,6 +2599,22 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
         return {make_error(id, -32005, "query exceeds max block range of " +
                            std::to_string(kMaxGetLogsBlockRange)), true};
     }
+    // Round 99 HIGH fix: cap to_block at the current chain head so
+    // pathological inputs like fromBlock = toBlock = 0xffffffff_ffffffff
+    // bypass the range check above (to_block > from_block is false at
+    // equality) and fall into the for-loop below where `bn <= to_block`
+    // never terminates after `bn` wraps past UINT64_MAX.
+    {
+        const uint64_t head = global_evm_state().block_number();
+        if (to_block > head) {
+            to_block = head;
+        }
+        // Reversed range after capping (e.g., from_block > head) →
+        // empty result without scanning.
+        if (from_block > to_block) {
+            return {make_result(id, "[]"), false};
+        }
+    }
 
     // Parse address (single string or array of strings)
     addresses = parse_address_param(params);
@@ -2349,6 +2637,19 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
     std::string arr = "[";
     bool first = true;
     for (uint64_t bn = from_block; bn <= to_block; ++bn) {
+        // Round 94 HIGH fix: surface -32010 when the block is
+        // marked accepted-but-unindexed.  Pre-fix eth_getLogs was
+        // block-keyed and silently dropped the block's logs when
+        // is_logs_for_block_canonical failed, so a partial cache
+        // commit (round-93's put_logs_for_block failure) caused
+        // log loss instead of the contractual indexing-incomplete
+        // surface.  is_logs_for_block_canonical also treats a
+        // missing log cell as canonical, so the marker must be
+        // checked explicitly here.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         if (!is_logs_for_block_canonical(bn)) {
             // Cache stamp disagrees with canonical (or canonical has
             // no block at this height) — drop this block's logs from
@@ -2382,8 +2683,9 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
 }
 
 static RpcResult handle_get_transaction_by_hash(const std::string& params, const std::string& id) {
+    // Round 105 LOW fix: positional hash extraction.
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_error(id, -32602, "invalid transaction hash"), true};
     }
     evmc::bytes32 tx_hash;
@@ -2391,6 +2693,13 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
 
     auto tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!tx) {
+        // Round 91 MEDIUM fix: surface the durable indexing-incomplete
+        // marker before returning null so a known accepted-but-
+        // unindexed tx doesn't look identical to "tx unknown".
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
@@ -2399,7 +2708,20 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
     // a cache miss so the canonical-state path can rewrite the affected
     // window at its own cadence.
     if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        // Round 91 MEDIUM fix: same indexing-incomplete check as
+        // above for the canonical-gate-failure path.
+        if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
+    }
+    // Round 95 HIGH fix: gate the happy path on markers too.
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
 
     std::string r = "{";
@@ -2418,7 +2740,10 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
     r += "\"blockNumber\":" + to_hex_quantity(tx->block_number) + ",";
     r += "\"blockHash\":" + lookup_block_hash_hex(tx->block_number) + ",";
     r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(tx->tx_index)) + ",";
-    r += "\"type\":\"0x0\",";
+    // Round 89 LOW fix: emit canonical EIP-2718 type.
+    r += "\"type\":" + to_hex_quantity(
+            static_cast<uint64_t>(receipt_type_for_tx(tx_hash)))
+         + ",";
     r += "\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"";
     r += "}";
 
@@ -2471,7 +2796,8 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
         return {make_error(id, -32601,
                            "debug_traceTransaction requires TOS_EVM_DEBUG_RPC_TOKEN"), true};
     }
-    if (std::strlen(expected_token) < 16 || provided_token != expected_token) {
+    if (std::strlen(expected_token) < 16 ||
+        !constant_time_compare_strings(provided_token, expected_token)) {
         return {make_error(id, -32001,
                            "debug_traceTransaction unauthorized"), true};
     }
@@ -2481,9 +2807,9 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
                            "debug_traceTransaction already running"), true};
     }
 
-    // Parse tx hash
+    // Parse tx hash (round 105 LOW fix: positional)
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_error(id, -32602, "invalid transaction hash"), true};
     }
     evmc::bytes32 tx_hash;
@@ -2492,6 +2818,35 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     // Look up the stored transaction to re-execute with tracing
     auto stored_tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!stored_tx) {
+        // Round 93 LOW fix: surface -32010 when the tx is known
+        // accepted-but-unindexed.  Pre-fix `debug_traceTransaction`
+        // returned `transaction not found` for both unknown and
+        // marker-tagged tx hashes — admin tooling and replay
+        // workflows could not distinguish "unknown" from "we
+        // accepted it but the cache is incomplete".
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_error(id, -32000, "transaction not found"), true};
+    }
+    // Round 94 LOW fix: also gate on per-tx and per-block markers
+    // when the tx is present.  A partial cache commit (tx record
+    // landed but receipt/log sidecars failed) leaves the tx
+    // marker set; tracing the tx is still possible but the
+    // surrounding state may be inconsistent — surface -32010 to
+    // match the contract instead of returning a trace.
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(stored_tx->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
+    // Round 110 LOW fix: gate on canonical-tx membership too.
+    // Pre-fix, a stale tx record from an old same-height block
+    // (no markers set) was traced even though the public tx RPC
+    // would null it.  Apply the same is_stored_tx_canonical
+    // gate the by-hash + by-index handlers use.
+    if (!is_stored_tx_canonical(tx_hash, stored_tx->block_number)) {
         return {make_error(id, -32000, "transaction not found"), true};
     }
 
@@ -2677,21 +3032,29 @@ static RpcResult handle_eth_get_subscription(const std::string& params, const st
 }
 
 static RpcResult handle_get_block_receipts(const std::string& params, const std::string& id) {
-    // Parse block number
-    uint64_t bn = global_evm_state().block_number();
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string bn_str = params.substr(pos, end - pos);
-        if (bn_str != "latest" && bn_str != "pending") {
-            bn = parse_hex_uint64(bn_str);
-        }
-    }
+    // Round 104 LOW fix: use parse_block_number_param so a nested
+    // `{"shadow":"0x0"}` cannot override the first positional tag.
+    uint64_t bn = parse_block_number_param(params);
 
     // Get the block to find its transaction hashes
     auto blk = global_evm_state().get_block_copy(bn);
     if (!global_evm_state().has_block(bn)) {
+        // Round 91 MEDIUM fix: surface the durable indexing-
+        // incomplete marker before returning the empty array so a
+        // known accepted-but-unindexed block doesn't look like an
+        // empty / non-existent block.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "[]"), false};
+    }
+    // Round 94 MEDIUM fix: gate on the durable block-marker even
+    // when has_block returns true.  Same rationale as the other
+    // round-93 happy-path block-marker checks.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
 
     // Build receipts array
@@ -2701,6 +3064,15 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
         const auto& tx_hash = blk.transaction_hashes[i];
         auto receipt = global_evm_state().get_receipt_copy(tx_hash);
         if (!receipt) continue;
+        // Round 89 MEDIUM fix: gate the per-tx receipt against
+        // canonical state, mirroring eth_getTransactionReceipt.
+        // Pre-fix a stale RAM receipt (same-height rewrite where
+        // put_receipt failed transiently and the cache hydration
+        // re-loaded the orphaned pre-rewrite receipt on restart)
+        // could be emitted under the canonical block.
+        if (!is_stored_receipt_canonical(tx_hash, receipt->block_number)) {
+            continue;
+        }
 
         arr += "{";
         arr += "\"transactionHash\":" + to_hex_data(tx_hash.bytes, 32) + ",";
@@ -2734,7 +3106,10 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
         arr += "],";
         arr += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
         arr += "\"blockHash\":" + to_hex_data(blk.hash.bytes, 32) + ",";
-        arr += "\"type\":\"0x0\"";
+        // Round 88 LOW fix: emit persisted EIP-2718 receipt type
+        // instead of hard-coded "0x0".  Same rationale as
+        // eth_getTransactionReceipt above.
+        arr += "\"type\":" + to_hex_quantity(static_cast<uint64_t>(receipt->type));
         arr += "}";
     }
     arr += "]";
@@ -2754,16 +3129,21 @@ static RpcResult handle_syncing(const std::string& id) {
 static RpcResult handle_get_storage_at(const std::string& params, const std::string& id) {
     // params: [address, slot, block]
     evmc::address addr{};
-    if (!parse_hex_address(params, addr)) {
+    if (!parse_first_address_param(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
 
-    // Parse storage slot (second hex param after the address)
+    // Parse storage slot (second positional param).
+    // Round 105 LOW fix: extract the SECOND positional JSON-string
+    // element rather than scanning the whole params blob for the
+    // second `0x`.  Pre-fix, an object second param like
+    // `{"slot":"0x01"}` was accepted and the slot value silently
+    // came from the nested string.
     evmc::bytes32 slot{};
-    auto second_0x = params.find("0x", params.find("0x") + 1);
-    if (second_0x != std::string::npos) {
+    if (auto slot_str = extract_array_element_string_n(params, 1);
+        slot_str.has_value()) {
         silkworm::Bytes slot_bytes;
-        if (parse_hex_bytes(params.substr(second_0x - 1), slot_bytes) && slot_bytes.size() <= 32) {
+        if (parse_hex_bytes(*slot_str, slot_bytes) && slot_bytes.size() <= 32) {
             // Left-pad to 32 bytes
             size_t offset = 32 - slot_bytes.size();
             std::memcpy(slot.bytes + offset, slot_bytes.data(), slot_bytes.size());
@@ -2785,10 +3165,14 @@ static RpcResult handle_get_storage_at(const std::string& params, const std::str
 
 static RpcResult handle_fee_history(const std::string& params, const std::string& id) {
     // Parse block count from params: [blockCount, newestBlock, rewardPercentiles]
+    // Round 100 LOW fix: round-99 made parse_hex_uint64 strict-validate
+    // every char of the input, so passing `params.substr(pos)` (which
+    // includes trailing `","latest",[]`) returned 0 and the block count
+    // collapsed to max(1, 0) = 1.  Use the strict first-hex-string
+    // extractor instead, which scans only inside the JSON string.
     uint64_t block_count = 1;
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        block_count = std::max(uint64_t{1}, parse_hex_uint64(params.substr(pos)));
+    if (auto bc_res = parse_first_hex_uint64_strict(params); bc_res.is_ok()) {
+        block_count = std::max(uint64_t{1}, bc_res.move_as_ok());
     }
     if (block_count > 1024) block_count = 1024;
 
@@ -2906,51 +3290,276 @@ static RpcResult handle_max_priority_fee(const std::string& id) {
 // Block explorer RPC helpers
 // ---------------------------------------------------------------------------
 
+// Round 103 LOW fix helper: extract the string value of the FIRST
+// JSON-array element from a `params` string like
+// `["latest","0x0"]` or `[{"to":"..."}]`.  Returns the inner
+// characters of the first `"..."` if the first element is a JSON
+// string; nullopt otherwise (object / array / number / null).
+// Pre-fix, the helpers below scanned the whole `params` string for
+// named tags / `"0x` and matched anywhere — including nested
+// strings like `{"to":"latest"}` — which let callers spoof
+// positional meaning.
+static std::optional<std::string> extract_first_array_string(
+    const std::string& params) {
+    auto lb = params.find('[');
+    if (lb == std::string::npos) return std::nullopt;
+    std::size_t i = lb + 1;
+    while (i < params.size() &&
+           (params[i] == ' ' || params[i] == '\t' ||
+            params[i] == '\n' || params[i] == '\r')) {
+        ++i;
+    }
+    if (i >= params.size()) return std::nullopt;
+    if (params[i] != '"') return std::nullopt;  // non-string first element
+    std::size_t start = i + 1;
+    auto end = params.find('"', start);
+    if (end == std::string::npos) return std::nullopt;
+    return params.substr(start, end - start);
+}
+
+// Round 105 LOW fix helper: extract the Nth (0-indexed) top-level
+// JSON-array element from a `params` string.  Walks the array
+// structure tracking depth and string boundaries so nested objects
+// / arrays don't count as positional separators.  Returns the
+// substring covering the element (without surrounding whitespace,
+// without the trailing comma).  Returns nullopt if the index is
+// out of range or params doesn't begin with an array.
+static std::optional<std::string> extract_array_element_n(
+    const std::string& params, std::size_t n) {
+    auto lb = params.find('[');
+    if (lb == std::string::npos) return std::nullopt;
+    std::size_t i = lb + 1;
+    std::size_t current = 0;
+    while (i < params.size()) {
+        // Skip leading whitespace before this element.
+        while (i < params.size() &&
+               (params[i] == ' ' || params[i] == '\t' ||
+                params[i] == '\n' || params[i] == '\r')) {
+            ++i;
+        }
+        if (i >= params.size()) return std::nullopt;
+        if (params[i] == ']') return std::nullopt;
+        std::size_t start = i;
+        // Walk the element body to its end (top-level `,` or `]`).
+        int depth = 0;
+        bool in_string = false;
+        for (; i < params.size(); ++i) {
+            char c = params[i];
+            if (in_string) {
+                if (c == '\\' && i + 1 < params.size()) {
+                    ++i;
+                    continue;
+                }
+                if (c == '"') in_string = false;
+            } else {
+                if (c == '"') in_string = true;
+                else if (c == '{' || c == '[') ++depth;
+                else if (c == '}' || c == ']') {
+                    if (depth == 0) break;
+                    --depth;
+                }
+                else if (c == ',' && depth == 0) break;
+            }
+        }
+        std::size_t end = i;
+        // Trim trailing whitespace from the element.
+        while (end > start &&
+               (params[end - 1] == ' ' || params[end - 1] == '\t' ||
+                params[end - 1] == '\n' || params[end - 1] == '\r')) {
+            --end;
+        }
+        if (current == n) {
+            return params.substr(start, end - start);
+        }
+        ++current;
+        if (i < params.size() && params[i] == ',') {
+            ++i;
+            continue;
+        }
+        // End of array reached.
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+// Round 105 LOW fix helper: extract the Nth element AS a JSON
+// string body (between the surrounding `"` chars).  Returns
+// nullopt if the element is not a JSON string.
+//
+// Round 106 LOW fix: also reject strings containing JSON escapes
+// (`\"`, `\\`, `\n`, etc.).  Pre-fix the body returned the raw
+// text including backslashes, and downstream parsers like
+// parse_hex_bytes happily matched the embedded `"0x` past an
+// escaped quote (`\"0x6869"` → 0x6869).  RPC inputs requiring
+// hex / address values never contain JSON escapes in practice,
+// so rejecting any escape is conservative but safe.
+static std::optional<std::string> extract_array_element_string_n(
+    const std::string& params, std::size_t n) {
+    auto el = extract_array_element_n(params, n);
+    if (!el.has_value()) return std::nullopt;
+    if (el->size() < 2 || (*el)[0] != '"' || el->back() != '"') {
+        return std::nullopt;
+    }
+    auto body = el->substr(1, el->size() - 2);
+    if (body.find('\\') != std::string::npos) {
+        return std::nullopt;
+    }
+    return body;
+}
+
 // Parse a block number tag from the first param in an array:
 //   ["latest"] / ["earliest"] / ["safe"] / ["finalized"] / ["pending"] / ["0x1"]
 // Returns the resolved uint64_t block number.
 static uint64_t parse_block_number_param(const std::string& params) {
-    uint64_t bn = global_evm_state().block_number();
-    // Check for named tags first
-    if (params.find("\"latest\"") != std::string::npos ||
-        params.find("\"pending\"") != std::string::npos ||
-        params.find("\"safe\"") != std::string::npos ||
-        params.find("\"finalized\"") != std::string::npos) {
-        return bn;
+    const uint64_t head = global_evm_state().block_number();
+    // Round 103 LOW fix: tag-detection now scans ONLY the first
+    // positional JSON-string element, not the whole params blob, so
+    // a nested `{"to":"latest"}` cannot spoof the tag.
+    auto first_str = extract_first_array_string(params);
+    if (!first_str.has_value()) {
+        return head;
     }
-    if (params.find("\"earliest\"") != std::string::npos) {
+    if (*first_str == "latest" || *first_str == "pending" ||
+        *first_str == "safe" || *first_str == "finalized") {
+        return head;
+    }
+    if (*first_str == "earliest") {
         return 0;
     }
-    // Otherwise parse hex
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string hex_str = params.substr(pos, end - pos);
-        return parse_hex_uint64(hex_str);
+    // Round 103 LOW fix: route through parse_hex_uint64_strict so
+    // malformed `"0xzz"` rejects rather than aliasing to 0, and
+    // oversized hex doesn't silently saturate to UINT64_MAX.
+    auto strict_res = parse_hex_uint64_strict(*first_str);
+    if (strict_res.is_error()) {
+        // Malformed first param; fall back to head (legacy behavior
+        // for bogus tags).  The caller's downstream gates surface
+        // -32010 / null / -32602 as appropriate.
+        return head;
     }
-    return bn;
+    return strict_res.move_as_ok();
 }
 
 // Parse a 32-byte hash from the first hex param in the params string.
+//
+// Round 105 LOW fix: extract the FIRST positional JSON-string
+// element rather than scanning the whole params blob.  Pre-fix
+// methods like `eth_getTransactionByHash` accepted nested objects
+// `{"hash":"0x..."}` because parse_hex_bytes scanned globally for
+// `"0x` and matched the inner string.
 static bool parse_hash_param(const std::string& params, evmc::bytes32& out) {
+    auto first_str = extract_array_element_string_n(params, 0);
+    if (!first_str.has_value()) return false;
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_hex_bytes(*first_str, hash_bytes) || hash_bytes.size() != 32) {
         return false;
     }
     std::memcpy(out.bytes, hash_bytes.data(), 32);
     return true;
 }
 
+// Parse the first positional element as 32-byte raw bytes.  Used by
+// hash-by-hash RPCs (eth_getTransactionByHash etc.).  Mirrors
+// parse_hash_param exactly but writes into a silkworm::Bytes
+// container so callers that already use that type don't have to
+// memcpy.
+static bool parse_first_hash_bytes(const std::string& params,
+                                    silkworm::Bytes& out) {
+    auto first_str = extract_array_element_string_n(params, 0);
+    if (!first_str.has_value()) return false;
+    if (!parse_hex_bytes(*first_str, out) || out.size() != 32) {
+        return false;
+    }
+    return true;
+}
+
+// Parse the first positional element as a variable-length hex byte
+// string.  Used by handlers like eth_sendRawTransaction and
+// web3_sha3 whose first param is a hex data string of arbitrary
+// length.  Pre-fix these scanned the whole params blob and would
+// accept nested object hex.
+static bool parse_first_hex_bytes_param(const std::string& params,
+                                         silkworm::Bytes& out) {
+    auto first_str = extract_array_element_string_n(params, 0);
+    if (!first_str.has_value()) return false;
+    return parse_hex_bytes(*first_str, out);
+}
+
+// Round 106 LOW fix: parse the first positional element as a
+// 20-byte EVM address.  Used by address-first RPCs
+// (eth_getBalance, eth_getTransactionCount, eth_getCode, the
+// address half of eth_getStorageAt).  Pre-fix these called
+// parse_hex_address(params, ...) which scanned the whole params
+// blob for `"0x` and accepted addresses nested inside object
+// values like `[{"shadow":"0x..."},"latest"]`.
+static bool parse_first_address_param(const std::string& params,
+                                       evmc::address& out) {
+    auto first_str = extract_array_element_string_n(params, 0);
+    if (!first_str.has_value()) return false;
+    return parse_hex_address(*first_str, out);
+}
+
 // Parse the second hex param (transaction index) from params like ["0x1", "0x0"].
-static uint64_t parse_second_hex_param(const std::string& params) {
-    // Find first 0x, skip past it, then find the second 0x
-    auto first = params.find("0x");
-    if (first == std::string::npos) return 0;
-    auto second = params.find("0x", first + 2);
-    if (second == std::string::npos) return 0;
-    auto end = params.find_first_of("\",]}", second);
-    std::string hex_str = params.substr(second, end - second);
-    return parse_hex_uint64(hex_str);
+// Returns nullopt when the string is malformed so callers can
+// distinguish "valid index 0" from "invalid input".  Pre-fix this
+// returned 0 in both cases, letting `"0x0,nothex"` masquerade as
+// index 0.
+//
+// Round 101 LOW fix: when the first param is a named block tag
+// (e.g. "latest", "pending"), the params string only contains ONE
+// `"0x` occurrence — the index itself.  In that case the lone
+// hex value IS the index.
+//
+// Round 102 LOW fix: a context-free fallback to "use the only
+// `"0x`" misinterpreted single-param calls — `["0x0"]` (missing
+// the required second param) was treated as block_number=0 by
+// parse_block_number_param AND tx_index=0 here, returning a
+// real tx instead of -32602.  Detect "first param is named tag"
+// explicitly; otherwise a missing second hex IS an error.
+//
+// Round 103 LOW fix: scan only the FIRST positional JSON-string
+// element for the named tag, not the whole params blob, so a
+// nested `{"to":"latest"}` cannot spoof the tag.
+//
+// Round 104 LOW fix: when the first positional element is an
+// object/array (not a string), the second positional element's
+// `"0x` could collide with a nested hex string inside the first
+// element.  Walk past the first positional element's end (the
+// top-level comma after the array's opening `[`) before
+// searching for the second `"0x`.
+// Round 105 LOW fix: require the second positional element to be
+// an actual JSON string.  Pre-fix, parse_second_hex_param walked
+// past the first element's top-level comma and then searched for
+// `"0x` anywhere — but a nested object second param like
+// `{"shadow":"0x0"}` still matched the inner hex string.  Use the
+// strict positional-element extractor and validate the element is
+// `"0x..."` (a JSON-string-quoted hex quantity).
+static std::optional<uint64_t> parse_second_hex_param(const std::string& params) {
+    auto first_str = extract_array_element_string_n(params, 0);
+    if (first_str.has_value()) {
+        const auto& s = *first_str;
+        if (s == "latest" || s == "pending" || s == "safe" ||
+            s == "finalized" || s == "earliest") {
+            // Single-positional-element form: index is the lone hex.
+            // Wait — the call has TWO positional params (block, index)
+            // even when block is a tag.  Fall through to extract
+            // element 1.
+        }
+    }
+    auto second_str = extract_array_element_string_n(params, 1);
+    if (!second_str.has_value()) return std::nullopt;
+    const std::string body = "0x" + (
+        second_str->size() >= 2 && (*second_str)[0] == '0' &&
+        ((*second_str)[1] == 'x' || (*second_str)[1] == 'X')
+            ? second_str->substr(2)
+            : *second_str);
+    // The above forms a `"0x..."` body; round-trip via strict.
+    if (second_str->size() < 2 || (*second_str)[0] != '0' ||
+        ((*second_str)[1] != 'x' && (*second_str)[1] != 'X')) {
+        return std::nullopt;
+    }
+    auto strict_res = parse_hex_uint64_strict(*second_str);
+    if (strict_res.is_error()) return std::nullopt;
+    return strict_res.move_as_ok();
 }
 
 // Format a full transaction object JSON (same as handle_get_transaction_by_hash output).
@@ -2971,7 +3580,10 @@ static std::string format_transaction_json(const evmc::bytes32& tx_hash, const S
     r += "\"blockNumber\":" + to_hex_quantity(tx.block_number) + ",";
     r += "\"blockHash\":" + lookup_block_hash_hex(tx.block_number) + ",";
     r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(tx.tx_index)) + ",";
-    r += "\"type\":\"0x0\",";
+    // Round 89 LOW fix: emit canonical EIP-2718 type.
+    r += "\"type\":" + to_hex_quantity(
+            static_cast<uint64_t>(receipt_type_for_tx(tx_hash)))
+         + ",";
     r += "\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"";
     r += "}";
     return r;
@@ -2986,6 +3598,16 @@ static RpcResult handle_get_block_tx_count_by_number(const std::string& params, 
         }
         return {make_result(id, "\"0x0\""), false};
     }
+    // Round 93 MEDIUM fix: also gate on the durable block-marker
+    // when has_block returns true.  A partial cache commit (block
+    // record landed but per-tx records failed) leaves the marker
+    // set; serving a tx count that doesn't match what
+    // eth_getTransactionByBlockNumberAndIndex can deliver is a
+    // canonicality divergence.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
     auto blk = global_evm_state().get_block_copy(bn);
     return {make_result(id, to_hex_quantity(static_cast<uint64_t>(blk.transaction_hashes.size()))), false};
 }
@@ -2999,6 +3621,11 @@ static RpcResult handle_get_block_tx_count_by_hash(const std::string& params, co
     if (blk.number == 0 && blk.hash == evmc::bytes32{}) {
         return {make_result(id, "null"), false};
     }
+    // Round 94 MEDIUM fix: gate on the durable block-marker.
+    if (is_evm_rpc_block_indexing_incomplete(blk.number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
     return {make_result(id, to_hex_quantity(static_cast<uint64_t>(blk.transaction_hashes.size()))), false};
 }
 
@@ -3009,7 +3636,11 @@ static RpcResult handle_get_uncle_count_by_block_number(const std::string& /*par
 
 static RpcResult handle_get_tx_by_block_number_and_index(const std::string& params, const std::string& id) {
     uint64_t bn = parse_block_number_param(params);
-    uint64_t tx_index = parse_second_hex_param(params);
+    auto tx_index_opt = parse_second_hex_param(params);
+    if (!tx_index_opt.has_value()) {
+        return {make_error(id, -32602, "invalid transaction index"), true};
+    }
+    uint64_t tx_index = *tx_index_opt;
 
     if (!global_evm_state().has_block(bn)) {
         if (is_evm_rpc_block_indexing_incomplete(bn)) {
@@ -3017,6 +3648,13 @@ static RpcResult handle_get_tx_by_block_number_and_index(const std::string& para
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, "null"), false};
+    }
+    // Round 93 MEDIUM fix: gate on the durable block-marker even
+    // when has_block returns true.  Same rationale as
+    // handle_get_block_tx_count_by_number above.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
     auto blk = global_evm_state().get_block_copy(bn);
     if (tx_index >= blk.transaction_hashes.size()) {
@@ -3026,12 +3664,35 @@ static RpcResult handle_get_tx_by_block_number_and_index(const std::string& para
     const auto& tx_hash = blk.transaction_hashes[tx_index];
     auto tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!tx) {
+        // Round 92 MEDIUM fix: same -32010 surfacing as
+        // eth_getTransactionByHash for known accepted-but-
+        // unindexed txs.
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
     // Reorg / fork rollback gate: see is_stored_tx_canonical for rationale.
     if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
+    }
+    // Round 109 LOW fix: gate the happy-path return on tx +
+    // block markers, matching eth_getTransactionByHash.  Pre-fix,
+    // the by-index handler returned a stored tx even when the
+    // tx marker had been independently set (e.g. block + tx
+    // markers diverged because they're cleared/pruned
+    // independently).
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
 
     return {make_result(id, format_transaction_json(tx_hash, *tx)), false};
@@ -3042,11 +3703,20 @@ static RpcResult handle_get_tx_by_block_hash_and_index(const std::string& params
     if (!parse_hash_param(params, block_hash)) {
         return {make_result(id, "null"), false};
     }
-    uint64_t tx_index = parse_second_hex_param(params);
+    auto tx_index_opt = parse_second_hex_param(params);
+    if (!tx_index_opt.has_value()) {
+        return {make_error(id, -32602, "invalid transaction index"), true};
+    }
+    uint64_t tx_index = *tx_index_opt;
 
     auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
     if (blk.number == 0 && blk.hash == evmc::bytes32{}) {
         return {make_result(id, "null"), false};
+    }
+    // Round 94 MEDIUM fix: gate on the durable block-marker.
+    if (is_evm_rpc_block_indexing_incomplete(blk.number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
     if (tx_index >= blk.transaction_hashes.size()) {
         return {make_result(id, "null"), false};
@@ -3055,6 +3725,12 @@ static RpcResult handle_get_tx_by_block_hash_and_index(const std::string& params
     const auto& tx_hash = blk.transaction_hashes[tx_index];
     auto tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!tx) {
+        // Round 92 MEDIUM fix: surface -32010 for known accepted-
+        // but-unindexed txs.
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
@@ -3063,21 +3739,42 @@ static RpcResult handle_get_tx_by_block_hash_and_index(const std::string& params
     // already validated by `get_block_by_hash_copy` above; this call only
     // re-checks the stamp freshness against canonical state.
     if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
+    }
+    // Round 109 LOW fix: happy-path marker gate (matches
+    // handle_get_tx_by_block_number_and_index).
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
 
     return {make_result(id, format_transaction_json(tx_hash, *tx)), false};
 }
 
 static RpcResult handle_get_block_by_hash(const std::string& params, const std::string& id) {
+    // Round 105 LOW fix: positional hash extraction.
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_result(id, "null"), false};
     }
     evmc::bytes32 block_hash;
     std::memcpy(block_hash.bytes, hash_bytes.data(), 32);
 
-    bool full_transactions = (params.find("true") != std::string::npos);
+    // Round 105 LOW fix: extract the second positional element so
+    // a nested object like `{"shadow":true}` cannot flip the
+    // full-transactions flag.
+    bool full_transactions = false;
+    if (auto el2 = extract_array_element_n(params, 1); el2.has_value()) {
+        if (*el2 == "true") {
+            full_transactions = true;
+        }
+    }
 
     auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
     if (blk.number != 0 || blk.hash != evmc::bytes32{}) {
@@ -3090,6 +3787,16 @@ static RpcResult handle_get_block_by_hash(const std::string& params, const std::
         if (std::memcmp(blk.hash.bytes, block_hash.bytes, 32) != 0 ||
             !block_cache_record_is_fresh(global_evm_state(), blk)) {
             return {make_result(id, "null"), false};
+        }
+        // Round 94 MEDIUM fix: gate on the durable block-marker
+        // even when the by-hash lookup is canonical-fresh.  A
+        // partial cache commit (block_by_number landed but
+        // block_by_hash failed, or any tx/log sidecar failed)
+        // leaves the marker set; eth_getBlockByHash should
+        // surface -32010 like the round-93 number-keyed handlers.
+        if (is_evm_rpc_block_indexing_incomplete(blk.number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
         return {make_result(id, format_block_json(blk, full_transactions)), false};
     }
@@ -3240,10 +3947,19 @@ static std::optional<RpcResult> parse_log_filter_for_subscription(
     out.has_fixed_to_block = false;
     out.future_only = true;
 
+    // Round 145 LOW fix: same strict-parser routing as eth_getLogs
+    // — malformed fromBlock/toBlock quantities now return -32602
+    // instead of silently coercing to block 0 (lenient
+    // parse_hex_uint64).
     std::string fb_hex = extract_json_string_value(params, "fromBlock");
     bool has_from = !fb_hex.empty();
     if (has_from && fb_hex != "latest" && fb_hex != "pending" && fb_hex != "earliest") {
-        out.from_block = parse_hex_uint64(fb_hex);
+        auto r = parse_hex_uint64_strict(fb_hex);
+        if (r.is_error()) {
+            return RpcResult{make_error(id, -32602,
+                "invalid 'fromBlock': " + r.error().message().str()), true};
+        }
+        out.from_block = r.move_as_ok();
         out.future_only = false;
     } else if (has_from && fb_hex == "earliest") {
         out.from_block = 0;
@@ -3256,8 +3972,16 @@ static std::optional<RpcResult> parse_log_filter_for_subscription(
     std::string tb_hex = extract_json_string_value(params, "toBlock");
     bool has_to = !tb_hex.empty();
     if (has_to && tb_hex != "latest" && tb_hex != "pending") {
-        if (tb_hex == "earliest") out.to_block = 0;
-        else out.to_block = parse_hex_uint64(tb_hex);
+        if (tb_hex == "earliest") {
+            out.to_block = 0;
+        } else {
+            auto r = parse_hex_uint64_strict(tb_hex);
+            if (r.is_error()) {
+                return RpcResult{make_error(id, -32602,
+                    "invalid 'toBlock': " + r.error().message().str()), true};
+            }
+            out.to_block = r.move_as_ok();
+        }
         out.has_fixed_to_block = true;
     }
 
@@ -3353,12 +4077,15 @@ static std::string format_log_json(const IndexedLog& il) {
 }
 
 static RpcResult handle_get_filter_changes(const std::string& params, const std::string& id) {
-    uint64_t fid = parse_hex_uint64(extract_json_string_value(params, ""));
-    if (fid == 0) {
-        auto pos = params.find("0x");
-        if (pos != std::string::npos)
-            fid = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
+    // Round 100 LOW fix: route through the strict first-hex parser
+    // so a malformed `"0x1,nothex"` can no longer alias to filter
+    // id=1.  Pre-fix the strtoull fallback truncated at the first
+    // non-hex char.
+    auto fid_res = parse_first_hex_uint64_strict(params);
+    if (fid_res.is_error()) {
+        return {make_error(id, -32602, "invalid filter id"), true};
     }
+    uint64_t fid = fid_res.move_as_ok();
 
     std::lock_guard<std::mutex> lock(g_filter_mutex);
     auto it = g_filters.find(fid);
@@ -3375,6 +4102,13 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
         to_block = f.query_to_block;
     }
 
+    // Round 99 HIGH fix: cap to_block at the chain head BEFORE
+    // any later range clamp so a fixed_to_block of UINT64_MAX
+    // (or any value past head) cannot bypass the kMaxGetLogsBlockRange
+    // gate (which is conditional on to_block > from_block).
+    if (to_block > current_block) {
+        to_block = current_block;
+    }
     if (from_block > to_block) {
         return {make_result(id, "[]"), false};
     }
@@ -3392,14 +4126,44 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
         to_block = from_block + kMaxGetLogsBlockRange;
     }
 
+    // Round 95 MEDIUM fix: surface -32010 for any block in the
+    // filter range that carries a durable block-marker.  Mirrors
+    // the round-94 eth_getLogs gate so filter polls cannot
+    // bypass the indexing-incomplete contract that block-keyed
+    // RPCs honour.
+    for (uint64_t bn = from_block; bn <= to_block; ++bn) {
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+    }
     std::string arr = "[";
     if (f.type == FilterType::Logs) {
         auto logs = global_evm_state().get_logs(from_block, to_block,
                                                  f.addresses, f.topics);
         f.next_poll_block = to_block + 1;
-        for (size_t i = 0; i < logs.size(); ++i) {
-            if (i > 0) arr += ",";
-            arr += format_log_json(logs[i]);
+        // Round 90 MEDIUM fix: gate every log through
+        // is_logs_for_block_canonical so a stale persisted log
+        // batch (same-height rewrite where put_logs_for_block
+        // failed transiently, or hydrated logs whose block was
+        // dropped) does not leak through eth_getFilterChanges.
+        // eth_getLogs already gates per-block; this mirror keeps
+        // the filter APIs canonicality-equivalent.  Cache the
+        // per-block result to avoid an O(logs * cache-lookup)
+        // hit on dense blocks.
+        std::map<uint64_t, bool> canonical_cache;
+        bool first_emitted = true;
+        for (const auto& log : logs) {
+            auto it = canonical_cache.find(log.block_number);
+            if (it == canonical_cache.end()) {
+                it = canonical_cache.emplace(
+                    log.block_number,
+                    is_logs_for_block_canonical(log.block_number)).first;
+            }
+            if (!it->second) continue;
+            if (!first_emitted) arr += ",";
+            arr += format_log_json(log);
+            first_emitted = false;
         }
     } else if (f.type == FilterType::Blocks) {
         // Return block hashes for new blocks. Security hardening round 7 (R7-H-14):
@@ -3428,10 +4192,12 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
 }
 
 static RpcResult handle_uninstall_filter(const std::string& params, const std::string& id) {
-    uint64_t fid = 0;
-    auto pos = params.find("0x");
-    if (pos != std::string::npos)
-        fid = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
+    // Round 100 LOW fix: strict filter-id parsing.
+    auto fid_res = parse_first_hex_uint64_strict(params);
+    if (fid_res.is_error()) {
+        return {make_error(id, -32602, "invalid filter id"), true};
+    }
+    uint64_t fid = fid_res.move_as_ok();
     std::lock_guard<std::mutex> lock(g_filter_mutex);
     bool removed = g_filters.erase(fid) > 0;
     return {make_result(id, removed ? "true" : "false"), false};
@@ -3484,8 +4250,9 @@ static RpcResult handle_uncle_by_block_number_and_index(const std::string&, cons
 // --- web3_sha3: keccak256 of input bytes ---
 
 static RpcResult handle_web3_sha3(const std::string& params, const std::string& id) {
+    // Round 105 LOW fix: positional first-element extraction.
     silkworm::Bytes data;
-    if (!parse_hex_bytes(params, data)) {
+    if (!parse_first_hex_bytes_param(params, data)) {
         return {make_error(id, -32602, "invalid hex input"), true};
     }
     auto h = ethash::keccak256(data.data(), data.size());
@@ -3502,26 +4269,47 @@ static std::string raw_tx_response(const std::string& id, const StoredTransactio
 }
 
 static RpcResult handle_get_raw_transaction_by_hash(const std::string& params, const std::string& id) {
+    // Round 105 LOW fix: positional hash extraction.
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_error(id, -32602, "invalid transaction hash"), true};
     }
     evmc::bytes32 tx_hash;
     std::memcpy(tx_hash.bytes, hash_bytes.data(), 32);
 
     auto tx = global_evm_state().get_transaction_copy(tx_hash);
-    if (!tx) return {make_result(id, "null"), false};
+    if (!tx) {
+        // Round 91 MEDIUM fix: same indexing-incomplete check as
+        // eth_getTransactionByHash.
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
     // Reorg / fork rollback gate: see is_stored_tx_canonical for rationale.
     if (!is_stored_tx_canonical(tx_hash, tx->block_number)) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
+    }
+    // Round 95 HIGH fix: gate the happy path on markers too.
+    if (is_evm_rpc_indexing_incomplete(tx_hash) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
     return {raw_tx_response(id, *tx), false};
 }
 
 static RpcResult handle_get_raw_tx_by_block_hash_and_index(const std::string& params, const std::string& id) {
     // params: ["0x<blockHash>", "0x<index>"]
+    // Round 105 LOW fix: positional hash extraction.
     silkworm::Bytes hash_bytes;
-    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+    if (!parse_first_hash_bytes(params, hash_bytes)) {
         return {make_error(id, -32602, "invalid block hash"), true};
     }
     evmc::bytes32 block_hash;
@@ -3531,34 +4319,59 @@ static RpcResult handle_get_raw_tx_by_block_hash_and_index(const std::string& pa
     if (blk.hash == evmc::bytes32{} && blk.number == 0) {
         return {make_result(id, "null"), false};
     }
+    // Round 94 MEDIUM fix: gate on the durable block-marker.
+    if (is_evm_rpc_block_indexing_incomplete(blk.number)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
 
     // Parse index (second hex param)
-    auto first_pos = params.find("0x");
-    if (first_pos == std::string::npos) return {make_result(id, "null"), false};
-    auto second_pos = params.find("0x", first_pos + 1);
-    uint64_t index = 0;
-    if (second_pos != std::string::npos) {
-        index = std::strtoull(params.c_str() + second_pos + 2, nullptr, 16);
+    // Round 99 LOW fix: route through the strict parser via
+    // parse_second_hex_param so a malformed `"0x0,nothex"` index
+    // does not silently truncate to the digit prefix.
+    auto index_opt = parse_second_hex_param(params);
+    if (!index_opt.has_value()) {
+        return {make_error(id, -32602, "invalid transaction index"), true};
     }
+    uint64_t index = *index_opt;
     if (index >= blk.transaction_hashes.size()) {
         return {make_result(id, "null"), false};
     }
-    auto tx = global_evm_state().get_transaction_copy(blk.transaction_hashes[index]);
-    if (!tx) return {make_result(id, "null"), false};
+    const auto& tx_hash_idx = blk.transaction_hashes[index];
+    auto tx = global_evm_state().get_transaction_copy(tx_hash_idx);
+    if (!tx) {
+        // Round 92 MEDIUM fix: surface -32010 for known accepted-
+        // but-unindexed txs in by-index lookups.
+        if (is_evm_rpc_indexing_incomplete(tx_hash_idx)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
+    // Round 109 LOW fix: raw by-index paths previously skipped both
+    // the canonical-tx gate and the success-path tx-marker check.
+    // Mirror the by-hash raw handler's protection.
+    if (!is_stored_tx_canonical(tx_hash_idx, tx->block_number) ||
+        is_evm_rpc_indexing_incomplete(tx_hash_idx) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash_idx) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
     return {raw_tx_response(id, *tx), false};
 }
 
 static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& params, const std::string& id) {
     // params: ["0x<blockNumber>" or "latest", "0x<index>"]
-    uint64_t bn = global_evm_state().block_number();
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string bn_str = params.substr(pos, end - pos);
-        if (bn_str != "latest" && bn_str != "pending" && bn_str != "safe" && bn_str != "finalized") {
-            bn = parse_hex_uint64(bn_str);
-        }
-    }
+    // Round 102 LOW fix: use the shared parse_block_number_param
+    // helper instead of inline-scanning for `0x`.  Pre-fix, when the
+    // first param was a named tag like `latest`, this code found the
+    // `0x` of the *index* and parsed it as the block number, so
+    // `["latest","0x5"]` resolved to block 5 / index 5.
+    uint64_t bn = parse_block_number_param(params);
     if (!global_evm_state().has_block(bn)) {
         if (is_evm_rpc_block_indexing_incomplete(bn)) {
             return {make_error(id, -32010,
@@ -3566,22 +4379,50 @@ static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& 
         }
         return {make_result(id, "null"), false};
     }
+    // Round 93 MEDIUM fix: gate on the durable block-marker even
+    // when has_block returns true.  Same rationale as
+    // handle_get_block_tx_count_by_number above.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
     auto blk = global_evm_state().get_block_copy(bn);
 
     // index: second hex param
-    uint64_t index = 0;
-    auto first_pos = params.find("0x");
-    if (first_pos != std::string::npos) {
-        auto second_pos = params.find("0x", first_pos + 1);
-        if (second_pos != std::string::npos) {
-            index = std::strtoull(params.c_str() + second_pos + 2, nullptr, 16);
-        }
+    // Round 99 LOW fix: same strict parsing as
+    // handle_get_raw_tx_by_block_hash_and_index above.
+    auto index_opt = parse_second_hex_param(params);
+    if (!index_opt.has_value()) {
+        return {make_error(id, -32602, "invalid transaction index"), true};
     }
+    uint64_t index = *index_opt;
     if (index >= blk.transaction_hashes.size()) {
         return {make_result(id, "null"), false};
     }
-    auto tx = global_evm_state().get_transaction_copy(blk.transaction_hashes[index]);
-    if (!tx) return {make_result(id, "null"), false};
+    const auto& tx_hash_idx = blk.transaction_hashes[index];
+    auto tx = global_evm_state().get_transaction_copy(tx_hash_idx);
+    if (!tx) {
+        // Round 92 MEDIUM fix: surface -32010 for known accepted-
+        // but-unindexed txs in by-index lookups.
+        if (is_evm_rpc_indexing_incomplete(tx_hash_idx)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
+    // Round 109 LOW fix: gate raw by-index path on tx canonicality
+    // + per-tx marker (mirrors handle_get_raw_tx_by_block_hash_and_
+    // index above).
+    if (!is_stored_tx_canonical(tx_hash_idx, tx->block_number) ||
+        is_evm_rpc_indexing_incomplete(tx_hash_idx) ||
+        is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash_idx) ||
+            is_evm_rpc_block_indexing_incomplete(tx->block_number)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
     return {raw_tx_response(id, *tx), false};
 }
 
@@ -3599,16 +4440,13 @@ static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& 
 // current head) or any 0x-prefixed hex block number. Returns the resolved
 // block number.
 static uint64_t parse_block_tag_param(const std::string& params) {
-    uint64_t bn = global_evm_state().block_number();
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string s = params.substr(pos, end - pos);
-        if (s != "latest" && s != "pending" && s != "safe" && s != "finalized") {
-            bn = parse_hex_uint64(s);
-        }
-    }
-    return bn;
+    // Round 104 LOW fix: route through parse_block_number_param so
+    // the named-tag detection (latest / pending / safe / finalized
+    // / earliest) scans ONLY the first positional element, malformed
+    // hex doesn't alias to head via parse_hex_uint64, and "earliest"
+    // is recognized.  Pre-fix this helper used a whole-blob `0x`
+    // scan and missed both "earliest" and the nested-string spoof.
+    return parse_block_number_param(params);
 }
 
 // Map our `StoredBlock` (the indexed-for-RPC view) to the silkworm
@@ -3663,12 +4501,34 @@ static std::optional<silkworm::Transaction> decode_stored_tx_rlp(const StoredTra
     auto res = silkworm::rlp::decode_transaction(view, txn,
                                                  silkworm::rlp::Eip2718Wrapping::kBoth);
     if (!res) return std::nullopt;
+    // Round 86 LOW fix: mirror the round-85 leftover-byte gate from
+    // decode_evm_transaction.  Pre-round-85 a stored or hydrated
+    // raw_rlp could carry a trailing byte (`0x02 || canonical_rlp
+    // || 0x00`) and `debug_getRawBlock` would re-encode the
+    // canonical form, dropping the trailing byte and producing a
+    // different hash than the stored tx-hash key — RPC-only, but
+    // still a debug/dump consistency divergence.
+    if (!view.empty()) return std::nullopt;
     return txn;
 }
 
 static RpcResult handle_debug_get_raw_header(const std::string& params, const std::string& id) {
     uint64_t bn = parse_block_tag_param(params);
-    if (!global_evm_state().has_block(bn)) return {make_result(id, "null"), false};
+    if (!global_evm_state().has_block(bn)) {
+        // Round 92 MEDIUM fix: surface -32010 when the block is
+        // marked accepted-but-unindexed.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
+    // Round 94 MEDIUM fix: gate on the durable block-marker even
+    // when has_block returns true.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
     auto blk = global_evm_state().get_block_copy(bn);
     auto header = build_silkworm_header(blk);
     silkworm::Bytes out;
@@ -3678,18 +4538,49 @@ static RpcResult handle_debug_get_raw_header(const std::string& params, const st
 
 static RpcResult handle_debug_get_raw_block(const std::string& params, const std::string& id) {
     uint64_t bn = parse_block_tag_param(params);
-    if (!global_evm_state().has_block(bn)) return {make_result(id, "null"), false};
+    if (!global_evm_state().has_block(bn)) {
+        // Round 92 MEDIUM fix: same as debug_getRawHeader.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "null"), false};
+    }
+    // Round 94 MEDIUM fix: gate on the durable block-marker.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
     auto blk = global_evm_state().get_block_copy(bn);
 
     silkworm::Block sw_block;
     sw_block.header = build_silkworm_header(blk);
     sw_block.transactions.reserve(blk.transaction_hashes.size());
+    // Round 87 LOW fix: when any stored tx fails to decode (pre-
+    // round-86 stored data with trailing bytes the new gate
+    // rejects, missing tx, etc.), return null instead of
+    // silently dropping the tx and serving a raw-block body
+    // whose tx count diverges from blk.transaction_hashes.
+    // Pre-fix `debug_getRawBlock` quietly produced a body with
+    // fewer transactions than the block claims; downstream
+    // tooling that re-encodes-then-hashes the body would see a
+    // mismatch with the stored block hash.
+    bool any_decode_failed = false;
     for (const auto& th : blk.transaction_hashes) {
         auto stored = global_evm_state().get_transaction_copy(th);
-        if (!stored) continue;
+        if (!stored) {
+            any_decode_failed = true;
+            break;
+        }
         auto decoded = decode_stored_tx_rlp(*stored);
-        if (!decoded) continue;
+        if (!decoded) {
+            any_decode_failed = true;
+            break;
+        }
         sw_block.transactions.push_back(std::move(*decoded));
+    }
+    if (any_decode_failed) {
+        return {make_result(id, "null"), false};
     }
     // ommers: empty (post-merge), already default-empty.
     // withdrawals: empty list (Shanghai+) — present so the BlockBody RLP
@@ -3704,7 +4595,20 @@ static RpcResult handle_debug_get_raw_block(const std::string& params, const std
 
 static RpcResult handle_debug_get_raw_receipts(const std::string& params, const std::string& id) {
     uint64_t bn = parse_block_tag_param(params);
-    if (!global_evm_state().has_block(bn)) return {make_result(id, "[]"), false};
+    if (!global_evm_state().has_block(bn)) {
+        // Round 92 MEDIUM fix: surface -32010 instead of empty
+        // array when the block is marked accepted-but-unindexed.
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+        return {make_result(id, "[]"), false};
+    }
+    // Round 94 MEDIUM fix: gate on the durable block-marker.
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
+    }
     auto blk = global_evm_state().get_block_copy(bn);
 
     // The spec returns an array with one hex string per transaction:
@@ -3718,17 +4622,25 @@ static RpcResult handle_debug_get_raw_receipts(const std::string& params, const 
         const auto& th = blk.transaction_hashes[i];
         auto r = global_evm_state().get_receipt_copy(th);
         if (!r) { out += "null"; continue; }
-
-        // Recover the transaction's EIP-2718 type from its raw RLP so
-        // typed-receipt prefixes match the corresponding tx type. Falls
-        // back to legacy (no prefix) if the tx isn't indexed or fails to
-        // decode.
-        silkworm::TransactionType tx_type = silkworm::TransactionType::kLegacy;
-        if (auto stored_tx = global_evm_state().get_transaction_copy(th)) {
-            if (auto decoded = decode_stored_tx_rlp(*stored_tx)) {
-                tx_type = decoded->type;
-            }
+        // Round 89 MEDIUM fix: gate per-tx receipt against canonical
+        // state.  Same rationale as eth_getBlockReceipts above —
+        // a stale RAM receipt hydrated from an orphaned cache DB
+        // entry could be encoded into the raw block dump.  Emit
+        // null for that slot so downstream tooling doesn't trust
+        // the encoded receipt.
+        if (!is_stored_receipt_canonical(th, r->block_number)) {
+            out += "null";
+            continue;
         }
+
+        // Round 88 LOW fix: prefer the persisted StoredReceipt::type
+        // over a tx-RLP re-decode.  Pre-fix the helper defaulted to
+        // legacy when the stored tx_rlp was missing or rejected by
+        // the round-86 leftover-byte gate, so a typed receipt could
+        // be RLP-encoded as a legacy receipt — diverging from the
+        // canonical tx type and from the type the receipt was
+        // produced for.
+        silkworm::TransactionType tx_type = r->type;
 
         silkworm::Receipt sw_receipt;
         sw_receipt.type = tx_type;
@@ -4250,6 +5162,20 @@ struct SimulateBlockOverrides {
 };
 
 static SimulateBlockOverrides parse_block_overrides_for_sim(const std::string& bsc_entry) {
+    // Round 146 LOW (deferred): block-override quantity fields
+    // (number, time, gasLimit, baseFeePerGas) currently use the
+    // lenient parse_hex_uint64 / parse_hex_uint256 helpers, which
+    // return 0 on malformed input rather than rejecting with
+    // -32602 like the round-145 strict-parser fix did for
+    // eth_getLogs / eth_newFilter filter range bounds.  Promoting
+    // these to strict parsing requires changing this function's
+    // return type to td::Result<SimulateBlockOverrides> and
+    // threading the error through three call sites in handle_eth_
+    // simulateV1; tracked as a focused follow-up rather than
+    // partially fixed here.  The exposure is bounded — silent
+    // coerce-to-0 yields a simulated block with zero gasLimit /
+    // baseFee, which clients can detect; this is a correctness
+    // hygiene issue, not a peer-poisoning vector.
     SimulateBlockOverrides bo;
     std::string body = extract_json_object_body(bsc_entry, "blockOverrides");
     if (body.empty()) return bo;
@@ -5468,11 +6394,12 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
 //     which returns since-last-poll) ---
 
 static RpcResult handle_get_filter_logs(const std::string& params, const std::string& id) {
-    uint64_t fid = 0;
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        fid = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
+    // Round 100 LOW fix: strict filter-id parsing.
+    auto fid_res = parse_first_hex_uint64_strict(params);
+    if (fid_res.is_error()) {
+        return {make_error(id, -32602, "invalid filter id"), true};
     }
+    uint64_t fid = fid_res.move_as_ok();
     std::lock_guard<std::mutex> lock(g_filter_mutex);
     auto it = g_filters.find(fid);
     if (it == g_filters.end()) {
@@ -5484,6 +6411,16 @@ static RpcResult handle_get_filter_logs(const std::string& params, const std::st
     }
     f.last_access = static_cast<uint64_t>(std::time(nullptr));
     uint64_t to_block = f.has_fixed_to_block ? f.query_to_block : global_evm_state().block_number();
+    // Round 99 HIGH fix: cap to_block at the chain head so a
+    // fixed_to_block of UINT64_MAX cannot bypass the
+    // kMaxGetLogsBlockRange gate and force the per-block scan loop
+    // to wrap around UINT64_MAX.
+    {
+        const uint64_t head = global_evm_state().block_number();
+        if (to_block > head) {
+            to_block = head;
+        }
+    }
     if (f.query_from_block > to_block) {
         return {make_result(id, "[]"), false};
     }
@@ -5500,12 +6437,34 @@ static RpcResult handle_get_filter_logs(const std::string& params, const std::st
                            std::to_string(kMaxGetLogsBlockRange) +
                            "; use eth_getLogs with an explicit range"), true};
     }
+    // Round 95 MEDIUM fix: surface -32010 for any block in the
+    // filter range that carries a durable block-marker.  Mirrors
+    // eth_getLogs / eth_getFilterChanges.
+    for (uint64_t bn = f.query_from_block; bn <= to_block; ++bn) {
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
+    }
     auto logs = global_evm_state().get_logs(f.query_from_block, to_block,
                                             f.addresses, f.topics);
     std::string arr = "[";
-    for (size_t i = 0; i < logs.size(); i++) {
-        if (i > 0) arr += ",";
-        arr += format_log_json(logs[i]);
+    // Round 90 MEDIUM fix: same canonical gate as
+    // eth_getFilterChanges and eth_getLogs.  See the
+    // is_logs_for_block_canonical helper for the rationale.
+    std::map<uint64_t, bool> canonical_cache;
+    bool first_emitted = true;
+    for (const auto& log : logs) {
+        auto cit = canonical_cache.find(log.block_number);
+        if (cit == canonical_cache.end()) {
+            cit = canonical_cache.emplace(
+                log.block_number,
+                is_logs_for_block_canonical(log.block_number)).first;
+        }
+        if (!cit->second) continue;
+        if (!first_emitted) arr += ",";
+        arr += format_log_json(log);
+        first_emitted = false;
     }
     arr += "]";
     return {make_result(id, arr), false};
@@ -5625,7 +6584,8 @@ static RpcResult handle_debug_rebuild_rpc_cache(const std::string& params,
         return {make_error(id, -32601,
                            "debug_rebuildRpcCache requires TOS_EVM_DEBUG_RPC_TOKEN"), true};
     }
-    if (std::strlen(expected_token) < 16 || provided_token != expected_token) {
+    if (std::strlen(expected_token) < 16 ||
+        !constant_time_compare_strings(provided_token, expected_token)) {
         return {make_error(id, -32001,
                            "debug_rebuildRpcCache unauthorized"), true};
     }
@@ -5867,6 +6827,27 @@ std::optional<RpcResult> handle_eth_rpc(
     // requirement here — the method is built unconditionally because
     // local operator tooling needs it without recompiling).
     if (method == "debug_rpcCacheHealth") {
+        if (!g_profile_debug_rpc_enabled.load(std::memory_order_relaxed)) {
+            return RpcResult{make_error(id, -32601,
+                std::string(method) +
+                " disabled by node profile"), true};
+        }
+    }
+    // Round 152 MEDIUM fix: gate the debug_getRaw* family behind the
+    // same AdminLocal profile.  Pre-fix only debug_traceTransaction,
+    // debug_rebuildRpcCache, and debug_rpcCacheHealth were gated;
+    // debug_getRawTransaction, debug_getRawHeader, debug_getRawBlock,
+    // and debug_getRawReceipts were dispatched on every profile.
+    // debug_getRawBlock and debug_getRawReceipts walk every tx /
+    // receipt in the named block and RLP/hex-encode the result —
+    // admin-style dump work that should not be exposed to public
+    // clients.  All four are conventional admin-only debug methods
+    // by Ethereum precedent; gating them matches operator
+    // expectations.
+    if (method == "debug_getRawTransaction" ||
+        method == "debug_getRawHeader" ||
+        method == "debug_getRawBlock" ||
+        method == "debug_getRawReceipts") {
         if (!g_profile_debug_rpc_enabled.load(std::memory_order_relaxed)) {
             return RpcResult{make_error(id, -32601,
                 std::string(method) +

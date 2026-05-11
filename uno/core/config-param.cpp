@@ -31,17 +31,53 @@ namespace uno_workchain {
 // ---------------------------------------------------------------------------
 namespace {
 
-// Using a pointer + mutex keeps the accessor path lock-free *after* install;
-// the install path is one-shot so a simple atomic swap is sufficient in
-// practice. For v1 we use a plain mutex since install is called exactly
-// once before any consumer thread reads the value.
-std::mutex g_config_mutex;
-UnoConfig g_uno_config{};       // default-constructed = testnet defaults
-bool      g_uno_config_installed{false};
+// Round 130 HIGH fix: store the active UnoConfig as an
+// atomic<shared_ptr> so reads on RPC / collator / ext-message-pool
+// threads never tear and writes from validate_and_resolve_config
+// always become visible.  Pre-fix the global was a plain
+// non-atomic struct; round 129 dropped the one-shot install guard
+// without strengthening the read side, leaving the per-block
+// install path with a C++ data-race UB hazard against concurrent
+// readers (parallel-verify, mine_uno, RPC accessors).  The
+// shared_ptr backing also lets readers grab a stable snapshot
+// for the duration of one block's compute even if a later
+// install swaps the pointer mid-block.
+//
+// The per-block "RPC sees a different snapshot than the collator"
+// concern that codex round 129/130 flagged is acknowledged: the
+// proper architectural fix is to plumb the parsed UnoConfig
+// through the WorkchainEngineConfig (matching JVM/EVM).  That is
+// a larger refactor (≈10 current_uno_config_view callers in
+// init.cpp) and is tracked as a follow-up; this round closes
+// the data-race UB and the present-to-absent transition without
+// changing the public accessor signature.
+// Round 130 HIGH fix storage.  Originally written as
+// `std::atomic<std::shared_ptr<const UnoConfig>>`, but that C++20
+// specialization is only available from libstdc++-12 onward —
+// libstdc++-11 (default on Ubuntu 22.04, which our CI matrix still
+// includes) keeps the generic primary template that requires the
+// value type to be trivially copyable, so `std::shared_ptr` fails
+// the static_assert at instantiation.
+//
+// Switch to a plain `std::shared_ptr` guarded by a mutex: readers
+// take a short shared snapshot copy under the lock, writers
+// exchange under the lock.  Same race-freedom guarantees as the
+// atomic version (no torn read of the shared_ptr control block,
+// readers always observe a fully-initialised UnoConfig), and the
+// reader cost is negligible — the writer fires at most once per
+// block, every other accessor is reader-side and contention is
+// effectively zero.
+std::shared_ptr<const UnoConfig> g_uno_config_ptr;
+std::mutex g_uno_config_mutex;
 
 // Runtime chain-id override (declared in workchain.h). Centralised here
 // to avoid a separate translation unit; mirrors evm's `set_evm_chain_id`.
 std::atomic<uint32_t> g_uno_chain_id{kDefaultTestnetChainId};
+
+// Held only by install_uno_config to log a warning when the new
+// config differs from the previous one — the actual config storage
+// is guarded by g_uno_config_mutex above.
+std::mutex g_config_log_mutex;
 
 }  // namespace
 
@@ -61,11 +97,21 @@ void set_uno_chain_id(uint32_t chain_id) noexcept {
 // Accessors for UnoConfig
 // ---------------------------------------------------------------------------
 
-const UnoConfig& current_uno_config() noexcept {
-    // Reads after `install_uno_config` are data-race-free because install
-    // is one-shot (see doc); before install, the caller sees the default
-    // value which is fine for testnet-default boot.
-    return g_uno_config;
+UnoConfig current_uno_config() noexcept {
+    // Round 130 HIGH fix: return by value via a mutex-guarded
+    // shared_ptr snapshot so concurrent installers (round-129
+    // wiring) never tear a read.  Pre-fix this returned a const-ref
+    // to the non-atomic global, which is C++ data-race UB once
+    // install_uno_config can be called more than once.  See the
+    // storage definition above for the libstdc++-11 portability
+    // rationale (replaces the original
+    // std::atomic<std::shared_ptr<...>> design).
+    std::shared_ptr<const UnoConfig> p;
+    {
+        std::lock_guard<std::mutex> lock(g_uno_config_mutex);
+        p = g_uno_config_ptr;
+    }
+    return p ? *p : UnoConfig{};
 }
 
 // Forward-declared in init.cpp — a minimal POD projection of UnoConfig to
@@ -85,7 +131,12 @@ struct UnoConfigView {
 };
 
 UnoConfigView current_uno_config_view() noexcept {
-    const auto& c = g_uno_config;
+    // Round 130 HIGH fix: copy via atomic load (see current_uno_
+    // config above for the rationale).  The local `c` is a
+    // by-value snapshot taken once per call; a concurrent
+    // install_uno_config that swaps the pointer afterwards does
+    // not affect the view this caller sees.
+    const auto c = current_uno_config();
     return UnoConfigView{
         c.chain_id,
         c.min_fee_nano,
@@ -100,21 +151,46 @@ UnoConfigView current_uno_config_view() noexcept {
 }
 
 void install_uno_config(UnoConfig cfg) noexcept {
-    std::lock_guard<std::mutex> lock(g_config_mutex);
-    if (g_uno_config_installed) {
-        LOG(WARNING) << "uno/config: install_uno_config called twice; ignoring "
-                     << "replacement (chain_id=0x" << std::hex << cfg.chain_id
-                     << std::dec << ")";
-        return;
+    // Round 129 HIGH fix: removed the one-shot guard.  Round 130
+    // HIGH fix: switched the storage from a plain global struct to
+    // a mutex-guarded `std::shared_ptr<const UnoConfig>` (see
+    // storage definition for the libstdc++-11 portability
+    // rationale that replaced the original atomic specialization).
+    // The fix's race-freedom guarantee is unchanged: writers
+    // exchange under the lock so readers always observe a fully-
+    // initialised UnoConfig.  Pre-fix the install path was racy
+    // against any caller of current_uno_config_view running in
+    // parallel (RPC, ext-message admission).
+    auto new_ptr =
+        std::make_shared<const UnoConfig>(std::move(cfg));
+    std::shared_ptr<const UnoConfig> old_ptr;
+    {
+        std::lock_guard<std::mutex> lock(g_uno_config_mutex);
+        old_ptr = std::move(g_uno_config_ptr);
+        g_uno_config_ptr = new_ptr;
     }
-    g_uno_config = std::move(cfg);
-    g_uno_config_installed = true;
-    g_uno_chain_id.store(g_uno_config.chain_id, std::memory_order_relaxed);
-    LOG(WARNING) << "uno/config: installed chain_id=0x" << std::hex
-                 << g_uno_config.chain_id << std::dec
-                 << ", min_fee=" << g_uno_config.min_fee_nano
-                 << ", max_spends=" << int(g_uno_config.max_spends_per_tx)
-                 << ", anchor_window=" << g_uno_config.anchor_window_size;
+    g_uno_chain_id.store(new_ptr->chain_id, std::memory_order_release);
+    // Log only when the value actually changed, under a separate
+    // mutex (the LOG macro can take a long time and we don't want
+    // it to serialise the atomic install fast-path).
+    bool changed = !old_ptr
+                || old_ptr->chain_id != new_ptr->chain_id
+                || old_ptr->min_fee_nano != new_ptr->min_fee_nano
+                || old_ptr->fee_per_byte_nano != new_ptr->fee_per_byte_nano
+                || old_ptr->fee_per_spend_nano != new_ptr->fee_per_spend_nano
+                || old_ptr->fee_per_output_nano != new_ptr->fee_per_output_nano
+                || old_ptr->max_spends_per_tx != new_ptr->max_spends_per_tx
+                || old_ptr->max_outputs_per_tx != new_ptr->max_outputs_per_tx
+                || old_ptr->anchor_window_size != new_ptr->anchor_window_size
+                || old_ptr->expiry_window_blocks != new_ptr->expiry_window_blocks;
+    if (changed) {
+        std::lock_guard<std::mutex> lock(g_config_log_mutex);
+        LOG(INFO) << "uno/config: installed chain_id=0x" << std::hex
+                  << new_ptr->chain_id << std::dec
+                  << ", min_fee=" << new_ptr->min_fee_nano
+                  << ", max_spends=" << int(new_ptr->max_spends_per_tx)
+                  << ", anchor_window=" << new_ptr->anchor_window_size;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +259,28 @@ bool parse_uno_config_cell(td::Ref<vm::Cell> cell, UnoConfig& out) {
     out.tree_depth = static_cast<uint8_t>(v);
     if (!cs.fetch_long_bool(32, v)) return false;
     out.expiry_window_blocks = static_cast<uint32_t>(v);
+
+    // Round 165 (claude review) LOW fix: reject trailing data / refs.
+    // Pre-fix this parser silently ignored any bits or refs past the
+    // last declared field.  Today the writer `build_uno_config_cell`
+    // emits exactly the declared shape and the masterchain config
+    // dict stores the same cell bytes for every node, so a same-
+    // version network won't split on a malformed proposal.  But the
+    // forward-compat surface is wide: a future schema version that
+    // appends fields after `expiry_window_blocks` would read those
+    // bytes while pre-fix nodes would silently ignore them, causing
+    // a quiet divergence at the moment the new fields start
+    // influencing behaviour.  JVM's ConfigParam 85 parser already
+    // checks `empty_ext()` for the same reason
+    // (jvm/core/config-param.cpp:107); mirror that here so any
+    // governance proposal that doesn't match the canonical shape is
+    // rejected at install time, not silently widened.
+    if (!cs.empty_ext()) {
+        LOG(ERROR) << "uno/config: ConfigParam 84 has trailing data "
+                   << "(bits=" << cs.size() << " refs=" << cs.size_refs()
+                   << ")";
+        return false;
+    }
 
     // Minimal sanity checks so a malformed config does not wedge consensus.
     if (out.max_spends_per_tx == 0 || out.max_outputs_per_tx == 0) {

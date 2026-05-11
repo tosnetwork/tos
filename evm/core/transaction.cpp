@@ -25,6 +25,22 @@ decode_evm_transaction(silkworm::ByteView raw_rlp) noexcept {
         return TxDecodeError{"RLP decode failed"};
     }
 
+    // Round 85 MEDIUM fix: enforce no trailing bytes after the
+    // canonical RLP body.  Silkworm's raw EIP-2718 typed branch
+    // delegates to `eip2718_decode(... Leftover::kAllow)`, so
+    // `0x02 || canonical_rlp || garbage` decoded as the same
+    // transaction.  Pre-fix, the same Ethereum tx hash had
+    // multiple distinct on-chain raw_rlp byte encodings, which
+    // yielded different TOS external message roots — bypassing
+    // root-based dedupe and producing RPC/raw-transaction
+    // poisoning where two cell trees committed the same
+    // canonical Ethereum transaction.  Legacy and string-wrapped
+    // typed paths already enforce this; the raw typed path was
+    // the gap.
+    if (!view.empty()) {
+        return TxDecodeError{"trailing bytes after RLP body"};
+    }
+
     // Recover sender from the ECDSA signature.
     auto sender_opt = txn.sender();
     if (!sender_opt.has_value()) {
@@ -64,8 +80,45 @@ extract_evm_payload(vm::CellSlice& body) noexcept {
         return std::nullopt;
     }
     unsigned has_next = static_cast<unsigned>(body.fetch_ulong(1));
-    if (has_next == 1) {
-        if (!body.have_refs()) return std::nullopt;
+    // Round 72 MEDIUM fix: enforce exact-shape after the
+    // Maybe-tag.  Pre-fix `extract_evm_payload` accepted trailing
+    // refs (and trailing bits via the relaxed `have_refs()` check)
+    // in both branches: with `has_next == 0` it ignored any refs;
+    // with `has_next == 1` it read only the first ref and ignored
+    // subsequent refs.  This let an attacker pad an external EVM
+    // message body with arbitrary cell subtrees that the host
+    // sized + validated under the same Ethereum tx hash, an
+    // unmetered DoS / canonicality surface.
+    //
+    // Canonical shape per `build_evm_external_message`:
+    //   has_next == 0  →  no trailing bits, no refs.
+    //   has_next == 1  →  exactly one ref (the next chunk), no
+    //                     trailing bits.
+    if (has_next == 0) {
+        if (body.size() != 0 || body.size_refs() != 0) {
+            return std::nullopt;
+        }
+    } else {
+        if (body.size() != 0 || body.size_refs() != 1) {
+            return std::nullopt;
+        }
+        // Round 73 MEDIUM fix: enforce canonical chunk size on the
+        // FIRST (head) chunk too.  Pre-fix `extract_evm_payload`
+        // checked only trailing bits/refs but did not require the
+        // head's `data_bytes == kEvmBytecodeChunkBytes` for
+        // non-final chunks — the canonical encoder always packs
+        // non-final cells with exactly 127 bytes, but a non-canonical
+        // head with `data_bytes == 0` or `1..126` could chain to a
+        // canonical tail and still parse to the same EVM tx bytes.
+        // Two distinct cell-tree roots → same Ethereum tx hash;
+        // collator dedupes by root hash, so the same tx could be
+        // submitted twice with different cell shapes.  The
+        // round-72 `decode_evm_bytecode` gate already covered this
+        // for the recursive tail; this mirror covers the head
+        // parsed inline by `extract_evm_payload`.
+        if (data_bytes != kEvmBytecodeChunkBytes) {
+            return std::nullopt;
+        }
         auto next = body.fetch_ref();
         auto more = decode_evm_bytecode(next);
         if (more.empty()) return std::nullopt;

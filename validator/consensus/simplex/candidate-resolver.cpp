@@ -255,8 +255,26 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
     // Load all candidate metadata entries we have.
     auto candidates = bus.db->get_by_prefix(tl::db_key_candidateResolver_candidateInfo::ID);
+    size_t skipped_keys = 0;
     for (auto &[key_str, value_str] : candidates) {
-      auto key = fetch_tl_object<tl::db_key_candidateResolver_candidateInfo>(key_str, true).move_as_ok();
+      // Round 168 (claude review) LOW fix: log-and-skip on a
+      // malformed TL key instead of aborting via .move_as_ok().
+      // Same operator-visibility class as round 140's fix on the
+      // candidate VALUE deserialize path lower in this file: a
+      // corrupted DB record whose key parse fails turned into a
+      // silent SIGABRT during load_from_db, with no operator-readable
+      // context.  Skip the bad record and surface a count.
+      auto key_r = fetch_tl_object<tl::db_key_candidateResolver_candidateInfo>(
+          key_str, true);
+      if (key_r.is_error()) {
+        LOG(WARNING) << "Simplex candidate-resolver: skipping malformed "
+                        "candidateInfo key in DB ("
+                     << key_str.size() << " bytes): "
+                     << key_r.error().message();
+        ++skipped_keys;
+        continue;
+      }
+      auto key = key_r.move_as_ok();
       CandidateId id = CandidateId::from_tl(key->candidateId_);
       auto &state = state_[id];
 
@@ -264,6 +282,10 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
         ++candidate_count;
         state.candidate_in_db = true;
       }
+    }
+    if (skipped_keys > 0) {
+      LOG(WARNING) << "Simplex candidate-resolver: skipped " << skipped_keys
+                   << " malformed candidateInfo keys during DB load";
     }
 
     LOG(INFO) << "Loaded " << notar_certs_count << " notarization certificates and " << candidate_count
@@ -280,7 +302,36 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     if (state.candidate_in_db) {
       auto contents_key = create_serialize_tl_object<tl::db_key_candidate>(id.to_tl());
       auto data = bus.db->get(std::move(contents_key)).value();
-      state.candidate_and_cert.candidate = Candidate::deserialize(data, bus).move_as_ok();
+      // Round 140 MEDIUM fix: validate that the deserialized
+      // candidate's id matches the requested id, mirroring the
+      // network-path gate at CandidateAndCert::from_tl above.
+      // Pre-fix this DB resume path used .move_as_ok() and
+      // accepted whatever was decoded; a corrupted /
+      // mis-indexed db_key_candidate(idA) → bytes-for-idB
+      // record let to_tl() at line 69 trip a CHECK on the
+      // mismatch, turning a single bad DB record into a
+      // remote-triggerable validator abort.  Now we deserialize
+      // into a temporary, log-and-skip on either deserialize
+      // failure or id mismatch.  The candidate stays in
+      // candidate_in_db state but is not surfaced to to_tl
+      // until a fresh network/local store overwrites it.
+      auto candidate_res = Candidate::deserialize(data, bus);
+      if (candidate_res.is_error()) {
+        LOG(WARNING) << "Simplex candidate-resolver: db record for "
+                     << id << " failed to deserialize: "
+                     << candidate_res.error().message();
+        co_return false;
+      }
+      auto candidate = candidate_res.move_as_ok();
+      if (candidate->id != id) {
+        LOG(WARNING) << "Simplex candidate-resolver: db record for "
+                     << id
+                     << " contains a candidate for a different id "
+                     << candidate->id
+                     << " (refusing to surface mismatched bytes)";
+        co_return false;
+      }
+      state.candidate_and_cert.candidate = std::move(candidate);
     }
 
     co_return false;
@@ -315,7 +366,22 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     co_await try_load_candidate_data_from_db(id, state);
 
     if (bus.validator_set.size() == 1) {
-      CHECK(state.candidate_and_cert.is_complete());
+      // Round 141 LOW fix: round-140 made try_load_candidate_data_
+      // from_db skip mismatched DB candidates instead of feeding
+      // them into to_tl, but the singleton path still assumed the
+      // load was authoritative.  In a one-validator group there is
+      // no peer to resolve from, so a corrupted db_key_candidate
+      // record now genuinely cannot be recovered — LOG(FATAL) with
+      // a clear reason is the right exit, replacing the bare
+      // CHECK(state.candidate_and_cert.is_complete()) that would
+      // otherwise abort with no context.
+      if (!state.candidate_and_cert.is_complete()) {
+        LOG(FATAL) << "Simplex candidate-resolver: singleton group "
+                      "cannot resolve candidate "
+                   << id
+                   << " — DB record is missing or corrupted and there "
+                      "is no peer to fall back to";
+      }
       co_return td::Unit{};
     }
 

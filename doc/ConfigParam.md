@@ -124,17 +124,46 @@ Each `WorkchainDescr` entry (keyed by workchain ID):
 
 | Field | Type | Value (wc 0) | Description |
 |-------|------|-------------|-------------|
-| `enabled_since` | uint32 | (genesis time) | When workchain was enabled |
+| `enabled_since` | uint32 | (genesis/config update time) | Recorded activation metadata; not a standalone delayed-height gate in the current implementation |
 | `monitor_min_split` | uint8 | 0 | Minimum split depth for monitoring |
 | `min_split` | uint8 | 0 | Minimum shard split depth |
 | `max_split` | uint8 | 0 | Maximum shard split depth |
 | `basic` | bit | 1 | Basic workchain flag |
-| `active` | Bool | true | Workchain is active |
-| `accept_msgs` | Bool | true | Accepts messages |
+| `active` | Bool | true | Workchain participates in execution routing |
+| `accept_msgs` | Bool | true | Accepts new inbound messages |
 | `zerostate_root_hash` | bits256 | (computed) | Root hash of workchain zero state |
 | `zerostate_file_hash` | bits256 | (computed) | File hash of workchain zero state |
 | `version` | uint32 | 0 | Workchain descriptor version |
 | `format` | wfmt_basic / wfmt_ext | wfmt_basic | Workchain VM format selector |
+
+### Activation Semantics
+
+`ConfigParam 12` is the consensus source of truth for ordinary workchain
+activation. The current execution registry treats a workchain as unavailable
+when its descriptor is absent or when the descriptor has `active=false`. Once an
+accepted masterchain config update installs a descriptor with `active=true`, the
+registry resolves the engine from `(format, selector)` and validates the
+engine-specific config snapshot. `accept_msgs=false` prevents new inbound
+messages even if the descriptor is present.
+
+`enabled_since` is stored in the descriptor and should match the intended
+activation metadata, but current routing does not use it as an automatic
+future-height scheduler. A staged launch is performed by separate config
+updates: for example, activate EVM (`wc=1`), Uno (`wc=2`), and JVM (`wc=3`) at
+different masterchain heights by adding or enabling each descriptor in separate
+`ConfigParam 12` proposals. If exact future-height activation after prior
+proposal acceptance is required, that must be implemented as an explicit
+scheduler/election rule rather than relying on `enabled_since` alone.
+
+Future workchains may be omitted from `ConfigParam 12` until their launch, or
+pre-registered with `active=false` and `accept_msgs=false`. Pre-registered
+descriptors must keep their consensus identity fields stable until activation:
+engine selector, descriptor version, `vm_mode`, address-length shape, and
+zerostate hashes should not change without an explicit migration rule.
+
+Engine-specific parameters must be present before or in the same update that
+makes the workchain active. EVM stores its chain id in `vm_mode`; Uno uses
+ConfigParam 84; JVM uses ConfigParam 85.
 
 ### Workchain VM Format
 
@@ -159,7 +188,7 @@ The workchain id `1` is the next slot after masterchain (`-1`) and basechain (`0
 Two paths:
 
 1. **Zerostate (clean network)**: edit `crypto/smartcont/gen-zerostate.fif` to register the EVM workchain alongside the basechain at genesis. New zerostate generation includes `wc=1`.
-2. **Governance proposal (existing network)**: submit a ConfigParam 12 update containing the new descriptor. Validators that have the `evm_workchain` module compiled into their `validator-engine` binary begin processing wc=1 messages on the next epoch.
+2. **Governance proposal (existing network)**: submit a ConfigParam 12 update containing the new descriptor. Validators that have the `evm_workchain` module compiled into their `validator-engine` binary begin processing wc=1 messages once the accepted update becomes part of the active masterchain config, subject to validator assignment and scheduler rules.
 
 See `doc/Validator-Local.md#evm-workchain-workchain-1` for end-to-end activation steps in a local 4-node testnet.
 
@@ -530,6 +559,78 @@ Per-chain parameters for wc=2 (Uno shielded workchain). See [uno-workchain.md §
 **Why 84 and not 26**: wc-specific protocol params follow the TOS convention established by the bridge/workchain-extension cluster at 71-82. Core-band gaps (26, 27, 38, 41, 42) are reserved for low-numbered core-protocol extensions that TOS upstream may backfill; 84 is adjacent to the existing 71-82 cluster and unlikely to clash.
 
 **Activation**: the param is installed at zerostate (`crypto/smartcont/gen-zerostate.fif`) alongside the wc=2 workchain descriptor in ConfigParam 12. No runtime governance upgrade path is required for v1, but the param is mutable through the standard proposal flow (ConfigParam 11) if future rate-adjustment is needed. `max_spends_per_tx`, `max_outputs_per_tx`, and `tree_depth` are effectively consensus-binding (mutating them breaks AIR public-input shape); treat them as frozen after genesis.
+
+## ConfigParam 85 — JVM Workchain Chain Config
+
+Per-chain parameters for wc=3 (Avata JVM workchain). The workchain descriptor
+uses ConfigParam 12 with `vm_version = 0x4a564d31` (`"JVM1"`) and
+`vm_mode = 0`; all JVM-specific limits and gas tables live in ConfigParam 85.
+
+Root cell layout:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `magic` | uint32 | `0x4a564d43` (`"JVMC"`) |
+| `schema_version` | uint8 | **2** (account-native topology wire format) |
+| `chain_id` | uint32 | JVM workchain chain id; must be non-zero |
+| `gas_price` | uint64 | nanotomi price per JVM gas unit |
+| `max_gas_per_tx` | uint64 | hard per-transaction gas limit |
+| `max_class_bytes` | uint32 | max byte size for one admitted contract class |
+| `max_heap_bytes` | uint32 | deterministic transaction heap/memory limit |
+| `max_storage_cells` | uint32 | max account-state cell budget |
+| `class_file_major` | uint16 | **52** for Java 8 class files |
+| `gas_schedule_version` | uint8 | non-zero version of the embedded gas table |
+| `stdlib_hash` | bytes32 | hash commitment to the admitted `rt.jar` / API profile |
+| `opcode_gas_table` | ref | linked gas table with exactly 256 uint64 entries |
+| `helper_gas_table` | ref | linked gas table with exactly 14 uint64 helper entries |
+
+Each gas-table cell stores `chunk:uint8` followed by `chunk` uint64 costs and,
+when more entries remain, one reference to the next cell. `chunk` must be in
+`1..15`; every gas cost must be in `1..UINT64_MAX-1`.
+
+Helper gas entries are ordered by the Avata ABI constants: storage load,
+storage store base, storage store byte, storage clear, object allocation word,
+array allocation base, array allocation element, `System.arraycopy()` base,
+`System.arraycopy()` element, native call, event base, event topic, event
+data byte, and storage load byte.
+
+The `storage load byte` entry (index 13) was added in Round 53 of the security
+review.  Pre-Round-53 `Storage.load` charged only the fixed `storage load`
+helper (~20 gas) regardless of value size, but the host walked the storage-
+value chain and `memcpy`'d the full payload (up to 1 MiB) into the JVM heap.
+A contract that had seeded a large slot once could repeatedly read it for
+~20 gas while validators paid O(N) bandwidth per call.  The new entry charges
+1 gas per loaded byte by default, mirroring `storage store byte`.
+
+**Activation**: validators parse and validate ConfigParam 85 through
+`jvm/core/config-param.cpp` during workchain-engine resolution. The
+`JvmAvataRuntime` bridge applies the parsed opcode/helper gas tables and heap
+limit at the Avata transaction boundary. The main CMake build links the
+canonical `avata_interpreter` target and `make_linked_jvm_avata_execution_api()`
+maps the bridge to the Avata C ABI. `init_jvm_workchain()` now installs a
+linked Avata runtime from `TOS_JVM_AVATA_RT_JAR` or the CMake-generated
+`rt.jar` default, optional `TOS_JVM_AVATA_CONTRACT_CLASSPATH`, and
+`TOS_JVM_AVATA_HEAP`. The runtime resolves inbound calls through the per-account
+method manifest stored in `JvmContractAccountState.manifest_root`. If VM creation
+fails, wc=3 registration remains fail-closed with a null runtime.
+
+**Schema version: breaking change at v2.** `schema_version=2` is the
+account-native topology wire format. The v1 layout carried an extra
+`max_total_class_bytes:uint32` between `max_class_bytes` and `max_heap_bytes`
+to bound the aggregate footprint of the singleton-executor's shared class store;
+under v2 each contract is its own wc=3 account and bytecode sharing is handled
+by Cell DB physical hash dedup (see `crypto/vm/db/CellStorage.cpp:267`), so the
+field has been removed. `parse_jvm_config_cell` rejects any cell whose
+`schema_version != 2` (`jvm/core/config-param.cpp:233-235`); a node holding a
+v1 ConfigParam 85 cell will fail to resolve the wc=3 engine and fall closed.
+This is a chain-config breaking change, acceptable because the previous schema
+was never on mainnet.
+
+**Migration note.** Nodes and genesis tooling must regenerate ConfigParam 85
+from `JvmConfig::default_activation()` (`jvm/core/config-param.cpp:275-307`),
+which now omits `max_total_class_bytes` and emits `schema_version=2`. Operators
+maintaining a hand-rolled `JvmConfig` builder must drop the
+`max_total_class_bytes` initializer and re-run `build_jvm_config_cell`.
 
 ## Negative (Internal) Parameters
 

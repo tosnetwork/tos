@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: java [--avata-build-dir DIR] [--rt JAR] [--avata BIN]
+            [--gas LIMIT] [--memory BYTES] <java args...>
+
+Runs contract classes with the local Avata interpreter and the Avata rt.jar.
+The wrapper fixes the boot classpath to the Avata runtime profile and refuses
+user-supplied bootclasspath and native library path overrides. --gas and
+--memory start the standalone interpreter in Avata contract-resource mode.
+EOF
+}
+
+die() {
+  echo "avata-java: $*" >&2
+  exit 2
+}
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+avata_dir=$(cd "$script_dir/.." && pwd)
+
+build_dir=${AVATA_BUILD_DIR:-}
+rt_jar=${AVATA_RT_JAR:-}
+avata_bin=${AVATA_EXECUTABLE:-}
+gas_limit=${AVATA_GAS_LIMIT:-}
+memory_limit=${AVATA_MEMORY_LIMIT:-}
+user_args=()
+
+while (($#)); do
+  case "$1" in
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --avata-build-dir)
+      (($# >= 2)) || die "--avata-build-dir requires a value"
+      build_dir=$2
+      shift 2
+      ;;
+    --avata-build-dir=*)
+      build_dir=${1#*=}
+      shift
+      ;;
+    --rt)
+      (($# >= 2)) || die "--rt requires a value"
+      rt_jar=$2
+      shift 2
+      ;;
+    --rt=*)
+      rt_jar=${1#*=}
+      shift
+      ;;
+    --avata)
+      (($# >= 2)) || die "--avata requires a value"
+      avata_bin=$2
+      shift 2
+      ;;
+    --avata=*)
+      avata_bin=${1#*=}
+      shift
+      ;;
+    --gas)
+      (($# >= 2)) || die "--gas requires a value"
+      gas_limit=$2
+      shift 2
+      ;;
+    --gas=*)
+      gas_limit=${1#*=}
+      shift
+      ;;
+    --memory)
+      (($# >= 2)) || die "--memory requires a value"
+      memory_limit=$2
+      shift 2
+      ;;
+    --memory=*)
+      memory_limit=${1#*=}
+      shift
+      ;;
+    --)
+      shift
+      user_args+=("$@")
+      break
+      ;;
+    -Xbootclasspath|-Xbootclasspath:|-Xbootclasspath/p:|-Xbootclasspath/a:)
+      die "$1 is fixed by jvm/avata/tools/java"
+      ;;
+    -Xbootclasspath:*|-Xbootclasspath/*)
+      die "$1 is fixed by jvm/avata/tools/java"
+      ;;
+    -Djava.library.path=*)
+      die "java.library.path is fixed by jvm/avata/tools/java"
+      ;;
+    -Xavata-gas:*|-Xavata-memory:*)
+      die "use --gas/--memory with jvm/avata/tools/java"
+      ;;
+    *)
+      user_args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$build_dir" ]]; then
+  if [[ -x "$avata_dir/build/linux-x86_64/avata" ]]; then
+    build_dir="$avata_dir/build/linux-x86_64"
+  else
+    mapfile -t candidates < <(find "$avata_dir/build" -maxdepth 2 \
+      -name avata -type f -perm -111 2>/dev/null | sort)
+    if [[ ${#candidates[@]} -eq 1 ]]; then
+      build_dir=$(cd "$(dirname "${candidates[0]}")" && pwd)
+    elif [[ ${#candidates[@]} -eq 0 ]]; then
+      die "Avata executable not found; run make -C jvm/avata build or pass --avata-build-dir"
+    else
+      die "multiple Avata build dirs found; pass --avata-build-dir"
+    fi
+  fi
+fi
+
+if [[ -z "$avata_bin" ]]; then
+  avata_bin="$build_dir/avata"
+fi
+if [[ -z "$rt_jar" ]]; then
+  rt_jar="$build_dir/rt.jar"
+fi
+
+[[ -x "$avata_bin" ]] || die "missing Avata executable: $avata_bin"
+[[ -f "$rt_jar" ]] || die "missing runtime jar: $rt_jar"
+
+validate_uint64() {
+  local name=$1
+  local value=$2
+  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    die "$name must be an unsigned decimal integer"
+  fi
+}
+
+resource_args=()
+if [[ -n "$gas_limit" ]]; then
+  validate_uint64 "--gas" "$gas_limit"
+  resource_args+=("-Xavata-gas:$gas_limit")
+fi
+if [[ -n "$memory_limit" ]]; then
+  validate_uint64 "--memory" "$memory_limit"
+  resource_args+=("-Xavata-memory:$memory_limit")
+fi
+
+case "$(uname -s)" in
+  Darwin)
+    export DYLD_LIBRARY_PATH="$build_dir${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+    ;;
+  Linux|FreeBSD)
+    export LD_LIBRARY_PATH="$build_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    ;;
+esac
+
+exec "$avata_bin" "-Xbootclasspath:$rt_jar" \
+  "-Djava.library.path=$build_dir" "${resource_args[@]}" "${user_args[@]}"
