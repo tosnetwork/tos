@@ -60,6 +60,19 @@ jobs:
         toolchain: 1.91.1
         profile: minimal
 
+    # JDK 8 needed by jvm/avata/makefile to compile rt.jar / api.jar
+    # (Avata's Java standard library, baked into the interpreter via
+    # TOS_AVATA_DEFAULT_RT_JAR).  Avata targets Java 8 bytecode
+    # (`-source 1.8 -target 1.8` at jvm/avata/makefile:160) and the
+    # makefile caps host-java-version at 8 (line 16-17), so JDK 8 is the
+    # minimal sufficient version and avoids forward-compat surprises
+    # from newer JDKs.
+    - name: Install OpenJDK 8
+      run: |
+        apt-get update
+        apt-get install -y --no-install-recommends openjdk-8-jdk-headless
+        echo "JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64" >> "$GITHUB_ENV"
+
     - name: Build TOS
       run: |
         mkdir -p ~/.ccache
