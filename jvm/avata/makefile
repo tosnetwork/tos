@@ -929,9 +929,13 @@ test-support-sources = \
 # The TOS profile test set follows the admitted contract runtime, not Avata's
 # old broad Java SE class-library surface.
 test-sources = \
+	$(test)/ABIPackedTest.java \
 	$(test)/AllFloats.java \
 	$(test)/ArrayDequeTest.java \
 	$(test)/BitsetTest.java \
+	$(test)/ContextTest.java \
+	$(test)/CryptoTest.java \
+	$(test)/EIP712Test.java \
 	$(test)/DeterministicFloatTest.java \
 	$(test)/FloatConformanceVector.java \
 	$(test)/PerfBaseline.java \

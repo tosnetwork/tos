@@ -24,6 +24,14 @@ public abstract class Contract {
     throw new ContractRevertException(errorSignature, data);
   }
 
+  /** ABI-encode `args` into the revert payload using the same rules as
+   *  ABI.encode(Object[]) so callers can decode the error symmetrically
+   *  via ABI.decode*. */
+  protected static void revert(String errorSignature, Object[] args) {
+    throw new ContractRevertException(errorSignature,
+                                       Bytes.wrap(ABI.encode(args)));
+  }
+
   protected static void requireNonZero(Address address,
                                        String errorSignature) {
     requireCondition(address != null && ! address.isZero(), errorSignature);

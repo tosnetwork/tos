@@ -62,6 +62,7 @@ static const char* const kContractProfileAdmittedApiClasses[] = {
     "java/lang/Crypto",
     "java/lang/Deprecated",
     "java/lang/Double",
+    "java/lang/EIP712",
     "java/lang/ERC1155",
     "java/lang/ERC1155Holder",
     "java/lang/ERC20",

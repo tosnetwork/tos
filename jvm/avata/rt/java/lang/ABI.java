@@ -119,4 +119,177 @@ public final class ABI {
     }
     return id;
   }
+
+  // --------------------------------------------------------------------
+  // Packed encoding — Solidity-style abi.encodePacked.
+  //
+  // No length prefixes, no zero padding inside dynamic types.  Useful for
+  // building keccak preimages where extra padding would waste gas (e.g.
+  // EIP-712 struct hashing of mapping keys, signed-message digests).
+  //
+  // Admitted argument types — anything else throws IllegalArgumentException
+  // so contracts can't accidentally leak a host-shaped Object.toString:
+  //   Uint256       → 32 bytes big-endian
+  //   Bytes32       → 32 bytes
+  //   Bytes4        →  4 bytes
+  //   Address       → 36 bytes (4B workchain + 32B accountId), matches
+  //                   ABI.encode(Address)
+  //   Bytes         → raw bytes, no length prefix
+  //   byte[]        → raw bytes, no length prefix
+  //   String        → UTF-8 bytes, no length prefix
+  //   Boolean       → 1 byte (0x01 / 0x00)
+  //   Integer/Short/Byte → 4 / 2 / 1 bytes big-endian
+  //   Long          → 8 bytes big-endian
+  // --------------------------------------------------------------------
+
+  public static byte[] encodePacked(Object[] values) {
+    if (values == null) {
+      throw new NullPointerException("encodePacked values cannot be null");
+    }
+    byte[] out = new byte[0];
+    for (int i = 0; i < values.length; ++i) {
+      out = concat(out, encodePackedValue(values[i]));
+    }
+    return out;
+  }
+
+  private static byte[] encodePackedValue(Object value) {
+    if (value == null) {
+      throw new NullPointerException("encodePacked value cannot be null");
+    }
+    if (value instanceof Uint256) {
+      return ((Uint256) value).toByteArray();
+    }
+    if (value instanceof Bytes32) {
+      return ((Bytes32) value).toByteArray();
+    }
+    if (value instanceof Bytes4) {
+      return ((Bytes4) value).toByteArray();
+    }
+    if (value instanceof Address) {
+      return encode((Address) value);
+    }
+    if (value instanceof Bytes) {
+      return ((Bytes) value).rawBytes();
+    }
+    if (value instanceof byte[]) {
+      return ContractHex.copy((byte[]) value);
+    }
+    if (value instanceof String) {
+      return ((String) value).getBytes();
+    }
+    if (value instanceof Boolean) {
+      return new byte[] { (byte) (((Boolean) value).booleanValue()
+                                  ? 0x01 : 0x00) };
+    }
+    if (value instanceof Long) {
+      long v = ((Long) value).longValue();
+      byte[] out = new byte[8];
+      for (int i = 7; i >= 0; --i) {
+        out[i] = (byte) v;
+        v >>>= 8;
+      }
+      return out;
+    }
+    if (value instanceof Integer) {
+      int v = ((Integer) value).intValue();
+      byte[] out = new byte[4];
+      out[0] = (byte) (v >>> 24);
+      out[1] = (byte) (v >>> 16);
+      out[2] = (byte) (v >>> 8);
+      out[3] = (byte) v;
+      return out;
+    }
+    if (value instanceof Short) {
+      short v = ((Short) value).shortValue();
+      return new byte[] { (byte) (v >>> 8), (byte) v };
+    }
+    if (value instanceof Byte) {
+      return new byte[] { ((Byte) value).byteValue() };
+    }
+    throw new IllegalArgumentException(
+        "encodePacked: unsupported value type " + value.getClass().getName());
+  }
+
+  // --------------------------------------------------------------------
+  // Standard (non-packed) encoding — every admitted type pads to 32 bytes.
+  // Mirrors Solidity abi.encode for the admitted Avata types.  Used by
+  // encodeWithSelector to produce `selector || encode(args)`.
+  // --------------------------------------------------------------------
+
+  public static byte[] encode(Object[] values) {
+    if (values == null) {
+      throw new NullPointerException("encode values cannot be null");
+    }
+    byte[] out = new byte[0];
+    for (int i = 0; i < values.length; ++i) {
+      out = concat(out, encodeValue(values[i]));
+    }
+    return out;
+  }
+
+  private static byte[] encodeValue(Object value) {
+    if (value == null) {
+      throw new NullPointerException("encode value cannot be null");
+    }
+    if (value instanceof Uint256) {
+      return encode((Uint256) value);
+    }
+    if (value instanceof Bytes32) {
+      return encode((Bytes32) value);
+    }
+    if (value instanceof Bytes4) {
+      // Pad Bytes4 right (selector position) to 32 bytes so the layout
+      // matches Solidity's static 4-byte right-padded encoding.
+      byte[] padded = new byte[32];
+      byte[] raw = ((Bytes4) value).toByteArray();
+      for (int i = 0; i < raw.length; ++i) {
+        padded[i] = raw[i];
+      }
+      return padded;
+    }
+    if (value instanceof Address) {
+      return encode((Address) value);
+    }
+    if (value instanceof Bytes) {
+      return encode((Bytes) value);
+    }
+    if (value instanceof Boolean) {
+      byte[] padded = new byte[Uint256.BYTE_LENGTH];
+      padded[Uint256.BYTE_LENGTH - 1] =
+          (byte) (((Boolean) value).booleanValue() ? 0x01 : 0x00);
+      return padded;
+    }
+    if (value instanceof Long) {
+      return Uint256.fromUnsignedLong(((Long) value).longValue()).toByteArray();
+    }
+    if (value instanceof Integer) {
+      long v = ((Integer) value).intValue() & 0xffffffffL;
+      return Uint256.fromUnsignedLong(v).toByteArray();
+    }
+    throw new IllegalArgumentException(
+        "encode: unsupported value type " + value.getClass().getName());
+  }
+
+  // --------------------------------------------------------------------
+  // encodeWithSelector(selector, args) → selector || encode(args).
+  // Matches EVM ABI v2 for typed call-data assembly so a future
+  // ContractCall surface can ship calldata in the same wire form.
+  // --------------------------------------------------------------------
+
+  public static byte[] encodeWithSelector(Bytes4 selector, Object[] args) {
+    if (selector == null) {
+      throw new NullPointerException("encodeWithSelector selector cannot be null");
+    }
+    return concat(selector.toByteArray(), encode(args));
+  }
+
+  // --------------------------------------------------------------------
+  // encodeWithSignature("name(types)", args) → selector || encode(args).
+  // Convenience wrapper that derives the selector from the signature.
+  // --------------------------------------------------------------------
+
+  public static byte[] encodeWithSignature(String signature, Object[] args) {
+    return encodeWithSelector(selector(signature), args);
+  }
 }

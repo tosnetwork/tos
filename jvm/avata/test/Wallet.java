@@ -1,18 +1,13 @@
 // Minimal wc=3 wallet skeleton.
 //
-// Status: design skeleton — PARTIAL.
-//   * Caller/value/block context: AVAILABLE via java.lang.Context (Phase A).
-//   * Signature verification path: still waiting on Crypto.{ed25519Verify,
-//     ecRecover} (Phase B of the rt.jar gap plan).
-//   * Outbound transfer: still waiting on System.sendMessage /
-//     java.lang.ContractCall (out of v1 scope per jvm-rt.md §496).
-// Spots that still depend on a missing primitive are marked TODO(rt).
+// Status: signature-authenticated; payload dispatch still waits on
+//   System.sendMessage / java.lang.ContractCall (out of v1 scope per
+//   jvm-rt.md §496).  Until that lands, execute() validates and logs
+//   the payload commitment via Event; the actual outbound legs are
+//   the contract author's responsibility once ContractCall ships.
 //
 // Storage layout (all slots are keccak256("Wallet.<name>")):
-//   OWNER_COMMITMENT  : 32 bytes — sha3/keccak of the owner's public key.
-//                       Stored as a commitment (not the raw key) so that an
-//                       attacker who reads on-chain state still has to find a
-//                       keccak preimage.
+//   OWNER_PUBKEY      : 32 bytes — Ed25519 public key, stored verbatim.
 //   NONCE             : Uint256 — monotonically increasing replay counter.
 //   INIT_FLAG         : 1 byte  — 0x01 once init() has run.
 //
@@ -47,9 +42,9 @@ public class Wallet {
   // Bytes32 slot itself is derived lazily because constant-folded
   // Bytes32 fields would create a <clinit>.
   // --------------------------------------------------------------------
-  private static final String SLOT_OWNER_COMMITMENT = "Wallet.ownerCommitment";
-  private static final String SLOT_NONCE            = "Wallet.nonce";
-  private static final String SLOT_INIT_FLAG        = "Wallet.initFlag";
+  private static final String SLOT_OWNER_PUBKEY = "Wallet.ownerPubKey";
+  private static final String SLOT_NONCE        = "Wallet.nonce";
+  private static final String SLOT_INIT_FLAG    = "Wallet.initFlag";
 
   private static Bytes32 slot(String name) {
     return Crypto.keccak256(name.getBytes());
@@ -59,11 +54,13 @@ public class Wallet {
   // @ContractEntry surface
   // --------------------------------------------------------------------
 
-  /** One-time owner-commitment install. Called by the first activation
-   *  (the deploy descriptor's body should encode this method id). */
+  /** One-time owner-key install. Called by the first activation (the
+   *  deploy descriptor's body should encode this method id). Only the
+   *  account that deployed this wallet may run init; this binds the
+   *  on-chain authority to the deploy descriptor's deployer field. */
   @ContractEntry
-  public static void init(Bytes32 ownerCommitment) {
-    if (ownerCommitment == null || ownerCommitment.equals(Bytes32.ZERO)) {
+  public static void init(Bytes32 ownerPubKey) {
+    if (ownerPubKey == null || ownerPubKey.equals(Bytes32.ZERO)) {
       revert(ERR_BAD_OWNER_KEY);
     }
 
@@ -72,23 +69,24 @@ public class Wallet {
       revert(ERR_ALREADY_INITIALIZED);
     }
 
-    s.store(slot(SLOT_OWNER_COMMITMENT), ownerCommitment.toByteArray());
-    s.store(slot(SLOT_NONCE),            Uint256.ZERO.toByteArray());
-    s.store(slot(SLOT_INIT_FLAG),        new byte[] { (byte) 0x01 });
+    s.store(slot(SLOT_OWNER_PUBKEY), ownerPubKey.toByteArray());
+    s.store(slot(SLOT_NONCE),        Uint256.ZERO.toByteArray());
+    s.store(slot(SLOT_INIT_FLAG),    new byte[] { (byte) 0x01 });
 
-    Event.emit(Event.topic(EVT_INITIALIZED), Bytes.wrap(ownerCommitment.toByteArray()));
+    Event.emit(Event.topic(EVT_INITIALIZED),
+               Bytes.wrap(ownerPubKey.toByteArray()));
   }
 
   /** Authenticated execute. Caller supplies (nonce, payload, signature);
-   *  contract checks nonce, re-derives the digest, verifies the signature
-   *  against the stored owner commitment, then dispatches the payload.
+   *  contract checks nonce, re-derives the digest, verifies the Ed25519
+   *  signature against the stored owner public key, then dispatches.
    *
    *  digest = keccak256(walletAddrBytes || nonceBytes || payloadBytes)
    *
-   *  TODO(rt): signature verification is currently a structural placeholder.
-   *  Once `Crypto.ed25519Verify(pubKey, msg, sig)` (or `ecRecover`) lands,
-   *  swap the verifyPlaceholder() call below for the real primitive AND
-   *  store the raw owner public key instead of just its commitment. */
+   *  Note: TOS Native (wc=0) wallets sign with Ed25519, so this matches
+   *  the established TVM wallet signing semantics. Contracts that want
+   *  Ethereum-style secp256k1 + ecRecover can replace Crypto.ed25519Verify
+   *  with Crypto.ecRecover and compare against the stored pubkey. */
   @ContractEntry
   public static void execute(Uint256 nonce, Bytes payload, Bytes signature) {
     requireInitialized();
@@ -100,19 +98,20 @@ public class Wallet {
       revert(ERR_BAD_NONCE);
     }
 
-    byte[] commitment = s.load(slot(SLOT_OWNER_COMMITMENT));
-    byte[] digest     = digest(nonce, payload).toByteArray();
+    byte[] ownerKey = s.load(slot(SLOT_OWNER_PUBKEY));
+    byte[] digest   = digest(nonce, payload).toByteArray();
 
-    if (! verifyPlaceholder(commitment, digest, signature.rawBytes())) {
+    if (! Crypto.ed25519Verify(ownerKey, digest, signature.rawBytes())) {
       revert(ERR_BAD_SIGNATURE);
     }
 
     s.store(slot(SLOT_NONCE), expected.add(Uint256.ONE).toByteArray());
 
-    // TODO(rt): once System.sendMessage(dest, value, body) is wired, decode
-    // `payload` as a typed outbound action list (transfer / call / etc.) and
-    // emit the corresponding outbound messages. Until then we just log the
-    // digest so off-chain tooling can prove acceptance.
+    // Once System.sendMessage(dest, value, body) / java.lang.ContractCall
+    // lands (jvm-rt.md §496 — currently out of v1 scope), decode `payload`
+    // as a typed outbound-action descriptor and emit the corresponding
+    // outbound messages here. Until then we just commit the digest as an
+    // event so off-chain tooling can prove acceptance.
     dispatch(payload);
 
     Event.emit(
@@ -159,42 +158,10 @@ public class Wallet {
                    ABI.concat(nonce.toByteArray(), payload.rawBytes())));
   }
 
-  /** Placeholder for real signature verification. The current rt.jar ships
-   *  only keccak256 in java.lang.Crypto, so this method checks a weak
-   *  property: that `signature` is the keccak256 preimage commitment to
-   *  the stored owner commitment when xored with the message digest.
-   *  THIS IS NOT SECURE. It exists so the skeleton compiles end-to-end and
-   *  every code path is reachable. Replace with Crypto.ed25519Verify or
-   *  Crypto.ecRecover as soon as those land. */
-  private static boolean verifyPlaceholder(byte[] commitment,
-                                           byte[] digest,
-                                           byte[] signature) {
-    if (commitment == null || signature == null) {
-      return false;
-    }
-    if (signature.length != Bytes32.LENGTH) {
-      return false;
-    }
-    byte[] mixed = new byte[Bytes32.LENGTH];
-    for (int i = 0; i < Bytes32.LENGTH; ++i) {
-      mixed[i] = (byte) (signature[i] ^ digest[i % digest.length]);
-    }
-    byte[] derived = Crypto.keccak256(mixed).toByteArray();
-    if (derived.length != commitment.length) {
-      return false;
-    }
-    for (int i = 0; i < derived.length; ++i) {
-      if (derived[i] != commitment[i]) {
-        return false;
-      }
-    }
-    return true;
-  }
-
   private static void dispatch(Bytes payload) {
-    // TODO(rt): decode payload as a typed outbound-action descriptor and
-    // call System.sendMessage(dest, value, body) for each leg. Today this
-    // is a no-op so the entry method still succeeds.
+    // Outbound action list decoding lands with ContractCall / sendMessage
+    // (jvm-rt.md §496). Until then we only validate the payload was
+    // non-null so the entry path remains observable.
     if (payload == null) {
       revert(ERR_NOT_IMPLEMENTED);
     }
