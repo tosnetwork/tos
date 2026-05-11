@@ -4416,7 +4416,23 @@ const uint64_t DefaultContractHelperGasCosts[
     // mirrors STORAGE_STORE_BYTE so load and store charge symmetric
     // bandwidth for the validator-CPU work proportional to the value
     // size.
-    1     // AVATA_CONTRACT_HELPER_STORAGE_LOAD_BYTE
+    1,    // AVATA_CONTRACT_HELPER_STORAGE_LOAD_BYTE
+    // Phase A (rt.jar gap plan): per-getter cost on java.lang.Context.
+    // 5 gas balances cheap-but-non-free against contracts that may
+    // poll caller() / value() / blockNumber() inside hot loops.
+    5,    // AVATA_CONTRACT_HELPER_CONTEXT_READ
+    // Phase B (rt.jar gap plan): crypto primitives.  Defaults track
+    // EVM precompile cost classes — sha256 cheap per byte, ecRecover
+    // and ECDSA verify ~3k, ed25519 ~2k, BLS pairing ~43k.  Consensus
+    // installs the production table from ConfigParam 85 via
+    // avata_set_contract_helper_gas_costs(); these standalone
+    // defaults only apply to the Avata test runner.
+    60,   // AVATA_CONTRACT_HELPER_CRYPTO_SHA256_BASE
+    12,   // AVATA_CONTRACT_HELPER_CRYPTO_SHA256_BYTE
+    3000, // AVATA_CONTRACT_HELPER_CRYPTO_SECP256K1_RECOVER
+    3000, // AVATA_CONTRACT_HELPER_CRYPTO_SECP256K1_VERIFY
+    2000, // AVATA_CONTRACT_HELPER_CRYPTO_ED25519_VERIFY
+    43000 // AVATA_CONTRACT_HELPER_CRYPTO_BLS12381_VERIFY
 };
 
 }  // namespace

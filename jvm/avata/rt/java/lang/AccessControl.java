@@ -38,16 +38,35 @@ public class AccessControl extends Contract
     }
   }
 
+  /** Preferred entrypoint — pulls the caller from the per-call chain
+   *  context installed by the workchain runtime. */
+  public void grantRole(Bytes32 role, Address account) {
+    grantRole(Context.caller(), role, account);
+  }
+
+  @Deprecated
   public void grantRole(Address caller, Bytes32 role, Address account) {
     checkRole(getRoleAdmin(role), caller);
     grantRoleInternal(role, account);
   }
 
+  /** Preferred entrypoint — pulls the caller from Context. */
+  public void revokeRole(Bytes32 role, Address account) {
+    revokeRole(Context.caller(), role, account);
+  }
+
+  @Deprecated
   public void revokeRole(Address caller, Bytes32 role, Address account) {
     checkRole(getRoleAdmin(role), caller);
     revokeRoleInternal(role, account);
   }
 
+  /** Preferred entrypoint — pulls the caller from Context. */
+  public void renounceRole(Bytes32 role, Address callerConfirmation) {
+    renounceRole(Context.caller(), role, callerConfirmation);
+  }
+
+  @Deprecated
   public void renounceRole(Address caller, Bytes32 role,
                            Address callerConfirmation) {
     if (! caller.equals(callerConfirmation)) {

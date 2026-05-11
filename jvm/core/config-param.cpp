@@ -303,6 +303,17 @@ JvmConfig JvmConfig::default_activation() noexcept {
     cfg.helper_gas_costs[11] = 10;   // EVENT_TOPIC
     cfg.helper_gas_costs[12] = 1;    // EVENT_BYTE
     cfg.helper_gas_costs[13] = 1;    // STORAGE_LOAD_BYTE (round 53)
+    cfg.helper_gas_costs[14] = 5;    // CONTEXT_READ (Phase A: rt.jar gap plan)
+    // Phase B (rt.jar gap plan): crypto primitives.  See machine.cpp
+    // DefaultContractHelperGasCosts for the rationale; these mirror EVM
+    // precompile cost classes so contracts compiled against the EVM
+    // mental model port without surprise.
+    cfg.helper_gas_costs[15] = 60;     // CRYPTO_SHA256_BASE
+    cfg.helper_gas_costs[16] = 12;     // CRYPTO_SHA256_BYTE
+    cfg.helper_gas_costs[17] = 3000;   // CRYPTO_SECP256K1_RECOVER
+    cfg.helper_gas_costs[18] = 3000;   // CRYPTO_SECP256K1_VERIFY
+    cfg.helper_gas_costs[19] = 2000;   // CRYPTO_ED25519_VERIFY
+    cfg.helper_gas_costs[20] = 43000;  // CRYPTO_BLS12381_VERIFY
 
     return cfg;
 }

@@ -35,7 +35,15 @@ constexpr unsigned kJvmOpcodeGasCostCount = 256;
 // `JvmConfig::helper_gas_costs` array now serializes 14 entries
 // instead of 13.  Pre-launch only, so no migration is needed, but
 // existing serialized configs will be invalid.
-constexpr unsigned kJvmContractHelperGasCostCount = 14;
+//
+// Phase A (rt.jar gap plan): bumped from 14 to 15 to add
+// AVATA_CONTRACT_HELPER_CONTEXT_READ.  Each java.lang.Context getter
+// charges one unit so contracts that poll context in a hot loop are
+// billed.  Same wire-layout discipline: pre-launch only, no migration.
+// Phase B: 15 → 21 to add CRYPTO_SHA256_BASE / SHA256_BYTE /
+// SECP256K1_RECOVER / SECP256K1_VERIFY / ED25519_VERIFY /
+// BLS12381_VERIFY.
+constexpr unsigned kJvmContractHelperGasCostCount = 21;
 constexpr unsigned kJvmStdlibHashBytes = 32;
 
 struct JvmConfig {

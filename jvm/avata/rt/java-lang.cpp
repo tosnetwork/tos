@@ -11,6 +11,8 @@
 #include "jni.h"
 #include "jni-util.h"
 #include "avata/contract.h"
+#include "avata/context.h"
+#include "avata/crypto.h"
 #include "avata/event.h"
 #include "avata/storage.h"
 
@@ -41,6 +43,21 @@ AvataStorageHost activeStorageHost;
 bool activeStorageHostSet = false;
 AvataEventHost activeEventHost;
 bool activeEventHostSet = false;
+AvataContractContext activeContractContext;
+bool activeContractContextSet = false;
+
+bool hasActiveContractContext()
+{
+  return activeContractContextSet;
+}
+
+AvataCryptoHost activeCryptoHost;
+bool activeCryptoHostSet = false;
+
+bool hasActiveCryptoHost()
+{
+  return activeCryptoHostSet;
+}
 
 bool hasActiveStorageHost()
 {
@@ -695,4 +712,486 @@ extern "C" JNIEXPORT void JNICALL
              "Event host emit failed with status %d",
              status);
   }
+}
+
+/* ------------------------------------------------------------------
+   Contract context ABI + JNI bindings (Phase A of rt.jar gap plan).
+
+   The context is a per-call read-only snapshot. It is installed by the
+   workchain runtime via avata_set_contract_context() before invoking
+   contract code, and cleared via avata_clear_contract_context() at
+   transaction end. Java side reads through java.lang.Context calls each
+   getter individually; every getter charges one CONTEXT_READ helper
+   gas unit so a contract that polls context in a hot loop is billed.
+   ------------------------------------------------------------------ */
+
+extern "C" AVATA_CONTEXT_EXPORT void avata_set_contract_context(
+    const AvataContractContext* ctx)
+{
+  if (ctx == 0) {
+    memset(&activeContractContext, 0, sizeof(activeContractContext));
+    activeContractContextSet = false;
+    return;
+  }
+
+  activeContractContext = *ctx;
+  activeContractContextSet = true;
+}
+
+extern "C" AVATA_CONTEXT_EXPORT void avata_clear_contract_context(void)
+{
+  memset(&activeContractContext, 0, sizeof(activeContractContext));
+  activeContractContextSet = false;
+}
+
+extern "C" AVATA_CONTEXT_EXPORT int avata_has_contract_context(void)
+{
+  return activeContractContextSet ? 1 : 0;
+}
+
+namespace {
+
+bool requireContextInstalled(JNIEnv* e)
+{
+  if (!hasActiveContractContext()) {
+    throwNew(e,
+             "java/lang/ContractViolationError",
+             "Contract context is not installed");
+    return false;
+  }
+  return true;
+}
+
+bool prepareContextRead(JNIEnv* e)
+{
+  if (!requireContextInstalled(e)) {
+    return false;
+  }
+  return chargeHelperGas(e, AVATA_CONTRACT_HELPER_CONTEXT_READ, 1);
+}
+
+jbyteArray contextByteArrayCopy(JNIEnv* e,
+                                const unsigned char* bytes,
+                                jsize length)
+{
+  return newByteArray(e, bytes, length);
+}
+
+}  // namespace
+
+extern "C" JNIEXPORT jint JNICALL
+    Java_java_lang_Context_nativeContractWorkchain(JNIEnv* e, jclass)
+{
+  if (!prepareContextRead(e)) {
+    return 0;
+  }
+  return static_cast<jint>(activeContractContext.contract_workchain);
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+    Java_java_lang_Context_nativeContractAddress(JNIEnv* e, jclass)
+{
+  if (!prepareContextRead(e)) {
+    return 0;
+  }
+  return contextByteArrayCopy(e,
+                              activeContractContext.contract_addr,
+                              AVATA_CONTEXT_ADDRESS_SIZE);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+    Java_java_lang_Context_nativeCallerWorkchain(JNIEnv* e, jclass)
+{
+  if (!prepareContextRead(e)) {
+    return 0;
+  }
+  return static_cast<jint>(activeContractContext.caller_workchain);
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+    Java_java_lang_Context_nativeCallerAddress(JNIEnv* e, jclass)
+{
+  if (!prepareContextRead(e)) {
+    return 0;
+  }
+  return contextByteArrayCopy(e,
+                              activeContractContext.caller_addr,
+                              AVATA_CONTEXT_ADDRESS_SIZE);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+    Java_java_lang_Context_nativeCallerPresent(JNIEnv* e, jclass)
+{
+  if (!prepareContextRead(e)) {
+    return JNI_FALSE;
+  }
+  return activeContractContext.caller_present ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+    Java_java_lang_Context_nativeValue(JNIEnv* e, jclass)
+{
+  if (!prepareContextRead(e)) {
+    return 0;
+  }
+  return contextByteArrayCopy(e,
+                              activeContractContext.value_be,
+                              AVATA_CONTEXT_VALUE_SIZE);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+    Java_java_lang_Context_nativeBlockNumber(JNIEnv* e, jclass)
+{
+  if (!prepareContextRead(e)) {
+    return 0;
+  }
+  return static_cast<jlong>(activeContractContext.block_seqno);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+    Java_java_lang_Context_nativeBlockTimestamp(JNIEnv* e, jclass)
+{
+  if (!prepareContextRead(e)) {
+    return 0;
+  }
+  return static_cast<jlong>(activeContractContext.block_timestamp);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+    Java_java_lang_Context_nativeChainId(JNIEnv* e, jclass)
+{
+  if (!prepareContextRead(e)) {
+    return 0;
+  }
+  return static_cast<jlong>(activeContractContext.chain_id);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+    Java_java_lang_Context_nativeIsStaticCall(JNIEnv* e, jclass)
+{
+  if (!prepareContextRead(e)) {
+    return JNI_FALSE;
+  }
+  return activeContractContext.is_static_call ? JNI_TRUE : JNI_FALSE;
+}
+
+/* ------------------------------------------------------------------
+   Crypto ABI + JNI bindings (Phase B of rt.jar gap plan).
+
+   sha256 + signature primitives are exposed as installable host
+   callbacks rather than direct links so the standalone Avata build
+   stays free of secp256k1/sodium/blst.  Each JNI binding charges
+   helper gas BEFORE delegating to the host, so a missing host still
+   bills the caller for the gas they would have paid.  Verification
+   failures return JNI_FALSE (not an exception) so contract code can
+   handle bad signatures as ordinary control flow.
+   ------------------------------------------------------------------ */
+
+extern "C" AVATA_CRYPTO_EXPORT void avata_set_crypto_host(
+    const AvataCryptoHost* host)
+{
+  if (host == 0) {
+    memset(&activeCryptoHost, 0, sizeof(activeCryptoHost));
+    activeCryptoHostSet = false;
+    return;
+  }
+  activeCryptoHost = *host;
+  activeCryptoHostSet = true;
+}
+
+extern "C" AVATA_CRYPTO_EXPORT void avata_clear_crypto_host(void)
+{
+  memset(&activeCryptoHost, 0, sizeof(activeCryptoHost));
+  activeCryptoHostSet = false;
+}
+
+extern "C" AVATA_CRYPTO_EXPORT int avata_has_crypto_host(void)
+{
+  return activeCryptoHostSet ? 1 : 0;
+}
+
+namespace {
+
+bool requireCryptoHost(JNIEnv* e, const char* primitiveName)
+{
+  if (!hasActiveCryptoHost()) {
+    throwNew(e,
+             "java/lang/ContractViolationError",
+             "crypto host is not installed for %s",
+             primitiveName);
+    return false;
+  }
+  return true;
+}
+
+bool copyFixedByteArray(JNIEnv* e,
+                        jbyteArray array,
+                        const char* name,
+                        jsize expectedLength,
+                        unsigned char* out)
+{
+  if (!checkByteArray(e, array, name)) {
+    return false;
+  }
+  jsize length = e->GetArrayLength(array);
+  if (length != expectedLength) {
+    throwNew(e,
+             "java/lang/IllegalArgumentException",
+             "%s must be %d bytes",
+             name,
+             static_cast<int>(expectedLength));
+    return false;
+  }
+  e->GetByteArrayRegion(array, 0, expectedLength,
+                        reinterpret_cast<jbyte*>(out));
+  return !e->ExceptionCheck();
+}
+
+}  // namespace
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+    Java_java_lang_Crypto_nativeSha256(JNIEnv* e, jclass, jbyteArray input)
+{
+  if (!checkByteArray(e, input, "Crypto.sha256 input")) {
+    return 0;
+  }
+  jsize length = e->GetArrayLength(input);
+  if (!chargeHelperGas(e, AVATA_CONTRACT_HELPER_CRYPTO_SHA256_BASE, 1)
+      || !chargeHelperGas(e,
+                          AVATA_CONTRACT_HELPER_CRYPTO_SHA256_BYTE,
+                          static_cast<uint64_t>(length))) {
+    return 0;
+  }
+  if (!requireCryptoHost(e, "Crypto.sha256")
+      || activeCryptoHost.sha256 == 0) {
+    if (!e->ExceptionCheck()) {
+      throwNew(e,
+               "java/lang/ContractViolationError",
+               "crypto host does not implement sha256");
+    }
+    return 0;
+  }
+
+  unsigned char* bytes = 0;
+  jsize byteCount = 0;
+  if (!copyByteArray(e, input, "Crypto.sha256 input", &bytes, &byteCount)) {
+    return 0;
+  }
+
+  unsigned char out[AVATA_CRYPTO_SHA256_OUT_SIZE];
+  int status = activeCryptoHost.sha256(
+      activeCryptoHost.user,
+      byteCount == 0 ? 0 : bytes,
+      static_cast<size_t>(byteCount),
+      out);
+  free(bytes);
+  if (status != AVATA_CRYPTO_OK) {
+    throwNew(e,
+             "java/lang/ContractViolationError",
+             "crypto host sha256 failed with status %d",
+             status);
+    return 0;
+  }
+  return newByteArray(e, out, AVATA_CRYPTO_SHA256_OUT_SIZE);
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+    Java_java_lang_Crypto_nativeSecp256k1Recover(JNIEnv* e,
+                                                 jclass,
+                                                 jbyteArray digest,
+                                                 jbyteArray signature)
+{
+  if (!chargeHelperGas(e,
+                       AVATA_CONTRACT_HELPER_CRYPTO_SECP256K1_RECOVER, 1)) {
+    return 0;
+  }
+  unsigned char digestBytes[AVATA_CRYPTO_DIGEST_SIZE];
+  unsigned char sigBytes[AVATA_CRYPTO_SECP256K1_RECOVERABLE_SIG_SIZE];
+  if (!copyFixedByteArray(e, digest, "Crypto.ecRecover digest",
+                          AVATA_CRYPTO_DIGEST_SIZE, digestBytes)) {
+    return 0;
+  }
+  if (!copyFixedByteArray(e, signature, "Crypto.ecRecover signature",
+                          AVATA_CRYPTO_SECP256K1_RECOVERABLE_SIG_SIZE,
+                          sigBytes)) {
+    return 0;
+  }
+  if (!requireCryptoHost(e, "Crypto.ecRecover")
+      || activeCryptoHost.secp256k1_recover == 0) {
+    if (!e->ExceptionCheck()) {
+      throwNew(e,
+               "java/lang/ContractViolationError",
+               "crypto host does not implement secp256k1 recover");
+    }
+    return 0;
+  }
+
+  unsigned char pubKey[AVATA_CRYPTO_SECP256K1_UNCOMPRESSED_PUBKEY_SIZE];
+  int status = activeCryptoHost.secp256k1_recover(
+      activeCryptoHost.user, digestBytes, sigBytes, pubKey);
+  if (status == AVATA_CRYPTO_VERIFICATION_FAILED
+      || status == AVATA_CRYPTO_INVALID_INPUT) {
+    return 0;  // null = recovery failed; Java side surfaces as null Address
+  }
+  if (status != AVATA_CRYPTO_OK) {
+    throwNew(e,
+             "java/lang/ContractViolationError",
+             "crypto host secp256k1 recover failed with status %d",
+             status);
+    return 0;
+  }
+  return newByteArray(e, pubKey,
+                      AVATA_CRYPTO_SECP256K1_UNCOMPRESSED_PUBKEY_SIZE);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+    Java_java_lang_Crypto_nativeSecp256k1Verify(JNIEnv* e,
+                                                jclass,
+                                                jbyteArray pubKey,
+                                                jbyteArray digest,
+                                                jbyteArray signature)
+{
+  if (!chargeHelperGas(e,
+                       AVATA_CONTRACT_HELPER_CRYPTO_SECP256K1_VERIFY, 1)) {
+    return JNI_FALSE;
+  }
+  if (!checkByteArray(e, pubKey, "Crypto.ecdsaVerify pubKey")) {
+    return JNI_FALSE;
+  }
+  jsize pubKeyLen = e->GetArrayLength(pubKey);
+  if (pubKeyLen != AVATA_CRYPTO_SECP256K1_COMPRESSED_PUBKEY_SIZE
+      && pubKeyLen != AVATA_CRYPTO_SECP256K1_UNCOMPRESSED_PUBKEY_SIZE) {
+    throwNew(e,
+             "java/lang/IllegalArgumentException",
+             "Crypto.ecdsaVerify pubKey must be 33 or 65 bytes");
+    return JNI_FALSE;
+  }
+  unsigned char pubKeyBytes[
+      AVATA_CRYPTO_SECP256K1_UNCOMPRESSED_PUBKEY_SIZE];
+  e->GetByteArrayRegion(pubKey, 0, pubKeyLen,
+                        reinterpret_cast<jbyte*>(pubKeyBytes));
+  if (e->ExceptionCheck()) {
+    return JNI_FALSE;
+  }
+  unsigned char digestBytes[AVATA_CRYPTO_DIGEST_SIZE];
+  unsigned char sigBytes[AVATA_CRYPTO_SECP256K1_SIGNATURE_SIZE];
+  if (!copyFixedByteArray(e, digest, "Crypto.ecdsaVerify digest",
+                          AVATA_CRYPTO_DIGEST_SIZE, digestBytes)) {
+    return JNI_FALSE;
+  }
+  if (!copyFixedByteArray(e, signature, "Crypto.ecdsaVerify signature",
+                          AVATA_CRYPTO_SECP256K1_SIGNATURE_SIZE,
+                          sigBytes)) {
+    return JNI_FALSE;
+  }
+  if (!requireCryptoHost(e, "Crypto.ecdsaVerify")
+      || activeCryptoHost.secp256k1_verify == 0) {
+    if (!e->ExceptionCheck()) {
+      throwNew(e,
+               "java/lang/ContractViolationError",
+               "crypto host does not implement secp256k1 verify");
+    }
+    return JNI_FALSE;
+  }
+  int status = activeCryptoHost.secp256k1_verify(
+      activeCryptoHost.user,
+      pubKeyBytes,
+      static_cast<size_t>(pubKeyLen),
+      digestBytes,
+      sigBytes);
+  return status == AVATA_CRYPTO_OK ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+    Java_java_lang_Crypto_nativeEd25519Verify(JNIEnv* e,
+                                              jclass,
+                                              jbyteArray pubKey,
+                                              jbyteArray message,
+                                              jbyteArray signature)
+{
+  if (!chargeHelperGas(e,
+                       AVATA_CONTRACT_HELPER_CRYPTO_ED25519_VERIFY, 1)) {
+    return JNI_FALSE;
+  }
+  unsigned char pubKeyBytes[AVATA_CRYPTO_ED25519_PUBKEY_SIZE];
+  unsigned char sigBytes[AVATA_CRYPTO_ED25519_SIGNATURE_SIZE];
+  if (!copyFixedByteArray(e, pubKey, "Crypto.ed25519Verify pubKey",
+                          AVATA_CRYPTO_ED25519_PUBKEY_SIZE, pubKeyBytes)) {
+    return JNI_FALSE;
+  }
+  if (!copyFixedByteArray(e, signature, "Crypto.ed25519Verify signature",
+                          AVATA_CRYPTO_ED25519_SIGNATURE_SIZE, sigBytes)) {
+    return JNI_FALSE;
+  }
+  unsigned char* msgBytes = 0;
+  jsize msgLen = 0;
+  if (!copyByteArray(e, message, "Crypto.ed25519Verify message",
+                     &msgBytes, &msgLen)) {
+    return JNI_FALSE;
+  }
+  if (!requireCryptoHost(e, "Crypto.ed25519Verify")
+      || activeCryptoHost.ed25519_verify == 0) {
+    free(msgBytes);
+    if (!e->ExceptionCheck()) {
+      throwNew(e,
+               "java/lang/ContractViolationError",
+               "crypto host does not implement ed25519 verify");
+    }
+    return JNI_FALSE;
+  }
+  int status = activeCryptoHost.ed25519_verify(
+      activeCryptoHost.user,
+      pubKeyBytes,
+      msgLen == 0 ? 0 : msgBytes,
+      static_cast<size_t>(msgLen),
+      sigBytes);
+  free(msgBytes);
+  return status == AVATA_CRYPTO_OK ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+    Java_java_lang_Crypto_nativeBls12381Verify(JNIEnv* e,
+                                               jclass,
+                                               jbyteArray pubKey,
+                                               jbyteArray message,
+                                               jbyteArray signature)
+{
+  if (!chargeHelperGas(e,
+                       AVATA_CONTRACT_HELPER_CRYPTO_BLS12381_VERIFY, 1)) {
+    return JNI_FALSE;
+  }
+  unsigned char pubKeyBytes[AVATA_CRYPTO_BLS12_381_PUBKEY_SIZE];
+  unsigned char sigBytes[AVATA_CRYPTO_BLS12_381_SIGNATURE_SIZE];
+  if (!copyFixedByteArray(e, pubKey, "Crypto.bls12381Verify pubKey",
+                          AVATA_CRYPTO_BLS12_381_PUBKEY_SIZE, pubKeyBytes)) {
+    return JNI_FALSE;
+  }
+  if (!copyFixedByteArray(e, signature, "Crypto.bls12381Verify signature",
+                          AVATA_CRYPTO_BLS12_381_SIGNATURE_SIZE, sigBytes)) {
+    return JNI_FALSE;
+  }
+  unsigned char* msgBytes = 0;
+  jsize msgLen = 0;
+  if (!copyByteArray(e, message, "Crypto.bls12381Verify message",
+                     &msgBytes, &msgLen)) {
+    return JNI_FALSE;
+  }
+  if (!requireCryptoHost(e, "Crypto.bls12381Verify")
+      || activeCryptoHost.bls12381_verify == 0) {
+    free(msgBytes);
+    if (!e->ExceptionCheck()) {
+      throwNew(e,
+               "java/lang/ContractViolationError",
+               "crypto host does not implement bls12-381 verify");
+    }
+    return JNI_FALSE;
+  }
+  int status = activeCryptoHost.bls12381_verify(
+      activeCryptoHost.user,
+      pubKeyBytes,
+      msgLen == 0 ? 0 : msgBytes,
+      static_cast<size_t>(msgLen),
+      sigBytes);
+  free(msgBytes);
+  return status == AVATA_CRYPTO_OK ? JNI_TRUE : JNI_FALSE;
 }

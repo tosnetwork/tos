@@ -18,6 +18,8 @@
 #include "jvm/core/storage-cell-host.h"
 #include "td/utils/Status.h"
 
+struct AvataContractContext;
+struct AvataCryptoHost;
 struct AvataEventHost;
 struct AvataStorageHost;
 
@@ -50,6 +52,12 @@ using JvmAvataClearStorageHost = void (*)();
 using JvmAvataSetEventHost =
     void (*)(const AvataEventHost* host);
 using JvmAvataClearEventHost = void (*)();
+using JvmAvataSetContractContext =
+    void (*)(const AvataContractContext* ctx);
+using JvmAvataClearContractContext = void (*)();
+using JvmAvataSetCryptoHost =
+    void (*)(const AvataCryptoHost* host);
+using JvmAvataClearCryptoHost = void (*)();
 using JvmAvataBeginContractTransactionWithLimits =
     int (*)(void* thread, std::uint64_t gas_limit,
             std::uint64_t memory_limit);
@@ -70,6 +78,10 @@ struct JvmAvataExecutionApi {
     JvmAvataClearStorageHost clear_storage_host{nullptr};
     JvmAvataSetEventHost set_event_host{nullptr};
     JvmAvataClearEventHost clear_event_host{nullptr};
+    JvmAvataSetContractContext set_contract_context{nullptr};
+    JvmAvataClearContractContext clear_contract_context{nullptr};
+    JvmAvataSetCryptoHost set_crypto_host{nullptr};
+    JvmAvataClearCryptoHost clear_crypto_host{nullptr};
     JvmAvataBeginContractTransactionWithLimits
         begin_contract_transaction_with_limits{nullptr};
     JvmAvataEndContractTransaction end_contract_transaction{nullptr};
@@ -123,7 +135,9 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
     JvmStorageCellHost& storage,
     const JvmAvataExecutionApi& api,
     void* invocation_user,
-    JvmEventHost* events = nullptr);
+    JvmEventHost* events = nullptr,
+    const AvataContractContext* context = nullptr,
+    const AvataCryptoHost* crypto = nullptr);
 
 // Convert the already-executed Avata transaction result into the canonical
 // custom-workchain compute output consumed by Transaction::prepare_compute_phase.

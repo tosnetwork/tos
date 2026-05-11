@@ -3,10 +3,14 @@
 */
 #include "jvm/core/avata-runtime.h"
 
+#include "jvm/avata/include/avata/context.h"
 #include "jvm/avata/include/avata/contract.h"
+#include "jvm/avata/include/avata/crypto.h"
 #include "jvm/avata/include/avata/event.h"
 #include "jvm/avata/include/avata/storage.h"
 #include "jvm/core/class-manifest.h"
+#include "jvm/core/crypto-host.h"
+#include "jvm/core/inbound-parse.h"
 #include "jvm/core/message-abi.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
@@ -529,6 +533,35 @@ td::Result<JvmAvataInvocationResult> JvmAvataRuntime::run_contract(
 
     JvmStorageCellHost storage(previous_state.storage_root);
     JvmEventHost events;
+
+    // Build the per-call AvataContractContext from the inbound message
+    // and compute context.  The parsed src is non-fatal: an external
+    // inbound or unparseable src leaves caller_present=0, which Java
+    // surfaces as Context.callerPresent() == false rather than throwing
+    // at the unpack site.
+    auto parsed_inbound = parse_jvm_inbound_message(input.inbound_message);
+    AvataContractContext call_context{};
+    call_context.contract_workchain = context.workchain_id;
+    std::memcpy(call_context.contract_addr,
+                input.account_addr.data(),
+                AVATA_CONTEXT_ADDRESS_SIZE);
+    if (parsed_inbound.is_ok()) {
+        const auto& pim = parsed_inbound.ok_ref();
+        if (pim.src_present) {
+            call_context.caller_workchain = pim.src_workchain;
+            std::memcpy(call_context.caller_addr,
+                        pim.src_addr.data(),
+                        AVATA_CONTEXT_ADDRESS_SIZE);
+            call_context.caller_present = 1;
+        }
+        std::memcpy(call_context.value_be,
+                    pim.value_be.data(),
+                    AVATA_CONTEXT_VALUE_SIZE);
+    }
+    call_context.block_seqno = context.block_seqno;
+    call_context.block_timestamp = context.now;
+    call_context.chain_id = config.chain_id;
+    call_context.is_static_call = 0;
     // Round 61 MEDIUM fix: bill the contract for the per-byte
     // validator-CPU work spent decoding + materializing typed
     // `Bytes` arguments BEFORE Avata gas accounting started.  The
@@ -559,13 +592,19 @@ td::Result<JvmAvataInvocationResult> JvmAvataRuntime::run_contract(
             }
         }
     }
+    // The crypto host is process-singleton and pure-function; building
+    // it on each call is cheap.  The underlying secp256k1 verification
+    // context is initialized on first use inside crypto-host.cpp.
+    AvataCryptoHost crypto_host = make_production_crypto_host();
     auto exec_res = execute_jvm_avata_transaction(target.thread,
                                                   config,
                                                   input.gas_limit,
                                                   storage,
                                                   api_,
                                                   target.invocation_user,
-                                                  &events);
+                                                  &events,
+                                                  &call_context,
+                                                  &crypto_host);
     if (exec_res.is_error()) {
         return exec_res.move_as_error();
     }
@@ -594,6 +633,10 @@ JvmAvataExecutionApi make_linked_jvm_avata_execution_api() {
     api.clear_storage_host = avata_clear_storage_host;
     api.set_event_host = avata_set_event_host;
     api.clear_event_host = avata_clear_event_host;
+    api.set_contract_context = avata_set_contract_context;
+    api.clear_contract_context = avata_clear_contract_context;
+    api.set_crypto_host = avata_set_crypto_host;
+    api.clear_crypto_host = avata_clear_crypto_host;
     api.begin_contract_transaction_with_limits =
         reinterpret_cast<JvmAvataBeginContractTransactionWithLimits>(
             avata_begin_contract_transaction_with_limits);

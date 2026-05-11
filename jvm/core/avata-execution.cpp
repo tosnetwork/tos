@@ -4,6 +4,8 @@
 #include "jvm/core/avata-execution.h"
 
 #include "block/transaction.h"
+#include "jvm/avata/include/avata/context.h"
+#include "jvm/avata/include/avata/crypto.h"
 #include "jvm/avata/include/avata/event.h"
 #include "jvm/avata/include/avata/storage.h"
 #include "vm/boc.h"
@@ -28,6 +30,16 @@ bool execution_api_complete(const JvmAvataExecutionApi& api) {
 bool event_api_complete(const JvmAvataExecutionApi& api) {
     return api.set_event_host != nullptr &&
            api.clear_event_host != nullptr;
+}
+
+bool context_api_complete(const JvmAvataExecutionApi& api) {
+    return api.set_contract_context != nullptr &&
+           api.clear_contract_context != nullptr;
+}
+
+bool crypto_api_complete(const JvmAvataExecutionApi& api) {
+    return api.set_crypto_host != nullptr &&
+           api.clear_crypto_host != nullptr;
 }
 
 td::Status finish_storage_transaction(JvmStorageCellHost& storage,
@@ -87,7 +99,9 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
     JvmStorageCellHost& storage,
     const JvmAvataExecutionApi& api,
     void* invocation_user,
-    JvmEventHost* events) {
+    JvmEventHost* events,
+    const AvataContractContext* context,
+    const AvataCryptoHost* crypto) {
     if (avata_thread == nullptr) {
         return td::Status::Error("JVM Avata execution received null thread");
     }
@@ -96,6 +110,14 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
     }
     if (events != nullptr && !event_api_complete(api)) {
         return td::Status::Error("JVM Avata event execution API is incomplete");
+    }
+    if (context != nullptr && !context_api_complete(api)) {
+        return td::Status::Error(
+            "JVM Avata context execution API is incomplete");
+    }
+    if (crypto != nullptr && !crypto_api_complete(api)) {
+        return td::Status::Error(
+            "JVM Avata crypto execution API is incomplete");
     }
     if (config.chain_id == 0 || config.max_heap_bytes == 0 ||
         config.max_gas_per_tx == 0) {
@@ -115,7 +137,17 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
     bool storage_transaction_open = false;
     bool event_transaction_open = false;
     bool contract_transaction_open = false;
+    bool context_installed = false;
+    bool crypto_installed = false;
     auto clear_host = [&]() {
+        if (crypto_installed) {
+            api.clear_crypto_host();
+            crypto_installed = false;
+        }
+        if (context_installed) {
+            api.clear_contract_context();
+            context_installed = false;
+        }
         if (events != nullptr) {
             api.clear_event_host();
         }
@@ -155,6 +187,16 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
             return fail(event_status.move_as_error());
         }
         event_transaction_open = true;
+    }
+
+    if (context != nullptr) {
+        api.set_contract_context(context);
+        context_installed = true;
+    }
+
+    if (crypto != nullptr) {
+        api.set_crypto_host(crypto);
+        crypto_installed = true;
     }
 
     int status = api.begin_contract_transaction_with_limits(

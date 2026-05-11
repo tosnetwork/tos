@@ -68,7 +68,21 @@ enum {
   // large slot.  Now mirrored to STORAGE_STORE_BYTE so load and
   // store bill symmetrically per byte.
   AVATA_CONTRACT_HELPER_STORAGE_LOAD_BYTE = 13,
-  AVATA_CONTRACT_HELPER_GAS_COST_COUNT = 14
+  /* Per Phase A of the rt.jar gap plan: each java.lang.Context getter
+     charges one unit of CONTEXT_READ. Reads are O(1) constant-bytes
+     snapshots, so we bill a single small fixed cost per call rather
+     than per-byte.  Position 14 is the first free slot after the
+     pre-existing 0..13 helpers; ConfigParam 85's helper-gas table
+     grows by appending. */
+  AVATA_CONTRACT_HELPER_CONTEXT_READ = 14,
+  /* Phase B of the rt.jar gap plan: signature + hash primitives. */
+  AVATA_CONTRACT_HELPER_CRYPTO_SHA256_BASE = 15,
+  AVATA_CONTRACT_HELPER_CRYPTO_SHA256_BYTE = 16,
+  AVATA_CONTRACT_HELPER_CRYPTO_SECP256K1_RECOVER = 17,
+  AVATA_CONTRACT_HELPER_CRYPTO_SECP256K1_VERIFY = 18,
+  AVATA_CONTRACT_HELPER_CRYPTO_ED25519_VERIFY = 19,
+  AVATA_CONTRACT_HELPER_CRYPTO_BLS12381_VERIFY = 20,
+  AVATA_CONTRACT_HELPER_GAS_COST_COUNT = 21
 };
 
 AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction(

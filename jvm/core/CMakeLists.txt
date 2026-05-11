@@ -14,9 +14,11 @@ set(JVM_CORE_SRC
   cell-codec.cpp
   class-manifest.cpp
   config-param.cpp
+  crypto-host.cpp
   deploy-abi.cpp
   dispatch-engine.cpp
   event-host.cpp
+  inbound-parse.cpp
   init.cpp
   message-abi.cpp
   rpc.cpp
@@ -33,4 +35,21 @@ target_include_directories(jvm_workchain_core PUBLIC
 target_link_libraries(jvm_workchain_core PUBLIC
     tos_block
     avata_interpreter
+)
+
+# Phase B of the rt.jar gap plan: link the production crypto libs used
+# by jvm/core/crypto-host.cpp.  tos_block transitively exposes
+# tos_crypto_core (which publicly links secp256k1 + sodium); blst is
+# private on tos_crypto so we add its include path + static archive
+# directly.  These names come from CMake/{BuildBLST,BuildSECP256K1,
+# FindSodium}.cmake at the top level.
+target_include_directories(jvm_workchain_core PRIVATE
+    ${BLST_INCLUDE_DIR}
+    ${SECP256K1_INCLUDE_DIR}
+    ${SODIUM_INCLUDE_DIR}
+)
+target_link_libraries(jvm_workchain_core PRIVATE
+    ${BLST_LIB}
+    ${SECP256K1_LIBRARY}
+    ${SODIUM_LIBRARY_RELEASE}
 )

@@ -1,9 +1,27 @@
 package java.lang;
 
-// Pure Java crypto helpers are covered by opcode, allocation, and arraycopy
-// gas. If any helper is moved to a native implementation, that native entry
-// must charge explicit helper gas proportional to its input size.
+// Crypto primitives admitted by the TOS contract profile.
+//
+// keccak256 is a pure-Java implementation: opcode + allocation + arraycopy
+// gas covers its work proportionally.
+//
+// sha256, secp256k1 recover/verify, ed25519 verify, and bls12-381 verify
+// route through a host bridge installed by the workchain runtime. The
+// standalone Avata runner does not install one, so calling those methods
+// outside a consensus invocation traps with ContractViolationError. Gas
+// is charged per call by the JNI bridge (see
+// AVATA_CONTRACT_HELPER_CRYPTO_* in include/avata/contract.h).
 public final class Crypto {
+  // ECDSA-recover signature is r(32) || s(32) || v(1).
+  public static final int ECDSA_SIGNATURE_LENGTH = 65;
+  public static final int ECDSA_SIGNATURE_RS_LENGTH = 64;
+  public static final int SECP256K1_COMPRESSED_PUBKEY_LENGTH = 33;
+  public static final int SECP256K1_UNCOMPRESSED_PUBKEY_LENGTH = 65;
+  public static final int ED25519_PUBKEY_LENGTH = 32;
+  public static final int ED25519_SIGNATURE_LENGTH = 64;
+  public static final int BLS12_381_PUBKEY_LENGTH = 48;
+  public static final int BLS12_381_SIGNATURE_LENGTH = 96;
+
   private static final int KECCAK_256_RATE = 136;
 
   private static final long[] KECCAK_ROUND_CONSTANTS = new long[] {
@@ -129,4 +147,118 @@ public final class Crypto {
   private static long rotateLeft(long value, int distance) {
     return (value << distance) | (value >>> (64 - distance));
   }
+
+  // -----------------------------------------------------------------------
+  // SHA-256.
+  // -----------------------------------------------------------------------
+
+  public static Bytes32 sha256(byte[] input) {
+    if (input == null) {
+      throw new NullPointerException("Crypto.sha256 input cannot be null");
+    }
+    return Bytes32.wrap(nativeSha256(input));
+  }
+
+  // -----------------------------------------------------------------------
+  // secp256k1 ECDSA — Ethereum-compatible signing scheme.
+  //
+  // ecRecover returns the recovered uncompressed public key bytes (65B,
+  // 0x04 prefix + X + Y); the caller can derive an address by taking
+  // keccak256(pubKey[1:])[12:].  Returns null on bad signature.
+  // -----------------------------------------------------------------------
+
+  public static byte[] ecRecover(Bytes32 digest, byte[] signature) {
+    if (digest == null) {
+      throw new NullPointerException("Crypto.ecRecover digest cannot be null");
+    }
+    if (signature == null) {
+      throw new NullPointerException(
+          "Crypto.ecRecover signature cannot be null");
+    }
+    if (signature.length != ECDSA_SIGNATURE_LENGTH) {
+      throw new IllegalArgumentException(
+          "Crypto.ecRecover signature must be 65 bytes");
+    }
+    return nativeSecp256k1Recover(digest.toByteArray(), signature);
+  }
+
+  public static boolean ecdsaVerify(byte[] pubKey, Bytes32 digest,
+                                    byte[] signature) {
+    if (pubKey == null) {
+      throw new NullPointerException(
+          "Crypto.ecdsaVerify pubKey cannot be null");
+    }
+    if (digest == null) {
+      throw new NullPointerException(
+          "Crypto.ecdsaVerify digest cannot be null");
+    }
+    if (signature == null) {
+      throw new NullPointerException(
+          "Crypto.ecdsaVerify signature cannot be null");
+    }
+    return nativeSecp256k1Verify(pubKey, digest.toByteArray(), signature);
+  }
+
+  // -----------------------------------------------------------------------
+  // Ed25519 — TOS-native signing scheme (matches the wc=0 TVM wallet keys).
+  // -----------------------------------------------------------------------
+
+  public static boolean ed25519Verify(byte[] pubKey, byte[] message,
+                                      byte[] signature) {
+    if (pubKey == null) {
+      throw new NullPointerException(
+          "Crypto.ed25519Verify pubKey cannot be null");
+    }
+    if (message == null) {
+      throw new NullPointerException(
+          "Crypto.ed25519Verify message cannot be null");
+    }
+    if (signature == null) {
+      throw new NullPointerException(
+          "Crypto.ed25519Verify signature cannot be null");
+    }
+    return nativeEd25519Verify(pubKey, message, signature);
+  }
+
+  // -----------------------------------------------------------------------
+  // BLS12-381 (min-pk: pubkey in G1, signature in G2).
+  // -----------------------------------------------------------------------
+
+  public static boolean bls12381Verify(byte[] pubKey, byte[] message,
+                                       byte[] signature) {
+    if (pubKey == null) {
+      throw new NullPointerException(
+          "Crypto.bls12381Verify pubKey cannot be null");
+    }
+    if (message == null) {
+      throw new NullPointerException(
+          "Crypto.bls12381Verify message cannot be null");
+    }
+    if (signature == null) {
+      throw new NullPointerException(
+          "Crypto.bls12381Verify signature cannot be null");
+    }
+    return nativeBls12381Verify(pubKey, message, signature);
+  }
+
+  // -----------------------------------------------------------------------
+  // Native bindings.
+  // -----------------------------------------------------------------------
+
+  private static native byte[] nativeSha256(byte[] input);
+
+  private static native byte[] nativeSecp256k1Recover(byte[] digest,
+                                                      byte[] signature);
+
+  private static native boolean nativeSecp256k1Verify(byte[] pubKey,
+                                                      byte[] digest,
+                                                      byte[] signature);
+
+  private static native boolean nativeEd25519Verify(byte[] pubKey,
+                                                    byte[] message,
+                                                    byte[] signature);
+
+  private static native boolean nativeBls12381Verify(byte[] pubKey,
+                                                     byte[] message,
+                                                     byte[] signature);
 }
