@@ -36,6 +36,14 @@ set(AVATA_MAKE_BUILD_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/build/${AVATA_MAKE_PLATFORM}-${AVATA_MAKE_ARCH}")
 set(AVATA_STATIC_LIBRARY
     "${AVATA_MAKE_BUILD_DIR}/libavata.a")
+# The Avata makefile defines its targets relative to its own source dir
+# (e.g. `$(build)/libavata.a` where `build = build/$(platform)-$(arch)`).
+# GNU make does NOT normalize absolute target arguments against relative
+# rule names — they are matched as plain strings. Pass the target as a
+# relative path so the makefile rule matches; BYPRODUCTS keeps the
+# absolute path that CMake's build graph requires.
+set(AVATA_STATIC_LIBRARY_RELATIVE
+    "build/${AVATA_MAKE_PLATFORM}-${AVATA_MAKE_ARCH}/libavata.a")
 
 add_custom_target(avata_interpreter_build
   COMMAND "${AVATA_MAKE_EXECUTABLE}"
@@ -44,7 +52,7 @@ add_custom_target(avata_interpreter_build
           arch=${AVATA_MAKE_ARCH}
           process=interpret
           mode=fast
-          "${AVATA_STATIC_LIBRARY}"
+          "${AVATA_STATIC_LIBRARY_RELATIVE}"
   BYPRODUCTS "${AVATA_STATIC_LIBRARY}"
              "${AVATA_MAKE_BUILD_DIR}/rt.jar"
              "${AVATA_MAKE_BUILD_DIR}/api.jar"
