@@ -31,18 +31,36 @@ bumped to `schema_version=2` (see [ConfigParam.md §85](ConfigParam.md#configpar
 
 ## 2. Address Derivation
 
-Per-contract wc=3 address (`derive_jvm_contract_address`,
-`jvm/core/deploy-abi.cpp:175-193`):
+Per-contract wc=3 address — five-input nested formula
+(`derive_jvm_contract_address_from_state` at
+`jvm/core/deploy-abi.cpp:215-232`):
 
 ```
+class_hash         = sha256(class_bytes)                         // 32B
+address_commit     = sha256(
+    deployer_addr.bits256                                        // 32B — wc=3 sender of the deploy action
+ || salt                                                         // 32B — caller-chosen
+ || init_args_cell.get_hash().bits256                            // 32B — cell hash, consensus-stable
+)                                                                // 32B
+manifest_root_hash = manifest_root_cell.get_hash().bits256       // 32B (or 32B zero if manifest is null)
+
 addr_bytes := sha256(
     "TOS-JVM-CONTRACT-v2"
- || deployer_addr.bits256              // 32B — wc=3 sender of the deploy action
- || class_hash                         // 32B — sha256 of class_bytes
- || salt                               // 32B — caller-chosen
- || init_args_cell.get_hash().bits256  // 32B — cell hash, consensus-stable
+ || deployer_addr.bits256                                        // 32B
+ || address_commit                                               // 32B — collapses (salt, init_args) into one bits256
+ || class_hash                                                   // 32B
+ || manifest_root_hash                                           // 32B — binds the dispatchable method set into the address
 )
 ```
+
+The `address_commit` indirection lets the engine authenticate the
+first-activation message source (`msg.src.addr == state.deployer`)
+without breaking the (salt, init_args) commitment; binding
+`manifest_root_hash` into the address prevents an attacker from
+redirecting `method_id → method dispatch` post-deploy.  Both
+commitments are stored verbatim inside the JVAC state and re-verified
+on every `run_compute` by the address-binding gate at
+`jvm/core/dispatch-engine.cpp:370-402`.
 
 `tos::StdSmcAddress` is flat 256 bits (`tos/tos-types.h:46`) — there are
 no reserved bit ranges, so the full sha256 output is the address. Workchain
@@ -350,9 +368,15 @@ is true so that the inbound deploy message can drive the
   `build_jvm_workchain_output` copies them verbatim from `previous_state`
   into `next_state`.
 - Storage isolation: two contracts deployed with the same class but
-  different salts have different addresses (different `init_args` /
-  `salt` enters the sha256) and therefore disjoint `storage_root` trees.
-  No cross-contract storage namespace exists.
+  different salts have different addresses (`salt` and `init_args` enter
+  the sha256 through `address_commit`, which is itself one of the five
+  inputs to the final address hash) and therefore disjoint `storage_root`
+  trees.  No cross-contract storage namespace exists.
+- Manifest binding: `manifest_root_hash` is one of the five address-derivation
+  inputs, so the dispatchable method set is committed into the address.
+  Swapping `method_id → method` mapping post-deploy would change the
+  account's address; consensus rejects any mismatch through the
+  address-binding gate.
 - Address space is flat: the wc=3 256-bit address space has no reserved
   ranges (`tos::StdSmcAddress = Bits256`, `tos/tos-types.h:46`).
 - Re-deploy is idempotent: a second deploy with the same

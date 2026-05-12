@@ -772,9 +772,16 @@ transaction's execution.
 
 Class-load validation must reject duplicate `method_id` values among callable
 entry methods in the same class. The ABI also defines a deploy descriptor
-(see below) and the deterministic per-contract address
+(see below) and the deterministic per-contract address derived through the
+five-input nested formula in `derive_jvm_contract_address_from_state`
+(`jvm/core/deploy-abi.cpp:215-232`):
+`address_commit = sha256(deployer || salt || init_args_cell.hash)`,
+`manifest_root_hash = manifest_cell.hash()` (or zeros when manifest is null),
 `contract_address = sha256("TOS-JVM-CONTRACT-v2" || deployer ||
-class_hash || salt || init_args_cell_hash)` (`derive_jvm_contract_address`).
+address_commit || class_hash || manifest_root_hash)`.  The
+`address_commit` indirection authenticates first-activation
+`msg.src.addr == state.deployer` and binding `manifest_root_hash` prevents
+post-deploy method-id redirection.
 
 **Per-account method manifest (`JvmMethodManifest`):**
 ```
@@ -1084,15 +1091,33 @@ isolated storage.  The v1 SingletonExecutor path is fully removed.
 
 ### Address derivation
 
+Five-input nested formula (`derive_jvm_contract_address_from_state` at
+`jvm/core/deploy-abi.cpp:215-232`):
+
 ```
+class_hash         = sha256(class_bytes)                         // 32B
+address_commit     = sha256(
+    deployer_addr.bits256                                        // 32B — wc=3 sender of deploy action
+ || salt                                                         // 32B — caller-chosen
+ || init_args_cell.get_hash().bits256                            // 32B — cell hash, consensus-stable
+)                                                                // 32B
+manifest_root_hash = manifest_root_cell.get_hash().bits256       // 32B (or zero if null)
+
 addr_bytes := sha256(
     "TOS-JVM-CONTRACT-v2"
- || deployer_addr.bits256              // 32B — wc=3 sender of deploy action
- || class_hash                         // 32B — sha256 of class_bytes
- || salt                               // 32B — caller-chosen
- || init_args_cell.get_hash().bits256  // 32B — cell hash, consensus-stable
+ || deployer_addr.bits256                                        // 32B
+ || address_commit                                               // 32B
+ || class_hash                                                   // 32B
+ || manifest_root_hash                                           // 32B
 )
 ```
+
+The `address_commit` indirection lets the engine authenticate the
+first-activation message source (`msg.src.addr == state.deployer`) and
+binding `manifest_root_hash` into the address prevents post-deploy
+method-id redirection.  Both commitments live inside the JVAC and are
+re-verified on every `run_compute` by the address-binding gate at
+`dispatch-engine.cpp:370-402`.
 
 Implemented by `derive_jvm_contract_address` in `jvm/core/deploy-abi.cpp`.
 Two contracts that share `(deployer, class_hash, salt, init_args)` collapse

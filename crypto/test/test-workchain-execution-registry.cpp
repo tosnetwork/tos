@@ -48,6 +48,10 @@
 #include "vm/cellslice.h"
 #include "vm/dict.h"
 
+extern "C" {
+#include "blst.h"
+}
+
 #include <cstdint>
 #include <cstring>
 #include <ethash/keccak.hpp>
@@ -6287,6 +6291,81 @@ TEST(JvmWorkchainCore, CryptoConformanceBls12381MinPkValidAndTampered) {
   // check fails; both are fails-closed.
   CHECK(rc == AVATA_CRYPTO_INVALID_INPUT ||
         rc == AVATA_CRYPTO_VERIFICATION_FAILED);
+}
+
+TEST(JvmWorkchainCore, CryptoConformanceBls12381MinPkRoundTrip) {
+  // Live-signed self-consistent positive vector, mirroring the
+  // secp256k1 round-trip pattern.  We derive a deterministic keypair
+  // from fixed IKM bytes via blst_keygen, sign a fixed message in the
+  // min-pk arrangement (pubkey in G1, signature in G2), compress both
+  // to wire format, and pass through our production crypto host's
+  // bls12381_verify callback.  A clean OK proves the entire encode →
+  // verify path round-trips byte-faithfully; a one-byte tamper of the
+  // signature proves the verifier rejects.
+  //
+  // Authoritative external test vectors for the min-pk ciphersuite
+  // are scarce (Ethereum 2.0 IETF drafts publish min-sig vectors); a
+  // self-consistent positive vector is the same standard we use for
+  // secp256k1.
+  auto host = jvm_workchain::make_production_crypto_host();
+  CHECK(host.bls12381_verify != nullptr);
+
+  // Fixed IKM (>= 32 bytes per IETF draft-irtf-cfrg-bls-signature §2.3).
+  // Deterministic, repeatable across machines.
+  constexpr std::uint8_t kIkm[48] = {
+      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+      0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+      0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+      0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+      0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+      0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f};
+
+  constexpr char kDst[] =
+      "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+  constexpr std::size_t kDstLen = sizeof(kDst) - 1;
+  td::Slice msg("conformance");
+
+  // Derive a private scalar from IKM.
+  blst_scalar sk{};
+  blst_keygen(&sk, kIkm, sizeof(kIkm), nullptr, 0);
+
+  // pk in G1 (min-pk arrangement).
+  blst_p1 pk_p1{};
+  blst_sk_to_pk_in_g1(&pk_p1, &sk);
+  std::array<std::uint8_t, AVATA_CRYPTO_BLS12_381_PUBKEY_SIZE> pk_bytes{};
+  blst_p1_compress(pk_bytes.data(), &pk_p1);
+
+  // Hash the message into G2 with the canonical DST, then sign.
+  blst_p2 hash_p2{};
+  blst_hash_to_g2(
+      &hash_p2,
+      reinterpret_cast<const std::uint8_t*>(msg.data()), msg.size(),
+      reinterpret_cast<const std::uint8_t*>(kDst), kDstLen,
+      nullptr, 0);
+  blst_p2 sig_p2{};
+  blst_sign_pk_in_g1(&sig_p2, &hash_p2, &sk);
+  std::array<std::uint8_t, AVATA_CRYPTO_BLS12_381_SIGNATURE_SIZE> sig_bytes{};
+  blst_p2_compress(sig_bytes.data(), &sig_p2);
+
+  // Positive case: production host must accept.
+  int rc = host.bls12381_verify(
+      host.user, pk_bytes.data(),
+      reinterpret_cast<const std::uint8_t*>(msg.data()), msg.size(),
+      sig_bytes.data());
+  CHECK(rc == AVATA_CRYPTO_OK);
+
+  // Negative case: flip one bit of the signature.  Must fail closed
+  // (either INVALID_INPUT if the perturbed point is off-curve, or
+  // VERIFICATION_FAILED if the pairing check rejects).
+  auto tampered = sig_bytes;
+  tampered[10] ^= 0x01;
+  int rc_bad = host.bls12381_verify(
+      host.user, pk_bytes.data(),
+      reinterpret_cast<const std::uint8_t*>(msg.data()), msg.size(),
+      tampered.data());
+  CHECK(rc_bad != AVATA_CRYPTO_OK);
+  CHECK(rc_bad == AVATA_CRYPTO_INVALID_INPUT ||
+        rc_bad == AVATA_CRYPTO_VERIFICATION_FAILED);
 }
 
 // ---------------------------------------------------------------------------
