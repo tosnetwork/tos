@@ -427,37 +427,51 @@ fn truncated(s: &str, max: usize) -> String {
 
 impl JvmWalletDeployCmd {
     pub async fn run(&self, _config_path: &str) -> Result<()> {
-        // Documented stub — see module-level doc-comment for the
-        // detailed rationale. The pieces needed to make this work
-        // automatically:
-        //   1. A wc=3 wallet at `--deployer-name` that has already
-        //      been seeded into the chain via the genesis Fift word
-        //      `jvm-zerostate-from-alloc` (see Phase F seeding docs).
-        //   2. A path to build an `action_create_account` OutAction
-        //      from that wallet's signing surface.
-        //   3. A way to package that into a wc=3 wallet internal
-        //      message and forward via `send_boc` — which requires
-        //      the deployer wallet to already understand the JVI2
-        //      execute(...) ABI.
-        // The contract-level building blocks all exist (see
-        // `contracts::JvmWalletContract::build_create_account_action`,
-        // `encode_jvm_state_init_cell`, `encode_action_create_account`).
-        // What's missing is a wc=3 "router" that can sign one for us
-        // before any wc=3 wallet exists — i.e. this is genuinely a
-        // bootstrapping problem that should be solved by genesis
-        // seeding, not by an ad-hoc CLI workflow.
+        // Phase H landed the host primitive (`System.createAccount`),
+        // the wc=3 router contract (`java.lang.Deployer`), AND the
+        // Rust contract abstraction (`contracts::JvmDeployerContract`)
+        // — see commit message for `bd4654de2` and the
+        // `tests/jvm_deployer_offline.rs` reference path.
+        //
+        // The remaining wiring is purely CLI ergonomics: a
+        // `jvm_deployers` config table on `AppConfig`, a
+        // `jw register-deployer` (or equivalent) subcommand to
+        // populate it, and an external-message build helper to wrap
+        // `JvmDeployerContract::encode_deploy_call` for `send_boc`.
+        // None of these change the protocol surface; they're a
+        // self-contained UX iteration.
+        //
+        // Programmatic deploy is already available today:
+        //
+        //   1. Build a `JvmDeployerContract` from a Signer + the
+        //      Deployer's deployer/salt/class_bytes.  The contract
+        //      itself must already be active on-chain (genesis seed
+        //      via `jvm-zerostate-from-alloc`, see Phase F docs).
+        //   2. Build the target wallet's StateInit BOC via
+        //      `contracts::jvm_codec::encode_jvm_state_init_cell` on
+        //      a `JvmContractAccountState` you assembled.
+        //   3. Call `deployer.sign_deploy(nonce, &dest, &state_init,
+        //      value, &body).await?` to get the Ed25519 signature.
+        //   4. Encode the call via
+        //      `deployer.encode_deploy_call(...)` → a JVI2 cell.
+        //   5. Wrap that cell as the body of an `ext_in_msg_info`
+        //      external message addressed to the Deployer's wc=3
+        //      account.  Forward via `ClientJsonRpc::send_boc`.
+        //
+        // The offline portions (steps 1–4) round-trip cleanly under
+        // `cargo test -p contracts --test jvm_deployer_offline`.
         let _ = &self.deployer_name;
         let _ = self.balance;
         let _ = &self.name;
         anyhow::bail!(
-            "tosctl jvm-wallet deploy is not yet wired into the CLI.\n\
-             For the first wc=3 wallet, use the genesis seeding Fift word\n\
-             `jvm-zerostate-from-alloc` from the Phase F bring-up docs.\n\
-             For subsequent wallets, this path will be enabled once a\n\
-             wc=3 router wallet is reachable from the CLI; the contract-\n\
-             level helpers (JvmWalletContract::build_create_account_action,\n\
-             encode_jvm_state_init_cell, encode_action_create_account)\n\
-             are already in place in `contracts::jvm_wallet`."
+            "tosctl jvm-wallet deploy CLI wiring is the only Phase H follow-up.\n\
+             The on-chain primitives + Rust contract helpers are all in place:\n\
+                * java.lang.Deployer + System.createAccount     (commit bd4654de2)\n\
+                * contracts::JvmDeployerContract                (this commit)\n\
+             For programmatic deploys today, see the canonical reference flow in\n\
+             tosctl/src/node-control/contracts/tests/jvm_deployer_offline.rs.\n\
+             For genesis seeding (the first batch of wc=3 accounts), use the\n\
+             Fift word `jvm-zerostate-from-alloc` from the Phase F bring-up docs."
         )
     }
 }
