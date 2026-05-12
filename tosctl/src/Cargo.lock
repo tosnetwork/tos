@@ -855,6 +855,7 @@ dependencies = [
  "chain_block",
  "common",
  "hex",
+ "sha2",
  "tl_api",
  "tokio",
 ]

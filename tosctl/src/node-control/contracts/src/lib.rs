@@ -10,6 +10,7 @@ pub mod chain_provider;
 pub mod config_contract;
 pub mod contract_codes;
 pub mod elector;
+pub mod jvm_codec;
 pub mod liquid_controller;
 pub mod nominator;
 pub mod nominator_pool;
