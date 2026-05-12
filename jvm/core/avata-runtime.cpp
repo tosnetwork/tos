@@ -7,11 +7,13 @@
 #include "jvm/avata/include/avata/contract.h"
 #include "jvm/avata/include/avata/crypto.h"
 #include "jvm/avata/include/avata/event.h"
+#include "jvm/avata/include/avata/message.h"
 #include "jvm/avata/include/avata/storage.h"
 #include "jvm/core/class-manifest.h"
 #include "jvm/core/crypto-host.h"
 #include "jvm/core/inbound-parse.h"
 #include "jvm/core/message-abi.h"
+#include "jvm/core/message-host.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "td/utils/SharedSlice.h"
@@ -533,6 +535,7 @@ td::Result<JvmAvataInvocationResult> JvmAvataRuntime::run_contract(
 
     JvmStorageCellHost storage(previous_state.storage_root);
     JvmEventHost events;
+    JvmMessageHost outbound_messages;
 
     // Build the per-call AvataContractContext from the inbound message
     // and compute context.  The parsed src is non-fatal: an external
@@ -604,7 +607,8 @@ td::Result<JvmAvataInvocationResult> JvmAvataRuntime::run_contract(
                                                   target.invocation_user,
                                                   &events,
                                                   &call_context,
-                                                  &crypto_host);
+                                                  &crypto_host,
+                                                  &outbound_messages);
     if (exec_res.is_error()) {
         return exec_res.move_as_error();
     }
@@ -637,6 +641,8 @@ JvmAvataExecutionApi make_linked_jvm_avata_execution_api() {
     api.clear_contract_context = avata_clear_contract_context;
     api.set_crypto_host = avata_set_crypto_host;
     api.clear_crypto_host = avata_clear_crypto_host;
+    api.set_message_host = avata_set_message_host;
+    api.clear_message_host = avata_clear_message_host;
     api.begin_contract_transaction_with_limits =
         reinterpret_cast<JvmAvataBeginContractTransactionWithLimits>(
             avata_begin_contract_transaction_with_limits);

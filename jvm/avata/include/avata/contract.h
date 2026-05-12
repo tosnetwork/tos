@@ -82,7 +82,12 @@ enum {
   AVATA_CONTRACT_HELPER_CRYPTO_SECP256K1_VERIFY = 18,
   AVATA_CONTRACT_HELPER_CRYPTO_ED25519_VERIFY = 19,
   AVATA_CONTRACT_HELPER_CRYPTO_BLS12381_VERIFY = 20,
-  AVATA_CONTRACT_HELPER_GAS_COST_COUNT = 21
+  /* Final TODO closure: outbound message primitive (System.sendMessage).
+     MESSAGE_BASE charges the fixed per-call cost (high enough to
+     discourage spam), MESSAGE_BYTE charges the body bandwidth. */
+  AVATA_CONTRACT_HELPER_MESSAGE_BASE = 21,
+  AVATA_CONTRACT_HELPER_MESSAGE_BYTE = 22,
+  AVATA_CONTRACT_HELPER_GAS_COST_COUNT = 23
 };
 
 AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction(

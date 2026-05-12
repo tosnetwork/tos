@@ -43,7 +43,10 @@ constexpr unsigned kJvmOpcodeGasCostCount = 256;
 // Phase B: 15 → 21 to add CRYPTO_SHA256_BASE / SHA256_BYTE /
 // SECP256K1_RECOVER / SECP256K1_VERIFY / ED25519_VERIFY /
 // BLS12381_VERIFY.
-constexpr unsigned kJvmContractHelperGasCostCount = 21;
+//
+// Final TODO closure: 21 → 23 for System.sendMessage's
+// MESSAGE_BASE + MESSAGE_BYTE.
+constexpr unsigned kJvmContractHelperGasCostCount = 23;
 constexpr unsigned kJvmStdlibHashBytes = 32;
 
 struct JvmConfig {

@@ -4432,7 +4432,13 @@ const uint64_t DefaultContractHelperGasCosts[
     3000, // AVATA_CONTRACT_HELPER_CRYPTO_SECP256K1_RECOVER
     3000, // AVATA_CONTRACT_HELPER_CRYPTO_SECP256K1_VERIFY
     2000, // AVATA_CONTRACT_HELPER_CRYPTO_ED25519_VERIFY
-    43000 // AVATA_CONTRACT_HELPER_CRYPTO_BLS12381_VERIFY
+    43000,// AVATA_CONTRACT_HELPER_CRYPTO_BLS12381_VERIFY
+    // Outbound message primitive — fixed base + per-body-byte cost.
+    // Base is high so a contract that fan-outs many tiny messages is
+    // billed proportionally to the validator work of building each
+    // action_send_msg cell.
+    500,  // AVATA_CONTRACT_HELPER_MESSAGE_BASE
+    1     // AVATA_CONTRACT_HELPER_MESSAGE_BYTE
 };
 
 }  // namespace

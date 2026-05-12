@@ -7,6 +7,7 @@
 #include "jvm/avata/include/avata/context.h"
 #include "jvm/avata/include/avata/crypto.h"
 #include "jvm/avata/include/avata/event.h"
+#include "jvm/avata/include/avata/message.h"
 #include "jvm/avata/include/avata/storage.h"
 #include "vm/boc.h"
 
@@ -40,6 +41,11 @@ bool context_api_complete(const JvmAvataExecutionApi& api) {
 bool crypto_api_complete(const JvmAvataExecutionApi& api) {
     return api.set_crypto_host != nullptr &&
            api.clear_crypto_host != nullptr;
+}
+
+bool message_api_complete(const JvmAvataExecutionApi& api) {
+    return api.set_message_host != nullptr &&
+           api.clear_message_host != nullptr;
 }
 
 td::Status finish_storage_transaction(JvmStorageCellHost& storage,
@@ -101,7 +107,8 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
     void* invocation_user,
     JvmEventHost* events,
     const AvataContractContext* context,
-    const AvataCryptoHost* crypto) {
+    const AvataCryptoHost* crypto,
+    JvmMessageHost* messages) {
     if (avata_thread == nullptr) {
         return td::Status::Error("JVM Avata execution received null thread");
     }
@@ -118,6 +125,10 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
     if (crypto != nullptr && !crypto_api_complete(api)) {
         return td::Status::Error(
             "JVM Avata crypto execution API is incomplete");
+    }
+    if (messages != nullptr && !message_api_complete(api)) {
+        return td::Status::Error(
+            "JVM Avata message execution API is incomplete");
     }
     if (config.chain_id == 0 || config.max_heap_bytes == 0 ||
         config.max_gas_per_tx == 0) {
@@ -136,6 +147,7 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
 
     bool storage_transaction_open = false;
     bool event_transaction_open = false;
+    bool message_transaction_open = false;
     bool contract_transaction_open = false;
     bool context_installed = false;
     bool crypto_installed = false;
@@ -148,6 +160,9 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
             api.clear_contract_context();
             context_installed = false;
         }
+        if (messages != nullptr) {
+            api.clear_message_host();
+        }
         if (events != nullptr) {
             api.clear_event_host();
         }
@@ -158,6 +173,10 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
         if (contract_transaction_open) {
             (void)api.end_contract_transaction(avata_thread);
             contract_transaction_open = false;
+        }
+        if (message_transaction_open) {
+            (void)messages->rollback_transaction();
+            message_transaction_open = false;
         }
         if (event_transaction_open) {
             (void)events->rollback_transaction();
@@ -187,6 +206,17 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
             return fail(event_status.move_as_error());
         }
         event_transaction_open = true;
+    }
+
+    AvataMessageHost message_host{};
+    if (messages != nullptr) {
+        configure_avata_message_host(*messages, message_host);
+        api.set_message_host(&message_host);
+        auto message_status = messages->begin_transaction();
+        if (message_status.is_error()) {
+            return fail(message_status.move_as_error());
+        }
+        message_transaction_open = true;
     }
 
     if (context != nullptr) {
@@ -265,8 +295,23 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
             : events->rollback_transaction();
         event_transaction_open = false;
         if (event_status.is_error()) {
+            if (message_transaction_open) {
+                (void)messages->rollback_transaction();
+                message_transaction_open = false;
+            }
             clear_host();
             return event_status.move_as_error();
+        }
+    }
+
+    if (messages != nullptr) {
+        auto message_status = result.success
+            ? messages->commit_transaction()
+            : messages->rollback_transaction();
+        message_transaction_open = false;
+        if (message_status.is_error()) {
+            clear_host();
+            return message_status.move_as_error();
         }
     }
 
@@ -275,10 +320,32 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
         result.storage_root = storage.root_cell();
         if (events != nullptr) {
             result.events = events->events();
-            result.action_list = build_jvm_event_action_list(result.events);
-            if (result.action_list.is_null()) {
-                return td::Status::Error("JVM Avata event action list encode failed");
+        }
+        if (messages != nullptr) {
+            result.outbound_messages = messages->messages();
+        }
+        // Build the unified action list.  Event-only and message-only
+        // cases compose cleanly because both branches walk a possibly-
+        // empty vector; result.action_list ends up null only if every
+        // vector is empty, which encodes as the canonical empty cell.
+        td::Ref<vm::Cell> event_actions =
+            (events != nullptr)
+                ? build_jvm_event_action_list(result.events)
+                : td::Ref<vm::Cell>{};
+        if (events != nullptr && event_actions.is_null()) {
+            return td::Status::Error(
+                "JVM Avata event action list encode failed");
+        }
+        if (messages != nullptr) {
+            auto combined = build_jvm_combined_action_list(
+                std::move(event_actions), result.outbound_messages);
+            if (combined.is_null()) {
+                return td::Status::Error(
+                    "JVM Avata outbound action list encode failed");
             }
+            result.action_list = std::move(combined);
+        } else {
+            result.action_list = std::move(event_actions);
         }
     }
     return result;

@@ -1,10 +1,12 @@
-// Minimal wc=3 wallet skeleton.
+// Minimal wc=3 wallet skeleton — fully functional, no remaining TODOs.
 //
-// Status: signature-authenticated; payload dispatch still waits on
-//   System.sendMessage / java.lang.ContractCall (out of v1 scope per
-//   jvm-rt.md §496).  Until that lands, execute() validates and logs
-//   the payload commitment via Event; the actual outbound legs are
-//   the contract author's responsibility once ContractCall ships.
+// Status: signature-authenticated AND payload dispatch enabled via
+//   java.lang.System.sendMessage.  Execute() decodes a typed outbound
+//   action list, charges gas, and emits one or more outbound internal
+//   messages whose action_send_msg cells the host appends to the
+//   transaction's action_list on commit.  Failed signature / nonce
+//   checks revert; the host then discards the staged outbound messages
+//   alongside storage writes and events.
 //
 // Storage layout (all slots are keccak256("Wallet.<name>")):
 //   OWNER_PUBKEY      : 32 bytes — Ed25519 public key, stored verbatim.
@@ -28,7 +30,7 @@ public class Wallet {
   private static final String ERR_BAD_OWNER_KEY        = "Wallet_BadOwnerKey()";
   private static final String ERR_BAD_NONCE            = "Wallet_BadNonce(uint256,uint256)";
   private static final String ERR_BAD_SIGNATURE        = "Wallet_BadSignature()";
-  private static final String ERR_NOT_IMPLEMENTED      = "Wallet_NotImplemented()";
+  private static final String ERR_BAD_PAYLOAD          = "Wallet_BadPayload()";
 
   // --------------------------------------------------------------------
   // Event topics (kept as static final String constants — verifier-safe;
@@ -158,13 +160,74 @@ public class Wallet {
                    ABI.concat(nonce.toByteArray(), payload.rawBytes())));
   }
 
+  /** Payload wire format (all big-endian, all sizes pinned for
+   *  determinism):
+   *
+   *    payload := count:uint8 || transfer*
+   *    transfer := destWorkchain:int32 || destAddr:bytes32 ||
+   *                value:bytes32 || bodyLen:uint16 || body:bytes
+   *
+   *  count must be in [0, 12] to fit the per-tx outbound message cap
+   *  the host enforces (kJvmMessageCountMax).  bodyLen is bounded by
+   *  kJvmMessageBodyMaxBytes; the host re-checks the cap so contracts
+   *  cannot exceed it by under-stating the length.
+   *
+   *  count=0 is valid — it produces a signed "no-op" entry useful for
+   *  bumping the nonce without an outbound message (e.g. to invalidate
+   *  a previously-signed payload). */
   private static void dispatch(Bytes payload) {
-    // Outbound action list decoding lands with ContractCall / sendMessage
-    // (jvm-rt.md §496). Until then we only validate the payload was
-    // non-null so the entry path remains observable.
-    if (payload == null) {
-      revert(ERR_NOT_IMPLEMENTED);
+    byte[] data = payload.rawBytes();
+    if (data.length == 0) {
+      revert(ERR_BAD_PAYLOAD);
     }
+    int count = data[0] & 0xff;
+    if (count > 12) {
+      revert(ERR_BAD_PAYLOAD);
+    }
+    int offset = 1;
+    for (int i = 0; i < count; ++i) {
+      offset = dispatchOne(data, offset);
+    }
+    if (offset != data.length) {
+      revert(ERR_BAD_PAYLOAD);
+    }
+  }
+
+  /** Decode one transfer entry and emit the outbound message.  Returns
+   *  the new offset into the payload buffer. */
+  private static int dispatchOne(byte[] data, int offset) {
+    if (offset + 4 + 32 + 32 + 2 > data.length) {
+      revert(ERR_BAD_PAYLOAD);
+    }
+    int wc = ((data[offset]     & 0xff) << 24)
+           | ((data[offset + 1] & 0xff) << 16)
+           | ((data[offset + 2] & 0xff) << 8)
+           |  (data[offset + 3] & 0xff);
+    offset += 4;
+
+    byte[] destAddr = new byte[32];
+    java.lang.System.arraycopy(data, offset, destAddr, 0, 32);
+    offset += 32;
+
+    byte[] valueBytes = new byte[32];
+    java.lang.System.arraycopy(data, offset, valueBytes, 0, 32);
+    offset += 32;
+
+    int bodyLen = ((data[offset] & 0xff) << 8) | (data[offset + 1] & 0xff);
+    offset += 2;
+    if (offset + bodyLen > data.length) {
+      revert(ERR_BAD_PAYLOAD);
+    }
+    byte[] body = new byte[bodyLen];
+    if (bodyLen > 0) {
+      java.lang.System.arraycopy(data, offset, body, 0, bodyLen);
+    }
+    offset += bodyLen;
+
+    Address dest = new Address(wc, destAddr);
+    Uint256 value = Uint256.fromBytes(valueBytes);
+    java.lang.System.sendMessage(dest, value, body);
+    return offset;
   }
 
   // --------------------------------------------------------------------

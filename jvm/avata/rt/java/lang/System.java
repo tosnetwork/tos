@@ -205,4 +205,45 @@ public abstract class System {
   public static void exit(int code) {
     throw new UnsupportedOperationException(MSG_EXIT);
   }
+
+  // -----------------------------------------------------------------------
+  // Outbound internal message — admitted.
+  //
+  // Stages an action_send_msg cell that the host appends to the
+  // transaction's action_list on commit.  Failed calls (revert /
+  // OutOfGas / OutOfMemory) discard pending messages alongside storage
+  // writes and events, so a contract that emits N messages and then
+  // reverts emits zero.
+  //
+  // Cross-contract invocation is asynchronous: the receiving contract
+  // executes in a later transaction within the same block, not inline.
+  // Use this primitive for transfers and for one-shot calls into other
+  // contracts; the call response (if any) lands as a separate inbound
+  // message back to the sender.
+  // -----------------------------------------------------------------------
+  public static void sendMessage(Address dest, Uint256 value, byte[] body) {
+    if (dest == null) {
+      throw new NullPointerException("System.sendMessage dest cannot be null");
+    }
+    if (value == null) {
+      throw new NullPointerException("System.sendMessage value cannot be null");
+    }
+    if (body == null) {
+      throw new NullPointerException("System.sendMessage body cannot be null");
+    }
+    nativeSendMessage(dest.workchain(),
+                      dest.accountIdBytes(),
+                      value.toByteArray(),
+                      body);
+  }
+
+  /** Convenience overload — passes the empty body. */
+  public static void sendMessage(Address dest, Uint256 value) {
+    sendMessage(dest, value, new byte[0]);
+  }
+
+  private static native void nativeSendMessage(int destWorkchain,
+                                               byte[] destAddr,
+                                               byte[] value,
+                                               byte[] body);
 }

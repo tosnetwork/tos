@@ -21,6 +21,7 @@ set(JVM_CORE_SRC
   inbound-parse.cpp
   init.cpp
   message-abi.cpp
+  message-host.cpp
   rpc.cpp
   storage-cell-host.cpp
   zerostate.cpp

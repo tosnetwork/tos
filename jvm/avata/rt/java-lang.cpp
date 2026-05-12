@@ -14,6 +14,7 @@
 #include "avata/context.h"
 #include "avata/crypto.h"
 #include "avata/event.h"
+#include "avata/message.h"
 #include "avata/storage.h"
 
 #include <stdlib.h>
@@ -57,6 +58,14 @@ bool activeCryptoHostSet = false;
 bool hasActiveCryptoHost()
 {
   return activeCryptoHostSet;
+}
+
+AvataMessageHost activeMessageHost;
+bool activeMessageHostSet = false;
+
+bool hasActiveMessageHost()
+{
+  return activeMessageHostSet and activeMessageHost.send;
 }
 
 bool hasActiveStorageHost()
@@ -1194,4 +1203,138 @@ extern "C" JNIEXPORT jboolean JNICALL
       sigBytes);
   free(msgBytes);
   return status == AVATA_CRYPTO_OK ? JNI_TRUE : JNI_FALSE;
+}
+
+/* ------------------------------------------------------------------
+   Outbound message ABI + JNI binding (final TODO closure).
+
+   System.sendMessage materializes an internal message whose
+   action_send_msg cell will land in WorkchainComputeOutput.action_list
+   after commit.  Host-callback pattern mirrors Event so failed contract
+   calls discard pending messages alongside storage writes and events.
+   ------------------------------------------------------------------ */
+
+extern "C" AVATA_MESSAGE_EXPORT void avata_set_message_host(
+    const AvataMessageHost* host)
+{
+  if (host == 0 or host->send == 0) {
+    memset(&activeMessageHost, 0, sizeof(activeMessageHost));
+    activeMessageHostSet = false;
+    return;
+  }
+  activeMessageHost = *host;
+  activeMessageHostSet = true;
+}
+
+extern "C" AVATA_MESSAGE_EXPORT void avata_clear_message_host(void)
+{
+  memset(&activeMessageHost, 0, sizeof(activeMessageHost));
+  activeMessageHostSet = false;
+}
+
+extern "C" AVATA_MESSAGE_EXPORT int avata_message_begin_transaction(void)
+{
+  if (hasActiveMessageHost() and activeMessageHost.beginTransaction) {
+    return activeMessageHost.beginTransaction(activeMessageHost.user);
+  }
+  return AVATA_MESSAGE_OK;
+}
+
+extern "C" AVATA_MESSAGE_EXPORT int avata_message_commit_transaction(void)
+{
+  if (hasActiveMessageHost() and activeMessageHost.commitTransaction) {
+    return activeMessageHost.commitTransaction(activeMessageHost.user);
+  }
+  return AVATA_MESSAGE_OK;
+}
+
+extern "C" AVATA_MESSAGE_EXPORT int avata_message_rollback_transaction(void)
+{
+  if (hasActiveMessageHost() and activeMessageHost.rollbackTransaction) {
+    return activeMessageHost.rollbackTransaction(activeMessageHost.user);
+  }
+  return AVATA_MESSAGE_OK;
+}
+
+extern "C" AVATA_MESSAGE_EXPORT int avata_message_send(
+    int32_t dest_workchain,
+    const unsigned char* dest_addr,
+    const unsigned char* value_be,
+    const unsigned char* body,
+    size_t body_length)
+{
+  if (dest_addr == 0
+      || value_be == 0
+      || (body_length != 0 and body == 0)) {
+    return AVATA_MESSAGE_ERROR;
+  }
+  if (!hasActiveMessageHost()) {
+    return AVATA_MESSAGE_OK;
+  }
+  return activeMessageHost.send(
+      activeMessageHost.user,
+      dest_workchain,
+      dest_addr,
+      value_be,
+      body_length == 0 ? 0 : body,
+      body_length);
+}
+
+extern "C" JNIEXPORT void JNICALL
+    Java_java_lang_System_nativeSendMessage(JNIEnv* e,
+                                            jclass,
+                                            jint destWorkchain,
+                                            jbyteArray destAddr,
+                                            jbyteArray value,
+                                            jbyteArray body)
+{
+  unsigned char destAddrBytes[AVATA_MESSAGE_ADDRESS_SIZE];
+  if (!copyFixedByteArray(e, destAddr,
+                          "System.sendMessage destAddr",
+                          AVATA_MESSAGE_ADDRESS_SIZE, destAddrBytes)) {
+    return;
+  }
+  unsigned char valueBytes[AVATA_MESSAGE_VALUE_SIZE];
+  if (!copyFixedByteArray(e, value,
+                          "System.sendMessage value",
+                          AVATA_MESSAGE_VALUE_SIZE, valueBytes)) {
+    return;
+  }
+  unsigned char* bodyBytes = 0;
+  jsize bodyLength = 0;
+  if (!copyByteArray(e, body, "System.sendMessage body",
+                     &bodyBytes, &bodyLength)) {
+    return;
+  }
+
+  if (!chargeHelperGas(e, AVATA_CONTRACT_HELPER_MESSAGE_BASE, 1)
+      || !chargeHelperGas(e,
+                          AVATA_CONTRACT_HELPER_MESSAGE_BYTE,
+                          static_cast<uint64_t>(bodyLength))) {
+    free(bodyBytes);
+    return;
+  }
+
+  if (!hasActiveMessageHost()) {
+    free(bodyBytes);
+    throwNew(e,
+             "java/lang/ContractViolationError",
+             "outbound message host is not installed");
+    return;
+  }
+
+  int status = avata_message_send(
+      destWorkchain,
+      destAddrBytes,
+      valueBytes,
+      bodyLength == 0 ? 0 : bodyBytes,
+      static_cast<size_t>(bodyLength));
+  free(bodyBytes);
+
+  if (status != AVATA_MESSAGE_OK) {
+    throwNew(e,
+             "java/lang/ContractViolationError",
+             "outbound message host send failed with status %d",
+             status);
+  }
 }

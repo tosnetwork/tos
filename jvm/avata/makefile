@@ -936,6 +936,7 @@ test-sources = \
 	$(test)/ContextTest.java \
 	$(test)/CryptoTest.java \
 	$(test)/EIP712Test.java \
+	$(test)/SendMessageTest.java \
 	$(test)/DeterministicFloatTest.java \
 	$(test)/FloatConformanceVector.java \
 	$(test)/PerfBaseline.java \

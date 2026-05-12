@@ -15,12 +15,14 @@
 #include "jvm/core/cell-codec.h"
 #include "jvm/core/config-param.h"
 #include "jvm/core/event-host.h"
+#include "jvm/core/message-host.h"
 #include "jvm/core/storage-cell-host.h"
 #include "td/utils/Status.h"
 
 struct AvataContractContext;
 struct AvataCryptoHost;
 struct AvataEventHost;
+struct AvataMessageHost;
 struct AvataStorageHost;
 
 namespace jvm_workchain {
@@ -58,6 +60,9 @@ using JvmAvataClearContractContext = void (*)();
 using JvmAvataSetCryptoHost =
     void (*)(const AvataCryptoHost* host);
 using JvmAvataClearCryptoHost = void (*)();
+using JvmAvataSetMessageHost =
+    void (*)(const AvataMessageHost* host);
+using JvmAvataClearMessageHost = void (*)();
 using JvmAvataBeginContractTransactionWithLimits =
     int (*)(void* thread, std::uint64_t gas_limit,
             std::uint64_t memory_limit);
@@ -82,6 +87,8 @@ struct JvmAvataExecutionApi {
     JvmAvataClearContractContext clear_contract_context{nullptr};
     JvmAvataSetCryptoHost set_crypto_host{nullptr};
     JvmAvataClearCryptoHost clear_crypto_host{nullptr};
+    JvmAvataSetMessageHost set_message_host{nullptr};
+    JvmAvataClearMessageHost clear_message_host{nullptr};
     JvmAvataBeginContractTransactionWithLimits
         begin_contract_transaction_with_limits{nullptr};
     JvmAvataEndContractTransaction end_contract_transaction{nullptr};
@@ -101,6 +108,7 @@ struct JvmAvataInvocationResult {
     td::Ref<vm::Cell> storage_root;
     td::Ref<vm::Cell> action_list;
     std::vector<JvmEvent> events;
+    std::vector<JvmOutboundMessage> outbound_messages;
 };
 
 // Execute one Avata contract transaction around an already-created Avata
@@ -137,7 +145,8 @@ td::Result<JvmAvataInvocationResult> execute_jvm_avata_transaction(
     void* invocation_user,
     JvmEventHost* events = nullptr,
     const AvataContractContext* context = nullptr,
-    const AvataCryptoHost* crypto = nullptr);
+    const AvataCryptoHost* crypto = nullptr,
+    JvmMessageHost* messages = nullptr);
 
 // Convert the already-executed Avata transaction result into the canonical
 // custom-workchain compute output consumed by Transaction::prepare_compute_phase.

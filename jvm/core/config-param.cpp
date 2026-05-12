@@ -314,6 +314,12 @@ JvmConfig JvmConfig::default_activation() noexcept {
     cfg.helper_gas_costs[18] = 3000;   // CRYPTO_SECP256K1_VERIFY
     cfg.helper_gas_costs[19] = 2000;   // CRYPTO_ED25519_VERIFY
     cfg.helper_gas_costs[20] = 43000;  // CRYPTO_BLS12381_VERIFY
+    // Final TODO closure: outbound message primitive.  Base is high
+    // because each call materializes an action_send_msg cell whose
+    // validator cost is amortized over the per-tx admission budget;
+    // body-byte cost mirrors STORAGE_STORE_BYTE.
+    cfg.helper_gas_costs[21] = 500;    // MESSAGE_BASE
+    cfg.helper_gas_costs[22] = 1;      // MESSAGE_BYTE
 
     return cfg;
 }
