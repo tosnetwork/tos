@@ -1,17 +1,20 @@
-// Minimal wc=3 wallet skeleton — fully functional, no remaining TODOs.
+package java.lang;
+
+// Single-owner Ed25519 wallet — the canonical wc=3 contract account.
 //
-// Status: signature-authenticated AND payload dispatch enabled via
-//   java.lang.System.sendMessage.  Execute() decodes a typed outbound
-//   action list, charges gas, and emits one or more outbound internal
-//   messages whose action_send_msg cells the host appends to the
-//   transaction's action_list on commit.  Failed signature / nonce
-//   checks revert; the host then discards the staged outbound messages
-//   alongside storage writes and events.
+// All entry methods are `public static` so that `@ContractEntry`
+// admission accepts them.  Wallet extends Contract so subclasses can
+// reuse `revert()` and the cell-backed storage handle.  Contract
+// authors who want a fee-bearing / multi-sig / paymaster variant
+// should subclass Wallet and add their own `@ContractEntry` methods
+// alongside (or in place of) the ones below; v1 is intentionally
+// minimal so the canonical genesis wallet image is small and easy
+// to audit.
 //
 // Storage layout (all slots are keccak256("Wallet.<name>")):
-//   OWNER_PUBKEY      : 32 bytes — Ed25519 public key, stored verbatim.
-//   NONCE             : Uint256 — monotonically increasing replay counter.
-//   INIT_FLAG         : 1 byte  — 0x01 once init() has run.
+//   OWNER_PUBKEY : 32 bytes — Ed25519 public key, stored verbatim.
+//   NONCE        : Uint256  — monotonically increasing replay counter.
+//   INIT_FLAG    : 1 byte   — 0x01 once init() has run.
 //
 // Verifier-profile compliance:
 //   * No mutable static fields (only `static final` primitives/Strings).
@@ -20,35 +23,38 @@
 //   * @ContractEntry methods are `public static void` only.
 //   * No synchronized / native methods, no finalize.
 //   * No java.lang.invoke / lambdas — the verifier rejects invokedynamic.
-public class Wallet {
+public class Wallet extends Contract {
 
   // --------------------------------------------------------------------
   // Error signatures (ABI-style stable IDs surfaced through revert()).
   // --------------------------------------------------------------------
-  private static final String ERR_ALREADY_INITIALIZED  = "Wallet_AlreadyInitialized()";
-  private static final String ERR_NOT_INITIALIZED      = "Wallet_NotInitialized()";
-  private static final String ERR_BAD_OWNER_KEY        = "Wallet_BadOwnerKey()";
-  private static final String ERR_BAD_NONCE            = "Wallet_BadNonce(uint256,uint256)";
-  private static final String ERR_BAD_SIGNATURE        = "Wallet_BadSignature()";
-  private static final String ERR_BAD_PAYLOAD          = "Wallet_BadPayload()";
+  public static final String ERR_ALREADY_INITIALIZED  = "Wallet_AlreadyInitialized()";
+  public static final String ERR_NOT_INITIALIZED      = "Wallet_NotInitialized()";
+  public static final String ERR_BAD_OWNER_KEY        = "Wallet_BadOwnerKey()";
+  public static final String ERR_BAD_NONCE            = "Wallet_BadNonce(uint256,uint256)";
+  public static final String ERR_BAD_SIGNATURE        = "Wallet_BadSignature()";
+  public static final String ERR_BAD_PAYLOAD          = "Wallet_BadPayload()";
 
   // --------------------------------------------------------------------
   // Event topics (kept as static final String constants — verifier-safe;
   // the Bytes32 topic is derived on demand inside emit*()).
   // --------------------------------------------------------------------
-  private static final String EVT_INITIALIZED = "WalletInitialized(bytes32)";
-  private static final String EVT_EXECUTED    = "WalletExecuted(uint256,bytes32)";
+  public static final String EVT_INITIALIZED = "WalletInitialized(bytes32)";
+  public static final String EVT_EXECUTED    = "WalletExecuted(uint256,bytes32)";
+  public static final String EVT_NONCE       = "WalletNonce(uint256)";
 
   // --------------------------------------------------------------------
   // Slot key derivation. `static final String` is verifier-admitted; the
   // Bytes32 slot itself is derived lazily because constant-folded
-  // Bytes32 fields would create a <clinit>.
+  // Bytes32 fields would create a <clinit>.  These names are
+  // consensus-stable — genesis seeders compute keccak256 over exactly
+  // these strings to populate the wallet's storage at block 0.
   // --------------------------------------------------------------------
-  private static final String SLOT_OWNER_PUBKEY = "Wallet.ownerPubKey";
-  private static final String SLOT_NONCE        = "Wallet.nonce";
-  private static final String SLOT_INIT_FLAG    = "Wallet.initFlag";
+  public static final String SLOT_OWNER_PUBKEY = "Wallet.ownerPubKey";
+  public static final String SLOT_NONCE        = "Wallet.nonce";
+  public static final String SLOT_INIT_FLAG    = "Wallet.initFlag";
 
-  private static Bytes32 slot(String name) {
+  public static Bytes32 slot(String name) {
     return Crypto.keccak256(name.getBytes());
   }
 
@@ -56,10 +62,10 @@ public class Wallet {
   // @ContractEntry surface
   // --------------------------------------------------------------------
 
-  /** One-time owner-key install. Called by the first activation (the
-   *  deploy descriptor's body should encode this method id). Only the
-   *  account that deployed this wallet may run init; this binds the
-   *  on-chain authority to the deploy descriptor's deployer field. */
+  /** One-time owner-key install.  The host's first-activation gate
+   *  (jvm/core/dispatch-engine.cpp) already requires the inbound src
+   *  workchain to match wc=3 and the src.addr to match state.deployer,
+   *  so init() doesn't need to re-check the caller here. */
   @ContractEntry
   public static void init(Bytes32 ownerPubKey) {
     if (ownerPubKey == null || ownerPubKey.equals(Bytes32.ZERO)) {
@@ -85,10 +91,9 @@ public class Wallet {
    *
    *  digest = keccak256(walletAddrBytes || nonceBytes || payloadBytes)
    *
-   *  Note: TOS Native (wc=0) wallets sign with Ed25519, so this matches
-   *  the established TVM wallet signing semantics. Contracts that want
-   *  Ethereum-style secp256k1 + ecRecover can replace Crypto.ed25519Verify
-   *  with Crypto.ecRecover and compare against the stored pubkey. */
+   *  TOS Native (wc=0) wallets sign with Ed25519, so this matches the
+   *  established TVM wallet signing semantics. Subclasses that want
+   *  Ethereum-style secp256k1 + ecRecover can override `verify()`. */
   @ContractEntry
   public static void execute(Uint256 nonce, Bytes payload, Bytes signature) {
     requireInitialized();
@@ -109,11 +114,6 @@ public class Wallet {
 
     s.store(slot(SLOT_NONCE), expected.add(Uint256.ONE).toByteArray());
 
-    // Once System.sendMessage(dest, value, body) / java.lang.ContractCall
-    // lands (jvm-rt.md §496 — currently out of v1 scope), decode `payload`
-    // as a typed outbound-action descriptor and emit the corresponding
-    // outbound messages here. Until then we just commit the digest as an
-    // event so off-chain tooling can prove acceptance.
     dispatch(payload);
 
     Event.emit(
@@ -122,33 +122,33 @@ public class Wallet {
         Bytes.wrap(nonce.toByteArray()));         // data   = nonce bytes
   }
 
-  /** Read-only nonce view; useful for off-chain wallet UIs that need to
-   *  build the next signed payload. */
+  /** Read-only nonce view; useful for off-chain wallet UIs that need
+   *  to build the next signed payload.  Emits an event because v1 has
+   *  no synchronous response channel. */
   @ContractEntry
   public static void getNonce() {
     requireInitialized();
     Uint256 n = loadNonce(Storage.current());
-    Event.emit(
-        Event.topic("WalletNonce(uint256)"),
-        Bytes.wrap(n.toByteArray()));
+    Event.emit(Event.topic(EVT_NONCE),
+               Bytes.wrap(n.toByteArray()));
   }
 
   // --------------------------------------------------------------------
-  // Internal helpers
+  // Internal helpers (protected so subclasses can override / reuse).
   // --------------------------------------------------------------------
 
-  private static Uint256 loadNonce(Storage s) {
+  protected static Uint256 loadNonce(Storage s) {
     byte[] raw = s.load(slot(SLOT_NONCE));
     return raw == null ? Uint256.ZERO : Uint256.fromBytes(raw);
   }
 
-  private static void requireInitialized() {
+  protected static void requireInitialized() {
     if (! Storage.current().contains(slot(SLOT_INIT_FLAG))) {
       revert(ERR_NOT_INITIALIZED);
     }
   }
 
-  private static Bytes32 digest(Uint256 nonce, Bytes payload) {
+  protected static Bytes32 digest(Uint256 nonce, Bytes payload) {
     // Bind the wallet's own address into the digest so a captured
     // signature cannot be replayed against a different wallet at the
     // same nonce. Context.contractAddress() returns the wc=3 account
@@ -174,8 +174,12 @@ public class Wallet {
    *
    *  count=0 is valid — it produces a signed "no-op" entry useful for
    *  bumping the nonce without an outbound message (e.g. to invalidate
-   *  a previously-signed payload). */
-  private static void dispatch(Bytes payload) {
+   *  a previously-signed payload).
+   *
+   *  Subclasses can override this method to swap in a different payload
+   *  encoding (e.g. typed call data, batched operations with metadata,
+   *  fee-aware forms). */
+  protected static void dispatch(Bytes payload) {
     byte[] data = payload.rawBytes();
     if (data.length == 0) {
       revert(ERR_BAD_PAYLOAD);
@@ -195,7 +199,7 @@ public class Wallet {
 
   /** Decode one transfer entry and emit the outbound message.  Returns
    *  the new offset into the payload buffer. */
-  private static int dispatchOne(byte[] data, int offset) {
+  protected static int dispatchOne(byte[] data, int offset) {
     if (offset + 4 + 32 + 32 + 2 > data.length) {
       revert(ERR_BAD_PAYLOAD);
     }
@@ -228,20 +232,5 @@ public class Wallet {
     Uint256 value = Uint256.fromBytes(valueBytes);
     java.lang.System.sendMessage(dest, value, body);
     return offset;
-  }
-
-  // --------------------------------------------------------------------
-  // revert(): mirror of Contract.revert() — duplicated here because Wallet
-  // is intentionally NOT a Contract subclass. The whole entry surface is
-  // static so we never construct an instance and never need a base-class
-  // Storage handle. (Contract.storage is captured per-instance via
-  // Storage.current(); we call Storage.current() inline instead.)
-  // --------------------------------------------------------------------
-  private static void revert(String errorSignature) {
-    throw new ContractRevertException(errorSignature);
-  }
-
-  private Wallet() {
-    // Non-instantiable. The wallet contract is a static-only facade.
   }
 }

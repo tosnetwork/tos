@@ -159,6 +159,7 @@ static const char* const kContractProfileAdmittedApiClasses[] = {
     "java/lang/VerifyError",
     "java/lang/VirtualMachineError",
     "java/lang/Void",
+    "java/lang/Wallet",
     "java/lang/annotation/Annotation",
     "java/lang/annotation/ElementType",
     "java/lang/annotation/Retention",

@@ -525,6 +525,15 @@ Initial classes or class families:
 - `MerkleProof`
 - `SafeCast`
 - `Governor`
+- `Wallet` — single-owner Ed25519 wallet contract. Static-only `@ContractEntry`
+  surface (`init` / `execute` / `getNonce`) for the canonical wc=3 account
+  pattern: signature-authenticated calls with nonce replay protection and
+  dispatch to `System.sendMessage` for outbound transfers / contract calls.
+  Subclasses can extend with paymaster, multi-sig, or batched-call
+  semantics. Storage layout (slots are `keccak256("Wallet.<name>")`):
+  `ownerPubKey` (32B Ed25519 pubkey), `nonce` (Uint256), `initFlag` (1B).
+  Genesis seeders mirror the same slot derivation when pre-installing
+  wallet accounts at zerostate (see `jvm/core/zerostate.h`).
 
 These classes should be normal Java source compiled against `api.jar`
 for contract development and packaged into `rt.jar` for runtime execution. They
@@ -592,6 +601,7 @@ should be avoided unless they are explicitly part of a typed call boundary.
 | `ERC2981` | royalty receiver and sale-price fraction calculation | Admit early; signaling only, no payment enforcement |
 | `ERC6909` | multi-token ID accounting, per-id allowances, operators, metadata, content URI, token supply | Admit core and simple extensions early |
 | `Pausable`, `ReentrancyGuard`, `Nonces` | context, storage, call-depth/reentrancy policy | Admit early |
+| `Wallet` | `Context.contractAddress`, `Storage`, `Crypto.ed25519Verify`, `Crypto.keccak256`, `System.sendMessage` | Admit early; canonical wc=3 account pattern (single-owner Ed25519 + nonce + multi-transfer dispatch). Class hash is part of any genesis-seeded address derivation, so once seeded the wire format must remain consensus-stable for the lifetime of that address. Future variants (multi-sig, paymaster) get new class hashes and live alongside V1 |
 | `Math`, `SafeCast`, `SignedMath` | `Uint256`, signed arithmetic, overflow rules | Admit early |
 | `MerkleProof`, `Hashes` | `Bytes32`, Keccak/SHA helpers | Admit early |
 | `ECDSA`, `MessageHashUtils` | secp256k1 recover/verify, canonical signatures | Admit if TOS account model needs it |
