@@ -18,6 +18,7 @@ set(JVM_CORE_SRC
   deploy-abi.cpp
   dispatch-engine.cpp
   event-host.cpp
+  genesis-wallet.cpp
   inbound-parse.cpp
   init.cpp
   message-abi.cpp
@@ -53,4 +54,5 @@ target_link_libraries(jvm_workchain_core PRIVATE
     ${BLST_LIB}
     ${SECP256K1_LIBRARY}
     ${SODIUM_LIBRARY_RELEASE}
+    ethash::keccak
 )

@@ -624,6 +624,137 @@ void interpret_jvm_zerostate_accounts_cell(vm::Stack& stack) {
   stack.push_cell(std::move(cell));
 }
 
+// Build the wc=3 ShardAccounts cell from a tuple of genesis Ed25519
+// wallet declarations.  Mirrors the EVM `evm-zerostate-from-alloc`
+// pattern so operators can declare any number of pre-seeded wc=3
+// wallets at zerostate time.  These wallets are `acc_active` from
+// block 0 and can immediately emit `action_create_account` to deploy
+// further wc=3 contracts — that is the path that breaks the
+// chicken-and-egg of an empty wc=3 ShardAccounts dict.
+//
+// Stack: ( T class_bytes stdlib_hash -- accounts_cell )
+//
+// Where:
+//   stdlib_hash  — bytes (exactly 32 bytes; mirrors ConfigParam 85's stdlib_hash).
+//   class_bytes  — bytes (canonical rt.jar Wallet.class bytecode).
+//   T            — tuple of 3-tuples (one per wallet):
+//                    [0] owner_pubkey — bytes (exactly 32 bytes; Ed25519 pubkey)
+//                    [1] salt         — bytes (exactly 32 bytes)
+//                    [2] balance      — int   (TOMIS amount, fits in 120 bits)
+//
+// All length checks run before the C++ builder so a malformed
+// declaration surfaces as a clear fift::IntError, not an opaque
+// "could not build accounts cell".
+void interpret_jvm_zerostate_from_alloc(vm::Stack& stack) {
+  using jvm_workchain::JvmGenesisWallet;
+
+  auto require_bytes_len =
+      [](const std::string& b, const char* what, std::size_t len) {
+        if (b.size() != len) {
+          throw fift::IntError{std::string{"jvm-zerostate-from-alloc: "} + what +
+                                " must be exactly " + std::to_string(len) +
+                                " bytes (got " + std::to_string(b.size()) + ")"};
+        }
+      };
+
+  if (stack.depth() < 3) {
+    throw fift::IntError{
+        "jvm-zerostate-from-alloc: expected (T class_bytes stdlib_hash) "
+        "on top of stack"};
+  }
+
+  // pop stdlib_hash
+  if (stack[0].type() != vm::StackEntry::t_bytes) {
+    throw fift::IntError{
+        "jvm-zerostate-from-alloc: stdlib_hash must be bytes (B{...})"};
+  }
+  std::string stdlib_hash_str = stack.pop_bytes();
+  require_bytes_len(stdlib_hash_str, "stdlib_hash", 32);
+  std::array<std::uint8_t, 32> stdlib_hash{};
+  std::memcpy(stdlib_hash.data(), stdlib_hash_str.data(), 32);
+
+  // pop class_bytes
+  if (stack[0].type() != vm::StackEntry::t_bytes) {
+    throw fift::IntError{
+        "jvm-zerostate-from-alloc: class_bytes must be bytes (B{...})"};
+  }
+  std::string class_bytes_str = stack.pop_bytes();
+  if (class_bytes_str.empty()) {
+    throw fift::IntError{
+        "jvm-zerostate-from-alloc: class_bytes cannot be empty"};
+  }
+
+  // pop tuple of wallets
+  auto outer = stack.pop_tuple();
+  if (outer.is_null()) {
+    throw fift::IntError{
+        "jvm-zerostate-from-alloc: expected a tuple of wallet declarations"};
+  }
+
+  std::vector<JvmGenesisWallet> wallets;
+  wallets.reserve(outer->size());
+
+  for (size_t i = 0; i < outer->size(); ++i) {
+    const vm::StackEntry& entry_se = outer->at(i);
+    if (!entry_se.is_tuple()) {
+      throw fift::IntError{
+          "jvm-zerostate-from-alloc: each element must be a 3-tuple"};
+    }
+    auto entry = entry_se.as_tuple();
+    if (entry.is_null() || entry->size() != 3) {
+      throw fift::IntError{
+          "jvm-zerostate-from-alloc: each element must be a 3-tuple "
+          "(owner_pubkey, salt, balance)"};
+    }
+
+    // [0] owner_pubkey — 32 bytes
+    if (entry->at(0).type() != vm::StackEntry::t_bytes) {
+      throw fift::IntError{
+          "jvm-zerostate-from-alloc: owner_pubkey must be bytes"};
+    }
+    std::string owner_str = entry->at(0).as_bytes();
+    require_bytes_len(owner_str, "owner_pubkey", 32);
+
+    // [1] salt — 32 bytes
+    if (entry->at(1).type() != vm::StackEntry::t_bytes) {
+      throw fift::IntError{"jvm-zerostate-from-alloc: salt must be bytes"};
+    }
+    std::string salt_str = entry->at(1).as_bytes();
+    require_bytes_len(salt_str, "salt", 32);
+
+    // [2] balance — non-negative integer fits in 120 bits (Grams range).
+    if (!entry->at(2).is_int()) {
+      throw fift::IntError{
+          "jvm-zerostate-from-alloc: balance must be integer"};
+    }
+    auto balance_int = entry->at(2).as_int();
+    if (balance_int.is_null() || !balance_int->is_valid()
+        || balance_int->sgn() < 0) {
+      throw fift::IntError{
+          "jvm-zerostate-from-alloc: balance must be non-negative"};
+    }
+    if (balance_int->bit_size(false) > 120) {
+      throw fift::IntError{
+          "jvm-zerostate-from-alloc: balance exceeds 120 bits (Grams)"};
+    }
+
+    JvmGenesisWallet w;
+    std::memcpy(w.owner_pubkey.data(), owner_str.data(), 32);
+    std::memcpy(w.salt.data(), salt_str.data(), 32);
+    w.initial_balance = balance_int;
+    wallets.push_back(std::move(w));
+  }
+
+  Ref<vm::Cell> cell = jvm_workchain::build_jvm_zerostate_accounts_cell(
+      wallets, stdlib_hash, td::Slice(class_bytes_str));
+  if (cell.is_null()) {
+    throw fift::IntError{
+        "jvm-zerostate-from-alloc: could not build accounts cell "
+        "(likely a duplicate wallet address or a malformed class)"};
+  }
+  stack.push_cell(std::move(cell));
+}
+
 // Returns a ConfigParam 85 cell populated with the canonical JVM v1 activation
 // parameters (chain_id=3, gas_schedule_version=1, tiered opcode costs).
 // Intended for genesis tooling — wires ConfigParam 85 into the masterchain
@@ -944,6 +1075,12 @@ void init_words_custom(fift::Dictionary& d) {
   // the single JVM executor account (0x00…01) as acc_uninit, so the collator
   // can route JvmCallDescriptor / JvmDeployDescriptor ext_in_msgs from block 0.
   d.def_stack_word("jvm-zerostate-accounts-cell ", interpret_jvm_zerostate_accounts_cell);
+  // JVM ShardAccounts cell pre-seeded from a list of Ed25519 wallet
+  // declarations.  Mirrors `evm-zerostate-from-alloc`; lets operators
+  // bootstrap wc=3 with the very first set of senders so subsequent
+  // contracts can be deployed through the standard
+  // `action_create_account` path.
+  d.def_stack_word("jvm-zerostate-from-alloc ", interpret_jvm_zerostate_from_alloc);
   // JVM ConfigParam 85 cell with canonical v1 activation parameters.
   d.def_stack_word("jvm-config-param-cell ", interpret_jvm_config_param_cell);
   d.def_stack_word("isShardState? ", interpret_is_shard_state);

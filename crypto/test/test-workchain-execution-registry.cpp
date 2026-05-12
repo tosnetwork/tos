@@ -34,6 +34,7 @@
 #include "jvm/core/deploy-abi.h"
 #include "jvm/core/dispatch-engine.h"
 #include "jvm/core/event-host.h"
+#include "jvm/core/genesis-wallet.h"
 #include "jvm/core/message-abi.h"
 #include "jvm/core/rpc.h"
 #include "jvm/core/storage-cell-host.h"
@@ -46,6 +47,8 @@
 #include "vm/dict.h"
 
 #include <cstdint>
+#include <cstring>
+#include <ethash/keccak.hpp>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -3529,6 +3532,220 @@ TEST(WorkchainExecutionRegistry, PreflightRejectsUnsupportedCustomAccountPolicie
 // ---------------------------------------------------------------------------
 // JVM zerostate
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Phase F: wc=3 genesis wallet seeding.
+// ---------------------------------------------------------------------------
+
+namespace jvm_genesis_test {
+
+// A class blob substitute: real Wallet.class bytes are 2-3 KiB.  For the
+// genesis tests we only assert encoding / address-derivation properties,
+// so a small distinct byte string suffices to drive a non-trivial
+// class_hash through the address derivation.
+inline std::string fake_wallet_class_bytes() {
+    std::string out(256, '\0');
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        out[i] = static_cast<char>(i & 0xff);
+    }
+    return out;
+}
+
+inline std::array<std::uint8_t, 32> stdlib_hash_fixture() {
+    std::array<std::uint8_t, 32> out{};
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        out[i] = static_cast<std::uint8_t>(0xa0 + i);
+    }
+    return out;
+}
+
+inline jvm_workchain::JvmGenesisWallet make_wallet(std::uint8_t tag) {
+    jvm_workchain::JvmGenesisWallet w;
+    for (std::size_t i = 0; i < w.owner_pubkey.size(); ++i) {
+        w.owner_pubkey[i] = static_cast<std::uint8_t>(tag * 7 + i);
+    }
+    for (std::size_t i = 0; i < w.salt.size(); ++i) {
+        w.salt[i] = static_cast<std::uint8_t>(tag * 13 + i);
+    }
+    w.initial_balance = td::make_refint(1'000'000'000ULL);
+    return w;
+}
+
+}  // namespace jvm_genesis_test
+
+TEST(JvmWorkchainCore, GenesisWalletBuildIsDeterministic) {
+  // Two builds with identical inputs must produce byte-identical Account
+  // cells.  This is the property genesis builders rely on: the same
+  // zerostate script run on different machines must produce the same
+  // network state.
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto class_bytes = fake_wallet_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+  auto wallet = make_wallet(1);
+
+  auto a = build_jvm_genesis_wallet(wallet, stdlib, td::Slice(class_bytes));
+  CHECK(a.is_ok());
+  auto b = build_jvm_genesis_wallet(wallet, stdlib, td::Slice(class_bytes));
+  CHECK(b.is_ok());
+  CHECK(a.ok().address == b.ok().address);
+  CHECK(a.ok().account_cell->get_hash()
+        == b.ok().account_cell->get_hash());
+}
+
+TEST(JvmWorkchainCore, GenesisWalletAddressBindingMatchesDispatchGate) {
+  // dispatch-engine.cpp recomputes the expected address from the
+  // (deployer, address_commit, class_hash, manifest_root) tuple stored
+  // inside the JVAC, and rejects any account whose stored address
+  // doesn't match.  Genesis wallets MUST satisfy this property — if
+  // not, every wc=3 transaction against a seeded wallet would fail
+  // sk_bad_state.  This test re-derives the address from the encoded
+  // JVAC the same way the dispatch engine would.
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto class_bytes = fake_wallet_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+  auto wallet = make_wallet(2);
+
+  auto build = build_jvm_genesis_wallet(
+      wallet, stdlib, td::Slice(class_bytes)).move_as_ok();
+
+  JvmContractAccountState decoded;
+  CHECK(decode_jvm_contract_account_state(
+            build.contract_account_state_cell, decoded));
+  CHECK(decoded.deployer == kJvmGenesisDeployer);
+  CHECK(decoded.stdlib_hash == stdlib);
+
+  auto manifest_hash = compute_jvm_manifest_root_hash(decoded.manifest_root);
+  auto rederived = derive_jvm_contract_address_from_state(
+      decoded.deployer,
+      decoded.address_commit,
+      decoded.class_hash,
+      manifest_hash);
+
+  CHECK(rederived == build.address);
+}
+
+TEST(JvmWorkchainCore, GenesisWalletStorageSlotsMatchWalletInit) {
+  // The seeded storage_root must contain exactly the three slots
+  // `Wallet.init(ownerPubKey)` would have written — same keccak256 slot
+  // derivation, same values.  Otherwise the on-chain Wallet.execute()
+  // would see no INIT_FLAG and revert with NotInitialized.
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto class_bytes = fake_wallet_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+  auto wallet = make_wallet(3);
+
+  auto build = build_jvm_genesis_wallet(
+      wallet, stdlib, td::Slice(class_bytes)).move_as_ok();
+
+  JvmContractAccountState decoded;
+  CHECK(decode_jvm_contract_account_state(
+            build.contract_account_state_cell, decoded));
+  CHECK(decoded.storage_root.not_null());
+
+  JvmStorageCellHost storage(decoded.storage_root);
+
+  auto keccak_slot = [](const char* name) -> JvmStorageSlot {
+      auto digest = ethash::keccak256(
+          reinterpret_cast<const std::uint8_t*>(name), std::strlen(name));
+      JvmStorageSlot s{};
+      std::memcpy(s.data(), digest.bytes, 32);
+      return s;
+  };
+
+  auto owner = storage.load(keccak_slot("Wallet.ownerPubKey")).move_as_ok();
+  CHECK(owner.has_value());
+  CHECK(owner.value().size() == 32);
+  for (std::size_t i = 0; i < 32; ++i) {
+      CHECK(owner.value()[i] == wallet.owner_pubkey[i]);
+  }
+
+  auto nonce = storage.load(keccak_slot("Wallet.nonce")).move_as_ok();
+  CHECK(nonce.has_value());
+  CHECK(nonce.value().size() == 32);
+  for (std::size_t i = 0; i < 32; ++i) {
+      CHECK(nonce.value()[i] == 0);
+  }
+
+  auto flag = storage.load(keccak_slot("Wallet.initFlag")).move_as_ok();
+  CHECK(flag.has_value());
+  CHECK(flag.value().size() == 1);
+  CHECK(flag.value()[0] == 0x01);
+}
+
+TEST(JvmWorkchainCore, GenesisWalletDifferentSaltProducesDifferentAddresses) {
+  // Two wallets with the same owner pubkey but different salts must
+  // resolve to different wc=3 addresses (the chain's basic "salt
+  // disambiguates instances" property).
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto class_bytes = fake_wallet_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+
+  auto w1 = make_wallet(4);
+  auto w2 = make_wallet(4);
+  // Mutate only the salt.
+  for (std::size_t i = 0; i < w2.salt.size(); ++i) {
+      w2.salt[i] = static_cast<std::uint8_t>(w2.salt[i] ^ 0x55);
+  }
+  CHECK(w1.owner_pubkey == w2.owner_pubkey);
+  CHECK(w1.salt != w2.salt);
+
+  auto a = build_jvm_genesis_wallet(w1, stdlib, td::Slice(class_bytes))
+              .move_as_ok();
+  auto b = build_jvm_genesis_wallet(w2, stdlib, td::Slice(class_bytes))
+              .move_as_ok();
+  CHECK(a.address != b.address);
+}
+
+TEST(JvmWorkchainCore, GenesisZerostateAccountsCellEmbedsAllWallets) {
+  // The parameterized zerostate builder must produce a dict whose
+  // entries iterate exactly the supplied wallets, keyed on their
+  // derived wc=3 addresses.
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto class_bytes = fake_wallet_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+  std::vector<JvmGenesisWallet> wallets{
+      make_wallet(5), make_wallet(6), make_wallet(7),
+  };
+
+  std::vector<JvmContractId> expected_addrs;
+  for (const auto& w : wallets) {
+      auto built = build_jvm_genesis_wallet(w, stdlib, td::Slice(class_bytes))
+                       .move_as_ok();
+      expected_addrs.push_back(built.address);
+  }
+
+  auto cell = build_jvm_zerostate_accounts_cell(wallets, stdlib,
+                                                 td::Slice(class_bytes));
+  CHECK(cell.not_null());
+
+  // Determinism: building twice yields identical hashes.
+  auto cell2 = build_jvm_zerostate_accounts_cell(wallets, stdlib,
+                                                  td::Slice(class_bytes));
+  CHECK(cell2.not_null());
+  CHECK(cell->get_hash() == cell2->get_hash());
+
+  // Every wallet's address must appear in the dict.
+  vm::AugmentedDictionary accounts_dict(vm::load_cell_slice_ref(cell), 256,
+                                        block::tlb::aug_ShardAccounts);
+  std::size_t entries = 0;
+  for (const auto& expected_addr : expected_addrs) {
+      auto bits = td::ConstBitPtr{expected_addr.data()};
+      auto value = accounts_dict.lookup(bits, 256);
+      CHECK(value.not_null());
+      ++entries;
+  }
+  CHECK(entries == wallets.size());
+}
 
 TEST(JvmWorkchainCore, ZerostateAccountsCellIsEmpty) {
   // Under v2 account-native topology the wc=3 genesis shard ships with no
