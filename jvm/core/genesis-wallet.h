@@ -87,4 +87,39 @@ td::Result<JvmGenesisWalletBuild> build_jvm_genesis_wallet(
     const std::array<std::uint8_t, 32>& stdlib_hash,
     td::Slice wallet_class_bytes);
 
+// Genesis Deployer declaration.  Structurally mirrors `JvmGenesisWallet`
+// but lands the account at a `java.lang.Deployer`-shaped address: the
+// derived address binds the Deployer manifest (init/deploy/getNonce)
+// and the Deployer slot-name prefix.
+//
+// Why this is distinct from JvmGenesisWallet: the address binding gate
+// at `dispatch-engine.cpp` checks `manifest_root_hash`, so a Deployer
+// at the same (owner_pubkey, salt) as a Wallet derives to a different
+// wc=3 address.  Mixing them in one genesis dict therefore cannot
+// collide.  The Deployer is the only contract on a fresh wc=3 chain
+// that can emit `action_create_account` — without at least one
+// genesis Deployer, no further wc=3 contracts can ever be deployed.
+struct JvmGenesisDeployer {
+    std::array<std::uint8_t, 32> owner_pubkey{};
+    std::array<std::uint8_t, 32> salt{};
+    td::RefInt256 initial_balance;
+};
+
+// Result of `build_jvm_genesis_deployer`.  Same shape as the wallet
+// build — distinct type only to keep call sites self-documenting.
+struct JvmGenesisDeployerBuild {
+    JvmContractId address{};
+    td::Ref<vm::Cell> shard_account_cell;
+    td::Ref<vm::Cell> account_cell;
+    td::Ref<vm::Cell> contract_account_state_cell;
+};
+
+// Build the per-Deployer bits.  `deployer_class_bytes` is the canonical
+// rt.jar Deployer.class bytecode (NOT the Wallet bytecode — they must
+// be admitted separately by the contract-profile header).
+td::Result<JvmGenesisDeployerBuild> build_jvm_genesis_deployer(
+    const JvmGenesisDeployer& deployer,
+    const std::array<std::uint8_t, 32>& stdlib_hash,
+    td::Slice deployer_class_bytes);
+
 }  // namespace jvm_workchain

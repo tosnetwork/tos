@@ -68,4 +68,30 @@ td::Ref<vm::Cell> build_jvm_zerostate_accounts_cell(
     const std::array<std::uint8_t, 32>& stdlib_hash,
     td::Slice wallet_class_bytes);
 
+/// Build the ShardAccounts cell with N pre-seeded wallets AND M
+/// pre-seeded Deployers in the same dict.
+///
+/// Wallets-only genesis is unable to deploy any further wc=3 contract
+/// because `java.lang.Wallet` exposes only `System.sendMessage`, not
+/// `System.createAccount`.  A working network therefore needs at
+/// least one genesis Deployer (or it must be willing to bind a
+/// Deployer at launch via inbound-from-masterchain machinery, which
+/// is not implemented).
+///
+/// Wallet and Deployer entries land in the same `aug_ShardAccounts`
+/// dict keyed on their derived wc=3 addresses.  Because the dispatch
+/// engine's address binding gate hashes the manifest_root in, a
+/// (owner_pubkey, salt) shared between a Wallet and a Deployer
+/// resolves to two distinct addresses — they cannot collide.
+///
+/// Returns null on any per-account encoding failure, on duplicate
+/// derived address, or if the combined count exceeds
+/// `kJvmGenesisWalletCountMax`.
+td::Ref<vm::Cell> build_jvm_zerostate_accounts_cell(
+    const std::vector<JvmGenesisWallet>& wallets,
+    td::Slice wallet_class_bytes,
+    const std::vector<JvmGenesisDeployer>& deployers,
+    td::Slice deployer_class_bytes,
+    const std::array<std::uint8_t, 32>& stdlib_hash);
+
 }  // namespace jvm_workchain

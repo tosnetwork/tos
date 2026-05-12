@@ -765,6 +765,187 @@ void interpret_jvm_zerostate_from_alloc(vm::Stack& stack) {
   stack.push_cell(std::move(cell));
 }
 
+// Shared per-tuple parser: a 3-tuple of (owner_pubkey:Bytes,
+// salt:Bytes, balance:Int) becomes a (pubkey, salt, balance) triple.
+// `word_name` is used only for error messages so each caller sees the
+// correct Fift word name in failures.
+namespace {
+
+struct ParsedGenesisAccount {
+  std::array<std::uint8_t, 32> owner_pubkey{};
+  std::array<std::uint8_t, 32> salt{};
+  td::RefInt256 initial_balance;
+};
+
+ParsedGenesisAccount parse_genesis_account_tuple(
+    const vm::StackEntry& entry_se, const char* word_name) {
+  auto fail = [&](const std::string& msg) {
+    throw fift::IntError{std::string{word_name} + ": " + msg};
+  };
+  if (!entry_se.is_tuple()) {
+    fail("each element must be a 3-tuple");
+  }
+  auto entry = entry_se.as_tuple();
+  if (entry.is_null() || entry->size() != 3) {
+    fail("each element must be a 3-tuple (owner_pubkey, salt, balance)");
+  }
+  if (entry->at(0).type() != vm::StackEntry::t_bytes) {
+    fail("owner_pubkey must be bytes");
+  }
+  std::string owner_str = entry->at(0).as_bytes();
+  if (owner_str.size() != 32) {
+    fail("owner_pubkey must be exactly 32 bytes (got "
+         + std::to_string(owner_str.size()) + ")");
+  }
+  if (entry->at(1).type() != vm::StackEntry::t_bytes) {
+    fail("salt must be bytes");
+  }
+  std::string salt_str = entry->at(1).as_bytes();
+  if (salt_str.size() != 32) {
+    fail("salt must be exactly 32 bytes (got "
+         + std::to_string(salt_str.size()) + ")");
+  }
+  if (!entry->at(2).is_int()) {
+    fail("balance must be integer");
+  }
+  auto balance_int = entry->at(2).as_int();
+  if (balance_int.is_null() || !balance_int->is_valid()
+      || balance_int->sgn() < 0) {
+    fail("balance must be non-negative");
+  }
+  if (balance_int->bit_size(false) > 120) {
+    fail("balance exceeds 120 bits (Grams)");
+  }
+
+  ParsedGenesisAccount out;
+  std::memcpy(out.owner_pubkey.data(), owner_str.data(), 32);
+  std::memcpy(out.salt.data(), salt_str.data(), 32);
+  out.initial_balance = balance_int;
+  return out;
+}
+
+}  // namespace
+
+// Variant of `jvm-zerostate-from-alloc` that ALSO seeds N
+// `java.lang.Deployer` accounts in the same ShardAccounts dict.
+//
+// Why this exists: a Wallet exposes only `System.sendMessage`, so a
+// chain with only genesis Wallets cannot emit `action_create_account`
+// — it can move funds but never deploy.  Seeding at least one
+// Deployer at genesis is what unlocks runtime contract deployment.
+//
+// Stack: ( walletT walletClassBytes deployerT deployerClassBytes stdlib_hash
+//         -- accounts_cell )
+//
+// Where each entry tuple (walletT / deployerT) is a tuple of 3-tuples
+// (owner_pubkey:bytes, salt:bytes, balance:int) — same shape both lists
+// use, since Wallet and Deployer share the same install-time inputs.
+// Either tuple may be empty.
+//
+// The combined wallet+deployer count is capped at
+// `kJvmGenesisWalletCountMax`.
+void interpret_jvm_zerostate_with_deployers_from_alloc(vm::Stack& stack) {
+  using jvm_workchain::JvmGenesisDeployer;
+  using jvm_workchain::JvmGenesisWallet;
+  constexpr const char* kWord = "jvm-zerostate-with-deployers-from-alloc";
+
+  if (stack.depth() < 5) {
+    throw fift::IntError{std::string{kWord} + ": expected (walletT "
+                          "walletClassBytes deployerT deployerClassBytes "
+                          "stdlib_hash) on top of stack"};
+  }
+
+  if (stack[0].type() != vm::StackEntry::t_bytes) {
+    throw fift::IntError{std::string{kWord} + ": stdlib_hash must be bytes"};
+  }
+  std::string stdlib_hash_str = stack.pop_bytes();
+  if (stdlib_hash_str.size() != 32) {
+    throw fift::IntError{std::string{kWord} + ": stdlib_hash must be exactly "
+                          "32 bytes (got "
+                          + std::to_string(stdlib_hash_str.size()) + ")"};
+  }
+  std::array<std::uint8_t, 32> stdlib_hash{};
+  std::memcpy(stdlib_hash.data(), stdlib_hash_str.data(), 32);
+
+  if (stack[0].type() != vm::StackEntry::t_bytes) {
+    throw fift::IntError{std::string{kWord}
+                          + ": deployer_class_bytes must be bytes"};
+  }
+  std::string deployer_class_bytes_str = stack.pop_bytes();
+
+  auto deployer_outer = stack.pop_tuple();
+  if (deployer_outer.is_null()) {
+    throw fift::IntError{std::string{kWord}
+                          + ": expected a tuple of deployer declarations"};
+  }
+
+  if (stack[0].type() != vm::StackEntry::t_bytes) {
+    throw fift::IntError{std::string{kWord}
+                          + ": wallet_class_bytes must be bytes"};
+  }
+  std::string wallet_class_bytes_str = stack.pop_bytes();
+
+  auto wallet_outer = stack.pop_tuple();
+  if (wallet_outer.is_null()) {
+    throw fift::IntError{std::string{kWord}
+                          + ": expected a tuple of wallet declarations"};
+  }
+
+  // Enforce class-bytes presence consistent with what each seed actually
+  // requires: if there are wallets, wallet_class_bytes must be non-empty;
+  // same for deployers.  An empty seed list with empty class_bytes is
+  // legal (lets operators run with deployers-only or wallets-only).
+  if (!wallet_outer->empty() && wallet_class_bytes_str.empty()) {
+    throw fift::IntError{std::string{kWord} + ": wallet_class_bytes is empty "
+                          "but wallet tuple is non-empty"};
+  }
+  if (!deployer_outer->empty() && deployer_class_bytes_str.empty()) {
+    throw fift::IntError{std::string{kWord} + ": deployer_class_bytes is "
+                          "empty but deployer tuple is non-empty"};
+  }
+
+  if (wallet_outer->size() + deployer_outer->size()
+      > jvm_workchain::kJvmGenesisWalletCountMax) {
+    throw fift::IntError{
+        std::string{kWord} + ": combined wallet+deployer count exceeds the "
+        "launch cap of "
+        + std::to_string(jvm_workchain::kJvmGenesisWalletCountMax) + " (got "
+        + std::to_string(wallet_outer->size() + deployer_outer->size()) + ")"};
+  }
+
+  std::vector<JvmGenesisWallet> wallets;
+  wallets.reserve(wallet_outer->size());
+  for (size_t i = 0; i < wallet_outer->size(); ++i) {
+    auto parsed = parse_genesis_account_tuple(wallet_outer->at(i), kWord);
+    JvmGenesisWallet w;
+    w.owner_pubkey = parsed.owner_pubkey;
+    w.salt = parsed.salt;
+    w.initial_balance = parsed.initial_balance;
+    wallets.push_back(std::move(w));
+  }
+
+  std::vector<JvmGenesisDeployer> deployers;
+  deployers.reserve(deployer_outer->size());
+  for (size_t i = 0; i < deployer_outer->size(); ++i) {
+    auto parsed = parse_genesis_account_tuple(deployer_outer->at(i), kWord);
+    JvmGenesisDeployer d;
+    d.owner_pubkey = parsed.owner_pubkey;
+    d.salt = parsed.salt;
+    d.initial_balance = parsed.initial_balance;
+    deployers.push_back(std::move(d));
+  }
+
+  Ref<vm::Cell> cell = jvm_workchain::build_jvm_zerostate_accounts_cell(
+      wallets, td::Slice(wallet_class_bytes_str), deployers,
+      td::Slice(deployer_class_bytes_str), stdlib_hash);
+  if (cell.is_null()) {
+    throw fift::IntError{
+        std::string{kWord} + ": could not build accounts cell (likely a "
+        "duplicate address or a malformed class)"};
+  }
+  stack.push_cell(std::move(cell));
+}
+
 // Returns a ConfigParam 85 cell populated with the canonical JVM v1 activation
 // parameters (chain_id=3, gas_schedule_version=1, tiered opcode costs).
 // Intended for genesis tooling — wires ConfigParam 85 into the masterchain
@@ -1129,6 +1310,11 @@ void init_words_custom(fift::Dictionary& d) {
   // contracts can be deployed through the standard
   // `action_create_account` path.
   d.def_stack_word("jvm-zerostate-from-alloc ", interpret_jvm_zerostate_from_alloc);
+  // Combined wallet+deployer seed.  Required for any chain that wants
+  // runtime contract deployment from block 0: a Wallet-only zerostate
+  // has no contract that can emit `action_create_account`.
+  d.def_stack_word("jvm-zerostate-with-deployers-from-alloc ",
+                   interpret_jvm_zerostate_with_deployers_from_alloc);
   // JVM ConfigParam 85 cell with canonical v1 activation parameters.
   d.def_stack_word("jvm-config-param-cell ", interpret_jvm_config_param_cell);
   // JVM ConfigParam 85 cell with `stdlib_hash = sha256(stdlib_bytes)`.

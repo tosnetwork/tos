@@ -753,8 +753,11 @@ impl JvmWalletDeployCmd {
 
         // 7. Wrap as external-in message to the Deployer's wc=3
         // account.  The validator's wc=3 admission accepts external
-        // inbound for already-active accounts (the Deployer is
-        // genesis-seeded in the canonical workflow).
+        // inbound for already-active accounts.  The canonical
+        // workflow is to seed the Deployer at genesis via the Fift
+        // word `jvm-zerostate-with-deployers-from-alloc`
+        // (`crypto/block/create-state.cpp`); see
+        // `doc/jvm-mainnet-activation.md` §3.
         let ext_msg_boc =
             build_ext_in_message(3, deployer_addr, deploy_call_cell)?;
 

@@ -82,4 +82,56 @@ td::Ref<vm::Cell> build_jvm_zerostate_accounts_cell(
     return finalize_accounts_dict(accounts_dict);
 }
 
+td::Ref<vm::Cell> build_jvm_zerostate_accounts_cell(
+    const std::vector<JvmGenesisWallet>& wallets,
+    td::Slice wallet_class_bytes,
+    const std::vector<JvmGenesisDeployer>& deployers,
+    td::Slice deployer_class_bytes,
+    const std::array<std::uint8_t, 32>& stdlib_hash) {
+    // The combined cap applies to total ShardAccounts entries, since
+    // wallet and deployer accounts share one dict.  An operator that
+    // declares e.g. 200 wallets + 100 deployers is almost certainly
+    // mis-scripting genesis — fail loudly at this gate.
+    if (wallets.size() + deployers.size() > kJvmGenesisWalletCountMax) {
+        return {};
+    }
+    vm::AugmentedDictionary accounts_dict(256, block::tlb::aug_ShardAccounts);
+
+    auto insert = [&](td::ConstBitPtr key, td::Ref<vm::Cell> shard_entry)
+        -> bool {
+        auto entry_cs = vm::load_cell_slice(shard_entry);
+        vm::CellBuilder vcb;
+        if (!vcb.append_cellslice_bool(std::move(entry_cs))) {
+            return false;
+        }
+        return accounts_dict.set_builder(key, 256, vcb);
+    };
+
+    for (const auto& wallet : wallets) {
+        auto built_res = build_jvm_genesis_wallet(wallet, stdlib_hash,
+                                                   wallet_class_bytes);
+        if (built_res.is_error()) {
+            return {};
+        }
+        auto built = built_res.move_as_ok();
+        if (!insert(td::ConstBitPtr{built.address.data()},
+                    std::move(built.shard_account_cell))) {
+            return {};
+        }
+    }
+    for (const auto& deployer : deployers) {
+        auto built_res = build_jvm_genesis_deployer(deployer, stdlib_hash,
+                                                     deployer_class_bytes);
+        if (built_res.is_error()) {
+            return {};
+        }
+        auto built = built_res.move_as_ok();
+        if (!insert(td::ConstBitPtr{built.address.data()},
+                    std::move(built.shard_account_cell))) {
+            return {};
+        }
+    }
+    return finalize_accounts_dict(accounts_dict);
+}
+
 }  // namespace jvm_workchain

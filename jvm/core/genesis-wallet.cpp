@@ -49,21 +49,27 @@ std::uint32_t method_id_for(const char* abi_signature) {
          |  static_cast<std::uint32_t>(hash[3]);
 }
 
-// Build the three-slot storage_root that mirrors what
-// `java.lang.Wallet.init(ownerPubKey)` would have written.
-td::Result<td::Ref<vm::Cell>> build_wallet_storage_root(
-    const std::array<std::uint8_t, 32>& owner_pubkey) {
+// Build the three-slot storage_root for an Ed25519-authenticated
+// single-owner contract.  Wallet and Deployer share the same storage
+// shape (ownerPubKey / nonce / initFlag); only the slot-name prefix
+// differs (`Wallet.*` vs `Deployer.*`).  Both prefixes are
+// consensus-stable strings the on-chain runtime hashes the same way.
+td::Result<td::Ref<vm::Cell>> build_owner_nonce_storage_root(
+    const std::array<std::uint8_t, 32>& owner_pubkey,
+    const char* owner_slot_name,
+    const char* nonce_slot_name,
+    const char* flag_slot_name) {
     JvmStorageCellHost storage;
 
-    auto owner_slot = slot_for("Wallet.ownerPubKey");
+    auto owner_slot = slot_for(owner_slot_name);
     JvmStorageValue owner_value(owner_pubkey.begin(), owner_pubkey.end());
     TRY_STATUS(storage.store(owner_slot, owner_value));
 
-    auto nonce_slot = slot_for("Wallet.nonce");
+    auto nonce_slot = slot_for(nonce_slot_name);
     JvmStorageValue nonce_value(32, 0);  // Uint256.ZERO
     TRY_STATUS(storage.store(nonce_slot, nonce_value));
 
-    auto flag_slot = slot_for("Wallet.initFlag");
+    auto flag_slot = slot_for(flag_slot_name);
     JvmStorageValue flag_value{static_cast<std::uint8_t>(0x01)};
     TRY_STATUS(storage.store(flag_slot, flag_value));
 
@@ -98,7 +104,41 @@ td::Ref<vm::Cell> build_wallet_manifest_cell() {
     return encode_jvm_method_manifest(entries);
 }
 
-td::Ref<vm::Cell> build_wallet_init_args(
+// Manifest for `java.lang.Deployer`.  ABI signatures mirror the four-
+// byte selectors the off-chain JvmDeployerContract (tosctl Rust side)
+// derives from the same strings; method specs are the JNI descriptors
+// that match the @ContractEntry surface in `Deployer.java`.
+td::Ref<vm::Cell> build_deployer_manifest_cell() {
+    std::vector<JvmMethodManifestEntry> entries;
+
+    JvmMethodManifestEntry init_entry;
+    init_entry.method_id = method_id_for("init(bytes32)");
+    init_entry.class_name = "java/lang/Deployer";
+    init_entry.method_name = "init";
+    init_entry.method_spec = "(Ljava/lang/Bytes32;)V";
+    entries.push_back(std::move(init_entry));
+
+    JvmMethodManifestEntry deploy_entry;
+    deploy_entry.method_id = method_id_for(
+        "deploy(uint256,bytes32,bytes,uint256,bytes,bytes)");
+    deploy_entry.class_name = "java/lang/Deployer";
+    deploy_entry.method_name = "deploy";
+    deploy_entry.method_spec =
+        "(Ljava/lang/Uint256;Ljava/lang/Bytes32;Ljava/lang/Bytes;"
+        "Ljava/lang/Uint256;Ljava/lang/Bytes;Ljava/lang/Bytes;)V";
+    entries.push_back(std::move(deploy_entry));
+
+    JvmMethodManifestEntry get_nonce_entry;
+    get_nonce_entry.method_id = method_id_for("getNonce()");
+    get_nonce_entry.class_name = "java/lang/Deployer";
+    get_nonce_entry.method_name = "getNonce";
+    get_nonce_entry.method_spec = "()V";
+    entries.push_back(std::move(get_nonce_entry));
+
+    return encode_jvm_method_manifest(entries);
+}
+
+td::Ref<vm::Cell> build_owner_init_args(
     const std::array<std::uint8_t, 32>& owner_pubkey) {
     JvmArgs args;
     JvmTypedArg arg;
@@ -206,7 +246,7 @@ td::Result<JvmGenesisWalletBuild> build_jvm_genesis_wallet(
                                      wallet_class_bytes.uend());
     auto class_hash = compute_jvm_class_hash(class_bytes_vec);
 
-    auto init_args_cell = build_wallet_init_args(wallet.owner_pubkey);
+    auto init_args_cell = build_owner_init_args(wallet.owner_pubkey);
     if (init_args_cell.is_null()) {
         return td::Status::Error(
             "JVM genesis wallet build: init_args encode failed");
@@ -227,7 +267,11 @@ td::Result<JvmGenesisWalletBuild> build_jvm_genesis_wallet(
 
     // Encode the JVAC state cell with pre-populated storage_root that
     // mirrors `Wallet.init(ownerPubKey)` outputs.
-    TRY_RESULT(storage_root, build_wallet_storage_root(wallet.owner_pubkey));
+    TRY_RESULT(storage_root, build_owner_nonce_storage_root(
+                                 wallet.owner_pubkey,
+                                 "Wallet.ownerPubKey",
+                                 "Wallet.nonce",
+                                 "Wallet.initFlag"));
 
     JvmContractAccountState state;
     state.schema_version = kJvmContractAccountStateSchemaVersion;
@@ -273,6 +317,99 @@ td::Result<JvmGenesisWalletBuild> build_jvm_genesis_wallet(
     }
 
     JvmGenesisWalletBuild built;
+    built.address = address;
+    built.shard_account_cell = std::move(shard_entry);
+    built.account_cell = std::move(account_cell);
+    built.contract_account_state_cell = std::move(contract_state_cell);
+    return built;
+}
+
+td::Result<JvmGenesisDeployerBuild> build_jvm_genesis_deployer(
+    const JvmGenesisDeployer& deployer,
+    const std::array<std::uint8_t, 32>& stdlib_hash,
+    td::Slice deployer_class_bytes) {
+    if (deployer_class_bytes.empty()) {
+        return td::Status::Error(
+            "JVM genesis deployer build: empty class bytes");
+    }
+    if (deployer.initial_balance.is_null()) {
+        return td::Status::Error(
+            "JVM genesis deployer build: null initial balance");
+    }
+
+    JvmStorageValue class_bytes_vec(deployer_class_bytes.ubegin(),
+                                     deployer_class_bytes.uend());
+    auto class_hash = compute_jvm_class_hash(class_bytes_vec);
+
+    auto init_args_cell = build_owner_init_args(deployer.owner_pubkey);
+    if (init_args_cell.is_null()) {
+        return td::Status::Error(
+            "JVM genesis deployer build: init_args encode failed");
+    }
+
+    auto address_commit = compute_jvm_address_commit(
+        kJvmGenesisDeployer, deployer.salt, init_args_cell);
+
+    auto manifest_cell = build_deployer_manifest_cell();
+    if (manifest_cell.is_null()) {
+        return td::Status::Error(
+            "JVM genesis deployer build: manifest encode failed");
+    }
+    auto manifest_hash = compute_jvm_manifest_root_hash(manifest_cell);
+
+    auto address = derive_jvm_contract_address_from_state(
+        kJvmGenesisDeployer, address_commit, class_hash, manifest_hash);
+
+    TRY_RESULT(storage_root, build_owner_nonce_storage_root(
+                                 deployer.owner_pubkey,
+                                 "Deployer.ownerPubKey",
+                                 "Deployer.nonce",
+                                 "Deployer.initFlag"));
+
+    JvmContractAccountState state;
+    state.schema_version = kJvmContractAccountStateSchemaVersion;
+    state.stdlib_hash = stdlib_hash;
+    state.class_hash = class_hash;
+    state.deployer = kJvmGenesisDeployer;
+    state.address_commit = address_commit;
+    state.class_bytes = encode_jvm_storage_value(class_bytes_vec);
+    state.storage_root = storage_root;
+    state.manifest_root = manifest_cell;
+    if (state.class_bytes.is_null()) {
+        return td::Status::Error(
+            "JVM genesis deployer build: class_bytes encode failed");
+    }
+
+    auto contract_state_cell = encode_jvm_contract_account_state(state);
+    if (contract_state_cell.is_null()) {
+        return td::Status::Error(
+            "JVM genesis deployer build: JVAC encode failed");
+    }
+
+    auto state_init_cell = encode_jvm_state_init_cell(state);
+    if (state_init_cell.is_null()) {
+        return td::Status::Error(
+            "JVM genesis deployer build: StateInit encode failed");
+    }
+
+    auto account_cell =
+        build_account_cell(address, state_init_cell, deployer.initial_balance);
+    if (account_cell.is_null()) {
+        return td::Status::Error(
+            "JVM genesis deployer build: account cell encode failed");
+    }
+    if (!block::gen::t_Account.validate_ref(account_cell)) {
+        return td::Status::Error(
+            "JVM genesis deployer build: account cell failed TLB validation");
+    }
+
+    auto shard_entry = build_shard_account_entry(account_cell);
+    if (shard_entry.is_null()) {
+        return td::Status::Error(
+            "JVM genesis deployer build: ShardAccount entry encode failed");
+    }
+
+    JvmGenesisDeployerBuild built;
     built.address = address;
     built.shard_account_cell = std::move(shard_entry);
     built.account_cell = std::move(account_cell);

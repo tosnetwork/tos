@@ -218,33 +218,63 @@ live on wc=3 — `Transaction::try_action_create_account` rejects
 genesis there is no wc=3 sender at block 0, so the first contract is
 not deployable through this flow. The only currently-supported
 bootstrap path is the **genesis seed**: pre-install one or more
-Ed25519 wallet accounts via `jvm-zerostate-from-alloc` (see §Genesis
-seeding below) so the chain has working wc=3 senders from block 0,
-and the deploy flow above can then proceed normally for every
-subsequent contract. Cross-reference: `jvm/core/zerostate.h` (the
-parameterized vs. empty zerostate builders) and
-`jvm/core/genesis-wallet.{h,cpp}` (per-wallet materialization).
+Ed25519 *Deployer* accounts (and optionally Wallet accounts) via
+`jvm-zerostate-with-deployers-from-alloc` (see §Genesis seeding
+below) so the chain has working wc=3 senders capable of emitting
+`action_create_account` from block 0, and the deploy flow above can
+then proceed normally for every subsequent contract. Cross-reference:
+`jvm/core/zerostate.h` (the parameterized vs. empty zerostate
+builders) and `jvm/core/genesis-wallet.{h,cpp}` (per-account
+materialization).
 
-## Genesis seeding (Phase F option)
+## Genesis seeding (Phase F + I option)
 
-Network operators can pre-seed wc=3 with Ed25519 wallet accounts at
-zerostate.  The Fift word `jvm-zerostate-from-alloc`
-(`crypto/block/create-state.cpp:648`, registered at line 1083)
-accepts a tuple of `(owner_pubkey:32B, salt:32B, balance:int)`
-triples; each triple becomes a fully-active wc=3 account whose
-`storage_root` is pre-populated as if `Wallet.init(ownerPubKey)` had
-already run.  This breaks the chicken-and-egg of an empty genesis:
-pre-seeded wallets can immediately emit `action_create_account` to
-deploy further wc=3 contracts (the standard `try_action_create_account`
-gate only requires that the source account live on wc=3, which a
-genesis-seeded wallet does by construction).
+Network operators can pre-seed wc=3 with two distinct kinds of
+Ed25519-authenticated account at zerostate:
 
-Fift stack signature:
+- `java.lang.Wallet` — single-owner asset holder.  Can call
+  `Wallet.execute(...)` to dispatch outbound *internal messages*
+  (via `System.sendMessage`) but **cannot** itself emit
+  `action_create_account` — its rt.jar admitted surface excludes
+  `System.createAccount`.
+
+- `java.lang.Deployer` — single-owner contract spawner.  Calls
+  `Deployer.deploy(...)` (authenticated by the same Ed25519 owner
+  key) and emits exactly one `action_create_account` per accepted
+  call.  Required if the chain wants runtime contract deployment;
+  without at least one genesis Deployer, the chain can move funds
+  but no further wc=3 contract can ever be created.
+
+The Fift word
+`jvm-zerostate-with-deployers-from-alloc`
+(`crypto/block/create-state.cpp`,
+`interpret_jvm_zerostate_with_deployers_from_alloc`) seeds both
+kinds in one ShardAccounts dict.  Each genesis account's
+`storage_root` is pre-populated as if the contract's `init(ownerPubKey)`
+had already run.  A Wallet and a Deployer with identical
+`(owner_pubkey, salt)` derive to *different* wc=3 addresses (the
+address-binding gate hashes `manifest_root_hash` in, and the two
+manifests differ), so the combined dict cannot collide.
+
+The older `jvm-zerostate-from-alloc` word remains available for
+wallets-only zerostates; it is functionally equivalent to the
+combined word with an empty deployer tuple, and a chain seeded with
+it stays in the bootstrap deadlock for contract deployment.
+
+Fift stack signatures:
 
 ```
-( T class_bytes stdlib_hash -- accounts_cell )
-where T is a tuple of 3-tuples (owner_pubkey:32B, salt:32B, balance:int).
+( wallet_alloc wallet_class_bytes deployer_alloc deployer_class_bytes
+  stdlib_hash -- accounts_cell ) jvm-zerostate-with-deployers-from-alloc
+
+( wallet_alloc class_bytes stdlib_hash -- accounts_cell ) jvm-zerostate-from-alloc
 ```
+
+Each allocation tuple holds 3-tuples
+`(owner_pubkey:32B, salt:32B, balance:int)`.  Either tuple may be
+empty in the combined form, letting an operator seed wallets-only,
+deployers-only, or any mix up to the combined cap of
+`kJvmGenesisWalletCountMax`.
 
 Each seeded account is materialized as:
 

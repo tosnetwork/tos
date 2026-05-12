@@ -3781,6 +3781,31 @@ inline jvm_workchain::JvmGenesisWallet make_wallet(std::uint8_t tag) {
     return w;
 }
 
+// Per-test class blob for Deployer.  Distinct from the wallet fixture
+// so class_hash truly differs — exercising the "different class_bytes
+// produces different derived addresses" property at the genesis layer.
+inline std::string fake_deployer_class_bytes() {
+    std::string out(256, '\0');
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        // Distinct seed pattern so class_hash differs from
+        // fake_wallet_class_bytes() while staying a non-trivial blob.
+        out[i] = static_cast<char>(((i * 5) ^ 0x77) & 0xff);
+    }
+    return out;
+}
+
+inline jvm_workchain::JvmGenesisDeployer make_deployer(std::uint8_t tag) {
+    jvm_workchain::JvmGenesisDeployer d;
+    for (std::size_t i = 0; i < d.owner_pubkey.size(); ++i) {
+        d.owner_pubkey[i] = static_cast<std::uint8_t>(tag * 7 + i);
+    }
+    for (std::size_t i = 0; i < d.salt.size(); ++i) {
+        d.salt[i] = static_cast<std::uint8_t>(tag * 13 + i);
+    }
+    d.initial_balance = td::make_refint(1'000'000'000ULL);
+    return d;
+}
+
 }  // namespace jvm_genesis_test
 
 TEST(JvmWorkchainCore, GenesisWalletBuildIsDeterministic) {
@@ -3955,6 +3980,240 @@ TEST(JvmWorkchainCore, GenesisZerostateAccountsCellEmbedsAllWallets) {
       ++entries;
   }
   CHECK(entries == wallets.size());
+}
+
+TEST(JvmWorkchainCore, GenesisDeployerBuildIsDeterministic) {
+  // The genesis deployer builder must be byte-deterministic for the
+  // same reasons the wallet builder is — every validator runs the
+  // same zerostate script and must arrive at identical Account cells.
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto class_bytes = fake_deployer_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+  auto deployer = make_deployer(11);
+
+  auto a = build_jvm_genesis_deployer(deployer, stdlib, td::Slice(class_bytes));
+  CHECK(a.is_ok());
+  auto b = build_jvm_genesis_deployer(deployer, stdlib, td::Slice(class_bytes));
+  CHECK(b.is_ok());
+  CHECK(a.ok().address == b.ok().address);
+  CHECK(a.ok().account_cell->get_hash()
+        == b.ok().account_cell->get_hash());
+}
+
+TEST(JvmWorkchainCore, GenesisDeployerAddressBindingMatchesDispatchGate) {
+  // Same dispatch-engine address-binding invariant as the wallet test,
+  // but for the Deployer manifest.  This is the property that lets a
+  // pre-seeded Deployer accept ext-in messages on day zero without
+  // tripping the JVAC->address recomputation check.
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto class_bytes = fake_deployer_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+  auto deployer = make_deployer(12);
+
+  auto build = build_jvm_genesis_deployer(
+      deployer, stdlib, td::Slice(class_bytes)).move_as_ok();
+
+  JvmContractAccountState decoded;
+  CHECK(decode_jvm_contract_account_state(
+            build.contract_account_state_cell, decoded));
+  CHECK(decoded.deployer == kJvmGenesisDeployer);
+  CHECK(decoded.stdlib_hash == stdlib);
+
+  auto manifest_hash = compute_jvm_manifest_root_hash(decoded.manifest_root);
+  auto rederived = derive_jvm_contract_address_from_state(
+      decoded.deployer,
+      decoded.address_commit,
+      decoded.class_hash,
+      manifest_hash);
+
+  CHECK(rederived == build.address);
+}
+
+TEST(JvmWorkchainCore, GenesisDeployerStorageSlotsMatchDeployerInit) {
+  // The seeded storage_root must contain the three slots
+  // `Deployer.init(ownerPubKey)` would have written, NOT the
+  // `Wallet.*` slot names.  A keccak256("Deployer.initFlag") that
+  // collides with `Wallet.initFlag` would be a fatal cross-contract
+  // confusion — verify the two namespaces are genuinely disjoint.
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto class_bytes = fake_deployer_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+  auto deployer = make_deployer(13);
+
+  auto build = build_jvm_genesis_deployer(
+      deployer, stdlib, td::Slice(class_bytes)).move_as_ok();
+
+  JvmContractAccountState decoded;
+  CHECK(decode_jvm_contract_account_state(
+            build.contract_account_state_cell, decoded));
+  CHECK(decoded.storage_root.not_null());
+
+  JvmStorageCellHost storage(decoded.storage_root);
+
+  auto keccak_slot = [](const char* name) -> JvmStorageSlot {
+      auto digest = ethash::keccak256(
+          reinterpret_cast<const std::uint8_t*>(name), std::strlen(name));
+      JvmStorageSlot s{};
+      std::memcpy(s.data(), digest.bytes, 32);
+      return s;
+  };
+
+  auto owner = storage.load(keccak_slot("Deployer.ownerPubKey"))
+                  .move_as_ok();
+  CHECK(owner.has_value());
+  CHECK(owner.value().size() == 32);
+  for (std::size_t i = 0; i < 32; ++i) {
+      CHECK(owner.value()[i] == deployer.owner_pubkey[i]);
+  }
+
+  auto nonce = storage.load(keccak_slot("Deployer.nonce")).move_as_ok();
+  CHECK(nonce.has_value());
+  CHECK(nonce.value().size() == 32);
+  for (std::size_t i = 0; i < 32; ++i) {
+      CHECK(nonce.value()[i] == 0);
+  }
+
+  auto flag = storage.load(keccak_slot("Deployer.initFlag")).move_as_ok();
+  CHECK(flag.has_value());
+  CHECK(flag.value().size() == 1);
+  CHECK(flag.value()[0] == 0x01);
+
+  // The Wallet-prefixed slots must NOT be present in a Deployer
+  // account's storage — otherwise a malicious caller could exploit
+  // a Wallet.execute() entry on a Deployer instance.
+  auto wallet_flag = storage.load(keccak_slot("Wallet.initFlag"))
+                        .move_as_ok();
+  CHECK(!wallet_flag.has_value());
+}
+
+TEST(JvmWorkchainCore, GenesisDeployerAddressDiffersFromWalletAtSameKey) {
+  // A Wallet and a Deployer with identical (owner_pubkey, salt) but
+  // differing manifests MUST derive to distinct wc=3 addresses.  This
+  // is the property that lets the combined zerostate dict mix both
+  // seed types without ever colliding.
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto wallet_class = fake_wallet_class_bytes();
+  auto deployer_class = fake_deployer_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+
+  // Identical owner_pubkey + salt across both seed types.
+  auto wallet = make_wallet(20);
+  auto deployer = make_deployer(20);
+  CHECK(wallet.owner_pubkey == deployer.owner_pubkey);
+  CHECK(wallet.salt == deployer.salt);
+
+  auto w = build_jvm_genesis_wallet(wallet, stdlib,
+                                     td::Slice(wallet_class)).move_as_ok();
+  auto d = build_jvm_genesis_deployer(deployer, stdlib,
+                                       td::Slice(deployer_class)).move_as_ok();
+  CHECK(w.address != d.address);
+}
+
+TEST(JvmWorkchainCore, GenesisDeployerEmptyClassBytesRejected) {
+  // Empty class blob is a launch-time misconfiguration — must produce
+  // a loud error, never a quietly-deployed account with an unverifiable
+  // class_hash of sha256(empty).
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto stdlib = stdlib_hash_fixture();
+  auto deployer = make_deployer(21);
+
+  auto res = build_jvm_genesis_deployer(deployer, stdlib, td::Slice{});
+  CHECK(res.is_error());
+}
+
+TEST(JvmWorkchainCore, ZerostateAccountsCellEmbedsWalletsAndDeployers) {
+  // The combined-seed zerostate builder must produce a single
+  // ShardAccounts dict whose entries iterate exactly the supplied
+  // wallets + deployers, each at their derived wc=3 address.
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto wallet_class = fake_wallet_class_bytes();
+  auto deployer_class = fake_deployer_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+  std::vector<JvmGenesisWallet> wallets{
+      make_wallet(30), make_wallet(31),
+  };
+  std::vector<JvmGenesisDeployer> deployers{
+      make_deployer(32), make_deployer(33), make_deployer(34),
+  };
+
+  std::vector<JvmContractId> expected_addrs;
+  for (const auto& w : wallets) {
+      expected_addrs.push_back(
+          build_jvm_genesis_wallet(w, stdlib, td::Slice(wallet_class))
+              .move_as_ok().address);
+  }
+  for (const auto& d : deployers) {
+      expected_addrs.push_back(
+          build_jvm_genesis_deployer(d, stdlib, td::Slice(deployer_class))
+              .move_as_ok().address);
+  }
+
+  auto cell = build_jvm_zerostate_accounts_cell(
+      wallets, td::Slice(wallet_class), deployers,
+      td::Slice(deployer_class), stdlib);
+  CHECK(cell.not_null());
+
+  // Determinism property: same inputs, same hash.
+  auto cell2 = build_jvm_zerostate_accounts_cell(
+      wallets, td::Slice(wallet_class), deployers,
+      td::Slice(deployer_class), stdlib);
+  CHECK(cell2.not_null());
+  CHECK(cell->get_hash() == cell2->get_hash());
+
+  vm::AugmentedDictionary accounts_dict(vm::load_cell_slice_ref(cell), 256,
+                                        block::tlb::aug_ShardAccounts);
+  std::size_t entries = 0;
+  for (const auto& expected_addr : expected_addrs) {
+      auto bits = td::ConstBitPtr{expected_addr.data()};
+      auto value = accounts_dict.lookup(bits, 256);
+      CHECK(value.not_null());
+      ++entries;
+  }
+  CHECK(entries == wallets.size() + deployers.size());
+}
+
+TEST(JvmWorkchainCore, ZerostateAccountsCellAcceptsDeployersOnly) {
+  // A common operational shape: a chain that wants runtime deployment
+  // but no genesis-funded user wallets.  Empty wallet tuple + non-empty
+  // deployer tuple must succeed and produce a dict with only the
+  // deployer accounts.
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto deployer_class = fake_deployer_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+  std::vector<JvmGenesisWallet> wallets{};
+  std::vector<JvmGenesisDeployer> deployers{
+      make_deployer(40), make_deployer(41),
+  };
+
+  auto cell = build_jvm_zerostate_accounts_cell(
+      wallets, td::Slice{}, deployers,
+      td::Slice(deployer_class), stdlib);
+  CHECK(cell.not_null());
+
+  vm::AugmentedDictionary accounts_dict(vm::load_cell_slice_ref(cell), 256,
+                                        block::tlb::aug_ShardAccounts);
+  std::size_t entries = 0;
+  accounts_dict.check_for_each([&entries](td::Ref<vm::CellSlice>,
+                                          td::ConstBitPtr,
+                                          int) -> bool {
+      ++entries;
+      return true;
+  });
+  CHECK(entries == deployers.size());
 }
 
 TEST(JvmWorkchainCore, ZerostateAccountsCellIsEmpty) {

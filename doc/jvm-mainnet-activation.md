@@ -62,47 +62,77 @@ keypair choose:
 - An initial TOMIS balance (must be non-negative and fit in 120
   bits — `crypto/block/create-state.cpp:736-739`).
 
-These keypairs become the bootstrap accounts: they will deploy every
-subsequent wc=3 contract through normal `action_create_account`
-flows.  Loss of all N private keys before any further accounts are
-deployed means the chain cannot grow its wc=3 surface — at least
-one key must be held by an entity with operational continuity.
+These keypairs become the bootstrap accounts: they hold pre-seeded
+funds and can send messages via `Wallet.execute(...)`.  **Wallets
+cannot themselves deploy new contracts** — `java.lang.Wallet`
+exposes only `System.sendMessage`, not `System.createAccount`.
+Runtime deployment of further wc=3 contracts requires at least one
+*Deployer* account at genesis as well (see §3 below); without one,
+the chain can move funds but never grow its contract surface.
+
+Loss of all N private keys (wallets + deployers) before further
+accounts are deployed means the chain cannot grow its wc=3 surface
+— at least one Deployer-owner key must be held by an entity with
+operational continuity.
 
 For the canonical wallet contract see [`jvm-wallet.md`](jvm-wallet.md).
 
-Files to read: `jvm/core/genesis-wallet.h`, `jvm/avata/rt/java/lang/Wallet.java`.
+Files to read: `jvm/core/genesis-wallet.h`, `jvm/avata/rt/java/lang/Wallet.java`,
+`jvm/avata/rt/java/lang/Deployer.java`.
 
 ## 3. Build the wc=3 ShardAccounts cell
 
-In the zerostate Fift script (typically alongside the existing
-`wc=0` / `wc=1` / `wc=2` setup), invoke:
+A chain that wants both pre-funded user wallets AND runtime contract
+deployment from block 0 should use the combined seed word
+(`crypto/block/create-state.cpp`,
+`interpret_jvm_zerostate_with_deployers_from_alloc`):
+
+```
+( wallet_alloc wallet_class_bytes deployer_alloc deployer_class_bytes
+  stdlib_hash -- accounts_cell )
+  jvm-zerostate-with-deployers-from-alloc
+```
+
+where:
+
+- `wallet_alloc` / `deployer_alloc` are Fift tuples of 3-tuples
+  `(owner_pubkey:32B, salt:32B, balance:int)`.  Either may be empty.
+- `wallet_class_bytes` is the canonical `Wallet.class` bytecode.
+- `deployer_class_bytes` is the canonical `Deployer.class` bytecode.
+  These must be the same `.class` blobs admitted by the contract
+  profile header — the genesis seeder hashes each into `class_hash`
+  and into every derived address, so mismatch with the on-chain
+  admitted bytes would produce accounts the dispatch engine rejects.
+- `stdlib_hash` is the 32-byte sha256 from step 1.
+
+A Wallet and a Deployer with identical `(owner_pubkey, salt)` derive
+to *different* wc=3 addresses (the address-binding gate hashes
+`manifest_root_hash` in, and the two manifests differ).  Mixing both
+seed types in one dict therefore cannot collide.
+
+The combined wallet+deployer count is capped at
+`kJvmGenesisWalletCountMax` (256 at the time of writing).  All
+length validation runs before any cells are materialized, so
+malformed declarations surface as a clear `fift::IntError`.
+
+**Backward-compat path — wallets only:** for tests or for a chain
+that has no use case for runtime contract deployment, the older
+single-tuple word remains available:
 
 ```
 ( wallet_alloc class_bytes stdlib_hash -- accounts_cell ) jvm-zerostate-from-alloc
 ```
 
-where:
+This is functionally a special case of the combined word with the
+deployer tuple empty.  A chain seeded with this word can move funds
+between pre-existing wallets but cannot deploy any further wc=3
+contract — the bootstrap deadlock described in §1 reappears.
 
-- `wallet_alloc` is a Fift tuple of 3-tuples:
-  `(owner_pubkey:32B, salt:32B, balance:int)` per wallet.
-- `class_bytes` is the canonical `Wallet.class` bytecode (extracted
-  from the pinned rt.jar; the genesis seeder hashes it into
-  `class_hash` and into every derived address).
-- `stdlib_hash` is the 32-byte sha256 from step 1.
-
-The Fift word
-(`crypto/block/create-state.cpp:648`, registered at line 1083) runs
-length validation on every triple before calling the C++ builder, so
-malformed declarations surface as a clear `fift::IntError`.  The
-returned cell is the wc=3 ShardAccounts entry for the global
-zerostate.
-
-To keep an empty wc=3 zerostate (no bootstrap wallets — only
-recommended if there is an alternate plan for getting a wc=3
-sender), use `jvm-zerostate-accounts-cell`
-(`crypto/block/create-state.cpp:1125`) which returns the canonical
-`hme_empty$0`.  This path leaves the chain in the bootstrap deadlock
-described above.
+To keep an empty wc=3 zerostate (no bootstrap accounts at all —
+only valid if you have an alternate plan for getting a wc=3
+sender, such as a future masterchain-bound mechanism), use
+`jvm-zerostate-accounts-cell` which returns the canonical
+`hme_empty$0`.
 
 Files to read: `crypto/block/create-state.cpp:640-756`,
 `jvm/core/zerostate.{h,cpp}`, `jvm/core/genesis-wallet.{h,cpp}`.
