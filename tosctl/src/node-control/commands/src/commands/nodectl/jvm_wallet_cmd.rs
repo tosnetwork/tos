@@ -159,6 +159,14 @@ pub struct JvmWalletDeployCmd {
     /// mainnet deploys.
     #[arg(long = "stdlib-hash", help = "32-byte hex stdlib_hash from ConfigParam 85")]
     stdlib_hash: Option<String>,
+    /// Opt-in to deploying with an all-zero stdlib_hash.  Required
+    /// when `--stdlib-hash` is omitted and the resulting wallet would
+    /// be rejected by any chain whose ConfigParam 85 carries a
+    /// non-zero hash (i.e. every mainnet-like network).  Use this on
+    /// localnet / unit-test chains only.
+    #[arg(long = "allow-zero-stdlib-hash",
+          help = "Permit the all-zero default (testnet only)")]
+    allow_zero_stdlib_hash: bool,
     /// Deployer nonce.  When omitted, the CLI fetches the current
     /// value from on-chain storage via `jvm_getContractState`.
     #[arg(long = "nonce", help = "Deployer replay-counter (defaults to chain-fetched)")]
@@ -209,7 +217,7 @@ pub struct JvmDeployerInfoCmd {
 }
 
 #[derive(clap::Args, Clone)]
-#[command(about = "Sign + send a single transfer from a wc=3 JVM wallet (stubbed)")]
+#[command(about = "Sign + send a single transfer from a wc=3 JVM wallet")]
 pub struct JvmWalletExecuteCmd {
     #[arg(short = 'n', long = "name", help = "Wallet name")]
     name: String,
@@ -226,6 +234,10 @@ pub struct JvmWalletExecuteCmd {
     /// to fetch the current value from on-chain storage.
     #[arg(long = "nonce", help = "Replay-protection nonce (defaults to chain-fetched)")]
     nonce: Option<u64>,
+    /// When set, build all the artifacts (signed execute() descriptor +
+    /// ext-msg BOC) and print them, but do NOT call send_boc.
+    #[arg(long = "dry-run", help = "Skip send_boc; print artifacts only")]
+    dry_run: bool,
 }
 
 #[derive(clap::Args, Clone)]
@@ -333,9 +345,20 @@ async fn load_jvm_deployer(
 /// response.  Reads the slot at `keccak256("Deployer.nonce")` and
 /// interprets the value as a big-endian Uint256.  Returns 0 when the
 /// slot is absent (uninitialized Deployer).
+fn parse_wallet_nonce(view: &JvmContractStateView) -> Result<u64> {
+    parse_nonce_slot(view, b"Wallet.nonce")
+}
+
 fn parse_deployer_nonce(view: &JvmContractStateView) -> Result<u64> {
+    parse_nonce_slot(view, b"Deployer.nonce")
+}
+
+fn parse_nonce_slot(
+    view: &JvmContractStateView,
+    slot_name: &[u8],
+) -> Result<u64> {
     let slot_key_hex =
-        hex::encode(chain_block::keccak256_digest(b"Deployer.nonce"));
+        hex::encode(chain_block::keccak256_digest(slot_name));
 
     let Some(slots) = &view.storage_slots else {
         return Ok(0);
@@ -633,7 +656,22 @@ impl JvmWalletDeployCmd {
         // 3. Build the target wallet's JVAC (consensus state cell).
         let stdlib_hash = match &self.stdlib_hash {
             Some(s) => parse_hex32(s, "--stdlib-hash")?,
-            None => [0u8; 32],
+            None => {
+                if !self.allow_zero_stdlib_hash && !self.dry_run {
+                    anyhow::bail!(
+                        "--stdlib-hash not provided and \
+                         --allow-zero-stdlib-hash not set.  Deploying \
+                         with an all-zero stdlib_hash produces a wallet \
+                         that any chain whose ConfigParam 85 carries a \
+                         non-zero stdlib_hash will reject on first call \
+                         with sk_bad_state.  Pass the real 32-byte hash \
+                         (from `tosctl get-config 85` or the genesis \
+                         ceremony output) or pass --allow-zero-stdlib-hash \
+                         on localnet."
+                    );
+                }
+                [0u8; 32]
+            }
         };
         let target_deployer = parse_hex32(&target_cfg.deployer_hex, "target deployer_hex")?;
         let target_salt = parse_hex32(&target_cfg.salt_hex, "target salt_hex")?;
@@ -906,7 +944,7 @@ impl JvmDeployerInfoCmd {
 impl JvmWalletExecuteCmd {
     pub async fn run(&self, config_path: &str) -> Result<()> {
         let path = Path::new(config_path);
-        let (config, vault, _rpc_client) =
+        let (config, vault, rpc_client) =
             load_config_vault_rpc_client(path).await?;
 
         let cfg = config
@@ -919,9 +957,6 @@ impl JvmWalletExecuteCmd {
                 )
             })?;
 
-        // Even though the actual send is stubbed, we make sure the
-        // offline portion (build payload + sign) succeeds so users can
-        // at least dry-run / capture the call descriptor BOC.
         let wallet = load_jvm_wallet(&self.name, cfg, vault.clone()).await?;
         let (dest_wc, dest_addr) = parse_address(&self.to)?;
         let body_bytes = match &self.body {
@@ -937,7 +972,22 @@ impl JvmWalletExecuteCmd {
             &body_bytes,
         )?;
 
-        let nonce_value = self.nonce.unwrap_or(0);
+        // Determine the wallet's current nonce: explicit override > chain
+        // fetch.  A wallet that has never sent before returns 0.
+        let wallet_addr = wallet.calculate_address();
+        let wallet_addr_hex = hex::encode(wallet_addr);
+        let nonce_value = match self.nonce {
+            Some(n) => n,
+            None => {
+                let view = rpc_client
+                    .jvm_get_contract_state(wallet_addr_hex.clone(), None)
+                    .await
+                    .context(
+                        "jvm_getContractState(wallet) — pass --nonce to skip",
+                    )?;
+                parse_wallet_nonce(&view)?
+            }
+        };
         let nonce = U256::from_u64(nonce_value);
 
         let signature = wallet.sign_execute(nonce, &payload).await?;
@@ -945,29 +995,42 @@ impl JvmWalletExecuteCmd {
             .encode_execute_call(nonce, &payload, &signature)
             .context("encode execute call descriptor")?;
 
-        let descriptor_boc = write_boc(&call_descriptor)?;
+        // Wrap as ext-in-msg to the wallet's own wc=3 address.  This is
+        // the same shape Phase H.4's `jw deploy` uses for the Deployer.
+        let ext_msg_boc =
+            build_ext_in_message(3, wallet_addr, call_descriptor)?;
+
         println!(
-            "{} Built signed execute() descriptor",
+            "\n{} prepared execute() artifacts\n",
             "OK".green().bold()
         );
-        println!("  wallet:          3:{}", hex::encode(wallet.calculate_address()));
+        println!("  wallet:          3:{}", wallet_addr_hex);
         println!("  destination:     {}:{}", dest_wc, hex::encode(dest_addr));
         println!("  amount:          {}", self.amount);
         println!("  nonce:           {}", nonce_value);
-        println!("  payload (hex):   {}", hex::encode(&payload));
-        println!("  signature (hex): {}", hex::encode(&signature));
-        println!(
-            "  descriptor BOC:  {}",
-            hex::encode(&descriptor_boc)
-        );
+        println!("  payload size:    {} bytes", payload.len());
+        println!("  ext-msg BOC:     {} bytes", ext_msg_boc.len());
+        println!();
 
-        anyhow::bail!(
-            "tosctl jvm-wallet execute is not yet wired for on-chain send.\n\
-             The signed JvmCallDescriptor BOC printed above is correct and\n\
-             can be replayed via a wc=3 router; CLI send routing requires\n\
-             a wc=3 sender account (see deploy stub for the same\n\
-             bootstrapping rationale)."
-        )
+        if self.dry_run {
+            println!(
+                "  {}: --dry-run set; not sending. ext-msg BOC hex below:",
+                "DRY".yellow().bold()
+            );
+            println!("  0x{}", hex::encode(&ext_msg_boc));
+            return Ok(());
+        }
+
+        rpc_client
+            .send_boc(&ext_msg_boc)
+            .await
+            .context("send_boc to wc=3 wallet")?;
+        println!(
+            "  {} ext-msg submitted; nonce will advance to {} on commit",
+            "SENT".green().bold(),
+            nonce_value + 1
+        );
+        Ok(())
     }
 }
 
