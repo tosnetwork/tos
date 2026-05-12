@@ -34,6 +34,7 @@ pub mod action_create_account;
 pub mod args;
 pub mod address;
 pub mod call_descriptor;
+pub mod contract_account_state;
 pub mod deploy_descriptor;
 pub mod manifest;
 pub mod state_init;
@@ -50,6 +51,11 @@ pub use address::{
 pub use args::{encode_jvm_args, JvmArgType, JvmArgs, JvmTypedArg};
 pub use call_descriptor::{
     encode_jvm_call_descriptor, JvmCallDescriptor, JVM_CALL_DESCRIPTOR_MAGIC,
+};
+pub use contract_account_state::{
+    encode_jvm_contract_account_state, JvmContractAccountState,
+    JVM_CONTRACT_ACCOUNT_STATE_MAGIC,
+    JVM_CONTRACT_ACCOUNT_STATE_SCHEMA_VERSION,
 };
 pub use deploy_descriptor::{
     encode_jvm_deploy_descriptor, JvmDeployDescriptor,

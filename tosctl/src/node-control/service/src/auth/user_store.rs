@@ -432,6 +432,7 @@ mod tests {
             nodes: HashMap::new(),
             wallets: HashMap::new(),
             jvm_wallets: HashMap::new(),
+            jvm_deployers: HashMap::new(),
             pools: HashMap::new(),
             bindings: HashMap::new(),
             chain_rpc: Default::default(),

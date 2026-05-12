@@ -40,12 +40,24 @@
  */
 use super::utils::load_config_vault_rpc_client;
 use anyhow::{Context, Result};
-use chain_block::{Cell, write_boc};
+use chain_block::{
+    Cell, ExternalInboundMessageHeader, Message, MsgAddressExt, MsgAddressInt,
+    SliceData, Serializable, write_boc,
+};
 use chain_rpc_client::v2::jvm::JvmContractStateView;
 use colored::Colorize;
-use common::{app_config::JvmWalletConfig, vault_signer::VaultSigner};
+use common::{
+    app_config::{JvmDeployerConfig, JvmWalletConfig},
+    vault_signer::VaultSigner,
+};
 use contracts::{
-    build_wallet_single_transfer_payload, jvm_wallet::JvmWalletContract,
+    build_wallet_single_transfer_payload,
+    jvm_codec::{
+        encode_jvm_contract_account_state, encode_jvm_state_init_cell,
+        JvmContractAccountState,
+    },
+    jvm_deployer::JvmDeployerContract,
+    jvm_wallet::JvmWalletContract,
     U256,
 };
 use secrets_vault::vault::SecretVault;
@@ -75,8 +87,7 @@ pub enum JvmWalletAction {
     Create(JvmWalletCreateCmd),
     /// Print the derived wc=3 address of a wallet.
     Address(JvmWalletAddressCmd),
-    /// Deploy this wallet to wc=3 via a deployer wallet (stub — see
-    /// docs).
+    /// Deploy this wallet to wc=3 via a registered Deployer.
     Deploy(JvmWalletDeployCmd),
     /// Sign + send a single transfer from this wallet (stub — see
     /// docs).
@@ -84,6 +95,14 @@ pub enum JvmWalletAction {
     /// Fetch + decode the wallet's on-chain state (owner key, nonce,
     /// init flag).
     Info(JvmWalletInfoCmd),
+    /// Register an existing on-chain Deployer under a CLI name (binds
+    /// to a vault secret + salt + class file).
+    RegisterDeployer(JvmDeployerRegisterCmd),
+    /// Print the derived wc=3 address of a registered Deployer.
+    DeployerAddress(JvmDeployerAddressCmd),
+    /// Print summary info for a registered Deployer (address +
+    /// best-effort on-chain state lookup).
+    DeployerInfo(JvmDeployerInfoCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -119,21 +138,74 @@ pub struct JvmWalletAddressCmd {
 }
 
 #[derive(clap::Args, Clone)]
-#[command(about = "Deploy a wc=3 JVM wallet (cross-workchain — stubbed)")]
+#[command(about = "Deploy a wc=3 JVM wallet via a registered Deployer")]
 pub struct JvmWalletDeployCmd {
-    #[arg(short = 'n', long = "name", help = "Wallet name")]
+    #[arg(short = 'n', long = "name", help = "Wallet name (target)")]
     name: String,
-    /// Name of a previously-deployed wc=3 wallet to send the deploy
-    /// `action_create_account` from. The action_create_account TLB
-    /// requires the sender to declare
-    /// `admits_engine_create_account_actions` (jvm/core only), so this
-    /// MUST be a wc=3 wallet, NOT a wc=0 TVM wallet.
-    #[arg(long = "deployer-name", help = "Name of a wc=3 deployer wallet")]
-    deployer_name: String,
-    /// Tomis attached to the deploy call (covers storage stake + init
-    /// call gas).
+    /// Name of a registered Deployer to route the deploy through.
+    /// The Deployer must already be active on-chain (e.g. seeded at
+    /// genesis via `jvm-zerostate-from-alloc`).
+    #[arg(long = "via", help = "Registered Deployer config name")]
+    via: String,
+    /// Tomis attached to the action_create_account (covers storage
+    /// stake + init call gas).
     #[arg(long = "balance", default_value = "1000000000")]
     balance: u128,
+    /// 32-byte hex stdlib_hash committed into the target wallet's
+    /// JVAC.  MUST match ConfigParam 85 on the live chain; otherwise
+    /// the engine rejects the first call with `sk_bad_state`.  Default
+    /// is all-zeros, which matches `JvmConfig::default_activation()`
+    /// for testnet/local-net workflows.  Pass the real value for
+    /// mainnet deploys.
+    #[arg(long = "stdlib-hash", help = "32-byte hex stdlib_hash from ConfigParam 85")]
+    stdlib_hash: Option<String>,
+    /// Deployer nonce.  When omitted, the CLI fetches the current
+    /// value from on-chain storage via `jvm_getContractState`.
+    #[arg(long = "nonce", help = "Deployer replay-counter (defaults to chain-fetched)")]
+    nonce: Option<u64>,
+    /// When set, build all the artifacts (signed deploy descriptor +
+    /// ext-msg BOC) and print them, but do NOT call send_boc.  Useful
+    /// for inspection / offline composition.
+    #[arg(long = "dry-run", help = "Skip send_boc; print artifacts only")]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Register an existing on-chain Deployer in the CLI config")]
+pub struct JvmDeployerRegisterCmd {
+    #[arg(short = 'n', long = "name", help = "Deployer config name")]
+    name: String,
+    /// Vault secret name that holds the Deployer's Ed25519 keypair.
+    /// Typically populated out-of-band (e.g. imported from the genesis
+    /// ceremony) via `tosctl wallet import` against the same vault.
+    #[arg(long = "vault-secret", help = "Vault secret name")]
+    vault_secret: String,
+    /// 32-byte hex salt.  Defaults to sha256(name).
+    #[arg(long = "salt", help = "32-byte hex salt (default: sha256(name))")]
+    salt: Option<String>,
+    /// 32-byte hex deployer-of-deployers account-id.  Defaults to
+    /// all-zero ("kJvmGenesisDeployer" sentinel) since genesis-seeded
+    /// Deployers use that.
+    #[arg(long = "deployer", help = "32-byte hex deployer (default: all-zero)")]
+    deployer: Option<String>,
+    /// Path to the compiled `Deployer.class` bytes.  Required —
+    /// without this the CLI cannot derive the Deployer's wc=3 address.
+    #[arg(long = "class-file", help = "Path to compiled Deployer.class bytes")]
+    class_file: String,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Print the derived wc=3 address of a registered Deployer")]
+pub struct JvmDeployerAddressCmd {
+    #[arg(short = 'n', long = "name", help = "Deployer config name")]
+    name: String,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Print summary info for a registered Deployer")]
+pub struct JvmDeployerInfoCmd {
+    #[arg(short = 'n', long = "name", help = "Deployer config name")]
+    name: String,
 }
 
 #[derive(clap::Args, Clone)]
@@ -171,6 +243,15 @@ impl JvmWalletCmd {
             JvmWalletAction::Deploy(cmd) => cmd.run(&self.config).await,
             JvmWalletAction::Execute(cmd) => cmd.run(&self.config).await,
             JvmWalletAction::Info(cmd) => cmd.run(&self.config).await,
+            JvmWalletAction::RegisterDeployer(cmd) => {
+                cmd.run(&self.config).await
+            }
+            JvmWalletAction::DeployerAddress(cmd) => {
+                cmd.run(&self.config).await
+            }
+            JvmWalletAction::DeployerInfo(cmd) => {
+                cmd.run(&self.config).await
+            }
         }
     }
 }
@@ -221,6 +302,90 @@ async fn load_jvm_wallet(
     JvmWalletContract::new(Box::new(signer), deployer, salt, class_bytes)
         .await
         .with_context(|| format!("Build JvmWalletContract for '{name}'"))
+}
+
+async fn load_jvm_deployer(
+    name: &str,
+    cfg: &JvmDeployerConfig,
+    vault: Arc<SecretVault>,
+) -> Result<JvmDeployerContract> {
+    let secret = cfg
+        .key
+        .read_secret(Some(vault))
+        .await
+        .with_context(|| format!("Read keypair for jvm-deployer '{name}'"))?;
+    let signer = VaultSigner::new(secret).await.with_context(|| {
+        format!("Build VaultSigner for jvm-deployer '{name}'")
+    })?;
+
+    let deployer = parse_hex32(&cfg.deployer_hex, "deployer_hex")?;
+    let salt = parse_hex32(&cfg.salt_hex, "salt_hex")?;
+    let class_bytes =
+        hex::decode(cfg.class_bytes_hex.strip_prefix("0x").unwrap_or(&cfg.class_bytes_hex))
+            .context("Invalid class_bytes_hex on deployer")?;
+
+    JvmDeployerContract::new(Box::new(signer), deployer, salt, class_bytes)
+        .await
+        .with_context(|| format!("Build JvmDeployerContract for '{name}'"))
+}
+
+/// Parse the on-chain Deployer nonce from a `jvm_getContractState`
+/// response.  Reads the slot at `keccak256("Deployer.nonce")` and
+/// interprets the value as a big-endian Uint256.  Returns 0 when the
+/// slot is absent (uninitialized Deployer).
+fn parse_deployer_nonce(view: &JvmContractStateView) -> Result<u64> {
+    let slot_key_hex =
+        hex::encode(chain_block::keccak256_digest(b"Deployer.nonce"));
+
+    let Some(slots) = &view.storage_slots else {
+        return Ok(0);
+    };
+    for slot in slots {
+        let normalized_key =
+            slot.key.strip_prefix("0x").unwrap_or(&slot.key).to_ascii_lowercase();
+        if normalized_key == slot_key_hex {
+            let value_hex = slot.value.strip_prefix("0x").unwrap_or(&slot.value);
+            let bytes =
+                hex::decode(value_hex).context("Invalid hex in nonce slot value")?;
+            if bytes.is_empty() {
+                return Ok(0);
+            }
+            // Treat trailing 8 bytes as u64 BE; Uint256 fits in u64 for any
+            // realistic nonce.
+            let mut buf = [0u8; 8];
+            let take = bytes.len().min(8);
+            buf[8 - take..].copy_from_slice(&bytes[bytes.len() - take..]);
+            return Ok(u64::from_be_bytes(buf));
+        }
+    }
+    Ok(0)
+}
+
+/// Build a wc=3 internal-message body Cell — used as the activating
+/// init() call body on the target wallet.  We wrap an already-built
+/// `JvmCallDescriptor` Cell so the host runtime's first-activation
+/// dispatch route runs `Wallet.init(ownerPubKey)`.
+fn cell_to_boc(cell: &Cell) -> Result<Vec<u8>> {
+    write_boc(cell).context("Serialize cell to BOC")
+}
+
+/// Build an external-in message body wrapping `body_cell`, addressed
+/// to `(dst_wc, dst_addr)`.  Returns the serialized BOC.
+fn build_ext_in_message(
+    dst_wc: i32,
+    dst_addr: [u8; 32],
+    body_cell: Cell,
+) -> Result<Vec<u8>> {
+    let dst = MsgAddressInt::with_standart(None, dst_wc as i8, dst_addr.into())
+        .context("Build MsgAddressInt for ext-msg dst")?;
+    let header = ExternalInboundMessageHeader::new(MsgAddressExt::AddrNone, dst);
+    let body_slice = SliceData::load_cell(body_cell)
+        .context("Load body cell into slice")?;
+    let msg = Message::with_ext_in_header_and_body(header, body_slice);
+    let msg_cell = msg
+        .serialize()
+        .context("Serialize ext-in message to cell")?;
+    write_boc(&msg_cell).context("Serialize ext-in message BOC")
 }
 
 // ─── Subcommand impls ───────────────────────────────────────────────
@@ -426,53 +591,315 @@ fn truncated(s: &str, max: usize) -> String {
 }
 
 impl JvmWalletDeployCmd {
-    pub async fn run(&self, _config_path: &str) -> Result<()> {
-        // Phase H landed the host primitive (`System.createAccount`),
-        // the wc=3 router contract (`java.lang.Deployer`), AND the
-        // Rust contract abstraction (`contracts::JvmDeployerContract`)
-        // — see commit message for `bd4654de2` and the
-        // `tests/jvm_deployer_offline.rs` reference path.
-        //
-        // The remaining wiring is purely CLI ergonomics: a
-        // `jvm_deployers` config table on `AppConfig`, a
-        // `jw register-deployer` (or equivalent) subcommand to
-        // populate it, and an external-message build helper to wrap
-        // `JvmDeployerContract::encode_deploy_call` for `send_boc`.
-        // None of these change the protocol surface; they're a
-        // self-contained UX iteration.
-        //
-        // Programmatic deploy is already available today:
-        //
-        //   1. Build a `JvmDeployerContract` from a Signer + the
-        //      Deployer's deployer/salt/class_bytes.  The contract
-        //      itself must already be active on-chain (genesis seed
-        //      via `jvm-zerostate-from-alloc`, see Phase F docs).
-        //   2. Build the target wallet's StateInit BOC via
-        //      `contracts::jvm_codec::encode_jvm_state_init_cell` on
-        //      a `JvmContractAccountState` you assembled.
-        //   3. Call `deployer.sign_deploy(nonce, &dest, &state_init,
-        //      value, &body).await?` to get the Ed25519 signature.
-        //   4. Encode the call via
-        //      `deployer.encode_deploy_call(...)` → a JVI2 cell.
-        //   5. Wrap that cell as the body of an `ext_in_msg_info`
-        //      external message addressed to the Deployer's wc=3
-        //      account.  Forward via `ClientJsonRpc::send_boc`.
-        //
-        // The offline portions (steps 1–4) round-trip cleanly under
-        // `cargo test -p contracts --test jvm_deployer_offline`.
-        let _ = &self.deployer_name;
-        let _ = self.balance;
-        let _ = &self.name;
-        anyhow::bail!(
-            "tosctl jvm-wallet deploy CLI wiring is the only Phase H follow-up.\n\
-             The on-chain primitives + Rust contract helpers are all in place:\n\
-                * java.lang.Deployer + System.createAccount     (commit bd4654de2)\n\
-                * contracts::JvmDeployerContract                (this commit)\n\
-             For programmatic deploys today, see the canonical reference flow in\n\
-             tosctl/src/node-control/contracts/tests/jvm_deployer_offline.rs.\n\
-             For genesis seeding (the first batch of wc=3 accounts), use the\n\
-             Fift word `jvm-zerostate-from-alloc` from the Phase F bring-up docs."
+    pub async fn run(&self, config_path: &str) -> Result<()> {
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) =
+            load_config_vault_rpc_client(path).await?;
+
+        // 1. Load target wallet config + signer.
+        let target_cfg = config.jvm_wallets.get(&self.name).ok_or_else(|| {
+            anyhow::anyhow!("JVM wallet '{}' not found in config", self.name)
+        })?;
+        let target_class_bytes_hex = target_cfg
+            .class_bytes_hex
+            .as_ref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "JVM wallet '{}' has no class_bytes_hex — re-run \
+                     `jw create` with `--class-file <Wallet.class>`",
+                    self.name
+                )
+            })?;
+        let target_class_bytes = hex::decode(
+            target_class_bytes_hex.strip_prefix("0x").unwrap_or(target_class_bytes_hex),
         )
+        .context("Decode target wallet class_bytes_hex")?;
+        let target_wallet =
+            load_jvm_wallet(&self.name, target_cfg, vault.clone()).await?;
+        let target_addr = target_wallet.calculate_address();
+
+        // 2. Load Deployer config + signer.
+        let deployer_cfg = config.jvm_deployers.get(&self.via).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Deployer '{}' not found in config — register one with \
+                 `jw register-deployer`",
+                self.via
+            )
+        })?;
+        let deployer =
+            load_jvm_deployer(&self.via, deployer_cfg, vault.clone()).await?;
+        let deployer_addr = deployer.calculate_address();
+
+        // 3. Build the target wallet's JVAC (consensus state cell).
+        let stdlib_hash = match &self.stdlib_hash {
+            Some(s) => parse_hex32(s, "--stdlib-hash")?,
+            None => [0u8; 32],
+        };
+        let target_deployer = parse_hex32(&target_cfg.deployer_hex, "target deployer_hex")?;
+        let target_salt = parse_hex32(&target_cfg.salt_hex, "target salt_hex")?;
+        // Rebuild the same init_args cell that target_wallet's address
+        // derivation used (Bytes32 ownerPubKey).
+        let init_args_cell = contracts::jvm_codec::encode_jvm_args(
+            &contracts::jvm_codec::JvmArgs::new(vec![
+                contracts::jvm_codec::JvmTypedArg::bytes32(
+                    *target_wallet.owner_pubkey(),
+                ),
+            ]),
+        )
+        .context("encode target wallet init_args")?;
+        let address_commit = contracts::jvm_codec::compute_jvm_address_commit(
+            &target_deployer,
+            &target_salt,
+            &init_args_cell,
+        );
+
+        let state = JvmContractAccountState {
+            stdlib_hash,
+            deployer: target_deployer,
+            address_commit,
+            class_bytes: target_class_bytes.clone(),
+            storage_root: None,
+            manifest_root: Some(target_wallet.manifest_cell().clone()),
+        };
+        let jvac_cell = encode_jvm_contract_account_state(&state)
+            .context("encode target JVAC")?;
+        let state_init_cell = encode_jvm_state_init_cell(jvac_cell)
+            .context("encode target StateInit")?;
+        let state_init_boc = cell_to_boc(&state_init_cell)?;
+
+        // 4. Init call descriptor — becomes the activating message body
+        // for the new wallet account.
+        let init_call_cell = target_wallet
+            .encode_init_call()
+            .context("encode init() call descriptor")?;
+        let init_body_boc = cell_to_boc(&init_call_cell)?;
+
+        // 5. Determine Deployer nonce (chain-fetch or override).
+        let deployer_addr_hex = hex::encode(deployer_addr);
+        let nonce_u64 = match self.nonce {
+            Some(n) => n,
+            None => {
+                let view = rpc_client
+                    .jvm_get_contract_state(deployer_addr_hex.clone(), None)
+                    .await
+                    .context(
+                        "jvm_getContractState(deployer) — pass --nonce to skip"
+                    )?;
+                parse_deployer_nonce(&view)?
+            }
+        };
+        let nonce = U256::from_u64(nonce_u64);
+        let value = U256::from_u64(self.balance as u64);
+
+        // 6. Sign + encode the Deployer.deploy(...) call.
+        let signature = deployer
+            .sign_deploy(
+                nonce,
+                &target_addr,
+                &state_init_boc,
+                value,
+                &init_body_boc,
+            )
+            .await
+            .context("Sign deploy digest")?;
+        let deploy_call_cell = deployer
+            .encode_deploy_call(
+                nonce,
+                &target_addr,
+                &state_init_boc,
+                value,
+                &init_body_boc,
+                &signature,
+            )
+            .context("Encode deploy() call descriptor")?;
+
+        // 7. Wrap as external-in message to the Deployer's wc=3
+        // account.  The validator's wc=3 admission accepts external
+        // inbound for already-active accounts (the Deployer is
+        // genesis-seeded in the canonical workflow).
+        let ext_msg_boc =
+            build_ext_in_message(3, deployer_addr, deploy_call_cell)?;
+
+        println!(
+            "\n{} prepared deploy artifacts\n",
+            "OK".green().bold()
+        );
+        println!("  target wallet:     3:{}", hex::encode(target_addr));
+        println!("  via deployer:      3:{}", deployer_addr_hex);
+        println!("  deployer nonce:    {}", nonce_u64);
+        println!("  initial balance:   {}", self.balance);
+        println!(
+            "  state_init BOC:    {} bytes",
+            state_init_boc.len()
+        );
+        println!(
+            "  init body BOC:     {} bytes",
+            init_body_boc.len()
+        );
+        println!("  ext-msg BOC:       {} bytes", ext_msg_boc.len());
+        println!();
+
+        if self.dry_run {
+            println!(
+                "  {}: --dry-run set; not sending. ext-msg BOC hex below:",
+                "DRY".yellow().bold()
+            );
+            println!("  0x{}", hex::encode(&ext_msg_boc));
+            return Ok(());
+        }
+
+        // 8. Send via RPC.
+        rpc_client
+            .send_boc(&ext_msg_boc)
+            .await
+            .context("send_boc to wc=3 Deployer")?;
+        println!(
+            "  {} ext-msg submitted; target wallet will materialize \
+             in the next block",
+            "SENT".green().bold()
+        );
+        Ok(())
+    }
+}
+
+impl JvmDeployerRegisterCmd {
+    pub async fn run(&self, config_path: &str) -> Result<()> {
+        let path = Path::new(config_path);
+        let (mut config, vault) = super::utils::load_config_vault(path).await?;
+
+        if config.jvm_deployers.contains_key(&self.name) {
+            anyhow::bail!(
+                "Deployer '{}' already exists in config",
+                self.name
+            );
+        }
+
+        // Verify the vault secret resolves to an Ed25519 keypair before
+        // we commit a config entry.
+        let secret_id = self.vault_secret.as_str().into();
+        let secret = vault.get(&secret_id).await.with_context(|| {
+            format!(
+                "Vault secret '{}' not found — import it first via \
+                 `tosctl wallet import`",
+                self.vault_secret
+            )
+        })?;
+        let signer = VaultSigner::new(secret).await?;
+
+        let salt: [u8; 32] = match &self.salt {
+            Some(s) => parse_hex32(s, "--salt")?,
+            None => default_salt_for(&self.name),
+        };
+        let deployer: [u8; 32] = match &self.deployer {
+            Some(d) => parse_hex32(d, "--deployer")?,
+            None => [0u8; 32],
+        };
+        let class_bytes = std::fs::read(&self.class_file).with_context(|| {
+            format!("Read Deployer class file {}", self.class_file)
+        })?;
+
+        let deployer_contract = JvmDeployerContract::new(
+            Box::new(signer),
+            deployer,
+            salt,
+            class_bytes.clone(),
+        )
+        .await
+        .context("Derive Deployer wc=3 address")?;
+        let address_hex = hex::encode(deployer_contract.calculate_address());
+
+        let class_size = class_bytes.len();
+        let entry = JvmDeployerConfig {
+            key: common::app_config::KeyConfig::VaultKey {
+                name: self.vault_secret.clone(),
+            },
+            deployer_hex: hex::encode(deployer),
+            salt_hex: hex::encode(salt),
+            class_bytes_hex: hex::encode(class_bytes),
+            address_hex: Some(address_hex.clone()),
+        };
+        config.jvm_deployers.insert(self.name.clone(), entry);
+        super::utils::save_config(&config, path)?;
+
+        println!(
+            "\n{} Deployer '{}' registered\n",
+            "OK".green().bold(),
+            self.name
+        );
+        println!("  wc=3 address: {}", address_hex);
+        println!("  salt:         {}", hex::encode(salt));
+        println!("  deployer:     {}", hex::encode(deployer));
+        println!("  vault key:    {}", self.vault_secret);
+        println!("  class size:   {} bytes", class_size);
+        println!();
+        Ok(())
+    }
+}
+
+impl JvmDeployerAddressCmd {
+    pub async fn run(&self, config_path: &str) -> Result<()> {
+        let path = Path::new(config_path);
+        let (config, vault) = super::utils::load_config_vault(path).await?;
+
+        let cfg = config.jvm_deployers.get(&self.name).ok_or_else(|| {
+            anyhow::anyhow!("Deployer '{}' not found in config", self.name)
+        })?;
+        let addr = match &cfg.address_hex {
+            Some(a) => a.clone(),
+            None => {
+                let dep =
+                    load_jvm_deployer(&self.name, cfg, vault.clone()).await?;
+                hex::encode(dep.calculate_address())
+            }
+        };
+        println!("3:{}", addr);
+        Ok(())
+    }
+}
+
+impl JvmDeployerInfoCmd {
+    pub async fn run(&self, config_path: &str) -> Result<()> {
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) =
+            load_config_vault_rpc_client(path).await?;
+
+        let cfg = config.jvm_deployers.get(&self.name).ok_or_else(|| {
+            anyhow::anyhow!("Deployer '{}' not found in config", self.name)
+        })?;
+        let deployer =
+            load_jvm_deployer(&self.name, cfg, vault.clone()).await?;
+        let address_hex = hex::encode(deployer.calculate_address());
+
+        println!(
+            "\n{} Deployer '{}' info\n",
+            "OK".green().bold(),
+            self.name
+        );
+        println!("  wc=3 address: {}", address_hex);
+        println!("  owner pubkey: {}", hex::encode(deployer.owner_pubkey()));
+        println!("  class hash:   {}", hex::encode(deployer.class_hash()));
+        println!(
+            "  manifest:     {}",
+            hex::encode(deployer.manifest_root_hash())
+        );
+
+        match rpc_client
+            .jvm_get_contract_state(address_hex.clone(), None)
+            .await
+        {
+            Ok(view) => match parse_deployer_nonce(&view) {
+                Ok(n) => println!("  on-chain nonce: {}", n),
+                Err(_) => {}
+            },
+            Err(e) => println!(
+                "\n  {} jvm_getContractState unavailable — Deployer may not \
+                 be deployed yet ({})",
+                "WARN".yellow(),
+                e.root_cause()
+            ),
+        }
+        println!();
+        Ok(())
     }
 }
 

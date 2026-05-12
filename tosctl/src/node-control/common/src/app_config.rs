@@ -353,6 +353,35 @@ pub struct JvmWalletConfig {
     pub address_hex: Option<String>,
 }
 
+/// Per-Deployer config for wc=3 JVM Deployer contracts (sibling to
+/// `JvmWalletConfig`).  A Deployer is a separate on-chain contract —
+/// typically genesis-seeded — that signs `action_create_account`
+/// actions on behalf of an off-chain client.  The CLI's `jw deploy`
+/// subcommand looks up `--via <name>` here and routes the new wallet's
+/// deploy through this Deployer's owner key.
+///
+/// Unlike `JvmWalletConfig`, the typical workflow is to *register* an
+/// already-existing Deployer (genesis-seeded or out-of-band deployed)
+/// rather than to create one from scratch: the operator points at a
+/// known vault secret + salt + class file, the CLI derives the wc=3
+/// address, and the entry is saved.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct JvmDeployerConfig {
+    pub key: KeyConfig,
+    /// 32-byte hex of the deployer-of-deployers account-id (usually all
+    /// zeros for genesis-seeded Deployers, since the Phase F genesis
+    /// path uses the all-zero "kJvmGenesisDeployer" sentinel).
+    pub deployer_hex: String,
+    /// 32-byte hex salt for address derivation.
+    pub salt_hex: String,
+    /// Hex of the compiled `java/lang/Deployer.class` bytes.  Required
+    /// — without it the CLI can't derive the Deployer's wc=3 address.
+    pub class_bytes_hex: String,
+    /// Cached derived wc=3 account-id (32-byte hex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address_hex: Option<String>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 #[serde(tag = "kind")]
 pub enum PoolConfig {
@@ -743,6 +772,11 @@ pub struct AppConfig {
     /// `WalletConfig`.
     #[serde(default)]
     pub jvm_wallets: HashMap<String, JvmWalletConfig>,
+    /// Per-Deployer config (wc=3 Deployer contracts).  See
+    /// `JvmDeployerConfig` doc-comment for the intended workflow.
+    /// `#[serde(default)]` so existing configs keep parsing.
+    #[serde(default)]
+    pub jvm_deployers: HashMap<String, JvmDeployerConfig>,
     #[serde(default)]
     pub pools: HashMap<String, PoolConfig>,
     #[serde(default)]
