@@ -10,9 +10,9 @@ use crate::commands::{
     nodectl::{
         account_cmd::AccountCmd, admin_cmd::AdminCmd, auth_cmd::AuthCmd, backup_cmd::BackupCmd,
         config_cmd::ConfigCmd, deploy_cmd::DeployCmd, host_cmd::HostCmd, install_cmd::InstallCmd,
-        key_cmd::KeyCmd, node_cmd::NodeCmd, observe_cmd::ObserveCmd, pool_cmd::PoolCmd,
-        service_api_cmd::ApiCmd, service_cmd::ServiceCmd, tx_cmd::TxCmd, vote_cmd::VoteCmd,
-        wallet_cmd::WalletCmd,
+        jvm_wallet_cmd::JvmWalletCmd, key_cmd::KeyCmd, node_cmd::NodeCmd, observe_cmd::ObserveCmd,
+        pool_cmd::PoolCmd, service_api_cmd::ApiCmd, service_cmd::ServiceCmd, tx_cmd::TxCmd,
+        vote_cmd::VoteCmd, wallet_cmd::WalletCmd,
     },
     chain_rpc::get_config_param_cmd::GetConfigParamCmd,
 };
@@ -52,6 +52,9 @@ pub enum Commands {
     /// Imperative wallet operations
     #[command(name = "wallet", visible_alias = "w")]
     Wallet(WalletCmd),
+    /// wc=3 JVM wallet operations
+    #[command(name = "jvm-wallet", visible_alias = "jw")]
+    JvmWallet(JvmWalletCmd),
     /// Pool lifecycle and staking operations
     #[command(name = "pool", visible_alias = "p")]
     Pool(PoolCmd),

@@ -12,6 +12,7 @@
 
 #include "block/block-auto.h"
 #include "jvm/core/dispatch-engine.h"
+#include "td/utils/crypto.h"
 #include "td/utils/logging.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
@@ -321,6 +322,21 @@ JvmConfig JvmConfig::default_activation() noexcept {
     cfg.helper_gas_costs[21] = 500;    // MESSAGE_BASE
     cfg.helper_gas_costs[22] = 1;      // MESSAGE_BYTE
 
+    return cfg;
+}
+
+JvmConfig JvmConfig::default_activation_with_stdlib(
+    td::Slice stdlib_bytes) noexcept {
+    JvmConfig cfg = default_activation();
+    // td::sha256 always produces exactly 32 bytes; cfg.stdlib_hash is
+    // sized to kJvmStdlibHashBytes (32), so the slice fits without
+    // truncation.  Empty input is valid (sha256 of the empty string is
+    // well-defined) and yields a deterministic non-zero hash, which is
+    // still distinguishable from the all-zero "unset" sentinel produced
+    // by default_activation().
+    td::sha256(stdlib_bytes,
+               td::MutableSlice(reinterpret_cast<char*>(cfg.stdlib_hash.data()),
+                                cfg.stdlib_hash.size()));
     return cfg;
 }
 

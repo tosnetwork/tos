@@ -8,6 +8,7 @@
  */
 pub mod client_json_rpc;
 pub mod data_models;
+pub mod jvm;
 pub mod stack;
 
 pub use stack::RPCStackEntry;

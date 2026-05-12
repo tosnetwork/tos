@@ -15,9 +15,12 @@ bumped to `schema_version=2` (see [ConfigParam.md §85](ConfigParam.md#configpar
 - No singleton executor; no shared class store; no shared storage namespace.
   The v1 SingletonExecutor at `0x0000…0001` is no longer seeded
   (`jvm/core/zerostate.h:15`).
-- The wc=3 ShardAccounts dict is empty at genesis; contracts materialize
-  later via the host `action_create_account` action emitted by an
-  authorized wc=3 sender (`jvm/core/zerostate.cpp:5`).
+- The wc=3 ShardAccounts dict is **empty by default at genesis**; contracts
+  materialize later via the host `action_create_account` action emitted by
+  an authorized wc=3 sender (`jvm/core/zerostate.cpp:5`). Network operators
+  who want a non-empty genesis (the canonical way to break the wc=3
+  bootstrap deadlock — see §Genesis seeding) can pre-seed wc=3 wallet
+  accounts at zerostate via the Fift word `jvm-zerostate-from-alloc`.
 - Account state is split exactly as TVM accounts already are:
   `account.code` is the activation marker (single byte `0x4a` = `'J'`,
   `jvm/core/dispatch-engine.cpp:33-37`) and `account.data` is the encoded
@@ -189,6 +192,91 @@ invoked.
    in the same block; method invocation on the new account is async via the
    message queue (the deploy emitter's transaction completes before the
    contract executes).
+
+**Bootstrap note (first wc=3 account).** Step 3 requires the sender to
+live on wc=3 — `Transaction::try_action_create_account` rejects
+`action_create_account` whose source is not wc=3
+(`crypto/block/transaction.cpp:2812-2823`). On an empty-default wc=3
+genesis there is no wc=3 sender at block 0, so the first contract is
+not deployable through this flow. The only currently-supported
+bootstrap path is the **genesis seed**: pre-install one or more
+Ed25519 wallet accounts via `jvm-zerostate-from-alloc` (see §Genesis
+seeding below) so the chain has working wc=3 senders from block 0,
+and the deploy flow above can then proceed normally for every
+subsequent contract. Cross-reference: `jvm/core/zerostate.h` (the
+parameterized vs. empty zerostate builders) and
+`jvm/core/genesis-wallet.{h,cpp}` (per-wallet materialization).
+
+## Genesis seeding (Phase F option)
+
+Network operators can pre-seed wc=3 with Ed25519 wallet accounts at
+zerostate.  The Fift word `jvm-zerostate-from-alloc`
+(`crypto/block/create-state.cpp:648`, registered at line 1083)
+accepts a tuple of `(owner_pubkey:32B, salt:32B, balance:int)`
+triples; each triple becomes a fully-active wc=3 account whose
+`storage_root` is pre-populated as if `Wallet.init(ownerPubKey)` had
+already run.  This breaks the chicken-and-egg of an empty genesis:
+pre-seeded wallets can immediately emit `action_create_account` to
+deploy further wc=3 contracts (the standard `try_action_create_account`
+gate only requires that the source account live on wc=3, which a
+genesis-seeded wallet does by construction).
+
+Fift stack signature:
+
+```
+( T class_bytes stdlib_hash -- accounts_cell )
+where T is a tuple of 3-tuples (owner_pubkey:32B, salt:32B, balance:int).
+```
+
+Each seeded account is materialized as:
+
+- `account.code` = single-byte `0x4a` activation marker.
+- `account.data` = `JvmContractAccountState` (JVAC, schema=2) with
+  `class_hash = sha256(class_bytes)`, `class_bytes` carrying the
+  canonical compiled `java.lang.Wallet.class`, `storage_root`
+  pre-populated with the three slots `keccak256("Wallet.ownerPubKey")
+  → owner_pubkey`, `keccak256("Wallet.nonce") → Uint256.ZERO`,
+  `keccak256("Wallet.initFlag") → 0x01`, and `manifest_root` carrying
+  `init`/`execute`/`getNonce`.
+- Account state is `account_active$1`, so the account does not need a
+  first-activation message to come alive.
+- Address is derived through `derive_jvm_contract_address_from_state`
+  — the same formula the dispatch engine recomputes on every call,
+  so the address-binding gate accepts the genesis account without
+  any new code path. Sentinel deployer is all-zero
+  (`kJvmGenesisDeployer`, `jvm/core/genesis-wallet.h:75`), signalling
+  "seeded at zerostate" — the genesis account is `acc_active` from
+  block 0 and never traverses the first-activation gate that would
+  have rejected an all-zero deployer.
+
+See `jvm/core/genesis-wallet.{h,cpp}` for the per-wallet builder and
+the five `JvmWorkchainCore` tests under
+`crypto/test/test-workchain-execution-registry.cpp` that pin the
+consensus invariants:
+
+- `GenesisWalletBuildIsDeterministic` — same inputs → byte-identical
+  Account cells (so a genesis script is reproducible across
+  validator hosts).
+- `GenesisWalletAddressBindingMatchesDispatchGate` — re-derives the
+  address from the encoded JVAC the way `dispatch-engine.cpp:370`
+  does; verifies the seeded address satisfies the address-binding
+  gate so wc=3 transactions against the wallet pass without
+  `sk_bad_state`.
+- `GenesisWalletStorageSlotsMatchWalletInit` — the seeded storage
+  contains exactly the three slots `Wallet.init` would have written.
+- `GenesisWalletDifferentSaltProducesDifferentAddresses` — salt
+  disambiguation: one owner can hold multiple distinct wallet
+  addresses.
+- `GenesisZerostateAccountsCellEmbedsAllWallets` — the parameterized
+  zerostate builder produces a dict whose entries iterate exactly
+  the supplied wallets, keyed on derived addresses; build twice →
+  identical hash.
+
+Empty-default semantics still hold: `build_jvm_zerostate_accounts_cell()`
+with no arguments returns the canonical `hme_empty$0` cell, so a
+chain that bootstraps purely via `action_create_account` from an
+external sender remains supported.  The choice between empty and
+seeded genesis is per-network and is made at zerostate-build time.
 
 ## 7. `run_compute` Flow on a Per-Contract Account
 

@@ -327,6 +327,32 @@ pub struct WalletConfig {
     pub workchain: i32,
 }
 
+/// Per-wallet config for a wc=3 JVM Wallet (mirror of Wallet.java).
+///
+/// `salt_hex` and `deployer_hex` are stored as 64-char hex strings (no
+/// `0x` prefix), `class_bytes_hex` carries the compiled .class blob the
+/// host stores at deploy time. `address_hex` is cached for fast lookup;
+/// it is rederived deterministically from the other fields and recomputed
+/// by the CLI whenever any input changes.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct JvmWalletConfig {
+    pub key: KeyConfig,
+    /// 32-byte hex of the deployer account-id that minted this wallet.
+    pub deployer_hex: String,
+    /// 32-byte hex salt that disambiguates wallets with the same owner
+    /// key + class.
+    pub salt_hex: String,
+    /// Hex of the compiled wallet `.class` bytes. Optional: when absent
+    /// the CLI uses a build-time default (Wallet.java compiled by the
+    /// Avata pipeline) or rejects deploy with a clear error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_bytes_hex: Option<String>,
+    /// Cached derived wc=3 account-id (32-byte hex). Optional so that
+    /// `create` can populate it lazily.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address_hex: Option<String>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 #[serde(tag = "kind")]
 pub enum PoolConfig {
@@ -711,6 +737,12 @@ pub struct AppConfig {
     pub nodes: HashMap<String, AdnlConfig>,
     #[serde(default)]
     pub wallets: HashMap<String, WalletConfig>,
+    /// Per-wallet config for wc=3 JVM wallets. Sibling to `wallets`
+    /// because the two have different addressing and signing flows
+    /// and forcing them into the same map would require sum-typing
+    /// `WalletConfig`.
+    #[serde(default)]
+    pub jvm_wallets: HashMap<String, JvmWalletConfig>,
     #[serde(default)]
     pub pools: HashMap<String, PoolConfig>,
     #[serde(default)]

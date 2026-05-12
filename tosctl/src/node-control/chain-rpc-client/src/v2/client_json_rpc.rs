@@ -14,6 +14,9 @@ use crate::v2::data_models::{
     RunGetMethodParams, RunGetMethodRes, SigningPayloadRes, SubmissionResultRes,
     TransactionIntentRes,
 };
+use crate::v2::jvm::{
+    JvmCallResponse, JvmContractStateView, JvmDeployResponse, JvmReceiptsResponse,
+};
 use anyhow::Context;
 use base64::Engine;
 use std::{
@@ -590,6 +593,119 @@ impl ClientJsonRpc {
         })?;
         let wallet_info = serde_json::from_value::<GetWalletInformationRes>(res)?;
         Ok(wallet_info)
+    }
+
+    // ─── wc=3 JVM RPC methods ────────────────────────────────────────
+    //
+    // Server-side implementation lives in `jvm/core/rpc.cpp` and the
+    // routing in `validator-engine/json-rpc-server.cpp`. The four
+    // methods below mirror the JSON parameter names exactly so any
+    // future server-side hardening keeps the Rust client compatible
+    // without churn here.
+
+    /// Build a `JvmDeployDescriptor` server-side and return the
+    /// derived wc=3 `contractAddress` (32-byte hex) plus the
+    /// canonical descriptor BOC.
+    ///
+    /// `salt_hex` and `init_args_boc_hex` are optional: omit them to
+    /// use the C++ defaults (zero salt + empty `JvmArgs` cell).
+    pub async fn jvm_deploy_contract(
+        &self,
+        class_bytes_hex: String,
+        class_name: String,
+        deployer_hex: String,
+        salt_hex: Option<String>,
+        init_args_boc_hex: Option<String>,
+    ) -> anyhow::Result<JvmDeployResponse> {
+        let mut json_params = serde_json::json!({
+            "classBytes": class_bytes_hex,
+            "className": class_name,
+            "deployer": deployer_hex,
+        });
+        if let Some(salt) = salt_hex {
+            json_params["salt"] = serde_json::Value::String(salt);
+        }
+        if let Some(args_boc) = init_args_boc_hex {
+            json_params["initArgsBoc"] = serde_json::Value::String(args_boc);
+        }
+        let res = self
+            .json_rpc("jvm_deployContract", json_params)
+            .await
+            .context("jvm_deployContract")?;
+        Ok(serde_json::from_value::<JvmDeployResponse>(res)?)
+    }
+
+    /// Build a `JvmCallDescriptor` server-side. When `account_state_boc_hex`
+    /// is supplied the validator also runs a local simulation and
+    /// returns the result under `localResult`.
+    pub async fn jvm_call_contract(
+        &self,
+        contract_address_hex: String,
+        method_id: u32,
+        args_boc_hex: Option<String>,
+        gas_limit: u64,
+        account_state_boc_hex: Option<String>,
+    ) -> anyhow::Result<JvmCallResponse> {
+        let mut json_params = serde_json::json!({
+            "contractAddress": contract_address_hex,
+            "methodId": method_id,
+            "gasLimit": gas_limit,
+        });
+        if let Some(args_boc) = args_boc_hex {
+            json_params["argsBoc"] = serde_json::Value::String(args_boc);
+        }
+        if let Some(state_boc) = account_state_boc_hex {
+            json_params["accountStateBoc"] = serde_json::Value::String(state_boc);
+        }
+        let res = self
+            .json_rpc("jvm_callContract", json_params)
+            .await
+            .context("jvm_callContract")?;
+        Ok(serde_json::from_value::<JvmCallResponse>(res)?)
+    }
+
+    /// Return a decoded view of a wc=3 contract's storage. The
+    /// validator binds `accountStateBoc` to `contractAddress` and
+    /// rejects mismatched pairs (round-123 address-binding gate in
+    /// `jvm/core/rpc.cpp`).
+    pub async fn jvm_get_contract_state(
+        &self,
+        contract_address_hex: String,
+        account_state_boc_hex: Option<String>,
+    ) -> anyhow::Result<JvmContractStateView> {
+        let mut json_params = serde_json::json!({
+            "contractAddress": contract_address_hex,
+        });
+        if let Some(state_boc) = account_state_boc_hex {
+            json_params["accountStateBoc"] = serde_json::Value::String(state_boc);
+        }
+        let res = self
+            .json_rpc("jvm_getContractState", json_params)
+            .await
+            .context("jvm_getContractState")?;
+        Ok(serde_json::from_value::<JvmContractStateView>(res)?)
+    }
+
+    /// Return event-log receipts for a wc=3 contract over a block
+    /// range. The core RPC fallback in `jvm/core/rpc.cpp` returns
+    /// `{receipts:[]}` for unit-test plumbing; live-node routing
+    /// scans the account history for committed JVME events.
+    pub async fn jvm_get_receipts(
+        &self,
+        contract_address_hex: String,
+        from_block: u64,
+        to_block: u64,
+    ) -> anyhow::Result<JvmReceiptsResponse> {
+        let json_params = serde_json::json!({
+            "contractAddress": contract_address_hex,
+            "fromBlock": from_block,
+            "toBlock": to_block,
+        });
+        let res = self
+            .json_rpc("jvm_getReceipts", json_params)
+            .await
+            .context("jvm_getReceipts")?;
+        Ok(serde_json::from_value::<JvmReceiptsResponse>(res)?)
     }
 }
 

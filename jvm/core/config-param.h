@@ -66,6 +66,14 @@ struct JvmConfig {
     // Returns the canonical v1 activation parameters (wc=3, gas_schedule_version=1).
     // stdlib_hash is zero until the stdlib archive is locked in.
     static JvmConfig default_activation() noexcept;
+
+    // Same as default_activation() but with stdlib_hash populated from
+    // sha256(stdlib_bytes).  This is the path mainnet genesis tooling
+    // takes: the operator points the Fift word at the canonical rt.jar
+    // bytes, the helper hashes them, and the resulting hash is locked
+    // into ConfigParam 85 so validators reject any node carrying a
+    // mismatched stdlib at activation.
+    static JvmConfig default_activation_with_stdlib(td::Slice stdlib_bytes) noexcept;
 };
 
 // Build the ConfigParam 12 WorkchainDescr cell for JVM v1.

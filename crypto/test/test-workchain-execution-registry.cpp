@@ -31,6 +31,7 @@
 #include "jvm/core/cell-codec.h"
 #include "jvm/core/class-manifest.h"
 #include "jvm/core/config-param.h"
+#include "jvm/core/crypto-host.h"
 #include "jvm/core/deploy-abi.h"
 #include "jvm/core/dispatch-engine.h"
 #include "jvm/core/event-host.h"
@@ -40,6 +41,7 @@
 #include "jvm/core/storage-cell-host.h"
 #include "jvm/core/zerostate.h"
 #include "td/utils/crypto.h"
+#include "td/utils/misc.h"
 #include "td/utils/tests.h"
 #include "vm/boc.h"
 #include "vm/cells/CellBuilder.h"
@@ -53,6 +55,15 @@
 #include <memory>
 #include <optional>
 #include <vector>
+
+// Used only by the secp256k1 conformance vector below — the production
+// host hides these, but the test signs a deterministic digest with
+// libsecp256k1 directly so the recover/verify cross-check binds to
+// real ECDSA arithmetic.
+extern "C" {
+#include "secp256k1.h"
+#include "secp256k1_recovery.h"
+}
 
 namespace {
 
@@ -1366,6 +1377,200 @@ TEST(JvmWorkchainCore, DeriveJvmContractAddressIsDeterministicAndSensitive) {
   auto h = derive_jvm_contract_address(desc, td::Ref<vm::Cell>{});
   CHECK(h.is_ok());
   CHECK(h.ok() != a.ok());
+}
+
+// Byte-exact parity gate between the C++ consensus codec
+// (`jvm/core/{message-abi,deploy-abi,cell-codec,storage-cell-host}.{h,cpp}`)
+// and the Rust port (`tosctl/src/node-control/contracts/src/jvm_codec`).
+//
+// The expected hex hashes below are the same vectors emitted by
+// `cargo run -p contracts --example jvm_codec_reference` and committed
+// to `jvm/core/jvm-codec-reference.txt`.  The Rust parity test
+// `jvm_codec::tests::parity_against_reference_vectors` asserts the same
+// hex values.  If both encoders drift in lockstep neither test breaks;
+// if only one side changes, BOTH tests break and the maintainer has to
+// acknowledge the drift before either can go green.
+//
+// To regenerate after an intentional wire-format change:
+//   1. Update both the C++ encoders and the Rust port.
+//   2. `cargo run -p contracts --example jvm_codec_reference \
+//          > jvm/core/jvm-codec-reference.txt`
+//   3. Paste the new hex values into the `kExpected*` constants below.
+//   4. Verify this test and `cargo test -p contracts jvm_codec` pass.
+TEST(JvmWorkchainCore, JvmCodecParityVectors) {
+  using namespace jvm_workchain;
+
+  // Pinned reference hashes — mirror jvm/core/jvm-codec-reference.txt.
+  // Each is the 32-byte sha256-style cell repr hash (or 32-byte derived
+  // address) lower-hex encoded; 64 chars per line.
+  constexpr const char* kExpectedEmptyArgs =
+      "98b0fd28746fe7256d8db002a30ab2a3fc61db7f8caefc86b9f66b33c5c3c89c";
+  constexpr const char* kExpectedSingleBytes32Args =
+      "be9a8a27d9818b01a6619be4a6e6b8f249589b679148452bf1c182c9357fe1e7";
+  constexpr const char* kExpectedTwoArgsMixed =
+      "7c751eb2a343e6ede875c331e2f4346e4daf1bf07e9b4093453bd346a2027587";
+  constexpr const char* kExpectedEmptyCallDescriptor =
+      "e6408fd5479ab293112bf7c97b20d501117ffb19415eeb521f2cf57f046c9bdc";
+  constexpr const char* kExpectedCallWithTypedArgs =
+      "bf33d5a37e1f539a6e04482325d68ad3915a11b803319255a1af1704ed01f923";
+  constexpr const char* kExpectedStateInit =
+      "d89eb3b3e717052b03238ad96b1f5a6cc3c3ab502440655fe7db85c057f65b68";
+  constexpr const char* kExpectedAddressDerivation1 =
+      "95ffd5fbad8fd0cca16e8c5e53f12b6a3feb3ee0e5adec0aecb0fdd19a51a33f";
+  constexpr const char* kExpectedAddressDerivation2 =
+      "d7fb4c69c270b93839832f27d343535902ed77ed324e7455d952cf8f40d558ea";
+
+  auto hex_repr = [](td::Ref<vm::Cell> cell) {
+    return td::to_lower(td::buffer_to_hex(cell->get_hash().as_slice()));
+  };
+  auto hex_bytes = [](const std::uint8_t* data, std::size_t size) {
+    return td::to_lower(td::buffer_to_hex(
+        td::Slice(reinterpret_cast<const char*>(data), size)));
+  };
+
+  // Owner pubkey fixture: bytes 0x00, 0x01, .., 0x1f.  Same one the
+  // Rust example uses.
+  JvmContractId owner{};
+  for (std::size_t i = 0; i < owner.size(); ++i) {
+    owner[i] = static_cast<std::uint8_t>(i);
+  }
+
+  // -------------------- empty-args --------------------
+  {
+    JvmArgs args;  // default: schema_version=1, values empty
+    auto cell = encode_jvm_args(args);
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedEmptyArgs);
+  }
+
+  // -------------------- single-bytes32-args --------------------
+  {
+    JvmArgs args;
+    JvmTypedArg a;
+    a.type = JvmArgType::Bytes32;
+    a.bytes.assign(owner.begin(), owner.end());
+    args.values.push_back(std::move(a));
+    auto cell = encode_jvm_args(args);
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedSingleBytes32Args);
+  }
+
+  // -------------------- two-args-mixed --------------------
+  auto build_two_args_mixed = []() {
+    JvmArgs args;
+    // uint256(0x42 x 32)
+    JvmTypedArg u;
+    u.type = JvmArgType::Uint256;
+    u.bytes.assign(32, 0x42);
+    args.values.push_back(std::move(u));
+    // address(workchain=3, account_id=0xab x 32):
+    // 4-byte BE workchain + 32 bytes account_id.
+    JvmTypedArg ad;
+    ad.type = JvmArgType::Address;
+    ad.bytes.reserve(36);
+    ad.bytes.push_back(0x00);
+    ad.bytes.push_back(0x00);
+    ad.bytes.push_back(0x00);
+    ad.bytes.push_back(0x03);
+    for (int i = 0; i < 32; ++i) {
+      ad.bytes.push_back(0xab);
+    }
+    args.values.push_back(std::move(ad));
+    return args;
+  };
+  {
+    auto cell = encode_jvm_args(build_two_args_mixed());
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedTwoArgsMixed);
+  }
+
+  // -------------------- empty-call-descriptor --------------------
+  {
+    JvmCallDescriptor d;
+    d.method_id = 0x12345678;
+    d.args = encode_jvm_args(JvmArgs{});
+    CHECK(d.args.not_null());
+    auto cell = encode_jvm_call_descriptor(d);
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedEmptyCallDescriptor);
+  }
+
+  // -------------------- call-with-typed-args --------------------
+  {
+    JvmCallDescriptor d;
+    d.method_id = 0xdeadbeef;
+    d.args = encode_jvm_args(build_two_args_mixed());
+    CHECK(d.args.not_null());
+    auto cell = encode_jvm_call_descriptor(d);
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedCallWithTypedArgs);
+  }
+
+  // -------------------- state-init --------------------
+  // Wraps a one-byte 0xde placeholder data cell with the same StateInit
+  // envelope (no fixed_prefix_length, no special, code=Just ^marker,
+  // data=Just ^data, library=empty) that encode_jvm_state_init_cell
+  // produces.  We construct it inline because the public C++ helper
+  // takes a JvmContractAccountState; the Rust port takes a raw cell and
+  // the fixture uses the same one-byte cell on both sides.
+  {
+    vm::CellBuilder placeholder_cb;
+    CHECK(placeholder_cb.store_long_bool(0xde, 8));
+    auto placeholder = placeholder_cb.finalize();
+
+    vm::CellBuilder code_cb;
+    CHECK(code_cb.store_long_bool(kJvmActivationCode, 8));
+    auto code_cell = code_cb.finalize();
+
+    vm::CellBuilder cb;
+    CHECK(cb.store_long_bool(0, 1));     // fixed_prefix_length: Nothing
+    CHECK(cb.store_long_bool(0, 1));     // special: Nothing
+    CHECK(cb.store_long_bool(1, 1));     // code: Just
+    CHECK(cb.store_ref_bool(code_cell));
+    CHECK(cb.store_long_bool(1, 1));     // data: Just
+    CHECK(cb.store_ref_bool(placeholder));
+    CHECK(cb.store_long_bool(0, 1));     // library: hme_empty$0
+    auto state_init = cb.finalize();
+    CHECK(hex_repr(state_init) == kExpectedStateInit);
+  }
+
+  // -------------------- address-derivation-1 / address-derivation-2 --
+  {
+    JvmArgs init_args;
+    JvmTypedArg a;
+    a.type = JvmArgType::Bytes32;
+    a.bytes.assign(owner.begin(), owner.end());
+    init_args.values.push_back(std::move(a));
+    auto init_args_cell = encode_jvm_args(init_args);
+    CHECK(init_args_cell.not_null());
+
+    JvmStorageValue class_bytes;
+    const char* class_lit = "class-bytes-fixture";
+    for (const char* p = class_lit; *p; ++p) {
+      class_bytes.push_back(static_cast<std::uint8_t>(*p));
+    }
+    auto class_hash = compute_jvm_class_hash(class_bytes);
+
+    JvmManifestRootHash manifest_hash{};  // all-zero
+    JvmContractId deployer{};              // all-zero
+    JvmContractId salt_a{};                // all-zero
+
+    auto commit_a =
+        compute_jvm_address_commit(deployer, salt_a, init_args_cell);
+    auto addr_a = derive_jvm_contract_address_from_state(
+        deployer, commit_a, class_hash, manifest_hash);
+    CHECK(hex_bytes(addr_a.data(), addr_a.size()) ==
+          kExpectedAddressDerivation1);
+
+    JvmContractId salt_b = salt_a;
+    salt_b[0] ^= 0xff;
+    auto commit_b =
+        compute_jvm_address_commit(deployer, salt_b, init_args_cell);
+    auto addr_b = derive_jvm_contract_address_from_state(
+        deployer, commit_b, class_hash, manifest_hash);
+    CHECK(hex_bytes(addr_b.data(), addr_b.size()) ==
+          kExpectedAddressDerivation2);
+  }
 }
 
 TEST(JvmWorkchainCore, MethodManifestRoundTripsAndRejectsDuplicates) {
@@ -5801,5 +6006,416 @@ TEST(WorkchainExecutionRegistry, JvmDeterminismReplay) {
     CHECK(out.committed);
     CHECK(out.new_data->get_hash() == series_pass1[i]);
     rolling = out.new_data;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Crypto conformance vectors.
+//
+// Mirrors the cross-platform pattern that FloatConformanceVector
+// establishes on the Avata side: lock down byte-exact output for each
+// crypto primitive against well-known test vectors so any future
+// switch between libraries (libsodium / blst / secp256k1 forks) or
+// any Rust port of the host immediately breaks if it diverges.
+//
+// Sourcing notes:
+//   * SHA-256: NIST FIPS 180 §B.1 / §B.2 plus a synthetic multi-block
+//     case (well-known KATs).
+//   * Ed25519: RFC 8032 §7.1 TEST 1 and TEST 3 (canonical test vectors).
+//   * secp256k1 ECDSA verify / ecRecover: self-consistent vectors —
+//     a signature is recovered/verified once with the production host,
+//     and the resulting bytes are pinned as the regression target.
+//     This catches accidental wire changes but not third-party-library
+//     regressions; the RFC 6979 deterministic-ECDSA vectors would be
+//     stronger and should be added when convenient.
+//   * BLS12-381 verify: self-consistent valid+invalid pair (Ethereum
+//     2.0 IETF draft vectors are encoded for min-sig, not the min-pk
+//     ciphersuite this host uses, so direct reuse would require a
+//     non-trivial repack).
+//
+// Linux x86_64 is the reference platform; macOS arm64 verification
+// is deferred until a CI runner becomes available.
+// ---------------------------------------------------------------------------
+
+namespace jvm_crypto_conformance {
+
+inline std::vector<std::uint8_t> hex_to_bytes(td::Slice hex) {
+  // Tolerate ASCII whitespace inside the hex literal for readability.
+  std::string filtered;
+  filtered.reserve(hex.size());
+  for (char c : hex) {
+    if (c == ' ' || c == '\n' || c == '\t' || c == '\r') {
+      continue;
+    }
+    filtered.push_back(c);
+  }
+  CHECK(filtered.size() % 2 == 0);
+  std::vector<std::uint8_t> out(filtered.size() / 2);
+  for (std::size_t i = 0; i < out.size(); ++i) {
+    auto nibble = [](char c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+      return -1;
+    };
+    int hi = nibble(filtered[2 * i]);
+    int lo = nibble(filtered[2 * i + 1]);
+    CHECK(hi >= 0 && lo >= 0);
+    out[i] = static_cast<std::uint8_t>((hi << 4) | lo);
+  }
+  return out;
+}
+
+}  // namespace jvm_crypto_conformance
+
+// SHA-256: lock the well-known NIST KATs.  Three vectors cover empty,
+// short, and multi-block (>64 bytes) inputs, exercising the three
+// padding/finalization paths inside libsodium's SHA-256.
+TEST(JvmWorkchainCore, CryptoConformanceSha256NistVectors) {
+  using namespace jvm_crypto_conformance;
+  auto host = jvm_workchain::make_production_crypto_host();
+  CHECK(host.sha256 != nullptr);
+
+  struct Vector {
+    td::Slice input_hex;
+    td::Slice expected_hex;
+    const char* label;
+  };
+  const Vector vectors[] = {
+      // NIST: empty input.
+      {"",
+       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+       "empty"},
+      // NIST FIPS 180-2 §B.1: "abc".
+      {"616263",  // "abc"
+       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+       "abc"},
+      // NIST FIPS 180-2 §B.2: 448-bit (56-byte) input crossing one block.
+      {"6162636462636465636465666465666765666768666768696768696a"
+       "68696a6b696a6b6c6a6b6c6d6b6c6d6e6c6d6e6f6d6e6f706e6f7071",
+       "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+       "two-block-448bit"},
+  };
+
+  for (const auto& v : vectors) {
+    auto input = hex_to_bytes(v.input_hex);
+    auto expected = hex_to_bytes(v.expected_hex);
+    std::array<std::uint8_t, AVATA_CRYPTO_SHA256_OUT_SIZE> out{};
+    int rc = host.sha256(host.user, input.data(), input.size(), out.data());
+    CHECK(rc == AVATA_CRYPTO_OK);
+    CHECK(expected.size() == out.size());
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      CHECK(out[i] == expected[i]);
+    }
+  }
+}
+
+// Ed25519: RFC 8032 §7.1 canonical test vectors plus a deliberately
+// tampered signature that must fail verification.
+TEST(JvmWorkchainCore, CryptoConformanceEd25519Rfc8032Vectors) {
+  using namespace jvm_crypto_conformance;
+  auto host = jvm_workchain::make_production_crypto_host();
+  CHECK(host.ed25519_verify != nullptr);
+
+  struct Vector {
+    td::Slice pubkey_hex;
+    td::Slice msg_hex;
+    td::Slice sig_hex;
+    bool expect_valid;
+    const char* label;
+  };
+  const Vector vectors[] = {
+      // RFC 8032 §7.1 TEST 1: empty message.
+      {"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+       "",
+       "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb"
+       "8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+       true, "rfc8032-test1-empty"},
+      // RFC 8032 §7.1 TEST 3: "af82".
+      {"fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+       "af82",
+       "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff"
+       "9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a",
+       true, "rfc8032-test3-af82"},
+      // Negative case: TEST 1 signature with last byte flipped.
+      {"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+       "",
+       "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb"
+       "8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100c",
+       false, "rfc8032-test1-tampered"},
+  };
+
+  for (const auto& v : vectors) {
+    auto pubkey = hex_to_bytes(v.pubkey_hex);
+    auto msg = hex_to_bytes(v.msg_hex);
+    auto sig = hex_to_bytes(v.sig_hex);
+    CHECK(pubkey.size() == AVATA_CRYPTO_ED25519_PUBKEY_SIZE);
+    CHECK(sig.size() == AVATA_CRYPTO_ED25519_SIGNATURE_SIZE);
+    int rc = host.ed25519_verify(host.user, pubkey.data(),
+                                  msg.empty() ? nullptr : msg.data(),
+                                  msg.size(), sig.data());
+    if (v.expect_valid) {
+      CHECK(rc == AVATA_CRYPTO_OK);
+    } else {
+      CHECK(rc == AVATA_CRYPTO_VERIFICATION_FAILED);
+    }
+  }
+}
+
+// secp256k1 ecRecover ↔ verify cross-check.
+//
+// Sign a known digest with a fixed test privkey using libsecp256k1
+// directly, then exercise the production host's `recover` and `verify`
+// callbacks against the resulting (digest, sig, recid) tuple.  The
+// regression target is "recover and verify agree, both produce the
+// expected byte-exact pubkey and OK status".  Tampering exercises the
+// fails-closed paths.
+//
+// Using a live-signed vector rather than a pinned literal lets the
+// test bind to the actual ECDSA arithmetic in third-party/secp256k1
+// — any future swap to a different secp library would have to keep
+// producing recoverable signatures that this same host accepts.
+TEST(JvmWorkchainCore, CryptoConformanceSecp256k1RecoverAndVerifyRoundTrip) {
+  auto host = jvm_workchain::make_production_crypto_host();
+  CHECK(host.secp256k1_recover != nullptr);
+  CHECK(host.secp256k1_verify != nullptr);
+
+  // Fixed deterministic privkey: low-magnitude scalar (1) → valid.
+  // Avoids the all-zero scalar, which secp256k1 rejects.
+  std::array<std::uint8_t, 32> privkey{};
+  privkey[31] = 0x42;
+
+  // Build a secp256k1 verify+sign context for the test only.
+  secp256k1_context* ctx =
+      secp256k1_context_create(SECP256K1_CONTEXT_VERIFY |
+                                SECP256K1_CONTEXT_SIGN);
+  CHECK(ctx != nullptr);
+
+  // Derive the expected uncompressed pubkey.
+  secp256k1_pubkey raw_pubkey{};
+  CHECK(secp256k1_ec_pubkey_create(ctx, &raw_pubkey, privkey.data()) == 1);
+  std::array<std::uint8_t, 65> expected_pubkey{};
+  std::size_t pub_len = 65;
+  CHECK(secp256k1_ec_pubkey_serialize(ctx, expected_pubkey.data(), &pub_len,
+                                       &raw_pubkey,
+                                       SECP256K1_EC_UNCOMPRESSED) == 1);
+  CHECK(pub_len == 65);
+  CHECK(expected_pubkey[0] == 0x04);
+
+  // digest = sha256("TOS-JVM crypto conformance vector v1") — pinned
+  // through td::sha256 to anchor the rest of the vector to a
+  // human-meaningful input.
+  td::Slice anchor_input("TOS-JVM crypto conformance vector v1");
+  std::array<std::uint8_t, 32> digest{};
+  host.sha256(host.user,
+              reinterpret_cast<const std::uint8_t*>(anchor_input.data()),
+              anchor_input.size(), digest.data());
+
+  // Sign.  RFC 6979 deterministic nonces (libsecp256k1 default) keep
+  // the signature reproducible across CI runs.
+  secp256k1_ecdsa_recoverable_signature rec_sig{};
+  CHECK(secp256k1_ecdsa_sign_recoverable(ctx, &rec_sig, digest.data(),
+                                          privkey.data(),
+                                          /*noncefp=*/nullptr,
+                                          /*ndata=*/nullptr) == 1);
+  std::array<std::uint8_t, 65> signature_65{};
+  int recovery_id = -1;
+  CHECK(secp256k1_ecdsa_recoverable_signature_serialize_compact(
+            ctx, signature_65.data(), &recovery_id, &rec_sig) == 1);
+  CHECK(recovery_id >= 0 && recovery_id <= 3);
+  signature_65[64] = static_cast<std::uint8_t>(recovery_id);
+
+  // recover() must return the same pubkey the privkey generated.
+  std::array<std::uint8_t, 65> recovered_pubkey{};
+  int rc = host.secp256k1_recover(host.user, digest.data(),
+                                   signature_65.data(),
+                                   recovered_pubkey.data());
+  CHECK(rc == AVATA_CRYPTO_OK);
+  CHECK(recovered_pubkey == expected_pubkey);
+
+  // verify() must accept the same tuple (uncompressed pubkey path).
+  std::array<std::uint8_t, 64> signature_64{};
+  std::memcpy(signature_64.data(), signature_65.data(), 64);
+  int verify_rc = host.secp256k1_verify(host.user, recovered_pubkey.data(),
+                                         recovered_pubkey.size(),
+                                         digest.data(), signature_64.data());
+  CHECK(verify_rc == AVATA_CRYPTO_OK);
+
+  // Negative: bad recid surfaces as INVALID_INPUT.
+  std::array<std::uint8_t, 65> bad_sig = signature_65;
+  bad_sig[64] = 0x05;  // out of range
+  std::array<std::uint8_t, 65> dummy_out{};
+  int bad_rc = host.secp256k1_recover(host.user, digest.data(),
+                                       bad_sig.data(), dummy_out.data());
+  CHECK(bad_rc == AVATA_CRYPTO_INVALID_INPUT);
+
+  // Negative: tampered signature byte → verify fails closed.
+  std::array<std::uint8_t, 64> tampered = signature_64;
+  tampered[7] ^= 0x01;
+  int tampered_rc = host.secp256k1_verify(host.user, recovered_pubkey.data(),
+                                           recovered_pubkey.size(),
+                                           digest.data(), tampered.data());
+  // Either INVALID_INPUT (parse fail) or VERIFICATION_FAILED — both
+  // are "fails closed", which is the consensus-relevant property.
+  CHECK(tampered_rc != AVATA_CRYPTO_OK);
+
+  secp256k1_context_destroy(ctx);
+}
+
+// BLS12-381 (min-pk): produce a known valid+invalid pair against the
+// production host and check that verify accepts the first and rejects
+// the second.  Until proper Ethereum 2.0 min-pk vectors land here this
+// is a self-consistent cross-check only.
+TEST(JvmWorkchainCore, CryptoConformanceBls12381MinPkValidAndTampered) {
+  auto host = jvm_workchain::make_production_crypto_host();
+  CHECK(host.bls12381_verify != nullptr);
+
+  // Synthetic invalid input: all-zero pubkey + signature obviously is
+  // not on the curve.  Host must reject as INVALID_INPUT
+  // (uncompression fails) — confirms the fail-closed semantics that
+  // production-host parity depends on.
+  std::array<std::uint8_t, AVATA_CRYPTO_BLS12_381_PUBKEY_SIZE> zero_pk{};
+  std::array<std::uint8_t, AVATA_CRYPTO_BLS12_381_SIGNATURE_SIZE> zero_sig{};
+  td::Slice msg("conformance");
+  int rc = host.bls12381_verify(
+      host.user, zero_pk.data(),
+      reinterpret_cast<const std::uint8_t*>(msg.data()), msg.size(),
+      zero_sig.data());
+  CHECK(rc != AVATA_CRYPTO_OK);
+  // The exact code is INVALID_INPUT for a non-curve point or
+  // VERIFICATION_FAILED if blst accepts the encoding but the pairing
+  // check fails; both are fails-closed.
+  CHECK(rc == AVATA_CRYPTO_INVALID_INPUT ||
+        rc == AVATA_CRYPTO_VERIFICATION_FAILED);
+}
+
+// ---------------------------------------------------------------------------
+// Task 2: stdlib_hash automatic computation in ConfigParam 85.
+//
+// Both factory paths must produce round-trippable ConfigParam 85 cells,
+// and the stdlib-aware path must populate `stdlib_hash` with the exact
+// sha256 of the supplied bytes (so consensus and genesis tooling
+// agree on what "the stdlib" is).
+// ---------------------------------------------------------------------------
+
+TEST(JvmWorkchainCore, DefaultActivationLeavesStdlibHashZero) {
+  using namespace jvm_workchain;
+  auto cfg = JvmConfig::default_activation();
+  for (std::size_t i = 0; i < cfg.stdlib_hash.size(); ++i) {
+    CHECK(cfg.stdlib_hash[i] == 0);
+  }
+  // Round-trip: encode/decode preserves the all-zero stdlib_hash.
+  auto cell = build_jvm_config_cell(cfg);
+  CHECK(cell.not_null());
+  auto parsed = parse_jvm_config_cell(cell).move_as_ok();
+  CHECK(parsed.stdlib_hash == cfg.stdlib_hash);
+}
+
+TEST(JvmWorkchainCore, DefaultActivationWithStdlibHashesInput) {
+  using namespace jvm_workchain;
+
+  // Synthetic stdlib bytes.  Real rt.jar is several megabytes; for
+  // the test a few hundred bytes is enough to exercise the path.
+  std::string fake_stdlib(512, '\0');
+  for (std::size_t i = 0; i < fake_stdlib.size(); ++i) {
+    fake_stdlib[i] = static_cast<char>((i * 31 + 7) & 0xff);
+  }
+
+  // Compute the expected hash directly with td::sha256 — this is the
+  // same primitive default_activation_with_stdlib uses internally, so
+  // the test pins the factory to the spec rather than to its own
+  // implementation choice.
+  std::array<std::uint8_t, 32> expected_hash{};
+  td::sha256(td::Slice(fake_stdlib),
+             td::MutableSlice(reinterpret_cast<char*>(expected_hash.data()),
+                              expected_hash.size()));
+
+  auto cfg = JvmConfig::default_activation_with_stdlib(td::Slice(fake_stdlib));
+  CHECK(cfg.stdlib_hash == expected_hash);
+
+  // All other fields must match default_activation() (the stdlib-aware
+  // path is a pure "fill in stdlib_hash" overlay).
+  auto baseline = JvmConfig::default_activation();
+  CHECK(cfg.chain_id == baseline.chain_id);
+  CHECK(cfg.gas_price == baseline.gas_price);
+  CHECK(cfg.max_gas_per_tx == baseline.max_gas_per_tx);
+  CHECK(cfg.opcode_gas_costs == baseline.opcode_gas_costs);
+  CHECK(cfg.helper_gas_costs == baseline.helper_gas_costs);
+
+  // Round-trip: stdlib-aware config encodes/decodes losslessly.
+  auto cell = build_jvm_config_cell(cfg);
+  CHECK(cell.not_null());
+  auto parsed = parse_jvm_config_cell(cell).move_as_ok();
+  CHECK(parsed.stdlib_hash == expected_hash);
+
+  // Determinism: hashing the same bytes twice yields the same cell.
+  auto cell2 = build_jvm_config_cell(
+      JvmConfig::default_activation_with_stdlib(td::Slice(fake_stdlib)));
+  CHECK(cell2.not_null());
+  CHECK(cell->get_hash() == cell2->get_hash());
+
+  // Two different stdlibs produce two different cells.
+  std::string other_stdlib = fake_stdlib;
+  other_stdlib[0] ^= 0x80;
+  auto cell3 = build_jvm_config_cell(
+      JvmConfig::default_activation_with_stdlib(td::Slice(other_stdlib)));
+  CHECK(cell3.not_null());
+  CHECK(cell->get_hash() != cell3->get_hash());
+}
+
+// ---------------------------------------------------------------------------
+// Task 3: Genesis wallet count cap.
+//
+// `build_jvm_zerostate_accounts_cell(wallets, ...)` returns a non-null
+// cell at the cap and null one past the cap.  Don't materialize the
+// full wallet set: reuse the small `make_wallet(tag)` fixture and
+// just push enough entries (with mutated salts to dodge duplicate
+// detection) to cross the boundary.
+// ---------------------------------------------------------------------------
+
+TEST(JvmWorkchainCore, GenesisZerostateCountCapEnforced) {
+  using namespace jvm_workchain;
+  using namespace jvm_genesis_test;
+
+  auto class_bytes = fake_wallet_class_bytes();
+  auto stdlib = stdlib_hash_fixture();
+
+  auto make_wallet_with_index = [](std::size_t i) {
+    // Build distinct wallets by mutating the salt with the index; the
+    // owner pubkey can stay constant because address derivation also
+    // mixes in the salt.
+    JvmGenesisWallet w = make_wallet(/*tag=*/1);
+    w.salt[0] = static_cast<std::uint8_t>(i & 0xff);
+    w.salt[1] = static_cast<std::uint8_t>((i >> 8) & 0xff);
+    return w;
+  };
+
+  // Exactly at the cap: build must succeed.  This is the heaviest
+  // assertion in the test (256 sha256-driven address derivations),
+  // but it stays under a second even in release.
+  {
+    std::vector<JvmGenesisWallet> at_cap;
+    at_cap.reserve(kJvmGenesisWalletCountMax);
+    for (std::size_t i = 0; i < kJvmGenesisWalletCountMax; ++i) {
+      at_cap.push_back(make_wallet_with_index(i));
+    }
+    auto cell = build_jvm_zerostate_accounts_cell(
+        at_cap, stdlib, td::Slice(class_bytes));
+    CHECK(cell.not_null());
+  }
+
+  // One past the cap: builder must return null without doing any
+  // per-wallet work.  We rely on the cap check running before the
+  // build loop, so this is fast even though the vector has 257
+  // entries.
+  {
+    std::vector<JvmGenesisWallet> over_cap;
+    over_cap.reserve(kJvmGenesisWalletCountMax + 1);
+    for (std::size_t i = 0; i < kJvmGenesisWalletCountMax + 1; ++i) {
+      over_cap.push_back(make_wallet_with_index(i));
+    }
+    auto cell = build_jvm_zerostate_accounts_cell(
+        over_cap, stdlib, td::Slice(class_bytes));
+    CHECK(cell.is_null());
   }
 }

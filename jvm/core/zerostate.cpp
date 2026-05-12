@@ -46,6 +46,15 @@ td::Ref<vm::Cell> build_jvm_zerostate_accounts_cell(
     const std::vector<JvmGenesisWallet>& wallets,
     const std::array<std::uint8_t, 32>& stdlib_hash,
     td::Slice wallet_class_bytes) {
+    // Hard cap: anything above kJvmGenesisWalletCountMax is treated as a
+    // misconfigured zerostate script and rejected before we materialize
+    // any per-wallet cells.  Callers must inspect for null and surface
+    // a clear error; the Fift word ahead of this path also checks the
+    // limit so operators see the issue at parse time rather than after
+    // the build silently returns null.
+    if (wallets.size() > kJvmGenesisWalletCountMax) {
+        return {};
+    }
     vm::AugmentedDictionary accounts_dict(256, block::tlb::aug_ShardAccounts);
     for (const auto& wallet : wallets) {
         auto built_res = build_jvm_genesis_wallet(wallet, stdlib_hash,

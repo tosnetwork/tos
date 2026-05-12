@@ -33,6 +33,20 @@
 
 namespace jvm_workchain {
 
+/// Hard cap on the number of pre-seeded genesis wallets.
+///
+/// The zerostate ShardAccounts dict is keyed on 256-bit addresses and
+/// `vm::AugmentedDictionary` itself handles arbitrarily many entries,
+/// but a misconfigured zerostate script that fed in millions of wallets
+/// would silently produce a pathologically deep dict whose
+/// load/iterate cost balloons every block.  Cap the count at a
+/// generous-but-finite ceiling so any operator typo surfaces as a
+/// loud build failure instead of a slow-network bug.  256 is enough
+/// for the launch validator set + a per-team seed wallet allotment;
+/// extending it later is a one-line constant bump if real demand
+/// emerges.
+constexpr std::size_t kJvmGenesisWalletCountMax = 256;
+
 /// Build the (empty) ShardAccounts cell for the wc=3 genesis shard.
 ///
 /// Always returns a non-null cell shaped as `hme_empty$0`

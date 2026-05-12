@@ -13,19 +13,35 @@
  * must produce a hash byte-identical to what the C++ encoders produce
  * for the same logical input.  The structural tests under
  * `jvm_codec::tests` lock the magic + schema_version + chunking rules
- * the C++ side enforces; parity against the live C++ codec is verified
- * by `cargo test -p contracts jvm_codec` against fixture inputs
- * (extend by adding a fixture, running the C++ test that exposes the
- * expected hash via `crypto/test/test-workchain-execution-registry`,
- * and pasting back the hex digest).
+ * the C++ side enforces; byte-exact parity against the live C++ codec
+ * is locked by `jvm_codec::tests::parity_against_reference_vectors` and
+ * the matching C++ test `JvmWorkchainCore::JvmCodecParityVectors` (in
+ * `crypto/test/test-workchain-execution-registry.cpp`), both of which
+ * assert the same 8 canonical hex hashes committed to
+ * `jvm/core/jvm-codec-reference.txt`.
+ *
+ * To regenerate the reference vectors after an intentional wire-format
+ * change:
+ *   1. Update both the Rust and C++ encoders.
+ *   2. cargo run -p contracts --example jvm_codec_reference \
+ *          > jvm/core/jvm-codec-reference.txt
+ *   3. Copy the new hex hashes into the `kExpected*` constants in the
+ *      C++ test inline expectations.
+ *   4. Verify `cargo test -p contracts jvm_codec` and
+ *      `./test-workchain-execution-registry` both pass.
  */
+pub mod action_create_account;
 pub mod args;
 pub mod address;
 pub mod call_descriptor;
 pub mod deploy_descriptor;
+pub mod manifest;
 pub mod state_init;
 pub mod storage_value;
 
+pub use action_create_account::{
+    encode_action_create_account, ACTION_CREATE_ACCOUNT_MAGIC,
+};
 pub use address::{
     compute_jvm_address_commit, compute_jvm_class_hash,
     compute_jvm_manifest_root_hash, derive_jvm_contract_address,
@@ -38,6 +54,11 @@ pub use call_descriptor::{
 pub use deploy_descriptor::{
     encode_jvm_deploy_descriptor, JvmDeployDescriptor,
     JVM_DEPLOY_DESCRIPTOR_MAGIC,
+};
+pub use manifest::{
+    encode_jvm_method_manifest, JvmMethodManifestEntry,
+    JVM_METHOD_MANIFEST_MAGIC, JVM_METHOD_MANIFEST_SCHEMA_VERSION,
+    JVM_METHOD_MANIFEST_MAX_ENTRIES,
 };
 pub use state_init::encode_jvm_state_init_cell;
 pub use storage_value::encode_jvm_storage_value;

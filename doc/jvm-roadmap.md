@@ -1,7 +1,7 @@
 # JVM Workchain Roadmap
 
-Status: **implemented** — Phases 0–8 + JVM v2 account-native topology landed
-Date: 2026-05-08
+Status: **implemented** — Phases 0–8 + JVM v2 account-native topology + post-v2 wc=3 wallet bootstrap (Phases A–G) landed
+Date: 2026-05-12
 
 This document is now both the historical roadmap and the implemented spec
 for `wc=3` (Avata JVM).  It covers engine selection rationale, design
@@ -985,8 +985,12 @@ Legend:
 - ⬜ Not started
 - ⏭ Explicitly deferred
 
-Last updated: 2026-05-08.  All phases plus JVM v2 account-native topology
-landed; 56/56 tests pass on Linux x86_64.
+Last updated: 2026-05-12.  All numbered phases (0–8) plus JVM v2
+account-native topology landed; post-v2 wc=3 wallet bootstrap (Phases
+A–G) landed on top.  91/91 `test-workchain-execution-registry` C++
+tests pass plus all standalone Avata Java tests (initial run +
+determinism replay); `tosctl/.../jvm_codec` Rust crate ships 13/13
+unit tests green.
 
 | Phase | Status | Notes |
 |---|---|---|
@@ -1002,8 +1006,43 @@ landed; 56/56 tests pass on Linux x86_64.
 | JVM v2 account-native topology | ✅ | Each Java contract is a real wc=3 account at a deterministic 256-bit address. Host plumbing (`EngineDefined` policy + `action_create_account#4a435241` TLB + handler), per-account state cell `JvmContractAccountState` (JVAC, schema=2), call descriptor `JvmCallDescriptor` (JVI2), per-account method manifest `JvmMethodManifest` (JVM2), `derive_jvm_contract_address("TOS-JVM-CONTRACT-v2")`, `encode_jvm_state_init_cell`, ConfigParam 85 schema=2 (no `max_total_class_bytes`), empty wc=3 zerostate, deploy RPC returning `contractAddress`, full v1 path removed (no `JvmExecutorState` / global `class_state_root` / `derive_jvm_contract_id` / `JvmAvataClassDefinition` / `install_jvm_deploy_descriptor` / SingletonExecutor `account_policy`). 56/56 tests pass; covered by `JvmEndToEndDeployCallSequence`, `JvmEngineDispatchesAccountStateToRuntime`, `ContractAccountStateCodecRoundTripsClassBytesAndStorage`, `DeriveJvmContractAddressIsDeterministicAndSensitive`, `DeriveJvmContractAddressFormulaMatchesSpec`, `MethodManifestRoundTripsAndRejectsDuplicates`, `EncodeJvmStateInitCellPassesTlbValidation`, `EngineDefinedPolicyValidates`, `RpcDeployContractReturnsContractAddress`, `RpcCallContractAcceptsAddressNotContractId`, `RpcGetContractStateFetchesPerAccount`, `MultiContractIsolatedStorageWithSharedClass`, `JvmDeterminismReplay`, `ActionCreateAccountTlbRoundTrip`, `ZerostateAccountsCellIsEmpty`, plus the existing storage / events / config / Avata-transaction / EVM+Uno tests |
 | Lambda / `invokedynamic` support | ⛔ | **Not supported in any version.** `invokedynamic` is rejected at three independent layers: (1) `CONSTANT_MethodHandle`, `CONSTANT_MethodType`, and `CONSTANT_InvokeDynamic` constant-pool entries throw `VerifyError` at class load; (2) the `BootstrapMethods` attribute is in the forbidden attribute list; (3) the `invokedynamic` opcode throws `VerifyError` in the interpreter as a fallback. `java.lang.invoke` is absent from `rt.jar` and `api.jar`. Lambda expressions and method references compiled by `javac` are rejected. The equivalent pattern — anonymous inner classes — is fully supported. There is no plan to support `invokedynamic` in v2 or any future version: a deterministic consensus VM cannot safely admit arbitrary bootstrap method linkage, and the anonymous-inner-class pattern covers all practical contract use cases without it. Decision and rationale documented in `jvm/avata/README.md` |
 | Per-account contract model | ✅ | Same scope as JVM v2 account-native topology above; tracked as one row in this table going forward |
+| Phase A — `java.lang.Context` | ✅ | Per-call chain-context primitives that OpenZeppelin-style contracts depend on: `caller()`, `value()`, `contractAddress()`, `blockNumber()`, `blockTimestamp()`, `chainId()`, `isStaticCall()`, `requireCaller(Address)`. Values are pulled from the inbound message + `WorkchainComputeContext` that `run_compute` already receives, pinned in Avata thread state via `avata_set_contract_context`, and surfaced through JNI getters charged at one CONTEXT_READ helper-gas unit each (default 5 gas). C ABI in `jvm/avata/include/avata/context.h`; install paths in `jvm/core/avata-execution.cpp` (`execute_jvm_avata_transaction` installs the context per call) and `jvm/core/avata-runtime.cpp`. Inbound-message parsing (addr_std src + Uint256 attached value) is extracted into `jvm/core/inbound-parse.{h,cpp}` so the dispatch-engine first-activation auth path and the avata-runtime context plumbing share a single canonical implementation. `Ownable` / `Ownable2Step` / `AccessControl` gain no-arg overloads that pull the caller from `Context.caller()`; the existing Address-caller overloads remain `@Deprecated` for one release. Pinned by `ContextTest` (every getter traps with `ContractViolationError` when no host is installed). Commit `1f123df22`. |
+| Phase B — `java.lang.Crypto` natives | ✅ | Five signature/hash primitives: `sha256`, secp256k1 `ecRecover`, ECDSA `ecdsaVerify`, `ed25519Verify`, BLS12-381 `bls12381Verify` (min-pk arrangement). Installed via an `AvataCryptoHost` host (C ABI in `jvm/avata/include/avata/crypto.h`); standalone Avata builds leave the host unset so sigverify traps deterministically in the test runner, while validator builds install a production host (`jvm/core/crypto-host.{h,cpp}`) that binds to libsecp256k1 + libsodium + blst (all already vendored under `third-party/`). Gas defaults track EVM precompile cost classes: SHA-256 60+12/B, ecRecover/ECDSA 3000, Ed25519 2000, BLS 43000. ConfigParam 85's helper-gas table grew 14→21 entries to accommodate the new helpers. Pinned by `CryptoTest` (keccak256 known-answer + trap-when-no-host). Commit `1f123df22`. |
+| Phase C — ABI extensions + EIP-712 | ✅ | `java.lang.ABI` adds Solidity-style helpers: `encodePacked(Object...)` (tight concatenation, no length prefixes, no zero padding), `encode(Object[])` (32-byte-padded encode), `encodeWithSelector(bytes4, Object[])`, `encodeWithSignature(String, Object[])`. Type whitelist is the contract profile (Uint256, Bytes32, Bytes4, Address, Bytes, byte[], String, Boolean, Integer/Long/Short/Byte); unknown types raise `IllegalArgumentException` so contracts cannot accidentally serialize a host-shaped `Object.toString`. `java.lang.EIP712` provides `domainSeparator` / `typeHash` / `hashStruct` / `digest` using the canonical EIP-191 0x1901 prefix; composes on top of `Crypto.keccak256` — no host needed. A second `domainSeparator` overload pulls `chainId` from the active Context (the form OpenZeppelin permits / votes write against). `Contract.revert(String signature, Object[] args)` ABI-encodes the args into the `ContractRevertException` payload so callers decode the error symmetrically. Pinned by `EIP712Test`, `ABIPackedTest`. Commit `aeff6f502`. |
+| Phase D — wc=3 wallet test + Wallet realization | ✅ | Same commit as Phase C. `Wallet.java` skeleton (still test-scoped at this point) stores the raw Ed25519 public key, verifies the spend signature via `Crypto.ed25519Verify(ownerKey, digest, sig)`, binds the replay digest to `Context.contractAddress`, and emits outbound transfers via `System.sendMessage`. Four standalone-runner tests landed: `ContextTest`, `CryptoTest`, `EIP712Test`, `ABIPackedTest`. All 38+ Java tests pass twice (initial run + determinism replay). Commit `aeff6f502`. |
+| `System.sendMessage` outbound primitive | ✅ | Same installable-host topology as Storage/Event/Crypto: `AvataMessageHost` C ABI in `jvm/avata/include/avata/message.h`; `JvmMessageHost` adapter in `jvm/core/message-host.{h,cpp}` serializes each emitted message as a canonical `action_send_msg` cell carrying a `MessageRelaxed` `int_msg_info` with `src=addr_none` (filled by the host's `check_replace_src_addr`), `dest=addr_std(wc, addr)`, `value=Uint256 tomis`, and the contract-supplied body. `execute_jvm_avata_transaction` installs the message host between events and the contract transaction, commits on success, rolls back on revert / OOG / OOM so a failed call emits zero outbound messages. `build_jvm_combined_action_list` splices the existing event `OutList` with one `action_send_msg` node per outbound message. Caps: `kJvmMessageCountMax = 12 messages/tx`, `kJvmMessageBodyMaxBytes = 128 016 byte body` — keeps spine + payload chain comfortably under `vm::CellTraits::max_depth`. Gas: `AVATA_CONTRACT_HELPER_MESSAGE_BASE` (default 500) + `MESSAGE_BYTE` (default 1); helper-gas table grew 21→23 entries. Java surface: `java.lang.System.sendMessage(Address, Uint256, byte[])` + zero-body overload. Pinned by `SendMessageTest`. Commit `8a1390170`. |
+| Phase E — `java.lang.Wallet` promoted to rt.jar | ✅ | `jvm/avata/test/Wallet.java` moves to `jvm/avata/rt/java/lang/Wallet.java` under package `java.lang` and `extends Contract` so it can be referenced by other admitted contracts (e.g. `extends Wallet` for paymaster / multi-sig variants), reuses `Contract.revert()`, and is picked up by api.jar / rt.jar through the standard classpath walk. Slot constants (`SLOT_OWNER_PUBKEY` / `SLOT_NONCE` / `SLOT_INIT_FLAG`) are `public static final String` so Phase F's genesis seeder hashes the same names the live runtime does (no drift between off-chain seeders and on-chain execution). Internal helpers (`loadNonce`, `requireInitialized`, `digest`, `dispatch`, `dispatchOne`) become `protected static` so subclasses can swap one piece (e.g. override `dispatch()` to inject fee-burning) without re-implementing the whole entry surface. `jvm/avata/src/avata/contract-profile.h` admits `java/lang/Wallet`. `doc/jvm-rt.md` adds Wallet to the Initial classes list and the OpenZeppelin capability mapping table with the consensus-stability caveat. `WalletTest.java` pins standalone-runner behaviour: arg validation traps, re-init guard, slot derivation invariant. Commit `6e9b7f48f`. |
+| Phase F — wc=3 genesis seeding | ✅ | Closes the wc=3 bootstrap deadlock (previously the wc=3 ShardAccounts dict was empty at genesis, but `action_create_account` requires a same-workchain sender → no first contract was deployable). `jvm/core/genesis-wallet.{h,cpp}` materializes one wallet per declaration as a fully-active wc=3 account with storage_root pre-populated as if `Wallet.init(ownerPubKey)` had already run, manifest_root carrying `init`/`execute`/`getNonce`, JVAC (schema=2) with sentinel all-zero deployer, and address derived through `derive_jvm_contract_address_from_state` (the same formula the dispatch-engine recomputes on every call, so the dispatch engine accepts the genesis account without any new code path). `jvm/core/zerostate.{h,cpp}` gains a parameterized `build_jvm_zerostate_accounts_cell(wallets, stdlib_hash, class_bytes)` overload; the zero-parameter form still returns the canonical `hme_empty$0` so chains that bootstrap purely via `action_create_account` from an external sender remain supported. Fift word `jvm-zerostate-from-alloc` (in `crypto/block/create-state.cpp:648`, registered at line 1083) mirrors `evm-zerostate-from-alloc`: stack signature `( T class_bytes stdlib_hash -- accounts_cell )` where T is a tuple of `(owner_pubkey:32B, salt:32B, balance:int)`. Length validation runs before the C++ builder so malformed declarations surface as a clear `fift::IntError`. Five C++ tests pin consensus-stable invariants: `GenesisWalletBuildIsDeterministic`, `GenesisWalletAddressBindingMatchesDispatchGate`, `GenesisWalletStorageSlotsMatchWalletInit`, `GenesisWalletDifferentSaltProducesDifferentAddresses`, `GenesisZerostateAccountsCellEmbedsAllWallets` (91/91 total; up from 86). Commit `652d39c5e`. |
+| Phase G — tosctl Rust `jvm_codec` | ✅ | Foundation layer for the wc=3 wallet CLI. Faithful Rust port of every consensus-side cell codec a wc=3 wallet client needs, under `tosctl/src/node-control/contracts/src/jvm_codec/`: `args.rs` (`JvmArgs` / `JvmTypedArg` + `encode_jvm_args`; mirrors `jvm_args#4a564d41`), `call_descriptor.rs` (`JvmCallDescriptor` + `encode_jvm_call_descriptor`; mirrors `jvm_call#4a564932`), `deploy_descriptor.rs` (`JvmDeployDescriptor` + encoder; mirrors `jvm_deploy#4a564d44`), `state_init.rs` (`encode_jvm_state_init_cell` wrapping a JVAC for `action_create_account`; single-byte `0x4a` code marker + JVAC data), `storage_value.rs` (chunked storage-value encoding, 127 B per chunk + 1-bit has_next, `max_depth − 16` wrapper margin), `address.rs` (`compute_jvm_class_hash` / `compute_jvm_address_commit` / `compute_jvm_manifest_root_hash` / `derive_jvm_contract_address`, matching the C++ `sha256("TOS-JVM-CONTRACT-v2" || deployer || address_commit || class_hash || manifest_root_hash)` formula). Reuses `keccak_hash::keccak_256` and `sha2::Sha256` already available in the tosctl workspace (only new declaration is an explicit `sha2` Cargo dep). 13 unit tests cover encode determinism, ref-shape invariants, address-formula sensitivity, and storage-value chunk linking. Out of scope for this commit (future follow-ups): `action_create_account#4a435241` OutAction builder, `JvmWalletContract` trait + concrete impl, `jvm-wallet` CLI subcommand family, `jvm_*` `ClientJsonRpc` bindings. Commit `6a28d551e`. |
 
-**Mainnet-activation blockers:** none — all known blockers are resolved.
+**Mainnet-activation blockers (post-Phase-G):**
+
+- **`stdlib_hash` is not yet pinned.** `JvmConfig::default_activation()`
+  emits an all-zero `stdlib_hash` (`jvm/core/config-param.cpp:285` —
+  "stdlib_hash stays zero-initialized until the stdlib archive is
+  locked in").  Before mainnet wc=3 activation, governance must build
+  the canonical `rt.jar`, compute `sha256(rt.jar)`, and ship that as
+  the ConfigParam 85 `stdlib_hash`.  Until that value is non-zero
+  every JVAC `state.stdlib_hash` check at compute time will be
+  meaningless (any deploy with `stdlib_hash=0` will pass).
+- **Initial genesis wallet keypairs unset.** Phase F gives the
+  capability to pre-seed wc=3 wallets; the keypairs themselves are a
+  governance decision (which Ed25519 keys, with which initial
+  balances, at which salts) that has not been made.  Without at least
+  one genesis wallet the chain is still in the empty-default
+  configuration and cannot deploy a first contract; see
+  `doc/jvm-mainnet-activation.md` for the activation runbook.
+- **Canonical `java.lang.Wallet` class_bytes not pinned.** The genesis
+  seeder hashes `wallet_class_bytes` (passed as a parameter) into both
+  the address derivation and the storage layout.  Until governance
+  pins a specific `Wallet.class` byte sequence (compiled from the rt.jar
+  source at a specific revision), genesis-seeded addresses cannot be
+  computed off-chain by clients.  The contract source itself is stable
+  (`jvm/avata/rt/java/lang/Wallet.java`); the missing artifact is the
+  versioned compiled bytecode + its class_hash.
+
+These are operational pinning decisions, not code changes — the
+implementation is feature-complete.
 
 **Resolved during the run-up to v2:**
 - Cross-platform float conformance: `check-float-conformance` (160-line
@@ -1308,7 +1347,28 @@ jvm/
     storage-cell-host.{h,cpp} ← JvmStorageCellHost (cell-backed 256-bit slots)
     event-host.{h,cpp}        ← JvmEventHost + event payload codec
     rpc.{h,cpp}               ← jvm_* JSON-RPC handlers + accountStateBoc parsing
+    ── post-v2 (Phases A–G) ──
+    inbound-parse.{h,cpp}     ← shared addr_std src + Uint256 value parser
+                                (dispatch-engine + avata-runtime context plumbing)
+    crypto-host.{h,cpp}       ← validator AvataCryptoHost binding to
+                                libsecp256k1 / libsodium / blst
+    message-host.{h,cpp}      ← JvmMessageHost — System.sendMessage adapter
+                                that serializes outbound action_send_msg cells
+    genesis-wallet.{h,cpp}    ← per-wallet builder for the Phase F seeder
+  avata/
+    rt/java/lang/Wallet.java  ← canonical wc=3 wallet contract (Phase E)
+    include/avata/
+      context.h               ← AvataContractContext C ABI (Phase A)
+      crypto.h                ← AvataCryptoHost C ABI (Phase B)
+      message.h               ← AvataMessageHost C ABI (System.sendMessage)
 ```
+
+Outside `jvm/`, Phase F adds the Fift word
+`jvm-zerostate-from-alloc` in `crypto/block/create-state.cpp:648`
+(stack signature `( T class_bytes stdlib_hash -- accounts_cell )`)
+and Phase G adds the Rust `jvm_codec` crate at
+`tosctl/src/node-control/contracts/src/jvm_codec/` (mirrors the C++
+cell codecs for wallet clients).
 
 Note: `persistent-map.cpp` / `persistent-list.cpp` as separate C++ files are
 not needed: `PersistentMap` and `PersistentList` are implemented as Java classes

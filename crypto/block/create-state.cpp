@@ -691,6 +691,16 @@ void interpret_jvm_zerostate_from_alloc(vm::Stack& stack) {
         "jvm-zerostate-from-alloc: expected a tuple of wallet declarations"};
   }
 
+  // Fail-fast on count overflow.  The C++ builder applies the same
+  // cap and returns null, but raising here gives operators a precise
+  // error message instead of "could not build accounts cell".
+  if (outer->size() > jvm_workchain::kJvmGenesisWalletCountMax) {
+    throw fift::IntError{
+        "jvm-zerostate-from-alloc: wallet count exceeds the launch cap of " +
+        std::to_string(jvm_workchain::kJvmGenesisWalletCountMax) +
+        " (got " + std::to_string(outer->size()) + ")"};
+  }
+
   std::vector<JvmGenesisWallet> wallets;
   wallets.reserve(outer->size());
 
@@ -761,11 +771,49 @@ void interpret_jvm_zerostate_from_alloc(vm::Stack& stack) {
 // initial state so validators can admit wc=3 transactions from block 0.
 //
 // Stack: ( -- config_cell )
+//
+// The resulting cell carries an all-zero `stdlib_hash`, which is the
+// pre-launch sentinel.  Once the stdlib archive is locked in, callers
+// should switch to `jvm-config-param-cell-with-stdlib` so consensus
+// pins the canonical rt.jar bytes.
 void interpret_jvm_config_param_cell(vm::Stack& stack) {
   jvm_workchain::JvmConfig cfg = jvm_workchain::JvmConfig::default_activation();
   auto cell = jvm_workchain::build_jvm_config_cell(cfg);
   if (cell.is_null()) {
     throw fift::IntError{"could not build JVM ConfigParam 85 cell"};
+  }
+  stack.push_cell(std::move(cell));
+}
+
+// Variant of `jvm-config-param-cell` that fills `stdlib_hash` with
+// sha256(stdlib_bytes) before encoding.  Empty stdlib_bytes is rejected
+// explicitly — passing an empty buffer is almost certainly an operator
+// mistake (forgot to slurp rt.jar) and the resulting hash would silently
+// pin "the empty stdlib" into ConfigParam 85.
+//
+// Stack: ( stdlib_bytes -- config_cell )
+void interpret_jvm_config_param_cell_with_stdlib(vm::Stack& stack) {
+  if (stack.depth() < 1) {
+    throw fift::IntError{
+        "jvm-config-param-cell-with-stdlib: expected stdlib_bytes on top of stack"};
+  }
+  if (stack[0].type() != vm::StackEntry::t_bytes) {
+    throw fift::IntError{
+        "jvm-config-param-cell-with-stdlib: stdlib_bytes must be bytes (B{...})"};
+  }
+  std::string stdlib_bytes = stack.pop_bytes();
+  if (stdlib_bytes.empty()) {
+    throw fift::IntError{
+        "jvm-config-param-cell-with-stdlib: stdlib_bytes cannot be empty"};
+  }
+
+  jvm_workchain::JvmConfig cfg =
+      jvm_workchain::JvmConfig::default_activation_with_stdlib(
+          td::Slice(stdlib_bytes));
+  auto cell = jvm_workchain::build_jvm_config_cell(cfg);
+  if (cell.is_null()) {
+    throw fift::IntError{
+        "jvm-config-param-cell-with-stdlib: could not build ConfigParam 85 cell"};
   }
   stack.push_cell(std::move(cell));
 }
@@ -1083,6 +1131,11 @@ void init_words_custom(fift::Dictionary& d) {
   d.def_stack_word("jvm-zerostate-from-alloc ", interpret_jvm_zerostate_from_alloc);
   // JVM ConfigParam 85 cell with canonical v1 activation parameters.
   d.def_stack_word("jvm-config-param-cell ", interpret_jvm_config_param_cell);
+  // JVM ConfigParam 85 cell with `stdlib_hash = sha256(stdlib_bytes)`.
+  // This is the mainnet-activation variant: pass the rt.jar bytes and
+  // get back a config cell whose stdlib_hash pins the canonical stdlib.
+  d.def_stack_word("jvm-config-param-cell-with-stdlib ",
+                   interpret_jvm_config_param_cell_with_stdlib);
   d.def_stack_word("isShardState? ", interpret_is_shard_state);
   d.def_stack_word("isWorkchainDescr? ", interpret_is_workchain_descr);
   d.def_stack_word("CC+? ", interpret_add_extra_currencies);
