@@ -60,6 +60,7 @@ static const char* const kContractProfileAdmittedApiClasses[] = {
     "java/lang/ContractRevertException",
     "java/lang/ContractViolationError",
     "java/lang/Crypto",
+    "java/lang/Deployer",
     "java/lang/Deprecated",
     "java/lang/Double",
     "java/lang/EIP712",

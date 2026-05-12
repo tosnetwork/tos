@@ -37,6 +37,7 @@
 #include "jvm/core/event-host.h"
 #include "jvm/core/genesis-wallet.h"
 #include "jvm/core/message-abi.h"
+#include "jvm/core/message-host.h"
 #include "jvm/core/rpc.h"
 #include "jvm/core/storage-cell-host.h"
 #include "jvm/core/zerostate.h"
@@ -6497,4 +6498,166 @@ TEST(JvmWorkchainCore, GenesisZerostateCountCapEnforced) {
         over_cap, stdlib, td::Slice(class_bytes));
     CHECK(cell.is_null());
   }
+}
+
+// ---------------------------------------------------------------------------
+// Phase H: action_create_account outbound primitive.
+//
+// Validates the host-side adapter (JvmMessageHost::create_account) and the
+// resulting action_list shape.  The Avata-side trap-when-no-host check is
+// covered by jvm/avata/test/CreateAccountTest.java; this test exercises
+// the encode → action-list path the production runtime uses.
+// ---------------------------------------------------------------------------
+
+TEST(JvmWorkchainCore,
+     MessageHostStagesSendAndCreateAccountInEmissionOrder) {
+  using namespace jvm_workchain;
+
+  // Build a minimal but consensus-valid StateInit BOC.  We reuse the
+  // existing JvmContractAccountState encoder + encode_jvm_state_init_cell
+  // so the resulting cell is the same shape a deploy call would produce.
+  auto cfg = make_test_jvm_config();
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe};
+  JvmContractAccountState state;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = compute_jvm_class_hash(class_bytes);
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  state.storage_root = JvmStorageCellHost{}.root_cell();
+  state.manifest_root = encode_jvm_method_manifest({});
+  auto state_init_cell = encode_jvm_state_init_cell(state);
+  CHECK(state_init_cell.not_null());
+  auto state_init_boc =
+      vm::std_boc_serialize(state_init_cell, 0).move_as_ok();
+  std::vector<std::uint8_t> state_init_bytes(
+      state_init_boc.as_slice().ubegin(),
+      state_init_boc.as_slice().uend());
+
+  JvmMessageHost host;
+  CHECK(host.begin_transaction().is_ok());
+
+  // Stage three actions in mixed order: send, create_account, send.
+  std::array<std::uint8_t, 32> peer_addr{};
+  peer_addr[31] = 0x42;
+  std::array<std::uint8_t, 32> new_addr{};
+  new_addr[0] = 0x11;
+  new_addr[31] = 0x99;
+  std::array<std::uint8_t, 32> value_be{};
+  value_be[31] = 0x10;  // 16 nano
+
+  CHECK(host.send(/*wc=*/3, peer_addr, value_be, std::vector<std::uint8_t>{})
+            .is_ok());
+  CHECK(host.create_account(new_addr, state_init_bytes, value_be,
+                             std::vector<std::uint8_t>{0xaa, 0xbb})
+            .is_ok());
+  CHECK(host.send(/*wc=*/3, peer_addr, value_be,
+                  std::vector<std::uint8_t>{0xcc})
+            .is_ok());
+  CHECK(host.commit_transaction().is_ok());
+
+  const auto& actions = host.actions();
+  CHECK(actions.size() == 3);
+  CHECK(actions[0].kind == JvmOutboundActionKind::SendMessage);
+  CHECK(actions[1].kind == JvmOutboundActionKind::CreateAccount);
+  CHECK(actions[2].kind == JvmOutboundActionKind::SendMessage);
+  // The createAccount entry carries the StateInit BOC verbatim.
+  CHECK(actions[1].state_init_boc == state_init_bytes);
+
+  // Combined action list must encode cleanly and contain three nodes.
+  auto action_list = build_jvm_combined_action_list(
+      /*event_action_list=*/td::Ref<vm::Cell>{}, actions);
+  CHECK(action_list.not_null());
+
+  // Walk the linked OutList spine: each node is `^prev (32B tag) (8B mode)
+  // ^msg|stateInit-payload`.  Each cell has 2 refs (prev + payload-or-msg).
+  // The tail of the spine is an empty cell (no refs).
+  std::size_t node_count = 0;
+  std::vector<std::uint32_t> tags;
+  td::Ref<vm::Cell> cursor = action_list;
+  while (cursor.not_null()) {
+    auto cs = vm::load_cell_slice(cursor);
+    if (cs.size_refs() < 2) {
+      break;
+    }
+    auto prev = cs.fetch_ref();
+    unsigned long long tag = 0;
+    CHECK(cs.fetch_ulong_bool(32, tag));
+    tags.push_back(static_cast<std::uint32_t>(tag));
+    ++node_count;
+    cursor = prev;
+  }
+  CHECK(node_count == 3);
+  // List is LIFO over emission order: head = most recent.
+  CHECK(tags[0] == 0x0ec3c86d);                 // send #3 (last)
+  CHECK(tags[1] == 0x4a435241);                 // create_account
+  CHECK(tags[2] == 0x0ec3c86d);                 // send #1
+}
+
+TEST(JvmWorkchainCore, MessageHostRollbackDiscardsCreateAccount) {
+  using namespace jvm_workchain;
+
+  JvmMessageHost host;
+  std::array<std::uint8_t, 32> peer_addr{};
+  std::array<std::uint8_t, 32> value_be{};
+
+  CHECK(host.begin_transaction().is_ok());
+  CHECK(host.send(3, peer_addr, value_be, std::vector<std::uint8_t>{}).is_ok());
+  // Use the smallest valid BOC so the StateInit ref test passes the
+  // length checks; the rollback test doesn't need the BOC to actually
+  // parse because the action list is never built.
+  std::vector<std::uint8_t> fake_state_init{0xb5, 0xee, 0x9c};
+  CHECK(host.create_account(peer_addr, fake_state_init, value_be,
+                             std::vector<std::uint8_t>{}).is_ok());
+  CHECK(host.actions().size() == 2);
+
+  CHECK(host.rollback_transaction().is_ok());
+  CHECK(host.actions().empty());
+}
+
+TEST(JvmWorkchainCore, MessageHostRejectsCreateAccountWithEmptyStateInit) {
+  using namespace jvm_workchain;
+
+  JvmMessageHost host;
+  std::array<std::uint8_t, 32> dest{};
+  std::array<std::uint8_t, 32> value_be{};
+  auto rc = host.create_account(dest, std::vector<std::uint8_t>{},
+                                 value_be, std::vector<std::uint8_t>{});
+  CHECK(rc.is_error());
+  CHECK(host.actions().empty());
+}
+
+TEST(JvmWorkchainCore, MessageHostRejectsOversizedStateInit) {
+  using namespace jvm_workchain;
+
+  JvmMessageHost host;
+  std::array<std::uint8_t, 32> dest{};
+  std::array<std::uint8_t, 32> value_be{};
+  std::vector<std::uint8_t> oversized(kJvmStateInitBocMaxBytes + 1, 0xaa);
+  auto rc = host.create_account(dest, oversized, value_be,
+                                 std::vector<std::uint8_t>{});
+  CHECK(rc.is_error());
+}
+
+TEST(JvmWorkchainCore,
+     MessageHostEnforcesCombinedOutboundActionCountCap) {
+  using namespace jvm_workchain;
+
+  JvmMessageHost host;
+  std::array<std::uint8_t, 32> dest{};
+  std::array<std::uint8_t, 32> value_be{};
+  std::vector<std::uint8_t> state_init{0xb5, 0xee, 0x9c};
+
+  // Mix kinds; the cap applies to the combined total.
+  for (std::size_t i = 0; i < kJvmOutboundActionCountMax; ++i) {
+    if (i % 2 == 0) {
+      CHECK(host.send(3, dest, value_be, std::vector<std::uint8_t>{})
+                .is_ok());
+    } else {
+      CHECK(host.create_account(dest, state_init, value_be,
+                                 std::vector<std::uint8_t>{}).is_ok());
+    }
+  }
+  // One past the cap must reject (either kind).
+  CHECK(host.send(3, dest, value_be, std::vector<std::uint8_t>{}).is_error());
+  CHECK(host.create_account(dest, state_init, value_be,
+                             std::vector<std::uint8_t>{}).is_error());
 }

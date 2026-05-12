@@ -87,7 +87,14 @@ enum {
      discourage spam), MESSAGE_BYTE charges the body bandwidth. */
   AVATA_CONTRACT_HELPER_MESSAGE_BASE = 21,
   AVATA_CONTRACT_HELPER_MESSAGE_BYTE = 22,
-  AVATA_CONTRACT_HELPER_GAS_COST_COUNT = 23
+  /* Phase H: action_create_account outbound primitive
+     (System.createAccount).  Higher base than action_send_msg
+     because account materialization costs the validator a fresh
+     account record + storage stake calculation; the per-byte cost
+     mirrors MESSAGE_BYTE and is charged on stateInit + body bytes. */
+  AVATA_CONTRACT_HELPER_CREATE_ACCOUNT_BASE = 23,
+  AVATA_CONTRACT_HELPER_CREATE_ACCOUNT_BYTE = 24,
+  AVATA_CONTRACT_HELPER_GAS_COST_COUNT = 25
 };
 
 AVATA_CONTRACT_EXPORT int avata_begin_contract_transaction(

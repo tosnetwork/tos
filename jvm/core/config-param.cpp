@@ -321,6 +321,12 @@ JvmConfig JvmConfig::default_activation() noexcept {
     // body-byte cost mirrors STORAGE_STORE_BYTE.
     cfg.helper_gas_costs[21] = 500;    // MESSAGE_BASE
     cfg.helper_gas_costs[22] = 1;      // MESSAGE_BYTE
+    // Phase H: action_create_account.  Higher base than action_send_msg
+    // because account materialization costs the validator a fresh
+    // account record + storage stake calculation; per-byte mirrors
+    // MESSAGE_BYTE and is charged on stateInit + body bytes.
+    cfg.helper_gas_costs[23] = 1000;   // CREATE_ACCOUNT_BASE
+    cfg.helper_gas_costs[24] = 1;      // CREATE_ACCOUNT_BYTE
 
     return cfg;
 }

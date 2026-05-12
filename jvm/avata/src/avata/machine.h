@@ -1008,7 +1008,7 @@ class GcRoots;
 class Machine {
  public:
   static const unsigned OpcodeCount = 256;
-  static const unsigned ContractHelperGasCostCount = 23;
+  static const unsigned ContractHelperGasCostCount = 25;
 
   enum AllocationType {
     MovableAllocation,

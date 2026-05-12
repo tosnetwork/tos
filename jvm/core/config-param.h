@@ -46,7 +46,9 @@ constexpr unsigned kJvmOpcodeGasCostCount = 256;
 //
 // Final TODO closure: 21 → 23 for System.sendMessage's
 // MESSAGE_BASE + MESSAGE_BYTE.
-constexpr unsigned kJvmContractHelperGasCostCount = 23;
+// Phase H: 23 → 25 for System.createAccount's
+// CREATE_ACCOUNT_BASE + CREATE_ACCOUNT_BYTE.
+constexpr unsigned kJvmContractHelperGasCostCount = 25;
 constexpr unsigned kJvmStdlibHashBytes = 32;
 
 struct JvmConfig {

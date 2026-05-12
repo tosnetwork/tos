@@ -246,4 +246,67 @@ public abstract class System {
                                                byte[] destAddr,
                                                byte[] value,
                                                byte[] body);
+
+  // -----------------------------------------------------------------------
+  // Outbound action_create_account — admitted.
+  //
+  // Stages an action_create_account#4a435241 cell that the host appends
+  // to the transaction's action_list on commit.  Destination workchain
+  // is implicitly the emitter's own (wc=3 for any caller running under
+  // JvmNativeEngine; the host action phase enforces
+  // `dest.workchain = account.workchain`).
+  //
+  // `stateInit` is the raw BOC of a `StateInit` cell that the host
+  // will install on the new account when the activating internal
+  // message arrives.  For a wc=3 JVM contract the canonical shape is
+  // `StateInit { code = ^marker(0x4a), data = ^JvmContractAccountState }`
+  // — see `encode_jvm_state_init_cell` in jvm/core/cell-codec.cpp.
+  //
+  // The caller is responsible for producing a consensus-valid BOC; the
+  // host parses it before staging and rejects malformed input.
+  //
+  // Cross-contract account materialization is asynchronous in the same
+  // sense as sendMessage: the new account becomes live in the next
+  // transaction within the same block.  Failed calls (revert /
+  // OutOfGas / OutOfMemory) discard pending createAccount actions
+  // alongside storage writes, events, and outbound messages.
+  // -----------------------------------------------------------------------
+  public static void createAccount(Address dest, byte[] stateInit,
+                                   Uint256 value, byte[] body) {
+    if (dest == null) {
+      throw new NullPointerException(
+          "System.createAccount dest cannot be null");
+    }
+    if (stateInit == null) {
+      throw new NullPointerException(
+          "System.createAccount stateInit cannot be null");
+    }
+    if (stateInit.length == 0) {
+      throw new IllegalArgumentException(
+          "System.createAccount stateInit must not be empty");
+    }
+    if (value == null) {
+      throw new NullPointerException(
+          "System.createAccount value cannot be null");
+    }
+    if (body == null) {
+      throw new NullPointerException(
+          "System.createAccount body cannot be null");
+    }
+    nativeCreateAccount(dest.accountIdBytes(),
+                        stateInit,
+                        value.toByteArray(),
+                        body);
+  }
+
+  /** Convenience overload — passes the empty body. */
+  public static void createAccount(Address dest, byte[] stateInit,
+                                   Uint256 value) {
+    createAccount(dest, stateInit, value, new byte[0]);
+  }
+
+  private static native void nativeCreateAccount(byte[] destAddr,
+                                                 byte[] stateInit,
+                                                 byte[] value,
+                                                 byte[] body);
 }

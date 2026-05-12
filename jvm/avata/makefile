@@ -934,7 +934,9 @@ test-sources = \
 	$(test)/ArrayDequeTest.java \
 	$(test)/BitsetTest.java \
 	$(test)/ContextTest.java \
+	$(test)/CreateAccountTest.java \
 	$(test)/CryptoTest.java \
+	$(test)/DeployerTest.java \
 	$(test)/EIP712Test.java \
 	$(test)/SendMessageTest.java \
 	$(test)/WalletTest.java \

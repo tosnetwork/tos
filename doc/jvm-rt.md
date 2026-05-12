@@ -534,6 +534,15 @@ Initial classes or class families:
   `ownerPubKey` (32B Ed25519 pubkey), `nonce` (Uint256), `initFlag` (1B).
   Genesis seeders mirror the same slot derivation when pre-installing
   wallet accounts at zerostate (see `jvm/core/zerostate.h`).
+- `Deployer` — focused companion to `Wallet`.  Same static-only Ed25519
+  pattern, but the signed payload triggers `System.createAccount` instead
+  of `System.sendMessage`.  The host's `try_action_create_account` gate
+  requires a same-workchain sender, so any runtime spawning of new wc=3
+  contracts (post-genesis) must route through a `Deployer` (or any
+  wc=3 contract that emits `action_create_account`).  Storage slots are
+  `keccak256("Deployer.<name>")` — intentionally distinct from `Wallet.<name>`
+  so a single account holding both roles would still need a unifying
+  contract; the expected pattern is one `Deployer` per genesis seed.
 
 These classes should be normal Java source compiled against `api.jar`
 for contract development and packaged into `rt.jar` for runtime execution. They
@@ -602,6 +611,7 @@ should be avoided unless they are explicitly part of a typed call boundary.
 | `ERC6909` | multi-token ID accounting, per-id allowances, operators, metadata, content URI, token supply | Admit core and simple extensions early |
 | `Pausable`, `ReentrancyGuard`, `Nonces` | context, storage, call-depth/reentrancy policy | Admit early |
 | `Wallet` | `Context.contractAddress`, `Storage`, `Crypto.ed25519Verify`, `Crypto.keccak256`, `System.sendMessage` | Admit early; canonical wc=3 account pattern (single-owner Ed25519 + nonce + multi-transfer dispatch). Class hash is part of any genesis-seeded address derivation, so once seeded the wire format must remain consensus-stable for the lifetime of that address. Future variants (multi-sig, paymaster) get new class hashes and live alongside V1 |
+| `Deployer` | `Context.contractAddress`, `Storage`, `Crypto.ed25519Verify`, `Crypto.keccak256`, `System.createAccount` | Admit early; signature-authenticated runtime spawner for new wc=3 contracts.  Required because the host's `action_create_account` gate enforces a same-workchain sender — without a `Deployer` (or equivalent) on wc=3, only genesis-seeded accounts exist.  Storage slots use the `Deployer.<name>` prefix to stay disjoint from `Wallet`'s namespace |
 | `Math`, `SafeCast`, `SignedMath` | `Uint256`, signed arithmetic, overflow rules | Admit early |
 | `MerkleProof`, `Hashes` | `Bytes32`, Keccak/SHA helpers | Admit early |
 | `ECDSA`, `MessageHashUtils` | secp256k1 recover/verify, canonical signatures | Admit if TOS account model needs it |

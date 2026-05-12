@@ -1338,3 +1338,113 @@ extern "C" JNIEXPORT void JNICALL
              status);
   }
 }
+
+extern "C" AVATA_MESSAGE_EXPORT int avata_message_create_account(
+    const unsigned char* dest_addr,
+    const unsigned char* state_init_boc,
+    size_t state_init_boc_length,
+    const unsigned char* value_be,
+    const unsigned char* body,
+    size_t body_length)
+{
+  if (dest_addr == 0
+      || value_be == 0
+      || (state_init_boc_length != 0 and state_init_boc == 0)
+      || (body_length != 0 and body == 0)) {
+    return AVATA_MESSAGE_ERROR;
+  }
+  if (!activeMessageHostSet or activeMessageHost.createAccount == 0) {
+    return AVATA_MESSAGE_OK;
+  }
+  return activeMessageHost.createAccount(
+      activeMessageHost.user,
+      dest_addr,
+      state_init_boc_length == 0 ? 0 : state_init_boc,
+      state_init_boc_length,
+      value_be,
+      body_length == 0 ? 0 : body,
+      body_length);
+}
+
+extern "C" JNIEXPORT void JNICALL
+    Java_java_lang_System_nativeCreateAccount(JNIEnv* e,
+                                              jclass,
+                                              jbyteArray destAddr,
+                                              jbyteArray stateInit,
+                                              jbyteArray value,
+                                              jbyteArray body)
+{
+  unsigned char destAddrBytes[AVATA_MESSAGE_ADDRESS_SIZE];
+  if (!copyFixedByteArray(e, destAddr,
+                          "System.createAccount destAddr",
+                          AVATA_MESSAGE_ADDRESS_SIZE, destAddrBytes)) {
+    return;
+  }
+  unsigned char valueBytes[AVATA_MESSAGE_VALUE_SIZE];
+  if (!copyFixedByteArray(e, value,
+                          "System.createAccount value",
+                          AVATA_MESSAGE_VALUE_SIZE, valueBytes)) {
+    return;
+  }
+  unsigned char* stateInitBytes = 0;
+  jsize stateInitLength = 0;
+  if (!copyByteArray(e, stateInit, "System.createAccount stateInit",
+                     &stateInitBytes, &stateInitLength)) {
+    return;
+  }
+  if (stateInitLength == 0) {
+    free(stateInitBytes);
+    throwNew(e,
+             "java/lang/IllegalArgumentException",
+             "System.createAccount stateInit must not be empty");
+    return;
+  }
+
+  unsigned char* bodyBytes = 0;
+  jsize bodyLength = 0;
+  if (!copyByteArray(e, body, "System.createAccount body",
+                     &bodyBytes, &bodyLength)) {
+    free(stateInitBytes);
+    return;
+  }
+
+  // Charge base + per-byte over (stateInit + body) — stateInit dominates
+  // and is the validator's real workload (BOC parse + StateInit shape
+  // validation downstream in the action phase).
+  uint64_t byteUnits = static_cast<uint64_t>(stateInitLength)
+                       + static_cast<uint64_t>(bodyLength);
+  if (!chargeHelperGas(e, AVATA_CONTRACT_HELPER_CREATE_ACCOUNT_BASE, 1)
+      || !chargeHelperGas(e,
+                          AVATA_CONTRACT_HELPER_CREATE_ACCOUNT_BYTE,
+                          byteUnits)) {
+    free(stateInitBytes);
+    free(bodyBytes);
+    return;
+  }
+
+  if (!activeMessageHostSet or activeMessageHost.createAccount == 0) {
+    free(stateInitBytes);
+    free(bodyBytes);
+    throwNew(e,
+             "java/lang/ContractViolationError",
+             "outbound createAccount host is not installed");
+    return;
+  }
+
+  int status = avata_message_create_account(
+      destAddrBytes,
+      stateInitBytes,
+      static_cast<size_t>(stateInitLength),
+      valueBytes,
+      bodyLength == 0 ? 0 : bodyBytes,
+      static_cast<size_t>(bodyLength));
+  free(stateInitBytes);
+  free(bodyBytes);
+
+  if (status != AVATA_MESSAGE_OK) {
+    throwNew(e,
+             "java/lang/ContractViolationError",
+             "outbound createAccount host failed with status %d",
+             status);
+  }
+}

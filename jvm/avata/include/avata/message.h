@@ -1,13 +1,22 @@
-/* TOS Network - Avata JVM outbound-message host interface.
+/* TOS Network - Avata JVM outbound-action host interface.
 
-   Avata's java.lang.System.sendMessage native API emits an outbound
-   internal message: (dest_workchain, dest_addr, value, body).  This
-   adapter records the ordered outbound message list for one transaction
-   and exposes nested snapshots so failed contract calls can roll back
-   pending outbound messages alongside storage writes and events.
+   Avata's outbound-action native APIs stage host actions whose cells
+   land in WorkchainComputeOutput.action_list after commit.  Two action
+   kinds today:
 
-   The host is the only path through which JVM contracts can reach
-   another account; it is the wc=3 equivalent of TVM SENDRAWMSG. */
+     * `System.sendMessage(dest, value, body)`  →  action_send_msg
+       (the wc=3 equivalent of TVM SENDRAWMSG).
+     * `System.createAccount(destAccountId, stateInit, value, body)`  →
+       action_create_account#4a435241 (the only path through which a
+       wc=3 contract can spawn another wc=3 contract account at
+       runtime, post-genesis).  Destination workchain is implicitly
+       the emitter's own workchain — see
+       crypto/block/transaction.cpp::try_action_create_account, which
+       sets `dest.workchain = account.workchain`.
+
+   This adapter records the ordered outbound action list for one
+   transaction and exposes nested snapshots so failed contract calls
+   can roll back pending actions alongside storage writes and events. */
 
 #ifndef AVATA_MESSAGE_H
 #define AVATA_MESSAGE_H
@@ -45,6 +54,22 @@ typedef int (*AvataMessageSend)(
     const unsigned char* body,
     size_t body_length);
 
+/* Stage one action_create_account.  Destination workchain is implicit
+   (= the emitter's own workchain — the host action phase enforces
+   `dest.workchain = account.workchain`).  state_init is the raw BOC of
+   a `StateInit` cell that the host will install on the new account;
+   body, when body_length > 0, is delivered as the body of the
+   activating internal message.  body may be null only when
+   body_length is zero. */
+typedef int (*AvataMessageCreateAccount)(
+    void* user,
+    const unsigned char* dest_addr,
+    const unsigned char* state_init_boc,
+    size_t state_init_boc_length,
+    const unsigned char* value_be,
+    const unsigned char* body,
+    size_t body_length);
+
 typedef int (*AvataMessageBeginTransaction)(void* user);
 typedef int (*AvataMessageCommitTransaction)(void* user);
 typedef int (*AvataMessageRollbackTransaction)(void* user);
@@ -52,6 +77,7 @@ typedef int (*AvataMessageRollbackTransaction)(void* user);
 typedef struct AvataMessageHost {
   void* user;
   AvataMessageSend send;
+  AvataMessageCreateAccount createAccount;
   AvataMessageBeginTransaction beginTransaction;
   AvataMessageCommitTransaction commitTransaction;
   AvataMessageRollbackTransaction rollbackTransaction;
@@ -65,6 +91,13 @@ AVATA_MESSAGE_EXPORT int avata_message_rollback_transaction(void);
 AVATA_MESSAGE_EXPORT int avata_message_send(
     int32_t dest_workchain,
     const unsigned char* dest_addr,
+    const unsigned char* value_be,
+    const unsigned char* body,
+    size_t body_length);
+AVATA_MESSAGE_EXPORT int avata_message_create_account(
+    const unsigned char* dest_addr,
+    const unsigned char* state_init_boc,
+    size_t state_init_boc_length,
     const unsigned char* value_be,
     const unsigned char* body,
     size_t body_length);

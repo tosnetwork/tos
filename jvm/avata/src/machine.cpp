@@ -4438,7 +4438,10 @@ const uint64_t DefaultContractHelperGasCosts[
     // billed proportionally to the validator work of building each
     // action_send_msg cell.
     500,  // AVATA_CONTRACT_HELPER_MESSAGE_BASE
-    1     // AVATA_CONTRACT_HELPER_MESSAGE_BYTE
+    1,    // AVATA_CONTRACT_HELPER_MESSAGE_BYTE
+    // action_create_account base + per-byte (Phase H).
+    1000, // AVATA_CONTRACT_HELPER_CREATE_ACCOUNT_BASE
+    1     // AVATA_CONTRACT_HELPER_CREATE_ACCOUNT_BYTE
 };
 
 }  // namespace
