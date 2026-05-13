@@ -110,6 +110,27 @@ pub fn build_wallet_manifest_cell() -> Result<Cell> {
         .context("encode wallet method manifest failed")
 }
 
+/// Compute the digest Wallet.java's `execute(...)` entry verifies
+/// against the supplied signature: `keccak256(self_addr || nonce ||
+/// payload)`.  Exposed as a free function so off-chain tooling and the
+/// parity-vector test can compute the digest with an arbitrary address
+/// (the method on `JvmWalletContract` requires a fully-instantiated
+/// signer, which is overkill for the digest itself).
+///
+/// Layout MUST match `java.lang.Wallet.digest`:
+///   selfBytes(32) || nonceBytes(32 BE) || payloadBytes(raw).
+pub fn compute_wallet_execute_digest(
+    self_addr: &[u8; 32],
+    nonce: U256,
+    payload: &[u8],
+) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(32 + 32 + payload.len());
+    buf.extend_from_slice(self_addr);
+    buf.extend_from_slice(nonce.as_bytes());
+    buf.extend_from_slice(payload);
+    keccak256_digest(&buf)
+}
+
 /// A 256-bit unsigned integer carried over the wire as 32 big-endian
 /// bytes. We use a `[u8; 32]` newtype instead of dragging in a heavier
 /// `primitive_types::U256` so the workspace's existing dependency graph
@@ -276,11 +297,7 @@ impl JvmWalletContract {
     /// Compute the digest the Wallet.java `execute(...)` entry checks
     /// against: `keccak256(self_addr || nonce || payload)`.
     pub fn execute_digest(&self, nonce: U256, payload: &[u8]) -> [u8; 32] {
-        let mut buf = Vec::with_capacity(32 + 32 + payload.len());
-        buf.extend_from_slice(&self.address);
-        buf.extend_from_slice(nonce.as_bytes());
-        buf.extend_from_slice(payload);
-        keccak256_digest(&buf)
+        compute_wallet_execute_digest(&self.address, nonce, payload)
     }
 
     /// Sign the `execute(...)` digest with the wallet's Ed25519 owner

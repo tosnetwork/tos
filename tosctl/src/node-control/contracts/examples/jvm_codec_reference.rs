@@ -25,8 +25,13 @@ use contracts::jvm_codec::{
     encode_jvm_storage_value, JvmArgs, JvmCallDescriptor,
     JvmContractAccountState, JvmTypedArg,
 };
-use contracts::jvm_deployer::build_deployer_manifest_cell;
-use contracts::jvm_wallet::build_wallet_manifest_cell;
+use contracts::jvm_deployer::{
+    build_deployer_manifest_cell, compute_deployer_deploy_digest,
+};
+use contracts::jvm_wallet::{
+    build_wallet_manifest_cell, compute_wallet_execute_digest,
+};
+use contracts::U256;
 
 fn owner_pubkey_fixture() -> [u8; 32] {
     // 0x00, 0x01, .., 0x1f — same as the existing
@@ -132,6 +137,53 @@ fn storage_value_multi_chunk_hash() -> String {
     lower_hex(cell.repr_hash().as_slice())
 }
 
+fn wallet_execute_digest_hash() -> String {
+    // Fixed (self_addr, nonce, payload) fixture.  self_addr is the
+    // 32-byte account-id pattern 0xaa..0xaa; nonce uses a non-zero
+    // tail byte so endian drift would surface; payload is a small
+    // multi-byte blob.  Layout MUST match Wallet.java's
+    // `digest(nonce, payload)`.
+    let self_addr = [0xaau8; 32];
+    let mut nonce_bytes = [0u8; 32];
+    nonce_bytes[30] = 0x12;
+    nonce_bytes[31] = 0x34;
+    let nonce = U256::from_be_bytes(nonce_bytes);
+    let payload: Vec<u8> = (0..96u32)
+        .map(|i| ((i.wrapping_mul(19).wrapping_add(5)) & 0xff) as u8)
+        .collect();
+    let digest = compute_wallet_execute_digest(&self_addr, nonce, &payload);
+    lower_hex(&digest)
+}
+
+fn deployer_deploy_digest_hash() -> String {
+    // Fixed fixture for the 6-input deploy digest.  Layout MUST match
+    // Deployer.java's `deployDigest`.
+    let self_addr = [0xccu8; 32];
+    let mut nonce_bytes = [0u8; 32];
+    nonce_bytes[31] = 0x09;
+    let nonce = U256::from_be_bytes(nonce_bytes);
+    let dest_account_id = [0x5au8; 32];
+    let state_init: Vec<u8> = (0..120u32)
+        .map(|i| ((i.wrapping_mul(23).wrapping_add(1)) & 0xff) as u8)
+        .collect();
+    let mut value_bytes = [0u8; 32];
+    value_bytes[30] = 0x03;
+    value_bytes[31] = 0xe8;
+    let value = U256::from_be_bytes(value_bytes);
+    let body: Vec<u8> = (0..32u32)
+        .map(|i| ((i.wrapping_mul(29).wrapping_add(7)) & 0xff) as u8)
+        .collect();
+    let digest = compute_deployer_deploy_digest(
+        &self_addr,
+        nonce,
+        &dest_account_id,
+        &state_init,
+        value,
+        &body,
+    );
+    lower_hex(&digest)
+}
+
 fn jvac_canonical_hash() -> String {
     // Deterministic JVAC fixture: same owner_pubkey pattern as the
     // other vectors, all-zero genesis deployer, fixed address_commit,
@@ -216,6 +268,8 @@ fn main() {
         &storage_value_multi_chunk_hash(),
     );
     print_line("jvac-canonical", &jvac_canonical_hash());
+    print_line("wallet-execute-digest", &wallet_execute_digest_hash());
+    print_line("deployer-deploy-digest", &deployer_deploy_digest_hash());
 
     let salt_a = [0u8; 32];
     let mut salt_b = salt_a;

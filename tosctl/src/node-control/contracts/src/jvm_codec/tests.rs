@@ -429,6 +429,61 @@ fn parity_against_reference_vectors() {
         "Rust jvac-canonical drifted from jvm-codec-reference.txt"
     );
 
+    // wallet-execute-digest — locks `keccak256(self_addr || nonce ||
+    // payload)` layout against silent drift between the off-chain
+    // signer and `java.lang.Wallet.digest`.  A mismatch here makes
+    // every `tosctl jw execute` produce signatures the chain rejects.
+    let we_self_addr = [0xaau8; 32];
+    let mut we_nonce_bytes = [0u8; 32];
+    we_nonce_bytes[30] = 0x12;
+    we_nonce_bytes[31] = 0x34;
+    let we_nonce = crate::U256::from_be_bytes(we_nonce_bytes);
+    let we_payload: Vec<u8> = (0..96u32)
+        .map(|i| ((i.wrapping_mul(19).wrapping_add(5)) & 0xff) as u8)
+        .collect();
+    let we_digest = crate::jvm_wallet::compute_wallet_execute_digest(
+        &we_self_addr,
+        we_nonce,
+        &we_payload,
+    );
+    assert_eq!(
+        lower_hex(&we_digest),
+        lookup("wallet-execute-digest"),
+        "Rust wallet-execute-digest drifted from jvm-codec-reference.txt"
+    );
+
+    // deployer-deploy-digest — locks the 6-input deploy digest layout
+    // against `java.lang.Deployer.deployDigest`.  Drift breaks every
+    // `tosctl jw deploy` with Deployer_BadSignature on chain.
+    let dd_self_addr = [0xccu8; 32];
+    let mut dd_nonce_bytes = [0u8; 32];
+    dd_nonce_bytes[31] = 0x09;
+    let dd_nonce = crate::U256::from_be_bytes(dd_nonce_bytes);
+    let dd_dest = [0x5au8; 32];
+    let dd_state_init: Vec<u8> = (0..120u32)
+        .map(|i| ((i.wrapping_mul(23).wrapping_add(1)) & 0xff) as u8)
+        .collect();
+    let mut dd_value_bytes = [0u8; 32];
+    dd_value_bytes[30] = 0x03;
+    dd_value_bytes[31] = 0xe8;
+    let dd_value = crate::U256::from_be_bytes(dd_value_bytes);
+    let dd_body: Vec<u8> = (0..32u32)
+        .map(|i| ((i.wrapping_mul(29).wrapping_add(7)) & 0xff) as u8)
+        .collect();
+    let dd_digest = crate::jvm_deployer::compute_deployer_deploy_digest(
+        &dd_self_addr,
+        dd_nonce,
+        &dd_dest,
+        &dd_state_init,
+        dd_value,
+        &dd_body,
+    );
+    assert_eq!(
+        lower_hex(&dd_digest),
+        lookup("deployer-deploy-digest"),
+        "Rust deployer-deploy-digest drifted from jvm-codec-reference.txt"
+    );
+
     // address-derivation-1 / address-derivation-2
     let init_args =
         encode_jvm_args(&JvmArgs::new(vec![JvmTypedArg::bytes32(owner)]))

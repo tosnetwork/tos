@@ -102,6 +102,36 @@ pub fn build_deployer_manifest_cell() -> Result<Cell> {
         .context("encode deployer method manifest failed")
 }
 
+/// Compute the digest Deployer.java's `deploy(...)` entry verifies
+/// against the supplied signature: `keccak256(self_addr || nonce ||
+/// destAccountId || keccak256(stateInit) || value || keccak256(body))`.
+/// Exposed as a free function so off-chain tooling and the parity-
+/// vector test can compute the digest with an arbitrary address.
+///
+/// Layout MUST match `java.lang.Deployer.deployDigest`:
+///   selfBytes(32) || nonce(32) || destAccountId(32) ||
+///   keccak256(stateInit)(32) || value(32) || keccak256(body)(32).
+pub fn compute_deployer_deploy_digest(
+    self_addr: &[u8; 32],
+    nonce: U256,
+    dest_account_id: &[u8; 32],
+    state_init: &[u8],
+    value: U256,
+    body: &[u8],
+) -> [u8; 32] {
+    let state_init_hash = keccak256_digest(state_init);
+    let body_hash = keccak256_digest(body);
+
+    let mut buf = Vec::with_capacity(32 * 6);
+    buf.extend_from_slice(self_addr);
+    buf.extend_from_slice(nonce.as_bytes());
+    buf.extend_from_slice(dest_account_id);
+    buf.extend_from_slice(&state_init_hash);
+    buf.extend_from_slice(value.as_bytes());
+    buf.extend_from_slice(&body_hash);
+    keccak256_digest(&buf)
+}
+
 /// wc=3 deploy-router contract abstraction.
 pub struct JvmDeployerContract {
     signer: Box<dyn Signer>,
@@ -208,17 +238,14 @@ impl JvmDeployerContract {
         value: U256,
         body: &[u8],
     ) -> [u8; 32] {
-        let state_init_hash = keccak256_digest(state_init);
-        let body_hash = keccak256_digest(body);
-
-        let mut buf = Vec::with_capacity(32 * 6);
-        buf.extend_from_slice(&self.address);
-        buf.extend_from_slice(nonce.as_bytes());
-        buf.extend_from_slice(dest_account_id);
-        buf.extend_from_slice(&state_init_hash);
-        buf.extend_from_slice(value.as_bytes());
-        buf.extend_from_slice(&body_hash);
-        keccak256_digest(&buf)
+        compute_deployer_deploy_digest(
+            &self.address,
+            nonce,
+            dest_account_id,
+            state_init,
+            value,
+            body,
+        )
     }
 
     /// Sign the deploy digest with the Deployer owner's Ed25519 key.

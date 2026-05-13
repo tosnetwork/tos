@@ -1430,6 +1430,10 @@ TEST(JvmWorkchainCore, JvmCodecParityVectors) {
       "b159946876e678789fbaab9581bb44b2f7428c14224f23168e80b8c554a9e890";
   constexpr const char* kExpectedJvacCanonical =
       "d37d2fa550cd3ba2115b6a6be3693d9fb140bfacbed6c9aaca34c6a155e4b93b";
+  constexpr const char* kExpectedWalletExecuteDigest =
+      "9d06033fdd867caa6cdebd0640c781a135c5233e2dd5302a2a80f08d99b40a21";
+  constexpr const char* kExpectedDeployerDeployDigest =
+      "f7884b363248d0b6fdf7fa356e230213c8c38302eb0ecb55e32333e4cac951ce";
   constexpr const char* kExpectedAddressDerivation1 =
       "95ffd5fbad8fd0cca16e8c5e53f12b6a3feb3ee0e5adec0aecb0fdd19a51a33f";
   constexpr const char* kExpectedAddressDerivation2 =
@@ -1659,6 +1663,88 @@ TEST(JvmWorkchainCore, JvmCodecParityVectors) {
     auto cell = encode_jvm_contract_account_state(state);
     CHECK(cell.not_null());
     CHECK(hex_repr(cell) == kExpectedJvacCanonical);
+  }
+
+  auto keccak256_bytes = [](td::Slice input) -> std::array<std::uint8_t, 32> {
+    auto digest = ethash::keccak256(
+        reinterpret_cast<const std::uint8_t*>(input.data()), input.size());
+    std::array<std::uint8_t, 32> out{};
+    std::memcpy(out.data(), digest.bytes, 32);
+    return out;
+  };
+
+  // -------------------- wallet-execute-digest --------------------
+  // Re-implements the same byte layout `java.lang.Wallet.digest`
+  // computes: `keccak256(selfBytes || nonce || payload)`.  This test
+  // is a third-party witness to the layout — if either the Rust
+  // signer (`compute_wallet_execute_digest`) or the on-chain
+  // Wallet.java drifts from this layout, the digest hash diverges
+  // from the reference and the test fires.
+  {
+    std::vector<std::uint8_t> buf;
+    buf.reserve(32 + 32 + 96);
+    buf.insert(buf.end(), 32, 0xaa);                // self_addr = 0xaa..0xaa
+    std::array<std::uint8_t, 32> nonce_bytes{};
+    nonce_bytes[30] = 0x12;
+    nonce_bytes[31] = 0x34;
+    buf.insert(buf.end(), nonce_bytes.begin(), nonce_bytes.end());
+    for (std::uint32_t i = 0; i < 96; ++i) {
+      buf.push_back(static_cast<std::uint8_t>((i * 19 + 5) & 0xff));
+    }
+    auto digest = keccak256_bytes(
+        td::Slice(reinterpret_cast<const char*>(buf.data()), buf.size()));
+    CHECK(hex_bytes(digest.data(), digest.size())
+          == kExpectedWalletExecuteDigest);
+  }
+
+  // -------------------- deployer-deploy-digest --------------------
+  // Mirrors `java.lang.Deployer.deployDigest`:
+  //   keccak256( selfBytes(32) || nonce(32) || destAccountId(32)
+  //              || keccak256(stateInit)(32) || value(32)
+  //              || keccak256(body)(32) ).
+  // Same third-party-witness role as the wallet digest test.
+  {
+    std::array<std::uint8_t, 32> self_addr{};
+    self_addr.fill(0xcc);
+    std::array<std::uint8_t, 32> nonce_bytes{};
+    nonce_bytes[31] = 0x09;
+    std::array<std::uint8_t, 32> dest{};
+    dest.fill(0x5a);
+
+    std::vector<std::uint8_t> state_init;
+    state_init.reserve(120);
+    for (std::uint32_t i = 0; i < 120; ++i) {
+      state_init.push_back(static_cast<std::uint8_t>((i * 23 + 1) & 0xff));
+    }
+    auto state_init_hash = keccak256_bytes(
+        td::Slice(reinterpret_cast<const char*>(state_init.data()),
+                  state_init.size()));
+
+    std::array<std::uint8_t, 32> value_bytes{};
+    value_bytes[30] = 0x03;
+    value_bytes[31] = 0xe8;
+
+    std::vector<std::uint8_t> body;
+    body.reserve(32);
+    for (std::uint32_t i = 0; i < 32; ++i) {
+      body.push_back(static_cast<std::uint8_t>((i * 29 + 7) & 0xff));
+    }
+    auto body_hash = keccak256_bytes(
+        td::Slice(reinterpret_cast<const char*>(body.data()), body.size()));
+
+    std::vector<std::uint8_t> buf;
+    buf.reserve(32 * 6);
+    buf.insert(buf.end(), self_addr.begin(), self_addr.end());
+    buf.insert(buf.end(), nonce_bytes.begin(), nonce_bytes.end());
+    buf.insert(buf.end(), dest.begin(), dest.end());
+    buf.insert(buf.end(), state_init_hash.begin(), state_init_hash.end());
+    buf.insert(buf.end(), value_bytes.begin(), value_bytes.end());
+    buf.insert(buf.end(), body_hash.begin(), body_hash.end());
+
+    auto digest = keccak256_bytes(
+        td::Slice(reinterpret_cast<const char*>(buf.data()), buf.size()));
+    CHECK(hex_bytes(digest.data(), digest.size())
+          == kExpectedDeployerDeployDigest);
   }
 
   // -------------------- address-derivation-1 / address-derivation-2 --
