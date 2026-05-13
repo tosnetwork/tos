@@ -358,6 +358,51 @@ fn parity_against_reference_vectors() {
         "Rust deployer-manifest drifted from jvm-codec-reference.txt"
     );
 
+    // storage-value-multi-chunk — 300-byte fixture forcing the
+    // chunked encoder to emit three linked cells.  Locks the chunk
+    // boundary placement + has_next bit position against the C++ port.
+    let class_bytes_fixture: Vec<u8> = (0..300u32)
+        .map(|i| ((i.wrapping_mul(7).wrapping_add(3)) & 0xff) as u8)
+        .collect();
+    let storage_value_cell = encode_jvm_storage_value(&class_bytes_fixture)
+        .expect("encode storage value");
+    assert_eq!(
+        lower_hex(storage_value_cell.repr_hash().as_slice()),
+        lookup("storage-value-multi-chunk"),
+        "Rust storage-value-multi-chunk drifted from jvm-codec-reference.txt"
+    );
+
+    // jvac-canonical — full JVAC with chunked class_bytes + wallet
+    // manifest_root + None storage_root.  Locks the wire layout for
+    // every wc=3 account's `data` cell.  A drift here makes
+    // `tosctl jw deploy` build a JVAC whose cell hash differs from
+    // what the on-chain account ends up with.
+    let mut jvac_address_commit = [0u8; 32];
+    for (i, b) in jvac_address_commit.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(11).wrapping_add(7);
+    }
+    let mut jvac_stdlib_hash = [0u8; 32];
+    for (i, b) in jvac_stdlib_hash.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(13).wrapping_add(2);
+    }
+    let jvac_manifest = crate::jvm_wallet::build_wallet_manifest_cell()
+        .expect("wallet manifest cell");
+    let jvac_state = JvmContractAccountState {
+        stdlib_hash: jvac_stdlib_hash,
+        deployer: [0u8; 32],
+        address_commit: jvac_address_commit,
+        class_bytes: class_bytes_fixture.clone(),
+        storage_root: None,
+        manifest_root: Some(jvac_manifest),
+    };
+    let jvac_cell = encode_jvm_contract_account_state(&jvac_state)
+        .expect("encode JVAC");
+    assert_eq!(
+        lower_hex(jvac_cell.repr_hash().as_slice()),
+        lookup("jvac-canonical"),
+        "Rust jvac-canonical drifted from jvm-codec-reference.txt"
+    );
+
     // address-derivation-1 / address-derivation-2
     let init_args =
         encode_jvm_args(&JvmArgs::new(vec![JvmTypedArg::bytes32(owner)]))

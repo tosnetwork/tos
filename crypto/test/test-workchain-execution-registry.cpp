@@ -1424,6 +1424,10 @@ TEST(JvmWorkchainCore, JvmCodecParityVectors) {
       "df351dfe1ecc32f743616b6ab8f4dece18fc5702dfdad8825bef1519ea3ec864";
   constexpr const char* kExpectedDeployerManifest =
       "2d0ef9a96b049d626371a24766e96b07e865b0b86d6862f94ec39039c5899e6b";
+  constexpr const char* kExpectedStorageValueMultiChunk =
+      "b159946876e678789fbaab9581bb44b2f7428c14224f23168e80b8c554a9e890";
+  constexpr const char* kExpectedJvacCanonical =
+      "d37d2fa550cd3ba2115b6a6be3693d9fb140bfacbed6c9aaca34c6a155e4b93b";
   constexpr const char* kExpectedAddressDerivation1 =
       "95ffd5fbad8fd0cca16e8c5e53f12b6a3feb3ee0e5adec0aecb0fdd19a51a33f";
   constexpr const char* kExpectedAddressDerivation2 =
@@ -1564,6 +1568,54 @@ TEST(JvmWorkchainCore, JvmCodecParityVectors) {
     auto cell = build_deployer_manifest_cell();
     CHECK(cell.not_null());
     CHECK(hex_repr(cell) == kExpectedDeployerManifest);
+  }
+
+  // -------------------- storage-value-multi-chunk --------------------
+  // 300-byte fixture forcing the chunked encoder to emit three linked
+  // cells (127 + 127 + 46).  Locks the chunk-boundary placement +
+  // has_next bit position against the Rust port — silent drift here
+  // would change the JVAC's class_bytes ref hash and therefore the
+  // entire account data cell.
+  JvmStorageValue class_bytes_fixture;
+  class_bytes_fixture.reserve(300);
+  for (std::uint32_t i = 0; i < 300; ++i) {
+    class_bytes_fixture.push_back(
+        static_cast<std::uint8_t>((i * 7 + 3) & 0xff));
+  }
+  {
+    auto cell = encode_jvm_storage_value(class_bytes_fixture);
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedStorageValueMultiChunk);
+  }
+
+  // -------------------- jvac-canonical --------------------
+  // Full JVAC fixture with chunked class_bytes + wallet manifest_root
+  // + None storage_root.  Locks the on-wire JVAC layout used as every
+  // wc=3 account's data cell.  A drift here makes `tosctl jw deploy`
+  // produce a JVAC whose cell hash differs from what the validator
+  // would write for the same logical fields — the contract address
+  // tosctl computed wouldn't match the chain's actual address.
+  {
+    JvmContractAccountState state;
+    state.schema_version = kJvmContractAccountStateSchemaVersion;
+    for (std::size_t i = 0; i < state.stdlib_hash.size(); ++i) {
+      state.stdlib_hash[i] =
+          static_cast<std::uint8_t>(static_cast<std::uint8_t>(i) * 13 + 2);
+    }
+    state.deployer = kJvmGenesisDeployer;
+    for (std::size_t i = 0; i < state.address_commit.size(); ++i) {
+      state.address_commit[i] =
+          static_cast<std::uint8_t>(static_cast<std::uint8_t>(i) * 11 + 7);
+    }
+    state.class_bytes = encode_jvm_storage_value(class_bytes_fixture);
+    CHECK(state.class_bytes.not_null());
+    state.class_hash = compute_jvm_class_hash(class_bytes_fixture);
+    state.storage_root = td::Ref<vm::Cell>{};
+    state.manifest_root = build_wallet_manifest_cell();
+    CHECK(state.manifest_root.not_null());
+    auto cell = encode_jvm_contract_account_state(state);
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedJvacCanonical);
   }
 
   // -------------------- address-derivation-1 / address-derivation-2 --

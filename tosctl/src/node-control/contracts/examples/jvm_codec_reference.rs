@@ -21,7 +21,9 @@ use chain_block::{BuilderData, Cell, IBitstring};
 use contracts::jvm_codec::{
     compute_jvm_address_commit, compute_jvm_class_hash,
     derive_jvm_contract_address, encode_jvm_args, encode_jvm_call_descriptor,
-    encode_jvm_state_init_cell, JvmArgs, JvmCallDescriptor, JvmTypedArg,
+    encode_jvm_contract_account_state, encode_jvm_state_init_cell,
+    encode_jvm_storage_value, JvmArgs, JvmCallDescriptor,
+    JvmContractAccountState, JvmTypedArg,
 };
 use contracts::jvm_deployer::build_deployer_manifest_cell;
 use contracts::jvm_wallet::build_wallet_manifest_cell;
@@ -95,6 +97,50 @@ fn deployer_manifest_hash() -> String {
     lower_hex(cell.repr_hash().as_slice())
 }
 
+// 300-byte fixture chosen so chunking actually fires: 127 + 127 + 46
+// = 3 chunks.  Pattern is i * 7 + 3 mod 256 — non-repeating so a
+// chunk-boundary off-by-one would change the hash.
+fn class_bytes_fixture() -> Vec<u8> {
+    (0..300u32)
+        .map(|i| ((i.wrapping_mul(7).wrapping_add(3)) & 0xff) as u8)
+        .collect()
+}
+
+fn storage_value_multi_chunk_hash() -> String {
+    let cell = encode_jvm_storage_value(&class_bytes_fixture())
+        .expect("storage value chunked");
+    lower_hex(cell.repr_hash().as_slice())
+}
+
+fn jvac_canonical_hash() -> String {
+    // Deterministic JVAC fixture: same owner_pubkey pattern as the
+    // other vectors, all-zero genesis deployer, fixed address_commit,
+    // chunked class_bytes from class_bytes_fixture(), no storage_root,
+    // wallet manifest cell as manifest_root.  This single fixture
+    // exercises: JVAC envelope, chunked class_bytes ref, Maybe(None)
+    // bit for storage_root, Maybe(Just) bit for manifest_root.
+    let mut address_commit = [0u8; 32];
+    for (i, b) in address_commit.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(11).wrapping_add(7);
+    }
+    let mut stdlib_hash = [0u8; 32];
+    for (i, b) in stdlib_hash.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(13).wrapping_add(2);
+    }
+    let manifest = build_wallet_manifest_cell().expect("wallet manifest cell");
+    let state = JvmContractAccountState {
+        stdlib_hash,
+        deployer: [0u8; 32],
+        address_commit,
+        class_bytes: class_bytes_fixture(),
+        storage_root: None,
+        manifest_root: Some(manifest),
+    };
+    let cell = encode_jvm_contract_account_state(&state)
+        .expect("encode_jvm_contract_account_state");
+    lower_hex(cell.repr_hash().as_slice())
+}
+
 fn address_fixture(salt: [u8; 32]) -> String {
     let deployer = [0u8; 32];
     let owner = owner_pubkey_fixture();
@@ -144,6 +190,11 @@ fn main() {
     print_line("state-init", &state_init_hash());
     print_line("wallet-manifest", &wallet_manifest_hash());
     print_line("deployer-manifest", &deployer_manifest_hash());
+    print_line(
+        "storage-value-multi-chunk",
+        &storage_value_multi_chunk_hash(),
+    );
+    print_line("jvac-canonical", &jvac_canonical_hash());
 
     let salt_a = [0u8; 32];
     let mut salt_b = salt_a;
