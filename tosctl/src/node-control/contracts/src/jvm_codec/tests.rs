@@ -299,6 +299,32 @@ fn parity_against_reference_vectors() {
         "Rust two-args-mixed drifted from jvm-codec-reference.txt"
     );
 
+    // execute-args — mirrors the on-wire shape of `Wallet.execute(
+    // uint256 nonce, bytes payload, bytes signature)`.  Variable-length
+    // Bytes encoding (vs the fixed-length Bytes32/Uint256/Address paths
+    // covered above) goes through a distinct chunk-chain ref; locking
+    // it here means every signed Wallet/Deployer call is parity-safe.
+    let mut execute_nonce = [0u8; 32];
+    execute_nonce[31] = 0x07;
+    let execute_payload: Vec<u8> = (0..200u32)
+        .map(|i| ((i.wrapping_mul(31).wrapping_add(11)) & 0xff) as u8)
+        .collect();
+    let execute_signature: Vec<u8> = (0..64u32)
+        .map(|i| ((i.wrapping_mul(17).wrapping_add(3)) & 0xff) as u8)
+        .collect();
+    let execute_args = JvmArgs::new(vec![
+        JvmTypedArg::uint256(execute_nonce),
+        JvmTypedArg::raw_bytes(execute_payload),
+        JvmTypedArg::raw_bytes(execute_signature),
+    ]);
+    let execute_args_cell =
+        encode_jvm_args(&execute_args).expect("encode execute_args");
+    assert_eq!(
+        lower_hex(execute_args_cell.repr_hash().as_slice()),
+        lookup("execute-args"),
+        "Rust execute-args drifted from jvm-codec-reference.txt"
+    );
+
     // empty-call-descriptor
     let empty_call = encode_jvm_call_descriptor(&JvmCallDescriptor::new(
         0x1234_5678,

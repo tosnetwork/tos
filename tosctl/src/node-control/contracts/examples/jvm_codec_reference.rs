@@ -53,6 +53,26 @@ fn two_args_mixed_fixture() -> JvmArgs {
     ])
 }
 
+// Mirrors the exact argument shape `Wallet.execute(uint256 nonce,
+// bytes payload, bytes signature)` takes on the wire.  Locks the
+// variable-length `Bytes` arg encoding path against silent drift —
+// every signed Wallet call rides on this shape.
+fn execute_args_fixture() -> JvmArgs {
+    let mut nonce = [0u8; 32];
+    nonce[31] = 0x07;
+    let payload: Vec<u8> = (0..200u32)
+        .map(|i| ((i.wrapping_mul(31).wrapping_add(11)) & 0xff) as u8)
+        .collect();
+    let signature: Vec<u8> = (0..64u32)
+        .map(|i| ((i.wrapping_mul(17).wrapping_add(3)) & 0xff) as u8)
+        .collect();
+    JvmArgs::new(vec![
+        JvmTypedArg::uint256(nonce),
+        JvmTypedArg::raw_bytes(payload),
+        JvmTypedArg::raw_bytes(signature),
+    ])
+}
+
 fn placeholder_state_cell() -> Cell {
     // Same one-byte 0xde placeholder used by the existing
     // `state_init_cell_has_two_refs_and_is_valid_shape` test fixture.
@@ -179,6 +199,7 @@ fn main() {
         &args_hash(&single_bytes32_args_fixture()),
     );
     print_line("two-args-mixed", &args_hash(&two_args_mixed_fixture()));
+    print_line("execute-args", &args_hash(&execute_args_fixture()));
     print_line(
         "empty-call-descriptor",
         &call_descriptor_hash(0x1234_5678, empty_args_fixture()),

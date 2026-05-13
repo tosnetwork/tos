@@ -1414,6 +1414,8 @@ TEST(JvmWorkchainCore, JvmCodecParityVectors) {
       "be9a8a27d9818b01a6619be4a6e6b8f249589b679148452bf1c182c9357fe1e7";
   constexpr const char* kExpectedTwoArgsMixed =
       "7c751eb2a343e6ede875c331e2f4346e4daf1bf07e9b4093453bd346a2027587";
+  constexpr const char* kExpectedExecuteArgs =
+      "7abc47ca1e202fea413fa57083f06315e84e3010f2547938988c279e993f0a91";
   constexpr const char* kExpectedEmptyCallDescriptor =
       "e6408fd5479ab293112bf7c97b20d501117ffb19415eeb521f2cf57f046c9bdc";
   constexpr const char* kExpectedCallWithTypedArgs =
@@ -1466,6 +1468,47 @@ TEST(JvmWorkchainCore, JvmCodecParityVectors) {
     auto cell = encode_jvm_args(args);
     CHECK(cell.not_null());
     CHECK(hex_repr(cell) == kExpectedSingleBytes32Args);
+  }
+
+  // -------------------- execute-args --------------------
+  // Builds the (Uint256, Bytes, Bytes) shape that `Wallet.execute`
+  // takes on the wire.  The variable-length `Bytes` path is encoded
+  // via a chunked storage_value ref — distinct from the in-line
+  // Bytes32/Uint256/Address paths exercised above — and is the
+  // critical surface for signed Wallet/Deployer calls.
+  auto build_execute_args = []() {
+    JvmArgs args;
+
+    JvmTypedArg nonce;
+    nonce.type = JvmArgType::Uint256;
+    nonce.bytes.assign(32, 0);
+    nonce.bytes[31] = 0x07;
+    args.values.push_back(std::move(nonce));
+
+    JvmTypedArg payload;
+    payload.type = JvmArgType::Bytes;
+    payload.bytes.reserve(200);
+    for (std::uint32_t i = 0; i < 200; ++i) {
+      payload.bytes.push_back(
+          static_cast<std::uint8_t>((i * 31 + 11) & 0xff));
+    }
+    args.values.push_back(std::move(payload));
+
+    JvmTypedArg signature;
+    signature.type = JvmArgType::Bytes;
+    signature.bytes.reserve(64);
+    for (std::uint32_t i = 0; i < 64; ++i) {
+      signature.bytes.push_back(
+          static_cast<std::uint8_t>((i * 17 + 3) & 0xff));
+    }
+    args.values.push_back(std::move(signature));
+
+    return args;
+  };
+  {
+    auto cell = encode_jvm_args(build_execute_args());
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedExecuteArgs);
   }
 
   // -------------------- two-args-mixed --------------------
