@@ -122,4 +122,17 @@ td::Result<JvmGenesisDeployerBuild> build_jvm_genesis_deployer(
     const std::array<std::uint8_t, 32>& stdlib_hash,
     td::Slice deployer_class_bytes);
 
+// Build the canonical `java.lang.Wallet` method manifest cell.  The
+// returned cell's `repr_hash` is hashed into every Wallet address —
+// it is consensus-stable and MUST equal the cell hash produced by the
+// Rust port (`contracts::jvm_wallet::build_wallet_manifest_cell`).
+// The codec parity test (`JvmCodecParityVectors`) pins this property.
+td::Ref<vm::Cell> build_wallet_manifest_cell();
+
+// Build the canonical `java.lang.Deployer` method manifest cell.
+// Same parity guarantee as `build_wallet_manifest_cell`: the cell's
+// `repr_hash` is hashed into every Deployer address and MUST equal
+// the Rust port's output.
+td::Ref<vm::Cell> build_deployer_manifest_cell();
+
 }  // namespace jvm_workchain

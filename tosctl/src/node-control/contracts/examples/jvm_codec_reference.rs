@@ -23,6 +23,8 @@ use contracts::jvm_codec::{
     derive_jvm_contract_address, encode_jvm_args, encode_jvm_call_descriptor,
     encode_jvm_state_init_cell, JvmArgs, JvmCallDescriptor, JvmTypedArg,
 };
+use contracts::jvm_deployer::build_deployer_manifest_cell;
+use contracts::jvm_wallet::build_wallet_manifest_cell;
 
 fn owner_pubkey_fixture() -> [u8; 32] {
     // 0x00, 0x01, .., 0x1f — same as the existing
@@ -83,6 +85,16 @@ fn state_init_hash() -> String {
     lower_hex(cell.repr_hash().as_slice())
 }
 
+fn wallet_manifest_hash() -> String {
+    let cell = build_wallet_manifest_cell().expect("wallet manifest cell");
+    lower_hex(cell.repr_hash().as_slice())
+}
+
+fn deployer_manifest_hash() -> String {
+    let cell = build_deployer_manifest_cell().expect("deployer manifest cell");
+    lower_hex(cell.repr_hash().as_slice())
+}
+
 fn address_fixture(salt: [u8; 32]) -> String {
     let deployer = [0u8; 32];
     let owner = owner_pubkey_fixture();
@@ -130,6 +142,8 @@ fn main() {
         &call_descriptor_hash(0xdead_beef, two_args_mixed_fixture()),
     );
     print_line("state-init", &state_init_hash());
+    print_line("wallet-manifest", &wallet_manifest_hash());
+    print_line("deployer-manifest", &deployer_manifest_hash());
 
     let salt_a = [0u8; 32];
     let mut salt_b = salt_a;

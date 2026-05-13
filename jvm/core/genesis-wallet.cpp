@@ -76,68 +76,6 @@ td::Result<td::Ref<vm::Cell>> build_owner_nonce_storage_root(
     return storage.root_cell();
 }
 
-td::Ref<vm::Cell> build_wallet_manifest_cell() {
-    std::vector<JvmMethodManifestEntry> entries;
-
-    JvmMethodManifestEntry init_entry;
-    init_entry.method_id = method_id_for("init(bytes32)");
-    init_entry.class_name = "java/lang/Wallet";
-    init_entry.method_name = "init";
-    init_entry.method_spec = "(Ljava/lang/Bytes32;)V";
-    entries.push_back(std::move(init_entry));
-
-    JvmMethodManifestEntry execute_entry;
-    execute_entry.method_id = method_id_for("execute(uint256,bytes,bytes)");
-    execute_entry.class_name = "java/lang/Wallet";
-    execute_entry.method_name = "execute";
-    execute_entry.method_spec =
-        "(Ljava/lang/Uint256;Ljava/lang/Bytes;Ljava/lang/Bytes;)V";
-    entries.push_back(std::move(execute_entry));
-
-    JvmMethodManifestEntry get_nonce_entry;
-    get_nonce_entry.method_id = method_id_for("getNonce()");
-    get_nonce_entry.class_name = "java/lang/Wallet";
-    get_nonce_entry.method_name = "getNonce";
-    get_nonce_entry.method_spec = "()V";
-    entries.push_back(std::move(get_nonce_entry));
-
-    return encode_jvm_method_manifest(entries);
-}
-
-// Manifest for `java.lang.Deployer`.  ABI signatures mirror the four-
-// byte selectors the off-chain JvmDeployerContract (tosctl Rust side)
-// derives from the same strings; method specs are the JNI descriptors
-// that match the @ContractEntry surface in `Deployer.java`.
-td::Ref<vm::Cell> build_deployer_manifest_cell() {
-    std::vector<JvmMethodManifestEntry> entries;
-
-    JvmMethodManifestEntry init_entry;
-    init_entry.method_id = method_id_for("init(bytes32)");
-    init_entry.class_name = "java/lang/Deployer";
-    init_entry.method_name = "init";
-    init_entry.method_spec = "(Ljava/lang/Bytes32;)V";
-    entries.push_back(std::move(init_entry));
-
-    JvmMethodManifestEntry deploy_entry;
-    deploy_entry.method_id = method_id_for(
-        "deploy(uint256,bytes32,bytes,uint256,bytes,bytes)");
-    deploy_entry.class_name = "java/lang/Deployer";
-    deploy_entry.method_name = "deploy";
-    deploy_entry.method_spec =
-        "(Ljava/lang/Uint256;Ljava/lang/Bytes32;Ljava/lang/Bytes;"
-        "Ljava/lang/Uint256;Ljava/lang/Bytes;Ljava/lang/Bytes;)V";
-    entries.push_back(std::move(deploy_entry));
-
-    JvmMethodManifestEntry get_nonce_entry;
-    get_nonce_entry.method_id = method_id_for("getNonce()");
-    get_nonce_entry.class_name = "java/lang/Deployer";
-    get_nonce_entry.method_name = "getNonce";
-    get_nonce_entry.method_spec = "()V";
-    entries.push_back(std::move(get_nonce_entry));
-
-    return encode_jvm_method_manifest(entries);
-}
-
 td::Ref<vm::Cell> build_owner_init_args(
     const std::array<std::uint8_t, 32>& owner_pubkey) {
     JvmArgs args;
@@ -227,6 +165,68 @@ td::Ref<vm::Cell> build_shard_account_entry(td::Ref<vm::Cell> account_cell) {
 }
 
 }  // namespace
+
+td::Ref<vm::Cell> build_wallet_manifest_cell() {
+    std::vector<JvmMethodManifestEntry> entries;
+
+    JvmMethodManifestEntry init_entry;
+    init_entry.method_id = method_id_for("init(bytes32)");
+    init_entry.class_name = "java/lang/Wallet";
+    init_entry.method_name = "init";
+    init_entry.method_spec = "(Ljava/lang/Bytes32;)V";
+    entries.push_back(std::move(init_entry));
+
+    JvmMethodManifestEntry execute_entry;
+    execute_entry.method_id = method_id_for("execute(uint256,bytes,bytes)");
+    execute_entry.class_name = "java/lang/Wallet";
+    execute_entry.method_name = "execute";
+    execute_entry.method_spec =
+        "(Ljava/lang/Uint256;Ljava/lang/Bytes;Ljava/lang/Bytes;)V";
+    entries.push_back(std::move(execute_entry));
+
+    JvmMethodManifestEntry get_nonce_entry;
+    get_nonce_entry.method_id = method_id_for("getNonce()");
+    get_nonce_entry.class_name = "java/lang/Wallet";
+    get_nonce_entry.method_name = "getNonce";
+    get_nonce_entry.method_spec = "()V";
+    entries.push_back(std::move(get_nonce_entry));
+
+    return encode_jvm_method_manifest(entries);
+}
+
+// Manifest for `java.lang.Deployer`.  ABI signatures mirror the four-
+// byte selectors the off-chain JvmDeployerContract (tosctl Rust side)
+// derives from the same strings; method specs are the JNI descriptors
+// that match the @ContractEntry surface in `Deployer.java`.
+td::Ref<vm::Cell> build_deployer_manifest_cell() {
+    std::vector<JvmMethodManifestEntry> entries;
+
+    JvmMethodManifestEntry init_entry;
+    init_entry.method_id = method_id_for("init(bytes32)");
+    init_entry.class_name = "java/lang/Deployer";
+    init_entry.method_name = "init";
+    init_entry.method_spec = "(Ljava/lang/Bytes32;)V";
+    entries.push_back(std::move(init_entry));
+
+    JvmMethodManifestEntry deploy_entry;
+    deploy_entry.method_id = method_id_for(
+        "deploy(uint256,bytes32,bytes,uint256,bytes,bytes)");
+    deploy_entry.class_name = "java/lang/Deployer";
+    deploy_entry.method_name = "deploy";
+    deploy_entry.method_spec =
+        "(Ljava/lang/Uint256;Ljava/lang/Bytes32;Ljava/lang/Bytes;"
+        "Ljava/lang/Uint256;Ljava/lang/Bytes;Ljava/lang/Bytes;)V";
+    entries.push_back(std::move(deploy_entry));
+
+    JvmMethodManifestEntry get_nonce_entry;
+    get_nonce_entry.method_id = method_id_for("getNonce()");
+    get_nonce_entry.class_name = "java/lang/Deployer";
+    get_nonce_entry.method_name = "getNonce";
+    get_nonce_entry.method_spec = "()V";
+    entries.push_back(std::move(get_nonce_entry));
+
+    return encode_jvm_method_manifest(entries);
+}
 
 td::Result<JvmGenesisWalletBuild> build_jvm_genesis_wallet(
     const JvmGenesisWallet& wallet,

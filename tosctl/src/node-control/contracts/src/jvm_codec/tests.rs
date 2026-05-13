@@ -335,6 +335,29 @@ fn parity_against_reference_vectors() {
         "Rust state-init drifted from jvm-codec-reference.txt"
     );
 
+    // wallet-manifest — must equal the C++ build_wallet_manifest_cell()
+    // hash; otherwise tosctl-derived wallet addresses don't match the
+    // chain's genesis-seeded wallet addresses.
+    let wallet_manifest = crate::jvm_wallet::build_wallet_manifest_cell()
+        .expect("wallet manifest cell");
+    assert_eq!(
+        lower_hex(wallet_manifest.repr_hash().as_slice()),
+        lookup("wallet-manifest"),
+        "Rust wallet-manifest drifted from jvm-codec-reference.txt"
+    );
+
+    // deployer-manifest — same parity concern, but the consequence is
+    // worse: a drift here makes `tosctl jw deploy --via <deployer>`
+    // route to a non-existent account because the deployer's wc=3
+    // address depends on this cell's hash.
+    let deployer_manifest = crate::jvm_deployer::build_deployer_manifest_cell()
+        .expect("deployer manifest cell");
+    assert_eq!(
+        lower_hex(deployer_manifest.repr_hash().as_slice()),
+        lookup("deployer-manifest"),
+        "Rust deployer-manifest drifted from jvm-codec-reference.txt"
+    );
+
     // address-derivation-1 / address-derivation-2
     let init_args =
         encode_jvm_args(&JvmArgs::new(vec![JvmTypedArg::bytes32(owner)]))

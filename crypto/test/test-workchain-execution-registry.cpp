@@ -1420,6 +1420,10 @@ TEST(JvmWorkchainCore, JvmCodecParityVectors) {
       "bf33d5a37e1f539a6e04482325d68ad3915a11b803319255a1af1704ed01f923";
   constexpr const char* kExpectedStateInit =
       "d89eb3b3e717052b03238ad96b1f5a6cc3c3ab502440655fe7db85c057f65b68";
+  constexpr const char* kExpectedWalletManifest =
+      "df351dfe1ecc32f743616b6ab8f4dece18fc5702dfdad8825bef1519ea3ec864";
+  constexpr const char* kExpectedDeployerManifest =
+      "2d0ef9a96b049d626371a24766e96b07e865b0b86d6862f94ec39039c5899e6b";
   constexpr const char* kExpectedAddressDerivation1 =
       "95ffd5fbad8fd0cca16e8c5e53f12b6a3feb3ee0e5adec0aecb0fdd19a51a33f";
   constexpr const char* kExpectedAddressDerivation2 =
@@ -1537,6 +1541,29 @@ TEST(JvmWorkchainCore, JvmCodecParityVectors) {
     CHECK(cb.store_long_bool(0, 1));     // library: hme_empty$0
     auto state_init = cb.finalize();
     CHECK(hex_repr(state_init) == kExpectedStateInit);
+  }
+
+  // -------------------- wallet-manifest --------------------
+  // The Wallet manifest cell's hash is hashed into every Wallet
+  // account's wc=3 address.  If the Rust port and the C++ consensus
+  // builder drift here, tosctl will compute a different address than
+  // the chain actually has — `tosctl jw deploy` would ext-in-message
+  // to a non-existent account.  Both sides MUST agree.
+  {
+    auto cell = build_wallet_manifest_cell();
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedWalletManifest);
+  }
+
+  // -------------------- deployer-manifest --------------------
+  // Same address-binding parity as the wallet manifest.  Without this
+  // a genesis-seeded Deployer's address would silently diverge between
+  // C++ (validator) and Rust (tosctl), breaking the deploy CLI's
+  // ext-in routing.
+  {
+    auto cell = build_deployer_manifest_cell();
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedDeployerManifest);
   }
 
   // -------------------- address-derivation-1 / address-derivation-2 --

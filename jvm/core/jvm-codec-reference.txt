@@ -9,5 +9,7 @@ two-args-mixed            7c751eb2a343e6ede875c331e2f4346e4daf1bf07e9b4093453bd3
 empty-call-descriptor     e6408fd5479ab293112bf7c97b20d501117ffb19415eeb521f2cf57f046c9bdc
 call-with-typed-args      bf33d5a37e1f539a6e04482325d68ad3915a11b803319255a1af1704ed01f923
 state-init                d89eb3b3e717052b03238ad96b1f5a6cc3c3ab502440655fe7db85c057f65b68
+wallet-manifest           df351dfe1ecc32f743616b6ab8f4dece18fc5702dfdad8825bef1519ea3ec864
+deployer-manifest         2d0ef9a96b049d626371a24766e96b07e865b0b86d6862f94ec39039c5899e6b
 address-derivation-1      95ffd5fbad8fd0cca16e8c5e53f12b6a3feb3ee0e5adec0aecb0fdd19a51a33f
 address-derivation-2      d7fb4c69c270b93839832f27d343535902ed77ed324e7455d952cf8f40d558ea
