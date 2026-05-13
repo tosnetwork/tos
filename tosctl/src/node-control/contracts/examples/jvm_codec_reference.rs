@@ -21,9 +21,10 @@ use chain_block::{BuilderData, Cell, IBitstring};
 use contracts::jvm_codec::{
     compute_jvm_address_commit, compute_jvm_class_hash,
     derive_jvm_contract_address, encode_jvm_args, encode_jvm_call_descriptor,
-    encode_jvm_contract_account_state, encode_jvm_state_init_cell,
-    encode_jvm_storage_value, JvmArgs, JvmCallDescriptor,
-    JvmContractAccountState, JvmTypedArg,
+    encode_jvm_contract_account_state, encode_jvm_deploy_descriptor,
+    encode_jvm_state_init_cell, encode_jvm_storage_value, JvmArgs,
+    JvmCallDescriptor, JvmContractAccountState, JvmDeployDescriptor,
+    JvmTypedArg,
 };
 use contracts::jvm_deployer::{
     build_deployer_manifest_cell, compute_deployer_deploy_digest,
@@ -184,6 +185,76 @@ fn deployer_deploy_digest_hash() -> String {
     lower_hex(&digest)
 }
 
+fn deploy_descriptor_hash() -> String {
+    // Full JvmDeployDescriptor with non-trivial fields.  Byte-order
+    // drift between Rust and C++ on any of (deployer, salt, class_hash,
+    // class_name, class_bytes ref, init_args ref) surfaces as a
+    // different cell hash.  Class_bytes uses the chunked fixture so
+    // the multi-chunk path is also exercised here.
+    let mut deployer = [0u8; 32];
+    for (i, b) in deployer.iter_mut().enumerate() {
+        *b = ((i as u8).wrapping_mul(31)).wrapping_add(0x80);
+    }
+    let mut salt = [0u8; 32];
+    for (i, b) in salt.iter_mut().enumerate() {
+        *b = ((i as u8) ^ 0xa5).wrapping_add(1);
+    }
+    let class_bytes = class_bytes_fixture();
+    let class_hash = compute_jvm_class_hash(&class_bytes);
+    let class_name = String::from("java/lang/Wallet");
+    // init_args = JvmArgs(Bytes32(owner_pubkey_fixture)) — same shape
+    // as the wallet deploy uses.
+    let init_args = encode_jvm_args(&JvmArgs::new(vec![JvmTypedArg::bytes32(
+        owner_pubkey_fixture(),
+    )]))
+    .expect("encode init args");
+    let descriptor = JvmDeployDescriptor {
+        deployer,
+        salt,
+        class_hash,
+        class_name,
+        class_bytes,
+        init_args,
+    };
+    let cell = encode_jvm_deploy_descriptor(&descriptor)
+        .expect("encode deploy descriptor");
+    lower_hex(cell.repr_hash().as_slice())
+}
+
+fn nonzero_deployer_address_hash() -> String {
+    // Address derivation with all four input slots non-zero so a
+    // byte-order or size drift on ANY of (deployer, address_commit,
+    // class_hash, manifest_root_hash) surfaces.  The existing
+    // address-derivation-1/-2 vectors use all-zero deployer +
+    // manifest_hash, which masks any flipped-endian bug at those
+    // slots.
+    let mut deployer = [0u8; 32];
+    for (i, b) in deployer.iter_mut().enumerate() {
+        *b = ((i as u8).wrapping_mul(19)).wrapping_add(0x40);
+    }
+    let mut salt = [0u8; 32];
+    for (i, b) in salt.iter_mut().enumerate() {
+        *b = ((i as u8) ^ 0x3c).wrapping_add(2);
+    }
+    let init_args = encode_jvm_args(&JvmArgs::new(vec![JvmTypedArg::bytes32(
+        owner_pubkey_fixture(),
+    )]))
+    .expect("encode init args");
+    let commit = compute_jvm_address_commit(&deployer, &salt, &init_args);
+    let class_hash = compute_jvm_class_hash(b"class-bytes-fixture");
+    let mut manifest_hash = [0u8; 32];
+    for (i, b) in manifest_hash.iter_mut().enumerate() {
+        *b = ((i as u8).wrapping_mul(7)).wrapping_add(0xc0);
+    }
+    let address = derive_jvm_contract_address(
+        &deployer,
+        &commit,
+        &class_hash,
+        &manifest_hash,
+    );
+    lower_hex(&address)
+}
+
 fn jvac_canonical_hash() -> String {
     // Deterministic JVAC fixture: same owner_pubkey pattern as the
     // other vectors, all-zero genesis deployer, fixed address_commit,
@@ -270,10 +341,15 @@ fn main() {
     print_line("jvac-canonical", &jvac_canonical_hash());
     print_line("wallet-execute-digest", &wallet_execute_digest_hash());
     print_line("deployer-deploy-digest", &deployer_deploy_digest_hash());
+    print_line("deploy-descriptor", &deploy_descriptor_hash());
 
     let salt_a = [0u8; 32];
     let mut salt_b = salt_a;
     salt_b[0] ^= 0xff;
     print_line("address-derivation-1", &address_fixture(salt_a));
     print_line("address-derivation-2", &address_fixture(salt_b));
+    // address-derivation-3: non-zero deployer + manifest_hash, so any
+    // byte-order or size drift in those slots surfaces (vectors -1/-2
+    // use all-zero deployer + manifest_hash and would mask such bugs).
+    print_line("address-derivation-3", &nonzero_deployer_address_hash());
 }

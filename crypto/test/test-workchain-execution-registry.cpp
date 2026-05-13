@@ -1434,10 +1434,14 @@ TEST(JvmWorkchainCore, JvmCodecParityVectors) {
       "9d06033fdd867caa6cdebd0640c781a135c5233e2dd5302a2a80f08d99b40a21";
   constexpr const char* kExpectedDeployerDeployDigest =
       "f7884b363248d0b6fdf7fa356e230213c8c38302eb0ecb55e32333e4cac951ce";
+  constexpr const char* kExpectedDeployDescriptor =
+      "b5b62a5085534a5a23b591dc2d09261b3c03e6dfeb5320124c878f4f2b5de1b5";
   constexpr const char* kExpectedAddressDerivation1 =
       "95ffd5fbad8fd0cca16e8c5e53f12b6a3feb3ee0e5adec0aecb0fdd19a51a33f";
   constexpr const char* kExpectedAddressDerivation2 =
       "d7fb4c69c270b93839832f27d343535902ed77ed324e7455d952cf8f40d558ea";
+  constexpr const char* kExpectedAddressDerivation3 =
+      "f850878fba03b75193a16c085b7b9a8027143b56d6a1cb426de73f7e9c265de8";
 
   auto hex_repr = [](td::Ref<vm::Cell> cell) {
     return td::to_lower(td::buffer_to_hex(cell->get_hash().as_slice()));
@@ -1783,6 +1787,76 @@ TEST(JvmWorkchainCore, JvmCodecParityVectors) {
         deployer, commit_b, class_hash, manifest_hash);
     CHECK(hex_bytes(addr_b.data(), addr_b.size()) ==
           kExpectedAddressDerivation2);
+
+    // -------------------- address-derivation-3 -----------------------
+    // Non-zero deployer + manifest_hash so any byte-order or size
+    // drift in those 256-bit slots surfaces.  Vectors -1/-2 use
+    // all-zero deployer + manifest_hash so they cannot catch such
+    // bugs at those positions.
+    JvmContractId nz_deployer{};
+    for (std::size_t i = 0; i < nz_deployer.size(); ++i) {
+      nz_deployer[i] = static_cast<std::uint8_t>(
+          static_cast<std::uint8_t>(i) * 19 + 0x40);
+    }
+    JvmContractId nz_salt{};
+    for (std::size_t i = 0; i < nz_salt.size(); ++i) {
+      nz_salt[i] = static_cast<std::uint8_t>(
+          (static_cast<std::uint8_t>(i) ^ 0x3c) + 2);
+    }
+    JvmManifestRootHash nz_manifest_hash{};
+    for (std::size_t i = 0; i < nz_manifest_hash.size(); ++i) {
+      nz_manifest_hash[i] = static_cast<std::uint8_t>(
+          static_cast<std::uint8_t>(i) * 7 + 0xc0);
+    }
+    auto nz_commit =
+        compute_jvm_address_commit(nz_deployer, nz_salt, init_args_cell);
+    auto nz_addr = derive_jvm_contract_address_from_state(
+        nz_deployer, nz_commit, class_hash, nz_manifest_hash);
+    CHECK(hex_bytes(nz_addr.data(), nz_addr.size()) ==
+          kExpectedAddressDerivation3);
+  }
+
+  // -------------------- deploy-descriptor --------------------
+  // Full JvmDeployDescriptor with non-trivial fields exercises:
+  //   - magic + schema_version + deployer + salt + class_hash bit
+  //     layout
+  //   - encode_string_cell(class_name) producing the same chunked
+  //     storage_value as the Rust port's encode_jvm_storage_value
+  //     applied to class_name.as_bytes()
+  //   - encode_jvm_storage_value(class_bytes) ref shape
+  //   - init_args ref placement
+  {
+    JvmDeployDescriptor d;
+    d.schema_version = kJvmDeployDescriptorSchemaVersion;
+    for (std::size_t i = 0; i < d.deployer.size(); ++i) {
+      d.deployer[i] = static_cast<std::uint8_t>(
+          static_cast<std::uint8_t>(i) * 31 + 0x80);
+    }
+    for (std::size_t i = 0; i < d.salt.size(); ++i) {
+      d.salt[i] = static_cast<std::uint8_t>(
+          (static_cast<std::uint8_t>(i) ^ 0xa5) + 1);
+    }
+    JvmStorageValue dpd_class_bytes;
+    dpd_class_bytes.reserve(300);
+    for (std::uint32_t i = 0; i < 300; ++i) {
+      dpd_class_bytes.push_back(
+          static_cast<std::uint8_t>((i * 7 + 3) & 0xff));
+    }
+    d.class_hash = compute_jvm_class_hash(dpd_class_bytes);
+    d.class_name = "java/lang/Wallet";
+    d.class_bytes = dpd_class_bytes;
+    {
+      JvmArgs init_args;
+      JvmTypedArg a;
+      a.type = JvmArgType::Bytes32;
+      a.bytes.assign(owner.begin(), owner.end());
+      init_args.values.push_back(std::move(a));
+      d.init_args = encode_jvm_args(init_args);
+      CHECK(d.init_args.not_null());
+    }
+    auto cell = encode_jvm_deploy_descriptor(d);
+    CHECK(cell.not_null());
+    CHECK(hex_repr(cell) == kExpectedDeployDescriptor);
   }
 }
 

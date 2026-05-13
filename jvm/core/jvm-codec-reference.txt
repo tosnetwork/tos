@@ -16,5 +16,7 @@ storage-value-multi-chunk b159946876e678789fbaab9581bb44b2f7428c14224f23168e80b8
 jvac-canonical            d37d2fa550cd3ba2115b6a6be3693d9fb140bfacbed6c9aaca34c6a155e4b93b
 wallet-execute-digest     9d06033fdd867caa6cdebd0640c781a135c5233e2dd5302a2a80f08d99b40a21
 deployer-deploy-digest    f7884b363248d0b6fdf7fa356e230213c8c38302eb0ecb55e32333e4cac951ce
+deploy-descriptor         b5b62a5085534a5a23b591dc2d09261b3c03e6dfeb5320124c878f4f2b5de1b5
 address-derivation-1      95ffd5fbad8fd0cca16e8c5e53f12b6a3feb3ee0e5adec0aecb0fdd19a51a33f
 address-derivation-2      d7fb4c69c270b93839832f27d343535902ed77ed324e7455d952cf8f40d558ea
+address-derivation-3      f850878fba03b75193a16c085b7b9a8027143b56d6a1cb426de73f7e9c265de8

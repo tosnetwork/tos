@@ -484,6 +484,41 @@ fn parity_against_reference_vectors() {
         "Rust deployer-deploy-digest drifted from jvm-codec-reference.txt"
     );
 
+    // deploy-descriptor — full JvmDeployDescriptor with non-trivial
+    // (deployer, salt, class_hash, class_name, class_bytes, init_args).
+    // Locks the legacy `jvm_deployContract` RPC path against Rust drift
+    // — currently unused by `tosctl jw deploy` but still a defined
+    // wire-format the validator decodes.
+    let mut dpd_deployer = [0u8; 32];
+    for (i, b) in dpd_deployer.iter_mut().enumerate() {
+        *b = ((i as u8).wrapping_mul(31)).wrapping_add(0x80);
+    }
+    let mut dpd_salt = [0u8; 32];
+    for (i, b) in dpd_salt.iter_mut().enumerate() {
+        *b = ((i as u8) ^ 0xa5).wrapping_add(1);
+    }
+    let dpd_class_bytes = class_bytes_fixture.clone();
+    let dpd_class_hash = compute_jvm_class_hash(&dpd_class_bytes);
+    let dpd_init_args = encode_jvm_args(&JvmArgs::new(vec![
+        JvmTypedArg::bytes32(owner),
+    ]))
+    .expect("encode init args");
+    let dpd = crate::jvm_codec::JvmDeployDescriptor {
+        deployer: dpd_deployer,
+        salt: dpd_salt,
+        class_hash: dpd_class_hash,
+        class_name: String::from("java/lang/Wallet"),
+        class_bytes: dpd_class_bytes,
+        init_args: dpd_init_args,
+    };
+    let dpd_cell = crate::jvm_codec::encode_jvm_deploy_descriptor(&dpd)
+        .expect("encode deploy descriptor");
+    assert_eq!(
+        lower_hex(dpd_cell.repr_hash().as_slice()),
+        lookup("deploy-descriptor"),
+        "Rust deploy-descriptor drifted from jvm-codec-reference.txt"
+    );
+
     // address-derivation-1 / address-derivation-2
     let init_args =
         encode_jvm_args(&JvmArgs::new(vec![JvmTypedArg::bytes32(owner)]))
@@ -522,5 +557,35 @@ fn parity_against_reference_vectors() {
         lower_hex(&addr_b),
         lookup("address-derivation-2"),
         "Rust address-derivation-2 drifted from jvm-codec-reference.txt"
+    );
+
+    // address-derivation-3 — non-zero deployer + manifest_hash so a
+    // byte-order or size drift in those slots surfaces.  The -1/-2
+    // vectors use all-zero deployer + manifest_hash and would mask
+    // such bugs.
+    let mut nz_deployer = [0u8; 32];
+    for (i, b) in nz_deployer.iter_mut().enumerate() {
+        *b = ((i as u8).wrapping_mul(19)).wrapping_add(0x40);
+    }
+    let mut nz_salt = [0u8; 32];
+    for (i, b) in nz_salt.iter_mut().enumerate() {
+        *b = ((i as u8) ^ 0x3c).wrapping_add(2);
+    }
+    let mut nz_manifest_hash = [0u8; 32];
+    for (i, b) in nz_manifest_hash.iter_mut().enumerate() {
+        *b = ((i as u8).wrapping_mul(7)).wrapping_add(0xc0);
+    }
+    let nz_commit =
+        compute_jvm_address_commit(&nz_deployer, &nz_salt, &init_args);
+    let nz_addr = derive_jvm_contract_address(
+        &nz_deployer,
+        &nz_commit,
+        &class_hash,
+        &nz_manifest_hash,
+    );
+    assert_eq!(
+        lower_hex(&nz_addr),
+        lookup("address-derivation-3"),
+        "Rust address-derivation-3 drifted from jvm-codec-reference.txt"
     );
 }
