@@ -19,18 +19,8 @@
 // Produces a fully-formed wc=1 ShardState cell with 10 giver accounts.
 // Drop-in replacement for `1 mkemptyShardState`.
 
-// mkShardStateWithAccounts ( accounts_cell wc -- shard_state_cell )
-// Wraps an arbitrary ShardAccounts cell into a complete ShardState cell,
-// mirroring mkemptyShardState (Workchain.fif) but accepting non-empty accounts.
-// Sourced from test/tostester/src/tostester/zerostate.py and
-// test/conformance/hive/clients/tos/bootstrap-validators.sh.
-{ <b x{9023afe2} s, globalid@ 32 i, 0 8 i,
-  swap 32 i, 1 63 << 64 u, 0 64 i, now 32 u, 0 64 i, -1 32 i,
-  <b 0 67 u, b> ref, 0 1 u,
-  swap ref,
-  <b 0 128 10 + 1+ 1+ u, b> ref, 0 1 u, b>
-  dup isShardState? not abort"invalid ShardState created for wc=1"
-} : mkShardStateWithAccounts
+// `mkShardStateWithAccounts` is now defined in crypto/fift/lib/Workchain.fif
+// (hoisted there so both EVM and JVM genesis scripts share one builder).
 
 // EToSPoWGiver runtime bytecode (solc 0.8.26 --optimize --optimize-runs 200, metadata hash disabled, 1745 bytes)
 // Recompile: see evm/contracts/README.md (solc 0.8.26, optimizer runs=200, metadata.bytecodeHash=none)

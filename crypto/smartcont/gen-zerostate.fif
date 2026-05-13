@@ -81,6 +81,54 @@ hashu dup =: unostate2_rhash
 
 unostate2_rhash unostate2_fhash now 0 4 8 2 add-uno-workchain
 
+// Initial state of Workchain 3 (JVM workchain)
+// vm_version=0x4a564d31 ("JVM1") in the WorkchainDescr (set by
+// add-jvm-workchain) routes wc=3 transactions to the Avata JVM
+// execution path (see jvm/core/config-param.cpp::build_jvm_workchain_descr).
+//
+// For a real launch, populate the wc=3 ShardAccounts dict with at
+// least one `java.lang.Deployer` (and any number of `java.lang.Wallet`
+// accounts) via `jvm-zerostate-with-deployers-from-alloc`.  Without
+// a genesis Deployer the chain can move funds between pre-seeded
+// Wallets but can never deploy further wc=3 contracts (Wallet only
+// exposes System.sendMessage, not System.createAccount).  See
+// doc/jvm-mainnet-activation.md §2-§3 for the operator workflow.
+//
+// TODO(jvm-genesis-wiring): the launch operator must replace the
+// empty-accounts branch below with a concrete allocation tuple:
+//   * Build `wallet_class_bytes` and `deployer_class_bytes` from the
+//     pinned rt.jar's java/lang/Wallet.class and java/lang/Deployer.class.
+//   * Compute `stdlib_hash = sha256(rt.jar)` — must match the value
+//     committed to ConfigParam 85 via `jvm-config-param-cell-with-stdlib`.
+//   * Build `wallet_alloc` and `deployer_alloc` as tuples of
+//     `(owner_pubkey:32B, salt:32B, balance:int)` triples.
+//
+// Reference usage (replace placeholders, then enable):
+//
+//   wallet_alloc wallet_class_bytes deployer_alloc deployer_class_bytes
+//   stdlib_hash jvm-zerostate-with-deployers-from-alloc
+//   3 mkShardStateWithAccounts
+//
+// Until the rt.jar / allocation inputs are decided, ship an empty
+// wc=3 ShardAccounts so chain config is well-formed even though no
+// wc=3 contract can yet be deployed.  This is the pre-launch
+// equivalent of the "empty UNO zerostate" branch above.
+
+3 mkemptyShardState
+
+cr ."initial JVM workchain state is:" cr dup <s csr. cr
+dup dup 31 boc+>B dup Bx. cr
+dup "jvmstate3" +suffix +".boc" tuck B>file
+."(Initial JVM workchain state saved to file " type .")" cr
+Bhashu dup =: jvmstate3_fhash
+."file hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"jvmstate3" +suffix +".fhash" B>file
+hashu dup =: jvmstate3_rhash
+."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"jvmstate3" +suffix +".rhash" B>file
+
+jvmstate3_rhash jvmstate3_fhash now 0 4 8 3 add-jvm-workchain
+
 config.workchains!
 
 /*

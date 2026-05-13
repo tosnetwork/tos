@@ -65,6 +65,28 @@ hashu dup =: unostate2_rhash
 
 unostate2_rhash unostate2_fhash now 0 4 8 2 add-uno-workchain
 
+// Initial state of Workchain 3 (JVM workchain) — testnet variant.
+// vm_version=0x4a564d31 ("JVM1"); routes wc=3 transactions to the Avata
+// JVM path.  Ships with an EMPTY ShardAccounts dict for now; a testnet
+// run that needs working wc=3 senders from block 0 must replace
+// `3 mkemptyShardState` with a `jvm-zerostate-with-deployers-from-alloc`
+// invocation (see gen-zerostate.fif's wc=3 block + doc/jvm-mainnet-activation.md).
+
+3 mkemptyShardState
+
+cr ."initial JVM workchain state is:" cr dup <s csr. cr
+dup dup 31 boc+>B dup Bx. cr
+dup "jvmstate3" +suffix +".boc" tuck B>file
+."(Initial JVM workchain state saved to file " type .")" cr
+Bhashu dup =: jvmstate3_fhash
+."file hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"jvmstate3" +suffix +".fhash" B>file
+hashu dup =: jvmstate3_rhash
+."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"jvmstate3" +suffix +".rhash" B>file
+
+jvmstate3_rhash jvmstate3_fhash now 0 4 8 3 add-jvm-workchain
+
 config.workchains!
 
 // SmartContract #1 (Simple wallet)

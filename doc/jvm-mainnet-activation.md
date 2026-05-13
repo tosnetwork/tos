@@ -146,15 +146,40 @@ The wc=3 descriptor is built by
 account policy is `EngineDefined` with
 `admits_engine_create_account_actions=true`.
 
+In Fift the binding is `add-jvm-workchain`
+(`crypto/fift/lib/Workchain.fif`), which mirrors `add-evm-workchain`
+/ `add-uno-workchain`:
+
+```
+( root-hash file-hash enable-utime actual-min-split min-split max-split workchain-id -- )
+  add-jvm-workchain
+```
+
 The descriptor must be inserted into ConfigParam 12 at the wc=3 slot
 with `active=false` until step 7.  `enabled_since` records activation
 metadata but is **not** an automatic delayed-height trigger in the
 current dispatch path — the active-flag flip in step 7 is what
 actually opens the workchain.
 
+The wc=3 ShardState itself is built either with `3 mkemptyShardState`
+(empty accounts — fine while bootstrapping, but no contract can ever
+deploy from this state without a Deployer seed; see §1 deadlock note)
+or with `accounts_cell 3 mkShardStateWithAccounts` where
+`accounts_cell` is the output of
+`jvm-zerostate-with-deployers-from-alloc` from step 3.  Both Fift
+words live in `crypto/fift/lib/Workchain.fif`.
+
+The canonical genesis script (`crypto/smartcont/gen-zerostate.fif`)
+ships with the empty-accounts variant gated behind a TODO comment;
+launch operators replace it with the seeded form before generating
+the production zerostate.
+
 Files to read: `jvm/core/config-param.cpp:155-179`,
 `jvm/core/dispatch-engine.cpp:80-110`,
-`doc/ConfigParam.md` (ConfigParam 12 layout).
+`doc/ConfigParam.md` (ConfigParam 12 layout),
+`crypto/fift/lib/Workchain.fif` (`add-jvm-workchain`,
+`mkShardStateWithAccounts`),
+`crypto/smartcont/gen-zerostate.fif` (wc=3 block).
 
 ## 5. Add ConfigParam 85
 

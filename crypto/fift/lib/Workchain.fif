@@ -31,6 +31,22 @@ variable workchain-dict
   <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
   workchain-dict !
 } : add-uno-workchain
+// JVM workchain (wc=3): vm_version=0x4a564d31 ("JVM1") so the host-chain
+// dispatch routes wc=3 transactions to the Avata JVM execution path
+// (see jvm/core/config-param.cpp::build_jvm_workchain_descr).  Account
+// policy is EngineDefined with admits_engine_create_account_actions=
+// true, which lets `Deployer.deploy(...)` materialise new wc=3
+// accounts via action_create_account.  Companion ConfigParam 85 must
+// also be set (use `jvm-config-param-cell-with-stdlib` once rt.jar
+// is pinned, otherwise `jvm-config-param-cell` produces the
+// all-zero `stdlib_hash` sentinel for pre-launch.)
+// root-hash file-hash enable-utime actual-min-split min-split max-split workchain-id --
+{ <b x{a6} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{e000} s,
+  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, 0x4a564d31 32 i, 0 64 u, b>
+  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
+  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+  workchain-dict !
+} : add-jvm-workchain
 // --
 { workchain-dict @ dict>s s>c 12 config! } : config.workchains!
 
@@ -41,3 +57,18 @@ variable workchain-dict
   <b 0 128 10 + 1+ 1+ u, b> ref, 0 1 u, b>
   dup isShardState? not abort"invalid ShardState created"
 } : mkemptyShardState
+
+// accounts_cell workchain-id -- wc-zero-state
+// Variant of `mkemptyShardState` that injects a caller-supplied
+// `ShardAccounts` cell (from e.g. `jvm-zerostate-with-deployers-from-alloc`
+// or `evm-zerostate-from-alloc`) instead of the canonical empty
+// 11-bit placeholder.  Mirrors the local definition that
+// `etos-pow-givers.fif` carried before this hoist — hoisted into the
+// shared library so EVM and JVM genesis scripts can both consume it.
+{ <b x{9023afe2} s, globalid@ 32 i, 0 8 i,
+  swap 32 i, 1 63 << 64 u, 0 64 i, now 32 u, 0 64 i, -1 32 i,
+  <b 0 67 u, b> ref, 0 1 u,
+  swap ref,
+  <b 0 128 10 + 1+ 1+ u, b> ref, 0 1 u, b>
+  dup isShardState? not abort"invalid ShardState created with accounts"
+} : mkShardStateWithAccounts
