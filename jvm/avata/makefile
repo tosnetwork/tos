@@ -1506,18 +1506,84 @@ $(converter): $(converter-objects) $(converter-tool-objects)
 	@mkdir -p $(dir $(@))
 	$(build-cc) $(^) -g -o $(@)
 
+# Reproducible jar build:
+#   1. `touch -t 198001010000.00` every file + directory under
+#      $(classpath-build) so every ZIP entry inside the jar carries
+#      the same mtime regardless of when the file was last compiled.
+#      198001010000 (1980-01-01 00:00:00) is the ZIP epoch — earlier
+#      timestamps would silently round to it.
+#   2. Sort the file list with `LC_ALL=C sort` so entry order is
+#      stable across machines (find(1)'s default order is filesystem-
+#      dependent — ext4, apfs, tmpfs all differ).
+#   3. Pass the sorted file list explicitly to `jar` so it honors our
+#      order instead of re-walking the directory.
+#
+# Verified by the `check-rt-jar-determinism` target below: two clean
+# builds on the same machine + JDK MUST produce byte-identical jars.
+# Cross-machine + cross-JDK reproducibility is a stronger property
+# that depends on the toolchain version itself; see
+# doc/jvm-rt-reproducibility.md for the operator-side procedure.
+#
+# Why 1980-01-01 rather than SOURCE_DATE_EPOCH: the jar tool in
+# OpenJDK 8 (the current Avata stdlib build target) doesn't honor
+# SOURCE_DATE_EPOCH; the only knob it respects is the file's
+# on-disk mtime.  Forcing the mtime via touch is the lowest-common-
+# denominator approach across JDK 8/11/17.
+# `tools/normalize-jar-timestamps.py` canonicalizes ZIP timestamps
+# AFTER `jar` finishes.  Without the post-process, OpenJDK 8's jar
+# stamps wallclock-derived DOS time into the central directory
+# regardless of file mtime — verified empirically that two clean
+# back-to-back builds differed in exactly 4 bytes (the 2-second-
+# granular DOS time fields).
+jar-normalize := $(shell pwd)/tools/normalize-jar-timestamps.py
+
 $(build)/rt.jar: $(classpath-dep) $(classpath-jar-dep)
-	@echo "creating $(@)"
+	@echo "creating $(@) (deterministic)"
 	(wd=$$(pwd) && \
 	 cd $(classpath-build) && \
-	 $(jar) c0f "$$($(native-path) "$${wd}/$(@)")" .)
+	 find . -exec touch -t 198001010000.00 {} + && \
+	 files=$$(find . -type f -print | sed 's#^\./##' | LC_ALL=C sort) && \
+	 $(jar) c0f "$$($(native-path) "$${wd}/$(@)")" $$files)
+	python3 $(jar-normalize) $(@)
 
 $(build)/api.jar: $(classpath-dep) $(classpath-jar-dep)
-	@echo "creating $(@)"
+	@echo "creating $(@) (deterministic)"
 	(wd=$$(pwd) && \
 	 cd $(classpath-build) && \
-	 files=$$(find . -type f ! -path './java/internal/*' -print | sed 's#^\./##') && \
+	 find . -exec touch -t 198001010000.00 {} + && \
+	 files=$$(find . -type f ! -path './java/internal/*' -print | sed 's#^\./##' | LC_ALL=C sort) && \
 	 $(jar) c0f "$$($(native-path) "$${wd}/$(@)")" $$files)
+	python3 $(jar-normalize) $(@)
+
+# `make check-rt-jar-determinism` — builds rt.jar twice from a clean
+# state and verifies the two outputs are byte-identical.  Catches
+# any non-determinism in the jar pipeline (filesystem ordering,
+# mtime leakage, etc.) at CI time rather than on launch day.
+# Cross-machine + cross-JDK reproducibility is a stronger property
+# (see doc/jvm-rt-reproducibility.md); this target only catches
+# same-machine + same-toolchain regressions.
+.PHONY: check-rt-jar-determinism
+check-rt-jar-determinism: $(build)/rt.jar
+	@echo "verifying $(build)/rt.jar reproducibility"
+	@first_hash=$$(sha256sum < $(build)/rt.jar | awk '{print $$1}') && \
+	 rm -f $(build)/rt.jar $(build)/rt.dep && \
+	 $(MAKE) java-version=$(java-version) $(build)/rt.jar > /dev/null && \
+	 second_hash=$$(sha256sum < $(build)/rt.jar | awk '{print $$1}') && \
+	 if [ "$$first_hash" != "$$second_hash" ]; then \
+	   echo "ERROR: rt.jar is non-deterministic"; \
+	   echo "  first:  $$first_hash"; \
+	   echo "  second: $$second_hash"; \
+	   exit 1; \
+	 fi && \
+	 echo "  OK: rt.jar sha256 stable across two clean builds = $$first_hash"
+
+# `make print-rt-jar-stdlib-hash` — print the sha256 of the current
+# rt.jar, the value that must be committed into ConfigParam 85 via
+# `jvm-config-param-cell-with-stdlib`.  Building rt.jar first is a
+# prerequisite (so the value is fresh).
+.PHONY: print-rt-jar-stdlib-hash
+print-rt-jar-stdlib-hash: $(build)/rt.jar
+	@sha256sum < $(build)/rt.jar | awk '{print $$1}'
 
 $(classpath-object): $(build)/rt.jar $(converter)
 	@echo "creating $(@)"
