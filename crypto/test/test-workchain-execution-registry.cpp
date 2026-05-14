@@ -6689,6 +6689,150 @@ TEST(JvmWorkchainCore, MultiContractIsolatedStorageWithSharedClass) {
 // Determinism: replay invariance under the engine + mock runtime
 // ---------------------------------------------------------------------------
 
+TEST(WorkchainExecutionRegistry, JvmMultiValidatorReplicaConvergence) {
+  // Phase R: cross-validator convergence test for wc=3.
+  //
+  // The consensus invariant for any multi-validator chain is: given
+  // the same pre-state and the same transaction, every honest
+  // validator must arrive at the same post-state.  For wc=3 this
+  // means every link in the per-tx pipeline must be a pure function
+  // of (state, input) — the dispatch engine, the JvmComputeRuntime
+  // adapter, the action_list encoder, the message host.
+  //
+  // `JvmDeterminismReplay` already covers one dimension: replaying
+  // the SAME execution instance against the same inputs yields
+  // byte-identical outputs.  That's necessary but not sufficient —
+  // a memoizing implementation could pass it and still drift across
+  // independent replicas.
+  //
+  // This test covers the orthogonal dimension: TWO INDEPENDENT
+  // {WorkchainExecutionRegistry, JvmComputeRuntime, ResolvedExecution}
+  // instances (modeling two separate validator processes) processing
+  // the SAME wc=3 inputs must produce byte-identical:
+  //   * `new_data` cells (post-state)
+  //   * `action_list` cells (outbound actions consensus's action
+  //     phase will process — this is what determines the new account
+  //     a deploy creates and the messages a Wallet send dispatches)
+  //   * `gas_used` (consensus-stable resource accounting)
+  //
+  // If any of those diverge across replicas, validators will fork
+  // on a wc=3 tx even though they ran the same code on the same
+  // input — a fatal consensus bug.  Locking these properties here
+  // means future refactors that accidentally introduce non-determinism
+  // (e.g. hashmap iteration order, address-of pointers in logs)
+  // break this test in lockstep with the actual consensus failure
+  // mode.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+  auto config_a = make_config_with_jvm_param(cfg);
+  auto config_b = make_config_with_jvm_param(cfg);
+  auto descriptor_a = make_basic_descriptor(3, kJvmVmVersion, 0);
+  auto descriptor_b = make_basic_descriptor(3, kJvmVmVersion, 0);
+
+  // Two independent runtimes — each modeling a separate validator's
+  // Avata instance.  They share nothing but the consensus inputs.
+  auto runtime_a = std::make_shared<MockJvmRuntime>();
+  auto runtime_b = std::make_shared<MockJvmRuntime>();
+
+  block::WorkchainExecutionRegistry registry_a;
+  block::WorkchainExecutionRegistry registry_b;
+  register_jvm_workchain_engine(registry_a, runtime_a);
+  register_jvm_workchain_engine(registry_b, runtime_b);
+
+  auto execution_a = registry_a.resolve(descriptor_a, *config_a).move_as_ok();
+  auto execution_b = registry_b.resolve(descriptor_b, *config_b).move_as_ok();
+
+  // Build a JVAC matching the address-binding gate.  Same as
+  // JvmDeterminismReplay so the engine path under test is exactly
+  // the one consensus runs.
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x99, 0x88};
+  auto class_bytes_cell = encode_jvm_storage_value(class_bytes);
+  JvmMethodManifestEntry entry;
+  entry.method_id = 0xdeadbeef;
+  entry.class_name = "ContractEntryPoint";
+  entry.method_name = "exec";
+  entry.method_spec = "()V";
+  auto manifest_root = encode_jvm_method_manifest({entry});
+
+  JvmContractAccountState state0;
+  state0.stdlib_hash = cfg.stdlib_hash;
+  state0.class_hash = compute_jvm_class_hash(class_bytes);
+  for (std::size_t i = 0; i < state0.address_commit.size(); ++i) {
+    state0.address_commit[i] = static_cast<std::uint8_t>(0x42 + i);
+  }
+  for (std::size_t i = 0; i < state0.deployer.size(); ++i) {
+    state0.deployer[i] = static_cast<std::uint8_t>(0x60 + i);
+  }
+  state0.class_bytes = class_bytes_cell;
+  state0.storage_root = JvmStorageCellHost{}.root_cell();
+  state0.manifest_root = manifest_root;
+  auto state0_cell = encode_jvm_contract_account_state(state0);
+  CHECK(state0_cell.not_null());
+
+  auto bound_addr = derive_jvm_contract_address_from_state(
+      state0.deployer, state0.address_commit, state0.class_hash,
+      compute_jvm_manifest_root_hash(state0.manifest_root));
+
+  // Helper: run one call against a given execution instance.
+  auto run_on = [&](const block::ResolvedWorkchainExecution& execution,
+                    const block::WorkchainExecutionDescriptor& desc,
+                    td::Ref<vm::Cell> in_state) {
+    block::WorkchainComputeContext context;
+    context.workchain_id = 3;
+    context.descriptor = desc;
+    context.engine_config = execution.engine_config;
+    block::WorkchainComputeInput input;
+    std::memcpy(input.account_addr.data(), bound_addr.data(), 32);
+    input.current_data = in_state;
+    input.inbound_body = make_jvm_call_body(entry.method_id);
+    input.gas_limit = 2000;
+    return execution.executor->run_compute(input, context).move_as_ok();
+  };
+
+  // ─── Step 1: same input, two independent replicas ────────────────
+  auto out_a_1 = run_on(execution_a, descriptor_a, state0_cell);
+  auto out_b_1 = run_on(execution_b, descriptor_b, state0_cell);
+
+  // Both must commit; replicas must agree on every consensus-visible
+  // output.
+  CHECK(out_a_1.committed);
+  CHECK(out_b_1.committed);
+  CHECK(out_a_1.new_data.not_null());
+  CHECK(out_b_1.new_data.not_null());
+  CHECK(out_a_1.new_data->get_hash() == out_b_1.new_data->get_hash());
+  CHECK(out_a_1.action_list.not_null());
+  CHECK(out_b_1.action_list.not_null());
+  CHECK(out_a_1.action_list->get_hash() == out_b_1.action_list->get_hash());
+  CHECK(out_a_1.gas_used == out_b_1.gas_used);
+  CHECK(out_a_1.engine_success == out_b_1.engine_success);
+  CHECK(out_a_1.exit_code == out_b_1.exit_code);
+
+  // ─── Step 2: feed each replica its own step-1 output, run again ──
+  // This catches a subtle class of bugs: if either replica's
+  // state-transition function silently depends on something other
+  // than (state, input) — e.g. on the runtime instance's internal
+  // counter — the second-step outputs would diverge even though the
+  // first step matched.
+  auto out_a_2 = run_on(execution_a, descriptor_a, out_a_1.new_data);
+  auto out_b_2 = run_on(execution_b, descriptor_b, out_b_1.new_data);
+  CHECK(out_a_2.committed);
+  CHECK(out_b_2.committed);
+  CHECK(out_a_2.new_data->get_hash() == out_b_2.new_data->get_hash());
+  CHECK(out_a_2.action_list->get_hash() == out_b_2.action_list->get_hash());
+  CHECK(out_a_2.gas_used == out_b_2.gas_used);
+
+  // ─── Step 3: cross-feed — replica A processes replica B's step-1
+  // output, and vice versa.  Since `new_data` is content-addressable
+  // (a cell hash), two replicas agreeing on it means they would also
+  // agree on every future step regardless of which replica's cell
+  // ref is fed in.  Tests this property explicitly.
+  auto out_a_3 = run_on(execution_a, descriptor_a, out_b_1.new_data);
+  auto out_b_3 = run_on(execution_b, descriptor_b, out_a_1.new_data);
+  CHECK(out_a_3.new_data->get_hash() == out_a_2.new_data->get_hash());
+  CHECK(out_b_3.new_data->get_hash() == out_b_2.new_data->get_hash());
+}
+
 TEST(WorkchainExecutionRegistry, JvmDeterminismReplay) {
   // The engine is a pure function of (state, input).  Driving the same
   // input cell twice against the same starting state must yield byte-
