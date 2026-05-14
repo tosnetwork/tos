@@ -33,7 +33,20 @@ concurrency:
 
 jobs:
   check-rt-jar-determinism:
-    runs-on: ubuntu-22.04
+    # Phase AA: matrix across architectures.  Each architecture
+    # verifies PER-ARCH determinism (two clean builds on the same
+    # arch must produce the same sha256).  Cross-arch hash equality
+    # is a stronger property: javac's bytecode output should be
+    # platform-independent for a given JDK build, but the canonical
+    # toolchain itself differs (openjdk-8-jdk-headless for
+    # x86_64 vs arm64 are different .deb packages).  The
+    # "Print canonical stdlib_hash" step at the end of each job
+    # surfaces the per-arch hash so reviewers can diff manually.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
@@ -47,7 +60,8 @@ jobs:
       # version at 8).  Using a fixed JDK from the distro pin
       # (ubuntu-22.04 → openjdk-8u-jdk-headless) is the same
       # toolchain choice doc/jvm-rt-reproducibility.md §5 recommends
-      # operators standardize on.
+      # operators standardize on.  The arm64 runner ships the same
+      # OpenJDK 8 build for the aarch64 architecture.
       - name: Install OpenJDK 8
         run: |
           sudo apt-get update
@@ -61,40 +75,52 @@ jobs:
       - name: Print toolchain versions (for diff diagnostics)
         run: |
           set -x
-          /usr/lib/jvm/java-8-openjdk-amd64/bin/javac -version
-          /usr/lib/jvm/java-8-openjdk-amd64/bin/jar --help 2>&1 | head -3 || true
+          # JAVA_HOME is arch-dependent (amd64 vs arm64 dirs).
+          # Derive it from the actual javac binary location.
+          JAVAC=$(which javac)
+          export JAVA_HOME=$(dirname $(dirname $(readlink -f ${JAVAC})))
+          ${JAVA_HOME}/bin/javac -version
+          ${JAVA_HOME}/bin/jar --help 2>&1 | head -3 || true
           python3 --version
           make --version | head -1
           uname -srm
+          echo "JAVA_HOME=${JAVA_HOME}"
 
       # The actual determinism gate.  Builds rt.jar twice from a
       # clean state and fails the workflow if the two sha256s diverge.
       - name: Verify rt.jar determinism
         run: |
-          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which javac))))
           cd jvm/avata
           make java-version=8 check-rt-jar-determinism
 
       # Surface the canonical hash so reviewers + downstream
       # automation can grep it from the workflow log without
-      # re-running the build locally.
+      # re-running the build locally.  Tagged with the matrix arch
+      # for cross-arch hash comparison in the workflow log.
       - name: Print canonical stdlib_hash
         run: |
-          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which javac))))
           cd jvm/avata
-          echo "canonical stdlib_hash = $(make -s java-version=8 print-rt-jar-stdlib-hash)"
+          ARCH=$(uname -m)
+          echo "canonical stdlib_hash (${ARCH}) = $(make -s java-version=8 print-rt-jar-stdlib-hash)"
 
       # The api.jar is built alongside rt.jar and must also be
       # reproducible (it's consumed by `tools/javac -bootclasspath`
       # during contract compilation, so any drift would silently
       # change developer-side .class outputs).  We don't have a
       # dedicated `check-api-jar-determinism` target yet; do an
-      # inline two-pass check here.
+      # inline two-pass check here.  The build directory name is
+      # arch-dependent — the makefile rewrites `uname -m` via sed
+      # (amd64→x86_64, aarch64→arm64), so we mirror that here.
       - name: Verify api.jar determinism
         run: |
-          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which javac))))
           cd jvm/avata
-          BUILD_DIR=build/linux-x86_64
+          # Mirror the makefile's build-arch sed (lines 22-27):
+          # x86_64 stays x86_64; aarch64 → arm64.
+          ARCH=$(uname -m | sed -e 's/amd64/x86_64/' -e 's/^aarch64$/arm64/')
+          BUILD_DIR=build/linux-${ARCH}
           # First build
           make java-version=8 ${BUILD_DIR}/api.jar > /dev/null
           first=$(sha256sum < ${BUILD_DIR}/api.jar | awk '{print $1}')
@@ -103,9 +129,9 @@ jobs:
           make java-version=8 ${BUILD_DIR}/api.jar > /dev/null
           second=$(sha256sum < ${BUILD_DIR}/api.jar | awk '{print $1}')
           if [ "$first" != "$second" ]; then
-            echo "ERROR: api.jar is non-deterministic"
+            echo "ERROR: api.jar is non-deterministic on ${ARCH}"
             echo "  first:  $first"
             echo "  second: $second"
             exit 1
           fi
-          echo "OK: api.jar sha256 stable = $first"
+          echo "OK: api.jar sha256 stable on ${ARCH} = $first"
