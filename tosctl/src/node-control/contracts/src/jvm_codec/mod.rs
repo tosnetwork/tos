@@ -36,6 +36,7 @@ pub mod address;
 pub mod call_descriptor;
 pub mod cli_parse;
 pub mod contract_account_state;
+pub mod event_registry;
 pub mod deploy_descriptor;
 pub mod manifest;
 pub mod state_init;
@@ -50,6 +51,11 @@ pub use address::{
     JvmAddressCommit, JvmClassHash, JvmContractId, JvmManifestRootHash,
 };
 pub use args::{encode_jvm_args, JvmArgType, JvmArgs, JvmTypedArg};
+pub use event_registry::{
+    lookup_admitted_event, JvmEventSignature, ADMITTED_EVENT_SIGNATURES,
+    DEPLOYER_EVT_DEPLOYED, DEPLOYER_EVT_INITIALIZED, DEPLOYER_EVT_NONCE,
+    WALLET_EVT_EXECUTED, WALLET_EVT_INITIALIZED, WALLET_EVT_NONCE,
+};
 pub use cli_parse::{
     parse_manifest_cell, parse_manifest_json, parse_typed_arg,
     parse_typed_args, parse_workchain_address, ManifestEntrySpec,
