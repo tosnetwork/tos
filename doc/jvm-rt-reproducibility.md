@@ -149,8 +149,19 @@ runs the same container, the .class outputs are necessarily
 identical, and the only remaining variable is the rt.jar
 post-processing — which this commit fully canonicalizes.
 
-> **TODO** — Dockerfile + CI verification recipe pending; tracked
-> in a follow-up to Phase V.
+The canonical build host pattern is already exercised in CI:
+`.github/workflows/check-jvm-rt-determinism.yml` runs on every PR
+touching `jvm/avata/**` and verifies both rt.jar AND api.jar
+produce byte-identical sha256 across two clean back-to-back
+builds under `ubuntu-22.04` + `openjdk-8-jdk-headless`.  This is
+the same toolchain pair the runbook recommends operators
+standardize on, so the CI-printed hash is the canonical hash for
+that toolchain combination.
+
+A standalone Dockerfile derived from the same base would let
+operators reproduce the canonical hash without going through
+GitHub Actions; that's a follow-up worth doing once the canonical
+hash is published in a release note.
 
 ## 6. Troubleshooting
 

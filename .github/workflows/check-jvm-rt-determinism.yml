@@ -1,0 +1,111 @@
+name: Check JVM rt.jar determinism
+
+# Phase W: CI gate on rt.jar reproducibility.  Every wc=3 contract's
+# JVAC embeds `stdlib_hash = sha256(rt.jar)`, and ConfigParam 85
+# pins the same hash on-chain — so the entire wc=3 contract surface
+# is gated on every validator agreeing on the canonical rt.jar
+# bytes.  A regression that re-introduced non-determinism (filesystem
+# ordering leakage, an unstripped timestamp, etc.) would silently
+# break this property; this workflow catches it pre-merge.
+#
+# See doc/jvm-rt-reproducibility.md for the build-flow background
+# and the canonical hash check is the `make check-rt-jar-determinism`
+# target landed in Phase V.
+
+on:
+  pull_request:
+    branches: [master, testnet, main]
+    paths:
+      - 'jvm/avata/**'
+      - '.github/workflows/check-jvm-rt-determinism.yml'
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [master, testnet, main]
+    paths:
+      - 'jvm/avata/**'
+      - '.github/workflows/check-jvm-rt-determinism.yml'
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-rt-jar-determinism:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # JDK 8 is the canonical build target for Avata's rt.jar (the
+      # makefile pins -source 1.8 -target 1.8 and caps host-java-
+      # version at 8).  Using a fixed JDK from the distro pin
+      # (ubuntu-22.04 → openjdk-8u-jdk-headless) is the same
+      # toolchain choice doc/jvm-rt-reproducibility.md §5 recommends
+      # operators standardize on.
+      - name: Install OpenJDK 8
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            openjdk-8-jdk-headless make python3
+
+      # Python is needed by tools/normalize-jar-timestamps.py.
+      # Ubuntu 22.04 ships python3 by default; the explicit install
+      # above also pulls it in if a base image strips it.
+
+      - name: Print toolchain versions (for diff diagnostics)
+        run: |
+          set -x
+          /usr/lib/jvm/java-8-openjdk-amd64/bin/javac -version
+          /usr/lib/jvm/java-8-openjdk-amd64/bin/jar --help 2>&1 | head -3 || true
+          python3 --version
+          make --version | head -1
+          uname -srm
+
+      # The actual determinism gate.  Builds rt.jar twice from a
+      # clean state and fails the workflow if the two sha256s diverge.
+      - name: Verify rt.jar determinism
+        run: |
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          cd jvm/avata
+          make java-version=8 check-rt-jar-determinism
+
+      # Surface the canonical hash so reviewers + downstream
+      # automation can grep it from the workflow log without
+      # re-running the build locally.
+      - name: Print canonical stdlib_hash
+        run: |
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          cd jvm/avata
+          echo "canonical stdlib_hash = $(make -s java-version=8 print-rt-jar-stdlib-hash)"
+
+      # The api.jar is built alongside rt.jar and must also be
+      # reproducible (it's consumed by `tools/javac -bootclasspath`
+      # during contract compilation, so any drift would silently
+      # change developer-side .class outputs).  We don't have a
+      # dedicated `check-api-jar-determinism` target yet; do an
+      # inline two-pass check here.
+      - name: Verify api.jar determinism
+        run: |
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          cd jvm/avata
+          BUILD_DIR=build/linux-x86_64
+          # First build
+          make java-version=8 ${BUILD_DIR}/api.jar > /dev/null
+          first=$(sha256sum < ${BUILD_DIR}/api.jar | awk '{print $1}')
+          # Force a clean re-build
+          rm -f ${BUILD_DIR}/api.jar ${BUILD_DIR}/rt.dep
+          make java-version=8 ${BUILD_DIR}/api.jar > /dev/null
+          second=$(sha256sum < ${BUILD_DIR}/api.jar | awk '{print $1}')
+          if [ "$first" != "$second" ]; then
+            echo "ERROR: api.jar is non-deterministic"
+            echo "  first:  $first"
+            echo "  second: $second"
+            exit 1
+          fi
+          echo "OK: api.jar sha256 stable = $first"
