@@ -1,0 +1,63 @@
+# Canonical build environment for reproducing the wc=3 rt.jar
+# `stdlib_hash` outside of GitHub Actions.
+#
+# Phase Z — closes the convenience gap from
+# doc/jvm-rt-reproducibility.md §5: the CI workflow
+# (.github/workflows/check-jvm-rt-determinism.yml) pins the
+# canonical toolchain (ubuntu-22.04 + openjdk-8-jdk-headless), but
+# operators without GitHub Actions had to install the same combo
+# manually.  This Dockerfile bakes it as one command:
+#
+#   $ docker build -t tos-jvm-canonical -f jvm/avata/Dockerfile.canonical-build .
+#   $ docker run --rm -v $(pwd):/tos tos-jvm-canonical
+#
+# The default CMD runs `make check-rt-jar-determinism`, which
+# builds rt.jar twice from a clean state and fails if the two
+# sha256s diverge.  Override CMD to run other rehearsal flows:
+#
+#   # Print just the stdlib_hash
+#   $ docker run --rm -v $(pwd):/tos tos-jvm-canonical \
+#       make -C jvm/avata java-version=8 print-rt-jar-stdlib-hash
+#
+#   # Run the full genesis ceremony rehearsal
+#   $ docker run --rm -v $(pwd):/tos tos-jvm-canonical \
+#       scripts/jvm-testnet-genesis-rehearsal.sh
+#
+# Base image pinned by digest for full reproducibility: every
+# operator runs the EXACT same image.  Bump the digest only when
+# the canonical toolchain advances (which is itself a hard-fork-
+# class decision — see jvm-rt-reproducibility.md §2.1).
+
+# ubuntu:22.04 — same OS pinned in
+# .github/workflows/check-jvm-rt-determinism.yml.
+FROM ubuntu:22.04
+
+# `openjdk-8-jdk-headless` provides javac + jar; `make` drives the
+# build pipeline; `python3` is required by
+# tools/normalize-jar-timestamps.py (the post-process that
+# canonicalizes ZIP central-directory timestamps — without it the
+# build is non-deterministic on OpenJDK 8, see Phase V commit).
+# `unzip` is used by scripts/jvm-testnet-genesis-rehearsal.sh to
+# extract Wallet.class + Deployer.class from rt.jar.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        openjdk-8-jdk-headless \
+        make \
+        python3 \
+        unzip \
+        git \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Workdir is the repo root when the user bind-mounts the checkout
+# at `/tos`.  This matches the path the workflow uses inside its
+# checkout step.
+WORKDIR /tos
+
+# Default action: verify rt.jar reproducibility.  Picks up the
+# entire build pipeline from a clean state, so a passing run
+# means the toolchain inside the container produces the canonical
+# hash.
+CMD ["make", "-C", "jvm/avata", "java-version=8", "check-rt-jar-determinism"]
