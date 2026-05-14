@@ -118,6 +118,11 @@ pub enum JvmWalletAction {
     /// supplied method signature + typed args, wraps it as the body of
     /// a Wallet single-transfer payload, signs, and submits.
     Call(JvmCallCmd),
+    /// Fetch + pretty-print event receipts (JVME outbound messages)
+    /// for a wc=3 contract over a block range.  Calls `jvm_getReceipts`
+    /// on the configured validator and decodes each event into
+    /// blockSeqno / tx-hash / log-index / topics / data.
+    Receipts(JvmReceiptsCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -320,6 +325,33 @@ pub struct JvmDeployContractCmd {
 }
 
 #[derive(clap::Args, Clone)]
+#[command(
+    about = "Fetch + pretty-print event receipts for a wc=3 contract"
+)]
+pub struct JvmReceiptsCmd {
+    /// Target contract address in `wc:hex32` form (e.g. `3:0xabcd..`),
+    /// or just a 32-byte hex string (workchain defaults to 3).
+    #[arg(long = "contract", help = "Contract address (wc:hex32 or hex32)")]
+    contract: String,
+    /// Start block (inclusive).  Defaults to 0.
+    #[arg(long = "from-block", default_value = "0")]
+    from_block: u64,
+    /// End block (inclusive).  Defaults to the validator's view of
+    /// the chain head.
+    #[arg(
+        long = "to-block",
+        default_value_t = u64::MAX,
+        help = "End block (inclusive; defaults to chain head)"
+    )]
+    to_block: u64,
+    /// Print at most this many receipts after fetching.  Use this to
+    /// trim a noisy contract's output without losing the validator-
+    /// side `truncated` advisory.
+    #[arg(long = "limit", default_value = "100")]
+    limit: usize,
+}
+
+#[derive(clap::Args, Clone)]
 #[command(about = "Invoke a method on a wc=3 contract via a registered wallet")]
 pub struct JvmCallCmd {
     /// Registered wallet name to sign + send the call from.  The
@@ -374,6 +406,7 @@ impl JvmWalletCmd {
                 cmd.run(&self.config).await
             }
             JvmWalletAction::Call(cmd) => cmd.run(&self.config).await,
+            JvmWalletAction::Receipts(cmd) => cmd.run(&self.config).await,
         }
     }
 }
@@ -1344,6 +1377,120 @@ impl JvmDeployContractCmd {
             hex::encode(target_addr)
         );
         Ok(())
+    }
+}
+
+/// Parse `--contract` for the receipts command: accepts either
+/// `wc:hex32` (any workchain, e.g. `3:0xabcd..`) or a bare 32-byte
+/// hex string (workchain defaults to 3 — the only one where JVM
+/// contracts live).
+fn parse_contract_address_flexible(spec: &str) -> Result<String> {
+    let hex_part = match spec.split_once(':') {
+        Some((_wc, rest)) => rest,
+        None => spec,
+    };
+    let stripped = hex_part.strip_prefix("0x").unwrap_or(hex_part);
+    let bytes = hex::decode(stripped).with_context(|| {
+        format!("contract address `{}` is not valid hex", spec)
+    })?;
+    if bytes.len() != 32 {
+        anyhow::bail!(
+            "contract address `{}` decoded to {} bytes, expected 32",
+            spec,
+            bytes.len()
+        );
+    }
+    Ok(hex::encode(bytes))
+}
+
+impl JvmReceiptsCmd {
+    pub async fn run(&self, config_path: &str) -> Result<()> {
+        let path = Path::new(config_path);
+        let (_config, _vault, rpc_client) =
+            load_config_vault_rpc_client(path).await?;
+
+        let contract_hex = parse_contract_address_flexible(&self.contract)
+            .context("Parse --contract")?;
+
+        let response = rpc_client
+            .jvm_get_receipts(contract_hex.clone(), self.from_block, self.to_block)
+            .await
+            .context("jvm_getReceipts")?;
+
+        let total = response.receipts.len();
+        let to_print = total.min(self.limit);
+
+        println!(
+            "\n{} receipts for 3:{}",
+            "OK".green().bold(),
+            contract_hex
+        );
+        println!(
+            "  block range:        [{}..{}]",
+            self.from_block,
+            if self.to_block == u64::MAX {
+                "HEAD".to_string()
+            } else {
+                self.to_block.to_string()
+            }
+        );
+        println!("  receipts fetched:   {}", total);
+        if response.scanned_transactions > 0 {
+            println!(
+                "  txs scanned:        {}",
+                response.scanned_transactions
+            );
+        }
+        if response.truncated {
+            println!(
+                "  {} validator hit its per-call cap; rerun \
+                 with a narrower `--from-block`/`--to-block` to \
+                 fetch the remainder",
+                "TRUNCATED".yellow().bold()
+            );
+        }
+        if total > to_print {
+            println!(
+                "  showing first {}/{} (use --limit to widen)",
+                to_print, total
+            );
+        }
+        println!();
+
+        if total == 0 {
+            println!("  (no events in this block range)");
+            return Ok(());
+        }
+
+        for (i, ev) in response.receipts.iter().take(to_print).enumerate() {
+            println!(
+                "  [{:3}]  block #{:<8}  tx {}  log #{}",
+                i, ev.block_seqno,
+                short_hex(&ev.transaction_hash),
+                ev.log_index
+            );
+            println!(
+                "          createdLt={}  createdAt={}",
+                ev.created_lt, ev.created_at
+            );
+            for (j, topic) in ev.topics.iter().enumerate() {
+                println!("          topic[{}]: {}", j, topic);
+            }
+            if !ev.data.is_empty() && ev.data != "0x" {
+                println!("          data:     {}", ev.data);
+            }
+            println!();
+        }
+        Ok(())
+    }
+}
+
+/// Truncate a long hex string for display (`0xabcdef...123456`).
+fn short_hex(s: &str) -> String {
+    if s.len() <= 18 {
+        s.to_string()
+    } else {
+        format!("{}…{}", &s[..10], &s[s.len() - 6..])
     }
 }
 

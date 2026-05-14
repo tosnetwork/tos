@@ -89,10 +89,44 @@ pub struct JvmStorageSlotView {
     pub value: String,
 }
 
+/// One JVME event emitted from a wc=3 transaction's outbound message.
+/// Matches the JSON shape `jvm_receipt_event_json` produces on the
+/// validator side (`validator-engine/json-rpc-server-jvm.cpp:214`).
+///
+/// Topics are 32-byte hex strings; topic[0] follows Solidity
+/// convention as `keccak256(event_signature)` so off-chain tooling
+/// can grep for known events (e.g. `WalletExecuted(uint256,bytes32)`).
+/// `data` is the ABI-encoded payload of the non-indexed args.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JvmReceiptEvent {
+    pub block_seqno: u64,
+    pub block_hash: String,
+    pub transaction_lt: String,
+    pub transaction_hash: String,
+    pub log_index: u32,
+    pub created_lt: String,
+    pub created_at: u64,
+    #[serde(default)]
+    pub topics: Vec<String>,
+    pub data: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JvmReceiptsResponse {
     pub contract_address: String,
     #[serde(default)]
-    pub receipts: Vec<serde_json::Value>,
+    pub receipts: Vec<JvmReceiptEvent>,
+    /// True when the validator hit a per-call cap (kJvmReceiptMaxResults,
+    /// kJvmReceiptMaxScannedTransactions, or the byte-budget) before
+    /// finishing the requested block range.  Re-issue with a smaller
+    /// range to fetch the remainder.
+    #[serde(default)]
+    pub truncated: bool,
+    /// Number of transactions actually scanned (advisory).  Mainly for
+    /// CLI debug output so operators can confirm the validator
+    /// reached their requested range.
+    #[serde(default)]
+    pub scanned_transactions: u64,
 }

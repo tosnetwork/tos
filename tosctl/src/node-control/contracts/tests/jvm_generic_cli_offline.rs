@@ -168,3 +168,69 @@ fn parse_manifest_cell_rejects_invalid_json() {
     assert!(parse_manifest_cell("{ malformed").is_err());
     assert!(parse_manifest_cell("[]").is_err()); // empty manifest
 }
+
+#[test]
+fn jvm_receipt_event_deserializes_from_server_shape() {
+    // Mirror the exact JSON shape `jvm_receipt_event_json` produces
+    // server-side (`validator-engine/json-rpc-server-jvm.cpp:214`).
+    // Any drift on the camelCase rename, the topics-array shape, or
+    // the createdLt/transactionLt string typing would break this
+    // test in lockstep with the CLI being unable to render receipts.
+    use chain_rpc_client::v2::jvm::{JvmReceiptEvent, JvmReceiptsResponse};
+
+    let payload = serde_json::json!({
+        "contractAddress": "0xabcdef",
+        "receipts": [
+            {
+                "blockSeqno": 12345,
+                "blockHash": "0x1234567890abcdef",
+                "transactionLt": "98765",
+                "transactionHash": "0xdeadbeef",
+                "logIndex": 0,
+                "createdLt": "98766",
+                "createdAt": 1700000000,
+                "topics": [
+                    "0x1111111111111111111111111111111111111111111111111111111111111111",
+                    "0x2222222222222222222222222222222222222222222222222222222222222222"
+                ],
+                "data": "0xabcd"
+            }
+        ],
+        "scannedTransactions": 42,
+        "truncated": false
+    });
+
+    let parsed: JvmReceiptsResponse =
+        serde_json::from_value(payload).expect("deserialize response");
+    assert_eq!(parsed.contract_address, "0xabcdef");
+    assert!(!parsed.truncated);
+    assert_eq!(parsed.scanned_transactions, 42);
+    assert_eq!(parsed.receipts.len(), 1);
+
+    let ev: &JvmReceiptEvent = &parsed.receipts[0];
+    assert_eq!(ev.block_seqno, 12345);
+    assert_eq!(ev.transaction_lt, "98765");
+    assert_eq!(ev.created_at, 1700000000);
+    assert_eq!(ev.topics.len(), 2);
+    assert_eq!(ev.data, "0xabcd");
+}
+
+#[test]
+fn jvm_receipts_response_defaults_handle_missing_fields() {
+    // The validator's core-RPC fallback (`jvm/core/rpc.cpp`) returns
+    // `{contractAddress, receipts:[]}` with no `truncated` or
+    // `scannedTransactions` — the Rust struct must treat those as
+    // optional so tosctl works against any compliant node.
+    use chain_rpc_client::v2::jvm::JvmReceiptsResponse;
+
+    let minimal = serde_json::json!({
+        "contractAddress": "0xff",
+        "receipts": []
+    });
+    let parsed: JvmReceiptsResponse =
+        serde_json::from_value(minimal).expect("deserialize minimal");
+    assert_eq!(parsed.contract_address, "0xff");
+    assert!(parsed.receipts.is_empty());
+    assert!(!parsed.truncated);
+    assert_eq!(parsed.scanned_transactions, 0);
+}
