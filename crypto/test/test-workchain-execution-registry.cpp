@@ -4413,6 +4413,253 @@ TEST(JvmWorkchainCore, GenesisDeployerEmptyClassBytesRejected) {
   CHECK(res.is_error());
 }
 
+TEST(JvmWorkchainCore, WalletDeploymentLifecycleEndToEnd) {
+  // Phase Q: stitches the wc=3 deploy lifecycle end-to-end without a
+  // full Transaction harness or live Avata JVM.  Every step from
+  // "Deployer.deploy() runs in the JVM and emits an action_create_
+  // account via System.createAccount" through "the new account
+  // receives its first inbound call and the dispatch engine accepts"
+  // touches a different layer of code; collectively they must
+  // round-trip the wc=3 address that the off-chain CLI computes
+  // (`tosctl jw deploy-contract`) and the on-chain consensus path
+  // both rely on.  Until this test landed, no single test exercised
+  // that full chain — drift in any one link could have shipped to
+  // testnet undetected.
+  //
+  // The path under test:
+  //
+  //   1. Off-chain operator computes (target_addr, JVAC, StateInit)
+  //      from (deployer_addr, owner_pubkey, salt, class_bytes,
+  //      manifest).  This mirrors `JvmDeployContractCmd::run`.
+  //
+  //   2. Deployer.deploy() — represented here by direct calls to
+  //      JvmMessageHost::create_account — stages the action in the
+  //      action queue.
+  //
+  //   3. The action queue is packed into the combined OutList cell
+  //      consensus actually sees.
+  //
+  //   4. The host's per-action record is recovered + verified:
+  //         - dest_addr matches the off-chain-computed target_addr.
+  //         - state_init_boc decodes to a StateInit whose data ref
+  //           is a JVAC whose deployer / class_hash / address_commit
+  //           round-trip the operator's inputs.
+  //
+  //   5. The decoded JVAC's address is re-derived using exactly the
+  //      same `derive_jvm_contract_address_from_state` consensus
+  //      runs on every inbound call — and equals target_addr.  This
+  //      is the address-binding gate: if the JVAC the action
+  //      installs doesn't satisfy it, the dispatch engine rejects
+  //      every subsequent call with sk_bad_state and the deployed
+  //      contract is dead.
+  //
+  //   6. The decoded JVAC satisfies the first-activation invariant
+  //      (storage_root empty) so the engine's round-15 gate accepts
+  //      it as a freshly-deployed account.
+  using namespace jvm_workchain;
+
+  auto cfg = make_test_jvm_config();
+
+  // ─── 1. Inputs a real `Deployer.deploy(target_addr, …)` call sees ─
+  std::array<std::uint8_t, 32> deployer_addr{};
+  for (std::size_t i = 0; i < deployer_addr.size(); ++i) {
+    deployer_addr[i] =
+        static_cast<std::uint8_t>(static_cast<std::uint8_t>(i) * 17 + 3);
+  }
+  std::array<std::uint8_t, 32> owner_pubkey{};
+  for (std::size_t i = 0; i < owner_pubkey.size(); ++i) {
+    owner_pubkey[i] = static_cast<std::uint8_t>(i);
+  }
+  std::array<std::uint8_t, 32> salt{};
+  for (std::size_t i = 0; i < salt.size(); ++i) {
+    salt[i] = static_cast<std::uint8_t>(static_cast<std::uint8_t>(i) ^ 0xa5);
+  }
+
+  // Class bytes + manifest matching `java.lang.Wallet`.  Real deploys
+  // use the pinned rt.jar bytes; this test uses a deterministic stub
+  // — the address-binding gate doesn't care about the class semantics,
+  // only about the class_hash and manifest_root_hash consistency.
+  JvmStorageValue class_bytes{0xca, 0xfe, 0xba, 0xbe, 0x42, 0x42, 0x42};
+  auto class_hash = compute_jvm_class_hash(class_bytes);
+  auto manifest_root = build_wallet_manifest_cell();
+  CHECK(manifest_root.not_null());
+  auto manifest_hash = compute_jvm_manifest_root_hash(manifest_root);
+
+  // init args = JvmArgs(Bytes32 ownerPubkey) — exactly what
+  // `tosctl jw deploy-contract --init-arg bytes32:<owner>` builds.
+  JvmArgs init_args;
+  {
+    JvmTypedArg pubkey_arg;
+    pubkey_arg.type = JvmArgType::Bytes32;
+    pubkey_arg.bytes.assign(owner_pubkey.begin(), owner_pubkey.end());
+    init_args.values.push_back(std::move(pubkey_arg));
+  }
+  auto init_args_cell = encode_jvm_args(init_args);
+  CHECK(init_args_cell.not_null());
+
+  // ─── 2. Derive the target's wc=3 address off-chain ───────────────
+  auto address_commit =
+      compute_jvm_address_commit(deployer_addr, salt, init_args_cell);
+  auto target_addr = derive_jvm_contract_address_from_state(
+      deployer_addr, address_commit, class_hash, manifest_hash);
+
+  // ─── 3. Build the JVAC the action_create_account will install ────
+  JvmContractAccountState state;
+  state.schema_version = kJvmContractAccountStateSchemaVersion;
+  state.stdlib_hash = cfg.stdlib_hash;
+  state.class_hash = class_hash;
+  state.deployer = deployer_addr;
+  state.address_commit = address_commit;
+  state.class_bytes = encode_jvm_storage_value(class_bytes);
+  CHECK(state.class_bytes.not_null());
+  // First-activation invariant: storage_root MUST be empty (the
+  // dispatch engine's round-15 gate rejects non-empty storage on
+  // msg_state_used==true).  The activating init() call writes the
+  // initial slots inside the same transaction.
+  state.storage_root = td::Ref<vm::Cell>{};
+  state.manifest_root = manifest_root;
+
+  auto state_init_cell = encode_jvm_state_init_cell(state);
+  CHECK(state_init_cell.not_null());
+  CHECK(block::gen::t_StateInit.validate_ref(state_init_cell));
+
+  // Serialize StateInit to BOC the way an off-chain caller would
+  // before embedding in the `bytes stateInit` arg of Deployer.deploy(...).
+  auto state_init_boc =
+      vm::std_boc_serialize(state_init_cell, 0).move_as_ok();
+  std::vector<std::uint8_t> state_init_bytes(
+      state_init_boc.as_slice().ubegin(),
+      state_init_boc.as_slice().uend());
+
+  // ─── 4. Deployer.deploy() stages the action via JvmMessageHost ───
+  JvmMessageHost host;
+  CHECK(host.begin_transaction().is_ok());
+  std::array<std::uint8_t, 32> value_be{};
+  value_be[31] = 0x20;  // 32-nano initial balance for the new account
+  // body would carry the init() call descriptor; non-empty placeholder
+  // here suffices since we exercise the action wire shape, not the
+  // first-call dispatch (covered separately by JvmEndToEnd*Sequence).
+  std::vector<std::uint8_t> init_body{0xde, 0xad, 0xbe, 0xef};
+  CHECK(host.create_account(target_addr, state_init_bytes, value_be, init_body)
+            .is_ok());
+  CHECK(host.commit_transaction().is_ok());
+
+  // Verify the per-action record the host kept.
+  CHECK(host.actions().size() == 1);
+  const auto& action = host.actions()[0];
+  CHECK(action.kind == JvmOutboundActionKind::CreateAccount);
+  CHECK(action.dest_addr == target_addr);
+  CHECK(action.state_init_boc == state_init_bytes);
+  CHECK(action.value_be == value_be);
+  CHECK(action.body == init_body);
+
+  // ─── 5. Pack into the combined action_list cell ──────────────────
+  // This is the actual cell consensus's action phase reads.  Round-trip
+  // through `build_jvm_combined_action_list` exercises the same
+  // OutList wire shape `try_action_create_account` decodes from.
+  auto action_list = build_jvm_combined_action_list(
+      /*event_action_list=*/td::Ref<vm::Cell>{}, host.actions());
+  CHECK(action_list.not_null());
+
+  // Walk one node deep and confirm the tag is action_create_account.
+  // (Multi-action walking is exercised by
+  // `MessageHostStagesSendAndCreateAccountInEmissionOrder`; here we
+  // care about the single-action path actually-most-deploys take.)
+  {
+    auto cs = vm::load_cell_slice(action_list);
+    CHECK(cs.size_refs() >= 2);
+    auto prev = cs.fetch_ref();
+    // Tail of a single-action list is the empty cell.
+    CHECK(prev.not_null());
+    CHECK(vm::load_cell_slice(prev).size_refs() == 0);
+    std::uint32_t tag = 0;
+    {
+      unsigned long long tag_ull = 0;
+      CHECK(cs.fetch_ulong_bool(32, tag_ull));
+      tag = static_cast<std::uint32_t>(tag_ull);
+    }
+    CHECK(tag == 0x4a435241);  // 'JCRA' — action_create_account
+  }
+
+  // ─── 6. Deserialize the host's state_init_boc back to a cell ─────
+  // This is the inverse of what an off-chain caller did: take the
+  // bytes the action carries and recover the StateInit + JVAC inside.
+  auto state_init_roundtrip =
+      vm::std_boc_deserialize(td::Slice(action.state_init_boc.data(),
+                                          action.state_init_boc.size()))
+          .move_as_ok();
+  CHECK(state_init_roundtrip.not_null());
+  CHECK(state_init_roundtrip->get_hash() == state_init_cell->get_hash());
+
+  // Decode the JVAC from the StateInit's data ref.  StateInit wire:
+  //   _ fixed_prefix_length:(Maybe …) special:(Maybe …)
+  //     code:(Maybe ^Cell) data:(Maybe ^Cell) library:HashmapE
+  // Three Maybe-zero bits (we always emit fpl=Nothing + special=Nothing
+  // + library=hme_empty$0) so we read: 0 (fpl), 0 (special), 1 (code
+  // Just), ^code, 1 (data Just), ^data.
+  td::Ref<vm::Cell> recovered_jvac;
+  {
+    auto cs = vm::load_cell_slice(state_init_roundtrip);
+    unsigned bit = 0;
+    CHECK(cs.fetch_bool_to(bit));
+    CHECK(bit == 0);  // fixed_prefix_length: Nothing
+    CHECK(cs.fetch_bool_to(bit));
+    CHECK(bit == 0);  // special: Nothing
+    CHECK(cs.fetch_bool_to(bit));
+    CHECK(bit == 1);  // code: Just
+    auto code_ref = cs.fetch_ref();
+    CHECK(code_ref.not_null());
+    CHECK(cs.fetch_bool_to(bit));
+    CHECK(bit == 1);  // data: Just
+    recovered_jvac = cs.fetch_ref();
+    CHECK(recovered_jvac.not_null());
+  }
+
+  // ─── 7. Decode JVAC and verify it round-trips the operator inputs ─
+  JvmContractAccountState decoded;
+  CHECK(decode_jvm_contract_account_state(recovered_jvac, decoded));
+  CHECK(decoded.schema_version == kJvmContractAccountStateSchemaVersion);
+  CHECK(decoded.stdlib_hash == cfg.stdlib_hash);
+  CHECK(decoded.class_hash == class_hash);
+  CHECK(decoded.deployer == deployer_addr);
+  CHECK(decoded.address_commit == address_commit);
+  // First-activation invariant: storage_root must be empty/null.
+  CHECK(decoded.storage_root.is_null());
+  CHECK(decoded.manifest_root.not_null());
+  CHECK(decoded.manifest_root->get_hash() == manifest_root->get_hash());
+
+  // ─── 8. Re-derive the address from the decoded JVAC ──────────────
+  // This is the consensus address-binding gate (dispatch-engine.cpp).
+  // If the recomputed address doesn't match the action's dest_addr,
+  // every subsequent inbound call is rejected with sk_bad_state and
+  // the deployed contract is dead-on-arrival.  Verifying it here
+  // pins the wire-shape integrity of the entire deploy path.
+  auto rederived_addr = derive_jvm_contract_address_from_state(
+      decoded.deployer,
+      decoded.address_commit,
+      decoded.class_hash,
+      compute_jvm_manifest_root_hash(decoded.manifest_root));
+  CHECK(rederived_addr == target_addr);
+  CHECK(rederived_addr == action.dest_addr);
+
+  // ─── 9. Negative case: a manifest mutation must break the binding ─
+  // Sanity check — if any input that the address binding includes
+  // were silently changed between off-chain and on-chain, the gate
+  // would catch it.  This protects against the silent-divergence
+  // class of bugs (e.g. an operator and the validator hashing
+  // different manifest cells).
+  auto other_manifest_root = encode_jvm_method_manifest({
+      JvmMethodManifestEntry{0xdeadbeef, "java/lang/Other", "x", "()V"},
+  });
+  CHECK(other_manifest_root.not_null());
+  auto wrong_addr = derive_jvm_contract_address_from_state(
+      decoded.deployer,
+      decoded.address_commit,
+      decoded.class_hash,
+      compute_jvm_manifest_root_hash(other_manifest_root));
+  CHECK(wrong_addr != target_addr);
+}
+
 TEST(JvmWorkchainCore, ZerostateAccountsCellEmbedsWalletsAndDeployers) {
   // The combined-seed zerostate builder must produce a single
   // ShardAccounts dict whose entries iterate exactly the supplied
