@@ -10,6 +10,8 @@ async-trait = "0.1.89"
 common = { path = "../common" }
 chain_block = { path = "../../block" }
 hex = "0.4.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 sha2 = "0.10"
 tl_api = { version = "0.4.32", path = "../../tl/api" }
 chain-rpc-client = { path = "../chain-rpc-client" }

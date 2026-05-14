@@ -855,6 +855,8 @@ dependencies = [
  "chain_block",
  "common",
  "hex",
+ "serde",
+ "serde_json",
  "sha2",
  "tl_api",
  "tokio",

@@ -53,11 +53,15 @@ use common::{
 use contracts::{
     build_wallet_single_transfer_payload,
     jvm_codec::{
+        compute_jvm_address_commit, compute_jvm_class_hash,
+        compute_jvm_manifest_root_hash, derive_jvm_contract_address,
+        encode_jvm_args, encode_jvm_call_descriptor,
         encode_jvm_contract_account_state, encode_jvm_state_init_cell,
-        JvmContractAccountState,
+        parse_manifest_cell, parse_typed_args, parse_workchain_address,
+        JvmArgs, JvmCallDescriptor, JvmContractAccountState,
     },
     jvm_deployer::JvmDeployerContract,
-    jvm_wallet::JvmWalletContract,
+    jvm_wallet::{method_id_of, JvmWalletContract},
     U256,
 };
 use secrets_vault::vault::SecretVault;
@@ -103,6 +107,17 @@ pub enum JvmWalletAction {
     /// Print summary info for a registered Deployer (address +
     /// best-effort on-chain state lookup).
     DeployerInfo(JvmDeployerInfoCmd),
+    /// Deploy an arbitrary wc=3 contract (not just `java.lang.Wallet`)
+    /// via a registered Deployer.  Operator supplies class bytes,
+    /// method manifest, salt, and the constructor-style init call's
+    /// arguments; CLI derives the target address, encodes the JVAC,
+    /// signs the Deployer.deploy digest, and submits the ext-in.
+    DeployContract(JvmDeployContractCmd),
+    /// Invoke an arbitrary method on an existing wc=3 contract via a
+    /// registered wallet.  Builds a JvmCallDescriptor from the user-
+    /// supplied method signature + typed args, wraps it as the body of
+    /// a Wallet single-transfer payload, signs, and submits.
+    Call(JvmCallCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -247,6 +262,97 @@ pub struct JvmWalletInfoCmd {
     name: String,
 }
 
+#[derive(clap::Args, Clone)]
+#[command(about = "Deploy a generic wc=3 contract via a registered Deployer")]
+pub struct JvmDeployContractCmd {
+    /// Path to the compiled `.class` file (raw bytecode).
+    #[arg(long = "class-file", help = "Path to the contract's .class bytes")]
+    class_file: String,
+    /// Path to the method-manifest JSON.  Each entry binds an ABI
+    /// signature to (class_name, method_name, method_spec) — see
+    /// `contracts::jvm_codec::cli_parse::ManifestEntrySpec` for the
+    /// exact schema.
+    #[arg(long = "manifest-file", help = "Path to the method manifest JSON")]
+    manifest_file: String,
+    /// 32-byte hex salt that disambiguates this deployment from other
+    /// deployments of the same class by the same Deployer.
+    #[arg(long = "salt", help = "32-byte hex salt")]
+    salt: String,
+    /// ABI signature of the activating call (default `init()`).  Must
+    /// also appear in the manifest, otherwise the dispatch engine
+    /// rejects the activating message.
+    #[arg(
+        long = "init-method",
+        default_value = "init()",
+        help = "ABI signature of the activating method (default: init())"
+    )]
+    init_method: String,
+    /// Typed args for the init method.  Repeat the flag for each arg.
+    /// Format: `<type>:<value>` (e.g. `bytes32:0x..`, `uint256:42`,
+    /// `address:3:0x..`, `bool:true`, `bytes:0xdead..`).  Order MUST
+    /// match the method signature — JVM ABI is positional.
+    #[arg(long = "init-arg", help = "Typed init arg (repeatable)")]
+    init_args: Vec<String>,
+    /// Tomis attached to the action_create_account (covers storage
+    /// stake + the activating call's gas).
+    #[arg(long = "balance", default_value = "1000000000")]
+    balance: u128,
+    /// Registered Deployer name to route the deploy through.  Same
+    /// semantics as `jw deploy --via`.
+    #[arg(long = "via", help = "Registered Deployer config name")]
+    via: String,
+    /// 32-byte hex stdlib_hash committed into the target's JVAC.
+    /// MUST match ConfigParam 85 on the live chain.
+    #[arg(long = "stdlib-hash", help = "32-byte hex stdlib_hash from ConfigParam 85")]
+    stdlib_hash: Option<String>,
+    /// Opt-in to deploying with all-zero stdlib_hash (testnet only).
+    #[arg(
+        long = "allow-zero-stdlib-hash",
+        help = "Permit the all-zero default (testnet only)"
+    )]
+    allow_zero_stdlib_hash: bool,
+    /// Deployer nonce.  Chain-fetched when omitted.
+    #[arg(long = "nonce", help = "Deployer replay-counter override")]
+    nonce: Option<u64>,
+    /// Print artifacts (derived address, BOCs) but skip send_boc.
+    #[arg(long = "dry-run", help = "Skip send_boc; print artifacts only")]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Invoke a method on a wc=3 contract via a registered wallet")]
+pub struct JvmCallCmd {
+    /// Registered wallet name to sign + send the call from.  The
+    /// wallet's wc=3 account must already be active on-chain (since
+    /// `action_create_account` only accepts same-workchain senders,
+    /// the calling wallet itself was either genesis-seeded or
+    /// deployed via `jw deploy`).
+    #[arg(long = "via", help = "Registered wallet config name")]
+    via: String,
+    /// Target contract address in `wc:hex32` form (e.g. `3:0xabcd..`).
+    #[arg(long = "contract", help = "Target contract address (wc:hex32)")]
+    contract: String,
+    /// ABI signature of the method to invoke.  method_id is derived
+    /// from `first-4-bytes(keccak256(<signature>))` exactly as the
+    /// on-chain manifest indexer does, so a typo here surfaces as
+    /// the dispatcher rejecting the call.
+    #[arg(long = "method", help = "Method ABI signature (e.g. 'transfer(uint256)')")]
+    method: String,
+    /// Typed args for the method.  Same format as `--init-arg` on
+    /// `jw deploy-contract`.  Order MUST match the method signature.
+    #[arg(long = "arg", help = "Typed arg (repeatable)")]
+    args: Vec<String>,
+    /// Tomis attached to the internal message.
+    #[arg(long = "value", default_value = "0")]
+    value: u128,
+    /// Wallet replay-counter.  Chain-fetched when omitted.
+    #[arg(long = "nonce", help = "Wallet nonce override")]
+    nonce: Option<u64>,
+    /// Print artifacts but skip send_boc.
+    #[arg(long = "dry-run", help = "Skip send_boc; print artifacts only")]
+    dry_run: bool,
+}
+
 impl JvmWalletCmd {
     pub async fn run(&self) -> Result<()> {
         match &self.action {
@@ -264,6 +370,10 @@ impl JvmWalletCmd {
             JvmWalletAction::DeployerInfo(cmd) => {
                 cmd.run(&self.config).await
             }
+            JvmWalletAction::DeployContract(cmd) => {
+                cmd.run(&self.config).await
+            }
+            JvmWalletAction::Call(cmd) => cmd.run(&self.config).await,
         }
     }
 }
@@ -1048,4 +1158,290 @@ fn parse_address(input: &str) -> Result<(i32, [u8; 32])> {
         .with_context(|| format!("invalid workchain id {wc_str}"))?;
     let addr = parse_hex32(addr_str, "address account-id")?;
     Ok((wc, addr))
+}
+
+impl JvmDeployContractCmd {
+    pub async fn run(&self, config_path: &str) -> Result<()> {
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) =
+            load_config_vault_rpc_client(path).await?;
+
+        // ─── 1. Load Deployer signer + address ────────────────────────
+        let deployer_cfg = config.jvm_deployers.get(&self.via).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Deployer '{}' not found in config — register one with \
+                 `jw register-deployer`",
+                self.via
+            )
+        })?;
+        let deployer =
+            load_jvm_deployer(&self.via, deployer_cfg, vault.clone()).await?;
+        let deployer_addr = deployer.calculate_address();
+        let deployer_addr_hex = hex::encode(deployer_addr);
+
+        // ─── 2. Read target's class bytes + manifest cell ─────────────
+        let class_bytes = std::fs::read(&self.class_file).with_context(|| {
+            format!("Read target class file {}", self.class_file)
+        })?;
+        if class_bytes.is_empty() {
+            anyhow::bail!(
+                "target class file {} is empty — refusing to deploy a \
+                 zero-byte contract (its class_hash would collide with \
+                 the empty-bytes sentinel)",
+                self.class_file
+            );
+        }
+        let manifest_json =
+            std::fs::read_to_string(&self.manifest_file).with_context(|| {
+                format!("Read manifest JSON {}", self.manifest_file)
+            })?;
+        let manifest_cell = parse_manifest_cell(&manifest_json)
+            .context("Parse manifest JSON")?;
+        let manifest_hash =
+            compute_jvm_manifest_root_hash(Some(&manifest_cell));
+
+        // ─── 3. Build init args cell + activating call descriptor ─────
+        // `init_args` is encoded twice deliberately: once standalone
+        // (to derive the address_commit via init_args_cell.hash) and
+        // once embedded inside the call descriptor.  Both encodings
+        // produce identical cells from identical input (the codec is
+        // deterministic), so the address binding the validator
+        // recomputes on first activation matches what we compute here.
+        let init_typed_args = parse_typed_args(&self.init_args)
+            .context("Parse --init-arg values")?;
+        let init_jvm_args = JvmArgs::new(init_typed_args);
+        let init_args_cell = encode_jvm_args(&init_jvm_args)
+            .context("Encode init args cell")?;
+        let init_method_id = method_id_of(&self.init_method);
+        let init_call_cell = encode_jvm_call_descriptor(
+            &JvmCallDescriptor::new(init_method_id, init_jvm_args),
+        )
+        .context("Encode init call descriptor")?;
+        let init_body_boc = cell_to_boc(&init_call_cell)?;
+
+        // ─── 4. Resolve other JVAC inputs ─────────────────────────────
+        let stdlib_hash = match &self.stdlib_hash {
+            Some(s) => parse_hex32(s, "--stdlib-hash")?,
+            None => {
+                if !self.allow_zero_stdlib_hash && !self.dry_run {
+                    anyhow::bail!(
+                        "--stdlib-hash not provided and \
+                         --allow-zero-stdlib-hash not set.  Deploying \
+                         with all-zero stdlib_hash produces a contract \
+                         that any chain whose ConfigParam 85 carries a \
+                         non-zero stdlib_hash will reject on first call \
+                         with sk_bad_state.  Pass the real 32-byte hash \
+                         or pass --allow-zero-stdlib-hash on localnet."
+                    );
+                }
+                [0u8; 32]
+            }
+        };
+        let salt = parse_hex32(&self.salt, "--salt")?;
+        let class_hash = compute_jvm_class_hash(&class_bytes);
+
+        // ─── 5. Derive the target contract's wc=3 address ─────────────
+        let address_commit =
+            compute_jvm_address_commit(&deployer_addr, &salt, &init_args_cell);
+        let target_addr = derive_jvm_contract_address(
+            &deployer_addr,
+            &address_commit,
+            &class_hash,
+            &manifest_hash,
+        );
+
+        // ─── 6. Build JVAC + StateInit ────────────────────────────────
+        let state = JvmContractAccountState {
+            stdlib_hash,
+            deployer: deployer_addr,
+            address_commit,
+            class_bytes: class_bytes.clone(),
+            storage_root: None,
+            manifest_root: Some(manifest_cell),
+        };
+        let jvac_cell = encode_jvm_contract_account_state(&state)
+            .context("Encode JVAC")?;
+        let state_init_cell = encode_jvm_state_init_cell(jvac_cell)
+            .context("Encode StateInit")?;
+        let state_init_boc = cell_to_boc(&state_init_cell)?;
+
+        // ─── 7. Resolve Deployer nonce ────────────────────────────────
+        let nonce_u64 = match self.nonce {
+            Some(n) => n,
+            None => {
+                let view = rpc_client
+                    .jvm_get_contract_state(deployer_addr_hex.clone(), None)
+                    .await
+                    .context(
+                        "jvm_getContractState(deployer) — pass --nonce to skip",
+                    )?;
+                parse_deployer_nonce(&view)?
+            }
+        };
+        let nonce = U256::from_u64(nonce_u64);
+        let value = U256::from_u64(self.balance as u64);
+
+        // ─── 8. Sign + encode Deployer.deploy(...) ────────────────────
+        let signature = deployer
+            .sign_deploy(
+                nonce,
+                &target_addr,
+                &state_init_boc,
+                value,
+                &init_body_boc,
+            )
+            .await
+            .context("Sign deploy digest")?;
+        let deploy_call_cell = deployer
+            .encode_deploy_call(
+                nonce,
+                &target_addr,
+                &state_init_boc,
+                value,
+                &init_body_boc,
+                &signature,
+            )
+            .context("Encode deploy() call descriptor")?;
+
+        // ─── 9. Wrap as ext-in to the Deployer's wc=3 account ─────────
+        let ext_msg_boc =
+            build_ext_in_message(3, deployer_addr, deploy_call_cell)?;
+
+        println!(
+            "\n{} prepared generic-contract deploy artifacts\n",
+            "OK".green().bold()
+        );
+        println!("  target address:    3:{}", hex::encode(target_addr));
+        println!("  via deployer:      3:{}", deployer_addr_hex);
+        println!("  deployer nonce:    {}", nonce_u64);
+        println!("  init method:       {} (id 0x{:08x})",
+                 self.init_method, init_method_id);
+        println!("  init args count:   {}", self.init_args.len());
+        println!("  initial balance:   {}", self.balance);
+        println!("  class size:        {} bytes", class_bytes.len());
+        println!("  state_init BOC:    {} bytes", state_init_boc.len());
+        println!("  init body BOC:     {} bytes", init_body_boc.len());
+        println!("  ext-msg BOC:       {} bytes", ext_msg_boc.len());
+        println!();
+
+        if self.dry_run {
+            println!(
+                "  {}: --dry-run set; not sending.  ext-msg BOC hex below:",
+                "DRY".yellow().bold()
+            );
+            println!("  0x{}", hex::encode(&ext_msg_boc));
+            return Ok(());
+        }
+
+        rpc_client
+            .send_boc(&ext_msg_boc)
+            .await
+            .context("send_boc to wc=3 Deployer")?;
+        println!(
+            "  {} ext-msg submitted; the target contract will \
+             materialize in the next block at 3:{}",
+            "SENT".green().bold(),
+            hex::encode(target_addr)
+        );
+        Ok(())
+    }
+}
+
+impl JvmCallCmd {
+    pub async fn run(&self, config_path: &str) -> Result<()> {
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) =
+            load_config_vault_rpc_client(path).await?;
+
+        // ─── 1. Load wallet ───────────────────────────────────────────
+        let wallet_cfg = config.jvm_wallets.get(&self.via).ok_or_else(|| {
+            anyhow::anyhow!(
+                "JVM wallet '{}' not found in config — create one with \
+                 `jw create`",
+                self.via
+            )
+        })?;
+        let wallet =
+            load_jvm_wallet(&self.via, wallet_cfg, vault.clone()).await?;
+        let wallet_addr = wallet.calculate_address();
+        let wallet_addr_hex = hex::encode(wallet_addr);
+
+        // ─── 2. Parse target + method + args ──────────────────────────
+        let (dest_wc, dest_addr) = parse_workchain_address(&self.contract)
+            .context("Parse --contract")?;
+        let method_id = method_id_of(&self.method);
+        let typed_args =
+            parse_typed_args(&self.args).context("Parse --arg values")?;
+        let call_descriptor = encode_jvm_call_descriptor(
+            &JvmCallDescriptor::new(method_id, JvmArgs::new(typed_args)),
+        )
+        .context("Encode call descriptor")?;
+        let call_descriptor_boc = cell_to_boc(&call_descriptor)?;
+
+        // ─── 3. Wrap as single-transfer wallet payload ────────────────
+        let payload = build_wallet_single_transfer_payload(
+            dest_wc,
+            &dest_addr,
+            self.value,
+            &call_descriptor_boc,
+        )
+        .context("Build wallet single-transfer payload")?;
+
+        // ─── 4. Resolve wallet nonce ──────────────────────────────────
+        let nonce_u64 = match self.nonce {
+            Some(n) => n,
+            None => {
+                let view = rpc_client
+                    .jvm_get_contract_state(wallet_addr_hex.clone(), None)
+                    .await
+                    .context(
+                        "jvm_getContractState(wallet) — pass --nonce to skip",
+                    )?;
+                parse_wallet_nonce(&view)?
+            }
+        };
+        let nonce = U256::from_u64(nonce_u64);
+
+        // ─── 5. Sign Wallet.execute(...) + encode call descriptor ─────
+        let signature = wallet
+            .sign_execute(nonce, &payload)
+            .await
+            .context("Sign execute digest")?;
+        let execute_call = wallet
+            .encode_execute_call(nonce, &payload, &signature)
+            .context("Encode execute call descriptor")?;
+        let ext_msg_boc = build_ext_in_message(3, wallet_addr, execute_call)?;
+
+        println!(
+            "\n{} prepared generic-call artifacts\n",
+            "OK".green().bold()
+        );
+        println!("  via wallet:        3:{}", wallet_addr_hex);
+        println!("  target contract:   {}:{}",
+                 dest_wc, hex::encode(dest_addr));
+        println!("  method:            {} (id 0x{:08x})",
+                 self.method, method_id);
+        println!("  args count:        {}", self.args.len());
+        println!("  call body BOC:     {} bytes", call_descriptor_boc.len());
+        println!("  attached value:    {}", self.value);
+        println!("  wallet nonce:      {}", nonce_u64);
+        println!("  ext-msg BOC:       {} bytes", ext_msg_boc.len());
+        println!();
+
+        if self.dry_run {
+            println!(
+                "  {}: --dry-run set; not sending.  ext-msg BOC hex below:",
+                "DRY".yellow().bold()
+            );
+            println!("  0x{}", hex::encode(&ext_msg_boc));
+            return Ok(());
+        }
+
+        rpc_client
+            .send_boc(&ext_msg_boc)
+            .await
+            .context("send_boc to wc=3 Wallet")?;
+        println!("  {} ext-msg submitted", "SENT".green().bold());
+        Ok(())
+    }
 }

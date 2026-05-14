@@ -34,6 +34,7 @@ pub mod action_create_account;
 pub mod args;
 pub mod address;
 pub mod call_descriptor;
+pub mod cli_parse;
 pub mod contract_account_state;
 pub mod deploy_descriptor;
 pub mod manifest;
@@ -49,6 +50,10 @@ pub use address::{
     JvmAddressCommit, JvmClassHash, JvmContractId, JvmManifestRootHash,
 };
 pub use args::{encode_jvm_args, JvmArgType, JvmArgs, JvmTypedArg};
+pub use cli_parse::{
+    parse_manifest_cell, parse_manifest_json, parse_typed_arg,
+    parse_typed_args, parse_workchain_address, ManifestEntrySpec,
+};
 pub use call_descriptor::{
     encode_jvm_call_descriptor, JvmCallDescriptor, JVM_CALL_DESCRIPTOR_MAGIC,
 };
