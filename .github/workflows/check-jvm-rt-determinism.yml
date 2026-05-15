@@ -75,10 +75,15 @@ jobs:
       - name: Print toolchain versions (for diff diagnostics)
         run: |
           set -x
-          # JAVA_HOME is arch-dependent (amd64 vs arm64 dirs).
-          # Derive it from the actual javac binary location.
-          JAVAC=$(which javac)
-          export JAVA_HOME=$(dirname $(dirname $(readlink -f ${JAVAC})))
+          # JAVA_HOME is arch-dependent (amd64 vs arm64 suffix on the
+          # openjdk-8 install dir).  Cannot use `$(which javac)` here
+          # because the runner image pre-installs Temurin JDK 11 and
+          # registers it as the system javac via update-alternatives —
+          # `which javac` would return JDK 11 instead of the
+          # openjdk-8 we just apt-installed.  Glob the openjdk-8 path
+          # directly to guarantee we hit the canonical toolchain
+          # regardless of what else is on the runner image.
+          export JAVA_HOME=$(ls -d /usr/lib/jvm/java-8-openjdk-*)
           ${JAVA_HOME}/bin/javac -version
           ${JAVA_HOME}/bin/jar --help 2>&1 | head -3 || true
           python3 --version
@@ -90,7 +95,7 @@ jobs:
       # clean state and fails the workflow if the two sha256s diverge.
       - name: Verify rt.jar determinism
         run: |
-          export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which javac))))
+          export JAVA_HOME=$(ls -d /usr/lib/jvm/java-8-openjdk-*)
           cd jvm/avata
           make java-version=8 check-rt-jar-determinism
 
@@ -100,7 +105,7 @@ jobs:
       # for cross-arch hash comparison in the workflow log.
       - name: Print canonical stdlib_hash
         run: |
-          export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which javac))))
+          export JAVA_HOME=$(ls -d /usr/lib/jvm/java-8-openjdk-*)
           cd jvm/avata
           ARCH=$(uname -m)
           echo "canonical stdlib_hash (${ARCH}) = $(make -s java-version=8 print-rt-jar-stdlib-hash)"
@@ -115,7 +120,7 @@ jobs:
       # (amd64→x86_64, aarch64→arm64), so we mirror that here.
       - name: Verify api.jar determinism
         run: |
-          export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which javac))))
+          export JAVA_HOME=$(ls -d /usr/lib/jvm/java-8-openjdk-*)
           cd jvm/avata
           # Mirror the makefile's build-arch sed (lines 22-27):
           # x86_64 stays x86_64; aarch64 → arm64.
