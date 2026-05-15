@@ -104,11 +104,30 @@ For a public testnet bring-up:
    `ae4ff3b7e557a8acffe31e9b41959e811c67dea87b6c6c3e38129466e5ade765`;
    any change to `jvm/avata/rt/` updates this value, with the new
    hash printed by the CI workflow on the merging PR.
-3. Operators download the rt.jar, verify the sha256 matches the
-   published canonical hash, and place it at the path the
-   validator-engine expects (TBD — currently the path is baked
-   into the build; see `jvm/core/config-param.cpp:285` for where
-   `stdlib_hash` is pinned).
+3. Operators download the rt.jar, verify the canonical hash, and
+   point the validator at it.  Two mechanisms (both implemented in
+   `jvm/core/init.cpp:35-39`):
+
+   a. **Build-time default** — `TOS_AVATA_DEFAULT_RT_JAR` is set by
+      `jvm/avata/CMakeLists.txt:69` to the absolute path of the
+      rt.jar built inside the same source tree.  Validators built
+      from a clean checkout under the canonical toolchain (Phase Z
+      Dockerfile or Phase W CI image) have this baked in
+      automatically; no operator action is needed if the rt.jar
+      stays at its build-tree path.
+
+   b. **Runtime override** — set `TOS_JVM_AVATA_RT_JAR=/path/to/rt.jar`
+      in the validator-engine's environment.  Takes precedence over
+      the baked-in default; required for any deployment where the
+      validator binary moves to a different machine than the build
+      host (production), or where the operator wants to update the
+      rt.jar without recompiling.
+
+   The runtime hashes the loaded rt.jar at startup
+   (`hash_boot_classpath`, `jvm/core/avata-runtime.cpp:176`) and
+   compares against ConfigParam 85's `stdlib_hash` on every wc=3
+   call (`dispatch-engine.cpp:330,350`).  Mismatch → every wc=3
+   transaction rejects with `sk_bad_state`.
 4. ConfigParam 85's `stdlib_hash` must equal the same sha256.
    Operators participating in genesis sign the masterchain
    zerostate that carries this value; operators joining post-

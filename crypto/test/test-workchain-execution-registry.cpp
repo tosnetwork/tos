@@ -4413,6 +4413,58 @@ TEST(JvmWorkchainCore, GenesisDeployerEmptyClassBytesRejected) {
   CHECK(res.is_error());
 }
 
+TEST(JvmWorkchainCore, HashBootClasspathMatchesCanonicalStdlibHash) {
+  // Phase EE: the strongest possible parity assertion — given a
+  // single rt.jar file F, the production runtime's
+  // `hash_boot_classpath(path_to_F)` MUST return the same 32 bytes
+  // as `compute_canonical_stdlib_hash(F.bytes)`.
+  //
+  // These two functions are independent implementations of the
+  // consensus stdlib_hash algorithm:
+  //   * hash_boot_classpath reads from disk + handles colon-separated
+  //     multi-entry classpaths (the runtime startup path).
+  //   * compute_canonical_stdlib_hash takes bytes directly (the
+  //     off-chain ConfigParam 85 + tooling path).
+  //
+  // Phase DD aligned them on paper.  Phase EE proves the alignment
+  // empirically — any future refactor that drifts one without the
+  // other breaks this test in lockstep with the actual consensus
+  // failure mode.
+  using namespace jvm_workchain;
+
+  // Deterministic fixture: 333 bytes (forces a non-trivial length
+  // prefix interaction; not a multiple of the 8-byte chunk size).
+  std::vector<std::uint8_t> rt_jar_bytes;
+  rt_jar_bytes.reserve(333);
+  for (std::uint32_t i = 0; i < 333; ++i) {
+    rt_jar_bytes.push_back(
+        static_cast<std::uint8_t>((i * 23 + 5) & 0xff));
+  }
+  auto bytes_slice = td::Slice(
+      reinterpret_cast<const char*>(rt_jar_bytes.data()),
+      rt_jar_bytes.size());
+
+  // Off-chain path: hash bytes directly.
+  auto canonical_hash = compute_canonical_stdlib_hash(bytes_slice);
+
+  // Runtime path: write bytes to a temp file, then hash via
+  // hash_boot_classpath (which reads + hashes file contents).
+  char tmpl[] = "/tmp/tos_jvm_canonical_hash_XXXXXX";
+  int fd = ::mkstemp(tmpl);
+  CHECK(fd >= 0);
+  std::ptrdiff_t written = ::write(fd, rt_jar_bytes.data(), rt_jar_bytes.size());
+  CHECK(written == static_cast<std::ptrdiff_t>(rt_jar_bytes.size()));
+  ::close(fd);
+
+  auto runtime_hash_res = hash_boot_classpath(std::string(tmpl));
+  CHECK(runtime_hash_res.is_ok());
+  auto runtime_hash = runtime_hash_res.move_as_ok();
+
+  ::unlink(tmpl);
+
+  CHECK(canonical_hash == runtime_hash);
+}
+
 TEST(JvmWorkchainCore, StdlibHashAlgorithmAlignment) {
   // Phase DD: the canonical wc=3 stdlib_hash that ConfigParam 85
   // commits MUST equal the value the production Avata runtime

@@ -78,4 +78,19 @@ JvmAvataExecutionApi make_linked_jvm_avata_execution_api();
 td::Result<std::shared_ptr<const JvmComputeRuntime>>
 make_linked_jvm_avata_runtime(const JvmLinkedAvataRuntimeOptions& options);
 
+// Hash the `:`-separated boot classpath, feeding each entry's file
+// bytes (in listed order) through sha256 with a domain tag + length
+// prefix + trailing entry-count anchor.  Used at runtime startup to
+// produce `rt_jar_hash()` which the dispatch engine compares against
+// ConfigParam 85's `stdlib_hash`.
+//
+// Exposed here (Phase EE) so the direct parity test against
+// `compute_canonical_stdlib_hash` can call this function instead of
+// going through the heavier `make_linked_jvm_avata_runtime` path.
+// For a single-entry classpath, the output is IDENTICAL to
+// `compute_canonical_stdlib_hash(file_bytes)` — that invariant is
+// the consensus-correctness gate for every wc=3 deploy.
+td::Result<std::array<std::uint8_t, 32>> hash_boot_classpath(
+    const std::string& boot_classpath);
+
 }  // namespace jvm_workchain

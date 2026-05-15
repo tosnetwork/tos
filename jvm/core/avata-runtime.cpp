@@ -156,6 +156,8 @@ struct LinkedAvataRuntimeState {
     }
 };
 
+}  // namespace
+
 // Hash the `:`-separated boot classpath, feeding each entry's file
 // bytes (in listed order) through sha256.  Empty entries are skipped
 // to mirror Avata's own tokenizer behavior.  Used both at runtime
@@ -173,6 +175,10 @@ struct LinkedAvataRuntimeState {
 // silently collide).  We also feed a fixed domain tag so the same
 // helper output cannot be confused with a sha256 over arbitrary
 // concatenated data.
+//
+// Phase EE: hoisted out of the anonymous namespace + declared in
+// `avata-runtime.h` so the direct parity test against
+// `compute_canonical_stdlib_hash` can call it.
 td::Result<std::array<std::uint8_t, 32>> hash_boot_classpath(
     const std::string& boot_classpath) {
     std::array<std::uint8_t, 32> out{};
@@ -226,6 +232,8 @@ td::Result<std::array<std::uint8_t, 32>> hash_boot_classpath(
                                   out.size()));
     return out;
 }
+
+namespace {
 
 struct LinkedAvataInvocation {
     AvataContractMethod method{0};
