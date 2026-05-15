@@ -91,17 +91,23 @@ wc=3 transaction whose JVAC's `stdlib_hash` field doesn't match.
 For a public testnet bring-up:
 
 1. The launch coordinator builds rt.jar from a pinned tree commit
-   (`jvm/avata/makefile`'s `build-rt-jar` target).  See
-   [Phase V — rt.jar reproducible build](#) when that work lands;
-   until then, treat rt.jar as a binary artifact distributed by
-   the coordinator.
+   under the canonical toolchain (Ubuntu 22.04 + openjdk-8-jdk-
+   headless), either via the Phase-W CI workflow
+   (`.github/workflows/check-jvm-rt-determinism.yml`) or the
+   Phase-Z Dockerfile (`jvm/avata/Dockerfile.canonical-build`).
+   See [`doc/jvm-rt-reproducibility.md`](jvm-rt-reproducibility.md)
+   for the full reproducibility procedure.
 2. The coordinator publishes the rt.jar bytes + its sha256 in the
-   testnet release notes.
-3. Operators download the rt.jar, verify the sha256, place it at
-   the path the validator-engine expects (TBD — currently the
-   path is baked into the build; see
-   `jvm/core/config-param.cpp:285` for where `stdlib_hash` is
-   pinned).
+   testnet release notes.  The current canonical hash (commit
+   `ba192f33b`, Phase CC) is
+   `8c0f7bfc0ceec73dba513537b94bc05f09409b3bbf648f9918ae021f5ebc0e72`;
+   any change to `jvm/avata/rt/` updates this value, with the new
+   hash printed by the CI workflow on the merging PR.
+3. Operators download the rt.jar, verify the sha256 matches the
+   published canonical hash, and place it at the path the
+   validator-engine expects (TBD — currently the path is baked
+   into the build; see `jvm/core/config-param.cpp:285` for where
+   `stdlib_hash` is pinned).
 4. ConfigParam 85's `stdlib_hash` must equal the same sha256.
    Operators participating in genesis sign the masterchain
    zerostate that carries this value; operators joining post-

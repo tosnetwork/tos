@@ -51,27 +51,51 @@ mechanisms combine to achieve this:
    wallclock-derived timestamps into the central directory even
    when file mtimes are pinned (4-byte drift verified empirically).
 
-Same-machine determinism was verified by two clean back-to-back
-`make -B build/<platform>/rt.jar` runs producing sha256
-`905a33b0a01793257b363934921ce0e02a955b63004066f2cb88ee7deb086787`
-on the Phase-V landing commit.
+### 2.1 Canonical hashes (from the Phase-CC CI run)
 
-### 2.1 What is NOT guaranteed
+Under the canonical toolchain (Ubuntu 22.04 + openjdk-8-jdk-headless,
+pinned by `.github/workflows/check-jvm-rt-determinism.yml` and the
+`jvm/avata/Dockerfile.canonical-build`), the published canonical
+hashes at commit `ba192f33b` (Phase CC) are:
 
-* **Cross-machine determinism** — the .class files javac produces
+| Artifact | sha256 |
+|---|---|
+| `rt.jar` (= `stdlib_hash`) | `8c0f7bfc0ceec73dba513537b94bc05f09409b3bbf648f9918ae021f5ebc0e72` |
+| `api.jar` | `87b1a190733f422f46d908487f43e63d5a792ae328fe0b63fa39ecf06365d3d4` |
+
+Both values were produced byte-identically on `ubuntu-22.04`
+(x86_64) and `ubuntu-22.04-arm` (aarch64) — the CI matrix proves
+cross-architecture reproducibility under the canonical toolchain,
+not just per-arch.  See GitHub Actions run
+[`25906314545`](https://github.com/tosnetwork/tos/actions/runs/25906314545).
+
+> **The `rt.jar` hash above is the value that must be committed
+> to ConfigParam 85 as `stdlib_hash` for any wc=3 chain built
+> from commit `ba192f33b` or later (until the rt.jar surface
+> changes again).**  Operators verify their toolchain produces
+> the same hash by running
+> `make -C jvm/avata java-version=8 print-rt-jar-stdlib-hash`
+> or `scripts/jvm-testnet-genesis-rehearsal.sh`.
+
+### 2.2 What is NOT guaranteed
+
+* **Cross-JDK determinism** — the .class files javac produces
   depend on JDK vendor + version (e.g. AdoptOpenJDK 8u392 vs
   Zulu 8u412 may emit slightly different bytecode for the same
-  source).  Coordinators should pin a single JDK build for the
-  reference rt.jar.
-
-* **Cross-architecture determinism** — javac is platform-
-  independent in principle but cross-checking is operator
-  responsibility.
+  source).  The canonical hash above is for the Ubuntu 22.04
+  distro openjdk-8 build.  Operators on other JDK builds may
+  see different hashes; switch to the canonical toolchain
+  (Dockerfile or CI workflow) for the reference value.
 
 * **`build-rt-jar` from a dirty tree** — if local edits / stash /
   uncommitted .java files exist, the resulting rt.jar will not
   match the published canonical hash.  Always build from a clean
   tag checkout.
+
+* **rt.jar surface changes** — any commit that adds, removes, or
+  modifies a `.java` file under `jvm/avata/rt/` changes the
+  canonical hash.  Track the latest value via the CI workflow log
+  on each merged change to `jvm/avata/`.
 
 ## 3. Build flow
 
