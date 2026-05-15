@@ -97,10 +97,11 @@ For a public testnet bring-up:
    Phase-Z Dockerfile (`jvm/avata/Dockerfile.canonical-build`).
    See [`doc/jvm-rt-reproducibility.md`](jvm-rt-reproducibility.md)
    for the full reproducibility procedure.
-2. The coordinator publishes the rt.jar bytes + its sha256 in the
-   testnet release notes.  The current canonical hash (commit
-   `ba192f33b`, Phase CC) is
-   `8c0f7bfc0ceec73dba513537b94bc05f09409b3bbf648f9918ae021f5ebc0e72`;
+2. The coordinator publishes the rt.jar bytes + its canonical hash
+   (Phase DD algorithm — domain-tagged, NOT plain sha256; see
+   `doc/jvm-rt-reproducibility.md §2.1`) in the testnet release
+   notes.  The current canonical hash (post-Phase-DD) is
+   `ae4ff3b7e557a8acffe31e9b41959e811c67dea87b6c6c3e38129466e5ade765`;
    any change to `jvm/avata/rt/` updates this value, with the new
    hash printed by the CI workflow on the merging PR.
 3. Operators download the rt.jar, verify the sha256 matches the

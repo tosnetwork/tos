@@ -1577,13 +1577,22 @@ check-rt-jar-determinism: $(build)/rt.jar
 	 fi && \
 	 echo "  OK: rt.jar sha256 stable across two clean builds = $$first_hash"
 
-# `make print-rt-jar-stdlib-hash` — print the sha256 of the current
-# rt.jar, the value that must be committed into ConfigParam 85 via
-# `jvm-config-param-cell-with-stdlib`.  Building rt.jar first is a
-# prerequisite (so the value is fresh).
+# `make print-rt-jar-stdlib-hash` — print the canonical stdlib_hash
+# for the current rt.jar, the value that must be committed into
+# ConfigParam 85 via `jvm-config-param-cell-with-stdlib`, AND the
+# value the production Avata runtime computes from its on-disk
+# rt.jar at startup.
+#
+# Phase DD: this hash is NOT plain sha256(rt.jar) — it's the
+# domain-tagged + length-prefixed hash that `hash_boot_classpath`
+# computes (see `jvm/core/config-param.cpp::compute_canonical_stdlib_
+# hash` and `tools/compute-stdlib-hash.py`).  Pre-fix this target
+# printed `sha256sum < rt.jar`, which did NOT agree with the
+# runtime's algorithm — every wc=3 contract deployed with that
+# value would have rejected every call with `sk_bad_state`.
 .PHONY: print-rt-jar-stdlib-hash
 print-rt-jar-stdlib-hash: $(build)/rt.jar
-	@sha256sum < $(build)/rt.jar | awk '{print $$1}'
+	@python3 $(shell pwd)/tools/compute-stdlib-hash.py $(build)/rt.jar
 
 $(classpath-object): $(build)/rt.jar $(converter)
 	@echo "creating $(@)"

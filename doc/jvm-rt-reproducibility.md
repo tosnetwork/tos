@@ -51,31 +51,73 @@ mechanisms combine to achieve this:
    wallclock-derived timestamps into the central directory even
    when file mtimes are pinned (4-byte drift verified empirically).
 
-### 2.1 Canonical hashes (from the Phase-CC CI run)
+### 2.1 Canonical stdlib_hash algorithm
+
+Phase DD aligned the off-chain `stdlib_hash` computation with the
+production Avata runtime's `hash_boot_classpath`.  The canonical
+algorithm is NOT plain `sha256(rt.jar)` — that produces a value
+the runtime cannot recognize, and every wc=3 contract deployed
+with such a hash rejects every call with `sk_bad_state`.
+
+The canonical wire format (locked by
+`jvm/core/config-param.cpp::compute_canonical_stdlib_hash` and
+the `Test_JvmWorkchainCore_StdlibHashAlgorithmAlignment` test):
+
+```
+sha256(
+    "TOS-JVM-AVATA-BOOTCLASSPATH-v1"
+    || u64_be(rt_jar.size())
+    || rt_jar
+    || u64_be(1)                         # single-entry classpath
+)
+```
+
+Three implementations MUST agree byte-for-byte:
+
+  1. **`compute_canonical_stdlib_hash`** (C++,
+     `jvm/core/config-param.cpp`) — what
+     `default_activation_with_stdlib` and the Fift word
+     `jvm-config-param-cell-with-stdlib` write into ConfigParam 85.
+  2. **`hash_boot_classpath`** (C++,
+     `jvm/core/avata-runtime.cpp`) — what the production runtime
+     returns from `rt_jar_hash()` at startup, consumed by the
+     dispatch engine on every wc=3 call.
+  3. **`compute-stdlib-hash.py`**
+     (`jvm/avata/tools/compute-stdlib-hash.py`) — what
+     `make print-rt-jar-stdlib-hash`,
+     `scripts/jvm-testnet-genesis-rehearsal.sh`, and operators
+     running `tosctl jw deploy-contract --stdlib-hash <hex>`
+     consume off-chain.
+
+### 2.2 Canonical hashes (post-Phase-DD)
 
 Under the canonical toolchain (Ubuntu 22.04 + openjdk-8-jdk-headless,
 pinned by `.github/workflows/check-jvm-rt-determinism.yml` and the
-`jvm/avata/Dockerfile.canonical-build`), the published canonical
-hashes at commit `ba192f33b` (Phase CC) are:
+`jvm/avata/Dockerfile.canonical-build`), the canonical hashes
+post-Phase-DD are:
 
-| Artifact | sha256 |
-|---|---|
-| `rt.jar` (= `stdlib_hash`) | `8c0f7bfc0ceec73dba513537b94bc05f09409b3bbf648f9918ae021f5ebc0e72` |
-| `api.jar` | `87b1a190733f422f46d908487f43e63d5a792ae328fe0b63fa39ecf06365d3d4` |
+| Artifact | hash | Algorithm |
+|---|---|---|
+| `rt.jar` (= `stdlib_hash`, ConfigParam 85) | `ae4ff3b7e557a8acffe31e9b41959e811c67dea87b6c6c3e38129466e5ade765` | canonical (§2.1) |
+| `api.jar` | `87b1a190733f422f46d908487f43e63d5a792ae328fe0b63fa39ecf06365d3d4` | plain sha256 |
 
-Both values were produced byte-identically on `ubuntu-22.04`
-(x86_64) and `ubuntu-22.04-arm` (aarch64) — the CI matrix proves
-cross-architecture reproducibility under the canonical toolchain,
-not just per-arch.  See GitHub Actions run
-[`25906314545`](https://github.com/tosnetwork/tos/actions/runs/25906314545).
+Note the rt.jar value uses the canonical algorithm (§2.1).  The
+api.jar value uses plain sha256 because api.jar isn't part of the
+consensus surface — it's consumed by `tools/javac -bootclasspath`
+during contract compilation, not by the runtime, so its hash is
+only used for build-system integrity checks.
 
 > **The `rt.jar` hash above is the value that must be committed
 > to ConfigParam 85 as `stdlib_hash` for any wc=3 chain built
-> from commit `ba192f33b` or later (until the rt.jar surface
-> changes again).**  Operators verify their toolchain produces
-> the same hash by running
+> from the post-Phase-DD tree.**  Operators verify their toolchain
+> produces the same hash by running
 > `make -C jvm/avata java-version=8 print-rt-jar-stdlib-hash`
 > or `scripts/jvm-testnet-genesis-rehearsal.sh`.
+
+A previous version of this document (Phase CC) listed
+`8c0f7bfc0ceec73dba513537b94bc05f09409b3bbf648f9918ae021f5ebc0e72`
+as the canonical value — that was plain `sha256(rt.jar)` and is
+NOT consensus-compatible.  Phase DD obsoleted it.
 
 ### 2.2 What is NOT guaranteed
 

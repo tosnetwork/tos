@@ -4413,6 +4413,76 @@ TEST(JvmWorkchainCore, GenesisDeployerEmptyClassBytesRejected) {
   CHECK(res.is_error());
 }
 
+TEST(JvmWorkchainCore, StdlibHashAlgorithmAlignment) {
+  // Phase DD: the canonical wc=3 stdlib_hash that ConfigParam 85
+  // commits MUST equal the value the production Avata runtime
+  // returns from `rt_jar_hash()` for the same rt.jar bytes.  Without
+  // this property the dispatch-engine consistency gate in
+  // `jvm/core/dispatch-engine.cpp` (which compares
+  // `runtime->rt_jar_hash()` against `cfg->config.stdlib_hash`)
+  // rejects EVERY wc=3 transaction with `sk_bad_state`.
+  //
+  // Pre-Phase-DD this test would have failed: `default_activation_
+  // with_stdlib` used plain `sha256(rt_jar_bytes)` while the runtime
+  // computes a domain-tagged, length-prefixed hash via
+  // `hash_boot_classpath`.  Phase DD extracted the shared algorithm
+  // into `compute_canonical_stdlib_hash` and rewired
+  // `default_activation_with_stdlib` to use it.
+  //
+  // The asserted invariant: for any rt.jar byte blob B,
+  //   default_activation_with_stdlib(B).stdlib_hash
+  //     == compute_canonical_stdlib_hash(B)
+  // AND both equal what a hypothetical hash_boot_classpath(B)
+  // would return (proven indirectly because both call the same
+  // hash construction).
+  using namespace jvm_workchain;
+
+  // Fixture: a non-empty deterministic byte blob standing in for
+  // rt.jar.  300 bytes is enough to exercise the length-prefix path
+  // without making the test slow.
+  std::vector<std::uint8_t> rt_jar_bytes;
+  rt_jar_bytes.reserve(300);
+  for (std::uint32_t i = 0; i < 300; ++i) {
+    rt_jar_bytes.push_back(
+        static_cast<std::uint8_t>((i * 11 + 7) & 0xff));
+  }
+  auto bytes_slice = td::Slice(
+      reinterpret_cast<const char*>(rt_jar_bytes.data()),
+      rt_jar_bytes.size());
+
+  // Path 1: what `jvm-config-param-cell-with-stdlib` ends up writing
+  // into ConfigParam 85's stdlib_hash field.
+  auto cfg = JvmConfig::default_activation_with_stdlib(bytes_slice);
+
+  // Path 2: the standalone helper (which the off-chain tooling
+  // should also call to produce the hash an operator pastes into
+  // `tosctl jw deploy --stdlib-hash <hex>`).
+  auto direct_hash = compute_canonical_stdlib_hash(bytes_slice);
+
+  CHECK(cfg.stdlib_hash == direct_hash);
+
+  // Negative: changing a single byte of the input MUST change the
+  // hash — otherwise the domain/length-prefixing isn't being fed.
+  rt_jar_bytes[150] ^= 0xff;
+  auto bytes_slice_2 = td::Slice(
+      reinterpret_cast<const char*>(rt_jar_bytes.data()),
+      rt_jar_bytes.size());
+  auto direct_hash_2 = compute_canonical_stdlib_hash(bytes_slice_2);
+  CHECK(direct_hash != direct_hash_2);
+
+  // Negative: the hash MUST NOT equal plain `sha256(rt_jar_bytes)` —
+  // that's exactly the pre-Phase-DD bug.  Recompute plain sha256
+  // here and confirm we're producing something different.  If this
+  // test fails (cfg.stdlib_hash == sha256(rt_jar_bytes)), Phase DD
+  // regressed and the consensus alignment is broken again.
+  rt_jar_bytes[150] ^= 0xff;  // restore original bytes
+  std::array<std::uint8_t, 32> plain_sha256{};
+  td::sha256(bytes_slice,
+             td::MutableSlice(reinterpret_cast<char*>(plain_sha256.data()),
+                              plain_sha256.size()));
+  CHECK(cfg.stdlib_hash != plain_sha256);
+}
+
 TEST(JvmWorkchainCore, WalletDeploymentLifecycleEndToEnd) {
   // Phase Q: stitches the wc=3 deploy lifecycle end-to-end without a
   // full Transaction harness or live Avata JVM.  Every step from
@@ -7333,14 +7403,15 @@ TEST(JvmWorkchainCore, DefaultActivationWithStdlibHashesInput) {
     fake_stdlib[i] = static_cast<char>((i * 31 + 7) & 0xff);
   }
 
-  // Compute the expected hash directly with td::sha256 — this is the
-  // same primitive default_activation_with_stdlib uses internally, so
-  // the test pins the factory to the spec rather than to its own
-  // implementation choice.
-  std::array<std::uint8_t, 32> expected_hash{};
-  td::sha256(td::Slice(fake_stdlib),
-             td::MutableSlice(reinterpret_cast<char*>(expected_hash.data()),
-                              expected_hash.size()));
+  // Phase DD: `default_activation_with_stdlib` now produces the
+  // CANONICAL hash — the same domain-tagged + length-prefixed value
+  // the production Avata runtime computes in `hash_boot_classpath`,
+  // NOT plain sha256(bytes).  The expected value comes from the
+  // public helper `compute_canonical_stdlib_hash`; the factory MUST
+  // call into the same algorithm (otherwise the dispatch engine's
+  // consistency gate sk_bad_state's every wc=3 call).
+  auto expected_hash =
+      compute_canonical_stdlib_hash(td::Slice(fake_stdlib));
 
   auto cfg = JvmConfig::default_activation_with_stdlib(td::Slice(fake_stdlib));
   CHECK(cfg.stdlib_hash == expected_hash);

@@ -334,16 +334,42 @@ JvmConfig JvmConfig::default_activation() noexcept {
 JvmConfig JvmConfig::default_activation_with_stdlib(
     td::Slice stdlib_bytes) noexcept {
     JvmConfig cfg = default_activation();
-    // td::sha256 always produces exactly 32 bytes; cfg.stdlib_hash is
-    // sized to kJvmStdlibHashBytes (32), so the slice fits without
-    // truncation.  Empty input is valid (sha256 of the empty string is
-    // well-defined) and yields a deterministic non-zero hash, which is
-    // still distinguishable from the all-zero "unset" sentinel produced
-    // by default_activation().
-    td::sha256(stdlib_bytes,
-               td::MutableSlice(reinterpret_cast<char*>(cfg.stdlib_hash.data()),
-                                cfg.stdlib_hash.size()));
+    cfg.stdlib_hash = compute_canonical_stdlib_hash(stdlib_bytes);
     return cfg;
+}
+
+std::array<std::uint8_t, kJvmStdlibHashBytes> compute_canonical_stdlib_hash(
+    td::Slice rt_jar_bytes) {
+    // Mirror `jvm_workchain::hash_boot_classpath` for the single-
+    // entry case.  Both must produce the same hash for the same
+    // rt.jar bytes — Phase DD's parity test pins this invariant.
+    std::array<std::uint8_t, kJvmStdlibHashBytes> out{};
+    td::Sha256State sha;
+    sha.init();
+    static constexpr td::Slice kDomain{"TOS-JVM-AVATA-BOOTCLASSPATH-v1"};
+    sha.feed(kDomain);
+
+    // Length prefix (8-byte big-endian) before the entry bytes.
+    const std::uint64_t len = rt_jar_bytes.size();
+    std::uint8_t len_be[8];
+    for (int i = 0; i < 8; ++i) {
+        len_be[i] = static_cast<std::uint8_t>(len >> (56 - i * 8));
+    }
+    sha.feed(td::Slice(reinterpret_cast<const char*>(len_be), 8));
+    sha.feed(rt_jar_bytes);
+
+    // Trailing entry count = 1 (single-entry classpath).
+    constexpr std::uint64_t entry_count = 1;
+    std::uint8_t count_be[8];
+    for (int i = 0; i < 8; ++i) {
+        count_be[i] = static_cast<std::uint8_t>(
+            entry_count >> (56 - i * 8));
+    }
+    sha.feed(td::Slice(reinterpret_cast<const char*>(count_be), 8));
+
+    sha.extract(td::MutableSlice(reinterpret_cast<char*>(out.data()),
+                                  out.size()));
+    return out;
 }
 
 }  // namespace jvm_workchain

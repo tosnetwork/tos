@@ -60,8 +60,13 @@ echo "[1/5] Building rt.jar..."
 make -C jvm/avata java-version="${JAVA_VERSION}" \
   "build/${PLATFORM}/rt.jar" > /dev/null
 RT_JAR="${REPO_ROOT}/jvm/avata/build/${PLATFORM}/rt.jar"
-STDLIB_HASH=$(sha256sum "${RT_JAR}" | awk '{print $1}')
+# Phase DD: use the canonical algorithm (domain-tagged + length-
+# prefixed sha256), NOT plain sha256.  See
+# `jvm/avata/tools/compute-stdlib-hash.py` and
+# `doc/jvm-rt-reproducibility.md §2.1`.
+STDLIB_HASH=$(python3 "${REPO_ROOT}/jvm/avata/tools/compute-stdlib-hash.py" "${RT_JAR}")
 echo "  rt.jar:        ${RT_JAR}"
+echo "  rt.jar size:   $(stat -c '%s' "${RT_JAR}" 2>/dev/null || stat -f '%z' "${RT_JAR}") bytes"
 echo "  stdlib_hash:   ${STDLIB_HASH}"
 echo
 
@@ -120,7 +125,7 @@ JVMSTATE_BOC_SIZE=$(stat -c '%s' "${JVMSTATE_BOC}" 2>/dev/null \
 JVMSTATE_RHASH=$(xxd -p "${JVMSTATE_RHASH_FILE}" | tr -d '\n')
 JVMSTATE_FHASH=$(xxd -p "${JVMSTATE_FHASH_FILE}" | tr -d '\n')
 
-echo "  stdlib_hash (sha256 of rt.jar):    ${STDLIB_HASH}"
+echo "  stdlib_hash (canonical, ConfigParam 85): ${STDLIB_HASH}"
 echo "  jvmstate3.boc size:                ${JVMSTATE_BOC_SIZE} bytes"
 echo "  jvmstate3 root hash:               ${JVMSTATE_RHASH}"
 echo "  jvmstate3 file hash:               ${JVMSTATE_FHASH}"

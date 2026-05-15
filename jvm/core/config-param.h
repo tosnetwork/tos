@@ -70,13 +70,44 @@ struct JvmConfig {
     static JvmConfig default_activation() noexcept;
 
     // Same as default_activation() but with stdlib_hash populated from
-    // sha256(stdlib_bytes).  This is the path mainnet genesis tooling
-    // takes: the operator points the Fift word at the canonical rt.jar
-    // bytes, the helper hashes them, and the resulting hash is locked
-    // into ConfigParam 85 so validators reject any node carrying a
-    // mismatched stdlib at activation.
+    // `compute_canonical_stdlib_hash(stdlib_bytes)` — the same
+    // algorithm the production Avata runtime uses in
+    // `hash_boot_classpath`.  Operators point the Fift word
+    // (`jvm-config-param-cell-with-stdlib`) at the canonical rt.jar
+    // bytes, this helper hashes them, and the resulting hash is
+    // locked into ConfigParam 85 so validators reject any node
+    // carrying a mismatched stdlib at activation.
+    //
+    // Phase-DD note: pre-fix this used plain `sha256(stdlib_bytes)`
+    // which did NOT agree with the runtime's domain-tagged hash.
+    // Every wc=3 contract deployed under that scheme would have
+    // rejected every call with `sk_bad_state` because
+    // `JVAC.stdlib_hash != runtime->rt_jar_hash()`.  The shared
+    // helper below produces the same value both sides expect.
     static JvmConfig default_activation_with_stdlib(td::Slice stdlib_bytes) noexcept;
 };
+
+// Compute the canonical wc=3 `stdlib_hash` for an rt.jar byte blob.
+//
+// This is the value committed to ConfigParam 85 AND the value the
+// production Avata runtime returns from `rt_jar_hash()` for the
+// same on-disk rt.jar.  The dispatch engine compares the two on
+// every wc=3 call; they MUST match.
+//
+// Wire format (same as `hash_boot_classpath` single-entry path):
+//   sha256(
+//     "TOS-JVM-AVATA-BOOTCLASSPATH-v1"
+//     || u64_be(rt_jar_bytes.size())
+//     || rt_jar_bytes
+//     || u64_be(1)                          // entry_count
+//   )
+//
+// The domain tag provides cross-protocol separation; the leading
+// length prefix + trailing count anchor a single-entry classpath
+// against any multi-entry classpath that happens to concatenate to
+// the same byte stream.
+std::array<std::uint8_t, kJvmStdlibHashBytes> compute_canonical_stdlib_hash(
+    td::Slice rt_jar_bytes);
 
 // Build the ConfigParam 12 WorkchainDescr cell for JVM v1.
 // The descriptor uses wfmt_basic, vm_version="JVM1", vm_mode=0, and the
