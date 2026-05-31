@@ -1,24 +1,26 @@
 # The Open System
 
-**The Open System (TOS)** is a multichain Layer‑1 that runs three distinct execution domains in parallel, on a single masterchain-rooted consensus:
+**The Open System (TOS)** is a multichain Layer‑1 that runs four distinct execution domains in parallel, on a single masterchain-rooted consensus:
 
 | Workchain | Execution model | What it's for |
 |---|---|---|
 | **Native (wc=0)** | **Asynchronous**, message-driven, TVM | High-throughput contracts, sharded scale, actor-style async flows |
 | **EVM (wc=1)** | **Synchronous**, EVM bytecode | Solidity / Ethereum-compatible contracts, wallet-compatible DeFi |
 | **Uno (wc=2)** | **PQ-native privacy**, Plonky3 STARK AIRs | Shielded payments; quantum-safe and bridgeless by architecture |
+| **JVM (wc=3)** | **Deterministic Java 8 bytecode**, Avata JVM | Account-autonomous Java smart contracts *(code-complete; activation gated — see below)* |
 
-One node binary (`validator-engine`) serves all three workchains. One canonical JSON-RPC surface, one operator path (`tosctl`), one wallet flow. Users choose their execution domain per transaction; validators opt in per workchain.
+One node binary (`validator-engine`) serves all four workchains. One canonical JSON-RPC surface, one operator path (`tosctl`), one wallet flow. Users choose their execution domain per transaction; validators opt in per workchain. wc=3 (JVM) is implemented and wired end-to-end but **not yet activated on any network**; it turns on through a governance flag once its runtime hash and genesis set are pinned.
 
 ---
 
-## Why three domains?
+## Why four domains?
 
 Different workloads want different trade-offs. TOS does not try to fit them into one VM.
 
 - **Throughput and scale** are solved by TVM's asynchronous message passing + horizontal sharding (the TOS native design). The native layer is where 100K+ TPS is realistic, and where contract-to-contract message fan-out is cheap.
 - **Developer familiarity and the Ethereum tool stack** are solved by running a real EVM as a separate workchain. Solidity contracts deploy as-is; MetaMask, ethers.js, Remix, and Foundry talk to wc=1 through standard JSON-RPC without modification.
 - **Terminal privacy and post-quantum safety** require a protocol-level commitment, not a bolt-on. Uno is a native (not bridged, not retrofitted) privacy chain built on a hash-based STARK proof system — post-quantum at ship, with no Phase 2 migration debt.
+- **Deterministic, audit-friendly application logic in a mainstream language** is served by the JVM workchain: contracts are Java 8 bytecode run on a restricted, JIT-free Avata interpreter, so existing JVM tooling applies while consensus-grade determinism is preserved.
 
 Each workchain keeps its own invariants. The masterchain provides shared consensus and global time. There is **no bridge between Uno (wc=2) and any other workchain** — this is an architectural property, not a roadmap item; see the Uno section.
 
@@ -125,19 +127,46 @@ Full design in [`doc/uno-workchain.md`](doc/uno-workchain.md). Implementation un
 
 ---
 
+## JVM Workchain (workchain 3) — Deterministic Java Smart Contracts
+
+The JVM workchain runs **Java 8 bytecode smart contracts** on **Avata**, a C++ JVM that TOS forks and owns (the upstream project is retired). It targets developers who want a mainstream language and JVM tooling without giving up consensus-grade determinism.
+
+> **Status: code-complete, not yet activated.** The engine, RPC namespace, gas model, config parameters, and operator tooling are implemented and wired into `validator-engine`. wc=3 turns on only when governance flips the activation flag (ConfigParam 12) after the runtime hash and genesis wallet set are pinned. No public network runs it yet.
+
+### Execution model
+
+- **Account-autonomous topology.** Every Java contract is its own real wc=3 account with a 256-bit deterministic address — there is no singleton executor and no shared class store. A contract's address is derived at deploy time from a nested-sha256 commitment over the deployer, salt, init args, class hash, and method-manifest root, so the deployed code and method set are bound into the address.
+- **Restricted, deterministic profile.** Interpreter-only (no JIT/AOT), deterministic SoftFloat floating point, no `invokedynamic`, no mutable static fields (only `static final` constants), and no host I/O, threads, wall-clock, or OS entropy. This is what keeps replay byte-identical across validators and platforms (verified identical on x86_64 and Apple Silicon).
+- **Constrained persistence.** Only explicit `java.lang.Persistent*` containers (`Storage`, `Mapping`, `PersistentMap`, `PersistentList`) survive a call; the transaction heap is discarded at the boundary. Persisted state commits into TOS cells like every other workchain — the contract's `storage_root` is the only mutable field of its state cell.
+
+### Runtime and consensus binding
+
+- **`rt.jar` / `api.jar`** provide the contract standard library (`java.lang.*` plus TOS-specific `Context`, `Storage`, `Event`, `ABI`, `Crypto`, `ContractCall` APIs).
+- **`stdlib_hash`** binds the exact runtime bytes into consensus via ConfigParam 85. Validators reject any inbound call whose `stdlib_hash` does not match the network's pinned value, so the runtime is reproducible by construction (a CI job verifies byte-identical rebuilds of `rt.jar`).
+
+### Interfaces and limits
+
+- **RPC namespace** served directly by `validator-engine`: `jvm_deployContract`, `jvm_callContract`, `jvm_getContractState`, `jvm_getReceipts`.
+- **Operator tooling** via `tosctl` JVM wallet subcommands (key/address generation, state queries; deploy/execute flows depend on genesis seeding).
+- **DoS-hardened resource limits**: `max_gas_per_tx = 1M`, `max_heap = 4 MiB`, `max_class_bytes = 64 KiB`, `max_storage_cells = 65536`, `max_outbound_actions = 12`, bounded RPC receipt scans.
+
+Design and operations are documented across [`doc/jvm-roadmap.md`](doc/jvm-roadmap.md), [`doc/jvm-v2-account-topology.md`](doc/jvm-v2-account-topology.md), [`doc/jvm-rt.md`](doc/jvm-rt.md), [`doc/jvm-rt-reproducibility.md`](doc/jvm-rt-reproducibility.md), [`doc/jvm-mainnet-activation.md`](doc/jvm-mainnet-activation.md), [`doc/jvm-validator-ops.md`](doc/jvm-validator-ops.md), and [`doc/jvm-dos-hardening.md`](doc/jvm-dos-hardening.md). Implementation under [`jvm/`](jvm/).
+
+---
+
 ## Architecture principles
 
 - **The node is the root of truth.** Public APIs come from `validator-engine`, not from fragmented sidecar stacks.
 - **One operator path.** `tosctl` is the canonical CLI for node operation, wallet flows, and workchain-specific tooling.
 - **Standards-first.** Wallet send / estimate / track semantics, RPC conventions, trust tiers, indexing and explorer surfaces are defined as standards, not as implementation artifacts.
-- **Deterministic execution everywhere.** No wall-clock, no OS RNG, no HashMap iteration in any consensus-critical path — on all three workchains.
-- **Cell-native state across the board.** TVM cells, EVM account state, and Uno shielded state all commit into TOS cells. The node's storage layer does not grow a new persistence mechanism per workchain.
+- **Deterministic execution everywhere.** No wall-clock, no OS RNG, no HashMap iteration in any consensus-critical path — on all four workchains.
+- **Cell-native state across the board.** TVM cells, EVM account state, Uno shielded state, and JVM contract state all commit into TOS cells. The node's storage layer does not grow a new persistence mechanism per workchain.
 
 ---
 
 ## Ecosystem surfaces
 
-- ✅ `validator-engine` serves JSON-RPC natively (Ethereum `eth_*` namespace on wc=1, TOS `tos_*` on wc=0, `uno_*` on wc=2)
+- ✅ `validator-engine` serves JSON-RPC natively (Ethereum `eth_*` namespace on wc=1, TOS `tos_*` on wc=0, `uno_*` on wc=2, `jvm_*` on wc=3)
 - ✅ OpenAPI surface in [`doc/openapi.yaml`](doc/openapi.yaml)
 - ✅ Canonical operator workflow through `tosctl`
 - ✅ Health, readiness, metrics, and machine-facing node operations
