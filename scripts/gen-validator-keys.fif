@@ -1,0 +1,37 @@
+#!/usr/bin/fift -s
+// gen-validator-keys.fif — generate N genesis validator key pairs and
+// assemble the `validator-keys.pub` file consumed by `load-keys-from-file`
+// in gen-zerostate*.fif.
+//
+// Usage:
+//   fift -I crypto/fift/lib -s scripts/gen-validator-keys.fif <count> [priv-prefix]
+//
+// Produces, in the current directory:
+//   - <priv-prefix><i>   : the raw 32-byte Ed25519 PRIVATE key for validator i
+//                          (default prefix "val-key-", so val-key-1, val-key-2, ...)
+//   - validator-keys.pub : the concatenation of every 32-byte raw PUBLIC key,
+//                          i.e. count*32 bytes, exactly what load-keys-from-file reads.
+//
+// Each validator's private key file is what that validator's node must hold to
+// sign blocks. Keep them secret and distribute one per operator. For a
+// decentralized launch, prefer having each operator run this for count=1 on
+// their own machine and submit only their 32-byte public key to the
+// coordinator, who concatenates the submissions into validator-keys.pub.
+"Lists.fif" include
+"Key.fif" include
+
+def? $1 { @' $1 (number) 0= abort"count must be a positive integer" } { 3 } cond constant count
+def? $2 { @' $2 } { "val-key-" } cond constant prefix
+
+variable pubs  B{} pubs !
+variable i     0 i !
+{ i @ count < } {
+  prefix i @ 1+ (.) $+            // private-key filename = prefix + (i+1)
+  load-generate-keypair          // ( fname -- pubkey privkey ); writes privkey to file
+  drop                           // privkey already saved; keep pubkey
+  pubs @ swap B+ pubs !          // append the 32-byte raw public key
+  i 1+!
+} while
+pubs @ "validator-keys.pub" B>file
+."Wrote " count . ."validator public keys (" pubs @ Blen . ."bytes) to validator-keys.pub" cr
+."Private keys: " prefix type ."1.." count . cr
