@@ -120,14 +120,17 @@ think about TOS as a distributed supercomputer, or rather a
 with one coherent operator and integration path.
 
 In its current product form, TOS uses this multichain architecture to
-run four distinct execution domains in parallel under one
-masterchain-rooted consensus: the asynchronous TVM-based base
-workchain, a synchronous EVM-oriented workchain for Ethereum-style
-smart contracts, the Uno privacy workchain with PQ-native
-shielded transfers, and the Avata JVM workchain for deterministic
-Java-bytecode contracts. The first three are live in the network's
-zerostate; the JVM domain is implemented and wired end-to-end, with
-its on-chain activation gated behind a governance flag (see
+define four distinct execution domains under one masterchain-rooted
+consensus: the asynchronous TVM-based base workchain, a synchronous
+EVM-oriented workchain for Ethereum-style smart contracts, the Uno
+privacy workchain with PQ-native shielded transfers, and the Avata
+JVM workchain for deterministic Java-bytecode contracts. All four are
+implemented in a single node binary, but a domain is \emph{active}
+only when a corresponding workchain descriptor is present in the
+on-chain configuration. The intended deployment path is therefore
+staged: the network launches with the native chain (Workchain Zero)
+and the other domains are activated individually, by governance, as
+each matures --- without redeploying or restarting validators (see
 \ptref{sp:cur.exec.domains}).
 One node binary (\texttt{validator-engine})
 serves these domains, and one canonical machine-facing surface
@@ -442,11 +445,18 @@ is organized around four concrete execution domains:
 \item {\em Workchain Three\/} ($\workchainid=3$): {\em Avata JVM\/},
   a deterministic Java\,8-bytecode environment in which every
   contract is its own account, executed on a restricted, JIT-free
-  interpreter. It is implemented and wired end-to-end into the node;
-  its on-chain activation is gated behind a governance flag (and the
-  pinning of its runtime hash and genesis set), so it is not yet
-  active on any network.
+  interpreter. Beyond the per-workchain activation common to all
+  domains, the JVM carries two additional activation gates --- its
+  runtime hash and its genesis account set must be pinned before
+  wc=3 can accept contracts.
 \end{itemize}
+All four domains are compiled into the same node binary, but each
+engine is dormant until a corresponding workchain descriptor appears
+in the on-chain configuration. A network may therefore launch with
+only Workchain Zero and bring the remaining domains online one at a
+time, by governance, as each matures; because every validator already
+runs the engine-capable binary, an activation is a configuration
+change rather than a software upgrade.
 The current native-asset naming of these execution domains is
 likewise fixed in product terminology: {\em TOS\/} is the native
 asset of the base chain (Workchain Zero), {\em eTOS\/} is the

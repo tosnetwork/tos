@@ -22,9 +22,10 @@ The zero state is the initial state of the blockchain — block 0 of the masterc
 
 | File | Purpose |
 |------|---------|
-| `crypto/smartcont/gen-zerostate.fif` | Mainnet template (`global_id = 1`) |
+| `crypto/smartcont/gen-zerostate.fif` | Mainnet template (`global_id = 1`), all four workchains |
+| `crypto/smartcont/gen-zerostate-wc0-only.fif` | Native-only launch: registers **just wc=0** in ConfigParam 12; EVM/Uno/JVM are staged in later by governance. Masterchain/economic params are byte-identical to the full template. |
 | `crypto/smartcont/gen-zerostate-test.fif` | Testnet template (`global_id = -3`) |
-| `test/tostester/src/tostester/zerostate.py` | Python wrapper for test/dev generation |
+| `test/tostester/src/tostester/zerostate.py` | Python wrapper for test/dev generation (wc=0/1/2) |
 | `crypto/smartcont/CreateState.fif` | Fift library with `setglobalid`, `register_smc`, `create_state`, etc. |
 
 ### Build tool

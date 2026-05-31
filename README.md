@@ -1,15 +1,15 @@
 # The Open System
 
-**The Open System (TOS)** is a multichain Layer‑1 that runs four distinct execution domains in parallel, on a single masterchain-rooted consensus:
+**The Open System (TOS)** is a multichain Layer‑1 that defines four distinct execution domains over a single masterchain-rooted consensus. All four are implemented in one node binary; the network **launches with the Native chain (wc=0)** and **stages in the other three by governance** as they harden — no redeploy.
 
-| Workchain | Execution model | What it's for |
-|---|---|---|
-| **Native (wc=0)** | **Asynchronous**, message-driven, TVM | High-throughput contracts, sharded scale, actor-style async flows |
-| **EVM (wc=1)** | **Synchronous**, EVM bytecode | Solidity / Ethereum-compatible contracts, wallet-compatible DeFi |
-| **Uno (wc=2)** | **PQ-native privacy**, Plonky3 STARK AIRs | Shielded payments; quantum-safe and bridgeless by architecture |
-| **JVM (wc=3)** | **Deterministic Java 8 bytecode**, Avata JVM | Account-autonomous Java smart contracts *(code-complete; activation gated — see below)* |
+| Workchain | Execution model | What it's for | Launch status |
+|---|---|---|---|
+| **Native (wc=0)** | **Asynchronous**, message-driven, TVM | High-throughput contracts, sharded scale, actor-style async flows | **Live at genesis** |
+| **EVM (wc=1)** | **Synchronous**, EVM bytecode | Solidity / Ethereum-compatible contracts, wallet-compatible DeFi | Implemented — staged activation |
+| **Uno (wc=2)** | **PQ-native privacy**, Plonky3 STARK AIRs | Shielded payments; quantum-safe and bridgeless by architecture | Implemented — staged activation |
+| **JVM (wc=3)** | **Deterministic Java 8 bytecode**, Avata JVM | Account-autonomous Java smart contracts | Implemented — staged activation |
 
-One node binary (`validator-engine`) serves all four workchains. One canonical JSON-RPC surface, one operator path (`tosctl`), one wallet flow. Users choose their execution domain per transaction; validators opt in per workchain. wc=3 (JVM) is implemented and wired end-to-end but **not yet activated on any network**; it turns on through a governance flag once its runtime hash and genesis set are pinned.
+One node binary (`validator-engine`) serves all four workchains: each engine is compiled in but **dormant until a workchain descriptor in `ConfigParam 12` routes traffic to it**. A genesis can ship with wc=0 alone (see [`crypto/smartcont/gen-zerostate-wc0-only.fif`](crypto/smartcont/gen-zerostate-wc0-only.fif)); EVM, Uno, and JVM are then switched on individually — at any masterchain height — through a `ConfigParam 12` governance update as each domain matures. Because every validator already runs the engine-capable binary, activation needs no binary change or restart. One canonical JSON-RPC surface, one operator path (`tosctl`), one wallet flow. Users choose their execution domain per transaction; validators opt in per workchain.
 
 ---
 
@@ -69,6 +69,8 @@ Block production uses **Catchain**, a BFT consensus protocol with a shared-log f
 
 The EVM workchain is a dedicated execution domain for **synchronous, Ethereum-semantic** smart contracts. Developers deploy unmodified Solidity contracts; existing Ethereum tooling works without patches.
 
+> **Launch status: implemented, staged activation.** The `evmone` engine ships in the node binary and stays dormant until wc=1 is added to `ConfigParam 12`. A wc=0-only genesis omits it; governance activates wc=1 when the EVM domain is ready.
+
 ### What's supported
 
 - **Full EVM bytecode** — the contract execution engine is [`evmone`](third-party/evmone), the standards-compliant EVM used in production Ethereum clients. All EVM opcodes, precompiles, and semantics are available.
@@ -96,6 +98,8 @@ Uno is a **post-quantum-native privacy Layer-1** on TOS wc=2. Its single-sentenc
 > **Privacy from inception, quantum-safe from inception, bridgeless by architecture.**
 
 Uno is not a privacy mixer added on top of a public asset. It is a distinct native currency whose entire supply is born shielded at genesis and is **never** reachable through any public-asset pathway. Every transfer on wc=2 is a shielded note-pool transaction producing a Plonky3 STARK proof; on-chain data reveals only `{tx occurred, fee, anchor, spend count, output count}`.
+
+> **Launch status: implemented, staged activation.** The STARK verifier (Plonky3 + ML-KEM via liboqs) ships in the node binary and stays dormant until wc=2 is added to `ConfigParam 12`. "Genesis" above refers to the wc=2 chain's own genesis state, established when governance activates the workchain — a wc=0-only launch omits it.
 
 ### What makes it PQ-native
 
@@ -131,7 +135,7 @@ Full design in [`doc/uno-workchain.md`](doc/uno-workchain.md). Implementation un
 
 The JVM workchain runs **Java 8 bytecode smart contracts** on **Avata**, a C++ JVM that TOS forks and owns (the upstream project is retired). It targets developers who want a mainstream language and JVM tooling without giving up consensus-grade determinism.
 
-> **Status: code-complete, not yet activated.** The engine, RPC namespace, gas model, config parameters, and operator tooling are implemented and wired into `validator-engine`. wc=3 turns on only when governance flips the activation flag (ConfigParam 12) after the runtime hash and genesis wallet set are pinned. No public network runs it yet.
+> **Launch status: implemented, staged activation.** The engine, RPC namespace, gas model, config parameters, and operator tooling are all wired into `validator-engine`; the Avata interpreter ships in the binary and stays dormant until wc=3 is added to `ConfigParam 12`. JVM carries two extra activation gates beyond the other domains: its runtime hash (`stdlib_hash` in ConfigParam 85) and its genesis wallet/deployer set must be pinned first. See [`doc/jvm-mainnet-activation.md`](doc/jvm-mainnet-activation.md).
 
 ### Execution model
 
