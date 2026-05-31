@@ -121,7 +121,7 @@ Users who want composable public liquidity hold public assets (native TOS, EVM-s
 
 ### Architectural constants
 
-- **Wire format**: 1..4 spends × 1..4 outputs per Transfer. PI length: `64 + 64·S + 72·O` bytes. Proofs ~52 KB typical / ~100 KB worst case (when the real Transfer AIR lands; the current MVP AIR is larger).
+- **Wire format**: 1..4 spends × 1..4 outputs per Transfer. PI length: `64 + 64·S + 72·O` bytes. The real Poseidon2 Transfer AIR is implemented; v1 proofs are ~520 KB typical (1-spend/2-output) / ~915 KB worst case (4/4) under the pinned FRI Option B parameters. The original ~52 KB / ~100 KB design target is deferred to a post-v1 `uni-stark → batch-stark` AIR rearchitecture.
 - **Merkle tree**: 32 levels (≈ 4 B-leaf cap), Poseidon2 internal nodes.
 - **Anchor window**: 100 blocks.
 - **Address size**: ~1.26 KB (carries the recipient's ML-KEM-768 public key); shared via QR code, deep link, or wallet DM. Addresses carry a Bech32m envelope with BLAKE3 checksum — wallets and RPC MUST reject malformed envelopes.
