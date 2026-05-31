@@ -360,10 +360,13 @@ these in lockstep whenever either is updated.
 
 ## ConfigParam 29 — Consensus Config (Catchain BFT, fallback when Simplex is not enabled)
 
+Genesis serializes the **`consensus_config_new#d7`** variant (tag `0xd7`; see
+[block.tlb](../crypto/block/block.tlb) line ~772 and `make-vsession-params` in
+`crypto/fift/lib/Config.fif:125`). Its fields:
+
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
-| `flags` | uint6 | **0** | Bit flags (0 = default) |
-| `use_quic` | Bool | **true** | Use QUIC transport for consensus (v4+) |
+| `flags` | uint7 | **0** | Bit flags (must be 0) |
 | `new_catchain_ids` | Bool | **true** | Use new-style catchain session IDs |
 | `round_candidates` | uint8 | **3** | Block candidates proposed per round |
 | `next_candidate_delay_ms` | uint32 | **2,000** | Delay (ms) before next candidate if first fails |
@@ -373,8 +376,12 @@ these in lockstep whenever either is updated.
 | `catchain_max_deps` | uint32 | **4** | Max catchain DAG dependencies |
 | `max_block_bytes` | uint32 | **2,097,152** (2 MB) | Maximum block size |
 | `max_collated_bytes` | uint32 | **2,097,152** (2 MB) | Maximum collated data size |
-| `proto_version` | uint16 | **5** | Consensus protocol version |
-| `catchain_max_blocks_coeff` | uint32 | **10,000** | Catchain blocks-per-round limit. 0 = unlimited (dev only). |
+
+> The TL-B also defines later variants that the genesis cell does **not** use:
+> `consensus_config_v3#d8` adds `proto_version:uint16`, and
+> `consensus_config_v4#d9` adds `use_quic:Bool` and
+> `catchain_max_blocks_coeff:uint32` (and narrows `flags` to 6 bits). These
+> fields are only present if a later config update installs a `#d8`/`#d9` cell.
 
 Block time: ~3-4s on local testnet (3 validators), ~5s on production network.
 
@@ -382,7 +389,9 @@ Block time: ~3-4s on local testnet (3 validators), ~5s on production network.
 
 Simplex replaces Catchain BFT as the primary consensus protocol. The leader produces blocks continuously without waiting for full BFT voting; notarization happens asynchronously.
 
-Both `mc` and `shard` use the same `NewConsensusConfig`:
+Both `mc` and `shard` use the same `NewConsensusConfig`. Genesis serializes the
+**`simplex_config#21`** variant (tag `0x21`; `make-simplex-params` in
+`crypto/fift/lib/Config.fif`), which carries exactly these five fields:
 
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
@@ -392,7 +401,10 @@ Both `mc` and `shard` use the same `NewConsensusConfig`:
 | `first_block_timeout_ms` | uint32 | **1,000** | Timeout for leader's first block |
 | `max_leader_window_desync` | uint32 | **2** | Max allowed desync between validators |
 
-Noncritical parameters (tunable via governance without changing the config structure):
+Noncritical parameters — these are **not** part of the genesis `#21` cell; they
+are validator runtime defaults. The `simplex_config_v2#22` variant adds a
+`HashmapE 8 uint32` (`noncritical_params`) that can override them on-chain
+without changing the config structure:
 
 | Index | Field | Value | Description |
 |-------|-------|-------|-------------|
@@ -566,41 +578,71 @@ Per-chain parameters for wc=3 (Avata JVM workchain). The workchain descriptor
 uses ConfigParam 12 with `vm_version = 0x4a564d31` (`"JVM1"`) and
 `vm_mode = 0`; all JVM-specific limits and gas tables live in ConfigParam 85.
 
-Root cell layout:
+Root cell layout (default values from `JvmConfig::default_activation()`,
+`jvm/core/config-param.cpp:276-331`):
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `magic` | uint32 | `0x4a564d43` (`"JVMC"`) |
-| `schema_version` | uint8 | **2** (account-native topology wire format) |
-| `chain_id` | uint32 | JVM workchain chain id; must be non-zero |
-| `gas_price` | uint64 | nanotomi price per JVM gas unit |
-| `max_gas_per_tx` | uint64 | hard per-transaction gas limit |
-| `max_class_bytes` | uint32 | max byte size for one admitted contract class |
-| `max_heap_bytes` | uint32 | deterministic transaction heap/memory limit |
-| `max_storage_cells` | uint32 | max account-state cell budget |
-| `class_file_major` | uint16 | **52** for Java 8 class files |
-| `gas_schedule_version` | uint8 | non-zero version of the embedded gas table |
-| `stdlib_hash` | bytes32 | hash commitment to the admitted `rt.jar` / API profile |
-| `opcode_gas_table` | ref | linked gas table with exactly 256 uint64 entries |
-| `helper_gas_table` | ref | linked gas table with exactly 14 uint64 helper entries |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `magic` | uint32 | `0x4a564d43` (`"JVMC"`) | Fixed magic |
+| `schema_version` | uint8 | **2** | Account-native topology wire format |
+| `chain_id` | uint32 | **3** | JVM workchain chain id; must be non-zero |
+| `gas_price` | uint64 | **1,000** | Nanotomi price per JVM gas unit |
+| `max_gas_per_tx` | uint64 | **1,000,000** | Hard per-transaction gas limit |
+| `max_class_bytes` | uint32 | **65,536** (64 KiB) | Max byte size for one admitted contract class |
+| `max_heap_bytes` | uint32 | **4,194,304** (4 MiB) | Deterministic transaction heap/memory limit |
+| `max_storage_cells` | uint32 | **65,536** | Max account-state cell budget |
+| `class_file_major` | uint16 | **52** | Java 8 class-file major version |
+| `gas_schedule_version` | uint8 | **1** | Non-zero version of the embedded gas table |
+| `stdlib_hash` | bytes32 | **0** (sentinel) | Hash commitment to the admitted `rt.jar` / API profile; stays zero until pinned at activation (see [jvm-rt-reproducibility.md](jvm-rt-reproducibility.md)) |
+| `opcode_gas_table` | ref | **256** entries | Linked gas table with exactly 256 uint64 entries |
+| `helper_gas_table` | ref | **25** entries | Linked gas table with exactly 25 uint64 helper entries |
 
 Each gas-table cell stores `chunk:uint8` followed by `chunk` uint64 costs and,
 when more entries remain, one reference to the next cell. `chunk` must be in
 `1..15`; every gas cost must be in `1..UINT64_MAX-1`.
 
-Helper gas entries are ordered by the Avata ABI constants: storage load,
-storage store base, storage store byte, storage clear, object allocation word,
-array allocation base, array allocation element, `System.arraycopy()` base,
-`System.arraycopy()` element, native call, event base, event topic, event
-data byte, and storage load byte.
+The 25 helper gas entries are ordered by the Avata ABI constants
+(`jvm/core/config-param.cpp:293-329`, mirroring `DefaultContractHelperGasCosts`
+in `machine.cpp`):
 
-The `storage load byte` entry (index 13) was added in Round 53 of the security
-review.  Pre-Round-53 `Storage.load` charged only the fixed `storage load`
+| Idx | Helper | Default gas | Added |
+|-----|--------|------------:|-------|
+| 0 | `STORAGE_LOAD` | 20 | — |
+| 1 | `STORAGE_STORE_BASE` | 100 | — |
+| 2 | `STORAGE_STORE_BYTE` | 1 | — |
+| 3 | `STORAGE_CLEAR` | 50 | — |
+| 4 | `ALLOCATION_OBJECT_WORD` | 1 | — |
+| 5 | `ALLOCATION_ARRAY_BASE` | 8 | — |
+| 6 | `ALLOCATION_ARRAY_ELEMENT` | 1 | — |
+| 7 | `ARRAYCOPY_BASE` | 3 | — |
+| 8 | `ARRAYCOPY_ELEMENT` | 1 | — |
+| 9 | `NATIVE_CALL` | 2 | — |
+| 10 | `EVENT_BASE` | 50 | — |
+| 11 | `EVENT_TOPIC` | 10 | — |
+| 12 | `EVENT_BYTE` | 1 | — |
+| 13 | `STORAGE_LOAD_BYTE` | 1 | Round 53 |
+| 14 | `CONTEXT_READ` | 5 | Phase A |
+| 15 | `CRYPTO_SHA256_BASE` | 60 | Phase B |
+| 16 | `CRYPTO_SHA256_BYTE` | 12 | Phase B |
+| 17 | `CRYPTO_SECP256K1_RECOVER` | 3,000 | Phase B |
+| 18 | `CRYPTO_SECP256K1_VERIFY` | 3,000 | Phase B |
+| 19 | `CRYPTO_ED25519_VERIFY` | 2,000 | Phase B |
+| 20 | `CRYPTO_BLS12381_VERIFY` | 43,000 | Phase B |
+| 21 | `MESSAGE_BASE` | 500 | — |
+| 22 | `MESSAGE_BYTE` | 1 | — |
+| 23 | `CREATE_ACCOUNT_BASE` | 1,000 | Phase H |
+| 24 | `CREATE_ACCOUNT_BYTE` | 1 | Phase H |
+
+The `STORAGE_LOAD_BYTE` entry (index 13) was added in Round 53 of the security
+review.  Pre-Round-53 `Storage.load` charged only the fixed `STORAGE_LOAD`
 helper (~20 gas) regardless of value size, but the host walked the storage-
 value chain and `memcpy`'d the full payload (up to 1 MiB) into the JVM heap.
 A contract that had seeded a large slot once could repeatedly read it for
 ~20 gas while validators paid O(N) bandwidth per call.  The new entry charges
-1 gas per loaded byte by default, mirroring `storage store byte`.
+1 gas per loaded byte by default, mirroring `STORAGE_STORE_BYTE`. Indices 14–24
+were added incrementally (Phase A context reads, Phase B crypto primitives, the
+`System.sendMessage` message helpers, and Phase H `System.createAccount`); each
+addition changed the ConfigParam-85 wire layout, acceptable pre-launch.
 
 **Activation**: validators parse and validate ConfigParam 85 through
 `jvm/core/config-param.cpp` during workchain-engine resolution. The
@@ -621,13 +663,13 @@ to bound the aggregate footprint of the singleton-executor's shared class store;
 under v2 each contract is its own wc=3 account and bytecode sharing is handled
 by Cell DB physical hash dedup (see `crypto/vm/db/CellStorage.cpp:267`), so the
 field has been removed. `parse_jvm_config_cell` rejects any cell whose
-`schema_version != 2` (`jvm/core/config-param.cpp:233-235`); a node holding a
+`schema_version != 2` (`jvm/core/config-param.cpp:234-236`); a node holding a
 v1 ConfigParam 85 cell will fail to resolve the wc=3 engine and fall closed.
 This is a chain-config breaking change, acceptable because the previous schema
 was never on mainnet.
 
 **Migration note.** Nodes and genesis tooling must regenerate ConfigParam 85
-from `JvmConfig::default_activation()` (`jvm/core/config-param.cpp:275-307`),
+from `JvmConfig::default_activation()` (`jvm/core/config-param.cpp:276-331`),
 which now omits `max_total_class_bytes` and emits `schema_version=2`. Operators
 maintaining a hand-rolled `JvmConfig` builder must drop the
 `max_total_class_bytes` initializer and re-run `build_jvm_config_cell`.
