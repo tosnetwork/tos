@@ -54,7 +54,7 @@ This is how the native layer reaches very high throughput: the work is distribut
 
 ### Consensus
 
-Block production uses **Catchain**, a BFT consensus protocol with a shared-log foundation (see `doc/catchain.pdf`). Validators participate per workchain + shard; the masterchain provides global signing and handles validator-set rotation. TOS is actively converging elements of the protocol toward a **Simplex-oriented** design (see `doc/simplex.pdf`) for cleaner proof-of-progress guarantees.
+Block production runs **Simplex** — a fast, leader-driven consensus (see `doc/simplex.pdf`) — as the **primary** path, with **Catchain** BFT (a shared-log protocol, see `doc/catchain.pdf`) retained as a conservative Byzantine fallback. The leader produces blocks continuously without waiting for full BFT voting; notarization is asynchronous. Validators participate per workchain + shard; the masterchain provides global signing and handles validator-set rotation. The active profile is selected on-chain (`ConfigParam 30` carries the Simplex config, `ConfigParam 29` the Catchain fallback).
 
 ### What contract teams get
 
@@ -183,13 +183,13 @@ Design and operations are documented under [`doc/jvm/`](doc/jvm/): [`jvm-v2-acco
 - ✅ Trust-tier and verification model for different client types
 - ✅ Transaction history and indexed-data contracts for explorers and backends
 - ✅ Token and application standardization work (TEP-style surfaces)
-- ✅ Catchain-based consensus foundation with ongoing Simplex-oriented convergence work
+- ✅ Simplex fast leader-driven consensus (primary) with Catchain BFT fallback
 
 ---
 
 ## Build
 
-Build instructions — including Uno workchain prerequisites (liboqs, corrosion-rs, Rust toolchain) — are in [`BUILD.md`](BUILD.md).
+Build instructions — including Uno workchain prerequisites (liboqs, corrosion-rs, Rust toolchain) and JVM workchain prerequisites (openjdk-8 for the `rt.jar` runtime) — are in [`BUILD.md`](BUILD.md).
 
 ## License
 
