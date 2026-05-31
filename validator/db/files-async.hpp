@@ -107,7 +107,7 @@ class ReadFile : public td::actor::Actor {
       promise_.set_result(S.move_as_ok());
     } else {
       // Differentiating "missing file" from other I/O errors is
-      // tracked as V-026 in doc/TODOS.md.
+      // tracked as V-026.
       if (flags_ & Flags::f_disable_log) {
         LOG(DEBUG) << "missing file " << file_name_;
       } else {

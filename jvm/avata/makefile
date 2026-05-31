@@ -1522,7 +1522,7 @@ $(converter): $(converter-objects) $(converter-tool-objects)
 # builds on the same machine + JDK MUST produce byte-identical jars.
 # Cross-machine + cross-JDK reproducibility is a stronger property
 # that depends on the toolchain version itself; see
-# doc/jvm-rt-reproducibility.md for the operator-side procedure.
+# doc/jvm/jvm-rt-reproducibility.md for the operator-side procedure.
 #
 # Why 1980-01-01 rather than SOURCE_DATE_EPOCH: the jar tool in
 # OpenJDK 8 (the current Avata stdlib build target) doesn't honor
@@ -1560,7 +1560,7 @@ $(build)/api.jar: $(classpath-dep) $(classpath-jar-dep)
 # any non-determinism in the jar pipeline (filesystem ordering,
 # mtime leakage, etc.) at CI time rather than on launch day.
 # Cross-machine + cross-JDK reproducibility is a stronger property
-# (see doc/jvm-rt-reproducibility.md); this target only catches
+# (see doc/jvm/jvm-rt-reproducibility.md); this target only catches
 # same-machine + same-toolchain regressions.
 .PHONY: check-rt-jar-determinism
 check-rt-jar-determinism: $(build)/rt.jar

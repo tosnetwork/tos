@@ -92,7 +92,7 @@ unostate2_rhash unostate2_fhash now 0 4 8 2 add-uno-workchain
 // a genesis Deployer the chain can move funds between pre-seeded
 // Wallets but can never deploy further wc=3 contracts (Wallet only
 // exposes System.sendMessage, not System.createAccount).  See
-// doc/jvm-mainnet-activation.md §2-§3 for the operator workflow.
+// doc/jvm/jvm-mainnet-activation.md §2-§3 for the operator workflow.
 //
 // TODO(jvm-genesis-wiring): the launch operator must replace the
 // empty-accounts branch below with a concrete allocation tuple:

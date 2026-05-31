@@ -900,7 +900,7 @@ impl JvmWalletDeployCmd {
         // workflow is to seed the Deployer at genesis via the Fift
         // word `jvm-zerostate-with-deployers-from-alloc`
         // (`crypto/block/create-state.cpp`); see
-        // `doc/jvm-mainnet-activation.md` §3.
+        // `doc/jvm/jvm-mainnet-activation.md` §3.
         let ext_msg_boc =
             build_ext_in_message(3, deployer_addr, deploy_call_cell)?;
 

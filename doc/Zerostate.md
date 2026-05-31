@@ -395,7 +395,7 @@ keypairs/balances, and pinning `Wallet.class` bytes are operational decisions
 made at activation. Note also that the **tostester local testnet does not
 register wc=3 at all** (its `test/tostester/src/tostester/zerostate.py` template
 wires only wc=0/1/2). Full runbook in
-[jvm-mainnet-activation.md](jvm-mainnet-activation.md).
+[jvm-mainnet-activation.md](jvm/jvm-mainnet-activation.md).
 
 ## Related Docs
 

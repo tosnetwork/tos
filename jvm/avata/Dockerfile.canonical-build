@@ -2,7 +2,7 @@
 # `stdlib_hash` outside of GitHub Actions.
 #
 # Phase Z — closes the convenience gap from
-# doc/jvm-rt-reproducibility.md §5: the CI workflow
+# doc/jvm/jvm-rt-reproducibility.md §5: the CI workflow
 # (.github/workflows/check-jvm-rt-determinism.yml) pins the
 # canonical toolchain (ubuntu-22.04 + openjdk-8-jdk-headless), but
 # operators without GitHub Actions had to install the same combo

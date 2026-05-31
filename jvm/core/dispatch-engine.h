@@ -29,7 +29,7 @@ class WorkchainExecutionRegistry;
 
 namespace jvm_workchain {
 
-// Engine selector: "JVM1" big-endian, matches doc/jvm-roadmap.md.
+// Engine selector: "JVM1" big-endian.
 // vm_version = 0x4a564d31 sign-extended to int32_t = 0x4a564d31 (positive).
 constexpr std::int32_t kJvmVmVersion = 0x4a564d31;
 

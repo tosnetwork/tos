@@ -135,7 +135,7 @@ Full design in [`doc/uno-workchain.md`](doc/uno-workchain.md). Implementation un
 
 The JVM workchain runs **Java 8 bytecode smart contracts** on **Avata**, a C++ JVM that TOS forks and owns (the upstream project is retired). It targets developers who want a mainstream language and JVM tooling without giving up consensus-grade determinism.
 
-> **Launch status: implemented, staged activation.** The engine, RPC namespace, gas model, config parameters, and operator tooling are all wired into `validator-engine`; the Avata interpreter ships in the binary and stays dormant until wc=3 is added to `ConfigParam 12`. JVM carries two extra activation gates beyond the other domains: its runtime hash (`stdlib_hash` in ConfigParam 85) and its genesis wallet/deployer set must be pinned first. See [`doc/jvm-mainnet-activation.md`](doc/jvm-mainnet-activation.md).
+> **Launch status: implemented, staged activation.** The engine, RPC namespace, gas model, config parameters, and operator tooling are all wired into `validator-engine`; the Avata interpreter ships in the binary and stays dormant until wc=3 is added to `ConfigParam 12`. JVM carries two extra activation gates beyond the other domains: its runtime hash (`stdlib_hash` in ConfigParam 85) and its genesis wallet/deployer set must be pinned first. See [`doc/jvm/jvm-mainnet-activation.md`](doc/jvm/jvm-mainnet-activation.md).
 
 ### Execution model
 
@@ -154,7 +154,7 @@ The JVM workchain runs **Java 8 bytecode smart contracts** on **Avata**, a C++ J
 - **Operator tooling** via `tosctl` JVM wallet subcommands (key/address generation, state queries; deploy/execute flows depend on genesis seeding).
 - **DoS-hardened resource limits**: `max_gas_per_tx = 1M`, `max_heap = 4 MiB`, `max_class_bytes = 64 KiB`, `max_storage_cells = 65536`, `max_outbound_actions = 12`, bounded RPC receipt scans.
 
-Design and operations are documented across [`doc/jvm-roadmap.md`](doc/jvm-roadmap.md), [`doc/jvm-v2-account-topology.md`](doc/jvm-v2-account-topology.md), [`doc/jvm-rt.md`](doc/jvm-rt.md), [`doc/jvm-rt-reproducibility.md`](doc/jvm-rt-reproducibility.md), [`doc/jvm-mainnet-activation.md`](doc/jvm-mainnet-activation.md), [`doc/jvm-validator-ops.md`](doc/jvm-validator-ops.md), and [`doc/jvm-dos-hardening.md`](doc/jvm-dos-hardening.md). Implementation under [`jvm/`](jvm/).
+Design and operations are documented under [`doc/jvm/`](doc/jvm/): [`jvm-v2-account-topology.md`](doc/jvm/jvm-v2-account-topology.md), [`jvm-rt.md`](doc/jvm/jvm-rt.md), [`jvm-rt-reproducibility.md`](doc/jvm/jvm-rt-reproducibility.md), [`jvm-mainnet-activation.md`](doc/jvm/jvm-mainnet-activation.md), [`jvm-validator-ops.md`](doc/jvm/jvm-validator-ops.md), [`jvm-profile.md`](doc/jvm/jvm-profile.md), [`jvm-wallet.md`](doc/jvm/jvm-wallet.md), and [`jvm-dos-hardening.md`](doc/jvm/jvm-dos-hardening.md). Implementation under [`jvm/`](jvm/).
 
 ---
 

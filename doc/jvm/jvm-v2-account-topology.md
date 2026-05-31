@@ -7,7 +7,7 @@ shapes, magics, and field orders are consensus-stable.
 Engine selector remains `vm_version = 0x4a564d31` ("JVM1") in ConfigParam 12.
 The wire-level pivot is the per-account state envelope (`JvmContractAccountState`,
 JVAC) and the per-contract account-creation flow; ConfigParam 85 itself is
-bumped to `schema_version=2` (see [ConfigParam.md §85](ConfigParam.md#configparam-85--jvm-workchain-chain-config)).
+bumped to `schema_version=2` (see [ConfigParam.md §85](../ConfigParam.md#configparam-85--jvm-workchain-chain-config)).
 
 ## 1. Overview / Topology
 
@@ -557,7 +557,6 @@ to confirm; additional tests may have been added since this doc was written.
 
 ## Related docs
 
-- [ConfigParam.md §85](ConfigParam.md#configparam-85--jvm-workchain-chain-config) — `schema_version=2` ConfigParam 85 layout and migration.
-- [jvm-roadmap.md](jvm-roadmap.md) — phased roadmap and out-of-scope items.
-- [block.tlb](../crypto/block/block.tlb) — canonical TLB schema, including
+- [ConfigParam.md §85](../ConfigParam.md#configparam-85--jvm-workchain-chain-config) — `schema_version=2` ConfigParam 85 layout and migration.
+- [block.tlb](../../crypto/block/block.tlb) — canonical TLB schema, including
   `action_create_account#4a435241` at line 420.

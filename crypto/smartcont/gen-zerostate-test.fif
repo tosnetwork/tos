@@ -70,7 +70,7 @@ unostate2_rhash unostate2_fhash now 0 4 8 2 add-uno-workchain
 // JVM path.  Ships with an EMPTY ShardAccounts dict for now; a testnet
 // run that needs working wc=3 senders from block 0 must replace
 // `3 mkemptyShardState` with a `jvm-zerostate-with-deployers-from-alloc`
-// invocation (see gen-zerostate.fif's wc=3 block + doc/jvm-mainnet-activation.md).
+// invocation (see gen-zerostate.fif's wc=3 block + doc/jvm/jvm-mainnet-activation.md).
 
 3 mkemptyShardState
 

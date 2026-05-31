@@ -7,8 +7,7 @@ This document describes the on-chain wallet contract that ships in the
 wc=3 (Avata JVM) `rt.jar`.  Audience: wc=3 contract developers,
 off-chain wallet authors, and validator/full-node operators who need
 to understand the canonical wc=3 account shape.  For the surrounding
-account topology see [`jvm-v2-account-topology.md`](jvm-v2-account-topology.md);
-for the workchain itself see [`jvm-roadmap.md`](jvm-roadmap.md).
+account topology see [`jvm-v2-account-topology.md`](jvm-v2-account-topology.md).
 
 ## 1. What it is
 

@@ -8,7 +8,7 @@ name: Check JVM rt.jar determinism
 # ordering leakage, an unstripped timestamp, etc.) would silently
 # break this property; this workflow catches it pre-merge.
 #
-# See doc/jvm-rt-reproducibility.md for the build-flow background
+# See doc/jvm/jvm-rt-reproducibility.md for the build-flow background
 # and the canonical hash check is the `make check-rt-jar-determinism`
 # target landed in Phase V.
 
@@ -59,7 +59,7 @@ jobs:
       # makefile pins -source 1.8 -target 1.8 and caps host-java-
       # version at 8).  Using a fixed JDK from the distro pin
       # (ubuntu-22.04 → openjdk-8u-jdk-headless) is the same
-      # toolchain choice doc/jvm-rt-reproducibility.md §5 recommends
+      # toolchain choice doc/jvm/jvm-rt-reproducibility.md §5 recommends
       # operators standardize on.  The arm64 runner ships the same
       # OpenJDK 8 build for the aarch64 architecture.
       - name: Install OpenJDK 8

@@ -280,4 +280,4 @@ When changing wc=3 code that touches any of the above:
 | `jvm/core/message-host.{h,cpp}`                         | Outbound action queue caps            |
 | `jvm/core/storage-cell-host.h`                          | Per-value storage limits              |
 | `crypto/test/test-workchain-execution-registry.cpp`    | Cap tests (114 + counting)            |
-| `doc/jvm-validator-ops.md`                              | Operator runbook (cross-references this doc) |
+| `doc/jvm/jvm-validator-ops.md`                              | Operator runbook (cross-references this doc) |

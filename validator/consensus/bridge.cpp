@@ -33,7 +33,7 @@ class ManagerFacadeImpl : public ManagerFacade {
     params.validator_set = validator_set_;
     params.collator_opts = opts_->get_collator_options();
     // Routing through CollationManager when the accelerator is
-    // enabled is tracked as V-022 in doc/TODOS.md.
+    // enabled is tracked as V-022.
     auto [task, promise] = td::actor::StartedTask<BlockCandidate>::make_bridge();
     run_collate_query(std::move(params), manager_, std::move(cancellation_token), std::move(promise));
     auto candidate = co_await std::move(task);

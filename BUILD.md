@@ -231,7 +231,7 @@ make -C jvm/avata platform=linux arch=x86_64 process=interpret mode=fast \
 > vendor/version, so a different JDK builds a *runnable* `rt.jar` that will
 > **not** reproduce the canonical hash
 > `ae4ff3b7e557a8acffe31e9b41959e811c67dea87b6c6c3e38129466e5ade765`. See
-> [`doc/jvm-rt-reproducibility.md`](doc/jvm-rt-reproducibility.md) for the
+> [`doc/jvm/jvm-rt-reproducibility.md`](doc/jvm/jvm-rt-reproducibility.md) for the
 > canonical build and [`scripts/jvm-testnet-genesis-rehearsal.sh`](scripts/jvm-testnet-genesis-rehearsal.sh)
 > for an end-to-end jar-build + hash + zerostate rehearsal.
 

@@ -926,7 +926,7 @@ bool Collator::unpack_last_mc_state() {
                << " (upgrade validator software?)";
   }
   // Tightening lt bounds with prev_mc_block extents is tracked as
-  // V-010 in doc/TODOS.md.
+  // V-010.
   return true;
 }
 
@@ -1137,7 +1137,7 @@ void Collator::got_neighbor_msg_queue(unsigned i, Ref<OutMsgQueueProof> res) {
   outq_descr.clear();
   // require masterchain blocks referred to in ProcessedUpto.
   // Skipping this loop when our output queue has no messages for
-  // the neighbor shard is tracked as V-009 in doc/TODOS.md.
+  // the neighbor shard is tracked as V-009.
   for (const auto& entry : descr.processed_upto->list) {
     Ref<MasterchainStateQ> state;
     if (!request_aux_mc_state(entry.mc_seqno, state)) {
@@ -2473,9 +2473,9 @@ td::actor::Task<> Collator::do_collate_inner() {
     // a block that every validator rejects.  This hook point exists so
     // that the logic can be added once V-002, V-003, and the missing
     // Transaction::serialize cases are implemented.
-    // See V-011 in doc/TODOS.md.
+    // See V-011.
     LOG(DEBUG) << "skipping merge prepare/install for large smart contracts"
-               << " (globally disabled; see V-011/V-002/V-003 in doc/TODOS.md)";
+               << " (globally disabled; see V-011/V-002/V-003)";
   }
   // 4. import inbound internal messages, process or transit
   LOG(INFO) << "process inbound internal messages";
@@ -2496,9 +2496,9 @@ td::actor::Task<> Collator::do_collate_inner() {
     // a block that every validator rejects.  This hook point exists so
     // that the logic can be added once V-004, V-005, and the missing
     // Transaction::serialize cases are implemented.
-    // See V-012 in doc/TODOS.md.
+    // See V-012.
     LOG(DEBUG) << "skipping split prepare/install for large smart contracts"
-               << " (globally disabled; see V-012/V-004/V-005 in doc/TODOS.md)";
+               << " (globally disabled; see V-012/V-004/V-005)";
   }
   // 8. tock transactions
   LOG(INFO) << "create tock transactions";
@@ -3548,8 +3548,7 @@ td::Result<std::unique_ptr<block::transaction::Transaction>> Collator::impl_crea
       }
     };
     // ihr_delivered is hard-coded to false; deriving it from
-    // IhrPendingInfo when IHR is reactivated is tracked as V-013
-    // in doc/TODOS.md.
+    // IhrPendingInfo when IHR is reactivated is tracked as V-013.
     bool ihr_delivered = false;
     if (!trans->unpack_input_msg(ihr_delivered, action_phase_cfg)) {
       if (external) {
@@ -4163,7 +4162,7 @@ bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalT
   // 6.1. check whether we have already processed this message by IHR
   //      (then create a msg_discard_fin InMsg and remove record
   //      from IhrPendingInfo). Implementing the IHR pending-info
-  //      lookup is tracked as V-014 in doc/TODOS.md.
+  //      lookup is tracked as V-014.
   // 7. decide what to do with the message
   if (!to_us) {
     // destination is outside our shard, relay transit message

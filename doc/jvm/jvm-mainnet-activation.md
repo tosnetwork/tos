@@ -7,8 +7,7 @@ the TOS mainnet.  Audience: network operators / governance.  All
 referenced code is on `origin/main` as of the document date; line
 numbers are accurate but may shift as the tree evolves.
 
-For background see [`jvm-roadmap.md`](jvm-roadmap.md) (phase
-breakdown, design rationale) and
+For background see
 [`jvm-v2-account-topology.md`](jvm-v2-account-topology.md) (state
 shape, address derivation, deploy flow).
 

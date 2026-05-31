@@ -593,7 +593,7 @@ Root cell layout (default values from `JvmConfig::default_activation()`,
 | `max_storage_cells` | uint32 | **65,536** | Max account-state cell budget |
 | `class_file_major` | uint16 | **52** | Java 8 class-file major version |
 | `gas_schedule_version` | uint8 | **1** | Non-zero version of the embedded gas table |
-| `stdlib_hash` | bytes32 | **0** (sentinel) | Hash commitment to the admitted `rt.jar` / API profile; stays zero until pinned at activation (see [jvm-rt-reproducibility.md](jvm-rt-reproducibility.md)) |
+| `stdlib_hash` | bytes32 | **0** (sentinel) | Hash commitment to the admitted `rt.jar` / API profile; stays zero until pinned at activation (see [jvm-rt-reproducibility.md](jvm/jvm-rt-reproducibility.md)) |
 | `opcode_gas_table` | ref | **256** entries | Linked gas table with exactly 256 uint64 entries |
 | `helper_gas_table` | ref | **25** entries | Linked gas table with exactly 25 uint64 helper entries |
 

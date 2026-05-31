@@ -19,7 +19,7 @@ The local testnet carries **three independent workchains** under one validator s
 > wc=0/1/2. The production generator `crypto/smartcont/gen-zerostate.fif`
 > *does* register wc=3 (empty, `stdlib_hash = 0`) via `add-jvm-workchain`, but
 > the tostester path does not. So this local cluster runs three chains; see
-> [`jvm-mainnet-activation.md`](jvm-mainnet-activation.md) for the wc=3 bring-up.
+> [`jvm-mainnet-activation.md`](jvm/jvm-mainnet-activation.md) for the wc=3 bring-up.
 
 All three chains share the **same validator set**, the **same catchain consensus**, and the **same** `/data/tos-global.json`. Deployment is a single `setup-testnet.sh` invocation — no per-chain activation flag is needed; wc=1 and wc=2 are wired into the zerostate from birth (via `add-evm-workchain-v2` + `add-uno-workchain-v2` in `test/tostester/src/tostester/zerostate.py`). Verify post-genesis with:
 

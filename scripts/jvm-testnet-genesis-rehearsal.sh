@@ -43,7 +43,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 # Pin the build platform; rt.jar reproducibility requires a
-# canonical toolchain (see doc/jvm-rt-reproducibility.md §5).
+# canonical toolchain (see doc/jvm/jvm-rt-reproducibility.md §5).
 # The Phase W CI workflow uses ubuntu-22.04 + openjdk-8-jdk-
 # headless; local runs SHOULD match.
 PLATFORM="${JVM_REHEARSAL_PLATFORM:-linux-x86_64}"
@@ -63,7 +63,7 @@ RT_JAR="${REPO_ROOT}/jvm/avata/build/${PLATFORM}/rt.jar"
 # Phase DD: use the canonical algorithm (domain-tagged + length-
 # prefixed sha256), NOT plain sha256.  See
 # `jvm/avata/tools/compute-stdlib-hash.py` and
-# `doc/jvm-rt-reproducibility.md §2.1`.
+# `doc/jvm/jvm-rt-reproducibility.md §2.1`.
 STDLIB_HASH=$(python3 "${REPO_ROOT}/jvm/avata/tools/compute-stdlib-hash.py" "${RT_JAR}")
 echo "  rt.jar:        ${RT_JAR}"
 echo "  rt.jar size:   $(stat -c '%s' "${RT_JAR}" 2>/dev/null || stat -f '%z' "${RT_JAR}") bytes"
@@ -135,4 +135,4 @@ echo
 echo "Cross-operator reproducibility check: every operator running"
 echo "this script with the same toolchain MUST see the same three"
 echo "hashes above.  Divergence → toolchain mismatch (see"
-echo "doc/jvm-rt-reproducibility.md §6 troubleshooting)."
+echo "doc/jvm/jvm-rt-reproducibility.md §6 troubleshooting)."

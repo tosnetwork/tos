@@ -275,6 +275,6 @@ coordinator can diff the jars byte-for-byte to find the source.
 | `jvm/avata/tools/normalize-jar-timestamps.py`       | ZIP timestamp canonicalizer           |
 | `make check-rt-jar-determinism`                     | Self-verify same-machine reproducibility |
 | `make print-rt-jar-stdlib-hash`                     | Emit the sha256 for ConfigParam 85    |
-| `doc/jvm-mainnet-activation.md` §5                  | Where stdlib_hash gets committed      |
-| `doc/jvm-validator-ops.md` §3.1                     | Operator-side rt.jar setup            |
-| `doc/jvm-dos-hardening.md`                          | Why stdlib_hash matters (consensus gate) |
+| `doc/jvm/jvm-mainnet-activation.md` §5                  | Where stdlib_hash gets committed      |
+| `doc/jvm/jvm-validator-ops.md` §3.1                     | Operator-side rt.jar setup            |
+| `doc/jvm/jvm-dos-hardening.md`                          | Why stdlib_hash matters (consensus gate) |

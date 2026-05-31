@@ -1,7 +1,7 @@
 # JVM (wc=3) Validator Operations Runbook
 
 > **Status**: draft for testnet launch.  Mirrors the structure of
-> [`doc/uno-v1-validator-ops.md`](uno-v1-validator-ops.md).  Several
+> [`doc/uno-v1-validator-ops.md`](../uno-v1-validator-ops.md).  Several
 > concrete commands and metric names below are marked **TBD** —
 > they depend on shipped binary surfaces still landing.  Where TBD,
 > the cited source file is the current truth.
@@ -14,8 +14,8 @@ This runbook is for a **TOS validator operator** already running a
 healthy TOS validator on `wc=0` (and optionally `wc=1` / `wc=2`)
 who wants to **opt into `wc=3` (JVM)**.  It does not cover
 first-time TOS validator setup — that lives in
-[`doc/Validator.md`](Validator.md) and
-[`doc/Validator-Local.md`](Validator-Local.md).
+[`doc/Validator.md`](../Validator.md) and
+[`doc/Validator-Local.md`](../Validator-Local.md).
 
 JVM does not add a separate node binary: the same
 `validator-engine` picks up `wc=3` once the engine registration is
@@ -95,11 +95,11 @@ For a public testnet bring-up:
    headless), either via the Phase-W CI workflow
    (`.github/workflows/check-jvm-rt-determinism.yml`) or the
    Phase-Z Dockerfile (`jvm/avata/Dockerfile.canonical-build`).
-   See [`doc/jvm-rt-reproducibility.md`](jvm-rt-reproducibility.md)
+   See [`doc/jvm/jvm-rt-reproducibility.md`](jvm-rt-reproducibility.md)
    for the full reproducibility procedure.
 2. The coordinator publishes the rt.jar bytes + its canonical hash
    (Phase DD algorithm — domain-tagged, NOT plain sha256; see
-   `doc/jvm-rt-reproducibility.md §2.1`) in the testnet release
+   `doc/jvm/jvm-rt-reproducibility.md §2.1`) in the testnet release
    notes.  The current canonical hash (post-Phase-DD) is
    `ae4ff3b7e557a8acffe31e9b41959e811c67dea87b6c6c3e38129466e5ade765`;
    any change to `jvm/avata/rt/` updates this value, with the new
@@ -153,13 +153,13 @@ masterchain config:
 * **ConfigParam 12** — the WorkchainSet — must carry a `wc=3`
   entry built by `add-jvm-workchain` (Fift) /
   `jvm_workchain::build_jvm_workchain_descr` (C++).  See
-  [`doc/jvm-mainnet-activation.md`](jvm-mainnet-activation.md) §4
+  [`doc/jvm/jvm-mainnet-activation.md`](jvm-mainnet-activation.md) §4
   for the launch flow.
 
 * **ConfigParam 85** — the JVM activation config — carries
   `stdlib_hash`, gas schedule, opcode costs, max_class_bytes,
   max_heap_bytes.  Built by `jvm-config-param-cell-with-stdlib`
-  (Fift); see [`doc/jvm-mainnet-activation.md`](jvm-mainnet-activation.md) §5.
+  (Fift); see [`doc/jvm/jvm-mainnet-activation.md`](jvm-mainnet-activation.md) §5.
 
 If either is absent, `register_jvm_workchain_engine` still
 installs the engine but `WorkchainExecutionRegistry::resolve`
@@ -409,14 +409,13 @@ started.
 
 | Document                                                            | Topic                                  |
 |---------------------------------------------------------------------|----------------------------------------|
-| [`doc/jvm-mainnet-activation.md`](jvm-mainnet-activation.md)         | Genesis ceremony, ConfigParam 12 + 85 |
-| [`doc/jvm-v2-account-topology.md`](jvm-v2-account-topology.md)       | Per-account JVAC, address binding     |
-| [`doc/jvm-wallet.md`](jvm-wallet.md)                                 | java.lang.Wallet semantics            |
-| [`doc/jvm-rt.md`](jvm-rt.md)                                         | rt.jar admitted contracts             |
-| [`doc/jvm-profile.md`](jvm-profile.md)                               | Verifier profile, allowed opcodes     |
-| [`doc/jvm-roadmap.md`](jvm-roadmap.md)                               | Phase log + known gaps                |
-| [`jvm/avata/`](../jvm/avata/)                                        | Avata JVM interpreter sources         |
-| [`jvm/core/`](../jvm/core/)                                          | TOS-side compute/dispatch path        |
+| [`doc/jvm/jvm-mainnet-activation.md`](jvm-mainnet-activation.md)         | Genesis ceremony, ConfigParam 12 + 85 |
+| [`doc/jvm/jvm-v2-account-topology.md`](jvm-v2-account-topology.md)       | Per-account JVAC, address binding     |
+| [`doc/jvm/jvm-wallet.md`](jvm-wallet.md)                                 | java.lang.Wallet semantics            |
+| [`doc/jvm/jvm-rt.md`](jvm-rt.md)                                         | rt.jar admitted contracts             |
+| [`doc/jvm/jvm-profile.md`](jvm-profile.md)                               | Verifier profile, allowed opcodes     |
+| [`jvm/avata/`](../../jvm/avata/)                                     | Avata JVM interpreter sources         |
+| [`jvm/core/`](../../jvm/core/)                                       | TOS-side compute/dispatch path        |
 
 ---
 
