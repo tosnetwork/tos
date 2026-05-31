@@ -184,7 +184,7 @@ Libs{{
   x{{ABACABADABACABA}} s>c public_lib
   x{{1234}} x{{5678}} |_ s>c private_lib
 }}Libs  // libraries
-TM$4999990000 // balance
+TM$5000000 // balance: 5 M TOS, fully pre-mined to the main wallet (TON-style)
 0 // split_depth
 0 // ticktock
 AllOnes 0 * // address

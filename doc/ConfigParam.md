@@ -54,7 +54,7 @@ The canonical TL-B schema is in [block.tlb](../crypto/block/block.tlb). Initial 
 |-------|------|-------|-------------|
 | `to_mint` | ExtraCurrencyCollection | (see zerostate) | Dictionary of extra currency IDs and amounts to mint each block |
 
-> **Note on main token supply.** ConfigParams 6 and 7 govern **extra (mintable) currencies only** — side-channel assets like governance tokens or test currencies that live alongside the native ones. The three native supplies — **TOS** (wc=0 TVM), **eTOS** (wc=1 EVM), **UNO** (wc=2 privacy) — are **not** ConfigParams. They are set at zero-state construction time and cannot be mutated by on-chain governance after genesis. See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for the per-workchain configuration points: TOS at **100 M** (wc=0); eTOS at **100 M** (wc=1, independent — no on-chain bridge to TOS, 1:1 conceptual swap via external markets); UNO at **21 M** (wc=2, Zcash-peer scarcity, fully contained).
+> **Note on main token supply.** ConfigParams 6 and 7 govern **extra (mintable) currencies only** — side-channel assets like governance tokens or test currencies that live alongside the native ones. The three native supplies — **TOS** (wc=0 TVM), **eTOS** (wc=1 EVM), **UNO** (wc=2 privacy) — are **not** ConfigParams. They are set at zero-state construction time and cannot be mutated by on-chain governance after genesis. See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for the per-workchain configuration points: TOS at **5 M** (wc=0, fully pre-mined to the main wallet in TON style — no genesis PoW givers); eTOS at **100 M** (wc=1, independent — no on-chain bridge to TOS, 1:1 conceptual swap via external markets); UNO at **21 M** (wc=2, Zcash-peer scarcity, fully contained).
 
 ## ConfigParam 8 — Global Version
 
@@ -228,10 +228,10 @@ See `doc/Validator-Local.md#evm-workchain-workchain-1` for end-to-end activation
 
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
-| `min_stake` | Tomis | **300,000 TOS** | Minimum stake to participate in elections |
-| `max_stake` | Tomis | **10,000,000 TOS** | Maximum stake per validator |
-| `min_total_stake` | Tomis | **900,000 TOS** | Minimum total stake across all validators |
-| `max_stake_factor` | uint32 | **196,608** (3x) | Max ratio of largest to smallest stake. Fixed-point: 65536 = 1x. |
+| `min_stake` | Tomis | **10,000 TOS** | Minimum stake to participate in elections |
+| `max_stake` | Tomis | **100,000 TOS** | Maximum stake per validator |
+| `min_total_stake` | Tomis | **10,000 TOS** | Minimum total stake across all validators |
+| `max_stake_factor` | uint32 | **655,360** (10x) | Max ratio of largest to smallest stake. Fixed-point: 65536 = 1x. |
 
 ## ConfigParam 18 — Storage Prices
 

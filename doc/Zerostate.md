@@ -137,7 +137,7 @@ All initial config values are set via Fift helper words:
 // max_validators max_main_validators min_validators
 
 // ConfigParam 17: stake limits
-TM$300000 TM$10000000 TM$900000 sg~3 config.validator_stake_limits!
+TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!
 // min_stake max_stake min_total_stake max_stake_factor
 
 // ConfigParam 15: election timing
@@ -308,7 +308,7 @@ TOS ships **three** native tokens, each independent and confined to its own work
 
 | Token | Lives on | Decimals | Target Supply | Role | Where configured |
 |---|---|---|---|---|---|
-| **TOS** | master (`-1`) + wc=0 (TVM) | 9 (nano-tomi) | **100,000,000 TOS** | L1 platform gas + staking | `crypto/smartcont/gen-zerostate.fif` line 94 (`TM$100000000 allocated-balance -`) |
+| **TOS** | master (`-1`) + wc=0 (TVM) | 9 (nano-tomi) | **5,000,000 TOS** | L1 platform gas + staking | `crypto/smartcont/gen-zerostate.fif` main-wallet line (`TM$5000000 allocated-balance -`) — fully pre-mined, no PoW givers |
 | **eTOS** | wc=1 (EVM) | 18 (wei) | **100,000,000 eTOS** | EVM gas + dapp economy | `crypto/smartcont/etos-pow-givers.fif` builds the explicit wc=1 allocation tuple and calls `evm-zerostate-from-alloc`; production builds do not expose the legacy zero-arg public test-account helper |
 | **UNO** | wc=2 (STARK) | 9 (nano-UNO) | **21,000,000 UNO** | Privacy "digital gold" (peer of Bitcoin / Zcash) | `uno/core/genesis.h::kGenesisTotalSupplyNano` constexpr; split 60 / 25 / 15 = 12.6 M / 5.25 M / 3.15 M |
 
@@ -316,14 +316,16 @@ TOS ships **three** native tokens, each independent and confined to its own work
 
 ### TOS (wc=0 TVM)
 
-The main wallet on masterchain absorbs the residual supply after subtracting `allocated-balance` (running total of stage 1/2/3 allocations + system contracts like the elector):
+TOS is **fully pre-mined to the main wallet** at genesis (TON-style) — there are **no PoW giver contracts** in the zerostate. The main wallet absorbs the residual supply after subtracting `allocated-balance` (running total of stage 1/2/3 allocations + system contracts like the elector):
 
 ```fif
-TM$100000000 allocated-balance - // balance = target - already-allocated
-register_smc                     // adds this to allocated-balance
+TM$5000000 allocated-balance - // balance = 5 M target - already-allocated
+register_smc                   // adds this to allocated-balance
 ```
 
-To change the TOS target supply, edit the `TM$<N>` literal on `gen-zerostate.fif` line 94. The value is in whole TOS (nano-tomi under the hood).
+To change the TOS target supply, edit the `TM$<N>` literal on the main-wallet line of `gen-zerostate.fif` (and the matching `gen-zerostate-test.fif` and `test/tostester/src/tostester/zerostate.py`). The value is in whole TOS (nano-tomi under the hood).
+
+> **No genesis PoW mining.** The original TON network pre-mined its entire supply to one wallet at genesis and deployed PoW-giver distribution contracts *afterward*, funded from that wallet. TOS follows the same model: to add a mining distribution later, deploy giver contracts post-genesis from the main wallet (see `doc/Mining-Design.md`).
 
 ### eTOS (wc=1 EVM)
 
