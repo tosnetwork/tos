@@ -60,6 +60,13 @@ if [ "${GITHUB_ACTIONS}" = "true" ] || \
   CMAKE_EXTRA_ARGS+=(-DTOS_PRODUCTION_BUILD=ON)
 fi
 
+# The wc=3 Avata JVM workchain is OFF by default (it needs a Java 8 JDK to
+# build rt.jar). Opt in by exporting TOS_ENABLE_JVM=ON before invoking this
+# script — the x86-64-shared CI job does so after installing openjdk-8.
+if [ "${TOS_ENABLE_JVM:-}" = "ON" ] || [ "${TOS_ENABLE_JVM:-0}" = "1" ]; then
+  CMAKE_EXTRA_ARGS+=(-DTOS_ENABLE_JVM=ON)
+fi
+
 cmake -GNinja .. \
 -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
 -DTOS_USE_JEMALLOC=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$(pwd)/install" \

@@ -124,8 +124,10 @@ define four distinct execution domains under one masterchain-rooted
 consensus: the asynchronous TVM-based base workchain, a synchronous
 EVM-oriented workchain for Ethereum-style smart contracts, the Uno
 privacy workchain with PQ-native shielded transfers, and the Avata
-JVM workchain for deterministic Java-bytecode contracts. All four are
-implemented in a single node binary, but a domain is \emph{active}
+JVM workchain for deterministic Java-bytecode contracts. The native,
+EVM and Uno engines are compiled into the default node binary; the
+JVM engine is a build-time option (it requires a Java toolchain to
+produce its runtime archive). In all cases a domain is \emph{active}
 only when a corresponding workchain descriptor is present in the
 on-chain configuration. The intended deployment path is therefore
 staged: the network launches with the native chain (Workchain Zero)
@@ -450,13 +452,15 @@ is organized around four concrete execution domains:
   runtime hash and its genesis account set must be pinned before
   wc=3 can accept contracts.
 \end{itemize}
-All four domains are compiled into the same node binary, but each
-engine is dormant until a corresponding workchain descriptor appears
-in the on-chain configuration. A network may therefore launch with
-only Workchain Zero and bring the remaining domains online one at a
-time, by governance, as each matures; because every validator already
-runs the engine-capable binary, an activation is a configuration
-change rather than a software upgrade.
+The native, EVM and Uno engines are compiled into the default node
+binary (the JVM engine is an optional build); each is dormant until a
+corresponding workchain descriptor appears in the on-chain
+configuration. A network may therefore launch with only Workchain Zero
+and bring the others online one at a time, by governance, as each
+matures; for the engines present in the binary an activation is a
+configuration change rather than a software upgrade, while enabling
+the JVM workchain additionally requires validators to run a
+JVM-enabled build.
 The current native-asset naming of these execution domains is
 likewise fixed in product terminology: {\em TOS\/} is the native
 asset of the base chain (Workchain Zero), {\em eTOS\/} is the

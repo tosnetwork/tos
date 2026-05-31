@@ -1,15 +1,15 @@
 # The Open System
 
-**The Open System (TOS)** is a multichain Layer‑1 that defines four distinct execution domains over a single masterchain-rooted consensus. All four are implemented in one node binary; the network **launches with the Native chain (wc=0)** and **stages in the other three by governance** as they harden — no redeploy.
+**The Open System (TOS)** is a multichain Layer‑1 that defines four distinct execution domains over a single masterchain-rooted consensus. The default node binary carries Native + EVM + Uno; the JVM engine is a build-time opt-in (it needs a Java toolchain). The network **launches with the Native chain (wc=0)** and **stages in the others by governance** as they harden — no redeploy.
 
 | Workchain | Execution model | What it's for | Launch status |
 |---|---|---|---|
 | **Native (wc=0)** | **Asynchronous**, message-driven, TVM | High-throughput contracts, sharded scale, actor-style async flows | **Live at genesis** |
 | **EVM (wc=1)** | **Synchronous**, EVM bytecode | Solidity / Ethereum-compatible contracts, wallet-compatible DeFi | Implemented — staged activation |
 | **Uno (wc=2)** | **PQ-native privacy**, Plonky3 STARK AIRs | Shielded payments; quantum-safe and bridgeless by architecture | Implemented — staged activation |
-| **JVM (wc=3)** | **Deterministic Java 8 bytecode**, Avata JVM | Account-autonomous Java smart contracts | Implemented — staged activation |
+| **JVM (wc=3)** | **Deterministic Java 8 bytecode**, Avata JVM | Account-autonomous Java smart contracts | Implemented — build-time opt-in (`-DTOS_ENABLE_JVM=ON`) |
 
-One node binary (`validator-engine`) serves all four workchains: each engine is compiled in but **dormant until a workchain descriptor in `ConfigParam 12` routes traffic to it**. A genesis can ship with wc=0 alone (see [`crypto/smartcont/gen-zerostate-wc0-only.fif`](crypto/smartcont/gen-zerostate-wc0-only.fif)); EVM, Uno, and JVM are then switched on individually — at any masterchain height — through a `ConfigParam 12` governance update as each domain matures. Because every validator already runs the engine-capable binary, activation needs no binary change or restart. One canonical JSON-RPC surface, one operator path (`tosctl`), one wallet flow. Users choose their execution domain per transaction; validators opt in per workchain.
+One node binary (`validator-engine`) serves the workchains: each compiled-in engine is **dormant until a workchain descriptor in `ConfigParam 12` routes traffic to it**. The Native, EVM, and Uno engines are compiled in by default; the JVM engine is gated behind `-DTOS_ENABLE_JVM=ON` at build time (off by default, since `rt.jar` needs `javac`). A genesis can ship with wc=0 alone (see [`crypto/smartcont/gen-zerostate-wc0-only.fif`](crypto/smartcont/gen-zerostate-wc0-only.fif)); EVM and Uno are then switched on by a `ConfigParam 12` governance update with no binary change, while wc=3 additionally requires validators to run a JVM-enabled build.  One canonical JSON-RPC surface, one operator path (`tosctl`), one wallet flow. Users choose their execution domain per transaction; validators opt in per workchain.
 
 ---
 
@@ -135,7 +135,7 @@ Full design in [`doc/uno-workchain.md`](doc/uno-workchain.md). Implementation un
 
 The JVM workchain runs **Java 8 bytecode smart contracts** on **Avata**, a C++ JVM that TOS forks and owns (the upstream project is retired). It targets developers who want a mainstream language and JVM tooling without giving up consensus-grade determinism.
 
-> **Launch status: implemented, staged activation.** The engine, RPC namespace, gas model, config parameters, and operator tooling are all wired into `validator-engine`; the Avata interpreter ships in the binary and stays dormant until wc=3 is added to `ConfigParam 12`. JVM carries two extra activation gates beyond the other domains: its runtime hash (`stdlib_hash` in ConfigParam 85) and its genesis wallet/deployer set must be pinned first. See [`doc/jvm/jvm-mainnet-activation.md`](doc/jvm/jvm-mainnet-activation.md).
+> **Launch status: implemented, build-time opt-in + staged activation.** The engine, RPC namespace, gas model, config parameters, and operator tooling are all wired into `validator-engine`, but the JVM is the one domain that is **off by default at build time** — it builds only with `-DTOS_ENABLE_JVM=ON`, because its `rt.jar` runtime needs a Java 8 JDK (`javac`); see [`BUILD.md`](BUILD.md). A JVM-enabled binary then keeps wc=3 dormant until it is added to `ConfigParam 12`, and JVM carries two extra activation gates beyond the other domains: its runtime hash (`stdlib_hash` in ConfigParam 85) and its genesis wallet/deployer set must be pinned first. See [`doc/jvm/jvm-mainnet-activation.md`](doc/jvm/jvm-mainnet-activation.md).
 
 ### Execution model
 

@@ -192,36 +192,44 @@ Refresh policy for the vendored trees is documented in their respective `README.
 
 ## JVM Workchain (wc=3) — Additional Prerequisites
 
-The wc=3 Avata JVM workchain is included in a normal validator build: the
-top-level `CMakeLists.txt` adds `add_subdirectory(jvm)` for every build except
-`TOS_ONLY_TOSLIB`, and `jvm/avata/CMakeLists.txt` is a CMake bridge that drives
-the Avata fork's own makefile to produce the interpreter static library
-(`libavata.a`). That bridge needs `make`/`gmake` (already required by the C++
-build) — the **JVM C++ core itself adds no new package dependency** beyond the
-standard validator toolchain.
+The wc=3 Avata JVM workchain is **off by default** and is the only part of the
+tree that needs a Java toolchain. A normal build (Native + EVM + Uno) **never
+invokes `javac`** — `add_subdirectory(jvm)` is skipped unless you opt in.
 
-What *does* need an extra tool is the **runtime archive `rt.jar` (and `api.jar`)**.
-These are loaded by the interpreter at runtime as its boot classpath
-(`jvm/core/init.cpp` → `TOS_AVATA_DEFAULT_RT_JAR`) and are **not checked into
-git** — `jvm/avata/build/` is `.gitignore`d, so a fresh checkout has no jars.
-The Avata makefile builds them from the Java sources under `jvm/avata/rt/`,
-which requires a **Java 8 JDK** (`javac`; the makefile detects the host JDK and
-defaults to `java-version := 8`).
-
-You need the JDK if you want to:
-
-- **run a wc=3-capable node** (the interpreter needs `rt.jar` at startup), or
-- **run the JVM test targets**, or
-- **verify reproducibility / pin `stdlib_hash` for wc=3 activation.**
+Why it needs Java at all: the Avata interpreter static library (`libavata.a`)
+embeds generated type-metadata derived from the *compiled* runtime classes, so
+the C++ engine itself can't build without `javac` — it's not merely the `rt.jar`
+byproduct. The whole JVM subtree is therefore gated behind one CMake option:
 
 ```bash
-# Debian/Ubuntu
-sudo apt-get install -y openjdk-8-jdk-headless
+# Default: native/EVM/Uno only, no Java needed.
+cmake -S . -B build-clang21 -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21
 
-# The CMake build regenerates the jars on demand; to build them directly:
-make -C jvm/avata platform=linux arch=x86_64 process=interpret mode=fast \
-  build/linux-x86_64/rt.jar
+# Opt in to wc=3: builds the Avata interpreter + rt.jar (requires a Java 8 JDK).
+sudo apt-get install -y openjdk-8-jdk-headless
+cmake -S . -B build-jvm -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+  -DTOS_ENABLE_JVM=ON
 ```
+
+With `-DTOS_ENABLE_JVM=ON`, `jvm/avata/CMakeLists.txt` drives the Avata makefile
+to build `libavata.a` plus the **runtime archives `rt.jar` / `api.jar`**. These
+are the interpreter's boot classpath (`jvm/core/init.cpp` →
+`TOS_AVATA_DEFAULT_RT_JAR`), are **not checked into git** (`jvm/avata/build/` is
+`.gitignore`d), and are compiled from `jvm/avata/rt/` by a **Java 8 JDK**
+(`javac`; the makefile detects the host JDK and defaults to `java-version := 8`).
+
+The jars can also be built **explicitly**, independently of the CMake build:
+
+```bash
+make -C jvm/avata rt-jar    # -> jvm/avata/build/<platform>-<arch>/rt.jar
+make -C jvm/avata jars      # rt.jar + api.jar
+```
+
+This explicit step is what you run to (a) ship a wc=3-capable node, (b) run the
+JVM test targets, or (c) verify reproducibility / pin `stdlib_hash` for wc=3
+activation.
 
 > **Reproducible `stdlib_hash`.** The consensus-binding runtime hash is only
 > byte-stable on the pinned canonical toolchain — **Ubuntu 22.04 +

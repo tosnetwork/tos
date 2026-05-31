@@ -74,6 +74,12 @@ jobs:
         echo "JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64" >> "$GITHUB_ENV"
 
     - name: Build TOS
+      # Enable the wc=3 Avata JVM workchain in this job only: the OpenJDK 8
+      # installed above builds the canonical rt.jar, and -DTOS_ENABLE_JVM=ON
+      # keeps JVM C++ build + test-workchain-execution-registry ctest coverage.
+      # Other build jobs stay javac-free (JVM is OFF by default).
+      env:
+        TOS_ENABLE_JVM: "ON"
       run: |
         mkdir -p ~/.ccache
         cp assembly/native/build-ubuntu-shared.sh .

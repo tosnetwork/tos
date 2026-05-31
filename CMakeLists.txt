@@ -89,6 +89,14 @@ endif()
 option(TOS_USE_ROCKSDB "Use \"ON\" to enable RocksDb." ${NOT_TOS_ONLY_TOSLIB})
 option(TOS_USE_ABSEIL "Use \"ON\" to enable Abseil." ${NOT_TOS_ONLY_TOSLIB})
 option(TOS_USE_JEMALLOC "Use \"ON\" to enable JeMalloc." OFF)
+# wc=3 Avata JVM workchain. OFF by default because building it requires a
+# Java 8 JDK (javac) to produce the embedded rt.jar/type-metadata. A normal
+# native/EVM/Uno build never needs javac. Turn ON to compile the JVM engine;
+# the rt.jar itself is still an explicit `make -C jvm/avata ... rt-jar` step.
+option(TOS_ENABLE_JVM "Use \"ON\" to build the wc=3 Avata JVM workchain (requires a Java 8 JDK)." OFF)
+if (TOS_ENABLE_JVM)
+  add_compile_definitions(TOS_WITH_JVM_WORKCHAIN)
+endif()
 #END internal
 
 option(TOSLIB_ENABLE_JNI "Use \"ON\" to enable JNI-compatible TosLib API.")
@@ -625,7 +633,7 @@ endif()
 if (NOT TOS_ONLY_TOSLIB)
   add_subdirectory(uno)
 endif()
-if (NOT TOS_ONLY_TOSLIB)
+if (NOT TOS_ONLY_TOSLIB AND TOS_ENABLE_JVM)
   add_subdirectory(jvm)
 endif()
 add_subdirectory(lite-client)
@@ -697,8 +705,12 @@ endif()
 add_executable(test-cells test/test-td-main.cpp ${CELLS_TEST_SOURCE})
 target_link_libraries(test-cells PRIVATE tos_crypto)
 
-add_executable(test-workchain-execution-registry test/test-td-main.cpp ${WORKCHAIN_EXECUTION_REGISTRY_TEST_SOURCE})
-target_link_libraries(test-workchain-execution-registry PRIVATE tos_block evm_workchain uno_workchain jvm_workchain_core)
+# This test exercises the wc=3 Avata execution path heavily (it includes the
+# jvm/avata interpreter headers), so it is only built when the JVM workchain is.
+if (TOS_ENABLE_JVM)
+  add_executable(test-workchain-execution-registry test/test-td-main.cpp ${WORKCHAIN_EXECUTION_REGISTRY_TEST_SOURCE})
+  target_link_libraries(test-workchain-execution-registry PRIVATE tos_block evm_workchain uno_workchain jvm_workchain_core)
+endif()
 
 add_executable(test-fift test/test-td-main.cpp ${FIFT_TEST_SOURCE})
 target_link_libraries(test-fift PRIVATE fift-lib)
@@ -989,7 +1001,9 @@ tos_test(test-bigint)
 tos_test(test-vm ${TEST_OPTIONS})
 tos_test(test-fift ${TEST_OPTIONS})
 tos_test(test-cells ${TEST_OPTIONS})
-tos_test(test-workchain-execution-registry)
+if (TOS_ENABLE_JVM)
+  tos_test(test-workchain-execution-registry)
+endif()
 tos_test(test-smartcont)
 tos_test(test-net)
 tos_test(test-tdactor)

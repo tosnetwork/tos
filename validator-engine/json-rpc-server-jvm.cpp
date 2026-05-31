@@ -16,6 +16,11 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
+// The entire wc=3 JVM JSON-RPC handler is compiled only when the JVM
+// workchain is built (-DTOS_ENABLE_JVM=ON). Without it the TU is empty and
+// jvm_* methods are simply not recognized (method-not-found), matching the
+// dormant-engine behavior of an unbuilt workchain.
+#ifdef TOS_WITH_JVM_WORKCHAIN
 #include "json-rpc-server-internal.h"
 
 #include "auto/tl/lite_api.hpp"
@@ -988,3 +993,4 @@ void JsonRpcServer::handle_jvm_get_receipts_rpc_method(
 }
 
 }  // namespace tos
+#endif  // TOS_WITH_JVM_WORKCHAIN

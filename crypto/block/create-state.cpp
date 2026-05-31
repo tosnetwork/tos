@@ -60,8 +60,10 @@
 #include "block.h"
 #include "evm/core/init.h"  // build_evm_zerostate_accounts_cell (Phase C)
 #include "uno/core/init.h"  // build_uno_zerostate_accounts_cell (wc=2 exec seed)
+#ifdef TOS_WITH_JVM_WORKCHAIN
 #include "jvm/core/config-param.h"  // JvmConfig::default_activation, build_jvm_config_cell
 #include "jvm/core/zerostate.h"  // build_jvm_zerostate_accounts_cell (wc=3 exec seed)
+#endif
 
 #include <evmc/evmc.hpp>
 #include <intx/intx.hpp>
@@ -609,6 +611,7 @@ void interpret_uno_zerostate_accounts_cell(vm::Stack& stack) {
   stack.push_cell(std::move(cell));
 }
 
+#ifdef TOS_WITH_JVM_WORKCHAIN
 // Returns the wc=3 ShardAccounts cell pre-populated with the single JVM
 // executor account (at 0x00…01) as acc_uninit.  Used by genesis tooling so
 // wc=3 can route ext_in_msgs (JvmCallDescriptor / JvmDeployDescriptor) from
@@ -998,6 +1001,7 @@ void interpret_jvm_config_param_cell_with_stdlib(vm::Stack& stack) {
   }
   stack.push_cell(std::move(cell));
 }
+#endif  // TOS_WITH_JVM_WORKCHAIN
 
 // Phase D (Hive bootstrap): returns a wc=1 ShardAccounts cell built from a
 // caller-supplied list of Ethereum-style genesis allocations. Used by
@@ -1303,6 +1307,7 @@ void init_words_custom(fift::Dictionary& d) {
   // JVM workchain zerostate seeding. Pushes a ShardAccounts cell containing
   // the single JVM executor account (0x00…01) as acc_uninit, so the collator
   // can route JvmCallDescriptor / JvmDeployDescriptor ext_in_msgs from block 0.
+#ifdef TOS_WITH_JVM_WORKCHAIN
   d.def_stack_word("jvm-zerostate-accounts-cell ", interpret_jvm_zerostate_accounts_cell);
   // JVM ShardAccounts cell pre-seeded from a list of Ed25519 wallet
   // declarations.  Mirrors `evm-zerostate-from-alloc`; lets operators
@@ -1322,6 +1327,7 @@ void init_words_custom(fift::Dictionary& d) {
   // get back a config cell whose stdlib_hash pins the canonical stdlib.
   d.def_stack_word("jvm-config-param-cell-with-stdlib ",
                    interpret_jvm_config_param_cell_with_stdlib);
+#endif  // TOS_WITH_JVM_WORKCHAIN
   d.def_stack_word("isShardState? ", interpret_is_shard_state);
   d.def_stack_word("isWorkchainDescr? ", interpret_is_workchain_descr);
   d.def_stack_word("CC+? ", interpret_add_extra_currencies);

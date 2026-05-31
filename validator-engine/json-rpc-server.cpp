@@ -19,7 +19,9 @@
 #include "json-rpc-server-internal.h"
 
 #include "evm/rpc/handlers.h"
+#ifdef TOS_WITH_JVM_WORKCHAIN
 #include "jvm/core/rpc.h"
+#endif
 #include "uno/rpc/handlers.h"
 
 #include <cstdlib>
@@ -1073,6 +1075,7 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   // request without a per-IP throttle, and jvm_callContract could
   // additionally run local JVM simulation.  The same per-IP token
   // bucket that gates EVM read-only methods applies here.
+#ifdef TOS_WITH_JVM_WORKCHAIN
   if (jvm_workchain::is_jvm_rpc_method(method)) {
     if (!evm_workchain::consume_per_ip_token(source_ip)) {
       promise.set_value(make_eth_json_error(
@@ -1086,6 +1089,7 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
                           std::move(req_id), std::move(promise));
     return;
   }
+#endif
 
   // Ethereum JSON-RPC sends params as arrays.  Handle eth_* methods
   // with array params directly, before the object-params check. The
@@ -1558,6 +1562,7 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   } else if (method == "sendBocReturnHashNoError") {
     handle_sendBocReturnHashNoError(params, std::move(req_id), std::move(promise));
   }
+#ifdef TOS_WITH_JVM_WORKCHAIN
   // --- JVM Workchain: jvm_* JSON-RPC methods ---
   else if (jvm_workchain::is_jvm_rpc_method(method)) {
     // Round 154 MEDIUM fix: per-IP gate, mirroring the array-
@@ -1578,6 +1583,7 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_jvm_rpc_method(std::move(method), std::move(params_str),
                           std::move(req_id), std::move(promise));
   }
+#endif
   // --- EVM Workchain: Ethereum JSON-RPC methods ---
   else if (evm_workchain::is_eth_rpc_method(method)) {
     std::string params_str = "[]";

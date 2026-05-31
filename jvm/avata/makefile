@@ -1537,6 +1537,17 @@ $(converter): $(converter-objects) $(converter-tool-objects)
 # granular DOS time fields).
 jar-normalize := $(shell pwd)/tools/normalize-jar-timestamps.py
 
+# Convenience aliases so the consensus-binding runtime archives can be built
+# explicitly without typing the platform-qualified build path. These are the
+# only targets that require a Java 8 JDK (javac); the normal TOS C++ build
+# (with -DTOS_ENABLE_JVM=OFF, the default) never invokes them.
+#   make -C jvm/avata rt-jar      # -> build/<platform>-<arch>/rt.jar
+#   make -C jvm/avata jars        # rt.jar + api.jar
+.PHONY: rt-jar api-jar jars
+rt-jar: $(build)/rt.jar
+api-jar: $(build)/api.jar
+jars: rt-jar api-jar
+
 $(build)/rt.jar: $(classpath-dep) $(classpath-jar-dep)
 	@echo "creating $(@) (deterministic)"
 	(wd=$$(pwd) && \
