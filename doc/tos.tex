@@ -120,14 +120,20 @@ think about TOS as a distributed supercomputer, or rather a
 with one coherent operator and integration path.
 
 In its current product form, TOS uses this multichain architecture to
-run three distinct execution domains in parallel under one
+run four distinct execution domains in parallel under one
 masterchain-rooted consensus: the asynchronous TVM-based base
 workchain, a synchronous EVM-oriented workchain for Ethereum-style
-smart contracts, and the Uno privacy workchain with PQ-native
-shielded transfers. One node binary (\texttt{validator-engine})
+smart contracts, the Uno privacy workchain with PQ-native
+shielded transfers, and the Avata JVM workchain for deterministic
+Java-bytecode contracts. The first three are live in the network's
+zerostate; the JVM domain is implemented and wired end-to-end, with
+its on-chain activation gated behind a governance flag (see
+\ptref{sp:cur.exec.domains}).
+One node binary (\texttt{validator-engine})
 serves these domains, and one canonical machine-facing surface
-(\texttt{tos\_*}, \texttt{eth\_*}, \texttt{uno\_*}) together with one
-operator path (\texttt{tosctl}) is intended to expose them.
+(\texttt{tos\_*}, \texttt{eth\_*}, \texttt{uno\_*}, \texttt{jvm\_*})
+together with one operator path (\texttt{tosctl}) is intended to
+expose them.
 
 This text is not intended to be the ultimate reference with respect to
 all implementation details. It describes the system as implemented and
@@ -419,7 +425,7 @@ workchain will be called {\em basic shardchains}.
 \nxsubpoint\label{sp:cur.exec.domains} \embt(Current execution
 domains.)  The general workchain mechanism admits many future virtual
 machines and transaction models, but the present TOS product direction
-is organized around three concrete execution domains:
+is organized around four concrete execution domains:
 \begin{itemize}
 \item {\em Workchain Zero\/} ($\workchainid=0$): the native
   asynchronous TVM environment, using actor-style message passing,
@@ -433,20 +439,29 @@ is organized around three concrete execution domains:
   privacy-oriented workchain using Plonky3 STARK proofs, hybrid
   post-quantum note encryption and a bridgeless shielded-pool
   architecture.
+\item {\em Workchain Three\/} ($\workchainid=3$): {\em Avata JVM\/},
+  a deterministic Java\,8-bytecode environment in which every
+  contract is its own account, executed on a restricted, JIT-free
+  interpreter. It is implemented and wired end-to-end into the node;
+  its on-chain activation is gated behind a governance flag (and the
+  pinning of its runtime hash and genesis set), so it is not yet
+  active on any network.
 \end{itemize}
 The current native-asset naming of these execution domains is
 likewise fixed in product terminology: {\em TOS\/} is the native
 asset of the base chain (Workchain Zero), {\em eTOS\/} is the
 native asset of the EVM-oriented workchain (Workchain One), and
 {\em UNO\/} is the native asset of the privacy workchain
-(Workchain Two). All three are economically independent — there
+(Workchain Two). The JVM workchain (Workchain Three) introduces no
+new native asset — it meters gas in TOS. These three native assets
+are economically independent — there
 are no on-chain bridges between any two of them. Conceptual
 1:1~parity between TOS and eTOS (they share the ``TOS'' brand and
 are designed to trade at parity) is realised by external markets,
 not by protocol-level routing. UNO never participates in cross-
 token flows by design (privacy preservation forbids a
 wc=2~$\leftrightarrow$~wc=0/wc=1 value bridge).
-These three domains share masterchain coordination, validator
+These domains share masterchain coordination, validator
 economics and the same node implementation. Users choose an execution
 domain per transaction; validators may advertise support and
 participate per workchain according to the corresponding on-chain

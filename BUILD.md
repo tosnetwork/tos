@@ -190,6 +190,51 @@ Tosctl's Rust workspace (`tosctl/src/`) pins `1.91.1`; the `uno/plonky3-ffi/` cr
 
 Refresh policy for the vendored trees is documented in their respective `README.uno.md` files.
 
+## JVM Workchain (wc=3) — Additional Prerequisites
+
+The wc=3 Avata JVM workchain is included in a normal validator build: the
+top-level `CMakeLists.txt` adds `add_subdirectory(jvm)` for every build except
+`TOS_ONLY_TOSLIB`, and `jvm/avata/CMakeLists.txt` is a CMake bridge that drives
+the Avata fork's own makefile to produce the interpreter static library
+(`libavata.a`). That bridge needs `make`/`gmake` (already required by the C++
+build) — the **JVM C++ core itself adds no new package dependency** beyond the
+standard validator toolchain.
+
+What *does* need an extra tool is the **runtime archive `rt.jar` (and `api.jar`)**.
+These are loaded by the interpreter at runtime as its boot classpath
+(`jvm/core/init.cpp` → `TOS_AVATA_DEFAULT_RT_JAR`) and are **not checked into
+git** — `jvm/avata/build/` is `.gitignore`d, so a fresh checkout has no jars.
+The Avata makefile builds them from the Java sources under `jvm/avata/rt/`,
+which requires a **Java 8 JDK** (`javac`; the makefile detects the host JDK and
+defaults to `java-version := 8`).
+
+You need the JDK if you want to:
+
+- **run a wc=3-capable node** (the interpreter needs `rt.jar` at startup), or
+- **run the JVM test targets**, or
+- **verify reproducibility / pin `stdlib_hash` for wc=3 activation.**
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y openjdk-8-jdk-headless
+
+# The CMake build regenerates the jars on demand; to build them directly:
+make -C jvm/avata platform=linux arch=x86_64 process=interpret mode=fast \
+  build/linux-x86_64/rt.jar
+```
+
+> **Reproducible `stdlib_hash`.** The consensus-binding runtime hash is only
+> byte-stable on the pinned canonical toolchain — **Ubuntu 22.04 +
+> `openjdk-8-jdk-headless`** (enforced by
+> `.github/workflows/check-jvm-rt-determinism.yml` and
+> `jvm/avata/Dockerfile.canonical-build`). `javac` output varies by JDK
+> vendor/version, so a different JDK builds a *runnable* `rt.jar` that will
+> **not** reproduce the canonical hash
+> `ae4ff3b7e557a8acffe31e9b41959e811c67dea87b6c6c3e38129466e5ade765`. See
+> [`doc/jvm-rt-reproducibility.md`](doc/jvm-rt-reproducibility.md) for the
+> canonical build and [`scripts/jvm-testnet-genesis-rehearsal.sh`](scripts/jvm-testnet-genesis-rehearsal.sh)
+> for an end-to-end jar-build + hash + zerostate rehearsal.
+
 ## C++ Configure
 
 Always use an out-of-source build:

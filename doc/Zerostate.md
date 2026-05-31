@@ -360,6 +360,42 @@ The 60 / 25 / 15 split lands on clean integer boundaries (12.6 M / 5.25 M / 3.15
 
 **Wiring status:** `add-uno-workchain` Fift word is in `Workchain.fif` and `gen-zerostate.fif` registers wc=2 with an empty initial `unostate2.boc`. The distribution-building pipeline (`GenesisDistributionInputs{airdrop, treasury, team}` → `build_zerostate_state_cell` → `unostate2.boc`) is not yet wired into the Fift script — mainnet launch requires either a `create-uno-state` standalone tool or an extension to `create-state` that consumes `zerostate-genesis-notes.json`. Until that tool exists, wc=2 boots with an empty commitment tree (no UNO in circulation).
 
+### Avata JVM (wc=3)
+
+The JVM workchain introduces **no native asset** — wc=3 contracts meter gas in
+TOS — so there is no genesis token supply to pin here. What it *does* need at
+genesis is its workchain descriptor, its companion ConfigParam 85, and
+(optionally) a set of pre-seeded accounts:
+
+- **Workchain descriptor.** `add-jvm-workchain` (in `Workchain.fif`) registers
+  wc=3 with `vm_version = 0x4a564d31` ("JVM1"). `gen-zerostate.fif` calls it
+  with `3 mkemptyShardState`, so the production generator currently ships a
+  **well-formed but empty** wc=3: empty `ShardAccounts` and `stdlib_hash = 0`.
+- **ConfigParam 85.** Carries `stdlib_hash` plus the gas/limit parameters
+  (`max_gas_per_tx = 1M`, `max_class_bytes = 64 KiB`, `max_heap_bytes = 4 MiB`,
+  `max_storage_cells = 65536`). Build it with `jvm-config-param-cell` (zero
+  `stdlib_hash` sentinel, pre-launch) or `jvm-config-param-cell-with-stdlib`
+  once `rt.jar` is pinned. See [ConfigParam.md](ConfigParam.md).
+- **Genesis account seeding (Phase F).** An empty wc=3 cannot deploy its first
+  contract, because `action_create_account` requires a same-workchain sender.
+  To bootstrap, seed at least one `java.lang.Deployer` (and any number of
+  `java.lang.Wallet` accounts) into the `ShardAccounts` dict via the Fift words
+  `jvm-zerostate-from-alloc` / `jvm-zerostate-with-deployers-from-alloc`
+  (`crypto/block/create-state.cpp`), backed by
+  `jvm/core/genesis-wallet.{h,cpp}` and
+  `build_jvm_zerostate_accounts_cell(wallets, stdlib_hash, class_bytes)`. Each
+  seeded wallet is a fully-active wc=3 account whose address is derived by the
+  same formula the dispatch engine recomputes on every call.
+
+**Wiring status:** the descriptor, ConfigParam 85, and genesis-seeding builders
+all exist and are tested, but the production `gen-zerostate.fif` ships the empty
+branch — pinning the canonical `rt.jar` `stdlib_hash`, choosing the genesis
+keypairs/balances, and pinning `Wallet.class` bytes are operational decisions
+made at activation. Note also that the **tostester local testnet does not
+register wc=3 at all** (its `test/tostester/src/tostester/zerostate.py` template
+wires only wc=0/1/2). Full runbook in
+[jvm-mainnet-activation.md](jvm-mainnet-activation.md).
+
 ## Related Docs
 
 - [ConfigParam.md](ConfigParam.md) — Complete parameter reference

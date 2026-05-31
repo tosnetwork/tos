@@ -1024,14 +1024,28 @@ unit tests green.
 
 **Mainnet-activation blockers (post-Phase-G):**
 
-- **`stdlib_hash` is not yet pinned.** `JvmConfig::default_activation()`
-  emits an all-zero `stdlib_hash` (`jvm/core/config-param.cpp:285` —
-  "stdlib_hash stays zero-initialized until the stdlib archive is
-  locked in").  Before mainnet wc=3 activation, governance must build
-  the canonical `rt.jar`, compute `sha256(rt.jar)`, and ship that as
-  the ConfigParam 85 `stdlib_hash`.  Until that value is non-zero
-  every JVAC `state.stdlib_hash` check at compute time will be
-  meaningless (any deploy with `stdlib_hash=0` will pass).
+- **`stdlib_hash` is computed but not yet committed.**
+  `JvmConfig::default_activation()` still emits an all-zero `stdlib_hash`
+  (`jvm/core/config-param.cpp:286` — "stdlib_hash stays zero-initialized
+  until the stdlib archive is locked in"), so the code default remains a
+  sentinel.  What has changed since this section was first written:
+  Phase DD/EE pinned the **canonical** runtime hash and aligned the
+  off-chain/on-chain computation.  The committed value is
+  `ae4ff3b7e557a8acffe31e9b41959e811c67dea87b6c6c3e38129466e5ade765`,
+  and the hash is **not** a plain `sha256(rt.jar)` — it is the
+  domain-separated boot-classpath hash
+  `sha256("TOS-JVM-AVATA-BOOTCLASSPATH-v1" || u64_be(size) || rt.jar || u64_be(1))`
+  computed identically by `compute_canonical_stdlib_hash` /
+  `hash_boot_classpath` and the off-chain `compute-stdlib-hash.py`.
+  See [`jvm-rt-reproducibility.md`](jvm-rt-reproducibility.md) §2.1–2.2
+  for the canonical value and reproducible-build procedure.  The
+  remaining blocker is therefore purely operational: at wc=3 activation
+  governance must build the canonical `rt.jar` on the pinned toolchain
+  and ship that value as the ConfigParam 85 `stdlib_hash`
+  (via `default_activation_with_stdlib()` / `jvm-config-param-cell-with-stdlib`).
+  Until that value is non-zero on-chain, every JVAC `state.stdlib_hash`
+  check at compute time is meaningless (any deploy with `stdlib_hash=0`
+  will pass).
 - **Initial genesis wallet keypairs unset.** Phase F gives the
   capability to pre-seed wc=3 wallets; the keypairs themselves are a
   governance decision (which Ed25519 keys, with which initial

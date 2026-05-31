@@ -3,6 +3,15 @@
 Status: working design
 Date: 2026-05-05
 
+> **Terminology note (added later).** Throughout this document, "v1" refers to
+> the first version of the *contract profile / `rt.jar` / ABI* — the admitted-API
+> surface — and that profile carries forward unchanged. It is a different axis
+> from the *account topology*, which moved from the v1 `SingletonExecutor` design
+> to the v2 account-autonomous model (each contract is its own wc=3 account)
+> during pre-launch cleanup. The API-profile constraints below remain valid under
+> v2; for the current account/state model see
+> [`jvm-v2-account-topology.md`](jvm-v2-account-topology.md).
+
 This document defines the practical development target for Avata inside the TOS
 JVM workchain. It is intentionally narrower than OpenJDK 8. The goal is to build
 a deterministic Java 8 bytecode smart-contract VM with a familiar Java developer

@@ -13,7 +13,15 @@ The local testnet carries **three independent workchains** under one validator s
 | `1` | **eTOS** (EVM)               | `0x45564D` ("EVM") = `4544077`  | Ethereum-compatible chain (evmone)| 100 M eTOS   | 10 genesis EToSPoWGiver contracts (10 M each); `chainId=0x544F53` (5 525 331); JSON-RPC at `127.0.0.1:801N` |
 | `2` | **UNO** (privacy / STARK)    | `0x554E4F31` ("UNO1") = `1431195441` | Zcash/Penumbra-style privacy payments with Plonky3 STARK proofs, Bitcoin-clone halving | 21 M UNO | **Empty at genesis — 0 pre-funded accounts, all UNO mined.** Mining via `tosctl-uno mine` (CPU Poseidon2, 600 s target, 50 UNO/solve, halving every 210 K solves) |
 
-All three chains share the **same validator set**, the **same catchain consensus**, and the **same** `/data/tos-global.json`. Deployment is a single `setup-testnet.sh` invocation — no per-chain activation flag is needed; wc=1 and wc=2 are wired into the zerostate from birth (via `add-evm-workchain` + `add-uno-workchain` in `crypto/smartcont/gen-zerostate.fif`, §50-84). Verify post-genesis with:
+> **wc=3 (Avata JVM) is intentionally absent from this local testnet.** The
+> tostester pipeline that `setup-testnet.sh` drives uses its own zerostate
+> template (`test/tostester/src/tostester/zerostate.py`) which wires only
+> wc=0/1/2. The production generator `crypto/smartcont/gen-zerostate.fif`
+> *does* register wc=3 (empty, `stdlib_hash = 0`) via `add-jvm-workchain`, but
+> the tostester path does not. So this local cluster runs three chains; see
+> [`jvm-mainnet-activation.md`](jvm-mainnet-activation.md) for the wc=3 bring-up.
+
+All three chains share the **same validator set**, the **same catchain consensus**, and the **same** `/data/tos-global.json`. Deployment is a single `setup-testnet.sh` invocation — no per-chain activation flag is needed; wc=1 and wc=2 are wired into the zerostate from birth (via `add-evm-workchain-v2` + `add-uno-workchain-v2` in `test/tostester/src/tostester/zerostate.py`). Verify post-genesis with:
 
 ```bash
 tos-lite-client -C /data/tos-global.json -v 0 -c "getconfig 12" -c "quit" \
