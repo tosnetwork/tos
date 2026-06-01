@@ -106,7 +106,7 @@ async def setup():
             # Populate static dir
             static_dir = node._directory / "static"
             static_dir.mkdir(exist_ok=True)
-            for state in (zs.masterchain, zs.shardchain, zs.evmchain, zs.unochain):
+            for state in (zs.masterchain, zs.shardchain):
                 link = static_dir / state.file_hash.hex().upper()
                 if not link.exists():
                     link.symlink_to(state.file)

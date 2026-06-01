@@ -32,9 +32,13 @@ class NetworkConfig:
     shard_validators: int = 4  # DEV-SPECIFIC: matches min_validators=4
     block_limit_mul: int = 1
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
-    mc_consensus: SimplexConsensusConfig | None = field(default_factory=SimplexConsensusConfig)  # Simplex enabled
+    mc_consensus: SimplexConsensusConfig | None = field(
+        default_factory=SimplexConsensusConfig
+    )  # Simplex enabled
     shard_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
-    shard_consensus: SimplexConsensusConfig | None = field(default_factory=SimplexConsensusConfig)  # Simplex enabled
+    shard_consensus: SimplexConsensusConfig | None = field(
+        default_factory=SimplexConsensusConfig
+    )  # Simplex enabled
     shard_validators_lifetime: int = 100000  # DEV: long lifetime for local testnet
 
 
@@ -49,8 +53,6 @@ class WorkchainState:
 class Zerostate:
     masterchain: WorkchainState
     shardchain: WorkchainState
-    evmchain: WorkchainState  # EVM workchain (wc=1)
-    unochain: WorkchainState  # UNO workchain (wc=2)
     main_wallet_key: nacl.signing.SigningKey
     main_wallet_address: Address
 
@@ -92,66 +94,10 @@ wc_master setworkchain
   workchain-dict !
 }} : add-std-workchain-v2
 
-// EVM workchain (wc=1) — same as add-std-workchain-v2 but vm_version=0x45564D ("EVM")
-// instead of -1, which selects the evmone executor in Transaction::prepare_compute_phase.
-// vm_mode stores the EVM chain_id (0x544F53 = "TOS", matching evm_workchain::kEvmChainId).
-{{ <b x{{a7}} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{{e000}} s,
-  3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, 0x45564D 32 i, 0x544F53 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
-  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
-  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
-  workchain-dict !
-}} : add-evm-workchain-v2
-
-// UNO workchain (wc=2) — same as add-std-workchain-v2 but vm_version=0x554E4F31
-// ("UNO1"), which routes wc=2 transactions to the Plonky3 STARK verifier
-// (see uno/core/workchain.h::kVmVersion).
-{{ <b x{{a7}} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{{e000}} s,
-  3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, 0x554E4F31 32 i, 0 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
-  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
-  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
-  workchain-dict !
-}} : add-uno-workchain-v2
-
 dup dup 31 boc+>B dup "basestate0.boc" B>file
 Bhashu dup =: basestate0_fhash 256 u>B "basestate0.fhash" B>file
 hashu dup =: basestate0_rhash 256 u>B "basestate0.rhash" B>file
 basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 add-std-workchain-v2
-
-// ( accounts_ref wc -- shard_state_cell )
-{{ <b x{{9023afe2}} s, globalid@ 32 i, 0 8 i,
-  swap 32 i, 1 63 << 64 u, 0 64 i, now 32 u, 0 64 i, -1 32 i,
-  <b 0 67 u, b> ref, 0 1 u,
-  swap ref,
-  <b 0 128 10 + 1+ 1+ u, b> ref, 0 1 u, b>
-  dup isShardState? not abort"invalid ShardState created"
-}} : mkShardStateWithAccounts
-
-// EVM workchain (wc=1) zerostate: explicit eTOS PoW giver genesis.
-"etos-pow-givers.fif" include
-dup dup 31 boc+>B dup "evmstate1.boc" B>file
-Bhashu dup =: evmstate1_fhash 256 u>B "evmstate1.fhash" B>file
-hashu dup =: evmstate1_rhash 256 u>B "evmstate1.rhash" B>file
-evmstate1_rhash evmstate1_fhash now {monitor_min_split} {split} dup 1 add-evm-workchain-v2
-
-// UNO workchain (wc=2) zerostate: ShardState whose accounts:^ShardAccounts ref
-// is pre-populated with the single UNO executor account at 0x…01 as
-// acc_uninit — built deterministically by the C++ word
-// `uno-zerostate-accounts-cell` registered in create-state.cpp. The executor
-// needs to exist in ShardAccounts from block 0 so the collator can route
-// ext_in_msgs (`uno_sendMineUno`, `uno_sendTransfer`) to it; otherwise the
-// lookup returns null and every inbound wc=2 tx is dropped before compute
-// phase. The first MineUno activates the account (acc_uninit → acc_active
-// with the 0x55 'U' code marker + serialised UnoShardState as data). The
-// commitment tree / nullifier set / anchor window are materialised lazily
-// inside UnoShardState on that first tx — the mainnet distribution-builder
-// (uno/core/genesis.h) is still TODO per gen-zerostate.fif. vm_version=
-// 0x554E4F31 on the descriptor routes wc=2 traffic to the Plonky3 STARK
-// verifier.
-uno-zerostate-accounts-cell 2 mkShardStateWithAccounts
-dup dup 31 boc+>B dup "unostate2.boc" B>file
-Bhashu dup =: unostate2_fhash 256 u>B "unostate2.fhash" B>file
-hashu dup =: unostate2_rhash 256 u>B "unostate2.rhash" B>file
-unostate2_rhash unostate2_fhash now {monitor_min_split} {split} dup 2 add-uno-workchain-v2
 
 config.workchains!
 
@@ -432,16 +378,6 @@ def create_zerostate(
             file=state_dir / "basestate0.boc",
             file_hash=(state_dir / "basestate0.fhash").read_bytes(),
             root_hash=(state_dir / "basestate0.rhash").read_bytes(),
-        ),
-        evmchain=WorkchainState(
-            file=state_dir / "evmstate1.boc",
-            file_hash=(state_dir / "evmstate1.fhash").read_bytes(),
-            root_hash=(state_dir / "evmstate1.rhash").read_bytes(),
-        ),
-        unochain=WorkchainState(
-            file=state_dir / "unostate2.boc",
-            file_hash=(state_dir / "unostate2.fhash").read_bytes(),
-            root_hash=(state_dir / "unostate2.rhash").read_bytes(),
         ),
         main_wallet_key=nacl.signing.SigningKey(pk),
         main_wallet_address=Address((addr_wc, addr_hash)),
