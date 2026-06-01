@@ -161,7 +161,6 @@ async def setup():
             print(f"    validator:  127.0.0.1:{node._addr.port}")
             print(f"    liteserver: 127.0.0.1:{node._liteserver_addr.port}")
             print(f"    console:    127.0.0.1:{node._engine_console_addr.port}")
-            print(f"    json-rpc:   127.0.0.1:{8010 + idx}  (eth_*)")
 
         # DHT node config
         dht_dir = DATA / "dht"
@@ -170,13 +169,11 @@ async def setup():
             os.symlink(dht._directory / "keyring", dht_dir / "keyring")
         (dht_dir / "config.json").write_text(dht._local_config.to_json())
 
-        # Port info for systemd generation. EVM JSON-RPC ports are 8011..8013
-        # (one per validator, allocated in the bash side after this Python block).
+        # Port info for systemd generation.
         port_info = {"dht_port": dht._addr.port, "nodes": [
             {"idx": i+1, "validator_port": n._addr.port,
              "liteserver_port": n._liteserver_addr.port,
-             "console_port": n._engine_console_addr.port,
-             "jsonrpc_port": 8010 + i + 1}
+             "console_port": n._engine_console_addr.port}
             for i, n in enumerate(nodes)
         ]}
         (DATA / "testnet-ports.json").write_text(json.dumps(port_info, indent=2))
@@ -236,9 +233,6 @@ for i in 1 2 3; do
     NODE_DIR="$DATA/tos$i"
     TESTNET_NODE_DIR=$(echo "$PORTS" | python3 -c "import json,sys; d=json.load(sys.stdin); n=[x for x in d['nodes'] if x['idx']==$i][0]; print(n)")
 
-    # JSON-RPC HTTP port for eth_* methods (one per validator: 8011..8013)
-    JSONRPC_PORT=$((8010 + i))
-
     cat > "/etc/systemd/system/tos-validator@${i}.service" <<SVCEOF
 [Unit]
 Description=TOS Validator Node $i
@@ -250,22 +244,6 @@ Type=simple
 User=tos
 Group=tos
 UMask=0077
-# UNO dev-mode mining target = 2^252 (BE byte[0]=0x10, others=0). Semantics:
-# hash < target is valid, so LARGER target means EASIER. 2^252 gives ~1/16
-# probability per Poseidon2 hash — a single CPU thread finds a valid nonce
-# in microseconds. Matches kDevMineTargetBE in uno/core/mine_constants.h.
-#
-# NOTE: This env var is ONLY honored by validator binaries built with
-# -DUNO_DEVNET_ALLOW_ENV_TARGET=ON. Production builds (the default) ignore
-# it and select the target from the zerostate global_id via
-# select_init_mine_target() — which already returns kDevMineTargetBE for
-# global_id == 3 (the local-dev id). For most local testnets you do not
-# need this env line at all; rebuild with the dev flag only if you must
-# override the target outside the dev global_id.
-#
-# NEVER set this on mainnet — it would let anyone mint all 21 M UNO instantly
-# (and an env-honoring binary would never have shipped to mainnet anyway).
-Environment=UNO_INIT_MINE_TARGET_HEX=1000000000000000000000000000000000000000000000000000000000000000
 WorkingDirectory=$NODE_DIR
 ExecStart=$INSTALL_BIN/tos-validator-engine \\
   -C /data/tos-global.json \\
@@ -275,7 +253,6 @@ ExecStart=$INSTALL_BIN/tos-validator-engine \\
   --initial-sync-delay 5 \\
   --session-logs $NODE_DIR/session-logs \\
   --quic-flood-control -1 \\
-  --json-rpc-address 127.0.0.1:$JSONRPC_PORT \\
   -l $NODE_DIR/log \\
   -t 4
 Restart=on-failure
