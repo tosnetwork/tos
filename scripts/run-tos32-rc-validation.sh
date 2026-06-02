@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Run the tos32 release-candidate local testnet validation loop.
 #
-# This script assumes scripts/setup-testnet.sh has already installed the
-# local 3-node systemd testnet, unless TOS_RC_SETUP=1 is set.
+# Native-only (wc=0): drives the native TVM testnet installed by
+# scripts/setup-testnet.sh (a 4-node systemd cluster). Each node is probed
+# through its own liteserver via tos-lite-client (ADNL); there is no
+# EVM/JSON-RPC surface. Assumes setup-testnet.sh has already installed the
+# cluster, unless TOS_RC_SETUP=1 is set.
 
 set -euo pipefail
 
@@ -13,117 +16,107 @@ HEALTH_INTERVAL_SECONDS="${TOS_RC_HEALTH_INTERVAL_SECONDS:-30}"
 RESTART_INTERVAL_SECONDS="${TOS_RC_RESTART_INTERVAL_SECONDS:-900}"
 CATCHUP_LAG_SECONDS="${TOS_RC_CATCHUP_LAG_SECONDS:-300}"
 CATCHUP_TIMEOUT_SECONDS="${TOS_RC_CATCHUP_TIMEOUT_SECONDS:-600}"
+NODE_COUNT="${TOS_RC_NODE_COUNT:-4}"
+GLOBAL_CONFIG="${TOS_RC_GLOBAL_CONFIG:-/data/tos-global.json}"
+LITE_CLIENT="${TOS_RC_LITE_CLIENT:-/usr/local/bin/tos-lite-client}"
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
   SUDO="sudo"
 fi
 
+if [ ! -x "$LITE_CLIENT" ]; then
+  alt="$ROOT/build/lite-client/lite-client"
+  [ -x "$alt" ] && LITE_CLIENT="$alt"
+fi
+
 mkdir -p "$ARTIFACT_DIR"
 exec > >(tee "$ARTIFACT_DIR/driver.log") 2>&1
 
-json_rpc() {
-  local port="$1"
-  local method="$2"
-  local params="${3:-[]}"
-  curl -fsS --max-time 5 \
-    -H 'Content-Type: application/json' \
-    --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}" \
-    "http://127.0.0.1:$port/"
-}
-
-node_port() {
-  echo $((8010 + $1))
-}
-
-node_eth_chain_id() {
-  local port
-  port="$(node_port "$1")"
-  local response
-  response="$(json_rpc "$port" eth_chainId)" || return 1
-  python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' <<< "$response"
-}
-
-node_eth_block_number() {
-  local port
-  port="$(node_port "$1")"
-  local response
-  response="$(json_rpc "$port" eth_blockNumber)" || return 1
-  python3 -c 'import json,sys; s=json.load(sys.stdin)["result"]; print(int(s, 16) if isinstance(s, str) and s.startswith("0x") else int(s or 0))' <<< "$response"
-}
-
+# Masterchain seqno from a specific node's liteserver. The liteservers in the
+# global config are ordered node 1..N, so node K maps to liteserver idx K-1.
 node_masterchain_seqno() {
-  local port
-  port="$(node_port "$1")"
-  local response
-  response="$(json_rpc "$port" getMasterchainInfo "{}")" || return 1
-  python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["last"]["seqno"])' <<< "$response"
+  local node="$1"
+  local out
+  out="$(timeout 15 "$LITE_CLIENT" -C "$GLOBAL_CONFIG" -i "$((node - 1))" -v 0 \
+    -c "time" -c "last" -c "quit" 2>/dev/null)" || return 1
+  # parse: latest masterchain block known to server is (-1,8000000000000000,SEQNO):roothash:filehash ...
+  echo "$out" | sed -nE 's/.*\(-1,[0-9a-fA-F]+,([0-9]+)\).*/\1/p' | head -1
 }
 
 check_node() {
   local node="$1"
-  local port
-  port="$(node_port "$node")"
   local active
   active="$($SUDO systemctl is-active "tos-validator@$node" 2>/dev/null || true)"
   if [ "$active" != "active" ]; then
     echo "node $node inactive: $active" >&2
     return 1
   fi
-  local chain_id evm_block mc_seqno
-  chain_id="$(node_eth_chain_id "$node")"
-  evm_block="$(node_eth_block_number "$node")"
-  mc_seqno="$(node_masterchain_seqno "$node")"
-  printf "%s,node=%s,active=%s,chain_id=%s,evm_block=%s,mc_seqno=%s\n" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$node" "$active" "$chain_id" "$evm_block" "$mc_seqno" \
+  local mc_seqno
+  mc_seqno="$(node_masterchain_seqno "$node" || true)"
+  printf "%s,node=%s,active=%s,mc_seqno=%s\n" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$node" "$active" "${mc_seqno:-NA}" \
     | tee -a "$ARTIFACT_DIR/health.csv"
 }
 
 check_all_nodes() {
-  check_node 1
-  check_node 2
-  check_node 3
+  local n
+  for n in $(seq 1 "$NODE_COUNT"); do
+    check_node "$n" || true
+  done
 }
 
 collect_logs() {
-  for svc in tos-dht tos-validator@1 tos-validator@2 tos-validator@3; do
-    $SUDO journalctl -u "$svc" --no-pager -n 2000 > "$ARTIFACT_DIR/${svc//@/_}.log" 2>&1 || true
+  local n svc
+  $SUDO journalctl -u tos-dht --no-pager -n 2000 > "$ARTIFACT_DIR/tos-dht.log" 2>&1 || true
+  for n in $(seq 1 "$NODE_COUNT"); do
+    svc="tos-validator@$n"
+    $SUDO journalctl -u "$svc" --no-pager -n 2000 > "$ARTIFACT_DIR/tos-validator_$n.log" 2>&1 || true
   done
-  $SUDO systemctl status tos-dht tos-validator@1 tos-validator@2 tos-validator@3 \
+  # shellcheck disable=SC2046
+  $SUDO systemctl status tos-dht $(for n in $(seq 1 "$NODE_COUNT"); do echo "tos-validator@$n"; done) \
     --no-pager > "$ARTIFACT_DIR/systemd-status.txt" 2>&1 || true
 }
 
 run_catchup_probe() {
+  # Stop the highest-numbered node (a pure validator; node 1 also hosts the
+  # DHT bootstrap). With NODE_COUNT=4 the remaining 3 (weight 51) still exceed
+  # the quorum threshold (quorum_threshold(68)=46), so the chain keeps
+  # producing while the stopped node falls behind and must catch up on restart.
+  local probe_node="$NODE_COUNT"
   echo
-  echo "### catch-up probe: stop node 3 for ${CATCHUP_LAG_SECONDS}s, then restart and wait"
-  $SUDO systemctl stop tos-validator@3
+  echo "### catch-up probe: stop node $probe_node for ${CATCHUP_LAG_SECONDS}s, then restart and wait"
+  $SUDO systemctl stop "tos-validator@$probe_node"
   sleep "$CATCHUP_LAG_SECONDS"
   local target
-  target="$(node_masterchain_seqno 1)"
+  target="$(node_masterchain_seqno 1 || true)"
   echo "target masterchain seqno from node 1 after lag: $target"
-  $SUDO systemctl start tos-validator@3
+  $SUDO systemctl start "tos-validator@$probe_node"
   local deadline=$((SECONDS + CATCHUP_TIMEOUT_SECONDS))
   while [ "$SECONDS" -lt "$deadline" ]; do
     local b
-    b="$(node_masterchain_seqno 3 2>/dev/null || true)"
+    b="$(node_masterchain_seqno "$probe_node" 2>/dev/null || true)"
     if [ -z "$b" ]; then
-      echo "node 3 catch-up: RPC not ready yet"
+      echo "node $probe_node catch-up: liteserver not ready yet"
       sleep "$HEALTH_INTERVAL_SECONDS"
       continue
     fi
-    echo "node 3 catch-up mc_seqno=$b target=$target"
-    if [ "$b" -ge "$target" ]; then
+    echo "node $probe_node catch-up mc_seqno=$b target=$target"
+    if [ -n "$target" ] && [ "$b" -ge "$target" ]; then
       echo "catch-up probe passed"
       return 0
     fi
     sleep "$HEALTH_INTERVAL_SECONDS"
   done
-  echo "catch-up probe failed: node 3 did not reach masterchain seqno $target within ${CATCHUP_TIMEOUT_SECONDS}s" >&2
+  echo "catch-up probe failed: node $probe_node did not reach masterchain seqno $target within ${CATCHUP_TIMEOUT_SECONDS}s" >&2
   return 1
 }
 
-echo "tos32 RC validation"
+echo "tos32 RC validation (native-only, wc=0)"
 echo "root=$ROOT"
 echo "artifact_dir=$ARTIFACT_DIR"
+echo "node_count=$NODE_COUNT"
+echo "lite_client=$LITE_CLIENT"
+echo "global_config=$GLOBAL_CONFIG"
 echo "duration_seconds=$DURATION_SECONDS"
 echo "restart_interval_seconds=$RESTART_INTERVAL_SECONDS"
 echo "git_commit=$(git -C "$ROOT" rev-parse HEAD)"
@@ -151,7 +144,7 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   if [ "$RESTART_INTERVAL_SECONDS" -gt 0 ] && [ "$SECONDS" -ge "$next_restart" ]; then
     echo "restarting tos-validator@$restart_node"
     $SUDO systemctl restart "tos-validator@$restart_node"
-    restart_node=$((restart_node % 3 + 1))
+    restart_node=$((restart_node % NODE_COUNT + 1))
     next_restart=$((SECONDS + RESTART_INTERVAL_SECONDS))
   fi
   sleep "$HEALTH_INTERVAL_SECONDS"
@@ -161,8 +154,9 @@ check_all_nodes
 collect_logs
 
 cat > "$ARTIFACT_DIR/summary.txt" <<EOF
-tos32 RC validation completed
+tos32 RC validation completed (native-only, wc=0)
 commit: $(git -C "$ROOT" rev-parse HEAD)
+node_count: $NODE_COUNT
 duration_seconds: $DURATION_SECONDS
 restart_interval_seconds: $RESTART_INTERVAL_SECONDS
 catchup_test: ${TOS_RC_CATCHUP_TEST:-0}

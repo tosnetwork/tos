@@ -133,8 +133,8 @@ All initial config values are set via Fift helper words:
 13 capCreateStats capBounceMsgBody or ... config.version!
 
 // ConfigParam 16: validator counts
-40 20 3 config.validator_num!
-// max_validators max_main_validators min_validators
+40 20 4 config.validator_num!
+// max_validators max_main_validators min_validators (4 = BFT f=1 floor)
 
 // ConfigParam 17: stake limits
 TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!

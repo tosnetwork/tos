@@ -29,7 +29,7 @@ class NetworkConfig:
     monitor_min_split: int = 0
     split: int = 0
     global_version: int = 13
-    shard_validators: int = 4  # DEV-SPECIFIC: matches min_validators=4
+    shard_validators: int = 4  # DEV-SPECIFIC: matches min_validators=4 and the 4-node local testnet
     block_limit_mul: int = 1
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
     mc_consensus: SimplexConsensusConfig | None = field(
@@ -210,7 +210,7 @@ Masterchain swap
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
-40 20 4 config.validator_num!  // DEV-SPECIFIC: same as production limits
+40 20 4 config.validator_num!  // min_validators=4, matches production gen-zerostate.fif
 // min-stake max-stake min-total-stake max-factor
 TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!  // DEV-SPECIFIC: low stakes for tests
 // elected-for elect-start-before elect-end-before stakes-frozen-for

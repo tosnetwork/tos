@@ -1,6 +1,6 @@
-# Local 3-Node TOS Testnet Setup Guide
+# Local 4-Node TOS Testnet Setup Guide
 
-This document records the exact steps used to configure and run a production-style local TOS testnet with 3 validator nodes on a single machine. This setup serves as the reference for future production deployments. The cluster size is chosen to match the canonical BFT-2/3 quorum (`tos/quorum.h`): 2 of 3 votes are sufficient to reach consensus, so the network keeps producing blocks while one validator is offline.
+This document records the exact steps used to configure and run a production-style local TOS testnet with 4 validator nodes on a single machine. This setup serves as the reference for future production deployments. Four is the smallest cluster with real BFT fault tolerance: under the canonical BFT-2/3 quorum (`tos/quorum.h`), 3 of 4 votes are sufficient to reach consensus, so the network keeps producing blocks while one validator is offline (a 3-node cluster would tolerate none).
 
 ## Native-only topology
 
@@ -11,7 +11,7 @@ The local testnet runs a **single execution domain — the native TVM workchain 
 | `-1` | **masterchain**     | (reserved) | Consensus / config           | —            | —                                              |
 | `0` | **TOS** (native TVM) | `-1` (TVM) | Primary smart-contract chain | 5 M TOS      | Fully pre-mined to the main wallet (TON-style) |
 
-The three nodes share the **same validator set**, the **same Simplex consensus**, and the **same** `/data/tos-global.json`. Deployment is a single `setup-testnet.sh` invocation. Verify post-genesis with:
+The four nodes share the **same validator set**, the **same Simplex consensus**, and the **same** `/data/tos-global.json`. Deployment is a single `setup-testnet.sh` invocation. Verify post-genesis with:
 
 ```bash
 tos-lite-client -C /data/tos-global.json -v 0 -c "getconfig 12" -c "quit" \
@@ -36,18 +36,18 @@ tos-lite-client -C /data/tos-global.json -v 0 -c "getconfig 12" -c "quit" \
                           │  (DHT + zero_state +    │  (used by all nodes
                           │   liteservers)          │   and lite-client)
                           └───────────┬────────────┘
-                ┌──────────────┬──────┴──────┬──────────────┐
-                │              │             │              │
-        ┌───────▼────────┐  ┌──▼────────────┐  ┌────────────▼───┐
-        │  tos-validator  │  │ tos-validator │  │ tos-validator  │
-        │      @1         │  │     @2        │  │      @3        │
-        │  /data/tos1/    │  │  /data/tos2/  │  │  /data/tos3/   │
-        │  UDP:2002       │  │  UDP:2005     │  │  UDP:2008      │
-        │  LS:2003        │  │  LS:2006      │  │  LS:2009       │
-        │  Console:2004   │  │  Console:2007 │  │  Console:2010  │
-        └─────────────────┘  └───────────────┘  └────────────────┘
-                │                  │                  │
-                └──────────────────┼──────────────────┘
+        ┌───────────┬───────────┬─────┴─────┬───────────┐
+        │           │           │           │
+ ┌──────▼─────┐ ┌───▼────────┐ ┌▼───────────┐ ┌─────────▼──┐
+ │ tos-valid. │ │ tos-valid. │ │ tos-valid. │ │ tos-valid. │
+ │    @1      │ │    @2      │ │    @3      │ │    @4      │
+ │ /data/tos1 │ │ /data/tos2 │ │ /data/tos3 │ │ /data/tos4 │
+ │ UDP:2002   │ │ UDP:2005   │ │ UDP:2008   │ │ UDP:2011   │
+ │ LS:2003    │ │ LS:2006    │ │ LS:2009    │ │ LS:2012    │
+ │ Cons:2004  │ │ Cons:2007  │ │ Cons:2010  │ │ Cons:2013  │
+ └────────────┘ └────────────┘ └────────────┘ └────────────┘
+        │           │           │           │
+        └───────────┴─────┬─────┴───────────┘
                           ┌────────▼────────────────┐
                           │     DHT bootstrap       │
                           │  node0 (port 2001)      │
@@ -73,6 +73,7 @@ The setup creates two directory trees:
     static/                       # symlinks: file_hash -> .boc
   node2/                          # validator 2
   node3/                          # validator 3
+  node4/                          # validator 4
 ```
 
 **Service tree** (symlinked from working tree, used by systemd):
@@ -94,6 +95,7 @@ The setup creates two directory trees:
     ...                           # other runtime dirs created by validator-engine
   tos2/                           # same structure
   tos3/                           # same structure
+  tos4/                           # same structure
 ```
 
 ## Port Allocation
@@ -104,14 +106,15 @@ The setup creates two directory trees:
 | tos1 | 2002            | 2003             | 2004          |
 | tos2 | 2005            | 2006             | 2007          |
 | tos3 | 2008            | 2009             | 2010          |
+| tos4 | 2011            | 2012             | 2013          |
 
 Ports are auto-assigned by the `tostester.Network` class starting from base port 2000.
 
 The native workchain (wc=0) is reached through the per-node liteserver:
 
-| Chain | Access surface          | Port per node (nodes 1..3) |
-|-------|-------------------------|----------------------------|
-| wc=0  | Liteserver (lite-client)| 2003 / 2006 / 2009         |
+| Chain | Access surface          | Port per node (nodes 1..4)  |
+|-------|-------------------------|-----------------------------|
+| wc=0  | Liteserver (lite-client)| 2003 / 2006 / 2009 / 2012   |
 
 ## systemd Services
 
@@ -121,6 +124,7 @@ The native workchain (wc=0) is reached through the per-node liteserver:
 | `tos-validator@1` | `/etc/systemd/system/tos-validator@1.service` | Validator node 1 |
 | `tos-validator@2` | `/etc/systemd/system/tos-validator@2.service` | Validator node 2 |
 | `tos-validator@3` | `/etc/systemd/system/tos-validator@3.service` | Validator node 3 |
+| `tos-validator@4` | `/etc/systemd/system/tos-validator@4.service` | Validator node 4 |
 
 Service unit files are generated per-instance (not templates) because each node has unique ports and paths. All services run as system user `tos` with the following hardening:
 
@@ -246,6 +250,7 @@ All services started.
   tos-validator@1          active
   tos-validator@2          active
   tos-validator@3          active
+  tos-validator@4          active
 ```
 
 ### Step 4: Verify block production
@@ -271,20 +276,21 @@ tos-lite-client -C /data/tos-global.json -v 0 -c "time" -c "getconfig 34" -c "qu
 
 Expected output includes:
 ```
-cur_validators:(validators_ext ... total:3 main:3 total_weight:51
+cur_validators:(validators_ext ... total:4 main:4 total_weight:68
+  ... weight:17
   ... weight:17
   ... weight:17
   ... weight:17
 ```
 
-All 3 validators active with equal weight. Quorum threshold (`tos::quorum_threshold(51)`) is `34`, so any 2 of 3 validators (combined weight 34) are sufficient to reach consensus.
+All 4 validators active with equal weight. Quorum threshold (`tos::quorum_threshold(68)`) is `46`, so any 3 of 4 validators (combined weight 51) are sufficient to reach consensus; the chain keeps producing while 1 validator is offline.
 
 ## Management
 
 ### Service control
 
 ```bash
-./scripts/testnet-ctl.sh start      # start DHT + 3 validators
+./scripts/testnet-ctl.sh start      # start DHT + 4 validators
 ./scripts/testnet-ctl.sh stop       # graceful stop (validators first, then DHT)
 ./scripts/testnet-ctl.sh restart    # stop + start
 ./scripts/testnet-ctl.sh status     # show active/inactive for each service
@@ -304,7 +310,7 @@ sudo journalctl -u tos-validator@3 -f --no-pager
 ### Restarting one validator for upgrades
 
 Stopping a single validator for a binary upgrade or config reload is
-safe — TOS does not auto-slash for downtime, and the remaining 2 of 3
+safe — TOS does not auto-slash for downtime, and the remaining 3 of 4
 nodes still meet the BFT-2/3 quorum so the chain keeps producing
 blocks. See [Validator.md → Maintenance and Graceful Shutdown](Validator.md#maintenance-and-graceful-shutdown)
 for the full operator procedure and the rationale.
@@ -474,7 +480,7 @@ This generates new keys, new zero state, and fresh databases. All previous chain
 | ADNL timeout on all nodes | Missing `--initial-sync-delay` or `--quic-flood-control` launch params | Verify systemd ExecStart includes both flags (see below) |
 | "missing file" in log for static/ | Zero state .boc not in static dir | Check symlinks in `static/` point to valid .boc files |
 | DHT "failed to get from dht" | Nodes haven't discovered each other yet | Wait 5-10 seconds, DHT needs time to propagate |
-| Nodes not producing blocks | < 2/3 validators online | Ensure at least 2 of 3 validator services are active (any 2 satisfy `tos::quorum_threshold(51)=34`); when only 1 is up, no quorum is possible |
+| Nodes not producing blocks | < 2/3 validators online | Ensure at least 3 of 4 validator services are active (any 3 satisfy `tos::quorum_threshold(68)=46`); when only 2 are up, no quorum is possible |
 
 ## Files
 

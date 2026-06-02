@@ -3,6 +3,21 @@
 "Asm.fif" include
 "Lists.fif" include
 
+// =====================================================================
+//  ⚠  LAUNCH SAFETY — FOUR-CHAIN TEMPLATE, NOT FOR NATIVE MAINNET  ⚠
+// =====================================================================
+//  This template registers EVM (wc=1), Uno (wc=2) and JVM (wc=3) and
+//  includes the eTOS PoW givers. The Uno/JVM genesis states are TODO/
+//  empty and NOT launch-ready, and these three workchains are OUTSIDE
+//  the native-only security audit (see doc/security-audit-native-2026-06.md,
+//  finding F1).
+//
+//  For a native-only mainnet/staged launch use
+//      crypto/smartcont/gen-zerostate-wc0-only.fif
+//  which is byte-identical below the workchain section. Activate EVM/Uno/
+//  JVM later via a ConfigParam 12 governance update — no binary redeploy.
+// =====================================================================
+
 def? $1 { @' $1 } { "" } cond constant suffix
 { suffix $+ } : +suffix
 256 1<<1- 15 / constant AllOnes
@@ -219,7 +234,7 @@ Masterchain swap
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
-40 20 3 config.validator_num!
+40 20 4 config.validator_num!  // max=40 max_main=20 min_validators=4 (BFT f=1: tolerate 1 fault)
 // min-stake max-stake min-total-stake max-factor
 TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!
 // elected-for elect-start-before elect-end-before stakes-frozen-for

@@ -28,9 +28,9 @@ if [ "${1:-}" = "--clean" ]; then
     echo "Stopping services..."
     "$REPO_ROOT/scripts/testnet-ctl.sh" stop 2>/dev/null || true
     echo "Cleaning $DATA/..."
-    # tos4 is wiped here too so a leftover 4-node deployment doesn't keep a
-    # stale validator dir on disk after the 3-node reconfigure.
-    for d in zerostate dht tos1 tos2 tos3 tos4 testnet; do rm -rf "${DATA:?}/$d"; done
+    # tos5 is wiped here too so a leftover higher-numbered deployment doesn't
+    # keep a stale validator dir on disk after the 4-node reconfigure.
+    for d in zerostate dht tos1 tos2 tos3 tos4 tos5 testnet; do rm -rf "${DATA:?}/$d"; done
     rm -f "${DATA:?}/tos-global.json"
 fi
 
@@ -85,10 +85,11 @@ async def setup():
         # Create DHT node
         dht = network.create_dht_node()
 
-        # Create 3 validators (≥2/3 quorum needs 2 of 3 votes per
-        # tos/quorum.h; matches doc/Validator-Local.md).
+        # Create 4 validators (≥2/3 quorum needs 3 of 4 votes per
+        # tos/quorum.h; tolerates 1 faulty/offline validator; matches
+        # doc/Validator-Local.md).
         nodes = []
-        for _ in range(3):
+        for _ in range(4):
             node = network.create_full_node()
             node.make_initial_validator()
             node.announce_to(dht)
@@ -229,7 +230,7 @@ WantedBy=multi-user.target
 SVCEOF
 
 # Validator services
-for i in 1 2 3; do
+for i in 1 2 3 4; do
     NODE_DIR="$DATA/tos$i"
     TESTNET_NODE_DIR=$(echo "$PORTS" | python3 -c "import json,sys; d=json.load(sys.stdin); n=[x for x in d['nodes'] if x['idx']==$i][0]; print(n)")
 
@@ -269,12 +270,12 @@ SVCEOF
 done
 
 systemctl daemon-reload
-# Disable any legacy @4 unit before enabling the 3-node set, in case this is
-# a reconfigure of a previous 4-node deployment where @4 was left enabled.
-systemctl disable tos-validator@4 2>/dev/null || true
-rm -f /etc/systemd/system/tos-validator@4.service
+# Disable any legacy @5 unit before enabling the 4-node set, in case this is a
+# reconfigure of a deployment where a higher-numbered unit was left enabled.
+systemctl disable tos-validator@5 2>/dev/null || true
+rm -f /etc/systemd/system/tos-validator@5.service
 systemctl daemon-reload
-systemctl enable tos-dht tos-validator@1 tos-validator@2 tos-validator@3
+systemctl enable tos-dht tos-validator@1 tos-validator@2 tos-validator@3 tos-validator@4
 
 echo ""
 echo "=========================================="

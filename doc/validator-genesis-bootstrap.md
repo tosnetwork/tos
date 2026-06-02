@@ -69,8 +69,10 @@ The filename includes the zerostate `suffix` (the first CLI arg to
 `create-state`): `validator-keys<suffix>.pub`. With no suffix it is just
 `validator-keys.pub`.
 
-> **`min_validators = 3`** (ConfigParam 16). Put **at least 3** public keys in
-> the file, otherwise the first election cannot form a valid set.
+> **`min_validators = 4`** (ConfigParam 16). Put **at least 4** public keys in
+> the file, otherwise the first election cannot form a valid set. (4 is the
+> smallest set with real BFT fault tolerance — it tolerates 1 faulty validator;
+> 3 would tolerate none.)
 
 ## Step-by-step bootstrap
 
@@ -85,13 +87,13 @@ Use the helper Fift script (committed at `scripts/gen-validator-keys.fif`):
 
 ```bash
 # from the repo root; produces val-key-1..N (private) + validator-keys.pub
-fift -I crypto/fift/lib -s scripts/gen-validator-keys.fif 3
+fift -I crypto/fift/lib -s scripts/gen-validator-keys.fif 4
 ```
 
 This writes:
-- `val-key-1`, `val-key-2`, `val-key-3` — each a raw 32-byte Ed25519 **private**
-  key (the block-signing key for that validator). Keep them secret.
-- `validator-keys.pub` — 96 bytes (3 × 32), the concatenated **public** keys.
+- `val-key-1`, `val-key-2`, `val-key-3`, `val-key-4` — each a raw 32-byte Ed25519
+  **private** key (the block-signing key for that validator). Keep them secret.
+- `validator-keys.pub` — 128 bytes (4 × 32), the concatenated **public** keys.
 
 ### 2. Assemble `validator-keys.pub`
 
@@ -107,8 +109,8 @@ Two ways, pick by trust model:
   coordinator concatenates the submissions in a fixed, agreed order:
 
   ```bash
-  cat op1.pub op2.pub op3.pub > validator-keys.pub   # order is consensus-relevant
-  test "$(wc -c < validator-keys.pub)" = "96"        # 3 × 32
+  cat op1.pub op2.pub op3.pub op4.pub > validator-keys.pub   # order is consensus-relevant
+  test "$(wc -c < validator-keys.pub)" = "128"              # 4 × 32
   ```
 
 ### 3. Enable `keys-from-file` in the genesis script
