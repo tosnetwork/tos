@@ -60,12 +60,26 @@ chown tos:tos "$DATA" "$DATA/testnet"
 
 # Python script that uses the tested tostester infrastructure
 cd "$REPO_ROOT"
-UV=$(which uv 2>/dev/null || echo "$HOME/.local/bin/uv")
-if [ ! -x "$UV" ]; then
-    echo "ERROR: uv not found. Install with: pip install uv"
+# Locate uv and the HOME it should use. Under sudo, $HOME is /root and the
+# caller's ~/.local/bin is off PATH, so resolve uv (and its venv/cache home)
+# from the invoking user (SUDO_USER). The Python step still runs as root so it
+# can write under /data — only HOME is borrowed so uv reuses the caller's venv.
+UV_HOME="$HOME"
+UV=$(command -v uv 2>/dev/null || true)
+if [ -n "${SUDO_USER:-}" ]; then
+    CALLER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    if [ -n "$CALLER_HOME" ]; then
+        UV_HOME="$CALLER_HOME"
+        for cand in "$CALLER_HOME/.local/bin/uv" "$CALLER_HOME/.cargo/bin/uv"; do
+            [ -x "$cand" ] && UV="$cand" && break
+        done
+    fi
+fi
+if [ -z "$UV" ] || [ ! -x "$UV" ]; then
+    echo "ERROR: uv not found. Install it: https://docs.astral.sh/uv/"
     exit 1
 fi
-$UV run python3 <<'PYEOF'
+HOME="$UV_HOME" "$UV" run python3 <<'PYEOF'
 import asyncio, json, os, sys, base64, hashlib
 from pathlib import Path
 from ipaddress import IPv4Address
