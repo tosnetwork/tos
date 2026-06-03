@@ -4,7 +4,6 @@ target_link_libraries(test-consensus PRIVATE
     adnltest
     dht
     overlay
-    rldp
     tdactor
     tdutils
     tl_api
@@ -18,7 +17,6 @@ target_link_libraries(test-validator-manager-resource-policy PRIVATE
     adnltest
     dht
     overlay
-    rldp
     tdactor
     tdutils
     tl_api

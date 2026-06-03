@@ -27,7 +27,6 @@
 #include "dht/dht.h"
 #include "overlay/overlays.h"
 #include "quic/quic-sender.h"
-#include "rldp/rldp.h"
 #include "rldp2/rldp.h"
 #include "td/actor/actor.h"
 #include "tos/tos-types.h"
@@ -135,10 +134,10 @@ class FullNode : public td::actor::Actor {
   static td::actor::ActorOwn<FullNode> create(
       adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash, FullNodeOptions opts,
       td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
-      td::actor::ActorId<rldp::Rldp> legacy_rldp, td::actor::ActorId<rldp2::Rldp> rldp2,
-      td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<dht::Dht> dht,
-      td::actor::ActorId<overlay::Overlays> overlays, td::actor::ActorId<ValidatorManagerInterface> validator_manager,
-      td::actor::ActorId<adnl::AdnlExtClient> client, std::string db_root, td::Promise<td::Unit> started_promise);
+      td::actor::ActorId<rldp2::Rldp> rldp2, td::actor::ActorId<quic::QuicSender> quic,
+      td::actor::ActorId<dht::Dht> dht, td::actor::ActorId<overlay::Overlays> overlays,
+      td::actor::ActorId<ValidatorManagerInterface> validator_manager, td::actor::ActorId<adnl::AdnlExtClient> client,
+      std::string db_root, td::Promise<td::Unit> started_promise);
 };
 
 }  // namespace fullnode
