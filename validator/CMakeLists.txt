@@ -187,6 +187,7 @@ add_library(validator-common OBJECT
   downloaders/wait-block-state-merge.cpp
   downloaders/wait-block-state.cpp
   apply-block.cpp
+  wc0-block-hook.cpp
   block-handle.cpp
   manager-init.cpp
   queue-size-counter.cpp

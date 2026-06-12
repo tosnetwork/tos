@@ -23,8 +23,81 @@
 #include "block/block-auto.h"
 #include "vm/cp0.h"
 #include "vm/vm.h"
+#include "vm/dict.h"
+#include "td/utils/crypto.h"
+
+#include <cstring>
 
 namespace tos {
+
+namespace {
+
+// Decode a TEP-64 snake string value cell (snake#00 followed by bytes across refs).
+std::string tep64_decode_snake(td::Ref<vm::Cell> cell) {
+  std::string out;
+  bool first = true;
+  // Cap chain length as well as output size: a crafted chain of zero-data cells
+  // would otherwise be walked to its full depth without growing `out`.
+  int cells_left = 256;
+  while (cell.not_null() && out.size() < 8192 && cells_left-- > 0) {
+    auto cs = vm::load_cell_slice(cell);
+    if (first) {
+      if (cs.size() < 8) {
+        break;
+      }
+      cs.fetch_ulong(8);  // skip the 0x00 snake type prefix
+      first = false;
+    }
+    int bytes = cs.size() / 8;
+    for (int i = 0; i < bytes; i++) {
+      out.push_back(static_cast<char>(cs.fetch_ulong(8)));
+    }
+    cell = cs.size_refs() > 0 ? cs.prefetch_ref() : td::Ref<vm::Cell>{};
+  }
+  return out;
+}
+
+// Append parsed TEP-64 on-chain metadata (name/symbol/decimals/image/description)
+// to `sb` from a jetton/NFT content cell. No-op if the content is not on-chain.
+void tep64_append_metadata(td::StringBuilder &sb, td::Ref<vm::Cell> content) {
+  if (content.is_null()) {
+    return;
+  }
+  try {
+    auto cs = vm::load_cell_slice(content);
+    if (cs.size() < 8 || cs.fetch_ulong(8) != 0) {
+      return;  // only on-chain (0x00) content is parsed here
+    }
+    vm::Dictionary dict{vm::DictAdvance{}, cs, 256};
+    auto get_attr = [&](const char *attr) -> std::string {
+      unsigned char h[32];
+      td::sha256(td::Slice(attr), td::MutableSlice(reinterpret_cast<char *>(h), 32));
+      td::Bits256 key;
+      std::memcpy(key.data(), h, 32);
+      auto val = dict.lookup_ref(key.bits(), 256);
+      if (val.is_null()) {
+        return std::string();
+      }
+      return tep64_decode_snake(val);
+    };
+    struct {
+      const char *attr;
+      const char *json;
+    } fields[] = {{"name", "jetton_name"},       {"symbol", "jetton_symbol"},
+                  {"decimals", "jetton_decimals"}, {"image", "jetton_image"},
+                  {"description", "jetton_description"}};
+    for (auto &f : fields) {
+      auto v = get_attr(f.attr);
+      if (!v.empty()) {
+        sb << ",\"" << f.json << "\":" << td::JsonString(td::Slice(v));
+      }
+    }
+  } catch (...) {
+    // best-effort metadata
+  }
+}
+
+}  // namespace
 
 void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_id,
                                         td::Promise<HttpReturn> promise) {
@@ -147,8 +220,10 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                          << ",\"mintable\":" << (mintable ? "true" : "false")
                          << ",\"admin_address\":" << td::JsonString(td::Slice(admin_addr_str))
                          << ",\"jetton_content\":" << td::JsonString(td::Slice(content_b64))
-                         << ",\"jetton_wallet_code\":" << td::JsonString(td::Slice(wallet_code_b64))
-                         << "}";
+                         << ",\"jetton_wallet_code\":" << td::JsonString(td::Slice(wallet_code_b64));
+                      // TEP-64: append parsed on-chain metadata (name/symbol/decimals/...).
+                      tep64_append_metadata(sb, content_e.as_cell());
+                      sb << "}";
                       promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
                       return;
                     }

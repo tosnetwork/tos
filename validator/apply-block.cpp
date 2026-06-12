@@ -24,6 +24,7 @@
 #include "validator/invariants.hpp"
 
 #include "apply-block.hpp"
+#include "wc0-block-hook.h"
 
 namespace tos {
 
@@ -276,6 +277,36 @@ void ApplyBlock::applied_prev() {
 void ApplyBlock::applied_set() {
   VLOG(VALIDATOR_DEBUG) << "applied_set";
   handle_->set_applied();
+  // wc=0 wallet index hook (best-effort, installed by validator-engine). Runs
+  // here — after the block is applied — so only canonical-chain blocks are ever
+  // indexed; data stored for unfinalized candidates (e.g. nonfinal candidate
+  // broadcasts) must not reach the index. When the block data was already in the
+  // database before this apply (block_ is null), fetch it asynchronously; a
+  // fetch failure only degrades RPC for this block.
+  if (g_wc0_block_index_hook && handle_->id().id.workchain == 0 && handle_->id().seqno() > 0) {
+    auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
+    if (block_.not_null()) {
+      try {
+        g_wc0_block_index_hook(block_->root_cell(), state_root, handle_->id().id.workchain,
+                               handle_->id().id.seqno);
+      } catch (...) {
+        // Indexing must never affect block application.
+      }
+    } else {
+      td::actor::send_closure(
+          manager_, &ValidatorManager::get_block_data_from_db, handle_,
+          [id = handle_->id(), state_root](td::Result<td::Ref<BlockData>> R) {
+            if (R.is_error() || R.ok().is_null() || !g_wc0_block_index_hook) {
+              return;
+            }
+            try {
+              g_wc0_block_index_hook(R.ok()->root_cell(), state_root, id.id.workchain, id.id.seqno);
+            } catch (...) {
+              // Indexing must never affect block application.
+            }
+          });
+    }
+  }
   if (handle_->id().seqno() > 0) {
     CHECK(handle_->handle_moved_to_archive());
     CHECK(handle_->moved_to_archive());

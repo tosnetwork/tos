@@ -14,6 +14,11 @@ set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
   json-rpc-server-utils.cpp
   json-rpc-server-shared.cpp
   json-rpc-server-uno.cpp
+  json-rpc-server-wc0index.cpp
+  wallet-index.h
+  wallet-index.cpp
+  wallet-index-writer.h
+  wallet-index-writer.cpp
 )
 
 set(VALIDATOR_ENGINE_SOURCE
@@ -31,6 +36,7 @@ target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_a
   rldp rldp2 quic catchain validatorsession full-node validator tos_validator validator
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
 
+target_link_libraries(validator-engine smc-envelope)
 target_link_libraries(validator-engine evm_workchain)
 target_link_libraries(validator-engine uno_workchain)
 if (TOS_ENABLE_JVM)

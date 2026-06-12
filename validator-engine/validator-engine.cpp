@@ -66,6 +66,9 @@
 #include "errorcode.h"
 
 #include "evm/core/init.h"
+#include "wallet-index.h"
+#include "wallet-index-writer.h"
+#include "validator/wc0-block-hook.h"
 #ifdef TOS_WITH_JVM_WORKCHAIN
 #include "jvm/core/init.h"
 #endif
@@ -2417,6 +2420,12 @@ void ValidatorEngine::start_validator() {
   validator_options_.write().set_state_serializer_enabled(config_.state_serializer_enabled &&
                                                           !state_serializer_disabled_flag_);
   load_collator_options();
+
+  // wc=0 in-process wallet index (jetton/NFT/event aggregate queries). Installed
+  // before the validator manager exists so the hook is never written while
+  // block-apply actors may already be reading it.
+  tos_wallet_index::open_wallet_index_db(db_root_);
+  tos::validator::g_wc0_block_index_hook = &tos_wallet_index::wc0_index_block;
 
   validator_manager_ = tos::validator::ValidatorManagerFactory::create(
       validator_options_, db_root_, keyring_.get(), adnl_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());

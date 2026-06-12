@@ -1548,6 +1548,12 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_getLibraries(params, std::move(req_id), std::move(promise));
   } else if (method == "getTokenData") {
     handle_getTokenData(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountJettons") {
+    handle_getAccountJettons(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountNfts") {
+    handle_getAccountNfts(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountEvents") {
+    handle_getAccountEvents(params, std::move(req_id), std::move(promise));
   // New APIs (HTTP API parity)
   } else if (method == "detectHash") {
     handle_detectHash(params, std::move(req_id), std::move(promise));

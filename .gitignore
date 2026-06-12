@@ -25,6 +25,8 @@ dev/
 
 # Work directory for integration tests
 test/integration/.network
+# Localnet work directories (contain generated validator/faucet private keys)
+test/integration/.localnet*
 
 test/tostester/tests/tl/generated
 test/tostester/src/tosapi
