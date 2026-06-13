@@ -111,8 +111,13 @@ td::Result<FecType> FecType::create(tl_object_ptr<tos_api::fec_Type> obj) {
   TRY_RESULT(symbol_size, td::narrow_cast_safe<size_t>(symbol_size_int));
   TRY_RESULT(symbols_count, td::narrow_cast_safe<size_t>(symbols_count_int));
 
-  if (symbol_size == 0) {
-    return td::Status::Error("invalid fec type: symbol_size is 0");
+  // All legitimate senders (overlay broadcast, RLDP, RLDP2) use a fixed
+  // 768-byte symbol. A smaller symbol_size lets a peer inflate the symbol/
+  // part count for a given data_size (up to ~16M parts at symbol_size==1),
+  // bloating per-broadcast decoder state before the 60 s GC. Floor it at the
+  // canonical 768 (matches upstream TON); this also subsumes the ==0 guard.
+  if (symbol_size < 768) {
+    return td::Status::Error("invalid fec type: symbol_size below floor (768)");
   }
   if (symbol_size > 1 << 11) {
     return td::Status::Error("invalid fec type: symbol_size is too big");

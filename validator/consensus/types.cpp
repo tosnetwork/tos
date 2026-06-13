@@ -25,7 +25,13 @@ td::StringBuilder& operator<<(td::StringBuilder& stream, const PeerValidatorId& 
 bool PeerValidator::check_signature(ValidatorSessionId session, td::Slice data, td::Slice signature) const {
   auto signed_data = create_serialize_tl_object<tl::dataToSign>(session, td::BufferSlice(data));
   TD_PERF_COUNTER(check_signature_consensus);
-  return key.create_encryptor().move_as_ok()->check_signature(signed_data, signature).is_ok();
+  // A malformed validator public key must fail the signature check, not abort
+  // the process: treat encryptor-construction failure as an invalid signature.
+  auto enc = key.create_encryptor();
+  if (enc.is_error()) {
+    return false;
+  }
+  return enc.move_as_ok()->check_signature(signed_data, signature).is_ok();
 }
 
 td::StringBuilder& operator<<(td::StringBuilder& stream, const PeerValidator& peer_validator) {

@@ -179,6 +179,8 @@ class MerkleProofCombineFast {
   }
 
  private:
+  // merge() returns a Result so a malformed peer-supplied proof pair cannot
+  // abort the process via CHECK. Valid proofs of the same tree are unaffected.
   Ref<Cell> a_;
   Ref<Cell> b_;
 #if TD_HAVE_ABSL
@@ -187,7 +189,7 @@ class MerkleProofCombineFast {
   std::map<std::tuple<Cell::Hash, Cell::Hash, td::uint32>, Ref<Cell>> visited_;
 #endif
 
-  Ref<Cell> merge(Ref<Cell> a, Ref<Cell> b, td::uint32 merkle_depth) {
+  td::Result<Ref<Cell>> merge(Ref<Cell> a, Ref<Cell> b, td::uint32 merkle_depth) {
     if (a->get_hash() == b->get_hash()) {
       return a;
     }
@@ -212,14 +214,24 @@ class MerkleProofCombineFast {
       return it->second;
     }
 
-    CHECK(csa.size_refs() != 0);
+    // Two non-pruned cells at the same position must have identical structure
+    // in a well-formed proof pair. A leaf (no refs) here, or a ref-count
+    // mismatch, means the proofs are malformed/adversarial — reject cleanly
+    // rather than abort (CHECK) or read past csb's refs (OOB).
+    if (csa.size_refs() == 0) {
+      return td::Status::Error("Can't combine MerkleProofs: non-pruned leaf mismatch");
+    }
+    if (csa.size_refs() != csb.size_refs()) {
+      return td::Status::Error("Can't combine MerkleProofs: ref-count mismatch");
+    }
 
     auto child_merkle_depth = csa.child_merkle_depth(merkle_depth);
 
     CellBuilder cb;
     cb.store_bits(csa.fetch_bits(csa.size()));
     for (unsigned i = 0; i < csa.size_refs(); i++) {
-      cb.store_ref(merge(csa.prefetch_ref(i), csb.prefetch_ref(i), child_merkle_depth));
+      TRY_RESULT(child, merge(csa.prefetch_ref(i), csb.prefetch_ref(i), child_merkle_depth));
+      cb.store_ref(std::move(child));
     }
     return visited_[key] = cb.finalize(csa.is_special());
   }
