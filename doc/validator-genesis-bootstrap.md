@@ -116,8 +116,8 @@ Two ways, pick by trust model:
 ### 3. Enable `keys-from-file` in the genesis script
 
 Flip the switch in the zerostate template(s) you launch from
-(`gen-zerostate.fif`, and/or `gen-zerostate-test.fif`,
-`gen-zerostate-wc0-only.fif`):
+(`gen-zerostate.fif` — the canonical native-only template — and/or
+`gen-zerostate-test.fif`, `gen-zerostate-allchains.fif`):
 
 ```diff
 -false =: keys-from-file

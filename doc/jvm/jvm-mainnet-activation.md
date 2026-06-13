@@ -168,17 +168,18 @@ or with `accounts_cell 3 mkShardStateWithAccounts` where
 `jvm-zerostate-with-deployers-from-alloc` from step 3.  Both Fift
 words live in `crypto/fift/lib/Workchain.fif`.
 
-The canonical genesis script (`crypto/smartcont/gen-zerostate.fif`)
+The four-chain genesis script (`crypto/smartcont/gen-zerostate-allchains.fif`)
 ships with the empty-accounts variant gated behind a TODO comment;
 launch operators replace it with the seeded form before generating
-the production zerostate.
+a wc=3-bearing zerostate. (The canonical `gen-zerostate.fif` is
+native-only and contains no wc=3 block.)
 
 Files to read: `jvm/core/config-param.cpp:155-179`,
 `jvm/core/dispatch-engine.cpp:80-110`,
 `doc/ConfigParam.md` (ConfigParam 12 layout),
 `crypto/fift/lib/Workchain.fif` (`add-jvm-workchain`,
 `mkShardStateWithAccounts`),
-`crypto/smartcont/gen-zerostate.fif` (wc=3 block).
+`crypto/smartcont/gen-zerostate-allchains.fif` (wc=3 block).
 
 ## 5. Add ConfigParam 85
 

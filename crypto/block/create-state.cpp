@@ -471,7 +471,18 @@ bool store_custom(vm::CellBuilder& cb) {
 
 Ref<vm::Cell> create_state() {
   vm::CellBuilder cb, cb2;
+  // gen_utime defaults to wall-clock, but honor SOURCE_DATE_EPOCH so genesis
+  // generation is byte-reproducible (used by the zerostate regression harness,
+  // and matches the fift `now` override in SourceLookup). Production leaves it
+  // unset → wall-clock as before.
   now = static_cast<tos::UnixTime>(time(0));
+  if (const char* sde = std::getenv("SOURCE_DATE_EPOCH")) {
+    char* end = nullptr;
+    unsigned long long v = std::strtoull(sde, &end, 10);
+    if (end != sde && *end == '\0') {
+      now = static_cast<tos::UnixTime>(v);
+    }
+  }
   bool ok = true;
   PDO(workchain_id != wc_undef);
   THRERR("workchain_id is unset, cannot generate state");

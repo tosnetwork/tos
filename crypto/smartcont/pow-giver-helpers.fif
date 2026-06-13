@@ -1,7 +1,8 @@
 // pow-giver-helpers.fif
 // Helper words for deploying PoW Giver smart contracts at genesis.
 //
-// Included by gen-zerostate.fif and gen-zerostate-test.fif.
+// Included by gen-zerostate-allchains.fif and gen-zerostate-test.fif.
+// (The canonical gen-zerostate.fif is native-only and ships no PoW givers.)
 //
 // Public word:
 //   ( giver_id amount interval min_cpl init_cpl max_cpl -- )

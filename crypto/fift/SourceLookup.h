@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #pragma once
+#include <cstdlib>
 #include <iostream>
 
 #include "td/utils/Status.h"
@@ -79,6 +80,17 @@ class SourceLookup {
   td::uint32 now() {
     if (os_time_) {
       return os_time_->now();
+    }
+    // Reproducible-build override: when SOURCE_DATE_EPOCH is set (e.g. by the
+    // zerostate regression harness, which shells out to create-state and so
+    // cannot inject an OsTime), use it so genesis `now`/gen_utime is
+    // deterministic. Production runs leave it unset → wall-clock as before.
+    if (const char* sde = std::getenv("SOURCE_DATE_EPOCH")) {
+      char* end = nullptr;
+      unsigned long long v = std::strtoull(sde, &end, 10);
+      if (end != sde && *end == '\0') {
+        return static_cast<td::uint32>(v);
+      }
     }
     return static_cast<td::uint32>(td::Clocks::system());
   }

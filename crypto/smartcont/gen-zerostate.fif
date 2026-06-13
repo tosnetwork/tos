@@ -4,18 +4,32 @@
 "Lists.fif" include
 
 // =====================================================================
-//  ⚠  LAUNCH SAFETY — FOUR-CHAIN TEMPLATE, NOT FOR NATIVE MAINNET  ⚠
+//  CANONICAL MAINNET GENESIS — Native (wc=0) only
 // =====================================================================
-//  This template registers EVM (wc=1), Uno (wc=2) and JVM (wc=3) and
-//  includes the eTOS PoW givers. The Uno/JVM genesis states are TODO/
-//  empty and NOT launch-ready, and these three workchains are OUTSIDE
-//  the native-only security audit (see doc/security-audit-native-2026-06.md,
-//  finding F1).
 //
-//  For a native-only mainnet/staged launch use
-//      crypto/smartcont/gen-zerostate-wc0-only.fif
-//  which is byte-identical below the workchain section. Activate EVM/Uno/
-//  JVM later via a ConfigParam 12 governance update — no binary redeploy.
+// This is THE default mainnet template. It ships a ConfigParam 12 that
+// contains ONLY the Native workchain (wc=0) plus the masterchain (wc=-1),
+// and it does NOT include the eTOS PoW givers — the supply is fully
+// pre-mined (see the main-wallet line below).
+//
+// The EVM (wc=1), Uno (wc=2), and JVM (wc=3) registration blocks are
+// deliberately absent: those engines are compiled into the same
+// `validator-engine` binary but are activated by *configuration*, not by
+// the binary. Launching with wc=0 alone lets the Native chain run
+// independently while the other three mature; each can be switched on
+// later — at any masterchain height — as a `ConfigParam 12` governance
+// update that adds its WorkchainDescr (and, for JVM, the companion
+// ConfigParam 85). No binary redeploy or validator restart is required,
+// since every validator already runs the engine-capable binary.
+//
+// Everything below the workchain section (masterchain economics, gas,
+// fwd prices, consensus params, validators, elector/config smart
+// contracts) is byte-identical to the four-chain template, so a later
+// EVM/Uno/JVM activation needs no consensus-parameter change.
+//
+// To build the (NOT launch-ready, unaudited) full four-chain network
+// instead, use `gen-zerostate-allchains.fif`. See finding F1 in
+// doc/security-audit-native-2026-06.md.
 // =====================================================================
 
 def? $1 { @' $1 } { "" } cond constant suffix
@@ -44,105 +58,11 @@ hashu dup =: basestate0_rhash
 // root-hash file-hash start-at actual-min-split min-split-depth max-split-depth wc-id
 basestate0_rhash basestate0_fhash now 0 4 8 0 add-std-workchain
 
-// Initial state of Workchain 1 (EVM workchain)
-// 10 EToSPoWGiver contracts are deployed at genesis using evm-zerostate-from-alloc.
-// Each giver is pre-funded with 10M eTOS and mines at a 12-second target interval.
-// Addresses: 0x1000000000000000000000000000000000000001 .. 0x100000000000000000000000000000000000000a
-// See: evm/contracts/EToSPoWGiver.sol and doc/Mining-Design.md §eTOS Mining.
-
-"etos-pow-givers.fif" include  // leaves wc=1 ShardState cell on stack
-
-cr ."initial EVM workchain state is:" cr dup <s csr. cr
-dup dup 31 boc+>B dup Bx. cr
-dup "evmstate1" +suffix +".boc" tuck B>file
-."(Initial EVM workchain state saved to file " type .")" cr
-Bhashu dup =: evmstate1_fhash
-."file hash=" dup 64x. space 256 u>B dup B>base64url type cr
-"evmstate1" +suffix +".fhash" B>file
-hashu dup =: evmstate1_rhash
-."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
-"evmstate1" +suffix +".rhash" B>file
-
-evmstate1_rhash evmstate1_fhash now 0 4 8 1 add-evm-workchain
-
-// Initial state of Workchain 2 (UNO workchain)
-// vm_version=0x554E4F31 ("UNO1") in the WorkchainDescr (set by
-// add-uno-workchain) routes wc=2 transactions to the Plonky3 STARK
-// verifier (see uno/core/workchain.h::kVmVersion).
-//
-// TODO(uno-genesis-wiring): currently mkemptyShardState produces an empty
-// UNO zerostate. For a real launch, the wc=2 ShardState must be generated
-// from a `GenesisDistribution` via `uno_workchain::build_zerostate_state_cell`
-// (uno/core/genesis.h) which materialises the 60/25/15 airdrop/treasury/team
-// note-commitment leaves into the initial commitment tree. The total supply
-// is pinned to 200 M UNO by `kGenesisTotalSupplyNano` (120 M / 50 M / 30 M
-// per category). The distribution-builder tool is not yet wired into this
-// Fift pipeline — supply / distribution inputs are TBD; tracking issue:
-// "UNO mainnet genesis wiring" (see doc/uno-workchain.md §10.3 + uno/core/genesis.h
-// `TODO(uno-design-gap)` markers).
-
-2 mkemptyShardState
-
-cr ."initial UNO workchain state is:" cr dup <s csr. cr
-dup dup 31 boc+>B dup Bx. cr
-dup "unostate2" +suffix +".boc" tuck B>file
-."(Initial UNO workchain state saved to file " type .")" cr
-Bhashu dup =: unostate2_fhash
-."file hash=" dup 64x. space 256 u>B dup B>base64url type cr
-"unostate2" +suffix +".fhash" B>file
-hashu dup =: unostate2_rhash
-."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
-"unostate2" +suffix +".rhash" B>file
-
-unostate2_rhash unostate2_fhash now 0 4 8 2 add-uno-workchain
-
-// Initial state of Workchain 3 (JVM workchain)
-// vm_version=0x4a564d31 ("JVM1") in the WorkchainDescr (set by
-// add-jvm-workchain) routes wc=3 transactions to the Avata JVM
-// execution path (see jvm/core/config-param.cpp::build_jvm_workchain_descr).
-//
-// For a real launch, populate the wc=3 ShardAccounts dict with at
-// least one `java.lang.Deployer` (and any number of `java.lang.Wallet`
-// accounts) via `jvm-zerostate-with-deployers-from-alloc`.  Without
-// a genesis Deployer the chain can move funds between pre-seeded
-// Wallets but can never deploy further wc=3 contracts (Wallet only
-// exposes System.sendMessage, not System.createAccount).  See
-// doc/jvm/jvm-mainnet-activation.md §2-§3 for the operator workflow.
-//
-// TODO(jvm-genesis-wiring): the launch operator must replace the
-// empty-accounts branch below with a concrete allocation tuple:
-//   * Build `wallet_class_bytes` and `deployer_class_bytes` from the
-//     pinned rt.jar's java/lang/Wallet.class and java/lang/Deployer.class.
-//   * Compute `stdlib_hash = sha256(rt.jar)` — must match the value
-//     committed to ConfigParam 85 via `jvm-config-param-cell-with-stdlib`.
-//   * Build `wallet_alloc` and `deployer_alloc` as tuples of
-//     `(owner_pubkey:32B, salt:32B, balance:int)` triples.
-//
-// Reference usage (replace placeholders, then enable):
-//
-//   wallet_alloc wallet_class_bytes deployer_alloc deployer_class_bytes
-//   stdlib_hash jvm-zerostate-with-deployers-from-alloc
-//   3 mkShardStateWithAccounts
-//
-// Until the rt.jar / allocation inputs are decided, ship an empty
-// wc=3 ShardAccounts so chain config is well-formed even though no
-// wc=3 contract can yet be deployed.  This is the pre-launch
-// equivalent of the "empty UNO zerostate" branch above.
-
-3 mkemptyShardState
-
-cr ."initial JVM workchain state is:" cr dup <s csr. cr
-dup dup 31 boc+>B dup Bx. cr
-dup "jvmstate3" +suffix +".boc" tuck B>file
-."(Initial JVM workchain state saved to file " type .")" cr
-Bhashu dup =: jvmstate3_fhash
-."file hash=" dup 64x. space 256 u>B dup B>base64url type cr
-"jvmstate3" +suffix +".fhash" B>file
-hashu dup =: jvmstate3_rhash
-."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
-"jvmstate3" +suffix +".rhash" B>file
-
-jvmstate3_rhash jvmstate3_fhash now 0 4 8 3 add-jvm-workchain
+// ---------------------------------------------------------------------
+// EVM (wc=1), Uno (wc=2), and JVM (wc=3) are intentionally NOT registered
+// here. See gen-zerostate.fif for their genesis wiring; activate them
+// post-launch via a ConfigParam 12 governance update.
+// ---------------------------------------------------------------------
 
 config.workchains!
 
@@ -234,7 +154,7 @@ Masterchain swap
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
-40 20 4 config.validator_num!  // max=40 max_main=20 min_validators=4 (BFT f=1: tolerate 1 fault)
+40 20 4 config.validator_num!  // min_validators=4 (BFT f=1: tolerate 1 fault)
 // min-stake max-stake min-total-stake max-factor
 TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!
 // elected-for elect-start-before elect-end-before stakes-frozen-for
@@ -250,13 +170,15 @@ elector_addr config.elector_smc!
 config.special!
 
 // gas_price gas_limit special_gas_limit gas_credit block_gas_limit freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price
-// Basechain gas — sized for the EVM workchain at wc=1 with Fusaka EVM semantics:
+// Basechain gas — sized so the EVM workchain (wc=1) can run with Fusaka EVM
+// semantics once it is activated:
 //   gas_limit       = 30M   (comfortably above EIP-7825 per-tx cap 2^24 = 16,777,216)
 //   block_gas_limit = 60M   (Ethereum Fusaka default, EIP-7935)
-// Keeping these below EIP-7825 would force well-formed txs to fail at the
-// compute-phase "tx gas limit exceeds block gas limit" check even after
-// passing the admission-layer EIP-7825 validation, producing the exact
-// confusing status=0x0/gasUsed=0x0 receipts we fixed admission to avoid.
+// These basechain limits are kept identical to the full-launch zerostate so
+// that activating EVM later needs no consensus-parameter change. Keeping them
+// below EIP-7825 would force well-formed txs to fail at the compute-phase
+// "tx gas limit exceeds block gas limit" check even after passing the
+// admission-layer EIP-7825 validation.
 26214400 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 40000 config.gas_prices!
 // masterchain gas (aligned with production)
 655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000 config.mc_gas_prices!

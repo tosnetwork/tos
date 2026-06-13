@@ -22,8 +22,8 @@ The zero state is the initial state of the blockchain — block 0 of the masterc
 
 | File | Purpose |
 |------|---------|
-| `crypto/smartcont/gen-zerostate.fif` | Mainnet template (`global_id = 1`), all four workchains |
-| `crypto/smartcont/gen-zerostate-wc0-only.fif` | Native-only launch: registers **just wc=0** in ConfigParam 12; EVM/Uno/JVM are staged in later by governance. Masterchain/economic params are byte-identical to the full template. |
+| `crypto/smartcont/gen-zerostate.fif` | **Canonical mainnet template** (`global_id = 1`): native **wc=0 only**, no PoW givers (supply fully pre-mined). EVM/Uno/JVM are staged in later by a `ConfigParam 12` governance update. |
+| `crypto/smartcont/gen-zerostate-allchains.fif` | Post-launch four-chain template (registers EVM/Uno/JVM + eTOS PoW givers). **NOT launch-ready / unaudited** (see F1, doc/security-audit-native-2026-06.md). Masterchain/economic params are byte-identical to the canonical template. |
 | `crypto/smartcont/gen-zerostate-test.fif` | Testnet template (`global_id = -3`) |
 | `test/tostester/src/tostester/zerostate.py` | Python wrapper for test/dev generation (wc=0/1/2) |
 | `crypto/smartcont/CreateState.fif` | Fift library with `setglobalid`, `register_smc`, `create_state`, etc. |
@@ -340,7 +340,7 @@ distribution:
 
 1. Prepare a Hive-style `genesis.json` with real recipient addresses and balances (total 100 M eTOS = 100 M × 10¹⁸ wei).
 2. Use `translate-genesis.py` to convert to a Fift tuple.
-3. Replace the `mkemptyShardState` call on wc=1 in `gen-zerostate.fif` with:
+3. Replace the `mkemptyShardState` call on wc=1 in `gen-zerostate-allchains.fif` with:
    ```fif
    <allocation-tuple> evm-zerostate-from-alloc  // builds wc=1 accounts cell
    ... wrap into ShardState ...
@@ -361,7 +361,7 @@ UNO uses a Zcash-style shielded commitment model — supply exists as note commi
 
 The 60 / 25 / 15 split lands on clean integer boundaries (12.6 M / 5.25 M / 3.15 M). Changing the total forces a `scheme_id` bump on the UNO side because the zerostate cm-set root is consensus-binding.
 
-**Wiring status:** `add-uno-workchain` Fift word is in `Workchain.fif` and `gen-zerostate.fif` registers wc=2 with an empty initial `unostate2.boc`. The distribution-building pipeline (`GenesisDistributionInputs{airdrop, treasury, team}` → `build_zerostate_state_cell` → `unostate2.boc`) is not yet wired into the Fift script — mainnet launch requires either a `create-uno-state` standalone tool or an extension to `create-state` that consumes `zerostate-genesis-notes.json`. Until that tool exists, wc=2 boots with an empty commitment tree (no UNO in circulation).
+**Wiring status:** `add-uno-workchain` Fift word is in `Workchain.fif` and `gen-zerostate-allchains.fif` registers wc=2 with an empty initial `unostate2.boc`. The distribution-building pipeline (`GenesisDistributionInputs{airdrop, treasury, team}` → `build_zerostate_state_cell` → `unostate2.boc`) is not yet wired into the Fift script — mainnet launch requires either a `create-uno-state` standalone tool or an extension to `create-state` that consumes `zerostate-genesis-notes.json`. Until that tool exists, wc=2 boots with an empty commitment tree (no UNO in circulation).
 
 ### Avata JVM (wc=3)
 
@@ -371,8 +371,8 @@ genesis is its workchain descriptor, its companion ConfigParam 85, and
 (optionally) a set of pre-seeded accounts:
 
 - **Workchain descriptor.** `add-jvm-workchain` (in `Workchain.fif`) registers
-  wc=3 with `vm_version = 0x4a564d31` ("JVM1"). `gen-zerostate.fif` calls it
-  with `3 mkemptyShardState`, so the production generator currently ships a
+  wc=3 with `vm_version = 0x4a564d31` ("JVM1"). `gen-zerostate-allchains.fif` calls it
+  with `3 mkemptyShardState`, so that generator currently ships a
   **well-formed but empty** wc=3: empty `ShardAccounts` and `stdlib_hash = 0`.
 - **ConfigParam 85.** Carries `stdlib_hash` plus the gas/limit parameters
   (`max_gas_per_tx = 1M`, `max_class_bytes = 64 KiB`, `max_heap_bytes = 4 MiB`,
@@ -391,7 +391,7 @@ genesis is its workchain descriptor, its companion ConfigParam 85, and
   same formula the dispatch engine recomputes on every call.
 
 **Wiring status:** the descriptor, ConfigParam 85, and genesis-seeding builders
-all exist and are tested, but the production `gen-zerostate.fif` ships the empty
+all exist and are tested, but `gen-zerostate-allchains.fif` ships the empty
 branch — pinning the canonical `rt.jar` `stdlib_hash`, choosing the genesis
 keypairs/balances, and pinning `Wallet.class` bytes are operational decisions
 made at activation. Note also that the **tostester local testnet does not

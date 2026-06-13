@@ -187,7 +187,7 @@ The workchain id `1` is the next slot after masterchain (`-1`) and basechain (`0
 
 Two paths:
 
-1. **Zerostate (clean network)**: edit `crypto/smartcont/gen-zerostate.fif` to register the EVM workchain alongside the basechain at genesis. New zerostate generation includes `wc=1`.
+1. **Zerostate (clean network)**: edit `crypto/smartcont/gen-zerostate-allchains.fif` (the four-chain template; the canonical `gen-zerostate.fif` is native-only) to register the EVM workchain alongside the basechain at genesis. New zerostate generation includes `wc=1`.
 2. **Governance proposal (existing network)**: submit a ConfigParam 12 update containing the new descriptor. Validators that have the `evm_workchain` module compiled into their `validator-engine` binary begin processing wc=1 messages once the accepted update becomes part of the active masterchain config, subject to validator assignment and scheduler rules.
 
 See `doc/Validator-Local.md#evm-workchain-workchain-1` for end-to-end activation steps in a local 4-node testnet.
@@ -570,7 +570,7 @@ Per-chain parameters for wc=2 (Uno shielded workchain). See [uno-workchain.md §
 
 **Why 84 and not 26**: wc-specific protocol params follow the TOS convention established by the bridge/workchain-extension cluster at 71-82. Core-band gaps (26, 27, 38, 41, 42) are reserved for low-numbered core-protocol extensions that TOS upstream may backfill; 84 is adjacent to the existing 71-82 cluster and unlikely to clash.
 
-**Activation**: the param is installed at zerostate (`crypto/smartcont/gen-zerostate.fif`) alongside the wc=2 workchain descriptor in ConfigParam 12. No runtime governance upgrade path is required for v1, but the param is mutable through the standard proposal flow (ConfigParam 11) if future rate-adjustment is needed. `max_spends_per_tx`, `max_outputs_per_tx`, and `tree_depth` are effectively consensus-binding (mutating them breaks AIR public-input shape); treat them as frozen after genesis.
+**Activation**: the param is installed at zerostate (`crypto/smartcont/gen-zerostate-allchains.fif`, the four-chain template) alongside the wc=2 workchain descriptor in ConfigParam 12. No runtime governance upgrade path is required for v1, but the param is mutable through the standard proposal flow (ConfigParam 11) if future rate-adjustment is needed. `max_spends_per_tx`, `max_outputs_per_tx`, and `tree_depth` are effectively consensus-binding (mutating them breaks AIR public-input shape); treat them as frozen after genesis.
 
 ## ConfigParam 85 — JVM Workchain Chain Config
 

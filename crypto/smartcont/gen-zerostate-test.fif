@@ -9,7 +9,8 @@
 //  Testnet variant of the four-chain template: registers EVM/Uno/JVM
 //  (wc=1/2/3) + eTOS PoW givers, which are OUTSIDE the native-only audit
 //  and not launch-ready (see doc/security-audit-native-2026-06.md, F1).
-//  For a native-only testnet use gen-zerostate-wc0-only.fif.
+//  For a native-only launch use the canonical gen-zerostate.fif
+//  (mainnet, global_id=1); this -test variant is global_id=-3.
 // =====================================================================
 
 def? $1 { @' $1 } { "" } cond constant suffix

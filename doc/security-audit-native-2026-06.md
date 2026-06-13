@@ -34,7 +34,7 @@ owner must make before mainnet:
 
 | ID | Dimension | Title | Severity | Status |
 |----|-----------|-------|----------|--------|
-| **F1** | Genesis | Canonical `gen-zerostate.fif` still builds EVM/Uno/JVM + PoW givers | **Critical (release-process)** | Mitigated (banner) — owner decision pending |
+| **F1** | Genesis | Canonical `gen-zerostate.fif` still builds EVM/Uno/JVM + PoW givers | **Critical (release-process)** | **Fixed** — native-only is now the default; four-chain renamed `-allchains` |
 | **F2** | Economics | Stake-limit set permits cheap 1/3 liveness veto | **High (economic)** | Owner decision pending |
 | **F3** | Economics | Full 5M pre-mine + minter under one single-sig key | **High (custody)** | Owner decision pending |
 | H-1 | Network | Overlay broadcast rate-limiters inert by default | Medium | Latent (upstream-inherited); hardening optional |
@@ -92,11 +92,17 @@ three excluded, unaudited workchains plus a PoW-giver eTOS mint — directly
 contradicting the "5M fully pre-mined, no givers" model.
 
 This is not a runtime exploit; it is a **release trap**. The fix is to make
-the safe path the default. A `LAUNCH-SAFETY` banner has been added to the two
-four-chain templates pointing operators at `gen-zerostate-wc0-only.fif`.
-**Owner decision needed:** make `gen-zerostate-wc0-only.fif` the canonical
-mainnet template (rename / retire the four-chain templates to a clearly
-post-launch name), so the default name cannot be misused.
+the safe path the default.
+
+**Fixed:** the canonical `gen-zerostate.fif` is now the native-only (wc=0)
+template — no EVM/Uno/JVM registration, no PoW givers, supply fully pre-mined.
+The four-chain template was renamed to `gen-zerostate-allchains.fif` and carries
+a `LAUNCH-SAFETY — NOT FOR NATIVE MAINNET` banner; the old
+`gen-zerostate-wc0-only.fif` is retired (its content is now the default). The
+default name can no longer be misused. The regression suite gained a
+`GenZerostateAllchainsFiftRegression` test and all three zerostate regressions
+are now byte-deterministic via `SOURCE_DATE_EPOCH` (genesis `gen_utime` was
+previously wall-clock in two places — `mkemptyShardState` and `create_state()`).
 
 ### F2 — High (economic): stake limits permit a cheap 1/3 liveness veto
 
@@ -268,7 +274,9 @@ with N ≥ 4 (preferably ≥ 7, per F2) so the set actually tolerates a fault.
 
 ## 7. Pre-mainnet checklist (unchanged prerequisites)
 
-1. ☐ **F1**: switch the canonical mainnet zerostate to native-only.
+1. ☑ **F1**: switch the canonical mainnet zerostate to native-only. **Done** —
+   `gen-zerostate.fif` is now native-only; four-chain template renamed
+   `gen-zerostate-allchains.fif`.
 2. ☐ **F2**: finalize stake economics (min_total_stake, max_stake_factor,
    min_validators) for the 5M supply.
 3. ☐ **F3**: move the 5M pre-mine to multisig/threshold custody; decouple minter.

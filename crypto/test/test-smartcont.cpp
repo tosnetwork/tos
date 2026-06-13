@@ -273,8 +273,14 @@ void write_deterministic_zerostate_keys(const std::string& dir) {
   td::write_file(dir + TD_DIR_SLASH + "config-master.pk", td::hex_decode(kConfigMasterPkHex).move_as_ok()).ensure();
 }
 
-void append_state_hash_summary(std::string& summary, const std::string& dir, const std::string& state_name) {
-  auto boc = td::read_file(dir + TD_DIR_SLASH + state_name + ".boc").move_as_ok();
+void append_state_hash_summary(std::string& summary, const std::string& dir, const std::string& state_name,
+                               bool optional = false) {
+  auto boc_r = td::read_file(dir + TD_DIR_SLASH + state_name + ".boc");
+  if (optional && boc_r.is_error()) {
+    // e.g. the native-only canonical gen-zerostate.fif produces no evmstate1.
+    return;
+  }
+  auto boc = boc_r.move_as_ok();
   auto file_hash = td::read_file(dir + TD_DIR_SLASH + state_name + ".fhash").move_as_ok();
   auto root_hash = td::read_file(dir + TD_DIR_SLASH + state_name + ".rhash").move_as_ok();
 
@@ -309,8 +315,12 @@ std::string run_zerostate_regression(td::Slice script_name) {
   auto stdout_path = temp_dir + TD_DIR_SLASH + "stdout.txt";
   auto stderr_path = temp_dir + TD_DIR_SLASH + "stderr.txt";
   auto include_path = PSTRING() << fift_lib_dir() << ":" << smartcont_dir();
+  // SOURCE_DATE_EPOCH pins the `now`/gen_utime stamped inside mkemptyShardState
+  // (Workchain.fif) — which the script-only `now` text-replacement can't reach —
+  // so the generated zerostate is byte-deterministic. Match kDeterministicZerostateNow.
   auto command =
-      PSTRING() << "cd " << shell_quote(temp_dir) << " && " << shell_quote(create_state_binary()) << " -I "
+      PSTRING() << "cd " << shell_quote(temp_dir) << " && SOURCE_DATE_EPOCH=" << kDeterministicZerostateNow << " "
+                << shell_quote(create_state_binary()) << " -I "
                 << shell_quote(include_path) << " " << shell_quote(script_path) << " > " << shell_quote(stdout_path)
                 << " 2> " << shell_quote(stderr_path);
 
@@ -326,7 +336,7 @@ std::string run_zerostate_regression(td::Slice script_name) {
 
   std::string summary = PSTRING() << "script=" << script_name << "\n";
   append_state_hash_summary(summary, temp_dir, "basestate0");
-  append_state_hash_summary(summary, temp_dir, "evmstate1");
+  append_state_hash_summary(summary, temp_dir, "evmstate1", /*optional=*/true);
   append_state_hash_summary(summary, temp_dir, "zerostate");
   append_optional_hex_summary(summary, temp_dir, "main-wallet.addr");
   append_optional_hex_summary(summary, temp_dir, "config-master.addr");
@@ -835,7 +845,13 @@ TEST(Toslib, GovernanceProposalFiftScriptRegression) {
 }
 
 TEST(Toslib, GenZerostateFiftRegression) {
+  // Canonical mainnet template — native (wc=0) only (see F1, gen-zerostate.fif).
   REGRESSION_VERIFY(run_zerostate_regression("gen-zerostate.fif"));
+}
+
+TEST(Toslib, GenZerostateAllchainsFiftRegression) {
+  // Post-launch four-chain template (EVM/Uno/JVM + PoW givers); not for mainnet.
+  REGRESSION_VERIFY(run_zerostate_regression("gen-zerostate-allchains.fif"));
 }
 
 TEST(Toslib, GenZerostateTestFiftRegression) {
