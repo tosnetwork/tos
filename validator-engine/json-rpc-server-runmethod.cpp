@@ -29,6 +29,13 @@
 
 namespace tos {
 
+// Hard cap on the number of input stack entries a runGetMethod request may
+// carry. A get-method's input stack is tiny in practice (a handful of args);
+// the TVM's own stack limits are far below this. The cap bounds the per-entry
+// base64-decode + BOC-deserialize work an attacker can pack into a single
+// (≤4 MiB) request, independent of whether the per-IP rate gate is enabled.
+static constexpr std::size_t kMaxRunMethodStackEntries = 256;
+
 // ─── Shared stack entry serializers ─────────────────────────────────────
 // Recursively serialize a TVM StackEntry to the legacy ["type", value] format
 // used by runGetMethod, and the typed {@type: "tvm.stackEntry..."} format
@@ -204,6 +211,11 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
   auto stack_r = params.extract_field("stack");
   if (stack_r.type() == td::JsonValue::Type::Array) {
     auto& arr = stack_r.get_array();
+    if (arr.size() > kMaxRunMethodStackEntries) {
+      promise.set_value(make_json_error(
+          -32602, "too many stack entries", req_id));
+      return;
+    }
     for (auto& entry : arr) {
       if (entry.type() != td::JsonValue::Type::Array) continue;
       auto& pair = entry.get_array();
@@ -480,6 +492,11 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
   auto stack_r = params.extract_field("stack");
   if (stack_r.type() == td::JsonValue::Type::Array) {
     auto& arr = stack_r.get_array();
+    if (arr.size() > kMaxRunMethodStackEntries) {
+      promise.set_value(make_json_error(
+          -32602, "too many stack entries", req_id));
+      return;
+    }
     for (auto& entry : arr) {
       if (entry.type() != td::JsonValue::Type::Array) continue;
       auto& pair = entry.get_array();
