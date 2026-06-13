@@ -226,10 +226,12 @@ with N ≥ 4 (preferably ≥ 7, per F2) so the set actually tolerates a fault.
   attacker-driven. *Hardening (optional, needs testnet tuning to avoid
   starving legitimate consensus broadcasts):* set conservative non-zero
   defaults (e.g. unauth 30 msgs / 4 MB per 60 s; auth far higher).
-- **M-1b (Medium, network):** FEC broadcast `received_parts_`/`parts_` bounded
-  only by `seqno < symbols_count*2+4` with `symbol_size` min = 1, so a single
-  16 MB broadcast can hold ~32M parts (~hundreds of MB–GB) before 60 s GC.
-  *Fix:* enforce a `symbol_size` floor (TON uses 768) in `FecType::create`.
+- **M-1b (Medium, network → Fixed):** FEC broadcast `received_parts_`/`parts_`
+  bounded only by `seqno < symbols_count*2+4` with `symbol_size` min = 1, so a
+  single 16 MB broadcast could hold ~32M parts (~hundreds of MB–GB) before 60 s
+  GC. *Fixed (`93a040987`):* `FecType::create` (`fec/fec.cpp`) now floors
+  `symbol_size` at 768 — the value every legitimate sender (overlay broadcast,
+  RLDP, RLDP2) already uses, matching upstream TON.
 - **S-2 (Medium, Simplex):** network equivocation is never detected because
   `Pool::wants()` (`pool.cpp:418`) pre-filters before `add_vote`, so a
   Byzantine peer can equivocate via bare votes without being slashed.
@@ -248,14 +250,19 @@ with N ≥ 4 (preferably ≥ 7, per F2) so the set actually tolerates a fault.
   `period=1e-5 s` makes the global cap a no-op; per-IP cap (10/0.2s) holds.
 - **L — Uno ext-msg limiter is process-global static** (cross-shard shared).
 - **L — `MerkleProofCombineFast::merge` CHECK-abort** (`MerkleProof.cpp:215`)
-  on peer-supplied proofs — convert to `td::Status::Error` to avoid
-  process-abort DoS.
+  on peer-supplied proofs — **Fixed (`93a040987`):** `merge()` now returns a
+  `td::Result` and rejects malformed proof pairs (non-pruned leaf mismatch,
+  ref-count mismatch → prefetch_ref OOB) cleanly instead of aborting. Valid
+  proofs unaffected (`Cell.MerkleProofCombine{,Array,Array2}` pass).
 - **L — placeholder genesis validator** (`gen-zerostate.fif:306-309`): the
   `keys-from-file=false` default appoints a hard-coded public key. Mainnet
   must use `load-keys-from-file` with a real `validator-keys.pub`.
 - **L — `move_as_ok()` aborts** in `validator/consensus/types.cpp:28` and
   `keys/keys.cpp:118-126` — not attacker-reachable (trusted inputs); propagate
-  errors for robustness.
+  errors for robustness. *Partially fixed (`93a040987`):*
+  `PeerValidator::check_signature` now returns `false` on a malformed validator
+  key rather than aborting. The `keys.cpp` own-key derivation sites are left
+  as-is (own trusted key; pure churn).
 
 ---
 
@@ -268,8 +275,9 @@ with N ≥ 4 (preferably ≥ 7, per F2) so the set actually tolerates a fault.
 4. ☐ Independent external security review (this internal audit is not a substitute).
 5. ☐ ≥ 4 weeks public multi-validator testnet with adversarial load.
 6. ☐ Launch with N ≥ 7 independent validators (per F2 / TOS-1).
-7. ☐ Optional hardening: H-1 limiter defaults, M-1b symbol-size floor,
-   S-1 sync vote write, M-1a lite-server attribution.
+7. ☐ Optional hardening: H-1 limiter defaults, ~~M-1b symbol-size floor~~ (done
+   `93a040987`), S-1 sync vote write, M-1a lite-server attribution, QUIC global
+   limiter period. (M-1b + MerkleProof/consensus abort-hardening landed.)
 
 ---
 
