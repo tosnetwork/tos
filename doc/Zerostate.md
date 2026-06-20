@@ -133,8 +133,8 @@ All initial config values are set via Fift helper words:
 13 capCreateStats capBounceMsgBody or ... config.version!
 
 // ConfigParam 16: validator counts
-40 20 4 config.validator_num!
-// max_validators max_main_validators min_validators (4 = BFT f=1 floor)
+40 20 1 config.validator_num!
+// max_validators max_main_validators min_validators (single-validator bootstrap)
 
 // ConfigParam 17: stake limits
 TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!
@@ -171,7 +171,7 @@ elector_addr config.elector_smc!
   config.mc_fwd_prices!
 
 // ConfigParam 28: catchain params
-250 250 1000 5 true config.catchain_params!
+250 250 1000 1 true config.catchain_params!
 // mc_lifetime shard_lifetime shard_validators_count shard_val_num mc_shuffle
 
 // ConfigParam 29: consensus params
@@ -282,22 +282,22 @@ The following table maps Fift calls in the zero state script to their recommende
 |-----------|-------------|-------------------|
 | `setglobalid` | 19 | **1** (mainnet), **-3** (testnet), **3** (dev) |
 | `config.version!` | 8 | version=13, capabilities=494 |
-| `config.validator_num!` | 16 | max=40, main=20, min=3 |
-| `config.validator_stake_limits!` | 17 | min=300K TOS, max=10M TOS, total=900K TOS, factor=3x |
+| `config.validator_num!` | 16 | max=40, main=20, min=1 |
+| `config.validator_stake_limits!` | 17 | min=10K TOS, max=100K TOS, total=10K TOS, factor=10x |
 | `config.election_params!` | 15 | 65536 / 32768 / 8192 / 32768 |
 | `config.storage_prices!` | 18 | 1 / 500 / 1000 / 500000 |
 | `config.gas_prices!` | 21 | gas_price=26M, limit=30M, block=60M |
 | `config.mc_gas_prices!` | 20 | gas_price=655M, limit=1M, block=2.5M |
 | `config.fwd_prices!` | 25 | lump=400K, bit=26M, cell=2.6G |
 | `config.mc_fwd_prices!` | 24 | lump=10M, bit=655M, cell=65G |
-| `config.catchain_params!` | 28 | mc=250, shard=250, val=1000, num=5 |
+| `config.catchain_params!` | 28 | mc=250, shard=250, val=1000, num=1 |
 | `config.consensus_params!` | 29 | cand=3, timeout=16s, blocks=2MB (Catchain fallback) |
 | `config.new_consensus_params_all!` | 30 | Simplex: target_rate=400ms, slots=4, timeout=1000ms |
 | `config.block_create_fees!` | 14 | mc=1.7 TOS, base=1.0 TOS |
 
 **Design notes:**
 - **global_id**: TOS uses distinct values (1/-3/3) to distinguish networks. Wallet contracts include global_id in signatures for [anti-replay protection](../crypto/smartcont/wallet3-code.fc).
-- **Validator thresholds**: `min_validators=13` and `min_stake=10K TOS` allow bootstrapping with a smaller initial validator set, then increase via governance as the network grows.
+- **Validator thresholds**: the launch profile uses `min_validators=1` for a resource-constrained bootstrap. Raise `min_validators`, `min_total_stake`, and `shard_validators_num` through governance once enough independent validators are ready.
 - **ConfigParam 19 is permanent** — global_id should never change after genesis, as it would invalidate all existing wallet signatures.
 
 All fee and gas parameters can be adjusted through on-chain governance after the network is running.

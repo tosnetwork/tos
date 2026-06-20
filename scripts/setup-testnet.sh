@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# setup-testnet.sh - Set up a local 3-node TOS testnet using the tested Python infrastructure.
+# setup-testnet.sh - Set up a local TOS testnet using the tested Python infrastructure.
 #
-# Usage:  sudo ./scripts/setup-testnet.sh [--clean]
+# Usage:  sudo VALIDATORS=1 ./scripts/setup-testnet.sh [--clean]
 
 set -euo pipefail
 
@@ -28,9 +28,10 @@ if [ "${1:-}" = "--clean" ]; then
     echo "Stopping services..."
     "$REPO_ROOT/scripts/testnet-ctl.sh" stop 2>/dev/null || true
     echo "Cleaning $DATA/..."
-    # tos5 is wiped here too so a leftover higher-numbered deployment doesn't
-    # keep a stale validator dir on disk after the 4-node reconfigure.
-    for d in zerostate dht tos1 tos2 tos3 tos4 tos5 testnet; do rm -rf "${DATA:?}/$d"; done
+    # Wipe a generous validator range so a reconfigure from a larger deployment
+    # cannot leave stale validator directories on disk.
+    for d in zerostate dht testnet; do rm -rf "${DATA:?}/$d"; done
+    for i in $(seq 1 20); do rm -rf "${DATA:?}/tos$i"; done
     rm -f "${DATA:?}/tos-global.json"
 fi
 
@@ -79,7 +80,7 @@ if [ -z "$UV" ] || [ ! -x "$UV" ]; then
     echo "ERROR: uv not found. Install it: https://docs.astral.sh/uv/"
     exit 1
 fi
-HOME="$UV_HOME" "$UV" run python3 <<'PYEOF'
+HOME="$UV_HOME" VALIDATORS="${VALIDATORS:-1}" "$UV" run python3 <<'PYEOF'
 import asyncio, json, os, sys, base64, hashlib
 from pathlib import Path
 from ipaddress import IPv4Address
@@ -91,19 +92,23 @@ REPO = Path(os.environ.get("REPO_ROOT", Path.home() / "tos"))
 BUILD = REPO / "build"
 DATA = Path("/data")
 TESTNET = DATA / "testnet"
+VALIDATORS = int(os.environ.get("VALIDATORS", "1"))
+if VALIDATORS < 1:
+    raise SystemExit("VALIDATORS must be >= 1")
 
 install = Install(BUILD, REPO)
 
 async def setup():
     async with Network(install, TESTNET) as network:
+        network.config.shard_validators = VALIDATORS
         # Create DHT node
         dht = network.create_dht_node()
 
-        # Create 4 validators (≥2/3 quorum needs 3 of 4 votes per
-        # tos/quorum.h; tolerates 1 faulty/offline validator; matches
-        # doc/Validator-Local.md).
+        # Create the initial validator set. VALIDATORS=1 is the default
+        # single-validator bootstrap profile; larger values are supported for
+        # rehearsal before switching to the safer production profile.
         nodes = []
-        for _ in range(4):
+        for _ in range(VALIDATORS):
             node = network.create_full_node()
             node.make_initial_validator()
             node.announce_to(dht)
@@ -193,7 +198,8 @@ async def setup():
         ]}
         (DATA / "testnet-ports.json").write_text(json.dumps(port_info, indent=2))
 
-        print(f"\n  Global config: {gc_path}")
+        print(f"\n  Validators: {VALIDATORS}")
+        print(f"  Global config: {gc_path}")
         print(f"  DHT config: {dht_dir / 'config.json'}")
 
 asyncio.run(setup())
@@ -244,9 +250,10 @@ WantedBy=multi-user.target
 SVCEOF
 
 # Validator services
-for i in 1 2 3 4; do
+VALIDATOR_IDS=$(echo "$PORTS" | python3 -c "import json,sys; print(' '.join(str(n['idx']) for n in json.load(sys.stdin)['nodes']))")
+VALIDATOR_SERVICES=""
+for i in $VALIDATOR_IDS; do
     NODE_DIR="$DATA/tos$i"
-    TESTNET_NODE_DIR=$(echo "$PORTS" | python3 -c "import json,sys; d=json.load(sys.stdin); n=[x for x in d['nodes'] if x['idx']==$i][0]; print(n)")
 
     cat > "/etc/systemd/system/tos-validator@${i}.service" <<SVCEOF
 [Unit]
@@ -281,15 +288,21 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 SVCEOF
+    VALIDATOR_SERVICES="$VALIDATOR_SERVICES tos-validator@$i"
 done
 
 systemctl daemon-reload
-# Disable any legacy @5 unit before enabling the 4-node set, in case this is a
-# reconfigure of a deployment where a higher-numbered unit was left enabled.
-systemctl disable tos-validator@5 2>/dev/null || true
-rm -f /etc/systemd/system/tos-validator@5.service
+for i in $(seq 1 20); do
+    case " $VALIDATOR_IDS " in
+        *" $i "*) ;;
+        *)
+            systemctl disable "tos-validator@$i" 2>/dev/null || true
+            rm -f "/etc/systemd/system/tos-validator@${i}.service"
+            ;;
+    esac
+done
 systemctl daemon-reload
-systemctl enable tos-dht tos-validator@1 tos-validator@2 tos-validator@3 tos-validator@4
+systemctl enable tos-dht $VALIDATOR_SERVICES
 
 echo ""
 echo "=========================================="

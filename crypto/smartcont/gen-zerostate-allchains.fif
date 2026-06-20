@@ -234,17 +234,13 @@ Masterchain swap
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
-40 20 7 config.validator_num!  // min_validators=7 (see stake-limit note below)
+// Single-validator bootstrap profile; raise to the safer production profile
+// through governance once enough independent validators exist.
+40 20 1 config.validator_num!
 // min-stake max-stake min-total-stake max-factor
-// F2 (liveness-veto hardening vs the 5M supply): the elector caps the top
-// validator's effective weight at max_stake_factor x the smallest participant.
-// Worst-case concentration is then 3/(N+2): with max_stake_factor=3 and N>=7
-// that is <= 1/3, so NO single validator (or single-key whale) can reach the
-// 1/3 weight needed to veto the >=2/3 BFT quorum. min_total_stake = 7*min_stake
-// forces a full min-validator complement, blocking a thin-set election where
-// weight would concentrate. (Was 10K/100K/10K/10.0 — a single min-stake total
-// with a 10x factor, which permitted a cheap 1/3 veto.)
-TM$10000 TM$100000 TM$70000 sg~3 config.validator_stake_limits!
+// Bootstrap permits a single min-stake validator. The safer production profile
+// is TM$10000 TM$100000 TM$70000 sg~3 together with min_validators=7.
+TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!
 // elected-for elect-start-before elect-end-before stakes-frozen-for
 65536 32768 8192 32768 config.election_params!
 // config-addr = -1:5555...5555
@@ -274,7 +270,7 @@ config.special!
 // masterchain fwd (aligned with production)
 10000000 655360000 65536000000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!
 // mc-cc-lifetime sh-cc-lifetime sh-val-lifetime sh-val-num mc-shuffle
-250 250 1000 5 true config.catchain_params!
+250 250 1000 1 true config.catchain_params!
 // round-candidates next-cand-delay-ms consensus-timeout-ms fast-attempts attempt-duration cc-max-deps max-block-size max-collated-size new-cc-ids
 3 2000 16000 3 8 4 2 *Mi 2 *Mi true config.consensus_params!
 // ConfigParam 30: Simplex consensus (target_rate=1000ms, slots=4, first_block_timeout=1000ms, max_desync=2)

@@ -69,10 +69,10 @@ The filename includes the zerostate `suffix` (the first CLI arg to
 `create-state`): `validator-keys<suffix>.pub`. With no suffix it is just
 `validator-keys.pub`.
 
-> **`min_validators = 4`** (ConfigParam 16). Put **at least 4** public keys in
-> the file, otherwise the first election cannot form a valid set. (4 is the
-> smallest set with real BFT fault tolerance — it tolerates 1 faulty validator;
-> 3 would tolerate none.)
+> **`min_validators = 1`** (ConfigParam 16) in the single-validator bootstrap
+> profile. Put exactly the public keys you want in the initial validator set.
+> The safer production profile should be restored through governance once
+> enough independent validators are ready.
 
 ## Step-by-step bootstrap
 
@@ -87,13 +87,13 @@ Use the helper Fift script (committed at `scripts/gen-validator-keys.fif`):
 
 ```bash
 # from the repo root; produces val-key-1..N (private) + validator-keys.pub
-fift -I crypto/fift/lib -s scripts/gen-validator-keys.fif 4
+fift -I crypto/fift/lib -s scripts/gen-validator-keys.fif 1
 ```
 
 This writes:
-- `val-key-1`, `val-key-2`, `val-key-3`, `val-key-4` — each a raw 32-byte Ed25519
-  **private** key (the block-signing key for that validator). Keep them secret.
-- `validator-keys.pub` — 128 bytes (4 × 32), the concatenated **public** keys.
+- `val-key-1` — a raw 32-byte Ed25519 **private** key (the block-signing key
+  for that validator). Keep it secret.
+- `validator-keys.pub` — 32 bytes (1 × 32), the concatenated **public** keys.
 
 ### 2. Assemble `validator-keys.pub`
 
@@ -109,8 +109,8 @@ Two ways, pick by trust model:
   coordinator concatenates the submissions in a fixed, agreed order:
 
   ```bash
-  cat op1.pub op2.pub op3.pub op4.pub > validator-keys.pub   # order is consensus-relevant
-  test "$(wc -c < validator-keys.pub)" = "128"              # 4 × 32
+  cat op1.pub > validator-keys.pub             # order is consensus-relevant
+  test "$(wc -c < validator-keys.pub)" = "32"  # 1 × 32
   ```
 
 ### 3. Enable `keys-from-file` in the genesis script
@@ -145,9 +145,9 @@ tos-lite-client -C /data/tos-global.json -v 0 -c "getconfig 34" -c "quit"
 
 It must list your N validator descriptors (each with weight 17).
 
-> **Verified end-to-end on this tree:** generating 4 keys
-> (`validator-keys.pub` = 128 bytes) with `keys-from-file = true` injects exactly
-> 4 validators into the zerostate, alongside the 5 M pre-mine, with no errors.
+> **Bootstrap invariant:** `validator-keys.pub` must contain `N * 32` bytes and
+> injects exactly `N` validators into the zerostate. For the single-validator
+> bootstrap profile, `N = 1`.
 
 ## Wiring the private keys into validator nodes
 

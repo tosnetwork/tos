@@ -222,7 +222,7 @@ See `doc/Validator-Local.md#evm-workchain-workchain-1` for end-to-end activation
 |-------|------|-------|-------------|
 | `max_validators` | uint32 | **40** | Maximum total validators |
 | `max_main_validators` | uint32 | **20** | Maximum masterchain validators |
-| `min_validators` | uint32 | **3** | Minimum validators for network to operate |
+| `min_validators` | uint32 | **1** | Bootstrap minimum validators for network to operate |
 
 ## ConfigParam 17 — Stake Limits
 
@@ -355,7 +355,7 @@ these in lockstep whenever either is updated.
 | `mc_catchain_lifetime` | uint32 | **250** | Masterchain catchain session lifetime (seconds) |
 | `shard_catchain_lifetime` | uint32 | **250** | Shard catchain session lifetime (seconds) |
 | `shard_validators_lifetime` | uint32 | **1,000** | How long a shard validator group stays assigned (seconds) |
-| `shard_validators_num` | uint32 | **5** | Validators per shard. 40 validators / 5 = up to 8 parallel shards. |
+| `shard_validators_num` | uint32 | **1** | Validators per shard in the bootstrap profile. Raise with `min_validators` for the safer production profile. |
 | `shuffle_mc_validators` | Bool | **true** | Shuffle masterchain validator ordering each round |
 
 ## ConfigParam 29 — Consensus Config (Catchain BFT, fallback when Simplex is not enabled)
