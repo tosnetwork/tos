@@ -1,6 +1,10 @@
 # The Open System
 
-**The Open System (TOS)** is a multichain Layer‑1 that defines four distinct execution domains over a single masterchain-rooted consensus. The default node binary carries Native + EVM + Uno; the JVM engine is a build-time opt-in (it needs a Java toolchain). The network **launches with the Native chain (wc=0)** and **stages in the others by governance** as they harden — no redeploy.
+**The Open System (TOS)** is a multichain Layer‑1 rooted in an actor-model native execution layer. On the native workchain, accounts are independent actors, state is private to each account, and composition happens through asynchronous messages rather than shared memory or synchronous contract calls.
+
+The actor model was introduced by Carl Hewitt, Peter Bishop, and Richard Steiger in 1973 and later formalized by Gul Agha, William Clinger, and others. TOS applies the same core ideas — private state, addressable actors, asynchronous message passing, actor creation, and behavior evolution — as a deterministic blockchain execution model with consensus ordering, gas limits, and persistent account state.
+
+TOS extends that native foundation into a multichain network with four distinct execution domains over a single masterchain-rooted consensus. The default node binary carries Native + EVM + Uno; the JVM engine is a build-time opt-in (it needs a Java toolchain). The network **launches with the Native chain (wc=0)** and **stages in the others by governance** as they harden — no redeploy.
 
 | Workchain | Execution model | What it's for | Launch status |
 |---|---|---|---|
@@ -15,7 +19,7 @@ One node binary (`validator-engine`) serves the workchains: each compiled-in eng
 
 ## Why four domains?
 
-Different workloads want different trade-offs. TOS does not try to fit them into one VM.
+The native TOS model is actor-first: local state, asynchronous messages, deterministic message execution, and sharding by account identity. Different workloads want different trade-offs, so TOS does not force every workload into that one VM.
 
 - **Throughput and scale** are solved by TVM's asynchronous message passing + horizontal sharding (the TOS native design). The native layer is where 100K+ TPS is realistic, and where contract-to-contract message fan-out is cheap.
 - **Developer familiarity and the Ethereum tool stack** are solved by running a real EVM as a separate workchain. Solidity contracts deploy as-is; MetaMask, ethers.js, Remix, and Foundry talk to wc=1 through standard JSON-RPC without modification.
@@ -28,11 +32,11 @@ Each workchain keeps its own invariants. The masterchain provides shared consens
 
 ## Native Layer (workchain 0) — Asynchronous, Sharded, TVM
 
-The native layer is the TOS native architecture: an actor-style, message-driven execution model that scales horizontally through dynamic sharding.
+The native layer is TOS's actor-style, message-driven execution model, built to scale horizontally through dynamic sharding.
 
 ### Execution model
 
-Every account on wc=0 is an **actor**. A contract call is an **asynchronous message** delivered to an actor's inbox; execution reads the message, mutates local state, and can emit zero or more outbound messages. There are no synchronous cross-contract calls — two contracts interact by passing messages. The TVM (TOS Virtual Machine) executes contract bytecode per message, with:
+Every account on wc=0 is an **actor**. A contract call is an **asynchronous message** delivered to an actor's inbox; execution reads the message, mutates only that actor's private state, and can emit zero or more outbound messages. There are no synchronous cross-contract calls — two contracts interact by passing messages. TVM executes contract bytecode per message, with:
 
 - deterministic, cell-native state (every account's storage is a Merkle tree of TVM cells)
 - gas metering in nano-TOS, billed from the message
@@ -160,6 +164,7 @@ Design and operations are documented under [`doc/jvm/`](doc/jvm/): [`jvm-v2-acco
 
 ## Architecture principles
 
+- **Actor model at the native core.** Native TOS uses an account-as-actor model: private account state, asynchronous message passing, no shared mutable memory across contracts, and no synchronous cross-contract call stack.
 - **The node is the root of truth.** Public APIs come from `validator-engine`, not from fragmented sidecar stacks.
 - **One operator path.** `tosctl` is the canonical CLI for node operation, wallet flows, and workchain-specific tooling.
 - **Standards-first.** Wallet send / estimate / track semantics, RPC conventions, trust tiers, indexing and explorer surfaces are defined as standards, not as implementation artifacts.
