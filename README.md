@@ -58,7 +58,7 @@ This is how the native layer reaches very high throughput: the work is distribut
 
 ### Consensus
 
-Block production runs **Simplex** — a fast, leader-driven consensus (see `doc/simplex.pdf`) — as the **primary** path, with **Catchain** BFT (a shared-log protocol, see `doc/catchain.pdf`) retained as a conservative Byzantine fallback. The leader produces blocks continuously without waiting for full BFT voting; notarization is asynchronous. Validators participate per workchain + shard; the masterchain provides global signing and handles validator-set rotation. The active profile is selected on-chain (`ConfigParam 30` carries the Simplex config, `ConfigParam 29` the Catchain fallback).
+Block production runs **Simplex** — a fast, leader-driven consensus (see `doc/simplex.pdf`). The leader produces blocks continuously while notarization proceeds asynchronously. Validators participate per workchain + shard; the masterchain provides global signing and handles validator-set rotation. The active profile is selected on-chain through `ConfigParam 30`.
 
 ### What contract teams get
 
@@ -188,7 +188,7 @@ Design and operations are documented under [`doc/jvm/`](doc/jvm/): [`jvm-v2-acco
 - ✅ Trust-tier and verification model for different client types
 - ✅ Transaction history and indexed-data contracts for explorers and backends
 - ✅ Token and application standardization work (TEP-style surfaces)
-- ✅ Simplex fast leader-driven consensus (primary) with Catchain BFT fallback
+- ✅ Simplex fast leader-driven consensus
 
 ---
 
