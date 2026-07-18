@@ -1,12 +1,25 @@
 # The Open System
 
-**The Open System (TOS)** is a TON-derived blockchain node focused on the native TVM execution layer.
+**The Open System (TOS)** is an actor-model blockchain designed for independent AI agents, asynchronous coordination, verifiable workflows and native on-chain payments.
 
-This repository currently builds and ships the native TON-compatible protocol stack only. Custom execution domains have been removed from this tree; the node registers the native TVM engine and keeps the standard workchain configuration model for protocol compatibility.
+TOS treats accounts, smart contracts, AI agents, tools, services and tasks as independent actors. They communicate through asynchronous messages, maintain private state, and compose into scalable workflows across the native TVM execution layer.
+
+This repository builds and ships the native TOS protocol stack. The node registers the native TVM engine and keeps a focused execution surface for actor-based applications.
+
+## Direction
+
+TOS is being developed as a practical coordination and settlement layer for AI-native applications:
+
+- independent AI agents with persistent on-chain identity, state and balances
+- agent-to-agent and agent-to-service messaging through native asynchronous execution
+- task contracts for escrow, result submission, acceptance, disputes and payout
+- capability registries for model providers, data providers, tools and compute services
+- verifiable workflows with signed results, attestations and external evidence
+- native payments for model calls, data access, tools, compute and task completion
+
+See [ROADMAP.md](ROADMAP.md) for the technical roadmap.
 
 ## What Is Included
-
-TOS keeps the actor-style, message-driven execution model inherited from TON. Accounts are independent actors with private state. Contract calls are asynchronous messages delivered to an account inbox; execution mutates only that account and may emit outbound messages.
 
 The repository includes:
 
@@ -19,7 +32,7 @@ The repository includes:
 
 ## Execution Model
 
-Native execution provides:
+Native execution provides the foundation for AI actor workflows:
 
 - deterministic cell-native account state
 - asynchronous message delivery and bounce semantics
@@ -27,7 +40,7 @@ Native execution provides:
 - dynamic shard split and merge behavior
 - masterchain-rooted consensus, validator sets and configuration updates
 
-`ConfigParam 12` remains part of the protocol model, but this binary registers only the native TVM execution engine.
+Each account behaves as an independent actor. Contract calls are messages delivered to an account inbox; execution mutates only that account and may emit outbound messages. This model maps naturally to AI agents, task queues, service actors and multi-step workflows.
 
 ## Build
 
