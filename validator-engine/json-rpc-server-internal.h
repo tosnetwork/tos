@@ -35,19 +35,6 @@ namespace tos {
 
 td::Result<block::StdAddress> parse_address_param(td::JsonObject& params);
 
-// ─── Uno workchain JSON-RPC: sync handler ────────────────────────────────
-// Synchronous read-only handler defined in json-rpc-server-uno.cpp.
-// `uno_sendMineUno` is async and lives as a JsonRpcServer member.
-// The return type mirrors `JsonRpcServer::HttpReturn` (a private type
-// alias inside the server class). We spell it out here so callers
-// outside the class can hold the value without triggering the access
-// check on the alias name.
-
-std::pair<std::unique_ptr<http::HttpResponse>,
-          std::shared_ptr<http::HttpPayload>>
-handle_uno_get_mine_state(std::string req_id,
-                          const std::string& cors_origin);
-
 // ─── Shared: block ID JSON formatters ───────────────────────────────────
 
 std::string format_block_id_json(const tos::lite_api::tosNode_blockIdExt& blk);

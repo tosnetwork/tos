@@ -20,7 +20,7 @@ public class Environment {
   /**
    * Will be lazily initialised by {@link #isMuslLibc()} instead of the previous static
    * initialisation. The lazy initialisation prevents Windows from reporting suspicious behaviour of
-   * the JVM attempting IO on Unix paths.
+   * the Java runtime attempting IO on Unix paths.
    */
   private static Boolean MUSL_LIBC = null;
 

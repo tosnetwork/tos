@@ -59,10 +59,6 @@ impl CommandManager {
                 cmd.run().await?;
                 Ok(None)
             }
-            Commands::JvmWallet(cmd) => {
-                cmd.run().await?;
-                Ok(None)
-            }
             Commands::Pool(cmd) => {
                 cmd.run().await?;
                 Ok(None)

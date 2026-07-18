@@ -21,7 +21,6 @@ pub(crate) mod config_wallet_cmd;
 pub(crate) mod deploy_cmd;
 pub(crate) mod host_cmd;
 pub(crate) mod install_cmd;
-pub(crate) mod jvm_wallet_cmd;
 pub(crate) mod key_cmd;
 pub(crate) mod master_wallet_cmd;
 pub(crate) mod node_cmd;

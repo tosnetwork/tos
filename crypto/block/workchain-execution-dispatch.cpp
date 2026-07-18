@@ -12,9 +12,6 @@ namespace block {
 namespace {
 
 constexpr std::int32_t kTvmVmVersion = -1;
-constexpr std::int32_t kEvmVmVersion = 0x45564D;    // "EVM"
-constexpr std::int32_t kUnoVmVersion = 0x554E4F31;  // "UNO1"
-constexpr std::int32_t kJvmVmVersion = 0x4a564d31;  // "JVM1"
 
 struct TvmEngineConfig final : public WorkchainEngineConfig {
 };
@@ -61,32 +58,8 @@ bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key) {
   return key == tvm_workchain_engine_key();
 }
 
-bool workchain_engine_key_is_evm(const WorkchainEngineKey& key) {
-  return key == evm_workchain_engine_key();
-}
-
-bool workchain_engine_key_is_uno(const WorkchainEngineKey& key) {
-  return key == uno_workchain_engine_key();
-}
-
-bool workchain_engine_key_is_jvm(const WorkchainEngineKey& key) {
-  return key == jvm_workchain_engine_key();
-}
-
 WorkchainEngineKey tvm_workchain_engine_key() {
   return {WorkchainFormat::Basic, kTvmVmVersion};
-}
-
-WorkchainEngineKey evm_workchain_engine_key() {
-  return {WorkchainFormat::Basic, kEvmVmVersion};
-}
-
-WorkchainEngineKey uno_workchain_engine_key() {
-  return {WorkchainFormat::Basic, kUnoVmVersion};
-}
-
-WorkchainEngineKey jvm_workchain_engine_key() {
-  return {WorkchainFormat::Basic, kJvmVmVersion};
 }
 
 td::Result<WorkchainExecutionDescriptor> normalize_workchain_descriptor(const WorkchainInfo& info) {
@@ -294,22 +267,8 @@ bool resolved_workchain_execution_is_custom(const ResolvedWorkchainExecution& ex
   return !workchain_engine_key_is_tvm(workchain_engine_key_from_descriptor(execution.descriptor));
 }
 
-bool resolved_workchain_execution_is_evm(const ResolvedWorkchainExecution& execution) {
-  return workchain_engine_key_is_evm(workchain_engine_key_from_descriptor(execution.descriptor));
-}
-
-td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& registry) {
-  td::uint32 flags = 0;
-  if (registry.has_engine(evm_workchain_engine_key())) {
-    flags |= kTosNodeCapabilityWorkchainEvm;
-  }
-  if (registry.has_engine(uno_workchain_engine_key())) {
-    flags |= kTosNodeCapabilityWorkchainUno;
-  }
-  if (registry.has_engine(jvm_workchain_engine_key())) {
-    flags |= kTosNodeCapabilityWorkchainJvm;
-  }
-  return flags;
+td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& /*registry*/) {
+  return 0;
 }
 
 WorkchainExecutionRegistry& default_workchain_execution_registry() {

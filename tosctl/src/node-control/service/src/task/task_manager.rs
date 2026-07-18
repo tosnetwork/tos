@@ -221,8 +221,6 @@ mod tests {
             app_config: Arc::new(AppConfig {
                 nodes: HashMap::new(),
                 wallets: HashMap::new(),
-                jvm_wallets: HashMap::new(),
-            jvm_deployers: HashMap::new(),
                 pools: HashMap::new(),
                 bindings: HashMap::new(),
                 chain_rpc: ChainRpcConfig::default(),

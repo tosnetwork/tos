@@ -138,8 +138,7 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
 
   // Engine-specific admission checks require ConfigParam 12 and therefore run
   // in ExtMessagePool::check_message, after this structural parse has produced
-  // the destination workchain and address. This layer intentionally does not
-  // hardcode EVM/Uno workchain ids.
+  // the destination workchain and address.
 
   TRY_RESULT(hash_norm, get_ext_in_msg_hash_norm(ext_msg));
   return Ref<ExtMessageQ>{true, std::move(data), std::move(ext_msg), dest_prefix, wc, addr, hash, hash_norm};

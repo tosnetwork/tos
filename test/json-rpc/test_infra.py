@@ -86,8 +86,7 @@ class TestBatch:
     def test_batch_returns_array(self, endpoint, headers):
         """A JSON-RPC batch must be processed and return an array of responses
         (spec section 6).  Pre-fix the server rejected batches with a single
-        error -- that broke Blockscout's catchup pipeline.  See
-        test/conformance/blockscout/README.md BUG #2."""
+        error -- that broke indexer catchup pipelines."""
         url = endpoint.rstrip("/") + "/jsonRPC"
         batch = [
             {"jsonrpc": "2.0", "method": "getMasterchainInfo", "params": {}, "id": 1},
@@ -117,7 +116,7 @@ class TestBatch:
     def test_batch_notification_returns_204(self, endpoint, headers):
         """An all-notification batch (no `id` fields) must produce no body."""
         url = endpoint.rstrip("/") + "/jsonRPC"
-        batch = [{"jsonrpc": "2.0", "method": "eth_chainId", "params": []}]
+        batch = [{"jsonrpc": "2.0", "method": "getMasterchainInfo", "params": {}}]
         resp = requests.post(url, json=batch, headers=headers)
         assert resp.status_code == 204
         assert resp.text == ""
@@ -125,7 +124,7 @@ class TestBatch:
     def test_batch_too_large_rejected(self, endpoint, headers):
         """Batches over the 100-element cap are rejected with -32600."""
         url = endpoint.rstrip("/") + "/jsonRPC"
-        batch = [{"jsonrpc": "2.0", "id": i, "method": "eth_chainId", "params": []}
+        batch = [{"jsonrpc": "2.0", "id": i, "method": "getMasterchainInfo", "params": {}}
                  for i in range(150)]
         resp = requests.post(url, json=batch, headers=headers)
         data = resp.json()

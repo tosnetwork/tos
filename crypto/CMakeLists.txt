@@ -207,8 +207,6 @@ set(BLOCK_SOURCE
   block/precompiled-smc/PrecompiledSmartContract.cpp
   block/workchain-execution-dispatch.cpp
   block/workchain-execution-dispatch.h
-  block/evm-workchain-dispatch.cpp
-  block/evm-workchain-dispatch.h
   ${TLB_BLOCK_AUTO}
 
   block/block-binlog.h
@@ -287,11 +285,6 @@ set(FIFT_TEST_SOURCE
 
 set(BIGINT_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/test-bigint.cpp
-  PARENT_SCOPE
-)
-
-set(WORKCHAIN_EXECUTION_REGISTRY_TEST_SOURCE
-  ${CMAKE_CURRENT_SOURCE_DIR}/test/test-workchain-execution-registry.cpp
   PARENT_SCOPE
 )
 
@@ -406,12 +399,6 @@ if (USE_EMSCRIPTEN)
   target_link_options(tos_block PRIVATE -fexceptions)
   target_compile_options(tos_block PRIVATE -fexceptions)
 endif()
-
-# EVM workchain execution lives at the top-level `evm/` subdirectory; see the
-# top-level CMakeLists.txt for `add_subdirectory(evm)`. The crypto/block
-# EVM file that remains here only exposes the canonical singleton executor
-# code-marker cell to crypto-layer callers without pulling in EVM/silkworm
-# headers.
 
 add_executable(func func/func-main.cpp ${FUNC_LIB_SOURCE})
 target_include_directories(func PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
@@ -557,16 +544,13 @@ add_executable(create-state block/create-state.cpp)
 target_include_directories(create-state PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
 if (INTERNAL_COMPILE)
-  target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib evm_workchain uno_workchain git)
+  target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib git)
 else()
   if (TOSLIB_COMPILE)
-    target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib evm_workchain uno_workchain git)
+    target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib git)
   else()
-    target_link_libraries(create-state PUBLIC tos_crypto fift-lib evm_workchain uno_workchain git)
+    target_link_libraries(create-state PUBLIC tos_crypto fift-lib git)
   endif()
-endif()
-if (TOS_ENABLE_JVM)
-  target_link_libraries(create-state PUBLIC jvm_workchain_core)
 endif()
 if (WINGETOPT_FOUND)
   target_link_libraries_system(create-state wingetopt)

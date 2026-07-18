@@ -8,28 +8,8 @@
 // =====================================================================
 //
 // This is THE default mainnet template. It ships a ConfigParam 12 that
-// contains ONLY the Native workchain (wc=0) plus the masterchain (wc=-1),
-// and it does NOT include the eTOS PoW givers — the supply is fully
-// pre-mined (see the main-wallet line below).
-//
-// The EVM (wc=1), Uno (wc=2), and JVM (wc=3) registration blocks are
-// deliberately absent: those engines are compiled into the same
-// `validator-engine` binary but are activated by *configuration*, not by
-// the binary. Launching with wc=0 alone lets the Native chain run
-// independently while the other three mature; each can be switched on
-// later — at any masterchain height — as a `ConfigParam 12` governance
-// update that adds its WorkchainDescr (and, for JVM, the companion
-// ConfigParam 85). No binary redeploy or validator restart is required,
-// since every validator already runs the engine-capable binary.
-//
-// Everything below the workchain section (masterchain economics, gas,
-// fwd prices, consensus params, validators, elector/config smart
-// contracts) is byte-identical to the four-chain template, so a later
-// EVM/Uno/JVM activation needs no consensus-parameter change.
-//
-// To build the (NOT launch-ready, unaudited) full four-chain network
-// instead, use `gen-zerostate-allchains.fif`. See finding F1 in
-// doc/security-audit-native-2026-06.md.
+// contains ONLY the Native workchain (wc=0) plus the masterchain (wc=-1).
+// The supply is fully pre-mined (see the main-wallet line below).
 // =====================================================================
 
 def? $1 { @' $1 } { "" } cond constant suffix
@@ -57,12 +37,6 @@ hashu dup =: basestate0_rhash
 
 // root-hash file-hash start-at actual-min-split min-split-depth max-split-depth wc-id
 basestate0_rhash basestate0_fhash now 0 4 8 0 add-std-workchain
-
-// ---------------------------------------------------------------------
-// EVM (wc=1), Uno (wc=2), and JVM (wc=3) are intentionally NOT registered
-// here. See gen-zerostate.fif for their genesis wiring; activate them
-// post-launch via a ConfigParam 12 governance update.
-// ---------------------------------------------------------------------
 
 config.workchains!
 
@@ -174,15 +148,7 @@ elector_addr config.elector_smc!
 config.special!
 
 // gas_price gas_limit special_gas_limit gas_credit block_gas_limit freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price
-// Basechain gas — sized so the EVM workchain (wc=1) can run with Fusaka EVM
-// semantics once it is activated:
-//   gas_limit       = 30M   (comfortably above EIP-7825 per-tx cap 2^24 = 16,777,216)
-//   block_gas_limit = 60M   (Ethereum Fusaka default, EIP-7935)
-// These basechain limits are kept identical to the full-launch zerostate so
-// that activating EVM later needs no consensus-parameter change. Keeping them
-// below EIP-7825 would force well-formed txs to fail at the compute-phase
-// "tx gas limit exceeds block gas limit" check even after passing the
-// admission-layer EIP-7825 validation.
+// Basechain gas limits for native TVM execution.
 26214400 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 40000 config.gas_prices!
 // masterchain gas (aligned with production)
 655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000 config.mc_gas_prices!
@@ -209,8 +175,8 @@ config.new_consensus_params_all!
 triple untriple config.mc_block_limits!
 // basechain block limits — gas tiers aligned with ConfigParam 21 gas_limit/
 // block_gas_limit above so collator block-selection and per-tx gas admission
-// agree on the same size envelope. underload=5M, soft=60M (matches EIP-7935
-// block cap), hard=120M (2x soft headroom).
+// agree on the same size envelope. underload=5M, soft=60M, hard=120M
+// (2x soft headroom).
 256 *Ki 1 *Mi 2 *Mi triple           // bytes: underload soft hard
 5000000 60000000 120000000 triple    // gas: underload soft hard
 1000 5000 10000 triple               // lt: underload soft hard

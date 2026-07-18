@@ -139,7 +139,7 @@ def build_pdf():
                   ["Standalone repo", "Custom serialization", "Compatibility self-managed"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
     pdf.inner_box(LEFT_LEGACY + 148, row_y + 9, 38, 28, "Kotlin SDK",
-                  ["Standalone repo", "JVM ecosystem", "Lagging updates"],
+                  ["Standalone repo", "Language ecosystem", "Lagging updates"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
 
     pdf.section_box(LEFT_TOS, row_y, W_TOS, h,

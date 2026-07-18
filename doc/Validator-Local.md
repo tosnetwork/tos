@@ -4,7 +4,7 @@ This document records the exact steps used to configure and run a production-sty
 
 ## Native-only topology
 
-The local testnet runs a **single execution domain — the native TVM workchain (wc=0)** — under one validator set and one masterchain. The tostester pipeline that `setup-testnet.sh` drives generates a zerostate that registers **only wc=0**; EVM (wc=1), Uno (wc=2), and JVM (wc=3) are not wired in.
+The local testnet runs a **single execution domain — the native TVM workchain (wc=0)** — under one validator set and one masterchain. The tostester pipeline that `setup-testnet.sh` drives generates a zerostate that registers **only wc=0**.
 
 | wc  | Chain                | vm_version | Role                         | Total supply | Distribution                                   |
 |-----|----------------------|------------|------------------------------|--------------|------------------------------------------------|
@@ -19,14 +19,6 @@ tos-lite-client -C /data/tos-global.json -v 0 -c "getconfig 12" -c "quit" \
 # Expect a single leaf:
 #   vm_version:-1          → wc=0 TVM
 ```
-
-> **Adding more workchains.** This guide is native-only. To run EVM / Uno / JVM
-> as well, wire them back into the tostester zerostate template
-> (`test/tostester/src/tostester/zerostate.py`) or use the production generator
-> `crypto/smartcont/gen-zerostate.fif`. Production deployments stage workchains
-> in via separate `ConfigParam 12` updates; see
-> [workchain-execution-registry.md](workchain-execution-registry.md#staged-workchain-activation)
-> and [ConfigParam.md](ConfigParam.md#activation-semantics).
 
 ## Architecture
 
@@ -190,7 +182,7 @@ The `--clean` flag stops any running services and removes previous `/data/` cont
    - Triggers zero state generation via `network._get_or_generate_zerostate()`
 
 5. **Zero state generation** (inside Python):
-   - Uses `crypto/smartcont/gen-zerostate-test.fif` template
+   - Uses the native testnet zero-state generator
    - Sets `global_id = 3` (dev network)
    - Embeds 3 validator public keys via `add-validator`
    - Runs `build/crypto/create-state` with Fift include paths

@@ -28,8 +28,6 @@
 #include "td/utils/Time.h"
 #include "validator/validator.h"
 #include "block/block.h"
-#include "evm/core/transaction.h"
-#include "evm/rpc/handlers.h"
 
 #include <list>
 #include <set>
@@ -152,39 +150,6 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     td::int32 cache_ttl = 0;        // seconds, 0 = disabled
     std::size_t cache_max_entries = 1024;
     std::size_t cache_max_body_bytes = 8 << 20;
-    // M-03: explicit EVM RPC profile selector. When unset, the server
-    // falls back to the `TOS_EVM_RPC_PROFILE` environment variable, then
-    // to `EvmRpcProfile::ValidatorMinimal` (the safest surface). The
-    // command-line wiring lives in `validator-engine.cpp` under the
-    // `--evm-rpc-profile=validator|follower|admin` flag.
-    std::optional<evm_workchain::EvmRpcProfile> evm_rpc_profile;
-    // M-02 hardening: allow the `AdminLocal` EVM RPC profile to be
-    // applied to a non-loopback listener. Default is `false`: a
-    // mis-configured `--evm-rpc-profile=admin` (or
-    // `TOS_EVM_RPC_PROFILE=admin`) on a public interface is refused at
-    // listen time so the heavy gas cap and (when compiled in) debug
-    // methods cannot silently surface to remote clients. Operators
-    // that genuinely need a remote admin endpoint must set this to
-    // true (CLI flag `--allow-remote-admin-rpc`) AND configure an API
-    // key — both checks are enforced together.
-    bool allow_remote_admin_rpc = false;
-
-    // In-process per-IP rate-limit configuration. The gate sits on the
-    // EVM RPC dispatcher BEFORE the per-method limiters. When the
-    // operator does not pin the toggle (`per_ip_enabled` left at
-    // `std::nullopt`) the server picks a default per profile:
-    //   ValidatorMinimal  → disabled (validators usually do not
-    //                       expose public RPC, and benign internal
-    //                       RPC patterns can trip the gate)
-    //   FollowerPublic    → enabled
-    //   AdminLocal        → enabled (loopback admin is small in
-    //                       absolute requests; the gate is a cheap
-    //                       extra layer)
-    std::optional<bool> per_ip_enabled;
-    double per_ip_requests_per_sec = 30.0;
-    double per_ip_burst = 60.0;
-    uint32_t per_ip_table_size = 1024;
-
     // M-01 hardening: control how the per-IP rate gate attributes a
     // request to a source IP.
     //
@@ -221,21 +186,15 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // into the appropriate LOG(ERROR) + early return.
   enum class ListenDecision {
     Accept,
-    RefuseAdminRemoteWithoutOverride,
-    RefuseAdminRemoteWithoutApiKey,
     RefuseWriteRemoteWithoutAuth,
   };
   // Pure decision-making helper. No side effects, no logging.
   // - `is_loopback`     : true iff the listening address is 127.0.0.1 / ::1.
-  // - `profile`         : resolved EvmRpcProfile (already merged with env).
   // - `api_key_empty`   : `Options::api_key.empty()` snapshot.
-  // - `allow_remote_admin`: `Options::allow_remote_admin_rpc` snapshot.
   // - `readonly`        : `Options::readonly` snapshot.
   static ListenDecision decide_listen_admission(
       bool is_loopback,
-      evm_workchain::EvmRpcProfile profile,
       bool api_key_empty,
-      bool allow_remote_admin,
       bool readonly);
 
   // M-01 hardening: pure helper that maps a real TCP peer IP plus
@@ -293,9 +252,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void on_request(RequestPtr request, PayloadPtr payload,
                   td::Promise<HttpReturn> promise);
   // Called by BodyWaiter via actor message — reads payload OUTSIDE HttpPayload mutex.
-  // `source_ip` is the attribution string for the per-IP rate gate
-  // (see `evm_workchain::consume_per_ip_token`); it is passed by value
-  // to the actor scheduler. Empty string disables the gate.
+  // `source_ip` is the attribution string passed by value to the actor
+  // scheduler. Empty string means the client address was not available.
   void on_body_ready(PayloadPtr payload, std::string source_ip,
                      td::Promise<HttpReturn> promise);
   void process_body(td::BufferSlice body, std::string req_id,
@@ -325,39 +283,9 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void dispatch_method(std::string method, td::JsonObject &params,
                        std::string req_id, std::string source_ip,
                        td::Promise<HttpReturn> promise);
-  void handle_jvm_rpc_method(std::string method, std::string params_json,
-                             std::string req_id,
-                             td::Promise<HttpReturn> promise);
-  void handle_jvm_get_receipts_rpc_method(std::string params_json,
-                                          std::string req_id,
-                                          td::Promise<HttpReturn> promise);
-
   // Method handlers — existing
   void handle_sendBoc(td::JsonObject &params, std::string req_id,
                       td::Promise<HttpReturn> promise);
-  void handle_eth_sendRawTransaction(td::JsonValue &params_val, std::string req_id,
-                                      td::Promise<HttpReturn> promise);
-  void handle_eth_sendRawTransaction_with_chain_id(
-      std::string raw_bytes, evm_workchain::DecodedTransaction decoded,
-      std::string req_id, tos::WorkchainId workchain_id, uint64_t chain_id,
-      tos::StdSmcAddress executor_addr,
-      td::Promise<HttpReturn> promise);
-  // --- Uno workchain JSON-RPC methods that need access to the
-  //     server-side liteserver_query pipe. Read-only `uno_*` methods live
-  //     in `uno/rpc/handlers.cpp` and are dispatched via
-  //     `uno_workchain::handle_uno_rpc`. The two below are intercepted
-  //     BEFORE that registry — see the dispatcher in json-rpc-server.cpp.
-  void handle_uno_sendMineUno(td::JsonValue &params_val, std::string req_id,
-                               td::Promise<HttpReturn> promise);
-  void handle_uno_sendTransfer(td::JsonValue &params_val, std::string req_id,
-                                td::Promise<HttpReturn> promise);
-  void handle_uno_submit_ext_message(tos::WorkchainId workchain_id,
-                                      tos::StdSmcAddress executor_addr,
-                                      td::Ref<vm::Cell> body_root,
-                                      std::string req_id,
-                                      std::string result_json,
-                                      std::string method_name,
-                                      td::Promise<HttpReturn> promise);
   void handle_getConfigParam(td::JsonObject &params, std::string req_id,
                              td::Promise<HttpReturn> promise);
   void handle_getAddressInformation(td::JsonObject &params, std::string req_id,
@@ -514,11 +442,10 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   static HttpReturn make_json_error(int code, std::string message, std::string id,
                                     const std::string& cors_origin = "*");
   // Standards-compliant JSON-RPC 2.0 error (nested `error:{code,message}`,
-  // HTTP 200). Use for every `eth_*` / `net_*` / `web3_*` / `debug_*`
-  // handler. `make_json_error` is retained for TVM JSON-RPC methods
+  // HTTP 200). `make_json_error` is retained for TVM JSON-RPC methods
   // whose existing tests depend on `{ok, error:<string>, code}` at
   // top level and on mapped HTTP status codes.
-  static HttpReturn make_eth_json_error(int code, std::string message, std::string id,
+  static HttpReturn make_json_rpc_error(int code, std::string message, std::string id,
                                         const std::string& cors_origin = "*");
   // HTTP 204 No Content with CORS — used for batch-of-only-notifications.
   static HttpReturn make_no_content(const std::string& cors_origin = "*");
@@ -544,17 +471,15 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                      td::Promise<HttpReturn> &promise);
 
   // Returns true iff `method` mutates chain state via this server. Centralized
-  // so `opts_.readonly` can be enforced once before any fast-path dispatch
-  // (eth_sendRawTransaction, uno_sendMineUno, uno_sendTransfer, sendBoc, …).
+  // so `opts_.readonly` can be enforced once before fast-path dispatch.
   // Adding a new write method? Add it here.
   static bool is_write_method(const std::string &method);
 
   // Cache-aware dispatch: checks cache for read-only methods, delegates to
   // dispatch_method() on miss, and stores successful results.
-  // `source_ip` flows through to `dispatch_method` and is consulted by
-  // the EVM RPC fan-out to drive the per-IP rate-limit gate. Cache hits
-  // return without consulting the gate — that is by design: cached
-  // responses cost essentially nothing.
+  // `source_ip` flows through to `dispatch_method`. Cache hits return
+  // without additional admission checks because cached responses cost
+  // essentially nothing.
   void cached_dispatch_method(std::string method, td::JsonObject &params,
                               std::string req_id, std::string source_ip,
                               td::Promise<HttpReturn> promise);

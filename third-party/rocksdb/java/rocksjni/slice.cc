@@ -272,7 +272,7 @@ jlong Java_org_rocksdb_DirectSlice_createNewDirectSlice0(JNIEnv* env,
   void* data_addr = env->GetDirectBufferAddress(data);
   if (data_addr == nullptr) {
     // error: memory region is undefined, given object is not a direct
-    // java.nio.Buffer, or JNI access to direct buffers is not supported by JVM
+    // java.nio.Buffer, or JNI access to direct buffers is not supported by the runtime
     ROCKSDB_NAMESPACE::IllegalArgumentExceptionJni::ThrowNew(
         env, ROCKSDB_NAMESPACE::Status::InvalidArgument(
                  "Could not access DirectBuffer"));
@@ -295,7 +295,7 @@ jlong Java_org_rocksdb_DirectSlice_createNewDirectSlice1(JNIEnv* env,
   void* data_addr = env->GetDirectBufferAddress(data);
   if (data_addr == nullptr) {
     // error: memory region is undefined, given object is not a direct
-    // java.nio.Buffer, or JNI access to direct buffers is not supported by JVM
+    // java.nio.Buffer, or JNI access to direct buffers is not supported by the runtime
     ROCKSDB_NAMESPACE::IllegalArgumentExceptionJni::ThrowNew(
         env, ROCKSDB_NAMESPACE::Status::InvalidArgument(
                  "Could not access DirectBuffer"));

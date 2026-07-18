@@ -52,7 +52,7 @@ jobs:
           submodules: recursive
 
       # ------------------------------------------------------------------
-      # Linux: install build dependencies (mirrors uno-ci.yml)
+      # Linux: install build dependencies
       # ------------------------------------------------------------------
       - name: Install build dependencies (Linux)
         if: runner.os == 'Linux'
@@ -91,8 +91,8 @@ jobs:
           brew install cmake ninja pkg-config automake libtool autoconf ccache openssl
 
       # ------------------------------------------------------------------
-      # Rust toolchain — required by corrosion-rs / libuno_plonky3_ffi
-      # Pinned version matches tosctl/src/rust-toolchain.toml and uno-ci.yml
+      # Rust toolchain needed for Rust crates under tosctl/src.
+      # Pinned version matches tosctl/src/rust-toolchain.toml
       # ------------------------------------------------------------------
       - name: Install pinned Rust toolchain
         uses: actions-rs/toolchain@v1

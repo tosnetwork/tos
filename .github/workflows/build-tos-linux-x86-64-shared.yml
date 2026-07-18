@@ -50,36 +50,14 @@ jobs:
         key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache-${{ steps.date-stamp.outputs.timestamp }}
         restore-keys: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache
 
-    # Rust toolchain needed for corrosion-rs / libuno_plonky3_ffi
-    # (`cmake ..` calls `find_package(Rust)` via `third-party/corrosion`
-    # since M-P2 Phase 2; pinned 1.91.1 matches tosctl/src/rust-toolchain.toml
-    # and .github/workflows/uno-ci.yml).
+    # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install pinned Rust toolchain
       uses: actions-rs/toolchain@v1
       with:
         toolchain: 1.91.1
         profile: minimal
 
-    # JDK 8 needed by jvm/avata/makefile to compile rt.jar / api.jar
-    # (Avata's Java standard library, baked into the interpreter via
-    # TOS_AVATA_DEFAULT_RT_JAR).  Avata targets Java 8 bytecode
-    # (`-source 1.8 -target 1.8` at jvm/avata/makefile:160) and the
-    # makefile caps host-java-version at 8 (line 16-17), so JDK 8 is the
-    # minimal sufficient version and avoids forward-compat surprises
-    # from newer JDKs.
-    - name: Install OpenJDK 8
-      run: |
-        apt-get update
-        apt-get install -y --no-install-recommends openjdk-8-jdk-headless
-        echo "JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64" >> "$GITHUB_ENV"
-
     - name: Build TOS
-      # Enable the wc=3 Avata JVM workchain in this job only: the OpenJDK 8
-      # installed above builds the canonical rt.jar, and -DTOS_ENABLE_JVM=ON
-      # keeps JVM C++ build + test-workchain-execution-registry ctest coverage.
-      # Other build jobs stay javac-free (JVM is OFF by default).
-      env:
-        TOS_ENABLE_JVM: "ON"
       run: |
         mkdir -p ~/.ccache
         cp assembly/native/build-ubuntu-shared.sh .

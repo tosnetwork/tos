@@ -150,15 +150,6 @@ private key B<sk> is present in the above sequence.
 If the C<priv-only> format is not included in the list, this format will not be
 recognised on input.
 
-=item C<oqskeypair>:
-
-This format represents B<PKCS#8> objects in which the private key is a DER
-encoding of an octet string containing the concatenaton of the FIPS 204 private
-key B<sk> and the public key B<pk>.
-This encoding is used in some builds of the C<oqsprovider>.
-If the C<oqskeypair> format is not included in the list, this format will not be
-recognised on input.
-
 =item C<bare-seed>:
 
 This format represents B<PKCS#8> objects in which the private key contains
@@ -196,7 +187,7 @@ If C<seed-only> is listed first, then the seed will be output without the key
 when available, otherwise the output will have just the key.
 If C<priv-only> is listed first, then just the key is output regardless of
 whether the seed is present.
-The legacy C<oqskeypair>, C<bare-seed> and C<bare-priv> formats can also be
+The legacy C<bare-seed> and C<bare-priv> formats can also be
 output, by listing those first.
 
 =back

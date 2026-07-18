@@ -65,14 +65,9 @@
 
 #include "errorcode.h"
 
-#include "evm/core/init.h"
 #include "wallet-index.h"
 #include "wallet-index-writer.h"
 #include "validator/wc0-block-hook.h"
-#ifdef TOS_WITH_JVM_WORKCHAIN
-#include "jvm/core/init.h"
-#endif
-#include "uno/core/init.h"
 #include "overlay-manager.h"
 #include "overlays.h"
 #include "validator/impl/config.hpp"
@@ -2429,49 +2424,6 @@ void ValidatorEngine::start_validator() {
 
   validator_manager_ = tos::validator::ValidatorManagerFactory::create(
       validator_options_, db_root_, keyring_.get(), adnl_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
-
-  evm_workchain::init_evm_workchain(db_root_);
-
-  // tos18 fresh-genesis-only policy (P1-D): if EVM workchain initialisation
-  // attempted to hydrate from a persistent canonical state and that decode
-  // rejected at the cp.new_data envelope (most commonly because the on-disk
-  // cell carries the obsolete v5 / Ethereum-MPT-compat schema rather than
-  // the v6 native schema mandated by tos18+), refuse to start. There is no
-  // v5->v6 migration path: silently continuing with `evm_hydration_corrupted`
-  // set would let the node serve traffic against an empty / partial EVM
-  // state, which is unsafe. The validator-engine has no graceful "abort
-  // startup" pathway from this call site, so escalate to LOG(FATAL) — the
-  // logging layer aborts the process when the FATAL severity is emitted.
-  if (evm_workchain::evm_hydration_corrupted()) {
-    auto reason = evm_workchain::evm_hydration_failure_reason();
-    // The cell-codec v5 reject branch surfaces a "non-v6 version" sentinel
-    // through the hydration failure reason aggregated by init.cpp. Treat
-    // any non-v6 / envelope-rejected reason as a v5-or-pre-tos18 state and
-    // emit operator-actionable text. (Other strict-load failures — e.g.
-    // code-hash mismatch — also abort, but with their own reason text.)
-    if (reason.find("non-v6") != std::string::npos ||
-        reason.find("envelope rejected") != std::string::npos ||
-        reason.find("schema") != std::string::npos) {
-      LOG(FATAL) << "evm-workchain: refusing to start — v5 (Ethereum-MPT-compat) "
-                    "or otherwise-invalid cp.new_data envelope detected during "
-                    "startup hydration. tos18+ requires a fresh wc=1 v6 native "
-                    "EVM workchain genesis; there is no v5->v6 migration path. "
-                    "Operators must regenerate the EVM workchain genesis (see "
-                    "release notes). Hydration failure reason: "
-                 << reason;
-    } else {
-      LOG(FATAL) << "evm-workchain: refusing to start — canonical EVM state "
-                    "hydration failed and the corruption flag is sticky. The "
-                    "node must restart from a known-good wc=1 v6 native state "
-                    "snapshot. Hydration failure reason: "
-                 << reason;
-    }
-  }
-
-  uno_workchain::init_uno_workchain(db_root_);
-#ifdef TOS_WITH_JVM_WORKCHAIN
-  jvm_workchain::init_jvm_workchain(db_root_.c_str());
-#endif
 
   if (json_rpc_addr_) {
     json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get(), json_rpc_opts_);
@@ -5786,31 +5738,6 @@ void ValidatorEngine::set_json_rpc_cache_ttl(td::int32 seconds) {
   json_rpc_opts_.cache_ttl = seconds;
 }
 
-void ValidatorEngine::set_evm_rpc_profile(evm_workchain::EvmRpcProfile profile) {
-  json_rpc_opts_.evm_rpc_profile = profile;
-}
-
-void ValidatorEngine::set_allow_remote_admin_evm_rpc(bool allow) {
-  // M-02 hardening: keep the validator-engine field and the JsonRpcServer
-  // Options struct in sync. The field on `ValidatorEngine` is the
-  // canonical operator-supplied value; `json_rpc_opts_` is what gets
-  // copied into the server actor at construction time.
-  allow_remote_admin_evm_rpc_ = allow;
-  json_rpc_opts_.allow_remote_admin_rpc = allow;
-}
-
-void ValidatorEngine::set_evm_rpc_per_ip_enabled(bool enabled) {
-  json_rpc_opts_.per_ip_enabled = enabled;
-}
-
-void ValidatorEngine::set_evm_rpc_per_ip_rate(double rate) {
-  json_rpc_opts_.per_ip_requests_per_sec = rate;
-}
-
-void ValidatorEngine::set_evm_rpc_per_ip_burst(double burst) {
-  json_rpc_opts_.per_ip_burst = burst;
-}
-
 void ValidatorEngine::set_json_rpc_trust_proxy_headers(bool trust) {
   // M-01 hardening: turn on per-IP attribution via X-Forwarded-For /
   // X-Real-IP. Honoured only when the real peer is loopback or in the
@@ -6397,100 +6324,6 @@ int main(int argc, char *argv[]) {
       return td::Status::Error("cache TTL must be >= 0");
     }
     acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cache_ttl, v); });
-    return td::Status::OK();
-  });
-  // M-03: EVM RPC profile selector. Three profiles, all routed through
-  // `evm_workchain::set_evm_rpc_profile()` (the centralised toggle for
-  // gas cap / debug methods / rate buckets):
-  //   validator | minimal           — heavy read-only RPC and debug
-  //                                   methods all DISABLED. The
-  //                                   safest default for consensus nodes.
-  //   follower  | public            — heavy read-only RPC ENABLED at
-  //                                   the public 10M gas cap; debug
-  //                                   methods stay DISABLED.
-  //   admin     | local             — full surface, 30M gas cap, debug
-  //                                   methods exposed if compiled in.
-  p.add_checked_option('\0', "evm-rpc-profile",
-      "EVM JSON-RPC profile (validator|follower|admin); default: validator",
-      [&](td::Slice arg) {
-    std::string s{arg.data(), arg.size()};
-    evm_workchain::EvmRpcProfile profile;
-    if (s == "validator" || s == "minimal" || s == "validator-minimal") {
-      profile = evm_workchain::EvmRpcProfile::ValidatorMinimal;
-    } else if (s == "follower" || s == "public" || s == "follower-public") {
-      profile = evm_workchain::EvmRpcProfile::FollowerPublic;
-    } else if (s == "admin" || s == "admin-local" || s == "local") {
-      profile = evm_workchain::EvmRpcProfile::AdminLocal;
-    } else {
-      return td::Status::Error(
-          "evm-rpc-profile must be one of validator|follower|admin");
-    }
-    acts.push_back([&x, profile] {
-      td::actor::send_closure(x, &ValidatorEngine::set_evm_rpc_profile, profile);
-    });
-    return td::Status::OK();
-  });
-  // M-02 hardening: explicit override that allows the AdminLocal EVM
-  // RPC profile to be applied on a non-loopback listener. The flag
-  // takes no value: passing `--allow-remote-admin-rpc` flips the
-  // override on. The listener still requires an API key to actually
-  // accept the AdminLocal profile remotely (see
-  // `JsonRpcServer::decide_listen_admission`); this flag alone is not
-  // sufficient. Recommended deployment is still loopback + SSH/VPN.
-  p.add_option('\0', "allow-remote-admin-rpc",
-               "Allow AdminLocal EVM RPC profile on non-loopback listeners "
-               "(REQUIRES --json-rpc-api-key, NOT recommended; prefer SSH "
-               "tunnel / VPN to a loopback admin endpoint).",
-               [&]() {
-                 acts.push_back([&x] {
-                   td::actor::send_closure(
-                       x, &ValidatorEngine::set_allow_remote_admin_evm_rpc, true);
-                 });
-               });
-  // In-process per-IP rate-limit gate. The gate is opt-in by profile by
-  // default (off for ValidatorMinimal, on for FollowerPublic and
-  // AdminLocal). The flags below let operators pin the toggle and
-  // tune the rate / burst explicitly.
-  p.add_option('\0', "evm-rpc-per-ip-enabled",
-               "Force-enable the EVM RPC in-process per-IP rate gate "
-               "(default: enabled for follower / admin profiles, "
-               "disabled for validator-minimal).",
-               [&]() {
-                 acts.push_back([&x] {
-                   td::actor::send_closure(
-                       x, &ValidatorEngine::set_evm_rpc_per_ip_enabled, true);
-                 });
-               });
-  p.add_option('\0', "evm-rpc-per-ip-disabled",
-               "Force-disable the EVM RPC in-process per-IP rate gate.",
-               [&]() {
-                 acts.push_back([&x] {
-                   td::actor::send_closure(
-                       x, &ValidatorEngine::set_evm_rpc_per_ip_enabled, false);
-                 });
-               });
-  p.add_checked_option('\0', "evm-rpc-per-ip-rate",
-      "EVM RPC per-IP refill rate in requests per second (default: 30)",
-      [&](td::Slice arg) {
-    double v = td::to_double(arg);
-    if (!(v > 0.0)) {
-      return td::Status::Error("evm-rpc-per-ip-rate must be > 0");
-    }
-    acts.push_back([&x, v] {
-      td::actor::send_closure(x, &ValidatorEngine::set_evm_rpc_per_ip_rate, v);
-    });
-    return td::Status::OK();
-  });
-  p.add_checked_option('\0', "evm-rpc-per-ip-burst",
-      "EVM RPC per-IP token-bucket burst capacity (default: 60)",
-      [&](td::Slice arg) {
-    double v = td::to_double(arg);
-    if (!(v > 0.0)) {
-      return td::Status::Error("evm-rpc-per-ip-burst must be > 0");
-    }
-    acts.push_back([&x, v] {
-      td::actor::send_closure(x, &ValidatorEngine::set_evm_rpc_per_ip_burst, v);
-    });
     return td::Status::OK();
   });
   // M-01 hardening: control whether the JSON-RPC server honours

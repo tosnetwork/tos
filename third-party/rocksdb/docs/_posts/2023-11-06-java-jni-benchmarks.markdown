@@ -15,7 +15,7 @@ Evolved Binary has been working on several aspects of how the Java API to RocksD
 ## Synthetic JNI API Performance Benchmarks
 The synthetic benchmark repository contains tests designed to isolate the Java to/from C++ interaction of a canonical data intensive Key/Value Store implemented in C++ with a Java (JNI) API layered on top.
 
-JNI provides several mechanisms for allowing transfer of data between Java buffers and C++ buffers. These mechanisms are not trivial, because they require the JNI system to ensure that Java memory under the control of the JVM is not moved or garbage collected whilst it is being accessed outside the direct control of the JVM.
+JNI provides several mechanisms for allowing transfer of data between Java buffers and C++ buffers. These mechanisms are not trivial, because they require the JNI system to ensure that Java memory under the control of the Java runtime is not moved or garbage collected whilst it is being accessed outside the direct control of the Java runtime.
 
 We set out to determine which of multiple options for transfer of data from `C++` to `Java` and vice-versa were the most efficient. We used the [Java Microbenchmark Harness](https://github.com/openjdk/jmh) to set up repeatable benchmarks to measure all the options.
 

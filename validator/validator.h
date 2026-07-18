@@ -345,10 +345,8 @@ class ValidatorManagerInterface : public td::actor::Actor {
   virtual void write_handle(BlockHandle handle, td::Promise<td::Unit> promise) = 0;
 
   // `source_peer` (when set) is the ADNL pubkey hash of the upstream
-  // peer that broadcast this message. Threaded through to the
-  // ExtMessagePool's per-peer rate limiter so a noisy peer cannot
-  // starve the wc=2 ingress bucket. Locally-originated submissions
-  // pass an empty optional and bypass the per-peer step.
+  // peer that broadcast this message. Locally-originated submissions
+  // pass an empty optional.
   virtual td::actor::Task<> new_external_message_broadcast(td::BufferSlice data, int priority,
                                                             td::optional<PublicKeyHash> source_peer = {}) = 0;
   virtual td::actor::Task<> new_external_message_query(td::BufferSlice data) {

@@ -1,6 +1,0 @@
-# Bind-mounted runtime dirs created by the blockscout backend on first
-# launch — see docker-compose.yml's `backend.volumes`. Owned by root
-# (the container runs as root by default), so they appear in `git status`
-# as untracked. Keep them out of commits.
-logs/
-dets/

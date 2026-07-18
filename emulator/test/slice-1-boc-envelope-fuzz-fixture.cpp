@@ -18,17 +18,14 @@
 // =============================================================================
 // Slice 1 Stage 4 deterministic BoC / Envelope fuzz smoke.
 //
-// This fixture gives CI a stable BoC-side fuzz signal without depending on a
-// coverage-guided libFuzzer runtime. The corpus is deterministic, small, and
+// This fixture gives CI a stable BoC-side fuzz signal. The corpus is deterministic, small, and
 // focused on the Slice 1 envelope shape (`opcode:uint32 query_id:uint64 ...`)
 // from `doc/tos-message-policy.md` v6 §3.1. The Tol-side sibling lives in
 // `tol-tester/tests/slice-1-envelope-fuzz-smoke.tol` and exercises
 // Envelope/OP_ERROR struct round-trips directly.
 //
-// The existing coverage-guided `test-boc-libfuzzer` target remains useful for
-// manual campaigns; this fixture is the required CI smoke because it runs
-// through the normal `test-emulator` target and has no fuzzer-driver exit-path
-// dependency.
+// This fixture is the required CI smoke because it runs through the normal
+// `test-emulator` target and has no fuzzer-driver exit-path dependency.
 // =============================================================================
 
 #include "crypto/vm/boc.h"

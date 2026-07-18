@@ -41,8 +41,7 @@ jobs:
         path: android-ndk-r25b
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-cache-android-ndk-${{ hashFiles('**/assembly/android/build-android-toslib.sh') }}
 
-    # Rust toolchain needed for corrosion-rs / libuno_plonky3_ffi
-    # (`cmake ..` calls `find_package(Rust)` via `third-party/corrosion`).
+    # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install pinned Rust toolchain
       uses: actions-rs/toolchain@v1
       with:

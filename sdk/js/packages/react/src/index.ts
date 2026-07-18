@@ -1,7 +1,7 @@
 /**
  * @tos/react — React hooks for reading and writing TOS blockchain data.
  *
- * Inspired by wagmi for Ethereum.  Provides a provider/hook architecture
+ * Provides a provider/hook architecture
  * backed by `useSyncExternalStore` with no external state libraries.
  *
  * @example

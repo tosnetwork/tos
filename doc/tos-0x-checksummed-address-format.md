@@ -29,7 +29,7 @@ It is a display and interchange format only.
 The format is designed to satisfy the following goals:
 
 - Preserve the complete native TOS address information.
-- Use a `0x` prefix familiar to users of EVM ecosystems.
+- Use a compact `0x` prefix familiar to users of hex-encoded addresses.
 - Include a checksum signal in the rendered string.
 - Be deterministic and reversible.
 - Avoid ambiguity for negative workchains such as `-1`.
@@ -39,8 +39,8 @@ The format is designed to satisfy the following goals:
 
 This format does not attempt to:
 
-- mimic Ethereum address semantics
-- reuse Ethereum's 20-byte address size
+- mimic another chain's address semantics
+- reuse a 20-byte account-address size
 - replace native TOS address parsing rules
 - carry bounceability or test-only flags from friendly addresses
 
@@ -105,7 +105,7 @@ Example shape:
 
 ## 7. Checksum Algorithm
 
-This format uses a mixed-case checksum style inspired by EIP-55, but applied to the full 36-byte TOS payload instead of a 20-byte Ethereum address.
+This format uses a mixed-case checksum style applied to the full 36-byte TOS payload instead of a shortened account-address payload.
 
 ### 7.1 Input to the Checksum
 
@@ -417,7 +417,7 @@ If this format is adopted, implementations should:
 - keep native TOS raw and friendly formats fully supported
 - expose explicit conversion helpers
 - label this format clearly as `TOS 0x checksummed`
-- avoid presenting it as an Ethereum-compatible address
+- avoid presenting it as an address for another chain
 
 ## 18. Relationship to the Current Repository
 

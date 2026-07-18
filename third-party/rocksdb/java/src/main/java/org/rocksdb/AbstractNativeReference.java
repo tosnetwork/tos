@@ -21,7 +21,7 @@ package org.rocksdb;
  * which is deprecated from Java 9.
  * <p>
  * Explanatory note - When or if the Garbage Collector calls {@link Object#finalize()}
- * depends on the JVM implementation and system conditions, which the programmer
+ * depends on the Java runtime implementation and system conditions, which the programmer
  * cannot control. In addition, the GC cannot see through the native reference
  * long member variable (which is the C++ pointer value to the native object),
  * and cannot know what other resources depend on it.

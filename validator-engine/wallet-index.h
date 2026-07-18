@@ -2,10 +2,9 @@
     TOS wc=0 in-process wallet index — side-channel RocksDB.
 
     Serves wallet "aggregate" queries (jetton list, NFT list, account events)
-    directly from the node, with no external indexer. Modeled on the EVM
-    workchain's EvmRpcCacheDb (evm/rpc/cache-db.{h,cpp}): a standalone, per-
-    validator RocksDB at `${db_root}/wc0-index`, parallel to celldb/statedb and
-    completely outside the consensus state cell tree. It never contributes to any
+    directly from the node, with no external indexer: a standalone, per-validator
+    RocksDB at `${db_root}/wc0-index`, parallel to celldb/statedb and completely
+    outside the consensus state cell tree. It never contributes to any
     state hash; operators can prune/rebuild independently without a hardfork.
 
     Writes happen best-effort on block apply (off the consensus path): a failed
@@ -110,7 +109,7 @@ class WalletIndexDb {
   bool batch_open_ = false;
 };
 
-// Module-scope singleton (mirrors evm_rpc_cache_db()). Returns nullptr until the
+// Module-scope singleton. Returns nullptr until the
 // validator opens the index at startup.
 WalletIndexDb* wallet_index_db();
 void set_wallet_index_db(std::unique_ptr<WalletIndexDb> db);

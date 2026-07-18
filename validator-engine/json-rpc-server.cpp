@@ -18,12 +18,6 @@
 */
 #include "json-rpc-server-internal.h"
 
-#include "evm/rpc/handlers.h"
-#ifdef TOS_WITH_JVM_WORKCHAIN
-#include "jvm/core/rpc.h"
-#endif
-#include "uno/rpc/handlers.h"
-
 #include <cstdlib>
 #include <cstring>
 
@@ -45,14 +39,8 @@ namespace tos {
 // DoS.  See test/conformance/manual-rpc/http_large_request_body.io for the
 // regression test that pins this behaviour.
 //
-// Cap: 4 MiB — must accommodate the largest legitimate `uno_sendTransfer`
-// payload, which post V1-3c-gamma is ~2.30 MB hex+JSON for a worst-case 4/4
-// shape (cf. uno/rpc/handlers.cpp:71-93). Audit #9 (2026-04-26) raised this
-// from 1 MiB; without the bump the per-method cap in
-// json-rpc-server-uno.cpp:498 (3 MiB) was unreachable because every body
-// >1 MiB was rejected upstream first. Geth defaults to 5 MiB, Erigon to
-// 1 MiB; 4 MiB sits between them and leaves ~70 % headroom over the
-// post-pivot worst case.
+// Cap: 4 MiB. This is intentionally above the largest native wallet/indexer
+// request bodies accepted today and below common reverse-proxy limits.
 static constexpr std::size_t kJsonRpcMaxRequestBodyBytes = 4u << 20;
 
 // Drain the entire payload into a single contiguous buffer.  Returns an
@@ -257,24 +245,9 @@ JsonRpcServer::JsonRpcServer(
 // `Refuse*` outcome into the appropriate LOG(ERROR) and early return.
 JsonRpcServer::ListenDecision JsonRpcServer::decide_listen_admission(
     bool is_loopback,
-    evm_workchain::EvmRpcProfile profile,
     bool api_key_empty,
-    bool allow_remote_admin,
     bool readonly) {
-  // 1. AdminLocal must be loopback-only unless the operator BOTH
-  //    flips the explicit override AND provisions an API key. This is
-  //    a defense-in-depth gate over a profile misconfiguration: the
-  //    "Local" in the profile name is now enforced at the listener
-  //    layer, not just documented.
-  if (profile == evm_workchain::EvmRpcProfile::AdminLocal && !is_loopback) {
-    if (!allow_remote_admin) {
-      return ListenDecision::RefuseAdminRemoteWithoutOverride;
-    }
-    if (api_key_empty) {
-      return ListenDecision::RefuseAdminRemoteWithoutApiKey;
-    }
-  }
-  // 2. Pre-existing rule: a write-enabled, unauthenticated RPC surface
+  // A write-enabled, unauthenticated RPC surface
   //    cannot be exposed on a non-loopback address. Operators that
   //    really want this must pass `--json-rpc-readonly` or
   //    `--json-rpc-api-key`.
@@ -286,54 +259,6 @@ JsonRpcServer::ListenDecision JsonRpcServer::decide_listen_admission(
 
 void JsonRpcServer::listen(td::IPAddress addr) {
   CHECK(http_.empty());
-  // Enable EVM RPC rate limiting for the production server
-  evm_workchain::enable_evm_rpc_rate_limit(true);
-
-  // M-03: resolve EVM RPC profile.
-  //
-  // Resolution order:
-  //   1. `Options::evm_rpc_profile` set via the validator-engine CLI
-  //      flag `--evm-rpc-profile=validator|follower|admin` (preferred —
-  //      the operator pinned the profile in the launch command).
-  //   2. The `TOS_EVM_RPC_PROFILE` environment variable (same names),
-  //      so deployment scripts that don't go through validator-engine
-  //      (test harness, staging containers) can still pick a profile
-  //      without code changes.
-  //   3. The default `EvmRpcProfile::ValidatorMinimal` (the safest
-  //      surface — heavy read-only RPC disabled, debug methods locked
-  //      even if compiled in).
-  //
-  // The profile MUST be applied via `set_evm_rpc_profile()`; that
-  // path centralises gas-cap + debug toggles + bucket resets in one
-  // place (see evm/rpc/handlers.cpp `apply_profile`).
-  evm_workchain::EvmRpcProfile resolved_profile =
-      evm_workchain::EvmRpcProfile::ValidatorMinimal;
-  bool profile_resolved_from_options = false;
-  if (opts_.evm_rpc_profile.has_value()) {
-    resolved_profile = *opts_.evm_rpc_profile;
-    profile_resolved_from_options = true;
-  } else if (const char* env = std::getenv("TOS_EVM_RPC_PROFILE"); env != nullptr) {
-    std::string s{env};
-    if (s == "validator" || s == "minimal" || s == "validator-minimal") {
-      resolved_profile = evm_workchain::EvmRpcProfile::ValidatorMinimal;
-    } else if (s == "follower" || s == "public" || s == "follower-public") {
-      resolved_profile = evm_workchain::EvmRpcProfile::FollowerPublic;
-    } else if (s == "admin" || s == "admin-local" || s == "local") {
-      resolved_profile = evm_workchain::EvmRpcProfile::AdminLocal;
-    } else {
-      LOG(WARNING) << "json-rpc: TOS_EVM_RPC_PROFILE=\"" << s
-                   << "\" is not recognised; using ValidatorMinimal default";
-    }
-  }
-
-  // M-02 hardening: classify the listening address BEFORE applying the
-  // EVM RPC profile. The earlier ordering eagerly applied
-  // `set_evm_rpc_profile(AdminLocal)` (which raises the gas cap and
-  // unlocks the debug allowlist when compiled in) even when the
-  // address turned out to be non-loopback and the listener was about
-  // to be refused below. With the order reversed, an `AdminLocal`
-  // profile mis-set on a public interface never touches the global
-  // EVM toggles.
   bool is_loopback = false;
   {
     auto ip_str = addr.get_ip_str().str();
@@ -341,26 +266,9 @@ void JsonRpcServer::listen(td::IPAddress addr) {
                    ip_str == "0:0:0:0:0:0:0:1");
   }
 
-  // Run the pure admission decision before any side effects. This is
-  // the same matrix exercised by the unit test in
-  // `validator-engine/test-json-rpc-cache.cpp` (M-02 sub-cases).
   const auto decision = decide_listen_admission(
-      is_loopback, resolved_profile, opts_.api_key.empty(),
-      opts_.allow_remote_admin_rpc, opts_.readonly);
+      is_loopback, opts_.api_key.empty(), opts_.readonly);
   switch (decision) {
-    case ListenDecision::RefuseAdminRemoteWithoutOverride:
-      LOG(ERROR) << "JSON-RPC: refusing AdminLocal EVM RPC profile on "
-                 << "non-loopback address (" << addr.get_ip_str().str()
-                 << "); pass --allow-remote-admin-rpc to override "
-                 << "(API key still required).";
-      http_ = {};
-      return;
-    case ListenDecision::RefuseAdminRemoteWithoutApiKey:
-      LOG(ERROR) << "JSON-RPC: refusing AdminLocal EVM RPC profile on "
-                 << "non-loopback address (" << addr.get_ip_str().str()
-                 << ") without API key. Set --json-rpc-api-key.";
-      http_ = {};
-      return;
     case ListenDecision::RefuseWriteRemoteWithoutAuth:
       LOG(ERROR) << "JSON-RPC: refusing to listen on non-loopback address "
                  << addr << " with write methods enabled and no API key. "
@@ -369,49 +277,6 @@ void JsonRpcServer::listen(td::IPAddress addr) {
       return;
     case ListenDecision::Accept:
       break;
-  }
-
-  evm_workchain::set_evm_rpc_profile(resolved_profile);
-  const char* profile_label =
-      resolved_profile == evm_workchain::EvmRpcProfile::ValidatorMinimal
-          ? "ValidatorMinimal"
-          : (resolved_profile == evm_workchain::EvmRpcProfile::FollowerPublic
-                 ? "FollowerPublic"
-                 : "AdminLocal");
-  LOG(WARNING) << "json-rpc: EVM RPC profile = " << profile_label
-               << (profile_resolved_from_options ? " (from --evm-rpc-profile)"
-                   : (std::getenv("TOS_EVM_RPC_PROFILE") != nullptr
-                          ? " (from TOS_EVM_RPC_PROFILE)"
-                          : " (default)"));
-
-  // Enable UNO RPC rate limiting (gate on uno_sendTransfer +
-  // uno_sendMineUno). Without this, the per-method rate-limit checks in
-  // uno_sendMineUno (forged-PI DoS hardening, K-mine-rate-limit) and
-  // uno_sendTransfer are inert — `try_consume_uno_sendtx_token` returns
-  // true on every call when g_rate_limit_enabled is false.
-  uno_workchain::enable_uno_rpc_rate_limit(true);
-
-  // Defense-in-depth: in-process per-IP rate gate. Operators that pin
-  // `Options::per_ip_enabled` win; otherwise we pick a per-profile
-  // default — ValidatorMinimal opts out (validators rarely expose
-  // public RPC and benign internal traffic could trip the gate),
-  // FollowerPublic and AdminLocal opt in.
-  {
-    bool per_ip_default_for_profile =
-        (resolved_profile != evm_workchain::EvmRpcProfile::ValidatorMinimal);
-    bool per_ip_enabled = opts_.per_ip_enabled.value_or(
-        per_ip_default_for_profile);
-    evm_workchain::PerIpRateConfig cfg;
-    cfg.requests_per_sec = opts_.per_ip_requests_per_sec;
-    cfg.burst = opts_.per_ip_burst;
-    cfg.table_size = opts_.per_ip_table_size;
-    cfg.enabled = per_ip_enabled;
-    evm_workchain::set_per_ip_rate_config(cfg);
-    LOG(WARNING) << "json-rpc: EVM per-IP rate gate "
-                 << (per_ip_enabled ? "ENABLED" : "disabled")
-                 << " (rate=" << cfg.requests_per_sec
-                 << " rps, burst=" << cfg.burst
-                 << ", buckets=" << cfg.table_size << ")";
   }
   auto callback = std::make_shared<HttpCallback>(actor_id(this));
   http_ = td::actor::create_actor<http::HttpServer>(
@@ -811,7 +676,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     auto body_r = drain_payload_body(payload);
     if (body_r.is_error()) {
       // JSON-RPC envelope path — emit spec-shape so generic clients decode it.
-      promise.set_value(make_eth_json_error(-32600, "Request body too large",
+      promise.set_value(make_json_rpc_error(-32600, "Request body too large",
                                             "null", opts_.cors_origin));
       return;
     }
@@ -857,7 +722,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
 void JsonRpcServer::on_body_ready(PayloadPtr payload, std::string source_ip,
                                   td::Promise<HttpReturn> promise) {
   if (!payload) {
-    promise.set_value(make_eth_json_error(-32603, "Internal error: missing request payload", "null",
+    promise.set_value(make_json_rpc_error(-32603, "Internal error: missing request payload", "null",
                                           opts_.cors_origin));
     return;
   }
@@ -865,7 +730,7 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, std::string source_ip,
   // HttpPayload::parse()'s mutex. This breaks the deadlock chain.
   auto body_r = drain_payload_body(payload);
   if (body_r.is_error()) {
-    promise.set_value(make_eth_json_error(-32600, "Request body too large", "null",
+    promise.set_value(make_json_rpc_error(-32600, "Request body too large", "null",
                                           opts_.cors_origin));
     return;
   }
@@ -873,29 +738,27 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, std::string source_ip,
                std::move(promise));
 }
 
-// JSON-RPC 2.0 batch request cap.  Anything larger gets rejected with
-// -32600 "Batch too large".  100 mirrors what most production indexers
-// (ethers BatchProvider, web3.js BatchRequest) settle on; Blockscout's
-// catchup uses ~50.
+// JSON-RPC 2.0 batch request cap. Anything larger gets rejected with
+// -32600 "Batch too large". 100 is a conservative cap for production
+// indexer traffic.
 static constexpr std::size_t kJsonRpcMaxBatchSize = 100;
 
 void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
                                  std::string source_ip,
                                  td::Promise<HttpReturn> promise) {
-  // NOTE: All JSON-RPC envelope errors below use `make_eth_json_error`
-  // (spec-compliant `{jsonrpc, id, error:{code, message}}`, HTTP 200) so
-  // that ethers/viem/Blockscout-style clients can decode them.  The
-  // legacy `make_json_error` (`{ok:false, error:<str>, code}` + mapped
-  // HTTP status) is retained for the dedicated REST endpoints under
+  // NOTE: All JSON-RPC envelope errors below use `make_json_rpc_error`
+  // (spec-compliant `{jsonrpc, id, error:{code, message}}`, HTTP 200).
+  // The legacy `make_json_error` (`{ok:false, error:<str>, code}` +
+  // mapped HTTP status) is retained for the dedicated REST endpoints under
   // `process_rest_post_body` whose Python tests still depend on it.
   if (body.empty()) {
-    promise.set_value(make_eth_json_error(-32700, "Empty request body", req_id, opts_.cors_origin));
+    promise.set_value(make_json_rpc_error(-32700, "Empty request body", req_id, opts_.cors_origin));
     return;
   }
 
   auto json_r = td::json_decode(body.as_slice());
   if (json_r.is_error()) {
-    promise.set_value(make_eth_json_error(-32700, "Parse error: invalid JSON",
+    promise.set_value(make_json_rpc_error(-32700, "Parse error: invalid JSON",
                                           req_id, opts_.cors_origin));
     return;
   }
@@ -908,12 +771,12 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     // Per spec: empty array → single -32600 error response (NOT an
     // empty array).
     if (arr.empty()) {
-      promise.set_value(make_eth_json_error(-32600, "Invalid Request: empty batch",
+      promise.set_value(make_json_rpc_error(-32600, "Invalid Request: empty batch",
                                             "null", opts_.cors_origin));
       return;
     }
     if (arr.size() > kJsonRpcMaxBatchSize) {
-      promise.set_value(make_eth_json_error(
+      promise.set_value(make_json_rpc_error(
           -32600,
           PSTRING() << "Batch too large: max " << kJsonRpcMaxBatchSize
                     << " requests, got " << arr.size(),
@@ -931,7 +794,7 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
   }
 
   if (json.type() != td::JsonValue::Type::Object) {
-    promise.set_value(make_eth_json_error(-32600, "Invalid Request: expected JSON object or array",
+    promise.set_value(make_json_rpc_error(-32600, "Invalid Request: expected JSON object or array",
                                           req_id, opts_.cors_origin));
     return;
   }
@@ -968,7 +831,7 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   // Extract method
   auto method_r = obj.get_required_string_field("method");
   if (method_r.is_error()) {
-    promise.set_value(make_eth_json_error(-32600, "Missing or invalid 'method' field", req_id));
+    promise.set_value(make_json_rpc_error(-32600, "Missing or invalid 'method' field", req_id));
     return;
   }
   std::string method = method_r.move_as_ok();
@@ -979,175 +842,23 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     params_val = td::JsonValue::make_object(td::JsonObject());
   }
 
-  // Readonly gate (centralized — see is_write_method). Must run BEFORE the
-  // per-method fast paths below or `eth_sendRawTransaction` / `uno_send*`
-  // would bypass `--json-rpc-readonly`.
+  // Readonly gate (centralized; see is_write_method). Must run before
+  // dispatch so write methods cannot bypass `--json-rpc-readonly`.
   if (opts_.readonly && is_write_method(method)) {
-    promise.set_value(make_eth_json_error(
+    promise.set_value(make_json_rpc_error(
         -32601, "Write methods are disabled (server is in readonly mode)",
         req_id, opts_.cors_origin));
     return;
   }
 
-  // eth_sendRawTransaction: route to async handler (submits to ExtMessagePool)
-  if (method == "eth_sendRawTransaction") {
-    // Round 153 MEDIUM fix: apply the EVM per-IP rate gate before
-    // dispatch.  Pre-fix the eth_sendRawTransaction fast-path
-    // bypassed the per-IP gate that handle_eth_rpc enforces for
-    // every other EVM method (handlers.cpp:6739) and only checked
-    // the global token bucket inside handle_eth_sendRawTransaction.
-    // A single IP could submit many small invalid raw-tx requests
-    // ("eth_sendRawTransaction(['0xzz'])") and consume the global
-    // bucket, starving other clients' EVM RPC.  Mirror the gate
-    // here before the route.
-    if (!evm_workchain::consume_per_ip_token(source_ip)) {
-      promise.set_value(make_eth_json_error(
-          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
-      return;
-    }
-    handle_eth_sendRawTransaction(params_val, std::move(req_id), std::move(promise));
-    return;
-  }
-
-  // uno_sendMineUno / uno_sendTransfer: route to async handlers. Each resolves
-  // the active Uno workchain from ConfigParam 12 and submits an ext_in_msg
-  // through the same liteServer_sendMessage pipe as eth_sendRawTransaction.
-  // Intercepted BEFORE the
-  // `is_uno_rpc_method` registry below — that registry covers read-only
-  // uno_* methods that don't need access to `send_liteserver_query`.
-  // The registry also hosts a `handle_send_transfer` impl that the test
-  // harness uses with its own `g_submit_ext` callback; in production the
-  // interceptor below shadows it so wallets always go through the actor
-  // pipe.
-  // Round 154 MEDIUM fix: apply the EVM per-IP rate gate to uno_send*
-  // fast paths too.  The per-IP gate is shared infrastructure (per-
-  // IP token bucket attribution) and applies equally to any
-  // submission method that fans out to live state queries.  Pre-
-  // fix uno_sendMineUno + uno_sendTransfer used only the global
-  // g_send_mine_uno_limiter / g_sendtx_limiter buckets, so a
-  // single IP could drain those buckets and starve other clients.
-  if (method == "uno_sendMineUno") {
-    if (!evm_workchain::consume_per_ip_token(source_ip)) {
-      promise.set_value(make_eth_json_error(
-          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
-      return;
-    }
-    handle_uno_sendMineUno(params_val, std::move(req_id), std::move(promise));
-    return;
-  }
-  if (method == "uno_sendTransfer") {
-    if (!evm_workchain::consume_per_ip_token(source_ip)) {
-      promise.set_value(make_eth_json_error(
-          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
-      return;
-    }
-    handle_uno_sendTransfer(params_val, std::move(req_id), std::move(promise));
-    return;
-  }
-
-  // uno_getMineState: synchronous read of the live MineUno consensus
-  // state. Lives in json-rpc-server-uno.cpp because the response shape
-  // and rate-limit policy are validator-engine concerns; the underlying
-  // accessor is bound by `init_uno_workchain` in uno/core/init.cpp.
-  if (method == "uno_getMineState") {
-    // Round 163 (claude review) MEDIUM fix: gate uno_getMineState
-    // with the per-IP token bucket.  Pre-fix this read fast-path
-    // bypassed the gate entirely, allowing a single IP to flood
-    // the validator-engine thread pool with live-state reads.
-    if (!evm_workchain::consume_per_ip_token(source_ip)) {
-      promise.set_value(make_eth_json_error(
-          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
-      return;
-    }
-    promise.set_value(
-        handle_uno_get_mine_state(std::move(req_id), opts_.cors_origin));
-    return;
-  }
-
-  // JVM workchain JSON-RPC: route jvm_* methods through the full-node
-  // facade. The handler resolves live ConfigParam 85 before calling into
-  // jvm_workchain::handle_jvm_rpc().
-  //
-  // Round 154 MEDIUM fix: apply the per-IP rate gate to JVM
-  // methods too.  Pre-fix jvm_callContract / jvm_getContractState
-  // / jvm_getReceipts each fanned out to liteserver queries
-  // (masterchain info + ConfigParam 85 + account state) on every
-  // request without a per-IP throttle, and jvm_callContract could
-  // additionally run local JVM simulation.  The same per-IP token
-  // bucket that gates EVM read-only methods applies here.
-#ifdef TOS_WITH_JVM_WORKCHAIN
-  if (jvm_workchain::is_jvm_rpc_method(method)) {
-    if (!evm_workchain::consume_per_ip_token(source_ip)) {
-      promise.set_value(make_eth_json_error(
-          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
-      return;
-    }
-    td::JsonBuilder jb;
-    jb.enter_value() << params_val;
-    auto params_str = jb.string_builder().as_cslice().str();
-    handle_jvm_rpc_method(std::move(method), std::move(params_str),
-                          std::move(req_id), std::move(promise));
-    return;
-  }
-#endif
-
-  // Ethereum JSON-RPC sends params as arrays.  Handle eth_* methods
-  // with array params directly, before the object-params check. The
-  // same dispatch covers the TOS-specific EVM read-only methods
-  // (e.g. `tos_evmChainInfo`) advertised via `is_eth_rpc_method` in
-  // evm/rpc/handlers.cpp, so the validator-engine layer needs no
-  // method-name allowlist of its own.
-  if (params_val.type() == td::JsonValue::Type::Array &&
-      evm_workchain::is_eth_rpc_method(method)) {
-    td::JsonBuilder jb;
-    jb.enter_value() << params_val;
-    std::string params_str = jb.string_builder().as_cslice().str();
-
-    auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id,
-                                                source_ip);
-    if (result) {
-      // The EVM RPC handler returns a complete JSON-RPC response string.
-      // Wrap it in a raw HTTP response.
-      promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
-    } else {
-      promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
-    }
-    return;
-  }
-
-  // Uno workchain JSON-RPC: same array-params convention as eth_*.
-  if (params_val.type() == td::JsonValue::Type::Array &&
-      uno_workchain::is_uno_rpc_method(method)) {
-    // Round 163 (claude review) MEDIUM fix: gate the uno_* array-
-    // params read path.  Pre-fix this branch went straight to
-    // handle_uno_rpc without consuming a per-IP token, mirroring
-    // the gap closed in round 154 for the jvm_* branch.
-    if (!evm_workchain::consume_per_ip_token(source_ip)) {
-      promise.set_value(make_eth_json_error(
-          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
-      return;
-    }
-    td::JsonBuilder jb;
-    jb.enter_value() << params_val;
-    std::string params_str = jb.string_builder().as_cslice().str();
-
-    auto result = uno_workchain::handle_uno_rpc(method, params_str, req_id);
-    if (result) {
-      promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
-    } else {
-      promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
-    }
-    return;
-  }
-
   if (params_val.type() != td::JsonValue::Type::Object) {
-    // Method is unknown to the eth_* registry AND params is not an object.
+    // Method is unknown and params is not an object.
     // Don't bail with "'params' must be an object" — that would mask a
     // real "Method not found" for callers who probe with array params
-    // (Blockscout's `txpool_content` polling, geth-style probes, etc.).
+    // (for example, clients probing with array params).
     // Substitute an empty params object and let dispatch_method emit
     // either the method-not-found error or a per-handler missing-field
-    // error.  Both are spec-shape via make_eth_json_error.
+    // error. Both are spec-shape via make_json_rpc_error.
     td::JsonObject empty_params;
     cached_dispatch_method(std::move(method), empty_params,
                            std::move(req_id), std::move(source_ip),
@@ -1267,7 +978,7 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
             break;
           }
         }
-        auto err = make_eth_json_error(
+        auto err = make_json_rpc_error(
             -32603, "Request batch timed out", elem_id, state->cors);
         state->responses[j] = extract_response_body(err);
         state->cursor++;
@@ -1276,7 +987,7 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
     }
     auto &el = state->elements[i];
     if (el.type() != td::JsonValue::Type::Object) {
-      auto err = make_eth_json_error(
+      auto err = make_json_rpc_error(
           -32600, "Invalid Request: batch element is not a JSON object",
           "null", state->cors);
       state->responses[i] = extract_response_body(err);
@@ -1290,7 +1001,7 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
         [self, state, i, is_notif](td::Result<HttpReturn> R) mutable {
           if (R.is_error()) {
             // Internal error becomes an element-level error with null id.
-            auto err = JsonRpcServer::make_eth_json_error(
+            auto err = JsonRpcServer::make_json_rpc_error(
                 -32603, R.error().message().str(), "null", state->cors);
             state->responses[i] = JsonRpcServer::extract_response_body(err);
           } else {
@@ -1425,38 +1136,11 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   // Re-check anyway so a future caller that bypasses the upper layer cannot
   // sneak through.
   if (opts_.readonly && is_write_method(method)) {
-    promise.set_value(make_eth_json_error(-32601,
+    promise.set_value(make_json_rpc_error(-32601,
         "Write methods are disabled (server is in readonly mode)", req_id));
     return;
   }
 
-  // Round 163 (claude review) MEDIUM fix: gate ALL legacy-TonAPI
-  // methods at the dispatch_method boundary.  Pre-fix only the
-  // submission family (sendBoc/sendQuery/etc.) was per-IP rate-
-  // limited; read-heavy methods (estimateFee, runGetMethod,
-  // getAddressInformation, getTransactions, ...) fanned out to
-  // liteserver queries on every call with no per-IP throttle,
-  // letting a single IP saturate the validator-engine thread
-  // pool / liteserver fanout.  EVM and JVM paths already gate
-  // every method at this boundary (handle_eth_rpc:6739 +
-  // process_single_object_request:1067); this brings legacy
-  // TonAPI to the same baseline.  An empty source_ip (REST
-  // pre-round-156 / in-process callers) bypasses the gate by
-  // design in consume_per_ip_token, so test fixtures remain
-  // unaffected.
-  if (!evm_workchain::consume_per_ip_token(source_ip)) {
-    promise.set_value(make_eth_json_error(
-        -32005, "rate limit exceeded (per-IP)", req_id));
-    return;
-  }
-
-  // Round 163 consolidation: round-155/156's explicit per-method
-  // legacy-submission gate (sendBoc / sendBocReturnHash /
-  // sendBocReturnHashNoError / sendQuery / submitSignedTransaction)
-  // is now redundant with the dispatch_method-wide per-IP gate
-  // added above and has been removed; the wider gate already
-  // covers these methods plus every legacy TonAPI read method
-  // that previously bypassed rate limiting.
   // Existing methods
   if (method == "sendBoc") {
     handle_sendBoc(params, std::move(req_id), std::move(promise));
@@ -1568,108 +1252,11 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   } else if (method == "sendBocReturnHashNoError") {
     handle_sendBocReturnHashNoError(params, std::move(req_id), std::move(promise));
   }
-#ifdef TOS_WITH_JVM_WORKCHAIN
-  // --- JVM Workchain: jvm_* JSON-RPC methods ---
-  else if (jvm_workchain::is_jvm_rpc_method(method)) {
-    // Round 154 MEDIUM fix: per-IP gate, mirroring the array-
-    // params route in process_body.
-    if (!evm_workchain::consume_per_ip_token(source_ip)) {
-      promise.set_value(make_eth_json_error(
-          -32005, "rate limit exceeded (per-IP)", req_id, opts_.cors_origin));
-      return;
-    }
-    td::JsonBuilder jb;
-    {
-      auto obj = jb.enter_object();
-      for (auto& kv : params.field_values_) {
-        obj(kv.first, kv.second);
-      }
-    }
-    auto params_str = jb.string_builder().as_cslice().str();
-    handle_jvm_rpc_method(std::move(method), std::move(params_str),
-                          std::move(req_id), std::move(promise));
-  }
-#endif
-  // --- EVM Workchain: Ethereum JSON-RPC methods ---
-  else if (evm_workchain::is_eth_rpc_method(method)) {
-    std::string params_str = "[]";
-    if (params.field_count() > 0) {
-      td::JsonBuilder jb;
-      auto arr = jb.enter_array();
-      for (auto& kv : params.field_values_) {
-        arr.enter_value() << kv.second;
-      }
-      arr.leave();
-      params_str = jb.string_builder().as_cslice().str();
-    }
-    auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id,
-                                                source_ip);
-    if (result) {
-      promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
-    } else {
-      promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
-    }
-  }
-  // --- Uno Workchain: validator-engine-side uno_* methods ---
-  // These methods need access to JsonRpcServer-private state
-  // (`send_liteserver_query` / mine-state accessor) so they can't live
-  // in the generic uno_workchain::handle_uno_rpc registry below.
-  else if (method == "uno_getMineState") {
-    promise.set_value(
-        handle_uno_get_mine_state(std::move(req_id), opts_.cors_origin));
-  }
-  else if (method == "uno_sendMineUno" || method == "uno_sendTransfer") {
-    // Object-params path: re-pack the field values into a JSON array
-    // and hand off to the same async handler used by the array-params
-    // fast-path in process_single_object_request.
-    const std::string method_name = method;
-    td::JsonBuilder jb;
-    {
-      auto arr = jb.enter_array();
-      for (auto& kv : params.field_values_) {
-        arr.enter_value() << kv.second;
-      }
-      arr.leave();
-    }
-    auto params_str = jb.string_builder().as_cslice().str();
-    auto parsed = td::json_decode(td::MutableSlice(params_str));
-    if (parsed.is_error()) {
-      promise.set_value(make_eth_json_error(-32602,
-          PSTRING() << method_name << ": malformed params: " << parsed.error(),
-          req_id));
-      return;
-    }
-    auto val = parsed.move_as_ok();
-    if (method_name == "uno_sendMineUno") {
-      handle_uno_sendMineUno(val, std::move(req_id), std::move(promise));
-    } else {
-      handle_uno_sendTransfer(val, std::move(req_id), std::move(promise));
-    }
-  }
-  // --- Uno Workchain: uno_* JSON-RPC methods ---
-  else if (uno_workchain::is_uno_rpc_method(method)) {
-    std::string params_str = "[]";
-    if (params.field_count() > 0) {
-      td::JsonBuilder jb;
-      auto arr = jb.enter_array();
-      for (auto& kv : params.field_values_) {
-        arr.enter_value() << kv.second;
-      }
-      arr.leave();
-      params_str = jb.string_builder().as_cslice().str();
-    }
-    auto result = uno_workchain::handle_uno_rpc(method, params_str, req_id);
-    if (result) {
-      promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
-    } else {
-      promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
-    }
-  }
   else {
     // Unknown method via JSON-RPC envelope dispatch — emit spec-compliant
-    // error so generic ethereum tooling (Blockscout, ethers, viem, web3.py)
-    // can decode it.  See process_body for the rationale.
-    promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
+    // error so generic JSON-RPC clients can decode it. See process_body
+    // for the rationale.
+    promise.set_value(make_json_rpc_error(-32601, PSTRING() << "Method not found: " << method, req_id));
   }
 }
 
@@ -1726,9 +1313,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_raw_json_response(const std::strin
 JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, std::string id,
                                                       const std::string& cors_origin) {
   if (id.empty()) id = "null";
-  // TVM convention: `{ok, jsonrpc, id, result}` — the `ok` field is a
-  // convenience wrapper the Python/JS test suite depends on. Ethereum
-  // JSON-RPC callers (ethers/viem/web3.py) ignore it.
+  // TVM convention: `{ok, jsonrpc, id, result}`. The `ok` field is a
+  // convenience wrapper the Python/JS test suite depends on; standards-
+  // compliant JSON-RPC clients ignore unknown fields.
   std::string body = PSTRING()
       << "{\"ok\":true,\"jsonrpc\":\"2.0\",\"id\":" << id
       << ",\"result\":" << result_json << "}";
@@ -1752,8 +1339,8 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
   // TVM convention: `{ok: false, jsonrpc, id, error:<string>, code}` +
   // a mapped HTTP status code. The Python test suite
   // (test/json-rpc/*.py) asserts on both `ok` and the HTTP status.
-  // For Ethereum RPC use `make_eth_json_error` instead — it emits
-  // the JSON-RPC 2.0 nested error shape with HTTP 200.
+  // For JSON-RPC envelope errors use `make_json_rpc_error` instead. It
+  // emits the JSON-RPC 2.0 nested error shape with HTTP 200.
   std::string body = PSTRING()
       << "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":" << id
       << ",\"error\":" << td::JsonString(td::Slice(message))
@@ -1804,12 +1391,11 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_health_ok(const std::string& cors_
   return {std::move(response), std::move(payload)};
 }
 
-JsonRpcServer::HttpReturn JsonRpcServer::make_eth_json_error(int code, std::string message, std::string id,
+JsonRpcServer::HttpReturn JsonRpcServer::make_json_rpc_error(int code, std::string message, std::string id,
                                                               const std::string& cors_origin) {
   if (id.empty()) id = "null";
   // JSON-RPC 2.0 error: `{jsonrpc, id, error:{code, message}}`, HTTP
-  // 200 always. Matches the Ethereum execution-apis contract that
-  // ethers / viem / web3.py all assume.
+  // 200 always.
   std::string body = PSTRING()
       << "{\"jsonrpc\":\"2.0\",\"id\":" << id
       << ",\"error\":{\"code\":" << code
@@ -1931,27 +1517,13 @@ static bool constant_time_compare(const std::string &a, const std::string &b) {
 }
 
 // Centralized write-method registry.
-// The per-method fast path for
-// `eth_sendRawTransaction`, `uno_sendMineUno`, and the `uno_*` write methods
-// (e.g. `uno_sendTransfer`) used to short-circuit `process_single_object_request`
-// BEFORE the readonly gate at `dispatch_method`. Readonly mode therefore only
-// blocked legacy `sendBoc`/`sendQuery`/account-write methods, not EVM/UNO
-// submissions. Centralize here so any caller (single-object dispatch, batch,
-// REST POST, GET adapter) checks once.
 bool JsonRpcServer::is_write_method(const std::string &method) {
   static const std::set<std::string> writes = {
-      // Legacy TOS write methods (also gated in dispatch_method, kept for parity).
       "sendBoc", "sendBocReturnHash", "sendBocReturnHashNoError", "sendQuery",
       "submitSignedTransaction",
       "grantAccountDelegation", "revokeAccountDelegation",
       "grantAccountSession", "revokeAccountSession",
       "grantAccountAgent", "revokeAccountAgent",
-      // EVM workchain.
-      "eth_sendRawTransaction",
-      // Uno workchain: both the synchronous Transfer admission path
-      // and the asynchronous MineUno submission path emit external messages.
-      "uno_sendTransfer",
-      "uno_sendMineUno",
   };
   return writes.count(method) > 0;
 }

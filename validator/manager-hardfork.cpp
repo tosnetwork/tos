@@ -173,7 +173,7 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
 
 td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::BufferSlice data, int priority,
                                                                         td::optional<PublicKeyHash> source_peer) {
-  // Hardfork-import manager does not run the wc=2 rate limiter either.
+  // Hardfork-import manager treats source_peer as informational only.
   (void)source_peer;
   auto msg = co_await create_ext_message(std::move(data), block::SizeLimitsConfig::ExtMsgLimits());
   ext_messages_.emplace_back(std::move(msg));

@@ -7,9 +7,6 @@
 
 FROM ubuntu:22.04 AS builder-22
 ARG DEBIAN_FRONTEND=noninteractive
-# Pinned liboqs commit — must match uno/crypto/LIBOQS_VERSION.md and
-# .github/workflows/uno-ci.yml's LIBOQS_COMMIT env var.
-ARG LIBOQS_COMMIT=3cb781fd4737c900ad755ee0bb9e1949d0f68955
 RUN apt-get update && \
     apt-get install -y build-essential git cmake ninja-build pkg-config \
     autoconf automake libtool libjemalloc-dev ccache gperf wget curl \
@@ -41,24 +38,6 @@ RUN wget -q https://apt.llvm.org/llvm.sh && \
 ENV CC=/usr/bin/clang-21
 ENV CXX=/usr/bin/clang++-21
 
-# Build + install liboqs at the pinned commit (ML-KEM-768 only, static).
-# CMake's default find_path/find_library picks it up from /usr/local without
-# extra hints (see uno/CMakeLists.txt §liboqs detection).
-RUN git clone https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs-src && \
-    cd /tmp/liboqs-src && \
-    git checkout "${LIBOQS_COMMIT}" && \
-    cmake -S . -B /tmp/liboqs-build \
-        -DOQS_BUILD_ONLY_LIB=ON \
-        -DOQS_ENABLE_KEM_ML_KEM=ON \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build /tmp/liboqs-build -j"$(nproc)" && \
-    cmake --install /tmp/liboqs-build && \
-    test -f /usr/local/lib/liboqs.a && \
-    test -f /usr/local/include/oqs/oqs.h && \
-    rm -rf /tmp/liboqs-src /tmp/liboqs-build
-
 # Install uv (pinned version)
 RUN curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
@@ -70,9 +49,6 @@ RUN clang-21 --version && uv --version
 
 FROM ubuntu:24.04 AS builder-24
 ARG DEBIAN_FRONTEND=noninteractive
-# Pinned liboqs commit — must match uno/crypto/LIBOQS_VERSION.md and
-# .github/workflows/uno-ci.yml's LIBOQS_COMMIT env var.
-ARG LIBOQS_COMMIT=3cb781fd4737c900ad755ee0bb9e1949d0f68955
 RUN apt-get update && \
     apt-get install -y build-essential git cmake ninja-build pkg-config \
     autoconf automake libtool libjemalloc-dev ccache gperf ripgrep wget curl \
@@ -89,24 +65,6 @@ RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - && \
 
 ENV CC=/usr/bin/clang-21
 ENV CXX=/usr/bin/clang++-21
-
-# Build + install liboqs at the pinned commit (ML-KEM-768 only, static).
-# CMake's default find_path/find_library picks it up from /usr/local without
-# extra hints (see uno/CMakeLists.txt §liboqs detection).
-RUN git clone https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs-src && \
-    cd /tmp/liboqs-src && \
-    git checkout "${LIBOQS_COMMIT}" && \
-    cmake -S . -B /tmp/liboqs-build \
-        -DOQS_BUILD_ONLY_LIB=ON \
-        -DOQS_ENABLE_KEM_ML_KEM=ON \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build /tmp/liboqs-build -j"$(nproc)" && \
-    cmake --install /tmp/liboqs-build && \
-    test -f /usr/local/lib/liboqs.a && \
-    test -f /usr/local/include/oqs/oqs.h && \
-    rm -rf /tmp/liboqs-src /tmp/liboqs-build
 
 # Install uv (pinned version)
 RUN curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh

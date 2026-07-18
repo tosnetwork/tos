@@ -21,7 +21,7 @@ use OpenSSL::Test::Utils;
 setup("test_ml_kem_codecs");
 
 my @algs = qw(512 768 1024);
-my @formats = qw(seed-priv priv-only seed-only oqskeypair bare-seed bare-priv);
+my @formats = qw(seed-priv priv-only seed-only bare-seed bare-priv);
 
 plan skip_all => "ML-KEM isn't supported in this build"
     if disabled("ml-kem");

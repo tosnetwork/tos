@@ -410,7 +410,7 @@ libref_ref$1 library:^Cell = LibRef;
 action_change_library#26fa1dd4 mode:(## 7)
   libref:LibRef = OutAction;
 //
-// JVM v2 (and any future EngineDefined workchain): emit a synchronous
+// Engine-defined workchains may emit a synchronous
 // account-creation request from a transaction's action list. The host
 // materializes a new acc_active account at `dest_addr` in the
 // current workchain, charges the sender for storage stake + fwd fee,
@@ -837,7 +837,7 @@ precompiled_contracts_config#c0 list:(HashmapE 256 PrecompiledSmc) = Precompiled
 _ PrecompiledContractsConfig = ConfigParam 45;
 
 oracle_bridge_params#_ bridge_address:bits256 oracle_mutlisig_address:bits256 oracles:(HashmapE 256 uint256) external_chain_address:bits256 = OracleBridgeParams;
-_ OracleBridgeParams = ConfigParam 71; // Ethereum bridge
+_ OracleBridgeParams = ConfigParam 71; // Oracle bridge
 _ OracleBridgeParams = ConfigParam 72; // Binance Smart Chain bridge
 _ OracleBridgeParams = ConfigParam 73; // Polygon bridge
 

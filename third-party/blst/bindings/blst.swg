@@ -401,9 +401,9 @@ import java.nio.file.*;
 %}
 
 #ifdef __cplusplus
-// Extensive sorcery to shift memory management to JVM GC. General idea is
+// Shift memory management to Java runtime GC. General idea is
 // to use Java long[] as opaque storage for blst data. Methods that return
-// new objects allocate suitably sized long[] arrays from JVM heap,
+// new objects allocate suitably sized long[] arrays from the Java heap,
 // references to which are then assigned to |swigCPtr| on the Java side.
 // And when passed back to JNI, |swigCPtr|s are dereferenced with
 // GetLongArrayElements... And no destructors!

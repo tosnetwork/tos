@@ -1036,10 +1036,9 @@ void test_hash_mismatch() {
 //      one of them through the production code path
 //      (CellDbExtCellLoader -> CellDbReaderImpl -> kv->get).
 //
-// Together with the production GC-pause hardening check (validated
-// separately by scripts/check-evm-production-hardening.sh), this test
-// is the regression cover for "an accepted streaming import's cells
-// remain reachable from their root post-commit".
+// Together with the production GC-pause lease checks, this test is the
+// regression cover for "an accepted streaming import's cells remain
+// reachable from their root post-commit".
 void test_imported_cells_survive_immediate_gc() {
   std::printf("=== test_imported_cells_survive_immediate_gc (tos26 P1-5) ===\n");
 
@@ -1148,11 +1147,9 @@ void test_imported_cells_survive_immediate_gc() {
 //      pin the GC pause indefinitely if the actor receives a fresh
 //      lease from a follow-on import).
 //
-// The fixed-timer path is verified separately by the
-// `scripts/check-evm-production-hardening.sh` Check 21 sub-checks
-// (no `delay_action(... resume_gc_for_import)`, the lease type is
-// declared, and the downloader calls
-// `release_after_root_store_committed`).
+// The fixed-timer path is verified by the lease type and downloader call
+// sites: no `delay_action(... resume_gc_for_import)`, and the downloader
+// calls `release_after_root_store_committed`.
 void test_gc_lease_outlives_60s_window() {
   std::printf("=== test_gc_lease_outlives_60s_window (tos27 P0-1) ===\n");
 

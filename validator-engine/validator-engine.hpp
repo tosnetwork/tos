@@ -187,14 +187,6 @@ class ValidatorEngine : public td::actor::Actor {
   td::actor::ActorOwn<tos::JsonRpcServer> json_rpc_server_;
   td::optional<td::IPAddress> json_rpc_addr_;
   tos::JsonRpcServer::Options json_rpc_opts_;
-  // M-02 hardening: explicit, opt-in flag that allows the AdminLocal
-  // EVM RPC profile on a non-loopback listener. Default `false` — a
-  // mis-configured `--evm-rpc-profile=admin` (or
-  // `TOS_EVM_RPC_PROFILE=admin`) on a public interface will now be
-  // refused at listen time. Operators that genuinely need a remote
-  // admin endpoint must set this AND configure an API key.
-  bool allow_remote_admin_evm_rpc_ = false;
-
   std::string local_config_ = "";
   std::string global_config_ = "tos-global.config";
   std::string config_file_;
@@ -523,11 +515,6 @@ class ValidatorEngine : public td::actor::Actor {
   void set_json_rpc_request_timeout(double seconds);
   void set_json_rpc_api_key(std::string key);
   void set_json_rpc_cache_ttl(td::int32 seconds);
-  void set_evm_rpc_profile(evm_workchain::EvmRpcProfile profile);
-  void set_allow_remote_admin_evm_rpc(bool allow);
-  void set_evm_rpc_per_ip_enabled(bool enabled);
-  void set_evm_rpc_per_ip_rate(double rate);
-  void set_evm_rpc_per_ip_burst(double burst);
   // M-01 hardening: opt-in honour of X-Forwarded-For / X-Real-IP
   // headers (only when the real TCP peer is loopback or explicitly
   // trusted via `add_json_rpc_trusted_proxy`). Default off — direct

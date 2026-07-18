@@ -391,18 +391,8 @@ struct MsgPrices {
 struct SizeLimitsConfig {
   // Default values are used when not present in global config
   struct ExtMsgLimits {
-    // 2 MiB default — accommodates UNO MineUno tx (proof + PI ≈ 255 KiB
-    // wrapped in 99-byte header + chunk tree). Legacy deployments that
-    // want the historical 64 KiB cap can still override via
-    // ConfigParam 43. See uno/core/mine_uno.h §1 wire format.
-    //
-    // Audit #9 (2026-04-26) follow-up: post V1-3c-gamma `uno_sendTransfer`
-    // worst-case 4/4 envelope is ~1.15 MB binary (see uno/rpc/handlers.cpp
-    // §preamble). The per-method JSON-RPC cap was raised to 3 MiB and
-    // kJsonRpcMaxRequestBodyBytes to 4 MiB. This binary ext-msg cap must
-    // also exceed the largest decoded BoC admitted by that RPC path; 2 MiB
-    // leaves headroom over both the documented 1.15 MB worst case and the
-    // 3 MiB-hex / ~1.5 MiB binary per-method cap.
+    // 2 MiB default. Legacy deployments that want the historical 64 KiB cap
+    // can still override via ConfigParam 43.
     td::uint32 max_size = 2u << 20;
     td::uint16 max_depth = 512;
   };

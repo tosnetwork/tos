@@ -177,7 +177,7 @@ landing path would have to keep the whole DAG in RAM until commit.
 
 L2 (`8ca3d30fd`) wired a `CellDbStreamingSink` to the importer
 against a synthetic 32 MiB BoC at ~72 B/cell density (a binary
-tree shape close to a real CellEvmState dump, see
+tree shape close to a dense account-state dump, see
 `test/test-download-state-budget.cpp:2937-3081`). The test snapshots
 `td::BufferAllocator::get_buffer_mem()` before the import and
 samples it every 4096 cells during the cell-build loop. The

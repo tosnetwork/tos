@@ -16,8 +16,7 @@ namespace tos_wallet_index {
 
 namespace {
 
-// Key tags. wc=0 wallet index uses 0x10..0x1F to avoid colliding with the EVM
-// cache (0x01..0x08).
+// Key tags reserved for the wc=0 wallet index.
 constexpr uint8_t kJettonTag = 0x10;        // 0x10 + owner(32) + master(32)
 constexpr uint8_t kNftTag = 0x11;           // 0x11 + owner(32) + nft(32)
 constexpr uint8_t kEventTag = 0x12;         // 0x12 + account(32) + ~lt_be(8)

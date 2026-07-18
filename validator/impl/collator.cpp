@@ -25,7 +25,6 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
-#include "evm/core/init.h"
 #include "block/mc-config.h"
 #include "block/validator-set.h"
 #include "block/workchain-execution-dispatch.h"
@@ -2272,7 +2271,6 @@ bool Collator::fetch_config_params() {
   hard_defer_out_queue_size_limit_ = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
 
   bool custom_workchain = false;
-  bool is_evm_custom_workchain = false;
   auto resolved_execution = block::default_workchain_execution_registry().resolve_workchain(
       config_->get_workchain_list(), workchain(), *config_);
   if (resolved_execution.is_error()) {
@@ -2281,20 +2279,12 @@ bool Collator::fetch_config_params() {
   if (resolved_execution.ok().has_value()) {
     const auto& execution = *resolved_execution.ok();
     custom_workchain = block::resolved_workchain_execution_is_custom(execution);
-    is_evm_custom_workchain = block::resolved_workchain_execution_is_evm(execution);
   }
 
   if (custom_workchain) {
-    compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(new_block_seqno);
-    // Thread the EVM parent block's root_hash so the snapshot compute
-    // path's EIP-2935 system call writes the real parent hash (not zero)
-    // into the historical-block-hash ring buffer. For non-EVM custom engines
-    // the field stays zero and only the shared block_seqno carrier is used.
-    if (is_evm_custom_workchain && !prev_blocks.empty()) {
-      compute_phase_cfg_.evm_parent_block_hash = prev_blocks[0].root_hash;
-    }
+    compute_phase_cfg_.custom_workchain_block_seqno = static_cast<td::uint64>(new_block_seqno);
   } else {
-    compute_phase_cfg_.evm_block_seqno = 0;
+    compute_phase_cfg_.custom_workchain_block_seqno = 0;
   }
 
   return true;
@@ -3211,9 +3201,8 @@ bool Collator::combine_account_transactions() {
     }
   }
 
-  // wc=1 post-loop merge deleted: single-executor design writes the sole
-  // executor AccountBlock via the normal per-account loop above. There is
-  // no mirror to merge.
+  // Single-executor design writes the sole AccountBlock via the normal
+  // per-account loop above. There is no mirror to merge.
 
   vm::CellBuilder cb;
   if (!(cb.append_cellslice_bool(std::move(dict).extract_root()) && cb.finalize_to(shard_account_blocks_))) {

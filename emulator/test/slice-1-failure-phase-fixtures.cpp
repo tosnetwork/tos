@@ -168,10 +168,9 @@ tos::SmartContract::State make_state_with_data(td::Ref<vm::Cell> code) {
 //     return true;
 //   }
 //
-// custom_ord is the wc=1 EVM / wc=2 UNO custom-executor route which
-// bypasses the balance-tomis non-positivity gate; F2.1 covers the
-// canonical wc=0 case so custom_ord is always false in the assertions
-// below.
+// custom_ord models a custom-executor route that bypasses the balance-tomis
+// non-positivity gate; F2.1 covers the canonical wc=0 case so custom_ord is
+// always false in the assertions below.
 struct OogPredicateInputs {
   td::int64 balance_tomis;
   td::int64 gas_limit;
@@ -353,9 +352,9 @@ TEST(Slice1FailurePhaseFixtures, F2_1_OutOfGas_BouncedByPhase0_ExitCode_Neg3) {
   });
   CHECK(skip_c == block::ComputePhase::sk_none);
 
-  // Negative case: wc=1/wc=2 custom-executor accounts bypass the
-  // balance-non-positive gate at line 1894 (the executor decides its
-  // own gas model). Verify the replica honours that.
+  // Negative case: custom-executor accounts bypass the balance-non-positive
+  // gate at line 1894 (the executor decides its own gas model). Verify the
+  // replica honours that.
   const auto skip_d = determine_oog_skip_reason({
       /*balance_tomis=*/0,
       /*gas_limit=*/100,

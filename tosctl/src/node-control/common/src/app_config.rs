@@ -327,61 +327,6 @@ pub struct WalletConfig {
     pub workchain: i32,
 }
 
-/// Per-wallet config for a wc=3 JVM Wallet (mirror of Wallet.java).
-///
-/// `salt_hex` and `deployer_hex` are stored as 64-char hex strings (no
-/// `0x` prefix), `class_bytes_hex` carries the compiled .class blob the
-/// host stores at deploy time. `address_hex` is cached for fast lookup;
-/// it is rederived deterministically from the other fields and recomputed
-/// by the CLI whenever any input changes.
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct JvmWalletConfig {
-    pub key: KeyConfig,
-    /// 32-byte hex of the deployer account-id that minted this wallet.
-    pub deployer_hex: String,
-    /// 32-byte hex salt that disambiguates wallets with the same owner
-    /// key + class.
-    pub salt_hex: String,
-    /// Hex of the compiled wallet `.class` bytes. Optional: when absent
-    /// the CLI uses a build-time default (Wallet.java compiled by the
-    /// Avata pipeline) or rejects deploy with a clear error.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub class_bytes_hex: Option<String>,
-    /// Cached derived wc=3 account-id (32-byte hex). Optional so that
-    /// `create` can populate it lazily.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub address_hex: Option<String>,
-}
-
-/// Per-Deployer config for wc=3 JVM Deployer contracts (sibling to
-/// `JvmWalletConfig`).  A Deployer is a separate on-chain contract —
-/// typically genesis-seeded — that signs `action_create_account`
-/// actions on behalf of an off-chain client.  The CLI's `jw deploy`
-/// subcommand looks up `--via <name>` here and routes the new wallet's
-/// deploy through this Deployer's owner key.
-///
-/// Unlike `JvmWalletConfig`, the typical workflow is to *register* an
-/// already-existing Deployer (genesis-seeded or out-of-band deployed)
-/// rather than to create one from scratch: the operator points at a
-/// known vault secret + salt + class file, the CLI derives the wc=3
-/// address, and the entry is saved.
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct JvmDeployerConfig {
-    pub key: KeyConfig,
-    /// 32-byte hex of the deployer-of-deployers account-id (usually all
-    /// zeros for genesis-seeded Deployers, since the Phase F genesis
-    /// path uses the all-zero "kJvmGenesisDeployer" sentinel).
-    pub deployer_hex: String,
-    /// 32-byte hex salt for address derivation.
-    pub salt_hex: String,
-    /// Hex of the compiled `java/lang/Deployer.class` bytes.  Required
-    /// — without it the CLI can't derive the Deployer's wc=3 address.
-    pub class_bytes_hex: String,
-    /// Cached derived wc=3 account-id (32-byte hex).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub address_hex: Option<String>,
-}
-
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 #[serde(tag = "kind")]
 pub enum PoolConfig {
@@ -766,17 +711,6 @@ pub struct AppConfig {
     pub nodes: HashMap<String, AdnlConfig>,
     #[serde(default)]
     pub wallets: HashMap<String, WalletConfig>,
-    /// Per-wallet config for wc=3 JVM wallets. Sibling to `wallets`
-    /// because the two have different addressing and signing flows
-    /// and forcing them into the same map would require sum-typing
-    /// `WalletConfig`.
-    #[serde(default)]
-    pub jvm_wallets: HashMap<String, JvmWalletConfig>,
-    /// Per-Deployer config (wc=3 Deployer contracts).  See
-    /// `JvmDeployerConfig` doc-comment for the intended workflow.
-    /// `#[serde(default)]` so existing configs keep parsing.
-    #[serde(default)]
-    pub jvm_deployers: HashMap<String, JvmDeployerConfig>,
     #[serde(default)]
     pub pools: HashMap<String, PoolConfig>,
     #[serde(default)]

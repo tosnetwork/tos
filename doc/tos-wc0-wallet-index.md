@@ -1,28 +1,24 @@
 # TOS wc=0 In-Process Wallet Index
 
 Status: in progress (Phase W). Goal: serve wallet "aggregate" queries (jetton list,
-NFT list, account events) directly from the node — no external tonapi/indexer —
-modeled on the EVM workchain's `EvmRpcCacheDb` side-channel.
+NFT list, account events) directly from the node — no external tonapi/indexer.
 
 ## Why
 
 A bare TON-style node (lite-server + toncenter-style JSON-RPC) can serve current
 account state, send messages, run get-methods, and walk a single account's
 transaction chain. It cannot *enumerate* which jettons / NFTs an account owns, nor
-produce a parsed event feed, because wc=0 has no Ethereum-style log primitive and
-ownership is spread across per-wallet contracts. The EVM workchain (wc=1) already
-solves the equivalent problem in-node via `EvmRpcCacheDb` (a side-channel RocksDB
-that indexes logs/receipts on block apply and is served by `eth_getLogs`). This
-brings the same capability to native wc=0 so the wallet needs zero external indexer.
+produce a parsed event feed, because ownership is spread across per-wallet
+contracts. This index adds that capability to native wc=0 so the wallet needs
+zero external indexer.
 
-## Architecture (mirrors EvmRpcCacheDb)
+## Architecture
 
 - **Side-channel RocksDB** at `${db_root}/wc0-index`, parallel to celldb/statedb,
   completely outside the consensus state cell tree. It never contributes to any
   state hash; each operator can prune/rebuild independently (no hardfork).
 - **Single-byte key tag + payload**, BOC-serialized values, `td::RocksDb` wrapper,
-  module-scope singleton with `set_/get_` accessors — same shape as
-  `evm/rpc/cache-db.{h,cpp}`.
+  module-scope singleton with `set_/get_` accessors.
 - **Writer (hook):** on block apply (`ApplyBlock::applied_set`, after the block is
   marked applied), walk `BlockExtra.account_blocks -> AccountBlock ->
   transactions -> Transaction -> in_msg/out_msgs`, detect token ops, and update the
@@ -31,8 +27,7 @@ brings the same capability to native wc=0 so the wallet needs zero external inde
   the index. All of a block's entries are written in one atomic RocksDB write
   batch (single WAL flush per block), serialized by a mutex because apply actors
   run concurrently. Best-effort, off the consensus path (a failed write only
-  degrades RPC for that block, never blocks consensus) — exactly the EVM cache
-  trade-off.
+  degrades RPC for that block, never blocks consensus).
 - **Reader (JSON-RPC):** new methods `getAccountJettons`, `getAccountNfts`,
   `getAccountEvents` range-scan the index (`for_each_in_range`, never a full table
   walk). Responses are bounded: optional `limit` param, default 100, max 1000 —

@@ -4,7 +4,7 @@
 # Native-only (wc=0): drives the native TVM testnet installed by
 # scripts/setup-testnet.sh (a 4-node systemd cluster). Each node is probed
 # through its own liteserver via tos-lite-client (ADNL); there is no
-# EVM/JSON-RPC surface. Assumes setup-testnet.sh has already installed the
+# custom-workchain JSON-RPC surface. Assumes setup-testnet.sh has already installed the
 # cluster, unless TOS_RC_SETUP=1 is set.
 
 set -euo pipefail

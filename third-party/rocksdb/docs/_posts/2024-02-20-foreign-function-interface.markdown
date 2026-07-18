@@ -8,7 +8,7 @@ category: blog
 
 Evolved Binary has been working on several aspects of how the Java API to RocksDB can be improved. The recently introduced FFI features in Java provide significant opportunities for improving the API. We have investigated this through a prototype implementation.
 
-Java 19 introduced a new [FFI Preview](https://openjdk.org/jeps/424) which is described as *an API by which Java programs can interoperate with code and data outside of the Java runtime. By efficiently invoking foreign functions (i.e., code outside the JVM), and by safely accessing foreign memory (i.e., memory not managed by the JVM), the API enables Java programs to call native libraries and process native data without the brittleness and danger of JNI*.
+Java 19 introduced a new [FFI Preview](https://openjdk.org/jeps/424) which is described as *an API by which Java programs can interoperate with code and data outside of the Java runtime. By efficiently invoking foreign functions (i.e., code outside the Java runtime), and by safely accessing foreign memory (i.e., memory not managed by the Java runtime), the API enables Java programs to call native libraries and process native data without the brittleness and danger of JNI*.
 
 If the twin promises of efficiency and safety are realised, then using FFI as a mechanism to support a future RocksDB API may be of significant benefit.
 

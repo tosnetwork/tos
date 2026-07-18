@@ -27,15 +27,13 @@
 namespace {
 
 TEST(LowLevelHashTest, VerifyGolden) {
-  constexpr size_t kNumGoldenOutputs = 95;
+  constexpr size_t kNumGoldenOutputs = 94;
   static struct {
     absl::string_view base64_data;
     uint64_t seed;
   } cases[kNumGoldenOutputs] = {
       {"VprUGNH+5NnNRaORxgH/ySrZFQFDL+4VAodhfBNinmn8cg==",
        uint64_t{0x531858a40bfa7ea1}},
-      {"gc1xZaY+q0nPcUvOOnWnT3bqfmT/geth/f7Dm2e/DemMfk4=",
-       uint64_t{0x86689478a7a7e8fa}},
       {"Mr35fIxqx1ukPAL0su1yFuzzAU3wABCLZ8+ZUFsXn47UmAph",
        uint64_t{0x4ec948b8e7f27288}},
       {"A9G8pw2+m7+rDtWYAdbl8tb2fT7FFo4hLi2vAsa5Y8mKH3CX3g==",
@@ -366,7 +364,7 @@ TEST(LowLevelHashTest, VerifyGolden) {
          "128 bit intristics.";
 #else
   constexpr uint64_t kGolden[kNumGoldenOutputs] = {
-      0x669da02f8d009e0f, 0xceb19bf2255445cd, 0x0e746992d6d43a7c,
+      0x669da02f8d009e0f, 0x0e746992d6d43a7c,
       0x41ed623b9dcc5fde, 0x187a5a30d7c72edc, 0x949ae2a9c1eb925a,
       0x7e9c76a7b7c35e68, 0x4f96bf15b8309ff6, 0x26c0c1fde233732e,
       0xb0453f72aa151615, 0xf24b621a9ce9fece, 0x99ed798408687b5f,

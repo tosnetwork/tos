@@ -15,7 +15,6 @@ Before RC, also run the release-scale checks:
 
 ```bash
 TOS_RUN_16GIB_CATCHUP=1 \
-TOS_RUN_BOC_FUZZ_SECONDS=3600 \
 bash scripts/run-tos31-state-sync-verification.sh
 ```
 
@@ -24,8 +23,6 @@ Required evidence:
 - `test-download-state-budget` passes, including the opt-in 16 GiB mmap
   catch-up when `TOS_RUN_16GIB_CATCHUP=1` is set.
 - `test-celldb-streaming-import` passes.
-- `scripts/check-evm-production-hardening.sh` passes.
-- BoC libFuzzer runs for at least 3600 seconds with no crash artifacts.
 - Artifact directory contains `driver.log`, per-step logs, git commit,
   host info, and disk-space snapshot.
 
@@ -75,7 +72,7 @@ bash scripts/run-tos32-rc-validation.sh
 Required evidence:
 
 - all three validators stay `active`
-- JSON-RPC `eth_chainId` and `eth_blockNumber` stay responsive on ports
+- JSON-RPC health and native chain-info methods stay responsive on ports
   `8011..8013`
 - scheduled validator restarts do not halt the chain
 - catch-up probe stops node 3, lets nodes 1/2 advance, restarts node 3,

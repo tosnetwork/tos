@@ -117,7 +117,7 @@ def build():
              ["Independent repo", "Custom serialization", "Self-managed compat"],
              LEGACY_CARD, LEGACY_BDR)
     pdf.card(LT+147, Y+9, 40, 24, "Kotlin SDK",
-             ["Independent repo", "Update lag", "JVM ecosystem"],
+             ["Independent repo", "Update lag", "Language ecosystem"],
              LEGACY_CARD, LEGACY_BDR)
 
     pdf.section(LR, Y, W, H, "Layer 5 : SDKs & Client Libraries", TOS_SEC)

@@ -628,7 +628,7 @@ pub enum ConfigParamEnum {
     ConfigParam44(SuspendedAddressList),
     ConfigParam45(PrecompiledContractsList),
     ConfigParam63(AcceleratedConsensusConfig),
-    ConfigParam71(OracleBridgeParams), // Ethereum bridge
+    ConfigParam71(OracleBridgeParams), // Oracle bridge
     ConfigParam72(OracleBridgeParams), // Binance Smart Chain bridge
     ConfigParam73(OracleBridgeParams), // Polygon bridge
     ConfigParam79(JettonBridgeParams), // ETH->TOS token bridge

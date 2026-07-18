@@ -49,8 +49,6 @@ fn app_cfg_with_auth(auth: AuthConfig) -> Arc<common::app_config::AppConfig> {
     Arc::new(common::app_config::AppConfig {
         nodes: HashMap::new(),
         wallets: HashMap::new(),
-        jvm_wallets: HashMap::new(),
-            jvm_deployers: HashMap::new(),
         pools: HashMap::new(),
         bindings: HashMap::new(),
         chain_rpc: Default::default(),
@@ -69,8 +67,6 @@ fn app_cfg_no_auth() -> Arc<common::app_config::AppConfig> {
     Arc::new(common::app_config::AppConfig {
         nodes: HashMap::new(),
         wallets: HashMap::new(),
-        jvm_wallets: HashMap::new(),
-            jvm_deployers: HashMap::new(),
         pools: HashMap::new(),
         bindings: HashMap::new(),
         chain_rpc: Default::default(),

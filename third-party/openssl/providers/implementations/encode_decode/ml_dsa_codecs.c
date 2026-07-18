@@ -81,7 +81,6 @@ static const ML_COMMON_PKCS8_FMT ml_dsa_44_p8fmt[NUM_PKCS8_FORMATS] = {
         0,
         0,
     },
-    { "oqskeypair", 0x0f24, 0, 0x04820f20, 0, 0, 0, 0, 0x04, 0x0a00, 0x0a04, 0x0520 },
     {
         "seed-only",
         0x0022,
@@ -186,7 +185,6 @@ static const ML_COMMON_PKCS8_FMT ml_dsa_65_p8fmt[NUM_PKCS8_FORMATS] = {
         0,
         0,
     },
-    { "oqskeypair", 0x1764, 0, 0x04821760, 0, 0, 0, 0, 0x04, 0x0fc0, 0x0fc4, 0x07a0 },
     {
         "seed-only",
         0x0022,
@@ -291,7 +289,6 @@ static const ML_COMMON_PKCS8_FMT ml_dsa_87_p8fmt[NUM_PKCS8_FORMATS] = {
         0,
         0,
     },
-    { "oqskeypair", 0x1d44, 0, 0x04821d40, 0, 0, 0, 0, 0x04, 0x1320, 0x1324, 0x0a20 },
     {
         "seed-only",
         0x0022,

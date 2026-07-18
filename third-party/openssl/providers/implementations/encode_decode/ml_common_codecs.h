@@ -49,11 +49,6 @@ typedef struct {
  *      seed OCTET STRING (SIZE (64)),
  *      expandedKey OCTET STRING SIZE ((1632 | 2400 | 3168)) } }
  *
- * one more for a historical OQS encoding:
- *
- * - OQS private + public key: OCTET STRING
- *   (The public key is ignored, just as with PKCS#8 v2.)
- *
  * and two more that are the minimal IETF non-ASN.1 seed encoding:
  *
  * - Bare seed (just the 32 or 64 bytes)
@@ -64,7 +59,7 @@ typedef struct {
  * The p8_shift is 0 when the top-level tag+length occupy four bytes, 2 when
  * they occupy two by†es, and 4 when no tag is used at all.
  */
-#define NUM_PKCS8_FORMATS 6
+#define NUM_PKCS8_FORMATS 5
 
 typedef struct {
     const char *p8_name; /* Format name */

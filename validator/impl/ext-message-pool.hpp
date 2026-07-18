@@ -42,7 +42,7 @@ class ExtMessagePool : public td::actor::Actor {
   void cleanup_external_messages(ShardIdFull shard);
   // Workchain-agnostic expiry sweep.
   // The shard-specific overload above is shard-hardcoded by the alarm to
-  // masterchain/basechain, leaving wc=1 / wc=2 messages stuck in the pool.
+  // masterchain/basechain.
   void cleanup_expired_messages_all_workchains();
   void complete_external_messages(std::vector<ExtMessage::Hash> to_delay, std::vector<ExtMessage::Hash> to_delete);
   void erase_external_messages(std::vector<ExtMessage::Hash> to_delete);

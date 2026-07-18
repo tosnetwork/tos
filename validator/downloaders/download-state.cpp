@@ -1066,7 +1066,7 @@ void DownloadShardState::on_streaming_import_done(td::Result<PersistentStateImpo
   if (result.gc_lease) {
     gc_leases_.push_back(std::move(result.gc_lease));
   }
-  LOG(INFO) << "evm-workchain: persistent-state catch-up routed through actor-local "
+  LOG(INFO) << "persistent-state catch-up routed through actor-local "
                "import_persistent_state_streaming for "
             << block_id_.to_str() << ", cells_persisted=" << result.cells_persisted;
 

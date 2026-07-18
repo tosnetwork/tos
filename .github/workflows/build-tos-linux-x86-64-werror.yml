@@ -41,8 +41,7 @@ jobs:
 
     # TODO: Preserve ccache cache between runs once we get rid of warning suppression mappings.
 
-    # Rust toolchain needed for corrosion-rs / libuno_plonky3_ffi
-    # (`cmake ..` calls `find_package(Rust)` via `third-party/corrosion`).
+    # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install pinned Rust toolchain
       uses: actions-rs/toolchain@v1
       with:

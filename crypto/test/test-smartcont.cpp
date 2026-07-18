@@ -277,7 +277,7 @@ void append_state_hash_summary(std::string& summary, const std::string& dir, con
                                bool optional = false) {
   auto boc_r = td::read_file(dir + TD_DIR_SLASH + state_name + ".boc");
   if (optional && boc_r.is_error()) {
-    // e.g. the native-only canonical gen-zerostate.fif produces no evmstate1.
+    // Some legacy optional state files are absent in the native-only zerostate.
     return;
   }
   auto boc = boc_r.move_as_ok();
@@ -336,7 +336,6 @@ std::string run_zerostate_regression(td::Slice script_name) {
 
   std::string summary = PSTRING() << "script=" << script_name << "\n";
   append_state_hash_summary(summary, temp_dir, "basestate0");
-  append_state_hash_summary(summary, temp_dir, "evmstate1", /*optional=*/true);
   append_state_hash_summary(summary, temp_dir, "zerostate");
   append_optional_hex_summary(summary, temp_dir, "main-wallet.addr");
   append_optional_hex_summary(summary, temp_dir, "config-master.addr");
@@ -847,15 +846,6 @@ TEST(Toslib, GovernanceProposalFiftScriptRegression) {
 TEST(Toslib, GenZerostateFiftRegression) {
   // Canonical mainnet template — native (wc=0) only (see F1, gen-zerostate.fif).
   REGRESSION_VERIFY(run_zerostate_regression("gen-zerostate.fif"));
-}
-
-TEST(Toslib, GenZerostateAllchainsFiftRegression) {
-  // Post-launch four-chain template (EVM/Uno/JVM + PoW givers); not for mainnet.
-  REGRESSION_VERIFY(run_zerostate_regression("gen-zerostate-allchains.fif"));
-}
-
-TEST(Toslib, GenZerostateTestFiftRegression) {
-  REGRESSION_VERIFY(run_zerostate_regression("gen-zerostate-test.fif"));
 }
 
 TEST(Toslib, RestrictedWallet) {

@@ -23,155 +23,12 @@
 #include "fabric.h"
 #include "transaction.h"
 
-#include <atomic>
-#include <chrono>
-#include <cstring>
-#include <mutex>
 #include <unordered_set>
 #include <vector>
 
 namespace tos::validator {
 
 namespace {
-
-// The pre-registry Uno short-circuit in `check_message`
-// previously admitted ANY structurally-valid Uno ext_in_msg without rate
-// limiting. The MineUno limiter in `uno/rpc/handlers.cpp` only fires on the
-// `uno_sendMineUno` JSON-RPC path; raw `sendBoc` and `liteServer_sendMessage`
-// reach `mine_uno::verify` (~50ms STARK verify each) with no throttle. Add a
-// process-global token bucket here that gates ALL Uno ext-message ingress
-// regardless of how the message arrives.
-//
-// Bucket shape mirrors `g_send_mine_uno_limiter` (5/s sustained, 20 burst)
-// — same threat model. Defined locally to avoid creating a downward link
-// from `validator` to `uno_workchain`. Token consumption happens before the
-// expensive collator-side verify, so a flood is rejected with a cheap
-// `co_return td::Status::Error` before any STARK work.
-//
-// We deliberately rate-limit ALL Uno ext-msg ingress (Transfer + MineUno)
-// from a single bucket here rather than discriminating by body byte 0:
-//   - The CellSlice walk to peek the body byte from a `vm::Cell` ref adds
-//     parsing complexity inside an actor task.
-//   - In production, `uno_sendTransfer` is currently unwired, so legitimate
-//     Transfer ingress at this layer is rare.
-//   - The JSON-RPC layer still applies its own per-method bucket before
-//     this one, so honest RPC traffic is unaffected.
-struct WcExtMsgRateLimiter {
-    std::mutex mutex;
-    uint64_t   tokens;
-    uint64_t   max_tokens;
-    uint64_t   refill_rate;
-    uint64_t   last_refill;
-
-    WcExtMsgRateLimiter(uint64_t max_tok, uint64_t rate)
-        : tokens(max_tok), max_tokens(max_tok), refill_rate(rate),
-          last_refill(now_sec()) {}
-
-    static uint64_t now_sec() {
-        return static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
-    }
-
-    bool try_consume() {
-        std::lock_guard<std::mutex> lock(mutex);
-        uint64_t now = now_sec();
-        if (now > last_refill) {
-            tokens = std::min(tokens + (now - last_refill) * refill_rate, max_tokens);
-            last_refill = now;
-        }
-        if (tokens == 0) return false;
-        --tokens;
-        return true;
-    }
-};
-
-constexpr uint64_t kWc2IngressBurst  = 20;
-constexpr uint64_t kWc2IngressPerSec = 5;
-WcExtMsgRateLimiter g_wc2_ingress_limiter{kWc2IngressBurst, kWc2IngressPerSec};
-
-// Security audit (round 16, finding #1): Transfers also run a Plonky3 STARK
-// verify on the collator side (uno/core/parallel-verify.cpp:250 →
-// transfer_air verify), comparable in cost to MineUno. The round-15 #3
-// fix made Transfer bypass the MineUno bucket entirely, leaving
-// raw-sendBoc Transfer flooding uncapped at this layer. Add a
-// dedicated Transfer bucket — same shape (5/s sustained, 20 burst).
-// Independent from the MineUno bucket so neither path can starve the
-// other; honest RPC traffic still goes through the per-method limiter
-// in uno/rpc/handlers.cpp first.
-constexpr uint64_t kWc2TransferBurst  = 20;
-constexpr uint64_t kWc2TransferPerSec = 5;
-WcExtMsgRateLimiter g_wc2_transfer_limiter{kWc2TransferBurst, kWc2TransferPerSec};
-
-// Per-peer Uno ingress bucket. Process-global limiters above prevent
-// total Uno throughput from exceeding the configured rate, but on
-// their own they let a single noisy peer drain the entire shared
-// budget and starve every honest user. The per-peer bucket below is
-// consumed BEFORE the global bucket: if any one peer exceeds its own
-// rate, it is rejected without burning a global token, so honest peers
-// keep paying the same baseline rate even while a flooder is being
-// throttled.
-//
-// Bucket shape: 10 burst, 2 tokens/sec — strictly tighter than the
-// global limiters (so the global stays a useful backstop for the
-// many-peer-in-aggregate case) but still generous enough for normal
-// wallet / miner traffic from one source.
-//
-// Storage: the map is bounded at kMaxTrackedPeers; on insert when
-// full, the oldest-touched entry is evicted. Lookup is O(n) on
-// eviction but expected n is very small (only peers actively sending
-// Uno messages stay tracked).
-constexpr uint64_t kWc2PerPeerBurst   = 10;
-constexpr uint64_t kWc2PerPeerPerSec  = 2;
-constexpr size_t   kMaxTrackedPeers   = 4096;
-
-struct PublicKeyHashHasher {
-  size_t operator()(const PublicKeyHash& h) const noexcept {
-    // First 8 bytes of the 32-byte hash provide ~64 bits of entropy
-    // and avoid pulling in a SipHash dep just for this map.
-    auto s = h.as_slice();
-    size_t v = 0;
-    std::memcpy(&v, s.data(), sizeof(v));
-    return v;
-  }
-};
-
-class WcExtMsgPerPeerLimiter {
- public:
-  bool try_consume(const PublicKeyHash& peer) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = buckets_.find(peer);
-    if (it == buckets_.end()) {
-      if (buckets_.size() >= kMaxTrackedPeers) {
-        evict_oldest_locked();
-      }
-      it = buckets_.try_emplace(peer, kWc2PerPeerBurst, kWc2PerPeerPerSec).first;
-    }
-    return it->second.try_consume();
-  }
-
- private:
-  void evict_oldest_locked() {
-    // Linear scan: with kMaxTrackedPeers = 4096 this is at most ~10us
-    // per eviction and only fires when a new peer arrives at a full
-    // map. A full LRU would be sleeker but the map churn is dominated
-    // by sustained-rate honest traffic, not eviction.
-    auto oldest = buckets_.begin();
-    uint64_t oldest_t = oldest->second.last_refill;
-    for (auto it = std::next(buckets_.begin()); it != buckets_.end(); ++it) {
-      if (it->second.last_refill < oldest_t) {
-        oldest = it;
-        oldest_t = it->second.last_refill;
-      }
-    }
-    buckets_.erase(oldest);
-  }
-
-  std::mutex mutex_;
-  std::unordered_map<PublicKeyHash, WcExtMsgRateLimiter, PublicKeyHashHasher> buckets_;
-};
-
-WcExtMsgPerPeerLimiter g_wc2_per_peer_limiter;
 
 td::Result<std::optional<block::ResolvedWorkchainExecution>> resolve_message_workchain_execution(
     const td::Ref<MasterchainState>& state, WorkchainId wc) {
@@ -186,11 +43,6 @@ td::Result<std::optional<block::ResolvedWorkchainExecution>> resolve_message_wor
   const block::Config& config = *holder_q->get_config();
   return block::default_workchain_execution_registry().resolve_workchain(
       config.get_workchain_list(), wc, config);
-}
-
-bool is_uno_execution(const block::ResolvedWorkchainExecution& execution) {
-  auto key = block::workchain_engine_key_from_descriptor(execution.descriptor);
-  return block::workchain_engine_key_is_uno(key);
 }
 
 td::Status reject_special_cells_for_custom_compute(td::Ref<vm::Cell> root,
@@ -336,10 +188,8 @@ void ExtMessagePool::cleanup_external_messages(ShardIdFull shard) {
 
 void ExtMessagePool::cleanup_expired_messages_all_workchains() {
   // The alarm previously called
-  // `cleanup_external_messages` only for masterchain (-1) and basechain (0),
-  // so wc=1 (EVM) and wc=2 (UNO) ext-msgs accepted via the
-  // `check_message` short-circuit never expired and accumulated forever.
-  // Sweep ALL workchains here by message expiry alone, not shard.
+  // `cleanup_external_messages` only for masterchain (-1) and basechain (0).
+  // Sweep all workchains here by message expiry alone, not shard.
   for (auto &[priority, msgs] : ext_msgs_) {
     std::vector<MessageId> to_erase;
     for (size_t i = 0; i < msgs.ext_messages_.size(); i++) {
@@ -443,7 +293,7 @@ void ExtMessagePool::alarm() {
   if (cleanup_mempool_at_.is_in_past()) {
     // The previous alarm only swept
     // masterchain (-1) and basechain (0). Use the workchain-agnostic
-    // sweep so wc=1 / wc=2 messages also expire after their 600s TTL.
+    // sweep so messages outside those shards also expire after their TTL.
     cleanup_expired_messages_all_workchains();
     cleanup_mempool_at_ = td::Timestamp::in(250.0);
   }
@@ -538,101 +388,6 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
       if (std::memcmp(addr.data(), policy.singleton_address.value().data(), 32) != 0) {
         co_return td::Status::Error(
             PSTRING() << "ext-msg destination is not the configured singleton executor for workchain " << wc);
-      }
-    }
-
-    // Rate-limit Uno ingress to bound
-    // forged-MineUno DoS via raw sendBoc / liteServer_sendMessage paths.
-    // EVM is left unchanged here — its compute phase does not run
-    // STARK verification, and the EVM RPC layer already has a dedicated
-    // limiter; an additional gate would burden the legitimate path more
-    // than the (cheaper) attack.
-    // Security audit (round 15, finding #3): the round-2 single-bucket
-    // limiter on wc=2 conflated cheap Transfer admission with expensive
-    // MineUno STARK-verify, letting either path starve the other. Peek
-    // the body's first byte to discriminate (UNO wire-format §1: byte 0
-    // == 0x01 → Transfer, 0x02 → MineUno) and only consume the bucket
-    // for MineUno bodies. Transfer admission is cheap and doesn't need
-    // throttling at this layer; the per-method JSON-RPC limiter still
-    // applies on the RPC path. ExtMessage itself does not expose the
-    // body byte, so re-walk the cell tree here. Failure to peek (e.g.
-    // body decode error) defaults to consuming the bucket — fail-closed.
-    if (is_uno_execution(*execution)) {
-      // Security audit (round 15 #3 + round 16 #1): Uno has TWO expensive
-      // body kinds at the collator: MineUno (STARK proof verify) and
-      // Transfer (Plonky3 transfer_air verify). Discriminate by body
-      // byte 0 (UNO wire-format §1: 0x01 → Transfer, 0x02 → MineUno)
-      // and charge each to its own independent bucket so a flood of
-      // one kind cannot starve the other. Body decode failure / unknown
-      // discriminator falls back to charging the MineUno bucket
-      // (fail-closed; matches the round-15 default).
-      enum BodyKind : uint8_t { kUnknown = 0, kTransfer = 1, kMineUno = 2 };
-      BodyKind kind = kUnknown;
-      try {
-        auto root = message->root_cell();
-        if (root.not_null()) {
-          bool root_special = false;
-          auto cs = vm::load_cell_slice_special(root, root_special);
-          if (!root_special) {
-            block::gen::Message::Record m;
-            if (block::gen::t_Message_Any.unpack(cs, m)) {
-              auto body_cs = m.body.write();
-              td::Ref<vm::Cell> body_ref;
-              vm::CellSlice body_inline;
-              bool body_inline_valid = false;
-              if (body_cs.fetch_ulong(1) == 1) {
-                if (body_cs.size_refs() >= 1) {
-                  body_ref = body_cs.fetch_ref();
-                }
-              } else {
-                body_inline = body_cs;
-                body_inline_valid = true;
-              }
-              auto peek_byte = [&](vm::CellSlice& s, uint8_t& out) -> bool {
-                if (!s.have(8)) return false;
-                out = static_cast<uint8_t>(s.prefetch_ulong(8));
-                return true;
-              };
-              uint8_t disc = 0xff;
-              bool got_disc = false;
-              if (body_ref.not_null()) {
-                bool body_special = false;
-                auto body_cs2 = vm::load_cell_slice_special(body_ref, body_special);
-                if (!body_special) {
-                  got_disc = peek_byte(body_cs2, disc);
-                }
-              } else if (body_inline_valid) {
-                got_disc = peek_byte(body_inline, disc);
-              }
-              if (got_disc) {
-                if (disc == 0x01) kind = kTransfer;
-                else if (disc == 0x02) kind = kMineUno;
-              }
-            }
-          }
-        }
-      } catch (...) {
-        // peek failed; fall through with kind=kUnknown (charged to MineUno bucket).
-      }
-      // Per-peer bucket runs FIRST, before any global bucket consume,
-      // so a noisy peer is throttled without burning shared tokens that
-      // honest peers would otherwise use. When the caller did not
-      // supply a source peer (e.g. local-node-originated submissions),
-      // the per-peer step is skipped and the global bucket alone gates.
-      if (source_peer) {
-        if (!g_wc2_per_peer_limiter.try_consume(source_peer.value())) {
-          co_return td::Status::Error("Uno ext-msg per-peer rate-limited");
-        }
-      }
-      if (kind == kTransfer) {
-        if (!g_wc2_transfer_limiter.try_consume()) {
-          co_return td::Status::Error("Uno transfer ingress rate-limited");
-        }
-      } else {
-        // MineUno or unknown — fail-closed onto the MineUno bucket.
-        if (!g_wc2_ingress_limiter.try_consume()) {
-          co_return td::Status::Error("Uno ext-msg ingress rate-limited");
-        }
       }
     }
     auto [wait, promise] = td::actor::StartedTask<>::make_bridge();

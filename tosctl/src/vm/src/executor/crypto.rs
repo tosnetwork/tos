@@ -219,7 +219,7 @@ fn serialize_uncompresed_public_key(
 }
 
 /// ECRECOVER (hash v r s - 0 or h x1 x2 -1)
-/// Recovers public key from signature, identical to Bitcoin/Ethereum operations.
+/// Recovers public key from a SECP256K1 signature.
 /// Takes 32-byte hash as uint256 hash; 65-byte signature as uint8 v and uint256 r, s.
 /// Returns 0 on failure, public key and -1 on success.
 /// 65-byte public key is returned as uint8 h, uint256 x1, x2.

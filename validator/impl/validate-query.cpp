@@ -24,7 +24,6 @@
 #include "block/block-db.h"
 #include "block/block-parse.h"
 #include "block/block.h"
-#include "evm/core/init.h"
 #include "block/output-queue-merger.h"
 #include "block/validator-set.h"
 #include "block/workchain-execution-dispatch.h"
@@ -1132,7 +1131,6 @@ bool ValidateQuery::fetch_config_params() {
     }
 
     bool custom_workchain = false;
-    bool is_evm_custom_workchain = false;
     auto resolved_execution = block::default_workchain_execution_registry().resolve_workchain(
         config_->get_workchain_list(), workchain(), *config_);
     if (resolved_execution.is_error()) {
@@ -1141,21 +1139,12 @@ bool ValidateQuery::fetch_config_params() {
     if (resolved_execution.ok().has_value()) {
       const auto& execution = *resolved_execution.ok();
       custom_workchain = block::resolved_workchain_execution_is_custom(execution);
-      is_evm_custom_workchain = block::resolved_workchain_execution_is_evm(execution);
     }
 
     if (custom_workchain) {
-      compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(id_.id.seqno);
-      // Mirror collator.cpp: thread the EVM parent block root_hash so the
-      // EIP-2935 system call uses the actual parent hash. The validator
-      // must agree with the collator on this value or cp.new_data
-      // diverges. Non-EVM custom engines use the shared block_seqno carrier
-      // and leave this hash zeroed.
-      if (is_evm_custom_workchain && !prev_blocks.empty()) {
-        compute_phase_cfg_.evm_parent_block_hash = prev_blocks[0].root_hash;
-      }
+      compute_phase_cfg_.custom_workchain_block_seqno = static_cast<td::uint64>(id_.id.seqno);
     } else {
-      compute_phase_cfg_.evm_block_seqno = 0;
+      compute_phase_cfg_.custom_workchain_block_seqno = 0;
     }
   }
   {

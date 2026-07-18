@@ -89,14 +89,6 @@ endif()
 option(TOS_USE_ROCKSDB "Use \"ON\" to enable RocksDb." ${NOT_TOS_ONLY_TOSLIB})
 option(TOS_USE_ABSEIL "Use \"ON\" to enable Abseil." ${NOT_TOS_ONLY_TOSLIB})
 option(TOS_USE_JEMALLOC "Use \"ON\" to enable JeMalloc." OFF)
-# wc=3 Avata JVM workchain. OFF by default because building it requires a
-# Java 8 JDK (javac) to produce the embedded rt.jar/type-metadata. A normal
-# native/EVM/Uno build never needs javac. Turn ON to compile the JVM engine;
-# the rt.jar itself is still an explicit `make -C jvm/avata ... rt-jar` step.
-option(TOS_ENABLE_JVM "Use \"ON\" to build the wc=3 Avata JVM workchain (requires a Java 8 JDK)." OFF)
-if (TOS_ENABLE_JVM)
-  add_compile_definitions(TOS_WITH_JVM_WORKCHAIN)
-endif()
 #END internal
 
 option(TOSLIB_ENABLE_JNI "Use \"ON\" to enable JNI-compatible TosLib API.")
@@ -104,7 +96,6 @@ option(TOS_USE_ASAN "Use \"ON\" to enable AddressSanitizer." OFF)
 option(TOS_USE_TSAN "Use \"ON\" to enable ThreadSanitizer." OFF)
 option(TOS_USE_UBSAN "Use \"ON\" to enable UndefinedBehaviorSanitizer." OFF)
 option(TOS_USE_COVERAGE "Use \"ON\" to enable code coverage with gcov." OFF)
-option(TOS_BUILD_LIBFUZZER "Build optional libFuzzer harnesses (requires clang)" OFF)
 set(TOS_ARCH "native" CACHE STRING "Architecture, will be passed to -march=")
 
 option(TOS_PRINT_BACKTRACE_ON_CRASH "Attempt to print a backtrace when a fatal signal is caught" ON)
@@ -149,32 +140,6 @@ include(BuildOpenSSL)
 include(BuildSodium)
 include(BuildLZ4)
 
-# -----------------------------------------------------------------------------
-# corrosion-rs — CMake ↔ Cargo integration for the Uno wc=2 Rust FFI crate
-# (`uno/plonky3-ffi/`, produces `libuno_plonky3_ffi.a`). Vendored at
-# `third-party/corrosion/` at release tag v0.5.2 — see
-# `third-party/corrosion/README.uno.md` for upstream pin + refresh policy.
-#
-# Added here (before `add_subdirectory(uno)` below) so the `Corrosion::*`
-# targets and `corrosion_import_crate(...)` function are visible when
-# `uno/CMakeLists.txt` calls them. Guarded by file existence so a stripped
-# checkout (no Rust toolchain available) still configures; in that case
-# `uno/CMakeLists.txt`'s `find_package(Corrosion QUIET)` returns not-found
-# and the Plonky3 bridge falls back to the weak-symbol stubs in
-# `uno/core/parallel-verify.cpp`.
-# -----------------------------------------------------------------------------
-if (NOT TOS_ONLY_TOSLIB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third-party/corrosion/CMakeLists.txt")
-  message("Add corrosion-rs (Rust ↔ CMake bridge for uno/plonky3-ffi)")
-  # Rust .a will be linked into the uno_workchain static lib which in turn
-  # feeds shared libs downstream; force PIC on the Rust side to avoid
-  # "relocation R_X86_64_32 against .rodata" link errors on GNU/Linux.
-  set(ENV{CARGO_PROFILE_RELEASE_PIC} "true")
-  set(ENV{CARGO_PROFILE_DEV_PIC} "true")
-  # Corrosion's own test suite is off when consumed as a subproject, but be
-  # explicit so a future top-level rebase doesn't flip the default on us.
-  set(CORROSION_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-  add_subdirectory(third-party/corrosion EXCLUDE_FROM_ALL)
-endif()
 
 if (USE_EMSCRIPTEN OR EMSCRIPTEN)
   set(SODIUM_ROOT_DIR ${CMAKE_BINARY_DIR}/3pp_emscripten/libsodium CACHE PATH "Sodium root directory" FORCE)
@@ -339,30 +304,6 @@ include(BuildLibbacktrace)
 include(BuildMHD)
 include(BuildZlib)
 
-# --- EVM Workchain third-party dependencies ---
-if (NOT TOS_ONLY_TOSLIB)
-  message("Add EVM workchain dependencies (intx, ethash, evmone)")
-  function(evm_deps_scope)
-    # intx: extended precision integer library (header-only)
-    add_subdirectory(third-party/intx EXCLUDE_FROM_ALL)
-    # ethash: keccak hashing
-    set(ETHASH_BUILD_GLOBAL_CONTEXT OFF CACHE BOOL "" FORCE)
-    set(ETHASH_BUILD_ETHASH ON CACHE BOOL "" FORCE)
-    set(ETHASH_TESTING OFF CACHE BOOL "" FORCE)
-    add_subdirectory(third-party/ethash EXCLUDE_FROM_ALL)
-    # evmone: EVM implementation (includes evmc)
-    add_subdirectory(third-party/evmone EXCLUDE_FROM_ALL)
-  endfunction()
-  evm_deps_scope()
-
-  # libff: finite field library for alt_bn128 pairing / modexp
-  message("Add libff (alt_bn128 precompiles)")
-  add_subdirectory(third-party/libff EXCLUDE_FROM_ALL)
-
-  # silkworm-core: Ethereum execution types, state, EVM wrapper
-  message("Add silkworm-core (Ethereum execution engine)")
-  add_subdirectory(third-party/silkworm/core EXCLUDE_FROM_ALL)
-endif()
 
 
 # Configure CCache if available
@@ -627,15 +568,6 @@ add_subdirectory(keys)
 add_subdirectory(tl-utils)
 add_subdirectory(adnl)
 add_subdirectory(crypto)
-if (NOT TOS_ONLY_TOSLIB)
-  add_subdirectory(evm)
-endif()
-if (NOT TOS_ONLY_TOSLIB)
-  add_subdirectory(uno)
-endif()
-if (NOT TOS_ONLY_TOSLIB AND TOS_ENABLE_JVM)
-  add_subdirectory(jvm)
-endif()
 add_subdirectory(lite-client)
 add_subdirectory(emulator)
 add_subdirectory(tol)
@@ -705,12 +637,6 @@ endif()
 add_executable(test-cells test/test-td-main.cpp ${CELLS_TEST_SOURCE})
 target_link_libraries(test-cells PRIVATE tos_crypto)
 
-# This test exercises the wc=3 Avata execution path heavily (it includes the
-# jvm/avata interpreter headers), so it is only built when the JVM workchain is.
-if (TOS_ENABLE_JVM)
-  add_executable(test-workchain-execution-registry test/test-td-main.cpp ${WORKCHAIN_EXECUTION_REGISTRY_TEST_SOURCE})
-  target_link_libraries(test-workchain-execution-registry PRIVATE tos_block evm_workchain uno_workchain jvm_workchain_core)
-endif()
 
 add_executable(test-fift test/test-td-main.cpp ${FIFT_TEST_SOURCE})
 target_link_libraries(test-fift PRIVATE fift-lib)
@@ -780,19 +706,6 @@ add_test(
   NAME test-quorum-static-grep
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-quorum-static.sh
           ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(
-  NAME test-evm-production-hardening-static
-  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-evm-production-hardening.sh
-          ${CMAKE_CURRENT_SOURCE_DIR})
-set(TOS_SOLC_0_8_26 "" CACHE FILEPATH "Pinned solc 0.8.26 binary for EToSPoWGiver bytecode equivalence")
-if(TOS_SOLC_0_8_26)
-  add_test(
-    NAME test-evm-etos-giver-bytecode-equivalence
-    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-evm-production-hardening.sh
-            ${CMAKE_CURRENT_SOURCE_DIR})
-  set_tests_properties(test-evm-etos-giver-bytecode-equivalence
-    PROPERTIES ENVIRONMENT "TOS_CHECK_ETOS_GIVER_BYTECODE=1;TOS_SOLC_0_8_26=${TOS_SOLC_0_8_26}")
-endif()
 
 add_executable(test-overlay test/test-overlay.cpp)
 target_link_libraries(test-overlay overlay tdutils tdactor adnl adnltest tl_api dht )
@@ -1001,9 +914,6 @@ tos_test(test-bigint)
 tos_test(test-vm ${TEST_OPTIONS})
 tos_test(test-fift ${TEST_OPTIONS})
 tos_test(test-cells ${TEST_OPTIONS})
-if (TOS_ENABLE_JVM)
-  tos_test(test-workchain-execution-registry)
-endif()
 tos_test(test-smartcont)
 tos_test(test-net)
 tos_test(test-tdactor)

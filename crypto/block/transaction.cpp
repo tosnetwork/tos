@@ -2086,13 +2086,12 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // below (`unpack_msg_state` after line 2125) populates `new_data` from
     // `state.data` for uninit/frozen TVM accounts; the custom branch must
     // do the same so engines that key consensus on the per-account state
-    // cell (e.g. JVM v2 keying on `JvmContractAccountState`) can decode
+    // cell can decode
     // the StateInit's data ref instead of seeing a null `current_data`.
     // We deliberately skip the TVM `check_in_msg_state_hash` check —
     // that rule (`addr == hash(StateInit)`) is TVM-specific and would
-    // reject legitimate JVM v2 deploys whose address comes from
-    // `derive_jvm_contract_address`.  Custom engines own their own
-    // activation invariants.
+    // reject custom-engine deploys whose address derivation differs from TVM.
+    // Custom engines own their own activation invariants.
     // Round 63 HIGH fix: snapshot the pre-unpack values so we can
     // roll back when the engine rejects the activation.  Pre-fix the
     // unpack mutated `new_code/new_data/new_library` unconditionally;
@@ -2154,12 +2153,11 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     input.account_addr = account.addr;
     input.current_code = new_code;
     input.current_data = new_data;
-    // Round 59 LOW fix: forward the active library so custom-engine
-    // workchains (JVM v2) can reject attacker-supplied
-    // `StateInit.library` on first activation — pre-fix the host
+    // Round 59 LOW fix: forward the active library so custom engines can
+    // reject attacker-supplied `StateInit.library` on first activation.
+    // Pre-fix the host
     // copied `si.library` into `new_library`, ran compute, and
-    // committed the library bytes verbatim into `account.library`
-    // even though the JVM engine has no library semantics.
+    // committed the library bytes verbatim into `account.library`.
     input.current_library = new_library;
     input.account_balance = balance;
     input.inbound_message = in_msg;
@@ -2168,19 +2166,18 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     input.gas_limit = cp.gas_limit;
     // Tell the engine whether `current_data` came from unpacking the
     // inbound StateInit (first activation) so it can enforce stricter
-    // invariants on the first decode (e.g., JVM v2 requires empty
-    // initial storage_root).
+    // invariants on the first decode.
     input.msg_state_used = use_msg_state;
 
     block::WorkchainComputeContext context;
     context.workchain_id = account.workchain;
-    context.block_seqno = cfg.evm_block_seqno;
+    context.block_seqno = cfg.custom_workchain_block_seqno;
     context.block_lt = start_lt;
     context.now = static_cast<td::uint64>(account.now_);
     context.global_version = cfg.global_version;
     std::memcpy(context.rand_seed.data(), cfg.block_rand_seed.as_array().data(),
                 context.rand_seed.size());
-    std::memcpy(context.parent_block_hash.data(), cfg.evm_parent_block_hash.data(),
+    std::memcpy(context.parent_block_hash.data(), cfg.custom_workchain_parent_block_hash.data(),
                 context.parent_block_hash.size());
     context.descriptor = custom_plan.descriptor;
     context.engine_config = custom_plan.engine_config;
@@ -2207,7 +2204,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // the account, mirroring the TVM and precompiled paths above.
     // Pre-fix the custom branch only COPIED `output.gas_fees` into
     // `cp.gas_fees` and never adjusted `total_fees` or `balance`,
-    // so a custom-engine contract (e.g. JVM v2) consumed validator
+    // so a custom-engine contract consumed validator
     // CPU without the account paying the recorded fee — the bypass
     // is reachable from a zero-balance account because
     // `compute_gas_limits` deliberately skips balance-based gas
@@ -2280,7 +2277,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
         // with the host's acc_uninit→acc_active transition.  The
         // engine's `output.account_activated` was copied earlier
         // (apply_custom_compute_output) from `cp.account_activated`,
-        // which custom engines (e.g. Uno) cannot set since the
+        // which custom engines cannot set since the
         // activation is performed here, not in their compute phase.
         // Pre-fix the canonical compute-phase metadata claimed
         // `account_activated=false` even when this branch flipped

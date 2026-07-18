@@ -126,8 +126,6 @@ impl GenerateCmd {
         let config = AppConfig {
             nodes: HashMap::new(),
             wallets: HashMap::new(),
-            jvm_wallets: HashMap::new(),
-            jvm_deployers: HashMap::new(),
             pools: HashMap::new(),
             bindings: HashMap::new(),
             chain_rpc: ChainRpcConfig::default(),

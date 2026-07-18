@@ -65,7 +65,6 @@ account.balance.tomis                // account balance
 | Chain | Base Unit | Smallest Unit | Ratio |
 |-------|-----------|---------------|-------|
 | TOS | 1 TOS | 1 nanotomi | 10^9 |
-| Ethereum | 1 ETH | 1 wei | 10^18 |
 | Bitcoin | 1 BTC | 1 satoshi | 10^8 |
 
 ## Initial Supply

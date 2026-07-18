@@ -2993,25 +2993,17 @@ void test_h03_streaming_sink_idempotent_abort() {
 // (rather than the 32 B/cell synthetic-tree shape used by the existing
 // H-03 tests)? The existing H-03 1 GiB regression measures peak under
 // a 4 M-cell tree (~120 MiB BoC, ~32 B/cell), which understates the
-// per-cell overhead of a real CellEvmState dump. This test pins the
+// per-cell overhead of a dense account-state dump. This test pins the
 // same invariant against a 512 MiB BoC (default) or 1 GiB BoC (under
-// TOS_RUN_2GIB_FUZZ=1) whose per-cell density mirrors what the EVM
-// account/storage/code dictionary serialiser actually produces.
+// TOS_RUN_2GIB_FUZZ=1) whose per-cell density mirrors a dense account,
+// storage, and code dictionary serialiser.
 //
-// Density methodology: a measurement helper builds a small CellEvmState
-// (100 accounts each carrying a 32-byte runtime and a non-trivial
-// storage slot) via `seed_storage_bearing_accounts` from
-// `evm/test/test-executor.cpp`, then computes
-//   bytes_per_cell = std_boc_serialize(serialize_to_cell).size /
-//                    cell_count_walked_by_topological_order_walker
-// However, importing the EVM helper into a download-state test would
-// pull in the full evm_workchain library — overkill for what is a
-// memory invariant check. Instead, we keep the existing
+// Density methodology: keep the existing
 // `build_synthetic_cell_tree` shape but replace the 32 B leaf payload
 // with 120 B (Cell::max_bits = 1023, leaving descriptor headroom) and
 // add ~16 B per internal node. The serialised BoC then sits at
 // ~130 B/cell, ~4x the 32 B/cell synthetic-tree shape and within an
-// order of magnitude of a real CellEvmState dump. This is the
+// order of magnitude of a dense account-state dump. This is the
 // documented fallback per the user's instruction: "If you can't find
 // a representative example, use 200 bytes/cell as a conservative
 // estimate and document the choice." A 512 MiB BoC at 130 B/cell
@@ -3218,7 +3210,7 @@ void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
   // headroom for descriptor overhead) so the binary-tree shape lands
   // at ~130 B/cell post-serialisation. That's ~4x the existing
   // 32 B/cell synthetic-tree shape and within an order of magnitude
-  // of a real CellEvmState dump (per the user-documented 200 B/cell
+  // of a dense account-state dump (per the user-documented 200 B/cell
   // conservative estimate when measurement is unavailable).
   //
   // Performance fix: the streaming importer's chunk reader (boc.cpp)
@@ -3237,7 +3229,7 @@ void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
   // payload + 2 refs) are counted. That's below the user-documented
   // 200 B/cell conservative estimate but above the 32 B/cell shape
   // the existing H-03 test uses, so it remains a meaningful step up
-  // toward real CellEvmState density without paying full real-state
+  // toward dense account-state density without paying full real-state
   // build cost.
   constexpr std::size_t kLeafPayloadBytes = 120;
   const char *full_gib_flag = std::getenv("TOS_RUN_2GIB_FUZZ");
@@ -3874,7 +3866,7 @@ int main() {
   // L2 — 1 GiB streaming importer at TOS-realistic cell density. The
   // existing H-03 1 GiB regression measures peak under a 32 B/cell
   // synthetic tree which understates per-cell overhead of a real
-  // CellEvmState dump. This run pins the same invariant against a
+  // dense account-state dump. This run pins the same invariant against a
   // 1 GiB BoC built at ~110 B/cell and prints the K1 verdict (peak
   // delta < 512 MiB → acceptable; > 1 GiB → architectural blocker
   // is real). Skipped under TOS_FAST_TESTS=1.

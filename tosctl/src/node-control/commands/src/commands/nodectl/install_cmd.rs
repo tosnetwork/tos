@@ -182,8 +182,6 @@ impl InstallWizardCmd {
             let config = AppConfig {
                 nodes: HashMap::new(),
                 wallets,
-                jvm_wallets: HashMap::new(),
-            jvm_deployers: HashMap::new(),
                 pools: HashMap::new(),
                 bindings: HashMap::new(),
                 chain_rpc,

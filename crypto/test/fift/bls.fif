@@ -1,4 +1,4 @@
-// Based on https://github.com/ethereum/bls12-381-tests
+// Based on public BLS12-381 test vectors
 "Asm.fif" include
 "FiftExt.fif" include
 
@@ -449,7 +449,7 @@ x{9104e74b9dfd3ad502f25d6a5ef57db0ed7d9a0e00f3500586d8ce44231212542fcfaf87840539
 -1
 test-aggregate-verify
 
-."Test fast_aggregate_verify with actual Ethereum signatures" cr
+."Test fast_aggregate_verify with actual BLS signatures" cr
 x{abd15ed19f6b6f4a199b6c90637e70222a8aadcb34ffdef3c6cc57a824a7410852d209835c91680875794ba287ce7de3}
 x{832451ba329e4fe2e81056ae224feea873ed8d6ffc86840437976a421a352282faca08b93e9e3a8068a9e3979e6056b5}
 x{b09e63a9a8b80928532e1fe0d4624be4990bbdf4c11293cd72ac635f56262fea853aef1348c26a8263f83d0c3144bdda}

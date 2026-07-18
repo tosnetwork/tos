@@ -1554,7 +1554,7 @@ class OracleBridgeParams(TlbScheme):
 
 class ConfigParam71(OracleBridgeParams):
     """
-    _ OracleBridgeParams = ConfigParam 71; // Ethereum bridge
+    _ OracleBridgeParams = ConfigParam 71; // Oracle bridge
     """
 
     def __init__(self, **kwargs):
@@ -1807,4 +1807,3 @@ class ConfigParam(TlbScheme):
     @classmethod
     def deserialize(cls, *args):
         pass
-

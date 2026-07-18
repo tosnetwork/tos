@@ -1658,7 +1658,7 @@ class JniUtil {
 
   /**
    * Obtains a reference to the JNIEnv from
-   * the JVM
+   * the Java VM
    *
    * If the current thread is not attached to the JavaVM
    * then it will be attached so as to retrieve the JNIEnv
@@ -1696,7 +1696,7 @@ class JniUtil {
       } else {
         // error, could not attach the thread
         std::cerr << "JniUtil::getJniEnv - Fatal: could not attach current "
-                     "thread to JVM!"
+                     "thread to Java VM!"
                   << std::endl;
         return nullptr;
       }
@@ -1716,7 +1716,7 @@ class JniUtil {
   /**
    * Counterpart to {@link JniUtil::getJniEnv(JavaVM*, jboolean*)}
    *
-   * Detachess the current thread from the JVM if it was previously
+   * Detachess the current thread from the Java VM if it was previously
    * attached
    *
    * @param jvm (IN) A pointer to the JavaVM instance
@@ -1730,7 +1730,7 @@ class JniUtil {
       assert(rs_detach == JNI_OK);
       if (rs_detach != JNI_OK) {
         std::cerr << "JniUtil::getJniEnv - Warn: Unable to detach current "
-                     "thread from JVM!"
+                     "thread from Java VM!"
                   << std::endl;
       }
     }

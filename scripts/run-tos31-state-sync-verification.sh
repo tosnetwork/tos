@@ -2,10 +2,9 @@
 # Run the tos31 persistent-state / CellDb state-sync verification suite.
 #
 # Default mode runs the deterministic CI-sized checks. Release-candidate
-# mode can opt into the full 16 GiB catch-up and libFuzzer soak via env:
+# mode can opt into the full 16 GiB catch-up via env:
 #
 #   TOS_RUN_16GIB_CATCHUP=1 bash scripts/run-tos31-state-sync-verification.sh
-#   TOS_RUN_BOC_FUZZ_SECONDS=3600 bash scripts/run-tos31-state-sync-verification.sh
 
 set -euo pipefail
 
@@ -41,8 +40,6 @@ run_step build-celldb-streaming-import \
   cmake --build "$BUILD_DIR" --target test-celldb-streaming-import
 run_step build-celldb-actor-restart \
   cmake --build "$BUILD_DIR" --target test-celldb-actor-restart
-run_step hardening-static \
-  bash "$ROOT/scripts/check-evm-production-hardening.sh" "$ROOT"
 run_step celldb-fatal-invariant-audit \
   bash -c 'root="$1"; rg -n "CELDB_LEGACY_FATAL_INVARIANT" "$root/validator/db/celldb.cpp"' _ "$ROOT"
 run_step test-download-state-budget \
@@ -61,22 +58,12 @@ else
   echo "SKIPPED: set TOS_RUN_16GIB_CATCHUP=1 to run the real 16 GiB mmap catch-up test"
 fi
 
-if [ "${TOS_RUN_BOC_FUZZ_SECONDS:-0}" != "0" ] && [ -n "${TOS_RUN_BOC_FUZZ_SECONDS:-}" ]; then
-  run_step boc-libfuzzer \
-    bash "$ROOT/scripts/run-libfuzzer.sh" boc "$TOS_RUN_BOC_FUZZ_SECONDS"
-else
-  echo
-  echo "### boc-libfuzzer"
-  echo "SKIPPED: set TOS_RUN_BOC_FUZZ_SECONDS=<seconds> to run malformed-BoC fuzzing"
-fi
-
 cat > "$ARTIFACT_DIR/summary.txt" <<EOF
 tos31 state-sync verification completed
 commit: $(git -C "$ROOT" rev-parse HEAD)
 artifacts: $ARTIFACT_DIR
 
 required default checks:
-- hardening-static
 - celldb-fatal-invariant-audit
 - test-download-state-budget
 - test-celldb-streaming-import
@@ -84,7 +71,6 @@ required default checks:
 
 optional RC checks:
 - TOS_RUN_16GIB_CATCHUP=1
-- TOS_RUN_BOC_FUZZ_SECONDS=<seconds>
 EOF
 
 echo

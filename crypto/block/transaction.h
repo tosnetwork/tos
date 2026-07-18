@@ -138,16 +138,10 @@ struct ComputePhaseConfig {
   bool allow_external_unfreeze{false};
   bool disable_anycast{false};
 
-  // Custom workchain shard block sequence number being produced/validated.
-  // For EVM this is used as `block.number` inside silkworm; other custom
-  // engines receive it through WorkchainComputeContext. Zero for TVM contexts.
-  td::uint64 evm_block_seqno = 0;
-
-  // EVM parent block root_hash, used for EIP-2935 historical-block-hash ring
-  // buffer writes inside the snapshot compute phase. Zero on non-EVM contexts
-  // and at block 0. Threaded in here rather than being read out of mutable
-  // process state.
-  td::Bits256 evm_parent_block_hash = td::Bits256::zero();
+  // Custom workchain shard block sequence number and parent root hash being
+  // produced/validated. Zero for TVM contexts.
+  td::uint64 custom_workchain_block_seqno = 0;
+  td::Bits256 custom_workchain_parent_block_hash = td::Bits256::zero();
 
   // Config-driven workchain dispatch context. These pointers are scoped to
   // the block-transition configuration snapshot that produced this compute
@@ -218,26 +212,6 @@ struct CreditPhase {
   block::CurrencyCollection credit;
 };
 
-// Forward declaration: EVM workchain side-effects payload, defined in
-// evm/core/post-accept.h. Held as an opaque shared_ptr on ComputePhase so
-// that the snapshot compute path (run_evm_compute_phase_snapshot) can stash
-// per-tx receipt / transaction / logs / block records here without forcing
-// silkworm types into the host-chain transaction header.
-//
-// The stash is consumed by `apply_block_side_effects` once the block is
-// accepted, which writes into the process-global EVM state and the RPC
-// cache DB. Compute itself is therefore pure — same `account_data` cell in
-// → bitwise-identical `cp.new_data` cell out, every time on every node.
-//
-// `}` and re-`namespace block {` to keep the forward declaration in the
-// outer `::evm_workchain` namespace (this header itself lives inside
-// `namespace block` once the file finishes parsing the headers above).
-}  // namespace block
-namespace evm_workchain {
-struct EvmBlockSideEffects;
-}  // namespace evm_workchain
-namespace block {
-
 struct ComputePhase {
   enum { sk_none = 0, sk_no_state = 1, sk_bad_state = 2, sk_no_gas = 3, sk_suspended = 4 };
   int skip_reason{sk_none};
@@ -259,7 +233,6 @@ struct ComputePhase {
   std::string vm_log;
   td::optional<td::uint64> precompiled_gas_usage;
   td::HashSet<vm::CellHash> vm_loaded_cells;
-  std::shared_ptr<::evm_workchain::EvmBlockSideEffects> evm_side_effects;
 };
 
 struct ActionPhase {

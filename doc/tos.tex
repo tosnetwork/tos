@@ -119,26 +119,15 @@ think about TOS as a distributed supercomputer, or rather a
 ``superserver'', intended to host on-chain and off-chain services
 with one coherent operator and integration path.
 
-In its current product form, TOS uses this multichain architecture to
-define four distinct execution domains under one masterchain-rooted
-consensus: the asynchronous TVM-based base workchain, a synchronous
-EVM-oriented workchain for Ethereum-style smart contracts, the Uno
-privacy workchain with PQ-native shielded transfers, and the Avata
-JVM workchain for deterministic Java-bytecode contracts. The native,
-EVM and Uno engines are compiled into the default node binary; the
-JVM engine is a build-time option (it requires a Java toolchain to
-produce its runtime archive). In all cases a domain is \emph{active}
-only when a corresponding workchain descriptor is present in the
-on-chain configuration. The intended deployment path is therefore
-staged: the network launches with the native chain (Workchain Zero)
-and the other domains are activated individually, by governance, as
-each matures --- without redeploying or restarting validators (see
-\ptref{sp:cur.exec.domains}).
-One node binary (\texttt{validator-engine})
-serves these domains, and one canonical machine-facing surface
-(\texttt{tos\_*}, \texttt{eth\_*}, \texttt{uno\_*}, \texttt{jvm\_*})
-together with one operator path (\texttt{tosctl}) is intended to
-expose them.
+In its current product form, TOS uses this multichain architecture
+with one active execution domain under masterchain-rooted consensus:
+the asynchronous TVM-based base workchain. Additional workchains
+remain an architectural extension point, but no custom execution
+domain is registered or built into the current product configuration
+(see \ptref{sp:cur.exec.domains}).
+One node binary (\texttt{validator-engine}) serves the native domain,
+and one canonical machine-facing surface (\texttt{tos\_*}) together
+with one operator path (\texttt{tosctl}) exposes it.
 
 This text is not intended to be the ultimate reference with respect to
 all implementation details. It describes the system as implemented and
@@ -159,12 +148,12 @@ following components:
   cf.\ Chapter~\ptref{sect:blockchain}), capable of processing
   high-throughput value transfers and smart-contract traffic with a
   tightly-coupled masterchain, workchain and shardchain architecture,
-  formal upgradable parameters and heterogeneous execution domains.
+  formal upgradable parameters and a native execution domain.
   TOS preserves the ``self-healing'' vertical block\-chain mechanism
   (cf.~\ptref{sp:inv.sh.blk.corr}) and Instant Hypercube Routing
-  (cf.~\ptref{sp:instant.hypercube}), while extending the workchain
-  model to support newer execution environments such as EVM-oriented
-  workchains alongside the TVM-based base workchain.
+  (cf.~\ptref{sp:instant.hypercube}), while retaining the workchain
+  model as a future extension point alongside the TVM-based base
+  workchain.
 \item A peer-to-peer network ({\em TOS P2P Network}, or just {\em TOS
   Network}; cf.\ Chapter~\ptref{sect:network}), used for accessing the
   TOS Block\-chain, sending transaction candidates, and receiving
@@ -282,8 +271,8 @@ are:
   (cf.~\ptref{sp:shard.supp}). Because all these shardchains share a
   common block format and rules, the TOS Blockchain is {\em
     homogeneous\/} in this respect (cf.~\ptref{sp:blkch.hom.het}),
-  similarly to what has been discussed in one of Ethereum scaling
-  proposals.\footnote{\url{https://github.com/ethereum/wiki/wiki/Sharding-FAQ}}
+  similarly to what has been discussed in one of a smart-contract platform scaling
+  proposals.\footnote{\url{https://github.com/smart-contract-platform/wiki/wiki/Sharding-FAQ}}
 \item Each block in a shardchain (and in the masterchain) is actually
   not just a block, but a small blockchain. Normally, this ``block
   blockchain'' or ``vertical blockchain'' consists of exactly one
@@ -377,10 +366,8 @@ masterchain transactions. The party interested in the activation of
 the new workchain might provide some incentive for the validators to
 support the new workchain by means of some rewards distributed by a
 smart contract. This is the natural architectural boundary for adding
-heterogeneous execution domains to TOS. In particular, one may define
-an EVM-oriented workchain with Ethereum-style addresses, signing and a
-wallet-facing \texttt{eth\_*} RPC surface, while keeping chain coordination,
-finality and workchain routing under TOS rules.
+heterogeneous execution domains to TOS while keeping chain
+coordination, finality and workchain routing under TOS rules.
 
 \nxsubpoint\label{sp:shard.ident} \embt(Identification of
 shardchains.)  Each shardchain is identified by a couple
@@ -430,56 +417,16 @@ workchain will be called {\em basic shardchains}.
 \nxsubpoint\label{sp:cur.exec.domains} \embt(Current execution
 domains.)  The general workchain mechanism admits many future virtual
 machines and transaction models, but the present TOS product direction
-is organized around four concrete execution domains:
+is organized around one concrete execution domain:
 \begin{itemize}
 \item {\em Workchain Zero\/} ($\workchainid=0$): the native
   asynchronous TVM environment, using actor-style message passing,
   dynamic sharding and the canonical TOS asset and wallet model.
-\item {\em Workchain One\/} ($\workchainid=1$): a synchronous
-  EVM-oriented environment intended for Solidity and the Ethereum
-  tooling stack. It uses Ethereum-style addresses and signed
-  transactions, while remaining a first-class TOS workchain rather
-  than a sidechain.
-\item {\em Workchain Two\/} ($\workchainid=2$): {\em Uno\/}, a
-  privacy-oriented workchain using Plonky3 STARK proofs, hybrid
-  post-quantum note encryption and a bridgeless shielded-pool
-  architecture.
-\item {\em Workchain Three\/} ($\workchainid=3$): {\em Avata JVM\/},
-  a deterministic Java\,8-bytecode environment in which every
-  contract is its own account, executed on a restricted, JIT-free
-  interpreter. Beyond the per-workchain activation common to all
-  domains, the JVM carries two additional activation gates --- its
-  runtime hash and its genesis account set must be pinned before
-  wc=3 can accept contracts.
 \end{itemize}
-The native, EVM and Uno engines are compiled into the default node
-binary (the JVM engine is an optional build); each is dormant until a
-corresponding workchain descriptor appears in the on-chain
-configuration. A network may therefore launch with only Workchain Zero
-and bring the others online one at a time, by governance, as each
-matures; for the engines present in the binary an activation is a
-configuration change rather than a software upgrade, while enabling
-the JVM workchain additionally requires validators to run a
-JVM-enabled build.
-The current native-asset naming of these execution domains is
-likewise fixed in product terminology: {\em TOS\/} is the native
-asset of the base chain (Workchain Zero), {\em eTOS\/} is the
-native asset of the EVM-oriented workchain (Workchain One), and
-{\em UNO\/} is the native asset of the privacy workchain
-(Workchain Two). The JVM workchain (Workchain Three) introduces no
-new native asset — it meters gas in TOS. These three native assets
-are economically independent — there
-are no on-chain bridges between any two of them. Conceptual
-1:1~parity between TOS and eTOS (they share the ``TOS'' brand and
-are designed to trade at parity) is realised by external markets,
-not by protocol-level routing. UNO never participates in cross-
-token flows by design (privacy preservation forbids a
-wc=2~$\leftrightarrow$~wc=0/wc=1 value bridge).
-These domains share masterchain coordination, validator
-economics and the same node implementation. Users choose an execution
-domain per transaction; validators may advertise support and
-participate per workchain according to the corresponding on-chain
-activation rules.
+The default node binary only includes this native execution path, and
+the on-chain workchain configuration registers only Workchain Zero.
+Future workchains, if introduced, would require their own descriptors,
+software support and validator activation process.
 
 \nxsubpoint \embt(Block generation intervals.)  TOS supports more than
 one consensus profile. In its current direction, block production is
@@ -687,16 +634,8 @@ TOS}. It is the basic asset of Workchain Zero. It is also used for
 transaction fees, validator stakes, storage accounting and other
 protocol-native payments.
 
-In the current TOS product structure, Workchain One (the EVM-oriented
-workchain) uses {\em eTOS\/} as its native asset — distinct from TOS
-on Workchain Zero, with its own 100~M supply cap and 18-decimal wei
-denomination matching Ethereum tooling. There is no on-chain bridge
-between TOS and eTOS; conceptual 1:1~parity is realised by external
-markets (analogous to ETH~$\leftrightarrow$~wETH or
-BTC~$\leftrightarrow$~WBTC). Workchain Two (Uno) uses {\em UNO\/} as
-its native asset, also independent: privacy preservation precludes
-a wc=2~$\leftrightarrow$~wc=0/wc=1 value bridge, so UNO is fully
-contained within wc=2.
+In the current TOS product structure there is only one native asset:
+{\em TOS\/} on Workchain Zero.
 
 In principle, other workchains may collect transaction fees in other
 tokens. In this case, some smart contract or protocol mechanism for
@@ -718,11 +657,9 @@ The simplest form of such messaging is a value transfer from one
 
 \nxsubpoint\label{sp:tosvm} \embt(TOS Virtual Machine.)  The {\em TOS
   Virtual Machine (TVM)} is the virtual machine used to execute smart-contract
-code in the masterchain and in the basic workchain. Other workchains
-may use other virtual machines alongside or instead of the TVM. In
-particular, TOS can be extended with EVM-oriented workchains whose
-wallet-facing and API-facing semantics are intentionally closer to the
-Ethereum ecosystem.
+code in the masterchain and in the basic workchain. Other future
+workchains may use other virtual machines alongside or instead of the
+TVM.
 
 Here we list some of its features. They are discussed further
 in~\ptref{sp:pec.tvm}, \ptref{sp:tvm.cells} and elsewhere.
@@ -1221,7 +1158,7 @@ for those shardchains, which is as safe as checking by itself unless
 \nxsubpoint\label{sp:pec.tvm} \embt(Peculiarities of TVM.)  The TVM,
 used to run smart contracts in
 the masterchain and Workchain Zero, is considerably different from
-customary designs inspired by the EVM (Ethereum Virtual Machine): it
+customary stack-oriented virtual machine designs: it
 works not just with 256-bit integers, but actually with (almost)
 arbitrary ``records'', ``structures'', or ``sum-product types'',
 making it more suitable to execute code written in high-level
@@ -1556,7 +1493,7 @@ of the gas payment for redistribution to the validators.
 
 In this sense, ``messages from nowhere'' or ``external messages'' take
 the role of transaction candidates used in other blockchain systems
-(e.g., Bitcoin and Ethereum).
+(e.g., Bitcoin and a smart-contract platform).
 
 \nxsubpoint \embt(Log messages, or ``messages to nowhere''.)
 Similarly, sometimes a special message can be generated and routed to
@@ -1573,7 +1510,7 @@ blockchains.)  These external input and output messages can be used
 for interacting with off-chain services and other (external)
 blockchains, such as Bitcoin or Ethe\-reum. One might create tokens or
 cryptocurrencies inside the TOS Block\-chain, pegged to Bitcoins,
-Ethers or ERC-20 tokens defined in the Ethe\-reum blockchain, and
+coins or ERC-20 tokens defined in the Ethe\-reum blockchain, and
 use ``messages from nowhere'' and ``messages to nowhere'', generated
 and processed by scripts residing on some third-party off-chain
 servers, to implement the necessary interaction between the TOS
@@ -2201,7 +2138,7 @@ bandwidth.
 \nxsubpoint \embt(Validators instead of miners.)  Recall that the TOS
 Blockchain uses the Proof-of-Stake approach, instead of the
 Proof-of-Work approach adopted by Bitcoin, the current version of
-Ethereum, and most other cryptocurrencies. This means that one cannot
+a smart-contract platform, and most other cryptocurrencies. This means that one cannot
 ``mine'' a new block by presenting some proof-of-work (computing a lot
 of otherwise useless hashes) and obtain some new coins as a
 result. Instead, one must become a validator and spend one's computing
@@ -2219,7 +2156,7 @@ connection for them. This is not so expensive as the ASIC equipment
 currently required to mine Bitcoins. However, one definitely cannot
 mine new TOS on a home computer, let alone a smartphone.
 
-In the Bitcoin, Ethereum and other Proof-of-Work cryptocurrency mining
+In the Bitcoin, a smart-contract platform and other Proof-of-Work cryptocurrency mining
 communities there is a notion of {\em mining pools}, where a lot of
 nodes, having insufficient computing power to mine new blocks by
 themselves, combine their efforts and share the reward afterwards.
@@ -2672,7 +2609,7 @@ expected to create and sign new masterchain blocks.
 that a Proof-of-Stake system such as the TOS Blockchain, relying on
 $T\approx1000$ validators to create all shardchain and masterchain
 blocks, is bound to become ``too centralized'', as opposed to
-conventional Proof-of-Work blockchains like Bitcoin or Ethereum, where
+conventional Proof-of-Work blockchains like Bitcoin or a smart-contract platform, where
 everybody (in principle) might mine a new block, without an explicit
 upper limit on the total number of miners.
 
@@ -2686,9 +2623,9 @@ and in the hands of several large mining pools, which concentrate and
 coordinate the efforts of larger groups of people who are not able to
 provide a sufficient ``hash rate'' by themselves.
 
-Therefore, as of 2017, more than 75\% of new Ethereum or Bitcoin
+Therefore, as of 2017, more than 75\% of new a smart-contract platform or Bitcoin
 blocks are produced by less than ten miners. In fact, the two largest
-Ethereum mining pools produce together more than half of all new
+a smart-contract platform mining pools produce together more than half of all new
 blocks! Clearly, such a system is much more centralized than one
 relying on $T\approx1000$ nodes to produce new blocks.
 
@@ -2697,7 +2634,7 @@ validator---i.e., to buy the hardware (say, several
 high-performance servers) and the stake (which can be easily collected
 through a pool of nominators if necessary;
 cf.~\ptref{sp:nominators})---is much lower than that required to
-become a successful stand-alone Bitcoin or Ethereum miner. In fact,
+become a successful stand-alone Bitcoin or a smart-contract platform miner. In fact,
 the parameter $L$ of~\ptref{sp:global.valid} will force nominators not
 to join the largest ``mining pool'' (i.e., the validator that has
 amassed the largest stake), but rather to look for smaller validators
@@ -3039,7 +2976,7 @@ have withstood the test of time. Their main drawback is low
 performance, or at least transaction throughput, which is on the level
 of ten (Bitcoin) to less than one hundred\footnote{More like 15, for
   the time being. However, some upgrades are being planned to make
-  Ethereum transaction throughput several times larger.}  (Ethereum)
+  a smart-contract platform transaction throughput several times larger.}  (a smart-contract platform)
 transactions per second for general-purpose systems. Some specialized
 systems (such as Bitshares) are capable of processing tens of
 thousands of specialized transactions per second, at the expense of
@@ -3110,7 +3047,7 @@ especially for multichain projects (because Proof-of-Work would
 require prohibitive amounts of computational resources if there are
 many blockchains), but must be more carefully thought out and
 implemented. Most currently running blockchain projects, especially
-the oldest ones (such as Bitcoin and at least the original Ethereum),
+the oldest ones (such as Bitcoin and at least the original a smart-contract platform),
 use Proof-of-Work.
 
 \nxsubpoint\label{sp:dpos.bft} \embt(Variants of Proof-of-Stake. DPOS
@@ -3291,7 +3228,7 @@ desirable in any general-purpose blockchain project; otherwise, the
 designers of the blockchain project must decide in advance which
 applications their blockchain will be used for. In fact, the lack of
 support for smart contracts in the Bitcoin blockchain was the
-principal reason why a new blockchain project, Ethereum, had to be
+principal reason why a new blockchain project, a smart-contract platform, had to be
 created.
 
 In a (heterogeneous; cf.~\ptref{sp:blkch.hom.het}) multichain system,
@@ -3367,9 +3304,9 @@ does, too).
 In some cases, the masterchain is {\em external}, meaning that it is
 not a part of the project, but some other pre-existing blockchain,
 originally completely unrelated to its use by the new project and
-agnostic of it. For example, one can try to use the Ethereum
+agnostic of it. For example, one can try to use the a smart-contract platform
 blockchain as a masterchain for an external project, and publish
-special smart contracts into the Ethereum blockchain for this purpose
+special smart contracts into the a smart-contract platform blockchain for this purpose
 (e.g., for electing and punishing validators).
 
 \nxsubpoint\label{sp:shard.supp} \embt(Sharding support.)  Some
@@ -3386,7 +3323,7 @@ Sharding is a natural approach to scaling blockchain systems, because,
 if it is properly implemented, users and smart contracts in the system
 need not be aware of the existence of sharding at all. In fact, one
 often wants to add sharding to an existing single-chain project (such
-as Ethereum) when the load becomes too high.
+as a smart-contract platform) when the load becomes too high.
 
 An alternative approach to scaling would be to use a ``confederation''
 of heterogeneous workchains as described in~\ptref{sp:het.confed},
@@ -3431,9 +3368,9 @@ messaging between blockchains, making interaction possible in
 principle, but awkward. We call such systems ``loosely-coupled''; in
 them one must send messages and transfer value between blockchains as
 if they had been blockchains belonging to completely separate
-blockchain projects (e.g., Bitcoin and Ethereum; imagine two parties
+blockchain projects (e.g., Bitcoin and a smart-contract platform; imagine two parties
 want to exchange some Bitcoins, kept in the Bitcoin blockchain, into
-Ethers, kept in the Ethereum blockchain). In other words, one must
+coins, kept in the a smart-contract platform blockchain). In other words, one must
 include the outbound message (or its generating transaction) in a
 block of the source blockchain. Then she (or some other party) must
 wait for enough confirmations (e.g., a given number of subsequent
@@ -3491,10 +3428,10 @@ characteristics of a generation are shown in {\bf bold}.
   contracts. Examples: Bitcoin (2009) and a lot of otherwise
   uninteresting imitators (Litecoin, Monero, \dots).
 \item Second generation: Single-chain, PoW, {\bf smart-contract
-  support}. Example: Ethereum (2013; deployed in 2015), at least in
+  support}. Example: a smart-contract platform (2013; deployed in 2015), at least in
   its original form.
 \item Third generation: Single-chain, {\bf PoS}, smart-contract
-  support. Example: {\em future Ethereum} (2018 or later).
+  support. Example: {\em future a smart-contract platform} (2018 or later).
 \item Alternative third ($3'$) generation: {\bf Multi-chain}, PoS, no
   support for smart contracts, loosely-coupled. Example: Bitshares
   (2013--2014; uses DPOS).
@@ -3522,26 +3459,26 @@ with their different rules, and bind them somehow to the blockchain
 (or the blockchains) of the original project. One might use the
 blockchain of the existing single-blockchain project as an external
 masterchain for an essentially new and separate project.\footnote{For
-  example, the Plasma project plans to use the Ethereum blockchain as
-  its (external) masterchain; it does not interact much with Ethereum
+  example, the Plasma project plans to use the a smart-contract platform blockchain as
+  its (external) masterchain; it does not interact much with a smart-contract platform
   otherwise, and it could have been suggested and implemented by a
-  team unrelated to the Ethereum project.}
+  team unrelated to the a smart-contract platform project.}
 
 Our conclusion is that the genome of a project is very hard to change
 once it has been deployed. Even starting with PoW and planning to
 replace it with PoS in the future is quite complicated.\footnote{As of
-  2017, Ethereum is still struggling to transition from PoW to a
+  2017, a smart-contract platform is still struggling to transition from PoW to a
   combined PoW+PoS system; we hope it will become a truly PoS system
   someday.} Adding shards to a project originally designed without
 support for them seems almost impossible.\footnote{There are sharding
-  proposals for Ethereum dating back to 2015; it is unclear how they
-  might be implemented and deployed without disrupting Ethereum or
+  proposals for a smart-contract platform dating back to 2015; it is unclear how they
+  might be implemented and deployed without disrupting a smart-contract platform or
   creating an essentially independent parallel project.} In fact,
 adding support for smart contracts into a project (namely, Bitcoin)
 originally designed without support for such features has been deemed
 impossible (or at least undesirable by the majority of the Bitcoin
 community) and eventually led to the creation of a new blockchain
-project, Ethereum.
+project, a smart-contract platform.
 
 \nxsubpoint \embt(Genome of the TOS Blockchain.)  Therefore, if one
 wants to build a scalable blockchain system, one must choose its
@@ -3576,7 +3513,7 @@ general scheme.
   \captionsetup{font=scriptsize}
   \begin{tabular}{|c|cc|ccc|ccc|}
     \hline Project & Year & G. & Cons. & Sm. & Ch. & R. & Sh. &
-    Int. \\ \hline Bitcoin & 2009 & 1 & PoW & no & 1 \\ Ethereum &
+    Int. \\ \hline Bitcoin & 2009 & 1 & PoW & no & 1 \\ a smart-contract platform &
     2013, 2015 & 2 & PoW & yes & 1 \\ NXT & 2014 & 2+ & PoS & no & 1
     \\ Tezos & 2017, ? & 2+ & PoS & yes & 1 \\ Casper & 2015, (2017) &
     3 & PoW/PoS & yes & 1 \\ \hline BitShares & 2013, 2014 & $3'$ &
@@ -3613,9 +3550,9 @@ general scheme.
             Bitcoin blockchain has no notion of an account; it uses
             the UTXO (Unspent Transaction Output) model instead.
 
-\nxsubpoint \embt(Ethereum \cite{EthWP}.)
-            \emph{Website:} \url{https://ethereum.org/}.
-            {\em Ethereum\/} (2015) is the first blockchain with
+\nxsubpoint \embt(a smart-contract platform \cite{SmartContractWP}.)
+            \emph{Website:} \url{https://smart-contract-platform.org/}.
+            {\em a smart-contract platform\/} (2015) is the first blockchain with
             support for Turing-complete smart contracts. As such, it
             is a typical {\em second-generation\/} project, and the
             most popular among them. It uses Proof-of-Work on a single
@@ -3647,11 +3584,11 @@ $\evtrans$, without fixing a particular {\em implementation}.
 
 \nxsubpoint
 \embt(Casper.)%
-\footnote{\href{https://blog.ethereum.org/2015/08/01/introducing-casper-friendly-ghost/}{Ethereum blog post on Casper FFG}}
-{\em Casper\/} is an upcoming PoS algorithm for Ethereum; its gradual
-deployment in 2017 (or 2018), if successful, will change Ethereum into
+\footnote{\href{https://blog.smart-contract-platform.org/2015/08/01/introducing-casper-friendly-ghost/}{a smart-contract platform blog post on Casper FFG}}
+{\em Casper\/} is an upcoming PoS algorithm for a smart-contract platform; its gradual
+deployment in 2017 (or 2018), if successful, will change a smart-contract platform into
 a single-chain PoS or mixed PoW+PoS system with smart contract
-support, transforming Ethereum into a {\em third-generation\/}
+support, transforming a smart-contract platform into a {\em third-generation\/}
 project.
 
 \nxsubpoint \embt(BitShares \cite{BitShWP}.)
@@ -3696,7 +3633,7 @@ and their implications for the scalability of a blockchain system.
 \emph{Website:} \url{https://polkadot.io/}.  {\em PolkaDot\/} (2019 or later) is one
 of the best thought-out and most detailed proposed multichain
 Proof-of-Stake projects; its development is led by one of the
-Ethereum co-founders. This project is one of the closest projects to
+a smart-contract platform co-founders. This project is one of the closest projects to
 the TOS Blockchain on our map. (In fact, we are indebted for our
 terminology for ``fishermen'' and ``nominators'' to the PolkaDot
 project.)
@@ -3704,7 +3641,7 @@ project.)
 PolkaDot is a heterogeneous loosely-coupled multichain Proof-of-Stake
 project, with Byzantine Fault Tolerant (BFT) consensus for generation
 of new blocks and a masterchain (which might be external---e.g., the
-Ethereum blockchain). It also uses hypercube routing, somewhat like
+a smart-contract platform blockchain). It also uses hypercube routing, somewhat like
 (the slow version of) TOS as described in~\ptref{sp:hypercube}.
 
 Its unique feature is its ability to create not only {\em public}, but
@@ -3739,12 +3676,12 @@ in a trusted centralized environment?).
 \nxsubpoint \embt(Plasma.)
             \emph{Website:} \url{https://plasma.io}.  {\em Plasma\/}
 (2019?) is an unconventional blockchain project from another
-co-founder of Ethereum. It is supposed to mitigate some limitations of
-Ethereum without introducing sharding. In essence, it is a separate
-project from Ethereum, introducing a hierarchy of (heterogeneous)
-workchains, bound to the Ethereum blockchain (to be used as an
+co-founder of a smart-contract platform. It is supposed to mitigate some limitations of
+a smart-contract platform without introducing sharding. In essence, it is a separate
+project from a smart-contract platform, introducing a hierarchy of (heterogeneous)
+workchains, bound to the a smart-contract platform blockchain (to be used as an
 external masterchain) at the top level. Funds can be transferred from
-any blockchain up in the hierarchy (starting from the Ethereum
+any blockchain up in the hierarchy (starting from the a smart-contract platform
 blockchain as the root), along with a description of a job to be
 done. Then the necessary computations are done in the child workchain
 (possibly requiring forwarding of parts of the original job further
@@ -3756,7 +3693,7 @@ workchain to its parent workchain (albeit slowly), and re-allocate
 their funds and their jobs to another workchain.
 
 In this way, Plasma might become a platform for distributed
-computations bound to the Ethereum blockchain, something like a
+computations bound to the a smart-contract platform blockchain, something like a
 ``mathematical co-processor''. However, this does not seem like a way
 to achieve true general-purpose scalability.
 
@@ -3885,7 +3822,7 @@ provided the protocol used to connect to full nodes is standardized
 enough.
 
 While the networking demands of single-blockchain projects, such as
-Bitcoin or Ethereum, can be met quite easily (one essentially needs to
+Bitcoin or a smart-contract platform, can be met quite easily (one essentially needs to
 construct a ``random'' peer-to-peer overlay network, and propagate all
 new blocks and transaction candidates by a gossip protocol),
 multichain projects, such as the TOS Blockchain, are much more
@@ -4698,11 +4635,9 @@ the TOS ecosystem. First of all, a simple classification is in order:
 current TOS product shape, the primary integration point for wallets,
 explorers, backends and automation is the node itself rather than an
 externally reconstructed gateway stack. The
-\texttt{validator-engine} embeds the canonical JSON-RPC namespaces of
-the major execution domains: \texttt{tos\_*} for the native
-workchain, \texttt{eth\_*} for the EVM-oriented workchain and
-\texttt{uno\_*} for the Uno privacy workchain. The same embedded
-server also exposes structured health, readiness and metrics surfaces
+\texttt{validator-engine} embeds the canonical JSON-RPC namespace for
+the native workchain: \texttt{tos\_*}. The same embedded server also
+exposes structured health, readiness and metrics surfaces
 for machine consumption.
 
 \nxsubpoint \embt(Standards as ecosystem surfaces.)  Closely related
@@ -5299,11 +5234,9 @@ wallet-to-application connection flow, by which a wallet, browser or
 dapp discovers a counterparty, negotiates supported methods and asks
 the user for account access or transaction signatures. TOS treats
 this as a first-class ecosystem surface because one user wallet may
-need to interact with applications across several execution domains:
-native TVM contracts in Workchain Zero, Ethereum-style contracts in
-Workchain One, or privacy-preserving workflows around Uno in
-Workchain Two. A standardized connection layer avoids bespoke
-integration logic for each application.
+need to interact with native TVM contracts in Workchain Zero. A
+standardized connection layer avoids bespoke integration logic for
+each application.
 
 \nxsubpoint \embt(``tos-sites'' as tos-services supporting an HTTP
 interface.)  A {\em tos-site\/} is simply a tos-service that supports
@@ -5389,8 +5322,8 @@ Hypercube Routing for faster communication between shards
 (cf.~\ptref{sp:instant.hypercube}). TOS preserves this architecture
 while evolving the operational and execution layers around it,
 including Simplex-oriented fast consensus, a node-first product
-surface and the possibility of heterogeneous workchains such as an
-EVM-oriented workchain. A brief comparison of the TOS
+surface and the possibility of future heterogeneous workchains. A
+brief comparison of the TOS
 Blockchain to existing and proposed blockchain projects
 (cf.~\ptref{sect:class.blkch} and~\ptref{sect:compare.blkch})
 highlights the benefits of this approach for systems that seek to
@@ -5431,8 +5364,8 @@ feel integrated rather than assembled.
 \bibitem{Birman}
   {\sc K.~Birman}, {\sl Reliable Distributed Systems: Technologies, Web Services and Applications}, Springer, 2005.
 
-\bibitem{EthWP}
-  {\sc V.~Buterin}, {\sl Ethereum: A next-generation smart contract and decentralized application platform}, \url{https://github.com/ethereum/wiki/wiki/White-Paper}, 2013.
+\bibitem{SmartContractWP}
+  {\sc V.~Buterin}, {\sl a smart-contract platform: A next-generation smart contract and decentralized application platform}, \url{https://github.com/smart-contract-platform/wiki/wiki/White-Paper}, 2013.
 
 \bibitem{BenOr}
   {\sc M.~Ben-Or, B.~Kelmer, T.~Rabin}, {\sl Asynchronous secure computations with optimal resilience}, in {\em Proceedings of the thirteenth annual ACM symposium on Principles of distributed computing}, p.~183--192. ACM, 1994.

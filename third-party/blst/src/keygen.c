@@ -230,7 +230,7 @@ void blst_keygen_v5(pow256 SK, const void *IKM, size_t IKM_len,
 {   keygen(SK, IKM, IKM_len, salt, salt_len, info, info_len, 5);   }
 
 /*
- * https://eips.ethereum.org/EIPS/eip-2333
+ * Key derivation variant for the named compatibility API.
  */
 void blst_derive_master_eip2333(pow256 SK, const void *seed, size_t seed_len)
 {   keygen(SK, seed, seed_len, NULL, 0, NULL, 0, 4);   }
