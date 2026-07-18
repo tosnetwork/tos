@@ -32,9 +32,6 @@ RUN apt-get install -y gcc-11 g++-11
 RUN apt-get install -y valgrind
 # install folly depencencies
 RUN apt-get install -y libgoogle-glog-dev
-# install openjdk 8
-RUN apt-get install -y openjdk-8-jdk
-ENV JAVA_HOME /usr/lib/jvm/java-1.8.0-openjdk-amd64
 # install mingw
 RUN apt-get install -y mingw-w64
 

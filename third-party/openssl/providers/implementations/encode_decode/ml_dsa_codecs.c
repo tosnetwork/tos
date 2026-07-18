@@ -508,7 +508,7 @@ ossl_ml_dsa_d2i_PKCS8(const uint8_t *prvenc, int prvlen,
         seed = buf + p8fmt->seed_offset;
     if (p8fmt->priv_length > 0)
         priv = buf + p8fmt->priv_offset;
-    /* Any OQS public key content is ignored */
+    /* Any appended public key content is ignored */
 
     if (ossl_ml_dsa_set_prekey(key, 0, 0,
             seed, ML_DSA_SEED_BYTES, priv, v->sk_len))
@@ -637,9 +637,9 @@ int ossl_ml_dsa_i2d_prvkey(const ML_DSA_KEY *key, uint8_t **out,
         memcpy(pos, sk, params->sk_len);
         pos += params->sk_len;
     }
-    /* OQS form output with tacked-on public key */
+    /* Optional form output with tacked-on public key */
     if (p8fmt->pub_length != 0) {
-        /* The OQS pubkey is never separately DER-wrapped */
+        /* The appended public key is never separately DER-wrapped */
         if (pos != buf + p8fmt->pub_offset) {
             ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR,
                 "error encoding %s private key", params->alg);

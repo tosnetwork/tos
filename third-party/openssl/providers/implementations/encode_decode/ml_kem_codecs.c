@@ -390,7 +390,7 @@ ossl_ml_kem_d2i_PKCS8(const uint8_t *prvenc, int prvlen,
         }
         memcpy(key->encoded_dk, buf + p8fmt->priv_offset, p8fmt->priv_length);
     }
-    /* Any OQS public key content is ignored */
+    /* Any appended public key content is ignored */
     ret = key;
 
 end:
@@ -527,9 +527,9 @@ int ossl_ml_kem_i2d_prvkey(const ML_KEM_KEY *key, uint8_t **out,
         }
         pos += v->prvkey_bytes;
     }
-    /* OQS form output with tacked-on public key */
+    /* Optional form output with tacked-on public key */
     if (p8fmt->pub_length != 0) {
-        /* The OQS pubkey is never separately DER-wrapped */
+        /* The appended public key is never separately DER-wrapped */
         if (pos != buf + p8fmt->pub_offset
             || !ossl_ml_kem_encode_public_key(pos, v->pubkey_bytes, key)) {
             ERR_raise_data(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR,

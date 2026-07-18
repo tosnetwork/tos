@@ -65,9 +65,6 @@ RUN apt-get install -y valgrind
 # So instead install from source. This currently requires compiling with
 # -DGLOG_USE_GLOG_EXPORT
 RUN wget https://github.com/google/glog/archive/refs/tags/v0.7.1.tar.gz && tar xzf v0.7.1.tar.gz && cd glog-0.7.1/ && cmake -S . -B build -G "Unix Makefiles" && cmake --build build && cmake --build build --target install && cd .. && rm -rf v0.7.1.tar.gz glog-0.7.1
-# install openjdk 8
-RUN apt-get install -y openjdk-8-jdk
-ENV JAVA_HOME /usr/lib/jvm/java-1.8.0-openjdk-amd64
 # install mingw
 RUN apt-get install -y mingw-w64
 

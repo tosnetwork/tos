@@ -252,7 +252,6 @@ In the B<openssl.cnf> file, this looks like:
     [ml_dsa_sect]
     prefer_seed = yes
     retain_seed = yes
-    # OQS legacy formats disabled
     input_formats = seed-priv, seed-only, priv-only
     # Output either the seed alone, or else the key alone
     output_formats = seed-only, priv-only
