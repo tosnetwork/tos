@@ -1,3 +1,10 @@
+## 2026 AI Actor Roadmap Update
+
+1. Project direction updated: TOS is now documented as an actor-model blockchain for independent AI agents, asynchronous coordination, verifiable workflows, and native on-chain payments.
+2. Added [`ROADMAP.md`](./ROADMAP.md), covering agent accounts, agent messaging, task contracts, capability registries, service actors, verifiable workflows, and the phased engineering path for an AI-native actor economy.
+3. Updated [`README.md`](./README.md) to present the project around native TVM execution for actor-based AI applications.
+4. Root-level documentation now keeps the native execution surface focused while describing future AI actor security and product primitives.
+
 ## 2026.04 Update
 
 1. Networking improvements: anti-spam measures that could affect block rate have been introduced in overlays, ADNL, and QUIC

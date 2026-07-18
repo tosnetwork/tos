@@ -5,7 +5,7 @@ This repository has two build surfaces:
 - C++/CMake/Ninja for the node, networking, native execution, and tooling
 - Rust/Cargo under `tosctl/src` for operator tooling and Rust-side libraries
 
-No custom-workchain third-party stack is required for the current C++ build.
+The current build focuses on the native TVM execution surface for actor-based applications.
 
 ## Linux Prerequisites
 

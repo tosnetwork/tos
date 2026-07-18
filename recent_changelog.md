@@ -1,5 +1,8 @@
 ## 2026.04 Recent Changes
 
+0. Project positioning update:
+Updated the root README and roadmap to position TOS as an actor-model blockchain for independent AI agents, asynchronous coordination, verifiable workflows, and native on-chain payments. The roadmap now focuses on agent accounts, task contracts, capability registries, service actors, and verifiable AI workflow primitives.
+
 1. Wallet security hardening:
 Added `global_id` anti-replay protection to wallet signing and verification, so wallet messages signed for one network are rejected on another. This applies across wallet contracts, Fift scripts, C++ signing code, zerostate generation, and `toslib` wallet wiring.
 

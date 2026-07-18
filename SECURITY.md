@@ -1,6 +1,6 @@
 # Security Policy
 
-This repository currently ships the native TVM execution path only.
+This repository currently ships the native TVM execution path for actor-based applications.
 
 ## Supported Surface
 
@@ -15,6 +15,19 @@ Security review should focus on:
 - wallet and token indexing for wc=0
 - build, release, and deployment scripts
 
+## AI Actor Security Scope
+
+As TOS evolves toward AI-native actor workflows, security review should also cover:
+
+- agent account ownership, delegation, recovery, and spending policies
+- task contracts that hold escrow, enforce deadlines, and settle payouts
+- service actors for model, data, tool, and compute access
+- capability registries, metadata updates, staking, and reputation references
+- asynchronous workflow messages, callbacks, retries, timeouts, and cancellation paths
+- result verification metadata, signed responses, attestations, and external evidence references
+
+Agent workflows should be designed so that balances, task state, permissions, and settlement rules remain auditable from chain state.
+
 ## Reporting
 
 Report suspected vulnerabilities privately to the project maintainers. Include:
@@ -27,6 +40,6 @@ Report suspected vulnerabilities privately to the project maintainers. Include:
 
 Avoid publishing exploit details before maintainers have had time to triage and patch.
 
-## Custom Workchains
+## Execution Scope
 
-Custom execution domains are outside the current security scope. If any are introduced in the future, they require fresh threat models, dedicated audits, and release gates before production use.
+Execution domains outside the native TVM surface are outside the current security scope. If any are introduced in the future, they require fresh threat models, dedicated audits, and release gates before production use.
