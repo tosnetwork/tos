@@ -181,8 +181,15 @@ Examples:
 - Add proof adapter interfaces for signed results, attestations and external evidence.
   (not started; Task Escrow/Dispute already carry generic evidence/ruling *hashes*, but there
   is no pluggable verification-backend interface yet)
-- Add workflow examples that compose planner, worker, service and verifier actors. (not started)
-- Publish reference schemas for result metadata and evidence bundles. (not started)
+- Add workflow examples that compose planner, worker, service and verifier actors: see
+  [`doc/ai-agent-workflow-example.md`](doc/ai-agent-workflow-example.md), which walks a
+  planner posting a Task Escrow, a worker (Agent Account) accepting it and paying a Service
+  Actor mid-task, a verifier settling the happy path, and a reviewer (Dispute contract)
+  resolving a contested one.
+- Publish reference schemas for result metadata and evidence bundles: see
+  [`doc/ai-workflow-schemas.md`](doc/ai-workflow-schemas.md) -- a canonical-JSON-plus-SHA-256
+  hashing convention and JSON shapes for every `*_hash` field across Task Escrow, Capability
+  Registry, Service Actor, Dispute and Agent Account.
 
 ### Phase 5: Scalable Agent Economy
 
