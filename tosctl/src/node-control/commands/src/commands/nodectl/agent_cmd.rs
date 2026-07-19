@@ -7,6 +7,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 
+use super::capability_registry_cmd::CapabilityRegistryCmd;
 use super::output_format::OutputFormat;
 use super::utils::{
     calculate_wallet_address, get_wallet_config, load_config_vault, load_config_vault_rpc_client,
@@ -71,6 +72,8 @@ pub enum AgentAction {
     Account(AgentAccountCmd),
     /// Native Task Escrow contract operations
     Task(AgentTaskCmd),
+    /// Capability Registry operations
+    Registry(CapabilityRegistryCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -852,6 +855,7 @@ impl AgentCmd {
             AgentAction::Wallet(cmd) => cmd.run(&self.config).await,
             AgentAction::Account(cmd) => cmd.run(&self.config).await,
             AgentAction::Task(cmd) => cmd.run(&self.config).await,
+            AgentAction::Registry(cmd) => cmd.run(&self.config).await,
         }
     }
 }
@@ -2051,7 +2055,7 @@ async fn run_agent_account_owner_action(
     Ok(())
 }
 
-async fn send_wallet_message(
+pub(crate) async fn send_wallet_message(
     wallet: &dyn Wallet,
     rpc_client: std::sync::Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
     destination: MsgAddressInt,
@@ -2073,7 +2077,7 @@ async fn send_wallet_message(
     .await
 }
 
-async fn send_wallet_message_with_state_init(
+pub(crate) async fn send_wallet_message_with_state_init(
     wallet: &dyn Wallet,
     rpc_client: std::sync::Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
     destination: MsgAddressInt,
@@ -2862,7 +2866,7 @@ impl AgentWalletUpdatePolicyCmd {
     }
 }
 
-fn validate_tos_amount(name: &str, value: f64) -> anyhow::Result<()> {
+pub(crate) fn validate_tos_amount(name: &str, value: f64) -> anyhow::Result<()> {
     if !value.is_finite() || value < 0.0 {
         anyhow::bail!("{name} must be a finite non-negative TOS amount");
     }
@@ -2909,7 +2913,7 @@ async fn build_agent_account_init(
     ))
 }
 
-fn parse_optional_hash(name: &str, value: &Option<String>) -> anyhow::Result<Option<[u8; 32]>> {
+pub(crate) fn parse_optional_hash(name: &str, value: &Option<String>) -> anyhow::Result<Option<[u8; 32]>> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -2921,7 +2925,7 @@ fn parse_optional_hash(name: &str, value: &Option<String>) -> anyhow::Result<Opt
     Ok(Some(hash))
 }
 
-fn parse_required_hash(name: &str, value: &Option<String>) -> anyhow::Result<[u8; 32]> {
+pub(crate) fn parse_required_hash(name: &str, value: &Option<String>) -> anyhow::Result<[u8; 32]> {
     parse_optional_hash(name, value)?.ok_or_else(|| anyhow::anyhow!("--{name} is required"))
 }
 
@@ -2943,7 +2947,7 @@ fn task_status_name(status: u8) -> &'static str {
     }
 }
 
-fn confirm(prompt: &str) -> anyhow::Result<bool> {
+pub(crate) fn confirm(prompt: &str) -> anyhow::Result<bool> {
     print!("{prompt} [y/N]: ");
     std::io::stdout().flush()?;
     let mut answer = String::new();

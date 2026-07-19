@@ -861,6 +861,7 @@ dependencies = [
  "tl_api",
  "tokio",
  "tos_sandbox",
+ "tos_vm",
 ]
 
 [[package]]

@@ -12,6 +12,9 @@ crypto/smartcont/auto/
 test/regression-tests.cache/
 *.swp
 **/*build*/
+# Convenience symlink to a build dir so tos_sandbox::compile can find func/fift
+# (it looks for build/crypto/func relative to the repo root).
+/build
 .cache
 .idea
 .vscode
@@ -29,6 +32,7 @@ test/integration/.network
 test/integration/.localnet*
 test/integration/.task-escrow-*
 test/integration/.agent-query-api-*
+test/integration/.capability-registry-*
 
 test/tostester/tests/tl/generated
 test/tostester/src/tosapi

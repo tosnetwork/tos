@@ -472,6 +472,7 @@ mod tests {
             wallets: HashMap::new(),
             agent_wallets: HashMap::new(),
             agent_tasks: HashMap::new(),
+            capability_registries: HashMap::new(),
             pools: HashMap::new(),
             bindings: HashMap::new(),
             chain_rpc: ChainRpcConfig::default(),

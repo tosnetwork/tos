@@ -11,6 +11,7 @@ pub(crate) mod agent_cmd;
 pub(crate) mod admin_cmd;
 pub(crate) mod auth_cmd;
 pub(crate) mod backup_cmd;
+pub(crate) mod capability_registry_cmd;
 pub(crate) mod config_bind_cmd;
 pub(crate) mod config_chain_rpc_cmd;
 pub(crate) mod config_cmd;

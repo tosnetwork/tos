@@ -1,0 +1,205 @@
+;; Copyright (C) 2025-2026  TOS Network.
+;; Minimal AI Agent Capability Registry actor.
+;;
+;; One instance per registered agent/service, discoverable at a deterministic
+;; address the same way Agent Account and Task Escrow are (this registry is
+;; not a single shared dictionary contract). Tracks the capability metadata
+;; an agent advertises (task categories, pricing model, verification
+;; method), an optional stake/bond, and a reputation reference a designated
+;; verifier can adjust.
+;;
+;; Persistent data layout:
+;;   owner:MsgAddress
+;;   has_verifier:uint1 verifier:MsgAddress
+;;   active:uint1
+;;   registered_at:uint64
+;;   bond:coins
+;;   reputation_score:int32
+;;   verification_method_hash:uint256
+;;   ^[task_categories_hash:uint256 pricing_hash:uint256 metadata_hash:uint256]
+;;
+;; Internal messages:
+;;   update_metadata#43415001 query_id:uint64 task_categories_hash:uint256
+;;                  pricing_hash:uint256 metadata_hash:uint256
+;;                  ^[verification_method_hash:uint256] = InternalMsgBody;
+;;   (verification_method_hash is in a separate cell reference: 4 inline
+;;   uint256 fields plus the 32-bit op and 64-bit query_id would exceed the
+;;   1023-bit single-cell limit.)
+;;   update_verifier#43415002 query_id:uint64 has_verifier:uint1
+;;                  verifier:MsgAddress = InternalMsgBody;
+;;   stake#43415003 query_id:uint64 = InternalMsgBody;
+;;   withdraw_bond#43415004 query_id:uint64 amount:coins = InternalMsgBody;
+;;   update_reputation#43415005 query_id:uint64 delta:int32 = InternalMsgBody;
+;;   deactivate#43415006 query_id:uint64 = InternalMsgBody;
+;;   reactivate#43415007 query_id:uint64 = InternalMsgBody;
+
+const int op::update_metadata = 0x43415001;
+const int op::update_verifier = 0x43415002;
+const int op::stake = 0x43415003;
+const int op::withdraw_bond = 0x43415004;
+const int op::update_reputation = 0x43415005;
+const int op::deactivate = 0x43415006;
+const int op::reactivate = 0x43415007;
+
+const int err::not_owner = 1800;
+const int err::not_verifier = 1801;
+const int err::no_verifier = 1802;
+const int err::inactive = 1803;
+const int err::already_active = 1804;
+const int err::insufficient_bond = 1805;
+const int err::insufficient_balance = 1806;
+const int err::unknown_op = 1807;
+
+(slice, int, slice, int, int, int, int, int, int, int, int) load_state() inline {
+  slice ds = get_data().begin_parse();
+  slice owner = ds~load_msg_addr();
+  int has_verifier = ds~load_uint(1);
+  slice verifier = ds~load_msg_addr();
+  int active = ds~load_uint(1);
+  int registered_at = ds~load_uint(64);
+  int bond = ds~load_tomis();
+  int reputation_score = ds~load_int(32);
+  int verification_method_hash = ds~load_uint(256);
+  slice meta = ds~load_ref().begin_parse();
+  int task_categories_hash = meta~load_uint(256);
+  int pricing_hash = meta~load_uint(256);
+  int metadata_hash = meta~load_uint(256);
+  ds.end_parse();
+  meta.end_parse();
+  return (owner, has_verifier, verifier, active, registered_at, bond, reputation_score,
+    verification_method_hash, task_categories_hash, pricing_hash, metadata_hash);
+}
+
+() save_state(slice owner, int has_verifier, slice verifier, int active, int registered_at,
+             int bond, int reputation_score, int verification_method_hash,
+             int task_categories_hash, int pricing_hash, int metadata_hash) impure inline {
+  set_data(begin_cell()
+    .store_slice(owner)
+    .store_uint(has_verifier, 1)
+    .store_slice(verifier)
+    .store_uint(active, 1)
+    .store_uint(registered_at, 64)
+    .store_tomis(bond)
+    .store_int(reputation_score, 32)
+    .store_uint(verification_method_hash, 256)
+    .store_ref(begin_cell()
+      .store_uint(task_categories_hash, 256)
+      .store_uint(pricing_hash, 256)
+      .store_uint(metadata_hash, 256)
+    .end_cell())
+  .end_cell());
+}
+
+;; mode 1: send exactly `amount`, fees paid from the contract balance.
+;; mode 128: `amount` is ignored and the whole remaining balance is carried.
+() send_value(slice destination, int amount, int mode) impure inline {
+  send_raw_message(begin_cell()
+    .store_uint(0x10, 6)
+    .store_slice(destination)
+    .store_tomis(amount)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+  .end_cell(), mode);
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  if (in_msg.slice_empty?()) { return (); }
+  int op = in_msg~load_uint(32);
+  int query_id = in_msg~load_uint(64);
+  query_id~impure_touch();
+
+  var full_msg = in_msg_full.begin_parse();
+  full_msg~skip_bits(4);
+  slice sender = full_msg~load_msg_addr();
+
+  (slice owner, int has_verifier, slice verifier, int active, int registered_at,
+   int bond, int reputation_score, int verification_method_hash,
+   int task_categories_hash, int pricing_hash, int metadata_hash) = load_state();
+
+  if (op == op::stake) {
+    ;; Anyone may top up the bond; the incoming value is already credited to
+    ;; the contract balance, this just records it against the tracked `bond`.
+    bond += msg_value;
+    save_state(owner, has_verifier, verifier, active, registered_at, bond,
+      reputation_score, verification_method_hash, task_categories_hash, pricing_hash,
+      metadata_hash);
+    return ();
+  }
+
+  if (op == op::update_metadata) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    throw_unless(err::inactive, active == 1);
+    int new_task_categories_hash = in_msg~load_uint(256);
+    int new_pricing_hash = in_msg~load_uint(256);
+    int new_metadata_hash = in_msg~load_uint(256);
+    slice vmh_slice = in_msg~load_ref().begin_parse();
+    int new_verification_method_hash = vmh_slice~load_uint(256);
+    vmh_slice.end_parse();
+    in_msg.end_parse();
+    save_state(owner, has_verifier, verifier, active, registered_at, bond,
+      reputation_score, new_verification_method_hash, new_task_categories_hash,
+      new_pricing_hash, new_metadata_hash);
+    return ();
+  }
+
+  if (op == op::update_verifier) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    int new_has_verifier = in_msg~load_uint(1);
+    slice new_verifier = in_msg~load_msg_addr();
+    in_msg.end_parse();
+    save_state(owner, new_has_verifier, new_verifier, active, registered_at, bond,
+      reputation_score, verification_method_hash, task_categories_hash, pricing_hash,
+      metadata_hash);
+    return ();
+  }
+
+  if (op == op::withdraw_bond) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    int amount = in_msg~load_tomis();
+    in_msg.end_parse();
+    throw_unless(err::insufficient_bond, amount <= bond);
+    throw_unless(err::insufficient_balance, amount <= get_balance().pair_first());
+    if (amount > 0) {
+      send_value(owner, amount, 1);
+    }
+    save_state(owner, has_verifier, verifier, active, registered_at, bond - amount,
+      reputation_score, verification_method_hash, task_categories_hash, pricing_hash,
+      metadata_hash);
+    return ();
+  }
+
+  if (op == op::update_reputation) {
+    throw_unless(err::no_verifier, has_verifier == 1);
+    throw_unless(err::not_verifier, equal_slice_bits(sender, verifier));
+    int delta = in_msg~load_int(32);
+    in_msg.end_parse();
+    save_state(owner, has_verifier, verifier, active, registered_at, bond,
+      reputation_score + delta, verification_method_hash, task_categories_hash,
+      pricing_hash, metadata_hash);
+    return ();
+  }
+
+  if (op == op::deactivate) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    throw_unless(err::inactive, active == 1);
+    send_value(owner, 0, 128);
+    save_state(owner, has_verifier, verifier, 0, registered_at, 0,
+      reputation_score, verification_method_hash, task_categories_hash, pricing_hash,
+      metadata_hash);
+    return ();
+  }
+
+  if (op == op::reactivate) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    throw_unless(err::already_active, active == 0);
+    save_state(owner, has_verifier, verifier, 1, registered_at, bond,
+      reputation_score, verification_method_hash, task_categories_hash, pricing_hash,
+      metadata_hash);
+    return ();
+  }
+
+  throw(err::unknown_op);
+}
+
+(slice, int, slice, int, int, int, int, int, int, int, int) get_capability_registry_data() method_id {
+  return load_state();
+}

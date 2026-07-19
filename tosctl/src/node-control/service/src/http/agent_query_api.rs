@@ -432,6 +432,7 @@ mod tests {
             nodes: Default::default(),
             wallets: Default::default(),
             agent_wallets: Default::default(),
+            capability_registries: Default::default(),
             agent_tasks: Default::default(),
             pools: Default::default(),
             bindings: Default::default(),

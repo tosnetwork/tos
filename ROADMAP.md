@@ -124,6 +124,8 @@ Examples:
 - Add `tosctl agent account deploy` to deploy deterministic Agent Account state through a configured funding wallet.
 - Add `tosctl agent account show/status` for get-method inspection and local-profile verification.
 - Add owner-signed Agent Account policy updates and controller rotation with post-transaction verification.
+- Add `tosctl agent wallet send` for owner-authorized transfers from the underlying Agent Wallet;
+  automated agent spending must continue through Agent Account policy enforcement.
 - Implement task escrow contracts with deadlines, result submission and settlement.
 - Add SDK helpers for creating agent accounts and task contracts.
 - Add JSON-RPC flows for task discovery, task state and agent account inspection.
@@ -138,11 +140,20 @@ Examples:
 
 ### Phase 3: Agent Registry and Service Marketplace
 
-- Add a capability registry contract.
-- Support agent registration, metadata updates, staking and reputation references.
-- Add service actor templates for model, data and tool providers.
-- Add native payment flows for per-call or per-task settlement.
-- Provide `tosctl` commands for registering agents, posting tasks and inspecting service actors.
+- Add a capability registry contract: one deployed instance per registered agent/service
+  (the same per-actor pattern as Agent Account and Task Escrow), tracking owner, an optional
+  verifier role, task-category/pricing/metadata/verification-method hashes, a stakeable bond,
+  and an accumulating signed reputation score, with an active/inactive lifecycle.
+- Support agent registration, metadata updates, staking and reputation references: owner-signed
+  metadata updates and verifier rotation, permissionless staking, owner-gated bond withdrawal,
+  verifier-gated reputation deltas, deactivate (refunds the bond) and reactivate.
+- Provide `tosctl agent registry deploy/ls/show/send/build-state` commands for registering
+  agents and inspecting registry entries (`send --operation` covers update-metadata,
+  update-verifier, stake, withdraw-bond, update-reputation, deactivate, reactivate).
+- Add service actor templates for model, data and tool providers. (not started)
+- Add native payment flows for per-call or per-task settlement. (not started)
+- `GET /tasks`'s "local registry only" limitation (see Phase 2) is not yet resolved by an
+  indexer; the capability registry above is a per-agent lookup, not a chain-wide index either.
 
 ### Phase 4: Verifiable AI Workflows
 

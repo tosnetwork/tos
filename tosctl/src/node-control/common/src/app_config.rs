@@ -419,6 +419,31 @@ pub struct AgentTaskConfig {
     pub created_at: Option<u64>,
 }
 
+/// Locally tracked Capability Registry deployment record.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+pub struct CapabilityRegistryConfig {
+    /// Deployed Capability Registry contract address.
+    pub address: String,
+    /// Registry owner address.
+    pub owner: String,
+    /// Optional verifier allowed to adjust the reputation score.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verifier: Option<String>,
+    /// Hex-encoded 32-byte hash of the advertised task categories.
+    pub task_categories_hash: String,
+    /// Hex-encoded 32-byte hash of the advertised pricing model.
+    pub pricing_hash: String,
+    /// Hex-encoded 32-byte hash of general capability/service metadata.
+    pub metadata_hash: String,
+    /// Hex-encoded 32-byte hash identifying the supported verification method.
+    pub verification_method_hash: String,
+    /// Unix timestamp recorded as the registration time.
+    pub registered_at: u64,
+    /// Unix timestamp when this local record was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 #[serde(tag = "kind")]
 pub enum PoolConfig {
@@ -804,6 +829,9 @@ pub struct AppConfig {
     /// Task Escrow deployments tracked by this operator, keyed by local task name.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub agent_tasks: HashMap<String, AgentTaskConfig>,
+    /// Capability Registry deployments tracked by this operator, keyed by local name.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub capability_registries: HashMap<String, CapabilityRegistryConfig>,
     #[serde(default)]
     pub pools: HashMap<String, PoolConfig>,
     #[serde(default)]

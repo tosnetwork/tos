@@ -233,6 +233,7 @@ mod tests {
                 bookmarks: HashMap::new(),
                 agent_wallets: HashMap::new(),
                 agent_tasks: HashMap::new(),
+                capability_registries: HashMap::new(),
                 alerts: Default::default(),
             }),
         })

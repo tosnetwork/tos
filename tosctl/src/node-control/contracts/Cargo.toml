@@ -19,3 +19,4 @@ chain-rpc-client = { path = "../chain-rpc-client" }
 [dev-dependencies]
 tokio = "1.48.0"
 tos_sandbox = { path = '../../sandbox' }
+tos_vm = { path = '../../vm' }
