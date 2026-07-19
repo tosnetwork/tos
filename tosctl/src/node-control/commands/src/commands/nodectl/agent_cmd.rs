@@ -37,6 +37,7 @@ use secrets_vault::types::{
     algorithm::Algorithm, secret::Secret, secret_id::SecretId, secret_spec::SecretSpec,
 };
 use secrets_vault::vault::SecretVault;
+use sha2::{Digest, Sha256};
 use std::{io::Write, path::Path, str::FromStr};
 
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -201,6 +202,8 @@ pub struct AgentTaskBuildStateCmd {
     agent: Option<String>,
     #[arg(long, help = "Optional verifier allowed to settle the task")]
     verifier: Option<String>,
+    #[arg(long, help = "Optional account-permission ID linked to this task")]
+    permission_id: Option<String>,
     #[arg(long, help = "Escrow budget in TOS")]
     budget: f64,
     #[arg(long, help = "Unix deadline")]
@@ -896,6 +899,7 @@ struct AgentTaskDataView {
     assigned_agent: Option<String>,
     verifier: Option<String>,
     permission_id: Option<String>,
+    permission_hash: String,
     budget: String,
     deadline: u64,
     status: String,
@@ -923,6 +927,7 @@ impl AgentTaskShowCmd {
             assigned_agent: data.assigned_agent.map(|value| value.to_string()),
             verifier: data.verifier.map(|value| value.to_string()),
             permission_id,
+            permission_hash: hex::encode(data.permission_hash),
             budget: display_tos(data.budget),
             deadline: data.deadline,
             status: task_status_name(data.status).to_string(),
@@ -971,6 +976,7 @@ impl AgentTaskCreateCmd {
             budget: tos_to_nanotos(self.budget),
             deadline: self.deadline,
             settlement_policy_hash: policy_hash,
+            permission_hash: permission_id_hash(self.permission_id.as_deref()),
         };
         let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
         let state_init = TaskEscrowContract::build_state_init(&init)?;
@@ -1144,6 +1150,9 @@ impl AgentTaskEncodeCmd {
 struct AgentTaskStateView {
     creator: String,
     assigned_agent: Option<String>,
+    verifier: Option<String>,
+    permission_id: Option<String>,
+    permission_hash: String,
     budget: String,
     deadline: u64,
     workchain: i32,
@@ -1172,13 +1181,18 @@ impl AgentTaskBuildStateCmd {
             .with_context(|| "verifier must be a valid native address")?;
         let policy_hash = parse_optional_hash("policy-hash", &Some(self.policy_hash.clone()))?
             .expect("policy hash is required");
+        if let Some(permission_id) = &self.permission_id {
+            validate_non_empty("permission-id", permission_id)?;
+        }
+        let permission_hash = permission_id_hash(self.permission_id.as_deref());
         let init = TaskEscrowInit {
             creator: creator.clone(),
             assigned_agent: assigned_agent.clone(),
-            verifier,
+            verifier: verifier.clone(),
             budget: tos_to_nanotos(self.budget),
             deadline: self.deadline,
             settlement_policy_hash: policy_hash,
+            permission_hash,
         };
         let state_init = TaskEscrowContract::build_state_init(&init)?;
         let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
@@ -1188,6 +1202,9 @@ impl AgentTaskBuildStateCmd {
         let view = AgentTaskStateView {
             creator: creator.to_string(),
             assigned_agent: assigned_agent.map(|value| value.to_string()),
+            verifier: verifier.map(|value| value.to_string()),
+            permission_id: self.permission_id.clone(),
+            permission_hash: hex::encode(permission_hash),
             budget: display_tos(init.budget),
             deadline: init.deadline,
             workchain: self.workchain,
@@ -1203,6 +1220,10 @@ impl AgentTaskBuildStateCmd {
         } else {
             println!("Task Escrow address: {}", view.address);
             println!("Creator: {}", view.creator);
+            println!("Assigned Agent: {}", view.assigned_agent.as_deref().unwrap_or("none"));
+            println!("Verifier: {}", view.verifier.as_deref().unwrap_or("none"));
+            println!("Permission ID: {}", view.permission_id.as_deref().unwrap_or("none"));
+            println!("Permission hash: {}", view.permission_hash);
             println!("Budget: {} TOS", view.budget);
             println!("Deadline: {}", view.deadline);
             println!("StateInit BOC: {}", view.state_init_boc);
@@ -2600,6 +2621,10 @@ fn parse_required_hash(name: &str, value: &Option<String>) -> anyhow::Result<[u8
     parse_optional_hash(name, value)?.ok_or_else(|| anyhow::anyhow!("--{name} is required"))
 }
 
+fn permission_id_hash(permission_id: Option<&str>) -> [u8; 32] {
+    permission_id.map(|id| Sha256::digest(id.as_bytes()).into()).unwrap_or([0; 32])
+}
+
 fn task_status_name(status: u8) -> &'static str {
     match status {
         0 => "open",
@@ -2736,4 +2761,18 @@ fn print_table_summary(view: &AgentWalletView) {
     println!("  Subwallet ID:  {}", view.subwallet_id);
     println!("  Owner key:     {}", view.owner_key);
     println!("  Controller:    {}", view.controller_key);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::permission_id_hash;
+
+    #[test]
+    fn permission_hash_has_stable_encoding() {
+        assert_eq!(
+            hex::encode(permission_id_hash(Some("e2e-agent:bounded-task:1"))),
+            "873d4711315b76cfa2130ec78baabe70fa7d60e8f69f363f45ff6f03246a81ca"
+        );
+        assert_eq!(permission_id_hash(None), [0; 32]);
+    }
 }

@@ -32,6 +32,7 @@ Exit code 0 iff every check passes.
 Run:  cd /home/tomi/tos && uv run python scripts/agent-task-escrow-e2e.py
 """
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -272,6 +273,9 @@ async def run_checks(faucet) -> None:
     check("agent recorded on-chain", same_addr(data["assigned_agent"], agent), str(data))
     check("policy hash recorded", data["settlement_policy_hash"] == POLICY_HASH)
     check("permission linkage shown", data.get("permission_id") == PERMISSION_ID, str(data))
+    check("permission hash recorded on-chain",
+          data.get("permission_hash") == hashlib.sha256(PERMISSION_ID.encode()).hexdigest(),
+          str(data))
 
     await send_op("accept", "e2e-main", "creator")
     await assert_status_stays("e2e-main", "open", "accept by creator rejected")

@@ -11,8 +11,8 @@
 //! accept -> result -> settle flow, the cancel and timeout flows, and the
 //! unauthorized/illegal-transition rejections.
 
-use contracts::{TaskEscrowContract, TaskEscrowInit};
 use chain_block::{Cell, MsgAddressInt};
+use contracts::{TaskEscrowContract, TaskEscrowInit};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
 
 const TOS: u64 = 1_000_000_000;
@@ -51,6 +51,7 @@ impl Fixture {
             budget,
             deadline,
             settlement_policy_hash: [0x11; 32],
+            permission_hash: [0x22; 32],
         };
         let escrow = TaskEscrowContract::calculate_address(-1, &init).expect("address");
         let state_init = TaskEscrowContract::build_state_init(&init).expect("state init");
@@ -102,8 +103,7 @@ fn full_happy_path_settles_exact_payout() {
     let agent_before = f.balance(&agent_addr);
     let creator_addr = f.creator.address().clone();
     let creator_before = f.balance(&creator_addr);
-    f.send_from(&creator_addr, TaskEscrowContract::settle(3, 3 * TOS).unwrap())
-        .expect_success();
+    f.send_from(&creator_addr, TaskEscrowContract::settle(3, 3 * TOS).unwrap()).expect_success();
     assert_eq!(f.status(), STATUS_SETTLED);
 
     let agent_delta = f.balance(&agent_addr) - agent_before;
@@ -214,4 +214,18 @@ fn unauthorized_and_out_of_order_messages_are_rejected() {
         .expect_aborted()
         .expect_exit_code(104);
     assert_eq!(f.status(), STATUS_SETTLED);
+}
+
+#[test]
+fn settlement_rejects_payout_above_actual_contract_balance() {
+    let mut f = Fixture::new(5 * TOS, 2 * TOS);
+    let agent_addr = f.agent.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    let creator_addr = f.creator.address().clone();
+    f.send_from(&creator_addr, TaskEscrowContract::settle(3, 4 * TOS).unwrap())
+        .expect_aborted()
+        .expect_exit_code(112);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
 }

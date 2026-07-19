@@ -377,5 +377,4 @@ The next slice should deepen the Agent Account and Task Escrow binding:
 
 - make controller-originated task actions reference the persisted permission ID and escrow address
 - add dispute/resolve/reject states to the escrow state machine
-- check the actual escrow balance rather than trusting the recorded budget
 - add public-testnet acceptance for controller-signed Agent Account actions

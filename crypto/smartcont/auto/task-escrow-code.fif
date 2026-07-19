@@ -21,31 +21,36 @@ PROGRAM{
     SENDRAWMSG
   }>
   save_state PROCINLINE:<{
-    //  creator agent has_agent verifier has_verifier budget deadline status result_hash evidence_hash policy_hash
-    s0 s2 XCHG
-    NEWC	//  creator agent has_agent verifier has_verifier budget deadline status policy_hash evidence_hash result_hash _11
-    256 STU	//  creator agent has_agent verifier has_verifier budget deadline status policy_hash evidence_hash _13
-    256 STU	//  creator agent has_agent verifier has_verifier budget deadline status policy_hash _15
-    256 STU	//  creator agent has_agent verifier has_verifier budget deadline status _17
-    ENDC	//  creator agent has_agent verifier has_verifier budget deadline status _18
-    NEWC	//  creator agent has_agent verifier has_verifier budget deadline status _18 _19
-    s0 s9 XCHG2	//  _18 agent has_agent verifier has_verifier budget deadline status _19 creator
-    STSLICER	//  _18 agent has_agent verifier has_verifier budget deadline status _20
-    s1 s6 XCHG	//  _18 agent status verifier has_verifier budget deadline has_agent _20
-    1 STU	//  _18 agent status verifier has_verifier budget deadline _22
-    s0 s6 XCHG2	//  _18 deadline status verifier has_verifier budget _22 agent
-    STSLICER	//  _18 deadline status verifier has_verifier budget _23
-    s1 s2 XCHG	//  _18 deadline status verifier budget has_verifier _23
-    1 STU	//  _18 deadline status verifier budget _25
-    ROT	//  _18 deadline status budget _25 verifier
-    STSLICER	//  _18 deadline status budget _26
-    SWAP	//  _18 deadline status _26 budget
-    STTOMIS	//  _18 deadline status _27
-    s1 s2 XCHG	//  _18 status deadline _27
-    64 STU	//  _18 status _29
-    8 STU	//  _18 _31
-    STREF	//  _32
-    ENDC	//  _33
+    //  creator agent has_agent verifier has_verifier budget deadline status result_hash evidence_hash policy_hash permission_hash
+    NEWC	//  creator agent has_agent verifier has_verifier budget deadline status result_hash evidence_hash policy_hash permission_hash _12
+    256 STU	//  creator agent has_agent verifier has_verifier budget deadline status result_hash evidence_hash policy_hash _14
+    ENDC	//  creator agent has_agent verifier has_verifier budget deadline status result_hash evidence_hash policy_hash _15
+    s0 s3 XCHG
+    NEWC	//  creator agent has_agent verifier has_verifier budget deadline status _15 evidence_hash policy_hash result_hash _16
+    256 STU	//  creator agent has_agent verifier has_verifier budget deadline status _15 evidence_hash policy_hash _18
+    s1 s2 XCHG	//  creator agent has_agent verifier has_verifier budget deadline status _15 policy_hash evidence_hash _18
+    256 STU	//  creator agent has_agent verifier has_verifier budget deadline status _15 policy_hash _20
+    256 STU	//  creator agent has_agent verifier has_verifier budget deadline status _15 _22
+    STREF	//  creator agent has_agent verifier has_verifier budget deadline status _23
+    ENDC	//  creator agent has_agent verifier has_verifier budget deadline status _24
+    NEWC	//  creator agent has_agent verifier has_verifier budget deadline status _24 _25
+    s0 s9 XCHG2	//  _24 agent has_agent verifier has_verifier budget deadline status _25 creator
+    STSLICER	//  _24 agent has_agent verifier has_verifier budget deadline status _26
+    s1 s6 XCHG	//  _24 agent status verifier has_verifier budget deadline has_agent _26
+    1 STU	//  _24 agent status verifier has_verifier budget deadline _28
+    s0 s6 XCHG2	//  _24 deadline status verifier has_verifier budget _28 agent
+    STSLICER	//  _24 deadline status verifier has_verifier budget _29
+    s1 s2 XCHG	//  _24 deadline status verifier budget has_verifier _29
+    1 STU	//  _24 deadline status verifier budget _31
+    ROT	//  _24 deadline status budget _31 verifier
+    STSLICER	//  _24 deadline status budget _32
+    SWAP	//  _24 deadline status _32 budget
+    STTOMIS	//  _24 deadline status _33
+    s1 s2 XCHG	//  _24 status deadline _33
+    64 STU	//  _24 status _35
+    8 STU	//  _24 _37
+    STREF	//  _38
+    ENDC	//  _39
     c4 POP
   }>
   recv_internal PROC:<{
@@ -58,7 +63,7 @@ PROGRAM{
     }>	//  in_msg in_msg_full
     SWAP	//  in_msg_full in_msg
     32 LDU	//  in_msg_full op in_msg
-    64 LDU	//  in_msg_full op _171 _170
+    64 LDU	//  in_msg_full op _184 _183
     NIP	//  in_msg_full op in_msg
     c4 PUSH	//  in_msg_full op in_msg _13
     CTOS	//  in_msg_full op in_msg ds
@@ -75,173 +80,184 @@ PROGRAM{
     CTOS	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds hashes
     256 LDU	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash hashes
     256 LDU	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash hashes
-    256 LDU	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash _195 _194
-    DROP	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash
-    s0 s3 XCHG	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash evidence_hash ds
+    256 LDU	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash hashes
+    LDREF	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash _210 _209
+    DROP	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash _60
+    CTOS	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash permission_slice
+    256 LDU	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash _212 _211
+    DROP	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash permission_hash
+    s0 s4 XCHG	//  in_msg_full op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash policy_hash ds
     ENDS
-    s0 s13 XCHG	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash in_msg_full
-    CTOS	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash full_msg
-    4 PUSHINT	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash full_msg _63=4
-    SDSKIPFIRST	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash full_msg
-    LDMSGADDR	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash _197 _196
-    DROP	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender
-    s12 PUSH
-    1413567233 PUSHINT	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender op _68=1413567233
-    EQUAL	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender _69
-    IFJMP:<{	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender
-      s11 POP
-      s11 POP	//  evidence_hash result_hash sender creator has_agent agent has_verifier verifier budget deadline status policy_hash
-      SWAP	//  evidence_hash result_hash sender creator has_agent agent has_verifier verifier budget deadline policy_hash status
-      0 EQINT	//  evidence_hash result_hash sender creator has_agent agent has_verifier verifier budget deadline policy_hash _72
+    s0 s14 XCHG	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash in_msg_full
+    CTOS	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash full_msg
+    4 PUSHINT	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash full_msg _71=4
+    SDSKIPFIRST	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash full_msg
+    LDMSGADDR	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash _214 _213
+    DROP	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender
+    s13 PUSH
+    1413567233 PUSHINT	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender op _76=1413567233
+    EQUAL	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender _77
+    IFJMP:<{	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender
+      s12 POP
+      s12 POP	//  policy_hash evidence_hash sender creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash
+      s0 s2 XCHG	//  policy_hash evidence_hash sender creator has_agent agent has_verifier verifier budget deadline result_hash permission_hash status
+      0 EQINT	//  policy_hash evidence_hash sender creator has_agent agent has_verifier verifier budget deadline result_hash permission_hash _80
       100 THROWIFNOT
-      s0 s6 XCHG	//  evidence_hash result_hash sender creator policy_hash agent has_verifier verifier budget deadline has_agent
-      0 EQINT	//  evidence_hash result_hash sender creator policy_hash agent has_verifier verifier budget deadline _76
-      s8 s5 PUXC	//  evidence_hash result_hash sender creator policy_hash _76 has_verifier verifier budget deadline sender agent
-      SDEQ	//  evidence_hash result_hash sender creator policy_hash _76 has_verifier verifier budget deadline _77
-      s1 s5 XCHG	//  evidence_hash result_hash sender creator policy_hash deadline has_verifier verifier budget _76 _77
-      OR	//  evidence_hash result_hash sender creator policy_hash deadline has_verifier verifier budget _78
-      101 THROWIFNOT	//  evidence_hash result_hash agent creator policy_hash deadline has_verifier verifier budget
-      1 PUSHINT	//  evidence_hash result_hash agent creator policy_hash deadline has_verifier verifier budget has_agent=1
-      DUP	//  evidence_hash result_hash agent creator policy_hash deadline has_verifier verifier budget has_agent=1 _81=1
-      s7 s10 XCHG
-      s1 s8 XCHG
+      s0 s7 XCHG	//  policy_hash evidence_hash sender creator permission_hash agent has_verifier verifier budget deadline result_hash has_agent
+      0 EQINT	//  policy_hash evidence_hash sender creator permission_hash agent has_verifier verifier budget deadline result_hash _84
+      s9 s6 PUXC	//  policy_hash evidence_hash sender creator permission_hash _84 has_verifier verifier budget deadline result_hash sender agent
+      SDEQ	//  policy_hash evidence_hash sender creator permission_hash _84 has_verifier verifier budget deadline result_hash _85
+      s1 s6 XCHG	//  policy_hash evidence_hash sender creator permission_hash result_hash has_verifier verifier budget deadline _84 _85
+      OR	//  policy_hash evidence_hash sender creator permission_hash result_hash has_verifier verifier budget deadline _86
+      101 THROWIFNOT	//  policy_hash evidence_hash agent creator permission_hash result_hash has_verifier verifier budget deadline
+      1 PUSHINT	//  policy_hash evidence_hash agent creator permission_hash result_hash has_verifier verifier budget deadline has_agent=1
+      DUP	//  policy_hash evidence_hash agent creator permission_hash result_hash has_verifier verifier budget deadline has_agent=1 _89=1
+      s8 s11 XCHG
       s1 s9 XCHG
+      s1 s10 XCHG
+      5 4 REVERSE
+      s3 s6 XCHG
+      s5 s4 s4 XCHG3
+      s0 s2 XCHG	//  creator agent has_agent=1 verifier has_verifier budget deadline _89=1 result_hash evidence_hash policy_hash permission_hash
+      save_state INLINECALLDICT
+    }>	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender
+    s13 PUSH
+    1413567234 PUSHINT	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender op _91=1413567234
+    EQUAL	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender _92
+    IFJMP:<{	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender
+      s13 POP
+      2DROP	//  policy_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash
+      SWAP	//  policy_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash status
+      1 EQINT	//  policy_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash _95
+      102 THROWIFNOT
+      s9 s5 XCPU	//  policy_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline sender agent
+      SDEQ	//  policy_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline _98
+      s6 s(-1) PUXC	//  policy_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_agent _98
+      AND	//  policy_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline _99
+      103 THROWIFNOT
+      s0 s7 XCHG	//  policy_hash permission_hash deadline creator has_agent agent has_verifier verifier budget in_msg
+      256 LDU	//  policy_hash permission_hash deadline creator has_agent agent has_verifier verifier budget result_hash in_msg
+      256 LDU	//  policy_hash permission_hash deadline creator has_agent agent has_verifier verifier budget result_hash _218 _217
+      DROP	//  policy_hash permission_hash deadline creator has_agent agent has_verifier verifier budget result_hash evidence_hash
+      s7 s10 XCHG
+      5 5 REVERSE
       5 3 REVERSE
       s2 s5 XCHG
-      s4 s3 s3 XCHG3
-      s0 s2 XCHG	//  creator agent has_agent=1 verifier has_verifier budget deadline _81=1 result_hash evidence_hash policy_hash
+      2 PUSHINT
+      s1 s4 s4 XCHG3
+      s0 s3 XCHG	//  creator agent has_agent verifier has_verifier budget deadline _107=2 result_hash evidence_hash policy_hash permission_hash
       save_state INLINECALLDICT
-    }>	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender
-    s12 PUSH
-    1413567234 PUSHINT	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender op _83=1413567234
-    EQUAL	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender _84
-    IFJMP:<{	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender
-      NIP
-      s11 POP
-      s11 POP	//  policy_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline status
-      1 EQINT	//  policy_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline _87
-      102 THROWIFNOT
-      s8 s4 XCPU	//  policy_hash deadline in_msg creator has_agent agent has_verifier verifier budget sender agent
-      SDEQ	//  policy_hash deadline in_msg creator has_agent agent has_verifier verifier budget _90
-      s5 s(-1) PUXC	//  policy_hash deadline in_msg creator has_agent agent has_verifier verifier budget has_agent _90
-      AND	//  policy_hash deadline in_msg creator has_agent agent has_verifier verifier budget _91
-      103 THROWIFNOT
-      s0 s6 XCHG	//  policy_hash deadline budget creator has_agent agent has_verifier verifier in_msg
-      256 LDU	//  policy_hash deadline budget creator has_agent agent has_verifier verifier result_hash in_msg
-      256 LDU	//  policy_hash deadline budget creator has_agent agent has_verifier verifier result_hash _201 _200
-      DROP	//  policy_hash deadline budget creator has_agent agent has_verifier verifier result_hash evidence_hash
+    }>	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender
+    s13 PUSH
+    1413567235 PUSHINT	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender op _109=1413567235
+    EQUAL	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender _110
+    IFJMP:<{	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender
+      s13 POP	//  policy_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash
+      s0 s3 XCHG	//  policy_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline evidence_hash permission_hash result_hash status
+      2 EQINT	//  policy_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline evidence_hash permission_hash result_hash _113
+      104 THROWIFNOT
+      s11 s9 PUSH2	//  policy_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline evidence_hash permission_hash result_hash sender creator
+      SDEQ	//  policy_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline evidence_hash permission_hash result_hash _116
+      s12 s6 XCPU	//  policy_hash _116 in_msg creator has_agent agent has_verifier verifier budget deadline evidence_hash permission_hash result_hash sender verifier
+      SDEQ	//  policy_hash _116 in_msg creator has_agent agent has_verifier verifier budget deadline evidence_hash permission_hash result_hash _117
+      s7 s(-1) PUXC	//  policy_hash _116 in_msg creator has_agent agent has_verifier verifier budget deadline evidence_hash permission_hash result_hash has_verifier _117
+      AND	//  policy_hash _116 in_msg creator has_agent agent has_verifier verifier budget deadline evidence_hash permission_hash result_hash _118
+      s1 s12 XCHG	//  policy_hash result_hash in_msg creator has_agent agent has_verifier verifier budget deadline evidence_hash permission_hash _116 _118
+      OR	//  policy_hash result_hash in_msg creator has_agent agent has_verifier verifier budget deadline evidence_hash permission_hash _119
+      105 THROWIFNOT
+      s0 s9 XCHG	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier budget deadline evidence_hash in_msg
+      LDTOMIS	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier budget deadline evidence_hash _220 _219
+      DROP	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier budget deadline evidence_hash payout
+      s0 s3 PUXC	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier payout deadline evidence_hash payout budget
+      LEQ	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier payout deadline evidence_hash _125
+      106 THROWIFNOT
+      BALANCE	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier payout deadline evidence_hash _128
+      FIRST	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier payout deadline evidence_hash _129
+      s3 s(-1) PUXC	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier payout deadline evidence_hash payout _129
+      LEQ	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier payout deadline evidence_hash _130
+      112 THROWIFNOT
+      s2 PUSH	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier payout deadline evidence_hash payout
+      0 GTINT	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier payout deadline evidence_hash _133
+      IF:<{	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier payout deadline evidence_hash
+        s5 s2 PUXC
+        1 PUSHINT	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier evidence_hash deadline agent payout _134=1
+        send_value INLINECALLDICT
+      }>ELSE<{
+        s2 POP	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier evidence_hash deadline
+      }>
+      s6 PUSH
+      0 PUSHINT
+      7 PUSHPOW2	//  policy_hash result_hash permission_hash creator has_agent agent has_verifier verifier evidence_hash deadline creator _136=0 _137=128
+      send_value INLINECALLDICT
       s6 s9 XCHG
       5 4 REVERSE
       5 2 REVERSE
-      s3 s4 XCHG
-      2 PUSHINT
-      s0 s3 XCHG	//  creator agent has_agent verifier has_verifier budget deadline _99=2 result_hash evidence_hash policy_hash
-      save_state INLINECALLDICT
-    }>	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender
-    s12 PUSH
-    1413567235 PUSHINT	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender op _101=1413567235
-    EQUAL	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender _102
-    IFJMP:<{	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender
-      s12 POP	//  evidence_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash
-      s0 s2 XCHG	//  evidence_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline result_hash policy_hash status
-      2 EQINT	//  evidence_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline result_hash policy_hash _105
-      104 THROWIFNOT
-      s10 s8 PUSH2	//  evidence_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline result_hash policy_hash sender creator
-      SDEQ	//  evidence_hash sender in_msg creator has_agent agent has_verifier verifier budget deadline result_hash policy_hash _108
-      s11 s5 XCPU	//  evidence_hash _108 in_msg creator has_agent agent has_verifier verifier budget deadline result_hash policy_hash sender verifier
-      SDEQ	//  evidence_hash _108 in_msg creator has_agent agent has_verifier verifier budget deadline result_hash policy_hash _109
-      s6 s(-1) PUXC	//  evidence_hash _108 in_msg creator has_agent agent has_verifier verifier budget deadline result_hash policy_hash has_verifier _109
-      AND	//  evidence_hash _108 in_msg creator has_agent agent has_verifier verifier budget deadline result_hash policy_hash _110
-      s1 s11 XCHG	//  evidence_hash policy_hash in_msg creator has_agent agent has_verifier verifier budget deadline result_hash _108 _110
-      OR	//  evidence_hash policy_hash in_msg creator has_agent agent has_verifier verifier budget deadline result_hash _111
-      105 THROWIFNOT
-      s0 s8 XCHG	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier budget deadline in_msg
-      LDTOMIS	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier budget deadline _203 _202
-      DROP	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier budget deadline payout
-      s0 s2 PUXC	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier payout deadline payout budget
-      LEQ	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier payout deadline _117
-      106 THROWIFNOT
-      OVER	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier payout deadline payout
-      0 GTINT	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier payout deadline _120
-      IF:<{	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier payout deadline
-        s4 s1 PUXC
-        1 PUSHINT	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier deadline agent payout _121=1
-        send_value INLINECALLDICT
-      }>ELSE<{
-        NIP	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier deadline
-      }>
-      s5 PUSH
       0 PUSHINT
-      7 PUSHPOW2	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier deadline creator _123=0 _124=128
-      send_value INLINECALLDICT
-      s5 s8 XCHG
-      5 3 REVERSE
-      5 1 REVERSE
-      0 PUSHINT
-      s3 s4 XCHG2
+      s4 s5 XCHG2
       3 PUSHINT
-      s3 s3 XCHG2	//  creator agent has_agent verifier has_verifier _126=0 deadline _127=3 result_hash evidence_hash policy_hash
+      s4 s4 XCHG2
+      s3 s1 s3 XCHG3	//  creator agent has_agent verifier has_verifier _139=0 deadline _140=3 result_hash evidence_hash policy_hash permission_hash
       save_state INLINECALLDICT
-    }>	//  evidence_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status policy_hash result_hash sender
-    s5 POP
-    s10 POP	//  evidence_hash op result_hash creator has_agent agent has_verifier verifier sender deadline status policy_hash
-    s10 PUSH
-    1413567236 PUSHINT	//  evidence_hash op result_hash creator has_agent agent has_verifier verifier sender deadline status policy_hash op _129=1413567236
-    EQUAL	//  evidence_hash op result_hash creator has_agent agent has_verifier verifier sender deadline status policy_hash _130
-    IFJMP:<{	//  evidence_hash op result_hash creator has_agent agent has_verifier verifier sender deadline status policy_hash
-      s10 POP	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier sender deadline status
-      0 EQINT	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier sender deadline _133
+    }>	//  policy_hash op in_msg creator has_agent agent has_verifier verifier budget deadline status permission_hash result_hash evidence_hash sender
+    s6 POP
+    s11 POP	//  policy_hash op evidence_hash creator has_agent agent has_verifier verifier sender deadline status permission_hash result_hash
+    s11 PUSH
+    1413567236 PUSHINT	//  policy_hash op evidence_hash creator has_agent agent has_verifier verifier sender deadline status permission_hash result_hash op _142=1413567236
+    EQUAL	//  policy_hash op evidence_hash creator has_agent agent has_verifier verifier sender deadline status permission_hash result_hash _143
+    IFJMP:<{	//  policy_hash op evidence_hash creator has_agent agent has_verifier verifier sender deadline status permission_hash result_hash
+      s11 POP	//  policy_hash result_hash evidence_hash creator has_agent agent has_verifier verifier sender deadline status permission_hash
+      SWAP	//  policy_hash result_hash evidence_hash creator has_agent agent has_verifier verifier sender deadline permission_hash status
+      0 EQINT	//  policy_hash result_hash evidence_hash creator has_agent agent has_verifier verifier sender deadline permission_hash _146
       107 THROWIFNOT
-      s1 s6 XCPU	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier deadline sender creator
-      SDEQ	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier deadline _136
+      s2 s7 XCPU	//  policy_hash result_hash evidence_hash creator has_agent agent has_verifier verifier permission_hash deadline sender creator
+      SDEQ	//  policy_hash result_hash evidence_hash creator has_agent agent has_verifier verifier permission_hash deadline _149
       108 THROWIFNOT
-      s5 PUSH
+      s6 PUSH
       0 PUSHINT
-      7 PUSHPOW2	//  evidence_hash policy_hash result_hash creator has_agent agent has_verifier verifier deadline creator _138=0 _139=128
+      7 PUSHPOW2	//  policy_hash result_hash evidence_hash creator has_agent agent has_verifier verifier permission_hash deadline creator _151=0 _152=128
       send_value INLINECALLDICT
-      s5 s8 XCHG
-      5 3 REVERSE
-      5 1 REVERSE
+      s6 s9 XCHG
+      5 4 REVERSE
+      5 2 REVERSE
       0 PUSHINT
-      s3 s4 XCHG2
+      s4 s5 XCHG2
       4 PUSHINT
-      s3 s3 XCHG2	//  creator agent has_agent verifier has_verifier _141=0 deadline _142=4 result_hash evidence_hash policy_hash
+      s4 s4 XCHG2
+      s0 s3 XCHG	//  creator agent has_agent verifier has_verifier _154=0 deadline _155=4 result_hash evidence_hash policy_hash permission_hash
       save_state INLINECALLDICT
-    }>	//  evidence_hash op result_hash creator has_agent agent has_verifier verifier sender deadline status policy_hash
-    s3 POP	//  evidence_hash op result_hash creator has_agent agent has_verifier verifier policy_hash deadline status
-    s0 s9 XCHG
-    1413567237 PUSHINT	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline op _144=1413567237
-    EQUAL	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline _145
-    IFJMP:<{	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline
-      DUP
-      NOW	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline deadline _147
-      LEQ	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline _148
+    }>	//  policy_hash op evidence_hash creator has_agent agent has_verifier verifier sender deadline status permission_hash result_hash
+    s4 POP	//  policy_hash op evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status permission_hash
+    s0 s10 XCHG
+    1413567237 PUSHINT	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status op _157=1413567237
+    EQUAL	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status _158
+    IFJMP:<{	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status
+      OVER
+      NOW	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status deadline _160
+      LEQ	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status _161
       109 THROWIFNOT
-      s8 PUSH	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline status
-      0 EQINT	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline _152
-      s9 PUSH	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline _152 status
-      1 EQINT	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline _152 _154
-      OR	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline _155
-      s0 s9 XCHG	//  evidence_hash _155 result_hash creator has_agent agent has_verifier verifier policy_hash deadline status
-      2 EQINT	//  evidence_hash _155 result_hash creator has_agent agent has_verifier verifier policy_hash deadline _157
-      s1 s9 XCHG	//  evidence_hash deadline result_hash creator has_agent agent has_verifier verifier policy_hash _155 _157
-      OR	//  evidence_hash deadline result_hash creator has_agent agent has_verifier verifier policy_hash _158
+      DUP	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status status
+      0 EQINT	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status _165
+      OVER	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status _165 status
+      1 EQINT	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status _165 _167
+      OR	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status _168
+      SWAP	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline _168 status
+      2 EQINT	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline _168 _170
+      OR	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline _171
       110 THROWIFNOT
-      s5 PUSH
+      s6 PUSH
       0 PUSHINT
-      7 PUSHPOW2	//  evidence_hash deadline result_hash creator has_agent agent has_verifier verifier policy_hash creator _160=0 _161=128
+      7 PUSHPOW2	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline creator _173=0 _174=128
       send_value INLINECALLDICT
-      s5 s8 XCHG
-      5 3 REVERSE
-      5 1 REVERSE
+      s6 s9 XCHG
+      5 4 REVERSE
+      5 2 REVERSE
       0 PUSHINT
-      s0 s4 XCHG
-      s0 s3 XCHG
+      s4 s5 XCHG2
       5 PUSHINT
-      s1 s3 s3 XCHG3	//  creator agent has_agent verifier has_verifier _163=0 deadline _164=5 result_hash evidence_hash policy_hash
+      s4 s4 XCHG2	//  creator agent has_agent verifier has_verifier _176=0 deadline _177=5 result_hash evidence_hash policy_hash permission_hash
       save_state INLINECALLDICT
-    }>	//  evidence_hash status result_hash creator has_agent agent has_verifier verifier policy_hash deadline
-    10 BLKDROP	// 
+    }>	//  policy_hash permission_hash evidence_hash creator has_agent agent has_verifier verifier result_hash deadline status
+    11 BLKDROP	// 
     111 THROW
   }>
   get_task_data PROC:<{
@@ -256,14 +272,18 @@ PROGRAM{
     LDTOMIS	//  creator has_agent agent has_verifier verifier budget ds
     64 LDU	//  creator has_agent agent has_verifier verifier budget deadline ds
     8 LDU	//  creator has_agent agent has_verifier verifier budget deadline status ds
-    LDREF	//  creator has_agent agent has_verifier verifier budget deadline status _61 _60
+    LDREF	//  creator has_agent agent has_verifier verifier budget deadline status _72 _71
     DROP	//  creator has_agent agent has_verifier verifier budget deadline status _32
     CTOS	//  creator has_agent agent has_verifier verifier budget deadline status hashes
-    256 LDU	//  creator has_agent agent has_verifier verifier budget deadline status _35 hashes
-    256 LDU	//  creator has_agent agent has_verifier verifier budget deadline status _35 _38 hashes
-    256 LDU	//  creator has_agent agent has_verifier verifier budget deadline status _35 _38 _67 _66
-    DROP	//  creator has_agent agent has_verifier verifier budget deadline status _35 _38 _41
-    s8 s9 XCHG
-    s6 s7 XCHG	//  creator agent has_agent verifier has_verifier budget deadline status _35 _38 _41
+    256 LDU	//  creator has_agent agent has_verifier verifier budget deadline status result_hash hashes
+    256 LDU	//  creator has_agent agent has_verifier verifier budget deadline status result_hash evidence_hash hashes
+    256 LDU	//  creator has_agent agent has_verifier verifier budget deadline status result_hash evidence_hash policy_hash hashes
+    LDREF	//  creator has_agent agent has_verifier verifier budget deadline status result_hash evidence_hash policy_hash _80 _79
+    DROP	//  creator has_agent agent has_verifier verifier budget deadline status result_hash evidence_hash policy_hash _48
+    CTOS	//  creator has_agent agent has_verifier verifier budget deadline status result_hash evidence_hash policy_hash permission_slice
+    256 LDU	//  creator has_agent agent has_verifier verifier budget deadline status result_hash evidence_hash policy_hash _82 _81
+    DROP	//  creator has_agent agent has_verifier verifier budget deadline status result_hash evidence_hash policy_hash permission_hash
+    s9 s10 XCHG
+    s7 s8 XCHG	//  creator agent has_agent verifier has_verifier budget deadline status result_hash evidence_hash policy_hash permission_hash
   }>
 }END>c

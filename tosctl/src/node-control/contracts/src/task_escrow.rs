@@ -9,7 +9,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const TASK_ESCROW_CODE_B64: &str = "te6ccgECCgEAApEAART/APSkE/S88sgLAQIBYgIDBLrQMiHHAJFb4AHTH9M/Me1E0PpA0wD6QNMA+kD6ANM/0wfUAdDT/9P/0/8wA9EN0HTXIfpAMCyCEFRBUwG64wIsghBUQVMCuuMCLIIQVEFTA7rjAjU6KoIQVEFTBLoEBQYHAEehIW3aiaH0gaYB9IGmAfSB9AGmf6YPqGGhp/+n/6f+YCESIM8AkDs7AcAA8uBkBsAAUobHBRWx8uBlcSAQehgZXjMQJUQzAgLIy//L/8v/ychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVACSMTs7wAHy4GZRhMcFUlCw8uBnBtP/0/8wEGleNF4yEDRyAwLIy//L/8v/ychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVAHIPALAAvLgaFOoxwVRtccFUmCwG7Hy4GkI+gAwUgO78uBqIcIAjhdSQnFwgBDIywVQBM8WWPoCEstqyQH7AJEx4iVwgwZwgBDIywVQBM8WWPoCEstqyQH7ABBYXjNeMXBQNHNQMwgB1o5YOsAA8uBrURbHBfLgbCVwgwZwgBDIywVQBM8WWPoCEstqyQH7ABBYXjNeMXBQNHRQMwLIy//L/8v/ychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVOAzCYIQVEFTBbrjAl8K8sBvCQBOAsjL/8v/y//JyFAJzxYWywBQBs8WEssAWM8WAfoCEss/ywfMye1UAMIg+CO78uBtKMAAKcABsQnAAhmx8uBuJXCDBnCAEMjLBVAEzxZY+gISy2rJAfsAEFheM14xcAQDdUEzAsjL/8v/y//JyFAJzxYWywBQBs8WEssAWM8WAfoCEss/ywfMye1U";
+pub const TASK_ESCROW_CODE_B64: &str = "te6ccgECCgEAAsgAART/APSkE/S88sgLAQIBYgIDBMTQMiHHAJFb4AHTH9M/Me1E0PpA0wD6QNMA+kD6ANM/0wfUAdDT/9P/0//UMNDT/zAE0Q7QdNch+kAwLYIQVEFTAbrjAi2CEFRBUwK64wItghBUQVMDuuMCNjsrghBUQVMEugQFBgcAUaEhbdqJofSBpgH0gaYB9IH0AaZ/pg+oYaGn/6f/p/+oYaGn/mAhNCDxAJw8PALAAPLgZAfAAFKXxwUWsfLgZXEgEIsZGl40EDZFRALIy//JA8jL/xLL/8v/zMnIUAnPFhbLAFAGzxYSywBYzxYB+gISyz/LB8zJ7VQAoj1bAcAB8uBmUZXHBVJgsPLgZwfT/9P/MBB6XjVeMxAlckFEA8jL/8kDyMv/Esv/y//MychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVAHgPQPAAvLgaFO5xwVRxscFUnCwHLHy4GkJ+gAwUgS78uBq+CdvEFIwu/LgcCLCAI4XUlNxcIAQyMsFUATPFlj6AhLLaskB+wCRMuImcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQaV40XjJwUEVzUERDEwgB5o5gOwHAAPLga1EnxwXy4GwmcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQaV40XjJwUEV0UEQDyMv/yQPIy/8Sy//L/8zJyFAJzxYWywBQBs8WEssAWM8WAfoCEss/ywfMye1U4DQKghBUQVMFuuMCXwvywG8JAFrIy//JA8jL/xLL/8v/zMnIUAnPFhbLAFAGzxYSywBYzxYB+gISyz/LB8zJ7VQAzCH4I7vy4G0gwAAhwAGxAcACsfLgbiZwgwZwgBDIywVQBM8WWPoCEstqyQH7ABBpXjReMnBQRXVQRMjL/8kDyMv/Esv/y//MychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVA==";
 pub const TASK_ACCEPT_OPCODE: u32 = 0x5441_5301;
 pub const TASK_RESULT_OPCODE: u32 = 0x5441_5302;
 pub const TASK_SETTLE_OPCODE: u32 = 0x5441_5303;
@@ -25,6 +25,7 @@ pub struct TaskEscrowInit {
     pub budget: u64,
     pub deadline: u64,
     pub settlement_policy_hash: [u8; 32],
+    pub permission_hash: [u8; 32],
 }
 
 pub struct TaskEscrowContract;
@@ -40,6 +41,7 @@ pub struct TaskEscrowData {
     pub result_hash: [u8; 32],
     pub evidence_hash: [u8; 32],
     pub settlement_policy_hash: [u8; 32],
+    pub permission_hash: [u8; 32],
 }
 
 impl TaskEscrowContract {
@@ -67,10 +69,13 @@ impl TaskEscrowContract {
         Coins::new(init.budget).write_to(&mut data)?;
         data.append_u64(init.deadline)?.append_u8(0)?;
         let mut hashes = BuilderData::new();
+        let mut permission = BuilderData::new();
+        permission.append_u256(&init.permission_hash)?;
         hashes
             .append_u256(&[0; 32])?
             .append_u256(&[0; 32])?
-            .append_u256(&init.settlement_policy_hash)?;
+            .append_u256(&init.settlement_policy_hash)?
+            .checked_append_reference(permission.into_cell()?)?;
         data.checked_append_reference(hashes.into_cell()?)?;
         Ok(data.into_cell()?)
     }
@@ -110,6 +115,7 @@ impl TaskEscrowContract {
             result_hash: parse_hash(stack, 8)?,
             evidence_hash: parse_hash(stack, 9)?,
             settlement_policy_hash: parse_hash(stack, 10)?,
+            permission_hash: parse_hash(stack, 11)?,
         })
     }
 
@@ -189,6 +195,7 @@ mod tests {
             budget: 1_000_000_000,
             deadline: 1_800_000_000,
             settlement_policy_hash: [0x33; 32],
+            permission_hash: [0x77; 32],
         }
     }
 
@@ -256,6 +263,7 @@ mod tests {
             hash_number([0x44; 32]),
             hash_number([0x55; 32]),
             hash_number(task.settlement_policy_hash),
+            hash_number(task.permission_hash),
         ]);
         let data = TaskEscrowContract::decode_data(&stack).unwrap();
         assert_eq!(data.creator, task.creator);
@@ -267,6 +275,7 @@ mod tests {
         assert_eq!(data.result_hash, [0x44; 32]);
         assert_eq!(data.evidence_hash, [0x55; 32]);
         assert_eq!(data.settlement_policy_hash, task.settlement_policy_hash);
+        assert_eq!(data.permission_hash, task.permission_hash);
     }
 
     #[test]
@@ -284,6 +293,7 @@ mod tests {
             hash_number([0; 32]),
             hash_number([0; 32]),
             hash_number(task.settlement_policy_hash),
+            hash_number(task.permission_hash),
         ]);
         let data = TaskEscrowContract::decode_data(&stack).unwrap();
         assert_eq!(data.assigned_agent, None);
