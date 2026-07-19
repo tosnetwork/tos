@@ -25,7 +25,7 @@ document:
 - Staking (`min_stake`, currently **10,000 TOS** — see
   [ConfigParam.md §17](ConfigParam.md)) is only needed **later**, when the
   `elector` contract runs the first on-chain election that replaces the genesis
-  set. Those stakes come from the **5,000,000 TOS pre-mined to the main wallet**
+  set. Those stakes come from the **5,000,000,000 TOS pre-mined to the main wallet**
   (see [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance)),
   distributed to candidates by the launch operator.
 - The genesis set is injected from a file called **`validator-keys.pub`** — a
@@ -181,7 +181,7 @@ stake-secured set:
 1. The genesis validators produce blocks and keep the chain live.
 2. The launch operator **distributes TOS from the main wallet** to anyone who
    wants to validate — at least `min_stake` (10,000 TOS) plus gas each. The
-   5 M pre-mine is the reservoir for this (≈ up to 500 candidates at 10 K).
+   5 B pre-mine is the reservoir for this (≈ up to 500 candidates at 10 K).
 3. Candidates send their stake to the `elector` contract. The first election
    (governed by ConfigParam 15 timing and ConfigParam 17 stake limits) produces
    a **staked** validator set that replaces the appointed one.

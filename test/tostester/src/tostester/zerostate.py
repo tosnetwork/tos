@@ -130,7 +130,7 @@ Libs{{
   x{{ABACABADABACABA}} s>c public_lib
   x{{1234}} x{{5678}} |_ s>c private_lib
 }}Libs  // libraries
-TM$5000000 // balance: 5 M TOS, fully pre-mined to the main wallet (TON-style)
+TM$4999999980 // balance: 5 B TOS less 20 tomis reserved for system contracts
 0 // split_depth
 0 // ticktock
 AllOnes 0 * // address
@@ -258,7 +258,8 @@ TM$1.7 TM$1 config.block_create_fees!
 // smc1_addr config.collector_smc!
 smc1_addr config.minter_smc!
 
-1000000000000 -17 of-cc 666666666666 239 of-cc cc+ config.to_mint!
+// No genesis extra-currency minting; native TOS supply is fully pre-mined.
+// PoW/test givers are not registered in the zero-state template.
 
 ( 0 1 9 10 12 14 15 16 17 18 20 21 22 23 24 25 28 34 ) config.mandatory_params!
 ( -999 -1000 -1001 0 1 9 10 12 14 15 16 17 32 34 36 ) config.critical_params!

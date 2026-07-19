@@ -27,7 +27,7 @@ The profile should verify that `getconfig 12` still reports only wc=0 before and
 | wc  | Chain                | vm_version | Role                         | Total supply | Distribution                                   |
 |-----|----------------------|------------|------------------------------|--------------|------------------------------------------------|
 | `-1` | **masterchain**     | (reserved) | Consensus / config           | —            | —                                              |
-| `0` | **TOS** (native TVM) | `-1` (TVM) | Primary smart-contract chain | 5 M TOS      | Fully pre-mined to the main wallet |
+| `0` | **TOS** (native TVM) | `-1` (TVM) | Primary smart-contract chain | 5 B TOS      | Fully pre-mined to the main wallet |
 
 The four nodes share the **same validator set**, the **same Simplex consensus**, and the **same** `/data/tos-global.json`. Deployment is a single `setup-testnet.sh` invocation. Verify post-genesis with:
 
@@ -214,7 +214,7 @@ The `--clean` flag stops any running services and removes previous `/data/` cont
 
    | wc | vm_version  | Total supply | Genesis distribution                                          |
    |----|-------------|--------------|--------------------------------------------------------------|
-   | 0  | `-1` (TVM)  | 5 M TOS      | Fully pre-mined to the main wallet; no PoW givers |
+   | 0  | `-1` (TVM)  | 5 B TOS      | Fully pre-mined to the main wallet; no PoW givers |
 
    TOS supply is set at zero-state construction time. See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance); the value lives on the main-wallet line of the tostester template `test/tostester/src/tostester/zerostate.py` (and `crypto/smartcont/gen-zerostate.fif`).
 

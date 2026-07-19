@@ -80,7 +80,7 @@ WCode3 // code
    B,
 b> // data
 empty_cell // libs
-TM$5000000 allocated-balance - // balance: 5 M TOS, fully pre-mined to the main wallet (TON-style)
+TM$5000000000 allocated-balance - // balance: 5 B TOS, fully pre-mined to the main wallet
 0 // split_depth
 0 // ticktock
 AllOnes 1 * // address
@@ -94,7 +94,7 @@ Masterchain over
 // PoW Givers removed — TON-style full pre-mine.  The original TON network
 // pre-mined its entire supply to the main wallet at genesis and deployed
 // PoW-giver distribution contracts AFTERWARD, funded from that wallet.  TOS
-// follows the same model here: the full 5 M supply is pre-mined to the main
+// follows the same model here: the full 5 B supply is pre-mined to the main
 // wallet above.  To add a mining distribution later, deploy giver contracts
 // post-genesis from the main wallet (see doc/Mining-Design.md).
 ."Total allocated balance (pre-mine) = " allocated-balance .TM cr

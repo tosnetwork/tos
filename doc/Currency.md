@@ -80,15 +80,15 @@ account.balance.tomis                // account balance
 
 ## Initial Supply
 
-The genesis zero state allocates approximately **5 billion TOS** (4,999,999,000 TOS), distributed as:
+The genesis zero state allocates **5 billion TOS** (5,000,000,000 TOS), distributed as:
 
 | Recipient | Amount | Address |
 |-----------|--------|---------|
-| Main wallet | ~4,999,998,000 TOS | `-1:000...000` |
+| Main wallet | approximately 4,999,999,000 TOS | `-1:000...000` |
 | Elector contract | 500 TOS | `-1:333...333` |
 | Config contract | 500 TOS | `-1:555...555` |
 
-Additional TOS is created through block validation rewards (ConfigParam 14: 1.7 TOS per masterchain block, 1.0 TOS per basechain block).
+The current genesis templates do not register PoW givers or genesis minting. Native TOS is fully pre-mined; standalone testgiver scripts are not part of the zero-state allocation.
 
 ## Related Docs
 
