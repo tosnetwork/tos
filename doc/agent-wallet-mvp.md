@@ -4,6 +4,13 @@ This document defines the first implementation slice for TOS Agent Wallets.
 
 The MVP is a local `tosctl` profile layer. It does not replace the future on-chain Agent Account contract. It gives operators and agent runtimes a concrete way to create wallet identities, separate owner and controller keys, and store machine-readable spending policy before the native contract templates are finalized.
 
+The repository also includes the first native Agent Account contract template:
+
+- [`crypto/smartcont/agent-account-code.fc`](../crypto/smartcont/agent-account-code.fc)
+- [`crypto/smartcont/agent-account.tlb`](../crypto/smartcont/agent-account.tlb)
+
+This contract is intentionally minimal. It stores owner identity, controller public key and policy data, exposes get-methods, and accepts owner-only internal messages for policy and controller updates. It does not yet execute controller spending, escrow settlement or task routing.
+
 ## Scope
 
 The MVP provides:
@@ -18,6 +25,7 @@ The MVP provides:
 - activation of the underlying native wallet contract after funding
 - policy updates for limits, services, task categories, metadata hashes and capabilities
 - safe removal of local Agent Wallet profiles, with optional vault-key deletion
+- a native Agent Account contract template for owner/controller/policy state
 - wallet address derivation using the existing native wallet implementation
 - policy fields for per-action spend, daily spend, allowed services, task categories and owner-approval threshold
 - JSON output for automation and service integration
@@ -190,9 +198,9 @@ The recommended local lifecycle is:
 
 The next slice should bind this local profile to a native Agent Account contract:
 
-- deploy an Agent Account using the owner public key and controller public key
-- store the same policy fields in contract state or a canonical policy cell
-- add get-methods for controller, limits, services, task categories and metadata hashes
+- add `tosctl agent account` deploy/build helpers for the Agent Account contract template
+- derive Agent Account state-init from owner address, controller public key and policy fields
+- expose RPC/CLI inspection for `get_agent_account_data`, `get_owner`, `get_controller_pubkey` and `get_agent_policy`
 - add task-contract messages that spend through the Agent Account policy
 - add native Agent Account deployment after the contract template exists
 - make controller rotation an on-chain policy update after the Agent Account contract exists

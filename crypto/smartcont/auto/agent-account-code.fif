@@ -1,0 +1,189 @@
+// automatically generated from `smartcont/stdlib.fc` `smartcont/agent-account-code.fc` 
+PROGRAM{
+  DECLPROC load_agent_state
+  DECLPROC pack_agent_state
+  DECLPROC require_owner
+  DECLPROC load_maybe_hash
+  DECLPROC recv_internal
+  DECLPROC recv_external
+  105195 DECLMETHOD get_agent_account_data
+  80293 DECLMETHOD get_owner
+  122447 DECLMETHOD get_controller_pubkey
+  69933 DECLMETHOD get_agent_policy
+  load_agent_state PROCINLINE:<{
+    // 
+    c4 PUSH	//  _1
+    CTOS	//  ds
+    LDMSGADDR	//  owner ds
+    256 LDU	//  owner controller_pubkey ds
+    LDTOMIS	//  owner controller_pubkey max_per_tx ds
+    LDTOMIS	//  owner controller_pubkey max_per_tx daily_limit ds
+    64 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ds
+    -1 PUSHINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ds metadata_hash=-1
+    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ds
+    1 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 _22 ds
+    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ds _22
+    IF:<{	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ds
+      NIP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ds
+      256 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ds
+    }>	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ds
+    -1 PUSHINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ds service_endpoint_hash=-1
+    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ds
+    1 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 _30 ds
+    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ds _30
+    IF:<{	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ds
+      NIP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ds
+      256 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash ds
+    }>	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash ds
+    ENDS
+  }>
+  pack_agent_state PROCINLINE:<{
+    //  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
+    s4 PUSH	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash max_per_tx
+    0 LESSINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _9
+    1701 THROWIF
+    s3 s4 PUSH2	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash daily_limit max_per_tx
+    LESS	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _12
+    1701 THROWIF
+    s2 PUSH	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash default_task_timeout
+    1 LESSINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _16
+    1701 THROWIF
+    NEWC	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _19
+    s0 s7 XCHG2	//  service_endpoint_hash controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash _19 owner
+    STSLICER	//  service_endpoint_hash controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash _20
+    s1 s5 XCHG	//  service_endpoint_hash metadata_hash max_per_tx daily_limit default_task_timeout controller_pubkey _20
+    256 STU	//  service_endpoint_hash metadata_hash max_per_tx daily_limit default_task_timeout _22
+    s0 s3 XCHG2	//  service_endpoint_hash metadata_hash default_task_timeout daily_limit _22 max_per_tx
+    STTOMIS	//  service_endpoint_hash metadata_hash default_task_timeout daily_limit _23
+    SWAP	//  service_endpoint_hash metadata_hash default_task_timeout _23 daily_limit
+    STTOMIS	//  service_endpoint_hash metadata_hash default_task_timeout _24
+    64 STU	//  service_endpoint_hash metadata_hash b
+    OVER	//  service_endpoint_hash metadata_hash b metadata_hash
+    0 LESSINT	//  service_endpoint_hash metadata_hash b _28
+    IF:<{	//  service_endpoint_hash metadata_hash b
+      0 PUSHINT
+      s2 POP	//  service_endpoint_hash _29=0 b
+      1 STU	//  service_endpoint_hash b
+    }>ELSE<{	//  service_endpoint_hash metadata_hash b
+      1 PUSHINT	//  service_endpoint_hash metadata_hash b _32=1
+      SWAP	//  service_endpoint_hash metadata_hash _32=1 b
+      1 STU	//  service_endpoint_hash metadata_hash _34
+      256 STU	//  service_endpoint_hash b
+    }>
+    OVER	//  service_endpoint_hash b service_endpoint_hash
+    0 LESSINT	//  service_endpoint_hash b _38
+    IF:<{	//  service_endpoint_hash b
+      0 PUSHINT
+      s2 POP	//  _39=0 b
+      1 STU	//  b
+    }>ELSE<{	//  service_endpoint_hash b
+      1 PUSHINT	//  service_endpoint_hash b _42=1
+      SWAP	//  service_endpoint_hash _42=1 b
+      1 STU	//  service_endpoint_hash _44
+      256 STU	//  b
+    }>
+    ENDC	//  _47
+  }>
+  require_owner PROCINLINE:<{
+    //  sender owner
+    SDEQ	//  _3
+    1702 THROWIFNOT
+  }>
+  load_maybe_hash PROCINLINE:<{
+    //  body
+    1 LDU	//  _1 body
+    SWAP	//  body _1
+    IF:<{	//  body
+      256 LDU	//  _11 _10
+      DROP	//  _4
+    }>ELSE<{	//  body
+      DROP	// 
+      -1 PUSHINT	//  _7=-1
+    }>
+  }>
+  recv_internal PROC:<{
+    //  msg_value in_msg_full in_msg_body
+    s2 POP	//  in_msg_body in_msg_full
+    OVER	//  in_msg_body in_msg_full in_msg_body
+    SEMPTY	//  in_msg_body in_msg_full _5
+    IFJMP:<{	//  in_msg_body in_msg_full
+      2DROP	// 
+    }>	//  in_msg_body in_msg_full
+    CTOS	//  in_msg_body cs
+    4 LDU	//  in_msg_body _67 _66
+    NIP	//  in_msg_body cs
+    LDMSGADDR	//  in_msg_body _69 _68
+    DROP	//  in_msg_body sender
+    load_agent_state INLINECALLDICT	//  in_msg_body sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
+    s0 s8 XCHG	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash in_msg_body
+    32 LDU	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body
+    64 LDU	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op query_id in_msg_body
+    NIP	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body
+    OVER
+    1095192577 PUSHINT	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body op _32=1095192577
+    EQUAL	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body _33
+    IFJMP:<{	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body
+      s9 POP
+      5 BLKDROP	//  in_msg_body sender owner controller_pubkey
+      s2 s1 XCPU	//  in_msg_body controller_pubkey owner sender owner
+      require_owner INLINECALLDICT
+      s0 s2 XCHG	//  owner controller_pubkey in_msg_body
+      LDTOMIS	//  owner controller_pubkey new_max_per_tx in_msg_body
+      LDTOMIS	//  owner controller_pubkey new_max_per_tx new_daily_limit in_msg_body
+      64 LDU	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body
+      DUP	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body in_msg_body
+      load_maybe_hash INLINECALLDICT	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body new_metadata_hash
+      OVER	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body new_metadata_hash in_msg_body
+      load_maybe_hash INLINECALLDICT	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body new_metadata_hash new_service_endpoint_hash
+      s0 s2 XCHG	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout new_service_endpoint_hash new_metadata_hash in_msg_body
+      ENDS
+      ACCEPT
+      SWAP	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout new_metadata_hash new_service_endpoint_hash
+      pack_agent_state INLINECALLDICT	//  _51
+      c4 POP
+    }>	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body
+    s6 POP	//  service_endpoint_hash sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash op
+    1095192578 PUSHINT	//  service_endpoint_hash sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash op _53=1095192578
+    EQUAL	//  service_endpoint_hash sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash _54
+    IFJMP:<{	//  service_endpoint_hash sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash
+      s6 s5 XCPU	//  service_endpoint_hash metadata_hash owner in_msg_body max_per_tx daily_limit default_task_timeout sender owner
+      require_owner INLINECALLDICT
+      s0 s3 XCHG	//  service_endpoint_hash metadata_hash owner default_task_timeout max_per_tx daily_limit in_msg_body
+      256 LDU	//  service_endpoint_hash metadata_hash owner default_task_timeout max_per_tx daily_limit new_controller_pubkey in_msg_body
+      ENDS
+      ACCEPT
+      s4 s6 XCHG
+      s4 s5 s5 XCHG3
+      s3 s1 s3 XCHG3	//  owner new_controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
+      pack_agent_state INLINECALLDICT	//  _62
+      c4 POP
+    }>	//  service_endpoint_hash sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash
+    8 BLKDROP	// 
+    1703 THROW
+  }>
+  recv_external PROC:<{
+    //  in_msg
+    DROP	// 
+    1702 THROW
+  }>
+  get_agent_account_data PROC:<{
+    // 
+    load_agent_state INLINECALLDICT	//  _1 _2 _3 _4 _5 _6 _7
+  }>
+  get_owner PROC:<{
+    // 
+    load_agent_state INLINECALLDICT	//  _8 _9 _10 _11 _12 _13 _14
+    6 BLKDROP	//  owner
+  }>
+  get_controller_pubkey PROC:<{
+    // 
+    load_agent_state INLINECALLDICT	//  _8 _9 _10 _11 _12 _13 _14
+    s5 s6 XCHG
+    6 BLKDROP	//  controller_pubkey
+  }>
+  get_agent_policy PROC:<{
+    // 
+    load_agent_state INLINECALLDICT	//  _8 _9 _10 _11 _12 _13 _14
+    2 5 BLKDROP2	//  max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
+  }>
+}END>c

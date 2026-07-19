@@ -235,6 +235,7 @@ The first implementation slice should add:
 - an example task escrow contract
 - task lifecycle message structs and opcodes
 - `tosctl agent wallet` commands for creating, listing, showing, funding, activating, checking status, updating policy, binding runtimes, rotating controller keys, exporting policy and removing local Agent Wallet profiles
+- native Agent Account get-methods for owner, controller key and policy inspection
 - local tests for request, accept, result, settle, cancel, and timeout paths
 - `tosctl` examples for creating and inspecting agent/task state
 

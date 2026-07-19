@@ -1,0 +1,22 @@
+// TOS Agent Account MVP wire schema.
+
+agent_update_policy#41475001 query_id:uint64
+  max_per_tx:Grams
+  daily_limit:Grams
+  default_task_timeout:uint64
+  metadata_hash:(Maybe uint256)
+  service_endpoint_hash:(Maybe uint256)
+  = InternalMsgBody;
+
+agent_rotate_controller#41475002 query_id:uint64
+  controller_pubkey:uint256
+  = InternalMsgBody;
+
+_ owner:MsgAddress
+  controller_pubkey:uint256
+  max_per_tx:Grams
+  daily_limit:Grams
+  default_task_timeout:uint64
+  metadata_hash:(Maybe uint256)
+  service_endpoint_hash:(Maybe uint256)
+  = AgentAccountData;

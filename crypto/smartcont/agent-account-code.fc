@@ -1,0 +1,192 @@
+;; TOS Agent Account MVP.
+;;
+;; Persistent data layout:
+;;   owner:MsgAddress
+;;   controller_pubkey:uint256
+;;   max_per_tx:coins
+;;   daily_limit:coins
+;;   default_task_timeout:uint64
+;;   metadata_hash:(Maybe uint256)
+;;   service_endpoint_hash:(Maybe uint256)
+;;
+;; Internal owner-only messages:
+;;   update_policy#41475001 query_id:uint64 max_per_tx:coins daily_limit:coins
+;;                         default_task_timeout:uint64 metadata_hash:(Maybe uint256)
+;;                         service_endpoint_hash:(Maybe uint256) = InternalMsgBody;
+;;   rotate_controller#41475002 query_id:uint64 controller_pubkey:uint256 = InternalMsgBody;
+
+const int op::agent_update_policy = 0x41475001;      ;; "AGP\1"
+const int op::agent_rotate_controller = 0x41475002;  ;; "AGP\2"
+
+const int err::invalid_policy = 1701;
+const int err::not_owner = 1702;
+const int err::unknown_op = 1703;
+
+(slice, int, int, int, int, int, int) load_agent_state() inline {
+  slice ds = get_data().begin_parse();
+  slice owner = ds~load_msg_addr();
+  int controller_pubkey = ds~load_uint(256);
+  int max_per_tx = ds~load_coins();
+  int daily_limit = ds~load_coins();
+  int default_task_timeout = ds~load_uint(64);
+
+  int metadata_hash = -1;
+  if (ds~load_uint(1)) {
+    metadata_hash = ds~load_uint(256);
+  }
+
+  int service_endpoint_hash = -1;
+  if (ds~load_uint(1)) {
+    service_endpoint_hash = ds~load_uint(256);
+  }
+  ds.end_parse();
+
+  return (
+    owner,
+    controller_pubkey,
+    max_per_tx,
+    daily_limit,
+    default_task_timeout,
+    metadata_hash,
+    service_endpoint_hash
+  );
+}
+
+cell pack_agent_state(
+  slice owner,
+  int controller_pubkey,
+  int max_per_tx,
+  int daily_limit,
+  int default_task_timeout,
+  int metadata_hash,
+  int service_endpoint_hash
+) inline {
+  throw_if(err::invalid_policy, max_per_tx < 0);
+  throw_if(err::invalid_policy, daily_limit < max_per_tx);
+  throw_if(err::invalid_policy, default_task_timeout <= 0);
+
+  builder b = begin_cell()
+    .store_slice(owner)
+    .store_uint(controller_pubkey, 256)
+    .store_coins(max_per_tx)
+    .store_coins(daily_limit)
+    .store_uint(default_task_timeout, 64);
+
+  if (metadata_hash < 0) {
+    b = b.store_uint(0, 1);
+  } else {
+    b = b.store_uint(1, 1).store_uint(metadata_hash, 256);
+  }
+
+  if (service_endpoint_hash < 0) {
+    b = b.store_uint(0, 1);
+  } else {
+    b = b.store_uint(1, 1).store_uint(service_endpoint_hash, 256);
+  }
+
+  return b.end_cell();
+}
+
+() require_owner(slice sender, slice owner) impure inline {
+  throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+}
+
+(int) load_maybe_hash(slice body) inline {
+  if (body~load_uint(1)) {
+    return body~load_uint(256);
+  }
+  return -1;
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  msg_value~impure_touch();
+
+  if (in_msg_body.slice_empty?()) {
+    return ();
+  }
+
+  slice cs = in_msg_full.begin_parse();
+  cs~load_uint(4);
+  slice sender = cs~load_msg_addr();
+
+  (
+    slice owner,
+    int controller_pubkey,
+    int max_per_tx,
+    int daily_limit,
+    int default_task_timeout,
+    int metadata_hash,
+    int service_endpoint_hash
+  ) = load_agent_state();
+
+  int op = in_msg_body~load_uint(32);
+  int query_id = in_msg_body~load_uint(64);
+  query_id~impure_touch();
+
+  if (op == op::agent_update_policy) {
+    require_owner(sender, owner);
+    int new_max_per_tx = in_msg_body~load_coins();
+    int new_daily_limit = in_msg_body~load_coins();
+    int new_default_task_timeout = in_msg_body~load_uint(64);
+    int new_metadata_hash = load_maybe_hash(in_msg_body);
+    int new_service_endpoint_hash = load_maybe_hash(in_msg_body);
+    in_msg_body.end_parse();
+
+    accept_message();
+    set_data(pack_agent_state(
+      owner,
+      controller_pubkey,
+      new_max_per_tx,
+      new_daily_limit,
+      new_default_task_timeout,
+      new_metadata_hash,
+      new_service_endpoint_hash
+    ));
+    return ();
+  }
+
+  if (op == op::agent_rotate_controller) {
+    require_owner(sender, owner);
+    int new_controller_pubkey = in_msg_body~load_uint(256);
+    in_msg_body.end_parse();
+
+    accept_message();
+    set_data(pack_agent_state(
+      owner,
+      new_controller_pubkey,
+      max_per_tx,
+      daily_limit,
+      default_task_timeout,
+      metadata_hash,
+      service_endpoint_hash
+    ));
+    return ();
+  }
+
+  throw(err::unknown_op);
+}
+
+() recv_external(slice in_msg) impure {
+  in_msg~touch();
+  throw(err::not_owner);
+}
+
+(slice, int, int, int, int, int, int) get_agent_account_data() method_id {
+  return load_agent_state();
+}
+
+slice get_owner() method_id {
+  var (owner, _, _, _, _, _, _) = load_agent_state();
+  return owner;
+}
+
+int get_controller_pubkey() method_id {
+  var (_, controller_pubkey, _, _, _, _, _) = load_agent_state();
+  return controller_pubkey;
+}
+
+(int, int, int, int, int) get_agent_policy() method_id {
+  var (_, _, max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash) =
+    load_agent_state();
+  return (max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash);
+}
