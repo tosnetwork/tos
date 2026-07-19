@@ -1,3 +1,4 @@
+;; Copyright (C) 2025-2026  TOS Network.
 ;; Minimal AI Agent task escrow actor.
 ;; The creator funds the actor at deployment, an agent accepts and submits a
 ;; result, and the creator settles or cancels the task.

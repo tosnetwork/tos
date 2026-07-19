@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025-2026 RSquad Blockchain Lab.
+ * Copyright (C) 2025-2026  TOS Network.
  *
  * Licensed under the GNU General Public License v3.0.
  * See the LICENSE file in the root of this repository.
@@ -16,6 +16,7 @@ pub mod nominator;
 pub mod nominator_pool;
 pub mod provider;
 pub mod smart_contract;
+pub mod task_escrow;
 mod stack_utils;
 pub mod wallet;
 
@@ -32,4 +33,5 @@ pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapper
 pub use nominator_pool::{NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl};
 pub use provider::ContractProvider;
 pub use smart_contract::SmartContract;
+pub use task_escrow::{TaskEscrowContract, TaskEscrowInit};
 pub use wallet::{Wallet, WalletContract};
