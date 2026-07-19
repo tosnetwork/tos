@@ -1,22 +1,23 @@
-// automatically generated from `crypto/smartcont/stdlib.fc` `crypto/smartcont/task-escrow-code.fc` 
+// automatically generated from `smartcont/stdlib.fc` `smartcont/task-escrow-code.fc` 
 PROGRAM{
   DECLPROC send_value
   DECLPROC save_state
   DECLPROC recv_internal
   102582 DECLMETHOD get_task_data
   send_value PROCINLINE:<{
-    //  destination amount
-    0 PUSHINT	//  destination amount _2=0
-    16 PUSHINT	//  destination amount _2=0 _3=16
-    NEWC	//  destination amount _2=0 _3=16 _4
-    6 STU	//  destination amount _2=0 _6
-    s0 s3 XCHG2	//  _2=0 amount _6 destination
-    STSLICER	//  _2=0 amount _7
-    SWAP	//  _2=0 _7 amount
-    STTOMIS	//  _2=0 _8
-    107 STU	//  _22
-    ENDC	//  _23
-    7 PUSHPOW2	//  _23 _24=128
+    //  destination amount mode
+    0 PUSHINT	//  destination amount mode _3=0
+    16 PUSHINT	//  destination amount mode _3=0 _4=16
+    NEWC	//  destination amount mode _3=0 _4=16 _5
+    6 STU	//  destination amount mode _3=0 _7
+    s0 s4 XCHG2	//  _3=0 amount mode _7 destination
+    STSLICER	//  _3=0 amount mode _8
+    ROT	//  _3=0 mode _8 amount
+    STTOMIS	//  _3=0 mode _9
+    s1 s2 XCHG	//  mode _3=0 _9
+    107 STU	//  mode _23
+    ENDC	//  mode _24
+    SWAP	//  _24 mode
     SENDRAWMSG
   }>
   save_state PROCINLINE:<{
@@ -31,7 +32,7 @@ PROGRAM{
     s0 s7 XCHG2	//  _16 agent has_agent budget deadline status _17 creator
     STSLICER	//  _16 agent has_agent budget deadline status _18
     s1 s4 XCHG	//  _16 agent status budget deadline has_agent _18
-    1 STI	//  _16 agent status budget deadline _20
+    1 STU	//  _16 agent status budget deadline _20
     s0 s4 XCHG2	//  _16 deadline status budget _20 agent
     STSLICER	//  _16 deadline status budget _21
     SWAP	//  _16 deadline status _21 budget
@@ -53,7 +54,7 @@ PROGRAM{
     }>	//  in_msg in_msg_full
     SWAP	//  in_msg_full in_msg
     32 LDU	//  in_msg_full op in_msg
-    64 LDU	//  in_msg_full op _153 _152
+    64 LDU	//  in_msg_full op _161 _160
     NIP	//  in_msg_full op in_msg
     c4 PUSH	//  in_msg_full op in_msg _13
     CTOS	//  in_msg_full op in_msg ds
@@ -68,7 +69,7 @@ PROGRAM{
     CTOS	//  in_msg_full op in_msg creator has_agent agent budget deadline status ds hashes
     256 LDU	//  in_msg_full op in_msg creator has_agent agent budget deadline status ds result_hash hashes
     256 LDU	//  in_msg_full op in_msg creator has_agent agent budget deadline status ds result_hash evidence_hash hashes
-    256 LDU	//  in_msg_full op in_msg creator has_agent agent budget deadline status ds result_hash evidence_hash _173 _172
+    256 LDU	//  in_msg_full op in_msg creator has_agent agent budget deadline status ds result_hash evidence_hash _181 _180
     DROP	//  in_msg_full op in_msg creator has_agent agent budget deadline status ds result_hash evidence_hash policy_hash
     s0 s3 XCHG	//  in_msg_full op in_msg creator has_agent agent budget deadline status policy_hash result_hash evidence_hash ds
     ENDS
@@ -76,7 +77,7 @@ PROGRAM{
     CTOS	//  evidence_hash op in_msg creator has_agent agent budget deadline status policy_hash result_hash full_msg
     4 PUSHINT	//  evidence_hash op in_msg creator has_agent agent budget deadline status policy_hash result_hash full_msg _56=4
     SDSKIPFIRST	//  evidence_hash op in_msg creator has_agent agent budget deadline status policy_hash result_hash full_msg
-    LDMSGADDR	//  evidence_hash op in_msg creator has_agent agent budget deadline status policy_hash result_hash _175 _174
+    LDMSGADDR	//  evidence_hash op in_msg creator has_agent agent budget deadline status policy_hash result_hash _183 _182
     DROP	//  evidence_hash op in_msg creator has_agent agent budget deadline status policy_hash result_hash sender
     s10 PUSH
     1413567233 PUSHINT	//  evidence_hash op in_msg creator has_agent agent budget deadline status policy_hash result_hash sender op _61=1413567233
@@ -94,12 +95,12 @@ PROGRAM{
       s1 s3 XCHG	//  evidence_hash result_hash sender creator policy_hash deadline budget _69 _70
       OR	//  evidence_hash result_hash sender creator policy_hash deadline budget _71
       101 THROWIFNOT	//  evidence_hash result_hash agent creator policy_hash deadline budget
-      s3 s6 XCHG
-      -1 PUSHINT
-      s0 s5 XCHG
-      s3 s4 s6 XCHG3
-      1 PUSHINT
-      s2 s3 XCHG2	//  creator agent has_agent=-1 budget deadline _74=1 result_hash evidence_hash policy_hash
+      1 PUSHINT	//  evidence_hash result_hash agent creator policy_hash deadline budget has_agent=1
+      DUP	//  evidence_hash result_hash agent creator policy_hash deadline budget has_agent=1 _74=1
+      s5 s8 XCHG
+      s1 s6 XCHG
+      s5 s7 s3 XCHG3
+      s2 s4 XCHG2	//  creator agent has_agent=1 budget deadline _74=1 result_hash evidence_hash policy_hash
       save_state INLINECALLDICT
     }>	//  evidence_hash op in_msg creator has_agent agent budget deadline status policy_hash result_hash sender
     s10 PUSH
@@ -118,7 +119,7 @@ PROGRAM{
       103 THROWIFNOT
       s0 s4 XCHG	//  policy_hash deadline budget creator has_agent agent in_msg
       256 LDU	//  policy_hash deadline budget creator has_agent agent result_hash in_msg
-      256 LDU	//  policy_hash deadline budget creator has_agent agent result_hash _179 _178
+      256 LDU	//  policy_hash deadline budget creator has_agent agent result_hash _187 _186
       DROP	//  policy_hash deadline budget creator has_agent agent result_hash evidence_hash
       s4 s7 XCHG
       5 2 REVERSE
@@ -140,76 +141,88 @@ PROGRAM{
       SDEQ	//  evidence_hash policy_hash in_msg creator has_agent agent budget deadline result_hash _101
       105 THROWIFNOT
       s0 s6 XCHG	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline in_msg
-      LDTOMIS	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline _181 _180
+      LDTOMIS	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline _189 _188
       DROP	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline payout
-      s0 s2 PUSH2	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline payout payout budget
-      LEQ	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline payout _107
+      s0 s2 PUXC	//  evidence_hash policy_hash result_hash creator has_agent agent payout deadline payout budget
+      LEQ	//  evidence_hash policy_hash result_hash creator has_agent agent payout deadline _107
       106 THROWIFNOT
-      s3 s0 PUSH2	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline payout agent payout
-      send_value INLINECALLDICT
-      s1 s2 XCHG	//  evidence_hash policy_hash result_hash creator has_agent agent deadline budget payout
-      SUB	//  evidence_hash policy_hash result_hash creator has_agent agent deadline _110
-      s4 s(-1) PUXC	//  evidence_hash policy_hash result_hash creator has_agent agent deadline creator _110
+      OVER	//  evidence_hash policy_hash result_hash creator has_agent agent payout deadline payout
+      0 GTINT	//  evidence_hash policy_hash result_hash creator has_agent agent payout deadline _110
+      IF:<{	//  evidence_hash policy_hash result_hash creator has_agent agent payout deadline
+        s2 s1 PUXC
+        1 PUSHINT	//  evidence_hash policy_hash result_hash creator has_agent agent deadline agent payout _111=1
+        send_value INLINECALLDICT
+      }>ELSE<{
+        NIP	//  evidence_hash policy_hash result_hash creator has_agent agent deadline
+      }>
+      s3 PUSH
+      0 PUSHINT
+      7 PUSHPOW2	//  evidence_hash policy_hash result_hash creator has_agent agent deadline creator _113=0 _114=128
       send_value INLINECALLDICT
       s3 s6 XCHG
       5 1 REVERSE
       0 PUSHINT
       s3 s4 XCHG2
       3 PUSHINT
-      s0 s3 XCHG	//  creator agent has_agent _112=0 deadline _113=3 result_hash evidence_hash policy_hash
+      s0 s3 XCHG	//  creator agent has_agent _116=0 deadline _117=3 result_hash evidence_hash policy_hash
       save_state INLINECALLDICT
     }>	//  evidence_hash op in_msg creator has_agent agent budget deadline status policy_hash result_hash sender
-    s9 POP	//  evidence_hash op sender creator has_agent agent budget deadline status policy_hash result_hash
-    s9 PUSH
-    1413567236 PUSHINT	//  evidence_hash op sender creator has_agent agent budget deadline status policy_hash result_hash op _115=1413567236
-    EQUAL	//  evidence_hash op sender creator has_agent agent budget deadline status policy_hash result_hash _116
-    IFJMP:<{	//  evidence_hash op sender creator has_agent agent budget deadline status policy_hash result_hash
-      s9 POP	//  evidence_hash result_hash sender creator has_agent agent budget deadline status policy_hash
-      SWAP	//  evidence_hash result_hash sender creator has_agent agent budget deadline policy_hash status
-      0 EQINT	//  evidence_hash result_hash sender creator has_agent agent budget deadline policy_hash _119
+    s5 POP
+    s8 POP	//  evidence_hash op result_hash creator has_agent agent sender deadline status policy_hash
+    s8 PUSH
+    1413567236 PUSHINT	//  evidence_hash op result_hash creator has_agent agent sender deadline status policy_hash op _119=1413567236
+    EQUAL	//  evidence_hash op result_hash creator has_agent agent sender deadline status policy_hash _120
+    IFJMP:<{	//  evidence_hash op result_hash creator has_agent agent sender deadline status policy_hash
+      s8 POP	//  evidence_hash policy_hash result_hash creator has_agent agent sender deadline status
+      0 EQINT	//  evidence_hash policy_hash result_hash creator has_agent agent sender deadline _123
       107 THROWIFNOT
-      s6 s5 XCPU	//  evidence_hash result_hash policy_hash creator has_agent agent budget deadline sender creator
-      SDEQ	//  evidence_hash result_hash policy_hash creator has_agent agent budget deadline _122
+      s1 s4 XCPU	//  evidence_hash policy_hash result_hash creator has_agent agent deadline sender creator
+      SDEQ	//  evidence_hash policy_hash result_hash creator has_agent agent deadline _126
       108 THROWIFNOT
-      s4 s1 PUXC	//  evidence_hash result_hash policy_hash creator has_agent agent deadline creator budget
+      s3 PUSH
+      0 PUSHINT
+      7 PUSHPOW2	//  evidence_hash policy_hash result_hash creator has_agent agent deadline creator _128=0 _129=128
       send_value INLINECALLDICT
       s3 s6 XCHG
       5 1 REVERSE
       0 PUSHINT
       s3 s4 XCHG2
       4 PUSHINT
-      s3 s1 s3 XCHG3	//  creator agent has_agent _125=0 deadline _126=4 result_hash evidence_hash policy_hash
+      s0 s3 XCHG	//  creator agent has_agent _131=0 deadline _132=4 result_hash evidence_hash policy_hash
       save_state INLINECALLDICT
-    }>	//  evidence_hash op sender creator has_agent agent budget deadline status policy_hash result_hash
-    s8 POP	//  evidence_hash op result_hash creator has_agent agent budget deadline status policy_hash
-    s0 s8 XCHG
-    1413567237 PUSHINT	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status op _128=1413567237
-    EQUAL	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status _129
-    IFJMP:<{	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status
-      OVER
-      NOW	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status deadline _131
-      LEQ	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status _132
+    }>	//  evidence_hash op result_hash creator has_agent agent sender deadline status policy_hash
+    s3 POP	//  evidence_hash op result_hash creator has_agent agent policy_hash deadline status
+    s0 s7 XCHG
+    1413567237 PUSHINT	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline op _134=1413567237
+    EQUAL	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline _135
+    IFJMP:<{	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline
+      DUP
+      NOW	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline deadline _137
+      LEQ	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline _138
       109 THROWIFNOT
-      DUP	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status status
-      0 EQINT	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status _136
-      OVER	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status _136 status
-      1 EQINT	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status _136 _138
-      OR	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status _139
-      SWAP	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline _139 status
-      2 EQINT	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline _139 _141
-      OR	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline _142
+      s6 PUSH	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline status
+      0 EQINT	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline _142
+      s7 PUSH	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline _142 status
+      1 EQINT	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline _142 _144
+      OR	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline _145
+      s0 s7 XCHG	//  evidence_hash _145 result_hash creator has_agent agent policy_hash deadline status
+      2 EQINT	//  evidence_hash _145 result_hash creator has_agent agent policy_hash deadline _147
+      s1 s7 XCHG	//  evidence_hash deadline result_hash creator has_agent agent policy_hash _145 _147
+      OR	//  evidence_hash deadline result_hash creator has_agent agent policy_hash _148
       110 THROWIFNOT
-      s4 s1 PUXC	//  evidence_hash policy_hash result_hash creator has_agent agent deadline creator budget
+      s3 PUSH
+      0 PUSHINT
+      7 PUSHPOW2	//  evidence_hash deadline result_hash creator has_agent agent policy_hash creator _150=0 _151=128
       send_value INLINECALLDICT
       s3 s6 XCHG
       5 1 REVERSE
       0 PUSHINT
-      s3 s4 XCHG2
+      s3 s1 s4 XCHG3
       5 PUSHINT
-      s0 s3 XCHG	//  creator agent has_agent _145=0 deadline _146=5 result_hash evidence_hash policy_hash
+      s3 s1 s3 XCHG3	//  creator agent has_agent _153=0 deadline _154=5 result_hash evidence_hash policy_hash
       save_state INLINECALLDICT
-    }>	//  evidence_hash policy_hash result_hash creator has_agent agent budget deadline status
-    9 BLKDROP	// 
+    }>	//  evidence_hash status result_hash creator has_agent agent policy_hash deadline
+    8 BLKDROP	// 
     111 THROW
   }>
   get_task_data PROC:<{
@@ -217,17 +230,18 @@ PROGRAM{
     c4 PUSH	//  _1
     CTOS	//  ds
     LDMSGADDR	//  creator ds
-    LDMSGADDR	//  creator agent ds
-    1 LDU	//  creator agent has_agent ds
-    LDTOMIS	//  creator agent has_agent budget ds
-    64 LDU	//  creator agent has_agent budget deadline ds
-    8 LDU	//  creator agent has_agent budget deadline status ds
-    LDREF	//  creator agent has_agent budget deadline status _50 _49
-    DROP	//  creator agent has_agent budget deadline status _25
-    CTOS	//  creator agent has_agent budget deadline status hashes
-    256 LDU	//  creator agent has_agent budget deadline status _28 hashes
-    256 LDU	//  creator agent has_agent budget deadline status _28 _31 hashes
-    256 LDU	//  creator agent has_agent budget deadline status _28 _31 _56 _55
-    DROP	//  creator agent has_agent budget deadline status _28 _31 _34
+    1 LDU	//  creator has_agent ds
+    LDMSGADDR	//  creator has_agent agent ds
+    LDTOMIS	//  creator has_agent agent budget ds
+    64 LDU	//  creator has_agent agent budget deadline ds
+    8 LDU	//  creator has_agent agent budget deadline status ds
+    LDREF	//  creator has_agent agent budget deadline status _50 _49
+    DROP	//  creator has_agent agent budget deadline status _25
+    CTOS	//  creator has_agent agent budget deadline status hashes
+    256 LDU	//  creator has_agent agent budget deadline status _28 hashes
+    256 LDU	//  creator has_agent agent budget deadline status _28 _31 hashes
+    256 LDU	//  creator has_agent agent budget deadline status _28 _31 _56 _55
+    DROP	//  creator has_agent agent budget deadline status _28 _31 _34
+    s6 s7 XCHG	//  creator agent has_agent budget deadline status _28 _31 _34
   }>
 }END>c
