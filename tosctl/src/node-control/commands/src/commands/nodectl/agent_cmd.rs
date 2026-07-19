@@ -23,7 +23,8 @@ use chain_rpc_client::v2::data_models::AccountState;
 use colored::Colorize;
 use common::{
     app_config::{
-        AgentRuntimeBinding, AgentWalletConfig, AgentWalletPolicy, KeyConfig, WalletConfig,
+        AgentRuntimeBinding, AgentTaskConfig, AgentWalletConfig, AgentWalletPolicy, KeyConfig,
+        WalletConfig,
     },
     chain_utils::{display_tos, tos_to_nanotos},
     time_format, WalletVersion,
@@ -81,7 +82,9 @@ pub struct AgentTaskCmd {
 pub enum AgentTaskAction {
     /// Deploy and fund a Task Escrow actor
     Create(AgentTaskCreateCmd),
-    /// Show Task Escrow state by address
+    /// List locally tracked Task Escrow records
+    Ls(AgentTaskLsCmd),
+    /// Show Task Escrow state by address or local record name
     Show(AgentTaskShowCmd),
     /// Send a Task Escrow lifecycle message
     Send(AgentTaskSendCmd),
@@ -96,8 +99,10 @@ pub enum AgentTaskAction {
 pub struct AgentTaskSendCmd {
     #[arg(long, value_enum)]
     operation: AgentTaskOperation,
-    #[arg(long)]
-    address: String,
+    #[arg(long, conflicts_with = "name", help = "Task Escrow address")]
+    address: Option<String>,
+    #[arg(long, help = "Local task record name from `agent task ls`")]
+    name: Option<String>,
     #[arg(long, help = "Signing wallet name or master_wallet")]
     from: String,
     #[arg(long, default_value_t = 0)]
@@ -115,10 +120,19 @@ pub struct AgentTaskSendCmd {
 }
 
 #[derive(clap::Args, Clone)]
-#[command(about = "Show Task Escrow state by address")]
+#[command(about = "Show Task Escrow state by address or local record name")]
 pub struct AgentTaskShowCmd {
-    #[arg(long)]
-    address: String,
+    #[arg(long, conflicts_with = "name", help = "Task Escrow address")]
+    address: Option<String>,
+    #[arg(long, help = "Local task record name from `agent task ls`")]
+    name: Option<String>,
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "List locally tracked Task Escrow records")]
+pub struct AgentTaskLsCmd {
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
 }
@@ -126,6 +140,8 @@ pub struct AgentTaskShowCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Deploy and fund a Task Escrow actor")]
 pub struct AgentTaskCreateCmd {
+    #[arg(long, help = "Local task record name; defaults to task-<address prefix>")]
+    name: Option<String>,
     #[arg(long, help = "Creator address; must match the funding wallet")]
     creator: String,
     #[arg(long)]
@@ -753,6 +769,7 @@ impl AgentTaskCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         match &self.action {
             AgentTaskAction::Create(cmd) => cmd.run(config_path).await,
+            AgentTaskAction::Ls(cmd) => cmd.run(config_path),
             AgentTaskAction::Show(cmd) => cmd.run(config_path).await,
             AgentTaskAction::Send(cmd) => cmd.run(config_path).await,
             AgentTaskAction::BuildState(cmd) => cmd.run(),
@@ -761,10 +778,28 @@ impl AgentTaskCmd {
     }
 }
 
+/// Resolve the escrow address from an explicit `--address` or a stored `--name` record.
+fn resolve_task_address(
+    config: &common::app_config::AppConfig,
+    address: &Option<String>,
+    name: &Option<String>,
+) -> anyhow::Result<MsgAddressInt> {
+    let raw = match (address, name) {
+        (Some(address), None) => address.clone(),
+        (None, Some(name)) => config
+            .agent_tasks
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("Task record '{}' not found; see `agent task ls`", name))?
+            .address
+            .clone(),
+        _ => anyhow::bail!("provide exactly one of --address or --name"),
+    };
+    raw.parse::<MsgAddressInt>().context("invalid Task Escrow address")
+}
+
 impl AgentTaskSendCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         validate_tos_amount("amount", self.amount)?;
-        let destination = self.address.parse::<MsgAddressInt>().context("invalid Task Escrow address")?;
         let body = match self.operation {
             AgentTaskOperation::Accept => TaskEscrowContract::accept(self.query_id)?,
             AgentTaskOperation::Result => TaskEscrowContract::result(
@@ -781,6 +816,7 @@ impl AgentTaskSendCmd {
         };
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let destination = resolve_task_address(&config, &self.address, &self.name)?;
         let wallet_config = get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (owner_address, owner_info, owner_secret) = wallet_info(rpc_client.clone(), wallet_config, vault).await?;
         if owner_info.account_state != AccountState::Active { anyhow::bail!("signing wallet is not active"); }
@@ -809,8 +845,8 @@ struct AgentTaskDataView {
 
 impl AgentTaskShowCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        let address = self.address.parse::<MsgAddressInt>().context("invalid Task Escrow address")?;
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
+        let address = resolve_task_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider.get_method(address.to_string(), "get_task_data", vec![]).await?;
@@ -857,7 +893,21 @@ impl AgentTaskCreateCmd {
         let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
         let state_init = TaskEscrowContract::build_state_init(&init)?;
         let path = Path::new(config_path);
-        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let record_name = self.name.clone().unwrap_or_else(|| {
+            let hex = address.to_string();
+            let hash = hex.rsplit(':').next().unwrap_or(&hex);
+            format!("task-{}", &hash[..hash.len().min(8)])
+        });
+        if let Some(existing) = config.agent_tasks.get(&record_name) {
+            if existing.address != address.to_string() {
+                anyhow::bail!(
+                    "Task record '{}' already exists for address {}",
+                    record_name,
+                    existing.address
+                );
+            }
+        }
         let payer_cfg = get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (payer_address, payer_info, payer_secret) = wallet_info(rpc_client.clone(), payer_cfg, vault).await?;
         if payer_address != creator { anyhow::bail!("creator address must match funding wallet address"); }
@@ -873,9 +923,82 @@ impl AgentTaskCreateCmd {
             &wallet, rpc_client, address.clone(), amount_nanotos, body,
             payer_info.seqno, &payer_address, state_init,
         ).await?;
+        config.agent_tasks.insert(
+            record_name.clone(),
+            AgentTaskConfig {
+                address: address.to_string(),
+                creator: creator.to_string(),
+                assigned_agent: init.assigned_agent.as_ref().map(|agent| agent.to_string()),
+                budget: init.budget,
+                deadline: init.deadline,
+                policy_hash: hex::encode(policy_hash),
+                created_at: Some(time_format::now()),
+            },
+        );
+        save_config(&config, path)?;
         if self.format == OutputFormat::Json {
-            println!("{}", serde_json::json!({"address": address.to_string(), "status": "submitted", "creator": creator.to_string()}));
-        } else { println!("{} Task Escrow deployed at {}", "OK".green().bold(), address); }
+            println!("{}", serde_json::json!({
+                "name": record_name,
+                "address": address.to_string(),
+                "status": "submitted",
+                "creator": creator.to_string(),
+            }));
+        } else {
+            println!("{} Task Escrow '{}' deployed at {}", "OK".green().bold(), record_name, address);
+        }
+        Ok(())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct AgentTaskRecordView {
+    name: String,
+    address: String,
+    creator: String,
+    assigned_agent: Option<String>,
+    budget: String,
+    deadline: u64,
+    policy_hash: String,
+    created_at: Option<u64>,
+}
+
+impl AgentTaskLsCmd {
+    fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = common::app_config::AppConfig::load(Path::new(config_path))?;
+        let mut records: Vec<AgentTaskRecordView> = config
+            .agent_tasks
+            .iter()
+            .map(|(name, task)| AgentTaskRecordView {
+                name: name.clone(),
+                address: task.address.clone(),
+                creator: task.creator.clone(),
+                assigned_agent: task.assigned_agent.clone(),
+                budget: display_tos(task.budget),
+                deadline: task.deadline,
+                policy_hash: task.policy_hash.clone(),
+                created_at: task.created_at,
+            })
+            .collect();
+        records.sort_by(|a, b| a.name.cmp(&b.name));
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&records)?);
+            return Ok(());
+        }
+        if records.is_empty() {
+            println!("No Task Escrow records configured");
+            return Ok(());
+        }
+        for record in &records {
+            println!(
+                "{}\n  Address:  {}\n  Creator:  {}\n  Agent:    {}\n  Budget:   {} TOS\n  Deadline: {}",
+                record.name.bold(),
+                record.address,
+                record.creator,
+                record.assigned_agent.as_deref().unwrap_or("open"),
+                record.budget,
+                record.deadline,
+            );
+        }
         Ok(())
     }
 }

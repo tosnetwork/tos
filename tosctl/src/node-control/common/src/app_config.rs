@@ -393,6 +393,27 @@ pub struct AgentWalletConfig {
     pub created_at: Option<u64>,
 }
 
+/// Locally tracked Task Escrow deployment record.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+pub struct AgentTaskConfig {
+    /// Deployed Task Escrow contract address.
+    pub address: String,
+    /// Task creator (funding wallet) address.
+    pub creator: String,
+    /// Assigned agent address when fixed at deployment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_agent: Option<String>,
+    /// Escrow budget in nano-TOS.
+    pub budget: u64,
+    /// Unix deadline after which the escrow may be expired.
+    pub deadline: u64,
+    /// Hex-encoded 32-byte settlement policy hash.
+    pub policy_hash: String,
+    /// Unix timestamp when this local record was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 #[serde(tag = "kind")]
 pub enum PoolConfig {
@@ -779,6 +800,9 @@ pub struct AppConfig {
     pub wallets: HashMap<String, WalletConfig>,
     #[serde(default)]
     pub agent_wallets: HashMap<String, AgentWalletConfig>,
+    /// Task Escrow deployments tracked by this operator, keyed by local task name.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub agent_tasks: HashMap<String, AgentTaskConfig>,
     #[serde(default)]
     pub pools: HashMap<String, PoolConfig>,
     #[serde(default)]
@@ -853,6 +877,51 @@ mod tests {
         "-1:bd313e9e1114bbbe7af6f28ef59be0ff3f02ac795423f10397a70dc16396c4ea";
     const OWNER: &'static str =
         "0:c5770dc489bef32419959c174b787ab95ff9109e0e43239c18059509819697fb";
+
+    fn minimal_config_json() -> serde_json::Value {
+        serde_json::json!({
+            "nodes": {},
+            "chain_rpc": {"urls": ["http://127.0.0.1:3301/"]},
+            "http": {},
+            "master_wallet": null,
+            "log": null
+        })
+    }
+
+    #[test]
+    fn config_without_agent_tasks_loads_with_empty_map() {
+        let config: AppConfig = serde_json::from_value(minimal_config_json()).unwrap();
+        assert!(config.agent_tasks.is_empty());
+    }
+
+    #[test]
+    fn agent_task_records_roundtrip_and_stay_backward_compatible() {
+        let mut json = minimal_config_json();
+        json["agent_tasks"] = serde_json::json!({
+            "task-1": {
+                "address": "-1:1111111111111111111111111111111111111111111111111111111111111111",
+                "creator": "0:2222222222222222222222222222222222222222222222222222222222222222",
+                "budget": 1_000_000_000u64,
+                "deadline": 1_800_000_000u64,
+                "policy_hash": "33".repeat(32),
+            }
+        });
+        let config: AppConfig = serde_json::from_value(json).unwrap();
+        let record = &config.agent_tasks["task-1"];
+        // Optional fields absent in older records must load as None.
+        assert_eq!(record.assigned_agent, None);
+        assert_eq!(record.created_at, None);
+        assert_eq!(record.budget, 1_000_000_000);
+
+        let serialized = serde_json::to_value(&config).unwrap();
+        let reloaded: AppConfig = serde_json::from_value(serialized).unwrap();
+        assert_eq!(reloaded.agent_tasks["task-1"], config.agent_tasks["task-1"]);
+
+        // An empty map is skipped on serialization so untouched configs stay stable.
+        let empty: AppConfig = serde_json::from_value(minimal_config_json()).unwrap();
+        let empty_json = serde_json::to_value(&empty).unwrap();
+        assert!(empty_json.get("agent_tasks").is_none());
+    }
 
     #[test]
     fn test_calculate_stake_insufficient_balance() {

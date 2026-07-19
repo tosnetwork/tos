@@ -183,6 +183,7 @@ impl InstallWizardCmd {
                 nodes: HashMap::new(),
                 wallets,
                 agent_wallets: HashMap::new(),
+                agent_tasks: HashMap::new(),
                 pools: HashMap::new(),
                 bindings: HashMap::new(),
                 chain_rpc,

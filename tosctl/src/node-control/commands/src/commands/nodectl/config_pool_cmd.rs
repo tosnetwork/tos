@@ -470,6 +470,8 @@ mod tests {
         AppConfig {
             nodes: HashMap::new(),
             wallets: HashMap::new(),
+            agent_wallets: HashMap::new(),
+            agent_tasks: HashMap::new(),
             pools: HashMap::new(),
             bindings: HashMap::new(),
             chain_rpc: ChainRpcConfig::default(),
