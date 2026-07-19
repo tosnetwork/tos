@@ -477,6 +477,23 @@ pub enum AgentWalletAction {
     Activate(AgentWalletActivateCmd),
     /// Remove a local Agent Wallet profile
     Rm(AgentWalletRmCmd),
+    /// Send an owner-authorized transfer from the underlying Agent Wallet
+    Send(AgentWalletSendCmd),
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Send an owner-authorized transfer from the underlying Agent Wallet")]
+pub struct AgentWalletSendCmd {
+    #[arg(short = 'n', long = "name", help = "Agent Wallet profile name")]
+    name: String,
+    #[arg(long, help = "Destination address")]
+    to: String,
+    #[arg(long, help = "Amount in TOS (e.g. 1.5)")]
+    amount: f64,
+    #[arg(long, help = "Optional message/comment")]
+    message: Option<String>,
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(clap::Args, Clone)]
@@ -2301,6 +2318,7 @@ impl AgentWalletCmd {
             AgentWalletAction::Status(cmd) => cmd.run(config_path).await,
             AgentWalletAction::Activate(cmd) => cmd.run(config_path).await,
             AgentWalletAction::Rm(cmd) => cmd.run(config_path).await,
+            AgentWalletAction::Send(cmd) => cmd.run(config_path).await,
         }
     }
 }
@@ -2577,6 +2595,100 @@ impl AgentWalletFundCmd {
             status: "sent".to_string(),
         };
         println!("{}", serde_json::to_string_pretty(&result)?);
+        Ok(())
+    }
+}
+
+impl AgentWalletSendCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_tos_amount("amount", self.amount)?;
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.name)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.name))?;
+
+        // Signs with the Agent Wallet's owner key only. This is a direct,
+        // owner-authorized transfer from the underlying wallet -- it does
+        // not go through the Agent Account controller path, and is
+        // therefore not constrained by the controller's max-per-tx or
+        // daily-limit policy. Automated agent spending must continue
+        // through `tosctl agent account task-send` or
+        // `tosctl agent task send --via-agent-account`.
+        let wallet_cfg = &agent_wallet.wallet;
+        let (from_address, from_info, from_secret) =
+            wallet_info(rpc_client.clone(), wallet_cfg, vault).await?;
+
+        let dest_addr = self.to.parse::<MsgAddressInt>().context("Invalid destination address")?;
+
+        let amount_nanotos = tos_to_nanotos(self.amount);
+        if !(1..=from_info.balance.saturating_sub(AGENT_WALLET_FUND_GAS))
+            .contains(&amount_nanotos)
+        {
+            anyhow::bail!(
+                "Wrong amount value {} TOS. Agent Wallet balance is {} TOS",
+                self.amount,
+                display_tos(from_info.balance)
+            );
+        }
+        if from_info.account_state == AccountState::Frozen {
+            anyhow::bail!("Agent wallet '{}' is frozen", self.name);
+        }
+        if from_info.account_state == AccountState::Uninitialized {
+            anyhow::bail!("Agent wallet '{}' is uninitialized", self.name);
+        }
+
+        println!(
+            "\n{}\n  Agent:   {}\n  From:    {}\n  To:      {}\n  Amount:  {:.9} TOS{}\n",
+            "Agent Wallet owner transfer summary:".cyan().bold(),
+            self.name,
+            from_address,
+            dest_addr,
+            self.amount,
+            if let Some(msg) = &self.message {
+                format!("\n  Comment: {}", msg)
+            } else {
+                String::new()
+            },
+        );
+
+        if !self.yes && !confirm("Confirm owner transfer?")? {
+            println!("{}", "Transfer cancelled".yellow());
+            return Ok(());
+        }
+
+        let wallet = make_wallet(rpc_client.clone(), wallet_cfg, from_secret, &self.name)
+            .await
+            .context("create agent wallet signer")?;
+        let body =
+            if let Some(msg) = &self.message { build_comment_cell(msg)? } else { Cell::default() };
+        let msg =
+            wallet.build_message(dest_addr.clone(), amount_nanotos, body, false, None, None, None)
+                .await?;
+        let msg_boc = write_boc(&msg)?;
+        rpc_client.send_boc(&msg_boc).await?;
+        wait_for_seqno_change(
+            rpc_client.clone(),
+            &from_address,
+            from_info.seqno,
+            &common::task_cancellation::CancellationCtx::default(),
+            SEND_TIMEOUT,
+        )
+        .await?;
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "ok": true,
+                "agent_wallet": self.name,
+                "from_address": from_address.to_string(),
+                "to_address": dest_addr.to_string(),
+                "amount": display_tos(amount_nanotos),
+                "message": self.message,
+                "status": "sent",
+            }))?
+        );
         Ok(())
     }
 }

@@ -304,10 +304,12 @@ tosctl agent wallet send \
   --yes
 ```
 
-This command is planned and is not implemented yet. It is intended for explicit operator
-actions such as treasury maintenance, refunds, emergency withdrawals, and agent retirement.
-It must sign with the Agent Wallet owner key stored in the vault. It must not accept the
-controller key or expose the owner key to an off-chain agent runtime.
+This command is intended for explicit operator actions such as treasury maintenance,
+refunds, emergency withdrawals, and agent retirement. It signs with the Agent Wallet owner
+key stored in the vault; it does not accept the controller key or expose the owner key to an
+off-chain agent runtime. It has passed real-localnet acceptance: funding, activation,
+transfer of an amount exceeding the Agent Account controller's `max-per-tx` (confirming the
+transfer is not policy-constrained), balance verification, and overdraft rejection.
 
 Because the owner retains full authority over the underlying wallet, an owner-authorized
 transfer is not constrained by the Agent Account controller's `max-per-tx` or `daily-limit`
@@ -461,10 +463,20 @@ unchanged:
 
 ## Next Engineering Step
 
-The next slice should deepen the Agent Account and Task Escrow binding:
+Controller-originated task actions already reference the persisted permission ID and escrow
+address (see the paragraph after the `--via-agent-account` example above), the escrow state
+machine already has dispute/resolve/reject states (see "When a task has a designated
+verifier..." above), and `tosctl agent wallet send` (see "Owner-Initiated Transfers" above)
+is implemented and real-localnet tested -- all three were open items here previously and are
+now shipped. What's still open for this Agent Wallet/Account/Task Escrow slice specifically:
 
-- add `tosctl agent wallet send` for explicit owner-authorized transfers from the underlying
-  Agent Wallet while keeping automated spending on the policy-enforced Agent Account path
-- make controller-originated task actions reference the persisted permission ID and escrow address
-- add dispute/resolve/reject states to the escrow state machine
-- add public-testnet acceptance for controller-signed Agent Account actions
+- add public-testnet acceptance for controller-signed Agent Account actions (all acceptance
+  so far, across every native contract in this repository, has run against throwaway
+  localnets only)
+
+The native-contract surface itself has grown well beyond this MVP's original Agent
+Account/Task Escrow scope -- see `ROADMAP.md`'s Phase 3 (Capability Registry, Service Actor)
+and Phase 4 (Dispute) entries, [`doc/ai-workflow-schemas.md`](ai-workflow-schemas.md) for the
+off-chain bundle formats every `*_hash` field expects, and
+[`doc/ai-agent-workflow-example.md`](ai-agent-workflow-example.md) for how all of these
+actors compose into one task lifecycle.
