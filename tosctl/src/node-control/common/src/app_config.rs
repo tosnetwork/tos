@@ -468,6 +468,26 @@ pub struct ServiceActorConfig {
     pub created_at: Option<u64>,
 }
 
+/// Locally tracked Dispute case record.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+pub struct DisputeConfig {
+    /// Deployed Dispute contract address.
+    pub address: String,
+    pub claimant: String,
+    pub respondent: String,
+    pub reviewer: String,
+    /// Unix timestamp: expected ruling deadline (informational only).
+    pub deadline: u64,
+    /// Hex-encoded 32-byte reference to the disputed subject (e.g. a Task
+    /// Escrow address's hash).
+    pub subject_hash: String,
+    /// Hex-encoded 32-byte hash of the claimant's evidence.
+    pub claimant_evidence_hash: String,
+    /// Unix timestamp when this local record was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 #[serde(tag = "kind")]
 pub enum PoolConfig {
@@ -859,6 +879,9 @@ pub struct AppConfig {
     /// Service Actor deployments tracked by this operator, keyed by local name.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub service_actors: HashMap<String, ServiceActorConfig>,
+    /// Dispute cases tracked by this operator, keyed by local name.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub disputes: HashMap<String, DisputeConfig>,
     #[serde(default)]
     pub pools: HashMap<String, PoolConfig>,
     #[serde(default)]

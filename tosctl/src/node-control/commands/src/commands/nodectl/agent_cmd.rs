@@ -8,6 +8,7 @@
  */
 
 use super::capability_registry_cmd::CapabilityRegistryCmd;
+use super::dispute_cmd::DisputeCmd;
 use super::output_format::OutputFormat;
 use super::service_actor_cmd::ServiceActorCmd;
 use super::utils::{
@@ -77,6 +78,8 @@ pub enum AgentAction {
     Registry(CapabilityRegistryCmd),
     /// Service Actor operations
     Service(ServiceActorCmd),
+    /// Dispute case operations
+    Dispute(DisputeCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -860,6 +863,7 @@ impl AgentCmd {
             AgentAction::Task(cmd) => cmd.run(&self.config).await,
             AgentAction::Registry(cmd) => cmd.run(&self.config).await,
             AgentAction::Service(cmd) => cmd.run(&self.config).await,
+            AgentAction::Dispute(cmd) => cmd.run(&self.config).await,
         }
     }
 }

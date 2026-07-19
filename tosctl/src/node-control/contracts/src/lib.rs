@@ -11,6 +11,7 @@ pub mod capability_registry;
 pub mod chain_provider;
 pub mod config_contract;
 pub mod contract_codes;
+pub mod dispute;
 pub mod elector;
 pub mod liquid_controller;
 pub mod nominator;
@@ -31,6 +32,11 @@ pub use capability_registry::{
 pub use chain_provider::{ChainProvider, DefaultChainProvider, contract_provider_from};
 pub use config_contract::{
     ConfigContractImpl, ConfigContractWrapper, ConfigProposal, ProposedParam,
+};
+pub use dispute::{
+    DISPUTE_STATUS_EVIDENCE_SUBMITTED, DISPUTE_STATUS_OPEN, DISPUTE_STATUS_RESOLVED,
+    DisputeContract, DisputeData, DisputeInit, RULING_CLAIMANT, RULING_NONE, RULING_RESPONDENT,
+    RULING_SPLIT,
 };
 pub use elector::{ElectionsInfo, ElectorWrapper, ElectorWrapperImpl, Participant};
 pub use liquid_controller::{ControllerData, ControllerWrapper, ControllerWrapperImpl, LoanBalanceRequirement};

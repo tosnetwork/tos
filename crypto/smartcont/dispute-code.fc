@@ -1,0 +1,141 @@
+;; Copyright (C) 2025-2026  TOS Network.
+;; Minimal Dispute actor for contested AI-agent task results.
+;;
+;; One instance per dispute case, discoverable at a deterministic address
+;; (same actor-per-address pattern as Agent Account, Task Escrow, Capability
+;; Registry and Service Actor). Deployed referencing a subject (typically a
+;; Task Escrow address, but any 32-byte reference works), a claimant, a
+;; respondent, and a reviewer authorized to rule. This contract is a pure
+;; adjudication ledger -- it does not hold or move funds itself; a subject
+;; contract's own settlement logic (e.g. Task Escrow's `resolve`) enforces
+;; whatever the ruling here decides.
+;;
+;; Persistent data layout:
+;;   claimant:MsgAddress
+;;   respondent:MsgAddress
+;;   reviewer:MsgAddress
+;;   status:uint8      (0 = open, 1 = evidence_submitted, 2 = resolved)
+;;   ruling:uint8       (0 = none, 1 = claimant, 2 = respondent, 3 = split)
+;;   split_bps:uint16   (basis points awarded to claimant; only meaningful
+;;                       when ruling = split)
+;;   deadline:uint64    (informational: expected ruling deadline)
+;;   ^[subject_hash:uint256 claimant_evidence_hash:uint256]
+;;   ^[respondent_evidence_hash:uint256 ruling_hash:uint256]
+;;
+;; Internal messages:
+;;   submit_respondent_evidence#44535001 query_id:uint64
+;;                              respondent_evidence_hash:uint256 = InternalMsgBody;
+;;   rule#44535002 query_id:uint64 ruling:uint8 split_bps:uint16
+;;                 ruling_hash:uint256 = InternalMsgBody;
+
+const int op::submit_respondent_evidence = 0x44535001;
+const int op::rule = 0x44535002;
+
+const int status::open = 0;
+const int status::evidence_submitted = 1;
+const int status::resolved = 2;
+
+const int ruling::none = 0;
+const int ruling::claimant = 1;
+const int ruling::respondent = 2;
+const int ruling::split = 3;
+
+const int err::not_respondent = 2000;
+const int err::not_reviewer = 2001;
+const int err::already_resolved = 2002;
+const int err::invalid_ruling = 2003;
+const int err::invalid_split_bps = 2004;
+const int err::unknown_op = 2005;
+
+(slice, slice, slice, int, int, int, int, int, int, int, int) load_state() inline {
+  slice ds = get_data().begin_parse();
+  slice claimant = ds~load_msg_addr();
+  slice respondent = ds~load_msg_addr();
+  slice reviewer = ds~load_msg_addr();
+  int status = ds~load_uint(8);
+  int ruling = ds~load_uint(8);
+  int split_bps = ds~load_uint(16);
+  int deadline = ds~load_uint(64);
+  slice claim = ds~load_ref().begin_parse();
+  int subject_hash = claim~load_uint(256);
+  int claimant_evidence_hash = claim~load_uint(256);
+  claim.end_parse();
+  slice res = ds~load_ref().begin_parse();
+  int respondent_evidence_hash = res~load_uint(256);
+  int ruling_hash = res~load_uint(256);
+  res.end_parse();
+  ds.end_parse();
+  return (claimant, respondent, reviewer, status, ruling, split_bps, deadline, subject_hash,
+    claimant_evidence_hash, respondent_evidence_hash, ruling_hash);
+}
+
+() save_state(slice claimant, slice respondent, slice reviewer, int status, int ruling,
+             int split_bps, int deadline, int subject_hash, int claimant_evidence_hash,
+             int respondent_evidence_hash, int ruling_hash) impure inline {
+  set_data(begin_cell()
+    .store_slice(claimant)
+    .store_slice(respondent)
+    .store_slice(reviewer)
+    .store_uint(status, 8)
+    .store_uint(ruling, 8)
+    .store_uint(split_bps, 16)
+    .store_uint(deadline, 64)
+    .store_ref(begin_cell()
+      .store_uint(subject_hash, 256)
+      .store_uint(claimant_evidence_hash, 256)
+    .end_cell())
+    .store_ref(begin_cell()
+      .store_uint(respondent_evidence_hash, 256)
+      .store_uint(ruling_hash, 256)
+    .end_cell())
+  .end_cell());
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  msg_value~impure_touch();
+  if (in_msg.slice_empty?()) { return (); }
+  int op = in_msg~load_uint(32);
+  int query_id = in_msg~load_uint(64);
+  query_id~impure_touch();
+
+  var full_msg = in_msg_full.begin_parse();
+  full_msg~skip_bits(4);
+  slice sender = full_msg~load_msg_addr();
+
+  (slice claimant, slice respondent, slice reviewer, int status, int ruling, int split_bps,
+   int deadline, int subject_hash, int claimant_evidence_hash, int respondent_evidence_hash,
+   int ruling_hash) = load_state();
+
+  if (op == op::submit_respondent_evidence) {
+    throw_unless(err::not_respondent, equal_slice_bits(sender, respondent));
+    throw_unless(err::already_resolved, status != status::resolved);
+    respondent_evidence_hash = in_msg~load_uint(256);
+    in_msg.end_parse();
+    save_state(claimant, respondent, reviewer, status::evidence_submitted, ruling, split_bps,
+      deadline, subject_hash, claimant_evidence_hash, respondent_evidence_hash, ruling_hash);
+    return ();
+  }
+
+  if (op == op::rule) {
+    throw_unless(err::not_reviewer, equal_slice_bits(sender, reviewer));
+    throw_unless(err::already_resolved, status != status::resolved);
+    int new_ruling = in_msg~load_uint(8);
+    int new_split_bps = in_msg~load_uint(16);
+    int new_ruling_hash = in_msg~load_uint(256);
+    in_msg.end_parse();
+    throw_unless(err::invalid_ruling,
+      (new_ruling == ruling::claimant) | (new_ruling == ruling::respondent) |
+      (new_ruling == ruling::split));
+    throw_unless(err::invalid_split_bps,
+      (new_ruling != ruling::split) | ((new_split_bps >= 0) & (new_split_bps <= 10000)));
+    save_state(claimant, respondent, reviewer, status::resolved, new_ruling, new_split_bps,
+      deadline, subject_hash, claimant_evidence_hash, respondent_evidence_hash, new_ruling_hash);
+    return ();
+  }
+
+  throw(err::unknown_op);
+}
+
+(slice, slice, slice, int, int, int, int, int, int, int, int) get_dispute_data() method_id {
+  return load_state();
+}

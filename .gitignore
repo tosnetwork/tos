@@ -34,6 +34,7 @@ test/integration/.task-escrow-*
 test/integration/.agent-query-api-*
 test/integration/.capability-registry-*
 test/integration/.service-actor-*
+test/integration/.dispute-*
 
 test/tostester/tests/tl/generated
 test/tostester/src/tosapi

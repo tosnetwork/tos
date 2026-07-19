@@ -434,6 +434,7 @@ mod tests {
             agent_wallets: Default::default(),
             capability_registries: Default::default(),
             service_actors: Default::default(),
+            disputes: Default::default(),
             agent_tasks: Default::default(),
             pools: Default::default(),
             bindings: Default::default(),

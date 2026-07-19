@@ -168,11 +168,21 @@ Examples:
 
 ### Phase 4: Verifiable AI Workflows
 
+- Add dispute contracts for contested results: a standalone reviewer/arbitrator actor (one
+  deployed instance per case, same per-actor pattern as the other native contracts),
+  independent of Task Escrow's existing built-in single-verifier resolve path. Records a
+  subject reference, claimant/respondent evidence hashes, and a reviewer ruling (claimant,
+  respondent, or a basis-point split), with `tosctl agent dispute deploy/ls/show/send`. It is
+  a pure adjudication ledger -- it does not hold or move funds; the subject contract's own
+  settlement logic must act on the ruling.
+- Support reviewer or verifier actors for task acceptance policies: the Dispute contract's
+  reviewer role above covers this for contested results; Task Escrow's existing verifier role
+  (Phase 2) already covers uncontested settlement authority.
 - Add proof adapter interfaces for signed results, attestations and external evidence.
-- Support reviewer or verifier actors for task acceptance policies.
-- Add dispute contracts for contested results.
-- Add workflow examples that compose planner, worker, service and verifier actors.
-- Publish reference schemas for result metadata and evidence bundles.
+  (not started; Task Escrow/Dispute already carry generic evidence/ruling *hashes*, but there
+  is no pluggable verification-backend interface yet)
+- Add workflow examples that compose planner, worker, service and verifier actors. (not started)
+- Publish reference schemas for result metadata and evidence bundles. (not started)
 
 ### Phase 5: Scalable Agent Economy
 

@@ -130,6 +130,7 @@ impl GenerateCmd {
             agent_tasks: HashMap::new(),
             capability_registries: HashMap::new(),
             service_actors: HashMap::new(),
+            disputes: HashMap::new(),
             pools: HashMap::new(),
             bindings: HashMap::new(),
             chain_rpc: ChainRpcConfig::default(),

@@ -1032,6 +1032,7 @@ mod tests {
             agent_tasks: HashMap::new(),
             capability_registries: HashMap::new(),
             service_actors: HashMap::new(),
+            disputes: HashMap::new(),
             alerts: Default::default(),
         })
     }
@@ -1054,6 +1055,7 @@ mod tests {
             agent_tasks: HashMap::new(),
             capability_registries: HashMap::new(),
             service_actors: HashMap::new(),
+            disputes: HashMap::new(),
             alerts: Default::default(),
         })
     }

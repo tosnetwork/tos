@@ -63,6 +63,7 @@ fn app_cfg_with_auth(auth: AuthConfig) -> Arc<common::app_config::AppConfig> {
         agent_tasks: HashMap::new(),
         capability_registries: HashMap::new(),
         service_actors: HashMap::new(),
+        disputes: HashMap::new(),
         alerts: Default::default(),
     })
 }
@@ -85,6 +86,7 @@ fn app_cfg_no_auth() -> Arc<common::app_config::AppConfig> {
         agent_tasks: HashMap::new(),
         capability_registries: HashMap::new(),
         service_actors: HashMap::new(),
+        disputes: HashMap::new(),
         alerts: Default::default(),
     })
 }
