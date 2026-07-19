@@ -22,6 +22,7 @@ const STATUS_RESULT_SUBMITTED: i128 = 2;
 const STATUS_SETTLED: i128 = 3;
 const STATUS_CANCELLED: i128 = 4;
 const STATUS_EXPIRED: i128 = 5;
+const STATUS_REJECTED: i128 = 6;
 
 struct Fixture {
     bc: Blockchain,
@@ -131,6 +132,29 @@ fn cancel_refunds_creator() {
     let refund = f.balance(&creator_addr) - creator_before;
     assert!(refund > 2 * TOS, "creator refund too small: {refund}");
     assert!(f.balance(&f.escrow.clone()) < TOS / 100, "escrow must be drained");
+}
+
+#[test]
+fn assigned_agent_can_reject_and_refund_creator() {
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 10);
+    let creator_addr = f.creator.address().clone();
+    let creator_before = f.balance(&creator_addr);
+    let outsider_addr = f.outsider.address().clone();
+    f.send_from(&outsider_addr, TaskEscrowContract::reject(1).unwrap())
+        .expect_aborted()
+        .expect_exit_code(114);
+    assert_eq!(f.status(), STATUS_OPEN);
+
+    let agent_addr = f.agent.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::reject(2).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_REJECTED);
+    let refund = f.balance(&creator_addr) - creator_before;
+    assert!(refund > 2 * TOS, "creator refund too small: {refund}");
+    assert!(f.balance(&f.escrow.clone()) < TOS / 100, "escrow must be drained");
+
+    f.send_from(&agent_addr, TaskEscrowContract::reject(3).unwrap())
+        .expect_aborted()
+        .expect_exit_code(113);
 }
 
 #[test]

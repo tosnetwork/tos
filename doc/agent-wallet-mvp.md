@@ -188,7 +188,8 @@ tosctl agent task send \
   --yes
 ```
 
-Settlement, cancellation and timeout retain their creator, verifier or public lifecycle authorities and cannot use `--via-agent-account`.
+An assigned Agent Account can also reject an open task through the same controller path. Rejection is terminal and refunds the escrow to the creator. Settlement, cancellation and timeout retain their creator, verifier or public lifecycle authorities and cannot use `--via-agent-account`.
+Before signing, this task-oriented path reads the Task Escrow state and verifies that the selected Agent Account is the assigned agent, the locally tracked permission ID matches the on-chain permission hash, and the lifecycle state accepts the requested action. These checks prevent predictable misdirected actions; the Task Escrow contract remains the final authorization boundary.
 
 Export only the policy:
 
@@ -313,22 +314,28 @@ Each successful `create` stores a task record in the config, so later commands c
 
 ```bash
 tosctl agent task ls --format json
+tosctl agent task ls --on-chain --format json
 tosctl agent task show --name research-task --format json
 ```
+
+The default list reads only local records. `--on-chain` enriches every record with its
+current lifecycle status and permission hash; a failed lookup is reported on that record
+without hiding the remaining tasks.
 
 Drive the lifecycle (the escrow enforces sender authorization and status order on-chain):
 
 ```bash
 tosctl agent task send --operation accept --name research-task --from agent-wallet --yes
+tosctl agent task send --operation reject --name research-task --from agent-wallet --yes
 tosctl agent task send --operation result --name research-task --from agent-wallet \
   --result-hash <64-hex> --evidence-hash <64-hex> --yes
 tosctl agent task send --operation settle --name research-task --from creator-wallet \
   --payout 3 --yes
 ```
 
-`cancel` (creator, open tasks only) and `timeout` (anyone, after the deadline) refund the
-escrow balance to the creator. `build-state` and `encode` remain available for offline
-StateInit and message construction.
+`reject` (assigned agent, open tasks only), `cancel` (creator, open tasks only) and
+`timeout` (anyone, after the deadline) refund the escrow balance to the creator.
+`build-state` and `encode` remain available for offline StateInit and message construction.
 
 ## Config Shape
 

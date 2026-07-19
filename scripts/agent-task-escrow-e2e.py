@@ -16,6 +16,12 @@ provisions a file vault plus a tosctl config, creates and funds two wallets
            agent receives exactly the payout, creator receives the remainder,
            escrow balance is drained.
 
+  CONTROL  deploy an Agent Account -> create an assigned task -> controller-
+           signed accept -> controller-signed result -> creator settlement.
+
+  REJECT   create an Agent Account-assigned task -> controller-signed reject;
+           refund returns to the creator and the escrow is drained.
+
   CANCEL   create (budget 2) -> cancel by creator -> cancelled; refund returns
            to the creator and the escrow is drained.
 
@@ -261,6 +267,18 @@ async def run_checks(faucet) -> None:
             lambda a=addr: rpc_call("getAddressState", address=a).get("result") == "active")
         check(f"{label} wallet active", bool(active))
 
+    await tosctl(
+        "agent", "wallet", "create", "--name", "runtime-agent", "-v", "V3R2", "-w", "0",
+        "--max-per-tx", "1", "--daily-limit", "5", "--format", "json",
+    )
+    account_deploy = await tosctl_json(
+        "agent", "account", "deploy", "--wallet", "runtime-agent", "--from", "creator",
+        "-w", "0", "--amount", "2", "--yes",
+    )
+    agent_account = norm_addr(account_deploy["address"])
+    check("Agent Account deployed", await poll_predicate(
+        lambda: rpc_call("getAddressState", address=agent_account).get("result") == "active"))
+
     # ---------------- HAPPY PATH ----------------
     print("\n=== happy path: create -> accept -> result -> settle ===")
     deadline = int(time.time()) + 3600
@@ -319,6 +337,48 @@ async def run_checks(faucet) -> None:
     check("escrow drained after settle", escrow_left < NANO // 100,
           f"left={escrow_left}")
 
+    # ---------------- CONTROLLER PATH ----------------
+    print("\n=== controller path: Agent Account -> Task Escrow ===")
+    controller_deadline = int(time.time()) + 3600
+    await create_task(
+        "e2e-controller", creator, agent_account, 2, controller_deadline, 2.2)
+    check("controller task open", await wait_status("e2e-controller", "open") == "open")
+    await tosctl(
+        "agent", "task", "send", "--operation", "accept", "--name", "e2e-controller",
+        "--via-agent-account", "runtime-agent", "--amount", "0.1", "--yes",
+    )
+    check("controller accepted task",
+          await wait_status("e2e-controller", "accepted") == "accepted")
+    await tosctl(
+        "agent", "task", "send", "--operation", "result", "--name", "e2e-controller",
+        "--via-agent-account", "runtime-agent", "--amount", "0.1",
+        "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH, "--yes",
+    )
+    check("controller submitted result",
+          await wait_status("e2e-controller", "result_submitted") == "result_submitted")
+    await send_op("settle", "e2e-controller", "creator", "--payout", "1")
+    check("controller task settled",
+          await wait_status("e2e-controller", "settled") == "settled")
+
+    # ---------------- REJECT PATH ----------------
+    print("\n=== reject path: Agent Account -> Task Escrow ===")
+    reject_deadline = controller_deadline + 1
+    escrow = await create_task(
+        "e2e-reject", creator, agent_account, 2, reject_deadline, 2.1)
+    check("reject task open", await wait_status("e2e-reject", "open") == "open")
+    creator_before = balance(creator)
+    await tosctl(
+        "agent", "task", "send", "--operation", "reject", "--name", "e2e-reject",
+        "--via-agent-account", "runtime-agent", "--amount", "0.1", "--yes",
+    )
+    check("controller rejected task",
+          await wait_status("e2e-reject", "rejected") == "rejected")
+    await asyncio.sleep(5)
+    creator_delta = balance(creator) - creator_before
+    check("reject refunded creator", creator_delta > int(1.9 * NANO),
+          f"delta={creator_delta}")
+    check("escrow drained after reject", balance(escrow) < NANO // 100)
+
     # ---------------- CANCEL PATH ----------------
     print("\n=== cancel path ===")
     escrow = await create_task("e2e-cancel", creator, agent, 2, deadline, 2.1)
@@ -363,7 +423,9 @@ async def run_checks(faucet) -> None:
     # ---------------- PERSISTED RECORDS ----------------
     print("\n=== persisted task records ===")
     records = {r["name"]: r for r in await tosctl_json("agent", "task", "ls")}
-    check("three records tracked", set(records) == {"e2e-main", "e2e-cancel", "e2e-timeout"},
+    expected_records = {
+        "e2e-main", "e2e-controller", "e2e-reject", "e2e-cancel", "e2e-timeout"}
+    check("five records tracked", set(records) == expected_records,
           str(sorted(records)))
     main_rec = records.get("e2e-main", {})
     check("record creator", same_addr(main_rec.get("creator"), creator))
@@ -374,9 +436,28 @@ async def run_checks(faucet) -> None:
     check("record created_at set", bool(main_rec.get("created_at")))
     saved = json.loads(CONFIG.read_text())
     check("records persisted in config file",
-          set(saved.get("agent_tasks", {})) == {"e2e-main", "e2e-cancel", "e2e-timeout"})
+          set(saved.get("agent_tasks", {})) == expected_records)
     check("permission linkage persisted in config file",
           saved.get("agent_tasks", {}).get("e2e-main", {}).get("permission_id") == PERMISSION_ID)
+
+    chain_records = {
+        r["name"]: r for r in await tosctl_json("agent", "task", "ls", "--on-chain")}
+    check("on-chain list has no lookup errors",
+          all("chain_error" not in record for record in chain_records.values()),
+          str(chain_records))
+    check("on-chain list reports lifecycle statuses", {
+        name: record.get("chain_status") for name, record in chain_records.items()
+    } == {
+        "e2e-main": "settled",
+        "e2e-controller": "settled",
+        "e2e-reject": "rejected",
+        "e2e-cancel": "cancelled",
+        "e2e-timeout": "expired",
+    }, str(chain_records))
+    check("on-chain list reports permission hashes",
+          all(record.get("chain_permission_hash") ==
+              hashlib.sha256(PERMISSION_ID.encode()).hexdigest()
+              for record in chain_records.values()), str(chain_records))
 
 
 async def main() -> int:

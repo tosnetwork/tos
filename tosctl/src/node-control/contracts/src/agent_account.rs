@@ -102,12 +102,12 @@ impl AgentAccountContract {
         Ok(AgentAccountData {
             owner,
             controller_pubkey: parse_hash(&stack, 1)?,
-            seqno: stack.u64(2)? as u32,
-            max_per_tx: stack.u64(3)?,
-            daily_limit: stack.u64(4)?,
-            default_task_timeout_secs: stack.u64(5)?,
-            metadata_hash: parse_maybe_hash(&stack, 6)?,
-            service_endpoint_hash: parse_maybe_hash(&stack, 7)?,
+            max_per_tx: stack.u64(2)?,
+            daily_limit: stack.u64(3)?,
+            default_task_timeout_secs: stack.u64(4)?,
+            metadata_hash: parse_maybe_hash(&stack, 5)?,
+            service_endpoint_hash: parse_maybe_hash(&stack, 6)?,
+            seqno: stack.u64(7)? as u32,
             spend_day: stack.u64(8)? as u32,
             spent_today: stack.u64(9)?,
         })
@@ -326,14 +326,14 @@ mod tests {
                     slice: slice::Slice { bytes: owner_bytes },
                 }),
                 hash_number(init.controller_pubkey),
-                number("0"),
                 number(init.max_per_tx.to_string()),
                 number(init.daily_limit.to_string()),
                 number(init.default_task_timeout_secs.to_string()),
                 hash_number(init.metadata_hash.unwrap()),
                 number("-1"),
-                number("0"),
-                number("0"),
+                number("17"),
+                number("20"),
+                number("123456789"),
             ],
         };
 
@@ -341,9 +341,9 @@ mod tests {
 
         assert_eq!(data.owner, init.owner);
         assert_eq!(data.controller_pubkey, init.controller_pubkey);
-        assert_eq!(data.seqno, 0);
-        assert_eq!(data.spend_day, 0);
-        assert_eq!(data.spent_today, 0);
+        assert_eq!(data.seqno, 17);
+        assert_eq!(data.spend_day, 20);
+        assert_eq!(data.spent_today, 123_456_789);
         assert_eq!(data.max_per_tx, init.max_per_tx);
         assert_eq!(data.daily_limit, init.daily_limit);
         assert_eq!(data.default_task_timeout_secs, init.default_task_timeout_secs);

@@ -3,3 +3,9 @@ task_escrow_state#_ creator:MsgAddressInt has_agent:Bool agent:MsgAddressInt
   has_verifier:Bool verifier:MsgAddressInt
   budget:Coins deadline:uint64 status:uint8 result_hash:uint256
   evidence_hash:uint256 policy_hash:uint256 permission_hash:uint256 = TaskEscrowState;
+task_accept#54415301 query_id:uint64 = TaskEscrowMessage;
+task_result#54415302 query_id:uint64 result_hash:uint256 evidence_hash:uint256 = TaskEscrowMessage;
+task_settle#54415303 query_id:uint64 payout:Coins = TaskEscrowMessage;
+task_cancel#54415304 query_id:uint64 = TaskEscrowMessage;
+task_timeout#54415305 query_id:uint64 = TaskEscrowMessage;
+task_reject#54415306 query_id:uint64 = TaskEscrowMessage;

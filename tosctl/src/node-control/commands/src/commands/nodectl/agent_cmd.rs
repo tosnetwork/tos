@@ -31,7 +31,7 @@ use common::{
 };
 use contracts::{
     AgentAccountContract, AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate,
-    TaskEscrowContract, TaskEscrowInit, Wallet,
+    TaskEscrowContract, TaskEscrowData, TaskEscrowInit, Wallet,
 };
 use secrets_vault::types::{
     algorithm::Algorithm, secret::Secret, secret_id::SecretId, secret_spec::SecretSpec,
@@ -150,6 +150,8 @@ pub struct AgentTaskShowCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "List locally tracked Task Escrow records")]
 pub struct AgentTaskLsCmd {
+    #[arg(long, help = "Read current status and permission hash from each Task Escrow")]
+    on_chain: bool,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
 }
@@ -188,6 +190,7 @@ pub struct AgentTaskCreateCmd {
 #[derive(Clone, clap::ValueEnum)]
 enum AgentTaskOperation {
     Accept,
+    Reject,
     Result,
     Settle,
     Cancel,
@@ -821,7 +824,7 @@ impl AgentTaskCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         match &self.action {
             AgentTaskAction::Create(cmd) => cmd.run(config_path).await,
-            AgentTaskAction::Ls(cmd) => cmd.run(config_path),
+            AgentTaskAction::Ls(cmd) => cmd.run(config_path).await,
             AgentTaskAction::Show(cmd) => cmd.run(config_path).await,
             AgentTaskAction::Send(cmd) => cmd.run(config_path).await,
             AgentTaskAction::BuildState(cmd) => cmd.run(),
@@ -851,11 +854,42 @@ fn resolve_task_address(
     raw.parse::<MsgAddressInt>().context("invalid Task Escrow address")
 }
 
+fn validate_controller_task_action(
+    operation: &AgentTaskOperation,
+    task: &TaskEscrowData,
+    agent_account: &MsgAddressInt,
+    permission_hash: [u8; 32],
+) -> anyhow::Result<()> {
+    if task.assigned_agent.as_ref() != Some(agent_account) {
+        anyhow::bail!("Task Escrow is not assigned to the selected Agent Account");
+    }
+    if task.permission_hash != permission_hash {
+        anyhow::bail!("local permission ID does not match the Task Escrow on-chain hash");
+    }
+    let (expected_status, expected_name) = match operation {
+        AgentTaskOperation::Accept => (0, "open"),
+        AgentTaskOperation::Reject => (0, "open"),
+        AgentTaskOperation::Result => (1, "accepted"),
+        _ => anyhow::bail!(
+            "--via-agent-account supports only accept, reject and result operations"
+        ),
+    };
+    if task.status != expected_status {
+        anyhow::bail!(
+            "Task Escrow must be {} for this controller action (current status: {})",
+            expected_name,
+            task_status_name(task.status)
+        );
+    }
+    Ok(())
+}
+
 impl AgentTaskSendCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         validate_tos_amount("amount", self.amount)?;
         let body = match self.operation {
             AgentTaskOperation::Accept => TaskEscrowContract::accept(self.query_id)?,
+            AgentTaskOperation::Reject => TaskEscrowContract::reject(self.query_id)?,
             AgentTaskOperation::Result => TaskEscrowContract::result(
                 self.query_id,
                 parse_required_hash("result-hash", &self.result_hash)?,
@@ -872,9 +906,6 @@ impl AgentTaskSendCmd {
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_task_address(&config, &self.address, &self.name)?;
         if let Some(agent_wallet) = &self.via_agent_account {
-            if !matches!(self.operation, AgentTaskOperation::Accept | AgentTaskOperation::Result) {
-                anyhow::bail!("--via-agent-account supports only accept and result operations");
-            }
             let record = config
                 .agent_tasks
                 .values()
@@ -882,13 +913,30 @@ impl AgentTaskSendCmd {
                 .ok_or_else(|| {
                     anyhow::anyhow!("controller task actions require a locally tracked task record")
                 })?;
+            let account = config
+                .agent_wallets
+                .get(agent_wallet)
+                .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", agent_wallet))?
+                .agent_account_address
+                .as_ref()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Agent wallet '{}' has no deployed Agent Account address; deploy it first",
+                        agent_wallet
+                    )
+                })?
+                .parse::<MsgAddressInt>()
+                .context("Invalid persisted Agent Account address")?;
             let provider = contracts::contract_provider!(rpc_client.clone());
             let stack =
                 provider.get_method(destination.to_string(), "get_task_data", vec![]).await?;
             let chain_task = TaskEscrowContract::decode_data(&stack)?;
-            if chain_task.permission_hash != permission_id_hash(record.permission_id.as_deref()) {
-                anyhow::bail!("local permission ID does not match the Task Escrow on-chain hash");
-            }
+            validate_controller_task_action(
+                &self.operation,
+                &chain_task,
+                &account,
+                permission_id_hash(record.permission_id.as_deref()),
+            )?;
             let body_boc = base64::engine::general_purpose::STANDARD.encode(write_boc(&body)?);
             return AgentAccountTaskSendCmd {
                 wallet: agent_wallet.clone(),
@@ -1044,6 +1092,17 @@ impl AgentTaskCreateCmd {
                 );
             }
         }
+        if let Some((existing_name, _)) = config
+            .agent_tasks
+            .iter()
+            .find(|(name, task)| *name != &record_name && task.address == address.to_string())
+        {
+            anyhow::bail!(
+                "Task Escrow address {} is already tracked as '{}'",
+                address,
+                existing_name
+            );
+        }
         let payer_cfg =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (payer_address, payer_info, payer_secret) =
@@ -1126,10 +1185,16 @@ struct AgentTaskRecordView {
     deadline: u64,
     policy_hash: String,
     created_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain_permission_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain_error: Option<String>,
 }
 
 impl AgentTaskLsCmd {
-    fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let mut records: Vec<AgentTaskRecordView> = config
             .agent_tasks
@@ -1145,9 +1210,36 @@ impl AgentTaskLsCmd {
                 deadline: task.deadline,
                 policy_hash: task.policy_hash.clone(),
                 created_at: task.created_at,
+                chain_status: None,
+                chain_permission_hash: None,
+                chain_error: None,
             })
             .collect();
         records.sort_by(|a, b| a.name.cmp(&b.name));
+        if self.on_chain {
+            let rpc_client = try_create_rpc_client(&config).await?;
+            let provider = contracts::contract_provider!(rpc_client);
+            for record in &mut records {
+                let result = async {
+                    let address = record
+                        .address
+                        .parse::<MsgAddressInt>()
+                        .context("invalid persisted Task Escrow address")?;
+                    let stack = provider
+                        .get_method(address.to_string(), "get_task_data", vec![])
+                        .await?;
+                    TaskEscrowContract::decode_data(&stack)
+                }
+                .await;
+                match result {
+                    Ok(data) => {
+                        record.chain_status = Some(task_status_name(data.status).to_string());
+                        record.chain_permission_hash = Some(hex::encode(data.permission_hash));
+                    }
+                    Err(error) => record.chain_error = Some(format!("{error:#}")),
+                }
+            }
+        }
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::to_string_pretty(&records)?);
             return Ok(());
@@ -1168,6 +1260,12 @@ impl AgentTaskLsCmd {
                 record.budget,
                 record.deadline,
             );
+            if let Some(status) = &record.chain_status {
+                println!("  Chain status: {}", status);
+            }
+            if let Some(error) = &record.chain_error {
+                println!("  Chain error:  {}", error);
+            }
         }
         Ok(())
     }
@@ -1177,6 +1275,7 @@ impl AgentTaskEncodeCmd {
     fn run(&self) -> anyhow::Result<()> {
         let body = match self.operation {
             AgentTaskOperation::Accept => TaskEscrowContract::accept(self.query_id)?,
+            AgentTaskOperation::Reject => TaskEscrowContract::reject(self.query_id)?,
             AgentTaskOperation::Result => {
                 let result_hash = parse_required_hash("result-hash", &self.result_hash)?;
                 let evidence_hash = parse_required_hash("evidence-hash", &self.evidence_hash)?;
@@ -2681,6 +2780,7 @@ fn task_status_name(status: u8) -> &'static str {
         3 => "settled",
         4 => "cancelled",
         5 => "expired",
+        6 => "rejected",
         _ => "unknown",
     }
 }
@@ -2813,7 +2913,28 @@ fn print_table_summary(view: &AgentWalletView) {
 
 #[cfg(test)]
 mod tests {
-    use super::permission_id_hash;
+    use super::{permission_id_hash, validate_controller_task_action, AgentTaskOperation};
+    use chain_block::MsgAddressInt;
+    use contracts::TaskEscrowData;
+
+    fn address(byte: u8) -> MsgAddressInt {
+        MsgAddressInt::with_standart(None, 0, [byte; 32].into()).unwrap()
+    }
+
+    fn controller_task(status: u8) -> TaskEscrowData {
+        TaskEscrowData {
+            creator: address(1),
+            assigned_agent: Some(address(2)),
+            verifier: None,
+            budget: 1_000_000_000,
+            deadline: u64::MAX,
+            status,
+            result_hash: [0; 32],
+            evidence_hash: [0; 32],
+            settlement_policy_hash: [3; 32],
+            permission_hash: permission_id_hash(Some("bounded-task")),
+        }
+    }
 
     #[test]
     fn permission_hash_has_stable_encoding() {
@@ -2822,5 +2943,58 @@ mod tests {
             "873d4711315b76cfa2130ec78baabe70fa7d60e8f69f363f45ff6f03246a81ca"
         );
         assert_eq!(permission_id_hash(None), [0; 32]);
+    }
+
+    #[test]
+    fn validates_controller_task_authority_and_lifecycle() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        validate_controller_task_action(
+            &AgentTaskOperation::Accept,
+            &controller_task(0),
+            &address(2),
+            permission_hash,
+        )
+        .unwrap();
+        validate_controller_task_action(
+            &AgentTaskOperation::Reject,
+            &controller_task(0),
+            &address(2),
+            permission_hash,
+        )
+        .unwrap();
+        validate_controller_task_action(
+            &AgentTaskOperation::Result,
+            &controller_task(1),
+            &address(2),
+            permission_hash,
+        )
+        .unwrap();
+
+        let wrong_account = validate_controller_task_action(
+            &AgentTaskOperation::Accept,
+            &controller_task(0),
+            &address(4),
+            permission_hash,
+        )
+        .unwrap_err();
+        assert!(wrong_account.to_string().contains("not assigned"));
+
+        let wrong_permission = validate_controller_task_action(
+            &AgentTaskOperation::Accept,
+            &controller_task(0),
+            &address(2),
+            [9; 32],
+        )
+        .unwrap_err();
+        assert!(wrong_permission.to_string().contains("permission ID"));
+
+        let wrong_status = validate_controller_task_action(
+            &AgentTaskOperation::Result,
+            &controller_task(0),
+            &address(2),
+            permission_hash,
+        )
+        .unwrap_err();
+        assert!(wrong_status.to_string().contains("must be accepted"));
     }
 }

@@ -9,12 +9,13 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const TASK_ESCROW_CODE_B64: &str = "te6ccgECCgEAAsgAART/APSkE/S88sgLAQIBYgIDBMTQMiHHAJFb4AHTH9M/Me1E0PpA0wD6QNMA+kD6ANM/0wfUAdDT/9P/0//UMNDT/zAE0Q7QdNch+kAwLYIQVEFTAbrjAi2CEFRBUwK64wItghBUQVMDuuMCNjsrghBUQVMEugQFBgcAUaEhbdqJofSBpgH0gaYB9IH0AaZ/pg+oYaGn/6f/p/+oYaGn/mAhNCDxAJw8PALAAPLgZAfAAFKXxwUWsfLgZXEgEIsZGl40EDZFRALIy//JA8jL/xLL/8v/zMnIUAnPFhbLAFAGzxYSywBYzxYB+gISyz/LB8zJ7VQAoj1bAcAB8uBmUZXHBVJgsPLgZwfT/9P/MBB6XjVeMxAlckFEA8jL/8kDyMv/Esv/y//MychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVAHgPQPAAvLgaFO5xwVRxscFUnCwHLHy4GkJ+gAwUgS78uBq+CdvEFIwu/LgcCLCAI4XUlNxcIAQyMsFUATPFlj6AhLLaskB+wCRMuImcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQaV40XjJwUEVzUERDEwgB5o5gOwHAAPLga1EnxwXy4GwmcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQaV40XjJwUEV0UEQDyMv/yQPIy/8Sy//L/8zJyFAJzxYWywBQBs8WEssAWM8WAfoCEss/ywfMye1U4DQKghBUQVMFuuMCXwvywG8JAFrIy//JA8jL/xLL/8v/zMnIUAnPFhbLAFAGzxYSywBYzxYB+gISyz/LB8zJ7VQAzCH4I7vy4G0gwAAhwAGxAcACsfLgbiZwgwZwgBDIywVQBM8WWPoCEstqyQH7ABBpXjReMnBQRXVQRMjL/8kDyMv/Esv/y//MychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVA==";
+pub const TASK_ESCROW_CODE_B64: &str = "te6ccgECCwEAAzgAART/APSkE/S88sgLAQIBYgIDBMTQMiHHAJFb4AHTH9M/Me1E0PpA0wD6QNMA+kD6ANM/0wfUAdDT/9P/0//UMNDT/zAE0Q7QdNch+kAwLYIQVEFTAbrjAi2CEFRBUwK64wItghBUQVMDuuMCNjsrghBUQVMEugQFBgcAUaEhbdqJofSBpgH0gaYB9IH0AaZ/pg+oYaGn/6f/p/+oYaGn/mAhNCDxAJw8PALAAPLgZAfAAFKXxwUWsfLgZXEgEIsZGl40EDZFRALIy//JA8jL/xLL/8v/zMnIUAnPFhbLAFAGzxYSywBYzxYB+gISyz/LB8zJ7VQAoj1bAcAB8uBmUZXHBVJgsPLgZwfT/9P/MBB6XjVeMxAlckFEA8jL/8kDyMv/Esv/y//MychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVAHgPQPAAvLgaFO5xwVRxscFUnCwHLHy4GkJ+gAwUgS78uBq+CdvEFIwu/LgcCLCAI4XUlNxcIAQyMsFUATPFlj6AhLLaskB+wCRMuImcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQaV40XjJwUEVzUERDEwgC+o5gOwHAAPLga1EnxwXy4GwmcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQaV40XjJwUEV0UEQDyMv/yQPIy/8Sy//L/8zJyFAJzxYWywBQBs8WEssAWM8WAfoCEss/ywfMye1U4CuCEFRBUwa64wI0CoIQVEFTBbrjAl8L8sBvCQoAWsjL/8kDyMv/Esv/y//MychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVADGOwHAAPLgcVElxwVSYLDy4HImcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQaV40XjJwUEV2UEQDyMv/yQPIy/8Sy//L/8zJyFAJzxYWywBQBs8WEssAWM8WAfoCEss/ywfMye1UAMwh+CO78uBtIMAAIcABsQHAArHy4G4mcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQaV40XjJwUEV1UETIy//JA8jL/xLL/8v/zMnIUAnPFhbLAFAGzxYSywBYzxYB+gISyz/LB8zJ7VQ=";
 pub const TASK_ACCEPT_OPCODE: u32 = 0x5441_5301;
 pub const TASK_RESULT_OPCODE: u32 = 0x5441_5302;
 pub const TASK_SETTLE_OPCODE: u32 = 0x5441_5303;
 pub const TASK_CANCEL_OPCODE: u32 = 0x5441_5304;
 pub const TASK_TIMEOUT_OPCODE: u32 = 0x5441_5305;
+pub const TASK_REJECT_OPCODE: u32 = 0x5441_5306;
 
 #[derive(Clone, Debug)]
 pub struct TaskEscrowInit {
@@ -144,6 +145,10 @@ impl TaskEscrowContract {
     pub fn timeout(query_id: u64) -> anyhow::Result<chain_block::Cell> {
         message(TASK_TIMEOUT_OPCODE, query_id, |_| Ok(()))
     }
+
+    pub fn reject(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message(TASK_REJECT_OPCODE, query_id, |_| Ok(()))
+    }
 }
 
 fn parse_hash(stack: &TvmStackParser, index: usize) -> anyhow::Result<[u8; 32]> {
@@ -239,6 +244,15 @@ mod tests {
         assert_eq!(slice.get_next_u32().unwrap(), TASK_SETTLE_OPCODE);
         assert_eq!(slice.get_next_u64().unwrap(), 8);
         assert_eq!(Coins::construct_from(&mut slice).unwrap().as_u128(), 123_456);
+        assert_eq!(slice.remaining_bits(), 0);
+    }
+
+    #[test]
+    fn encodes_reject_message() {
+        let body = TaskEscrowContract::reject(9).unwrap();
+        let mut slice = SliceData::load_cell(body).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), TASK_REJECT_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 9);
         assert_eq!(slice.remaining_bits(), 0);
     }
 

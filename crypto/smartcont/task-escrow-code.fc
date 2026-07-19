@@ -8,6 +8,7 @@ const int op::result = 0x54415302;
 const int op::settle = 0x54415303;
 const int op::cancel = 0x54415304;
 const int op::timeout = 0x54415305;
+const int op::reject = 0x54415306;
 
 const int status::open = 0;
 const int status::accepted = 1;
@@ -15,6 +16,7 @@ const int status::result_submitted = 2;
 const int status::settled = 3;
 const int status::cancelled = 4;
 const int status::expired = 5;
+const int status::rejected = 6;
 
 ;; mode 1: send exactly `amount`, fees paid from the contract balance.
 ;; mode 128: `amount` is ignored and the whole remaining balance is carried.
@@ -112,6 +114,14 @@ const int status::expired = 5;
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::cancelled, result_hash, evidence_hash, policy_hash, permission_hash);
+    return ();
+  }
+  if (op == op::reject) {
+    throw_unless(113, status == status::open);
+    throw_unless(114, has_agent & equal_slice_bits(sender, agent));
+    send_value(creator, 0, 128);
+    save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
+      status::rejected, result_hash, evidence_hash, policy_hash, permission_hash);
     return ();
   }
   if (op == op::timeout) {
