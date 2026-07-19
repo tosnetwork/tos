@@ -327,6 +327,69 @@ pub struct WalletConfig {
     pub workchain: i32,
 }
 
+fn default_agent_task_timeout_secs() -> u64 {
+    3600
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct AgentWalletPolicy {
+    /// Maximum value the controller may spend in one action, in nano-TOS.
+    pub max_per_tx: u64,
+    /// Maximum value the controller may spend in one day, in nano-TOS.
+    pub daily_limit: u64,
+    /// Addresses or names of service actors the controller may pay or call.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_service_actors: Vec<String>,
+    /// Task categories this agent wallet may accept.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_task_categories: Vec<String>,
+    /// Require owner approval when a single action is above this value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_owner_approval_above: Option<u64>,
+    /// Default task timeout used by off-chain runners and future task contracts.
+    #[serde(default = "default_agent_task_timeout_secs")]
+    pub default_task_timeout_secs: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct AgentRuntimeBinding {
+    /// Stable operator-defined runtime identifier.
+    pub runner_id: String,
+    /// Runtime endpoint or local descriptor URI.
+    pub endpoint: String,
+    /// Optional hash of runtime attestation or deployment evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attestation_hash: Option<String>,
+    /// Unix timestamp when this local runtime binding was recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bound_at: Option<u64>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct AgentWalletConfig {
+    /// The underlying TOS wallet/account used to hold funds and sign owner actions.
+    pub wallet: WalletConfig,
+    /// Controller key used by the agent runtime for bounded automated actions.
+    pub controller_key: KeyConfig,
+    /// Machine-readable spending and service-call policy.
+    pub policy: AgentWalletPolicy,
+    /// Optional content hash for agent metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_hash: Option<String>,
+    /// Optional hash of the off-chain service endpoint descriptor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_endpoint_hash: Option<String>,
+    /// Capability labels advertised by the agent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+    /// Optional off-chain runtime binding for this agent wallet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<AgentRuntimeBinding>,
+    /// Unix timestamp when this local config entry was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 #[serde(tag = "kind")]
 pub enum PoolConfig {
@@ -711,6 +774,8 @@ pub struct AppConfig {
     pub nodes: HashMap<String, AdnlConfig>,
     #[serde(default)]
     pub wallets: HashMap<String, WalletConfig>,
+    #[serde(default)]
+    pub agent_wallets: HashMap<String, AgentWalletConfig>,
     #[serde(default)]
     pub pools: HashMap<String, PoolConfig>,
     #[serde(default)]

@@ -2,13 +2,13 @@
 
 ## Vision
 
-The Open System (TOS) is an actor-model blockchain for AI robot wallets and independent AI agents.
+The Open System (TOS) is an actor-model blockchain for autonomous AI agents and agent-first wallets.
 
 TOS treats accounts, smart contracts, AI agents, tools, services and tasks as independent actors. Each actor owns private state, receives asynchronous messages, emits new messages, and participates in native on-chain payment and verification flows.
 
 The goal is to make TOS a practical execution and coordination layer for AI-native applications:
 
-- AI robot wallets that hold funds, permissions, task history and service-call policy
+- AI Agent Wallets that hold funds, permissions, task history and service-call policy
 - independent agents with persistent on-chain identity and state
 - asynchronous agent-to-agent and agent-to-service workflows
 - verifiable task execution, settlement and reputation
@@ -17,7 +17,7 @@ The goal is to make TOS a practical execution and coordination layer for AI-nati
 
 ## Design Principles
 
-- Agent-wallet first: wallet primitives should serve AI robots and automation systems before consumer mobile wallet UX.
+- Agent-wallet first: wallet primitives should serve autonomous agents and automation systems before consumer mobile wallet UX.
 - Actor first: every account, agent, task and service should map naturally to an independent actor.
 - Asynchronous by default: workflows should use messages, callbacks, retries and timeouts instead of synchronous blocking calls.
 - Native execution focus: the core protocol should stay centered on the native TVM execution layer.
@@ -118,6 +118,7 @@ Examples:
 ### Phase 2: Agent Account and Task Primitives
 
 - Implement reusable smart-contract templates for agent wallets and agent accounts.
+- Ship the first `tosctl agent wallet` MVP for local profile creation, funding, activation, controller keys, runtime binding, policy updates, removal and policy inspection.
 - Implement task escrow contracts with deadlines, result submission and settlement.
 - Add SDK helpers for creating agent accounts and task contracts.
 - Add JSON-RPC flows for task discovery, task state and agent account inspection.
@@ -150,8 +151,9 @@ Examples:
 ## Near-Term Engineering Tasks
 
 - Add `doc/ai-actors.md` to describe the actor-model architecture for AI agents.
+- Add `doc/agent-wallet-mvp.md` to define the first local Agent Wallet slice.
 - Add example task, agent wallet and agent account contracts under the native smart-contract tree.
-- Extend `tosctl` with basic agent and task commands.
+- Extend `tosctl` from local Agent Wallet profiles toward deploy and task commands.
 - Add JSON-RPC endpoints or examples for querying agent and task state.
 - Add tests that cover asynchronous task lifecycle messages.
 - Keep scans in CI to prevent removed execution domains from reappearing.

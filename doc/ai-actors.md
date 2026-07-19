@@ -1,13 +1,13 @@
 # AI Actor Model
 
-This document defines the product and protocol direction for AI-native actor workflows and AI robot wallets on TOS.
+This document defines the product and protocol direction for AI-native actor workflows and AI Agent Wallets on TOS.
 
 TOS treats accounts, smart contracts, AI agents, tools, services, and tasks as actors. Each actor owns private state, receives asynchronous messages, emits new messages, and participates in on-chain payment and verification flows.
 
 ## Goals
 
 - Give AI agents persistent on-chain identity, state, balances, and permissions.
-- Give AI robots wallet primitives for funds, spending policy, task history, service calls, and verifier decisions.
+- Give AI agents wallet primitives for funds, spending policy, task history, service calls, and verifier decisions.
 - Make agent-to-agent and agent-to-service coordination asynchronous by default.
 - Use native TVM contracts for task escrow, settlement, and workflow state.
 - Keep payments, permissions, deadlines, results, and disputes inspectable from chain state.
@@ -15,9 +15,9 @@ TOS treats accounts, smart contracts, AI agents, tools, services, and tasks as a
 
 ## Actor Types
 
-### AI Robot Wallet
+### AI Agent Wallet
 
-An AI robot wallet is an agent-first wallet/account used by an AI robot, agent runner, automation system, or service workflow. It is not optimized for consumer mobile UX. It should expose policy, permissions, balances, task history and service-call limits in machine-readable form.
+An AI Agent Wallet is an agent-first wallet/account used by an autonomous agent, agent runner, automation system, or service workflow. It is not optimized for consumer mobile UX. It should expose policy, permissions, balances, task history and service-call limits in machine-readable form.
 
 ### User Actor
 
@@ -25,7 +25,7 @@ A user actor owns funds, creates tasks, accepts results, and defines policy for 
 
 ### Agent Account
 
-An agent account is an on-chain account controlled by owner and controller keys. It is the account side of the AI robot wallet model. It may expose:
+An agent account is an on-chain account controlled by owner and controller keys. It is the account side of the AI Agent Wallet model. It may expose:
 
 - owner and controller principals
 - spending limits
@@ -179,11 +179,12 @@ Authoritative checks:
 The recommended implementation order is:
 
 1. Define task lifecycle message structs and opcodes.
-2. Implement a minimal task escrow contract.
-3. Implement a minimal agent account contract.
-4. Add local tests for request, accept, result, settle, cancel, and timeout.
-5. Add read-only inspection helpers in `tosctl`.
-6. Add JSON-RPC examples or methods only after the contract state model is stable.
+2. Implement the local Agent Wallet MVP in `tosctl` so operators can create profiles, fund and activate wallet addresses, manage owner/controller keys, update policy, bind runtimes and export machine-readable policies before the on-chain contract lands.
+3. Implement a minimal task escrow contract.
+4. Implement a minimal agent account contract.
+5. Add local tests for request, accept, result, settle, cancel, and timeout.
+6. Add read-only inspection helpers in `tosctl`.
+7. Add JSON-RPC examples or methods only after the contract state model is stable.
 
 ## Engineering Readiness Checklist
 
@@ -233,13 +234,14 @@ The first implementation slice should add:
 - an example agent account contract
 - an example task escrow contract
 - task lifecycle message structs and opcodes
+- `tosctl agent wallet` commands for creating, listing, showing, funding, activating, checking status, updating policy, binding runtimes, rotating controller keys, exporting policy and removing local Agent Wallet profiles
 - local tests for request, accept, result, settle, cancel, and timeout paths
 - `tosctl` examples for creating and inspecting agent/task state
 
 ## Non-Goals
 
 - Do not add a separate VM or execution domain for AI workloads.
-- Do not prioritize ordinary Android or iOS consumer wallets over AI robot wallets.
+- Do not prioritize ordinary Android or iOS consumer wallets over AI Agent Wallets.
 - Do not make off-chain model output authoritative without on-chain acceptance or verifier policy.
 - Do not store large prompts, model responses, datasets, or private credentials in contract state.
 - Do not let workflow indexers decide settlement.
@@ -254,6 +256,7 @@ The first implementation slice should add:
 - [ai-actor-threat-model.md](ai-actor-threat-model.md)
 - [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md)
 - [ai-actor-operations-runbook.md](ai-actor-operations-runbook.md)
+- [agent-wallet-mvp.md](agent-wallet-mvp.md)
 - [actor.md](actor.md)
 - [tos-message-policy.md](tos-message-policy.md)
 - [tos-account-permission-model.md](tos-account-permission-model.md)

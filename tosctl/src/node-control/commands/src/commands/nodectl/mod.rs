@@ -7,6 +7,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 pub(crate) mod account_cmd;
+pub(crate) mod agent_cmd;
 pub(crate) mod admin_cmd;
 pub(crate) mod auth_cmd;
 pub(crate) mod backup_cmd;

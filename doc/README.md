@@ -19,6 +19,7 @@ Start with:
 - [ai-actor-glossary.md](ai-actor-glossary.md) - shared terminology for agent, task, service, and verifier workflows
 - [ai-actor-message-catalog.md](ai-actor-message-catalog.md) - initial task, service, and verifier message catalog
 - [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md) - contract design guidance for agent accounts, task escrow, service actors, and verifier actors
+- [agent-wallet-mvp.md](agent-wallet-mvp.md) - first `tosctl agent wallet` implementation slice for profiles, funding, activation, policy updates, runtime binding, controller rotation, policy export and removal
 - [ai-actor-threat-model.md](ai-actor-threat-model.md) - baseline threat model
 - [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md) - required test coverage
 - [ai-actor-operations-runbook.md](ai-actor-operations-runbook.md) - operational guidance for agent and service infrastructure
