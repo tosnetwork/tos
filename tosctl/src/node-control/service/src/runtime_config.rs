@@ -147,8 +147,8 @@ impl RuntimeConfigStore {
 
     #[cfg(test)]
     pub fn from_app_config(app_config: Arc<AppConfig>) -> Self {
-        use contracts::SmartContract;
         use chain_block::{Cell, StateInit};
+        use contracts::SmartContract;
 
         struct NoopWallet;
         #[async_trait::async_trait]
@@ -198,6 +198,82 @@ impl RuntimeConfigStore {
         );
         let chain_provider: Arc<dyn ChainProvider> =
             Arc::new(DefaultChainProvider::new(rpc_client.clone()));
+        Self {
+            state: RwLock::new(Arc::new(RuntimeState {
+                config: app_config,
+                vault: None,
+                pools: Arc::new(HashMap::new()),
+                wallets: Arc::new(HashMap::new()),
+                master_wallet,
+                rpc_client,
+                chain_provider,
+            })),
+            updated_at: AtomicU64::new(time_format::now()),
+            config_path: "noop".to_string(),
+            last_file_hash: Mutex::new(None),
+        }
+    }
+
+    /// Like [`Self::from_app_config`], but with a caller-supplied
+    /// [`ChainProvider`] instead of a real `ClientJsonRpc`-backed one.
+    ///
+    /// Lets HTTP-layer tests exercise real get-method decoding against a
+    /// [`tos_sandbox`](../../sandbox) blockchain (real contract bytecode,
+    /// real state transitions) without a live chain RPC endpoint.
+    #[cfg(test)]
+    pub fn from_app_config_with_chain_provider(
+        app_config: Arc<AppConfig>,
+        chain_provider: Arc<dyn ChainProvider>,
+    ) -> Self {
+        use chain_block::{Cell, StateInit};
+        use contracts::SmartContract;
+
+        struct NoopWallet;
+        #[async_trait::async_trait]
+        impl SmartContract for NoopWallet {
+            fn address(&self) -> MsgAddressInt {
+                MsgAddressInt::with_standart(None, 0, [0u8; 32].into()).unwrap()
+            }
+            async fn balance(&self) -> anyhow::Result<u64> {
+                Ok(0)
+            }
+        }
+        #[async_trait::async_trait]
+        impl Wallet for NoopWallet {
+            async fn message(
+                &self,
+                _dest: MsgAddressInt,
+                _value: u64,
+                _payload: Cell,
+            ) -> anyhow::Result<Cell> {
+                anyhow::bail!("NoopWallet does not support message()")
+            }
+
+            async fn deploy_message(&self, _value: u64, _payload: Cell) -> anyhow::Result<Cell> {
+                anyhow::bail!("NoopWallet does not support deploy_message()")
+            }
+
+            async fn build_message(
+                &self,
+                _dest: MsgAddressInt,
+                _value: u64,
+                _payload: Cell,
+                _bounce: bool,
+                _seqno: Option<u32>,
+                _state_init_external: Option<StateInit>,
+                _state_init_internal: Option<StateInit>,
+            ) -> anyhow::Result<Cell> {
+                anyhow::bail!("NoopWallet does not support build_message()")
+            }
+        }
+        let master_wallet = Arc::new(NoopWallet);
+        let rpc_client = Arc::new(
+            ClientJsonRpc::connect_many(
+                app_config.chain_rpc.resolved_endpoints(),
+                app_config.chain_rpc.api_key.clone(),
+            )
+            .unwrap(),
+        );
         Self {
             state: RwLock::new(Arc::new(RuntimeState {
                 config: app_config,

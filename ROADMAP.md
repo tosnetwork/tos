@@ -128,6 +128,13 @@ Examples:
 - Add SDK helpers for creating agent accounts and task contracts.
 - Add JSON-RPC flows for task discovery, task state and agent account inspection.
 - Add integration tests for agent-to-agent task messages.
+- Add authenticated HTTP query endpoints (`GET /agents/{address}`, `GET /tasks/{address}`,
+  `GET /tasks`) to `tosctld` for inspecting Agent Account and Task Escrow state, with
+  status/creator/agent/deadline filters, bounded-concurrency chain reads, per-query timeouts,
+  and a stable structured error taxonomy (`invalid_request`, `not_found`, `rpc_unavailable`,
+  `invalid_contract_state`, `timeout`). `GET /tasks` enumerates tasks registered in the
+  querying node's local `tosctld` configuration only — it is not a chain-wide contract index;
+  that requires the Phase 3 capability registry / indexer below.
 
 ### Phase 3: Agent Registry and Service Marketplace
 

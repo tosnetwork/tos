@@ -408,6 +408,25 @@ async fn auth_disabled_operator_routes_open() {
     assert_eq!(resp.status(), 200);
 }
 
+#[tokio::test]
+async fn agent_query_routes_require_auth_when_enabled() {
+    let st = state_with_auth().await;
+    let resp = app(st).oneshot(get("/tasks")).await.unwrap();
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn agent_query_routes_open_when_auth_disabled() {
+    // No agent_tasks are registered, so listing does not need to reach the
+    // chain -- this exercises only the auth middleware passthrough.
+    let st = state_no_auth().await;
+    let resp = app(st).oneshot(get("/tasks")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let v = json(resp).await;
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["total"], 0);
+}
+
 // --- /auth/me ---
 
 #[tokio::test]

@@ -6,8 +6,10 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use super::agent_query_api;
-use super::login_rate_limiter::{LoginRateLimiter, login_limiter_key};
+use super::{
+    agent_query_api,
+    login_rate_limiter::{LoginRateLimiter, login_limiter_key},
+};
 use crate::{
     auth::{
         Claims,
@@ -171,6 +173,9 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
 pub struct ApiErrorBody {
     pub code: i32,
     pub message: String,
+    /// Stable machine-readable error category. Prefer matching on this field
+    /// over `message`, which is a human-readable string that may change.
+    pub kind: String,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
@@ -186,40 +191,67 @@ pub struct AppError {
 }
 
 impl AppError {
-    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
+    fn with_kind(
+        status: axum::http::StatusCode,
+        kind: &'static str,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
-            status: axum::http::StatusCode::BAD_REQUEST,
-            body: ApiErrorBody { code: 400, message: message.into() },
+            status,
+            body: ApiErrorBody {
+                code: status.as_u16() as i32,
+                message: message.into(),
+                kind: kind.to_owned(),
+            },
         }
+    }
+
+    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
+        Self::with_kind(axum::http::StatusCode::BAD_REQUEST, "invalid_request", message)
     }
 
     fn unauthorized(message: impl Into<String>) -> Self {
-        Self {
-            status: axum::http::StatusCode::UNAUTHORIZED,
-            body: ApiErrorBody { code: 401, message: message.into() },
-        }
+        Self::with_kind(axum::http::StatusCode::UNAUTHORIZED, "unauthenticated", message)
     }
 
     fn too_many_requests(message: impl Into<String>) -> Self {
-        Self {
-            status: axum::http::StatusCode::TOO_MANY_REQUESTS,
-            body: ApiErrorBody { code: 429, message: message.into() },
-        }
+        Self::with_kind(axum::http::StatusCode::TOO_MANY_REQUESTS, "rate_limited", message)
     }
 
     #[allow(dead_code)]
     pub(crate) fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            status: axum::http::StatusCode::NOT_FOUND,
-            body: ApiErrorBody { code: 404, message: message.into() },
-        }
+        Self::with_kind(axum::http::StatusCode::NOT_FOUND, "not_found", message)
     }
 
     pub(crate) fn internal(message: impl Into<String>) -> Self {
-        Self {
-            status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            body: ApiErrorBody { code: 500, message: message.into() },
-        }
+        Self::with_kind(axum::http::StatusCode::INTERNAL_SERVER_ERROR, "internal", message)
+    }
+
+    /// The chain RPC transport could not be reached or failed at the
+    /// transport level (as opposed to the target contract rejecting the
+    /// get-method call). Distinct from [`AppError::not_found`] so clients can
+    /// tell "retry later" apart from "this address has no such state".
+    pub(crate) fn rpc_unavailable(message: impl Into<String>) -> Self {
+        Self::with_kind(axum::http::StatusCode::SERVICE_UNAVAILABLE, "rpc_unavailable", message)
+    }
+
+    /// The get-method call succeeded but the returned TVM stack did not
+    /// decode into the expected contract data shape.
+    pub(crate) fn invalid_contract_state(message: impl Into<String>) -> Self {
+        Self::with_kind(axum::http::StatusCode::UNPROCESSABLE_ENTITY, "invalid_contract_state", message)
+    }
+
+    /// A chain query exceeded its per-request timeout budget.
+    pub(crate) fn timeout(message: impl Into<String>) -> Self {
+        Self::with_kind(axum::http::StatusCode::GATEWAY_TIMEOUT, "timeout", message)
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.body.message
+    }
+
+    pub(crate) fn kind(&self) -> &str {
+        &self.body.kind
     }
 }
 
@@ -1650,5 +1682,15 @@ mod tests {
         assert!(json["paths"]["/agents/{address}"]["get"].is_object());
         assert!(json["paths"]["/tasks/{address}"]["get"].is_object());
         assert!(json["paths"]["/tasks"]["get"].is_object());
+
+        // The new query routes require the same bearerAuth as other v1 routes.
+        for path in ["/agents/{address}", "/tasks/{address}", "/tasks"] {
+            let security = &json["paths"][path]["get"]["security"];
+            assert!(security.is_array(), "{path} endpoint should have security");
+            assert!(
+                security.as_array().unwrap().iter().any(|v| v.get("bearerAuth").is_some()),
+                "{path} endpoint should require bearerAuth"
+            );
+        }
     }
 }
