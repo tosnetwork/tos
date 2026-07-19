@@ -120,6 +120,9 @@ Examples:
 - Implement reusable smart-contract templates for agent wallets and agent accounts.
 - Ship the first `tosctl agent wallet` MVP for local profile creation, funding, activation, controller keys, runtime binding, policy updates, removal and policy inspection.
 - Add the first native Agent Account contract template with owner/controller/policy state.
+- Add `tosctl agent account build-state` for deterministic Agent Account StateInit generation.
+- Add `tosctl agent account deploy` to deploy deterministic Agent Account state through a configured funding wallet.
+- Add `tosctl agent account show/status` for get-method inspection and local-profile verification.
 - Implement task escrow contracts with deadlines, result submission and settlement.
 - Add SDK helpers for creating agent accounts and task contracts.
 - Add JSON-RPC flows for task discovery, task state and agent account inspection.
@@ -154,7 +157,7 @@ Examples:
 - Add `doc/ai-actors.md` to describe the actor-model architecture for AI agents.
 - Add `doc/agent-wallet-mvp.md` to define the first local Agent Wallet slice.
 - Add example task and Agent Account contracts under the native smart-contract tree.
-- Extend `tosctl` from local Agent Wallet profiles toward deploy and task commands.
+- Extend `tosctl` from Agent Account inspection toward on-chain policy updates and task commands.
 - Add JSON-RPC endpoints or examples for querying agent and task state.
 - Add tests that cover asynchronous task lifecycle messages.
 - Keep scans in CI to prevent removed execution domains from reappearing.

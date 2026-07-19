@@ -6,6 +6,7 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+pub mod agent_account;
 pub mod chain_provider;
 pub mod config_contract;
 pub mod contract_codes;
@@ -18,6 +19,7 @@ pub mod smart_contract;
 mod stack_utils;
 pub mod wallet;
 
+pub use agent_account::{AgentAccountContract, AgentAccountData, AgentAccountInit};
 pub use chain_provider::{ChainProvider, DefaultChainProvider, contract_provider_from};
 pub use config_contract::{
     ConfigContractImpl, ConfigContractWrapper, ConfigProposal, ProposedParam,

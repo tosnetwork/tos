@@ -16,25 +16,28 @@ PROGRAM{
     CTOS	//  ds
     LDMSGADDR	//  owner ds
     256 LDU	//  owner controller_pubkey ds
-    LDTOMIS	//  owner controller_pubkey max_per_tx ds
-    LDTOMIS	//  owner controller_pubkey max_per_tx daily_limit ds
-    64 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ds
-    -1 PUSHINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ds metadata_hash=-1
-    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ds
-    1 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 _22 ds
-    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ds _22
-    IF:<{	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ds
-      NIP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ds
-      256 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ds
-    }>	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ds
-    -1 PUSHINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ds service_endpoint_hash=-1
-    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ds
-    1 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 _30 ds
-    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ds _30
-    IF:<{	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ds
-      NIP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ds
-      256 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash ds
-    }>	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash ds
+    LDREF	//  owner controller_pubkey policy_cell ds
+    ENDS
+    CTOS	//  owner controller_pubkey ps
+    LDTOMIS	//  owner controller_pubkey max_per_tx ps
+    LDTOMIS	//  owner controller_pubkey max_per_tx daily_limit ps
+    64 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ps
+    -1 PUSHINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ps metadata_hash=-1
+    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ps
+    1 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 _28 ps
+    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ps _28
+    IF:<{	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ps
+      NIP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ps
+      256 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ps
+    }>	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ps
+    -1 PUSHINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ps service_endpoint_hash=-1
+    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ps
+    1 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 _36 ps
+    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ps _36
+    IF:<{	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ps
+      NIP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ps
+      256 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash ps
+    }>	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash ps
     ENDS
   }>
   pack_agent_state PROCINLINE:<{
@@ -49,40 +52,42 @@ PROGRAM{
     1 LESSINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _16
     1701 THROWIF
     NEWC	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _19
-    s0 s7 XCHG2	//  service_endpoint_hash controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash _19 owner
-    STSLICER	//  service_endpoint_hash controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash _20
-    s1 s5 XCHG	//  service_endpoint_hash metadata_hash max_per_tx daily_limit default_task_timeout controller_pubkey _20
-    256 STU	//  service_endpoint_hash metadata_hash max_per_tx daily_limit default_task_timeout _22
-    s0 s3 XCHG2	//  service_endpoint_hash metadata_hash default_task_timeout daily_limit _22 max_per_tx
-    STTOMIS	//  service_endpoint_hash metadata_hash default_task_timeout daily_limit _23
-    SWAP	//  service_endpoint_hash metadata_hash default_task_timeout _23 daily_limit
-    STTOMIS	//  service_endpoint_hash metadata_hash default_task_timeout _24
-    64 STU	//  service_endpoint_hash metadata_hash b
-    OVER	//  service_endpoint_hash metadata_hash b metadata_hash
-    0 LESSINT	//  service_endpoint_hash metadata_hash b _28
-    IF:<{	//  service_endpoint_hash metadata_hash b
+    s0 s5 XCHG2	//  owner controller_pubkey service_endpoint_hash daily_limit default_task_timeout metadata_hash _19 max_per_tx
+    STTOMIS	//  owner controller_pubkey service_endpoint_hash daily_limit default_task_timeout metadata_hash _20
+    s0 s3 XCHG2	//  owner controller_pubkey service_endpoint_hash metadata_hash default_task_timeout _20 daily_limit
+    STTOMIS	//  owner controller_pubkey service_endpoint_hash metadata_hash default_task_timeout _21
+    64 STU	//  owner controller_pubkey service_endpoint_hash metadata_hash policy
+    OVER	//  owner controller_pubkey service_endpoint_hash metadata_hash policy metadata_hash
+    0 LESSINT	//  owner controller_pubkey service_endpoint_hash metadata_hash policy _25
+    IF:<{	//  owner controller_pubkey service_endpoint_hash metadata_hash policy
       0 PUSHINT
-      s2 POP	//  service_endpoint_hash _29=0 b
-      1 STU	//  service_endpoint_hash b
-    }>ELSE<{	//  service_endpoint_hash metadata_hash b
-      1 PUSHINT	//  service_endpoint_hash metadata_hash b _32=1
-      SWAP	//  service_endpoint_hash metadata_hash _32=1 b
-      1 STU	//  service_endpoint_hash metadata_hash _34
-      256 STU	//  service_endpoint_hash b
+      s2 POP	//  owner controller_pubkey service_endpoint_hash _26=0 policy
+      1 STU	//  owner controller_pubkey service_endpoint_hash policy
+    }>ELSE<{	//  owner controller_pubkey service_endpoint_hash metadata_hash policy
+      1 PUSHINT	//  owner controller_pubkey service_endpoint_hash metadata_hash policy _29=1
+      SWAP	//  owner controller_pubkey service_endpoint_hash metadata_hash _29=1 policy
+      1 STU	//  owner controller_pubkey service_endpoint_hash metadata_hash _31
+      256 STU	//  owner controller_pubkey service_endpoint_hash policy
     }>
-    OVER	//  service_endpoint_hash b service_endpoint_hash
-    0 LESSINT	//  service_endpoint_hash b _38
-    IF:<{	//  service_endpoint_hash b
+    OVER	//  owner controller_pubkey service_endpoint_hash policy service_endpoint_hash
+    0 LESSINT	//  owner controller_pubkey service_endpoint_hash policy _35
+    IF:<{	//  owner controller_pubkey service_endpoint_hash policy
       0 PUSHINT
-      s2 POP	//  _39=0 b
-      1 STU	//  b
-    }>ELSE<{	//  service_endpoint_hash b
-      1 PUSHINT	//  service_endpoint_hash b _42=1
-      SWAP	//  service_endpoint_hash _42=1 b
-      1 STU	//  service_endpoint_hash _44
-      256 STU	//  b
+      s2 POP	//  owner controller_pubkey _36=0 policy
+      1 STU	//  owner controller_pubkey policy
+    }>ELSE<{	//  owner controller_pubkey service_endpoint_hash policy
+      1 PUSHINT	//  owner controller_pubkey service_endpoint_hash policy _39=1
+      SWAP	//  owner controller_pubkey service_endpoint_hash _39=1 policy
+      1 STU	//  owner controller_pubkey service_endpoint_hash _41
+      256 STU	//  owner controller_pubkey policy
     }>
-    ENDC	//  _47
+    ENDC	//  owner controller_pubkey _44
+    NEWC	//  owner controller_pubkey _44 _45
+    s0 s3 XCHG2	//  _44 controller_pubkey _45 owner
+    STSLICER	//  _44 controller_pubkey _46
+    256 STU	//  _44 _48
+    STREF	//  _49
+    ENDC	//  _50
   }>
   require_owner PROCINLINE:<{
     //  sender owner

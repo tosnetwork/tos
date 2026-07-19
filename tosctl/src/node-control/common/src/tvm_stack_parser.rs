@@ -7,9 +7,9 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use anyhow::Context;
+use chain_block::{read_single_root_boc, Cell, SliceData};
 use num::Num;
 use tl_api::tos::tvm::StackEntry;
-use chain_block::{Cell, read_single_root_boc};
 
 #[derive(Debug)]
 pub struct TvmStackParser {
@@ -110,6 +110,29 @@ impl TvmStackParser {
         Ok(if minus { -num } else { num })
     }
 
+    pub fn u64(&self, index: usize) -> anyhow::Result<u64> {
+        let number = self.decimal_string(index)?;
+        if number.starts_with('-') {
+            anyhow::bail!("number is negative: index={}, value={}", index, number);
+        }
+        if let Some(hex) = number.strip_prefix("0x") {
+            u64::from_str_radix(hex, 16).context(format!("parse u64 from hex: item={}", index))
+        } else {
+            number.parse::<u64>().context(format!("parse u64 from decimal: item={}", index))
+        }
+    }
+
+    pub fn slice(&self, index: usize) -> anyhow::Result<SliceData> {
+        let entry = self.entry(index)?;
+        let bytes = entry
+            .slice()
+            .ok_or_else(|| anyhow::anyhow!("stack entry is not a slice: index={}", index))?
+            .bytes
+            .clone();
+        let bit_len = bytes.len() * 8;
+        Ok(SliceData::from_raw(bytes, bit_len))
+    }
+
     pub fn bool(&self, index: usize) -> anyhow::Result<bool> {
         Ok(self.i64(index)? != 0)
     }
@@ -155,13 +178,16 @@ impl TvmStackParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chain_block::{write_boc, BuilderData, Cell, IBitstring};
     use tl_api::tos::tvm::{
-        List, Number, Tuple, cell, list,
+        cell, list,
         numberdecimal::NumberDecimal,
-        stackentry::{StackEntryCell, StackEntryList, StackEntryNumber, StackEntryTuple},
-        tuple,
+        slice,
+        stackentry::{
+            StackEntryCell, StackEntryList, StackEntryNumber, StackEntrySlice, StackEntryTuple,
+        },
+        tuple, List, Number, Tuple,
     };
-    use chain_block::{BuilderData, Cell, IBitstring, write_boc};
 
     fn create_number_entry(value: &str) -> StackEntry {
         StackEntry::Tvm_StackEntryNumber(StackEntryNumber {
@@ -188,6 +214,10 @@ mod tests {
     fn create_cell_entry(cell: &Cell) -> StackEntry {
         let boc = write_boc(cell).unwrap();
         StackEntry::Tvm_StackEntryCell(StackEntryCell { cell: cell::Cell { bytes: boc } })
+    }
+
+    fn create_slice_entry(bytes: Vec<u8>) -> StackEntry {
+        StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } })
     }
 
     #[test]
@@ -258,6 +288,26 @@ mod tests {
 
         let result = parser.number_bytes(0, 2).unwrap();
         assert_eq!(result, vec![255u8, 255u8]);
+    }
+
+    #[test]
+    fn test_u64_hex_and_decimal() {
+        let parser = TvmStackParser::new(vec![
+            create_number_entry("18446744073709551615"),
+            create_number_entry("0xffffffffffffffff"),
+        ]);
+
+        assert_eq!(parser.u64(0).unwrap(), u64::MAX);
+        assert_eq!(parser.u64(1).unwrap(), u64::MAX);
+    }
+
+    #[test]
+    fn test_slice() {
+        let parser = TvmStackParser::new(vec![create_slice_entry(vec![0xaa, 0x55])]);
+        let slice = parser.slice(0).unwrap();
+
+        assert_eq!(slice.remaining_bits(), 16);
+        assert_eq!(slice.get_bytestring(0), vec![0xaa, 0x55]);
     }
 
     #[test]

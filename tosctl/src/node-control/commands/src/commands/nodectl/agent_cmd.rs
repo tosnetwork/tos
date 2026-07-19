@@ -10,11 +10,14 @@
 use super::output_format::OutputFormat;
 use super::utils::{
     calculate_wallet_address, get_wallet_config, load_config_vault, load_config_vault_rpc_client,
-    make_wallet, save_config, wait_for_deploy, wait_for_seqno_change, wallet_info,
-    DEPLOY_TIMEOUT, SEND_TIMEOUT,
+    make_wallet, save_config, try_create_rpc_client, wait_for_deploy, wait_for_seqno_change,
+    wallet_info, DEPLOY_TIMEOUT, SEND_TIMEOUT,
 };
 use anyhow::Context;
-use chain_block::{write_boc, BuilderData, Cell, IBitstring, MsgAddressInt};
+use base64::Engine;
+use chain_block::{
+    read_single_root_boc, write_boc, BuilderData, Cell, IBitstring, MsgAddressInt, Serializable,
+};
 use chain_rpc_client::v2::data_models::AccountState;
 use colored::Colorize;
 use common::{
@@ -24,13 +27,15 @@ use common::{
     chain_utils::{display_tos, tos_to_nanotos},
     time_format, WalletVersion,
 };
-use contracts::Wallet;
+use contracts::{AgentAccountContract, AgentAccountData, AgentAccountInit, Wallet};
 use secrets_vault::types::{
     algorithm::Algorithm, secret::Secret, secret_id::SecretId, secret_spec::SecretSpec,
 };
+use secrets_vault::vault::SecretVault;
 use std::{io::Write, path::Path, str::FromStr};
 
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
+const AGENT_ACCOUNT_DEPLOY_GAS: u64 = 1_000_000; // 0.001 TOS
 
 /// Top-level `tosctl agent` command.
 #[derive(clap::Args, Clone)]
@@ -54,6 +59,94 @@ pub struct AgentCmd {
 pub enum AgentAction {
     /// Agent wallet operations
     Wallet(AgentWalletCmd),
+    /// Native Agent Account contract operations
+    Account(AgentAccountCmd),
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Native Agent Account contract operations")]
+pub struct AgentAccountCmd {
+    #[command(subcommand)]
+    action: AgentAccountAction,
+}
+
+#[derive(clap::Subcommand, Clone)]
+pub enum AgentAccountAction {
+    /// Build Agent Account StateInit from a local Agent Wallet profile
+    BuildState(AgentAccountBuildStateCmd),
+    /// Deploy an Agent Account from a local Agent Wallet profile
+    Deploy(AgentAccountDeployCmd),
+    /// Show an Agent Account by its chain address
+    Show(AgentAccountShowCmd),
+    /// Show Agent Account contract template metadata
+    ShowTemplate(AgentAccountShowTemplateCmd),
+    /// Compare a local Agent Wallet profile with its Agent Account chain state
+    Status(AgentAccountStatusCmd),
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Build Agent Account StateInit from a local Agent Wallet profile")]
+pub struct AgentAccountBuildStateCmd {
+    #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
+    wallet: String,
+
+    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Agent Account workchain")]
+    workchain: i32,
+
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Deploy an Agent Account from a local Agent Wallet profile")]
+pub struct AgentAccountDeployCmd {
+    #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
+    wallet: String,
+
+    #[arg(long = "from", help = "Funding wallet name from config, or master_wallet")]
+    from: String,
+
+    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Agent Account workchain")]
+    workchain: i32,
+
+    #[arg(long = "amount", default_value_t = 0.2, help = "Initial Agent Account balance, in TOS")]
+    amount: f64,
+
+    #[arg(long = "yes", help = "Skip confirmation prompt")]
+    yes: bool,
+
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Show an Agent Account by its chain address")]
+pub struct AgentAccountShowCmd {
+    #[arg(short, long, help = "Agent Account address")]
+    address: String,
+
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Compare a local Agent Wallet profile with its Agent Account chain state")]
+pub struct AgentAccountStatusCmd {
+    #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
+    wallet: String,
+
+    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Agent Account workchain")]
+    workchain: i32,
+
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Show Agent Account contract template metadata")]
+pub struct AgentAccountShowTemplateCmd {
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
 }
 
 #[derive(clap::Args, Clone)]
@@ -201,7 +294,10 @@ pub struct AgentWalletUpdatePolicyCmd {
     #[arg(long = "clear-services", help = "Clear allowed service actors")]
     clear_services: bool,
 
-    #[arg(long = "task-category", help = "Replace allowed task categories with this repeated list")]
+    #[arg(
+        long = "task-category",
+        help = "Replace allowed task categories with this repeated list"
+    )]
     allowed_task_categories: Vec<String>,
 
     #[arg(long = "clear-task-categories", help = "Clear allowed task categories")]
@@ -372,11 +468,447 @@ struct AgentWalletStatusView {
     runtime: Option<AgentRuntimeBinding>,
 }
 
+#[derive(serde::Serialize)]
+struct AgentAccountStateView {
+    wallet: String,
+    address: String,
+    workchain: i32,
+    owner: String,
+    controller_key: String,
+    controller_pubkey: String,
+    max_per_tx: u64,
+    daily_limit: u64,
+    default_task_timeout_secs: u64,
+    metadata_hash: Option<String>,
+    service_endpoint_hash: Option<String>,
+    state_init_boc: String,
+    code_hash: String,
+    data_hash: String,
+}
+
+#[derive(serde::Serialize)]
+struct AgentAccountDeployView {
+    wallet: String,
+    address: String,
+    owner: String,
+    payer: String,
+    payer_address: String,
+    amount: String,
+    code_hash: String,
+    data_hash: String,
+    status: String,
+}
+
+#[derive(serde::Serialize)]
+struct AgentAccountChainView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wallet: Option<String>,
+    address: String,
+    state: String,
+    balance: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    template_matches: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    controller_pubkey: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_per_tx: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    daily_limit: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_task_timeout_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_endpoint_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matches_profile: Option<bool>,
+}
+
+#[derive(serde::Serialize)]
+struct AgentAccountTemplateView {
+    contract: &'static str,
+    source: &'static str,
+    tlb: &'static str,
+    update_policy_opcode: String,
+    rotate_controller_opcode: String,
+    get_methods: Vec<&'static str>,
+    code_hash: String,
+    code_boc: String,
+}
+
 impl AgentCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         match &self.action {
             AgentAction::Wallet(cmd) => cmd.run(&self.config).await,
+            AgentAction::Account(cmd) => cmd.run(&self.config).await,
         }
+    }
+}
+
+impl AgentAccountCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        match &self.action {
+            AgentAccountAction::BuildState(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::Deploy(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::Show(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::ShowTemplate(cmd) => cmd.run().await,
+            AgentAccountAction::Status(cmd) => cmd.run(config_path).await,
+        }
+    }
+}
+
+impl AgentAccountBuildStateCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let path = Path::new(config_path);
+        let (config, vault) = load_config_vault(path).await?;
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+
+        let (init, owner_address) =
+            build_agent_account_init(&self.wallet, agent_wallet, vault).await?;
+        let state_init = AgentAccountContract::build_state_init(&init)?;
+        let address = AgentAccountContract::calculate_address(self.workchain, &init)?;
+        let state_cell = state_init.write_to_new_cell()?.into_cell()?;
+        let data_cell = AgentAccountContract::build_data(&init)?;
+        let code_cell = AgentAccountContract::code()?;
+        let state_init_boc =
+            base64::engine::general_purpose::STANDARD.encode(write_boc(&state_cell)?);
+
+        let view = AgentAccountStateView {
+            wallet: self.wallet.clone(),
+            address: address.to_string(),
+            workchain: self.workchain,
+            owner: owner_address,
+            controller_key: describe_key(&agent_wallet.controller_key),
+            controller_pubkey: hex::encode(init.controller_pubkey),
+            max_per_tx: init.max_per_tx,
+            daily_limit: init.daily_limit,
+            default_task_timeout_secs: init.default_task_timeout_secs,
+            metadata_hash: agent_wallet.metadata_hash.clone(),
+            service_endpoint_hash: agent_wallet.service_endpoint_hash.clone(),
+            state_init_boc,
+            code_hash: hex::encode(code_cell.hash(0)),
+            data_hash: hex::encode(data_cell.hash(0)),
+        };
+
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&view)?);
+            return Ok(());
+        }
+
+        println!("{}", "Agent Account StateInit".bold());
+        println!("  Wallet profile:       {}", view.wallet);
+        println!("  Address:              {}", view.address);
+        println!("  Owner:                {}", view.owner);
+        println!("  Controller key:       {}", view.controller_key);
+        println!("  Controller pubkey:    {}", view.controller_pubkey);
+        println!("  Max per action:       {} TOS", display_tos(view.max_per_tx));
+        println!("  Daily limit:          {} TOS", display_tos(view.daily_limit));
+        println!("  Default task timeout: {}s", view.default_task_timeout_secs);
+        println!("  Code hash:            {}", view.code_hash);
+        println!("  Data hash:            {}", view.data_hash);
+        println!("  StateInit BOC:        {}", view.state_init_boc);
+        Ok(())
+    }
+}
+
+impl AgentAccountDeployCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_tos_amount("amount", self.amount)?;
+        if self.amount == 0.0 {
+            anyhow::bail!("amount must be greater than zero");
+        }
+
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+
+        let (init, _owner_address) =
+            build_agent_account_init(&self.wallet, agent_wallet, vault.clone()).await?;
+        let owner = init.owner.clone();
+        let state_init = AgentAccountContract::build_state_init(&init)?;
+        let address = AgentAccountContract::calculate_address(self.workchain, &init)?;
+        let address_info = rpc_client.get_address_information(&address).await?;
+        if address_info.state == AccountState::Active {
+            anyhow::bail!("Agent Account '{}' is already active at {}", self.wallet, address);
+        }
+        if address_info.state == AccountState::Frozen {
+            anyhow::bail!("Agent Account '{}' ({}) is frozen", self.wallet, address);
+        }
+
+        let payer_cfg =
+            get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
+        let (payer_address, payer_info, payer_secret) =
+            wallet_info(rpc_client.clone(), payer_cfg, vault).await?;
+        if payer_info.account_state == AccountState::Frozen {
+            anyhow::bail!("wallet '{}' is frozen", self.from);
+        }
+        if payer_info.account_state == AccountState::Uninitialized {
+            anyhow::bail!("wallet '{}' is uninitialized", self.from);
+        }
+
+        let amount_nanotos = tos_to_nanotos(self.amount);
+        if !(1..=payer_info.balance.saturating_sub(AGENT_ACCOUNT_DEPLOY_GAS))
+            .contains(&amount_nanotos)
+        {
+            anyhow::bail!(
+                "Wrong amount value {} TOS. Wallet balance is {} TOS",
+                self.amount,
+                display_tos(payer_info.balance)
+            );
+        }
+
+        if self.format != OutputFormat::Json {
+            println!(
+                "\n{}\n  Profile:  {}\n  Owner:    {}\n  From:     {} ({})\n  Account:  {}\n  Amount:   {:.9} TOS\n",
+                "Agent Account deployment summary:".cyan().bold(),
+                self.wallet,
+                owner,
+                self.from,
+                payer_address,
+                address,
+                self.amount,
+            );
+        }
+        if !self.yes && !confirm("Confirm Agent Account deployment?")? {
+            println!("{}", "Agent Account deployment cancelled".yellow());
+            return Ok(());
+        }
+
+        let wallet = make_wallet(rpc_client.clone(), payer_cfg, payer_secret, &self.from)
+            .await
+            .context("create Agent Account funding wallet")?;
+        let msg = wallet
+            .build_message(
+                address.clone(),
+                amount_nanotos,
+                Cell::default(),
+                false,
+                payer_info.seqno,
+                None,
+                Some(state_init),
+            )
+            .await?;
+        rpc_client.send_boc(&write_boc(&msg)?).await?;
+        wait_for_deploy(
+            rpc_client,
+            &address,
+            &common::task_cancellation::CancellationCtx::default(),
+            self.format != OutputFormat::Json,
+            DEPLOY_TIMEOUT,
+        )
+        .await?;
+
+        let code_cell = AgentAccountContract::code()?;
+        let data_cell = AgentAccountContract::build_data(&init)?;
+        let result = AgentAccountDeployView {
+            wallet: self.wallet.clone(),
+            address: address.to_string(),
+            owner: owner.to_string(),
+            payer: self.from.clone(),
+            payer_address: payer_address.to_string(),
+            amount: display_tos(amount_nanotos),
+            code_hash: hex::encode(code_cell.hash(0)),
+            data_hash: hex::encode(data_cell.hash(0)),
+            status: "deployed".to_string(),
+        };
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            println!(
+                "{} Agent Account '{}' deployed at {}",
+                "OK".green().bold(),
+                self.wallet,
+                result.address
+            );
+        }
+        Ok(())
+    }
+}
+
+impl AgentAccountShowCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let address = self
+            .address
+            .parse::<MsgAddressInt>()
+            .with_context(|| format!("Invalid Agent Account address '{}'", self.address))?;
+        let config = common::app_config::AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let view = load_agent_account_chain_view(rpc_client, &address, None, None).await?;
+        print_agent_account_chain_view(&view, self.format.clone())
+    }
+}
+
+impl AgentAccountStatusCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let (init, _) = build_agent_account_init(&self.wallet, agent_wallet, vault).await?;
+        let address = AgentAccountContract::calculate_address(self.workchain, &init)?;
+        let view = load_agent_account_chain_view(
+            rpc_client,
+            &address,
+            Some(self.wallet.clone()),
+            Some(&init),
+        )
+        .await?;
+        print_agent_account_chain_view(&view, self.format.clone())
+    }
+}
+
+async fn load_agent_account_chain_view(
+    rpc_client: std::sync::Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
+    address: &MsgAddressInt,
+    wallet: Option<String>,
+    expected: Option<&AgentAccountInit>,
+) -> anyhow::Result<AgentAccountChainView> {
+    let info = rpc_client.get_address_information(address).await?;
+    let active = info.state == AccountState::Active;
+    let code_hash = info
+        .code
+        .as_ref()
+        .map(|code| read_single_root_boc(code).map(|cell| hex::encode(cell.hash(0))))
+        .transpose()?;
+    let expected_code_hash = hex::encode(AgentAccountContract::code()?.hash(0));
+    let template_matches = code_hash.as_ref().map(|hash| hash == &expected_code_hash);
+
+    let data = if active {
+        let provider = contracts::contract_provider!(rpc_client);
+        Some(AgentAccountContract::get_data(provider.as_ref(), address).await?)
+    } else {
+        None
+    };
+    let matches_profile = expected.map(|expected| {
+        template_matches == Some(true)
+            && data.as_ref().is_some_and(|data| agent_account_data_matches(data, expected))
+    });
+
+    Ok(AgentAccountChainView {
+        wallet,
+        address: address.to_string(),
+        state: info.state.to_string(),
+        balance: display_tos(info.balance),
+        code_hash,
+        template_matches,
+        owner: data.as_ref().map(|data| data.owner.to_string()),
+        controller_pubkey: data.as_ref().map(|data| hex::encode(data.controller_pubkey)),
+        max_per_tx: data.as_ref().map(|data| data.max_per_tx),
+        daily_limit: data.as_ref().map(|data| data.daily_limit),
+        default_task_timeout_secs: data.as_ref().map(|data| data.default_task_timeout_secs),
+        metadata_hash: data.as_ref().and_then(|data| data.metadata_hash.map(hex::encode)),
+        service_endpoint_hash: data
+            .as_ref()
+            .and_then(|data| data.service_endpoint_hash.map(hex::encode)),
+        matches_profile,
+    })
+}
+
+fn agent_account_data_matches(data: &AgentAccountData, expected: &AgentAccountInit) -> bool {
+    data.owner == expected.owner
+        && data.controller_pubkey == expected.controller_pubkey
+        && data.max_per_tx == expected.max_per_tx
+        && data.daily_limit == expected.daily_limit
+        && data.default_task_timeout_secs == expected.default_task_timeout_secs
+        && data.metadata_hash == expected.metadata_hash
+        && data.service_endpoint_hash == expected.service_endpoint_hash
+}
+
+fn print_agent_account_chain_view(
+    view: &AgentAccountChainView,
+    format: OutputFormat,
+) -> anyhow::Result<()> {
+    if format == OutputFormat::Json {
+        println!("{}", serde_json::to_string_pretty(view)?);
+        return Ok(());
+    }
+
+    println!("{}", "Agent Account Chain State".bold());
+    if let Some(wallet) = &view.wallet {
+        println!("  Wallet profile:       {}", wallet);
+    }
+    println!("  Address:              {}", view.address);
+    println!("  State:                {}", view.state);
+    println!("  Balance:              {} TOS", view.balance);
+    if let Some(code_hash) = &view.code_hash {
+        println!("  Code hash:            {}", code_hash);
+    }
+    if let Some(matches) = view.template_matches {
+        println!("  Template matches:     {}", matches);
+    }
+    if let Some(owner) = &view.owner {
+        println!("  Owner:                {}", owner);
+    }
+    if let Some(controller) = &view.controller_pubkey {
+        println!("  Controller pubkey:    {}", controller);
+    }
+    if let Some(max_per_tx) = view.max_per_tx {
+        println!("  Max per action:       {} TOS", display_tos(max_per_tx));
+    }
+    if let Some(daily_limit) = view.daily_limit {
+        println!("  Daily limit:          {} TOS", display_tos(daily_limit));
+    }
+    if let Some(timeout) = view.default_task_timeout_secs {
+        println!("  Default task timeout: {}s", timeout);
+    }
+    if let Some(metadata_hash) = &view.metadata_hash {
+        println!("  Metadata hash:        {}", metadata_hash);
+    }
+    if let Some(endpoint_hash) = &view.service_endpoint_hash {
+        println!("  Endpoint hash:        {}", endpoint_hash);
+    }
+    if let Some(matches) = view.matches_profile {
+        println!("  Profile matches:      {}", matches);
+    }
+    Ok(())
+}
+
+impl AgentAccountShowTemplateCmd {
+    pub async fn run(&self) -> anyhow::Result<()> {
+        let code = AgentAccountContract::code()?;
+        let code_boc = base64::engine::general_purpose::STANDARD.encode(write_boc(&code)?);
+        let view = AgentAccountTemplateView {
+            contract: "agent-account",
+            source: "crypto/smartcont/agent-account-code.fc",
+            tlb: "crypto/smartcont/agent-account.tlb",
+            update_policy_opcode: "0x41475001".to_string(),
+            rotate_controller_opcode: "0x41475002".to_string(),
+            get_methods: vec![
+                "get_agent_account_data",
+                "get_owner",
+                "get_controller_pubkey",
+                "get_agent_policy",
+            ],
+            code_hash: hex::encode(code.hash(0)),
+            code_boc,
+        };
+
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&view)?);
+            return Ok(());
+        }
+
+        println!("{}", "Agent Account Template".bold());
+        println!("  Contract:                 {}", view.contract);
+        println!("  Source:                   {}", view.source);
+        println!("  TLB:                      {}", view.tlb);
+        println!("  Update policy opcode:     {}", view.update_policy_opcode);
+        println!("  Rotate controller opcode: {}", view.rotate_controller_opcode);
+        println!("  Get methods:              {}", view.get_methods.join(", "));
+        println!("  Code hash:                {}", view.code_hash);
+        Ok(())
     }
 }
 
@@ -540,9 +1072,7 @@ impl AgentWalletRotateControllerCmd {
         vault.generate_secret(&spec, &secret_id).await?;
         vault.flush().await?;
 
-        agent_wallet.controller_key = KeyConfig::VaultKey {
-            name: new_key_name.clone(),
-        };
+        agent_wallet.controller_key = KeyConfig::VaultKey { name: new_key_name.clone() };
         let agent_wallet = agent_wallet.clone();
         save_config(&config, path)?;
 
@@ -552,11 +1082,7 @@ impl AgentWalletRotateControllerCmd {
             return Ok(());
         }
 
-        println!(
-            "{} Controller key rotated for '{}'",
-            "OK".green().bold(),
-            self.name
-        );
+        println!("{} Controller key rotated for '{}'", "OK".green().bold(), self.name);
         println!("  New controller key: {} (in vault)", new_key_name);
         Ok(())
     }
@@ -650,14 +1176,10 @@ impl AgentWalletFundCmd {
         let wallet = make_wallet(rpc_client.clone(), from_wallet_cfg, from_secret, &self.from)
             .await
             .context("create funding wallet")?;
-        let body = if let Some(msg) = &self.message {
-            build_comment_cell(msg)?
-        } else {
-            Cell::default()
-        };
-        let msg = wallet
-            .build_message(dest_addr, amount_nanotos, body, false, None, None, None)
-            .await?;
+        let body =
+            if let Some(msg) = &self.message { build_comment_cell(msg)? } else { Cell::default() };
+        let msg =
+            wallet.build_message(dest_addr, amount_nanotos, body, false, None, None, None).await?;
         let msg_boc = write_boc(&msg)?;
         rpc_client.send_boc(&msg_boc).await?;
         wait_for_seqno_change(
@@ -692,10 +1214,8 @@ impl AgentWalletStatusCmd {
             .get(&self.name)
             .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.name))?;
         let view = build_view(&self.name, agent_wallet, Some(vault)).await?;
-        let address = view
-            .address
-            .parse::<MsgAddressInt>()
-            .context("Invalid Agent Wallet address")?;
+        let address =
+            view.address.parse::<MsgAddressInt>().context("Invalid Agent Wallet address")?;
         let info = rpc_client
             .get_wallet_information(&address)
             .await
@@ -720,10 +1240,7 @@ impl AgentWalletStatusCmd {
         println!("  Address:     {}", status.address);
         println!("  Balance:     {} TOS", status.balance);
         println!("  State:       {}", status.state);
-        println!(
-            "  Wallet type: {}",
-            status.wallet_type.unwrap_or_else(|| "-".to_string())
-        );
+        println!("  Wallet type: {}", status.wallet_type.unwrap_or_else(|| "-".to_string()));
         println!(
             "  Seqno:       {}",
             status.seqno.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string())
@@ -788,12 +1305,7 @@ impl AgentWalletActivateCmd {
         )
         .await?;
 
-        println!(
-            "{} Agent Wallet '{}' ({}) activated",
-            "OK".green().bold(),
-            self.name,
-            address
-        );
+        println!("{} Agent Wallet '{}' ({}) activated", "OK".green().bold(), self.name, address);
         Ok(())
     }
 }
@@ -998,6 +1510,51 @@ fn validate_non_empty(name: &str, value: &str) -> anyhow::Result<()> {
         anyhow::bail!("{name} cannot be empty");
     }
     Ok(())
+}
+
+async fn build_agent_account_init(
+    wallet_name: &str,
+    agent_wallet: &AgentWalletConfig,
+    vault: std::sync::Arc<SecretVault>,
+) -> anyhow::Result<(AgentAccountInit, String)> {
+    let owner_view = build_view(wallet_name, agent_wallet, Some(vault.clone())).await?;
+    let owner = owner_view
+        .address
+        .parse::<MsgAddressInt>()
+        .context("Invalid Agent Wallet owner address")?;
+    let controller_secret = agent_wallet.controller_key.read_secret(Some(vault)).await?;
+    let controller_pubkey: [u8; 32] = public_key_from_secret(&controller_secret)
+        .await?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("controller public key must be 32 bytes"))?;
+
+    Ok((
+        AgentAccountInit {
+            owner,
+            controller_pubkey,
+            max_per_tx: agent_wallet.policy.max_per_tx,
+            daily_limit: agent_wallet.policy.daily_limit,
+            default_task_timeout_secs: agent_wallet.policy.default_task_timeout_secs,
+            metadata_hash: parse_optional_hash("metadata-hash", &agent_wallet.metadata_hash)?,
+            service_endpoint_hash: parse_optional_hash(
+                "service-endpoint-hash",
+                &agent_wallet.service_endpoint_hash,
+            )?,
+        },
+        owner_view.address,
+    ))
+}
+
+fn parse_optional_hash(name: &str, value: &Option<String>) -> anyhow::Result<Option<[u8; 32]>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let trimmed = value.strip_prefix("0x").unwrap_or(value);
+    let bytes =
+        hex::decode(trimmed).with_context(|| format!("{name} must be a 32-byte hex string"))?;
+    let hash: [u8; 32] =
+        bytes.try_into().map_err(|_| anyhow::anyhow!("{name} must be exactly 32 bytes"))?;
+    Ok(Some(hash))
 }
 
 fn confirm(prompt: &str) -> anyhow::Result<bool> {

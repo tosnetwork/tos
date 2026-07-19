@@ -3,6 +3,9 @@
 ;; Persistent data layout:
 ;;   owner:MsgAddress
 ;;   controller_pubkey:uint256
+;;   policy:^Cell
+;;
+;; Policy cell layout:
 ;;   max_per_tx:coins
 ;;   daily_limit:coins
 ;;   default_task_timeout:uint64
@@ -26,20 +29,24 @@ const int err::unknown_op = 1703;
   slice ds = get_data().begin_parse();
   slice owner = ds~load_msg_addr();
   int controller_pubkey = ds~load_uint(256);
-  int max_per_tx = ds~load_coins();
-  int daily_limit = ds~load_coins();
-  int default_task_timeout = ds~load_uint(64);
+  cell policy_cell = ds~load_ref();
+  ds.end_parse();
+
+  slice ps = policy_cell.begin_parse();
+  int max_per_tx = ps~load_coins();
+  int daily_limit = ps~load_coins();
+  int default_task_timeout = ps~load_uint(64);
 
   int metadata_hash = -1;
-  if (ds~load_uint(1)) {
-    metadata_hash = ds~load_uint(256);
+  if (ps~load_uint(1)) {
+    metadata_hash = ps~load_uint(256);
   }
 
   int service_endpoint_hash = -1;
-  if (ds~load_uint(1)) {
-    service_endpoint_hash = ds~load_uint(256);
+  if (ps~load_uint(1)) {
+    service_endpoint_hash = ps~load_uint(256);
   }
-  ds.end_parse();
+  ps.end_parse();
 
   return (
     owner,
@@ -65,26 +72,28 @@ cell pack_agent_state(
   throw_if(err::invalid_policy, daily_limit < max_per_tx);
   throw_if(err::invalid_policy, default_task_timeout <= 0);
 
-  builder b = begin_cell()
-    .store_slice(owner)
-    .store_uint(controller_pubkey, 256)
+  builder policy = begin_cell()
     .store_coins(max_per_tx)
     .store_coins(daily_limit)
     .store_uint(default_task_timeout, 64);
 
   if (metadata_hash < 0) {
-    b = b.store_uint(0, 1);
+    policy = policy.store_uint(0, 1);
   } else {
-    b = b.store_uint(1, 1).store_uint(metadata_hash, 256);
+    policy = policy.store_uint(1, 1).store_uint(metadata_hash, 256);
   }
 
   if (service_endpoint_hash < 0) {
-    b = b.store_uint(0, 1);
+    policy = policy.store_uint(0, 1);
   } else {
-    b = b.store_uint(1, 1).store_uint(service_endpoint_hash, 256);
+    policy = policy.store_uint(1, 1).store_uint(service_endpoint_hash, 256);
   }
 
-  return b.end_cell();
+  return begin_cell()
+    .store_slice(owner)
+    .store_uint(controller_pubkey, 256)
+    .store_ref(policy.end_cell())
+    .end_cell();
 }
 
 () require_owner(slice sender, slice owner) impure inline {

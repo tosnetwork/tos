@@ -2,14 +2,16 @@
 
 This document defines the first implementation slice for TOS Agent Wallets.
 
-The MVP is a local `tosctl` profile layer. It does not replace the future on-chain Agent Account contract. It gives operators and agent runtimes a concrete way to create wallet identities, separate owner and controller keys, and store machine-readable spending policy before the native contract templates are finalized.
+The MVP combines a local `tosctl` profile layer with the first native Agent Account contract. It gives operators and agent runtimes a concrete way to create wallet identities, separate owner and controller keys, store machine-readable spending policy, derive deterministic contract state and deploy that state on-chain.
 
 The repository also includes the first native Agent Account contract template:
 
 - [`crypto/smartcont/agent-account-code.fc`](../crypto/smartcont/agent-account-code.fc)
 - [`crypto/smartcont/agent-account.tlb`](../crypto/smartcont/agent-account.tlb)
 
-This contract is intentionally minimal. It stores owner identity, controller public key and policy data, exposes get-methods, and accepts owner-only internal messages for policy and controller updates. It does not yet execute controller spending, escrow settlement or task routing.
+This contract is intentionally minimal. It stores owner identity, controller public key and policy data, exposes get-methods, and accepts owner-only internal messages for policy and controller updates. Policy data is stored in a referenced cell so metadata and endpoint hashes fit within TVM cell limits. It does not yet execute controller spending, escrow settlement or task routing.
+
+`tosctl` can derive and deploy Agent Account StateInit from a local Agent Wallet profile. This makes the local profile and the native contract template share one deterministic owner/controller/policy encoding.
 
 ## Scope
 
@@ -26,6 +28,7 @@ The MVP provides:
 - policy updates for limits, services, task categories, metadata hashes and capabilities
 - safe removal of local Agent Wallet profiles, with optional vault-key deletion
 - a native Agent Account contract template for owner/controller/policy state
+- deterministic Agent Account StateInit generation and deployment through a configured funding wallet
 - wallet address derivation using the existing native wallet implementation
 - policy fields for per-action spend, daily spend, allowed services, task categories and owner-approval threshold
 - JSON output for automation and service integration
@@ -63,6 +66,55 @@ Show one Agent Wallet profile:
 ```bash
 tosctl agent wallet show --name research-agent --format json
 ```
+
+Show Agent Account contract template metadata:
+
+```bash
+tosctl agent account show-template
+```
+
+Build Agent Account StateInit from a profile:
+
+```bash
+tosctl agent account build-state --wallet research-agent --format json
+```
+
+For on-chain Agent Account StateInit generation, `metadata-hash` and `service-endpoint-hash` must be 32-byte hex strings when present.
+
+The `build-state` output includes:
+
+- deterministic Agent Account address
+- owner address derived from the Agent Wallet profile
+- controller public key
+- code hash and data hash
+- base64 StateInit BOC
+
+Deploy the deterministic Agent Account through an active configured wallet:
+
+```bash
+tosctl agent account deploy \
+  --wallet research-agent \
+  --from master_wallet \
+  --amount 0.2 \
+  --yes \
+  --format json
+```
+
+The deployment command rejects active or frozen target accounts, validates the payer state and balance, sends the generated StateInit as an internal message, and waits for the Agent Account to become active.
+
+Compare a local profile with its deterministic Agent Account chain state:
+
+```bash
+tosctl agent account status --wallet research-agent --format json
+```
+
+Inspect an Agent Account directly by address:
+
+```bash
+tosctl agent account show --address <agent-account-address> --format json
+```
+
+`status` verifies the deployed code hash and compares owner, controller key, limits, timeout and optional metadata hashes with the local profile. `show` reads the same native get-method without requiring a local Agent Wallet profile.
 
 Export only the policy:
 
@@ -155,10 +207,12 @@ The recommended local lifecycle is:
 1. `create` the Agent Wallet profile.
 2. `fund` the derived address from `master_wallet` or another configured wallet.
 3. `activate` the underlying native wallet contract once the address has enough balance.
-4. `update-policy` when spending limits, service actors, task categories or metadata change.
-5. `bind-runtime` to an agent runner.
-6. `export-runtime` for the runner manifest.
-7. `rm` stale local profiles when an agent is retired or a test profile is no longer needed.
+4. `build-state` to inspect the deterministic Agent Account address and state before deployment.
+5. `account deploy` to deploy the native Agent Account through an active configured wallet.
+6. `update-policy` when spending limits, service actors, task categories or metadata change.
+7. `bind-runtime` to an agent runner.
+8. `export-runtime` for the runner manifest.
+9. `rm` stale local profiles when an agent is retired or a test profile is no longer needed.
 
 ## Config Shape
 
@@ -196,11 +250,8 @@ The recommended local lifecycle is:
 
 ## Next Engineering Step
 
-The next slice should bind this local profile to a native Agent Account contract:
+The next slice should make the deployed Agent Account actionable:
 
-- add `tosctl agent account` deploy/build helpers for the Agent Account contract template
-- derive Agent Account state-init from owner address, controller public key and policy fields
-- expose RPC/CLI inspection for `get_agent_account_data`, `get_owner`, `get_controller_pubkey` and `get_agent_policy`
 - add task-contract messages that spend through the Agent Account policy
-- add native Agent Account deployment after the contract template exists
-- make controller rotation an on-chain policy update after the Agent Account contract exists
+- make controller rotation and policy changes signed on-chain operations
+- add deployment and policy-transition integration tests against a local network

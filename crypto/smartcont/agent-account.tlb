@@ -14,9 +14,13 @@ agent_rotate_controller#41475002 query_id:uint64
 
 _ owner:MsgAddress
   controller_pubkey:uint256
+  policy:^AgentAccountPolicy
+  = AgentAccountData;
+
+_
   max_per_tx:Grams
   daily_limit:Grams
   default_task_timeout:uint64
   metadata_hash:(Maybe uint256)
   service_endpoint_hash:(Maybe uint256)
-  = AgentAccountData;
+  = AgentAccountPolicy;

@@ -1,0 +1,246 @@
+/*
+ * Copyright (C) 2025-2026 RSquad Blockchain Lab.
+ *
+ * Licensed under the GNU General Public License v3.0.
+ * See the LICENSE file in the root of this repository.
+ *
+ * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
+ */
+use chain_block::{
+    base64_decode, read_single_root_boc, BuilderData, Coins, Deserializable, IBitstring,
+    MsgAddressInt, Serializable, StateInit,
+};
+
+use crate::ContractProvider;
+
+pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECDgEAAgsAART/APSkE/S88sgLAQIBIAIDAgFIBAUACvIw8samAqbQMiHHAJFb4NDTAzH6QDDtRND6QNP/1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RCNMf0z8xIYIQQUdQAbrjAjaCEEFHUAK64wJfCPLGpwYHAgEgCAkA7jlfBVEhxwXy5qYC+gD6ANM/INMAAZPT/zCSMH/iIdMAAZPT/zCSMH/iAtH4AAEkwQDy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQA88Wy//Mye1UALhRZccF8uamA9P/0fgAEEZEVUMTJMEA8talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAPPFsv/zMntVAIBSAoLAgEgDA0AU7YlvaiaH0gaf/qaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72i2EsABTtzS9qJofSBp/+po6H0AfQBpn7+A6YAAyZjp/+8/gOmAAMmY6f/vaK+DQAE+5rr7UTQ+kDT/9TR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0YAFe55P7UTQ+kDT/9TR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0RBWXwaA==";
+
+#[derive(Clone, Debug)]
+pub struct AgentAccountInit {
+    pub owner: MsgAddressInt,
+    pub controller_pubkey: [u8; 32],
+    pub max_per_tx: u64,
+    pub daily_limit: u64,
+    pub default_task_timeout_secs: u64,
+    pub metadata_hash: Option<[u8; 32]>,
+    pub service_endpoint_hash: Option<[u8; 32]>,
+}
+
+pub struct AgentAccountContract;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentAccountData {
+    pub owner: MsgAddressInt,
+    pub controller_pubkey: [u8; 32],
+    pub max_per_tx: u64,
+    pub daily_limit: u64,
+    pub default_task_timeout_secs: u64,
+    pub metadata_hash: Option<[u8; 32]>,
+    pub service_endpoint_hash: Option<[u8; 32]>,
+}
+
+impl AgentAccountContract {
+    pub fn code() -> anyhow::Result<chain_block::Cell> {
+        read_single_root_boc(base64_decode(AGENT_ACCOUNT_CODE_B64)?).map_err(Into::into)
+    }
+
+    pub fn build_data(init: &AgentAccountInit) -> anyhow::Result<chain_block::Cell> {
+        if init.daily_limit < init.max_per_tx {
+            anyhow::bail!("daily_limit must be greater than or equal to max_per_tx");
+        }
+        if init.default_task_timeout_secs == 0 {
+            anyhow::bail!("default_task_timeout_secs must be greater than zero");
+        }
+
+        let mut policy = BuilderData::new();
+        Coins::new(init.max_per_tx).write_to(&mut policy)?;
+        Coins::new(init.daily_limit).write_to(&mut policy)?;
+        policy.append_u64(init.default_task_timeout_secs)?;
+        append_maybe_hash(&mut policy, init.metadata_hash)?;
+        append_maybe_hash(&mut policy, init.service_endpoint_hash)?;
+
+        let mut data = BuilderData::new();
+        init.owner.write_to(&mut data)?;
+        data.append_raw(&init.controller_pubkey, 256)?;
+        data.checked_append_reference(policy.into_cell()?)?;
+        Ok(data.into_cell()?)
+    }
+
+    pub fn build_state_init(init: &AgentAccountInit) -> anyhow::Result<StateInit> {
+        Ok(StateInit::with_code_and_data(Self::code()?, Self::build_data(init)?))
+    }
+
+    pub fn calculate_address(wc: i32, init: &AgentAccountInit) -> anyhow::Result<MsgAddressInt> {
+        let state_cell = Self::build_state_init(init)?.write_to_new_cell()?.into_cell()?;
+        Ok(MsgAddressInt::with_params(wc, state_cell.hash(0))?)
+    }
+
+    pub async fn get_data(
+        provider: &dyn ContractProvider,
+        address: &MsgAddressInt,
+    ) -> anyhow::Result<AgentAccountData> {
+        let stack =
+            provider.get_method(address.to_string(), "get_agent_account_data", vec![]).await?;
+        let mut owner_slice = stack.slice(0)?;
+        let owner = MsgAddressInt::construct_from(&mut owner_slice)?;
+
+        Ok(AgentAccountData {
+            owner,
+            controller_pubkey: parse_hash(&stack, 1)?,
+            max_per_tx: stack.u64(2)?,
+            daily_limit: stack.u64(3)?,
+            default_task_timeout_secs: stack.u64(4)?,
+            metadata_hash: parse_maybe_hash(&stack, 5)?,
+            service_endpoint_hash: parse_maybe_hash(&stack, 6)?,
+        })
+    }
+}
+
+fn parse_hash(
+    stack: &common::tvm_stack_parser::TvmStackParser,
+    index: usize,
+) -> anyhow::Result<[u8; 32]> {
+    stack
+        .number_bytes(index, 32)?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("stack entry {} is not a 256-bit value", index))
+}
+
+fn parse_maybe_hash(
+    stack: &common::tvm_stack_parser::TvmStackParser,
+    index: usize,
+) -> anyhow::Result<Option<[u8; 32]>> {
+    if stack.decimal_string(index)? == "-1" {
+        return Ok(None);
+    }
+    Ok(Some(parse_hash(stack, index)?))
+}
+
+fn append_maybe_hash(builder: &mut BuilderData, hash: Option<[u8; 32]>) -> anyhow::Result<()> {
+    if let Some(hash) = hash {
+        builder.append_bit_one()?.append_raw(&hash, 256)?;
+    } else {
+        builder.append_bit_zero()?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common::tvm_stack_parser::TvmStackParser;
+    use tl_api::tos::tvm::{
+        numberdecimal::NumberDecimal,
+        slice,
+        stackentry::{StackEntryNumber, StackEntrySlice},
+        Number, StackEntry,
+    };
+
+    struct MockProvider {
+        stack: Vec<StackEntry>,
+    }
+
+    #[async_trait::async_trait]
+    impl ContractProvider for MockProvider {
+        async fn get_method(
+            &self,
+            _address: String,
+            method: &str,
+            args: Vec<StackEntry>,
+        ) -> anyhow::Result<TvmStackParser> {
+            assert_eq!(method, "get_agent_account_data");
+            assert!(args.is_empty());
+            Ok(TvmStackParser::new(self.stack.clone()))
+        }
+
+        async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            Ok(0)
+        }
+    }
+
+    fn number(value: impl Into<String>) -> StackEntry {
+        StackEntry::Tvm_StackEntryNumber(StackEntryNumber {
+            number: Number::Tvm_NumberDecimal(NumberDecimal { number: value.into() }),
+        })
+    }
+
+    fn hash_number(value: [u8; 32]) -> StackEntry {
+        number(format!("0x{}", hex::encode(value)))
+    }
+
+    fn valid_init() -> AgentAccountInit {
+        AgentAccountInit {
+            owner: MsgAddressInt::with_standart(None, -1, [0x11; 32].into()).unwrap(),
+            controller_pubkey: [0x22; 32],
+            max_per_tx: 500_000_000,
+            daily_limit: 5_000_000_000,
+            default_task_timeout_secs: 3_600,
+            metadata_hash: Some([0x33; 32]),
+            service_endpoint_hash: Some([0x44; 32]),
+        }
+    }
+
+    #[test]
+    fn state_init_and_address_are_deterministic() {
+        let init = valid_init();
+        let first_state = AgentAccountContract::build_state_init(&init).unwrap();
+        let second_state = AgentAccountContract::build_state_init(&init).unwrap();
+        let first_cell = first_state.write_to_new_cell().unwrap().into_cell().unwrap();
+        let second_cell = second_state.write_to_new_cell().unwrap().into_cell().unwrap();
+
+        assert_eq!(first_cell.hash(0), second_cell.hash(0));
+        assert_eq!(
+            AgentAccountContract::calculate_address(-1, &init).unwrap(),
+            AgentAccountContract::calculate_address(-1, &init).unwrap()
+        );
+        assert_eq!(AgentAccountContract::build_data(&init).unwrap().references_count(), 1);
+    }
+
+    #[test]
+    fn rejects_daily_limit_below_per_action_limit() {
+        let mut init = valid_init();
+        init.daily_limit = init.max_per_tx - 1;
+
+        let error = AgentAccountContract::build_data(&init).unwrap_err();
+        assert!(error.to_string().contains("daily_limit"));
+    }
+
+    #[test]
+    fn rejects_zero_task_timeout() {
+        let mut init = valid_init();
+        init.default_task_timeout_secs = 0;
+
+        let error = AgentAccountContract::build_data(&init).unwrap_err();
+        assert!(error.to_string().contains("default_task_timeout_secs"));
+    }
+
+    #[tokio::test]
+    async fn decodes_agent_account_get_method() {
+        let init = valid_init();
+        let owner_cell = init.owner.write_to_new_cell().unwrap().into_cell().unwrap();
+        let owner_bytes = chain_block::SliceData::load_cell(owner_cell).unwrap().get_bytestring(0);
+        let provider = MockProvider {
+            stack: vec![
+                StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+                    slice: slice::Slice { bytes: owner_bytes },
+                }),
+                hash_number(init.controller_pubkey),
+                number(init.max_per_tx.to_string()),
+                number(init.daily_limit.to_string()),
+                number(init.default_task_timeout_secs.to_string()),
+                hash_number(init.metadata_hash.unwrap()),
+                number("-1"),
+            ],
+        };
+
+        let data = AgentAccountContract::get_data(&provider, &init.owner).await.unwrap();
+
+        assert_eq!(data.owner, init.owner);
+        assert_eq!(data.controller_pubkey, init.controller_pubkey);
+        assert_eq!(data.max_per_tx, init.max_per_tx);
+        assert_eq!(data.daily_limit, init.daily_limit);
+        assert_eq!(data.default_task_timeout_secs, init.default_task_timeout_secs);
+        assert_eq!(data.metadata_hash, init.metadata_hash);
+        assert_eq!(data.service_endpoint_hash, None);
+    }
+}

@@ -176,15 +176,16 @@ Authoritative checks:
 
 ## Implementation Order
 
-The recommended implementation order is:
+The implementation sequence is:
 
 1. Define task lifecycle message structs and opcodes.
-2. Implement the local Agent Wallet MVP in `tosctl` so operators can create profiles, fund and activate wallet addresses, manage owner/controller keys, update policy, bind runtimes and export machine-readable policies before the on-chain contract lands.
-3. Implement a minimal task escrow contract.
-4. Implement a minimal agent account contract.
-5. Add local tests for request, accept, result, settle, cancel, and timeout.
-6. Add read-only inspection helpers in `tosctl`.
-7. Add JSON-RPC examples or methods only after the contract state model is stable.
+2. Implement the local Agent Wallet MVP in `tosctl` so operators can create profiles, fund and activate wallet addresses, manage owner/controller keys, update policy, bind runtimes and export machine-readable policies.
+3. Implement the minimal native Agent Account contract, deterministic StateInit generation and deployment commands.
+4. Add read-only Agent Account inspection helpers in `tosctl`, including code-hash and local-profile verification.
+5. Make controller rotation and policy updates signed on-chain operations.
+6. Implement a minimal task escrow contract.
+7. Add local tests for request, accept, result, settle, cancel, and timeout.
+8. Add JSON-RPC examples or methods after the contract state model is stable.
 
 ## Engineering Readiness Checklist
 
@@ -236,6 +237,9 @@ The first implementation slice should add:
 - task lifecycle message structs and opcodes
 - `tosctl agent wallet` commands for creating, listing, showing, funding, activating, checking status, updating policy, binding runtimes, rotating controller keys, exporting policy and removing local Agent Wallet profiles
 - native Agent Account get-methods for owner, controller key and policy inspection
+- deterministic Agent Account StateInit generation from local Agent Wallet profiles
+- native Agent Account deployment through an active configured wallet
+- read-only Agent Account inspection with template and local-profile verification
 - local tests for request, accept, result, settle, cancel, and timeout paths
 - `tosctl` examples for creating and inspecting agent/task state
 
