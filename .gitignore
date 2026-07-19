@@ -28,6 +28,7 @@ test/integration/.network
 # Localnet work directories (contain generated validator/faucet private keys)
 test/integration/.localnet*
 test/integration/.task-escrow-*
+test/integration/.agent-query-api-*
 
 test/tostester/tests/tl/generated
 test/tostester/src/tosapi
