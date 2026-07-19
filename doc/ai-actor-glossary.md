@@ -6,6 +6,10 @@ This glossary defines terms used by AI actor documentation.
 
 An on-chain account that represents an AI agent or an automation controller. It owns state, receives messages, and acts under explicit owner and controller policy.
 
+## AI Robot Wallet
+
+An agent-first wallet/account designed for AI robots, agent runners, automation systems, and service workflows. It holds funds, policy, task history, permissions, and service-call limits. It is not the same product target as an ordinary consumer Android or iOS wallet.
+
 ## Agent Runner
 
 An off-chain process that observes chain state and submits messages on behalf of an agent account. It is not trusted unless its actions are authorized on-chain.

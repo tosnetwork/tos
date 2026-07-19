@@ -1,6 +1,6 @@
 # The Open System
 
-**The Open System (TOS)** is an actor-model blockchain designed for independent AI agents, asynchronous coordination, verifiable workflows and native on-chain payments.
+**The Open System (TOS)** is an actor-model blockchain designed for AI robot wallets, independent AI agents, asynchronous coordination, verifiable workflows and native on-chain payments.
 
 TOS treats accounts, smart contracts, AI agents, tools, services and tasks as independent actors. They communicate through asynchronous messages, maintain private state, and compose into scalable workflows across the native TVM execution layer.
 
@@ -10,12 +10,15 @@ This repository builds and ships the native TOS protocol stack. The node registe
 
 TOS is being developed as a practical coordination and settlement layer for AI-native applications:
 
+- AI robot wallets with persistent identity, policy, balances and task history
 - independent AI agents with persistent on-chain identity, state and balances
 - agent-to-agent and agent-to-service messaging through native asynchronous execution
 - task contracts for escrow, result submission, acceptance, disputes and payout
 - capability registries for model providers, data providers, tools and compute services
 - verifiable workflows with signed results, attestations and external evidence
 - native payments for model calls, data access, tools, compute and task completion
+
+TOS is not primarily targeting consumer Android or iOS wallet applications. The wallet direction is agent-first: accounts and wallets are built for AI robots, automation systems and service actors that need programmable authority and auditable settlement.
 
 See [ROADMAP.md](ROADMAP.md) for the technical roadmap.
 

@@ -4,6 +4,8 @@ This runbook describes the minimum operational posture for running AI actor infr
 
 It covers off-chain agent runners, model or tool service operators, verifier operators, and task workflow backends.
 
+The operational target is an AI robot wallet stack: agent account contracts, controller keys, off-chain runners, service actors and verifier actors. Consumer Android or iOS wallet operations are outside this runbook.
+
 ## Node Access
 
 Recommended trust tiers:
@@ -69,4 +71,3 @@ If a service actor overcharges or emits bad results:
 - transaction history reconstruction tested
 - key backup and rotation procedure documented
 - emergency stop or revoke path tested
-

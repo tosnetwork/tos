@@ -6,6 +6,7 @@ Version: v0.4-spec-draft
 
 This document defines the account, signing, delegation, and permission model for TOS.
 It is also the authorization foundation for the AI Actor Model described in [ai-actors.md](ai-actors.md).
+The product priority is AI robot wallets and agent accounts rather than ordinary consumer Android or iOS wallets.
 
 It exists because wallet UX, application composability, automation, and safe operator workflows all depend on a clear answer to this question:
 
@@ -26,7 +27,7 @@ It is not yet a frozen protocol spec, but it is intended to be specific enough t
 The following terms are used normatively in this document:
 
 - **Account**: the canonical user-facing authority container recognized by wallets, SDKs, and applications.
-- **Default Account Model**: the primary account model that mainstream wallets and SDKs MUST support.
+- **Default Account Model**: the primary account model that agent wallets, SDKs, and automation systems MUST support.
 - **Signer**: the authority that approves a transaction or delegated action.
 - **Submitter**: the actor that broadcasts a signed transaction.
 - **Fee Payer**: the actor whose balance funds execution.
@@ -132,7 +133,7 @@ The account and permission model should produce:
 
 The baseline direction for TOS should be:
 
-- one canonical account and signing model for mainstream integrations
+- one canonical account and signing model for agent wallet integrations
 - explicit delegated permissions instead of wallet-specific hidden behavior
 - session and agent permissions treated as first-class standards, not ad hoc app conventions
 - machine-readable signing, submission, and authorization semantics
@@ -144,7 +145,7 @@ TOS should prefer one strong default path over many loosely compatible patterns.
 
 The proposed baseline model for TOS is:
 
-- one canonical default externally owned account model for mainstream wallets
+- one canonical default account model for AI robot wallets and automation SDKs
 - one canonical transaction signing payload model
 - one canonical submission model that distinguishes:
   - signer
@@ -156,7 +157,7 @@ The proposed baseline model for TOS is:
 
 This baseline is intended to optimize for:
 
-- wallet portability
+- agent wallet portability
 - SDK portability
 - low ambiguity in public RPCs
 - safe application automation
@@ -166,8 +167,8 @@ This baseline is intended to optimize for:
 
 Unless superseded by a later approved revision, the v1 baseline for TOS is:
 
-1. TOS MUST define one canonical Default Account Model for mainstream user wallets and SDKs.
-2. TOS MUST define one canonical signing payload model for mainstream transaction authorization.
+1. TOS MUST define one canonical Default Account Model for AI robot wallets and automation SDKs.
+2. TOS MUST define one canonical signing payload model for agent transaction authorization.
 3. TOS MUST distinguish signer, submitter, and fee payer as separate logical roles in public standards, even when the common case collapses them into one actor.
 4. TOS MUST define delegation as an explicit, inspectable, bounded authorization object.
 5. TOS MUST define session and agent permissions as constrained forms of delegation rather than unrelated wallet-specific mechanisms.
@@ -208,7 +209,7 @@ Open questions:
 Decisions:
 
 - v1 baseline direction chosen:
-  - one canonical default account model for mainstream wallets and SDKs
+  - one canonical default account model for AI robot wallets, agent accounts and automation SDKs
   - advanced account variants deferred to later additive standards
 
 Recommended options:
@@ -219,11 +220,11 @@ Recommended options:
 Recommended direction:
 
 - Prefer Option A.
-- The ecosystem should converge around one mainstream account model before expanding variants.
+- The ecosystem should converge around one agent-wallet account model before expanding variants.
 
 Proposed baseline:
 
-- TOS should define one canonical default account model for mainstream user wallets.
+- TOS should define one canonical default account model for AI robot wallets and automation SDKs.
 - That model should support:
   - deterministic ownership semantics
   - replay-safe transaction authorization
@@ -232,14 +233,14 @@ Proposed baseline:
 
 Implications:
 
-- wallets should not need to detect multiple equally-primary user account standards
+- agent wallets should not need to detect multiple equally-primary account standards
 - public RPCs should assume one default account model unless a request explicitly targets an advanced variant
 - advanced account variants may exist later, but they should be additive rather than foundational
 
 Normative baseline:
 
-- The Default Account Model MUST be the only account model required for mainstream wallet compatibility.
-- Advanced account models MAY exist, but they MUST NOT replace or fragment the default user-facing path.
+- The Default Account Model MUST be the only account model required for agent wallet compatibility.
+- Advanced account models MAY exist, but they MUST NOT replace or fragment the default agent-facing path.
 - Capability discovery MUST make the difference between default and advanced account models explicit.
 
 ### 2. Signing Model

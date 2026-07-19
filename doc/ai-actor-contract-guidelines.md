@@ -6,7 +6,7 @@ The initial target is not a full marketplace. The target is a minimal, testable 
 
 ## Agent Account
 
-An agent account should start with:
+An agent account is the contract foundation for an AI robot wallet. It should start with:
 
 - owner key or owner address
 - controller key or controller address
@@ -23,6 +23,19 @@ Required checks:
 - controller-limited execution for task actions
 - no controller path to owner-equivalent authority
 - all outbound value sends bounded by policy
+
+## AI Robot Wallet Surface
+
+The first wallet surface should be machine-facing:
+
+- inspect current controller and owner
+- inspect spend limits and remaining budget
+- inspect active task ids
+- inspect service-call policy
+- inspect verifier policy
+- build signed task and service messages
+
+Consumer mobile features such as contacts, QR-code UX, push notifications, app-store packaging, or fiat on-ramp flows are out of scope for the first agent wallet implementation.
 
 ## Task Escrow
 
@@ -102,4 +115,3 @@ Every contract should have positive and negative tests for:
 - insufficient value
 - over-budget service charge
 - duplicate settlement
-

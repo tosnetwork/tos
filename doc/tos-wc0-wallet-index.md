@@ -105,6 +105,7 @@ by token reputation client-side; the `limit` param bounds the blast radius.
 - **W2:** block-apply hook (the writer) + token-op parsing; populate the index.
 - **W3:** `getAccountEvents`; crash-recovery incomplete markers; localnet e2e
   (deploy a jetton, transfer, query).
-- **W4:** re-point the Android wallet `TosSource.getAccountJettons/getAccountNfts`
-  to these methods, completing Phase 1.5's indexer-dependent features.
+- **W4:** re-point agent wallet and service workflow clients to
+  `getAccountJettons` / `getAccountNfts`, completing the in-node token
+  inspection surface for AI actor workflows.
 ```

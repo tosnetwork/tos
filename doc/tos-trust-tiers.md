@@ -23,7 +23,7 @@ This document complements:
 
 Different clients need different verification levels.
 A validator must verify everything locally.
-A mobile wallet can accept proof-backed remote verification.
+An AI robot wallet can use proof-backed remote verification when it cannot run a full node.
 A dashboard may accept trusted API responses.
 
 But every client should know which tier it operates at, what guarantees that tier provides, and what risks it accepts.
@@ -35,7 +35,7 @@ If a client cannot answer those questions, the integration is not yet well-defin
 AI agents that spend funds, accept tasks, settle escrow, or submit verifier decisions should use the strongest practical trust tier:
 
 - Tier 1 for agents or services that control material funds
-- Tier 2 for wallets and lightweight agents that need proof-backed reads
+- Tier 2 for AI robot wallets and lightweight agents that need proof-backed reads
 - Tier 3 only for convenience reads where the client understands the trusted endpoint
 - Tier 4 only for analytics, discovery, reputation previews, or non-authoritative workflow dashboards
 
@@ -131,8 +131,9 @@ Bandwidth is limited to proofs and the specific data requested.
 
 **Recommended for**
 
-- Non-custodial wallets (mobile and desktop)
-- Browser wallets and extensions
+- AI robot wallets that cannot run a full node
+- lightweight agent runners
+- automation clients that need proof-backed reads
 - Embedded payment systems
 - Any client that needs trustless verification without full-node cost
 
@@ -255,9 +256,9 @@ Should never be treated as authoritative without cross-referencing against a hig
 |---|---|---|
 | Validator node | Tier 1 | Must use full verification |
 | Infrastructure operator | Tier 1 | Runs own nodes |
-| Custodial wallet (backend) | Tier 1 or Tier 3 (self-operated) | Self-operated JSON-RPC against own full node |
-| Non-custodial wallet (mobile/desktop) | Tier 2 (preferred) or Tier 3 | Should verify proofs when feasible |
-| Browser wallet / extension | Tier 2 or Tier 3 | Tier 2 if proof verification is performant in browser |
+| AI robot wallet / agent runner | Tier 1 or Tier 2 | Use Tier 1 when controlling material funds; Tier 2 for proof-backed lightweight operation |
+| Service actor backend | Tier 1 or Tier 3 (self-operated) | Self-operated JSON-RPC against own full node |
+| Consumer wallet prototype | Tier 2 or Tier 3 | Out of scope for the first product roadmap |
 | Explorer / block viewer | Tier 3 (self-operated) | Operates own full node with JSON-RPC |
 | Analytics / compliance | Tier 4 (acceptable) | Must document data freshness guarantees |
 | Development / testing | Tier 3 | Acceptable for non-production use |
@@ -336,7 +337,7 @@ This section classifies the stability of the trust tier specification itself, us
 The following questions are known but not yet resolved.
 They should be addressed as trust tier tooling matures.
 
-1. **Light-client library**: When will a published verification library make Tier 2 practical for wallet integrators? This is the highest-priority gap for trustless mobile and browser clients.
+1. **Light-client library**: When will a published verification library make Tier 2 practical for AI robot wallet and agent-runner integrators?
 
 2. **Proof freshness**: What is the maximum acceptable age of a block proof before a Tier 2 client should consider it stale? This affects both UX and security.
 

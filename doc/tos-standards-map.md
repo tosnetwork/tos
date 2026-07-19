@@ -326,9 +326,9 @@ Concrete proof transport details may remain Level 2 while implementation matures
 
 ### Primary Consumers
 
-- wallets
-- browser clients
-- mobile clients
+- AI robot wallets
+- agent runners
+- automation clients
 - SDKs
 - explorers
 - infrastructure providers
@@ -340,6 +340,7 @@ Concrete proof transport details may remain Level 2 while implementation matures
 **Status: draft direction published (doc/ai-actors.md)**
 
 AI actor workflow standards define how user actors, agent accounts, task actors, service actors, and verifier actors coordinate through asynchronous messages.
+The primary wallet standard in this family is the AI robot wallet: a machine-facing wallet/account for agents and automation, not a consumer Android or iOS wallet product.
 
 Companion draft documents:
 
@@ -352,6 +353,7 @@ Companion draft documents:
 ### Surfaces
 
 - agent account metadata and permission expectations
+- AI robot wallet policy, balance, task-history and service-call inspection
 - task lifecycle messages
 - task escrow and settlement semantics
 - service actor pricing and authorization metadata
@@ -375,6 +377,7 @@ The first agent and task primitives may begin as Level 3 while examples and test
 ### Primary Consumers
 
 - AI agent developers
+- AI robot wallet implementers
 - wallet and account teams
 - model and tool service providers
 - workflow builders

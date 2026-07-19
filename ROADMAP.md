@@ -2,12 +2,13 @@
 
 ## Vision
 
-The Open System (TOS) is an actor-model blockchain for independent AI agents.
+The Open System (TOS) is an actor-model blockchain for AI robot wallets and independent AI agents.
 
 TOS treats accounts, smart contracts, AI agents, tools, services and tasks as independent actors. Each actor owns private state, receives asynchronous messages, emits new messages, and participates in native on-chain payment and verification flows.
 
 The goal is to make TOS a practical execution and coordination layer for AI-native applications:
 
+- AI robot wallets that hold funds, permissions, task history and service-call policy
 - independent agents with persistent on-chain identity and state
 - asynchronous agent-to-agent and agent-to-service workflows
 - verifiable task execution, settlement and reputation
@@ -16,6 +17,7 @@ The goal is to make TOS a practical execution and coordination layer for AI-nati
 
 ## Design Principles
 
+- Agent-wallet first: wallet primitives should serve AI robots and automation systems before consumer mobile wallet UX.
 - Actor first: every account, agent, task and service should map naturally to an independent actor.
 - Asynchronous by default: workflows should use messages, callbacks, retries and timeouts instead of synchronous blocking calls.
 - Native execution focus: the core protocol should stay centered on the native TVM execution layer.
@@ -27,9 +29,9 @@ The goal is to make TOS a practical execution and coordination layer for AI-nati
 
 ### Agent Accounts
 
-Introduce an agent-oriented account model on top of native contracts.
+Introduce an agent-oriented wallet/account model on top of native contracts.
 
-Agent accounts should be able to express:
+Agent wallets should be able to express:
 
 - owner and controller keys
 - spending limits and execution policies
@@ -115,7 +117,7 @@ Examples:
 
 ### Phase 2: Agent Account and Task Primitives
 
-- Implement reusable smart-contract templates for agent accounts.
+- Implement reusable smart-contract templates for agent wallets and agent accounts.
 - Implement task escrow contracts with deadlines, result submission and settlement.
 - Add SDK helpers for creating agent accounts and task contracts.
 - Add JSON-RPC flows for task discovery, task state and agent account inspection.
@@ -148,7 +150,7 @@ Examples:
 ## Near-Term Engineering Tasks
 
 - Add `doc/ai-actors.md` to describe the actor-model architecture for AI agents.
-- Add example task and agent contracts under the native smart-contract tree.
+- Add example task, agent wallet and agent account contracts under the native smart-contract tree.
 - Extend `tosctl` with basic agent and task commands.
 - Add JSON-RPC endpoints or examples for querying agent and task state.
 - Add tests that cover asynchronous task lifecycle messages.
@@ -160,3 +162,4 @@ Examples:
 - TOS should not depend on synchronous request-response execution for core agent workflows.
 - TOS should not hard-code one model provider, proof system, oracle or off-chain runtime.
 - TOS should not make AI execution opaque; task state, payments and verification metadata should remain inspectable.
+- TOS should not optimize its first wallet roadmap around ordinary consumer Android or iOS wallets.

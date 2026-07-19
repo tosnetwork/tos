@@ -4,6 +4,8 @@ This document defines the initial message catalog for AI actor workflows.
 
 The catalog is intentionally small. Each message should use an explicit opcode, a `query_id`, and enough fields to reconstruct the workflow from transaction history.
 
+The primary sender and receiver model is AI robot wallets and agent accounts, not ordinary mobile wallets.
+
 ## Conventions
 
 - Field names are written in snake_case for documentation.
@@ -81,4 +83,3 @@ The catalog is intentionally small. Each message should use an explicit opcode, 
 - out-of-phase messages: reject or postpone according to the task ABI
 - insufficient escrow: reject before state transition
 - expired authority: reject and preserve task state
-

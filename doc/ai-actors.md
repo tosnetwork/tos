@@ -1,12 +1,13 @@
 # AI Actor Model
 
-This document defines the product and protocol direction for AI-native actor workflows on TOS.
+This document defines the product and protocol direction for AI-native actor workflows and AI robot wallets on TOS.
 
 TOS treats accounts, smart contracts, AI agents, tools, services, and tasks as actors. Each actor owns private state, receives asynchronous messages, emits new messages, and participates in on-chain payment and verification flows.
 
 ## Goals
 
 - Give AI agents persistent on-chain identity, state, balances, and permissions.
+- Give AI robots wallet primitives for funds, spending policy, task history, service calls, and verifier decisions.
 - Make agent-to-agent and agent-to-service coordination asynchronous by default.
 - Use native TVM contracts for task escrow, settlement, and workflow state.
 - Keep payments, permissions, deadlines, results, and disputes inspectable from chain state.
@@ -14,13 +15,17 @@ TOS treats accounts, smart contracts, AI agents, tools, services, and tasks as a
 
 ## Actor Types
 
+### AI Robot Wallet
+
+An AI robot wallet is an agent-first wallet/account used by an AI robot, agent runner, automation system, or service workflow. It is not optimized for consumer mobile UX. It should expose policy, permissions, balances, task history and service-call limits in machine-readable form.
+
 ### User Actor
 
-A user actor owns funds, creates tasks, accepts results, and defines policy for delegated agents.
+A user actor owns funds, creates tasks, accepts results, and defines policy for delegated agents. In the first roadmap, this is a control role for agent workflows, not the primary consumer-wallet product.
 
 ### Agent Account
 
-An agent account is an on-chain account controlled by owner and controller keys. It may expose:
+An agent account is an on-chain account controlled by owner and controller keys. It is the account side of the AI robot wallet model. It may expose:
 
 - owner and controller principals
 - spending limits
@@ -234,6 +239,7 @@ The first implementation slice should add:
 ## Non-Goals
 
 - Do not add a separate VM or execution domain for AI workloads.
+- Do not prioritize ordinary Android or iOS consumer wallets over AI robot wallets.
 - Do not make off-chain model output authoritative without on-chain acceptance or verifier policy.
 - Do not store large prompts, model responses, datasets, or private credentials in contract state.
 - Do not let workflow indexers decide settlement.
