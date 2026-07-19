@@ -6,6 +6,7 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use super::agent_query_api;
 use super::login_rate_limiter::{LoginRateLimiter, login_limiter_key};
 use crate::{
     auth::{
@@ -136,6 +137,9 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
     let authenticated = axum::Router::new()
         .route("/v1/elections", axum::routing::get(v1_elections_handler))
         .route("/v1/validators", axum::routing::get(v1_validators_handler))
+        .route("/v1/agents/{address}", axum::routing::get(agent_query_api::get_agent))
+        .route("/v1/tasks", axum::routing::get(agent_query_api::list_tasks))
+        .route("/v1/tasks/{address}", axum::routing::get(agent_query_api::get_task))
         .route("/auth/me", axum::routing::get(me_handler))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -182,7 +186,7 @@ pub struct AppError {
 }
 
 impl AppError {
-    fn bad_request(message: impl Into<String>) -> Self {
+    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: axum::http::StatusCode::BAD_REQUEST,
             body: ApiErrorBody { code: 400, message: message.into() },
@@ -204,14 +208,14 @@ impl AppError {
     }
 
     #[allow(dead_code)]
-    fn not_found(message: impl Into<String>) -> Self {
+    pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: axum::http::StatusCode::NOT_FOUND,
             body: ApiErrorBody { code: 404, message: message.into() },
         }
     }
 
-    fn internal(message: impl Into<String>) -> Self {
+    pub(crate) fn internal(message: impl Into<String>) -> Self {
         Self {
             status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             body: ApiErrorBody { code: 500, message: message.into() },
@@ -855,6 +859,9 @@ impl utoipa::Modify for BearerAuthAddon {
         login_handler,
         me_handler,
         list_users_handler
+        ,agent_query_api::get_agent
+        ,agent_query_api::get_task
+        ,agent_query_api::list_tasks
     ),
     components(schemas(
         ApiErrorBody,
@@ -880,6 +887,12 @@ impl utoipa::Modify for BearerAuthAddon {
         MeResponse,
         UserListResponse,
         UserInfoDto,
+        agent_query_api::AgentAccountDto,
+        agent_query_api::AgentAccountResponse,
+        agent_query_api::TaskDto,
+        agent_query_api::TaskResponse,
+        agent_query_api::TaskListItem,
+        agent_query_api::TaskListResponse,
         common::snapshot::Snapshot,
         common::snapshot::ElectionsStatus,
         common::snapshot::ElectionsSnapshot,
@@ -907,8 +920,8 @@ mod tests {
     use base64::Engine;
     use common::{
         app_config::{
-            AppConfig, ElectionsConfig, HttpConfig, LogConfig, NodeBinding, StakePolicy,
-            ChainRpcConfig,
+            AppConfig, ChainRpcConfig, ElectionsConfig, HttpConfig, LogConfig, NodeBinding,
+            StakePolicy,
         },
         snapshot::{
             ElectionsParticipantSnapshot, ElectionsSnapshot, ElectionsStatus,
@@ -983,6 +996,8 @@ mod tests {
             tick_interval: 30,
             log: Some(LogConfig::default()),
             bookmarks: HashMap::new(),
+            agent_wallets: HashMap::new(),
+            agent_tasks: HashMap::new(),
             alerts: Default::default(),
         })
     }
@@ -1001,6 +1016,8 @@ mod tests {
             tick_interval: 30,
             log: Some(LogConfig::default()),
             bookmarks: HashMap::new(),
+            agent_wallets: HashMap::new(),
+            agent_tasks: HashMap::new(),
             alerts: Default::default(),
         })
     }
@@ -1585,6 +1602,23 @@ mod tests {
         assert_eq!(v["ok"], false);
     }
 
+    #[tokio::test]
+    async fn agent_query_routes_reject_invalid_filters() {
+        let store = Arc::new(SnapshotStore::new());
+        let runtime_cfg =
+            Arc::new(RuntimeConfigStore::from_app_config(test_app_config(StakePolicy::Minimum)));
+        let elections_task = test_elections_task();
+        let app = routes(false, test_state(store, runtime_cfg, elections_task).await);
+
+        let response = app.clone().oneshot(get_request("/v1/agents/not-an-address")).await.unwrap();
+        assert_eq!(response.status(), 400);
+        assert_eq!(body_json(response).await["error"]["code"], 400);
+
+        let response = app.oneshot(get_request("/v1/tasks?status=invalid")).await.unwrap();
+        assert_eq!(response.status(), 400);
+        assert_eq!(body_json(response).await["error"]["message"], "invalid task status");
+    }
+
     #[test]
     fn openapi_spec_contains_bearer_auth_scheme() {
         let spec = <ApiDoc as utoipa::OpenApi>::openapi();
@@ -1612,5 +1646,9 @@ mod tests {
                 "{name} endpoint should not require bearerAuth"
             );
         }
+
+        assert!(json["paths"]["/v1/agents/{address}"]["get"].is_object());
+        assert!(json["paths"]["/v1/tasks/{address}"]["get"].is_object());
+        assert!(json["paths"]["/v1/tasks"]["get"].is_object());
     }
 }

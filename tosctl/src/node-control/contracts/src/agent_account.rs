@@ -96,6 +96,13 @@ impl AgentAccountContract {
     ) -> anyhow::Result<AgentAccountData> {
         let stack =
             provider.get_method(address.to_string(), "get_agent_account_data", vec![]).await?;
+        Self::decode_data(&stack)
+    }
+
+    /// Decode `get_agent_account_data`; transport concerns stay outside this module.
+    pub fn decode_data(
+        stack: &common::tvm_stack_parser::TvmStackParser,
+    ) -> anyhow::Result<AgentAccountData> {
         let mut owner_slice = stack.slice(0)?;
         let owner = MsgAddressInt::construct_from(&mut owner_slice)?;
 

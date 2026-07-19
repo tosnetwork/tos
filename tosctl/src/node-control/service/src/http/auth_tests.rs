@@ -59,6 +59,8 @@ fn app_cfg_with_auth(auth: AuthConfig) -> Arc<common::app_config::AppConfig> {
         tick_interval: 30,
         log: Some(Default::default()),
         bookmarks: HashMap::new(),
+        agent_wallets: HashMap::new(),
+        agent_tasks: HashMap::new(),
         alerts: Default::default(),
     })
 }
@@ -77,6 +79,8 @@ fn app_cfg_no_auth() -> Arc<common::app_config::AppConfig> {
         tick_interval: 30,
         log: Some(Default::default()),
         bookmarks: HashMap::new(),
+        agent_wallets: HashMap::new(),
+        agent_tasks: HashMap::new(),
         alerts: Default::default(),
     })
 }

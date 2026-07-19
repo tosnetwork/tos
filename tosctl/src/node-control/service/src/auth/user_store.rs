@@ -441,6 +441,8 @@ mod tests {
             tick_interval: 30,
             log: Some(Default::default()),
             bookmarks: HashMap::new(),
+            agent_wallets: HashMap::new(),
+            agent_tasks: HashMap::new(),
             alerts: Default::default(),
         }
     }
