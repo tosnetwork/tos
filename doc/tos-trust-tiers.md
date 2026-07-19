@@ -17,6 +17,7 @@ This document complements:
 
 - [tos-standards-map.md](tos-standards-map.md) (Standard Family 7: trust and verification standards)
 - [tos-release-policy.md](tos-release-policy.md) (stability levels referenced in Section 6)
+- [ai-actors.md](ai-actors.md) (AI actor workflow direction)
 
 ## Policy Rule
 
@@ -28,6 +29,17 @@ A dashboard may accept trusted API responses.
 But every client should know which tier it operates at, what guarantees that tier provides, and what risks it accepts.
 
 If a client cannot answer those questions, the integration is not yet well-defined.
+
+## AI Actor Trust Rule
+
+AI agents that spend funds, accept tasks, settle escrow, or submit verifier decisions should use the strongest practical trust tier:
+
+- Tier 1 for agents or services that control material funds
+- Tier 2 for wallets and lightweight agents that need proof-backed reads
+- Tier 3 only for convenience reads where the client understands the trusted endpoint
+- Tier 4 only for analytics, discovery, reputation previews, or non-authoritative workflow dashboards
+
+An agent must not treat indexed or transformed data as authority for spending limits, task settlement, or permission checks unless the relevant contract state is also verified.
 
 ## Trust Tiers
 

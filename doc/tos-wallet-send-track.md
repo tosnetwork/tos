@@ -10,6 +10,8 @@ The flow uses the TOS embedded JSON-RPC API exposed by validator-engine. All met
 
 This spec covers the canonical send-and-track path. It does not cover contract deployment, multi-message workflows, or Jetton transfers. Those flows build on the primitives described here.
 
+For AI actor workflows, this path remains the base transaction primitive for funding task actors, invoking agent accounts, calling service actors, and tracking settlement messages. Higher-level task and agent SDKs should preserve the same message-hash and transaction-id correlation model.
+
 ## 2. Fee Estimation
 
 ### Method

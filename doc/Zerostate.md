@@ -1,6 +1,6 @@
 # Zerostate
 
-This document describes the current native-only zero-state layout.
+This document describes the current native zero-state layout for the focused TVM execution surface.
 
 ## Scope
 
@@ -18,7 +18,7 @@ The canonical zero-state registers only the native chains:
 | `crypto/smartcont/gen-zerostate.fif` | Canonical native zero-state template |
 | `test/tostester/src/tostester/zerostate.py` | Local testnet zero-state generation |
 
-The deleted multi-workchain templates and helper scripts must not be used for current genesis generation.
+Only the native zero-state template is valid for current genesis generation.
 
 ## Initial Supply
 
@@ -34,7 +34,7 @@ To change the TOS target supply, update the main-wallet allocation in the native
 - `vm_version = -1`
 - TVM execution
 
-Descriptors for the removed custom workchains are not valid for this binary because their execution engines are no longer registered.
+Descriptors for unsupported execution domains are not valid for this binary because their execution engines are not registered.
 
 ## References
 

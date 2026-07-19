@@ -89,8 +89,8 @@ voluntary-exit signal that you have to send before stopping the process.
 Operators may stop, restart, upgrade, or migrate a validator at any time
 without losing stake.
 
-This is a deliberate design choice and the natural consequence of TOS
-inheriting TON's complaint-driven slashing model. Concretely:
+This is a deliberate design choice based on complaint-driven slashing.
+Concretely:
 
 - **No automatic stake reduction for downtime.** Slashing is triggered
   only when another participant submits a `validator_complaint`

@@ -14,6 +14,7 @@ The goal is to answer:
 > What compatibility promises does TOS make, how long do they last, and how are changes communicated?
 
 This document complements [tos-standards-map.md](tos-standards-map.md).
+For AI actor work, it governs how agent account, task actor, service actor, verifier actor, and workflow-indexing surfaces move from experimental examples to supported or stable standards.
 
 ## Policy Rule
 
@@ -40,8 +41,21 @@ This policy applies to public or semi-public surfaces such as:
 - indexing and data contracts
 - account and permission semantics
 - trust-tier terminology and verification claims
+- AI actor workflow messages, task contracts, service actor metadata, verifier outputs, and agent permission surfaces
 
 Internal implementation details are not covered unless they leak into one of the surfaces above.
+
+## AI Actor Release Rule
+
+AI actor primitives should start as Level 3 unless they already have:
+
+- documented message formats
+- tests for request, accept, result, settle, cancel, timeout, and dispute paths where applicable
+- explicit account permission and spending-limit behavior
+- clear trust-tier labeling for any derived workflow views
+- migration guidance for contracts or SDKs that depend on the primitive
+
+Once SDKs, wallets, or service providers rely on a primitive, changes to its message semantics or settlement behavior must be treated as ecosystem-facing changes.
 
 ## Stability Levels
 

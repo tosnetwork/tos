@@ -1,12 +1,12 @@
 # Configuration Parameters
 
-This document tracks the configuration parameters used by the current native-only TOS build.
+This document tracks the configuration parameters used by the current native TOS build for actor-based applications.
 
 The canonical TL-B schema is in [block.tlb](../crypto/block/block.tlb). Initial values are set during [zero state generation](Zerostate.md).
 
-## Native-Only Scope
+## Native TVM Scope
 
-Custom workchain activation, gas, RPC, and chain-specific ConfigParam descriptions are intentionally absent from this native-only tree.
+Additional execution-domain activation, gas, RPC, and chain-specific ConfigParam descriptions are intentionally absent from this native TVM tree.
 
 The current node registers:
 
@@ -19,7 +19,7 @@ The current node registers:
 
 `ConfigParam 12` stores the workchain descriptor dictionary. In the current build it should contain only the native basechain descriptor for wc=0.
 
-Validators no longer register custom execution engines. A descriptor for an unsupported workchain would not be executable by this binary.
+Validators register the native TVM execution engine. A descriptor for an unsupported workchain would not be executable by this binary.
 
 ## ConfigParams 6 and 7
 
@@ -29,7 +29,7 @@ The native TOS supply is set at zero-state construction time in the genesis temp
 
 ## Validator and Network Parameters
 
-The remaining masterchain parameters follow the TON/TOS schema in [block.tlb](../crypto/block/block.tlb) and are consumed by the native validator, collator, election, gas, storage, and networking code paths.
+The remaining masterchain parameters follow the native TOS schema in [block.tlb](../crypto/block/block.tlb) and are consumed by the validator, collator, election, gas, storage, and networking code paths.
 
 When adding or changing a parameter:
 

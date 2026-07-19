@@ -2,6 +2,8 @@
 
 The lite client is the fastest way to inspect chain state, configs, blocks, and DNS without operating the full validator stack.
 
+For AI actor workflows, it is useful for read-only inspection of agent accounts, task contracts, service actor addresses, and verifier outputs during development and operations.
+
 ## Build
 
 Use the verified build flow in [BUILD.md](../BUILD.md).
@@ -71,3 +73,4 @@ If the client cannot connect:
 - [DNS.md](DNS.md)
 - [ConfigParam.md](ConfigParam.md)
 - [FullNode.md](FullNode.md)
+- [ai-actors.md](ai-actors.md)

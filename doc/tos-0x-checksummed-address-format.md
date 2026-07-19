@@ -16,6 +16,7 @@ This format is intended for:
 - SDK helpers
 - user interfaces
 - copy/paste workflows
+- AI agent manifests, task dashboards, and service actor metadata
 
 This format is not a protocol-level replacement for native TOS address formats such as:
 
@@ -23,6 +24,8 @@ This format is not a protocol-level replacement for native TOS address formats s
 - friendly format with CRC16
 
 It is a display and interchange format only.
+
+AI actor contracts should store canonical addresses or hashes in state. The checksummed `0x` form is useful for manifests, CLI output, and user interfaces, but it is not a new on-chain address type.
 
 ## 2. Design Goals
 

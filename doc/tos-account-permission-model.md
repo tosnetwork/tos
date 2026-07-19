@@ -5,6 +5,7 @@ Version: v0.4-spec-draft
 ## Purpose
 
 This document defines the account, signing, delegation, and permission model for TOS.
+It is also the authorization foundation for the AI Actor Model described in [ai-actors.md](ai-actors.md).
 
 It exists because wallet UX, application composability, automation, and safe operator workflows all depend on a clear answer to this question:
 
@@ -18,6 +19,7 @@ It is not yet a frozen protocol spec, but it is intended to be specific enough t
 - wallet design
 - SDK type design
 - future protocol and account-surface standardization
+- AI agent account, task, and service-actor authorization
 
 ## Terminology
 

@@ -8,6 +8,8 @@ after the first design-review fix pass.
 This document opens the public design required by `actor.md` section
 5.4. It does not approve protocol-level capability admission control.
 
+In the AI Actor Model, capability handles are the preferred foundation for bounded service access, delegated agent actions, and task-specific authority.
+
 ## 1. First principles
 
 TOS account addresses are public and content-derived. That cannot be
@@ -18,6 +20,8 @@ The core security question is not "can we make an address unguessable?"
 The answer is no. The real question is: can a target contract verify
 that this caller has a bounded grant to invoke this entry point under
 these constraints?
+
+For AI actor workflows, that question becomes concrete: can a service actor verify that an agent is authorized to call a model endpoint, spend up to a task budget, submit a result, or invoke a verifier under explicit constraints?
 
 ## 2. Rejected baseline: reusable public bearer token
 

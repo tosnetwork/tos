@@ -27,6 +27,8 @@ The supported surface is `onInternalMessage`, optional
 wire compatibility requires them, and the stdlib `Error` /
 `ErrorClass` types.
 
+For AI actor contracts, this playbook is the migration baseline for task, agent, service, and verifier messages that use opcode/query_id bodies before higher-level Tol syntax is available.
+
 ## 1. Non-Negotiable Rules
 
 1. Preserve the wire bytes. `tos-message-policy.md` §8.1 is the hard
@@ -52,6 +54,10 @@ wire compatibility requires them, and the stdlib `Error` /
    external bodies must remain exactly as the wallet standard defines
    them; only internal bodies that already have an opcode/query_id
    shape opt into the Slice 1 envelope discipline.
+7. AI actor lifecycle messages must remain explicit. Do not hide task
+   acceptance, result submission, settlement, cancellation, or dispute
+   semantics behind generic payload cells unless the outer message still
+   exposes stable opcode/query_id correlation.
 
 ## 2. Migration Inventory
 

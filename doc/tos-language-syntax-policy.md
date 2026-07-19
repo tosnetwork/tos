@@ -546,7 +546,7 @@ compile error. There is no `save(...)` available.
 ### 3.6 No `init()` block — `@deploy` receiver runs before `loadData()`
 
 Tol does NOT introduce an `init()` keyword for contract
-deployment. The TON/TOS deployment convention is unchanged:
+deployment. The TOS deployment convention is unchanged:
 a contract is materialised when an internal message carrying
 `StateInit` arrives at its address. v1 said "the first executed
 receiver IS the deployment handler" without specifying how that
@@ -636,7 +636,7 @@ account uninit. The deterministic Slice 2 behaviour is:
   compile error.
 - A contract MAY omit `@deploy` entirely; in that case the
   contract relies on external deployment infrastructure to
-  populate c4 before the first message (the existing TON/TOS
+  populate c4 before the first message (the existing TOS
   pattern for ext-msg-driven wallets).
 - `@deploy` is mutually exclusive with `@bounce_only`.
 - `@deploy` is **not** mutually exclusive with

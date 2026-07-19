@@ -2,6 +2,8 @@
 
 This note summarizes the intended operator and protocol posture for catchain DoS resistance.
 
+AI actor workloads can create bursty task, service, and verifier traffic. Consensus protections must be evaluated against those burst patterns before any AI actor feature is promoted beyond experimental use.
+
 ## Upgrade Safety
 
 Catchain is consensus-critical. Any protocol change must be rolled out in a way that preserves overlapping validator agreement during transition.
@@ -38,8 +40,10 @@ The main defenses are:
 - prefer config-gated activation over hard behavior flips
 - monitor bad-node and fork-related events closely during upgrades
 - validate parameter changes in a non-production environment first
+- load-test agent/task traffic patterns before raising message throughput assumptions
 
 ## Related Docs
 
 - [ConfigParam.md](ConfigParam.md)
 - [Validator.md](Validator.md)
+- [ai-actors.md](ai-actors.md)

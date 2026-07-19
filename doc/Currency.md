@@ -20,6 +20,17 @@
 | C++ source code | **tomis** / **Tomis** | `balance.tomis`, `t_Tomis`, `store_tomis()` |
 | On-chain (nanounit) | **nanotomi** | `amount:(VarUInteger 16)` |
 
+## AI Actor Usage
+
+AI actor workflows use TOS as the native settlement unit:
+
+- task actors escrow budgets in nanotomi
+- agent accounts receive task payouts in nanotomi
+- service actors price model, data, tool, and compute calls in nanotomi
+- spending limits and capability constraints should be expressed in nanotomi
+
+User-facing tools may display TOS, but contract state, task settlement, and service pricing should store the smallest unit to avoid rounding ambiguity.
+
 ## Fift Syntax
 
 Defined in `crypto/fift/lib/TosUtil.fif`:
@@ -83,4 +94,5 @@ Additional TOS is created through block validation rewards (ConfigParam 14: 1.7 
 
 - [ConfigParam.md](ConfigParam.md) — Fee parameters (all in nanotomi)
 - [Zerostate.md](Zerostate.md) — Initial supply allocation
+- [ai-actors.md](ai-actors.md) — AI actor payment and settlement context
 - [block.tlb](../crypto/block/block.tlb) — Wire format definition

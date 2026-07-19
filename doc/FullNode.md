@@ -2,6 +2,8 @@
 
 This guide covers the direct binary workflow for running a TOS full node from this repository.
 
+For AI actor deployments, a full node is the strongest read path for agents, service operators, and verifier actors that need locally verified task state, balances, permissions, and settlement outcomes.
+
 ## Components
 
 - `validator-engine`: the main node process
@@ -86,7 +88,17 @@ Use the console and lite client to confirm:
 - Pin a consistent global config per environment
 - Upgrade binaries and configs together, not independently
 
+## AI Actor Operations
+
+Operators running AI agents or service actors should prefer a local full node when:
+
+- agents manage funds or task escrow
+- verifier services make acceptance or dispute decisions
+- service actors need reliable payment-settlement checks
+- workflow systems must avoid trusting third-party indexed data for balances or permissions
+
 ## Related Docs
 
 - [Validator.md](Validator.md)
 - [LiteClient.md](LiteClient.md)
+- [ai-actors.md](ai-actors.md)

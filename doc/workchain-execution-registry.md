@@ -4,7 +4,7 @@ The workchain execution registry is the host-chain mechanism that maps a workcha
 
 ## Current Scope
 
-This repository currently ships only the native TVM execution path.
+This repository currently ships the native TVM execution path for actor-based applications.
 
 The default registry registers the TVM descriptor engine only:
 
@@ -12,17 +12,17 @@ The default registry registers the TVM descriptor engine only:
 |---|---|---|
 | TVM | `wfmt_basic`, `vm_version = -1` | active |
 
-No custom engine keys are registered or advertised by the node.
+No additional engine keys are registered or advertised by the node.
 
 ## Behavior
 
 When a non-masterchain workchain appears in `ConfigParam 12`, the validator resolves its descriptor through the registry. If the local binary has no matching engine, validation fails rather than falling back to TVM.
 
-This keeps unknown or removed execution domains fail-closed.
+This keeps unknown execution domains fail-closed.
 
-## Adding Future Engines
+## Future Engine Policy
 
-Any future custom workchain engine must define:
+Any future engine outside the native TVM surface must define:
 
 - descriptor key and versioning rules
 - account execution policy
@@ -31,4 +31,4 @@ Any future custom workchain engine must define:
 - migration rules for active networks
 - tests for collator and validator paths
 
-Until such an engine exists and is registered, this binary remains native-only.
+Until such an engine exists and is registered, this binary remains focused on native TVM execution.

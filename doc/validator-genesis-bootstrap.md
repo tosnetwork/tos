@@ -15,16 +15,16 @@ validators that run the chain *before* the first staking election.
   (see [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance)),
   distributed to candidates by the launch operator.
 - The genesis set is injected from a file called **`validator-keys.pub`** — a
-  flat concatenation of 32-byte raw Ed25519 public keys. This is exactly how the
-  original TON network bootstraps; our `gen-zerostate*.fif` is cloned from TON
-  unchanged.
+  flat concatenation of 32-byte raw Ed25519 public keys. The native
+  `gen-zerostate*.fif` flow reads this file directly during zero-state
+  construction.
 
 ## Background: why no stake at genesis
 
 A chain cannot run its first staking election before it produces any blocks, and
-it cannot produce blocks without validators — a chicken-and-egg. TON (and TOS)
-break it the same way: the **first** validator set is *appointed* in the
-zerostate, not *elected*.
+it cannot produce blocks without validators. TOS breaks this bootstrap loop by
+appointing the **first** validator set in the zerostate before later handing
+control to on-chain elections.
 
 In `crypto/smartcont/gen-zerostate.fif`:
 
@@ -174,9 +174,9 @@ stake-secured set:
 4. From then on, validator membership is determined purely by on-chain staking
    elections.
 
-This is the same two-phase model the original TON network used: pre-mine the
-whole supply to one wallet, appoint a bootstrap validator set, then decentralize
-via stake distribution + elections.
+This is the TOS two-phase launch model: pre-mine the initial supply to one
+wallet, appoint a bootstrap validator set, then decentralize via stake
+distribution and elections.
 
 ## Related docs
 

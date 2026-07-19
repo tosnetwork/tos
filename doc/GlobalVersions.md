@@ -4,6 +4,8 @@ Global versioning is controlled by `ConfigParam 8`, defined in [block.tlb](../cr
 
 It enables protocol capability bits and gates behavior across validators, contracts, and VM execution.
 
+AI actor protocol primitives that affect consensus-visible behavior, such as scheduled task timeouts, delivery failure records, supervision, or new execution semantics, must be gated through the same global-version and capability process.
+
 ## Why It Matters
 
 `ConfigParam 8` is one of the most operationally sensitive settings in the chain:
@@ -37,10 +39,12 @@ cd build
 - Review related validator and VM code paths before activation.
 - Test changes in a non-production environment first.
 - Record both the old value and the intended replacement before voting.
+- Document whether the change affects agent accounts, task actors, service actors, verifier actors, or workflow message handling.
 
 ## Related Docs
 
 - [ConfigParam.md](ConfigParam.md)
+- [ai-actors.md](ai-actors.md)
 - [block.tlb](../crypto/block/block.tlb)
 * `GETGASFEE` (`gas_used is_mc - price`) - calculates gas fee.
 * `GETSTORAGEFEE` (`cells bits seconds is_mc - price`) - calculates storage fees (only current StoragePrices entry is used).

@@ -9,6 +9,8 @@ This document defines the on-chain supervision model for `actor.md`
 sections 5.1, 6.3, 6.4, and 6.6. It depends on the delivery-SLA and
 time RFCs for failure records, dead letters, and retry timing.
 
+For AI actor workflows, supervision is the mechanism that lets planners, task actors, service actors, and verifier actors observe failures without relying on off-chain logs.
+
 ## 1. First principles
 
 Erlang can restart a process inside one runtime. TOS cannot do that
@@ -23,6 +25,8 @@ Therefore TOS supervision means:
   declared strategy;
 - restart intensity and circuit breakers stop repeated failure from
   becoming message amplification.
+
+AI agent deployments should treat supervision as an opt-in contract relationship. A task actor may monitor an assigned agent or service actor, but recovery actions must remain funded, bounded, and visible on-chain.
 
 ## 2. Failure sources
 

@@ -5,6 +5,7 @@ Version: v1.0
 ## Purpose
 
 This document defines the major public standards surfaces for TOS.
+The AI Actor Model in [ai-actors.md](ai-actors.md) is the current product direction for these standards.
 
 It is not a protocol spec and not a complete API reference.
 It is a map of the surfaces that must become stable enough for ecosystem participants to rely on.
@@ -54,6 +55,7 @@ The TOS standards map is organized into these families:
 5. operator standards
 6. contract and application standards
 7. trust and verification standards
+8. AI actor workflow standards
 
 ## 1. RPC Standards
 
@@ -331,6 +333,44 @@ Concrete proof transport details may remain Level 2 while implementation matures
 - explorers
 - infrastructure providers
 
+## 8. AI Actor Workflow Standards
+
+### Scope
+
+**Status: draft direction published (doc/ai-actors.md)**
+
+AI actor workflow standards define how user actors, agent accounts, task actors, service actors, and verifier actors coordinate through asynchronous messages.
+
+### Surfaces
+
+- agent account metadata and permission expectations
+- task lifecycle messages
+- task escrow and settlement semantics
+- service actor pricing and authorization metadata
+- verifier actor result-review messages
+- evidence reference and result metadata conventions
+- workflow indexing and inspection expectations
+
+### Required Stability
+
+The first agent and task primitives may begin as Level 3 while examples and tests mature. Message names, settlement semantics, and account permission boundaries should move toward Level 2 before SDKs depend on them.
+
+### Required Guarantees
+
+- agent permissions are explicit and bounded
+- task state is inspectable from chain state
+- service actors cannot charge without authorized requests
+- result references and verification metadata are machine-readable
+- workflows remain asynchronous and do not depend on synchronous cross-contract calls
+
+### Primary Consumers
+
+- AI agent developers
+- wallet and account teams
+- model and tool service providers
+- workflow builders
+- verifier and reputation systems
+
 ## Standards Ownership
 
 TOS should assign clear ownership for each standards family:
@@ -342,6 +382,7 @@ TOS should assign clear ownership for each standards family:
 - operator standards
 - contract and application standards
 - trust and verification standards
+- AI actor workflow standards
 
 Ownership must answer:
 

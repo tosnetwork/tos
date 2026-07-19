@@ -10,6 +10,8 @@ scheduled messages. It intentionally starts below Tol syntax because the
 danger is not spelling `sendAfter`; the danger is an unpriced validator
 timer queue.
 
+For AI actor workflows, scheduled messages are the foundation for task deadlines, cancellation windows, retry backoff, service-call expiry, and dispute periods.
+
 ## 1. First principles
 
 A scheduled message is persistent consensus state. It is not a callback
@@ -24,6 +26,8 @@ Therefore every scheduled message must be:
 - delivered no earlier than its due point, with no exact-time guarantee;
 - observable enough for audit without exposing precise validator queue
   internals.
+
+Task actors and service actors should use scheduled messages only for consensus-visible deadlines. Off-chain timers may improve UX, but they are not authoritative for escrow, timeout, or settlement.
 
 ## 2. Time base
 

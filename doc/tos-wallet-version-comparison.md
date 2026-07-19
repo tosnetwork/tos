@@ -12,6 +12,8 @@ This document compares the wallet versions that are explicitly modeled in the cu
 
 The goal is practical interoperability guidance for implementers. This is an implementation-oriented document based on the current repository state. It does not attempt to restate external TOS ecosystem history beyond what can be verified locally.
 
+For the AI Actor Model, these wallet versions are relevant because user actors and agent controllers still need predictable signing, sequence, extension, and permission behavior before task or service workflows can safely spend funds.
+
 ## 2. Scope and Evidence
 
 This comparison is derived from the current codebase, especially:

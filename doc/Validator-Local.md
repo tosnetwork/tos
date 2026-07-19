@@ -2,14 +2,14 @@
 
 This document records the exact steps used to configure and run a production-style local TOS testnet with 4 validator nodes on a single machine. This setup serves as the reference for future production deployments. Four is the smallest cluster with real BFT fault tolerance: under the canonical BFT-2/3 quorum (`tos/quorum.h`), 3 of 4 votes are sufficient to reach consensus, so the network keeps producing blocks while one validator is offline (a 3-node cluster would tolerate none).
 
-## Native-only topology
+## Native TVM Topology
 
 The local testnet runs a **single execution domain — the native TVM workchain (wc=0)** — under one validator set and one masterchain. The tostester pipeline that `setup-testnet.sh` drives generates a zerostate that registers **only wc=0**.
 
 | wc  | Chain                | vm_version | Role                         | Total supply | Distribution                                   |
 |-----|----------------------|------------|------------------------------|--------------|------------------------------------------------|
 | `-1` | **masterchain**     | (reserved) | Consensus / config           | —            | —                                              |
-| `0` | **TOS** (native TVM) | `-1` (TVM) | Primary smart-contract chain | 5 M TOS      | Fully pre-mined to the main wallet (TON-style) |
+| `0` | **TOS** (native TVM) | `-1` (TVM) | Primary smart-contract chain | 5 M TOS      | Fully pre-mined to the main wallet |
 
 The four nodes share the **same validator set**, the **same Simplex consensus**, and the **same** `/data/tos-global.json`. Deployment is a single `setup-testnet.sh` invocation. Verify post-genesis with:
 
@@ -192,11 +192,11 @@ The `--clean` flag stops any running services and removes previous `/data/` cont
      | `zerostate.boc`      | Masterchain (wc=-1) zerostate                          |
      | `basestate0.boc`     | wc=0 TVM shardstate (TOS)                              |
 
-   Workchain wiring (native only):
+   Workchain wiring (native TVM):
 
    | wc | vm_version  | Total supply | Genesis distribution                                          |
    |----|-------------|--------------|--------------------------------------------------------------|
-   | 0  | `-1` (TVM)  | 5 M TOS      | Fully pre-mined to the main wallet (TON-style); no PoW givers |
+   | 0  | `-1` (TVM)  | 5 M TOS      | Fully pre-mined to the main wallet; no PoW givers |
 
    TOS supply is set at zero-state construction time. See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance); the value lives on the main-wallet line of the tostester template `test/tostester/src/tostester/zerostate.py` (and `crypto/smartcont/gen-zerostate.fif`).
 

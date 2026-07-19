@@ -6,13 +6,14 @@ Version: v1.0
 
 This document defines the canonical token standards for TOS: TOS-TEP-74 (Jetton / fungible tokens) and TOS-TEP-62 (NFT / non-fungible tokens).
 
-These are TOS adaptations of the proven TEP-74 and TEP-62 standards. The contract interfaces, operation codes, and get-method signatures are protocol-compatible with the original designs. TOS naming conventions apply: the native currency is "Tomi", and internal field names use `tomis`.
+These are TOS token standards for fungible tokens and NFTs. The contract interfaces, operation codes, and get-method signatures are kept stable for wallet, explorer, SDK, and AI agent integrations. TOS naming conventions apply: the native currency is "Tomi", and internal field names use `tomis`.
 
 This document is the authoritative reference for:
 
 - contract developers implementing Jetton or NFT contracts on TOS
 - wallet and explorer developers integrating token display and transfer
 - SDK authors building token abstraction layers
+- AI agent developers that need machine-readable token ownership, payment, and metadata flows
 - the JSON-RPC `getTokenData` endpoint that performs token type detection
 
 This document complements:

@@ -2,6 +2,8 @@
 
 TOS DNS maps human-readable names to on-chain or network-level targets such as smart contracts, service endpoints, and resolver chains.
 
+For the AI Actor Model, DNS can provide stable names for agent accounts, service actors, model endpoints, tool endpoints, and verifier services. DNS records are discovery hints; task contracts and agent accounts should still verify permissions, capabilities, and payment rules on-chain.
+
 ## Core Concepts
 
 - Names are resolved through DNS smart contracts.
@@ -75,3 +77,4 @@ This is normal. Do not assume every name resolves in one step.
 - [LiteClient.md](LiteClient.md)
 - [TosSites.md](TosSites.md)
 - [ConfigParam.md](ConfigParam.md)
+- [ai-actors.md](ai-actors.md)

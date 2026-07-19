@@ -1,5 +1,7 @@
 # Strengthening TOS from Actor-Model First Principles
 
+This document is the low-level actor-model rationale behind the AI Actor Model described in [ai-actors.md](ai-actors.md). The AI-facing roadmap builds on the same execution property: accounts are independent actors that communicate through asynchronous messages.
+
 ## 0. Reference
 
 Throughout this document, *Actor Model* refers to the formal model

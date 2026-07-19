@@ -16,6 +16,7 @@ This document complements:
 
 - [tos-release-policy.md](tos-release-policy.md) -- stability levels, compatibility windows, deprecation policy
 - [tos-standards-map.md](tos-standards-map.md) -- which surfaces are standards and who owns them
+- [ai-actors.md](ai-actors.md) -- AI actor workflow direction
 
 ## 2. Change Categories
 
@@ -33,6 +34,7 @@ Examples:
 - new or modified system contracts (elector, config, minter)
 - changes to the block or state serialization format
 - changes to proof structure or validation logic
+- native task, agent, service, or verifier contracts that become part of a protocol-governed workflow
 
 Protocol changes are the highest-risk category. A botched protocol change can halt the network.
 
@@ -45,6 +47,7 @@ API changes affect the JSON-RPC surface that wallets, backends, explorers, and S
 - new JSON-RPC methods
 - new optional fields in existing responses
 - new error codes for previously undocumented failure modes
+- new agent, task, service, verifier, or workflow inspection methods
 
 **Breaking (high risk):**
 
@@ -65,6 +68,7 @@ Operator changes affect the `tosctl` CLI, node configuration, service management
 - new `tosctl` subcommands
 - new optional config fields with safe defaults
 - new diagnostic or inspection commands
+- new `tosctl` commands for agent accounts, task contracts, service actors, or verifier workflows
 
 **Breaking (high risk):**
 
@@ -73,6 +77,27 @@ Operator changes affect the `tosctl` CLI, node configuration, service management
 - changes to key management workflows (key paths, formats, rotation procedures)
 - changes to service management behavior (startup, shutdown, signal handling)
 - changes to machine-readable output format (JSON output shape changes)
+
+### 2.4 AI Actor Workflow Changes
+
+AI actor workflow changes affect agent account contracts, task escrow contracts, service actors, verifier actors, workflow message formats, and the SDK or CLI surfaces that operate them.
+
+**Additive (low to medium risk):**
+
+- new experimental task message types
+- new optional metadata fields
+- new verifier evidence reference formats
+- new read-only inspection commands
+
+**Breaking or high risk:**
+
+- changes to task settlement semantics
+- changes to agent spending-limit interpretation
+- changes to service actor authorization checks
+- changes to verifier decision meaning
+- changes that make an existing workflow replayable, unbounded, or unauditable
+
+Any workflow change that can move funds, accept results, reject results, or alter task ownership must receive security review before release.
 
 ## 3. Stability Levels
 

@@ -13,9 +13,12 @@ This document defines the first implementable form of
 stricter than Erlang selective receive because TOS validators must
 execute deterministically and price all work.
 
+For AI actor workflows, bounded postponement is useful when an agent account or task actor receives valid messages out of phase, such as a result before acceptance, a verifier decision before result submission, or a service callback before the task state is ready.
+
 References:
 
 - `doc/actor.md` section 5.9, selective receive and postponement.
+- `doc/ai-actors.md`, task and service actor lifecycle.
 - `doc/actor.md` section 5.7, delivery failure handling.
 - `doc/actor.md` section 6.5, behaviour patterns for Tol contracts.
 - `doc/tos-message-policy.md` section 5.3, `ErrorClass`.

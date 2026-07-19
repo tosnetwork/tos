@@ -2,6 +2,8 @@
 
 TOS Sites expose HTTP content through RLDP and ADNL rather than a traditional public TCP web origin.
 
+In the AI Actor Model, TOS Sites can host service metadata, agent manifests, tool endpoints, model-service documentation, and verifier evidence bundles. Contracts should reference hashes or authenticated metadata rather than treating site content as trusted chain state.
+
 ## Main Tool
 
 The operator and client entrypoint is:
@@ -68,3 +70,4 @@ TOS Sites depend on working DNS resolution when using named sites. Validate DNS 
 
 - [DNS.md](DNS.md)
 - [LiteClient.md](LiteClient.md)
+- [ai-actors.md](ai-actors.md)

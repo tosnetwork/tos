@@ -5,6 +5,8 @@ server in `validator-engine`.  Each policy has a short rationale; the
 canonical source of truth is the code in `validator-engine/json-rpc-server.cpp`
 and `validator-engine/json-rpc-server.h`.
 
+For AI actor workflows, this server is the node-local interface used by agent runners, service operators, verifier processes, and task dashboards to inspect chain state and submit authorized messages.
+
 ## R6: Liteserver selection
 
 All queries are routed through `ValidatorManagerInterface::run_ext_query`,
@@ -74,3 +76,13 @@ is ever required, it will be introduced as a new method name rather than
 altering the semantics of an existing one.  This avoids the operational burden
 of version negotiation in a system where the server and its primary clients
 (tosctl, monitoring scripts) are typically co-deployed.
+
+## AI Actor RPC Guidance
+
+Future AI actor RPC additions should follow these rules:
+
+- task, agent, service, and verifier inspection methods should be added as explicit new methods
+- methods that expose derived workflow views must label their trust tier and data source
+- write methods for agent actions must preserve the account permission model and signing-payload flow
+- service actor payment checks should prefer node-verified state over unverified indexer state
+- long-running workflow clients should use transaction identifiers and message hashes for correlation

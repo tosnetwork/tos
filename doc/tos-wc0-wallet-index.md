@@ -1,16 +1,17 @@
 # TOS wc=0 In-Process Wallet Index
 
 Status: in progress (Phase W). Goal: serve wallet "aggregate" queries (jetton list,
-NFT list, account events) directly from the node — no external tonapi/indexer.
+NFT list, account events) directly from the node, without requiring an external
+wallet indexer.
 
 ## Why
 
-A bare TON-style node (lite-server + toncenter-style JSON-RPC) can serve current
-account state, send messages, run get-methods, and walk a single account's
-transaction chain. It cannot *enumerate* which jettons / NFTs an account owns, nor
-produce a parsed event feed, because ownership is spread across per-wallet
-contracts. This index adds that capability to native wc=0 so the wallet needs
-zero external indexer.
+A bare node can serve current account state, send messages, run get-methods,
+and walk a single account's transaction chain. It cannot *enumerate* which
+jettons / NFTs an account owns, nor produce a parsed event feed, because
+ownership is spread across per-wallet contracts. This index adds that capability
+to native wc=0 so wallets and AI agents can inspect token state without a
+separate indexer dependency.
 
 ## Architecture
 
@@ -87,10 +88,9 @@ capped at 1024 per block (logged when hit). Every transaction also appends an
 block are facts.
 
 What verification does *not* prevent: an attacker deploying their own master M'
-whose resolver acknowledges a wallet claiming owner O — that creates a truthful
-entry "(O, M')" (a scam-token airdrop, same reality as on TON mainnet). Wallets
-filter by token reputation client-side; the `limit` param bounds the blast
-radius.
+whose resolver acknowledges a wallet claiming owner O. That creates a truthful
+entry "(O, M')" for an unwanted token airdrop. Wallets and agent clients filter
+by token reputation client-side; the `limit` param bounds the blast radius.
 
 ## What stays external (cannot be in-node)
 

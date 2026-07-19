@@ -9,6 +9,8 @@ This document defines the delivery-failure substrate required before
 scheduled messages, supervision, monitor notifications, or active
 `ErrorClass.BackPressure` semantics can safely ship.
 
+For AI actor workflows, delivery failure records let task contracts and agent runners distinguish retryable congestion from permanent failure, timeout, or undeliverable service calls.
+
 ## 1. First principles
 
 TOS already has message delivery, bounces, and application-level
@@ -20,6 +22,8 @@ The answer must be protocol-level because delivery can fail before the
 destination contract executes. A stdlib cannot observe every cross-shard
 import delay, frozen recipient, deleted account, or expired scheduled
 message.
+
+Task actors should use this substrate to make retry, refund, cancellation, and dispute behavior deterministic instead of leaving failed delivery to off-chain interpretation.
 
 ## 2. Failure classes
 

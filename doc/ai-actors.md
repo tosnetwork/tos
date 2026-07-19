@@ -1,0 +1,226 @@
+# AI Actor Model
+
+This document defines the product and protocol direction for AI-native actor workflows on TOS.
+
+TOS treats accounts, smart contracts, AI agents, tools, services, and tasks as actors. Each actor owns private state, receives asynchronous messages, emits new messages, and participates in on-chain payment and verification flows.
+
+## Goals
+
+- Give AI agents persistent on-chain identity, state, balances, and permissions.
+- Make agent-to-agent and agent-to-service coordination asynchronous by default.
+- Use native TVM contracts for task escrow, settlement, and workflow state.
+- Keep payments, permissions, deadlines, results, and disputes inspectable from chain state.
+- Allow external evidence, signatures, attestations, and proof adapters without binding the protocol to one off-chain runtime.
+
+## Actor Types
+
+### User Actor
+
+A user actor owns funds, creates tasks, accepts results, and defines policy for delegated agents.
+
+### Agent Account
+
+An agent account is an on-chain account controlled by owner and controller keys. It may expose:
+
+- owner and controller principals
+- spending limits
+- accepted task categories
+- capability metadata hash
+- service endpoint hash
+- task history references
+- delegation and recovery policy
+
+### Task Actor
+
+A task actor represents a unit of work. It holds task state and may hold escrowed funds.
+
+Minimal task state should include:
+
+- creator
+- assigned agent, if any
+- budget
+- deadline
+- status
+- result metadata hash
+- settlement policy
+
+### Service Actor
+
+A service actor represents a model provider, data provider, tool provider, compute endpoint, or verifier.
+
+Service actor state may include:
+
+- price schedule
+- rate-limit policy
+- service metadata hash
+- accepted payment flow
+- signed response key or attestation policy
+
+### Verifier Actor
+
+A verifier actor reviews task results or external evidence. It may submit acceptance, rejection, score, or dispute messages.
+
+## Message Lifecycle
+
+AI actor workflows should use explicit messages instead of synchronous calls:
+
+1. `TaskRequest`: a user actor creates or funds a task.
+2. `TaskAccept`: an agent accepts the task or the task assigns an agent.
+3. `TaskProgress`: an agent posts optional progress metadata.
+4. `TaskResult`: an agent submits result metadata and evidence references.
+5. `TaskSettle`: the task pays the agent or service actors according to policy.
+6. `TaskCancel`: the creator cancels an unaccepted or expired task.
+7. `TaskTimeout`: the task moves to a timeout state when deadlines pass.
+8. `TaskDispute`: a reviewer or participant opens a dispute path.
+
+Every message type should be idempotent where practical and should carry enough correlation data for off-chain workers and indexers to reconstruct the workflow.
+
+## Minimal Message Fields
+
+The first task lifecycle messages should use stable opcode/query_id bodies and include compact metadata references rather than large payloads.
+
+### `TaskRequest`
+
+- `query_id`
+- creator address
+- optional preferred agent
+- budget in nanotomi
+- deadline or timeout policy
+- task metadata hash
+- settlement policy hash
+
+### `TaskAccept`
+
+- `query_id`
+- task id
+- accepting agent
+- accepted budget or price reference
+- agent capability hash
+
+### `TaskResult`
+
+- `query_id`
+- task id
+- agent
+- result metadata hash
+- evidence reference hash
+- optional service-call transcript hash
+
+### `TaskSettle`
+
+- `query_id`
+- task id
+- settlement decision
+- payout target
+- payout amount
+- verifier decision hash, if present
+
+### `TaskDispute`
+
+- `query_id`
+- task id
+- disputer
+- dispute reason code
+- evidence reference hash
+
+## Task State Machine
+
+The first task actor implementation should keep a simple, auditable state machine:
+
+```text
+Open -> Accepted -> ResultSubmitted -> Settled
+  |        |              |              ^
+  |        |              v              |
+  |        |          Disputed ----------+
+  |        v
+  |     Cancelled
+  v
+Expired
+```
+
+Rules:
+
+- only `Open` tasks can be accepted
+- only the assigned agent can submit the normal result path
+- only configured authorities can accept, reject, dispute, or settle
+- timeout behavior must be deterministic
+- every value transfer must be derived from explicit escrow and settlement state
+
+## Indexing and Inspection
+
+Workflow indexers may build derived views for UX, but contracts and agents should rely on chain state for authority.
+
+Useful indexed views:
+
+- tasks by creator
+- tasks by assigned agent
+- pending results
+- settled tasks
+- disputed tasks
+- service actor calls
+- verifier decisions
+
+Authoritative checks:
+
+- task status
+- escrow balance
+- assigned agent
+- spending limit
+- settlement rule
+- verifier authority
+
+## Implementation Order
+
+The recommended implementation order is:
+
+1. Define task lifecycle message structs and opcodes.
+2. Implement a minimal task escrow contract.
+3. Implement a minimal agent account contract.
+4. Add local tests for request, accept, result, settle, cancel, and timeout.
+5. Add read-only inspection helpers in `tosctl`.
+6. Add JSON-RPC examples or methods only after the contract state model is stable.
+
+## State and Evidence Boundary
+
+TOS should not put large model outputs, private prompts, or bulky datasets directly into contract state.
+
+Contracts should store compact references:
+
+- content hash
+- metadata hash
+- signed response hash
+- external evidence URI hash
+- attestation hash
+- reviewer decision hash
+
+The chain remains the source of truth for permissions, funds, task state, deadlines, settlement, and evidence references.
+
+## Security Requirements
+
+AI actor workflows must preserve the account permission model:
+
+- Agent permissions must not silently escalate to owner-equivalent authority.
+- Spending limits must be explicit and machine-readable.
+- Task escrow must have deterministic timeout and settlement paths.
+- Service actors must not be able to charge without an authorized request.
+- Result acceptance and dispute rules must be visible from contract state.
+- External evidence must be treated as referenced evidence unless a verifier actor or proof adapter validates it.
+
+## Near-Term Implementation
+
+The first implementation slice should add:
+
+- an example agent account contract
+- an example task escrow contract
+- task lifecycle message structs and opcodes
+- local tests for request, accept, result, settle, cancel, and timeout paths
+- `tosctl` examples for creating and inspecting agent/task state
+
+## Related Documents
+
+- [actor.md](actor.md)
+- [tos-message-policy.md](tos-message-policy.md)
+- [tos-account-permission-model.md](tos-account-permission-model.md)
+- [tos-capability-policy.md](tos-capability-policy.md)
+- [tos-supervision-policy.md](tos-supervision-policy.md)
+- [tos-time-policy.md](tos-time-policy.md)
