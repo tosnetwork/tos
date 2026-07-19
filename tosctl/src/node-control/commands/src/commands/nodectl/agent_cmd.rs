@@ -15,6 +15,7 @@ use super::utils::{
 };
 use anyhow::Context;
 use base64::Engine;
+use clap::ValueEnum;
 use chain_block::{
     read_single_root_boc, write_boc, BuilderData, Cell, IBitstring, MsgAddressInt, Serializable,
 };
@@ -78,10 +79,73 @@ pub struct AgentTaskCmd {
 
 #[derive(clap::Subcommand, Clone)]
 pub enum AgentTaskAction {
+    /// Deploy and fund a Task Escrow actor
+    Create(AgentTaskCreateCmd),
+    /// Show Task Escrow state by address
+    Show(AgentTaskShowCmd),
+    /// Send a Task Escrow lifecycle message
+    Send(AgentTaskSendCmd),
     /// Build deterministic Task Escrow StateInit
     BuildState(AgentTaskBuildStateCmd),
     /// Encode a Task Escrow lifecycle message
     Encode(AgentTaskEncodeCmd),
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Send a Task Escrow lifecycle message")]
+pub struct AgentTaskSendCmd {
+    #[arg(long, value_enum)]
+    operation: AgentTaskOperation,
+    #[arg(long)]
+    address: String,
+    #[arg(long, help = "Signing wallet name or master_wallet")]
+    from: String,
+    #[arg(long, default_value_t = 0)]
+    query_id: u64,
+    #[arg(long)]
+    result_hash: Option<String>,
+    #[arg(long)]
+    evidence_hash: Option<String>,
+    #[arg(long, help = "Payout in TOS for settle; message value uses --amount")]
+    payout: Option<f64>,
+    #[arg(long, default_value_t = 0.01)]
+    amount: f64,
+    #[arg(long)]
+    yes: bool,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Show Task Escrow state by address")]
+pub struct AgentTaskShowCmd {
+    #[arg(long)]
+    address: String,
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Deploy and fund a Task Escrow actor")]
+pub struct AgentTaskCreateCmd {
+    #[arg(long, help = "Creator address; must match the funding wallet")]
+    creator: String,
+    #[arg(long)]
+    agent: Option<String>,
+    #[arg(long)]
+    budget: f64,
+    #[arg(long)]
+    deadline: u64,
+    #[arg(long)]
+    policy_hash: String,
+    #[arg(long, help = "Funding wallet name or master_wallet")]
+    from: String,
+    #[arg(long, default_value_t = 0.2)]
+    amount: f64,
+    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    workchain: i32,
+    #[arg(long)]
+    yes: bool,
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -666,7 +730,7 @@ impl AgentCmd {
         match &self.action {
             AgentAction::Wallet(cmd) => cmd.run(&self.config).await,
             AgentAction::Account(cmd) => cmd.run(&self.config).await,
-            AgentAction::Task(cmd) => cmd.run().await,
+            AgentAction::Task(cmd) => cmd.run(&self.config).await,
         }
     }
 }
@@ -686,11 +750,133 @@ impl AgentAccountCmd {
 }
 
 impl AgentTaskCmd {
-    async fn run(&self) -> anyhow::Result<()> {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         match &self.action {
+            AgentTaskAction::Create(cmd) => cmd.run(config_path).await,
+            AgentTaskAction::Show(cmd) => cmd.run(config_path).await,
+            AgentTaskAction::Send(cmd) => cmd.run(config_path).await,
             AgentTaskAction::BuildState(cmd) => cmd.run(),
             AgentTaskAction::Encode(cmd) => cmd.run(),
         }
+    }
+}
+
+impl AgentTaskSendCmd {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_tos_amount("amount", self.amount)?;
+        let destination = self.address.parse::<MsgAddressInt>().context("invalid Task Escrow address")?;
+        let body = match self.operation {
+            AgentTaskOperation::Accept => TaskEscrowContract::accept(self.query_id)?,
+            AgentTaskOperation::Result => TaskEscrowContract::result(
+                self.query_id,
+                parse_required_hash("result-hash", &self.result_hash)?,
+                parse_required_hash("evidence-hash", &self.evidence_hash)?,
+            )?,
+            AgentTaskOperation::Settle => TaskEscrowContract::settle(
+                self.query_id,
+                tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
+            )?,
+            AgentTaskOperation::Cancel => TaskEscrowContract::cancel(self.query_id)?,
+            AgentTaskOperation::Timeout => TaskEscrowContract::timeout(self.query_id)?,
+        };
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let wallet_config = get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
+        let (owner_address, owner_info, owner_secret) = wallet_info(rpc_client.clone(), wallet_config, vault).await?;
+        if owner_info.account_state != AccountState::Active { anyhow::bail!("signing wallet is not active"); }
+        let amount_nanotos = tos_to_nanotos(self.amount);
+        if owner_info.balance < amount_nanotos.saturating_add(AGENT_ACCOUNT_ACTION_GAS) { anyhow::bail!("signing wallet has insufficient balance"); }
+        if !self.yes && !confirm("Confirm Task Escrow message?")? { return Ok(()); }
+        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        send_wallet_message(&wallet, rpc_client, destination.clone(), amount_nanotos, body, true, owner_info.seqno, &owner_address).await?;
+        println!("{} Task Escrow {} message submitted to {}", "OK".green().bold(), self.operation.to_possible_value().unwrap().get_name(), destination);
+        Ok(())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct AgentTaskDataView {
+    address: String,
+    creator: String,
+    assigned_agent: Option<String>,
+    budget: String,
+    deadline: u64,
+    status: String,
+    result_hash: String,
+    evidence_hash: String,
+    settlement_policy_hash: String,
+}
+
+impl AgentTaskShowCmd {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let address = self.address.parse::<MsgAddressInt>().context("invalid Task Escrow address")?;
+        let config = common::app_config::AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let provider = contracts::contract_provider!(rpc_client);
+        let stack = provider.get_method(address.to_string(), "get_task_data", vec![]).await?;
+        let data = TaskEscrowContract::decode_data(&stack)?;
+        let view = AgentTaskDataView {
+            address: address.to_string(),
+            creator: data.creator.to_string(),
+            assigned_agent: data.assigned_agent.map(|value| value.to_string()),
+            budget: display_tos(data.budget),
+            deadline: data.deadline,
+            status: task_status_name(data.status).to_string(),
+            result_hash: hex::encode(data.result_hash),
+            evidence_hash: hex::encode(data.evidence_hash),
+            settlement_policy_hash: hex::encode(data.settlement_policy_hash),
+        };
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&view)?);
+        } else {
+            println!("Task Escrow: {}", view.address);
+            println!("Creator: {}", view.creator);
+            println!("Assigned Agent: {}", view.assigned_agent.as_deref().unwrap_or("none"));
+            println!("Budget: {} TOS", view.budget);
+            println!("Deadline: {}", view.deadline);
+            println!("Status: {}", view.status);
+        }
+        Ok(())
+    }
+}
+
+impl AgentTaskCreateCmd {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_tos_amount("amount", self.amount)?;
+        validate_tos_amount("budget", self.budget)?;
+        let creator = self.creator.parse::<MsgAddressInt>().context("invalid creator address")?;
+        let agent = self.agent.as_deref().map(str::parse).transpose().context("invalid agent address")?;
+        let policy_hash = parse_optional_hash("policy-hash", &Some(self.policy_hash.clone()))?.unwrap();
+        let init = TaskEscrowInit {
+            creator: creator.clone(),
+            assigned_agent: agent,
+            budget: tos_to_nanotos(self.budget),
+            deadline: self.deadline,
+            settlement_policy_hash: policy_hash,
+        };
+        let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
+        let state_init = TaskEscrowContract::build_state_init(&init)?;
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let payer_cfg = get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
+        let (payer_address, payer_info, payer_secret) = wallet_info(rpc_client.clone(), payer_cfg, vault).await?;
+        if payer_address != creator { anyhow::bail!("creator address must match funding wallet address"); }
+        if payer_info.account_state != AccountState::Active { anyhow::bail!("funding wallet is not active"); }
+        let amount_nanotos = tos_to_nanotos(self.amount);
+        if amount_nanotos == 0 || payer_info.balance < amount_nanotos.saturating_add(AGENT_ACCOUNT_DEPLOY_GAS) {
+            anyhow::bail!("funding wallet has insufficient balance");
+        }
+        if !self.yes && !confirm("Confirm Task Escrow deployment?")? { return Ok(()); }
+        let wallet = make_wallet(rpc_client.clone(), payer_cfg, payer_secret, &self.from).await?;
+        let body = BuilderData::new().into_cell()?;
+        send_wallet_message_with_state_init(
+            &wallet, rpc_client, address.clone(), amount_nanotos, body,
+            payer_info.seqno, &payer_address, state_init,
+        ).await?;
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::json!({"address": address.to_string(), "status": "submitted", "creator": creator.to_string()}));
+        } else { println!("{} Task Escrow deployed at {}", "OK".green().bold(), address); }
+        Ok(())
     }
 }
 
@@ -1233,6 +1419,30 @@ async fn send_wallet_message(
 ) -> anyhow::Result<()> {
     let msg = wallet
         .build_message(destination, amount, body, bounce, seqno, None, None)
+        .await?;
+    rpc_client.send_boc(&write_boc(&msg)?).await?;
+    wait_for_seqno_change(
+        rpc_client,
+        owner_address,
+        seqno,
+        &common::task_cancellation::CancellationCtx::default(),
+        SEND_TIMEOUT,
+    )
+    .await
+}
+
+async fn send_wallet_message_with_state_init(
+    wallet: &dyn Wallet,
+    rpc_client: std::sync::Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
+    destination: MsgAddressInt,
+    amount: u64,
+    body: Cell,
+    seqno: Option<u32>,
+    owner_address: &MsgAddressInt,
+    state_init: chain_block::StateInit,
+) -> anyhow::Result<()> {
+    let msg = wallet
+        .build_message(destination, amount, body, false, seqno, None, Some(state_init))
         .await?;
     rpc_client.send_boc(&write_boc(&msg)?).await?;
     wait_for_seqno_change(
@@ -2057,6 +2267,18 @@ fn parse_optional_hash(name: &str, value: &Option<String>) -> anyhow::Result<Opt
 
 fn parse_required_hash(name: &str, value: &Option<String>) -> anyhow::Result<[u8; 32]> {
     parse_optional_hash(name, value)?.ok_or_else(|| anyhow::anyhow!("--{name} is required"))
+}
+
+fn task_status_name(status: u8) -> &'static str {
+    match status {
+        0 => "open",
+        1 => "accepted",
+        2 => "result_submitted",
+        3 => "settled",
+        4 => "cancelled",
+        5 => "expired",
+        _ => "unknown",
+    }
 }
 
 fn confirm(prompt: &str) -> anyhow::Result<bool> {
