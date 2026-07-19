@@ -33,5 +33,5 @@ pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapper
 pub use nominator_pool::{NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl};
 pub use provider::ContractProvider;
 pub use smart_contract::SmartContract;
-pub use task_escrow::{TaskEscrowContract, TaskEscrowInit};
+pub use task_escrow::{TaskEscrowContract, TaskEscrowData, TaskEscrowInit};
 pub use wallet::{Wallet, WalletContract};

@@ -28,7 +28,8 @@ use common::{
     time_format, WalletVersion,
 };
 use contracts::{
-    AgentAccountContract, AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate, Wallet,
+    AgentAccountContract, AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate,
+    TaskEscrowContract, TaskEscrowInit, Wallet,
 };
 use secrets_vault::types::{
     algorithm::Algorithm, secret::Secret, secret_id::SecretId, secret_spec::SecretSpec,
@@ -64,6 +65,66 @@ pub enum AgentAction {
     Wallet(AgentWalletCmd),
     /// Native Agent Account contract operations
     Account(AgentAccountCmd),
+    /// Native Task Escrow contract operations
+    Task(AgentTaskCmd),
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "AI Agent Task Escrow operations")]
+pub struct AgentTaskCmd {
+    #[command(subcommand)]
+    action: AgentTaskAction,
+}
+
+#[derive(clap::Subcommand, Clone)]
+pub enum AgentTaskAction {
+    /// Build deterministic Task Escrow StateInit
+    BuildState(AgentTaskBuildStateCmd),
+    /// Encode a Task Escrow lifecycle message
+    Encode(AgentTaskEncodeCmd),
+}
+
+#[derive(Clone, clap::ValueEnum)]
+enum AgentTaskOperation {
+    Accept,
+    Result,
+    Settle,
+    Cancel,
+    Timeout,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Encode a Task Escrow lifecycle message")]
+pub struct AgentTaskEncodeCmd {
+    #[arg(long, value_enum)]
+    operation: AgentTaskOperation,
+    #[arg(long, default_value_t = 0)]
+    query_id: u64,
+    #[arg(long, help = "Result metadata hash for result operation")]
+    result_hash: Option<String>,
+    #[arg(long, help = "Evidence hash for result operation")]
+    evidence_hash: Option<String>,
+    #[arg(long, help = "Payout in TOS for settle operation")]
+    payout: Option<f64>,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Build deterministic Task Escrow StateInit")]
+pub struct AgentTaskBuildStateCmd {
+    #[arg(long, help = "Task creator address")]
+    creator: String,
+    #[arg(long, help = "Optional assigned Agent address")]
+    agent: Option<String>,
+    #[arg(long, help = "Escrow budget in TOS")]
+    budget: f64,
+    #[arg(long, help = "Unix deadline")]
+    deadline: u64,
+    #[arg(long, help = "32-byte settlement policy hash")]
+    policy_hash: String,
+    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    workchain: i32,
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
 }
 
 #[derive(clap::Args, Clone)]
@@ -605,6 +666,7 @@ impl AgentCmd {
         match &self.action {
             AgentAction::Wallet(cmd) => cmd.run(&self.config).await,
             AgentAction::Account(cmd) => cmd.run(&self.config).await,
+            AgentAction::Task(cmd) => cmd.run().await,
         }
     }
 }
@@ -620,6 +682,99 @@ impl AgentAccountCmd {
             AgentAccountAction::UpdatePolicy(cmd) => cmd.run(config_path).await,
             AgentAccountAction::RotateController(cmd) => cmd.run(config_path).await,
         }
+    }
+}
+
+impl AgentTaskCmd {
+    async fn run(&self) -> anyhow::Result<()> {
+        match &self.action {
+            AgentTaskAction::BuildState(cmd) => cmd.run(),
+            AgentTaskAction::Encode(cmd) => cmd.run(),
+        }
+    }
+}
+
+impl AgentTaskEncodeCmd {
+    fn run(&self) -> anyhow::Result<()> {
+        let body = match self.operation {
+            AgentTaskOperation::Accept => TaskEscrowContract::accept(self.query_id)?,
+            AgentTaskOperation::Result => {
+                let result_hash = parse_required_hash("result-hash", &self.result_hash)?;
+                let evidence_hash = parse_required_hash("evidence-hash", &self.evidence_hash)?;
+                TaskEscrowContract::result(self.query_id, result_hash, evidence_hash)?
+            }
+            AgentTaskOperation::Settle => TaskEscrowContract::settle(
+                self.query_id,
+                tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
+            )?,
+            AgentTaskOperation::Cancel => TaskEscrowContract::cancel(self.query_id)?,
+            AgentTaskOperation::Timeout => TaskEscrowContract::timeout(self.query_id)?,
+        };
+        println!("{}", base64::engine::general_purpose::STANDARD.encode(write_boc(&body)?));
+        Ok(())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct AgentTaskStateView {
+    creator: String,
+    assigned_agent: Option<String>,
+    budget: String,
+    deadline: u64,
+    workchain: i32,
+    address: String,
+    policy_hash: String,
+    state_init_boc: String,
+    code_hash: String,
+    data_hash: String,
+}
+
+impl AgentTaskBuildStateCmd {
+    fn run(&self) -> anyhow::Result<()> {
+        let creator = MsgAddressInt::from_str(&self.creator)
+            .with_context(|| "creator must be a valid native address")?;
+        let assigned_agent = self
+            .agent
+            .as_deref()
+            .map(MsgAddressInt::from_str)
+            .transpose()
+            .with_context(|| "agent must be a valid native address")?;
+        let policy_hash = parse_optional_hash("policy-hash", &Some(self.policy_hash.clone()))?
+            .expect("policy hash is required");
+        let init = TaskEscrowInit {
+            creator: creator.clone(),
+            assigned_agent: assigned_agent.clone(),
+            budget: tos_to_nanotos(self.budget),
+            deadline: self.deadline,
+            settlement_policy_hash: policy_hash,
+        };
+        let state_init = TaskEscrowContract::build_state_init(&init)?;
+        let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
+        let state_cell = state_init.write_to_new_cell()?.into_cell()?;
+        let code_hash = hex::encode(TaskEscrowContract::code()?.hash(0));
+        let data_hash = hex::encode(TaskEscrowContract::build_data(&init)?.hash(0));
+        let view = AgentTaskStateView {
+            creator: creator.to_string(),
+            assigned_agent: assigned_agent.map(|value| value.to_string()),
+            budget: display_tos(init.budget),
+            deadline: init.deadline,
+            workchain: self.workchain,
+            address: address.to_string(),
+            policy_hash: hex::encode(policy_hash),
+            state_init_boc: base64::engine::general_purpose::STANDARD.encode(write_boc(&state_cell)?),
+            code_hash,
+            data_hash,
+        };
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&view)?);
+        } else {
+            println!("Task Escrow address: {}", view.address);
+            println!("Creator: {}", view.creator);
+            println!("Budget: {} TOS", view.budget);
+            println!("Deadline: {}", view.deadline);
+            println!("StateInit BOC: {}", view.state_init_boc);
+        }
+        Ok(())
     }
 }
 
@@ -1036,16 +1191,15 @@ async fn run_agent_account_owner_action(
     let wallet = make_wallet(rpc_client.clone(), &agent_wallet.wallet, owner_secret, wallet_name)
         .await
         .context("create Agent Account owner wallet")?;
-    let msg = wallet
-        .build_message(address.clone(), amount_nanotos, body, true, owner_info.seqno, None, None)
-        .await?;
-    rpc_client.send_boc(&write_boc(&msg)?).await?;
-    wait_for_seqno_change(
+    send_wallet_message(
+        &wallet,
         rpc_client.clone(),
-        &owner_address,
+        address.clone(),
+        amount_nanotos,
+        body,
+        true,
         owner_info.seqno,
-        &common::task_cancellation::CancellationCtx::default(),
-        SEND_TIMEOUT,
+        &owner_address,
     )
     .await?;
     wait_for_agent_account_match(rpc_client, &address, &init, matches).await?;
@@ -1065,6 +1219,30 @@ async fn run_agent_account_owner_action(
         println!("{} Agent Account {} applied at {}", "OK".green().bold(), action, address);
     }
     Ok(())
+}
+
+async fn send_wallet_message(
+    wallet: &dyn Wallet,
+    rpc_client: std::sync::Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
+    destination: MsgAddressInt,
+    amount: u64,
+    body: Cell,
+    bounce: bool,
+    seqno: Option<u32>,
+    owner_address: &MsgAddressInt,
+) -> anyhow::Result<()> {
+    let msg = wallet
+        .build_message(destination, amount, body, bounce, seqno, None, None)
+        .await?;
+    rpc_client.send_boc(&write_boc(&msg)?).await?;
+    wait_for_seqno_change(
+        rpc_client,
+        owner_address,
+        seqno,
+        &common::task_cancellation::CancellationCtx::default(),
+        SEND_TIMEOUT,
+    )
+    .await
 }
 
 async fn wait_for_agent_account_match(
@@ -1875,6 +2053,10 @@ fn parse_optional_hash(name: &str, value: &Option<String>) -> anyhow::Result<Opt
     let hash: [u8; 32] =
         bytes.try_into().map_err(|_| anyhow::anyhow!("{name} must be exactly 32 bytes"))?;
     Ok(Some(hash))
+}
+
+fn parse_required_hash(name: &str, value: &Option<String>) -> anyhow::Result<[u8; 32]> {
+    parse_optional_hash(name, value)?.ok_or_else(|| anyhow::anyhow!("--{name} is required"))
 }
 
 fn confirm(prompt: &str) -> anyhow::Result<bool> {

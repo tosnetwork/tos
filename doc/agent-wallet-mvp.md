@@ -9,6 +9,18 @@ The repository also includes the first native Agent Account contract template:
 - [`crypto/smartcont/agent-account-code.fc`](../crypto/smartcont/agent-account-code.fc)
 - [`crypto/smartcont/agent-account.tlb`](../crypto/smartcont/agent-account.tlb)
 
+The MVP also includes the native Task Escrow actor foundation:
+
+- [`crypto/smartcont/task-escrow-code.fc`](../crypto/smartcont/task-escrow-code.fc)
+- [`crypto/smartcont/task-escrow.tlb`](../crypto/smartcont/task-escrow.tlb)
+- [`tosctl/src/node-control/contracts/src/task_escrow.rs`](../tosctl/src/node-control/contracts/src/task_escrow.rs)
+
+Task Escrow stores the creator, optional assigned Agent, budget, deadline, lifecycle status,
+result hash, evidence hash and settlement policy hash. Its message surface covers accept,
+result submission, settlement, cancellation and deterministic timeout. The Rust wrapper
+currently provides deterministic StateInit/address construction, message encoding and TVM
+stack decoding; CLI orchestration and testnet settlement flows are the next implementation slice.
+
 This contract is intentionally minimal. It stores owner identity, controller public key and policy data, exposes get-methods, and accepts owner-only internal messages for policy and controller updates. Policy data is stored in a referenced cell so metadata and endpoint hashes fit within TVM cell limits. It does not yet execute controller spending, escrow settlement or task routing.
 
 `tosctl` can derive and deploy Agent Account StateInit from a local Agent Wallet profile. This makes the local profile and the native contract template share one deterministic owner/controller/policy encoding.
