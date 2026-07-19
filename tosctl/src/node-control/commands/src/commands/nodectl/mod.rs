@@ -29,6 +29,7 @@ pub(crate) mod node_cmd;
 pub(crate) mod observe_cmd;
 pub(crate) mod output_format;
 pub(crate) mod pool_cmd;
+pub(crate) mod service_actor_cmd;
 pub(crate) mod service_api_cmd;
 pub(crate) mod service_cmd;
 pub(crate) mod tx_cmd;

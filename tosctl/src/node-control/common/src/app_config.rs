@@ -444,6 +444,30 @@ pub struct CapabilityRegistryConfig {
     pub created_at: Option<u64>,
 }
 
+/// Locally tracked Service Actor deployment record.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+pub struct ServiceActorConfig {
+    /// Deployed Service Actor contract address.
+    pub address: String,
+    /// Service owner address.
+    pub owner: String,
+    /// Optional single authorized caller when access is not open.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authorized_caller: Option<String>,
+    pub open_access: bool,
+    /// Price per call, in nano-TOS.
+    pub price_per_call: u64,
+    /// Maximum calls accepted per day; `0` means unlimited.
+    pub rate_limit_per_day: u32,
+    /// Hex-encoded 32-byte hash of general service metadata.
+    pub metadata_hash: String,
+    /// Hex-encoded 32-byte hash identifying the supported proof/attestation scheme.
+    pub proof_scheme_hash: String,
+    /// Unix timestamp when this local record was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 #[serde(tag = "kind")]
 pub enum PoolConfig {
@@ -832,6 +856,9 @@ pub struct AppConfig {
     /// Capability Registry deployments tracked by this operator, keyed by local name.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub capability_registries: HashMap<String, CapabilityRegistryConfig>,
+    /// Service Actor deployments tracked by this operator, keyed by local name.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub service_actors: HashMap<String, ServiceActorConfig>,
     #[serde(default)]
     pub pools: HashMap<String, PoolConfig>,
     #[serde(default)]

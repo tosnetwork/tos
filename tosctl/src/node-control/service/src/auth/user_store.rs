@@ -444,6 +444,7 @@ mod tests {
             agent_wallets: HashMap::new(),
             agent_tasks: HashMap::new(),
             capability_registries: HashMap::new(),
+            service_actors: HashMap::new(),
             alerts: Default::default(),
         }
     }

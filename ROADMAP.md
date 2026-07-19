@@ -150,10 +150,21 @@ Examples:
 - Provide `tosctl agent registry deploy/ls/show/send/build-state` commands for registering
   agents and inspecting registry entries (`send --operation` covers update-metadata,
   update-verifier, stake, withdraw-bond, update-reputation, deactivate, reactivate).
-- Add service actor templates for model, data and tool providers. (not started)
-- Add native payment flows for per-call or per-task settlement. (not started)
+- Add service actor templates for model, data and tool providers: one deployed instance per
+  service (same per-actor pattern), tracking owner, an access policy (open or a single
+  authorized caller), price-per-call, a daily rate limit, accumulated revenue, signed
+  response-hash commitments, and an optional proof/attestation-scheme reference, with the
+  same active/inactive lifecycle as the capability registry.
+- Add native payment flows for per-call settlement: `call` requires the message value to
+  cover `price_per_call` and credits it to on-chain revenue; the owner commits a response
+  hash via `respond` and withdraws accumulated revenue via `withdraw-revenue`. Per-task
+  settlement already exists via Task Escrow (Phase 2).
+- Provide `tosctl agent service deploy/ls/show/send/build-state` commands for registering
+  services and inspecting them (`send --operation` covers call, respond, update-policy,
+  withdraw-revenue, deactivate, reactivate).
 - `GET /tasks`'s "local registry only" limitation (see Phase 2) is not yet resolved by an
-  indexer; the capability registry above is a per-agent lookup, not a chain-wide index either.
+  indexer; the capability registry and service actor above are per-agent/per-service
+  lookups, not a chain-wide index either.
 
 ### Phase 4: Verifiable AI Workflows
 

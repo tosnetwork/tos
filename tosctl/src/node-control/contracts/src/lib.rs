@@ -16,6 +16,7 @@ pub mod liquid_controller;
 pub mod nominator;
 pub mod nominator_pool;
 pub mod provider;
+pub mod service_actor;
 pub mod smart_contract;
 pub mod task_escrow;
 mod stack_utils;
@@ -36,6 +37,7 @@ pub use liquid_controller::{ControllerData, ControllerWrapper, ControllerWrapper
 pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapperImpl};
 pub use nominator_pool::{NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl};
 pub use provider::ContractProvider;
+pub use service_actor::{ServiceActorContract, ServiceActorData, ServiceActorInit};
 pub use smart_contract::SmartContract;
 pub use task_escrow::{TaskEscrowContract, TaskEscrowData, TaskEscrowInit};
 pub use wallet::{Wallet, WalletContract};

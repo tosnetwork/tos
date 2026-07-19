@@ -1,0 +1,219 @@
+;; Copyright (C) 2025-2026  TOS Network.
+;; Minimal Service Actor: represents a model, data, or tool provider that
+;; sells per-call access on-chain.
+;;
+;; One instance per registered service, discoverable at a deterministic
+;; address (same actor-per-address pattern as Agent Account, Task Escrow and
+;; Capability Registry). Callers pay `price_per_call` (or more) per `call`
+;; message; the owner later commits a response hash via `respond` and can
+;; withdraw accumulated revenue.
+;;
+;; Persistent data layout:
+;;   owner:MsgAddress
+;;   has_authorized_caller:uint1 authorized_caller:MsgAddress
+;;   open_access:uint1
+;;   active:uint1
+;;   price_per_call:coins
+;;   rate_limit_per_day:uint32  (0 = unlimited)
+;;   call_day:uint32
+;;   calls_today:uint32
+;;   total_revenue:coins
+;;   ^[metadata_hash:uint256 proof_scheme_hash:uint256]
+;;   ^[last_request_hash:uint256 last_response_hash:uint256]
+;;
+;; Internal messages:
+;;   call#53564301 query_id:uint64 request_hash:uint256 = InternalMsgBody;
+;;   respond#53564302 query_id:uint64 response_hash:uint256 = InternalMsgBody;
+;;   update_policy#53564303 query_id:uint64 price_per_call:coins
+;;                rate_limit_per_day:uint32 open_access:uint1
+;;                has_authorized_caller:uint1 authorized_caller:MsgAddress
+;;                ^[metadata_hash:uint256 proof_scheme_hash:uint256] = InternalMsgBody;
+;;   withdraw_revenue#53564304 query_id:uint64 amount:coins = InternalMsgBody;
+;;   deactivate#53564305 query_id:uint64 = InternalMsgBody;
+;;   reactivate#53564306 query_id:uint64 = InternalMsgBody;
+
+const int op::call = 0x53564301;
+const int op::respond = 0x53564302;
+const int op::update_policy = 0x53564303;
+const int op::withdraw_revenue = 0x53564304;
+const int op::deactivate = 0x53564305;
+const int op::reactivate = 0x53564306;
+
+const int err::not_owner = 1900;
+const int err::not_authorized = 1901;
+const int err::inactive = 1902;
+const int err::already_active = 1903;
+const int err::rate_limited = 1904;
+const int err::insufficient_payment = 1905;
+const int err::insufficient_revenue = 1906;
+const int err::insufficient_balance = 1907;
+const int err::unknown_op = 1908;
+
+(slice, int, slice, int, int, int, int, int, int, int, int, int, int, int) load_state() inline {
+  slice ds = get_data().begin_parse();
+  slice owner = ds~load_msg_addr();
+  int has_authorized_caller = ds~load_uint(1);
+  slice authorized_caller = ds~load_msg_addr();
+  int open_access = ds~load_uint(1);
+  int active = ds~load_uint(1);
+  int price_per_call = ds~load_tomis();
+  int rate_limit_per_day = ds~load_uint(32);
+  int call_day = ds~load_uint(32);
+  int calls_today = ds~load_uint(32);
+  int total_revenue = ds~load_tomis();
+  slice meta = ds~load_ref().begin_parse();
+  int metadata_hash = meta~load_uint(256);
+  int proof_scheme_hash = meta~load_uint(256);
+  meta.end_parse();
+  slice last = ds~load_ref().begin_parse();
+  int last_request_hash = last~load_uint(256);
+  int last_response_hash = last~load_uint(256);
+  last.end_parse();
+  ds.end_parse();
+  return (owner, has_authorized_caller, authorized_caller, open_access, active, price_per_call,
+    rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash, proof_scheme_hash,
+    last_request_hash, last_response_hash);
+}
+
+() save_state(slice owner, int has_authorized_caller, slice authorized_caller, int open_access,
+             int active, int price_per_call, int rate_limit_per_day, int call_day,
+             int calls_today, int total_revenue, int metadata_hash, int proof_scheme_hash,
+             int last_request_hash, int last_response_hash) impure inline {
+  set_data(begin_cell()
+    .store_slice(owner)
+    .store_uint(has_authorized_caller, 1)
+    .store_slice(authorized_caller)
+    .store_uint(open_access, 1)
+    .store_uint(active, 1)
+    .store_tomis(price_per_call)
+    .store_uint(rate_limit_per_day, 32)
+    .store_uint(call_day, 32)
+    .store_uint(calls_today, 32)
+    .store_tomis(total_revenue)
+    .store_ref(begin_cell()
+      .store_uint(metadata_hash, 256)
+      .store_uint(proof_scheme_hash, 256)
+    .end_cell())
+    .store_ref(begin_cell()
+      .store_uint(last_request_hash, 256)
+      .store_uint(last_response_hash, 256)
+    .end_cell())
+  .end_cell());
+}
+
+;; mode 1: send exactly `amount`, fees paid from the contract balance.
+;; mode 128: `amount` is ignored and the whole remaining balance is carried.
+() send_value(slice destination, int amount, int mode) impure inline {
+  send_raw_message(begin_cell()
+    .store_uint(0x10, 6)
+    .store_slice(destination)
+    .store_tomis(amount)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+  .end_cell(), mode);
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  if (in_msg.slice_empty?()) { return (); }
+  int op = in_msg~load_uint(32);
+  int query_id = in_msg~load_uint(64);
+  query_id~impure_touch();
+
+  var full_msg = in_msg_full.begin_parse();
+  full_msg~skip_bits(4);
+  slice sender = full_msg~load_msg_addr();
+
+  (slice owner, int has_authorized_caller, slice authorized_caller, int open_access, int active,
+   int price_per_call, int rate_limit_per_day, int call_day, int calls_today, int total_revenue,
+   int metadata_hash, int proof_scheme_hash, int last_request_hash, int last_response_hash) =
+    load_state();
+
+  if (op == op::call) {
+    throw_unless(err::inactive, active == 1);
+    throw_unless(err::not_authorized,
+      (open_access == 1) | (has_authorized_caller & equal_slice_bits(sender, authorized_caller)));
+    throw_unless(err::insufficient_payment, msg_value >= price_per_call);
+    int today = now() / 86400;
+    if (today != call_day) {
+      call_day = today;
+      calls_today = 0;
+    }
+    throw_unless(err::rate_limited, (rate_limit_per_day == 0) | (calls_today < rate_limit_per_day));
+    calls_today += 1;
+    total_revenue += msg_value;
+    int request_hash = in_msg~load_uint(256);
+    in_msg.end_parse();
+    save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
+      price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
+      proof_scheme_hash, request_hash, last_response_hash);
+    return ();
+  }
+
+  if (op == op::respond) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    int response_hash = in_msg~load_uint(256);
+    in_msg.end_parse();
+    save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
+      price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
+      proof_scheme_hash, last_request_hash, response_hash);
+    return ();
+  }
+
+  if (op == op::update_policy) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    throw_unless(err::inactive, active == 1);
+    int new_price_per_call = in_msg~load_tomis();
+    int new_rate_limit_per_day = in_msg~load_uint(32);
+    int new_open_access = in_msg~load_uint(1);
+    int new_has_authorized_caller = in_msg~load_uint(1);
+    slice new_authorized_caller = in_msg~load_msg_addr();
+    slice meta = in_msg~load_ref().begin_parse();
+    int new_metadata_hash = meta~load_uint(256);
+    int new_proof_scheme_hash = meta~load_uint(256);
+    meta.end_parse();
+    in_msg.end_parse();
+    save_state(owner, new_has_authorized_caller, new_authorized_caller, new_open_access, active,
+      new_price_per_call, new_rate_limit_per_day, call_day, calls_today, total_revenue,
+      new_metadata_hash, new_proof_scheme_hash, last_request_hash, last_response_hash);
+    return ();
+  }
+
+  if (op == op::withdraw_revenue) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    int amount = in_msg~load_tomis();
+    in_msg.end_parse();
+    throw_unless(err::insufficient_revenue, amount <= total_revenue);
+    throw_unless(err::insufficient_balance, amount <= get_balance().pair_first());
+    if (amount > 0) {
+      send_value(owner, amount, 1);
+    }
+    save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
+      price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue - amount,
+      metadata_hash, proof_scheme_hash, last_request_hash, last_response_hash);
+    return ();
+  }
+
+  if (op == op::deactivate) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    throw_unless(err::inactive, active == 1);
+    send_value(owner, 0, 128);
+    save_state(owner, has_authorized_caller, authorized_caller, open_access, 0, price_per_call,
+      rate_limit_per_day, call_day, calls_today, 0, metadata_hash, proof_scheme_hash,
+      last_request_hash, last_response_hash);
+    return ();
+  }
+
+  if (op == op::reactivate) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    throw_unless(err::already_active, active == 0);
+    save_state(owner, has_authorized_caller, authorized_caller, open_access, 1, price_per_call,
+      rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash, proof_scheme_hash,
+      last_request_hash, last_response_hash);
+    return ();
+  }
+
+  throw(err::unknown_op);
+}
+
+(slice, int, slice, int, int, int, int, int, int, int, int, int, int, int) get_service_actor_data() method_id {
+  return load_state();
+}

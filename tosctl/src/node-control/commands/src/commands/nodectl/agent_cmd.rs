@@ -9,6 +9,7 @@
 
 use super::capability_registry_cmd::CapabilityRegistryCmd;
 use super::output_format::OutputFormat;
+use super::service_actor_cmd::ServiceActorCmd;
 use super::utils::{
     calculate_wallet_address, get_wallet_config, load_config_vault, load_config_vault_rpc_client,
     make_wallet, save_config, try_create_rpc_client, wait_for_deploy, wait_for_seqno_change,
@@ -74,6 +75,8 @@ pub enum AgentAction {
     Task(AgentTaskCmd),
     /// Capability Registry operations
     Registry(CapabilityRegistryCmd),
+    /// Service Actor operations
+    Service(ServiceActorCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -856,6 +859,7 @@ impl AgentCmd {
             AgentAction::Account(cmd) => cmd.run(&self.config).await,
             AgentAction::Task(cmd) => cmd.run(&self.config).await,
             AgentAction::Registry(cmd) => cmd.run(&self.config).await,
+            AgentAction::Service(cmd) => cmd.run(&self.config).await,
         }
     }
 }
