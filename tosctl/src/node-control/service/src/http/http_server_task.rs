@@ -137,9 +137,9 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
     let authenticated = axum::Router::new()
         .route("/v1/elections", axum::routing::get(v1_elections_handler))
         .route("/v1/validators", axum::routing::get(v1_validators_handler))
-        .route("/v1/agents/{address}", axum::routing::get(agent_query_api::get_agent))
-        .route("/v1/tasks", axum::routing::get(agent_query_api::list_tasks))
-        .route("/v1/tasks/{address}", axum::routing::get(agent_query_api::get_task))
+        .route("/agents/{address}", axum::routing::get(agent_query_api::get_agent))
+        .route("/tasks", axum::routing::get(agent_query_api::list_tasks))
+        .route("/tasks/{address}", axum::routing::get(agent_query_api::get_task))
         .route("/auth/me", axum::routing::get(me_handler))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -1610,11 +1610,11 @@ mod tests {
         let elections_task = test_elections_task();
         let app = routes(false, test_state(store, runtime_cfg, elections_task).await);
 
-        let response = app.clone().oneshot(get_request("/v1/agents/not-an-address")).await.unwrap();
+        let response = app.clone().oneshot(get_request("/agents/not-an-address")).await.unwrap();
         assert_eq!(response.status(), 400);
         assert_eq!(body_json(response).await["error"]["code"], 400);
 
-        let response = app.oneshot(get_request("/v1/tasks?status=invalid")).await.unwrap();
+        let response = app.oneshot(get_request("/tasks?status=invalid")).await.unwrap();
         assert_eq!(response.status(), 400);
         assert_eq!(body_json(response).await["error"]["message"], "invalid task status");
     }
@@ -1647,8 +1647,8 @@ mod tests {
             );
         }
 
-        assert!(json["paths"]["/v1/agents/{address}"]["get"].is_object());
-        assert!(json["paths"]["/v1/tasks/{address}"]["get"].is_object());
-        assert!(json["paths"]["/v1/tasks"]["get"].is_object());
+        assert!(json["paths"]["/agents/{address}"]["get"].is_object());
+        assert!(json["paths"]["/tasks/{address}"]["get"].is_object());
+        assert!(json["paths"]["/tasks"]["get"].is_object());
     }
 }

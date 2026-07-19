@@ -133,7 +133,7 @@ async fn read_task(state: &AppState, address: &MsgAddressInt) -> anyhow::Result<
     Ok(task_dto(None, address.to_string(), TaskEscrowContract::decode_data(&stack)?))
 }
 
-#[utoipa::path(get, path = "/v1/agents/{address}", params(("address" = String, Path, description = "Agent Account address")), responses(
+#[utoipa::path(get, path = "/agents/{address}", params(("address" = String, Path, description = "Agent Account address")), responses(
     (status = 200, body = AgentAccountResponse), (status = 400, body = ApiErrorResponse),
     (status = 404, body = ApiErrorResponse), (status = 500, body = ApiErrorResponse)
 ), security(("bearerAuth" = [])))]
@@ -168,7 +168,7 @@ pub async fn get_agent(
     }))
 }
 
-#[utoipa::path(get, path = "/v1/tasks/{address}", params(("address" = String, Path, description = "Task Escrow address")), responses(
+#[utoipa::path(get, path = "/tasks/{address}", params(("address" = String, Path, description = "Task Escrow address")), responses(
     (status = 200, body = TaskResponse), (status = 400, body = ApiErrorResponse),
     (status = 404, body = ApiErrorResponse)
 ), security(("bearerAuth" = [])))]
@@ -183,7 +183,7 @@ pub async fn get_task(
     Ok(axum::Json(TaskResponse { ok: true, result: task }))
 }
 
-#[utoipa::path(get, path = "/v1/tasks", params(TaskListQuery), responses(
+#[utoipa::path(get, path = "/tasks", params(TaskListQuery), responses(
     (status = 200, body = TaskListResponse), (status = 400, body = ApiErrorResponse)
 ), security(("bearerAuth" = [])))]
 pub async fn list_tasks(
