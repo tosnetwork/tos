@@ -409,6 +409,9 @@ pub struct AgentTaskConfig {
     pub budget: u64,
     /// Unix deadline after which the escrow may be expired.
     pub deadline: u64,
+    /// Result review window in seconds.
+    #[serde(default)]
+    pub review_period: u32,
     /// Hex-encoded 32-byte settlement policy hash.
     pub policy_hash: String,
     /// Unix timestamp when this local record was created.
@@ -910,6 +913,7 @@ mod tests {
         assert_eq!(record.assigned_agent, None);
         assert_eq!(record.created_at, None);
         assert_eq!(record.budget, 1_000_000_000);
+        assert_eq!(record.review_period, 0);
 
         let serialized = serde_json::to_value(&config).unwrap();
         let reloaded: AppConfig = serde_json::from_value(serialized).unwrap();

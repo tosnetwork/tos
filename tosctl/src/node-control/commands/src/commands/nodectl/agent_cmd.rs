@@ -21,6 +21,7 @@ use chain_block::{
 use chain_rpc_client::v2::data_models::AccountState;
 use clap::ValueEnum;
 use colored::Colorize;
+use futures_util::{stream, StreamExt};
 use common::{
     app_config::{
         AgentRuntimeBinding, AgentTaskConfig, AgentWalletConfig, AgentWalletPolicy, KeyConfig,
@@ -128,7 +129,9 @@ pub struct AgentTaskSendCmd {
     result_hash: Option<String>,
     #[arg(long)]
     evidence_hash: Option<String>,
-    #[arg(long, help = "Payout in TOS for settle; message value uses --amount")]
+    #[arg(long, help = "Dispute metadata/evidence hash for dispute operation")]
+    dispute_hash: Option<String>,
+    #[arg(long, help = "Payout in TOS for settle or resolve; message value uses --amount")]
     payout: Option<f64>,
     #[arg(long, default_value_t = 0.01)]
     amount: f64,
@@ -152,6 +155,18 @@ pub struct AgentTaskShowCmd {
 pub struct AgentTaskLsCmd {
     #[arg(long, help = "Read current status and permission hash from each Task Escrow")]
     on_chain: bool,
+    #[arg(long, value_enum, requires = "on_chain", help = "Filter by on-chain lifecycle status")]
+    status: Option<AgentTaskStatusFilter>,
+    #[arg(long, help = "Filter by creator address")]
+    creator: Option<String>,
+    #[arg(long, conflicts_with = "unassigned", help = "Filter by assigned agent address")]
+    agent: Option<String>,
+    #[arg(long, conflicts_with = "agent", help = "Show only tasks without an assigned agent")]
+    unassigned: bool,
+    #[arg(long, help = "Show tasks with deadline strictly before this Unix timestamp")]
+    deadline_before: Option<u64>,
+    #[arg(long, help = "Show tasks with deadline strictly after this Unix timestamp")]
+    deadline_after: Option<u64>,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
 }
@@ -173,6 +188,8 @@ pub struct AgentTaskCreateCmd {
     budget: f64,
     #[arg(long)]
     deadline: u64,
+    #[arg(long, default_value_t = 86_400, help = "Result review window in seconds")]
+    review_period: u32,
     #[arg(long)]
     policy_hash: String,
     #[arg(long, help = "Funding wallet name or master_wallet")]
@@ -190,11 +207,41 @@ pub struct AgentTaskCreateCmd {
 #[derive(Clone, clap::ValueEnum)]
 enum AgentTaskOperation {
     Accept,
+    Claim,
     Reject,
     Result,
+    Dispute,
+    Resolve,
     Settle,
     Cancel,
     Timeout,
+}
+
+#[derive(Clone, clap::ValueEnum)]
+enum AgentTaskStatusFilter {
+    Open,
+    Accepted,
+    ResultSubmitted,
+    Settled,
+    Cancelled,
+    Expired,
+    Rejected,
+    Disputed,
+}
+
+impl AgentTaskStatusFilter {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Accepted => "accepted",
+            Self::ResultSubmitted => "result_submitted",
+            Self::Settled => "settled",
+            Self::Cancelled => "cancelled",
+            Self::Expired => "expired",
+            Self::Rejected => "rejected",
+            Self::Disputed => "disputed",
+        }
+    }
 }
 
 #[derive(clap::Args, Clone)]
@@ -208,7 +255,9 @@ pub struct AgentTaskEncodeCmd {
     result_hash: Option<String>,
     #[arg(long, help = "Evidence hash for result operation")]
     evidence_hash: Option<String>,
-    #[arg(long, help = "Payout in TOS for settle operation")]
+    #[arg(long, help = "Dispute metadata/evidence hash for dispute operation")]
+    dispute_hash: Option<String>,
+    #[arg(long, help = "Payout in TOS for settle or resolve operation")]
     payout: Option<f64>,
 }
 
@@ -227,6 +276,8 @@ pub struct AgentTaskBuildStateCmd {
     budget: f64,
     #[arg(long, help = "Unix deadline")]
     deadline: u64,
+    #[arg(long, default_value_t = 86_400, help = "Result review window in seconds")]
+    review_period: u32,
     #[arg(long, help = "32-byte settlement policy hash")]
     policy_hash: String,
     #[arg(short = 'w', long = "workchain", default_value = "-1")]
@@ -860,18 +911,16 @@ fn validate_controller_task_action(
     agent_account: &MsgAddressInt,
     permission_hash: [u8; 32],
 ) -> anyhow::Result<()> {
-    if task.assigned_agent.as_ref() != Some(agent_account) {
-        anyhow::bail!("Task Escrow is not assigned to the selected Agent Account");
-    }
     if task.permission_hash != permission_hash {
         anyhow::bail!("local permission ID does not match the Task Escrow on-chain hash");
     }
     let (expected_status, expected_name) = match operation {
         AgentTaskOperation::Accept => (0, "open"),
+        AgentTaskOperation::Claim => (0, "open"),
         AgentTaskOperation::Reject => (0, "open"),
         AgentTaskOperation::Result => (1, "accepted"),
         _ => anyhow::bail!(
-            "--via-agent-account supports only accept, reject and result operations"
+            "--via-agent-account supports only claim, accept, reject and result operations"
         ),
     };
     if task.status != expected_status {
@@ -881,6 +930,16 @@ fn validate_controller_task_action(
             task_status_name(task.status)
         );
     }
+    match operation {
+        AgentTaskOperation::Claim if task.assigned_agent.is_some() => {
+            anyhow::bail!("Task Escrow is already assigned and cannot be claimed")
+        }
+        AgentTaskOperation::Claim => {}
+        _ if task.assigned_agent.as_ref() != Some(agent_account) => {
+            anyhow::bail!("Task Escrow is not assigned to the selected Agent Account")
+        }
+        _ => {}
+    }
     Ok(())
 }
 
@@ -889,11 +948,20 @@ impl AgentTaskSendCmd {
         validate_tos_amount("amount", self.amount)?;
         let body = match self.operation {
             AgentTaskOperation::Accept => TaskEscrowContract::accept(self.query_id)?,
+            AgentTaskOperation::Claim => TaskEscrowContract::claim(self.query_id)?,
             AgentTaskOperation::Reject => TaskEscrowContract::reject(self.query_id)?,
             AgentTaskOperation::Result => TaskEscrowContract::result(
                 self.query_id,
                 parse_required_hash("result-hash", &self.result_hash)?,
                 parse_required_hash("evidence-hash", &self.evidence_hash)?,
+            )?,
+            AgentTaskOperation::Dispute => TaskEscrowContract::dispute(
+                self.query_id,
+                parse_required_hash("dispute-hash", &self.dispute_hash)?,
+            )?,
+            AgentTaskOperation::Resolve => TaskEscrowContract::resolve(
+                self.query_id,
+                tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
             )?,
             AgentTaskOperation::Settle => TaskEscrowContract::settle(
                 self.query_id,
@@ -998,9 +1066,12 @@ struct AgentTaskDataView {
     permission_hash: String,
     budget: String,
     deadline: u64,
+    review_period: u32,
+    review_deadline: u64,
     status: String,
     result_hash: String,
     evidence_hash: String,
+    dispute_hash: String,
     settlement_policy_hash: String,
 }
 
@@ -1026,9 +1097,12 @@ impl AgentTaskShowCmd {
             permission_hash: hex::encode(data.permission_hash),
             budget: display_tos(data.budget),
             deadline: data.deadline,
+            review_period: data.review_period,
+            review_deadline: data.review_deadline,
             status: task_status_name(data.status).to_string(),
             result_hash: hex::encode(data.result_hash),
             evidence_hash: hex::encode(data.evidence_hash),
+            dispute_hash: hex::encode(data.dispute_hash),
             settlement_policy_hash: hex::encode(data.settlement_policy_hash),
         };
         if self.format == OutputFormat::Json {
@@ -1041,6 +1115,8 @@ impl AgentTaskShowCmd {
             println!("Permission ID: {}", view.permission_id.as_deref().unwrap_or("none"));
             println!("Budget: {} TOS", view.budget);
             println!("Deadline: {}", view.deadline);
+            println!("Review period: {}s", view.review_period);
+            println!("Review deadline: {}", view.review_deadline);
             println!("Status: {}", view.status);
         }
         Ok(())
@@ -1071,6 +1147,7 @@ impl AgentTaskCreateCmd {
             verifier,
             budget: tos_to_nanotos(self.budget),
             deadline: self.deadline,
+            review_period: self.review_period,
             settlement_policy_hash: policy_hash,
             permission_hash: permission_id_hash(self.permission_id.as_deref()),
         };
@@ -1145,6 +1222,7 @@ impl AgentTaskCreateCmd {
                 permission_id: self.permission_id.clone(),
                 budget: init.budget,
                 deadline: init.deadline,
+                review_period: init.review_period,
                 policy_hash: hex::encode(policy_hash),
                 created_at: Some(time_format::now()),
             },
@@ -1183,10 +1261,13 @@ struct AgentTaskRecordView {
     permission_id: Option<String>,
     budget: String,
     deadline: u64,
+    review_period: u32,
     policy_hash: String,
     created_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     chain_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain_assigned_agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     chain_permission_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1196,9 +1277,32 @@ struct AgentTaskRecordView {
 impl AgentTaskLsCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
+        let creator_filter = self
+            .creator
+            .as_deref()
+            .map(MsgAddressInt::from_str)
+            .transpose()
+            .context("creator filter must be a valid native address")?;
+        let agent_filter = self
+            .agent
+            .as_deref()
+            .map(MsgAddressInt::from_str)
+            .transpose()
+            .context("agent filter must be a valid native address")?;
+        if matches!((self.deadline_after, self.deadline_before), (Some(after), Some(before)) if after >= before)
+        {
+            anyhow::bail!("deadline-after must be less than deadline-before");
+        }
         let mut records: Vec<AgentTaskRecordView> = config
             .agent_tasks
             .iter()
+            .filter(|(_, task)| {
+                creator_filter.as_ref().is_none_or(|creator| {
+                    task.creator.parse::<MsgAddressInt>().ok().as_ref() == Some(creator)
+                })
+            })
+            .filter(|(_, task)| self.deadline_before.is_none_or(|value| task.deadline < value))
+            .filter(|(_, task)| self.deadline_after.is_none_or(|value| task.deadline > value))
             .map(|(name, task)| AgentTaskRecordView {
                 name: name.clone(),
                 address: task.address.clone(),
@@ -1208,9 +1312,11 @@ impl AgentTaskLsCmd {
                 permission_id: task.permission_id.clone(),
                 budget: display_tos(task.budget),
                 deadline: task.deadline,
+                review_period: task.review_period,
                 policy_hash: task.policy_hash.clone(),
                 created_at: task.created_at,
                 chain_status: None,
+                chain_assigned_agent: None,
                 chain_permission_hash: None,
                 chain_error: None,
             })
@@ -1219,27 +1325,62 @@ impl AgentTaskLsCmd {
         if self.on_chain {
             let rpc_client = try_create_rpc_client(&config).await?;
             let provider = contracts::contract_provider!(rpc_client);
-            for record in &mut records {
-                let result = async {
-                    let address = record
-                        .address
-                        .parse::<MsgAddressInt>()
-                        .context("invalid persisted Task Escrow address")?;
-                    let stack = provider
-                        .get_method(address.to_string(), "get_task_data", vec![])
-                        .await?;
-                    TaskEscrowContract::decode_data(&stack)
+            let queries = records
+                .iter()
+                .enumerate()
+                .map(|(index, record)| (index, record.address.clone()))
+                .collect::<Vec<_>>();
+            let results = stream::iter(queries.into_iter().map(|(index, raw_address)| {
+                let provider = provider.clone();
+                async move {
+                    let result = async {
+                        let address = raw_address
+                            .parse::<MsgAddressInt>()
+                            .context("invalid persisted Task Escrow address")?;
+                        let stack = provider
+                            .get_method(address.to_string(), "get_task_data", vec![])
+                            .await?;
+                        TaskEscrowContract::decode_data(&stack)
+                    }
+                    .await;
+                    (index, result)
                 }
-                .await;
+            }))
+            .buffer_unordered(8)
+            .collect::<Vec<_>>()
+            .await;
+            for (index, result) in results {
+                let record = &mut records[index];
                 match result {
                     Ok(data) => {
                         record.chain_status = Some(task_status_name(data.status).to_string());
+                        record.chain_assigned_agent =
+                            data.assigned_agent.map(|address| address.to_string());
                         record.chain_permission_hash = Some(hex::encode(data.permission_hash));
                     }
                     Err(error) => record.chain_error = Some(format!("{error:#}")),
                 }
             }
         }
+        records.retain(|record| {
+            self.status.as_ref().is_none_or(|status| {
+                record.chain_status.as_deref() == Some(status.as_str())
+            })
+        });
+        records.retain(|record| {
+            let assigned = if self.on_chain {
+                record.chain_assigned_agent.as_deref()
+            } else {
+                record.assigned_agent.as_deref()
+            };
+            if self.unassigned {
+                return assigned.is_none() && (!self.on_chain || record.chain_status.is_some());
+            }
+            agent_filter.as_ref().is_none_or(|agent| {
+                assigned.and_then(|value| value.parse::<MsgAddressInt>().ok()).as_ref()
+                    == Some(agent)
+            })
+        });
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::to_string_pretty(&records)?);
             return Ok(());
@@ -1260,8 +1401,12 @@ impl AgentTaskLsCmd {
                 record.budget,
                 record.deadline,
             );
+            println!("  Review:     {}s", record.review_period);
             if let Some(status) = &record.chain_status {
                 println!("  Chain status: {}", status);
+            }
+            if let Some(agent) = &record.chain_assigned_agent {
+                println!("  Chain agent:  {}", agent);
             }
             if let Some(error) = &record.chain_error {
                 println!("  Chain error:  {}", error);
@@ -1275,12 +1420,21 @@ impl AgentTaskEncodeCmd {
     fn run(&self) -> anyhow::Result<()> {
         let body = match self.operation {
             AgentTaskOperation::Accept => TaskEscrowContract::accept(self.query_id)?,
+            AgentTaskOperation::Claim => TaskEscrowContract::claim(self.query_id)?,
             AgentTaskOperation::Reject => TaskEscrowContract::reject(self.query_id)?,
             AgentTaskOperation::Result => {
                 let result_hash = parse_required_hash("result-hash", &self.result_hash)?;
                 let evidence_hash = parse_required_hash("evidence-hash", &self.evidence_hash)?;
                 TaskEscrowContract::result(self.query_id, result_hash, evidence_hash)?
             }
+            AgentTaskOperation::Dispute => TaskEscrowContract::dispute(
+                self.query_id,
+                parse_required_hash("dispute-hash", &self.dispute_hash)?,
+            )?,
+            AgentTaskOperation::Resolve => TaskEscrowContract::resolve(
+                self.query_id,
+                tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
+            )?,
             AgentTaskOperation::Settle => TaskEscrowContract::settle(
                 self.query_id,
                 tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
@@ -1302,6 +1456,7 @@ struct AgentTaskStateView {
     permission_hash: String,
     budget: String,
     deadline: u64,
+    review_period: u32,
     workchain: i32,
     address: String,
     policy_hash: String,
@@ -1338,6 +1493,7 @@ impl AgentTaskBuildStateCmd {
             verifier: verifier.clone(),
             budget: tos_to_nanotos(self.budget),
             deadline: self.deadline,
+            review_period: self.review_period,
             settlement_policy_hash: policy_hash,
             permission_hash,
         };
@@ -1354,6 +1510,7 @@ impl AgentTaskBuildStateCmd {
             permission_hash: hex::encode(permission_hash),
             budget: display_tos(init.budget),
             deadline: init.deadline,
+            review_period: init.review_period,
             workchain: self.workchain,
             address: address.to_string(),
             policy_hash: hex::encode(policy_hash),
@@ -2781,6 +2938,7 @@ fn task_status_name(status: u8) -> &'static str {
         4 => "cancelled",
         5 => "expired",
         6 => "rejected",
+        7 => "disputed",
         _ => "unknown",
     }
 }
@@ -2928,11 +3086,14 @@ mod tests {
             verifier: None,
             budget: 1_000_000_000,
             deadline: u64::MAX,
+            review_period: 3_600,
+            review_deadline: 0,
             status,
             result_hash: [0; 32],
             evidence_hash: [0; 32],
             settlement_policy_hash: [3; 32],
             permission_hash: permission_id_hash(Some("bounded-task")),
+            dispute_hash: [0; 32],
         }
     }
 
@@ -2958,6 +3119,15 @@ mod tests {
         validate_controller_task_action(
             &AgentTaskOperation::Reject,
             &controller_task(0),
+            &address(2),
+            permission_hash,
+        )
+        .unwrap();
+        let mut open_task = controller_task(0);
+        open_task.assigned_agent = None;
+        validate_controller_task_action(
+            &AgentTaskOperation::Claim,
+            &open_task,
             &address(2),
             permission_hash,
         )
@@ -2996,5 +3166,14 @@ mod tests {
         )
         .unwrap_err();
         assert!(wrong_status.to_string().contains("must be accepted"));
+
+        let assigned_claim = validate_controller_task_action(
+            &AgentTaskOperation::Claim,
+            &controller_task(0),
+            &address(2),
+            permission_hash,
+        )
+        .unwrap_err();
+        assert!(assigned_claim.to_string().contains("already assigned"));
     }
 }

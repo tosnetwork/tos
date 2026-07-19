@@ -166,6 +166,7 @@ fn controller_action_accepts_assigned_task_escrow() {
         verifier: None,
         budget: 2 * TOS,
         deadline: u64::from(fixture.bc.now()) + 3_600,
+        review_period: 600,
         settlement_policy_hash: [0x11; 32],
         permission_hash: [0x22; 32],
     };

@@ -17,7 +17,7 @@ The MVP also includes the native Task Escrow actor foundation:
 
 Task Escrow stores the creator, optional assigned Agent, budget, deadline, lifecycle status,
 result hash, evidence hash and settlement policy hash. Its message surface covers accept,
-result submission, settlement, cancellation and deterministic timeout. The Rust wrapper
+atomic open-task claim, result submission, settlement, cancellation and deterministic timeout. The Rust wrapper
 provides deterministic StateInit/address construction, message encoding and TVM stack
 decoding, and `tosctl agent task` covers deployment, lifecycle messages, on-chain
 inspection and local task records.
@@ -177,7 +177,7 @@ tosctl agent account task-send \
 
 The command reads the deployed sequence number, verifies that the configured controller key matches the contract, enforces the local per-action precheck, signs the payload and broadcasts an external message. The contract independently enforces signature validity, expiry, replay protection, per-action limits and UTC-day cumulative limits.
 
-For a Task Escrow whose assigned agent is the deployed Agent Account address, the task CLI can route `accept` and `result` through the controller directly:
+The task CLI can route `claim`, `accept`, `reject` and `result` through an Agent Account controller. For `accept`, `reject` and `result`, the deployed Agent Account must already be the assigned agent:
 
 ```bash
 tosctl agent task send \
@@ -188,8 +188,20 @@ tosctl agent task send \
   --yes
 ```
 
+An Agent Account can atomically claim an unassigned open task. Claim records the caller as
+the assigned agent and moves the task directly to `accepted`, so competing claims fail:
+
+```bash
+tosctl agent task send \
+  --operation claim \
+  --name open-research-task \
+  --via-agent-account research-agent \
+  --amount 0.01 \
+  --yes
+```
+
 An assigned Agent Account can also reject an open task through the same controller path. Rejection is terminal and refunds the escrow to the creator. Settlement, cancellation and timeout retain their creator, verifier or public lifecycle authorities and cannot use `--via-agent-account`.
-Before signing, this task-oriented path reads the Task Escrow state and verifies that the selected Agent Account is the assigned agent, the locally tracked permission ID matches the on-chain permission hash, and the lifecycle state accepts the requested action. These checks prevent predictable misdirected actions; the Task Escrow contract remains the final authorization boundary.
+Before signing, this task-oriented path reads the Task Escrow state, verifies the locally tracked permission ID against the on-chain permission hash, and checks the required lifecycle state. It also verifies assignment for assigned-agent actions or verifies that a claim target is still unassigned. These checks prevent predictable misdirected actions; the Task Escrow contract remains the final authorization boundary.
 
 Export only the policy:
 
@@ -303,6 +315,7 @@ tosctl agent task create \
   --agent "0:<agent-account-id>" \
   --budget 5 \
   --deadline 1790000000 \
+  --review-period 86400 \
   --policy-hash <64-hex-settlement-policy-hash> \
   --from creator-wallet \
   --amount 5.2 \
@@ -320,12 +333,25 @@ tosctl agent task show --name research-task --format json
 
 The default list reads only local records. `--on-chain` enriches every record with its
 current lifecycle status and permission hash; a failed lookup is reported on that record
-without hiding the remaining tasks.
+without hiding the remaining tasks. Chain reads use bounded concurrency and preserve
+deterministic name ordering, so discovery scales without issuing an unbounded RPC burst.
+
+Task discovery can be narrowed by creator, assigned agent, assignment state, deadline or
+on-chain lifecycle status. Agent filtering with `--on-chain` uses the current contract
+assignment, so it includes tasks acquired through `claim`:
+
+```bash
+tosctl agent task ls --creator <creator-address> --format json
+tosctl agent task ls --on-chain --status result-submitted --format json
+tosctl agent task ls --on-chain --agent <agent-account-address> --format json
+tosctl agent task ls --on-chain --unassigned --deadline-before 1790000000 --format json
+```
 
 Drive the lifecycle (the escrow enforces sender authorization and status order on-chain):
 
 ```bash
 tosctl agent task send --operation accept --name research-task --from agent-wallet --yes
+tosctl agent task send --operation claim --name open-research-task --from agent-wallet --yes
 tosctl agent task send --operation reject --name research-task --from agent-wallet --yes
 tosctl agent task send --operation result --name research-task --from agent-wallet \
   --result-hash <64-hex> --evidence-hash <64-hex> --yes
@@ -333,9 +359,25 @@ tosctl agent task send --operation settle --name research-task --from creator-wa
   --payout 3 --yes
 ```
 
-`reject` (assigned agent, open tasks only), `cancel` (creator, open tasks only) and
-`timeout` (anyone, after the deadline) refund the escrow balance to the creator.
+Result submission starts the configured review period. Settlement must occur before its
+review deadline. `reject` (assigned agent, open tasks only), `cancel` (creator, open tasks
+only) and `timeout` refund the escrow balance to the creator. Timeout uses the task deadline
+while work is open or accepted, and the review deadline after a result has been submitted.
 `build-state` and `encode` remain available for offline StateInit and message construction.
+
+When a task has a designated verifier, the creator may dispute a submitted result during
+the review window. The dispute hash should identify the off-chain reason or evidence bundle.
+Only the verifier can resolve the frozen dispute and choose the agent payout:
+
+```bash
+tosctl agent task send --operation dispute --name research-task --from creator-wallet \
+  --dispute-hash <64-hex> --yes
+tosctl agent task send --operation resolve --name research-task --from verifier-wallet \
+  --payout 2.5 --yes
+```
+
+While disputed, ordinary settlement and timeout are disabled. Resolution pays the selected
+amount to the assigned agent and returns the remaining escrow balance to the creator.
 
 ## Config Shape
 

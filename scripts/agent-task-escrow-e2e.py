@@ -19,6 +19,12 @@ provisions a file vault plus a tosctl config, creates and funds two wallets
   CONTROL  deploy an Agent Account -> create an assigned task -> controller-
            signed accept -> controller-signed result -> creator settlement.
 
+  CLAIM    create an unassigned task -> controller-signed atomic claim ->
+           assigned Agent Account recorded -> result -> settlement.
+
+  DISPUTE create with verifier -> result -> creator dispute -> unauthorized
+           resolution rejected -> verifier resolution.
+
   REJECT   create an Agent Account-assigned task -> controller-signed reject;
            refund returns to the creator and the escrow is drained.
 
@@ -31,7 +37,8 @@ provisions a file vault plus a tosctl config, creates and funds two wallets
 
   RECORDS  `agent task create` persists a record in the tosctl config;
            `agent task ls` lists it and every show/send above resolves the
-           escrow through `--name` (exercising the persisted record).
+           escrow through `--name`; on-chain discovery filters cover status,
+           creator, dynamic assigned agent and unassigned tasks.
 
 Exit code 0 iff every check passes.
 
@@ -64,7 +71,9 @@ MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000001"
 POLICY_HASH = "11" * 32
 RESULT_HASH = "aa" * 32
 EVIDENCE_HASH = "bb" * 32
+DISPUTE_HASH = "cc" * 32
 PERMISSION_ID = "e2e-agent:bounded-task:1"
+REVIEW_PERIOD = 120
 NANO = 1_000_000_000
 
 failures: list[str] = []
@@ -218,14 +227,17 @@ async def wallet_address(name: str) -> str:
 
 
 async def create_task(name: str, creator: str, agent: str | None, budget: float,
-                      deadline: int, amount: float) -> str:
+                      deadline: int, amount: float, verifier: str | None = None) -> str:
     args = ["agent", "task", "create", "--name", name, "--creator", creator,
             "--budget", str(budget), "--deadline", str(deadline),
+            "--review-period", str(REVIEW_PERIOD),
             "--policy-hash", POLICY_HASH, "--from", "creator",
             "--permission-id", PERMISSION_ID,
             "--amount", str(amount), "-w", "0", "--yes"]
     if agent is not None:
         args += ["--agent", agent]
+    if verifier is not None:
+        args += ["--verifier", verifier]
     out = json.loads(await tosctl(*args, "--format", "json"))
     return out["address"]
 
@@ -250,9 +262,11 @@ async def run_checks(faucet) -> None:
     print(f"  json-rpc ready at http://{RPC}/jsonRPC")
     await tosctl("wallet", "create", "-n", "creator", "-v", "V3R2", "-w", "0")
     await tosctl("wallet", "create", "-n", "agent", "-v", "V3R2", "-w", "0")
+    await tosctl("wallet", "create", "-n", "verifier", "-v", "V3R2", "-w", "0")
     creator = await wallet_address("creator")
     agent = await wallet_address("agent")
-    print(f"  creator: {creator}\n  agent:   {agent}")
+    verifier = await wallet_address("verifier")
+    print(f"  creator:  {creator}\n  agent:    {agent}\n  verifier: {verifier}")
 
     # Fund sequentially: two in-flight external messages from the faucet share
     # a seqno, so the second would replace the first.
@@ -260,9 +274,12 @@ async def run_checks(faucet) -> None:
     check("creator funded", await wait_balance_at_least(creator, 49 * NANO))
     await faucet.send(faucet_transfer(faucet, agent, 50))
     check("agent funded", await wait_balance_at_least(agent, 49 * NANO))
+    await faucet.send(faucet_transfer(faucet, verifier, 50))
+    check("verifier funded", await wait_balance_at_least(verifier, 49 * NANO))
     await tosctl("wallet", "activate", "-n", "creator")
     await tosctl("wallet", "activate", "-n", "agent")
-    for label, addr in (("creator", creator), ("agent", agent)):
+    await tosctl("wallet", "activate", "-n", "verifier")
+    for label, addr in (("creator", creator), ("agent", agent), ("verifier", verifier)):
         active = await poll_predicate(
             lambda a=addr: rpc_call("getAddressState", address=a).get("result") == "active")
         check(f"{label} wallet active", bool(active))
@@ -315,6 +332,10 @@ async def run_checks(faucet) -> None:
     data = await task_show("e2e-main")
     check("result hash recorded", data["result_hash"] == RESULT_HASH, str(data))
     check("evidence hash recorded", data["evidence_hash"] == EVIDENCE_HASH)
+    check("review period recorded", data["review_period"] == REVIEW_PERIOD, str(data))
+    check("review deadline started",
+          int(time.time()) + REVIEW_PERIOD - 30 <= data["review_deadline"] <=
+          int(time.time()) + REVIEW_PERIOD + 30, str(data))
 
     await send_op("settle", "e2e-main", "agent", "--payout", "3")
     await assert_status_stays("e2e-main", "result_submitted", "settle by agent rejected")
@@ -359,6 +380,56 @@ async def run_checks(faucet) -> None:
     await send_op("settle", "e2e-controller", "creator", "--payout", "1")
     check("controller task settled",
           await wait_status("e2e-controller", "settled") == "settled")
+
+    # ---------------- OPEN CLAIM PATH ----------------
+    print("\n=== claim path: open Task Escrow -> Agent Account ===")
+    claim_deadline = controller_deadline + 2
+    await create_task("e2e-claim", creator, None, 1.5, claim_deadline, 1.7)
+    check("claim task open", await wait_status("e2e-claim", "open") == "open")
+    await tosctl(
+        "agent", "task", "send", "--operation", "claim", "--name", "e2e-claim",
+        "--via-agent-account", "runtime-agent", "--amount", "0.1", "--yes",
+    )
+    check("controller claimed open task",
+          await wait_status("e2e-claim", "accepted") == "accepted")
+    claim_data = await task_show("e2e-claim")
+    check("claim records Agent Account on-chain",
+          same_addr(claim_data.get("assigned_agent"), agent_account), str(claim_data))
+    await tosctl(
+        "agent", "task", "send", "--operation", "result", "--name", "e2e-claim",
+        "--via-agent-account", "runtime-agent", "--amount", "0.1",
+        "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH, "--yes",
+    )
+    check("claim winner submitted result",
+          await wait_status("e2e-claim", "result_submitted") == "result_submitted")
+    await send_op("settle", "e2e-claim", "creator", "--payout", "0.5")
+    check("claimed task settled", await wait_status("e2e-claim", "settled") == "settled")
+
+    # ---------------- DISPUTE PATH ----------------
+    print("\n=== dispute path: creator -> verifier resolution ===")
+    dispute_deadline = controller_deadline + 3
+    await create_task(
+        "e2e-dispute", creator, agent, 2.5, dispute_deadline, 2.7, verifier)
+    check("dispute task open", await wait_status("e2e-dispute", "open") == "open")
+    await send_op("accept", "e2e-dispute", "agent")
+    check("dispute task accepted",
+          await wait_status("e2e-dispute", "accepted") == "accepted")
+    await send_op("result", "e2e-dispute", "agent",
+                  "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH)
+    check("dispute result submitted",
+          await wait_status("e2e-dispute", "result_submitted") == "result_submitted")
+    await send_op("dispute", "e2e-dispute", "creator", "--dispute-hash", DISPUTE_HASH)
+    check("creator opened dispute",
+          await wait_status("e2e-dispute", "disputed") == "disputed")
+    dispute_data = await task_show("e2e-dispute")
+    check("dispute hash recorded", dispute_data.get("dispute_hash") == DISPUTE_HASH,
+          str(dispute_data))
+    await send_op("resolve", "e2e-dispute", "agent", "--payout", "1.5")
+    await assert_status_stays(
+        "e2e-dispute", "disputed", "resolve by non-verifier rejected")
+    await send_op("resolve", "e2e-dispute", "verifier", "--payout", "1.5")
+    check("verifier resolved dispute",
+          await wait_status("e2e-dispute", "settled") == "settled")
 
     # ---------------- REJECT PATH ----------------
     print("\n=== reject path: Agent Account -> Task Escrow ===")
@@ -424,8 +495,9 @@ async def run_checks(faucet) -> None:
     print("\n=== persisted task records ===")
     records = {r["name"]: r for r in await tosctl_json("agent", "task", "ls")}
     expected_records = {
-        "e2e-main", "e2e-controller", "e2e-reject", "e2e-cancel", "e2e-timeout"}
-    check("five records tracked", set(records) == expected_records,
+        "e2e-main", "e2e-controller", "e2e-claim", "e2e-reject", "e2e-cancel",
+        "e2e-dispute", "e2e-timeout"}
+    check("seven records tracked", set(records) == expected_records,
           str(sorted(records)))
     main_rec = records.get("e2e-main", {})
     check("record creator", same_addr(main_rec.get("creator"), creator))
@@ -433,6 +505,7 @@ async def run_checks(faucet) -> None:
     check("record policy hash", main_rec.get("policy_hash") == POLICY_HASH)
     check("record permission linkage", main_rec.get("permission_id") == PERMISSION_ID)
     check("record deadline", main_rec.get("deadline") == deadline)
+    check("record review period", main_rec.get("review_period") == REVIEW_PERIOD)
     check("record created_at set", bool(main_rec.get("created_at")))
     saved = json.loads(CONFIG.read_text())
     check("records persisted in config file",
@@ -450,6 +523,8 @@ async def run_checks(faucet) -> None:
     } == {
         "e2e-main": "settled",
         "e2e-controller": "settled",
+        "e2e-claim": "settled",
+        "e2e-dispute": "settled",
         "e2e-reject": "rejected",
         "e2e-cancel": "cancelled",
         "e2e-timeout": "expired",
@@ -458,6 +533,26 @@ async def run_checks(faucet) -> None:
           all(record.get("chain_permission_hash") ==
               hashlib.sha256(PERMISSION_ID.encode()).hexdigest()
               for record in chain_records.values()), str(chain_records))
+
+    settled_records = await tosctl_json(
+        "agent", "task", "ls", "--on-chain", "--status", "settled")
+    check("status filter returns settled tasks",
+          {record["name"] for record in settled_records} == {
+              "e2e-main", "e2e-controller", "e2e-claim", "e2e-dispute"},
+          str(settled_records))
+    account_records = await tosctl_json(
+        "agent", "task", "ls", "--on-chain", "--agent", agent_account)
+    check("agent filter uses dynamic on-chain assignment",
+          {record["name"] for record in account_records} == {
+              "e2e-controller", "e2e-claim", "e2e-reject"}, str(account_records))
+    unassigned_records = await tosctl_json(
+        "agent", "task", "ls", "--on-chain", "--unassigned")
+    check("unassigned filter observes claimed task", not unassigned_records,
+          str(unassigned_records))
+    creator_records = await tosctl_json(
+        "agent", "task", "ls", "--creator", creator)
+    check("creator filter returns all owned tasks", len(creator_records) == 7,
+          str(creator_records))
 
 
 async def main() -> int:

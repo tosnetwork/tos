@@ -23,6 +23,7 @@ const STATUS_SETTLED: i128 = 3;
 const STATUS_CANCELLED: i128 = 4;
 const STATUS_EXPIRED: i128 = 5;
 const STATUS_REJECTED: i128 = 6;
+const STATUS_DISPUTED: i128 = 7;
 
 struct Fixture {
     bc: Blockchain,
@@ -36,6 +37,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(budget: u64, funding: u64) -> Self {
+        Self::with_assignment(budget, funding, true)
+    }
+
+    fn open(budget: u64, funding: u64) -> Self {
+        Self::with_assignment(budget, funding, false)
+    }
+
+    fn with_assignment(budget: u64, funding: u64, assigned: bool) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         // The sandbox config has no basechain workchain descriptor, so run
         // everything in the masterchain where outbound sends are permitted.
@@ -47,10 +56,11 @@ impl Fixture {
         let deadline = u64::from(bc.now()) + 3_600;
         let init = TaskEscrowInit {
             creator: creator.address().clone(),
-            assigned_agent: Some(agent.address().clone()),
+            assigned_agent: assigned.then(|| agent.address().clone()),
             verifier: Some(verifier.address().clone()),
             budget,
             deadline,
+            review_period: 600,
             settlement_policy_hash: [0x11; 32],
             permission_hash: [0x22; 32],
         };
@@ -80,12 +90,47 @@ impl Fixture {
             .int_at(7)
     }
 
+    fn review_deadline(&self) -> u64 {
+        self.bc
+            .run_get_method(&self.escrow, "get_task_data", vec![])
+            .expect("get_task_data")
+            .expect_success()
+            .int_at(13) as u64
+    }
+
     fn balance(&self, addr: &MsgAddressInt) -> u64 {
         self.bc
             .get_account(addr)
             .and_then(|acc| acc.balance().and_then(|cc| cc.coins.as_u64()))
             .unwrap_or(0)
     }
+}
+
+#[test]
+fn open_task_claim_atomically_assigns_first_agent() {
+    let mut f = Fixture::open(2 * TOS, 2 * TOS + TOS / 10);
+    let agent_addr = f.agent.address().clone();
+
+    // Open tasks cannot bypass the explicit claim transition.
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap())
+        .expect_aborted()
+        .expect_exit_code(101);
+    assert_eq!(f.status(), STATUS_OPEN);
+
+    let outsider_addr = f.outsider.address().clone();
+    f.send_from(&outsider_addr, TaskEscrowContract::claim(2).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_ACCEPTED);
+
+    // The accepted state prevents a competing claim, and only the winner can submit a result.
+    f.send_from(&agent_addr, TaskEscrowContract::claim(3).unwrap())
+        .expect_aborted()
+        .expect_exit_code(115);
+    f.send_from(&agent_addr, TaskEscrowContract::result(4, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(103);
+    f.send_from(&outsider_addr, TaskEscrowContract::result(5, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
 }
 
 #[test]
@@ -177,6 +222,79 @@ fn timeout_after_deadline_expires_and_refunds() {
     f.send_from(&outsider_addr, TaskEscrowContract::timeout(3).unwrap()).expect_success();
     assert_eq!(f.status(), STATUS_EXPIRED);
     assert!(f.balance(&creator_addr) > creator_before + 2 * TOS - TOS / 10);
+}
+
+#[test]
+fn submitted_result_uses_review_deadline_for_settlement_and_timeout() {
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 10);
+    let agent_addr = f.agent.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    let review_deadline = f.review_deadline();
+    assert_eq!(review_deadline, u64::from(f.bc.now()) + 600);
+
+    let outsider_addr = f.outsider.address().clone();
+    f.send_from(&outsider_addr, TaskEscrowContract::timeout(3).unwrap())
+        .expect_aborted()
+        .expect_exit_code(109);
+
+    f.bc.set_now((review_deadline + 1) as u32);
+    let creator_addr = f.creator.address().clone();
+    f.send_from(&creator_addr, TaskEscrowContract::settle(4, TOS).unwrap())
+        .expect_aborted()
+        .expect_exit_code(118);
+    f.send_from(&outsider_addr, TaskEscrowContract::timeout(5).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_EXPIRED);
+}
+
+#[test]
+fn creator_disputes_and_verifier_resolves() {
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    let agent_addr = f.agent.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+
+    let outsider_addr = f.outsider.address().clone();
+    f.send_from(&outsider_addr, TaskEscrowContract::dispute(3, [0xCC; 32]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(120);
+    let creator_addr = f.creator.address().clone();
+    f.send_from(&creator_addr, TaskEscrowContract::dispute(4, [0xCC; 32]).unwrap())
+        .expect_success();
+    assert_eq!(f.status(), STATUS_DISPUTED);
+
+    f.send_from(&creator_addr, TaskEscrowContract::settle(5, TOS).unwrap())
+        .expect_aborted()
+        .expect_exit_code(104);
+    f.send_from(&outsider_addr, TaskEscrowContract::timeout(6).unwrap())
+        .expect_aborted()
+        .expect_exit_code(110);
+    f.send_from(&outsider_addr, TaskEscrowContract::resolve(7, TOS).unwrap())
+        .expect_aborted()
+        .expect_exit_code(124);
+
+    let verifier_addr = f.verifier.address().clone();
+    f.send_from(&verifier_addr, TaskEscrowContract::resolve(8, 3 * TOS).unwrap())
+        .expect_aborted()
+        .expect_exit_code(125);
+    f.send_from(&verifier_addr, TaskEscrowContract::resolve(9, TOS).unwrap())
+        .expect_success();
+    assert_eq!(f.status(), STATUS_SETTLED);
+    assert!(f.balance(&f.escrow.clone()) < TOS / 100, "escrow must be drained");
+}
+
+#[test]
+fn result_submission_after_task_deadline_is_rejected() {
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 10);
+    let agent_addr = f.agent.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.bc.set_now((f.deadline + 1) as u32);
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(117);
+    assert_eq!(f.status(), STATUS_ACCEPTED);
 }
 
 #[test]

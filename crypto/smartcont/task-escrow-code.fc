@@ -9,6 +9,9 @@ const int op::settle = 0x54415303;
 const int op::cancel = 0x54415304;
 const int op::timeout = 0x54415305;
 const int op::reject = 0x54415306;
+const int op::claim = 0x54415307;
+const int op::dispute = 0x54415308;
+const int op::resolve = 0x54415309;
 
 const int status::open = 0;
 const int status::accepted = 1;
@@ -17,6 +20,7 @@ const int status::settled = 3;
 const int status::cancelled = 4;
 const int status::expired = 5;
 const int status::rejected = 6;
+const int status::disputed = 7;
 
 ;; mode 1: send exactly `amount`, fees paid from the contract balance.
 ;; mode 128: `amount` is ignored and the whole remaining balance is carried.
@@ -31,7 +35,8 @@ const int status::rejected = 6;
 
 () save_state(slice creator, slice agent, int has_agent, slice verifier, int has_verifier,
              int budget, int deadline, int status, int result_hash, int evidence_hash,
-             int policy_hash, int permission_hash) impure inline {
+             int policy_hash, int review_period, int review_deadline,
+             int permission_hash, int dispute_hash) impure inline {
   set_data(begin_cell()
     .store_slice(creator)
     .store_uint(has_agent, 1)
@@ -45,7 +50,12 @@ const int status::rejected = 6;
       .store_uint(result_hash, 256)
       .store_uint(evidence_hash, 256)
       .store_uint(policy_hash, 256)
-      .store_ref(begin_cell().store_uint(permission_hash, 256).end_cell())
+      .store_uint(review_period, 32)
+      .store_uint(review_deadline, 64)
+      .store_ref(begin_cell()
+        .store_uint(permission_hash, 256)
+        .store_uint(dispute_hash, 256)
+      .end_cell())
     .end_cell())
   .end_cell());
 }
@@ -67,29 +77,44 @@ const int status::rejected = 6;
   var result_hash = hashes~load_uint(256);
   var evidence_hash = hashes~load_uint(256);
   var policy_hash = hashes~load_uint(256);
+  var review_period = hashes~load_uint(32);
+  var review_deadline = hashes~load_uint(64);
   var permission_slice = hashes~load_ref().begin_parse();
   var permission_hash = permission_slice~load_uint(256);
+  var dispute_hash = permission_slice~load_uint(256);
   ds.end_parse();
   var full_msg = in_msg_full.begin_parse();
   full_msg~skip_bits(4);
   var sender = full_msg~load_msg_addr();
 
-  if (op == op::accept) {
-    throw_unless(100, status == status::open);
-    throw_unless(101, (has_agent == 0) | equal_slice_bits(sender, agent));
+  if (op == op::claim) {
+    throw_unless(115, status == status::open);
+    throw_unless(116, has_agent == 0);
     agent = sender;
     has_agent = 1;
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
-      status::accepted, result_hash, evidence_hash, policy_hash, permission_hash);
+      status::accepted, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash);
+    return ();
+  }
+  if (op == op::accept) {
+    throw_unless(100, status == status::open);
+    throw_unless(101, has_agent & equal_slice_bits(sender, agent));
+    save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
+      status::accepted, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash);
     return ();
   }
   if (op == op::result) {
     throw_unless(102, status == status::accepted);
     throw_unless(103, has_agent & equal_slice_bits(sender, agent));
+    throw_unless(117, now() <= deadline);
     result_hash = in_msg~load_uint(256);
     evidence_hash = in_msg~load_uint(256);
+    review_deadline = now() + review_period;
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
-      status::result_submitted, result_hash, evidence_hash, policy_hash, permission_hash);
+      status::result_submitted, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash);
     return ();
   }
   if (op == op::settle) {
@@ -97,6 +122,7 @@ const int status::rejected = 6;
     ;; Settlement authority: the creator, or the designated verifier when set.
     throw_unless(105, equal_slice_bits(sender, creator) |
       (has_verifier & equal_slice_bits(sender, verifier)));
+    throw_unless(118, now() <= review_deadline);
     var payout = in_msg~load_tomis();
     throw_unless(106, payout <= budget);
     throw_unless(112, payout <= get_balance().pair_first());
@@ -105,7 +131,8 @@ const int status::rejected = 6;
     }
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
-      status::settled, result_hash, evidence_hash, policy_hash, permission_hash);
+      status::settled, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash);
     return ();
   }
   if (op == op::cancel) {
@@ -113,7 +140,8 @@ const int status::rejected = 6;
     throw_unless(108, equal_slice_bits(sender, creator));
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
-      status::cancelled, result_hash, evidence_hash, policy_hash, permission_hash);
+      status::cancelled, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash);
     return ();
   }
   if (op == op::reject) {
@@ -121,22 +149,54 @@ const int status::rejected = 6;
     throw_unless(114, has_agent & equal_slice_bits(sender, agent));
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
-      status::rejected, result_hash, evidence_hash, policy_hash, permission_hash);
+      status::rejected, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash);
     return ();
   }
   if (op == op::timeout) {
-    throw_unless(109, deadline <= now());
     throw_unless(110, (status == status::open) | (status == status::accepted) |
       (status == status::result_submitted));
+    if (status == status::result_submitted) {
+      throw_unless(109, review_deadline <= now());
+    } else {
+      throw_unless(109, deadline <= now());
+    }
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
-      status::expired, result_hash, evidence_hash, policy_hash, permission_hash);
+      status::expired, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash);
+    return ();
+  }
+  if (op == op::dispute) {
+    throw_unless(119, status == status::result_submitted);
+    throw_unless(120, equal_slice_bits(sender, creator));
+    throw_unless(121, has_verifier);
+    throw_unless(122, now() <= review_deadline);
+    dispute_hash = in_msg~load_uint(256);
+    save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
+      status::disputed, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash);
+    return ();
+  }
+  if (op == op::resolve) {
+    throw_unless(123, status == status::disputed);
+    throw_unless(124, has_verifier & equal_slice_bits(sender, verifier));
+    var payout = in_msg~load_tomis();
+    throw_unless(125, payout <= budget);
+    throw_unless(126, payout <= get_balance().pair_first());
+    if (payout > 0) {
+      send_value(agent, payout, 1);
+    }
+    send_value(creator, 0, 128);
+    save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
+      status::settled, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash);
     return ();
   }
   throw(111);
 }
 
-(slice, slice, int, slice, int, int, int, int, int, int, int, int) get_task_data() method_id {
+(slice, slice, int, slice, int, int, int, int, int, int, int, int, int, int, int) get_task_data() method_id {
   var ds = get_data().begin_parse();
   var creator = ds~load_msg_addr();
   var has_agent = ds~load_uint(1);
@@ -150,8 +210,12 @@ const int status::rejected = 6;
   var result_hash = hashes~load_uint(256);
   var evidence_hash = hashes~load_uint(256);
   var policy_hash = hashes~load_uint(256);
+  var review_period = hashes~load_uint(32);
+  var review_deadline = hashes~load_uint(64);
   var permission_slice = hashes~load_ref().begin_parse();
   var permission_hash = permission_slice~load_uint(256);
+  var dispute_hash = permission_slice~load_uint(256);
   return (creator, agent, has_agent, verifier, has_verifier, budget, deadline, status,
-    result_hash, evidence_hash, policy_hash, permission_hash);
+    result_hash, evidence_hash, policy_hash, permission_hash, review_period, review_deadline,
+    dispute_hash);
 }
