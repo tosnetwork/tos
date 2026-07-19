@@ -92,7 +92,10 @@ impl ContractProvider for ContractProviderImpl {
         if result.exit_code != 0 {
             anyhow::bail!("get-method {} error: exit_code={}", method, result.exit_code);
         }
-        Ok(TvmStackParser::new(result.stack.into_iter().map(Into::into).collect::<Vec<_>>()))
+        // The JSON-RPC server serializes the TVM stack top-first (vm::Stack::at(0)
+        // is the top). Decoders index entries in get-method return order, so
+        // reverse to bottom-first at the RPC boundary.
+        Ok(TvmStackParser::new(result.stack.into_iter().rev().map(Into::into).collect::<Vec<_>>()))
     }
     async fn balance(&self, address: &MsgAddressInt) -> anyhow::Result<u64> {
         let info = self

@@ -129,6 +129,14 @@ impl TvmStackParser {
             .ok_or_else(|| anyhow::anyhow!("stack entry is not a slice: index={}", index))?
             .bytes
             .clone();
+        // The JSON-RPC server serializes slice entries as a single-cell BOC;
+        // raw bit payloads (without the BOC magic) are kept as-is.
+        if bytes.starts_with(&[0xb5, 0xee, 0x9c, 0x72]) {
+            let cell = read_single_root_boc(&bytes)
+                .map_err(|e| anyhow::anyhow!("invalid slice boc: index={}: {}", index, e))?;
+            return SliceData::load_cell(cell)
+                .map_err(|e| anyhow::anyhow!("invalid slice cell: index={}: {}", index, e));
+        }
         let bit_len = bytes.len() * 8;
         Ok(SliceData::from_raw(bytes, bit_len))
     }
@@ -308,6 +316,20 @@ mod tests {
 
         assert_eq!(slice.remaining_bits(), 16);
         assert_eq!(slice.get_bytestring(0), vec![0xaa, 0x55]);
+    }
+
+    #[test]
+    fn test_slice_boc_encoded() {
+        // The JSON-RPC server sends slice entries as a single-cell BOC.
+        let mut builder = BuilderData::new();
+        builder.append_u32(0xDEADBEEF).unwrap();
+        let cell = builder.into_cell().unwrap();
+        let boc = write_boc(&cell).unwrap();
+        let parser = TvmStackParser::new(vec![create_slice_entry(boc)]);
+        let mut slice = parser.slice(0).unwrap();
+
+        assert_eq!(slice.get_next_u32().unwrap(), 0xDEADBEEF);
+        assert_eq!(slice.remaining_bits(), 0);
     }
 
     #[test]
