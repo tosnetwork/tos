@@ -23,6 +23,14 @@ these constraints?
 
 For AI actor workflows, that question becomes concrete: can a service actor verify that an agent is authorized to call a model endpoint, spend up to a task budget, submit a result, or invoke a verifier under explicit constraints?
 
+The first AI actor capability profiles should cover:
+
+- task-scoped service-call authorization
+- agent controller authorization
+- verifier decision authorization
+- maximum service charge
+- task-specific replay domain
+
 ## 2. Rejected baseline: reusable public bearer token
 
 A reusable bearer token placed in an internal message body is visible on

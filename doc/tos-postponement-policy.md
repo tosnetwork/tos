@@ -15,6 +15,8 @@ execute deterministically and price all work.
 
 For AI actor workflows, bounded postponement is useful when an agent account or task actor receives valid messages out of phase, such as a result before acceptance, a verifier decision before result submission, or a service callback before the task state is ready.
 
+Contracts should document which AI actor messages may be postponed and which must fail immediately. Messages that carry value should only be postponed if the refund and expiry behavior is explicit.
+
 References:
 
 - `doc/actor.md` section 5.9, selective receive and postponement.

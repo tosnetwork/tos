@@ -50,6 +50,10 @@ This document should eventually define:
 - sponsorship / fee-payer semantics if supported
 - how these decisions surface in wallets, SDKs, RPCs, and contracts
 
+For AI actor contracts, this model must also define how agent owner authority,
+controller authority, service-call authority, verifier authority, and task
+settlement authority remain distinct.
+
 ## Implementation Status
 
 The initial account/permission transaction surfaces derived from this model are now implemented in `validator-engine`:
@@ -89,6 +93,8 @@ The following items belong to a later standards-and-implementation stage rather 
 - richer operator and wallet UX around lifecycle previews and post-mutation inspection
 
 These items SHOULD be treated as additive evolution work, not as blockers on the current baseline.
+
+AI actor account standards should not wait for a universal account-abstraction design. The first version can be narrow, but it must preserve bounded delegation, spending limits, and inspectable agent permissions.
 
 In particular:
 

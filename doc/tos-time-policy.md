@@ -29,6 +29,15 @@ Therefore every scheduled message must be:
 
 Task actors and service actors should use scheduled messages only for consensus-visible deadlines. Off-chain timers may improve UX, but they are not authoritative for escrow, timeout, or settlement.
 
+AI actor timeout policies should document:
+
+- acceptance deadline
+- result submission deadline
+- dispute window
+- service-call expiry
+- cancellation authority
+- refund target
+
 ## 2. Time base
 
 Slice 6 scheduled delivery uses **masterchain seqno** as its consensus

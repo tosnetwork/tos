@@ -2,6 +2,8 @@
 
 This document is the low-level actor-model rationale behind the AI Actor Model described in [ai-actors.md](ai-actors.md). The AI-facing roadmap builds on the same execution property: accounts are independent actors that communicate through asynchronous messages.
 
+When this document discusses supervision, time, delivery, state machines, or capability addressing, read those topics as the protocol substrate for agent accounts, task actors, service actors, and verifier actors.
+
 ## 0. Reference
 
 Throughout this document, *Actor Model* refers to the formal model

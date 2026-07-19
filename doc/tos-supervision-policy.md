@@ -28,6 +28,13 @@ Therefore TOS supervision means:
 
 AI agent deployments should treat supervision as an opt-in contract relationship. A task actor may monitor an assigned agent or service actor, but recovery actions must remain funded, bounded, and visible on-chain.
 
+Recommended AI actor supervision relationships:
+
+- task actor monitors assigned agent account
+- task actor monitors service actor when a paid service call is outstanding
+- planner agent monitors worker agents only through explicit task policy
+- verifier actor is monitored only for delivery and decision submission, not for off-chain correctness
+
 ## 2. Failure sources
 
 Supervision may observe:

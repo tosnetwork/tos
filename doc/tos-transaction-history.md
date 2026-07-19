@@ -29,6 +29,15 @@ Agent, task, service, and verifier workflows should store enough transaction ide
 
 Clients should correlate workflow steps by account, logical time, transaction hash, inbound message hash, and application-level query id when available. Derived task timelines are useful for UX, but settlement authority remains the on-chain transaction and contract state.
 
+Workflow history implementations should preserve raw references for:
+
+- lifecycle message body hash
+- task actor address
+- agent account address
+- service actor address, when present
+- verifier actor address, when present
+- evidence reference hash
+
 ## 2. Transaction Identifiers
 
 Every transaction on TOS is identified by three independent values.

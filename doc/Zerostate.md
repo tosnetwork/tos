@@ -1,6 +1,7 @@
 # Zerostate
 
 This document describes the current native zero-state layout for the focused TVM execution surface.
+AI actor deployments inherit this same genesis model; agent, task, service, and verifier contracts are ordinary native accounts unless a future launch profile explicitly predeploys them.
 
 ## Scope
 
@@ -25,6 +26,10 @@ Only the native zero-state template is valid for current genesis generation.
 The native TOS supply is set at zero-state construction time. It is not controlled by ConfigParams 6 or 7, which are for extra currencies.
 
 To change the TOS target supply, update the main-wallet allocation in the native zero-state template and the matching testnet generator.
+
+If a launch profile allocates funds for AI actor bootstrap programs, those allocations should be recorded as named genesis recipients and tied to auditable task, service, or verifier deployment plans.
+
+Do not encode off-chain model endpoints, private prompts, service API keys, or large evidence payloads into zero-state. Store only addresses, balances, code/data cells, and compact metadata references that are safe to publish.
 
 ## Workchain Descriptors
 

@@ -1,7 +1,9 @@
 # Architecture Decision Records
 
-This directory holds the Architecture Decision Records (ADRs) for the
-TOS Blockchain Library.
+This directory holds the Architecture Decision Records (ADRs) for TOS.
+AI actor architecture decisions that affect protocol behavior, task settlement,
+agent permissions, service actors, verifier actors, or workflow indexing should
+be captured here once they become durable engineering choices.
 
 ## What an ADR is
 
@@ -48,3 +50,6 @@ this way and not the other plausible way?"
 6. Never delete or rewrite an accepted ADR. To revoke or amend it,
    write a new ADR with status `Supersedes ADR-XXXX` (or
    `Deprecated`) and link both directions.
+7. For AI actor ADRs, include the affected actor types, trust tier,
+   settlement impact, and whether the decision touches consensus,
+   contract ABI, RPC, SDK, or operator workflows.

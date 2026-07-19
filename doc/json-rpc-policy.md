@@ -86,3 +86,5 @@ Future AI actor RPC additions should follow these rules:
 - write methods for agent actions must preserve the account permission model and signing-payload flow
 - service actor payment checks should prefer node-verified state over unverified indexer state
 - long-running workflow clients should use transaction identifiers and message hashes for correlation
+- request and response schemas should cite the corresponding message catalog or contract guideline section
+- derived workflow endpoints should never be the only way to verify escrow, permission, or settlement state

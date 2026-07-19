@@ -1,6 +1,7 @@
 # Configuration Parameters
 
 This document tracks the configuration parameters used by the current native TOS build for actor-based applications.
+AI actor features that need consensus-level activation, such as task deadline semantics, delivery failure records, or future service-actor pricing rules, should be introduced through explicit configuration and versioning rather than hidden local defaults.
 
 The canonical TL-B schema is in [block.tlb](../crypto/block/block.tlb). Initial values are set during [zero state generation](Zerostate.md).
 
@@ -20,6 +21,8 @@ The current node registers:
 `ConfigParam 12` stores the workchain descriptor dictionary. In the current build it should contain only the native basechain descriptor for wc=0.
 
 Validators register the native TVM execution engine. A descriptor for an unsupported workchain would not be executable by this binary.
+
+AI actor applications should be deployed as native TVM contracts on wc=0 unless a future approved protocol change defines otherwise.
 
 ## ConfigParams 6 and 7
 

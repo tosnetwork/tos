@@ -180,6 +180,21 @@ The recommended implementation order is:
 5. Add read-only inspection helpers in `tosctl`.
 6. Add JSON-RPC examples or methods only after the contract state model is stable.
 
+## Engineering Readiness Checklist
+
+Before an AI actor primitive moves beyond an example, it should satisfy:
+
+- Message shape: opcode, `query_id`, sender authority, value semantics, and failure behavior are documented.
+- State model: every state transition is explicit and rejects out-of-phase messages deterministically.
+- Permission model: owner, controller, delegated agent, service, verifier, and fee payer roles are distinguishable.
+- Settlement model: every payout, refund, service charge, or slash is derived from contract state.
+- Timeout model: deadlines and cancellation windows are consensus-visible or explicitly off-chain and non-authoritative.
+- Trust model: clients know whether they are reading node-verified state, proof-backed state, trusted RPC state, or derived indexed data.
+- Indexing model: derived task timelines do not become authority for balance, permission, or settlement checks.
+- Operations model: local testnet validation covers restart, catch-up, and transaction-history reconstruction.
+- Release model: the primitive has a declared stability level before SDKs, wallets, or services rely on it.
+- Security model: spending limits, replay domains, evidence references, and service authorization have been reviewed.
+
 ## State and Evidence Boundary
 
 TOS should not put large model outputs, private prompts, or bulky datasets directly into contract state.
@@ -216,8 +231,23 @@ The first implementation slice should add:
 - local tests for request, accept, result, settle, cancel, and timeout paths
 - `tosctl` examples for creating and inspecting agent/task state
 
+## Non-Goals
+
+- Do not add a separate VM or execution domain for AI workloads.
+- Do not make off-chain model output authoritative without on-chain acceptance or verifier policy.
+- Do not store large prompts, model responses, datasets, or private credentials in contract state.
+- Do not let workflow indexers decide settlement.
+- Do not let agent controller keys silently become owner keys.
+- Do not treat service metadata or DNS records as authorization by themselves.
+
 ## Related Documents
 
+- [ai-actor-glossary.md](ai-actor-glossary.md)
+- [ai-actor-message-catalog.md](ai-actor-message-catalog.md)
+- [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md)
+- [ai-actor-threat-model.md](ai-actor-threat-model.md)
+- [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md)
+- [ai-actor-operations-runbook.md](ai-actor-operations-runbook.md)
 - [actor.md](actor.md)
 - [tos-message-policy.md](tos-message-policy.md)
 - [tos-account-permission-model.md](tos-account-permission-model.md)

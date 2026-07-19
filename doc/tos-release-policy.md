@@ -54,6 +54,9 @@ AI actor primitives should start as Level 3 unless they already have:
 - explicit account permission and spending-limit behavior
 - clear trust-tier labeling for any derived workflow views
 - migration guidance for contracts or SDKs that depend on the primitive
+- entries in [ai-actor-message-catalog.md](ai-actor-message-catalog.md)
+- threat coverage in [ai-actor-threat-model.md](ai-actor-threat-model.md)
+- release-gate coverage in [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md)
 
 Once SDKs, wallets, or service providers rely on a primitive, changes to its message semantics or settlement behavior must be treated as ecosystem-facing changes.
 

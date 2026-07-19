@@ -3,6 +3,20 @@
 How to seed the **initial validator set** of a TOS network at genesis — the
 validators that run the chain *before* the first staking election.
 
+AI actor launch plans should treat this as validator bootstrap only. Agent,
+task, service, and verifier accounts should be deployed through auditable
+native transactions or explicitly documented genesis allocations.
+
+If genesis allocation is used for AI actor bootstrap, the launch plan must
+document:
+
+- recipient address
+- intended actor type
+- initial balance
+- controller or owner authority
+- whether the account is predeployed or funded for later deployment
+- rollback or recovery policy before public use
+
 ## TL;DR
 
 - **Genesis validators do not stake.** They are written directly into the

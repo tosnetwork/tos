@@ -2,9 +2,27 @@
 
 This document records the exact steps used to configure and run a production-style local TOS testnet with 4 validator nodes on a single machine. This setup serves as the reference for future production deployments. Four is the smallest cluster with real BFT fault tolerance: under the canonical BFT-2/3 quorum (`tos/quorum.h`), 3 of 4 votes are sufficient to reach consensus, so the network keeps producing blocks while one validator is offline (a 3-node cluster would tolerate none).
 
+For AI actor development, this local topology is the reference environment for task escrow, agent account, service actor, and verifier actor integration tests before any public testnet deployment.
+
 ## Native TVM Topology
 
 The local testnet runs a **single execution domain — the native TVM workchain (wc=0)** — under one validator set and one masterchain. The tostester pipeline that `setup-testnet.sh` drives generates a zerostate that registers **only wc=0**.
+
+AI actor contracts should be deployed to wc=0 in this environment. Test fixtures must not introduce additional execution domains.
+
+## AI Actor Test Profile
+
+When using this local network for AI actor development, the minimum profile should include:
+
+- one user actor funded from the main wallet
+- one agent account contract
+- one task escrow contract
+- one service actor contract or stub
+- one verifier actor contract or stub
+- JSON-RPC access for workflow submission and inspection
+- transaction-history reconstruction after validator restart
+
+The profile should verify that `getconfig 12` still reports only wc=0 before and after contract deployment.
 
 | wc  | Chain                | vm_version | Role                         | Total supply | Distribution                                   |
 |-----|----------------------|------------|------------------------------|--------------|------------------------------------------------|

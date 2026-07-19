@@ -18,6 +18,10 @@ agree on before they begin implementing
 [`doc/actor.md`](actor.md) §5.3 + §5.6 and
 the Tol surface specified by [`doc/tol.tex`](tol.tex).
 
+AI actor lifecycle messages, including task request, acceptance, result,
+settlement, cancellation, timeout, and dispute messages, should build on
+this envelope and correlation policy.
+
 **Out of scope.** Higher-level language syntax (`contract`,
 `receive(...)`, `message` keywords) is out of scope here; that is
 Slice 2. Supervision (§5.1), scheduled messages (§5.2), and
@@ -37,6 +41,8 @@ later policy documents.
 - Existing TEP-style standards inventory:
   [`doc/tos-tep-token-standards.md`](tos-tep-token-standards.md),
   [`doc/tos-standards-map.md`](tos-standards-map.md).
+- AI actor workflow direction:
+  [`doc/ai-actors.md`](ai-actors.md).
 
 ## 1. Why this policy exists
 

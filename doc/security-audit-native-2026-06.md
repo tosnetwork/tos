@@ -24,3 +24,10 @@ Out of scope:
 The canonical zero-state template registers only wc=0. Any future execution domain outside the native TVM surface must be introduced as a separate feature with its own implementation, tests, threat model, and audit.
 
 AI actor primitives such as agent accounts, task escrow contracts, service actors, and verifier actors require dedicated review before production use.
+
+AI actor review should use:
+
+- [ai-actor-threat-model.md](ai-actor-threat-model.md)
+- [ai-actor-message-catalog.md](ai-actor-message-catalog.md)
+- [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md)
+- [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md)

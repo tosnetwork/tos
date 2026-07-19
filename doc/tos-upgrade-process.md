@@ -99,6 +99,14 @@ AI actor workflow changes affect agent account contracts, task escrow contracts,
 
 Any workflow change that can move funds, accept results, reject results, or alter task ownership must receive security review before release.
 
+Required AI actor upgrade evidence:
+
+- updated message catalog when message fields or opcodes change
+- updated contract guidelines when state or settlement behavior changes
+- updated threat model when trust boundaries change
+- updated testing matrix when a new lifecycle path is introduced
+- local testnet evidence for restart, catch-up, and workflow reconstruction
+
 ## 3. Stability Levels
 
 Every public surface affected by a change has a stability level defined in [tos-release-policy.md](tos-release-policy.md). The stability level determines the compatibility obligations that apply to changes.

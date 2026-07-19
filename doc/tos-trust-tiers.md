@@ -41,6 +41,13 @@ AI agents that spend funds, accept tasks, settle escrow, or submit verifier deci
 
 An agent must not treat indexed or transformed data as authority for spending limits, task settlement, or permission checks unless the relevant contract state is also verified.
 
+Before an AI actor client is released, it should document:
+
+- which tier it uses for task state
+- which tier it uses for balance and permission checks
+- which tier it uses for workflow history
+- whether service and verifier evidence is verified locally or trusted
+
 ## Trust Tiers
 
 TOS defines four trust tiers, ordered from strongest verification to weakest.

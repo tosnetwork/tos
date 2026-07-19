@@ -341,6 +341,14 @@ Concrete proof transport details may remain Level 2 while implementation matures
 
 AI actor workflow standards define how user actors, agent accounts, task actors, service actors, and verifier actors coordinate through asynchronous messages.
 
+Companion draft documents:
+
+- [ai-actor-message-catalog.md](ai-actor-message-catalog.md)
+- [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md)
+- [ai-actor-threat-model.md](ai-actor-threat-model.md)
+- [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md)
+- [ai-actor-operations-runbook.md](ai-actor-operations-runbook.md)
+
 ### Surfaces
 
 - agent account metadata and permission expectations
@@ -362,6 +370,7 @@ The first agent and task primitives may begin as Level 3 while examples and test
 - service actors cannot charge without authorized requests
 - result references and verification metadata are machine-readable
 - workflows remain asynchronous and do not depend on synchronous cross-contract calls
+- threat model, message catalog, and test matrix are updated before a primitive is promoted
 
 ### Primary Consumers
 

@@ -9,9 +9,19 @@ The current project direction is the AI Actor Model:
 - native TVM execution remains the focused execution surface
 - task state, payments, permissions, and verification metadata remain inspectable from chain state
 
+Implementation rule: AI actor work should add native contracts, message schemas,
+SDK/RPC helpers, tests, and operator workflows. It should not add unrelated
+execution engines or bypass the native TVM actor model.
+
 Start with:
 
 - [ai-actors.md](ai-actors.md) - AI actor product and protocol direction
+- [ai-actor-glossary.md](ai-actor-glossary.md) - shared terminology for agent, task, service, and verifier workflows
+- [ai-actor-message-catalog.md](ai-actor-message-catalog.md) - initial task, service, and verifier message catalog
+- [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md) - contract design guidance for agent accounts, task escrow, service actors, and verifier actors
+- [ai-actor-threat-model.md](ai-actor-threat-model.md) - baseline threat model
+- [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md) - required test coverage
+- [ai-actor-operations-runbook.md](ai-actor-operations-runbook.md) - operational guidance for agent and service infrastructure
 - [actor.md](actor.md) - actor-model first principles for TOS
 - [tos-message-policy.md](tos-message-policy.md) - message envelope and lifecycle policy
 - [tos-account-permission-model.md](tos-account-permission-model.md) - account, delegation, session, and agent permissions
@@ -43,3 +53,11 @@ Operator and launch docs:
 - [ConfigParam.md](ConfigParam.md)
 - [FullNode.md](FullNode.md)
 - [LiteClient.md](LiteClient.md)
+
+Review and release docs:
+
+- [tos-release-policy.md](tos-release-policy.md)
+- [tos-upgrade-process.md](tos-upgrade-process.md)
+- [security-audit-native-2026-06.md](security-audit-native-2026-06.md)
+- [ops/tos31-tos32-validation.md](ops/tos31-tos32-validation.md)
+- [adr/README.md](adr/README.md)

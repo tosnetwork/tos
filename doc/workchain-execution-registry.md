@@ -5,6 +5,7 @@ The workchain execution registry is the host-chain mechanism that maps a workcha
 ## Current Scope
 
 This repository currently ships the native TVM execution path for actor-based applications.
+AI actor features are expected to compose through native contracts and asynchronous messages, not through additional execution engines.
 
 The default registry registers the TVM descriptor engine only:
 
@@ -32,3 +33,5 @@ Any future engine outside the native TVM surface must define:
 - tests for collator and validator paths
 
 Until such an engine exists and is registered, this binary remains focused on native TVM execution.
+
+AI actor roadmap work must not add an execution engine as a shortcut for model, service, or agent integration. Those integrations should be represented as native service actors, off-chain workers with on-chain authorization, or proof adapters.

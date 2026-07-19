@@ -25,6 +25,13 @@ message.
 
 Task actors should use this substrate to make retry, refund, cancellation, and dispute behavior deterministic instead of leaving failed delivery to off-chain interpretation.
 
+AI actor delivery policies should specify whether each lifecycle message is:
+
+- retryable with backoff
+- terminal on first permanent failure
+- eligible for dead-letter notification
+- allowed to trigger refund, timeout, or dispute behavior
+
 ## 2. Failure classes
 
 Delivery failure records must map into the existing `ErrorClass`

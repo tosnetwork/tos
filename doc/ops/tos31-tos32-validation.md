@@ -3,6 +3,10 @@
 This runbook defines the evidence required before calling a build a
 real-value mainnet candidate.
 
+For AI actor readiness, this runbook is also the baseline node-stability gate
+before enabling task escrow, agent account, service actor, or verifier actor
+traffic on a public testnet.
+
 ## tos31 State-Sync Gate
 
 Run the deterministic suite on every candidate:
@@ -25,6 +29,24 @@ Required evidence:
 - `test-celldb-streaming-import` passes.
 - Artifact directory contains `driver.log`, per-step logs, git commit,
   host info, and disk-space snapshot.
+
+AI actor extension evidence, once the first contracts land:
+
+- task escrow contract deploys on the local network
+- agent account accepts and rejects task messages deterministically
+- service actor payment checks use verified chain state
+- verifier actor decisions are reconstructible from transaction history
+
+Use [ai-actor-testing-matrix.md](../ai-actor-testing-matrix.md) as the required coverage baseline for those extension checks.
+
+For any candidate that advertises AI actor support, archive these additional artifacts:
+
+- task lifecycle transaction hashes
+- message bodies or decoded lifecycle events
+- agent account state before and after settlement
+- escrow balance before and after settlement
+- verifier decision transaction, if present
+- restart/catch-up logs covering the same workflow
 
 ## Crash / Replay Matrix
 

@@ -2,6 +2,8 @@
 
 This guide describes the operator view of the validator stack in this repository.
 
+Validators are the verification backbone for AI actor workflows. Agent runners, service operators, and verifier processes may query validators, but validator nodes remain responsible only for protocol validation, consensus, and serving verified chain state.
+
 ## Main Components
 
 - [validator-engine](../validator-engine)
@@ -80,6 +82,10 @@ Use the console for:
 - pin logs and DB paths explicitly
 - monitor sync status before attempting validator operations
 - stage config or governance changes before main deployment
+- keep AI agent keys, service API credentials, and validator keys in separate trust domains
+- do not run unreviewed off-chain agent workers with validator keyring access
+
+AI actor infrastructure should treat validators as chain-state providers, not as agent runtimes. Agent runners and service workers should be deployed as separate processes with their own logs, credentials, and restart policy.
 
 ## Maintenance and Graceful Shutdown
 

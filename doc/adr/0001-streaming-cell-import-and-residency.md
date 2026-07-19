@@ -54,6 +54,11 @@ This ADR consolidates both findings into one permanent record so
 that future maintainers do not have to re-derive the analysis from
 two superseded audit notes.
 
+AI actor relevance: high-volume agent, task, service, and verifier activity
+increases the importance of predictable state catch-up and bounded memory use.
+This ADR does not define an AI actor primitive, but it records storage behavior
+that AI actor deployments rely on when nodes recover or join the network.
+
 ## The cell model
 
 The cell hierarchy is rooted at the abstract base `vm::Cell`,

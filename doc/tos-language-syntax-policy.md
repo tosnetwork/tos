@@ -26,6 +26,10 @@ what contract authors write and what wire bytes the compiler
 emits; it does **not** specify the compiler's internal IR or
 parser implementation.
 
+AI actor contracts should use this direction for explicit task, agent,
+service, and verifier state machines rather than hand-rolled dispatcher
+conventions once the syntax is available.
+
 **Out of scope.** Cross-contract synchronous-feeling calls,
 supervision (`actor.md` §5.1), scheduled messages (`actor.md`
 §5.2), capability addressing (`actor.md` §5.4), and any new
@@ -37,6 +41,8 @@ deferred. The full out-of-scope list is in §8.
 - [`doc/tos-message-policy.md`](tos-message-policy.md) v6
   — wire-level envelope, error class, query_id rules; Slice 2
   compiles ONTO this substrate.
+- [`doc/ai-actors.md`](ai-actors.md)
+  — task and service actor lifecycle requirements.
 - [`doc/actor.md`](actor.md) §5.5 — design rationale for
   language-level state machines and `become`.
 - [`doc/tol.tex`](tol.tex) — current Tol language specification.
