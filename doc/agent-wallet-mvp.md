@@ -289,6 +289,32 @@ Activate the underlying native wallet contract after funding:
 tosctl agent wallet activate --name research-agent
 ```
 
+### Owner-Initiated Transfers
+
+The underlying Agent Wallet is controlled by its owner key. TOS still needs a dedicated
+owner-authorized command for manually moving funds from that wallet to an arbitrary native
+address:
+
+```bash
+tosctl agent wallet send \
+  --name research-agent \
+  --to <destination-address> \
+  --amount 1.5 \
+  --message "operator transfer" \
+  --yes
+```
+
+This command is planned and is not implemented yet. It is intended for explicit operator
+actions such as treasury maintenance, refunds, emergency withdrawals, and agent retirement.
+It must sign with the Agent Wallet owner key stored in the vault. It must not accept the
+controller key or expose the owner key to an off-chain agent runtime.
+
+Because the owner retains full authority over the underlying wallet, an owner-authorized
+transfer is not constrained by the Agent Account controller's `max-per-tx` or `daily-limit`
+policy. Automated agent spending must continue through `tosctl agent account task-send` or
+`tosctl agent task send --via-agent-account`, where the Agent Account contract enforces the
+controller signature, sequence number, expiry, per-action limit, and daily limit on-chain.
+
 The recommended local lifecycle is:
 
 1. `create` the Agent Wallet profile.
@@ -437,6 +463,8 @@ unchanged:
 
 The next slice should deepen the Agent Account and Task Escrow binding:
 
+- add `tosctl agent wallet send` for explicit owner-authorized transfers from the underlying
+  Agent Wallet while keeping automated spending on the policy-enforced Agent Account path
 - make controller-originated task actions reference the persisted permission ID and escrow address
 - add dispute/resolve/reject states to the escrow state machine
 - add public-testnet acceptance for controller-signed Agent Account actions

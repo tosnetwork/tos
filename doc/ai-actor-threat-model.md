@@ -36,6 +36,23 @@ Required controls:
 - separate owner, controller, fee payer, service, and verifier roles
 - inspectable permission state
 
+### Owner and Controller Key Confusion
+
+An off-chain agent runtime obtains the Agent Wallet owner key, or an operator mistakes a
+controller-authorized action for an unrestricted owner-authorized wallet transfer.
+
+Required controls:
+
+- keep the Agent Wallet owner key in the operator-controlled vault and never export it to the
+  agent runtime
+- use the controller key only through Agent Account messages that enforce sequence numbers,
+  expiry, per-action limits, and daily limits on-chain
+- require `tosctl agent wallet send` to use the owner key and explicit operator confirmation
+- do not allow `tosctl agent wallet send` to accept controller signatures or runtime manifests
+- reserve owner-authorized transfers for manual treasury maintenance, refunds, emergency
+  withdrawals, and agent retirement
+- route automated task and service spending through the policy-enforced Agent Account path
+
 ### Escrow Theft
 
 A task actor releases funds to the wrong party or releases funds before the required result or verification state exists.
@@ -115,4 +132,3 @@ Every production AI actor primitive should receive review for:
 - indexer trust boundaries
 - denial-of-service and message amplification
 - local testnet restart and catch-up behavior
-
