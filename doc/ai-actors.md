@@ -182,7 +182,7 @@ The implementation sequence is:
 2. Implement the local Agent Wallet MVP in `tosctl` so operators can create profiles, fund and activate wallet addresses, manage owner/controller keys, update policy, bind runtimes and export machine-readable policies.
 3. Implement the minimal native Agent Account contract, deterministic StateInit generation and deployment commands.
 4. Add read-only Agent Account inspection helpers in `tosctl`, including code-hash and local-profile verification.
-5. Make controller rotation and policy updates signed on-chain operations.
+5. Make controller rotation and policy updates owner-signed on-chain operations with state verification.
 6. Implement a minimal task escrow contract.
 7. Add local tests for request, accept, result, settle, cancel, and timeout.
 8. Add JSON-RPC examples or methods after the contract state model is stable.
@@ -240,6 +240,7 @@ The first implementation slice should add:
 - deterministic Agent Account StateInit generation from local Agent Wallet profiles
 - native Agent Account deployment through an active configured wallet
 - read-only Agent Account inspection with template and local-profile verification
+- owner-signed Agent Account policy synchronization and controller rotation
 - local tests for request, accept, result, settle, cancel, and timeout paths
 - `tosctl` examples for creating and inspecting agent/task state
 

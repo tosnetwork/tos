@@ -1,0 +1,3 @@
+task_escrow_state#_ creator:MsgAddressInt has_agent:Bool agent:MsgAddressInt
+  budget:Coins deadline:uint64 status:uint8 result_hash:uint256
+  evidence_hash:uint256 policy_hash:uint256 = TaskEscrowState;

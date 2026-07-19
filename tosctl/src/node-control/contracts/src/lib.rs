@@ -19,7 +19,9 @@ pub mod smart_contract;
 mod stack_utils;
 pub mod wallet;
 
-pub use agent_account::{AgentAccountContract, AgentAccountData, AgentAccountInit};
+pub use agent_account::{
+    AgentAccountContract, AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate,
+};
 pub use chain_provider::{ChainProvider, DefaultChainProvider, contract_provider_from};
 pub use config_contract::{
     ConfigContractImpl, ConfigContractWrapper, ConfigProposal, ProposedParam,

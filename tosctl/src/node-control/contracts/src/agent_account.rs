@@ -14,6 +14,8 @@ use chain_block::{
 use crate::ContractProvider;
 
 pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECDgEAAgsAART/APSkE/S88sgLAQIBIAIDAgFIBAUACvIw8samAqbQMiHHAJFb4NDTAzH6QDDtRND6QNP/1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RCNMf0z8xIYIQQUdQAbrjAjaCEEFHUAK64wJfCPLGpwYHAgEgCAkA7jlfBVEhxwXy5qYC+gD6ANM/INMAAZPT/zCSMH/iIdMAAZPT/zCSMH/iAtH4AAEkwQDy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQA88Wy//Mye1UALhRZccF8uamA9P/0fgAEEZEVUMTJMEA8talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAPPFsv/zMntVAIBSAoLAgEgDA0AU7YlvaiaH0gaf/qaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72i2EsABTtzS9qJofSBp/+po6H0AfQBpn7+A6YAAyZjp/+8/gOmAAMmY6f/vaK+DQAE+5rr7UTQ+kDT/9TR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0YAFe55P7UTQ+kDT/9TR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0RBWXwaA==";
+pub const AGENT_UPDATE_POLICY_OPCODE: u32 = 0x4147_5001;
+pub const AGENT_ROTATE_CONTROLLER_OPCODE: u32 = 0x4147_5002;
 
 #[derive(Clone, Debug)]
 pub struct AgentAccountInit {
@@ -39,18 +41,22 @@ pub struct AgentAccountData {
     pub service_endpoint_hash: Option<[u8; 32]>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentAccountPolicyUpdate {
+    pub max_per_tx: u64,
+    pub daily_limit: u64,
+    pub default_task_timeout_secs: u64,
+    pub metadata_hash: Option<[u8; 32]>,
+    pub service_endpoint_hash: Option<[u8; 32]>,
+}
+
 impl AgentAccountContract {
     pub fn code() -> anyhow::Result<chain_block::Cell> {
         read_single_root_boc(base64_decode(AGENT_ACCOUNT_CODE_B64)?).map_err(Into::into)
     }
 
     pub fn build_data(init: &AgentAccountInit) -> anyhow::Result<chain_block::Cell> {
-        if init.daily_limit < init.max_per_tx {
-            anyhow::bail!("daily_limit must be greater than or equal to max_per_tx");
-        }
-        if init.default_task_timeout_secs == 0 {
-            anyhow::bail!("default_task_timeout_secs must be greater than zero");
-        }
+        validate_policy(init.max_per_tx, init.daily_limit, init.default_task_timeout_secs)?;
 
         let mut policy = BuilderData::new();
         Coins::new(init.max_per_tx).write_to(&mut policy)?;
@@ -94,6 +100,46 @@ impl AgentAccountContract {
             service_endpoint_hash: parse_maybe_hash(&stack, 6)?,
         })
     }
+
+    pub fn build_update_policy_message(
+        query_id: u64,
+        policy: &AgentAccountPolicyUpdate,
+    ) -> anyhow::Result<chain_block::Cell> {
+        validate_policy(policy.max_per_tx, policy.daily_limit, policy.default_task_timeout_secs)?;
+        let mut body = BuilderData::new();
+        body.append_u32(AGENT_UPDATE_POLICY_OPCODE)?.append_u64(query_id)?;
+        Coins::new(policy.max_per_tx).write_to(&mut body)?;
+        Coins::new(policy.daily_limit).write_to(&mut body)?;
+        body.append_u64(policy.default_task_timeout_secs)?;
+        append_maybe_hash(&mut body, policy.metadata_hash)?;
+        append_maybe_hash(&mut body, policy.service_endpoint_hash)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn build_rotate_controller_message(
+        query_id: u64,
+        controller_pubkey: [u8; 32],
+    ) -> anyhow::Result<chain_block::Cell> {
+        let mut body = BuilderData::new();
+        body.append_u32(AGENT_ROTATE_CONTROLLER_OPCODE)?
+            .append_u64(query_id)?
+            .append_raw(&controller_pubkey, 256)?;
+        Ok(body.into_cell()?)
+    }
+}
+
+fn validate_policy(
+    max_per_tx: u64,
+    daily_limit: u64,
+    default_task_timeout_secs: u64,
+) -> anyhow::Result<()> {
+    if daily_limit < max_per_tx {
+        anyhow::bail!("daily_limit must be greater than or equal to max_per_tx");
+    }
+    if default_task_timeout_secs == 0 {
+        anyhow::bail!("default_task_timeout_secs must be greater than zero");
+    }
+    Ok(())
 }
 
 fn parse_hash(
@@ -242,5 +288,39 @@ mod tests {
         assert_eq!(data.default_task_timeout_secs, init.default_task_timeout_secs);
         assert_eq!(data.metadata_hash, init.metadata_hash);
         assert_eq!(data.service_endpoint_hash, None);
+    }
+
+    #[test]
+    fn builds_update_policy_message() {
+        let policy = AgentAccountPolicyUpdate {
+            max_per_tx: 700_000_000,
+            daily_limit: 9_000_000_000,
+            default_task_timeout_secs: 7_200,
+            metadata_hash: Some([0x55; 32]),
+            service_endpoint_hash: None,
+        };
+        let body = AgentAccountContract::build_update_policy_message(42, &policy).unwrap();
+        let mut slice = chain_block::SliceData::load_cell(body).unwrap();
+
+        assert_eq!(slice.get_next_u32().unwrap(), AGENT_UPDATE_POLICY_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 42);
+        assert_eq!(Coins::construct_from(&mut slice).unwrap().as_u128(), 700_000_000);
+        assert_eq!(Coins::construct_from(&mut slice).unwrap().as_u128(), 9_000_000_000);
+        assert_eq!(slice.get_next_u64().unwrap(), 7_200);
+        assert!(slice.get_next_bit().unwrap());
+        assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0x55; 32]);
+        assert!(!slice.get_next_bit().unwrap());
+        assert_eq!(slice.remaining_bits(), 0);
+    }
+
+    #[test]
+    fn builds_rotate_controller_message() {
+        let body = AgentAccountContract::build_rotate_controller_message(43, [0x66; 32]).unwrap();
+        let mut slice = chain_block::SliceData::load_cell(body).unwrap();
+
+        assert_eq!(slice.get_next_u32().unwrap(), AGENT_ROTATE_CONTROLLER_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 43);
+        assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0x66; 32]);
+        assert_eq!(slice.remaining_bits(), 0);
     }
 }

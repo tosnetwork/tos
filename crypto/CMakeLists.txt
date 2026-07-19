@@ -523,6 +523,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2)
   GenFif(DEST smartcont/auto/restricted-wallet3-code SOURCE smartcont/restricted-wallet3-code.fc NAME restricted-wallet3)
   GenFif(DEST smartcont/auto/session-wallet-code SOURCE smartcont/session-wallet-code.fc NAME session-wallet)
+  GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow)
   GenFif(DEST smartcont/auto/agent-account-code SOURCE smartcont/agent-account-code.fc NAME agent-account)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 

@@ -116,6 +116,29 @@ tosctl agent account show --address <agent-account-address> --format json
 
 `status` verifies the deployed code hash and compares owner, controller key, limits, timeout and optional metadata hashes with the local profile. `show` reads the same native get-method without requiring a local Agent Wallet profile.
 
+Apply the policy fields from the local profile to the deployed Agent Account:
+
+```bash
+tosctl agent account update-policy \
+  --wallet research-agent \
+  --amount 0.05 \
+  --yes \
+  --format json
+```
+
+Apply the current local controller public key to the deployed Agent Account:
+
+```bash
+tosctl agent wallet rotate-controller --name research-agent
+tosctl agent account rotate-controller \
+  --wallet research-agent \
+  --amount 0.05 \
+  --yes \
+  --format json
+```
+
+Both chain actions are sent by the active underlying Agent Wallet, which is the Agent Account owner. They reject unknown contract code or an owner mismatch and verify the resulting get-method state before reporting success. Deployment persists `agent_account_address` in the local profile so later policy or controller changes keep targeting the original account. Re-running `deploy` safely records an already-active matching account without sending another deployment transaction.
+
 Export only the policy:
 
 ```bash
@@ -209,10 +232,11 @@ The recommended local lifecycle is:
 3. `activate` the underlying native wallet contract once the address has enough balance.
 4. `build-state` to inspect the deterministic Agent Account address and state before deployment.
 5. `account deploy` to deploy the native Agent Account through an active configured wallet.
-6. `update-policy` when spending limits, service actors, task categories or metadata change.
-7. `bind-runtime` to an agent runner.
-8. `export-runtime` for the runner manifest.
-9. `rm` stale local profiles when an agent is retired or a test profile is no longer needed.
+6. `wallet update-policy`, then `account update-policy`, when on-chain policy fields change.
+7. `wallet rotate-controller`, then `account rotate-controller`, when rotating runtime authority.
+8. `bind-runtime` to an agent runner.
+9. `export-runtime` for the runner manifest.
+10. `rm` stale local profiles when an agent is retired or a test profile is no longer needed.
 
 ## Config Shape
 
@@ -228,6 +252,7 @@ The recommended local lifecycle is:
         "subwallet_id": 4242,
         "workchain": -1
       },
+      "agent_account_address": "-1:<deployed-agent-account-id>",
       "controller_key": { "kind": "VaultKey", "name": "agent-wallet-research-agent-controller" },
       "policy": {
         "max_per_tx": 500000000,
@@ -250,8 +275,7 @@ The recommended local lifecycle is:
 
 ## Next Engineering Step
 
-The next slice should make the deployed Agent Account actionable:
+The next slice should make the deployed Agent Account useful for task settlement:
 
 - add task-contract messages that spend through the Agent Account policy
-- make controller rotation and policy changes signed on-chain operations
 - add deployment and policy-transition integration tests against a local network
