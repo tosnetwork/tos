@@ -1,4 +1,5 @@
 // Copyright (C) 2025-2026  TOS Network.
 task_escrow_state#_ creator:MsgAddressInt has_agent:Bool agent:MsgAddressInt
+  has_verifier:Bool verifier:MsgAddressInt
   budget:Coins deadline:uint64 status:uint8 result_hash:uint256
   evidence_hash:uint256 policy_hash:uint256 = TaskEscrowState;

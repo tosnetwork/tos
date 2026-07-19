@@ -27,6 +27,7 @@ struct Fixture {
     bc: Blockchain,
     creator: Treasury,
     agent: Treasury,
+    verifier: Treasury,
     outsider: Treasury,
     escrow: MsgAddressInt,
     deadline: u64,
@@ -40,11 +41,13 @@ impl Fixture {
         bc.set_workchain(-1);
         let creator = bc.treasury("creator", 1_000 * TOS).expect("creator");
         let agent = bc.treasury("agent", 1_000 * TOS).expect("agent");
+        let verifier = bc.treasury("verifier", 1_000 * TOS).expect("verifier");
         let outsider = bc.treasury("outsider", 1_000 * TOS).expect("outsider");
         let deadline = u64::from(bc.now()) + 3_600;
         let init = TaskEscrowInit {
             creator: creator.address().clone(),
             assigned_agent: Some(agent.address().clone()),
+            verifier: Some(verifier.address().clone()),
             budget,
             deadline,
             settlement_policy_hash: [0x11; 32],
@@ -57,7 +60,7 @@ impl Fixture {
             .body(Cell::default())
             .build();
         bc.send_message(deploy).expect("deploy").expect_success();
-        Self { bc, creator, agent, outsider, escrow, deadline }
+        Self { bc, creator, agent, verifier, outsider, escrow, deadline }
     }
 
     fn send_from(&mut self, from: &MsgAddressInt, body: Cell) -> SendResult {
@@ -72,7 +75,7 @@ impl Fixture {
             .run_get_method(&self.escrow, "get_task_data", vec![])
             .expect("get_task_data")
             .expect_success()
-            .int_at(5)
+            .int_at(7)
     }
 
     fn balance(&self, addr: &MsgAddressInt) -> u64 {
@@ -190,7 +193,7 @@ fn unauthorized_and_out_of_order_messages_are_rejected() {
     f.send_from(&agent_addr, TaskEscrowContract::result(8, [0xAA; 32], [0xBB; 32]).unwrap())
         .expect_success();
 
-    // Only the creator may settle.
+    // The assigned agent may not settle.
     f.send_from(&agent_addr, TaskEscrowContract::settle(9, TOS).unwrap())
         .expect_aborted()
         .expect_exit_code(105);
@@ -203,13 +206,12 @@ fn unauthorized_and_out_of_order_messages_are_rejected() {
         .expect_aborted()
         .expect_exit_code(102);
 
-    f.send_from(&creator_addr, TaskEscrowContract::settle(12, TOS).unwrap()).expect_success();
+    // The configured verifier may settle on behalf of the creator.
+    let verifier_addr = f.verifier.address().clone();
+    f.send_from(&verifier_addr, TaskEscrowContract::settle(12, TOS).unwrap()).expect_success();
     // Settle after settle is rejected.
     f.send_from(&creator_addr, TaskEscrowContract::settle(13, TOS).unwrap())
         .expect_aborted()
         .expect_exit_code(104);
     assert_eq!(f.status(), STATUS_SETTLED);
 }
-
-
-

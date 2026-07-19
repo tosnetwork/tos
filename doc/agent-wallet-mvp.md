@@ -32,7 +32,7 @@ persisted records. Offline TVM lifecycle tests live in
 Acceptance so far ran against throwaway localnets; a persistent public-testnet deployment
 has not happened yet.
 
-This contract is intentionally minimal. It stores owner identity, controller public key and policy data, exposes get-methods, and accepts owner-only internal messages for policy and controller updates. Policy data is stored in a referenced cell so metadata and endpoint hashes fit within TVM cell limits. It does not yet execute controller spending, escrow settlement or task routing.
+The contract stores owner identity, controller public key, replay-protection state, daily spend accounting and policy data. Owner-only internal messages update policy or rotate the controller. Controller-signed external actions can send bounded task messages after signature, expiry, sequence, per-action and UTC-day spend checks. Policy data remains in a referenced cell so metadata and endpoint hashes fit within TVM cell limits.
 
 `tosctl` can derive and deploy Agent Account StateInit from a local Agent Wallet profile. This makes the local profile and the native contract template share one deterministic owner/controller/policy encoding.
 
@@ -52,6 +52,8 @@ The MVP provides:
 - safe removal of local Agent Wallet profiles, with optional vault-key deletion
 - a native Agent Account contract template for owner/controller/policy state
 - deterministic Agent Account StateInit generation and deployment through a configured funding wallet
+- controller-signed task actions with expiry and sequence-based replay protection
+- enforced per-action and UTC-day spending limits
 - wallet address derivation using the existing native wallet implementation
 - policy fields for per-action spend, daily spend, allowed services, task categories and owner-approval threshold
 - JSON output for automation and service integration
@@ -161,6 +163,19 @@ tosctl agent account rotate-controller \
 ```
 
 Both chain actions are sent by the active underlying Agent Wallet, which is the Agent Account owner. They reject unknown contract code or an owner mismatch and verify the resulting get-method state before reporting success. Deployment persists `agent_account_address` in the local profile so later policy or controller changes keep targeting the original account. Re-running `deploy` safely records an already-active matching account without sending another deployment transaction.
+
+Send a controller-signed bounded action directly from the Agent Account:
+
+```bash
+tosctl agent account task-send \
+  --wallet research-agent \
+  --target <task-or-service-address> \
+  --value 0.1 \
+  --valid-until <future-unix-timestamp> \
+  --yes
+```
+
+The command reads the deployed sequence number, verifies that the configured controller key matches the contract, enforces the local per-action precheck, signs the payload and broadcasts an external message. The contract independently enforces signature validity, expiry, replay protection, per-action limits and UTC-day cumulative limits.
 
 Export only the policy:
 
@@ -358,10 +373,9 @@ unchanged:
 
 ## Next Engineering Step
 
-The next slice should bind the Agent Account and Task Escrow together:
+The next slice should deepen the Agent Account and Task Escrow binding:
 
-- require the bound Agent Account controller for result submission, and a creator,
-  verifier or policy authority for settlement, enforced on-chain and in the CLI
-- add a verifier role plus dispute/resolve/reject states to the escrow state machine
+- make controller-originated task actions reference the persisted permission ID and escrow address
+- add dispute/resolve/reject states to the escrow state machine
 - check the actual escrow balance rather than trusting the recorded budget
-- add task-contract messages that spend through the Agent Account policy
+- add public-testnet acceptance for controller-signed Agent Account actions

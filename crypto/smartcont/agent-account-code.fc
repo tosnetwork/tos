@@ -3,6 +3,9 @@
 ;; Persistent data layout:
 ;;   owner:MsgAddress
 ;;   controller_pubkey:uint256
+;;   seqno:uint32
+;;   spend_day:uint32
+;;   spent_today:coins
 ;;   policy:^Cell
 ;;
 ;; Policy cell layout:
@@ -17,18 +20,28 @@
 ;;                         default_task_timeout:uint64 metadata_hash:(Maybe uint256)
 ;;                         service_endpoint_hash:(Maybe uint256) = InternalMsgBody;
 ;;   rotate_controller#41475002 query_id:uint64 controller_pubkey:uint256 = InternalMsgBody;
+;;   task_send#41475003 seqno:uint32 valid_until:uint32 target:MsgAddressInt
+;;             value:coins body:^Cell = SignedExternalBody;
 
 const int op::agent_update_policy = 0x41475001;      ;; "AGP\1"
 const int op::agent_rotate_controller = 0x41475002;  ;; "AGP\2"
+const int op::agent_task_send = 0x41475003;          ;; "AGP\3"
 
 const int err::invalid_policy = 1701;
 const int err::not_owner = 1702;
 const int err::unknown_op = 1703;
+const int err::bad_signature = 1704;
+const int err::bad_seqno = 1705;
+const int err::expired = 1706;
+const int err::policy_exceeded = 1707;
 
-(slice, int, int, int, int, int, int) load_agent_state() inline {
+(slice, int, int, int, int, int, int, int, int, int) load_agent_state() inline {
   slice ds = get_data().begin_parse();
   slice owner = ds~load_msg_addr();
   int controller_pubkey = ds~load_uint(256);
+  int seqno = ds~load_uint(32);
+  int spend_day = ds~load_uint(32);
+  int spent_today = ds~load_coins();
   cell policy_cell = ds~load_ref();
   ds.end_parse();
 
@@ -55,13 +68,19 @@ const int err::unknown_op = 1703;
     daily_limit,
     default_task_timeout,
     metadata_hash,
-    service_endpoint_hash
+    service_endpoint_hash,
+    seqno,
+    spend_day,
+    spent_today
   );
 }
 
 cell pack_agent_state(
   slice owner,
   int controller_pubkey,
+  int seqno,
+  int spend_day,
+  int spent_today,
   int max_per_tx,
   int daily_limit,
   int default_task_timeout,
@@ -92,6 +111,9 @@ cell pack_agent_state(
   return begin_cell()
     .store_slice(owner)
     .store_uint(controller_pubkey, 256)
+    .store_uint(seqno, 32)
+    .store_uint(spend_day, 32)
+    .store_coins(spent_today)
     .store_ref(policy.end_cell())
     .end_cell();
 }
@@ -125,7 +147,10 @@ cell pack_agent_state(
     int daily_limit,
     int default_task_timeout,
     int metadata_hash,
-    int service_endpoint_hash
+    int service_endpoint_hash,
+    int seqno,
+    int spend_day,
+    int spent_today
   ) = load_agent_state();
 
   int op = in_msg_body~load_uint(32);
@@ -145,6 +170,9 @@ cell pack_agent_state(
     set_data(pack_agent_state(
       owner,
       controller_pubkey,
+      seqno,
+      spend_day,
+      spent_today,
       new_max_per_tx,
       new_daily_limit,
       new_default_task_timeout,
@@ -163,6 +191,9 @@ cell pack_agent_state(
     set_data(pack_agent_state(
       owner,
       new_controller_pubkey,
+      seqno,
+      spend_day,
+      spent_today,
       max_per_tx,
       daily_limit,
       default_task_timeout,
@@ -176,26 +207,78 @@ cell pack_agent_state(
 }
 
 () recv_external(slice in_msg) impure {
-  in_msg~touch();
-  throw(err::not_owner);
+  slice signature = in_msg~load_bits(512);
+  slice signed_body = in_msg;
+  (
+    slice owner,
+    int controller_pubkey,
+    int max_per_tx,
+    int daily_limit,
+    int default_task_timeout,
+    int metadata_hash,
+    int service_endpoint_hash,
+    int seqno,
+    int spend_day,
+    int spent_today
+  ) = load_agent_state();
+  throw_unless(err::bad_signature, check_signature(slice_hash(signed_body), signature, controller_pubkey));
+
+  int op = signed_body~load_uint(32);
+  throw_unless(err::unknown_op, op == op::agent_task_send);
+  int request_seqno = signed_body~load_uint(32);
+  int valid_until = signed_body~load_uint(32);
+  throw_unless(err::bad_seqno, request_seqno == seqno);
+  throw_unless(err::expired, valid_until > now());
+  slice target = signed_body~load_msg_addr();
+  int value = signed_body~load_coins();
+  cell body = signed_body~load_ref();
+  signed_body.end_parse();
+  throw_unless(err::policy_exceeded, value <= max_per_tx);
+  int current_day = now() / 86400;
+  if (current_day != spend_day) {
+    spend_day = current_day;
+    spent_today = 0;
+  }
+  throw_unless(err::policy_exceeded, spent_today + value <= daily_limit);
+
+  accept_message();
+  send_raw_message(begin_cell()
+    .store_uint(0x10, 6)
+    .store_slice(target)
+    .store_tomis(value)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .store_ref(body)
+  .end_cell(), 1);
+  set_data(pack_agent_state(
+    owner,
+    controller_pubkey,
+    seqno + 1,
+    spend_day,
+    spent_today + value,
+    max_per_tx,
+    daily_limit,
+    default_task_timeout,
+    metadata_hash,
+    service_endpoint_hash
+  ));
 }
 
-(slice, int, int, int, int, int, int) get_agent_account_data() method_id {
+(slice, int, int, int, int, int, int, int, int, int) get_agent_account_data() method_id {
   return load_agent_state();
 }
 
 slice get_owner() method_id {
-  var (owner, _, _, _, _, _, _) = load_agent_state();
+  var (owner, _, _, _, _, _, _, _, _, _) = load_agent_state();
   return owner;
 }
 
 int get_controller_pubkey() method_id {
-  var (_, controller_pubkey, _, _, _, _, _) = load_agent_state();
+  var (_, controller_pubkey, _, _, _, _, _, _, _, _) = load_agent_state();
   return controller_pubkey;
 }
 
 (int, int, int, int, int) get_agent_policy() method_id {
-  var (_, _, max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash) =
+  var (_, _, max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash, _, _, _) =
     load_agent_state();
   return (max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash);
 }

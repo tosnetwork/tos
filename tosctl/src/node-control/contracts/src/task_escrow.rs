@@ -9,7 +9,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const TASK_ESCROW_CODE_B64: &str = "te6ccgECCAEAAk8AART/APSkE/S88sgLAQIBYgIDAfbQMiHHAJFb4AHTH9M/Me1E0PpA0wD6QPoA0z/TB9QB0NP/0//T/zAD0QvQdNch+kAwKoIQVEFTAbqOPjk5AcAA8uBkBMAAUmTHBROx8uBlcSAQWBZFc1AkAsjL/8v/y//JyFAHzxYUywBQBM8WAfoCEss/ywfMye1U4CoEADuhIW3aiaH0gaYB9IH0AaZ/pg+oYaGn/6f/p/5gIM8D5oIQVEFTArqOQzE5OcAB8uBmUWLHBVIwsPLgZwTT/9P/MBBHXjIQNBAjcgMCyMv/y//L/8nIUAfPFhTLAFAEzxYB+gISyz/LB8zJ7VTgKoIQVEFTA7rjAjU4KIIQVEFTBLrjAjMHghBUQVMFuuMCXwjywG8FBgcA8joCwALy4GhRhscF8uBpBvoAMFIDu/LgaiHCAI4XUiJxcIAQyMsFUATPFlj6AhLLaskB+wCRMeIjcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQNl4xcFA0cwMCyMv/y//L/8nIUAfPFhTLAFAEzxYB+gISyz/LB8zJ7VQAnjjAAPLga1EUxwXy4GwjcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQNl4xcFA0dAMCyMv/y//L/8nIUAfPFhTLAFAEzxYB+gISyz/LB8zJ7VQAsiD4I7vy4G0mwAAnwAGxB8ACF7Hy4G4jcIMGcIAQyMsFUATPFlj6AhLLaskB+wAQNl4xcEMUdUMTAsjL/8v/y//JyFAHzxYUywBQBM8WAfoCEss/ywfMye1U";
+pub const TASK_ESCROW_CODE_B64: &str = "te6ccgECCgEAApEAART/APSkE/S88sgLAQIBYgIDBLrQMiHHAJFb4AHTH9M/Me1E0PpA0wD6QNMA+kD6ANM/0wfUAdDT/9P/0/8wA9EN0HTXIfpAMCyCEFRBUwG64wIsghBUQVMCuuMCLIIQVEFTA7rjAjU6KoIQVEFTBLoEBQYHAEehIW3aiaH0gaYB9IGmAfSB9AGmf6YPqGGhp/+n/6f+YCESIM8AkDs7AcAA8uBkBsAAUobHBRWx8uBlcSAQehgZXjMQJUQzAgLIy//L/8v/ychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVACSMTs7wAHy4GZRhMcFUlCw8uBnBtP/0/8wEGleNF4yEDRyAwLIy//L/8v/ychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVAHIPALAAvLgaFOoxwVRtccFUmCwG7Hy4GkI+gAwUgO78uBqIcIAjhdSQnFwgBDIywVQBM8WWPoCEstqyQH7AJEx4iVwgwZwgBDIywVQBM8WWPoCEstqyQH7ABBYXjNeMXBQNHNQMwgB1o5YOsAA8uBrURbHBfLgbCVwgwZwgBDIywVQBM8WWPoCEstqyQH7ABBYXjNeMXBQNHRQMwLIy//L/8v/ychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVOAzCYIQVEFTBbrjAl8K8sBvCQBOAsjL/8v/y//JyFAJzxYWywBQBs8WEssAWM8WAfoCEss/ywfMye1UAMIg+CO78uBtKMAAKcABsQnAAhmx8uBuJXCDBnCAEMjLBVAEzxZY+gISy2rJAfsAEFheM14xcAQDdUEzAsjL/8v/y//JyFAJzxYWywBQBs8WEssAWM8WAfoCEss/ywfMye1U";
 pub const TASK_ACCEPT_OPCODE: u32 = 0x5441_5301;
 pub const TASK_RESULT_OPCODE: u32 = 0x5441_5302;
 pub const TASK_SETTLE_OPCODE: u32 = 0x5441_5303;
@@ -20,6 +20,8 @@ pub const TASK_TIMEOUT_OPCODE: u32 = 0x5441_5305;
 pub struct TaskEscrowInit {
     pub creator: MsgAddressInt,
     pub assigned_agent: Option<MsgAddressInt>,
+    /// Optional settlement authority allowed to settle alongside the creator.
+    pub verifier: Option<MsgAddressInt>,
     pub budget: u64,
     pub deadline: u64,
     pub settlement_policy_hash: [u8; 32],
@@ -31,6 +33,7 @@ pub struct TaskEscrowContract;
 pub struct TaskEscrowData {
     pub creator: MsgAddressInt,
     pub assigned_agent: Option<MsgAddressInt>,
+    pub verifier: Option<MsgAddressInt>,
     pub budget: u64,
     pub deadline: u64,
     pub status: u8,
@@ -46,6 +49,7 @@ impl TaskEscrowContract {
 
     pub fn build_data(init: &TaskEscrowInit) -> anyhow::Result<chain_block::Cell> {
         let agent = init.assigned_agent.as_ref().unwrap_or(&init.creator);
+        let verifier = init.verifier.as_ref().unwrap_or(&init.creator);
         let mut data = BuilderData::new();
         init.creator.write_to(&mut data)?;
         if init.assigned_agent.is_some() {
@@ -54,6 +58,12 @@ impl TaskEscrowContract {
             data.append_bit_zero()?;
         }
         agent.write_to(&mut data)?;
+        if init.verifier.is_some() {
+            data.append_bit_one()?;
+        } else {
+            data.append_bit_zero()?;
+        }
+        verifier.write_to(&mut data)?;
         Coins::new(init.budget).write_to(&mut data)?;
         data.append_u64(init.deadline)?.append_u8(0)?;
         let mut hashes = BuilderData::new();
@@ -84,15 +94,22 @@ impl TaskEscrowContract {
         } else {
             Some(MsgAddressInt::construct_from(&mut agent_slice)?)
         };
+        let mut verifier_slice = stack.slice(3)?;
+        let verifier = if stack.u64(4)? == 0 {
+            None
+        } else {
+            Some(MsgAddressInt::construct_from(&mut verifier_slice)?)
+        };
         Ok(TaskEscrowData {
             creator,
             assigned_agent,
-            budget: stack.u64(3)?,
-            deadline: stack.u64(4)?,
-            status: stack.u64(5)? as u8,
-            result_hash: parse_hash(stack, 6)?,
-            evidence_hash: parse_hash(stack, 7)?,
-            settlement_policy_hash: parse_hash(stack, 8)?,
+            verifier,
+            budget: stack.u64(5)?,
+            deadline: stack.u64(6)?,
+            status: stack.u64(7)? as u8,
+            result_hash: parse_hash(stack, 8)?,
+            evidence_hash: parse_hash(stack, 9)?,
+            settlement_policy_hash: parse_hash(stack, 10)?,
         })
     }
 
@@ -168,6 +185,7 @@ mod tests {
             assigned_agent: Some(
                 MsgAddressInt::with_standart(None, -1, [0x22; 32].into()).unwrap(),
             ),
+            verifier: Some(MsgAddressInt::with_standart(None, -1, [0x66; 32].into()).unwrap()),
             budget: 1_000_000_000,
             deadline: 1_800_000_000,
             settlement_policy_hash: [0x33; 32],
@@ -217,21 +235,20 @@ mod tests {
         assert_eq!(slice.remaining_bits(), 0);
     }
 
+    fn address_slice_entry(address: &MsgAddressInt) -> StackEntry {
+        let cell = address.write_to_new_cell().unwrap().into_cell().unwrap();
+        let bytes = SliceData::load_cell(cell).unwrap().get_bytestring(0);
+        StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } })
+    }
+
     #[test]
     fn decodes_task_data_stack() {
         let task = init();
-        let creator_cell = task.creator.write_to_new_cell().unwrap().into_cell().unwrap();
-        let creator_bytes = SliceData::load_cell(creator_cell).unwrap().get_bytestring(0);
-        let agent = task.assigned_agent.as_ref().unwrap();
-        let agent_cell = agent.write_to_new_cell().unwrap().into_cell().unwrap();
-        let agent_bytes = SliceData::load_cell(agent_cell).unwrap().get_bytestring(0);
         let stack = TvmStackParser::new(vec![
-            StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
-                slice: slice::Slice { bytes: creator_bytes },
-            }),
-            StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
-                slice: slice::Slice { bytes: agent_bytes },
-            }),
+            address_slice_entry(&task.creator),
+            address_slice_entry(task.assigned_agent.as_ref().unwrap()),
+            number("1"),
+            address_slice_entry(task.verifier.as_ref().unwrap()),
             number("1"),
             number(task.budget.to_string()),
             number(task.deadline.to_string()),
@@ -243,11 +260,34 @@ mod tests {
         let data = TaskEscrowContract::decode_data(&stack).unwrap();
         assert_eq!(data.creator, task.creator);
         assert_eq!(data.assigned_agent, task.assigned_agent);
+        assert_eq!(data.verifier, task.verifier);
         assert_eq!(data.budget, task.budget);
         assert_eq!(data.deadline, task.deadline);
         assert_eq!(data.status, 2);
         assert_eq!(data.result_hash, [0x44; 32]);
         assert_eq!(data.evidence_hash, [0x55; 32]);
         assert_eq!(data.settlement_policy_hash, task.settlement_policy_hash);
+    }
+
+    #[test]
+    fn decodes_task_data_without_verifier() {
+        let task = init();
+        let stack = TvmStackParser::new(vec![
+            address_slice_entry(&task.creator),
+            address_slice_entry(&task.creator),
+            number("0"),
+            address_slice_entry(&task.creator),
+            number("0"),
+            number(task.budget.to_string()),
+            number(task.deadline.to_string()),
+            number("0"),
+            hash_number([0; 32]),
+            hash_number([0; 32]),
+            hash_number(task.settlement_policy_hash),
+        ]);
+        let data = TaskEscrowContract::decode_data(&stack).unwrap();
+        assert_eq!(data.assigned_agent, None);
+        assert_eq!(data.verifier, None);
+        assert_eq!(data.status, 0);
     }
 }

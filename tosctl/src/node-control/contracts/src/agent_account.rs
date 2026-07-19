@@ -7,15 +7,18 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use chain_block::{
-    base64_decode, read_single_root_boc, BuilderData, Coins, Deserializable, IBitstring,
-    MsgAddressInt, Serializable, StateInit,
+    base64_decode, read_single_root_boc, BuilderData, Coins, Deserializable,
+    ExternalInboundMessageHeader, IBitstring, Message, MsgAddressExt, MsgAddressInt, Serializable,
+    SliceData, StateInit,
 };
 
 use crate::ContractProvider;
 
-pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECDgEAAgsAART/APSkE/S88sgLAQIBIAIDAgFIBAUACvIw8samAqbQMiHHAJFb4NDTAzH6QDDtRND6QNP/1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RCNMf0z8xIYIQQUdQAbrjAjaCEEFHUAK64wJfCPLGpwYHAgEgCAkA7jlfBVEhxwXy5qYC+gD6ANM/INMAAZPT/zCSMH/iIdMAAZPT/zCSMH/iAtH4AAEkwQDy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQA88Wy//Mye1UALhRZccF8uamA9P/0fgAEEZEVUMTJMEA8talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAPPFsv/zMntVAIBSAoLAgEgDA0AU7YlvaiaH0gaf/qaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72i2EsABTtzS9qJofSBp/+po6H0AfQBpn7+A6YAAyZjp/+8/gOmAAMmY6f/vaK+DQAE+5rr7UTQ+kDT/9TR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0YAFe55P7UTQ+kDT/9TR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0RBWXwaA==";
+pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECEAEAA0gAART/APSkE/S88sgLAQIBIAIDAgFIBAUB+PKDCNcY7UTQ+kDT/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkKvkBVBDJ+RDy5qgJ0x8BghBBR1ADuvLmp9Mf0x9RI7ry5qn4I7zy5qr6QPoA1NFTGLvy5qv4I4IBUYCpBFMMvZM8cD2RMOJTwaAPArbQMiHHAJFb4NDTAzH6QDDtRND6QNP/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQL0x/TPzEhghBBR1ABuuMCOYIQQUdQArrjAl8L8sanBgcCASAJCgFuMWwzMzNRVMcF8uam+gD6ANM/INMAAZPT/zCSMH/iIdMAAZPT/zCSMH/iAtH4ABB5EGgQZxBWAQgAzFGYxwXy5qYG0//R+AAQeQgGB1VAJMEA8talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAbPFhTL/xLLH8sfAfoCzMntVACkJMEA8talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAbPFhTL/xLLH8sfAfoCzMntVAIBSAsMAgEgDQ4AZ7YlvaiaH0gaf/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+BthLAAY7c0vaiaH0gaf/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+EwAF+5rr7UTQ+kDT/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkgAZ7nk/tRND6QNP/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQQiV8JgA9Ci78uar+ABwgBDIywVQBM8WIvoCE8tqEszJcfsAAaRQqqAQeRBoVUAkwQDy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQBs8WFMv/Essfyx8B+gLMye1U";
+
 pub const AGENT_UPDATE_POLICY_OPCODE: u32 = 0x4147_5001;
 pub const AGENT_ROTATE_CONTROLLER_OPCODE: u32 = 0x4147_5002;
+pub const AGENT_TASK_SEND_OPCODE: u32 = 0x4147_5003;
 
 #[derive(Clone, Debug)]
 pub struct AgentAccountInit {
@@ -34,6 +37,9 @@ pub struct AgentAccountContract;
 pub struct AgentAccountData {
     pub owner: MsgAddressInt,
     pub controller_pubkey: [u8; 32],
+    pub seqno: u32,
+    pub spend_day: u32,
+    pub spent_today: u64,
     pub max_per_tx: u64,
     pub daily_limit: u64,
     pub default_task_timeout_secs: u64,
@@ -68,6 +74,9 @@ impl AgentAccountContract {
         let mut data = BuilderData::new();
         init.owner.write_to(&mut data)?;
         data.append_raw(&init.controller_pubkey, 256)?;
+        data.append_u32(0)?;
+        data.append_u32(0)?;
+        Coins::new(0).write_to(&mut data)?;
         data.checked_append_reference(policy.into_cell()?)?;
         Ok(data.into_cell()?)
     }
@@ -93,11 +102,14 @@ impl AgentAccountContract {
         Ok(AgentAccountData {
             owner,
             controller_pubkey: parse_hash(&stack, 1)?,
-            max_per_tx: stack.u64(2)?,
-            daily_limit: stack.u64(3)?,
-            default_task_timeout_secs: stack.u64(4)?,
-            metadata_hash: parse_maybe_hash(&stack, 5)?,
-            service_endpoint_hash: parse_maybe_hash(&stack, 6)?,
+            seqno: stack.u64(2)? as u32,
+            max_per_tx: stack.u64(3)?,
+            daily_limit: stack.u64(4)?,
+            default_task_timeout_secs: stack.u64(5)?,
+            metadata_hash: parse_maybe_hash(&stack, 6)?,
+            service_endpoint_hash: parse_maybe_hash(&stack, 7)?,
+            spend_day: stack.u64(8)? as u32,
+            spent_today: stack.u64(9)?,
         })
     }
 
@@ -125,6 +137,49 @@ impl AgentAccountContract {
             .append_u64(query_id)?
             .append_raw(&controller_pubkey, 256)?;
         Ok(body.into_cell()?)
+    }
+
+    /// Build the controller-signed payload. The controller signs the cell hash
+    /// returned by this method; `build_signed_task_send_message` prepends the
+    /// resulting 512-bit signature for external delivery.
+    pub fn build_task_send_payload(
+        seqno: u32,
+        valid_until: u32,
+        target: &MsgAddressInt,
+        value: u64,
+        body: chain_block::Cell,
+    ) -> anyhow::Result<chain_block::Cell> {
+        let mut payload = BuilderData::new();
+        payload.append_u32(AGENT_TASK_SEND_OPCODE)?.append_u32(seqno)?.append_u32(valid_until)?;
+        target.write_to(&mut payload)?;
+        Coins::new(value).write_to(&mut payload)?;
+        payload.checked_append_reference(body)?;
+        Ok(payload.into_cell()?)
+    }
+
+    pub fn build_signed_task_send_message(
+        payload: chain_block::Cell,
+        signature: &[u8; 64],
+    ) -> anyhow::Result<chain_block::Cell> {
+        let mut message = BuilderData::new();
+        message.append_raw(signature, 512)?;
+        message.append_builder(&BuilderData::from_cell(&payload)?)?;
+        Ok(message.into_cell()?)
+    }
+
+    pub fn build_external_task_send_message(
+        account: MsgAddressInt,
+        signed_body: chain_block::Cell,
+    ) -> anyhow::Result<chain_block::Cell> {
+        let body = SliceData::load_cell(signed_body)?;
+        let message = Message::with_ext_in_header_and_body(
+            ExternalInboundMessageHeader::new(MsgAddressExt::AddrNone, account),
+            body,
+        );
+        let (builder, _, _) = message
+            .serialize_as_is()
+            .map_err(|e| anyhow::anyhow!("external message serialization error: {:?}", e))?;
+        Ok(builder.into_cell()?)
     }
 }
 
@@ -271,11 +326,14 @@ mod tests {
                     slice: slice::Slice { bytes: owner_bytes },
                 }),
                 hash_number(init.controller_pubkey),
+                number("0"),
                 number(init.max_per_tx.to_string()),
                 number(init.daily_limit.to_string()),
                 number(init.default_task_timeout_secs.to_string()),
                 hash_number(init.metadata_hash.unwrap()),
                 number("-1"),
+                number("0"),
+                number("0"),
             ],
         };
 
@@ -283,6 +341,9 @@ mod tests {
 
         assert_eq!(data.owner, init.owner);
         assert_eq!(data.controller_pubkey, init.controller_pubkey);
+        assert_eq!(data.seqno, 0);
+        assert_eq!(data.spend_day, 0);
+        assert_eq!(data.spent_today, 0);
         assert_eq!(data.max_per_tx, init.max_per_tx);
         assert_eq!(data.daily_limit, init.daily_limit);
         assert_eq!(data.default_task_timeout_secs, init.default_task_timeout_secs);
@@ -322,5 +383,28 @@ mod tests {
         assert_eq!(slice.get_next_u64().unwrap(), 43);
         assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0x66; 32]);
         assert_eq!(slice.remaining_bits(), 0);
+    }
+
+    #[test]
+    fn builds_controller_signed_task_payload() {
+        let target = MsgAddressInt::with_standart(None, -1, [0x66; 32].into()).unwrap();
+        let task_body = BuilderData::new().into_cell().unwrap();
+        let payload = AgentAccountContract::build_task_send_payload(
+            7,
+            1_900_000_000,
+            &target,
+            123_000_000,
+            task_body,
+        )
+        .unwrap();
+        let signed =
+            AgentAccountContract::build_signed_task_send_message(payload, &[0xAA; 64]).unwrap();
+        let external = AgentAccountContract::build_external_task_send_message(
+            MsgAddressInt::with_standart(None, -1, [0x77; 32].into()).unwrap(),
+            signed,
+        )
+        .unwrap();
+
+        assert!(external.references_count() >= 1);
     }
 }

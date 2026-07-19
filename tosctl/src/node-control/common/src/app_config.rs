@@ -6,9 +6,10 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use crate::{WalletVersion, serde_utils, socket_utils::resolve_ip};
+use crate::{serde_utils, socket_utils::resolve_ip, WalletVersion};
 use adnl::{client::AdnlClientConfig, common::Timeouts};
 use anyhow::Context;
+use chain_block::Ed25519KeyOption;
 use secrets_vault::{
     crypto::factory::{AutoCryptoFactory, CryptoFactory},
     types::{algorithm::Algorithm, metadata::Metadata, secret::Secret},
@@ -23,7 +24,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use chain_block::Ed25519KeyOption;
 
 fn default_chain_rpc_url() -> String {
     "http://127.0.0.1:3301/".to_owned()
@@ -76,11 +76,7 @@ pub struct ChainRpcConfig {
 
 impl Default for ChainRpcConfig {
     fn default() -> Self {
-        Self {
-            urls: vec![EndpointEntry::Url(default_chain_rpc_url())],
-            url: None,
-            api_key: None,
-        }
+        Self { urls: vec![EndpointEntry::Url(default_chain_rpc_url())], url: None, api_key: None }
     }
 }
 
@@ -403,6 +399,12 @@ pub struct AgentTaskConfig {
     /// Assigned agent address when fixed at deployment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assigned_agent: Option<String>,
+    /// Optional verifier allowed to settle the task.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verifier: Option<String>,
+    /// Optional account-permission object linked to this task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_id: Option<String>,
     /// Escrow budget in nano-TOS.
     pub budget: u64,
     /// Unix deadline after which the escrow may be expired.
@@ -754,11 +756,7 @@ impl AlertChannel {
     /// Returns an error when neither source provides a value.
     pub fn resolve_telegram_token(&self) -> anyhow::Result<String> {
         match self {
-            AlertChannel::Telegram {
-                bot_token,
-                bot_token_env,
-                ..
-            } => {
+            AlertChannel::Telegram { bot_token, bot_token_env, .. } => {
                 // Try env var first
                 if let Some(env_name) = bot_token_env {
                     if let Ok(val) = std::env::var(env_name) {

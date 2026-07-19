@@ -57,6 +57,7 @@ MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000001"
 POLICY_HASH = "11" * 32
 RESULT_HASH = "aa" * 32
 EVIDENCE_HASH = "bb" * 32
+PERMISSION_ID = "e2e-agent:bounded-task:1"
 NANO = 1_000_000_000
 
 failures: list[str] = []
@@ -214,6 +215,7 @@ async def create_task(name: str, creator: str, agent: str | None, budget: float,
     args = ["agent", "task", "create", "--name", name, "--creator", creator,
             "--budget", str(budget), "--deadline", str(deadline),
             "--policy-hash", POLICY_HASH, "--from", "creator",
+            "--permission-id", PERMISSION_ID,
             "--amount", str(amount), "-w", "0", "--yes"]
     if agent is not None:
         args += ["--agent", agent]
@@ -269,6 +271,7 @@ async def run_checks(faucet) -> None:
     check("creator recorded on-chain", same_addr(data["creator"], creator), str(data))
     check("agent recorded on-chain", same_addr(data["assigned_agent"], agent), str(data))
     check("policy hash recorded", data["settlement_policy_hash"] == POLICY_HASH)
+    check("permission linkage shown", data.get("permission_id") == PERMISSION_ID, str(data))
 
     await send_op("accept", "e2e-main", "creator")
     await assert_status_stays("e2e-main", "open", "accept by creator rejected")
@@ -362,11 +365,14 @@ async def run_checks(faucet) -> None:
     check("record creator", same_addr(main_rec.get("creator"), creator))
     check("record agent", same_addr(main_rec.get("assigned_agent"), agent))
     check("record policy hash", main_rec.get("policy_hash") == POLICY_HASH)
+    check("record permission linkage", main_rec.get("permission_id") == PERMISSION_ID)
     check("record deadline", main_rec.get("deadline") == deadline)
     check("record created_at set", bool(main_rec.get("created_at")))
     saved = json.loads(CONFIG.read_text())
     check("records persisted in config file",
           set(saved.get("agent_tasks", {})) == {"e2e-main", "e2e-cancel", "e2e-timeout"})
+    check("permission linkage persisted in config file",
+          saved.get("agent_tasks", {}).get("e2e-main", {}).get("permission_id") == PERMISSION_ID)
 
 
 async def main() -> int:

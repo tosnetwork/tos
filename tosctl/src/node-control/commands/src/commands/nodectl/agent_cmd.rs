@@ -15,11 +15,11 @@ use super::utils::{
 };
 use anyhow::Context;
 use base64::Engine;
-use clap::ValueEnum;
 use chain_block::{
     read_single_root_boc, write_boc, BuilderData, Cell, IBitstring, MsgAddressInt, Serializable,
 };
 use chain_rpc_client::v2::data_models::AccountState;
+use clap::ValueEnum;
 use colored::Colorize;
 use common::{
     app_config::{
@@ -146,6 +146,10 @@ pub struct AgentTaskCreateCmd {
     creator: String,
     #[arg(long)]
     agent: Option<String>,
+    #[arg(long, help = "Optional verifier allowed to settle the task")]
+    verifier: Option<String>,
+    #[arg(long, help = "Optional account-permission ID linked to this task")]
+    permission_id: Option<String>,
     #[arg(long)]
     budget: f64,
     #[arg(long)]
@@ -195,6 +199,8 @@ pub struct AgentTaskBuildStateCmd {
     creator: String,
     #[arg(long, help = "Optional assigned Agent address")]
     agent: Option<String>,
+    #[arg(long, help = "Optional verifier allowed to settle the task")]
+    verifier: Option<String>,
     #[arg(long, help = "Escrow budget in TOS")]
     budget: f64,
     #[arg(long, help = "Unix deadline")]
@@ -230,6 +236,8 @@ pub enum AgentAccountAction {
     UpdatePolicy(AgentAccountUpdatePolicyCmd),
     /// Apply the local controller key to a deployed Agent Account
     RotateController(AgentAccountRotateControllerCmd),
+    /// Send a controller-signed transfer from a deployed Agent Account
+    TaskSend(AgentAccountTaskSendCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -328,6 +336,23 @@ pub struct AgentAccountRotateControllerCmd {
 
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Send a controller-signed transfer from an Agent Account")]
+pub struct AgentAccountTaskSendCmd {
+    #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
+    wallet: String,
+    #[arg(long, help = "Destination address")]
+    target: String,
+    #[arg(long, help = "Transfer amount in TOS")]
+    value: f64,
+    #[arg(long, help = "Body BOC as base64; defaults to an empty cell")]
+    body_boc: Option<String>,
+    #[arg(long, help = "Unix timestamp after which the request is invalid")]
+    valid_until: u32,
+    #[arg(long, help = "Skip confirmation prompt")]
+    yes: bool,
 }
 
 #[derive(clap::Args, Clone)]
@@ -716,9 +741,15 @@ struct AgentAccountChainView {
     #[serde(skip_serializing_if = "Option::is_none")]
     controller_pubkey: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    seqno: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     max_per_tx: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     daily_limit: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spend_day: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spent_today: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     default_task_timeout_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -736,6 +767,7 @@ struct AgentAccountTemplateView {
     tlb: &'static str,
     update_policy_opcode: String,
     rotate_controller_opcode: String,
+    task_send_opcode: String,
     get_methods: Vec<&'static str>,
     code_hash: String,
     code_boc: String,
@@ -761,6 +793,7 @@ impl AgentAccountCmd {
             AgentAccountAction::Status(cmd) => cmd.run(config_path).await,
             AgentAccountAction::UpdatePolicy(cmd) => cmd.run(config_path).await,
             AgentAccountAction::RotateController(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::TaskSend(cmd) => cmd.run(config_path).await,
         }
     }
 }
@@ -789,7 +822,9 @@ fn resolve_task_address(
         (None, Some(name)) => config
             .agent_tasks
             .get(name)
-            .ok_or_else(|| anyhow::anyhow!("Task record '{}' not found; see `agent task ls`", name))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Task record '{}' not found; see `agent task ls`", name)
+            })?
             .address
             .clone(),
         _ => anyhow::bail!("provide exactly one of --address or --name"),
@@ -817,15 +852,39 @@ impl AgentTaskSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_task_address(&config, &self.address, &self.name)?;
-        let wallet_config = get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
-        let (owner_address, owner_info, owner_secret) = wallet_info(rpc_client.clone(), wallet_config, vault).await?;
-        if owner_info.account_state != AccountState::Active { anyhow::bail!("signing wallet is not active"); }
+        let wallet_config =
+            get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
+        let (owner_address, owner_info, owner_secret) =
+            wallet_info(rpc_client.clone(), wallet_config, vault).await?;
+        if owner_info.account_state != AccountState::Active {
+            anyhow::bail!("signing wallet is not active");
+        }
         let amount_nanotos = tos_to_nanotos(self.amount);
-        if owner_info.balance < amount_nanotos.saturating_add(AGENT_ACCOUNT_ACTION_GAS) { anyhow::bail!("signing wallet has insufficient balance"); }
-        if !self.yes && !confirm("Confirm Task Escrow message?")? { return Ok(()); }
-        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
-        send_wallet_message(&wallet, rpc_client, destination.clone(), amount_nanotos, body, true, owner_info.seqno, &owner_address).await?;
-        println!("{} Task Escrow {} message submitted to {}", "OK".green().bold(), self.operation.to_possible_value().unwrap().get_name(), destination);
+        if owner_info.balance < amount_nanotos.saturating_add(AGENT_ACCOUNT_ACTION_GAS) {
+            anyhow::bail!("signing wallet has insufficient balance");
+        }
+        if !self.yes && !confirm("Confirm Task Escrow message?")? {
+            return Ok(());
+        }
+        let wallet =
+            make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        send_wallet_message(
+            &wallet,
+            rpc_client,
+            destination.clone(),
+            amount_nanotos,
+            body,
+            true,
+            owner_info.seqno,
+            &owner_address,
+        )
+        .await?;
+        println!(
+            "{} Task Escrow {} message submitted to {}",
+            "OK".green().bold(),
+            self.operation.to_possible_value().unwrap().get_name(),
+            destination
+        );
         Ok(())
     }
 }
@@ -835,6 +894,8 @@ struct AgentTaskDataView {
     address: String,
     creator: String,
     assigned_agent: Option<String>,
+    verifier: Option<String>,
+    permission_id: Option<String>,
     budget: String,
     deadline: u64,
     status: String,
@@ -851,10 +912,17 @@ impl AgentTaskShowCmd {
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider.get_method(address.to_string(), "get_task_data", vec![]).await?;
         let data = TaskEscrowContract::decode_data(&stack)?;
+        let permission_id = config
+            .agent_tasks
+            .values()
+            .find(|task| task.address == address.to_string())
+            .and_then(|task| task.permission_id.clone());
         let view = AgentTaskDataView {
             address: address.to_string(),
             creator: data.creator.to_string(),
             assigned_agent: data.assigned_agent.map(|value| value.to_string()),
+            verifier: data.verifier.map(|value| value.to_string()),
+            permission_id,
             budget: display_tos(data.budget),
             deadline: data.deadline,
             status: task_status_name(data.status).to_string(),
@@ -868,6 +936,8 @@ impl AgentTaskShowCmd {
             println!("Task Escrow: {}", view.address);
             println!("Creator: {}", view.creator);
             println!("Assigned Agent: {}", view.assigned_agent.as_deref().unwrap_or("none"));
+            println!("Verifier: {}", view.verifier.as_deref().unwrap_or("none"));
+            println!("Permission ID: {}", view.permission_id.as_deref().unwrap_or("none"));
             println!("Budget: {} TOS", view.budget);
             println!("Deadline: {}", view.deadline);
             println!("Status: {}", view.status);
@@ -881,11 +951,23 @@ impl AgentTaskCreateCmd {
         validate_tos_amount("amount", self.amount)?;
         validate_tos_amount("budget", self.budget)?;
         let creator = self.creator.parse::<MsgAddressInt>().context("invalid creator address")?;
-        let agent = self.agent.as_deref().map(str::parse).transpose().context("invalid agent address")?;
-        let policy_hash = parse_optional_hash("policy-hash", &Some(self.policy_hash.clone()))?.unwrap();
+        let agent =
+            self.agent.as_deref().map(str::parse).transpose().context("invalid agent address")?;
+        let verifier = self
+            .verifier
+            .as_deref()
+            .map(str::parse)
+            .transpose()
+            .context("invalid verifier address")?;
+        let policy_hash =
+            parse_optional_hash("policy-hash", &Some(self.policy_hash.clone()))?.unwrap();
+        if let Some(permission_id) = &self.permission_id {
+            validate_non_empty("permission-id", permission_id)?;
+        }
         let init = TaskEscrowInit {
             creator: creator.clone(),
             assigned_agent: agent,
+            verifier,
             budget: tos_to_nanotos(self.budget),
             deadline: self.deadline,
             settlement_policy_hash: policy_hash,
@@ -908,27 +990,46 @@ impl AgentTaskCreateCmd {
                 );
             }
         }
-        let payer_cfg = get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
-        let (payer_address, payer_info, payer_secret) = wallet_info(rpc_client.clone(), payer_cfg, vault).await?;
-        if payer_address != creator { anyhow::bail!("creator address must match funding wallet address"); }
-        if payer_info.account_state != AccountState::Active { anyhow::bail!("funding wallet is not active"); }
+        let payer_cfg =
+            get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
+        let (payer_address, payer_info, payer_secret) =
+            wallet_info(rpc_client.clone(), payer_cfg, vault).await?;
+        if payer_address != creator {
+            anyhow::bail!("creator address must match funding wallet address");
+        }
+        if payer_info.account_state != AccountState::Active {
+            anyhow::bail!("funding wallet is not active");
+        }
         let amount_nanotos = tos_to_nanotos(self.amount);
-        if amount_nanotos == 0 || payer_info.balance < amount_nanotos.saturating_add(AGENT_ACCOUNT_DEPLOY_GAS) {
+        if amount_nanotos == 0
+            || payer_info.balance < amount_nanotos.saturating_add(AGENT_ACCOUNT_DEPLOY_GAS)
+        {
             anyhow::bail!("funding wallet has insufficient balance");
         }
-        if !self.yes && !confirm("Confirm Task Escrow deployment?")? { return Ok(()); }
+        if !self.yes && !confirm("Confirm Task Escrow deployment?")? {
+            return Ok(());
+        }
         let wallet = make_wallet(rpc_client.clone(), payer_cfg, payer_secret, &self.from).await?;
         let body = BuilderData::new().into_cell()?;
         send_wallet_message_with_state_init(
-            &wallet, rpc_client, address.clone(), amount_nanotos, body,
-            payer_info.seqno, &payer_address, state_init,
-        ).await?;
+            &wallet,
+            rpc_client,
+            address.clone(),
+            amount_nanotos,
+            body,
+            payer_info.seqno,
+            &payer_address,
+            state_init,
+        )
+        .await?;
         config.agent_tasks.insert(
             record_name.clone(),
             AgentTaskConfig {
                 address: address.to_string(),
                 creator: creator.to_string(),
                 assigned_agent: init.assigned_agent.as_ref().map(|agent| agent.to_string()),
+                verifier: init.verifier.as_ref().map(|verifier| verifier.to_string()),
+                permission_id: self.permission_id.clone(),
                 budget: init.budget,
                 deadline: init.deadline,
                 policy_hash: hex::encode(policy_hash),
@@ -937,14 +1038,23 @@ impl AgentTaskCreateCmd {
         );
         save_config(&config, path)?;
         if self.format == OutputFormat::Json {
-            println!("{}", serde_json::json!({
-                "name": record_name,
-                "address": address.to_string(),
-                "status": "submitted",
-                "creator": creator.to_string(),
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "name": record_name,
+                    "address": address.to_string(),
+                    "status": "submitted",
+                    "creator": creator.to_string(),
+                    "permission_id": self.permission_id,
+                })
+            );
         } else {
-            println!("{} Task Escrow '{}' deployed at {}", "OK".green().bold(), record_name, address);
+            println!(
+                "{} Task Escrow '{}' deployed at {}",
+                "OK".green().bold(),
+                record_name,
+                address
+            );
         }
         Ok(())
     }
@@ -956,6 +1066,8 @@ struct AgentTaskRecordView {
     address: String,
     creator: String,
     assigned_agent: Option<String>,
+    verifier: Option<String>,
+    permission_id: Option<String>,
     budget: String,
     deadline: u64,
     policy_hash: String,
@@ -973,6 +1085,8 @@ impl AgentTaskLsCmd {
                 address: task.address.clone(),
                 creator: task.creator.clone(),
                 assigned_agent: task.assigned_agent.clone(),
+                verifier: task.verifier.clone(),
+                permission_id: task.permission_id.clone(),
                 budget: display_tos(task.budget),
                 deadline: task.deadline,
                 policy_hash: task.policy_hash.clone(),
@@ -990,11 +1104,13 @@ impl AgentTaskLsCmd {
         }
         for record in &records {
             println!(
-                "{}\n  Address:  {}\n  Creator:  {}\n  Agent:    {}\n  Budget:   {} TOS\n  Deadline: {}",
+                "{}\n  Address:    {}\n  Creator:    {}\n  Agent:      {}\n  Verifier:   {}\n  Permission: {}\n  Budget:     {} TOS\n  Deadline:   {}",
                 record.name.bold(),
                 record.address,
                 record.creator,
                 record.assigned_agent.as_deref().unwrap_or("open"),
+                record.verifier.as_deref().unwrap_or("none"),
+                record.permission_id.as_deref().unwrap_or("none"),
                 record.budget,
                 record.deadline,
             );
@@ -1048,11 +1164,18 @@ impl AgentTaskBuildStateCmd {
             .map(MsgAddressInt::from_str)
             .transpose()
             .with_context(|| "agent must be a valid native address")?;
+        let verifier = self
+            .verifier
+            .as_deref()
+            .map(MsgAddressInt::from_str)
+            .transpose()
+            .with_context(|| "verifier must be a valid native address")?;
         let policy_hash = parse_optional_hash("policy-hash", &Some(self.policy_hash.clone()))?
             .expect("policy hash is required");
         let init = TaskEscrowInit {
             creator: creator.clone(),
             assigned_agent: assigned_agent.clone(),
+            verifier,
             budget: tos_to_nanotos(self.budget),
             deadline: self.deadline,
             settlement_policy_hash: policy_hash,
@@ -1070,7 +1193,8 @@ impl AgentTaskBuildStateCmd {
             workchain: self.workchain,
             address: address.to_string(),
             policy_hash: hex::encode(policy_hash),
-            state_init_boc: base64::engine::general_purpose::STANDARD.encode(write_boc(&state_cell)?),
+            state_init_boc: base64::engine::general_purpose::STANDARD
+                .encode(write_boc(&state_cell)?),
             code_hash,
             data_hash,
         };
@@ -1401,6 +1525,78 @@ impl AgentAccountRotateControllerCmd {
     }
 }
 
+impl AgentAccountTaskSendCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_tos_amount("value", self.value)?;
+        if self.value == 0.0 {
+            anyhow::bail!("value must be greater than zero");
+        }
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Agent Account is not deployed for this wallet"))?
+            .parse::<MsgAddressInt>()?;
+        let target = self.target.parse::<MsgAddressInt>().context("invalid target address")?;
+        let provider = contracts::contract_provider!(rpc_client.clone());
+        let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        let value = tos_to_nanotos(self.value);
+        if value > data.max_per_tx {
+            anyhow::bail!(
+                "value {} exceeds Agent Account max_per_tx {}",
+                display_tos(value),
+                display_tos(data.max_per_tx)
+            );
+        }
+        let now = time_format::now() as u32;
+        if self.valid_until <= now {
+            anyhow::bail!("valid_until must be a future Unix timestamp");
+        }
+        let secret = agent_wallet.controller_key.read_secret(Some(vault)).await?;
+        let keypair = secret.as_keypair()?;
+        let controller_pubkey: [u8; 32] = keypair
+            .public_key()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("controller secret has no public key"))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("controller public key must be 32 bytes"))?;
+        if controller_pubkey != data.controller_pubkey {
+            anyhow::bail!("configured controller key does not match the deployed Agent Account");
+        }
+        let body = match &self.body_boc {
+            Some(encoded) => {
+                read_single_root_boc(base64::engine::general_purpose::STANDARD.decode(encoded)?)?
+            }
+            None => Cell::default(),
+        };
+        let payload = AgentAccountContract::build_task_send_payload(
+            data.seqno,
+            self.valid_until,
+            &target,
+            value,
+            body,
+        )?;
+        let signature = keypair.sign(payload.hash(0).as_slice()).await?;
+        let signature: [u8; 64] = signature
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;
+        let signed = AgentAccountContract::build_signed_task_send_message(payload, &signature)?;
+        let message =
+            AgentAccountContract::build_external_task_send_message(account.clone(), signed)?;
+        if !self.yes && !confirm(&format!("Send controller action from {}?", account))? {
+            return Ok(());
+        }
+        rpc_client.send_boc(&write_boc(&message)?).await?;
+        println!("{} controller task action sent from {}", "OK".green().bold(), account);
+        Ok(())
+    }
+}
+
 async fn run_agent_account_owner_action(
     config_path: &str,
     wallet_name: &str,
@@ -1540,9 +1736,7 @@ async fn send_wallet_message(
     seqno: Option<u32>,
     owner_address: &MsgAddressInt,
 ) -> anyhow::Result<()> {
-    let msg = wallet
-        .build_message(destination, amount, body, bounce, seqno, None, None)
-        .await?;
+    let msg = wallet.build_message(destination, amount, body, bounce, seqno, None, None).await?;
     rpc_client.send_boc(&write_boc(&msg)?).await?;
     wait_for_seqno_change(
         rpc_client,
@@ -1634,8 +1828,11 @@ async fn load_agent_account_chain_view(
         template_matches,
         owner: data.as_ref().map(|data| data.owner.to_string()),
         controller_pubkey: data.as_ref().map(|data| hex::encode(data.controller_pubkey)),
+        seqno: data.as_ref().map(|data| data.seqno),
         max_per_tx: data.as_ref().map(|data| data.max_per_tx),
         daily_limit: data.as_ref().map(|data| data.daily_limit),
+        spend_day: data.as_ref().map(|data| data.spend_day),
+        spent_today: data.as_ref().map(|data| data.spent_today),
         default_task_timeout_secs: data.as_ref().map(|data| data.default_task_timeout_secs),
         metadata_hash: data.as_ref().and_then(|data| data.metadata_hash.map(hex::encode)),
         service_endpoint_hash: data
@@ -1683,11 +1880,20 @@ fn print_agent_account_chain_view(
     if let Some(controller) = &view.controller_pubkey {
         println!("  Controller pubkey:    {}", controller);
     }
+    if let Some(seqno) = view.seqno {
+        println!("  Controller seqno:     {}", seqno);
+    }
     if let Some(max_per_tx) = view.max_per_tx {
         println!("  Max per action:       {} TOS", display_tos(max_per_tx));
     }
     if let Some(daily_limit) = view.daily_limit {
         println!("  Daily limit:          {} TOS", display_tos(daily_limit));
+    }
+    if let Some(spent_today) = view.spent_today {
+        println!("  Spent today:          {} TOS", display_tos(spent_today));
+    }
+    if let Some(spend_day) = view.spend_day {
+        println!("  Spend day (UTC):      {}", spend_day);
     }
     if let Some(timeout) = view.default_task_timeout_secs {
         println!("  Default task timeout: {}s", timeout);
@@ -1714,6 +1920,7 @@ impl AgentAccountShowTemplateCmd {
             tlb: "crypto/smartcont/agent-account.tlb",
             update_policy_opcode: "0x41475001".to_string(),
             rotate_controller_opcode: "0x41475002".to_string(),
+            task_send_opcode: "0x41475003".to_string(),
             get_methods: vec![
                 "get_agent_account_data",
                 "get_owner",
@@ -1735,6 +1942,7 @@ impl AgentAccountShowTemplateCmd {
         println!("  TLB:                      {}", view.tlb);
         println!("  Update policy opcode:     {}", view.update_policy_opcode);
         println!("  Rotate controller opcode: {}", view.rotate_controller_opcode);
+        println!("  Task send opcode:         {}", view.task_send_opcode);
         println!("  Get methods:              {}", view.get_methods.join(", "));
         println!("  Code hash:                {}", view.code_hash);
         Ok(())

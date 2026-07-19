@@ -1,4 +1,4 @@
-// automatically generated from `smartcont/stdlib.fc` `smartcont/agent-account-code.fc` 
+// automatically generated from `crypto/smartcont/stdlib.fc` `crypto/smartcont/agent-account-code.fc` 
 PROGRAM{
   DECLPROC load_agent_state
   DECLPROC pack_agent_state
@@ -16,78 +16,88 @@ PROGRAM{
     CTOS	//  ds
     LDMSGADDR	//  owner ds
     256 LDU	//  owner controller_pubkey ds
-    LDREF	//  owner controller_pubkey policy_cell ds
+    32 LDU	//  owner controller_pubkey seqno ds
+    32 LDU	//  owner controller_pubkey seqno spend_day ds
+    LDTOMIS	//  owner controller_pubkey seqno spend_day spent_today ds
+    LDREF	//  owner controller_pubkey seqno spend_day spent_today policy_cell ds
     ENDS
-    CTOS	//  owner controller_pubkey ps
-    LDTOMIS	//  owner controller_pubkey max_per_tx ps
-    LDTOMIS	//  owner controller_pubkey max_per_tx daily_limit ps
-    64 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ps
-    -1 PUSHINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ps metadata_hash=-1
-    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ps
-    1 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 _28 ps
-    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ps _28
-    IF:<{	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash=-1 ps
-      NIP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout ps
-      256 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ps
-    }>	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ps
-    -1 PUSHINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ps service_endpoint_hash=-1
-    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ps
-    1 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 _36 ps
-    SWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ps _36
-    IF:<{	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ps
-      NIP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash ps
-      256 LDU	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash ps
-    }>	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash ps
+    CTOS	//  owner controller_pubkey seqno spend_day spent_today ps
+    LDTOMIS	//  owner controller_pubkey seqno spend_day spent_today max_per_tx ps
+    LDTOMIS	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit ps
+    64 LDU	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout ps
+    -1 PUSHINT	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout ps metadata_hash=-1
+    SWAP	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash=-1 ps
+    1 LDU	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash=-1 _39 ps
+    SWAP	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash=-1 ps _39
+    IF:<{	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash=-1 ps
+      NIP	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout ps
+      256 LDU	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash ps
+    }>	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash ps
+    -1 PUSHINT	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash ps service_endpoint_hash=-1
+    SWAP	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ps
+    1 LDU	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 _47 ps
+    SWAP	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ps _47
+    IF:<{	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash=-1 ps
+      NIP	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash ps
+      256 LDU	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash ps
+    }>	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash ps
     ENDS
+    3 5 BLKSWAP	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day spent_today
   }>
   pack_agent_state PROCINLINE:<{
-    //  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
-    s4 PUSH	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash max_per_tx
-    0 LESSINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _9
+    //  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
+    s4 PUSH	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash max_per_tx
+    0 LESSINT	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _12
     1701 THROWIF
-    s3 s4 PUSH2	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash daily_limit max_per_tx
-    LESS	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _12
+    s3 s4 PUSH2	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash daily_limit max_per_tx
+    LESS	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _15
     1701 THROWIF
-    s2 PUSH	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash default_task_timeout
-    1 LESSINT	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _16
+    s2 PUSH	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash default_task_timeout
+    1 LESSINT	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _19
     1701 THROWIF
-    NEWC	//  owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _19
-    s0 s5 XCHG2	//  owner controller_pubkey service_endpoint_hash daily_limit default_task_timeout metadata_hash _19 max_per_tx
-    STTOMIS	//  owner controller_pubkey service_endpoint_hash daily_limit default_task_timeout metadata_hash _20
-    s0 s3 XCHG2	//  owner controller_pubkey service_endpoint_hash metadata_hash default_task_timeout _20 daily_limit
-    STTOMIS	//  owner controller_pubkey service_endpoint_hash metadata_hash default_task_timeout _21
-    64 STU	//  owner controller_pubkey service_endpoint_hash metadata_hash policy
-    OVER	//  owner controller_pubkey service_endpoint_hash metadata_hash policy metadata_hash
-    0 LESSINT	//  owner controller_pubkey service_endpoint_hash metadata_hash policy _25
-    IF:<{	//  owner controller_pubkey service_endpoint_hash metadata_hash policy
+    NEWC	//  owner controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _22
+    s0 s5 XCHG2	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash daily_limit default_task_timeout metadata_hash _22 max_per_tx
+    STTOMIS	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash daily_limit default_task_timeout metadata_hash _23
+    s0 s3 XCHG2	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash metadata_hash default_task_timeout _23 daily_limit
+    STTOMIS	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash metadata_hash default_task_timeout _24
+    64 STU	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash metadata_hash policy
+    OVER	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash metadata_hash policy metadata_hash
+    0 LESSINT	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash metadata_hash policy _28
+    IF:<{	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash metadata_hash policy
       0 PUSHINT
-      s2 POP	//  owner controller_pubkey service_endpoint_hash _26=0 policy
-      1 STU	//  owner controller_pubkey service_endpoint_hash policy
-    }>ELSE<{	//  owner controller_pubkey service_endpoint_hash metadata_hash policy
-      1 PUSHINT	//  owner controller_pubkey service_endpoint_hash metadata_hash policy _29=1
-      SWAP	//  owner controller_pubkey service_endpoint_hash metadata_hash _29=1 policy
-      1 STU	//  owner controller_pubkey service_endpoint_hash metadata_hash _31
-      256 STU	//  owner controller_pubkey service_endpoint_hash policy
+      s2 POP	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash _29=0 policy
+      1 STU	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash policy
+    }>ELSE<{	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash metadata_hash policy
+      1 PUSHINT	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash metadata_hash policy _32=1
+      SWAP	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash metadata_hash _32=1 policy
+      1 STU	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash metadata_hash _34
+      256 STU	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash policy
     }>
-    OVER	//  owner controller_pubkey service_endpoint_hash policy service_endpoint_hash
-    0 LESSINT	//  owner controller_pubkey service_endpoint_hash policy _35
-    IF:<{	//  owner controller_pubkey service_endpoint_hash policy
+    OVER	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash policy service_endpoint_hash
+    0 LESSINT	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash policy _38
+    IF:<{	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash policy
       0 PUSHINT
-      s2 POP	//  owner controller_pubkey _36=0 policy
-      1 STU	//  owner controller_pubkey policy
-    }>ELSE<{	//  owner controller_pubkey service_endpoint_hash policy
-      1 PUSHINT	//  owner controller_pubkey service_endpoint_hash policy _39=1
-      SWAP	//  owner controller_pubkey service_endpoint_hash _39=1 policy
-      1 STU	//  owner controller_pubkey service_endpoint_hash _41
-      256 STU	//  owner controller_pubkey policy
+      s2 POP	//  owner controller_pubkey seqno spend_day spent_today _39=0 policy
+      1 STU	//  owner controller_pubkey seqno spend_day spent_today policy
+    }>ELSE<{	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash policy
+      1 PUSHINT	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash policy _42=1
+      SWAP	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash _42=1 policy
+      1 STU	//  owner controller_pubkey seqno spend_day spent_today service_endpoint_hash _44
+      256 STU	//  owner controller_pubkey seqno spend_day spent_today policy
     }>
-    ENDC	//  owner controller_pubkey _44
-    NEWC	//  owner controller_pubkey _44 _45
-    s0 s3 XCHG2	//  _44 controller_pubkey _45 owner
-    STSLICER	//  _44 controller_pubkey _46
-    256 STU	//  _44 _48
-    STREF	//  _49
-    ENDC	//  _50
+    ENDC	//  owner controller_pubkey seqno spend_day spent_today _47
+    NEWC	//  owner controller_pubkey seqno spend_day spent_today _47 _48
+    s0 s6 XCHG2	//  _47 controller_pubkey seqno spend_day spent_today _48 owner
+    STSLICER	//  _47 controller_pubkey seqno spend_day spent_today _49
+    s1 s4 XCHG	//  _47 spent_today seqno spend_day controller_pubkey _49
+    256 STU	//  _47 spent_today seqno spend_day _51
+    s1 s2 XCHG	//  _47 spent_today spend_day seqno _51
+    32 STU	//  _47 spent_today spend_day _53
+    32 STU	//  _47 spent_today _55
+    SWAP	//  _47 _55 spent_today
+    STTOMIS	//  _47 _56
+    STREF	//  _57
+    ENDC	//  _58
   }>
   require_owner PROCINLINE:<{
     //  sender owner
@@ -115,80 +125,157 @@ PROGRAM{
       2DROP	// 
     }>	//  in_msg_body in_msg_full
     CTOS	//  in_msg_body cs
-    4 LDU	//  in_msg_body _67 _66
+    4 LDU	//  in_msg_body _70 _69
     NIP	//  in_msg_body cs
-    LDMSGADDR	//  in_msg_body _69 _68
+    LDMSGADDR	//  in_msg_body _72 _71
     DROP	//  in_msg_body sender
-    load_agent_state INLINECALLDICT	//  in_msg_body sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
-    s0 s8 XCHG	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash in_msg_body
-    32 LDU	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body
-    64 LDU	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op query_id in_msg_body
-    NIP	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body
+    load_agent_state INLINECALLDICT	//  in_msg_body sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day spent_today
+    s0 s11 XCHG	//  spent_today sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day in_msg_body
+    32 LDU	//  spent_today sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day op in_msg_body
+    64 LDU	//  spent_today sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day op query_id in_msg_body
+    NIP	//  spent_today sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day op in_msg_body
     OVER
-    1095192577 PUSHINT	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body op _32=1095192577
-    EQUAL	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body _33
-    IFJMP:<{	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body
-      s9 POP
-      5 BLKDROP	//  in_msg_body sender owner controller_pubkey
-      s2 s1 XCPU	//  in_msg_body controller_pubkey owner sender owner
+    1095192577 PUSHINT	//  spent_today sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day op in_msg_body op _35=1095192577
+    EQUAL	//  spent_today sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day op in_msg_body _36
+    IFJMP:<{	//  spent_today sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day op in_msg_body
+      NIP
+      3 3 BLKDROP2
+      s3 POP
+      s3 POP	//  spent_today sender owner controller_pubkey spend_day in_msg_body seqno
+      s5 s4 XCPU	//  spent_today seqno owner controller_pubkey spend_day in_msg_body sender owner
       require_owner INLINECALLDICT
-      s0 s2 XCHG	//  owner controller_pubkey in_msg_body
-      LDTOMIS	//  owner controller_pubkey new_max_per_tx in_msg_body
-      LDTOMIS	//  owner controller_pubkey new_max_per_tx new_daily_limit in_msg_body
-      64 LDU	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body
-      DUP	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body in_msg_body
-      load_maybe_hash INLINECALLDICT	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body new_metadata_hash
-      OVER	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body new_metadata_hash in_msg_body
-      load_maybe_hash INLINECALLDICT	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body new_metadata_hash new_service_endpoint_hash
-      s0 s2 XCHG	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout new_service_endpoint_hash new_metadata_hash in_msg_body
+      LDTOMIS	//  spent_today seqno owner controller_pubkey spend_day new_max_per_tx in_msg_body
+      LDTOMIS	//  spent_today seqno owner controller_pubkey spend_day new_max_per_tx new_daily_limit in_msg_body
+      64 LDU	//  spent_today seqno owner controller_pubkey spend_day new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body
+      DUP	//  spent_today seqno owner controller_pubkey spend_day new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body in_msg_body
+      load_maybe_hash INLINECALLDICT	//  spent_today seqno owner controller_pubkey spend_day new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body new_metadata_hash
+      OVER	//  spent_today seqno owner controller_pubkey spend_day new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body new_metadata_hash in_msg_body
+      load_maybe_hash INLINECALLDICT	//  spent_today seqno owner controller_pubkey spend_day new_max_per_tx new_daily_limit new_default_task_timeout in_msg_body new_metadata_hash new_service_endpoint_hash
+      s0 s2 XCHG	//  spent_today seqno owner controller_pubkey spend_day new_max_per_tx new_daily_limit new_default_task_timeout new_service_endpoint_hash new_metadata_hash in_msg_body
       ENDS
       ACCEPT
-      SWAP	//  owner controller_pubkey new_max_per_tx new_daily_limit new_default_task_timeout new_metadata_hash new_service_endpoint_hash
-      pack_agent_state INLINECALLDICT	//  _51
+      s7 s9 XCHG
+      s6 s8 XCHG
+      s6 s7 XCHG
+      s5 s6 XCHG
+      SWAP	//  owner controller_pubkey seqno spend_day spent_today new_max_per_tx new_daily_limit new_default_task_timeout new_metadata_hash new_service_endpoint_hash
+      pack_agent_state INLINECALLDICT	//  _54
       c4 POP
-    }>	//  service_endpoint_hash sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash op in_msg_body
-    s6 POP	//  service_endpoint_hash sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash op
-    1095192578 PUSHINT	//  service_endpoint_hash sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash op _53=1095192578
-    EQUAL	//  service_endpoint_hash sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash _54
-    IFJMP:<{	//  service_endpoint_hash sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash
-      s6 s5 XCPU	//  service_endpoint_hash metadata_hash owner in_msg_body max_per_tx daily_limit default_task_timeout sender owner
+    }>	//  spent_today sender owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day op in_msg_body
+    s9 POP	//  spent_today sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day op
+    1095192578 PUSHINT	//  spent_today sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day op _56=1095192578
+    EQUAL	//  spent_today sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day _57
+    IFJMP:<{	//  spent_today sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day
+      s9 s8 XCPU	//  spent_today spend_day owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno sender owner
       require_owner INLINECALLDICT
-      s0 s3 XCHG	//  service_endpoint_hash metadata_hash owner default_task_timeout max_per_tx daily_limit in_msg_body
-      256 LDU	//  service_endpoint_hash metadata_hash owner default_task_timeout max_per_tx daily_limit new_controller_pubkey in_msg_body
+      s0 s6 XCHG	//  spent_today spend_day owner seqno max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash in_msg_body
+      256 LDU	//  spent_today spend_day owner seqno max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash new_controller_pubkey in_msg_body
       ENDS
       ACCEPT
-      s4 s6 XCHG
-      s4 s5 s5 XCHG3
-      s3 s1 s3 XCHG3	//  owner new_controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
-      pack_agent_state INLINECALLDICT	//  _62
+      s7 s9 XCHG
+      s0 s8 XCHG
+      s0 s6 XCHG
+      s0 s7 XCHG
+      5 -ROLL	//  owner new_controller_pubkey seqno spend_day spent_today max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
+      pack_agent_state INLINECALLDICT	//  _65
       c4 POP
-    }>	//  service_endpoint_hash sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash
-    8 BLKDROP	// 
+    }>	//  spent_today sender owner in_msg_body max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day
+    11 BLKDROP	// 
     1703 THROW
   }>
   recv_external PROC:<{
     //  in_msg
-    DROP	// 
-    1702 THROW
+    9 PUSHPOW2	//  in_msg _3=512
+    LDSLICEX	//  signature signed_body
+    load_agent_state INLINECALLDICT	//  signature signed_body owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day spent_today
+    s10 PUSH	//  signature signed_body owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day spent_today signed_body
+    HASHSU	//  signature signed_body owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day spent_today _18
+    s0 s12 s9 XC2PU	//  spent_today signed_body owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day _18 signature controller_pubkey
+    CHKSIGNU	//  spent_today signed_body owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno spend_day _19
+    1704 THROWIFNOT
+    s0 s9 XCHG	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno signed_body
+    32 LDU	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno op signed_body
+    SWAP
+    1095192579 PUSHINT	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno signed_body op _26=1095192579
+    EQUAL	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno signed_body _27
+    1703 THROWIFNOT
+    32 LDU	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno request_seqno signed_body
+    32 LDU	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno request_seqno valid_until signed_body
+    s2 s3 XCPU	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno signed_body valid_until request_seqno seqno
+    EQUAL	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno signed_body valid_until _38
+    1705 THROWIFNOT
+    NOW	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno signed_body valid_until _41
+    GREATER	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno signed_body _42
+    1706 THROWIFNOT
+    LDMSGADDR	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target signed_body
+    LDTOMIS	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value signed_body
+    LDREF	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body signed_body
+    ENDS
+    s1 s8 PUSH2	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body value max_per_tx
+    LEQ	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body _55
+    1707 THROWIFNOT
+    NOW	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body _58
+    86400 PUSHINT	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body _58 _59=86400
+    DIV	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body current_day
+    s0 s12 PUSH2	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body current_day current_day spend_day
+    NEQ	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body current_day _61
+    IF:<{	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body current_day
+      s12 POP
+      0 PUSHINT
+      s13 POP	//  spent_today=0 spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body
+    }>ELSE<{
+      DROP	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body
+    }>
+    s12 s1 PUSH2	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body spent_today value
+    ADD	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body _64
+    s8 PUSH	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body _64 daily_limit
+    LEQ	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body _65
+    1707 THROWIFNOT
+    ACCEPT
+    0 PUSHINT	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body _68=0
+    16 PUSHINT	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body _68=0 _69=16
+    NEWC	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body _68=0 _69=16 _70
+    6 STU	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno target value body _68=0 _72
+    s0 s4 XCHG2	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno _68=0 value body _72 target
+    STSLICER	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno _68=0 value body _73
+    s2 PUSH	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno _68=0 value body _73 value
+    STTOMIS	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno _68=0 value body _74
+    s1 s3 XCHG	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno body value _68=0 _74
+    107 STU	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno body value _88
+    s1 s2 XCHG	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno value body _88
+    STREF	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno value _89
+    ENDC	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno value _90
+    1 PUSHINT	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash seqno value _90 _91=1
+    SENDRAWMSG
+    SWAP	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash value seqno
+    INC	//  spent_today spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash value _94
+    s10 s10 XCHG2	//  _94 spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash spent_today value
+    ADD	//  _94 spend_day owner controller_pubkey max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash _95
+    s7 s9 XCHG
+    s6 s8 XCHG
+    5 -ROLL	//  owner controller_pubkey _94 spend_day _95 max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
+    pack_agent_state INLINECALLDICT	//  _96
+    c4 POP
   }>
   get_agent_account_data PROC:<{
     // 
-    load_agent_state INLINECALLDICT	//  _1 _2 _3 _4 _5 _6 _7
+    load_agent_state INLINECALLDICT	//  _1 _2 _3 _4 _5 _6 _7 _8 _9 _10
   }>
   get_owner PROC:<{
     // 
-    load_agent_state INLINECALLDICT	//  _8 _9 _10 _11 _12 _13 _14
-    6 BLKDROP	//  owner
+    load_agent_state INLINECALLDICT	//  _11 _12 _13 _14 _15 _16 _17 _18 _19 _20
+    9 BLKDROP	//  owner
   }>
   get_controller_pubkey PROC:<{
     // 
-    load_agent_state INLINECALLDICT	//  _8 _9 _10 _11 _12 _13 _14
-    s5 s6 XCHG
-    6 BLKDROP	//  controller_pubkey
+    load_agent_state INLINECALLDICT	//  _11 _12 _13 _14 _15 _16 _17 _18 _19 _20
+    s8 s9 XCHG
+    9 BLKDROP	//  controller_pubkey
   }>
   get_agent_policy PROC:<{
     // 
-    load_agent_state INLINECALLDICT	//  _8 _9 _10 _11 _12 _13 _14
+    load_agent_state INLINECALLDICT	//  _11 _12 _13 _14 _15 _16 _17 _18 _19 _20
+    3 BLKDROP
     2 5 BLKDROP2	//  max_per_tx daily_limit default_task_timeout metadata_hash service_endpoint_hash
   }>
 }END>c
