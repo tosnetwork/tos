@@ -123,6 +123,15 @@ impl Blockchain {
     ///
     /// The `balance` parameter specifies additional coins to add.  If you
     /// only need the default treasury balance, pass `0`.
+    /// Override the workchain used for treasuries created after this call.
+    ///
+    /// The default sandbox config carries no workchain descriptors, so
+    /// action-phase sends to basechain destinations are rejected with
+    /// action code 36; masterchain (`-1`) destinations skip that check.
+    pub fn set_workchain(&mut self, workchain: i8) {
+        self.workchain = workchain;
+    }
+
     pub fn treasury(&mut self, name: &str, balance: u64) -> SandboxResult<Treasury> {
         let (treasury, mut account) = Treasury::create(name, self.workchain)?;
 

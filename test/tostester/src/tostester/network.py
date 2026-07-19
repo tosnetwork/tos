@@ -259,10 +259,12 @@ class Network:
         install: Install,
         directory: Path,
         event_loop: asyncio.AbstractEventLoop | None = None,
+        *,
+        base_port: int = 2000,
     ):
         self._install = install
         self._directory = directory.absolute()
-        self._port = 2000
+        self._port = base_port
         self._node_idx = 0
         self._status = _Status.INITED
 

@@ -18,8 +18,19 @@ The MVP also includes the native Task Escrow actor foundation:
 Task Escrow stores the creator, optional assigned Agent, budget, deadline, lifecycle status,
 result hash, evidence hash and settlement policy hash. Its message surface covers accept,
 result submission, settlement, cancellation and deterministic timeout. The Rust wrapper
-currently provides deterministic StateInit/address construction, message encoding and TVM
-stack decoding; CLI orchestration and testnet settlement flows are the next implementation slice.
+provides deterministic StateInit/address construction, message encoding and TVM stack
+decoding, and `tosctl agent task` covers deployment, lifecycle messages, on-chain
+inspection and local task records.
+
+The full Task Escrow lifecycle has passed real local-node acceptance: the
+[`scripts/agent-task-escrow-e2e.py`](../scripts/agent-task-escrow-e2e.py) harness boots a
+single-validator localnet with the JSON-RPC server, funds creator and agent wallets, and
+drives create -> accept -> result -> settle, the cancel path, and the timeout path through
+the `tosctl` CLI, asserting statuses, unauthorized-sender rejections, balance deltas and
+persisted records. Offline TVM lifecycle tests live in
+[`tosctl/src/node-control/contracts/tests/task_escrow_sandbox.rs`](../tosctl/src/node-control/contracts/tests/task_escrow_sandbox.rs).
+Acceptance so far ran against throwaway localnets; a persistent public-testnet deployment
+has not happened yet.
 
 This contract is intentionally minimal. It stores owner identity, controller public key and policy data, exposes get-methods, and accepts owner-only internal messages for policy and controller updates. Policy data is stored in a referenced cell so metadata and endpoint hashes fit within TVM cell limits. It does not yet execute controller spending, escrow settlement or task routing.
 
@@ -250,7 +261,67 @@ The recommended local lifecycle is:
 9. `export-runtime` for the runner manifest.
 10. `rm` stale local profiles when an agent is retired or a test profile is no longer needed.
 
+## Task Escrow Commands
+
+Deploy and fund a Task Escrow actor (the creator must be the funding wallet's address;
+the deployment `--amount` is what the escrow actually holds, so keep it at or above the
+budget plus a gas margin):
+
+```bash
+tosctl agent task create \
+  --name research-task \
+  --creator "0:<creator-account-id>" \
+  --agent "0:<agent-account-id>" \
+  --budget 5 \
+  --deadline 1790000000 \
+  --policy-hash <64-hex-settlement-policy-hash> \
+  --from creator-wallet \
+  --amount 5.2 \
+  -w 0 --yes
+```
+
+Each successful `create` stores a task record in the config, so later commands can use
+`--name` instead of `--address`. List and inspect tasks:
+
+```bash
+tosctl agent task ls --format json
+tosctl agent task show --name research-task --format json
+```
+
+Drive the lifecycle (the escrow enforces sender authorization and status order on-chain):
+
+```bash
+tosctl agent task send --operation accept --name research-task --from agent-wallet --yes
+tosctl agent task send --operation result --name research-task --from agent-wallet \
+  --result-hash <64-hex> --evidence-hash <64-hex> --yes
+tosctl agent task send --operation settle --name research-task --from creator-wallet \
+  --payout 3 --yes
+```
+
+`cancel` (creator, open tasks only) and `timeout` (anyone, after the deadline) refund the
+escrow balance to the creator. `build-state` and `encode` remain available for offline
+StateInit and message construction.
+
 ## Config Shape
+
+`tosctl` stores task records under `agent_tasks`; older configs without this key load
+unchanged:
+
+```json
+{
+  "agent_tasks": {
+    "research-task": {
+      "address": "0:<task-escrow-account-id>",
+      "creator": "0:<creator-account-id>",
+      "assigned_agent": "0:<agent-account-id>",
+      "budget": 5000000000,
+      "deadline": 1790000000,
+      "policy_hash": "<64-hex-settlement-policy-hash>",
+      "created_at": 1784448000
+    }
+  }
+}
+```
 
 `tosctl` stores Agent Wallets under `agent_wallets`:
 
@@ -287,7 +358,10 @@ The recommended local lifecycle is:
 
 ## Next Engineering Step
 
-The next slice should make the deployed Agent Account useful for task settlement:
+The next slice should bind the Agent Account and Task Escrow together:
 
+- require the bound Agent Account controller for result submission, and a creator,
+  verifier or policy authority for settlement, enforced on-chain and in the CLI
+- add a verifier role plus dispute/resolve/reject states to the escrow state machine
+- check the actual escrow balance rather than trusting the recorded budget
 - add task-contract messages that spend through the Agent Account policy
-- add deployment and policy-transition integration tests against a local network

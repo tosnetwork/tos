@@ -860,6 +860,7 @@ dependencies = [
  "sha2",
  "tl_api",
  "tokio",
+ "tos_sandbox",
 ]
 
 [[package]]
