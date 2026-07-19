@@ -104,8 +104,24 @@ pub struct AgentTaskSendCmd {
     address: Option<String>,
     #[arg(long, help = "Local task record name from `agent task ls`")]
     name: Option<String>,
-    #[arg(long, help = "Signing wallet name or master_wallet")]
-    from: String,
+    #[arg(
+        long,
+        conflicts_with = "via_agent_account",
+        help = "Signing wallet name or master_wallet"
+    )]
+    from: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "from",
+        help = "Agent Wallet profile whose deployed Agent Account sends the action"
+    )]
+    via_agent_account: Option<String>,
+    #[arg(
+        long,
+        requires = "via_agent_account",
+        help = "Controller action expiry; defaults to now + 300s"
+    )]
+    valid_until: Option<u32>,
     #[arg(long, default_value_t = 0)]
     query_id: u64,
     #[arg(long)]
@@ -855,8 +871,41 @@ impl AgentTaskSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_task_address(&config, &self.address, &self.name)?;
+        if let Some(agent_wallet) = &self.via_agent_account {
+            if !matches!(self.operation, AgentTaskOperation::Accept | AgentTaskOperation::Result) {
+                anyhow::bail!("--via-agent-account supports only accept and result operations");
+            }
+            let record = config
+                .agent_tasks
+                .values()
+                .find(|task| task.address == destination.to_string())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("controller task actions require a locally tracked task record")
+                })?;
+            let provider = contracts::contract_provider!(rpc_client.clone());
+            let stack =
+                provider.get_method(destination.to_string(), "get_task_data", vec![]).await?;
+            let chain_task = TaskEscrowContract::decode_data(&stack)?;
+            if chain_task.permission_hash != permission_id_hash(record.permission_id.as_deref()) {
+                anyhow::bail!("local permission ID does not match the Task Escrow on-chain hash");
+            }
+            let body_boc = base64::engine::general_purpose::STANDARD.encode(write_boc(&body)?);
+            return AgentAccountTaskSendCmd {
+                wallet: agent_wallet.clone(),
+                target: destination.to_string(),
+                value: self.amount,
+                body_boc: Some(body_boc),
+                valid_until: self.valid_until.unwrap_or_else(|| time_format::now() as u32 + 300),
+                yes: self.yes,
+            }
+            .run(config_path)
+            .await;
+        }
+        let from = self.from.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("provide exactly one of --from or --via-agent-account")
+        })?;
         let wallet_config =
-            get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
+            get_wallet_config(from, &config.wallets, config.master_wallet.as_ref())?;
         let (owner_address, owner_info, owner_secret) =
             wallet_info(rpc_client.clone(), wallet_config, vault).await?;
         if owner_info.account_state != AccountState::Active {
@@ -869,8 +918,7 @@ impl AgentTaskSendCmd {
         if !self.yes && !confirm("Confirm Task Escrow message?")? {
             return Ok(());
         }
-        let wallet =
-            make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, from).await?;
         send_wallet_message(
             &wallet,
             rpc_client,

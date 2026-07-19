@@ -246,7 +246,8 @@ cell pack_agent_state(
     .store_uint(0x10, 6)
     .store_slice(target)
     .store_tomis(value)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)
+    .store_uint(1, 1)
     .store_ref(body)
   .end_cell(), 1);
   set_data(pack_agent_state(

@@ -177,6 +177,19 @@ tosctl agent account task-send \
 
 The command reads the deployed sequence number, verifies that the configured controller key matches the contract, enforces the local per-action precheck, signs the payload and broadcasts an external message. The contract independently enforces signature validity, expiry, replay protection, per-action limits and UTC-day cumulative limits.
 
+For a Task Escrow whose assigned agent is the deployed Agent Account address, the task CLI can route `accept` and `result` through the controller directly:
+
+```bash
+tosctl agent task send \
+  --operation accept \
+  --name research-task \
+  --via-agent-account research-agent \
+  --amount 0.01 \
+  --yes
+```
+
+Settlement, cancellation and timeout retain their creator, verifier or public lifecycle authorities and cannot use `--via-agent-account`.
+
 Export only the policy:
 
 ```bash
