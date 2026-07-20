@@ -12,12 +12,28 @@ from pytosiq_core.boc.deserialize import Boc
 from tostester.install import Install
 from tostester.key import Key
 from tostester.network import NetworkConfig
-from tostester.zerostate import create_zerostate
+from tostester.zerostate import SimplexConsensusConfig, create_zerostate
 
 REPO = Path(__file__).resolve().parents[4]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
 NANOTOS_PER_TOS = 1_000_000_000
 EXPECTED_TOTAL_SUPPLY_TOS = 5_000_000_000
+EXPECTED_SIMPLEX_PARAMS = (2400, 4, 1000, 250)
+
+
+def test_genesis_simplex_parameters_match_node_defaults():
+    simplex = SimplexConsensusConfig()
+    actual = (
+        simplex.target_block_rate_ms,
+        simplex.slots_per_leader_window,
+        simplex.first_block_timeout_ms,
+        simplex.max_leader_window_desync,
+    )
+    assert actual == EXPECTED_SIMPLEX_PARAMS
+
+    genesis = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    encoded = " ".join(map(str, EXPECTED_SIMPLEX_PARAMS)) + " make-simplex-params"
+    assert genesis.count(encoded) == 2
 
 
 def test_local_genesis_total_supply_is_exactly_five_billion_tos(tmp_path):
