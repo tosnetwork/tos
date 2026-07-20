@@ -122,11 +122,18 @@ cell pack_agent_state(
   throw_unless(err::not_owner, equal_slice_bits(sender, owner));
 }
 
-(int) load_maybe_hash(slice body) inline {
+;; Bug fix: this must be called as `in_msg_body~load_maybe_hash()`, not
+;; `load_maybe_hash(in_msg_body)` -- FunC passes plain (non-`~`) call
+;; arguments by value, so a version of this helper returning only `int`
+;; would silently never advance the caller's slice, leaving unconsumed
+;; bits that make a later `end_parse()` throw a cell-underflow exception
+;; instead of the update actually taking effect.
+(slice, int) load_maybe_hash(slice body) inline {
   if (body~load_uint(1)) {
-    return body~load_uint(256);
+    int hash = body~load_uint(256);
+    return (body, hash);
   }
-  return -1;
+  return (body, -1);
 }
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
@@ -162,8 +169,8 @@ cell pack_agent_state(
     int new_max_per_tx = in_msg_body~load_coins();
     int new_daily_limit = in_msg_body~load_coins();
     int new_default_task_timeout = in_msg_body~load_uint(64);
-    int new_metadata_hash = load_maybe_hash(in_msg_body);
-    int new_service_endpoint_hash = load_maybe_hash(in_msg_body);
+    int new_metadata_hash = in_msg_body~load_maybe_hash();
+    int new_service_endpoint_hash = in_msg_body~load_maybe_hash();
     in_msg_body.end_parse();
 
     accept_message();
@@ -221,7 +228,20 @@ cell pack_agent_state(
     int spend_day,
     int spent_today
   ) = load_agent_state();
-  throw_unless(err::bad_signature, check_signature(slice_hash(signed_body), signature, controller_pubkey));
+
+  ;; Domain-bind the signed payload to this Agent Account's own address so
+  ;; a signature cannot be replayed against a different Agent Account that
+  ;; happens to share the same controller key (e.g. an operator reusing key
+  ;; material across several agent identities) and a coincidentally-valid
+  ;; seqno -- the bare slice_hash used previously had no such binding. Hash
+  ;; the payload first, then domain-bind that hash: the same two-step
+  ;; pattern (and the same `contracts::domain_bound_hash` helper) as Task
+  ;; Escrow/Dispute/Service Actor's attestation signatures.
+  int payload_hash = slice_hash(signed_body);
+  (int wc, int addr) = my_address().parse_std_addr();
+  int domain_hash = cell_hash(begin_cell()
+    .store_int(wc, 8).store_uint(addr, 256).store_uint(payload_hash, 256).end_cell());
+  throw_unless(err::bad_signature, check_signature(domain_hash, signature, controller_pubkey));
 
   int op = signed_body~load_uint(32);
   throw_unless(err::unknown_op, op == op::agent_task_send);

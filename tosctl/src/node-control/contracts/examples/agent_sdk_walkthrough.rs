@@ -52,7 +52,8 @@ fn main() -> anyhow::Result<()> {
         /* value */ 100_000_000,
         TaskEscrowContract::accept(1)?,
     )?;
-    let signature: [u8; 64] = controller.sign(payload.hash(0).as_slice()).to_bytes();
+    let hash_to_sign = AgentAccountContract::task_send_hash_to_sign(&agent_address, &payload)?;
+    let signature: [u8; 64] = controller.sign(&hash_to_sign).to_bytes();
     let signed = AgentAccountContract::build_signed_task_send_message(payload, &signature)?;
     let external = AgentAccountContract::build_external_task_send_message(agent_address, signed)?;
     print_cell("signed external task-send message", &external)?;

@@ -2075,7 +2075,8 @@ impl AgentAccountTaskSendCmd {
             value,
             body,
         )?;
-        let signature = keypair.sign(payload.hash(0).as_slice()).await?;
+        let hash_to_sign = AgentAccountContract::task_send_hash_to_sign(&account, &payload)?;
+        let signature = keypair.sign(&hash_to_sign).await?;
         let signature: [u8; 64] = signature
             .try_into()
             .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;

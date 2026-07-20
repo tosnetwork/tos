@@ -145,6 +145,37 @@ Examples:
   registered in the querying node's local `tosctld` configuration; it is now also backed by
   the chain-wide indexer described in Phase 3, so it lists Task Escrows any operator
   deployed, not just this node's own.
+- Closed two real findings in a testnet-readiness security pass over Agent Account/Agent
+  Wallet, both surfaced by writing test coverage that had never existed rather than by
+  inspection alone. First, `recv_external`'s controller-signature check verified only
+  `check_signature(slice_hash(signed_body), ...)` with no binding to which Agent Account the
+  signature was submitted against, so a controller key reused across multiple Agent Accounts
+  (an operator convenience, not a contract requirement) could have a signature valid on one
+  account replayed against another sharing the same key and a coincidentally-valid seqno. Fixed
+  by domain-binding the signed hash to the account's own address before verification --
+  `cell_hash(workchain || address_hash || payload_hash)` -- reusing the same
+  `contracts::domain_bound_hash` helper and pattern already applied to Task Escrow/Dispute/
+  Service Actor attestation signatures earlier in this effort, rather than inventing a second
+  scheme. Second, `update_policy`'s FunC handler called its `load_maybe_hash` helper as a plain
+  (non-`~`) function, so the helper's internal slice mutations never propagated back to the
+  caller; every `update_policy` message that needed to re-store the policy left unconsumed bits
+  in the message body and threw a cell-underflow exception at `end_parse()`, making
+  `update_policy` completely non-functional (100% reproducible, unrelated to test ordering).
+  Fixed by redeclaring the helper to return `(slice, int)` and invoking it as
+  `in_msg_body~load_maybe_hash()`. Both fixes are covered by new Agent Account sandbox tests
+  (owner-vs-non-owner policy update and controller rotation; cross-account signature replay
+  rejection) and by a new real-localnet acceptance script,
+  [`scripts/agent-wallet-account-e2e.py`](scripts/agent-wallet-account-e2e.py), covering the
+  full Agent Wallet/Agent Account CLI lifecycle end to end: wallet and account provisioning,
+  controller-signed task-send, owner-signed policy update and controller rotation (each
+  re-verified post-change against live chain state, not just a submitted-without-error check),
+  owner-authorized `agent wallet send`, and a single-validator stop/restart mid-lifecycle to
+  confirm state and in-flight policy survive a node restart and catch-up. This restart check is
+  deliberately scoped to one validator restarting and catching back up -- there is no existing
+  multi-validator reference pattern in this codebase to build a true multi-node fault-tolerance
+  test on top of, so that remains open rather than claimed. `doc/security-audit-native-2026-06.md`
+  still explicitly excludes all AI-actor primitives from its scope; this pass closes concrete
+  bugs found along the way but is not a substitute for that dedicated review.
 
 ### Phase 3: Agent Registry and Service Marketplace
 

@@ -14,7 +14,7 @@ use chain_block::{
 
 use crate::ContractProvider;
 
-pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECEAEAA0wAART/APSkE/S88sgLAQIBIAIDAgFIBAUB+PKDCNcY7UTQ+kDT/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkKvkBVBDJ+RDy5qgJ0x8BghBBR1ADuvLmp9Mf0x9RI7ry5qn4I7zy5qr6QPoA1NFTGLvy5qv4I4IBUYCpBFMMvZM8cD2RMOJTwaAPArbQMiHHAJFb4NDTAzH6QDDtRND6QNP/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQL0x/TPzEhghBBR1ABuuMCOYIQQUdQArrjAl8L8sanBgcCASAJCgFuMWwzMzNRVMcF8uam+gD6ANM/INMAAZPT/zCSMH/iIdMAAZPT/zCSMH/iAtH4ABB5EGgQZxBWAQgAzFGYxwXy5qYG0//R+AAQeQgGB1VAJMEA8talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAbPFhTL/xLLH8sfAfoCzMntVACkJMEA8talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAbPFhTL/xLLH8sfAfoCzMntVAIBSAsMAgEgDQ4AZ7YlvaiaH0gaf/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+BthLAAY7c0vaiaH0gaf/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+EwAF+5rr7UTQ+kDT/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkgAZ7nk/tRND6QNP/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQQiV8JgA/Ci78uar+ABxcIAQyMsFUAXPFiP6AhTLaRPLABLMyXH7AAGkUKqgEHkQaFVAJMEA8talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAbPFhTL/xLLH8sfAfoCzMntVA==";
+pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECEAEAAwYAART/APSkE/S88sgLAQIBIAIDAgFIBAUB+PKDCNcY7UTQ+kDT/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkKvkB+Cj6RAHIygfL/8v/yfkAVBDJ+RDy5qgJ0x8BghBBR1ADuvLmp9Mf0x9RI7ry5qn4I7zy5qr6QPoA1NFTGLvy5qv4I4IBUYAOArbQMiHHAJFb4NDTAzH6QDDtRND6QNP/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQL0x/TPzEhghBBR1ABuuMCOYIQQUdQArrjAl8L8sanBgcCASAICQFmMWwzMzNRVMcF8uam+gD6ANM/0wABk9P/AZF/4gHTAAGT0/8BkX/iAdH4ABB5EGgQZxBWDwDMUZjHBfLmpgbT/9H4ABB5CAYHVUAkwQDy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQBs8WFMv/Essfyx8B+gLMye1UAgFICgsCASAMDQBntiW9qJofSBp/+mP6Y/9AGpo6H0AfQBpn7+A6YAAyZjp/+8/gOmAAMmY6f/vaKqSL4G2EsABjtzS9qJofSBp/+mP6Y/9AGpo6H0AfQBpn7+A6YAAyZjp/+8/gOmAAMmY6f/vaKqSL4TAAX7muvtRND6QNP/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSSABnueT+1E0PpA0//TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJBCJXwmAF2qQRTDL2TPHA9kTDiU8GgKLvy5qv4AHFwgBDIywVQBc8WI/oCFMtpE8sAEszJcfsAAaRQqqAQeRBoVUAPAKQkwQDy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQBs8WFMv/Essfyx8B+gLMye1U";
 
 pub const AGENT_UPDATE_POLICY_OPCODE: u32 = 0x4147_5001;
 pub const AGENT_ROTATE_CONTROLLER_OPCODE: u32 = 0x4147_5002;
@@ -146,9 +146,10 @@ impl AgentAccountContract {
         Ok(body.into_cell()?)
     }
 
-    /// Build the controller-signed payload. The controller signs the cell hash
-    /// returned by this method; `build_signed_task_send_message` prepends the
-    /// resulting 512-bit signature for external delivery.
+    /// Build the controller-signed payload. The controller must sign the
+    /// hash returned by [`Self::task_send_hash_to_sign`] -- *not* this
+    /// payload cell's own hash directly -- before calling
+    /// `build_signed_task_send_message`.
     pub fn build_task_send_payload(
         seqno: u32,
         valid_until: u32,
@@ -162,6 +163,22 @@ impl AgentAccountContract {
         Coins::new(value).write_to(&mut payload)?;
         payload.checked_append_reference(body)?;
         Ok(payload.into_cell()?)
+    }
+
+    /// The hash the controller must actually sign for a `task_send` payload:
+    /// domain-bound to `account_address` (the Agent Account that will
+    /// verify it) so a signature cannot be replayed against a different
+    /// Agent Account that happens to share the same controller key (e.g.
+    /// an operator reusing key material across several agent identities).
+    /// Mirrors Task Escrow/Dispute/Service Actor's attestation scheme: hash
+    /// the payload, then domain-bind that hash via the same
+    /// [`crate::domain_bound_hash`] helper.
+    pub fn task_send_hash_to_sign(
+        account_address: &MsgAddressInt,
+        payload: &chain_block::Cell,
+    ) -> anyhow::Result<[u8; 32]> {
+        let payload_hash = *payload.repr_hash().as_array();
+        crate::domain_bound_hash(account_address, &payload_hash)
     }
 
     pub fn build_signed_task_send_message(

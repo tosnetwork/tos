@@ -6,7 +6,10 @@
  */
 
 use chain_block::{ed25519_create_private_key, Cell, MsgAddressInt, SliceData};
-use contracts::{AgentAccountContract, AgentAccountInit, TaskEscrowContract, TaskEscrowInit};
+use contracts::{
+    AgentAccountContract, AgentAccountInit, AgentAccountPolicyUpdate, TaskEscrowContract,
+    TaskEscrowInit,
+};
 use tos_sandbox::{Blockchain, MessageBuilder, SandboxResult, SendResult, Treasury};
 
 const TOS: u64 = 1_000_000_000;
@@ -14,23 +17,38 @@ const TOS: u64 = 1_000_000_000;
 struct Fixture {
     bc: Blockchain,
     account: MsgAddressInt,
+    owner: Treasury,
+    outsider: Treasury,
     target: Treasury,
     controller_secret: [u8; 32],
 }
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_controller([0x42; 32])
+    }
+
+    fn with_controller(controller_secret: [u8; 32]) -> Self {
+        Self::with_controller_and_limit(controller_secret, 5 * TOS)
+    }
+
+    /// `max_per_tx` also acts as a deploy-data salt: two fixtures that would
+    /// otherwise be identical (same controller key, same treasury names --
+    /// deterministic across independent `Blockchain` instances) must use
+    /// different values here to actually deploy to different addresses,
+    /// which the cross-account replay test below depends on.
+    fn with_controller_and_limit(controller_secret: [u8; 32], max_per_tx: u64) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         bc.set_workchain(-1);
         let owner = bc.treasury("owner", 1_000 * TOS).expect("owner");
+        let outsider = bc.treasury("outsider", 1_000 * TOS).expect("outsider");
         let target = bc.treasury("target", 1_000 * TOS).expect("target");
-        let controller_secret = [0x42; 32];
         let controller = ed25519_create_private_key(&controller_secret).expect("controller key");
         let init = AgentAccountInit {
             owner: owner.address().clone(),
             controller_pubkey: controller.verifying_key(),
-            max_per_tx: 5 * TOS,
-            daily_limit: 6 * TOS,
+            max_per_tx,
+            daily_limit: max_per_tx + TOS,
             default_task_timeout_secs: 3_600,
             metadata_hash: None,
             service_endpoint_hash: None,
@@ -42,7 +60,12 @@ impl Fixture {
             .body(Cell::default())
             .build();
         bc.send_message(deploy).expect("deploy").expect_success();
-        Self { bc, account, target, controller_secret }
+        Self { bc, account, owner, outsider, target, controller_secret }
+    }
+
+    fn send_internal(&mut self, from: &MsgAddressInt, body: Cell) -> SendResult {
+        let msg = MessageBuilder::internal(from, &self.account, TOS / 10).body(body).build();
+        self.bc.send_message(msg).expect("send")
     }
 
     fn signed_action(&self, secret: &[u8; 32], seqno: u32, valid_until: u32, value: u64) -> Cell {
@@ -68,8 +91,10 @@ impl Fixture {
         let payload =
             AgentAccountContract::build_task_send_payload(seqno, valid_until, target, value, body)
                 .expect("payload");
+        let hash_to_sign =
+            AgentAccountContract::task_send_hash_to_sign(&self.account, &payload).expect("hash");
         let key = ed25519_create_private_key(secret).expect("signing key");
-        let signature = key.sign(payload.hash(0).as_slice());
+        let signature = key.sign(&hash_to_sign);
         AgentAccountContract::build_signed_task_send_message(payload, &signature)
             .expect("signed body")
     }
@@ -97,6 +122,12 @@ impl Fixture {
             .expect("get data")
             .expect_success()
             .int_at(7)
+    }
+
+    fn policy(&self) -> (u64, u64) {
+        let binding = self.bc.run_get_method(&self.account, "get_agent_policy", vec![]).expect("get_agent_policy");
+        let stack = binding.expect_success();
+        (stack.int_at(0) as u64, stack.int_at(1) as u64)
     }
 }
 
@@ -195,4 +226,89 @@ fn controller_action_accepts_assigned_task_escrow() {
         .expect_success()
         .int_at(7);
     assert_eq!(status, 1);
+}
+
+#[test]
+fn owner_can_update_policy_and_rotate_controller_others_rejected() {
+    let mut fixture = Fixture::new();
+    let owner_addr = fixture.owner.address().clone();
+    let outsider_addr = fixture.outsider.address().clone();
+
+    // Non-owner cannot update policy.
+    let policy = AgentAccountPolicyUpdate {
+        max_per_tx: 2 * TOS,
+        daily_limit: 3 * TOS,
+        default_task_timeout_secs: 7_200,
+        metadata_hash: None,
+        service_endpoint_hash: None,
+    };
+    let update_body = AgentAccountContract::build_update_policy_message(1, &policy).unwrap();
+    fixture
+        .send_internal(&outsider_addr, update_body.clone())
+        .expect_aborted()
+        .expect_exit_code(1702);
+    assert_eq!(fixture.policy(), (5 * TOS, 6 * TOS), "rejected update must not change policy");
+
+    // Owner can update policy.
+    fixture.send_internal(&owner_addr, update_body).expect_success();
+    assert_eq!(fixture.policy(), (2 * TOS, 3 * TOS));
+
+    // Non-owner cannot rotate the controller key.
+    let new_secret = [0x99; 32];
+    let new_pubkey =
+        ed25519_create_private_key(&new_secret).expect("new key").verifying_key();
+    let rotate_body = AgentAccountContract::build_rotate_controller_message(2, new_pubkey).unwrap();
+    fixture
+        .send_internal(&outsider_addr, rotate_body.clone())
+        .expect_aborted()
+        .expect_exit_code(1702);
+
+    // The rejected rotation left the old controller key in force.
+    let valid_until = fixture.bc.now() + 300;
+    let old_key_action = fixture.signed_action(&fixture.controller_secret, 0, valid_until, TOS);
+    fixture.send_external(old_key_action).expect("old key still works").expect_success();
+    assert_eq!(fixture.seqno(), 1);
+
+    // Owner rotates the controller key.
+    fixture.send_internal(&owner_addr, rotate_body).expect_success();
+
+    // The old key's signature is now rejected...
+    let old_key_action_2 = fixture.signed_action(&fixture.controller_secret, 1, valid_until, TOS);
+    fixture.expect_external_exit(old_key_action_2, 1704);
+    assert_eq!(fixture.seqno(), 1);
+
+    // ...only the newly-rotated-in key works.
+    let new_key_action = fixture.signed_action(&new_secret, 1, valid_until, TOS);
+    fixture.send_external(new_key_action).expect("new key works").expect_success();
+    assert_eq!(fixture.seqno(), 2);
+}
+
+#[test]
+fn task_send_signature_is_bound_to_the_account_address_and_rejected_across_accounts() {
+    // The signed message is domain_bound_hash(account_address, payload_hash),
+    // not the bare payload hash -- so a signature minted for one Agent
+    // Account is *not* accepted by a second, independent Agent Account that
+    // happens to share the same controller key (e.g. an operator reusing
+    // key material across several agent identities) and, since both are
+    // freshly deployed, the same seqno.
+    let shared_secret = [0x77; 32];
+    let mut account_a = Fixture::with_controller_and_limit(shared_secret, 5 * TOS);
+    let mut account_b = Fixture::with_controller_and_limit(shared_secret, 6 * TOS);
+    assert_ne!(account_a.account, account_b.account, "fixtures must deploy to different addresses");
+
+    let valid_until = account_a.bc.now() + 300;
+    let action_for_a = account_a.signed_action(&shared_secret, 0, valid_until, TOS);
+
+    account_a.send_external(action_for_a.clone()).expect("account_a action").expect_success();
+    assert_eq!(account_a.seqno(), 1);
+
+    // The same signed message, replayed verbatim against account_b, must be
+    // rejected: it was signed for account_a's address, not account_b's.
+    account_b.expect_external_exit(action_for_a, 1704);
+    assert_eq!(account_b.seqno(), 0);
+
+    // A correctly re-signed (domain-bound to account_b) message still works.
+    let action_for_b = account_b.signed_action(&shared_secret, 0, valid_until, TOS);
+    account_b.send_external(action_for_b).expect("account_b action").expect_success();
+    assert_eq!(account_b.seqno(), 1);
 }
