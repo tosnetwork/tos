@@ -271,3 +271,85 @@ The bounced message has the same 0th and 1st bits in `extra_flags` as the origin
   - Previous block
   - Reference masterchain block
   - Top shard block (in masterchain)
+
+## Version 14
+
+Not yet activated on any TOS network (`ConfigParam 8` stays below `14` until all validators run
+binaries that support it). The node binary supports it; see the near-term rollout notes at the
+end of this file for the activation plan.
+
+### TVM changes
+- `SENDMSG` no longer uses user-provided `fwd_fee` / `ihr_fee` as a lower bound for the returned
+  fee estimate of an internal message. This aligns the compute-phase estimate with action-phase
+  behavior, which has been ignoring those fields since version 8. Previously a large `fwd_fee`
+  written into the message cell could inflate the value returned by `SENDMSG` (and its
+  estimate-only mode `+1024`) arbitrarily, while the action phase still charged only the
+  recomputed network price.
+- `RIST255_MUL` and `RIST255_QMUL` now accept the identity element (integer `0`) and return `0`
+  in that case. They also validate point `x` and number `n` on all paths. Previously, libsodium's
+  non-zero return code (which it also uses to signal "result is identity") was misinterpreted as
+  "invalid x or n".
+- `ECRECOVER` now accepts Ethereum legacy recovery bytes `v = 27` and `v = 28`, normalizing them
+  to raw recovery ids `0` and `1`.
+- `CHKSIGNS` and `CHKSIGNU` now reject the canonical Ed25519 identity public key (`01 00..00`,
+  that is, `2^248`) and the zero public key before invoking the verifier and return `false`. The
+  check is a fixed 32-byte comparison and does not affect gas. This is directly relevant to the
+  native AI-actor contracts (Agent Account, Task Escrow, Proof Attestation), which all use
+  `CHKSIGNU` to verify controller/attestor signatures.
+- Quiet `RSHIFT`/`MODPOW2` compound opcodes now return `NaN` instead of throwing `range_chk` when
+  their stack-provided shift argument is `NaN` or out of range.
+- `LSHIFT` and similar invoked with `NaN` return `NaN`, not zero.
+- The savelist-writing opcodes `SETCONTCTR`, `SETCONTCTRX`, `SETRETCTR`, `SETALTCTR`, `SAVECTR`,
+  `SAVEALTCTR`, `SETCONTCTRMANY`, and `SETCONTCTRMANYX` now silently do nothing when the targeted
+  savelist slot is already filled (as required by the TVM whitepaper). Earlier they threw
+  `type_chk` in that case.
+
+### Transaction changes
+- When the action phase fails with bounce-on-fail, bounce now returns the whole remaining
+  message balance from before the action phase, instead of whatever was left after partially
+  processed actions.
+- TOS-specific (not part of upstream TON's version 14): deploy activation after a StateInit
+  message now requires the compute phase to have committed successfully (`success`), rather than
+  merely accepted gas (`accepted`). Before version 14, an account could be deployed by a message
+  that accepted gas but then threw during compute, matching legacy TON behavior. See
+  `compute_phase_can_activate_account` in `crypto/block/transaction.cpp`.
+
+## Version 15
+
+Not yet activated on any TOS network, same as version 14 above.
+
+### Transaction changes
+- Libraries:
+  - The `change_library` action can only be performed by governance (special) contracts.
+  - Private libraries (mode `+1`) can no longer be added at all, by anyone.
+  - Private/account libraries (message-init and account-state library cells) are no longer added
+    to the TVM library search context; only the global governance-controlled library dictionary
+    is available to `CALLREF`/library lookups. `LiteQuery::finish_runSmcMethod` mirrors this for
+    read-only get-method calls.
+  - An account cannot be deployed (from `acc_uninit`) with a non-null library dictionary in its
+    `StateInit`. Unfreezing an existing frozen account with libraries is still allowed.
+- When action phase fails, the action fine is now collected for all successful messages processed
+  before the failure as well (`ActionPhase::fail_action_fine`), not just the one that failed.
+  Closes a way to submit a large batch of actions that partially succeed and then deliberately
+  fail the last one to dodge the fine on the successful ones.
+- Total bits/cells across all outgoing messages of a transaction are now limited to
+  `5242880` bits / `20480` cells (`SizeLimitsConfig` v3, `max_total_msg_bits` /
+  `max_total_msg_cells`, configured in `ConfigParam 43`). Older v1/v2 `ConfigParam 43` records
+  fall back to these same defaults.
+
+## Rollout plan
+
+Enabling version 14/15 on a live TOS network is a consensus-level change and must not be done by
+simply bumping `SUPPORTED_VERSION` on a subset of nodes -- that would let different validators
+compute different results for the same transaction and fork the chain. The safe sequence:
+
+1. Ship a node binary that supports version 15 (this is what `SUPPORTED_VERSION = 15` means --
+   the ceiling this binary is capable of executing), while `ConfigParam 8` on every live network
+   stays at its current active version.
+2. Get every validator upgraded to a binary that supports the new version before touching
+   `ConfigParam 8`.
+3. Activate version 14 first via `ConfigParam 8` once all validators are upgraded; observe
+   stability.
+4. Activate version 15 only after 14 has been stable for a period, following the same
+   all-validators-first rule.
+5. Mainnet activation happens last, after both versions have proven stable on a public testnet.

@@ -19,6 +19,6 @@
 namespace tos {
 
 // See doc/GlobalVersions.md
-constexpr int SUPPORTED_VERSION = 13;
+constexpr int SUPPORTED_VERSION = 15;
 
 }  // namespace tos

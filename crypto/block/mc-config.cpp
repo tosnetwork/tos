@@ -2126,7 +2126,7 @@ td::Result<SizeLimitsConfig> Config::do_get_size_limits_config(td::Ref<vm::CellS
     limits.ext_msg_limits.max_depth = static_cast<td::uint16>(rec.max_ext_msg_depth);
   };
 
-  auto unpack_v2 = [&](auto& rec) {
+  auto unpack_v2_common = [&](auto& rec) {
     unpack_v1(rec);
     limits.max_acc_state_cells = rec.max_acc_state_cells;
     limits.max_mc_acc_state_cells = rec.max_mc_acc_state_cells;
@@ -2136,12 +2136,25 @@ td::Result<SizeLimitsConfig> Config::do_get_size_limits_config(td::Ref<vm::CellS
     limits.max_acc_fixed_prefix_length = rec.max_acc_fixed_prefix_length;
     limits.acc_state_cells_for_storage_dict = rec.acc_state_cells_for_storage_dict;
   };
+  auto unpack_v2 = [&](gen::SizeLimitsConfig::Record_size_limits_config_v2& rec) { unpack_v2_common(rec); };
+  auto unpack_v3 = [&](gen::SizeLimitsConfig::Record_size_limits_config_v3& rec) {
+    unpack_v2_common(rec);
+    if (rec.max_transaction_library_loads.write().fetch_long(1)) {
+      limits.max_transaction_library_loads =
+          static_cast<td::uint32>(rec.max_transaction_library_loads->prefetch_long(32));
+    }
+    limits.max_total_msg_bits = rec.max_total_msg_bits;
+    limits.max_total_msg_cells = rec.max_total_msg_cells;
+  };
   gen::SizeLimitsConfig::Record_size_limits_config rec_v1;
   gen::SizeLimitsConfig::Record_size_limits_config_v2 rec_v2;
+  gen::SizeLimitsConfig::Record_size_limits_config_v3 rec_v3;
   if (tlb::csr_unpack(cs, rec_v1)) {
     unpack_v1(rec_v1);
   } else if (tlb::csr_unpack(cs, rec_v2)) {
     unpack_v2(rec_v2);
+  } else if (tlb::csr_unpack(cs, rec_v3)) {
+    unpack_v3(rec_v3);
   } else {
     return td::Status::Error("configuration parameter 43 is invalid");
   }

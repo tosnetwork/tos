@@ -408,6 +408,9 @@ struct SizeLimitsConfig {
   td::uint32 max_msg_extra_currencies = 2;
   td::uint32 max_acc_fixed_prefix_length = 8;
   td::uint32 acc_state_cells_for_storage_dict = 26;
+  td::optional<td::uint32> max_transaction_library_loads;  // default - unlimited
+  td::uint32 max_total_msg_bits = (1 << 21) * 5 / 2;   // enabled in global version 15
+  td::uint32 max_total_msg_cells = (1 << 13) * 5 / 2;  // enabled in global version 15
 };
 
 struct CatchainValidatorsConfig {

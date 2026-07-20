@@ -974,6 +974,29 @@ td::RefInt256 Account::compute_storage_fees(tos::UnixTime now, const std::vector
 }
 
 namespace transaction {
+int check_change_library_action(unsigned mode, bool is_special, int global_version) {
+  if (mode > 2) {
+    return -1;
+  }
+  return global_version >= 15 && (mode == 1 || !is_special) ? 46 : 0;
+}
+
+bool exceeds_total_message_size(td::uint64 total_bits, td::uint64 total_cells, td::uint64 message_bits,
+                                td::uint64 message_cells, const SizeLimitsConfig& limits, int global_version) {
+  return global_version >= 15 &&
+         (total_bits + message_bits > limits.max_total_msg_bits ||
+          total_cells + message_cells > limits.max_total_msg_cells);
+}
+
+td::RefInt256 cap_failed_action_fine(td::RefInt256 action_fine, td::RefInt256 fail_action_fine,
+                                     td::RefInt256 balance) {
+  return std::min(action_fine + fail_action_fine, balance);
+}
+
+bool reject_deploy_with_libraries(bool is_uninitialized, bool library_dict_has_refs, int global_version) {
+  return global_version >= 15 && is_uninitialized && library_dict_has_refs;
+}
+
 /**
  * Constructs a new Transaction object.
  *
@@ -1813,11 +1836,10 @@ unsigned output_actions_count(Ref<vm::Cell> list) {
  *
  * @param cfg The configuration for the compute phase.
  * @param lib_only If true, only unpack libraries from the state.
- * @param forbid_public_libs Don't allow public libraries in initstate.
  *
  * @returns True if the unpacking is successful, false otherwise.
  */
-bool Transaction::unpack_msg_state(const ComputePhaseConfig& cfg, bool lib_only, bool forbid_public_libs) {
+bool Transaction::unpack_msg_state(const ComputePhaseConfig& cfg, bool lib_only) {
   block::gen::StateInit::Record state;
   if (in_msg_state.is_null() || !tlb::unpack_cell(in_msg_state, state)) {
     LOG(ERROR) << "cannot unpack StateInit from an inbound message";
@@ -1844,12 +1866,18 @@ bool Transaction::unpack_msg_state(const ComputePhaseConfig& cfg, bool lib_only,
     new_tock = z & 1;
     LOG(DEBUG) << "tick=" << new_tick << ", tock=" << new_tock;
   }
+  // Forbid for deploying, allow for unfreezing
+  if (reject_deploy_with_libraries(acc_status == Account::acc_uninit, state.library->have_refs(),
+                                   cfg.global_version)) {
+    LOG(DEBUG) << "Cannot unpack msg state: libraries are not null";
+    return false;
+  }
   td::Ref<vm::Cell> old_code = new_code, old_data = new_data, old_library = new_library;
   new_code = state.code->prefetch_ref();
   new_data = state.data->prefetch_ref();
   new_library = state.library->prefetch_ref();
   auto size_limits = cfg.size_limits;
-  if (forbid_public_libs) {
+  if (acc_status == Account::acc_uninit && account.is_masterchain()) {
     size_limits.max_acc_public_libraries = 0;
   }
   auto S = check_state_limits(size_limits, cfg.global_version, false);
@@ -1872,11 +1900,13 @@ bool Transaction::unpack_msg_state(const ComputePhaseConfig& cfg, bool lib_only,
  */
 std::vector<Ref<vm::Cell>> Transaction::compute_vm_libraries(const ComputePhaseConfig& cfg) {
   std::vector<Ref<vm::Cell>> lib_set;
-  if (in_msg_library.not_null()) {
-    lib_set.push_back(in_msg_library);
-  }
-  if (new_library.not_null()) {
-    lib_set.push_back(new_library);
+  if (cfg.global_version < 15) {
+    if (in_msg_library.not_null()) {
+      lib_set.push_back(in_msg_library);
+    }
+    if (new_library.not_null()) {
+      lib_set.push_back(new_library);
+    }
   }
   auto global_libs = cfg.get_lib_root();
   if (global_libs.not_null()) {
@@ -2314,10 +2344,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       return true;
     }
     use_msg_state = true;
-    bool forbid_public_libs =
-        acc_status == Account::acc_uninit && account.is_masterchain();  // Forbid for deploying, allow for unfreezing
-    if (!(unpack_msg_state(cfg, false, forbid_public_libs) &&
-          account.check_addr_rewrite_length(new_fixed_prefix_length))) {
+    if (!(unpack_msg_state(cfg, false) && account.check_addr_rewrite_length(new_fixed_prefix_length))) {
       LOG(DEBUG) << "cannot unpack in_msg_state, or it has bad fixed_prefix_length; cannot init account state";
       cp.skip_reason = ComputePhase::sk_bad_state;
       return true;
@@ -2552,6 +2579,7 @@ bool Transaction::prepare_action_phase(const ActionPhaseConfig& cfg) {
   ap.reserved_balance.set_zero();
   ap.action_fine = td::zero_refint();
 
+  CurrencyCollection msg_balance_remaining_before_actions = msg_balance_remaining;
   td::Ref<vm::Cell> old_code = new_code, old_data = new_data, old_library = new_library;
   // 1 - ok, 0 - limits exceeded, -1 - fatal error
   auto enforce_state_limits = [&]() -> int {
@@ -2694,8 +2722,11 @@ bool Transaction::prepare_action_phase(const ActionPhaseConfig& cfg) {
       if (enforce_state_limits() == -1) {
         return false;
       }
+      if (cfg.global_version >= 14) {
+        msg_balance_remaining = msg_balance_remaining_before_actions;
+      }
       if (cfg.action_fine_enabled) {
-        ap.action_fine = std::min(ap.action_fine, balance.tomis);
+        ap.action_fine = cap_failed_action_fine(ap.action_fine, ap.fail_action_fine, balance.tomis);
         ap.total_action_fees = ap.action_fine;
         balance.tomis -= ap.action_fine;
         total_fees += ap.action_fine;
@@ -2720,10 +2751,13 @@ bool Transaction::prepare_action_phase(const ActionPhaseConfig& cfg) {
     return false;
   }
   if (res == 0) {
+    if (cfg.global_version >= 14) {
+      msg_balance_remaining = msg_balance_remaining_before_actions;
+    }
     if (cfg.extra_currency_v2) {
       end_lt = ap.end_lt = start_lt + 1;
       if (cfg.action_fine_enabled) {
-        ap.action_fine = std::min(ap.action_fine, balance.tomis);
+        ap.action_fine = cap_failed_action_fine(ap.action_fine, ap.fail_action_fine, balance.tomis);
         ap.total_action_fees = ap.action_fine;
         balance.tomis -= ap.action_fine;
         total_fees += ap.action_fine;
@@ -2947,8 +2981,9 @@ int Transaction::try_action_change_library(vm::CellSlice& cs, ActionPhase& ap, c
     ap.need_bounce_on_fail = true;
     rec.mode &= ~16;
   }
-  if (rec.mode > 2) {
-    return -1;
+  int gate_result = check_change_library_action(rec.mode, account.is_special, cfg.global_version);
+  if (gate_result != 0) {
+    return gate_result;
   }
   Ref<vm::Cell> lib_ref = rec.libref->prefetch_ref();
   tos::Bits256 hash;
@@ -3457,15 +3492,15 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
   if (!ext_msg && !cfg.extra_currency_v2) {
     add_used_storage(info.value->prefetch_ref(), 0);
   }
+  td::uint64 fine =
+      cfg.action_fine_enabled && !account.is_special ? fine_per_cell * std::min<td::uint64>(max_cells, sstat.cells) : 0;
   auto collect_fine = [&] {
-    if (cfg.action_fine_enabled && !account.is_special) {
-      td::uint64 fine = fine_per_cell * std::min<td::uint64>(max_cells, sstat.cells);
-      if (ap.remaining_balance.tomis->cmp(fine) < 0) {
-        fine = ap.remaining_balance.tomis->to_long();
-      }
-      ap.action_fine += fine;
-      ap.remaining_balance.tomis -= fine;
+    td::uint64 actual_fine = fine;
+    if (ap.remaining_balance.tomis->cmp(actual_fine) < 0) {
+      actual_fine = ap.remaining_balance.tomis->to_long();
     }
+    ap.action_fine += actual_fine;
+    ap.remaining_balance.tomis -= actual_fine;
   };
   if (sstat.cells > max_cells && max_cells < cfg.size_limits.max_msg_cells) {
     LOG(DEBUG) << "not enough funds to process a message (max_cells=" << max_cells << ")";
@@ -3622,6 +3657,12 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
 
     new_msg_bits = cb.size();
     new_msg = cb.finalize();
+    if (exceeds_total_message_size(ap.tot_msg_bits, ap.tot_msg_cells, sstat.bits + new_msg_bits, sstat.cells + 1,
+                                   cfg.size_limits, cfg.global_version)) {
+      LOG(DEBUG) << "total message size too large, invalid";
+      collect_fine();
+      return check_skip_invalid(47);
+    }
 
     // clear msg_balance_remaining if it has been used
     if (act_rec.mode & 0xc0) {
@@ -3666,6 +3707,12 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
 
     new_msg_bits = cb.size();
     new_msg = cb.finalize();
+    if (exceeds_total_message_size(ap.tot_msg_bits, ap.tot_msg_cells, sstat.bits + new_msg_bits, sstat.cells + 1,
+                                   cfg.size_limits, cfg.global_version)) {
+      LOG(DEBUG) << "total message size too large, invalid";
+      collect_fine();
+      return check_skip_invalid(47);
+    }
 
     // update balance
     ap.remaining_balance -= fwd_fee;
@@ -3714,6 +3761,9 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
 
   ap.tot_msg_bits += sstat.bits + new_msg_bits;
   ap.tot_msg_cells += sstat.cells + 1;
+  if (cfg.global_version >= 15) {
+    ap.fail_action_fine += fine;
+  }
 
   return 0;
 }

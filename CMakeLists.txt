@@ -874,7 +874,10 @@ add_executable(test-emulator
         emulator/test/slice-6-deploy-activation-version-fixture.cpp
         # Slice 5 receive-context harness for production receive handlers.
         emulator/test/slice-5-receive-context-fixture.cpp
-        emulator/test/tos-report-bond-oracle-fixture.cpp)
+        emulator/test/tos-report-bond-oracle-fixture.cpp
+        # TVM v14/v15 transaction-layer version-gate boundary tests (upstream
+        # ton ships v14/v15 with no dedicated regression tests to port).
+        emulator/test/tvm-v14-v15-transaction-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
 add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract)
 target_compile_definitions(test-emulator PRIVATE

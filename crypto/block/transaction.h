@@ -261,6 +261,7 @@ struct ActionPhase {
   tos::LogicalTime end_lt;
   unsigned long long tot_msg_bits{0}, tot_msg_cells{0};
   td::RefInt256 action_fine;
+  td::RefInt256 fail_action_fine = td::zero_refint();  // Collected if action phase fails
   bool need_bounce_on_fail = false;
   bool bounce = false;
 };
@@ -358,6 +359,13 @@ struct Account {
 };
 
 namespace transaction {
+int check_change_library_action(unsigned mode, bool is_special, int global_version);
+bool exceeds_total_message_size(td::uint64 total_bits, td::uint64 total_cells, td::uint64 message_bits,
+                                td::uint64 message_cells, const SizeLimitsConfig& limits, int global_version);
+td::RefInt256 cap_failed_action_fine(td::RefInt256 action_fine, td::RefInt256 fail_action_fine,
+                                     td::RefInt256 balance);
+bool reject_deploy_with_libraries(bool is_uninitialized, bool library_dict_has_refs, int global_version);
+
 struct Transaction {
   static constexpr unsigned max_allowed_merkle_depth = 2;
   enum {
@@ -476,7 +484,7 @@ struct Transaction {
   bool serialize_compute_phase(vm::CellBuilder& cb);
   bool serialize_action_phase(vm::CellBuilder& cb);
   bool serialize_bounce_phase(vm::CellBuilder& cb);
-  bool unpack_msg_state(const ComputePhaseConfig& cfg, bool lib_only = false, bool forbid_public_libs = false);
+  bool unpack_msg_state(const ComputePhaseConfig& cfg, bool lib_only = false);
 
  public:
   static Ref<vm::Tuple> prepare_in_msg_params_tuple(const gen::CommonMsgInfo::Record_int_msg_info* info,
