@@ -187,6 +187,7 @@ impl InstallWizardCmd {
                 capability_registries: HashMap::new(),
                 service_actors: HashMap::new(),
                 disputes: HashMap::new(),
+                proof_attestations: HashMap::new(),
                 pools: HashMap::new(),
                 bindings: HashMap::new(),
                 chain_rpc,

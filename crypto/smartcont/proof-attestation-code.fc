@@ -1,0 +1,121 @@
+;; Copyright (C) 2025-2026  TOS Network.
+;; Minimal Proof Attestation actor: an ed25519 signature-verification proof
+;; adapter for AI-agent results and rulings.
+;;
+;; One instance per attestation subject, discoverable at a deterministic
+;; address (same actor-per-address pattern as Agent Account, Task Escrow,
+;; Capability Registry, Service Actor and Dispute). This is a standalone,
+;; additive proof adapter: it does not modify Task Escrow or Dispute, which
+;; keep accepting bare hash commitments unchanged. Deploying one of these
+;; alongside a Task Escrow result or a Dispute ruling upgrades "the
+;; submitter promises this hash" to "a specific known public key attests to
+;; this hash", auditable independently of the contract that recorded the
+;; hash commitment in the first place.
+;;
+;; `attest` is deliberately permissionless (any sender may relay it): the
+;; security comes entirely from the signature check against the registered
+;; public key, not from sender identity, so anyone can relay an attestation
+;; on behalf of the actual signer without being trusted themselves.
+;;
+;; Persistent data layout:
+;;   owner:MsgAddress
+;;   public_key:uint256
+;;   revoked:uint1
+;;   has_attestation:uint1
+;;   attested_at:uint64
+;;   ^[subject_hash:uint256 attested_hash:uint256]
+;;
+;; Internal messages:
+;;   attest#41545401 query_id:uint64 attested_hash:uint256
+;;                   signature:(512 bits) = InternalMsgBody;
+;;   rotate_key#41545402 query_id:uint64 new_public_key:uint256 = InternalMsgBody;
+;;   revoke#41545403 query_id:uint64 = InternalMsgBody;
+
+const int op::attest = 0x41545401;
+const int op::rotate_key = 0x41545402;
+const int op::revoke = 0x41545403;
+
+const int err::revoked = 2100;
+const int err::bad_signature = 2101;
+const int err::not_owner = 2102;
+const int err::unknown_op = 2103;
+
+(slice, int, int, int, int, int, int) load_state() inline {
+  slice ds = get_data().begin_parse();
+  slice owner = ds~load_msg_addr();
+  int public_key = ds~load_uint(256);
+  int revoked = ds~load_uint(1);
+  int has_attestation = ds~load_uint(1);
+  int attested_at = ds~load_uint(64);
+  slice sub = ds~load_ref().begin_parse();
+  int subject_hash = sub~load_uint(256);
+  int attested_hash = sub~load_uint(256);
+  sub.end_parse();
+  ds.end_parse();
+  return (owner, public_key, revoked, has_attestation, attested_at, subject_hash, attested_hash);
+}
+
+() save_state(slice owner, int public_key, int revoked, int has_attestation, int attested_at,
+             int subject_hash, int attested_hash) impure inline {
+  set_data(begin_cell()
+    .store_slice(owner)
+    .store_uint(public_key, 256)
+    .store_uint(revoked, 1)
+    .store_uint(has_attestation, 1)
+    .store_uint(attested_at, 64)
+    .store_ref(begin_cell()
+      .store_uint(subject_hash, 256)
+      .store_uint(attested_hash, 256)
+    .end_cell())
+  .end_cell());
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  msg_value~impure_touch();
+  if (in_msg.slice_empty?()) { return (); }
+  int op = in_msg~load_uint(32);
+  int query_id = in_msg~load_uint(64);
+  query_id~impure_touch();
+
+  var full_msg = in_msg_full.begin_parse();
+  full_msg~skip_bits(4);
+  slice sender = full_msg~load_msg_addr();
+
+  (slice owner, int public_key, int revoked, int has_attestation, int attested_at,
+   int subject_hash, int attested_hash) = load_state();
+
+  if (op == op::attest) {
+    ;; Permissionless: anyone may relay a valid signature. `sender` is
+    ;; intentionally not checked here.
+    throw_unless(err::revoked, revoked == 0);
+    int new_attested_hash = in_msg~load_uint(256);
+    slice signature = in_msg~load_bits(512);
+    in_msg.end_parse();
+    throw_unless(err::bad_signature, check_signature(new_attested_hash, signature, public_key));
+    save_state(owner, public_key, revoked, 1, now(), subject_hash, new_attested_hash);
+    return ();
+  }
+
+  if (op == op::rotate_key) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    int new_public_key = in_msg~load_uint(256);
+    in_msg.end_parse();
+    ;; A rotated key invalidates any existing attestation: it was recorded
+    ;; under the authority of the previous key and is no longer meaningful.
+    save_state(owner, new_public_key, revoked, 0, 0, subject_hash, 0);
+    return ();
+  }
+
+  if (op == op::revoke) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    in_msg.end_parse();
+    save_state(owner, public_key, 1, has_attestation, attested_at, subject_hash, attested_hash);
+    return ();
+  }
+
+  throw(err::unknown_op);
+}
+
+(slice, int, int, int, int, int, int) get_proof_attestation_data() method_id {
+  return load_state();
+}

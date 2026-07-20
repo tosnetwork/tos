@@ -178,9 +178,15 @@ Examples:
 - Support reviewer or verifier actors for task acceptance policies: the Dispute contract's
   reviewer role above covers this for contested results; Task Escrow's existing verifier role
   (Phase 2) already covers uncontested settlement authority.
-- Add proof adapter interfaces for signed results, attestations and external evidence.
-  (not started; Task Escrow/Dispute already carry generic evidence/ruling *hashes*, but there
-  is no pluggable verification-backend interface yet)
+- Add proof adapter interfaces for signed results, attestations and external evidence: a
+  standalone Proof Attestation contract (one deployed instance per signer/subject, same
+  per-actor pattern) verifying ed25519 signatures natively on-chain (`CHKSIGNU`) over an
+  attested hash. `attest` is permissionless -- any sender may relay a valid signature from
+  the registered key -- while `rotate-key` and `revoke` are owner-gated, with
+  `tosctl agent attestation deploy/ls/show/send`. This is a concrete, narrowly-scoped
+  instance of a proof adapter (ed25519 signature verification); Task Escrow/Dispute still
+  carry generic evidence/ruling *hashes* rather than consuming this adapter directly, so a
+  broader pluggable verification-backend interface across contracts remains open.
 - Add workflow examples that compose planner, worker, service and verifier actors: see
   [`doc/ai-agent-workflow-example.md`](doc/ai-agent-workflow-example.md), which walks a
   planner posting a Task Escrow, a worker (Agent Account) accepting it and paying a Service

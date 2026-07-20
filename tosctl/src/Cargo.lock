@@ -854,6 +854,7 @@ dependencies = [
  "chain-rpc-client",
  "chain_block",
  "common",
+ "ed25519-dalek",
  "hex",
  "serde",
  "serde_json",

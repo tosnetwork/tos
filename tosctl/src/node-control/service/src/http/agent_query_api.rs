@@ -435,6 +435,7 @@ mod tests {
             capability_registries: Default::default(),
             service_actors: Default::default(),
             disputes: Default::default(),
+            proof_attestations: Default::default(),
             agent_tasks: Default::default(),
             pools: Default::default(),
             bindings: Default::default(),

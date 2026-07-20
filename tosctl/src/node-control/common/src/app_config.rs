@@ -488,6 +488,21 @@ pub struct DisputeConfig {
     pub created_at: Option<u64>,
 }
 
+/// Locally tracked Proof Attestation record.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+pub struct ProofAttestationConfig {
+    /// Deployed Proof Attestation contract address.
+    pub address: String,
+    pub owner: String,
+    /// Hex-encoded 32-byte ed25519 public key registered to sign attestations.
+    pub public_key: String,
+    /// Hex-encoded 32-byte reference to what this attestation is about.
+    pub subject_hash: String,
+    /// Unix timestamp when this local record was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 #[serde(tag = "kind")]
 pub enum PoolConfig {
@@ -882,6 +897,9 @@ pub struct AppConfig {
     /// Dispute cases tracked by this operator, keyed by local name.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub disputes: HashMap<String, DisputeConfig>,
+    /// Proof Attestation actors tracked by this operator, keyed by local name.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub proof_attestations: HashMap<String, ProofAttestationConfig>,
     #[serde(default)]
     pub pools: HashMap<String, PoolConfig>,
     #[serde(default)]

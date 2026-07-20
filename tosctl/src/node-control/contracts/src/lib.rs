@@ -16,6 +16,7 @@ pub mod elector;
 pub mod liquid_controller;
 pub mod nominator;
 pub mod nominator_pool;
+pub mod proof_attestation;
 pub mod provider;
 pub mod service_actor;
 pub mod smart_contract;
@@ -42,6 +43,7 @@ pub use elector::{ElectionsInfo, ElectorWrapper, ElectorWrapperImpl, Participant
 pub use liquid_controller::{ControllerData, ControllerWrapper, ControllerWrapperImpl, LoanBalanceRequirement};
 pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapperImpl};
 pub use nominator_pool::{NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl};
+pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;
 pub use service_actor::{ServiceActorContract, ServiceActorData, ServiceActorInit};
 pub use smart_contract::SmartContract;

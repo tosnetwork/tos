@@ -1033,6 +1033,7 @@ mod tests {
             capability_registries: HashMap::new(),
             service_actors: HashMap::new(),
             disputes: HashMap::new(),
+            proof_attestations: HashMap::new(),
             alerts: Default::default(),
         })
     }
@@ -1056,6 +1057,7 @@ mod tests {
             capability_registries: HashMap::new(),
             service_actors: HashMap::new(),
             disputes: HashMap::new(),
+            proof_attestations: HashMap::new(),
             alerts: Default::default(),
         })
     }

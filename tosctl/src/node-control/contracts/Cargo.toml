@@ -20,3 +20,4 @@ chain-rpc-client = { path = "../chain-rpc-client" }
 tokio = "1.48.0"
 tos_sandbox = { path = '../../sandbox' }
 tos_vm = { path = '../../vm' }
+ed25519-dalek = { version = "2", features = ["rand_core"] }

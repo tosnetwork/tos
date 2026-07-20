@@ -10,6 +10,7 @@
 use super::capability_registry_cmd::CapabilityRegistryCmd;
 use super::dispute_cmd::DisputeCmd;
 use super::output_format::OutputFormat;
+use super::proof_attestation_cmd::ProofAttestationCmd;
 use super::service_actor_cmd::ServiceActorCmd;
 use super::utils::{
     calculate_wallet_address, get_wallet_config, load_config_vault, load_config_vault_rpc_client,
@@ -80,6 +81,8 @@ pub enum AgentAction {
     Service(ServiceActorCmd),
     /// Dispute case operations
     Dispute(DisputeCmd),
+    /// Proof Attestation (ed25519 signature adapter) operations
+    Attestation(ProofAttestationCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -881,6 +884,7 @@ impl AgentCmd {
             AgentAction::Registry(cmd) => cmd.run(&self.config).await,
             AgentAction::Service(cmd) => cmd.run(&self.config).await,
             AgentAction::Dispute(cmd) => cmd.run(&self.config).await,
+            AgentAction::Attestation(cmd) => cmd.run(&self.config).await,
         }
     }
 }

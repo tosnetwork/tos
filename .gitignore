@@ -35,6 +35,7 @@ test/integration/.agent-query-api-*
 test/integration/.capability-registry-*
 test/integration/.service-actor-*
 test/integration/.dispute-*
+test/integration/.proof-attestation-*
 
 test/tostester/tests/tl/generated
 test/tostester/src/tosapi
