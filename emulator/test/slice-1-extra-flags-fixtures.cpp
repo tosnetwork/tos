@@ -243,7 +243,7 @@ TEST(Slice1ExtraFlagsFixtures, F3_3_synchronized_constants_self_check) {
 
   // Locate the sibling source files relative to the test binary's
   // build location is unreliable, so we use __FILE__ realpath. From
-  // /home/tomi/tos/emulator/test/ the production sites live at
+  // the emulator/test directory, the production sites live at
   // ../../crypto/block/transaction.cpp and the header at
   // ../../tol/extra-flags-constants.h.
   const std::string test_dir = current_dir();

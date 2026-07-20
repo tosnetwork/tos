@@ -26,7 +26,7 @@ validator:
 
 Exit code 0 iff every check passes.
 
-Run:  cd /home/tomi/tos && uv run python scripts/service-actor-e2e.py
+Run from the repository root: uv run python scripts/service-actor-e2e.py
 """
 import asyncio
 import json

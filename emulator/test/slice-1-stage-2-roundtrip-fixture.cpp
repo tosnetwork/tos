@@ -150,7 +150,7 @@ namespace {
 // Any divergence between this asm and the live Tol output (modulo (a)
 // and (b) above) is a fixture drift; regenerate by running:
 //
-//     /home/tomi/tos/build/tol/tol crypto/smartcont/echo-envelope.tol
+//     build/tol/tol crypto/smartcont/echo-envelope.tol
 //
 // and copy the body of `onInternalMessage() PROC:<{ ... }>` between the
 // `ACCEPT` and the closing brace below, then re-apply substitution (b).

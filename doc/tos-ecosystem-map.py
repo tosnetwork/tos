@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate Legacy/TOS ecosystem map PDF."""
 
+from pathlib import Path
+
 from fpdf import FPDF, XPos, YPos
 
 FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
@@ -367,6 +369,6 @@ def build_pdf():
 
 if __name__ == "__main__":
     pdf = build_pdf()
-    out = "/home/tomi/tos/doc/tos-ecosystem-map.pdf"
+    out = Path(__file__).resolve().with_name("tos-ecosystem-map.pdf")
     pdf.output(out)
     print(f"PDF saved to {out}")

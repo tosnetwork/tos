@@ -42,7 +42,7 @@ provisions a file vault plus a tosctl config, creates and funds two wallets
 
 Exit code 0 iff every check passes.
 
-Run:  cd /home/tomi/tos && uv run python scripts/agent-task-escrow-e2e.py
+Run from the repository root: uv run python scripts/agent-task-escrow-e2e.py
 """
 import asyncio
 import hashlib

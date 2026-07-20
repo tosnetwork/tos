@@ -296,16 +296,17 @@ A useful migration test set has three layers:
 For Stage 3 the expected local checks were:
 
 ```bash
-/home/tomi/tos/build/tol/tol crypto/smartcont/<contract>.tol
+build/tol/tol crypto/smartcont/<contract>.tol
 
-cd /home/tomi/tos/tol-tester
-FIFTPATH=/home/tomi/tos/crypto/fift/lib \
-FIFT_EXECUTABLE=/home/tomi/tos/build/crypto/fift \
-TOL_EXECUTABLE=/home/tomi/tos/build/tol/tol \
+cd tol-tester
+FIFTPATH=../crypto/fift/lib \
+FIFT_EXECUTABLE=../build/crypto/fift \
+TOL_EXECUTABLE=../build/tol/tol \
   python3 tol-tester.py tests
 
-cmake --build /home/tomi/tos/build --target test-emulator -j 32
-/home/tomi/tos/build/test-emulator
+cd ..
+cmake --build build --target test-emulator -j 32
+build/test-emulator
 ```
 
 ## 9. Header Template

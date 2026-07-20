@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Generate Legacy/TOS ecosystem map PDF from structured data (English only)."""
+from pathlib import Path
+
 from fpdf import FPDF
 
 
@@ -344,6 +346,6 @@ def build():
 
 if __name__ == "__main__":
     p = build()
-    out = "/home/tomi/tos/doc/tos-ecosystem-map.pdf"
+    out = Path(__file__).resolve().with_name("tos-ecosystem-map.pdf")
     p.output(out)
     print(f"OK -> {out}")

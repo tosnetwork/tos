@@ -56,16 +56,16 @@ inbound message field as `caller_controlled: true`.
 
 ```sh
 # compiler check-only on all three source files
-/home/tomi/tos/build/tol/tol --check-only src/tos-escrowed-auction.tol
-/home/tomi/tos/build/tol/tol --check-only tests/tos-escrowed-auction-positive.tol
-/home/tomi/tos/build/tol/tol --check-only tests/tos-escrowed-auction-import-positive.tol
+build/tol/tol --check-only examples/slice5/tos-escrowed-auction/src/tos-escrowed-auction.tol
+build/tol/tol --check-only examples/slice5/tos-escrowed-auction/tests/tos-escrowed-auction-positive.tol
+build/tol/tol --check-only examples/slice5/tos-escrowed-auction/tests/tos-escrowed-auction-import-positive.tol
 
 # full test suite
 cd examples/slice5/tos-escrowed-auction && \
-  FIFTPATH=/home/tomi/tos/crypto/fift/lib \
-  FIFT_EXECUTABLE=/home/tomi/tos/build/crypto/fift \
-  TOL_EXECUTABLE=/home/tomi/tos/build/tol/tol \
-  python3 /home/tomi/tos/tol-tester/tol-tester.py tests
+  FIFTPATH=../../../crypto/fift/lib \
+  FIFT_EXECUTABLE=../../../build/crypto/fift \
+  TOL_EXECUTABLE=../../../build/tol/tol \
+  python3 ../../../tol-tester/tol-tester.py tests
 
 # whitespace gate
 git diff --check

@@ -25,7 +25,7 @@ compiled contract's `CHKSIGNU` verification, on a live node:
 
 Exit code 0 iff every check passes.
 
-Run:  cd /home/tomi/tos && uv run python scripts/proof-attestation-e2e.py
+Run from the repository root: uv run python scripts/proof-attestation-e2e.py
 """
 import asyncio
 import json

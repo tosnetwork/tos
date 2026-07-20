@@ -98,6 +98,10 @@ tosctl agent service send --operation respond --name model-provider-service \
   --from model-provider --response-hash <64-hex, ServiceCallResponseBundle> --yes
 ```
 
+If the service was deployed with `--attestor-pubkey` or `--signer-vault-key`, `respond`
+additionally requires a signature over `response_hash` (`--attestation-signature` or
+`--signer-vault-key` on `send`), verified inline by the Service Actor itself.
+
 The worker then submits the task result, with `evidence_hash` referencing a
 `TaskEvidenceBundle` whose `steps` array includes this `service_call` (see
 `doc/ai-workflow-schemas.md`):
@@ -155,6 +159,10 @@ tosctl agent dispute send --operation rule --name literature-review-dispute \
   --from reviewer --ruling split --split-bps 6500 \
   --ruling-hash <64-hex, DisputeRulingBundle> --yes
 ```
+
+If the dispute was deployed with `--attestor-pubkey` or `--signer-vault-key`, `rule`
+additionally requires a signature over `ruling_hash` (`--attestation-signature` or
+`--signer-vault-key` on `send`), verified inline by the Dispute contract itself.
 
 The Dispute contract is a pure adjudication ledger (see
 [`crypto/smartcont/dispute-code.fc`](../crypto/smartcont/dispute-code.fc)): it records the

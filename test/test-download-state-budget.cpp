@@ -3541,9 +3541,6 @@ void test_h03_max_cells_zero_uses_default() {
   // Direct invariant: the boc.h header source must declare the safe
   // default rather than 0.
   auto boc_h_fd = td::FileFd::open("crypto/vm/boc.h", td::FileFd::Flags::Read);
-  if (boc_h_fd.is_error()) {
-    boc_h_fd = td::FileFd::open("/Users/tomisetsu/tos/crypto/vm/boc.h", td::FileFd::Flags::Read);
-  }
   if (boc_h_fd.is_ok()) {
     auto fd_ok = boc_h_fd.move_as_ok();
     auto stat = fd_ok.stat().move_as_ok();
@@ -3601,11 +3598,6 @@ void test_h03_bad_alloc_caught() {
   // error. Verify the pattern is present in the importer source.
   auto path = std::string{"crypto/vm/boc.cpp"};
   auto fd = td::FileFd::open(path, td::FileFd::Flags::Read);
-  if (fd.is_error()) {
-    // Some build layouts run the test from a different cwd; try the
-    // absolute path that the repo uses.
-    fd = td::FileFd::open("/Users/tomisetsu/tos/crypto/vm/boc.cpp", td::FileFd::Flags::Read);
-  }
   if (fd.is_error()) {
     std::printf("  SKIPPED (cannot open boc.cpp from cwd)\n");
     return;

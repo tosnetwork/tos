@@ -101,6 +101,15 @@ basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 add-std-
 
 config.workchains!
 
+// Genesis balances reserved for system contracts, carved out of the fixed
+// 5 B TOS total supply. Defined once here and reused at both the
+// main-wallet subtraction below and each contract's own register_smc call,
+// so the total is correct by construction instead of relying on
+// independently-maintained literals staying in sync.
+TM$1 constant smc3_genesis_balance
+TM$10 constant elector_genesis_balance
+TM$10 constant config_genesis_balance
+
 // SmartContract #1 (Simple wallet)
 
 <{{ SETCP0 DUP IFNOTRET // return if recv_internal
@@ -130,7 +139,8 @@ Libs{{
   x{{ABACABADABACABA}} s>c public_lib
   x{{1234}} x{{5678}} |_ s>c private_lib
 }}Libs  // libraries
-TM$4999999980 // balance: 5 B TOS less 20 tomis reserved for system contracts
+TM$5000000000 smc3_genesis_balance - elector_genesis_balance - config_genesis_balance -
+// balance: 5 B TOS total supply, less reserves for system contracts (smc3 + elector + config)
 0 // split_depth
 0 // ticktock
 AllOnes 0 * // address
@@ -172,7 +182,7 @@ Libs{{
   x{{ABACABADABACABA}} s>c public_lib
   x{{1234}} x{{5678}} |_ s>c public_lib
 }}Libs  // libraries
-TM$1 // balance
+smc3_genesis_balance // balance
 0 // split_depth
 3 // ticktock: tick
 2 // mode: create
@@ -189,7 +199,7 @@ dup make_special dup constant smc3_addr
 "auto/elector-code.fif" include   // code in separate source file
 <b 0 1 1+ 1+ 4 + 32 + u, 0 256 u, b>  // data: dict dict dict tomis uint32 uint256
 empty_cell  // libraries
-TM$10  // balance: 10 tomis
+elector_genesis_balance  // balance
 0 // split_depth
 2 // ticktock: tick
 AllOnes 3 * // address: -1:333...333
@@ -300,7 +310,7 @@ config.new_consensus_params_all!
    dictnew dict,   // vote dict
 b> // data
 empty_cell  // libraries
-TM$10  // balance
+config_genesis_balance  // balance
 0 1 config_addr 6 register_smc  // tock
 dup set_config_smc
 Masterchain swap

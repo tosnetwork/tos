@@ -7,7 +7,7 @@ with node[0] additionally serving JSON-RPC HTTP (default 127.0.0.1:18545), stayi
 once blocks are produced.
 
 Run:
-    cd /home/tomi/tos && uv run python scripts/localnet-jsonrpc.py
+    uv run python scripts/localnet-jsonrpc.py
 Self-test "balance change from a faucet transfer" (read via JSON-RPC, same path as the app):
     ... scripts/localnet-jsonrpc.py --demo
 Fund your app wallet address (repeatable):

@@ -68,30 +68,30 @@ tol-tester/tests/vesting-vault-positive.tol   — tol-tester entry point (import
 
 ### 1. Build tol compiler
 ```
-cmake --build /home/tomi/tos/build --target tol -j 32
+cmake --build build --target tol -j 32
 ```
 Result: clean build, 4/4 steps.
 
 ### 2. Run tol-tester
 ```
-cd /home/tomi/tos/tol-tester && \
-  FIFTPATH=/home/tomi/tos/crypto/fift/lib \
-  FIFT_EXECUTABLE=/home/tomi/tos/build/crypto/fift \
-  TOL_EXECUTABLE=/home/tomi/tos/build/tol/tol \
+cd tol-tester && \
+  FIFTPATH=../crypto/fift/lib \
+  FIFT_EXECUTABLE=../build/crypto/fift \
+  TOL_EXECUTABLE=../build/tol/tol \
   python3 tol-tester.py tests vesting-vault
 ```
 Result: **14/14 cases pass, gas 132954.**
 
 ### 3. Standalone contract check
 ```
-/home/tomi/tos/build/tol/tol --check-only \
+build/tol/tol --check-only \
   examples/external-trials/vesting-vault/src/vesting-vault.tol
 ```
 Result: clean; zero errors and zero warnings.
 
 ### 4. Whitespace check
 ```
-cd /home/tomi/tos && git diff --check
+git diff --check
 ```
 Result: clean (no output).
 

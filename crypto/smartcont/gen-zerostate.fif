@@ -40,6 +40,14 @@ basestate0_rhash basestate0_fhash now 0 4 8 0 add-std-workchain
 
 config.workchains!
 
+// Genesis balances reserved for system contracts (elector, config), carved
+// out of the fixed 5 B TOS total supply. Defined once here and reused at
+// both the main-wallet subtraction below and each contract's own
+// register_smc call, so the total is correct by construction instead of
+// relying on two independently-maintained literals staying in sync.
+TM$500 constant elector_genesis_balance
+TM$500 constant config_genesis_balance
+
 /*
  *
  *  Initial wallets (test)
@@ -80,7 +88,10 @@ WCode3 // code
    B,
 b> // data
 empty_cell // libs
-TM$5000000000 allocated-balance - // balance: 5 B TOS, fully pre-mined to the main wallet
+TM$5000000000 allocated-balance - elector_genesis_balance - config_genesis_balance -
+// balance: 5 B TOS total supply, fully pre-mined to the main wallet less the
+// stage wallets above (allocated-balance) and the elector/config reserves
+// registered below
 0 // split_depth
 0 // ticktock
 AllOnes 1 * // address
@@ -97,7 +108,7 @@ Masterchain over
 // follows the same model here: the full 5 B supply is pre-mined to the main
 // wallet above.  To add a mining distribution later, deploy giver contracts
 // post-genesis from the main wallet (see doc/Mining-Design.md).
-."Total allocated balance (pre-mine) = " allocated-balance .TM cr
+."Total wallet balance (pre-mine, excludes elector/config reserves) = " allocated-balance .TM cr
 
 /*
  *
@@ -107,7 +118,7 @@ Masterchain over
 "auto/elector-code.fif" include   // code in separate source file
 <b 0 1 1+ 1+ 4 + 32 + u, 0 256 u, b>  // data: dict dict dict tomis uint32 uint256
 empty_cell  // libraries
-TM$500  // balance: 500 tomis
+elector_genesis_balance  // balance
 0 // split_depth
 2 // ticktock: tick
 AllOnes 3 * // address: -1:333...333
@@ -241,7 +252,7 @@ now dup orig_vset_valid_for + 0 config.validators!
    dictnew dict,   // vote dict
 b> // data
 empty_cell  // libraries
-TM$500  // balance
+config_genesis_balance  // balance
 0 1 config_addr 6 register_smc  // tock
 dup set_config_smc
 Masterchain swap

@@ -19,7 +19,7 @@ then exercises the security-critical verification path through real contracts:
 Together these prove the indexer trusts committed contract state, not message
 claims. Exit code 0 iff both scenarios pass.
 
-Run:  cd /home/tomi/tos && uv run python scripts/wc0-token-index-e2e.py
+Run from the repository root: uv run python scripts/wc0-token-index-e2e.py
 """
 import asyncio
 import json
