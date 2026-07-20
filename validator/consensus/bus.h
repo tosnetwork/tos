@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <variant>
+
 #include "consensus/misbehavior.h"
 #include "keyring/keyring.hpp"
 #include "overlay/overlays.h"
@@ -86,7 +88,14 @@ struct IncomingProtocolMessage {
 struct OutgoingProtocolMessage {
   using LogToDebug = std::true_type;
 
-  std::optional<PeerValidatorId> recipient;
+  struct BroadcastToAll {};
+  struct BroadcastToRandom {
+    size_t count;
+  };
+
+  using Recipient = std::variant<BroadcastToAll, BroadcastToRandom>;
+
+  Recipient recipient;
   ProtocolMessage message;
 
   std::string contents_to_string() const;

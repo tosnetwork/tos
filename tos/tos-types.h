@@ -539,7 +539,6 @@ struct NewConsensusConfig {
   td::uint32 max_block_size = (4 << 20);
   td::uint32 max_collated_data_size = (4 << 20);
 
-  bool use_quic = false;
   td::uint32 slots_per_leader_window = 4;
 
   // When adding a new noncritical parameters, also add it to consensus.simplex.noncriticalParams TL scheme
@@ -559,7 +558,8 @@ struct NewConsensusConfig {
   duration_fn(11, bad_signature_ban_duration, 5'000)                    \
   uint32_fn(12, candidate_resolve_rate_limit, 10)                       \
   duration_fn(13, min_block_interval, 0)                                \
-  duration_fn(14, no_empty_blocks_on_error_timeout, 15'000)
+  duration_fn(14, no_empty_blocks_on_error_timeout, 15'000)             \
+  uint32_fn(15, certificate_gossip_neighbors, 20)
   // clang-format on
 
   struct NoncriticalParams {
