@@ -143,6 +143,8 @@ enum ServiceActorOperation {
     WithdrawRevenue,
     Deactivate,
     Reactivate,
+    RotateAttestorKey,
+    RevokeAttestor,
 }
 
 #[derive(clap::Args, Clone)]
@@ -196,6 +198,12 @@ pub struct ServiceActorSendCmd {
     proof_scheme_hash: Option<String>,
     #[arg(long, help = "Amount to withdraw from revenue, in TOS, for withdraw-revenue")]
     withdraw_amount: Option<f64>,
+    #[arg(
+        long,
+        conflicts_with = "signer_vault_key",
+        help = "New 32-byte ed25519 public key for rotate-attestor-key (owner-only)"
+    )]
+    new_attestor_pubkey: Option<String>,
     #[arg(
         long,
         default_value_t = 0.01,
@@ -687,6 +695,23 @@ impl ServiceActorSendCmd {
             )?,
             ServiceActorOperation::Deactivate => ServiceActorContract::deactivate(self.query_id)?,
             ServiceActorOperation::Reactivate => ServiceActorContract::reactivate(self.query_id)?,
+            ServiceActorOperation::RotateAttestorKey => {
+                let pubkey = resolve_attestor_pubkey(
+                    &self.new_attestor_pubkey,
+                    &self.signer_vault_key,
+                    vault.clone(),
+                )
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "provide --new-attestor-pubkey or --signer-vault-key for rotate-attestor-key"
+                    )
+                })?;
+                ServiceActorContract::rotate_attestor_key(self.query_id, pubkey)?
+            }
+            ServiceActorOperation::RevokeAttestor => {
+                ServiceActorContract::revoke_attestor(self.query_id)?
+            }
         };
 
         let amount_nanotos = tos_to_nanotos(self.amount);

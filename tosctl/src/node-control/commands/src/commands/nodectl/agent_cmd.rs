@@ -157,6 +157,12 @@ pub struct AgentTaskSendCmd {
         help = "Sign the on-chain result_hash with this vault key instead of passing --attestation-signature directly"
     )]
     signer_vault_key: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "signer_vault_key",
+        help = "New 32-byte ed25519 public key for rotate-attestor-key (creator-only)"
+    )]
+    new_attestor_pubkey: Option<String>,
     #[arg(long, default_value_t = 0.01)]
     amount: f64,
     #[arg(long)]
@@ -251,6 +257,8 @@ enum AgentTaskOperation {
     Settle,
     Cancel,
     Timeout,
+    RotateAttestorKey,
+    RevokeAttestor,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -300,6 +308,11 @@ pub struct AgentTaskEncodeCmd {
         help = "64-byte ed25519 signature over result_hash, for settle on a task deployed with --attestor-pubkey"
     )]
     attestation_signature: Option<String>,
+    #[arg(
+        long,
+        help = "New 32-byte ed25519 public key for rotate-attestor-key (creator-only)"
+    )]
+    new_attestor_pubkey: Option<String>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -1048,26 +1061,59 @@ impl AgentTaskSendCmd {
             }
             AgentTaskOperation::Cancel => Some(TaskEscrowContract::cancel(self.query_id)?),
             AgentTaskOperation::Timeout => Some(TaskEscrowContract::timeout(self.query_id)?),
+            AgentTaskOperation::RotateAttestorKey => {
+                match parse_optional_hash("new-attestor-pubkey", &self.new_attestor_pubkey)? {
+                    Some(pubkey) => {
+                        Some(TaskEscrowContract::rotate_attestor_key(self.query_id, pubkey)?)
+                    }
+                    // Resolved once the vault is available, below.
+                    None if self.signer_vault_key.is_some() => None,
+                    None => anyhow::bail!(
+                        "provide --new-attestor-pubkey or --signer-vault-key for rotate-attestor-key"
+                    ),
+                }
+            }
+            AgentTaskOperation::RevokeAttestor => {
+                Some(TaskEscrowContract::revoke_attestor(self.query_id)?)
+            }
         };
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_task_address(&config, &self.address, &self.name)?;
         if body.is_none() {
             let vault_key = self.signer_vault_key.as_deref().expect("checked above");
-            let payout = tos_to_nanotos(
-                self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
-            );
-            let provider = contracts::contract_provider!(rpc_client.clone());
-            let stack =
-                provider.get_method(destination.to_string(), "get_task_data", vec![]).await?;
-            let chain_task = TaskEscrowContract::decode_data(&stack)?;
-            let signature = sign_hash_with_vault_key(
-                vault_key,
-                &chain_task.result_hash,
-                vault.clone(),
-            )
-            .await?;
-            body = Some(TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?);
+            match self.operation {
+                AgentTaskOperation::Settle => {
+                    let payout = tos_to_nanotos(
+                        self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
+                    );
+                    let provider = contracts::contract_provider!(rpc_client.clone());
+                    let stack = provider
+                        .get_method(destination.to_string(), "get_task_data", vec![])
+                        .await?;
+                    let chain_task = TaskEscrowContract::decode_data(&stack)?;
+                    let signature = sign_hash_with_vault_key(
+                        vault_key,
+                        &chain_task.result_hash,
+                        vault.clone(),
+                    )
+                    .await?;
+                    body =
+                        Some(TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?);
+                }
+                AgentTaskOperation::RotateAttestorKey => {
+                    let pubkey = resolve_attestor_pubkey(
+                        &None,
+                        &Some(vault_key.to_owned()),
+                        vault.clone(),
+                    )
+                    .await?
+                    .expect("vault key provided");
+                    body =
+                        Some(TaskEscrowContract::rotate_attestor_key(self.query_id, pubkey)?);
+                }
+                _ => unreachable!("only settle and rotate-attestor-key defer body resolution"),
+            }
         }
         let body = body.expect("body resolved for every operation");
         if let Some(agent_wallet) = &self.via_agent_account {
@@ -1557,6 +1603,13 @@ impl AgentTaskEncodeCmd {
             }
             AgentTaskOperation::Cancel => TaskEscrowContract::cancel(self.query_id)?,
             AgentTaskOperation::Timeout => TaskEscrowContract::timeout(self.query_id)?,
+            AgentTaskOperation::RotateAttestorKey => TaskEscrowContract::rotate_attestor_key(
+                self.query_id,
+                parse_required_hash("new-attestor-pubkey", &self.new_attestor_pubkey)?,
+            )?,
+            AgentTaskOperation::RevokeAttestor => {
+                TaskEscrowContract::revoke_attestor(self.query_id)?
+            }
         };
         println!("{}", base64::engine::general_purpose::STANDARD.encode(write_boc(&body)?));
         Ok(())

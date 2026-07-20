@@ -408,6 +408,49 @@ async def run_checks(faucet) -> None:
     check("attestor task settled",
           await wait_status("e2e-attestor", "settled") == "settled")
 
+    # ---------------- ROTATE/REVOKE ATTESTOR PATH ----------------
+    print("\n=== rotate/revoke: creator manages the attestor key post-deploy ===")
+    await tosctl("key", "add", "--name", "rotated-attestor-key")
+    rotate_deadline = int(time.time()) + 3600
+    rotate_escrow = await create_task(
+        "e2e-rotate", creator, agent, 2, rotate_deadline, 2.2)
+    print(f"  escrow: {rotate_escrow}")
+    data = await task_show("e2e-rotate")
+    check("no attestor at deploy", not data.get("attestor_pubkey"), str(data))
+
+    await send_op("rotate-attestor-key", "e2e-rotate", "agent",
+                  "--new-attestor-pubkey", "aa" * 32)
+    await assert_status_stays("e2e-rotate", "open", "non-creator rotate rejected")
+    data = await task_show("e2e-rotate")
+    check("rotate by non-creator did not set attestor", not data.get("attestor_pubkey"), str(data))
+
+    await send_op("rotate-attestor-key", "e2e-rotate", "creator",
+                  "--signer-vault-key", "rotated-attestor-key")
+    data = await task_show("e2e-rotate")
+    check("creator rotate sets attestor pubkey", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("accept", "e2e-rotate", "agent")
+    await send_op("result", "e2e-rotate", "agent",
+                  "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH)
+    check("rotate task result submitted",
+          await wait_status("e2e-rotate", "result_submitted") == "result_submitted")
+
+    await send_op("settle", "e2e-rotate", "creator", "--payout", "1")
+    await assert_status_stays(
+        "e2e-rotate", "result_submitted", "settle after rotate still requires attestation")
+
+    await send_op("revoke-attestor", "e2e-rotate", "agent")
+    data = await task_show("e2e-rotate")
+    check("revoke by non-creator rejected", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("revoke-attestor", "e2e-rotate", "creator")
+    data = await task_show("e2e-rotate")
+    check("creator revoke clears attestor", not data.get("attestor_pubkey"), str(data))
+
+    await send_op("settle", "e2e-rotate", "creator", "--payout", "1")
+    check("settle after revoke succeeds unattested",
+          await wait_status("e2e-rotate", "settled") == "settled")
+
     # ---------------- CONTROLLER PATH ----------------
     print("\n=== controller path: Agent Account -> Task Escrow ===")
     controller_deadline = int(time.time()) + 3600
@@ -546,8 +589,8 @@ async def run_checks(faucet) -> None:
     records = {r["name"]: r for r in await tosctl_json("agent", "task", "ls")}
     expected_records = {
         "e2e-main", "e2e-controller", "e2e-claim", "e2e-reject", "e2e-cancel",
-        "e2e-dispute", "e2e-timeout", "e2e-attestor"}
-    check("eight records tracked", set(records) == expected_records,
+        "e2e-dispute", "e2e-timeout", "e2e-attestor", "e2e-rotate"}
+    check("nine records tracked", set(records) == expected_records,
           str(sorted(records)))
     main_rec = records.get("e2e-main", {})
     check("record creator", same_addr(main_rec.get("creator"), creator))
@@ -579,6 +622,7 @@ async def run_checks(faucet) -> None:
         "e2e-cancel": "cancelled",
         "e2e-timeout": "expired",
         "e2e-attestor": "settled",
+        "e2e-rotate": "settled",
     }, str(chain_records))
     check("on-chain list reports permission hashes",
           all(record.get("chain_permission_hash") ==
@@ -589,7 +633,8 @@ async def run_checks(faucet) -> None:
         "agent", "task", "ls", "--on-chain", "--status", "settled")
     check("status filter returns settled tasks",
           {record["name"] for record in settled_records} == {
-              "e2e-main", "e2e-controller", "e2e-claim", "e2e-dispute", "e2e-attestor"},
+              "e2e-main", "e2e-controller", "e2e-claim", "e2e-dispute", "e2e-attestor",
+              "e2e-rotate"},
           str(settled_records))
     account_records = await tosctl_json(
         "agent", "task", "ls", "--on-chain", "--agent", agent_account)
@@ -602,7 +647,7 @@ async def run_checks(faucet) -> None:
           str(unassigned_records))
     creator_records = await tosctl_json(
         "agent", "task", "ls", "--creator", creator)
-    check("creator filter returns all owned tasks", len(creator_records) == 8,
+    check("creator filter returns all owned tasks", len(creator_records) == 9,
           str(creator_records))
 
 

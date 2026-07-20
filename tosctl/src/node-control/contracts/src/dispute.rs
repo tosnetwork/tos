@@ -9,9 +9,11 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const DISPUTE_CODE_B64: &str = "te6cckECBgEAAXoAART/APSkE/S88sgLAQIBYgIDArzQMiHHAJFb4AHTH9M/MQLQdNch+kAw7UTQ+kD6QPpA0wfTB9MP0z/UAdDT/9P/0QLUAdDT/9P/0wDT/9EE0RBFVQIughBEU1ABuuMCMjY2C4IQRFNQArrjAl8M8sfVBAUAXaEzEdqJofSB9IH0gaYPpg+mH6Z/qAOhp/+n/6IFqAOhp/+n/6YBp/+iCaIgiqoFAKgzPVG5xwXy59AGwwLy59IL0//REIsQehBpcQkQWBBHEDZFFEADA8jL/xLL/8sAy//JAsjL/8v/ychQCc8WUAfPFlAFzxYTywfLB8sPyz8SzMzJ7VQA+lGWxwXy59EEwwLy59IJ0wfTD9P/JJyDCNcYUiIn+RDy59be0SLAASPAArEjwAOx8ufTIsMDfyOBJxC7sLHy59QQixB6EGlyCRA4RxZBRQPIy/8Sy//LAMv/yQLIy//L/8nIUAnPFlAHzxZQBc8WE8sHywfLD8s/EszMye1UgOMl6A==";
+pub const DISPUTE_CODE_B64: &str = "te6cckECCQEAAjEAART/APSkE/S88sgLAQIBYgIDBNTQMiHHAJFb4AHTH9M/MQLQdNch+kAw7UTQ+kD6QPpA0wfTB9MP0z/UAdDT/9P/0QLUAdDT/9P/0wDT/9EE0RBFVQIughBEU1ABuuMCLoIQRFNQArrjAjEtghBEU1ADuuMCPgyCEERTUAS6BAUGBwBdoTMR2omh9IH0gfSBpg+mD6Yfpn+oA6Gn/6f/ogWoA6Gn/6f/pgGn/6IJoiCKqgUAqDM9UbnHBfLn0AbDAvLn0gvT/9EQixB6EGlxCRBYEEcQNkUUQAMDyMv/Esv/ywDL/8kCyMv/y//JyFAJzxZQB88WUAXPFhPLB8sHyw/LPxLMzMntVAGkMjY2O1GWxwXy59EEwwLy59IJ0wfTD9P/JJyDCNcYUiIn+RDy59be0SLAASPAArEjwAOx8ufTIsMDfyOBJxC7sLHy59QQixB6EGlyCRA4RxZBRQgAnDA8UafHBfLn0QvT/zAQixB6EGkQWBBHEDZFQBAjcQEDyMv/Esv/ywDL/8kCyMv/y//JyFAJzxZQB88WUAXPFhPLB8sHyw/LPxLMzMntVACgjkhRp8cF8ufREIsQehBpEFgQRxA2RRNQQnABA8jL/xLL/8sAy//JAsjL/8v/ychQCc8WUAfPFlAFzxYTywfLB8sPyz8SzMzJ7VTgXw3yx9UAXgPIy/8Sy//LAMv/yQLIy//L/8nIUAnPFlAHzxZQBc8WE8sHywfLD8s/EszMye1UUHaqQQ==";
 pub const DSP_SUBMIT_RESPONDENT_EVIDENCE_OPCODE: u32 = 0x4453_5001;
 pub const DSP_RULE_OPCODE: u32 = 0x4453_5002;
+pub const DSP_ROTATE_ATTESTOR_KEY_OPCODE: u32 = 0x4453_5003;
+pub const DSP_REVOKE_ATTESTOR_OPCODE: u32 = 0x4453_5004;
 
 pub const DISPUTE_STATUS_OPEN: u8 = 0;
 pub const DISPUTE_STATUS_EVIDENCE_SUBMITTED: u8 = 1;
@@ -161,6 +163,23 @@ impl DisputeContract {
             b.append_u8(ruling)?.append_u16(split_bps)?.append_u256(&ruling_hash)?;
             b.append_raw(signature, 512).map(|_| ())
         })
+    }
+
+    /// Reviewer-only: set or replace the `attestor_pubkey` `rule` checks
+    /// against. Purely local state -- no cross-contract messaging.
+    pub fn rotate_attestor_key(
+        query_id: u64,
+        new_attestor_pubkey: [u8; 32],
+    ) -> anyhow::Result<chain_block::Cell> {
+        message(DSP_ROTATE_ATTESTOR_KEY_OPCODE, query_id, |b| {
+            b.append_raw(&new_attestor_pubkey, 256).map(|_| ())
+        })
+    }
+
+    /// Reviewer-only: drop the attestation requirement -- `rule` reverts to
+    /// sender-authorization-only until `rotate_attestor_key` is called again.
+    pub fn revoke_attestor(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message(DSP_REVOKE_ATTESTOR_OPCODE, query_id, |_| Ok(()))
     }
 }
 

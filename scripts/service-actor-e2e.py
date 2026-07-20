@@ -350,6 +350,48 @@ async def run_checks(faucet) -> None:
     data = await service_show("svc-2")
     check("attestor respond recorded", data["last_response_hash"] == "dd" * 32, str(data))
 
+    print("\n=== rotate/revoke: owner manages the attestor key post-deploy ===")
+    await tosctl("key", "add", "--name", "rotated-service-attestor-key")
+    deploy3 = await tosctl_json(
+        "agent", "service", "deploy", "--name", "svc-3", "--owner", owner,
+        "--open-access", "--price-per-call", "0.01", "--rate-limit-per-day", "0",
+        "--metadata-hash", METADATA_HASH, "--proof-scheme-hash", PROOF_SCHEME_HASH,
+        "--from", "owner", "--amount", "0.2", "-w", "0", "--yes",
+    )
+    address3 = deploy3["address"]
+    check("rotate service deployed and active", await poll_predicate(
+        lambda: rpc_call("getAddressState", address=address3).get("result") == "active"))
+    data = await service_show("svc-3")
+    check("no attestor at deploy", not data.get("attestor_pubkey"), str(data))
+
+    await send_op("rotate-attestor-key", "svc-3", "outsider",
+                  "--new-attestor-pubkey", "aa" * 32, may_fail=True)
+    data = await service_show("svc-3")
+    check("non-owner rotate rejected", not data.get("attestor_pubkey"), str(data))
+
+    await send_op("rotate-attestor-key", "svc-3", "owner",
+                  "--signer-vault-key", "rotated-service-attestor-key")
+    data = await service_show("svc-3")
+    check("owner rotate sets attestor pubkey", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("respond", "svc-3", "owner", "--response-hash", "ee" * 32, may_fail=True)
+    data = await service_show("svc-3")
+    check("respond after rotate still requires attestation",
+          int(data["last_response_hash"], 16) == 0, str(data))
+
+    await send_op("revoke-attestor", "svc-3", "outsider", may_fail=True)
+    data = await service_show("svc-3")
+    check("non-owner revoke rejected", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("revoke-attestor", "svc-3", "owner")
+    data = await service_show("svc-3")
+    check("owner revoke clears attestor", not data.get("attestor_pubkey"), str(data))
+
+    await send_op("respond", "svc-3", "owner", "--response-hash", "ee" * 32)
+    data = await service_show("svc-3")
+    check("respond after revoke succeeds unattested", data["last_response_hash"] == "ee" * 32,
+          str(data))
+
     print("\n=== persisted local record ===")
     records = {r["name"]: r for r in await tosctl_json("agent", "service", "ls")}
     check("record tracked locally", "svc-1" in records, str(sorted(records)))

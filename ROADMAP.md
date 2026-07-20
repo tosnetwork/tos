@@ -207,6 +207,14 @@ Examples:
   consuming a separately-deployed Proof Attestation contract's own revocation/rotation
   state; a broader pluggable verification-backend interface across contracts (one where
   these ops instead reference a live Proof Attestation instance) remains open.
+  Each contract's own `attestor_pubkey` is independently rotatable and revocable, so
+  key management "actually takes effect" without needing that broader interface: a
+  `rotate-attestor-key` op (creator/reviewer/owner respectively) sets or replaces the
+  key -- including turning on attestation post-deploy, for a contract originally
+  deployed without one -- and `revoke-attestor` drops the requirement entirely
+  (reverting to sender-authorization-only) until rotated again. Purely local state
+  mutation, no cross-contract messaging, following the same authorization pattern as
+  each contract's other management ops.
 - Add workflow examples that compose planner, worker, service and verifier actors: see
   [`doc/ai-agent-workflow-example.md`](doc/ai-agent-workflow-example.md), which walks a
   planner posting a Task Escrow, a worker (Agent Account) accepting it and paying a Service

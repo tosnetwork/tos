@@ -119,6 +119,15 @@ impl Fixture {
             .and_then(|acc| acc.balance().and_then(|cc| cc.coins.as_u64()))
             .unwrap_or(0)
     }
+
+    fn has_attestor(&self) -> bool {
+        self.bc
+            .run_get_method(&self.escrow, "get_task_data", vec![])
+            .expect("get_task_data")
+            .expect_success()
+            .int_at(15)
+            != 0
+    }
 }
 
 #[test]
@@ -436,5 +445,53 @@ fn settle_on_an_attestor_configured_task_requires_a_valid_signature() {
 
     f.send_from(&creator_addr, TaskEscrowContract::settle_signed(7, TOS, &valid_signature).unwrap())
         .expect_success();
+    assert_eq!(f.status(), STATUS_SETTLED);
+}
+
+#[test]
+fn creator_can_rotate_and_revoke_the_attestor_key_others_rejected() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let attestor_pubkey = attestor.verifying_key().to_bytes();
+    let result_hash = [0xAA; 32];
+    // Deployed with no attestor at all -- settle should work unattested until
+    // the creator opts in via rotate_attestor_key.
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    let creator_addr = f.creator.address().clone();
+    let agent_addr = f.agent.address().clone();
+    let outsider_addr = f.outsider.address().clone();
+    assert!(!f.has_attestor());
+
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, result_hash, [0xBB; 32]).unwrap())
+        .expect_success();
+
+    // Non-creator rotate is rejected; attestor state is unaffected.
+    f.send_from(
+        &outsider_addr,
+        TaskEscrowContract::rotate_attestor_key(3, attestor_pubkey).unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(128);
+    assert!(!f.has_attestor());
+
+    // Creator rotates in an attestor key: settle now requires a signature.
+    f.send_from(&creator_addr, TaskEscrowContract::rotate_attestor_key(4, attestor_pubkey).unwrap())
+        .expect_success();
+    assert!(f.has_attestor());
+
+    f.send_from(&creator_addr, TaskEscrowContract::settle(5, TOS).unwrap()).expect_aborted();
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+
+    // Non-creator revoke is rejected; attestor requirement still in force.
+    f.send_from(&outsider_addr, TaskEscrowContract::revoke_attestor(6).unwrap())
+        .expect_aborted()
+        .expect_exit_code(129);
+    assert!(f.has_attestor());
+
+    // Creator revokes: settle works again without any signature.
+    f.send_from(&creator_addr, TaskEscrowContract::revoke_attestor(7).unwrap()).expect_success();
+    assert!(!f.has_attestor());
+
+    f.send_from(&creator_addr, TaskEscrowContract::settle(8, TOS).unwrap()).expect_success();
     assert_eq!(f.status(), STATUS_SETTLED);
 }

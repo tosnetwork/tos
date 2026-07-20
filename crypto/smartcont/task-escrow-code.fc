@@ -12,6 +12,8 @@ const int op::reject = 0x54415306;
 const int op::claim = 0x54415307;
 const int op::dispute = 0x54415308;
 const int op::resolve = 0x54415309;
+const int op::rotate_attestor_key = 0x5441530a;
+const int op::revoke_attestor = 0x5441530b;
 
 const int status::open = 0;
 const int status::accepted = 1;
@@ -205,6 +207,27 @@ const int status::disputed = 7;
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::settled, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
+    return ();
+  }
+  if (op == op::rotate_attestor_key) {
+    ;; Creator-only: set or replace the attestor_pubkey settle checks against.
+    ;; Purely local state -- no cross-contract messaging.
+    throw_unless(128, equal_slice_bits(sender, creator));
+    attestor_pubkey = in_msg~load_uint(256);
+    has_attestor = 1;
+    save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
+      status, result_hash, evidence_hash, policy_hash, review_period,
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
+    return ();
+  }
+  if (op == op::revoke_attestor) {
+    ;; Creator-only: permanently (until rotated again) drop the attestation
+    ;; requirement -- settle reverts to sender-authorization-only.
+    throw_unless(129, equal_slice_bits(sender, creator));
+    has_attestor = 0;
+    save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
+      status, result_hash, evidence_hash, policy_hash, review_period,
       review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
     return ();
   }

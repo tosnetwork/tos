@@ -38,6 +38,8 @@ const int op::update_policy = 0x53564303;
 const int op::withdraw_revenue = 0x53564304;
 const int op::deactivate = 0x53564305;
 const int op::reactivate = 0x53564306;
+const int op::rotate_attestor_key = 0x53564307;
+const int op::revoke_attestor = 0x53564308;
 
 const int err::not_owner = 1900;
 const int err::not_authorized = 1901;
@@ -224,6 +226,29 @@ const int err::bad_response_signature = 1909;
     save_state(owner, has_authorized_caller, authorized_caller, open_access, 1, price_per_call,
       rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash, proof_scheme_hash,
       last_request_hash, last_response_hash, has_attestor, attestor_pubkey);
+    return ();
+  }
+
+  if (op == op::rotate_attestor_key) {
+    ;; Owner-only: set or replace the attestor_pubkey respond checks against.
+    ;; Purely local state -- no cross-contract messaging.
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    attestor_pubkey = in_msg~load_uint(256);
+    has_attestor = 1;
+    save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
+      price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
+      proof_scheme_hash, last_request_hash, last_response_hash, has_attestor, attestor_pubkey);
+    return ();
+  }
+
+  if (op == op::revoke_attestor) {
+    ;; Owner-only: permanently (until rotated again) drop the attestation
+    ;; requirement -- respond reverts to sender-authorization-only.
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    has_attestor = 0;
+    save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
+      price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
+      proof_scheme_hash, last_request_hash, last_response_hash, has_attestor, attestor_pubkey);
     return ();
   }
 

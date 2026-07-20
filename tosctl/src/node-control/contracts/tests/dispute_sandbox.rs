@@ -287,3 +287,45 @@ fn rule_on_an_attestor_configured_dispute_requires_a_valid_signature() {
     assert_eq!(data.ruling, RULING_CLAIMANT);
     assert_eq!(data.ruling_hash, ruling_hash);
 }
+
+#[test]
+fn reviewer_can_rotate_and_revoke_the_attestor_key_others_rejected() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let attestor_pubkey = attestor.verifying_key().to_bytes();
+    let ruling_hash = [0xBB; 32];
+    // Deployed with no attestor at all -- rule should work unattested until
+    // the reviewer opts in via rotate_attestor_key.
+    let mut f = Fixture::new(TOS / 10);
+    let reviewer = f.reviewer.address().clone();
+    let outsider = f.outsider.address().clone();
+    assert!(f.data().attestor_pubkey.is_none());
+
+    // Non-reviewer rotate is rejected; attestor state is unaffected.
+    f.send_from(&outsider, DisputeContract::rotate_attestor_key(1, attestor_pubkey).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_NOT_REVIEWER);
+    assert!(f.data().attestor_pubkey.is_none());
+
+    // Reviewer rotates in an attestor key: rule now requires a signature.
+    f.send_from(&reviewer, DisputeContract::rotate_attestor_key(2, attestor_pubkey).unwrap())
+        .expect_success();
+    assert_eq!(f.data().attestor_pubkey, Some(attestor_pubkey));
+
+    f.send_from(&reviewer, DisputeContract::rule(3, RULING_CLAIMANT, 0, ruling_hash).unwrap())
+        .expect_aborted();
+    assert_eq!(f.data().status, DISPUTE_STATUS_OPEN);
+
+    // Non-reviewer revoke is rejected; attestor requirement still in force.
+    f.send_from(&outsider, DisputeContract::revoke_attestor(4).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_NOT_REVIEWER);
+    assert!(f.data().attestor_pubkey.is_some());
+
+    // Reviewer revokes: rule works again without any signature.
+    f.send_from(&reviewer, DisputeContract::revoke_attestor(5).unwrap()).expect_success();
+    assert!(f.data().attestor_pubkey.is_none());
+
+    f.send_from(&reviewer, DisputeContract::rule(6, RULING_CLAIMANT, 0, ruling_hash).unwrap())
+        .expect_success();
+    assert_eq!(f.data().status, DISPUTE_STATUS_RESOLVED);
+}

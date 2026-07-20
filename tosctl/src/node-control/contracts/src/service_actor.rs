@@ -9,13 +9,15 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const SERVICE_ACTOR_CODE_B64: &str = "te6cckECCwEAA4QAART/APSkE/S88sgLAQIBYgIDBObQIMcAkl8D4NMf0z8xAtB01yH6QDDtRND6QNMA+kDTANMA+gDTH9Mf0x/6ANQB0NP/0//RAtQB0NP/0//TANP/0QTREEVVAlYRghBTVkMBuuMCVxNWEIIQU1ZDArrjAlYQghBTVkMDuuMCVhCCEFNWQwS6BAUGBwBpoDpT2omh9IGmAfSBpgGmAfQBpj+mP6Y/9AGoA6Gn/6f/ogWoA6Gn/6f/pgGn/6IJoiCKqgUBrjNXECnAAfLnbirAAVH8xwVS0LAfsfLnbVYQKL7y53H4I4IBUYCpBFMGvZM2cDWRMOImwABTV7mx8udwBKQREBOgDtP/0RC/EK4QnRCMEHsQahBZEEhEUwgA1jE/UdzHBfLnbA7T/y6dgwjXGFIiVhL5EPLndd7REL8QrhCdEIwQexBqEFkQSBA3QBYEUFMDyMv/Esv/ywDL/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UAO4zMzY2Nzc3OVF2xwXy52whwAHy524I+gDTH9MA0wD6QNQB0NP/0//RAtEQvxA+EC0QTBB7EGoQWRAoEGcFUEYTA8jL/xLL/8sAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVAPgjtFXEFHtxwXy52wP+gDRUwO78udy+CdvEFIQu/LncyDCAI4XU8BxcIAQyMsFUATPFlj6AhLLaskB+wDeE6EQvxCuEJ0QjBB7EGoQWRBIEDdeUAPgVxEvghBTVkMFuuMCD4IQU1ZDBrrjAl8PW/LHdAgJCgBuA8jL/xLL/8sAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVADqND5Ry8cF8udsBsAB8uduKXCDBnCAEMjLBVAEzxZY+gISy2rJAfsAcCAQvxCuEJ0QjBsQahBZEEgQNwYQNQEDyMv/Esv/ywDL/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UALZR3McF8udsB8AA8udvEK4QnRCMEHtxCxBqEFkQSBA3RlAQNBIDyMv/Esv/ywDL/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UrbS4jA==";
+pub const SERVICE_ACTOR_CODE_B64: &str = "te6cckECDQEABFQAART/APSkE/S88sgLAQIBYgIDBObQIMcAkl8D4NMf0z8xAtB01yH6QDDtRND6QNMA+kDTANMA+gDTH9Mf0x/6ANQB0NP/0//RAtQB0NP/0//TANP/0QTREEVVAlYRghBTVkMBuuMCVxNWEIIQU1ZDArrjAlYQghBTVkMDuuMCVhCCEFNWQwS6BAUGBwBpoDpT2omh9IGmAfSBpgGmAfQBpj+mP6Y/9AGoA6Gn/6f/ogWoA6Gn/6f/pgGn/6IJoiCKqgUBrjNXECnAAfLnbirAAVH8xwVS0LAfsfLnbVYQKL7y53H4I4IBUYCpBFMGvZM2cDWRMOImwABTV7mx8udwBKQREBOgDtP/0RC/EK4QnRCMEHsQahBZEEhEUwgA1jE/UdzHBfLnbA7T/y6dgwjXGFIiVhL5EPLndd7REL8QrhCdEIwQexBqEFkQSBA3QBYEUFMDyMv/Esv/ywDL/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UAO4zMzY2Nzc3OVF2xwXy52whwAHy524I+gDTH9MA0wD6QNQB0NP/0//RAtEQvxA+EC0QTBB7EGoQWRAoEGcFUEYTA8jL/xLL/8sAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVATmjtFXEFHtxwXy52wP+gDRUwO78udy+CdvEFIQu/LncyDCAI4XU8BxcIAQyMsFUATPFlj6AhLLaskB+wDeE6EQvxCuEJ0QjBB7EGoQWRBIEDdeUAPgVhCCEFNWQwW64wJWEIIQU1ZDBrrjAjAvghBTVkMHuggJCgsAbgPIy/8Sy//LAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQA7DU/P1HLxwXy52wGwAHy524pcIMGcIAQyMsFUATPFlj6AhLLaskB+wBwIBC/EK4QnRCMGxBqEFkQSBA3BgNFVQPIy/8Sy//LAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQAvFcQVxBR3McF8udsB8AA8udvEK4QnRCMEHtxCxBqEFkQSBA3RlAQNAPIy/8Sy//LAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQB3o5aP1cQUcvHBfLnbA3T/zAQrhCdEIwQexBqEFkQSBA3RlAUcQEDyMv/Esv/ywDL/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1U4FcQDoIQU1ZDCLrjAl8PMPLHdAwAqFHLxwXy52wQrhCdEIwQexBqEFkQSBA3RhRQUnABA8jL/xLL/8sAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVOcoCaQ=";
 pub const SVC_CALL_OPCODE: u32 = 0x5356_4301;
 pub const SVC_RESPOND_OPCODE: u32 = 0x5356_4302;
 pub const SVC_UPDATE_POLICY_OPCODE: u32 = 0x5356_4303;
 pub const SVC_WITHDRAW_REVENUE_OPCODE: u32 = 0x5356_4304;
 pub const SVC_DEACTIVATE_OPCODE: u32 = 0x5356_4305;
 pub const SVC_REACTIVATE_OPCODE: u32 = 0x5356_4306;
+pub const SVC_ROTATE_ATTESTOR_KEY_OPCODE: u32 = 0x5356_4307;
+pub const SVC_REVOKE_ATTESTOR_OPCODE: u32 = 0x5356_4308;
 
 /// Deployment parameters for a Service Actor.
 ///
@@ -209,6 +211,23 @@ impl ServiceActorContract {
 
     pub fn reactivate(query_id: u64) -> anyhow::Result<chain_block::Cell> {
         message(SVC_REACTIVATE_OPCODE, query_id, |_| Ok(()))
+    }
+
+    /// Owner-only: set or replace the `attestor_pubkey` `respond` checks
+    /// against. Purely local state -- no cross-contract messaging.
+    pub fn rotate_attestor_key(
+        query_id: u64,
+        new_attestor_pubkey: [u8; 32],
+    ) -> anyhow::Result<chain_block::Cell> {
+        message(SVC_ROTATE_ATTESTOR_KEY_OPCODE, query_id, |b| {
+            b.append_raw(&new_attestor_pubkey, 256).map(|_| ())
+        })
+    }
+
+    /// Owner-only: drop the attestation requirement -- `respond` reverts to
+    /// sender-authorization-only until `rotate_attestor_key` is called again.
+    pub fn revoke_attestor(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message(SVC_REVOKE_ATTESTOR_OPCODE, query_id, |_| Ok(()))
     }
 }
 

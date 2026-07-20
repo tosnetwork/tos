@@ -123,6 +123,8 @@ pub struct DisputeShowCmd {
 enum DisputeOperation {
     SubmitRespondentEvidence,
     Rule,
+    RotateAttestorKey,
+    RevokeAttestor,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -169,6 +171,12 @@ pub struct DisputeSendCmd {
         help = "Sign ruling_hash with this vault key instead of passing --attestation-signature directly"
     )]
     signer_vault_key: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "signer_vault_key",
+        help = "New 32-byte ed25519 public key for rotate-attestor-key (reviewer-only)"
+    )]
+    new_attestor_pubkey: Option<String>,
     #[arg(long, default_value_t = 0.01, help = "Message value in TOS")]
     amount: f64,
     #[arg(long)]
@@ -502,6 +510,21 @@ impl DisputeSendCmd {
                     }
                 }
             }
+            DisputeOperation::RotateAttestorKey => {
+                let pubkey = resolve_attestor_pubkey(
+                    &self.new_attestor_pubkey,
+                    &self.signer_vault_key,
+                    vault.clone(),
+                )
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "provide --new-attestor-pubkey or --signer-vault-key for rotate-attestor-key"
+                    )
+                })?;
+                DisputeContract::rotate_attestor_key(self.query_id, pubkey)?
+            }
+            DisputeOperation::RevokeAttestor => DisputeContract::revoke_attestor(self.query_id)?,
         };
 
         let amount_nanotos = common::chain_utils::tos_to_nanotos(self.amount);

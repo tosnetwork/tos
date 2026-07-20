@@ -383,3 +383,54 @@ fn respond_on_an_attestor_configured_service_requires_a_valid_signature() {
     .expect_success();
     assert_eq!(f.data().last_response_hash, response_hash);
 }
+
+#[test]
+fn owner_can_rotate_and_revoke_the_attestor_key_others_rejected() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let attestor_pubkey = attestor.verifying_key().to_bytes();
+    let response_hash = [0xDD; 32];
+    // Deployed with no attestor at all -- respond should work unattested
+    // until the owner opts in via rotate_attestor_key.
+    let mut f = Fixture::new(TOS / 10, 0, true, TOS / 10);
+    let owner = f.owner.address().clone();
+    let outsider = f.outsider.address().clone();
+    assert!(f.data().attestor_pubkey.is_none());
+
+    // Non-owner rotate is rejected; attestor state is unaffected.
+    f.send_from(
+        &outsider,
+        TOS / 10,
+        ServiceActorContract::rotate_attestor_key(1, attestor_pubkey).unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_NOT_OWNER);
+    assert!(f.data().attestor_pubkey.is_none());
+
+    // Owner rotates in an attestor key: respond now requires a signature.
+    f.send_from(
+        &owner,
+        TOS / 10,
+        ServiceActorContract::rotate_attestor_key(2, attestor_pubkey).unwrap(),
+    )
+    .expect_success();
+    assert_eq!(f.data().attestor_pubkey, Some(attestor_pubkey));
+
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(3, response_hash).unwrap())
+        .expect_aborted();
+    assert_eq!(f.data().last_response_hash, [0; 32]);
+
+    // Non-owner revoke is rejected; attestor requirement still in force.
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::revoke_attestor(4).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_NOT_OWNER);
+    assert!(f.data().attestor_pubkey.is_some());
+
+    // Owner revokes: respond works again without any signature.
+    f.send_from(&owner, TOS / 10, ServiceActorContract::revoke_attestor(5).unwrap())
+        .expect_success();
+    assert!(f.data().attestor_pubkey.is_none());
+
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(6, response_hash).unwrap())
+        .expect_success();
+    assert_eq!(f.data().last_response_hash, response_hash);
+}

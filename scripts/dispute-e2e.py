@@ -322,10 +322,52 @@ async def run_checks(faucet) -> None:
     data = await dispute_show("case-3")
     check("attestor dispute resolved", data["status"] == "resolved", str(data))
 
+    print("\n=== rotate/revoke: reviewer manages the attestor key post-deploy ===")
+    await tosctl("key", "add", "--name", "rotated-dispute-attestor-key")
+    deploy4 = await tosctl_json(
+        "agent", "dispute", "deploy", "--name", "case-4",
+        "--claimant", claimant, "--respondent", respondent, "--reviewer", reviewer,
+        "--deadline", str(deadline + 30),
+        "--subject-hash", SUBJECT_HASH, "--claimant-evidence-hash", CLAIMANT_EVIDENCE_HASH,
+        "--from", "claimant", "--amount", "0.1", "-w", "0", "--yes",
+    )
+    address4 = deploy4["address"]
+    check("rotate dispute deployed and active", await poll_predicate(
+        lambda: rpc_call("getAddressState", address=address4).get("result") == "active"))
+    data = await dispute_show("case-4")
+    check("no attestor at deploy", not data.get("attestor_pubkey"), str(data))
+
+    await send_op("rotate-attestor-key", "case-4", "outsider",
+                  "--new-attestor-pubkey", "aa" * 32, may_fail=True)
+    data = await dispute_show("case-4")
+    check("non-reviewer rotate rejected", not data.get("attestor_pubkey"), str(data))
+
+    await send_op("rotate-attestor-key", "case-4", "reviewer",
+                  "--signer-vault-key", "rotated-dispute-attestor-key")
+    data = await dispute_show("case-4")
+    check("reviewer rotate sets attestor pubkey", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("rule", "case-4", "reviewer", "--ruling", "claimant",
+                  "--ruling-hash", RULING_HASH, may_fail=True)
+    data = await dispute_show("case-4")
+    check("rule after rotate still requires attestation", data["status"] == "open", str(data))
+
+    await send_op("revoke-attestor", "case-4", "outsider", may_fail=True)
+    data = await dispute_show("case-4")
+    check("non-reviewer revoke rejected", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("revoke-attestor", "case-4", "reviewer")
+    data = await dispute_show("case-4")
+    check("reviewer revoke clears attestor", not data.get("attestor_pubkey"), str(data))
+
+    await send_op("rule", "case-4", "reviewer", "--ruling", "claimant", "--ruling-hash", RULING_HASH)
+    data = await dispute_show("case-4")
+    check("rule after revoke succeeds unattested", data["status"] == "resolved", str(data))
+
     print("\n=== persisted local records ===")
     records = {r["name"]: r for r in await tosctl_json("agent", "dispute", "ls")}
-    check("all records tracked locally", {"case-1", "case-2", "case-3"} <= set(records),
-          str(sorted(records)))
+    check("all records tracked locally",
+          {"case-1", "case-2", "case-3", "case-4"} <= set(records), str(sorted(records)))
     check("record claimant matches", same_addr(records["case-1"]["claimant"], claimant),
           str(records["case-1"]))
 

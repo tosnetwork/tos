@@ -30,6 +30,8 @@
 
 const int op::submit_respondent_evidence = 0x44535001;
 const int op::rule = 0x44535002;
+const int op::rotate_attestor_key = 0x44535003;
+const int op::revoke_attestor = 0x44535004;
 
 const int status::open = 0;
 const int status::evidence_submitted = 1;
@@ -145,6 +147,29 @@ const int err::bad_ruling_signature = 2006;
       (new_ruling != ruling::split) | ((new_split_bps >= 0) & (new_split_bps <= 10000)));
     save_state(claimant, respondent, reviewer, status::resolved, new_ruling, new_split_bps,
       deadline, subject_hash, claimant_evidence_hash, respondent_evidence_hash, new_ruling_hash,
+      has_attestor, attestor_pubkey);
+    return ();
+  }
+
+  if (op == op::rotate_attestor_key) {
+    ;; Reviewer-only: set or replace the attestor_pubkey rule checks against.
+    ;; Purely local state -- no cross-contract messaging.
+    throw_unless(err::not_reviewer, equal_slice_bits(sender, reviewer));
+    attestor_pubkey = in_msg~load_uint(256);
+    has_attestor = 1;
+    save_state(claimant, respondent, reviewer, status, ruling, split_bps, deadline,
+      subject_hash, claimant_evidence_hash, respondent_evidence_hash, ruling_hash,
+      has_attestor, attestor_pubkey);
+    return ();
+  }
+
+  if (op == op::revoke_attestor) {
+    ;; Reviewer-only: permanently (until rotated again) drop the attestation
+    ;; requirement -- rule reverts to sender-authorization-only.
+    throw_unless(err::not_reviewer, equal_slice_bits(sender, reviewer));
+    has_attestor = 0;
+    save_state(claimant, respondent, reviewer, status, ruling, split_bps, deadline,
+      subject_hash, claimant_evidence_hash, respondent_evidence_hash, ruling_hash,
       has_attestor, attestor_pubkey);
     return ();
   }
