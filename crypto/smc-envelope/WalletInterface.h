@@ -78,13 +78,14 @@ class WalletInterface : public SmartContract {
   td::Result<td::Ref<vm::Cell>> get_init_message(const td::Ed25519::PrivateKey &private_key,
                                                  td::uint32 valid_until = std::numeric_limits<td::uint32>::max()) const;
 
+  static td::Result<td::Ref<vm::Cell>> try_create_int_message(const Gift &gift);
   static td::Ref<vm::Cell> create_int_message(const Gift &gift);
 
  protected:
   td::int32 global_id_{0};
 
  private:
-  static void store_gift_message(vm::CellBuilder &cb, const Gift &gift);
+  static td::Status store_gift_message(vm::CellBuilder &cb, const Gift &gift);
 };
 
 template <class WalletT, class TraitsT>
