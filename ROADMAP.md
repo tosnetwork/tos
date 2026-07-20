@@ -211,8 +211,20 @@ Examples:
   stale data, but does not proactively prune rows solely sourced from an orphaned
   branch -- those age out only if the address is revisited or a client's live follow-up
   query (which the API already expects) observes its real current state. The embedded
-  SQLite store also records a checked `schema_version`: a version mismatch on open fails
-  loudly rather than silently misinterpreting old data, since no migration path exists yet.
+  SQLite store also records a checked `schema_version` and runs any pending migrations
+  through a real ordered-step framework on open (empty today -- v1 is the only version
+  that has ever shipped -- but this is the mechanism the next schema change runs through,
+  not scaffolding waiting on a design). A corrupt (unparseable) checkpoint value falls
+  back to a full rescan of that shard rather than erroring, logged so an operator notices
+  the redundant work rather than it happening silently. Test coverage beyond the reorg
+  case above: an RPC failure mid-scan leaves the checkpoint at the last seqno actually
+  completed (not skipped or corrupted) and resumes correctly once the RPC recovers;
+  rescanning an already-covered range is a no-op beyond the single reorg-verification
+  probe; catching up from far behind advances in capped per-tick steps across multiple
+  calls without gaps or duplication; and a shard set changing between ticks (e.g. a
+  split or merge) starts newly-reported shards fresh from their own head without
+  erroring, while a shard that stops being reported simply stops advancing rather than
+  causing a failure.
 
 ### Phase 4: Verifiable AI Workflows
 

@@ -634,21 +634,55 @@ mod tests {
     /// `scan_shard` (only `scan_new_blocks` -- not exercised by these tests
     /// -- calls `get_masterchain_info`/`get_shards`), so they're stubbed.
     struct ScriptedBlocksProvider {
-        by_seqno: std::sync::Mutex<std::collections::HashMap<u32, contracts::chain_provider::BlockTransactionsPage>>,
+        // Keyed by (workchain, shard, seqno): `scan_new_blocks` scans the
+        // masterchain and every other shard in the same call, so a mock
+        // keyed by seqno alone would silently hand one shard's block to
+        // another shard's query whenever their seqnos happened to collide.
+        by_seqno: std::sync::Mutex<
+            std::collections::HashMap<(i32, i64, u32), contracts::chain_provider::BlockTransactionsPage>,
+        >,
+        /// Total `get_block_transactions_page` calls made so far, and (if
+        /// set) the call count after which every subsequent call fails --
+        /// simulating an RPC disruption partway through a scan.
+        call_count: std::sync::Mutex<usize>,
+        fail_after_calls: std::sync::Mutex<Option<usize>>,
+        masterchain_info: std::sync::Mutex<Option<contracts::chain_provider::MasterchainInfo>>,
+        shards: std::sync::Mutex<Option<contracts::chain_provider::ShardsInfo>>,
     }
+
+    /// Default (workchain, shard) pair most tests scan; matches the id
+    /// baked into the `BlockIdExt`s `set` constructs.
+    const TEST_WORKCHAIN: i32 = 0;
+    const TEST_SHARD: i64 = -9223372036854775808;
 
     impl ScriptedBlocksProvider {
         fn new() -> Self {
-            Self { by_seqno: std::sync::Mutex::new(std::collections::HashMap::new()) }
+            Self {
+                by_seqno: std::sync::Mutex::new(std::collections::HashMap::new()),
+                call_count: std::sync::Mutex::new(0),
+                fail_after_calls: std::sync::Mutex::new(None),
+                masterchain_info: std::sync::Mutex::new(None),
+                shards: std::sync::Mutex::new(None),
+            }
         }
 
+        /// Scripts a block on the default test shard ([`TEST_WORKCHAIN`]/
+        /// [`TEST_SHARD`]), the shard every pre-existing test scans.
         fn set(&self, seqno: u32, block_hash: &str) {
+            self.set_on(TEST_WORKCHAIN, TEST_SHARD, seqno, block_hash);
+        }
+
+        /// Scripts a block on an explicit (workchain, shard) -- needed once
+        /// a test scans more than one shard in the same call (e.g. via
+        /// `scan_new_blocks`, which walks the masterchain and every entry
+        /// `get_shards` reports).
+        fn set_on(&self, workchain: i32, shard: i64, seqno: u32, block_hash: &str) {
             let page = contracts::chain_provider::BlockTransactionsPage {
                 r#type: None,
                 id: Some(chain_rpc_client::v2::data_models::BlockIdExt {
                     r#type: "tos.blockIdExt".to_owned(),
-                    workchain: 0,
-                    shard: -9223372036854775808,
+                    workchain,
+                    shard,
                     seqno,
                     root_hash: hex::decode(block_hash).unwrap(),
                     file_hash: vec![0; 32],
@@ -657,7 +691,54 @@ mod tests {
                 incomplete: false,
                 transactions: vec![],
             };
-            self.by_seqno.lock().unwrap().insert(seqno, page);
+            self.by_seqno.lock().unwrap().insert((workchain, shard, seqno), page);
+        }
+
+        /// After this many `get_block_transactions_page` calls succeed,
+        /// every subsequent call fails -- simulating an RPC disruption.
+        fn fail_after(&self, n: usize) {
+            *self.fail_after_calls.lock().unwrap() = Some(n);
+        }
+
+        fn calls_made(&self) -> usize {
+            *self.call_count.lock().unwrap()
+        }
+
+        fn clear_failure(&self) {
+            *self.fail_after_calls.lock().unwrap() = None;
+        }
+
+        fn set_masterchain_info(&self, seqno: u32, shard: i64) {
+            *self.masterchain_info.lock().unwrap() = Some(contracts::chain_provider::MasterchainInfo {
+                r#type: None,
+                last: chain_rpc_client::v2::data_models::BlockIdExt {
+                    r#type: "tos.blockIdExt".to_owned(),
+                    workchain: -1,
+                    shard,
+                    seqno,
+                    root_hash: vec![0; 32],
+                    file_hash: vec![0; 32],
+                },
+                state_root_hash: String::new(),
+                init: None,
+            });
+        }
+
+        fn set_shards(&self, entries: &[(i32, i64, u32)]) {
+            *self.shards.lock().unwrap() = Some(contracts::chain_provider::ShardsInfo {
+                r#type: None,
+                shards: entries
+                    .iter()
+                    .map(|&(workchain, shard, seqno)| chain_rpc_client::v2::data_models::BlockIdExt {
+                        r#type: "tos.blockIdExt".to_owned(),
+                        workchain,
+                        shard,
+                        seqno,
+                        root_hash: vec![0; 32],
+                        file_hash: vec![0; 32],
+                    })
+                    .collect(),
+            });
         }
     }
 
@@ -699,26 +780,39 @@ mod tests {
             unimplemented!()
         }
         async fn get_masterchain_info(&self) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
-            unimplemented!("not exercised: tests call scan_shard directly")
+            self.masterchain_info
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("no scripted masterchain info"))
         }
         async fn get_shards(&self, _seqno: u32) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
-            unimplemented!("not exercised: tests call scan_shard directly")
+            self.shards.lock().unwrap().clone().ok_or_else(|| anyhow::anyhow!("no scripted shards"))
         }
         async fn get_block_transactions_page(
             &self,
-            _workchain: i32,
-            _shard: i64,
+            workchain: i32,
+            shard: i64,
             seqno: u32,
             _after_lt: Option<u64>,
             _after_hash: Option<&str>,
             _count: u32,
         ) -> anyhow::Result<contracts::chain_provider::BlockTransactionsPage> {
+            {
+                let mut count = self.call_count.lock().unwrap();
+                *count += 1;
+                if let Some(fail_at) = *self.fail_after_calls.lock().unwrap() {
+                    if *count > fail_at {
+                        anyhow::bail!("simulated RPC disruption");
+                    }
+                }
+            }
             self.by_seqno
                 .lock()
                 .unwrap()
-                .get(&seqno)
+                .get(&(workchain, shard, seqno))
                 .cloned()
-                .ok_or_else(|| anyhow::anyhow!("no scripted block for seqno {seqno}"))
+                .ok_or_else(|| anyhow::anyhow!("no scripted block for ({workchain}, {shard}, {seqno})"))
         }
     }
 
@@ -775,5 +869,127 @@ mod tests {
             store.checkpoint_block_hash("0:-9223372036854775808").unwrap(),
             Some("33".repeat(32))
         );
+    }
+
+    #[tokio::test]
+    async fn rpc_disruption_mid_scan_leaves_the_checkpoint_at_the_last_successful_seqno() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        for seqno in 1..=5u32 {
+            provider.set(seqno, &format!("{seqno:064x}"));
+        }
+        provider.fail_after(3); // seqnos 1-3 succeed; seqno 4's call fails
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+
+        let result = scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 5).await;
+        assert!(result.is_err(), "the simulated RPC disruption must propagate as an error");
+        assert_eq!(
+            store.checkpoint("0:-9223372036854775808").unwrap(),
+            3,
+            "checkpoint must stop at the last seqno actually scanned, not skip ahead or corrupt"
+        );
+
+        // The RPC recovers; a subsequent call must resume from seqno 4, not
+        // re-scan 1-3 or skip ahead.
+        let calls_before_retry = provider.calls_made();
+        provider.clear_failure();
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 5).await.unwrap();
+        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 5);
+        assert_eq!(
+            provider.calls_made() - calls_before_retry,
+            3,
+            "resuming must only make the reorg-check probe plus the 2 remaining calls \
+             (seqno 4 and 5), not re-scan from genesis"
+        );
+    }
+
+    #[tokio::test]
+    async fn rescanning_an_unchanged_range_only_probes_for_a_reorg_once() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        provider.set(1, &"11".repeat(32));
+        provider.set(2, &"22".repeat(32));
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2).await.unwrap();
+        let calls_after_first_scan = provider.calls_made();
+
+        // Nothing changed on chain. Re-running against the same target
+        // must make exactly one call -- the reorg-verification probe that
+        // re-checks the checkpoint's block hash still matches -- not a
+        // full rescan, and not zero calls either (skipping verification
+        // once "done" would miss a reorg that happens afterward).
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2).await.unwrap();
+        assert_eq!(provider.calls_made(), calls_after_first_scan + 1);
+        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 2);
+        assert_eq!(
+            store.checkpoint_block_hash("0:-9223372036854775808").unwrap(),
+            Some("22".repeat(32))
+        );
+    }
+
+    #[tokio::test]
+    async fn long_catch_up_advances_in_capped_steps_across_multiple_calls() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        for seqno in 1..=250u32 {
+            provider.set(seqno, &format!("{seqno:064x}"));
+        }
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+
+        // Far behind (250 available, checkpoint at 0): must cap at
+        // MAX_BLOCKS_PER_TICK in a single call, not consume everything at
+        // once and stall the tick loop.
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 250).await.unwrap();
+        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), MAX_BLOCKS_PER_TICK);
+
+        // A second call continues from exactly where it left off, without
+        // gaps or re-scanning, until the real head is reached.
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 250).await.unwrap();
+        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 250);
+    }
+
+    #[tokio::test]
+    async fn shard_set_changes_between_ticks_do_not_error_or_lose_the_new_shard() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let mc_shard = -9223372036854775808i64;
+        let shard_a: i64 = 4611686018427387904; // an arbitrary distinct shard id
+        let shard_b: i64 = -4611686018427387904; // a different one entirely
+
+        provider.set_on(-1, mc_shard, 1, &"aa".repeat(32));
+        provider.set_masterchain_info(1, mc_shard);
+        provider.set_on(0, shard_a, 1, &"bb".repeat(32));
+        provider.set_shards(&[(0, shard_a, 1)]);
+
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+
+        scan_new_blocks(&dyn_provider, &store, &known).await.unwrap();
+        assert_eq!(store.checkpoint(&format!("0:{shard_a}")).unwrap(), 1);
+        assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 1);
+
+        // Simulate a shard-set change (e.g. a split/merge): shard_a is
+        // gone, shard_b appears instead (starting from its own seqno 1,
+        // like a genuinely new shard), and the masterchain advances.
+        provider.set_on(-1, mc_shard, 2, &"cc".repeat(32));
+        provider.set_masterchain_info(2, mc_shard);
+        provider.set_on(0, shard_b, 1, &"dd".repeat(32));
+        provider.set_shards(&[(0, shard_b, 1)]);
+
+        scan_new_blocks(&dyn_provider, &store, &known).await.unwrap();
+
+        // The new shard is scanned from its own reported head with no
+        // prior checkpoint -- it starts fresh, exactly as a genuinely new
+        // shard should.
+        assert_eq!(store.checkpoint(&format!("0:{shard_b}")).unwrap(), 1);
+        // The retired shard's checkpoint is simply never advanced again;
+        // it is not an error for `get_shards` to stop reporting it.
+        assert_eq!(store.checkpoint(&format!("0:{shard_a}")).unwrap(), 1);
+        // The masterchain itself keeps advancing normally throughout.
+        assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 2);
     }
 }

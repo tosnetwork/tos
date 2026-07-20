@@ -28,11 +28,18 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
-/// changed column set on an existing file). There is no migration path
-/// implemented yet -- [`IndexerStore::open`] fails loudly on a mismatch
-/// rather than silently misinterpreting old data, which is the honest
-/// behavior until a real migration is written.
+/// changed column set on an existing file).
 const CURRENT_SCHEMA_VERSION: i64 = 1;
+
+/// `MIGRATIONS[i]` transforms a database at schema version `i + 1` into
+/// version `i + 2` (e.g. `MIGRATIONS[0]` migrates v1 -> v2). Empty today:
+/// v1 is the only version that has ever shipped, so there is nothing to
+/// migrate from yet. This is the mechanism the *next* schema change runs
+/// through, not a currently-exercised path -- adding an entry here plus
+/// bumping [`CURRENT_SCHEMA_VERSION`] is the intended way to evolve the
+/// schema, rather than editing `init_schema`'s `CREATE TABLE` in place
+/// (which `IF NOT EXISTS` would silently no-op against an existing file).
+const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[];
 
 /// One indexed account: either a recognized contract (`kind` is one of
 /// `task_escrow`/`dispute`/`service_actor`/`capability_registry`) or
@@ -103,12 +110,27 @@ impl IndexerStore {
         Ok(())
     }
 
-    /// Records [`CURRENT_SCHEMA_VERSION`] on a fresh database, or verifies an
-    /// existing one matches. A mismatch fails the open outright: an older
-    /// version means this binary doesn't know how to migrate it forward yet,
-    /// and a newer version means an older binary opened a database written
-    /// by a future one -- neither is safe to silently proceed with.
+    /// Records [`CURRENT_SCHEMA_VERSION`] on a fresh database, or runs any
+    /// pending [`MIGRATIONS`] to bring an older one forward. A version newer
+    /// than this binary supports fails outright -- an older binary opening a
+    /// database written by a future one is never safe to silently proceed
+    /// with. Each migration step updates the stored version immediately
+    /// after it succeeds, so a failure partway through a multi-step chain
+    /// leaves the database at the last version that was actually reached,
+    /// not silently marked as fully migrated.
     fn ensure_schema_version(conn: &Connection) -> anyhow::Result<()> {
+        Self::ensure_schema_version_against(conn, CURRENT_SCHEMA_VERSION, MIGRATIONS)
+    }
+
+    /// The actual logic, with `current`/`migrations` as parameters rather
+    /// than reading the module constants directly, so tests can exercise
+    /// the "old version with a missing migration step" branch without
+    /// needing a real second schema version to exist yet.
+    fn ensure_schema_version_against(
+        conn: &Connection,
+        current: i64,
+        migrations: &[fn(&Connection) -> rusqlite::Result<()>],
+    ) -> anyhow::Result<()> {
         let existing: Option<String> = conn
             .query_row(
                 "SELECT value FROM indexer_meta WHERE key = 'schema_version'",
@@ -116,26 +138,44 @@ impl IndexerStore {
                 |row| row.get(0),
             )
             .optional()?;
-        match existing.as_deref().map(str::parse::<i64>) {
+        let mut version = match existing.as_deref().map(str::parse::<i64>) {
             None => {
+                // Fresh database: `init_schema` just created the current
+                // layout directly, so it's already at the current version.
                 conn.execute(
                     "INSERT INTO indexer_meta (key, value) VALUES ('schema_version', ?1)",
-                    params![CURRENT_SCHEMA_VERSION.to_string()],
+                    params![current.to_string()],
                 )?;
-                Ok(())
+                return Ok(());
             }
-            Some(Ok(v)) if v == CURRENT_SCHEMA_VERSION => Ok(()),
-            Some(Ok(v)) if v < CURRENT_SCHEMA_VERSION => Err(anyhow::anyhow!(
-                "indexer database schema version {v} is older than {CURRENT_SCHEMA_VERSION} \
-                 and no migration path is implemented yet -- delete the indexer database file \
-                 to rebuild from genesis, or pin the binary version that wrote it"
-            )),
-            Some(Ok(v)) => Err(anyhow::anyhow!(
-                "indexer database schema version {v} is newer than this binary supports \
-                 ({CURRENT_SCHEMA_VERSION}) -- upgrade tosctl"
-            )),
-            Some(Err(_)) => Err(anyhow::anyhow!("indexer database has a corrupt schema_version value")),
+            Some(Ok(v)) => v,
+            Some(Err(_)) => anyhow::bail!("indexer database has a corrupt schema_version value"),
+        };
+        if version < 1 {
+            anyhow::bail!("indexer database has an invalid schema_version {version}");
         }
+        if version > current {
+            anyhow::bail!(
+                "indexer database schema version {version} is newer than this binary supports \
+                 ({current}) -- upgrade tosctl"
+            );
+        }
+        while version < current {
+            let migration = migrations.get((version - 1) as usize).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "indexer database schema version {version} has no migration path to \
+                     {current} -- delete the indexer database file to rebuild from genesis, \
+                     or pin the binary version that wrote it"
+                )
+            })?;
+            migration(conn)?;
+            version += 1;
+            conn.execute(
+                "UPDATE indexer_meta SET value = ?1 WHERE key = 'schema_version'",
+                params![version.to_string()],
+            )?;
+        }
+        Ok(())
     }
 
     /// Last seqno fully scanned for the given shard key (e.g.
@@ -144,6 +184,13 @@ impl IndexerStore {
     /// scanned" -- the caller starts from seqno 1 (genesis). Shard block
     /// seqnos advance independently of the masterchain's, so each shard is
     /// checkpointed separately.
+    /// A missing checkpoint (never scanned) and a corrupt one (unparseable
+    /// stored value) both fall back to `0` -- the safe behavior in both
+    /// cases is "rescan this shard from genesis" -- but the two are
+    /// distinguished in the log, since a corrupt value on an
+    /// already-populated database is worth an operator's attention (a full
+    /// rescan is redundant work, not silent data loss, so this is a
+    /// deliberate fail-safe rather than a fail-closed).
     pub fn checkpoint(&self, shard_key: &str) -> anyhow::Result<u32> {
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         let value: Option<String> = conn
@@ -153,7 +200,21 @@ impl IndexerStore {
                 |row| row.get(0),
             )
             .optional()?;
-        Ok(value.and_then(|v| v.parse().ok()).unwrap_or(0))
+        match value {
+            None => Ok(0),
+            Some(v) => match v.parse() {
+                Ok(seqno) => Ok(seqno),
+                Err(_) => {
+                    tracing::warn!(
+                        target: "indexer",
+                        shard = %shard_key,
+                        raw_value = %v,
+                        "corrupt checkpoint value, falling back to a full rescan from genesis",
+                    );
+                    Ok(0)
+                }
+            },
+        }
     }
 
     pub fn set_checkpoint(&self, shard_key: &str, seqno: u32) -> anyhow::Result<()> {
@@ -359,6 +420,20 @@ mod tests {
     }
 
     #[test]
+    fn a_corrupt_checkpoint_value_falls_back_to_zero_rather_than_erroring() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO indexer_meta (key, value) VALUES ('checkpoint:0:1', 'not-a-number')",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(store.checkpoint("0:1").unwrap(), 0, "corrupt data must trigger a safe rescan, not a panic/error");
+    }
+
+    #[test]
     fn checkpoints_are_independent_per_shard_key() {
         let store = IndexerStore::open_in_memory().unwrap();
         store.set_checkpoint("-1:-9223372036854775808", 10).unwrap();
@@ -407,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn reopening_a_database_with_an_older_schema_version_fails_loudly() {
+    fn reopening_a_database_with_an_invalid_schema_version_fails_loudly() {
         let conn = Connection::open_in_memory().unwrap();
         IndexerStore::init_schema(&conn).unwrap();
         conn.execute(
@@ -416,7 +491,84 @@ mod tests {
         )
         .unwrap();
         let err = IndexerStore::ensure_schema_version(&conn).unwrap_err();
-        assert!(err.to_string().contains("no migration path is implemented"), "{err}");
+        assert!(err.to_string().contains("invalid schema_version"), "{err}");
+    }
+
+    #[test]
+    fn an_old_version_with_no_migration_step_available_fails_loudly() {
+        // CURRENT_SCHEMA_VERSION is 1 with no real migrations yet, so this
+        // exercises the "missing migration" branch against an injected
+        // higher target version rather than waiting for a real v2 to exist.
+        let conn = Connection::open_in_memory().unwrap();
+        IndexerStore::init_schema(&conn).unwrap();
+        conn.execute("INSERT INTO indexer_meta (key, value) VALUES ('schema_version', '1')", [])
+            .unwrap();
+        let err = IndexerStore::ensure_schema_version_against(&conn, 3, &[]).unwrap_err();
+        assert!(err.to_string().contains("no migration path"), "{err}");
+    }
+
+    #[test]
+    fn migrations_run_in_order_and_update_the_stored_version_after_each_step() {
+        let conn = Connection::open_in_memory().unwrap();
+        IndexerStore::init_schema(&conn).unwrap();
+        conn.execute("INSERT INTO indexer_meta (key, value) VALUES ('schema_version', '1')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO indexer_meta (key, value) VALUES ('migration_log', '')",
+            [],
+        )
+        .unwrap();
+
+        fn append_log(conn: &Connection, step: &str) {
+            conn.execute(
+                "UPDATE indexer_meta SET value = value || ?1 WHERE key = 'migration_log'",
+                params![step],
+            )
+            .unwrap();
+        }
+        fn migrate_to_v2(conn: &Connection) -> rusqlite::Result<()> {
+            append_log(conn, "1->2;");
+            Ok(())
+        }
+        fn migrate_to_v3(conn: &Connection) -> rusqlite::Result<()> {
+            append_log(conn, "2->3;");
+            Ok(())
+        }
+
+        IndexerStore::ensure_schema_version_against(&conn, 3, &[migrate_to_v2, migrate_to_v3])
+            .unwrap();
+
+        let version: String = conn
+            .query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, "3");
+        let log: String = conn
+            .query_row("SELECT value FROM indexer_meta WHERE key = 'migration_log'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(log, "1->2;2->3;", "migrations must run in order, once each");
+    }
+
+    #[test]
+    fn a_failing_migration_leaves_the_version_at_the_last_successfully_reached_step() {
+        let conn = Connection::open_in_memory().unwrap();
+        IndexerStore::init_schema(&conn).unwrap();
+        conn.execute("INSERT INTO indexer_meta (key, value) VALUES ('schema_version', '1')", [])
+            .unwrap();
+
+        fn migrate_ok(_conn: &Connection) -> rusqlite::Result<()> {
+            Ok(())
+        }
+        fn migrate_fails(_conn: &Connection) -> rusqlite::Result<()> {
+            Err(rusqlite::Error::SqliteSingleThreadedMode)
+        }
+
+        let result = IndexerStore::ensure_schema_version_against(&conn, 3, &[migrate_ok, migrate_fails]);
+        assert!(result.is_err());
+
+        let version: String = conn
+            .query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, "2", "the successful first step must be durably recorded");
     }
 
     #[test]
