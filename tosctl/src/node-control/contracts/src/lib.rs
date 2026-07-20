@@ -6,6 +6,20 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+//! Rust SDK for TOS's native AI-actor contracts: Agent Account, Task Escrow,
+//! Capability Registry, Service Actor, Dispute and Proof Attestation.
+//!
+//! Each contract module (e.g. [`agent_account`], [`task_escrow`]) exposes,
+//! independent of the `tosctl` CLI or any vault/key-management choice:
+//!
+//! - deterministic StateInit / deploy-data construction (`build_state_init`,
+//!   `calculate_address`)
+//! - operation-message body builders (e.g. `TaskEscrowContract::accept`)
+//! - get-method result decoding (`decode_data`, transport-agnostic)
+//!
+//! Signing and network submission (JSON-RPC or otherwise) are the caller's
+//! responsibility -- see `examples/agent_sdk_walkthrough.rs` for an
+//! end-to-end construction walkthrough that runs without `tosctl`.
 pub mod agent_account;
 pub mod capability_registry;
 pub mod chain_provider;

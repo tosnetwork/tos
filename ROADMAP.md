@@ -127,7 +127,14 @@ Examples:
 - Add `tosctl agent wallet send` for owner-authorized transfers from the underlying Agent Wallet;
   automated agent spending must continue through Agent Account policy enforcement.
 - Implement task escrow contracts with deadlines, result submission and settlement.
-- Add SDK helpers for creating agent accounts and task contracts.
+- Add SDK helpers for creating agent accounts and task contracts: the `contracts`
+  crate (`tosctl/src/node-control/contracts`) is a transport-agnostic Rust SDK --
+  deterministic StateInit/deploy-data construction, operation-message builders and
+  get-method decoding for every native AI-actor contract, usable independent of the
+  `tosctl` CLI. See its crate-level docs and
+  `examples/agent_sdk_walkthrough.rs` (`cargo run --example agent_sdk_walkthrough -p
+  contracts`) for an end-to-end construction walkthrough with no CLI or network
+  dependency.
 - Add JSON-RPC flows for task discovery, task state and agent account inspection.
 - Add integration tests for agent-to-agent task messages.
 - Add authenticated HTTP query endpoints (`GET /agents/{address}`, `GET /tasks/{address}`,
@@ -213,7 +220,10 @@ Examples:
 - Extend `tosctl` from Agent Account policy operations toward task commands.
 - Add JSON-RPC endpoints or examples for querying agent and task state.
 - Add tests that cover asynchronous task lifecycle messages.
-- Keep scans in CI to prevent removed execution domains from reappearing.
+- Keep scans in CI to prevent removed execution domains from reappearing: see
+  [`scripts/check-no-removed-execution-domains.sh`](scripts/check-no-removed-execution-domains.sh),
+  wired into CI via
+  [`.github/workflows/no-removed-execution-domains-scan.yml`](.github/workflows/no-removed-execution-domains-scan.yml).
 
 ## Non-Goals
 

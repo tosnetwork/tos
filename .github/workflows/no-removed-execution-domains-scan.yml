@@ -1,0 +1,21 @@
+name: No Removed Execution Domains
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+    - name: Scan for reintroduced execution domains
+      run: scripts/check-no-removed-execution-domains.sh
