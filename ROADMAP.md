@@ -202,6 +202,17 @@ Examples:
   a Capability Registry entry deployed through one `tosctl` config are discovered by a
   second `tosctld` instance's `GET /tasks` / `GET /registry` that never ran a single
   `agent task create` or `agent registry deploy` command itself.
+  Reorgs are a real, documented hazard on this chain (`doc/tos-message-policy.md`'s
+  replay-across-reorgs note, `doc/tos-time-policy.md`'s scheduled-entry rollback
+  semantics), not a theoretical one, so each shard also records the block hash it last
+  scanned alongside its checkpoint; before advancing, the indexer re-verifies that hash
+  against the chain's current report for that seqno and, on a mismatch, rewinds a fixed
+  safety margin (5 blocks) and rescans. This bounds how far a detected reorg can leave
+  stale data, but does not proactively prune rows solely sourced from an orphaned
+  branch -- those age out only if the address is revisited or a client's live follow-up
+  query (which the API already expects) observes its real current state. The embedded
+  SQLite store also records a checked `schema_version`: a version mismatch on open fails
+  loudly rather than silently misinterpreting old data, since no migration path exists yet.
 
 ### Phase 4: Verifiable AI Workflows
 

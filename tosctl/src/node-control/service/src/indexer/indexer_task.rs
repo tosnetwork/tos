@@ -42,6 +42,13 @@ use crate::runtime_config::RuntimeConfig;
 const MAX_BLOCKS_PER_TICK: u32 = 200;
 /// Max transactions requested per `getBlockTransactions` page.
 const TRANSACTIONS_PAGE_SIZE: u32 = 256;
+/// How far back to rewind and rescan when a reorg is detected at the
+/// checkpoint boundary. Reorgs are a real, documented hazard on this chain
+/// (see `doc/tos-message-policy.md`'s replay-across-reorgs note), not a
+/// theoretical one; this bounds how much already-indexed data can go stale
+/// from a single detected divergence rather than only ever checking the one
+/// block at the checkpoint itself.
+const REORG_REWIND_BLOCKS: u32 = 5;
 
 pub async fn run(
     cancellation_ctx: CancellationCtx,
@@ -124,17 +131,58 @@ async fn scan_shard(
 ) -> anyhow::Result<()> {
     let shard_key = format!("{workchain}:{shard}");
     let mut next = store.checkpoint(&shard_key)?.saturating_add(1).max(1);
+
+    // Reorg check: if a block has already been scanned here, verify the
+    // hash recorded for it still matches what the chain reports now. A
+    // mismatch means that block -- and everything already scanned after
+    // it -- was reorganized out from under us; rewind by a safety margin
+    // and rescan rather than silently trusting stale data forever.
+    let last_scanned = next.saturating_sub(1);
+    if last_scanned > 0 {
+        if let Some(expected_hash) = store.checkpoint_block_hash(&shard_key)? {
+            if let Ok(Some(actual_hash)) =
+                fetch_block_hash(chain_provider, workchain, shard, last_scanned).await
+            {
+                if actual_hash != expected_hash {
+                    tracing::warn!(
+                        target: "indexer",
+                        shard = %shard_key,
+                        seqno = last_scanned,
+                        "reorg detected (block hash changed since last scan), rewinding",
+                    );
+                    next = last_scanned.saturating_sub(REORG_REWIND_BLOCKS).saturating_add(1).max(1);
+                }
+            }
+        }
+    }
+
     if next > target_seqno {
         return Ok(());
     }
     let end = next.saturating_add(MAX_BLOCKS_PER_TICK - 1).min(target_seqno);
 
     while next <= end {
-        scan_one_seqno(chain_provider, store, known, workchain, shard, next).await?;
+        let block_hash = scan_one_seqno(chain_provider, store, known, workchain, shard, next).await?;
         store.set_checkpoint(&shard_key, next)?;
+        if let Some(hash) = block_hash {
+            store.set_checkpoint_block_hash(&shard_key, &hash)?;
+        }
         next += 1;
     }
     Ok(())
+}
+
+/// Fetches just the block's own identity hash (a minimal, one-transaction
+/// page is enough) -- used only for the reorg check above, never to walk
+/// transactions.
+async fn fetch_block_hash(
+    chain_provider: &Arc<dyn ChainProvider>,
+    workchain: i32,
+    shard: i64,
+    seqno: u32,
+) -> anyhow::Result<Option<String>> {
+    let page = chain_provider.get_block_transactions_page(workchain, shard, seqno, None, None, 1).await?;
+    Ok(page.id.map(|id| hex::encode(&id.root_hash)))
 }
 
 async fn scan_one_seqno(
@@ -144,8 +192,9 @@ async fn scan_one_seqno(
     workchain: i32,
     shard: i64,
     seqno: u32,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     let mut addresses: HashSet<String> = HashSet::new();
+    let mut block_hash: Option<String> = None;
     let mut after_lt: Option<u64> = None;
     let mut after_hash: Option<String> = None;
     loop {
@@ -159,6 +208,9 @@ async fn scan_one_seqno(
                 TRANSACTIONS_PAGE_SIZE,
             )
             .await?;
+        if block_hash.is_none() {
+            block_hash = page.id.as_ref().map(|id| hex::encode(&id.root_hash));
+        }
         for tx in &page.transactions {
             if tx.account.is_empty() {
                 continue;
@@ -190,7 +242,7 @@ async fn scan_one_seqno(
             tracing::warn!(target: "indexer", address = %address, error = %format!("{e:#}"), "failed to index account");
         }
     }
-    Ok(())
+    Ok(block_hash)
 }
 
 async fn visit_address(
@@ -571,5 +623,157 @@ mod tests {
         let json = serde_json::to_string(&CapabilityRegistryRecordDto::from(&data)).unwrap();
         let dto = crate::http::agent_query_api::indexed_dto::<RegistryDto>(&json, "0:aa", false);
         assert!(dto.is_some(), "CapabilityRegistryRecordDto JSON must decode into RegistryDto: {json}");
+    }
+
+    // ─── Reorg detection ───────────────────────────────────────────────────
+
+    /// A [`ChainProvider`] whose `get_block_transactions_page` answers are
+    /// scripted per-seqno and can be mutated mid-test, so a reorg (the same
+    /// seqno later reporting a different block hash) can be simulated
+    /// without a real chain. Every other trait method is unreachable from
+    /// `scan_shard` (only `scan_new_blocks` -- not exercised by these tests
+    /// -- calls `get_masterchain_info`/`get_shards`), so they're stubbed.
+    struct ScriptedBlocksProvider {
+        by_seqno: std::sync::Mutex<std::collections::HashMap<u32, contracts::chain_provider::BlockTransactionsPage>>,
+    }
+
+    impl ScriptedBlocksProvider {
+        fn new() -> Self {
+            Self { by_seqno: std::sync::Mutex::new(std::collections::HashMap::new()) }
+        }
+
+        fn set(&self, seqno: u32, block_hash: &str) {
+            let page = contracts::chain_provider::BlockTransactionsPage {
+                r#type: None,
+                id: Some(chain_rpc_client::v2::data_models::BlockIdExt {
+                    r#type: "tos.blockIdExt".to_owned(),
+                    workchain: 0,
+                    shard: -9223372036854775808,
+                    seqno,
+                    root_hash: hex::decode(block_hash).unwrap(),
+                    file_hash: vec![0; 32],
+                }),
+                req_count: Some(1),
+                incomplete: false,
+                transactions: vec![],
+            };
+            self.by_seqno.lock().unwrap().insert(seqno, page);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChainProvider for ScriptedBlocksProvider {
+        async fn run_get_method(
+            &self,
+            _address: String,
+            _method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+        ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
+            unimplemented!("not exercised by scan_shard reorg tests")
+        }
+        async fn get_balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            unimplemented!()
+        }
+        async fn send_boc(&self, _boc: &[u8]) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn get_config_param(&self, _param_id: u32) -> anyhow::Result<chain_block::ConfigParamEnum> {
+            unimplemented!()
+        }
+        async fn get_address_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::AddressInfo> {
+            unimplemented!()
+        }
+        async fn get_extended_address_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::ExtendedAddressInfo> {
+            unimplemented!()
+        }
+        async fn get_wallet_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::WalletInfo> {
+            unimplemented!()
+        }
+        async fn get_masterchain_info(&self) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
+            unimplemented!("not exercised: tests call scan_shard directly")
+        }
+        async fn get_shards(&self, _seqno: u32) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+            unimplemented!("not exercised: tests call scan_shard directly")
+        }
+        async fn get_block_transactions_page(
+            &self,
+            _workchain: i32,
+            _shard: i64,
+            seqno: u32,
+            _after_lt: Option<u64>,
+            _after_hash: Option<&str>,
+            _count: u32,
+        ) -> anyhow::Result<contracts::chain_provider::BlockTransactionsPage> {
+            self.by_seqno
+                .lock()
+                .unwrap()
+                .get(&seqno)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("no scripted block for seqno {seqno}"))
+        }
+    }
+
+    fn known_code_hashes_for_test() -> KnownCodeHashes {
+        KnownCodeHashes::compute().unwrap()
+    }
+
+    #[tokio::test]
+    async fn scan_shard_advances_the_checkpoint_and_records_the_block_hash() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        provider.set(1, &"11".repeat(32));
+        provider.set(2, &"22".repeat(32));
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2).await.unwrap();
+
+        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 2);
+        assert_eq!(
+            store.checkpoint_block_hash("0:-9223372036854775808").unwrap(),
+            Some("22".repeat(32))
+        );
+    }
+
+    #[tokio::test]
+    async fn scan_shard_detects_a_reorg_and_rewinds_to_rescan() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        provider.set(1, &"11".repeat(32));
+        provider.set(2, &"22".repeat(32));
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2).await.unwrap();
+        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 2);
+        assert_eq!(
+            store.checkpoint_block_hash("0:-9223372036854775808").unwrap(),
+            Some("22".repeat(32))
+        );
+
+        // Simulate a reorg: seqno 2 now has different content/hash, and a
+        // new seqno 3 is available.
+        provider.set(2, &"99".repeat(32));
+        provider.set(3, &"33".repeat(32));
+
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 3).await.unwrap();
+
+        // The checkpoint must reflect the corrected chain: re-scanned
+        // through the reorged block up to the new head, with the *new*
+        // hash recorded, not the stale pre-reorg one.
+        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 3);
+        assert_eq!(
+            store.checkpoint_block_hash("0:-9223372036854775808").unwrap(),
+            Some("33".repeat(32))
+        );
     }
 }
