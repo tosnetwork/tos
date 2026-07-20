@@ -315,10 +315,10 @@ void DhtMemberImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::dht_regist
   if (ttl <= now) {
     return;
   }
-  PublicKey pub{query.node_};
-  adnl::AdnlNodeIdShort client_id{pub.compute_short_id()};
+  TRY_RESULT_PROMISE(promise, client_id_full, adnl::AdnlNodeIdFull::create(query.node_));
+  adnl::AdnlNodeIdShort client_id{client_id_full.compute_short_id()};
   td::BufferSlice to_sign = register_reverse_connection_to_sign(client_id, src, ttl);
-  TRY_RESULT_PROMISE(promise, encryptor, pub.create_encryptor());
+  TRY_RESULT_PROMISE(promise, encryptor, client_id_full.pubkey().create_encryptor());
   TRY_STATUS_PROMISE(promise, encryptor->check_signature(to_sign, query.signature_));
   DhtKeyId key_id = get_reverse_connection_key(client_id).compute_key_id();
   auto it = reverse_connections_.find(client_id);
@@ -336,8 +336,8 @@ void DhtMemberImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::dht_reques
   adnl::AdnlNodeIdShort client{query.client_};
   auto it = reverse_connections_.find(client);
   if (it != reverse_connections_.end() && !it->second.ttl_.is_in_past()) {
-    PublicKey pub{query.target_->id_};
-    TRY_RESULT_PROMISE(promise, encryptor, pub.create_encryptor());
+    TRY_RESULT_PROMISE(promise, target, adnl::AdnlNodeIdFull::create(query.target_->id_));
+    TRY_RESULT_PROMISE(promise, encryptor, target.pubkey().create_encryptor());
     TRY_STATUS_PROMISE(promise, encryptor->check_signature(serialize_tl_object(query.target_, true), query.signature_));
     td::actor::send_closure(adnl_, &adnl::Adnl::send_message, id_, it->second.dht_node_,
                             create_serialize_tl_object<tos_api::dht_requestReversePingCont>(
