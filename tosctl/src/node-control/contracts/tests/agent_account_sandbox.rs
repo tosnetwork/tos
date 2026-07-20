@@ -169,6 +169,7 @@ fn controller_action_accepts_assigned_task_escrow() {
         review_period: 600,
         settlement_policy_hash: [0x11; 32],
         permission_hash: [0x22; 32],
+        attestor_pubkey: None,
     };
     let escrow = TaskEscrowContract::calculate_address(-1, &init).expect("escrow address");
     let deploy = MessageBuilder::internal(creator.address(), &escrow, 3 * TOS)

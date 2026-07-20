@@ -36,7 +36,8 @@ const int status::disputed = 7;
 () save_state(slice creator, slice agent, int has_agent, slice verifier, int has_verifier,
              int budget, int deadline, int status, int result_hash, int evidence_hash,
              int policy_hash, int review_period, int review_deadline,
-             int permission_hash, int dispute_hash) impure inline {
+             int permission_hash, int dispute_hash,
+             int has_attestor, int attestor_pubkey) impure inline {
   set_data(begin_cell()
     .store_slice(creator)
     .store_uint(has_agent, 1)
@@ -55,6 +56,10 @@ const int status::disputed = 7;
       .store_ref(begin_cell()
         .store_uint(permission_hash, 256)
         .store_uint(dispute_hash, 256)
+      .end_cell())
+      .store_ref(begin_cell()
+        .store_uint(has_attestor, 1)
+        .store_uint(attestor_pubkey, 256)
       .end_cell())
     .end_cell())
   .end_cell());
@@ -82,6 +87,9 @@ const int status::disputed = 7;
   var permission_slice = hashes~load_ref().begin_parse();
   var permission_hash = permission_slice~load_uint(256);
   var dispute_hash = permission_slice~load_uint(256);
+  var attestor_slice = hashes~load_ref().begin_parse();
+  var has_attestor = attestor_slice~load_uint(1);
+  var attestor_pubkey = attestor_slice~load_uint(256);
   ds.end_parse();
   var full_msg = in_msg_full.begin_parse();
   full_msg~skip_bits(4);
@@ -94,7 +102,7 @@ const int status::disputed = 7;
     has_agent = 1;
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status::accepted, result_hash, evidence_hash, policy_hash, review_period,
-      review_deadline, permission_hash, dispute_hash);
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
     return ();
   }
   if (op == op::accept) {
@@ -102,7 +110,7 @@ const int status::disputed = 7;
     throw_unless(101, has_agent & equal_slice_bits(sender, agent));
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status::accepted, result_hash, evidence_hash, policy_hash, review_period,
-      review_deadline, permission_hash, dispute_hash);
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
     return ();
   }
   if (op == op::result) {
@@ -114,7 +122,7 @@ const int status::disputed = 7;
     review_deadline = now() + review_period;
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status::result_submitted, result_hash, evidence_hash, policy_hash, review_period,
-      review_deadline, permission_hash, dispute_hash);
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
     return ();
   }
   if (op == op::settle) {
@@ -126,13 +134,20 @@ const int status::disputed = 7;
     var payout = in_msg~load_tomis();
     throw_unless(106, payout <= budget);
     throw_unless(112, payout <= get_balance().pair_first());
+    if (has_attestor) {
+      ;; Additional, independent check: the configured attestor key must have
+      ;; signed the submitted result_hash. This never replaces the sender
+      ;; authorization above -- it is an extra requirement layered on top.
+      slice signature = in_msg~load_bits(512);
+      throw_unless(127, check_signature(result_hash, signature, attestor_pubkey));
+    }
     if (payout > 0) {
       send_value(agent, payout, 1);
     }
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::settled, result_hash, evidence_hash, policy_hash, review_period,
-      review_deadline, permission_hash, dispute_hash);
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
     return ();
   }
   if (op == op::cancel) {
@@ -141,7 +156,7 @@ const int status::disputed = 7;
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::cancelled, result_hash, evidence_hash, policy_hash, review_period,
-      review_deadline, permission_hash, dispute_hash);
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
     return ();
   }
   if (op == op::reject) {
@@ -150,7 +165,7 @@ const int status::disputed = 7;
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::rejected, result_hash, evidence_hash, policy_hash, review_period,
-      review_deadline, permission_hash, dispute_hash);
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
     return ();
   }
   if (op == op::timeout) {
@@ -164,7 +179,7 @@ const int status::disputed = 7;
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::expired, result_hash, evidence_hash, policy_hash, review_period,
-      review_deadline, permission_hash, dispute_hash);
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
     return ();
   }
   if (op == op::dispute) {
@@ -175,7 +190,7 @@ const int status::disputed = 7;
     dispute_hash = in_msg~load_uint(256);
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status::disputed, result_hash, evidence_hash, policy_hash, review_period,
-      review_deadline, permission_hash, dispute_hash);
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
     return ();
   }
   if (op == op::resolve) {
@@ -190,13 +205,14 @@ const int status::disputed = 7;
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::settled, result_hash, evidence_hash, policy_hash, review_period,
-      review_deadline, permission_hash, dispute_hash);
+      review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
     return ();
   }
   throw(111);
 }
 
-(slice, slice, int, slice, int, int, int, int, int, int, int, int, int, int, int) get_task_data() method_id {
+(slice, slice, int, slice, int, int, int, int, int, int, int, int, int, int, int, int, int)
+get_task_data() method_id {
   var ds = get_data().begin_parse();
   var creator = ds~load_msg_addr();
   var has_agent = ds~load_uint(1);
@@ -215,7 +231,10 @@ const int status::disputed = 7;
   var permission_slice = hashes~load_ref().begin_parse();
   var permission_hash = permission_slice~load_uint(256);
   var dispute_hash = permission_slice~load_uint(256);
+  var attestor_slice = hashes~load_ref().begin_parse();
+  var has_attestor = attestor_slice~load_uint(1);
+  var attestor_pubkey = attestor_slice~load_uint(256);
   return (creator, agent, has_agent, verifier, has_verifier, budget, deadline, status,
     result_hash, evidence_hash, policy_hash, permission_hash, review_period, review_deadline,
-    dispute_hash);
+    dispute_hash, has_attestor, attestor_pubkey);
 }

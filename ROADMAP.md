@@ -194,6 +194,17 @@ Examples:
   instance of a proof adapter (ed25519 signature verification); Task Escrow/Dispute still
   carry generic evidence/ruling *hashes* rather than consuming this adapter directly, so a
   broader pluggable verification-backend interface across contracts remains open.
+  Task Escrow now optionally consumes this signature scheme directly: a task deployed
+  with an `attestor_pubkey` requires `settle` to carry a valid ed25519 signature over
+  the submitted `result_hash`, verified inline (`CHKSIGNU`) by Task Escrow itself --
+  additive on top of, never a replacement for, the existing creator/verifier sender
+  authorization. `tosctl agent task create/build-state` accept `--attestor-pubkey` or
+  `--signer-vault-key`; `tosctl agent task send --operation settle` accepts
+  `--attestation-signature` or `--signer-vault-key`. This is deliberately inline
+  verification (no cross-contract messaging) -- see the session's design discussion
+  for why: it avoids a novel cross-contract trust/message pattern in a fund-moving
+  path, at the cost of not consuming a separately-deployed Proof Attestation
+  contract's own revocation/rotation state.
 - Add workflow examples that compose planner, worker, service and verifier actors: see
   [`doc/ai-agent-workflow-example.md`](doc/ai-agent-workflow-example.md), which walks a
   planner posting a Task Escrow, a worker (Agent Account) accepting it and paying a Service

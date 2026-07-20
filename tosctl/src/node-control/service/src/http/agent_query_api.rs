@@ -621,6 +621,7 @@ mod tests {
                 review_period: 600,
                 settlement_policy_hash: [0x33; 32],
                 permission_hash: [0x77; 32],
+                attestor_pubkey: None,
             };
             let address = TaskEscrowContract::calculate_address(-1, &init).expect("address");
             let state_init = TaskEscrowContract::build_state_init(&init).expect("state init");
@@ -759,6 +760,7 @@ mod tests {
                 deadline: 2_000_000_000,
                 review_period: 600,
                 policy_hash: "33".repeat(32),
+                attestor_pubkey: None,
                 created_at: None,
             },
         );
@@ -774,6 +776,7 @@ mod tests {
                 deadline: 2_100_000_000,
                 review_period: 600,
                 policy_hash: "33".repeat(32),
+                attestor_pubkey: None,
                 created_at: None,
             },
         );
@@ -789,6 +792,7 @@ mod tests {
                 deadline: 0,
                 review_period: 600,
                 policy_hash: "33".repeat(32),
+                attestor_pubkey: None,
                 created_at: None,
             },
         );
@@ -839,6 +843,7 @@ mod tests {
                     deadline: 2_000_000_000,
                     review_period: 600,
                     policy_hash: "33".repeat(32),
+                    attestor_pubkey: None,
                     created_at: None,
                 },
             );

@@ -116,6 +116,12 @@ tosctl agent task send --operation settle --name literature-review \
   --from verifier --payout 5 --yes
 ```
 
+If the task was deployed with `--attestor-pubkey` or `--signer-vault-key` (see
+`tosctl agent task create --help`), `settle` additionally requires a valid ed25519
+signature over the on-chain `result_hash`, verified inline by Task Escrow itself
+(`--attestation-signature <hex>` or `--signer-vault-key <name>` on `send`) -- on top
+of, never instead of, the creator/verifier authorization above.
+
 ## 5b. Contested path: the planner disputes, a reviewer resolves
 
 If the planner rejects the submitted result instead of letting it settle, it opens a

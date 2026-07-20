@@ -145,6 +145,18 @@ pub struct AgentTaskSendCmd {
     dispute_hash: Option<String>,
     #[arg(long, help = "Payout in TOS for settle or resolve; message value uses --amount")]
     payout: Option<f64>,
+    #[arg(
+        long,
+        conflicts_with = "signer_vault_key",
+        help = "64-byte ed25519 signature over result_hash, for settle on a task deployed with --attestor-pubkey"
+    )]
+    attestation_signature: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "attestation_signature",
+        help = "Sign the on-chain result_hash with this vault key instead of passing --attestation-signature directly"
+    )]
+    signer_vault_key: Option<String>,
     #[arg(long, default_value_t = 0.01)]
     amount: f64,
     #[arg(long)]
@@ -204,6 +216,18 @@ pub struct AgentTaskCreateCmd {
     review_period: u32,
     #[arg(long)]
     policy_hash: String,
+    #[arg(
+        long,
+        conflicts_with = "signer_vault_key",
+        help = "Optional 32-byte ed25519 public key; when set, settle also requires a signature over result_hash"
+    )]
+    attestor_pubkey: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "attestor_pubkey",
+        help = "Derive --attestor-pubkey from a vault key instead of passing it directly"
+    )]
+    signer_vault_key: Option<String>,
     #[arg(long, help = "Funding wallet name or master_wallet")]
     from: String,
     #[arg(long, default_value_t = 0.2)]
@@ -271,6 +295,11 @@ pub struct AgentTaskEncodeCmd {
     dispute_hash: Option<String>,
     #[arg(long, help = "Payout in TOS for settle or resolve operation")]
     payout: Option<f64>,
+    #[arg(
+        long,
+        help = "64-byte ed25519 signature over result_hash, for settle on a task deployed with --attestor-pubkey"
+    )]
+    attestation_signature: Option<String>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -292,6 +321,11 @@ pub struct AgentTaskBuildStateCmd {
     review_period: u32,
     #[arg(long, help = "32-byte settlement policy hash")]
     policy_hash: String,
+    #[arg(
+        long,
+        help = "Optional 32-byte ed25519 public key; when set, settle also requires a signature over result_hash"
+    )]
+    attestor_pubkey: Option<String>,
     #[arg(short = 'w', long = "workchain", default_value = "-1")]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
@@ -979,33 +1013,63 @@ fn validate_controller_task_action(
 impl AgentTaskSendCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         validate_tos_amount("amount", self.amount)?;
-        let body = match self.operation {
-            AgentTaskOperation::Accept => TaskEscrowContract::accept(self.query_id)?,
-            AgentTaskOperation::Claim => TaskEscrowContract::claim(self.query_id)?,
-            AgentTaskOperation::Reject => TaskEscrowContract::reject(self.query_id)?,
-            AgentTaskOperation::Result => TaskEscrowContract::result(
+        let mut body: Option<Cell> = match self.operation {
+            AgentTaskOperation::Accept => Some(TaskEscrowContract::accept(self.query_id)?),
+            AgentTaskOperation::Claim => Some(TaskEscrowContract::claim(self.query_id)?),
+            AgentTaskOperation::Reject => Some(TaskEscrowContract::reject(self.query_id)?),
+            AgentTaskOperation::Result => Some(TaskEscrowContract::result(
                 self.query_id,
                 parse_required_hash("result-hash", &self.result_hash)?,
                 parse_required_hash("evidence-hash", &self.evidence_hash)?,
-            )?,
-            AgentTaskOperation::Dispute => TaskEscrowContract::dispute(
+            )?),
+            AgentTaskOperation::Dispute => Some(TaskEscrowContract::dispute(
                 self.query_id,
                 parse_required_hash("dispute-hash", &self.dispute_hash)?,
-            )?,
-            AgentTaskOperation::Resolve => TaskEscrowContract::resolve(
+            )?),
+            AgentTaskOperation::Resolve => Some(TaskEscrowContract::resolve(
                 self.query_id,
                 tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
-            )?,
-            AgentTaskOperation::Settle => TaskEscrowContract::settle(
-                self.query_id,
-                tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
-            )?,
-            AgentTaskOperation::Cancel => TaskEscrowContract::cancel(self.query_id)?,
-            AgentTaskOperation::Timeout => TaskEscrowContract::timeout(self.query_id)?,
+            )?),
+            AgentTaskOperation::Settle => {
+                let payout = tos_to_nanotos(
+                    self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
+                );
+                match parse_optional_signature(
+                    "attestation-signature",
+                    &self.attestation_signature,
+                )? {
+                    Some(signature) => {
+                        Some(TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?)
+                    }
+                    // Resolved once chain state (result_hash) and the vault are available, below.
+                    None if self.signer_vault_key.is_some() => None,
+                    None => Some(TaskEscrowContract::settle(self.query_id, payout)?),
+                }
+            }
+            AgentTaskOperation::Cancel => Some(TaskEscrowContract::cancel(self.query_id)?),
+            AgentTaskOperation::Timeout => Some(TaskEscrowContract::timeout(self.query_id)?),
         };
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_task_address(&config, &self.address, &self.name)?;
+        if body.is_none() {
+            let vault_key = self.signer_vault_key.as_deref().expect("checked above");
+            let payout = tos_to_nanotos(
+                self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
+            );
+            let provider = contracts::contract_provider!(rpc_client.clone());
+            let stack =
+                provider.get_method(destination.to_string(), "get_task_data", vec![]).await?;
+            let chain_task = TaskEscrowContract::decode_data(&stack)?;
+            let signature = sign_result_hash_with_vault_key(
+                vault_key,
+                &chain_task.result_hash,
+                vault.clone(),
+            )
+            .await?;
+            body = Some(TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?);
+        }
+        let body = body.expect("body resolved for every operation");
         if let Some(agent_wallet) = &self.via_agent_account {
             let record = config
                 .agent_tasks
@@ -1106,6 +1170,8 @@ struct AgentTaskDataView {
     evidence_hash: String,
     dispute_hash: String,
     settlement_policy_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attestor_pubkey: Option<String>,
 }
 
 impl AgentTaskShowCmd {
@@ -1137,6 +1203,7 @@ impl AgentTaskShowCmd {
             evidence_hash: hex::encode(data.evidence_hash),
             dispute_hash: hex::encode(data.dispute_hash),
             settlement_policy_hash: hex::encode(data.settlement_policy_hash),
+            attestor_pubkey: data.attestor_pubkey.map(hex::encode),
         };
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::to_string_pretty(&view)?);
@@ -1151,6 +1218,7 @@ impl AgentTaskShowCmd {
             println!("Review period: {}s", view.review_period);
             println!("Review deadline: {}", view.review_deadline);
             println!("Status: {}", view.status);
+            println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
         }
         Ok(())
     }
@@ -1174,6 +1242,11 @@ impl AgentTaskCreateCmd {
         if let Some(permission_id) = &self.permission_id {
             validate_non_empty("permission-id", permission_id)?;
         }
+        let path = Path::new(config_path);
+        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let attestor_pubkey =
+            resolve_attestor_pubkey(&self.attestor_pubkey, &self.signer_vault_key, vault.clone())
+                .await?;
         let init = TaskEscrowInit {
             creator: creator.clone(),
             assigned_agent: agent,
@@ -1183,11 +1256,10 @@ impl AgentTaskCreateCmd {
             review_period: self.review_period,
             settlement_policy_hash: policy_hash,
             permission_hash: permission_id_hash(self.permission_id.as_deref()),
+            attestor_pubkey,
         };
         let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
         let state_init = TaskEscrowContract::build_state_init(&init)?;
-        let path = Path::new(config_path);
-        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let record_name = self.name.clone().unwrap_or_else(|| {
             let hex = address.to_string();
             let hash = hex.rsplit(':').next().unwrap_or(&hex);
@@ -1257,6 +1329,7 @@ impl AgentTaskCreateCmd {
                 deadline: init.deadline,
                 review_period: init.review_period,
                 policy_hash: hex::encode(policy_hash),
+                attestor_pubkey: init.attestor_pubkey.map(hex::encode),
                 created_at: Some(time_format::now()),
             },
         );
@@ -1468,10 +1541,20 @@ impl AgentTaskEncodeCmd {
                 self.query_id,
                 tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
             )?,
-            AgentTaskOperation::Settle => TaskEscrowContract::settle(
-                self.query_id,
-                tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
-            )?,
+            AgentTaskOperation::Settle => {
+                let payout = tos_to_nanotos(
+                    self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
+                );
+                match parse_optional_signature(
+                    "attestation-signature",
+                    &self.attestation_signature,
+                )? {
+                    Some(signature) => {
+                        TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?
+                    }
+                    None => TaskEscrowContract::settle(self.query_id, payout)?,
+                }
+            }
             AgentTaskOperation::Cancel => TaskEscrowContract::cancel(self.query_id)?,
             AgentTaskOperation::Timeout => TaskEscrowContract::timeout(self.query_id)?,
         };
@@ -1520,6 +1603,7 @@ impl AgentTaskBuildStateCmd {
             validate_non_empty("permission-id", permission_id)?;
         }
         let permission_hash = permission_id_hash(self.permission_id.as_deref());
+        let attestor_pubkey = parse_optional_hash("attestor-pubkey", &self.attestor_pubkey)?;
         let init = TaskEscrowInit {
             creator: creator.clone(),
             assigned_agent: assigned_agent.clone(),
@@ -1529,6 +1613,7 @@ impl AgentTaskBuildStateCmd {
             review_period: self.review_period,
             settlement_policy_hash: policy_hash,
             permission_hash,
+            attestor_pubkey,
         };
         let state_init = TaskEscrowContract::build_state_init(&init)?;
         let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
@@ -3053,6 +3138,57 @@ pub(crate) fn parse_required_hash(name: &str, value: &Option<String>) -> anyhow:
     parse_optional_hash(name, value)?.ok_or_else(|| anyhow::anyhow!("--{name} is required"))
 }
 
+async fn resolve_attestor_pubkey(
+    attestor_pubkey: &Option<String>,
+    signer_vault_key: &Option<String>,
+    vault: std::sync::Arc<SecretVault>,
+) -> anyhow::Result<Option<[u8; 32]>> {
+    match (attestor_pubkey, signer_vault_key) {
+        (Some(_), Some(_)) => {
+            anyhow::bail!("provide at most one of --attestor-pubkey or --signer-vault-key")
+        }
+        (Some(hex), None) => parse_optional_hash("attestor-pubkey", &Some(hex.clone())),
+        (None, Some(name)) => {
+            let secret =
+                KeyConfig::VaultKey { name: name.clone() }.read_secret(Some(vault)).await?;
+            let keypair = secret.as_keypair()?;
+            let raw = keypair
+                .public_key()
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("vault key '{}' has no public key", name))?;
+            let pubkey: [u8; 32] =
+                raw.try_into().map_err(|_| anyhow::anyhow!("public key must be 32 bytes"))?;
+            Ok(Some(pubkey))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+/// Sign the 32-byte `result_hash` directly with the named vault key, matching
+/// CHKSIGNU's convention (the raw hash, not a re-hashed or prefixed encoding).
+async fn sign_result_hash_with_vault_key(
+    name: &str,
+    result_hash: &[u8; 32],
+    vault: std::sync::Arc<SecretVault>,
+) -> anyhow::Result<[u8; 64]> {
+    let secret = KeyConfig::VaultKey { name: name.to_owned() }.read_secret(Some(vault)).await?;
+    let keypair = secret.as_keypair()?;
+    let raw = keypair.sign(result_hash).await?;
+    raw.try_into().map_err(|_| anyhow::anyhow!("signature must be 64 bytes"))
+}
+
+fn parse_optional_signature(name: &str, value: &Option<String>) -> anyhow::Result<Option<[u8; 64]>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let trimmed = value.strip_prefix("0x").unwrap_or(value);
+    let bytes =
+        hex::decode(trimmed).with_context(|| format!("{name} must be a 64-byte hex string"))?;
+    let signature: [u8; 64] =
+        bytes.try_into().map_err(|_| anyhow::anyhow!("{name} must be exactly 64 bytes"))?;
+    Ok(Some(signature))
+}
+
 fn permission_id_hash(permission_id: Option<&str>) -> [u8; 32] {
     permission_id.map(|id| Sha256::digest(id.as_bytes()).into()).unwrap_or([0; 32])
 }
@@ -3222,6 +3358,7 @@ mod tests {
             settlement_policy_hash: [3; 32],
             permission_hash: permission_id_hash(Some("bounded-task")),
             dispute_hash: [0; 32],
+            attestor_pubkey: None,
         }
     }
 

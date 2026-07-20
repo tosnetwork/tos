@@ -242,6 +242,18 @@ async def create_task(name: str, creator: str, agent: str | None, budget: float,
     return out["address"]
 
 
+async def create_task_with_attestor(name: str, creator: str, agent: str, budget: float,
+                                    deadline: int, amount: float, signer_vault_key: str) -> str:
+    out = json.loads(await tosctl(
+        "agent", "task", "create", "--name", name, "--creator", creator,
+        "--agent", agent, "--budget", str(budget), "--deadline", str(deadline),
+        "--review-period", str(REVIEW_PERIOD), "--policy-hash", POLICY_HASH,
+        "--permission-id", PERMISSION_ID,
+        "--signer-vault-key", signer_vault_key, "--from", "creator",
+        "--amount", str(amount), "-w", "0", "--yes", "--format", "json"))
+    return out["address"]
+
+
 async def wait_rpc_ready(timeout: float = 180.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -357,6 +369,44 @@ async def run_checks(faucet) -> None:
           f"delta={creator_delta}")
     check("escrow drained after settle", escrow_left < NANO // 100,
           f"left={escrow_left}")
+
+    # ---------------- ATTESTOR PATH ----------------
+    print("\n=== attestor path: settle requires a signature over result_hash ===")
+    await tosctl("key", "add", "--name", "attestor-key")
+    await tosctl("key", "add", "--name", "wrong-attestor-key")
+    attestor_deadline = int(time.time()) + 3600
+    attestor_escrow = await create_task_with_attestor(
+        "e2e-attestor", creator, agent, 2, attestor_deadline, 2.2, "attestor-key")
+    print(f"  escrow: {attestor_escrow}")
+    check("attestor task open after deploy",
+          await wait_status("e2e-attestor", "open") == "open")
+    data = await task_show("e2e-attestor")
+    check("attestor pubkey recorded on-chain", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("accept", "e2e-attestor", "agent")
+    check("attestor task accepted",
+          await wait_status("e2e-attestor", "accepted") == "accepted")
+    await send_op("result", "e2e-attestor", "agent",
+                  "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH)
+    check("attestor task result submitted",
+          await wait_status("e2e-attestor", "result_submitted") == "result_submitted")
+
+    # No signature at all: the contract's trailing signature load fails.
+    await send_op("settle", "e2e-attestor", "creator", "--payout", "1")
+    await assert_status_stays(
+        "e2e-attestor", "result_submitted", "settle without attestation rejected")
+
+    # Signature from the wrong key: on-chain check_signature fails.
+    await send_op("settle", "e2e-attestor", "creator", "--payout", "1",
+                  "--signer-vault-key", "wrong-attestor-key")
+    await assert_status_stays(
+        "e2e-attestor", "result_submitted", "settle with wrong attestor key rejected")
+
+    # The correct attestor key signs the on-chain result_hash and settles.
+    await send_op("settle", "e2e-attestor", "creator", "--payout", "1",
+                  "--signer-vault-key", "attestor-key")
+    check("attestor task settled",
+          await wait_status("e2e-attestor", "settled") == "settled")
 
     # ---------------- CONTROLLER PATH ----------------
     print("\n=== controller path: Agent Account -> Task Escrow ===")
@@ -496,8 +546,8 @@ async def run_checks(faucet) -> None:
     records = {r["name"]: r for r in await tosctl_json("agent", "task", "ls")}
     expected_records = {
         "e2e-main", "e2e-controller", "e2e-claim", "e2e-reject", "e2e-cancel",
-        "e2e-dispute", "e2e-timeout"}
-    check("seven records tracked", set(records) == expected_records,
+        "e2e-dispute", "e2e-timeout", "e2e-attestor"}
+    check("eight records tracked", set(records) == expected_records,
           str(sorted(records)))
     main_rec = records.get("e2e-main", {})
     check("record creator", same_addr(main_rec.get("creator"), creator))
@@ -528,6 +578,7 @@ async def run_checks(faucet) -> None:
         "e2e-reject": "rejected",
         "e2e-cancel": "cancelled",
         "e2e-timeout": "expired",
+        "e2e-attestor": "settled",
     }, str(chain_records))
     check("on-chain list reports permission hashes",
           all(record.get("chain_permission_hash") ==
@@ -538,7 +589,7 @@ async def run_checks(faucet) -> None:
         "agent", "task", "ls", "--on-chain", "--status", "settled")
     check("status filter returns settled tasks",
           {record["name"] for record in settled_records} == {
-              "e2e-main", "e2e-controller", "e2e-claim", "e2e-dispute"},
+              "e2e-main", "e2e-controller", "e2e-claim", "e2e-dispute", "e2e-attestor"},
           str(settled_records))
     account_records = await tosctl_json(
         "agent", "task", "ls", "--on-chain", "--agent", agent_account)
@@ -551,7 +602,7 @@ async def run_checks(faucet) -> None:
           str(unassigned_records))
     creator_records = await tosctl_json(
         "agent", "task", "ls", "--creator", creator)
-    check("creator filter returns all owned tasks", len(creator_records) == 7,
+    check("creator filter returns all owned tasks", len(creator_records) == 8,
           str(creator_records))
 
 

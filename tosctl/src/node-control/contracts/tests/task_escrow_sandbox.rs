@@ -13,6 +13,7 @@
 
 use chain_block::{Cell, MsgAddressInt};
 use contracts::{TaskEscrowContract, TaskEscrowInit};
+use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
 
 const TOS: u64 = 1_000_000_000;
@@ -45,6 +46,19 @@ impl Fixture {
     }
 
     fn with_assignment(budget: u64, funding: u64, assigned: bool) -> Self {
+        Self::build(budget, funding, assigned, None)
+    }
+
+    fn with_attestor(budget: u64, funding: u64, attestor_pubkey: [u8; 32]) -> Self {
+        Self::build(budget, funding, true, Some(attestor_pubkey))
+    }
+
+    fn build(
+        budget: u64,
+        funding: u64,
+        assigned: bool,
+        attestor_pubkey: Option<[u8; 32]>,
+    ) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         // The sandbox config has no basechain workchain descriptor, so run
         // everything in the masterchain where outbound sends are permitted.
@@ -63,6 +77,7 @@ impl Fixture {
             review_period: 600,
             settlement_policy_hash: [0x11; 32],
             permission_hash: [0x22; 32],
+            attestor_pubkey,
         };
         let escrow = TaskEscrowContract::calculate_address(-1, &init).expect("address");
         let state_init = TaskEscrowContract::build_state_init(&init).expect("state init");
@@ -370,4 +385,56 @@ fn settlement_rejects_payout_above_actual_contract_balance() {
         .expect_aborted()
         .expect_exit_code(112);
     assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+}
+
+#[test]
+fn settle_on_an_attestor_configured_task_requires_a_valid_signature() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let attestor_pubkey = attestor.verifying_key().to_bytes();
+    let result_hash = [0xAA; 32];
+    let mut f = Fixture::with_attestor(2 * TOS, 2 * TOS + TOS / 5, attestor_pubkey);
+    let agent_addr = f.agent.address().clone();
+    let creator_addr = f.creator.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, result_hash, [0xBB; 32]).unwrap())
+        .expect_success();
+
+    // Plain `settle` (no signature at all) is rejected: the message body ends
+    // early and the contract's load of the trailing 512-bit signature fails.
+    f.send_from(&creator_addr, TaskEscrowContract::settle(3, TOS).unwrap()).expect_aborted();
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+
+    // A signature from the wrong key is rejected.
+    let wrong_key = SigningKey::from_bytes(&[0x88; 32]);
+    let wrong_signature: [u8; 64] = wrong_key.sign(&result_hash).to_bytes();
+    f.send_from(&creator_addr, TaskEscrowContract::settle_signed(4, TOS, &wrong_signature).unwrap())
+        .expect_aborted()
+        .expect_exit_code(127);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+
+    // A signature over a hash other than the submitted result_hash is rejected.
+    let tampered_signature: [u8; 64] = attestor.sign(&[0xCC; 32]).to_bytes();
+    f.send_from(
+        &creator_addr,
+        TaskEscrowContract::settle_signed(5, TOS, &tampered_signature).unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(127);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+
+    // The correct attestor signature over the real result_hash settles the task.
+    // Sender authorization (creator/verifier) is still independently enforced.
+    let outsider_addr = f.outsider.address().clone();
+    let valid_signature: [u8; 64] = attestor.sign(&result_hash).to_bytes();
+    f.send_from(
+        &outsider_addr,
+        TaskEscrowContract::settle_signed(6, TOS, &valid_signature).unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(105);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+
+    f.send_from(&creator_addr, TaskEscrowContract::settle_signed(7, TOS, &valid_signature).unwrap())
+        .expect_success();
+    assert_eq!(f.status(), STATUS_SETTLED);
 }

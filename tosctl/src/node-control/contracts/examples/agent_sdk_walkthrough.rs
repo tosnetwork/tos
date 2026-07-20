@@ -57,7 +57,10 @@ fn main() -> anyhow::Result<()> {
     let external = AgentAccountContract::build_external_task_send_message(agent_address, signed)?;
     print_cell("signed external task-send message", &external)?;
 
-    // --- Task Escrow: deploy state ---
+    // --- Task Escrow: deploy state, with an inline settlement attestor ---
+    let attestor = SigningKey::from_bytes(&[0x99; 32]);
+    let attestor_pubkey = attestor.verifying_key().to_bytes();
+    let result_hash = [0x55; 32];
     let task_init = TaskEscrowInit {
         creator: owner.clone(),
         assigned_agent: None,
@@ -67,6 +70,7 @@ fn main() -> anyhow::Result<()> {
         review_period: 3_600,
         settlement_policy_hash: [0x33; 32],
         permission_hash: [0x44; 32],
+        attestor_pubkey: Some(attestor_pubkey),
     };
     let task_address = TaskEscrowContract::calculate_address(-1, &task_init)?;
     println!("task escrow address: {task_address}");
@@ -77,8 +81,16 @@ fn main() -> anyhow::Result<()> {
 
     // --- Task Escrow: lifecycle message bodies ---
     print_cell("accept message body", &TaskEscrowContract::accept(1)?)?;
-    print_cell("result message body", &TaskEscrowContract::result(2, [0x55; 32], [0x66; 32])?)?;
-    print_cell("settle message body", &TaskEscrowContract::settle(3, task_init.budget)?)?;
+    print_cell("result message body", &TaskEscrowContract::result(2, result_hash, [0x66; 32])?)?;
+
+    // Because this task was deployed with an attestor_pubkey, settle requires
+    // a signature over result_hash under that key -- the attestor is
+    // independent of the creator/verifier who authorizes the settle call.
+    let attestation: [u8; 64] = attestor.sign(&result_hash).to_bytes();
+    print_cell(
+        "settle message body (attested)",
+        &TaskEscrowContract::settle_signed(3, task_init.budget, &attestation)?,
+    )?;
 
     println!(
         "\nAll state and messages above were built without tosctl, a vault, or a network call; \
