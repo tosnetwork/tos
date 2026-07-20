@@ -540,7 +540,11 @@ static td::Result<td::Ref<vm::Cell>> build_external_message_cell(const InitialIn
   if (init_code.not_null() || init_data.not_null()) {
     new_state = tos::GenericAccount::get_init_state(init_code, init_data);
   }
-  return tos::GenericAccount::create_ext_message(addr, new_state, body_r.move_as_ok());
+  auto message = tos::GenericAccount::create_ext_message(addr, new_state, body_r.move_as_ok());
+  if (message.is_null()) {
+    return td::Status::Error("Failed to build external message (body or init state too large to encode)");
+  }
+  return message;
 }
 
 static td::Result<std::string> serialize_cell_b64(td::Ref<vm::Cell> cell) {
@@ -1432,6 +1436,12 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                             auto storage_fee = storage_fee_256.is_null() ? 0 : storage_fee_256->to_long();
 
                             auto message = tos::GenericAccount::create_ext_message(addr, new_state, body_cell);
+                            if (message.is_null()) {
+                              promise.set_value(make_json_error(-32602,
+                                  "Failed to build external message (body or init state too large to encode)",
+                                  req_id));
+                              return;
+                            }
                             vm::CellStorageStat in_msg_stat;
                             in_msg_stat.add_used_storage(message, true, 3);
                             auto in_fwd_fee =
