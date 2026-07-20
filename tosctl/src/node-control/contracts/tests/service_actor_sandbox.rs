@@ -350,12 +350,16 @@ fn respond_on_an_attestor_configured_service_requires_a_valid_signature() {
         .expect_aborted();
     assert_eq!(f.data().last_response_hash, [0; 32]);
 
-    // A signature from the wrong key is rejected.
+    let domain_hash = contracts::domain_bound_hash(&f.service, &response_hash).unwrap();
+
+    // A signature from the wrong key is rejected. (Domain-bound hashing runs
+    // before the signature is judged invalid, so this needs the higher
+    // attestation gas credit too.)
     let wrong_key = SigningKey::from_bytes(&[0x88; 32]);
-    let wrong_signature: [u8; 64] = wrong_key.sign(&response_hash).to_bytes();
+    let wrong_signature: [u8; 64] = wrong_key.sign(&domain_hash).to_bytes();
     f.send_from(
         &owner,
-        TOS / 10,
+        TOS / 4,
         ServiceActorContract::respond_signed(2, response_hash, &wrong_signature).unwrap(),
     )
     .expect_aborted()
@@ -364,10 +368,10 @@ fn respond_on_an_attestor_configured_service_requires_a_valid_signature() {
 
     // A non-owner sender is still rejected, even with a valid signature.
     let outsider = f.outsider.address().clone();
-    let valid_signature: [u8; 64] = attestor.sign(&response_hash).to_bytes();
+    let valid_signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
     f.send_from(
         &outsider,
-        TOS / 10,
+        TOS / 4,
         ServiceActorContract::respond_signed(3, response_hash, &valid_signature).unwrap(),
     )
     .expect_aborted()
@@ -377,7 +381,7 @@ fn respond_on_an_attestor_configured_service_requires_a_valid_signature() {
     // The owner, with the correct attestor signature, commits the response.
     f.send_from(
         &owner,
-        TOS / 10,
+        TOS / 4,
         ServiceActorContract::respond_signed(4, response_hash, &valid_signature).unwrap(),
     )
     .expect_success();
@@ -432,5 +436,50 @@ fn owner_can_rotate_and_revoke_the_attestor_key_others_rejected() {
 
     f.send_from(&owner, TOS / 10, ServiceActorContract::respond(6, response_hash).unwrap())
         .expect_success();
+    assert_eq!(f.data().last_response_hash, response_hash);
+}
+
+#[test]
+fn rotating_the_attestor_key_invalidates_signatures_from_the_old_key() {
+    let old_attestor = SigningKey::from_bytes(&[0x11; 32]);
+    let old_pubkey = old_attestor.verifying_key().to_bytes();
+    let new_attestor = SigningKey::from_bytes(&[0x22; 32]);
+    let new_pubkey = new_attestor.verifying_key().to_bytes();
+    let response_hash = [0xDD; 32];
+
+    let mut f = Fixture::with_attestor(TOS / 10, 0, true, TOS / 10, old_pubkey);
+    let owner = f.owner.address().clone();
+    let domain_hash = contracts::domain_bound_hash(&f.service, &response_hash).unwrap();
+
+    // A signature from the currently-configured old key is valid...
+    let old_signature: [u8; 64] = old_attestor.sign(&domain_hash).to_bytes();
+
+    // ...until the owner rotates to a new key.
+    f.send_from(
+        &owner,
+        TOS / 10,
+        ServiceActorContract::rotate_attestor_key(1, new_pubkey).unwrap(),
+    )
+    .expect_success();
+
+    // The old signature, still cryptographically valid under the old key, is
+    // now rejected: respond checks against whichever key is configured *now*.
+    f.send_from(
+        &owner,
+        TOS / 4,
+        ServiceActorContract::respond_signed(2, response_hash, &old_signature).unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_BAD_RESPONSE_SIGNATURE);
+    assert_eq!(f.data().last_response_hash, [0; 32]);
+
+    // Only a fresh signature from the new key commits the response.
+    let new_signature: [u8; 64] = new_attestor.sign(&domain_hash).to_bytes();
+    f.send_from(
+        &owner,
+        TOS / 4,
+        ServiceActorContract::respond_signed(3, response_hash, &new_signature).unwrap(),
+    )
+    .expect_success();
     assert_eq!(f.data().last_response_hash, response_hash);
 }

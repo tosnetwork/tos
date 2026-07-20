@@ -115,15 +115,21 @@ fn parse_address(value: &str) -> Result<MsgAddressInt, AppError> {
     MsgAddressInt::from_str(value).map_err(|_| AppError::bad_request("invalid TOS address"))
 }
 
+// Mirrors the FunC contract's `status::*` constants exactly (see
+// `crypto/smartcont/task-escrow-code.fc`): 0 open, 1 accepted,
+// 2 result_submitted, 3 settled, 4 cancelled, 5 expired, 6 rejected,
+// 7 disputed. Keep in sync with `indexer::indexer_task::task_status_name`,
+// which decodes the same on-chain field for chain-wide-discovered tasks.
 fn status_name(status: u8) -> &'static str {
     match status {
         0 => "open",
         1 => "accepted",
-        2 => "submitted",
+        2 => "result_submitted",
         3 => "settled",
         4 => "cancelled",
         5 => "expired",
-        6 => "disputed",
+        6 => "rejected",
+        7 => "disputed",
         _ => "unknown",
     }
 }
@@ -310,7 +316,14 @@ pub async fn list_tasks(
     if let Some(status) = query.status.as_deref() {
         if !matches!(
             status,
-            "open" | "accepted" | "submitted" | "settled" | "cancelled" | "expired" | "disputed"
+            "open"
+                | "accepted"
+                | "result_submitted"
+                | "settled"
+                | "cancelled"
+                | "expired"
+                | "rejected"
+                | "disputed"
         ) {
             return Err(AppError::bad_request("invalid task status"));
         }
@@ -380,11 +393,309 @@ pub async fn list_tasks(
         true
     });
 
+    // Merge in chain-wide discoveries the indexer knows about that this
+    // operator's local config does not (e.g. a Task Escrow some other
+    // operator deployed). Local-config entries always win on address
+    // collision, since they carry a human-assigned `name`; this only adds
+    // addresses not already present.
+    let known_addrs: std::collections::HashSet<String> =
+        result.iter().map(|item| item.address.clone()).collect();
+    let creator_str = creator.as_ref().map(|a| a.to_string());
+    let filters = crate::indexer::ListFilters {
+        creator: creator_str.as_deref(),
+        status: query.status.as_deref(),
+        deadline_after: query.deadline_after,
+        deadline_before: query.deadline_before,
+    };
+    if let Ok((indexed, _)) = state.indexer_store.list("task_escrow", &filters, 0, 10_000) {
+        for rec in indexed {
+            if known_addrs.contains(&rec.address) {
+                continue;
+            }
+            if let Some(agent) = &agent {
+                if rec.counterparty.as_deref() != Some(agent.to_string().as_str()) {
+                    continue;
+                }
+            }
+            let Some(task) = indexed_dto::<TaskDto>(&rec.dto_json, &rec.address, true) else {
+                continue;
+            };
+            result.push(TaskListItem {
+                name: rec.address.clone(),
+                address: rec.address,
+                task: Some(task),
+                error: None,
+                error_kind: None,
+            });
+        }
+    }
+
     let total = result.len();
     let offset = query.offset.unwrap_or(0).min(total);
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let result = result.into_iter().skip(offset).take(limit).collect();
     Ok(axum::Json(TaskListResponse { ok: true, total, offset, limit, result }))
+}
+
+/// Decodes an [`crate::indexer::IndexerStore`] record's `dto_json` into a
+/// concrete DTO type, patching in the `address` field the indexer doesn't
+/// store inline (and `name: null` when the DTO has a `name` field, for the
+/// Task Escrow DTO shared with the local-config-backed listing path).
+pub(crate) fn indexed_dto<T: serde::de::DeserializeOwned>(
+    dto_json: &str,
+    address: &str,
+    has_name_field: bool,
+) -> Option<T> {
+    let mut value: serde_json::Value = serde_json::from_str(dto_json).ok()?;
+    if has_name_field {
+        value["name"] = serde_json::Value::Null;
+    }
+    value["address"] = serde_json::Value::String(address.to_owned());
+    serde_json::from_value(value).ok()
+}
+
+// ─── Chain-wide indexer-backed listings: Dispute / Service Actor / ────────
+// ─── Capability Registry ───────────────────────────────────────────────────
+//
+// Unlike `/tasks` (which predates the indexer and still primarily reads a
+// local per-operator registry), these three endpoints are indexer-only from
+// the start: there was no chain-wide way to enumerate any of these contract
+// types before the indexer existed, so there is no legacy local-config path
+// to preserve.
+
+#[derive(Clone, Default, serde::Deserialize, utoipa::IntoParams)]
+pub struct IndexedListQuery {
+    pub status: Option<String>,
+    pub creator: Option<String>,
+    pub deadline_after: Option<u64>,
+    pub deadline_before: Option<u64>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+fn validate_indexed_query(query: &IndexedListQuery) -> Result<(), AppError> {
+    if matches!((query.deadline_after, query.deadline_before), (Some(a), Some(b)) if a >= b) {
+        return Err(AppError::bad_request("deadline_after must be less than deadline_before"));
+    }
+    if let Some(creator) = query.creator.as_deref() {
+        parse_address(creator)?;
+    }
+    Ok(())
+}
+
+fn indexed_list_filters(query: &IndexedListQuery) -> crate::indexer::ListFilters<'_> {
+    crate::indexer::ListFilters {
+        creator: query.creator.as_deref(),
+        status: query.status.as_deref(),
+        deadline_after: query.deadline_after,
+        deadline_before: query.deadline_before,
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct DisputeDto {
+    pub address: String,
+    pub claimant: String,
+    pub respondent: String,
+    pub reviewer: String,
+    pub status: String,
+    pub ruling: u8,
+    pub split_bps: u16,
+    pub deadline: u64,
+    pub subject_hash: String,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct DisputeResponse {
+    pub ok: bool,
+    pub result: DisputeDto,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct DisputeListResponse {
+    pub ok: bool,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub result: Vec<DisputeDto>,
+}
+
+#[utoipa::path(get, path = "/disputes", params(IndexedListQuery), responses(
+    (status = 200, body = DisputeListResponse), (status = 400, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn list_disputes(
+    State(state): State<AppState>,
+    Query(query): Query<IndexedListQuery>,
+) -> Result<axum::Json<DisputeListResponse>, AppError> {
+    validate_indexed_query(&query)?;
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let (rows, total) = state
+        .indexer_store
+        .list("dispute", &indexed_list_filters(&query), offset, limit)
+        .map_err(|e| AppError::internal(format!("{e:#}")))?;
+    let result = rows
+        .into_iter()
+        .filter_map(|r| indexed_dto::<DisputeDto>(&r.dto_json, &r.address, false))
+        .collect();
+    Ok(axum::Json(DisputeListResponse { ok: true, total, offset, limit, result }))
+}
+
+#[utoipa::path(get, path = "/disputes/{address}", params(("address" = String, Path, description = "Dispute address")), responses(
+    (status = 200, body = DisputeResponse), (status = 400, body = ApiErrorResponse),
+    (status = 404, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn get_dispute(
+    State(state): State<AppState>,
+    Path(raw): Path<String>,
+) -> Result<axum::Json<DisputeResponse>, AppError> {
+    let address = parse_address(&raw)?;
+    let rec = state
+        .indexer_store
+        .get(&address.to_string())
+        .map_err(|e| AppError::internal(format!("{e:#}")))?
+        .filter(|r| r.kind == "dispute")
+        .ok_or_else(|| AppError::not_found("no dispute indexed at this address"))?;
+    let result = indexed_dto::<DisputeDto>(&rec.dto_json, &rec.address, false)
+        .ok_or_else(|| AppError::invalid_contract_state("indexed dispute record could not be decoded"))?;
+    Ok(axum::Json(DisputeResponse { ok: true, result }))
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ServiceActorDto {
+    pub address: String,
+    pub owner: String,
+    pub authorized_caller: Option<String>,
+    pub open_access: bool,
+    pub status: String,
+    pub price_per_call: u64,
+    pub rate_limit_per_day: u32,
+    pub total_revenue: u64,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ServiceActorResponse {
+    pub ok: bool,
+    pub result: ServiceActorDto,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ServiceActorListResponse {
+    pub ok: bool,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub result: Vec<ServiceActorDto>,
+}
+
+#[utoipa::path(get, path = "/services", params(IndexedListQuery), responses(
+    (status = 200, body = ServiceActorListResponse), (status = 400, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn list_services(
+    State(state): State<AppState>,
+    Query(query): Query<IndexedListQuery>,
+) -> Result<axum::Json<ServiceActorListResponse>, AppError> {
+    validate_indexed_query(&query)?;
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let (rows, total) = state
+        .indexer_store
+        .list("service_actor", &indexed_list_filters(&query), offset, limit)
+        .map_err(|e| AppError::internal(format!("{e:#}")))?;
+    let result = rows
+        .into_iter()
+        .filter_map(|r| indexed_dto::<ServiceActorDto>(&r.dto_json, &r.address, false))
+        .collect();
+    Ok(axum::Json(ServiceActorListResponse { ok: true, total, offset, limit, result }))
+}
+
+#[utoipa::path(get, path = "/services/{address}", params(("address" = String, Path, description = "Service Actor address")), responses(
+    (status = 200, body = ServiceActorResponse), (status = 400, body = ApiErrorResponse),
+    (status = 404, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn get_service(
+    State(state): State<AppState>,
+    Path(raw): Path<String>,
+) -> Result<axum::Json<ServiceActorResponse>, AppError> {
+    let address = parse_address(&raw)?;
+    let rec = state
+        .indexer_store
+        .get(&address.to_string())
+        .map_err(|e| AppError::internal(format!("{e:#}")))?
+        .filter(|r| r.kind == "service_actor")
+        .ok_or_else(|| AppError::not_found("no service actor indexed at this address"))?;
+    let result = indexed_dto::<ServiceActorDto>(&rec.dto_json, &rec.address, false).ok_or_else(|| {
+        AppError::invalid_contract_state("indexed service actor record could not be decoded")
+    })?;
+    Ok(axum::Json(ServiceActorResponse { ok: true, result }))
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct RegistryDto {
+    pub address: String,
+    pub owner: String,
+    pub verifier: Option<String>,
+    pub status: String,
+    pub registered_at: u64,
+    pub bond: u64,
+    pub reputation_score: i64,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct RegistryResponse {
+    pub ok: bool,
+    pub result: RegistryDto,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct RegistryListResponse {
+    pub ok: bool,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub result: Vec<RegistryDto>,
+}
+
+#[utoipa::path(get, path = "/registry", params(IndexedListQuery), responses(
+    (status = 200, body = RegistryListResponse), (status = 400, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn list_registry(
+    State(state): State<AppState>,
+    Query(query): Query<IndexedListQuery>,
+) -> Result<axum::Json<RegistryListResponse>, AppError> {
+    validate_indexed_query(&query)?;
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let (rows, total) = state
+        .indexer_store
+        .list("capability_registry", &indexed_list_filters(&query), offset, limit)
+        .map_err(|e| AppError::internal(format!("{e:#}")))?;
+    let result = rows
+        .into_iter()
+        .filter_map(|r| indexed_dto::<RegistryDto>(&r.dto_json, &r.address, false))
+        .collect();
+    Ok(axum::Json(RegistryListResponse { ok: true, total, offset, limit, result }))
+}
+
+#[utoipa::path(get, path = "/registry/{address}", params(("address" = String, Path, description = "Capability Registry address")), responses(
+    (status = 200, body = RegistryResponse), (status = 400, body = ApiErrorResponse),
+    (status = 404, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn get_registry(
+    State(state): State<AppState>,
+    Path(raw): Path<String>,
+) -> Result<axum::Json<RegistryResponse>, AppError> {
+    let address = parse_address(&raw)?;
+    let rec = state
+        .indexer_store
+        .get(&address.to_string())
+        .map_err(|e| AppError::internal(format!("{e:#}")))?
+        .filter(|r| r.kind == "capability_registry")
+        .ok_or_else(|| AppError::not_found("no capability registry entry indexed at this address"))?;
+    let result = indexed_dto::<RegistryDto>(&rec.dto_json, &rec.address, false).ok_or_else(|| {
+        AppError::invalid_contract_state("indexed capability registry record could not be decoded")
+    })?;
+    Ok(axum::Json(RegistryResponse { ok: true, result }))
 }
 
 #[cfg(test)]
@@ -473,6 +784,7 @@ mod tests {
             jwt_auth,
             user_store,
             login_rate_limiter: Arc::new(tokio::sync::Mutex::new(LoginRateLimiter::default())),
+            indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
         }
     }
 
@@ -550,6 +862,28 @@ mod tests {
             &self,
             _address: &MsgAddressInt,
         ) -> anyhow::Result<contracts::chain_provider::WalletInfo> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn get_masterchain_info(
+            &self,
+        ) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn get_shards(&self, _seqno: u32) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn get_block_transactions_page(
+            &self,
+            _workchain: i32,
+            _shard: i64,
+            _seqno: u32,
+            _after_lt: Option<u64>,
+            _after_hash: Option<&str>,
+            _count: u32,
+        ) -> anyhow::Result<contracts::chain_provider::BlockTransactionsPage> {
             anyhow::bail!("not supported by SandboxChainProvider")
         }
     }
@@ -929,6 +1263,28 @@ mod tests {
             &self,
             _address: &MsgAddressInt,
         ) -> anyhow::Result<contracts::chain_provider::WalletInfo> {
+            anyhow::bail!("not supported by FakeChainProvider")
+        }
+
+        async fn get_masterchain_info(
+            &self,
+        ) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
+            anyhow::bail!("not supported by FakeChainProvider")
+        }
+
+        async fn get_shards(&self, _seqno: u32) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+            anyhow::bail!("not supported by FakeChainProvider")
+        }
+
+        async fn get_block_transactions_page(
+            &self,
+            _workchain: i32,
+            _shard: i64,
+            _seqno: u32,
+            _after_lt: Option<u64>,
+            _after_hash: Option<&str>,
+            _count: u32,
+        ) -> anyhow::Result<contracts::chain_provider::BlockTransactionsPage> {
             anyhow::bail!("not supported by FakeChainProvider")
         }
     }

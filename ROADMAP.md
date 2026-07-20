@@ -141,9 +141,10 @@ Examples:
   `GET /tasks`) to `tosctld` for inspecting Agent Account and Task Escrow state, with
   status/creator/agent/deadline filters, bounded-concurrency chain reads, per-query timeouts,
   and a stable structured error taxonomy (`invalid_request`, `not_found`, `rpc_unavailable`,
-  `invalid_contract_state`, `timeout`). `GET /tasks` enumerates tasks registered in the
-  querying node's local `tosctld` configuration only — it is not a chain-wide contract index;
-  that requires the Phase 3 capability registry / indexer below.
+  `invalid_contract_state`, `timeout`). `GET /tasks` originally enumerated only tasks
+  registered in the querying node's local `tosctld` configuration; it is now also backed by
+  the chain-wide indexer described in Phase 3, so it lists Task Escrows any operator
+  deployed, not just this node's own.
 
 ### Phase 3: Agent Registry and Service Marketplace
 
@@ -169,9 +170,38 @@ Examples:
 - Provide `tosctl agent service deploy/ls/show/send/build-state` commands for registering
   services and inspecting them (`send --operation` covers call, respond, update-policy,
   withdraw-revenue, deactivate, reactivate).
-- `GET /tasks`'s "local registry only" limitation (see Phase 2) is not yet resolved by an
-  indexer; the capability registry and service actor above are per-agent/per-service
-  lookups, not a chain-wide index either.
+- Add a chain-wide contract indexer, closing `GET /tasks`'s original "local registry only"
+  limitation (see Phase 2) and giving the capability registry and service actor above their
+  first chain-wide (not per-agent/per-service) discovery surface. There is no chain
+  primitive to "list every Task Escrow"; the only enumeration primitive available over
+  JSON-RPC is per-block (`getBlockTransactions`: which accounts had a transaction in this
+  block). A new background task in `tosctld` (`service::indexer`) walks every shard block
+  by block from its own checkpoint -- the masterchain itself plus every other workchain's
+  current shard(s), since in practice almost every contract is deployed to workchain 0, not
+  the masterchain -- and for every account it hasn't classified yet, checks its code hash
+  against the four known contract codes (Task Escrow, Dispute, Service Actor, Capability
+  Registry; each has a fixed, distinct compiled code, so code-hash matching is a reliable
+  discriminator). A match is decoded via that contract's own existing `decode_data` --
+  zero new decode logic -- and stored in an embedded SQLite database alongside the config
+  file. An address already known to be one of these kinds is always re-decoded when it
+  reappears in a later block, which is how a status change (accept/settle/rule/...) becomes
+  visible without a separate "refresh" mechanism. `GET /tasks` now merges in
+  indexer-discovered addresses beyond the local config, and three new endpoints
+  (`GET /registry[/{address}]`, `GET /services[/{address}]`, `GET /disputes[/{address}]`)
+  are indexer-only from the start, since there was no chain-wide way to list any of these
+  three contract types before. This deliberately does not follow the in-node,
+  block-apply-hook pattern of the (separate, token/NFT-specific, still in-progress) wc=0
+  wallet index described in `doc/tos-wc0-wallet-index.md` -- that hooks directly into
+  `validator-engine`'s block-apply path in C++; this indexer instead polls the existing
+  JSON-RPC surface from within the `tosctld` service process, so it needs no consensus-
+  adjacent node changes and works against any RPC endpoint. If a single indexing
+  architecture across both concerns is wanted later, migrating this indexer to the same
+  in-node hook is a natural follow-up, not a redesign of what it stores or how contracts
+  are classified. Verified end to end by
+  [`scripts/agent-chain-index-e2e.py`](scripts/agent-chain-index-e2e.py): a Task Escrow and
+  a Capability Registry entry deployed through one `tosctl` config are discovered by a
+  second `tosctld` instance's `GET /tasks` / `GET /registry` that never ran a single
+  `agent task create` or `agent registry deploy` command itself.
 
 ### Phase 4: Verifiable AI Workflows
 
@@ -215,11 +245,32 @@ Examples:
   (reverting to sender-authorization-only) until rotated again. Purely local state
   mutation, no cross-contract messaging, following the same authorization pattern as
   each contract's other management ops.
+- Domain-separate the inline attestation signature so it cannot be replayed across
+  contract instances: a security-hardening pass found that the signed message was
+  originally just the bare `result_hash`/`ruling_hash`/`response_hash`, with no binding
+  to the specific contract instance, so a signature minted for one Task Escrow (or
+  Dispute, or Service Actor) was valid verbatim on any other instance sharing the same
+  attestor key and the same hash value. Fixed by hashing the contract's own address
+  into what gets signed: each contract now verifies
+  `check_signature(cell_hash(wc ## address ## original_hash), signature, attestor_pubkey)`
+  instead of `check_signature(original_hash, signature, attestor_pubkey)` --
+  `contracts::domain_bound_hash` (`tosctl/src/node-control/contracts/src/attestation.rs`)
+  computes the identical value on the Rust side (verified byte-for-byte against the
+  on-chain `HASHCU` computation) so `tosctl`'s `--signer-vault-key` signing path and the
+  sandbox tests both sign what the contract actually checks. This is a wire-format
+  change to the attestation scheme: any signature minted before this fix must be
+  re-signed against the new domain-bound hash.
 - Add workflow examples that compose planner, worker, service and verifier actors: see
   [`doc/ai-agent-workflow-example.md`](doc/ai-agent-workflow-example.md), which walks a
   planner posting a Task Escrow, a worker (Agent Account) accepting it and paying a Service
   Actor mid-task, a verifier settling the happy path, and a reviewer (Dispute contract)
-  resolving a contested one.
+  resolving a contested one. This composition is exercised end to end against a real
+  localnet (not just per-contract in isolation) by
+  [`scripts/agent-economy-composed-e2e.py`](scripts/agent-economy-composed-e2e.py): a single
+  continuous run covering Planner -> Task Escrow -> Agent Account (controller-signed
+  accept/result) -> attested Service Actor call/response -> attested settlement, and
+  separately Planner -> dispute -> attested Dispute ruling -> Task Escrow resolve with the
+  ruling's split-translated payout.
 - Publish reference schemas for result metadata and evidence bundles: see
   [`doc/ai-workflow-schemas.md`](doc/ai-workflow-schemas.md) -- a canonical-JSON-plus-SHA-256
   hashing convention and JSON shapes for every `*_hash` field across Task Escrow, Capability

@@ -21,6 +21,7 @@
 //! responsibility -- see `examples/agent_sdk_walkthrough.rs` for an
 //! end-to-end construction walkthrough that runs without `tosctl`.
 pub mod agent_account;
+pub mod attestation;
 pub mod capability_registry;
 pub mod chain_provider;
 pub mod config_contract;
@@ -41,6 +42,7 @@ pub mod wallet;
 pub use agent_account::{
     AgentAccountContract, AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate,
 };
+pub use attestation::domain_bound_hash;
 pub use capability_registry::{
     CapabilityRegistryContract, CapabilityRegistryData, CapabilityRegistryInit,
 };

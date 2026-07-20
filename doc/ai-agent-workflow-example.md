@@ -14,9 +14,10 @@ Every hash field below follows [`doc/ai-workflow-schemas.md`](ai-workflow-schema
 command is documented in full elsewhere (`doc/agent-wallet-mvp.md` for Agent
 Account/Wallet/Task Escrow, and the Capability Registry / Service Actor / Dispute sections of
 `ROADMAP.md`'s Phase 3/4 entries for the newer contracts) -- this document only shows how
-they compose into one workflow, and is a documentation example, not a new contract or a new
-automated test (each contract's own lifecycle is already covered by its dedicated
-`scripts/*-e2e.py` real-localnet acceptance script).
+they compose into one workflow. Each contract's own lifecycle is covered by its dedicated
+`scripts/*-e2e.py` real-localnet acceptance script; this exact composed flow is additionally
+exercised end to end, in one continuous real-localnet run, by
+[`scripts/agent-economy-composed-e2e.py`](../scripts/agent-economy-composed-e2e.py).
 
 ## 0. Actors in this example
 
@@ -99,8 +100,9 @@ tosctl agent service send --operation respond --name model-provider-service \
 ```
 
 If the service was deployed with `--attestor-pubkey` or `--signer-vault-key`, `respond`
-additionally requires a signature over `response_hash` (`--attestation-signature` or
-`--signer-vault-key` on `send`), verified inline by the Service Actor itself.
+additionally requires a signature over the domain-bound hash of `response_hash` and
+this Service Actor's own address (`--attestation-signature` or `--signer-vault-key`
+on `send`), verified inline by the Service Actor itself.
 
 The worker then submits the task result, with `evidence_hash` referencing a
 `TaskEvidenceBundle` whose `steps` array includes this `service_call` (see
@@ -122,9 +124,14 @@ tosctl agent task send --operation settle --name literature-review \
 
 If the task was deployed with `--attestor-pubkey` or `--signer-vault-key` (see
 `tosctl agent task create --help`), `settle` additionally requires a valid ed25519
-signature over the on-chain `result_hash`, verified inline by Task Escrow itself
+signature over a hash *domain-bound to this specific Task Escrow's own address*
+(not the bare `result_hash` -- this prevents a signature from being replayed
+against a different Task Escrow instance that shares the same attestor key and
+the same `result_hash`), verified inline by Task Escrow itself
 (`--attestation-signature <hex>` or `--signer-vault-key <name>` on `send`) -- on top
-of, never instead of, the creator/verifier authorization above.
+of, never instead of, the creator/verifier authorization above. `--signer-vault-key`
+computes the domain-bound hash automatically; `--attestation-signature` must be a
+signature already computed over it (see `contracts::domain_bound_hash`).
 
 ## 5b. Contested path: the planner disputes, a reviewer resolves
 
@@ -161,8 +168,9 @@ tosctl agent dispute send --operation rule --name literature-review-dispute \
 ```
 
 If the dispute was deployed with `--attestor-pubkey` or `--signer-vault-key`, `rule`
-additionally requires a signature over `ruling_hash` (`--attestation-signature` or
-`--signer-vault-key` on `send`), verified inline by the Dispute contract itself.
+additionally requires a signature over the domain-bound hash of `ruling_hash` and
+this Dispute's own address (`--attestation-signature` or `--signer-vault-key` on
+`send`), verified inline by the Dispute contract itself.
 
 The Dispute contract is a pure adjudication ledger (see
 [`crypto/smartcont/dispute-code.fc`](../crypto/smartcont/dispute-code.fc)): it records the

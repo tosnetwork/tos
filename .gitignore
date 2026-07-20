@@ -36,6 +36,7 @@ test/integration/.capability-registry-*
 test/integration/.service-actor-*
 test/integration/.dispute-*
 test/integration/.proof-attestation-*
+test/integration/.agent-economy-composed-e2e*
 
 test/tostester/tests/tl/generated
 test/tostester/src/tosapi

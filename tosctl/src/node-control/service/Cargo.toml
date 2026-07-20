@@ -29,6 +29,7 @@ utoipa = "4"
 axum = "0.8"
 jsonwebtoken = "9"
 base64 = "0.22"
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [dev-dependencies]
 argon2 = "0.5"

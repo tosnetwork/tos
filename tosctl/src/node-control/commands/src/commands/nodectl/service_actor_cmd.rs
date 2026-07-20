@@ -644,7 +644,9 @@ impl ServiceActorSendCmd {
                     Some(signature) => Some(signature),
                     None => match &self.signer_vault_key {
                         Some(name) => {
-                            Some(sign_hash_with_vault_key(name, &response_hash, vault.clone()).await?)
+                            let domain_hash =
+                                contracts::domain_bound_hash(&destination, &response_hash)?;
+                            Some(sign_hash_with_vault_key(name, &domain_hash, vault.clone()).await?)
                         }
                         None => None,
                     },

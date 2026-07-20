@@ -138,10 +138,16 @@ const int status::disputed = 7;
     throw_unless(112, payout <= get_balance().pair_first());
     if (has_attestor) {
       ;; Additional, independent check: the configured attestor key must have
-      ;; signed the submitted result_hash. This never replaces the sender
-      ;; authorization above -- it is an extra requirement layered on top.
+      ;; signed the submitted result_hash, domain-bound to this contract's own
+      ;; address so the signature can't be replayed against another instance
+      ;; sharing the same attestor key and result_hash. This never replaces
+      ;; the sender authorization above -- it is an extra requirement layered
+      ;; on top.
       slice signature = in_msg~load_bits(512);
-      throw_unless(127, check_signature(result_hash, signature, attestor_pubkey));
+      (int wc, int addr) = my_address().parse_std_addr();
+      int domain_hash = cell_hash(begin_cell()
+        .store_int(wc, 8).store_uint(addr, 256).store_uint(result_hash, 256).end_cell());
+      throw_unless(127, check_signature(domain_hash, signature, attestor_pubkey));
     }
     if (payout > 0) {
       send_value(agent, payout, 1);

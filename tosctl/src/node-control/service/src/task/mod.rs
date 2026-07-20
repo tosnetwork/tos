@@ -23,6 +23,11 @@ task!(ContractsTask, crate::contracts::contracts_task::run {
     store: Arc<SnapshotStore>
 });
 
+task!(IndexerTask, crate::indexer::indexer_task::run {
+    runtime_cfg: Arc<dyn RuntimeConfig>,
+    indexer_store: Arc<crate::indexer::IndexerStore>
+});
+
 // Since the elections task is placed in a separate crate, we cannot pass
 // RuntimeConfigStore directly to it. This is because RuntimeConfigStore is
 // defined in the service crate. Instead, we pass the required dependencies to

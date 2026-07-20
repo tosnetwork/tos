@@ -6,11 +6,7 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-pub mod auth;
-pub mod contracts;
-pub mod http;
-pub mod indexer;
-pub mod runtime_config;
-pub mod service_main_task;
-pub mod task;
-pub mod voting;
+pub mod indexer_task;
+pub mod store;
+
+pub use store::{IndexedRecord, IndexerStore, ListFilters};

@@ -426,18 +426,34 @@ impl ClientJsonRpc {
         seqno: u32,
         count: u32,
     ) -> anyhow::Result<GetBlockTransactionsRes> {
-        let res = self
-            .json_rpc(
-                "getBlockTransactions",
-                serde_json::json!({
-                    "workchain": workchain,
-                    "shard": shard,
-                    "seqno": seqno,
-                    "count": count,
-                }),
-            )
-            .await
-            .context("getBlockTransactions")?;
+        self.get_block_transactions_page(workchain, shard, seqno, None, None, count).await
+    }
+
+    /// Like [`Self::get_block_transactions`], but supports the `after_lt`/
+    /// `after_hash` pagination cursor for blocks whose transaction count
+    /// exceeds `count` (signalled by `incomplete: true` in the response).
+    pub async fn get_block_transactions_page(
+        &self,
+        workchain: i32,
+        shard: &str,
+        seqno: u32,
+        after_lt: Option<u64>,
+        after_hash: Option<&str>,
+        count: u32,
+    ) -> anyhow::Result<GetBlockTransactionsRes> {
+        let mut params = serde_json::json!({
+            "workchain": workchain,
+            "shard": shard,
+            "seqno": seqno,
+            "count": count,
+        });
+        if let Some(lt) = after_lt {
+            params["after_lt"] = serde_json::json!(lt.to_string());
+        }
+        if let Some(hash) = after_hash {
+            params["after_hash"] = serde_json::json!(hash);
+        }
+        let res = self.json_rpc("getBlockTransactions", params).await.context("getBlockTransactions")?;
         Ok(serde_json::from_value(res)?)
     }
 

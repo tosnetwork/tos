@@ -93,7 +93,15 @@ impl Fixture {
     fn send_from(&mut self, from: &MsgAddressInt, body: Cell) -> SendResult {
         // 0.1 TOS: masterchain gas is 10x basechain pricing, and the credited
         // gas limit is derived from the message value.
-        let msg = MessageBuilder::internal(from, &self.escrow, TOS / 10).body(body).build();
+        self.send_from_with_value(from, body, TOS / 10)
+    }
+
+    /// Like [`Fixture::send_from`], but with an explicit message value.
+    /// Attestor-signature-checking calls do the extra work of building and
+    /// hashing the domain-separation cell, which needs more gas headroom
+    /// than the default `TOS / 10` credits in the masterchain.
+    fn send_from_with_value(&mut self, from: &MsgAddressInt, body: Cell, value: u64) -> SendResult {
+        let msg = MessageBuilder::internal(from, &self.escrow, value).body(body).build();
         self.bc.send_message(msg).expect("send")
     }
 
@@ -397,6 +405,29 @@ fn settlement_rejects_payout_above_actual_contract_balance() {
 }
 
 #[test]
+fn settlement_rejects_payout_one_nanoton_above_the_exact_available_balance() {
+    // Budget (5 TOS) intentionally exceeds funding (2 TOS), so the actual
+    // contract balance -- not the budget -- is the binding constraint here.
+    // `send_from` always attaches TOS/10 as the message's own value, which
+    // is credited to the contract's balance before `get_balance()` runs
+    // inside the transaction, so the balance settle actually checks against
+    // is the pre-message balance plus that credit. This tightens
+    // `settlement_rejects_payout_above_actual_contract_balance` (which uses
+    // a payout far above the balance) down to the exact off-by-one boundary.
+    let mut f = Fixture::new(5 * TOS, 2 * TOS);
+    let agent_addr = f.agent.address().clone();
+    let creator_addr = f.creator.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    let available_at_settle = f.balance(&f.escrow.clone()) + TOS / 10;
+    f.send_from(&creator_addr, TaskEscrowContract::settle(3, available_at_settle + 1).unwrap())
+        .expect_aborted()
+        .expect_exit_code(112);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+}
+
+#[test]
 fn settle_on_an_attestor_configured_task_requires_a_valid_signature() {
     let attestor = SigningKey::from_bytes(&[0x77; 32]);
     let attestor_pubkey = attestor.verifying_key().to_bytes();
@@ -413,38 +444,53 @@ fn settle_on_an_attestor_configured_task_requires_a_valid_signature() {
     f.send_from(&creator_addr, TaskEscrowContract::settle(3, TOS).unwrap()).expect_aborted();
     assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
 
-    // A signature from the wrong key is rejected.
-    let wrong_key = SigningKey::from_bytes(&[0x88; 32]);
-    let wrong_signature: [u8; 64] = wrong_key.sign(&result_hash).to_bytes();
-    f.send_from(&creator_addr, TaskEscrowContract::settle_signed(4, TOS, &wrong_signature).unwrap())
-        .expect_aborted()
-        .expect_exit_code(127);
-    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+    let domain_hash = contracts::domain_bound_hash(&f.escrow, &result_hash).unwrap();
 
-    // A signature over a hash other than the submitted result_hash is rejected.
-    let tampered_signature: [u8; 64] = attestor.sign(&[0xCC; 32]).to_bytes();
-    f.send_from(
+    // A signature from the wrong key is rejected. (Domain-bound hashing and
+    // signature verification both run before the signature is judged
+    // invalid, so this needs the higher attestation gas credit too.)
+    let wrong_key = SigningKey::from_bytes(&[0x88; 32]);
+    let wrong_signature: [u8; 64] = wrong_key.sign(&domain_hash).to_bytes();
+    f.send_from_with_value(
         &creator_addr,
-        TaskEscrowContract::settle_signed(5, TOS, &tampered_signature).unwrap(),
+        TaskEscrowContract::settle_signed(4, TOS, &wrong_signature).unwrap(),
+        TOS / 4,
     )
     .expect_aborted()
     .expect_exit_code(127);
     assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
 
-    // The correct attestor signature over the real result_hash settles the task.
-    // Sender authorization (creator/verifier) is still independently enforced.
+    // A signature over a hash other than the domain-bound result_hash is rejected.
+    let tampered_signature: [u8; 64] = attestor.sign(&[0xCC; 32]).to_bytes();
+    f.send_from_with_value(
+        &creator_addr,
+        TaskEscrowContract::settle_signed(5, TOS, &tampered_signature).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(127);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+
+    // The correct attestor signature over the domain-bound hash settles the
+    // task. Sender authorization (creator/verifier) is still independently
+    // enforced.
     let outsider_addr = f.outsider.address().clone();
-    let valid_signature: [u8; 64] = attestor.sign(&result_hash).to_bytes();
-    f.send_from(
+    let valid_signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
+    f.send_from_with_value(
         &outsider_addr,
         TaskEscrowContract::settle_signed(6, TOS, &valid_signature).unwrap(),
+        TOS / 4,
     )
     .expect_aborted()
     .expect_exit_code(105);
     assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
 
-    f.send_from(&creator_addr, TaskEscrowContract::settle_signed(7, TOS, &valid_signature).unwrap())
-        .expect_success();
+    f.send_from_with_value(
+        &creator_addr,
+        TaskEscrowContract::settle_signed(7, TOS, &valid_signature).unwrap(),
+        TOS / 4,
+    )
+    .expect_success();
     assert_eq!(f.status(), STATUS_SETTLED);
 }
 
@@ -494,4 +540,155 @@ fn creator_can_rotate_and_revoke_the_attestor_key_others_rejected() {
 
     f.send_from(&creator_addr, TaskEscrowContract::settle(8, TOS).unwrap()).expect_success();
     assert_eq!(f.status(), STATUS_SETTLED);
+}
+
+#[test]
+fn rotating_the_attestor_key_invalidates_signatures_from_the_old_key() {
+    let old_attestor = SigningKey::from_bytes(&[0x11; 32]);
+    let old_pubkey = old_attestor.verifying_key().to_bytes();
+    let new_attestor = SigningKey::from_bytes(&[0x22; 32]);
+    let new_pubkey = new_attestor.verifying_key().to_bytes();
+    let result_hash = [0xAA; 32];
+
+    let mut f = Fixture::with_attestor(2 * TOS, 2 * TOS + TOS / 5, old_pubkey);
+    let creator_addr = f.creator.address().clone();
+    let agent_addr = f.agent.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, result_hash, [0xBB; 32]).unwrap())
+        .expect_success();
+
+    let domain_hash = contracts::domain_bound_hash(&f.escrow, &result_hash).unwrap();
+
+    // A signature from the currently-configured old key is valid...
+    let old_signature: [u8; 64] = old_attestor.sign(&domain_hash).to_bytes();
+
+    // ...until the creator rotates to a new key.
+    f.send_from(&creator_addr, TaskEscrowContract::rotate_attestor_key(3, new_pubkey).unwrap())
+        .expect_success();
+
+    // The old signature, still cryptographically valid under the old key, is
+    // now rejected: settle checks against whichever key is configured *now*.
+    f.send_from_with_value(
+        &creator_addr,
+        TaskEscrowContract::settle_signed(4, TOS, &old_signature).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(127);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+
+    // Only a fresh signature from the new key settles the task.
+    let new_signature: [u8; 64] = new_attestor.sign(&domain_hash).to_bytes();
+    f.send_from_with_value(
+        &creator_addr,
+        TaskEscrowContract::settle_signed(5, TOS, &new_signature).unwrap(),
+        TOS / 4,
+    )
+        .expect_success();
+    assert_eq!(f.status(), STATUS_SETTLED);
+}
+
+#[test]
+fn result_and_settle_deadlines_are_inclusive_boundaries() {
+    // now() <= deadline (result) and now() <= review_deadline (settle) both
+    // allow the exact boundary second, not just strictly-before.
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    let agent_addr = f.agent.address().clone();
+    let creator_addr = f.creator.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+
+    f.bc.set_now(f.deadline as u32);
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+
+    let review_deadline = f.review_deadline();
+    f.bc.set_now(review_deadline as u32);
+    f.send_from(&creator_addr, TaskEscrowContract::settle(3, TOS).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_SETTLED);
+}
+
+#[test]
+fn timeout_deadlines_are_inclusive_boundaries() {
+    // deadline <= now() (open/accepted) and review_deadline <= now()
+    // (result_submitted) both allow the exact boundary second.
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 10);
+    let agent_addr = f.agent.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    let deadline = f.deadline;
+    f.bc.set_now(deadline as u32);
+    let outsider_addr = f.outsider.address().clone();
+    f.send_from(&outsider_addr, TaskEscrowContract::timeout(2).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_EXPIRED);
+}
+
+#[test]
+fn attestation_signature_is_bound_to_the_contract_address_and_rejected_across_tasks() {
+    // The signed message is domain_bound_hash(contract_address, result_hash),
+    // not the bare result_hash -- so a signature minted for one Task Escrow
+    // instance is *not* accepted by a second, independent instance that
+    // happens to share the same attestor_pubkey and the same result_hash
+    // (e.g. copied from public on-chain data). This closes the replay gap
+    // that a bare-hash signature would otherwise have.
+    let attestor = SigningKey::from_bytes(&[0x33; 32]);
+    let attestor_pubkey = attestor.verifying_key().to_bytes();
+    let shared_result_hash = [0xEE; 32];
+
+    let mut task_a = Fixture::with_attestor(TOS, TOS + TOS / 5, attestor_pubkey);
+    let agent_a = task_a.agent.address().clone();
+    let creator_a = task_a.creator.address().clone();
+    task_a.send_from(&agent_a, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    task_a
+        .send_from(&agent_a, TaskEscrowContract::result(2, shared_result_hash, [0; 32]).unwrap())
+        .expect_success();
+    let domain_hash_a = contracts::domain_bound_hash(&task_a.escrow, &shared_result_hash).unwrap();
+    let signature: [u8; 64] = attestor.sign(&domain_hash_a).to_bytes();
+    task_a
+        .send_from_with_value(
+            &creator_a,
+            TaskEscrowContract::settle_signed(3, TOS / 2, &signature).unwrap(),
+            TOS / 4,
+        )
+        .expect_success();
+    assert_eq!(task_a.status(), STATUS_SETTLED);
+
+    // A second, entirely independent task -- different budget (and so a
+    // different calculated contract address; the Fixture's fixed treasury
+    // names would otherwise make two same-shaped deploys collide) -- deployed
+    // with the same attestor key and, here, the same result hash. The
+    // signature minted for task_a's settlement is replayed as-is and must be
+    // rejected: it was signed over task_a's address, not task_b's.
+    let mut task_b = Fixture::with_attestor(2 * TOS, 2 * TOS + TOS / 5, attestor_pubkey);
+    let agent_b = task_b.agent.address().clone();
+    let creator_b = task_b.creator.address().clone();
+    assert_ne!(task_a.escrow, task_b.escrow, "fixtures must deploy to different addresses");
+    task_b.send_from(&agent_b, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    task_b
+        .send_from(&agent_b, TaskEscrowContract::result(2, shared_result_hash, [0; 32]).unwrap())
+        .expect_success();
+    task_b
+        .send_from_with_value(
+            &creator_b,
+            TaskEscrowContract::settle_signed(3, TOS / 2, &signature).unwrap(),
+            TOS / 4,
+        )
+        .expect_aborted()
+        .expect_exit_code(127);
+    assert_eq!(
+        task_b.status(),
+        STATUS_RESULT_SUBMITTED,
+        "a signature bound to task_a's address must not settle task_b"
+    );
+
+    // A correctly re-signed (domain-bound to task_b) signature still works.
+    let domain_hash_b = contracts::domain_bound_hash(&task_b.escrow, &shared_result_hash).unwrap();
+    let signature_b: [u8; 64] = attestor.sign(&domain_hash_b).to_bytes();
+    task_b
+        .send_from_with_value(
+            &creator_b,
+            TaskEscrowContract::settle_signed(4, TOS / 2, &signature_b).unwrap(),
+            TOS / 4,
+        )
+        .expect_success();
+    assert_eq!(task_b.status(), STATUS_SETTLED);
 }

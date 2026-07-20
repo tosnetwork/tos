@@ -1092,12 +1092,10 @@ impl AgentTaskSendCmd {
                         .get_method(destination.to_string(), "get_task_data", vec![])
                         .await?;
                     let chain_task = TaskEscrowContract::decode_data(&stack)?;
-                    let signature = sign_hash_with_vault_key(
-                        vault_key,
-                        &chain_task.result_hash,
-                        vault.clone(),
-                    )
-                    .await?;
+                    let domain_hash =
+                        contracts::domain_bound_hash(&destination, &chain_task.result_hash)?;
+                    let signature =
+                        sign_hash_with_vault_key(vault_key, &domain_hash, vault.clone()).await?;
                     body =
                         Some(TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?);
                 }

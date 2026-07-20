@@ -126,7 +126,18 @@ pub mod i64_as_str {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(de)?;
-        s.parse::<i64>().map_err(serde::de::Error::custom)
+        if let Ok(v) = s.parse::<i64>() {
+            return Ok(v);
+        }
+        // Shard identifiers are conventionally a 64-bit bit pattern (e.g.
+        // the "full shard" 0x8000000000000000); depending on which chain
+        // it's rendered for, the JSON-RPC layer sends either its signed
+        // two's-complement form ("-9223372036854775808", masterchain) or
+        // its unsigned decimal form ("9223372036854775808", other
+        // workchains) for the very same bit pattern. The first doesn't fit
+        // i64 as a decimal parse, but round-trips via a bitwise
+        // reinterpret cast.
+        s.parse::<u64>().map(|v| v as i64).map_err(serde::de::Error::custom)
     }
 }
 

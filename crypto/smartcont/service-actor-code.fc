@@ -161,11 +161,17 @@ const int err::bad_response_signature = 1909;
     int response_hash = in_msg~load_uint(256);
     if (has_attestor) {
       ;; Additional, independent check: the configured attestor key must have
-      ;; signed the new response_hash. This never replaces the owner sender
-      ;; check above -- it is an extra requirement layered on top.
+      ;; signed the new response_hash, domain-bound to this contract's own
+      ;; address so the signature can't be replayed against another instance
+      ;; sharing the same attestor key and response_hash. This never replaces
+      ;; the owner sender check above -- it is an extra requirement layered
+      ;; on top.
       slice signature = in_msg~load_bits(512);
+      (int wc, int addr) = my_address().parse_std_addr();
+      int domain_hash = cell_hash(begin_cell()
+        .store_int(wc, 8).store_uint(addr, 256).store_uint(response_hash, 256).end_cell());
       throw_unless(err::bad_response_signature,
-        check_signature(response_hash, signature, attestor_pubkey));
+        check_signature(domain_hash, signature, attestor_pubkey));
     }
     in_msg.end_parse();
     save_state(owner, has_authorized_caller, authorized_caller, open_access, active,

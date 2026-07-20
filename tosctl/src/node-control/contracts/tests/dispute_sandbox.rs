@@ -76,7 +76,20 @@ impl Fixture {
     }
 
     fn send_from(&mut self, from: &MsgAddressInt, body: Cell) -> tos_sandbox::SendResult {
-        let msg = MessageBuilder::internal(from, &self.dispute, TOS / 10).body(body).build();
+        self.send_from_with_value(from, body, TOS / 10)
+    }
+
+    /// Like [`Fixture::send_from`], but with an explicit message value.
+    /// Attestor-signature-checking calls do the extra work of building and
+    /// hashing the domain-separation cell, which needs more gas headroom
+    /// than the default `TOS / 10` credits in the masterchain.
+    fn send_from_with_value(
+        &mut self,
+        from: &MsgAddressInt,
+        body: Cell,
+        value: u64,
+    ) -> tos_sandbox::SendResult {
+        let msg = MessageBuilder::internal(from, &self.dispute, value).body(body).build();
         self.bc.send_message(msg).expect("send")
     }
 
@@ -251,13 +264,16 @@ fn rule_on_an_attestor_configured_dispute_requires_a_valid_signature() {
         .expect_aborted();
     assert_eq!(f.data().status, DISPUTE_STATUS_OPEN);
 
+    let domain_hash = contracts::domain_bound_hash(&f.dispute, &ruling_hash).unwrap();
+
     // A signature from the wrong key is rejected.
     let wrong_key = SigningKey::from_bytes(&[0x88; 32]);
-    let wrong_signature: [u8; 64] = wrong_key.sign(&ruling_hash).to_bytes();
-    f.send_from(
+    let wrong_signature: [u8; 64] = wrong_key.sign(&domain_hash).to_bytes();
+    f.send_from_with_value(
         &reviewer,
         DisputeContract::rule_signed(2, RULING_CLAIMANT, 0, ruling_hash, &wrong_signature)
             .unwrap(),
+        TOS / 4,
     )
     .expect_aborted()
     .expect_exit_code(ERR_BAD_RULING_SIGNATURE);
@@ -265,21 +281,23 @@ fn rule_on_an_attestor_configured_dispute_requires_a_valid_signature() {
 
     // A non-reviewer sender is still rejected, even with a valid signature.
     let outsider = f.outsider.address().clone();
-    let valid_signature: [u8; 64] = attestor.sign(&ruling_hash).to_bytes();
-    f.send_from(
+    let valid_signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
+    f.send_from_with_value(
         &outsider,
         DisputeContract::rule_signed(3, RULING_CLAIMANT, 0, ruling_hash, &valid_signature)
             .unwrap(),
+        TOS / 4,
     )
     .expect_aborted()
     .expect_exit_code(ERR_NOT_REVIEWER);
     assert_eq!(f.data().status, DISPUTE_STATUS_OPEN);
 
     // The reviewer, with the correct attestor signature, resolves the dispute.
-    f.send_from(
+    f.send_from_with_value(
         &reviewer,
         DisputeContract::rule_signed(4, RULING_CLAIMANT, 0, ruling_hash, &valid_signature)
             .unwrap(),
+        TOS / 4,
     )
     .expect_success();
     let data = f.data();
@@ -327,5 +345,46 @@ fn reviewer_can_rotate_and_revoke_the_attestor_key_others_rejected() {
 
     f.send_from(&reviewer, DisputeContract::rule(6, RULING_CLAIMANT, 0, ruling_hash).unwrap())
         .expect_success();
+    assert_eq!(f.data().status, DISPUTE_STATUS_RESOLVED);
+}
+
+#[test]
+fn rotating_the_attestor_key_invalidates_signatures_from_the_old_key() {
+    let old_attestor = SigningKey::from_bytes(&[0x11; 32]);
+    let old_pubkey = old_attestor.verifying_key().to_bytes();
+    let new_attestor = SigningKey::from_bytes(&[0x22; 32]);
+    let new_pubkey = new_attestor.verifying_key().to_bytes();
+    let ruling_hash = [0xBB; 32];
+
+    let mut f = Fixture::with_attestor(TOS / 10, old_pubkey);
+    let reviewer = f.reviewer.address().clone();
+    let domain_hash = contracts::domain_bound_hash(&f.dispute, &ruling_hash).unwrap();
+
+    // A signature from the currently-configured old key is valid...
+    let old_signature: [u8; 64] = old_attestor.sign(&domain_hash).to_bytes();
+
+    // ...until the reviewer rotates to a new key.
+    f.send_from(&reviewer, DisputeContract::rotate_attestor_key(1, new_pubkey).unwrap())
+        .expect_success();
+
+    // The old signature, still cryptographically valid under the old key, is
+    // now rejected: rule checks against whichever key is configured *now*.
+    f.send_from_with_value(
+        &reviewer,
+        DisputeContract::rule_signed(2, RULING_CLAIMANT, 0, ruling_hash, &old_signature).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_BAD_RULING_SIGNATURE);
+    assert_eq!(f.data().status, DISPUTE_STATUS_OPEN);
+
+    // Only a fresh signature from the new key resolves the dispute.
+    let new_signature: [u8; 64] = new_attestor.sign(&domain_hash).to_bytes();
+    f.send_from_with_value(
+        &reviewer,
+        DisputeContract::rule_signed(3, RULING_CLAIMANT, 0, ruling_hash, &new_signature).unwrap(),
+        TOS / 4,
+    )
+    .expect_success();
     assert_eq!(f.data().status, DISPUTE_STATUS_RESOLVED);
 }

@@ -39,6 +39,7 @@ pub struct AppState {
     pub jwt_auth: Arc<JwtAuth>,
     pub user_store: Arc<UserStore>,
     pub(crate) login_rate_limiter: Arc<tokio::sync::Mutex<LoginRateLimiter>>,
+    pub indexer_store: Arc<crate::indexer::IndexerStore>,
 }
 
 pub async fn run(
@@ -46,6 +47,7 @@ pub async fn run(
     store: Arc<SnapshotStore>,
     runtime_cfg: Arc<RuntimeConfigStore>,
     tasks: HashMap<&'static str, Arc<TaskController>>,
+    indexer_store: Arc<crate::indexer::IndexerStore>,
 ) {
     tracing::info!("http-server task started");
 
@@ -95,8 +97,15 @@ pub async fn run(
     let elections_task = tasks.get("elections").cloned().expect("elections task is not registered");
 
     let login_rate_limiter = Arc::new(tokio::sync::Mutex::new(LoginRateLimiter::default()));
-    let state =
-        AppState { store, runtime_cfg, elections_task, jwt_auth, user_store, login_rate_limiter };
+    let state = AppState {
+        store,
+        runtime_cfg,
+        elections_task,
+        jwt_auth,
+        user_store,
+        login_rate_limiter,
+        indexer_store,
+    };
     let app = routes(enable_swagger, state);
 
     let listener = match tokio::net::TcpListener::bind(bind_addr).await {
@@ -142,6 +151,12 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
         .route("/agents/{address}", axum::routing::get(agent_query_api::get_agent))
         .route("/tasks", axum::routing::get(agent_query_api::list_tasks))
         .route("/tasks/{address}", axum::routing::get(agent_query_api::get_task))
+        .route("/disputes", axum::routing::get(agent_query_api::list_disputes))
+        .route("/disputes/{address}", axum::routing::get(agent_query_api::get_dispute))
+        .route("/services", axum::routing::get(agent_query_api::list_services))
+        .route("/services/{address}", axum::routing::get(agent_query_api::get_service))
+        .route("/registry", axum::routing::get(agent_query_api::list_registry))
+        .route("/registry/{address}", axum::routing::get(agent_query_api::get_registry))
         .route("/auth/me", axum::routing::get(me_handler))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -894,6 +909,12 @@ impl utoipa::Modify for BearerAuthAddon {
         ,agent_query_api::get_agent
         ,agent_query_api::get_task
         ,agent_query_api::list_tasks
+        ,agent_query_api::list_disputes
+        ,agent_query_api::get_dispute
+        ,agent_query_api::list_services
+        ,agent_query_api::get_service
+        ,agent_query_api::list_registry
+        ,agent_query_api::get_registry
     ),
     components(schemas(
         ApiErrorBody,
@@ -925,6 +946,15 @@ impl utoipa::Modify for BearerAuthAddon {
         agent_query_api::TaskResponse,
         agent_query_api::TaskListItem,
         agent_query_api::TaskListResponse,
+        agent_query_api::DisputeDto,
+        agent_query_api::DisputeResponse,
+        agent_query_api::DisputeListResponse,
+        agent_query_api::ServiceActorDto,
+        agent_query_api::ServiceActorResponse,
+        agent_query_api::ServiceActorListResponse,
+        agent_query_api::RegistryDto,
+        agent_query_api::RegistryResponse,
+        agent_query_api::RegistryListResponse,
         common::snapshot::Snapshot,
         common::snapshot::ElectionsStatus,
         common::snapshot::ElectionsSnapshot,
@@ -1004,6 +1034,7 @@ mod tests {
             jwt_auth: test_jwt_auth().await,
             user_store,
             login_rate_limiter: Arc::new(tokio::sync::Mutex::new(LoginRateLimiter::default())),
+            indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
         }
     }
 

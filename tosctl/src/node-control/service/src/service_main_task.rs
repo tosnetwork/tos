@@ -8,8 +8,9 @@
  */
 use crate::{
     http::http_server_task,
+    indexer::IndexerStore,
     runtime_config::RuntimeConfigStore,
-    task::{ContractsTask, ElectionsTask, VotingTask, task_manager::TaskController},
+    task::{ContractsTask, ElectionsTask, IndexerTask, VotingTask, task_manager::TaskController},
 };
 use anyhow::Context;
 use common::{
@@ -48,11 +49,14 @@ pub async fn run_with_config(
     app_cfg: Arc<AppConfig>,
     config_path: String,
 ) -> anyhow::Result<()> {
+    let indexer_db_path = Path::new(&config_path).with_file_name("tosctl-indexer.db");
     let runtime_cfg = RuntimeConfigStore::initialize(app_cfg.clone(), config_path)
         .await
         .context("initialize runtime config store")?;
     let runtime_cfg = Arc::new(runtime_cfg);
     let store = Arc::new(SnapshotStore::new());
+    let indexer_store =
+        Arc::new(IndexerStore::open(&indexer_db_path).context("open indexer store")?);
 
     // Status callback: when the elections runner detects binding status changes,
     // update the runtime config and save to file.
@@ -96,6 +100,15 @@ pub async fn run_with_config(
         )),
     );
 
+    tasks.insert(
+        "indexer",
+        Arc::new(TaskController::new(
+            "indexer",
+            IndexerTask::new(runtime_cfg.clone(), indexer_store.clone()),
+            runtime_cfg.clone(),
+        )),
+    );
+
     let _ = tasks.get("contracts").expect("contracts task").enable().await;
     if app_cfg.elections.is_some() {
         let _ = tasks.get("elections").expect("elections task").enable().await;
@@ -103,12 +116,16 @@ pub async fn run_with_config(
     if app_cfg.voting.is_some() {
         let _ = tasks.get("voting").expect("voting task").enable().await;
     }
+    // Always on: chain-wide contract discovery is a baseline read-only
+    // capability, not an opt-in participation feature like elections/voting.
+    let _ = tasks.get("indexer").expect("indexer task").enable().await;
 
     let http_task_handle = tokio::spawn(http_server_task::run(
         cancellation_ctx.clone(),
         store.clone(),
         runtime_cfg.clone(),
         tasks.clone(),
+        indexer_store.clone(),
     ));
 
     let max_wait = std::time::Duration::from_secs(10);

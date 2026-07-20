@@ -72,8 +72,8 @@ use chain_rpc_client::v2::{
     RPCStackEntry,
     client_json_rpc::ClientJsonRpc,
     data_models::{
-        GetAddressInformationRes, GetExtendedAddressInformationRes, GetWalletInformationRes,
-        RunGetMethodParams,
+        GetAddressInformationRes, GetBlockTransactionsRes, GetExtendedAddressInformationRes,
+        GetMasterchainInfoRes, GetShardsRes, GetWalletInformationRes, RunGetMethodParams,
     },
 };
 
@@ -91,6 +91,22 @@ pub type ExtendedAddressInfo = GetExtendedAddressInformationRes;
 
 /// Type alias: wallet information response (TOS-facing name).
 pub type WalletInfo = GetWalletInformationRes;
+
+/// Type alias: masterchain head information (last block, used to drive
+/// block-scanning consumers such as the chain-wide contract indexer).
+pub type MasterchainInfo = GetMasterchainInfoRes;
+
+/// Type alias: one page of a block's transaction short-IDs (`account`/`lt`/
+/// `hash`), used to enumerate every account touched by a block without a
+/// full-state scan.
+pub type BlockTransactionsPage = GetBlockTransactionsRes;
+
+/// Type alias: the current shard block descriptors for non-masterchain
+/// workchains, as of a given masterchain seqno. On this chain almost every
+/// contract lives on workchain 0 (the masterchain is reserved for
+/// system contracts and directly-deployed actors) -- a block-scanning
+/// consumer that only walks the masterchain would miss nearly everything.
+pub type ShardsInfo = GetShardsRes;
 
 // ─── Trait ─────────────────────────────────────────────────────────────────
 
@@ -131,6 +147,30 @@ pub trait ChainProvider: Send + Sync {
 
     /// Get wallet-specific information (wallet type, seqno, etc.).
     async fn get_wallet_info(&self, address: &MsgAddressInt) -> anyhow::Result<WalletInfo>;
+
+    /// Get the current masterchain head (last block seqno/shard identity).
+    /// The masterchain block's own `shard` value is constant across all its
+    /// past seqnos too, so callers can reuse it to scan any earlier block.
+    async fn get_masterchain_info(&self) -> anyhow::Result<MasterchainInfo>;
+
+    /// Get the current shard block descriptors (for non-masterchain
+    /// workchains) as of the given masterchain seqno.
+    async fn get_shards(&self, seqno: u32) -> anyhow::Result<ShardsInfo>;
+
+    /// List the accounts (as `account`/`lt`/`hash` short-IDs) that had a
+    /// transaction in the given block, paginated via `after_lt`/`after_hash`
+    /// when `incomplete` comes back `true`. This is the primitive a
+    /// chain-wide indexer walks block-by-block to discover every account
+    /// without a full-state dump.
+    async fn get_block_transactions_page(
+        &self,
+        workchain: i32,
+        shard: i64,
+        seqno: u32,
+        after_lt: Option<u64>,
+        after_hash: Option<&str>,
+        count: u32,
+    ) -> anyhow::Result<BlockTransactionsPage>;
 }
 
 // ─── JSON-RPC adapter implementation ─────────────────────────────────────────
@@ -214,6 +254,28 @@ impl ChainProvider for DefaultChainProvider {
 
     async fn get_wallet_info(&self, address: &MsgAddressInt) -> anyhow::Result<WalletInfo> {
         self.client.get_wallet_information(address).await
+    }
+
+    async fn get_masterchain_info(&self) -> anyhow::Result<MasterchainInfo> {
+        self.client.get_masterchain_info().await
+    }
+
+    async fn get_shards(&self, seqno: u32) -> anyhow::Result<ShardsInfo> {
+        self.client.get_shards(seqno).await
+    }
+
+    async fn get_block_transactions_page(
+        &self,
+        workchain: i32,
+        shard: i64,
+        seqno: u32,
+        after_lt: Option<u64>,
+        after_hash: Option<&str>,
+        count: u32,
+    ) -> anyhow::Result<BlockTransactionsPage> {
+        self.client
+            .get_block_transactions_page(workchain, &shard.to_string(), seqno, after_lt, after_hash, count)
+            .await
     }
 }
 
