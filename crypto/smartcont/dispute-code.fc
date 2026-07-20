@@ -101,14 +101,14 @@ const int err::bad_ruling_signature = 2006;
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
   msg_value~impure_touch();
+  var full_msg = in_msg_full.begin_parse();
+  int flags = full_msg~load_uint(4);
+  if (flags & 1) { return (); }  ;; ignore bounced messages
+  slice sender = full_msg~load_msg_addr();
   if (in_msg.slice_empty?()) { return (); }
   int op = in_msg~load_uint(32);
   int query_id = in_msg~load_uint(64);
   query_id~impure_touch();
-
-  var full_msg = in_msg_full.begin_parse();
-  full_msg~skip_bits(4);
-  slice sender = full_msg~load_msg_addr();
 
   (slice claimant, slice respondent, slice reviewer, int status, int ruling, int split_bps,
    int deadline, int subject_hash, int claimant_evidence_hash, int respondent_evidence_hash,

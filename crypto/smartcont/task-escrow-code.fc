@@ -68,6 +68,10 @@ const int status::disputed = 7;
 }
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  var full_msg = in_msg_full.begin_parse();
+  int flags = full_msg~load_uint(4);
+  if (flags & 1) { return (); }  ;; ignore bounced messages
+  var sender = full_msg~load_msg_addr();
   if (in_msg.slice_empty?()) { return (); }
   var op = in_msg~load_uint(32);
   var query_id = in_msg~load_uint(64);
@@ -93,9 +97,6 @@ const int status::disputed = 7;
   var has_attestor = attestor_slice~load_uint(1);
   var attestor_pubkey = attestor_slice~load_uint(256);
   ds.end_parse();
-  var full_msg = in_msg_full.begin_parse();
-  full_msg~skip_bits(4);
-  var sender = full_msg~load_msg_addr();
 
   if (op == op::claim) {
     throw_unless(115, status == status::open);

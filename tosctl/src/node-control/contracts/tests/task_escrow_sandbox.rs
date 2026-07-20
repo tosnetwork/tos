@@ -105,6 +105,15 @@ impl Fixture {
         self.bc.send_message(msg).expect("send")
     }
 
+    /// Sends a message with the `bounced` header flag set -- simulating an
+    /// automatic network bounce rather than a genuine call -- to verify the
+    /// contract ignores it instead of parsing the body as a real operation.
+    fn send_bounced_from(&mut self, from: &MsgAddressInt, body: Cell) -> SendResult {
+        let mut msg = MessageBuilder::internal(from, &self.escrow, TOS / 10).body(body).build();
+        msg.int_header_mut().expect("internal header").bounced = true;
+        self.bc.send_message(msg).expect("send")
+    }
+
     fn status(&self) -> i128 {
         self.bc
             .run_get_method(&self.escrow, "get_task_data", vec![])
@@ -228,6 +237,18 @@ fn trailing_bits_after_a_well_formed_op_are_rejected() {
         .expect_aborted()
         .expect_exit_code(9);
     assert_eq!(f.status(), STATUS_OPEN, "the malformed cancel must not have taken effect");
+}
+
+#[test]
+fn a_bounced_message_is_ignored_rather_than_parsed_as_a_real_operation() {
+    // If this were *not* filtered, a bounced message carrying a `cancel` body
+    // sent from `creator` (the exact sender `cancel` authorizes) would cancel
+    // the task -- even though no real `cancel` was ever sent. The contract
+    // must ignore it and leave state untouched.
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 10);
+    let creator_addr = f.creator.address().clone();
+    f.send_bounced_from(&creator_addr, TaskEscrowContract::cancel(1).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_OPEN, "a bounced message must not affect contract state");
 }
 
 #[test]

@@ -139,13 +139,16 @@ cell pack_agent_state(
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
   msg_value~impure_touch();
 
+  slice cs = in_msg_full.begin_parse();
+  int flags = cs~load_uint(4);
+  if (flags & 1) {
+    return ();  ;; ignore bounced messages
+  }
+  slice sender = cs~load_msg_addr();
+
   if (in_msg_body.slice_empty?()) {
     return ();
   }
-
-  slice cs = in_msg_full.begin_parse();
-  cs~load_uint(4);
-  slice sender = cs~load_msg_addr();
 
   (
     slice owner,

@@ -68,6 +68,15 @@ impl Fixture {
         self.bc.send_message(msg).expect("send")
     }
 
+    /// Sends a message with the `bounced` header flag set -- simulating an
+    /// automatic network bounce rather than a genuine call -- to verify the
+    /// contract ignores it instead of parsing the body as a real operation.
+    fn send_bounced_internal(&mut self, from: &MsgAddressInt, body: Cell) -> SendResult {
+        let mut msg = MessageBuilder::internal(from, &self.account, TOS / 10).body(body).build();
+        msg.int_header_mut().expect("internal header").bounced = true;
+        self.bc.send_message(msg).expect("send")
+    }
+
     fn signed_action(&self, secret: &[u8; 32], seqno: u32, valid_until: u32, value: u64) -> Cell {
         self.signed_action_to(
             secret,
@@ -226,6 +235,27 @@ fn controller_action_accepts_assigned_task_escrow() {
         .expect_success()
         .int_at(7);
     assert_eq!(status, 1);
+}
+
+#[test]
+fn a_bounced_message_is_ignored_rather_than_parsed_as_a_real_operation() {
+    // If this were *not* filtered, a bounced message carrying an
+    // update_policy body sent from `owner` (the exact sender update_policy
+    // authorizes) would change the policy -- even though no real
+    // update_policy was ever sent. The contract must ignore it and leave
+    // state untouched.
+    let mut fixture = Fixture::new();
+    let owner_addr = fixture.owner.address().clone();
+    let policy = AgentAccountPolicyUpdate {
+        max_per_tx: 2 * TOS,
+        daily_limit: 3 * TOS,
+        default_task_timeout_secs: 7_200,
+        metadata_hash: None,
+        service_endpoint_hash: None,
+    };
+    let update_body = AgentAccountContract::build_update_policy_message(1, &policy).unwrap();
+    fixture.send_bounced_internal(&owner_addr, update_body).expect_success();
+    assert_eq!(fixture.policy(), (5 * TOS, 6 * TOS), "a bounced message must not affect contract state");
 }
 
 #[test]

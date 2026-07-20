@@ -102,14 +102,14 @@ const int err::unknown_op = 1807;
 }
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  var full_msg = in_msg_full.begin_parse();
+  int flags = full_msg~load_uint(4);
+  if (flags & 1) { return (); }  ;; ignore bounced messages
+  slice sender = full_msg~load_msg_addr();
   if (in_msg.slice_empty?()) { return (); }
   int op = in_msg~load_uint(32);
   int query_id = in_msg~load_uint(64);
   query_id~impure_touch();
-
-  var full_msg = in_msg_full.begin_parse();
-  full_msg~skip_bits(4);
-  slice sender = full_msg~load_msg_addr();
 
   (slice owner, int has_verifier, slice verifier, int active, int registered_at,
    int bond, int reputation_score, int verification_method_hash,

@@ -208,6 +208,27 @@ Examples:
   [`scripts/capability-registry-e2e.py`](scripts/capability-registry-e2e.py),
   [`scripts/agent-task-escrow-e2e.py`](scripts/agent-task-escrow-e2e.py)), all passing after the
   fix with no observed regressions.
+- Closed a third class of finding across all six native AI-actor contracts (Agent Account, Task
+  Escrow, Dispute, Service Actor, Capability Registry, Proof Attestation): none of them checked
+  the `bounced` header flag on incoming internal messages before parsing the body as a real
+  operation, unlike this codebase's own established convention elsewhere (`wallet-v4-code.fc`,
+  `elector-code.fc`, `dns-auto-code.fc`, `config-code.fc`, `payment-channel-code.fc` all check
+  `flags & 1` and return immediately). A message the network automatically bounces back to a
+  contract carries the *original destination* as its `sender` -- exactly the kind of address
+  (`agent`/`creator`/`verifier`/`owner`) these contracts already treat as authorized for
+  sender-gated operations -- so an unfiltered bounce could in principle be misparsed as a
+  legitimate call from that party. In the current code this isn't independently reachable (every
+  outgoing `send_raw_message` in these contracts is built with `bounce = false`, so the network
+  never generates an automatic bounce back to them in the first place), but it is a real gap
+  relative to the codebase's own convention and a foot-gun for any future change that starts
+  sending with `bounce = true` or wires in a new cross-contract call path. Fixed by moving the
+  bounce check to the very first thing each `recv_internal` does -- before even touching the
+  message body -- matching `wallet-v4-code.fc`'s idiomatic ordering. Verified with new sandbox
+  tests (in `task_escrow_sandbox.rs` and `agent_account_sandbox.rs`) that construct a message with
+  `bounced = true` carrying a body that would otherwise be accepted as a real, sender-authorized
+  operation, and assert it is silently ignored with state left untouched; every other sandbox
+  suite across all six contracts continues to pass unchanged, and every affected contract's
+  real-localnet end-to-end script was re-run and passed.
 
 ### Phase 3: Agent Registry and Service Marketplace
 
