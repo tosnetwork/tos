@@ -6,8 +6,9 @@
  */
 
 use super::agent_cmd::{
-    confirm, parse_required_hash, send_wallet_message, send_wallet_message_with_state_init,
-    validate_tos_amount,
+    confirm, parse_optional_hash, parse_optional_signature, parse_required_hash,
+    resolve_attestor_pubkey, send_wallet_message, send_wallet_message_with_state_init,
+    sign_hash_with_vault_key, validate_tos_amount,
 };
 use super::output_format::OutputFormat;
 use super::utils::{
@@ -88,6 +89,18 @@ pub struct ServiceActorDeployCmd {
     metadata_hash: String,
     #[arg(long, help = "32-byte hash identifying the supported proof/attestation scheme")]
     proof_scheme_hash: String,
+    #[arg(
+        long,
+        conflicts_with = "signer_vault_key",
+        help = "Optional 32-byte ed25519 public key; when set, respond also requires a signature over response_hash"
+    )]
+    attestor_pubkey: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "attestor_pubkey",
+        help = "Derive --attestor-pubkey from a vault key instead of passing it directly"
+    )]
+    signer_vault_key: Option<String>,
     #[arg(long, help = "Funding wallet name or master_wallet")]
     from: String,
     #[arg(long, default_value_t = 0.2, help = "Message value funding the deploy, in TOS")]
@@ -149,6 +162,18 @@ pub struct ServiceActorSendCmd {
     request_hash: Option<String>,
     #[arg(long, help = "Response hash for respond")]
     response_hash: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "signer_vault_key",
+        help = "64-byte ed25519 signature over response_hash, for respond on a service deployed with --attestor-pubkey"
+    )]
+    attestation_signature: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "attestation_signature",
+        help = "Sign response_hash with this vault key instead of passing --attestation-signature directly"
+    )]
+    signer_vault_key: Option<String>,
     #[arg(long, help = "New price per call, in TOS, for update-policy")]
     price_per_call: Option<f64>,
     #[arg(long, help = "New rate limit per day for update-policy; 0 means unlimited")]
@@ -198,6 +223,11 @@ pub struct ServiceActorBuildStateCmd {
     metadata_hash: String,
     #[arg(long, help = "32-byte hash identifying the supported proof/attestation scheme")]
     proof_scheme_hash: String,
+    #[arg(
+        long,
+        help = "Optional 32-byte ed25519 public key; when set, respond also requires a signature over response_hash"
+    )]
+    attestor_pubkey: Option<String>,
     #[arg(short = 'w', long = "workchain", default_value = "-1")]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
@@ -234,6 +264,7 @@ fn build_init(
     rate_limit_per_day: u32,
     metadata_hash: &str,
     proof_scheme_hash: &str,
+    attestor_pubkey: Option<[u8; 32]>,
 ) -> anyhow::Result<ServiceActorInit> {
     validate_tos_amount("price-per-call", price_per_call)?;
     if !open_access && authorized_caller.is_none() {
@@ -250,6 +281,7 @@ fn build_init(
             "proof-scheme-hash",
             &Some(proof_scheme_hash.to_owned()),
         )?,
+        attestor_pubkey,
     })
 }
 
@@ -263,6 +295,11 @@ impl ServiceActorDeployCmd {
             .map(str::parse)
             .transpose()
             .context("invalid authorized-caller address")?;
+        let path = Path::new(config_path);
+        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let attestor_pubkey =
+            resolve_attestor_pubkey(&self.attestor_pubkey, &self.signer_vault_key, vault.clone())
+                .await?;
         let init = build_init(
             owner.clone(),
             authorized_caller,
@@ -271,11 +308,10 @@ impl ServiceActorDeployCmd {
             self.rate_limit_per_day,
             &self.metadata_hash,
             &self.proof_scheme_hash,
+            attestor_pubkey,
         )?;
         let address = ServiceActorContract::calculate_address(self.workchain, &init)?;
         let state_init = ServiceActorContract::build_state_init(&init)?;
-        let path = Path::new(config_path);
-        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let record_name = self.name.clone().unwrap_or_else(|| {
             let hex = address.to_string();
             let hash = hex.rsplit(':').next().unwrap_or(&hex);
@@ -344,6 +380,7 @@ impl ServiceActorDeployCmd {
                 rate_limit_per_day: init.rate_limit_per_day,
                 metadata_hash: hex::encode(init.metadata_hash),
                 proof_scheme_hash: hex::encode(init.proof_scheme_hash),
+                attestor_pubkey: init.attestor_pubkey.map(hex::encode),
                 created_at: Some(time_format::now()),
             },
         );
@@ -385,6 +422,8 @@ struct ServiceActorDataView {
     proof_scheme_hash: String,
     last_request_hash: String,
     last_response_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attestor_pubkey: Option<String>,
 }
 
 fn data_view(address: &MsgAddressInt, data: ServiceActorData) -> ServiceActorDataView {
@@ -402,6 +441,7 @@ fn data_view(address: &MsgAddressInt, data: ServiceActorData) -> ServiceActorDat
         proof_scheme_hash: hex::encode(data.proof_scheme_hash),
         last_request_hash: hex::encode(data.last_request_hash),
         last_response_hash: hex::encode(data.last_response_hash),
+        attestor_pubkey: data.attestor_pubkey.map(hex::encode),
     }
 }
 
@@ -432,6 +472,7 @@ impl ServiceActorShowCmd {
             println!("Rate limit/day: {}", view.rate_limit_per_day);
             println!("Calls today: {}", view.calls_today);
             println!("Total revenue: {} TOS", view.total_revenue);
+            println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
         }
         Ok(())
     }
@@ -576,7 +617,7 @@ impl ServiceActorSendCmd {
         let wallet_config =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (owner_address, owner_info, owner_secret) =
-            wallet_info(rpc_client.clone(), wallet_config, vault).await?;
+            wallet_info(rpc_client.clone(), wallet_config, vault.clone()).await?;
         if owner_info.account_state != AccountState::Active {
             anyhow::bail!("signing wallet is not active");
         }
@@ -586,10 +627,29 @@ impl ServiceActorSendCmd {
                 self.query_id,
                 parse_required_hash("request-hash", &self.request_hash)?,
             )?,
-            ServiceActorOperation::Respond => ServiceActorContract::respond(
-                self.query_id,
-                parse_required_hash("response-hash", &self.response_hash)?,
-            )?,
+            ServiceActorOperation::Respond => {
+                let response_hash = parse_required_hash("response-hash", &self.response_hash)?;
+                let signature = match parse_optional_signature(
+                    "attestation-signature",
+                    &self.attestation_signature,
+                )? {
+                    Some(signature) => Some(signature),
+                    None => match &self.signer_vault_key {
+                        Some(name) => {
+                            Some(sign_hash_with_vault_key(name, &response_hash, vault.clone()).await?)
+                        }
+                        None => None,
+                    },
+                };
+                match signature {
+                    Some(signature) => ServiceActorContract::respond_signed(
+                        self.query_id,
+                        response_hash,
+                        &signature,
+                    )?,
+                    None => ServiceActorContract::respond(self.query_id, response_hash)?,
+                }
+            }
             ServiceActorOperation::UpdatePolicy => {
                 let authorized_caller = self
                     .authorized_caller
@@ -675,6 +735,7 @@ impl ServiceActorBuildStateCmd {
             self.rate_limit_per_day,
             &self.metadata_hash,
             &self.proof_scheme_hash,
+            parse_optional_hash("attestor-pubkey", &self.attestor_pubkey)?,
         )?;
         let address = ServiceActorContract::calculate_address(self.workchain, &init)?;
         if self.format == OutputFormat::Json {

@@ -16,6 +16,7 @@
 
 use chain_block::{Cell, MsgAddressInt};
 use contracts::{ServiceActorContract, ServiceActorInit};
+use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 
 const TOS: u64 = 1_000_000_000;
@@ -26,6 +27,7 @@ const ERR_ALREADY_ACTIVE: i32 = 1903;
 const ERR_RATE_LIMITED: i32 = 1904;
 const ERR_INSUFFICIENT_PAYMENT: i32 = 1905;
 const ERR_INSUFFICIENT_REVENUE: i32 = 1906;
+const ERR_BAD_RESPONSE_SIGNATURE: i32 = 1909;
 
 struct Fixture {
     bc: Blockchain,
@@ -42,6 +44,26 @@ impl Fixture {
         open_access: bool,
         funding: u64,
     ) -> Self {
+        Self::build(price_per_call, rate_limit_per_day, open_access, funding, None)
+    }
+
+    fn with_attestor(
+        price_per_call: u64,
+        rate_limit_per_day: u32,
+        open_access: bool,
+        funding: u64,
+        attestor_pubkey: [u8; 32],
+    ) -> Self {
+        Self::build(price_per_call, rate_limit_per_day, open_access, funding, Some(attestor_pubkey))
+    }
+
+    fn build(
+        price_per_call: u64,
+        rate_limit_per_day: u32,
+        open_access: bool,
+        funding: u64,
+        attestor_pubkey: Option<[u8; 32]>,
+    ) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         bc.set_workchain(-1);
         let owner = bc.treasury("owner", 1_000 * TOS).expect("owner");
@@ -55,6 +77,7 @@ impl Fixture {
             rate_limit_per_day,
             metadata_hash: [0x11; 32],
             proof_scheme_hash: [0x22; 32],
+            attestor_pubkey,
         };
         let service = ServiceActorContract::calculate_address(-1, &init).expect("address");
         let state_init = ServiceActorContract::build_state_init(&init).expect("state init");
@@ -312,4 +335,51 @@ fn deactivate_sweeps_revenue_blocks_calls_and_reactivate_restores() {
     f.send_from(&owner, TOS / 10, ServiceActorContract::reactivate(8).unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_ALREADY_ACTIVE);
+}
+
+#[test]
+fn respond_on_an_attestor_configured_service_requires_a_valid_signature() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let attestor_pubkey = attestor.verifying_key().to_bytes();
+    let response_hash = [0xDD; 32];
+    let mut f = Fixture::with_attestor(TOS / 10, 0, true, TOS / 10, attestor_pubkey);
+    let owner = f.owner.address().clone();
+
+    // Plain `respond` (no signature) is rejected by the trailing signature load.
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(1, response_hash).unwrap())
+        .expect_aborted();
+    assert_eq!(f.data().last_response_hash, [0; 32]);
+
+    // A signature from the wrong key is rejected.
+    let wrong_key = SigningKey::from_bytes(&[0x88; 32]);
+    let wrong_signature: [u8; 64] = wrong_key.sign(&response_hash).to_bytes();
+    f.send_from(
+        &owner,
+        TOS / 10,
+        ServiceActorContract::respond_signed(2, response_hash, &wrong_signature).unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_BAD_RESPONSE_SIGNATURE);
+    assert_eq!(f.data().last_response_hash, [0; 32]);
+
+    // A non-owner sender is still rejected, even with a valid signature.
+    let outsider = f.outsider.address().clone();
+    let valid_signature: [u8; 64] = attestor.sign(&response_hash).to_bytes();
+    f.send_from(
+        &outsider,
+        TOS / 10,
+        ServiceActorContract::respond_signed(3, response_hash, &valid_signature).unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_NOT_OWNER);
+    assert_eq!(f.data().last_response_hash, [0; 32]);
+
+    // The owner, with the correct attestor signature, commits the response.
+    f.send_from(
+        &owner,
+        TOS / 10,
+        ServiceActorContract::respond_signed(4, response_hash, &valid_signature).unwrap(),
+    )
+    .expect_success();
+    assert_eq!(f.data().last_response_hash, response_hash);
 }

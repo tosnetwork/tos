@@ -9,7 +9,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const DISPUTE_CODE_B64: &str = "te6cckECBgEAAVAAART/APSkE/S88sgLAQIBYgIDArDQMiHHAJFb4AHTH9M/MQLQdNch+kAw7UTQ+kD6QPpA0wfTB9MP0z/UAdDT/9P/0QLUAdDT/9P/0QLRQwAsghBEU1ABuuMCMDQ0CYIQRFNQArrjAl8K8sfVBAUAUaEzEdqJofSB9IH0gaYPpg+mH6Z/qAOhp/+n/6IFqAOhp/+n/6IFooYBAJQxO1GXxwXy59AEwwLy59IJ0//REGkQWBBHcQcQNkUUAwHIy//L/8kCyMv/y//JyFAJzxZQB88WUAXPFhPLB8sHyw/LPxLMzMntVADSUXTHBfLn0QLDAvLn0gfTB9MP0//RIsABI8ACsSPAA7Hy59MiwwN/I4EnELuwsfLn1BBpEFgQR3IHEDZAFVBEAcjL/8v/yQLIy//L/8nIUAnPFlAHzxZQBc8WE8sHywfLD8s/EszMye1UP7i2ZA==";
+pub const DISPUTE_CODE_B64: &str = "te6cckECBgEAAXoAART/APSkE/S88sgLAQIBYgIDArzQMiHHAJFb4AHTH9M/MQLQdNch+kAw7UTQ+kD6QPpA0wfTB9MP0z/UAdDT/9P/0QLUAdDT/9P/0wDT/9EE0RBFVQIughBEU1ABuuMCMjY2C4IQRFNQArrjAl8M8sfVBAUAXaEzEdqJofSB9IH0gaYPpg+mH6Z/qAOhp/+n/6IFqAOhp/+n/6YBp/+iCaIgiqoFAKgzPVG5xwXy59AGwwLy59IL0//REIsQehBpcQkQWBBHEDZFFEADA8jL/xLL/8sAy//JAsjL/8v/ychQCc8WUAfPFlAFzxYTywfLB8sPyz8SzMzJ7VQA+lGWxwXy59EEwwLy59IJ0wfTD9P/JJyDCNcYUiIn+RDy59be0SLAASPAArEjwAOx8ufTIsMDfyOBJxC7sLHy59QQixB6EGlyCRA4RxZBRQPIy/8Sy//LAMv/yQLIy//L/8nIUAnPFlAHzxZQBc8WE8sHywfLD8s/EszMye1UgOMl6A==";
 pub const DSP_SUBMIT_RESPONDENT_EVIDENCE_OPCODE: u32 = 0x4453_5001;
 pub const DSP_RULE_OPCODE: u32 = 0x4453_5002;
 
@@ -40,6 +40,10 @@ pub struct DisputeInit {
     /// Reference to what is being disputed, e.g. a Task Escrow address's hash.
     pub subject_hash: [u8; 32],
     pub claimant_evidence_hash: [u8; 32],
+    /// Optional ed25519 public key. When set, `rule` additionally requires a
+    /// signature over the new `ruling_hash` under this key -- on top of,
+    /// never instead of, the existing reviewer sender authorization.
+    pub attestor_pubkey: Option<[u8; 32]>,
 }
 
 pub struct DisputeContract;
@@ -58,6 +62,7 @@ pub struct DisputeData {
     pub claimant_evidence_hash: [u8; 32],
     pub respondent_evidence_hash: [u8; 32],
     pub ruling_hash: [u8; 32],
+    pub attestor_pubkey: Option<[u8; 32]>,
 }
 
 impl DisputeContract {
@@ -79,6 +84,14 @@ impl DisputeContract {
         data.checked_append_reference(claim.into_cell()?)?;
         let mut res = BuilderData::new();
         res.append_u256(&[0; 32])?.append_u256(&[0; 32])?;
+        match init.attestor_pubkey {
+            Some(pubkey) => {
+                res.append_bit_one()?.append_raw(&pubkey, 256)?;
+            }
+            None => {
+                res.append_bit_zero()?.append_raw(&[0; 32], 256)?;
+            }
+        }
         data.checked_append_reference(res.into_cell()?)?;
         Ok(data.into_cell()?)
     }
@@ -110,6 +123,7 @@ impl DisputeContract {
             claimant_evidence_hash: parse_hash(stack, 8)?,
             respondent_evidence_hash: parse_hash(stack, 9)?,
             ruling_hash: parse_hash(stack, 10)?,
+            attestor_pubkey: if stack.u64(11)? == 0 { None } else { Some(parse_hash(stack, 12)?) },
         })
     }
 
@@ -130,6 +144,22 @@ impl DisputeContract {
     ) -> anyhow::Result<chain_block::Cell> {
         message(DSP_RULE_OPCODE, query_id, |b| {
             b.append_u8(ruling)?.append_u16(split_bps)?.append_u256(&ruling_hash).map(|_| ())
+        })
+    }
+
+    /// Rule on a dispute deployed with an `attestor_pubkey`: `signature` must
+    /// be a valid ed25519 signature over `ruling_hash` under that key, or the
+    /// contract rejects the message.
+    pub fn rule_signed(
+        query_id: u64,
+        ruling: u8,
+        split_bps: u16,
+        ruling_hash: [u8; 32],
+        signature: &[u8; 64],
+    ) -> anyhow::Result<chain_block::Cell> {
+        message(DSP_RULE_OPCODE, query_id, |b| {
+            b.append_u8(ruling)?.append_u16(split_bps)?.append_u256(&ruling_hash)?;
+            b.append_raw(signature, 512).map(|_| ())
         })
     }
 }
@@ -187,6 +217,7 @@ mod tests {
             deadline: 1_700_000_000,
             subject_hash: [0x44; 32],
             claimant_evidence_hash: [0x55; 32],
+            attestor_pubkey: None,
         }
     }
 
@@ -245,6 +276,8 @@ mod tests {
             hash_number(d.claimant_evidence_hash),
             hash_number([0x66; 32]),
             hash_number([0x77; 32]),
+            number("1"),
+            hash_number([0x88; 32]),
         ]);
         let data = DisputeContract::decode_data(&stack).unwrap();
         assert_eq!(data.claimant, d.claimant);
@@ -258,5 +291,6 @@ mod tests {
         assert_eq!(data.claimant_evidence_hash, d.claimant_evidence_hash);
         assert_eq!(data.respondent_evidence_hash, [0x66; 32]);
         assert_eq!(data.ruling_hash, [0x77; 32]);
+        assert_eq!(data.attestor_pubkey, Some([0x88; 32]));
     }
 }

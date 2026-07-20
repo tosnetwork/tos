@@ -5,7 +5,10 @@
  * See the LICENSE file in the root of this repository.
  */
 
-use super::agent_cmd::{confirm, parse_required_hash, send_wallet_message, validate_tos_amount};
+use super::agent_cmd::{
+    confirm, parse_optional_signature, parse_required_hash, resolve_attestor_pubkey,
+    send_wallet_message, sign_hash_with_vault_key, validate_tos_amount,
+};
 use super::output_format::OutputFormat;
 use super::utils::{
     get_wallet_config, load_config_vault_rpc_client, make_wallet, save_config,
@@ -74,6 +77,18 @@ pub struct DisputeDeployCmd {
     subject_hash: String,
     #[arg(long, help = "32-byte hash of the claimant's evidence")]
     claimant_evidence_hash: String,
+    #[arg(
+        long,
+        conflicts_with = "signer_vault_key",
+        help = "Optional 32-byte ed25519 public key; when set, rule also requires a signature over ruling_hash"
+    )]
+    attestor_pubkey: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "attestor_pubkey",
+        help = "Derive --attestor-pubkey from a vault key instead of passing it directly"
+    )]
+    signer_vault_key: Option<String>,
     #[arg(long, help = "Funding wallet name or master_wallet")]
     from: String,
     #[arg(long, default_value_t = 0.05, help = "Message value funding the deploy, in TOS")]
@@ -142,6 +157,18 @@ pub struct DisputeSendCmd {
     split_bps: u16,
     #[arg(long, help = "Ruling rationale/evidence hash for rule")]
     ruling_hash: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "signer_vault_key",
+        help = "64-byte ed25519 signature over ruling_hash, for rule on a dispute deployed with --attestor-pubkey"
+    )]
+    attestation_signature: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "attestation_signature",
+        help = "Sign ruling_hash with this vault key instead of passing --attestation-signature directly"
+    )]
+    signer_vault_key: Option<String>,
     #[arg(long, default_value_t = 0.01, help = "Message value in TOS")]
     amount: f64,
     #[arg(long)]
@@ -176,6 +203,11 @@ impl DisputeDeployCmd {
         let respondent =
             self.respondent.parse::<MsgAddressInt>().context("invalid respondent address")?;
         let reviewer = self.reviewer.parse::<MsgAddressInt>().context("invalid reviewer address")?;
+        let path = Path::new(config_path);
+        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let attestor_pubkey =
+            resolve_attestor_pubkey(&self.attestor_pubkey, &self.signer_vault_key, vault.clone())
+                .await?;
         let init = DisputeInit {
             claimant: claimant.clone(),
             respondent: respondent.clone(),
@@ -186,11 +218,10 @@ impl DisputeDeployCmd {
                 "claimant-evidence-hash",
                 &Some(self.claimant_evidence_hash.clone()),
             )?,
+            attestor_pubkey,
         };
         let address = DisputeContract::calculate_address(self.workchain, &init)?;
         let state_init = DisputeContract::build_state_init(&init)?;
-        let path = Path::new(config_path);
-        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let record_name = self.name.clone().unwrap_or_else(|| {
             let hex = address.to_string();
             let hash = hex.rsplit(':').next().unwrap_or(&hex);
@@ -254,6 +285,7 @@ impl DisputeDeployCmd {
                 deadline: init.deadline,
                 subject_hash: hex::encode(init.subject_hash),
                 claimant_evidence_hash: hex::encode(init.claimant_evidence_hash),
+                attestor_pubkey: init.attestor_pubkey.map(hex::encode),
                 created_at: Some(common::time_format::now()),
             },
         );
@@ -289,6 +321,8 @@ struct DisputeDataView {
     claimant_evidence_hash: String,
     respondent_evidence_hash: String,
     ruling_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attestor_pubkey: Option<String>,
 }
 
 fn status_name(status: u8) -> &'static str {
@@ -324,6 +358,7 @@ fn data_view(address: &MsgAddressInt, data: DisputeData) -> DisputeDataView {
         claimant_evidence_hash: hex::encode(data.claimant_evidence_hash),
         respondent_evidence_hash: hex::encode(data.respondent_evidence_hash),
         ruling_hash: hex::encode(data.ruling_hash),
+        attestor_pubkey: data.attestor_pubkey.map(hex::encode),
     }
 }
 
@@ -348,6 +383,7 @@ impl DisputeShowCmd {
             if view.ruling == "split" {
                 println!("Split (bps to claimant): {}", view.split_bps);
             }
+            println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
         }
         Ok(())
     }
@@ -412,7 +448,7 @@ impl DisputeSendCmd {
         let wallet_config =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (owner_address, owner_info, owner_secret) =
-            wallet_info(rpc_client.clone(), wallet_config, vault).await?;
+            wallet_info(rpc_client.clone(), wallet_config, vault.clone()).await?;
         if owner_info.account_state != AccountState::Active {
             anyhow::bail!("signing wallet is not active");
         }
@@ -440,12 +476,31 @@ impl DisputeSendCmd {
                 if self.split_bps > 10_000 {
                     anyhow::bail!("--split-bps must be between 0 and 10000");
                 }
-                DisputeContract::rule(
-                    self.query_id,
-                    ruling,
-                    self.split_bps,
-                    parse_required_hash("ruling-hash", &self.ruling_hash)?,
-                )?
+                let ruling_hash = parse_required_hash("ruling-hash", &self.ruling_hash)?;
+                let signature = match parse_optional_signature(
+                    "attestation-signature",
+                    &self.attestation_signature,
+                )? {
+                    Some(signature) => Some(signature),
+                    None => match &self.signer_vault_key {
+                        Some(name) => {
+                            Some(sign_hash_with_vault_key(name, &ruling_hash, vault.clone()).await?)
+                        }
+                        None => None,
+                    },
+                };
+                match signature {
+                    Some(signature) => DisputeContract::rule_signed(
+                        self.query_id,
+                        ruling,
+                        self.split_bps,
+                        ruling_hash,
+                        &signature,
+                    )?,
+                    None => {
+                        DisputeContract::rule(self.query_id, ruling, self.split_bps, ruling_hash)?
+                    }
+                }
             }
         };
 

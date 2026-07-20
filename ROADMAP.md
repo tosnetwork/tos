@@ -191,20 +191,22 @@ Examples:
   attested hash. `attest` is permissionless -- any sender may relay a valid signature from
   the registered key -- while `rotate-key` and `revoke` are owner-gated, with
   `tosctl agent attestation deploy/ls/show/send`. This is a concrete, narrowly-scoped
-  instance of a proof adapter (ed25519 signature verification); Task Escrow/Dispute still
-  carry generic evidence/ruling *hashes* rather than consuming this adapter directly, so a
-  broader pluggable verification-backend interface across contracts remains open.
-  Task Escrow now optionally consumes this signature scheme directly: a task deployed
-  with an `attestor_pubkey` requires `settle` to carry a valid ed25519 signature over
-  the submitted `result_hash`, verified inline (`CHKSIGNU`) by Task Escrow itself --
-  additive on top of, never a replacement for, the existing creator/verifier sender
-  authorization. `tosctl agent task create/build-state` accept `--attestor-pubkey` or
-  `--signer-vault-key`; `tosctl agent task send --operation settle` accepts
+  instance of a proof adapter (ed25519 signature verification). Task Escrow, Dispute and
+  Service Actor each optionally consume this signature scheme directly, inline: a
+  contract deployed with an `attestor_pubkey` requires the relevant lifecycle op --
+  Task Escrow's `settle` (over `result_hash`), Dispute's `rule` (over the new
+  `ruling_hash`), Service Actor's `respond` (over the new `response_hash`) -- to
+  additionally carry a valid ed25519 signature under that key, verified inline
+  (`CHKSIGNU`) by the contract itself. This is strictly additive on top of, never a
+  replacement for, each contract's existing sender authorization
+  (creator/verifier, reviewer, owner respectively). `deploy`/`build-state` accept
+  `--attestor-pubkey` or `--signer-vault-key`; the corresponding `send` op accepts
   `--attestation-signature` or `--signer-vault-key`. This is deliberately inline
-  verification (no cross-contract messaging) -- see the session's design discussion
-  for why: it avoids a novel cross-contract trust/message pattern in a fund-moving
-  path, at the cost of not consuming a separately-deployed Proof Attestation
-  contract's own revocation/rotation state.
+  verification (no cross-contract messaging) -- it avoids a novel cross-contract
+  trust/message pattern in fund-moving and adjudication paths, at the cost of not
+  consuming a separately-deployed Proof Attestation contract's own revocation/rotation
+  state; a broader pluggable verification-backend interface across contracts (one where
+  these ops instead reference a live Proof Attestation instance) remains open.
 - Add workflow examples that compose planner, worker, service and verifier actors: see
   [`doc/ai-agent-workflow-example.md`](doc/ai-agent-workflow-example.md), which walks a
   planner posting a Task Escrow, a worker (Agent Account) accepting it and paying a Service

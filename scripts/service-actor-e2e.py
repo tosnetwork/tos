@@ -319,6 +319,37 @@ async def run_checks(faucet) -> None:
     data = await service_show("svc-1")
     check("reactivated", data["active"] is True, str(data))
 
+    print("\n=== attestor path: respond requires a signature over response_hash ===")
+    await tosctl("key", "add", "--name", "service-attestor-key")
+    await tosctl("key", "add", "--name", "wrong-service-attestor-key")
+    deploy2 = await tosctl_json(
+        "agent", "service", "deploy", "--name", "svc-2", "--owner", owner,
+        "--open-access", "--price-per-call", "0.01", "--rate-limit-per-day", "0",
+        "--metadata-hash", METADATA_HASH, "--proof-scheme-hash", PROOF_SCHEME_HASH,
+        "--signer-vault-key", "service-attestor-key",
+        "--from", "owner", "--amount", "0.2", "-w", "0", "--yes",
+    )
+    address2 = deploy2["address"]
+    check("attestor service deployed and active", await poll_predicate(
+        lambda: rpc_call("getAddressState", address=address2).get("result") == "active"))
+    data = await service_show("svc-2")
+    check("attestor pubkey recorded on-chain", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("respond", "svc-2", "owner", "--response-hash", "dd" * 32, may_fail=True)
+    data = await service_show("svc-2")
+    check("respond without attestation rejected", int(data["last_response_hash"], 16) == 0, str(data))
+
+    await send_op("respond", "svc-2", "owner", "--response-hash", "dd" * 32,
+                  "--signer-vault-key", "wrong-service-attestor-key", may_fail=True)
+    data = await service_show("svc-2")
+    check("respond with wrong attestor key rejected",
+          int(data["last_response_hash"], 16) == 0, str(data))
+
+    await send_op("respond", "svc-2", "owner", "--response-hash", "dd" * 32,
+                  "--signer-vault-key", "service-attestor-key")
+    data = await service_show("svc-2")
+    check("attestor respond recorded", data["last_response_hash"] == "dd" * 32, str(data))
+
     print("\n=== persisted local record ===")
     records = {r["name"]: r for r in await tosctl_json("agent", "service", "ls")}
     check("record tracked locally", "svc-1" in records, str(sorted(records)))

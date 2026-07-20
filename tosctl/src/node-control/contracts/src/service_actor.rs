@@ -9,7 +9,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const SERVICE_ACTOR_CODE_B64: &str = "te6cckECCwEAA18AART/APSkE/S88sgLAQIBYgIDBNLQIMcAkl8D4NMf0z8xAtB01yH6QDDtRND6QNMA+kDTANMA+gDTH9Mf0x/6ANQB0NP/0//RAtQB0NP/0//RAtFDAC+CEFNWQwG64wJXES6CEFNWQwK64wIughBTVkMDuuMCLoIQU1ZDBLoEBQYHAF2gOlPaiaH0gaYB9IGmAaYB9AGmP6Y/pj/0AagDoaf/p/+iBagDoaf/p/+iBaKGAQGiMT4nwAHy524owAFR2scFUrCwHbHy521T5b7y53H4I4IBUYCpBFMEvZM0cDORMOIkwABTNbmx8udwAqQOoAzT/9EQnRCMEHsQahBZEEgQN0YDCACiPj9RuscF8udsDNP/0RCdEIwQexBqEFkQSBA3RlBBMAHIy//L/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UAOA2WzQ1NTU3UVTHBfLnbCTAAfLnbgb6ANMf0wDTAPpA1AHQ0//T/9EC0RCdEDwQKxBKEEkQaBBXEFYQNUQzAgHIy//L/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UAv7jAj8tghBTVkMFuo5qMjxRqccF8udsBMAB8uduJ3CDBnCAEMjLBVAEzxZY+gISy2rJAfsAcCAQnRCMEHsQahkQSBA3RkQByMv/y//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVOANghBTVkMGCQoAZAHIy//L/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UAP4+UcvHBfLnbA36ANFTAbvy53L4J28QUhC78udzIMIAjhdToHFwgBDIywVQBM8WWPoCEstqyQH7AN6hEJ0QjBB7EGoQWRBIEDdGFFAzBQHIy//L/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UALS6jlFRuscF8udsBcAA8udvEIwQexBqEFlxCRBIEDdGUF4hAcjL/8v/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VTgXw/yx3SI7Nnd";
+pub const SERVICE_ACTOR_CODE_B64: &str = "te6cckECCwEAA4QAART/APSkE/S88sgLAQIBYgIDBObQIMcAkl8D4NMf0z8xAtB01yH6QDDtRND6QNMA+kDTANMA+gDTH9Mf0x/6ANQB0NP/0//RAtQB0NP/0//TANP/0QTREEVVAlYRghBTVkMBuuMCVxNWEIIQU1ZDArrjAlYQghBTVkMDuuMCVhCCEFNWQwS6BAUGBwBpoDpT2omh9IGmAfSBpgGmAfQBpj+mP6Y/9AGoA6Gn/6f/ogWoA6Gn/6f/pgGn/6IJoiCKqgUBrjNXECnAAfLnbirAAVH8xwVS0LAfsfLnbVYQKL7y53H4I4IBUYCpBFMGvZM2cDWRMOImwABTV7mx8udwBKQREBOgDtP/0RC/EK4QnRCMEHsQahBZEEhEUwgA1jE/UdzHBfLnbA7T/y6dgwjXGFIiVhL5EPLndd7REL8QrhCdEIwQexBqEFkQSBA3QBYEUFMDyMv/Esv/ywDL/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UAO4zMzY2Nzc3OVF2xwXy52whwAHy524I+gDTH9MA0wD6QNQB0NP/0//RAtEQvxA+EC0QTBB7EGoQWRAoEGcFUEYTA8jL/xLL/8sAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVAPgjtFXEFHtxwXy52wP+gDRUwO78udy+CdvEFIQu/LncyDCAI4XU8BxcIAQyMsFUATPFlj6AhLLaskB+wDeE6EQvxCuEJ0QjBB7EGoQWRBIEDdeUAPgVxEvghBTVkMFuuMCD4IQU1ZDBrrjAl8PW/LHdAgJCgBuA8jL/xLL/8sAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVADqND5Ry8cF8udsBsAB8uduKXCDBnCAEMjLBVAEzxZY+gISy2rJAfsAcCAQvxCuEJ0QjBsQahBZEEgQNwYQNQEDyMv/Esv/ywDL/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UALZR3McF8udsB8AA8udvEK4QnRCMEHtxCxBqEFkQSBA3RlAQNBIDyMv/Esv/ywDL/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UrbS4jA==";
 pub const SVC_CALL_OPCODE: u32 = 0x5356_4301;
 pub const SVC_RESPOND_OPCODE: u32 = 0x5356_4302;
 pub const SVC_UPDATE_POLICY_OPCODE: u32 = 0x5356_4303;
@@ -35,6 +35,10 @@ pub struct ServiceActorInit {
     pub rate_limit_per_day: u32,
     pub metadata_hash: [u8; 32],
     pub proof_scheme_hash: [u8; 32],
+    /// Optional ed25519 public key. When set, `respond` additionally
+    /// requires a signature over the new `response_hash` under this key --
+    /// on top of, never instead of, the existing owner sender authorization.
+    pub attestor_pubkey: Option<[u8; 32]>,
 }
 
 pub struct ServiceActorContract;
@@ -54,6 +58,7 @@ pub struct ServiceActorData {
     pub proof_scheme_hash: [u8; 32],
     pub last_request_hash: [u8; 32],
     pub last_response_hash: [u8; 32],
+    pub attestor_pubkey: Option<[u8; 32]>,
 }
 
 impl ServiceActorContract {
@@ -87,6 +92,14 @@ impl ServiceActorContract {
         data.checked_append_reference(meta.into_cell()?)?;
         let mut last = BuilderData::new();
         last.append_u256(&[0; 32])?.append_u256(&[0; 32])?;
+        match init.attestor_pubkey {
+            Some(pubkey) => {
+                last.append_bit_one()?.append_raw(&pubkey, 256)?;
+            }
+            None => {
+                last.append_bit_zero()?.append_raw(&[0; 32], 256)?;
+            }
+        }
         data.checked_append_reference(last.into_cell()?)?;
         Ok(data.into_cell()?)
     }
@@ -125,6 +138,7 @@ impl ServiceActorContract {
             proof_scheme_hash: parse_hash(stack, 11)?,
             last_request_hash: parse_hash(stack, 12)?,
             last_response_hash: parse_hash(stack, 13)?,
+            attestor_pubkey: if stack.u64(14)? == 0 { None } else { Some(parse_hash(stack, 15)?) },
         })
     }
 
@@ -134,6 +148,20 @@ impl ServiceActorContract {
 
     pub fn respond(query_id: u64, response_hash: [u8; 32]) -> anyhow::Result<chain_block::Cell> {
         message(SVC_RESPOND_OPCODE, query_id, |b| b.append_u256(&response_hash).map(|_| ()))
+    }
+
+    /// Respond on a Service Actor deployed with an `attestor_pubkey`:
+    /// `signature` must be a valid ed25519 signature over `response_hash`
+    /// under that key, or the contract rejects the message.
+    pub fn respond_signed(
+        query_id: u64,
+        response_hash: [u8; 32],
+        signature: &[u8; 64],
+    ) -> anyhow::Result<chain_block::Cell> {
+        message(SVC_RESPOND_OPCODE, query_id, |b| {
+            b.append_u256(&response_hash)?;
+            b.append_raw(signature, 512).map(|_| ())
+        })
     }
 
     /// `filler` is written in the authorized-caller slot when
@@ -238,6 +266,7 @@ mod tests {
             rate_limit_per_day: 1_000,
             metadata_hash: [0x33; 32],
             proof_scheme_hash: [0x44; 32],
+            attestor_pubkey: None,
         }
     }
 
@@ -343,6 +372,8 @@ mod tests {
             hash_number(svc.proof_scheme_hash),
             hash_number([0xEE; 32]),
             hash_number([0xFF; 32]),
+            number("1"),
+            hash_number([0x99; 32]),
         ]);
         let data = ServiceActorContract::decode_data(&stack).unwrap();
         assert_eq!(data.owner, svc.owner);
@@ -358,6 +389,7 @@ mod tests {
         assert_eq!(data.proof_scheme_hash, svc.proof_scheme_hash);
         assert_eq!(data.last_request_hash, [0xEE; 32]);
         assert_eq!(data.last_response_hash, [0xFF; 32]);
+        assert_eq!(data.attestor_pubkey, Some([0x99; 32]));
     }
 
     #[test]
@@ -378,10 +410,13 @@ mod tests {
             hash_number([0; 32]),
             hash_number([0; 32]),
             hash_number([0; 32]),
+            number("0"),
+            hash_number([0; 32]),
         ]);
         let data = ServiceActorContract::decode_data(&stack).unwrap();
         assert_eq!(data.authorized_caller, None);
         assert!(data.open_access);
         assert!(!data.active);
+        assert_eq!(data.attestor_pubkey, None);
     }
 }

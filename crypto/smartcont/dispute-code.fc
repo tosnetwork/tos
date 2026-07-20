@@ -46,8 +46,9 @@ const int err::already_resolved = 2002;
 const int err::invalid_ruling = 2003;
 const int err::invalid_split_bps = 2004;
 const int err::unknown_op = 2005;
+const int err::bad_ruling_signature = 2006;
 
-(slice, slice, slice, int, int, int, int, int, int, int, int) load_state() inline {
+(slice, slice, slice, int, int, int, int, int, int, int, int, int, int) load_state() inline {
   slice ds = get_data().begin_parse();
   slice claimant = ds~load_msg_addr();
   slice respondent = ds~load_msg_addr();
@@ -63,15 +64,18 @@ const int err::unknown_op = 2005;
   slice res = ds~load_ref().begin_parse();
   int respondent_evidence_hash = res~load_uint(256);
   int ruling_hash = res~load_uint(256);
+  int has_attestor = res~load_uint(1);
+  int attestor_pubkey = res~load_uint(256);
   res.end_parse();
   ds.end_parse();
   return (claimant, respondent, reviewer, status, ruling, split_bps, deadline, subject_hash,
-    claimant_evidence_hash, respondent_evidence_hash, ruling_hash);
+    claimant_evidence_hash, respondent_evidence_hash, ruling_hash, has_attestor, attestor_pubkey);
 }
 
 () save_state(slice claimant, slice respondent, slice reviewer, int status, int ruling,
              int split_bps, int deadline, int subject_hash, int claimant_evidence_hash,
-             int respondent_evidence_hash, int ruling_hash) impure inline {
+             int respondent_evidence_hash, int ruling_hash, int has_attestor,
+             int attestor_pubkey) impure inline {
   set_data(begin_cell()
     .store_slice(claimant)
     .store_slice(respondent)
@@ -87,6 +91,8 @@ const int err::unknown_op = 2005;
     .store_ref(begin_cell()
       .store_uint(respondent_evidence_hash, 256)
       .store_uint(ruling_hash, 256)
+      .store_uint(has_attestor, 1)
+      .store_uint(attestor_pubkey, 256)
     .end_cell())
   .end_cell());
 }
@@ -104,7 +110,7 @@ const int err::unknown_op = 2005;
 
   (slice claimant, slice respondent, slice reviewer, int status, int ruling, int split_bps,
    int deadline, int subject_hash, int claimant_evidence_hash, int respondent_evidence_hash,
-   int ruling_hash) = load_state();
+   int ruling_hash, int has_attestor, int attestor_pubkey) = load_state();
 
   if (op == op::submit_respondent_evidence) {
     throw_unless(err::not_respondent, equal_slice_bits(sender, respondent));
@@ -112,7 +118,8 @@ const int err::unknown_op = 2005;
     respondent_evidence_hash = in_msg~load_uint(256);
     in_msg.end_parse();
     save_state(claimant, respondent, reviewer, status::evidence_submitted, ruling, split_bps,
-      deadline, subject_hash, claimant_evidence_hash, respondent_evidence_hash, ruling_hash);
+      deadline, subject_hash, claimant_evidence_hash, respondent_evidence_hash, ruling_hash,
+      has_attestor, attestor_pubkey);
     return ();
   }
 
@@ -122,6 +129,14 @@ const int err::unknown_op = 2005;
     int new_ruling = in_msg~load_uint(8);
     int new_split_bps = in_msg~load_uint(16);
     int new_ruling_hash = in_msg~load_uint(256);
+    if (has_attestor) {
+      ;; Additional, independent check: the configured attestor key must have
+      ;; signed the new ruling_hash. This never replaces the reviewer sender
+      ;; check above -- it is an extra requirement layered on top.
+      slice signature = in_msg~load_bits(512);
+      throw_unless(err::bad_ruling_signature,
+        check_signature(new_ruling_hash, signature, attestor_pubkey));
+    }
     in_msg.end_parse();
     throw_unless(err::invalid_ruling,
       (new_ruling == ruling::claimant) | (new_ruling == ruling::respondent) |
@@ -129,13 +144,14 @@ const int err::unknown_op = 2005;
     throw_unless(err::invalid_split_bps,
       (new_ruling != ruling::split) | ((new_split_bps >= 0) & (new_split_bps <= 10000)));
     save_state(claimant, respondent, reviewer, status::resolved, new_ruling, new_split_bps,
-      deadline, subject_hash, claimant_evidence_hash, respondent_evidence_hash, new_ruling_hash);
+      deadline, subject_hash, claimant_evidence_hash, respondent_evidence_hash, new_ruling_hash,
+      has_attestor, attestor_pubkey);
     return ();
   }
 
   throw(err::unknown_op);
 }
 
-(slice, slice, slice, int, int, int, int, int, int, int, int) get_dispute_data() method_id {
+(slice, slice, slice, int, int, int, int, int, int, int, int, int, int) get_dispute_data() method_id {
   return load_state();
 }

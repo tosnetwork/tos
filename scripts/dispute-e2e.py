@@ -289,9 +289,43 @@ async def run_checks(faucet) -> None:
     check("split ruling recorded", data["ruling"] == "split", str(data))
     check("split bps recorded", data["split_bps"] == 6500, str(data))
 
+    print("\n=== attestor path: rule requires a signature over ruling_hash ===")
+    await tosctl("key", "add", "--name", "dispute-attestor-key")
+    await tosctl("key", "add", "--name", "wrong-dispute-attestor-key")
+    deploy3 = await tosctl_json(
+        "agent", "dispute", "deploy", "--name", "case-3",
+        "--claimant", claimant, "--respondent", respondent, "--reviewer", reviewer,
+        "--deadline", str(deadline + 20),
+        "--subject-hash", SUBJECT_HASH, "--claimant-evidence-hash", CLAIMANT_EVIDENCE_HASH,
+        "--signer-vault-key", "dispute-attestor-key",
+        "--from", "claimant", "--amount", "0.1", "-w", "0", "--yes",
+    )
+    address3 = deploy3["address"]
+    check("attestor dispute deployed and active", await poll_predicate(
+        lambda: rpc_call("getAddressState", address=address3).get("result") == "active"))
+    data = await dispute_show("case-3")
+    check("attestor pubkey recorded on-chain", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("rule", "case-3", "reviewer", "--ruling", "claimant",
+                  "--ruling-hash", RULING_HASH, may_fail=True)
+    data = await dispute_show("case-3")
+    check("rule without attestation rejected", data["status"] == "open", str(data))
+
+    await send_op("rule", "case-3", "reviewer", "--ruling", "claimant",
+                  "--ruling-hash", RULING_HASH,
+                  "--signer-vault-key", "wrong-dispute-attestor-key", may_fail=True)
+    data = await dispute_show("case-3")
+    check("rule with wrong attestor key rejected", data["status"] == "open", str(data))
+
+    await send_op("rule", "case-3", "reviewer", "--ruling", "claimant",
+                  "--ruling-hash", RULING_HASH, "--signer-vault-key", "dispute-attestor-key")
+    data = await dispute_show("case-3")
+    check("attestor dispute resolved", data["status"] == "resolved", str(data))
+
     print("\n=== persisted local records ===")
     records = {r["name"]: r for r in await tosctl_json("agent", "dispute", "ls")}
-    check("both records tracked locally", {"case-1", "case-2"} <= set(records), str(sorted(records)))
+    check("all records tracked locally", {"case-1", "case-2", "case-3"} <= set(records),
+          str(sorted(records)))
     check("record claimant matches", same_addr(records["case-1"]["claimant"], claimant),
           str(records["case-1"]))
 

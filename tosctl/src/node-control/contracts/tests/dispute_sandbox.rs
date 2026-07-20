@@ -18,6 +18,7 @@ use contracts::{
     DisputeContract, DisputeInit, DISPUTE_STATUS_EVIDENCE_SUBMITTED, DISPUTE_STATUS_OPEN,
     DISPUTE_STATUS_RESOLVED, RULING_CLAIMANT, RULING_RESPONDENT, RULING_SPLIT,
 };
+use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 
 const TOS: u64 = 1_000_000_000;
@@ -27,6 +28,7 @@ const ERR_ALREADY_RESOLVED: i32 = 2002;
 const ERR_INVALID_RULING: i32 = 2003;
 const ERR_INVALID_SPLIT_BPS: i32 = 2004;
 const ERR_UNKNOWN_OP: i32 = 2005;
+const ERR_BAD_RULING_SIGNATURE: i32 = 2006;
 
 struct Fixture {
     bc: Blockchain,
@@ -39,6 +41,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(funding: u64) -> Self {
+        Self::build(funding, None)
+    }
+
+    fn with_attestor(funding: u64, attestor_pubkey: [u8; 32]) -> Self {
+        Self::build(funding, Some(attestor_pubkey))
+    }
+
+    fn build(funding: u64, attestor_pubkey: Option<[u8; 32]>) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         bc.set_workchain(-1);
         let claimant = bc.treasury("claimant", 1_000 * TOS).expect("claimant");
@@ -52,6 +62,7 @@ impl Fixture {
             deadline: 1_800_000_000,
             subject_hash: [0x11; 32],
             claimant_evidence_hash: [0x22; 32],
+            attestor_pubkey,
         };
         let dispute = DisputeContract::calculate_address(-1, &init).expect("address");
         let state_init = DisputeContract::build_state_init(&init).expect("state init");
@@ -225,4 +236,54 @@ fn unknown_operation_is_rejected() {
     f.send_from(&claimant, body.into_cell().unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_UNKNOWN_OP);
+}
+
+#[test]
+fn rule_on_an_attestor_configured_dispute_requires_a_valid_signature() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let attestor_pubkey = attestor.verifying_key().to_bytes();
+    let ruling_hash = [0xBB; 32];
+    let mut f = Fixture::with_attestor(TOS / 10, attestor_pubkey);
+    let reviewer = f.reviewer.address().clone();
+
+    // Plain `rule` (no signature) is rejected by the trailing signature load.
+    f.send_from(&reviewer, DisputeContract::rule(1, RULING_CLAIMANT, 0, ruling_hash).unwrap())
+        .expect_aborted();
+    assert_eq!(f.data().status, DISPUTE_STATUS_OPEN);
+
+    // A signature from the wrong key is rejected.
+    let wrong_key = SigningKey::from_bytes(&[0x88; 32]);
+    let wrong_signature: [u8; 64] = wrong_key.sign(&ruling_hash).to_bytes();
+    f.send_from(
+        &reviewer,
+        DisputeContract::rule_signed(2, RULING_CLAIMANT, 0, ruling_hash, &wrong_signature)
+            .unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_BAD_RULING_SIGNATURE);
+    assert_eq!(f.data().status, DISPUTE_STATUS_OPEN);
+
+    // A non-reviewer sender is still rejected, even with a valid signature.
+    let outsider = f.outsider.address().clone();
+    let valid_signature: [u8; 64] = attestor.sign(&ruling_hash).to_bytes();
+    f.send_from(
+        &outsider,
+        DisputeContract::rule_signed(3, RULING_CLAIMANT, 0, ruling_hash, &valid_signature)
+            .unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_NOT_REVIEWER);
+    assert_eq!(f.data().status, DISPUTE_STATUS_OPEN);
+
+    // The reviewer, with the correct attestor signature, resolves the dispute.
+    f.send_from(
+        &reviewer,
+        DisputeContract::rule_signed(4, RULING_CLAIMANT, 0, ruling_hash, &valid_signature)
+            .unwrap(),
+    )
+    .expect_success();
+    let data = f.data();
+    assert_eq!(data.status, DISPUTE_STATUS_RESOLVED);
+    assert_eq!(data.ruling, RULING_CLAIMANT);
+    assert_eq!(data.ruling_hash, ruling_hash);
 }

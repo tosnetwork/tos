@@ -1061,7 +1061,7 @@ impl AgentTaskSendCmd {
             let stack =
                 provider.get_method(destination.to_string(), "get_task_data", vec![]).await?;
             let chain_task = TaskEscrowContract::decode_data(&stack)?;
-            let signature = sign_result_hash_with_vault_key(
+            let signature = sign_hash_with_vault_key(
                 vault_key,
                 &chain_task.result_hash,
                 vault.clone(),
@@ -3138,7 +3138,7 @@ pub(crate) fn parse_required_hash(name: &str, value: &Option<String>) -> anyhow:
     parse_optional_hash(name, value)?.ok_or_else(|| anyhow::anyhow!("--{name} is required"))
 }
 
-async fn resolve_attestor_pubkey(
+pub(crate) async fn resolve_attestor_pubkey(
     attestor_pubkey: &Option<String>,
     signer_vault_key: &Option<String>,
     vault: std::sync::Arc<SecretVault>,
@@ -3164,20 +3164,23 @@ async fn resolve_attestor_pubkey(
     }
 }
 
-/// Sign the 32-byte `result_hash` directly with the named vault key, matching
+/// Sign a 32-byte hash directly with the named vault key, matching
 /// CHKSIGNU's convention (the raw hash, not a re-hashed or prefixed encoding).
-async fn sign_result_hash_with_vault_key(
+pub(crate) async fn sign_hash_with_vault_key(
     name: &str,
-    result_hash: &[u8; 32],
+    hash: &[u8; 32],
     vault: std::sync::Arc<SecretVault>,
 ) -> anyhow::Result<[u8; 64]> {
     let secret = KeyConfig::VaultKey { name: name.to_owned() }.read_secret(Some(vault)).await?;
     let keypair = secret.as_keypair()?;
-    let raw = keypair.sign(result_hash).await?;
+    let raw = keypair.sign(hash).await?;
     raw.try_into().map_err(|_| anyhow::anyhow!("signature must be 64 bytes"))
 }
 
-fn parse_optional_signature(name: &str, value: &Option<String>) -> anyhow::Result<Option<[u8; 64]>> {
+pub(crate) fn parse_optional_signature(
+    name: &str,
+    value: &Option<String>,
+) -> anyhow::Result<Option<[u8; 64]>> {
     let Some(value) = value else {
         return Ok(None);
     };

@@ -467,6 +467,10 @@ pub struct ServiceActorConfig {
     pub metadata_hash: String,
     /// Hex-encoded 32-byte hash identifying the supported proof/attestation scheme.
     pub proof_scheme_hash: String,
+    /// Optional hex-encoded ed25519 public key required to sign `respond`'s
+    /// response_hash, on top of the existing owner authorization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestor_pubkey: Option<String>,
     /// Unix timestamp when this local record was created.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<u64>,
@@ -487,6 +491,10 @@ pub struct DisputeConfig {
     pub subject_hash: String,
     /// Hex-encoded 32-byte hash of the claimant's evidence.
     pub claimant_evidence_hash: String,
+    /// Optional hex-encoded ed25519 public key required to sign `rule`'s
+    /// ruling_hash, on top of the existing reviewer authorization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestor_pubkey: Option<String>,
     /// Unix timestamp when this local record was created.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<u64>,
