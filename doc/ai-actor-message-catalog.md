@@ -4,7 +4,7 @@ This document defines the initial message catalog for AI actor workflows.
 
 The catalog is intentionally small. Each message should use an explicit opcode, a `query_id`, and enough fields to reconstruct the workflow from transaction history.
 
-The primary sender and receiver model is AI robot wallets and agent accounts, not ordinary mobile wallets.
+The primary sender and receiver model is Agent Wallets and Agent Accounts.
 
 ## Conventions
 

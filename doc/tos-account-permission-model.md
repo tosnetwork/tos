@@ -6,7 +6,7 @@ Version: v0.4-spec-draft
 
 This document defines the account, signing, delegation, and permission model for TOS.
 It is also the authorization foundation for the AI Actor Model described in [ai-actors.md](ai-actors.md).
-The product priority is AI robot wallets and agent accounts rather than ordinary consumer Android or iOS wallets.
+The product priority is Agent Wallets and Agent Accounts.
 
 It exists because wallet UX, application composability, automation, and safe operator workflows all depend on a clear answer to this question:
 
@@ -145,7 +145,7 @@ TOS should prefer one strong default path over many loosely compatible patterns.
 
 The proposed baseline model for TOS is:
 
-- one canonical default account model for AI robot wallets and automation SDKs
+- one canonical default account model for Agent Wallets and automation SDKs
 - one canonical transaction signing payload model
 - one canonical submission model that distinguishes:
   - signer
@@ -167,7 +167,7 @@ This baseline is intended to optimize for:
 
 Unless superseded by a later approved revision, the v1 baseline for TOS is:
 
-1. TOS MUST define one canonical Default Account Model for AI robot wallets and automation SDKs.
+1. TOS MUST define one canonical Default Account Model for Agent Wallets and automation SDKs.
 2. TOS MUST define one canonical signing payload model for agent transaction authorization.
 3. TOS MUST distinguish signer, submitter, and fee payer as separate logical roles in public standards, even when the common case collapses them into one actor.
 4. TOS MUST define delegation as an explicit, inspectable, bounded authorization object.
@@ -209,7 +209,7 @@ Open questions:
 Decisions:
 
 - v1 baseline direction chosen:
-  - one canonical default account model for AI robot wallets, agent accounts and automation SDKs
+  - one canonical default account model for Agent Wallets, Agent Accounts and automation SDKs
   - advanced account variants deferred to later additive standards
 
 Recommended options:
@@ -224,7 +224,7 @@ Recommended direction:
 
 Proposed baseline:
 
-- TOS should define one canonical default account model for AI robot wallets and automation SDKs.
+- TOS should define one canonical default account model for Agent Wallets and automation SDKs.
 - That model should support:
   - deterministic ownership semantics
   - replay-safe transaction authorization

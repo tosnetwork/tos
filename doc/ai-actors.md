@@ -17,7 +17,7 @@ TOS treats accounts, smart contracts, AI agents, tools, services, and tasks as a
 
 ### AI Agent Wallet
 
-An AI Agent Wallet is an agent-first wallet/account used by an autonomous agent, agent runner, automation system, or service workflow. It is not optimized for consumer mobile UX. It should expose policy, permissions, balances, task history and service-call limits in machine-readable form.
+An AI Agent Wallet is an agent-first wallet/account used by an autonomous agent, agent runner, automation system, or service workflow. It should expose policy, permissions, balances, task history and service-call limits in machine-readable form.
 
 ### User Actor
 
@@ -247,7 +247,6 @@ The first implementation slice should add:
 ## Non-Goals
 
 - Do not add a separate VM or execution domain for AI workloads.
-- Do not prioritize ordinary Android or iOS consumer wallets over AI Agent Wallets.
 - Do not make off-chain model output authoritative without on-chain acceptance or verifier policy.
 - Do not store large prompts, model responses, datasets, or private credentials in contract state.
 - Do not let workflow indexers decide settlement.

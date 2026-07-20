@@ -60,7 +60,6 @@ The MVP provides:
 
 The MVP intentionally avoids:
 
-- consumer Android or iOS wallet UX
 - a separate execution engine
 - storing prompts, model outputs, private credentials or large task payloads on-chain
 - treating the controller key as owner-equivalent authority

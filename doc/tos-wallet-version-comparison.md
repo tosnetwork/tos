@@ -14,7 +14,7 @@ The goal is practical interoperability guidance for implementers. This is an imp
 
 For the AI Actor Model, these wallet versions are relevant because user actors and agent controllers still need predictable signing, sequence, extension, and permission behavior before task or service workflows can safely spend funds.
 
-This comparison supports the agent-wallet compatibility layer. It is not a roadmap for consumer Android or iOS wallet products.
+This comparison supports the Agent Wallet compatibility layer.
 
 ## 2. Scope and Evidence
 

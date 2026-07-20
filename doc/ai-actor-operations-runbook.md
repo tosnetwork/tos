@@ -4,7 +4,7 @@ This runbook describes the minimum operational posture for running AI actor infr
 
 It covers off-chain agent runners, model or tool service operators, verifier operators, and task workflow backends.
 
-The operational target is an AI robot wallet stack: agent account contracts, controller keys, off-chain runners, service actors and verifier actors. Consumer Android or iOS wallet operations are outside this runbook.
+The operational target is an Agent Wallet stack: Agent Account contracts, controller keys, off-chain runners, Service Actors and Verifier Actors.
 
 ## Node Access
 
