@@ -17,6 +17,7 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <exception>
 #include <utility>
 
 #include "auto/tl/toslib_api_json.h"
@@ -51,7 +52,9 @@ static td::Result<std::pair<toslib_api::object_ptr<toslib_api::Function>, std::s
 
 static std::string from_response(const toslib_api::Object &object, const td::string &extra) {
   auto str = td::json_encode<td::string>(td::ToJson(object));
-  CHECK(!str.empty() && str.back() == '}');
+  if (str.empty() || str.back() != '}') {
+    return str;
+  }
   if (!extra.empty()) {
     str.pop_back();
     str.reserve(str.size() + 11 + extra.size());
@@ -70,19 +73,31 @@ static td::CSlice store_string(std::string str) {
   return *current_output;
 }
 
-void ClientJson::send(td::Slice request) {
-  auto r_request = to_request(request);
-  if (r_request.is_error()) {
-    LOG(ERROR) << "Failed to parse " << tag("request", td::format::escaped(request)) << " " << r_request.error();
-    return;
-  }
+static td::CSlice store_error_response(int code, td::Slice message) {
+  auto response = toslib_api::make_object<toslib_api::error>(code, message.str());
+  return store_string(from_response(*response, ""));
+}
 
-  std::uint64_t extra_id = extra_id_.fetch_add(1, std::memory_order_relaxed);
-  if (!r_request.ok_ref().second.empty()) {
-    std::lock_guard<std::mutex> guard(mutex_);
-    extra_[extra_id] = std::move(r_request.ok_ref().second);
+void ClientJson::send(td::Slice request) {
+  try {
+    auto r_request = to_request(request);
+    if (r_request.is_error()) {
+      LOG(ERROR) << "Failed to parse " << tag("request", td::format::escaped(request)) << " " << r_request.error();
+      return;
+    }
+
+    auto parsed_request = r_request.move_as_ok();
+    std::uint64_t extra_id = extra_id_.fetch_add(1, std::memory_order_relaxed);
+    if (!parsed_request.second.empty()) {
+      std::lock_guard<std::mutex> guard(mutex_);
+      extra_[extra_id] = std::move(parsed_request.second);
+    }
+    client_.send(Client::Request{extra_id, std::move(parsed_request.first)});
+  } catch (const std::exception &error) {
+    LOG(ERROR) << "Unhandled exception while sending JSON request: " << error.what();
+  } catch (...) {
+    LOG(ERROR) << "Unhandled unknown exception while sending JSON request";
   }
-  client_.send(Client::Request{extra_id, std::move(r_request.ok_ref().first)});
 }
 
 td::CSlice ClientJson::receive(double timeout) {
@@ -104,14 +119,26 @@ td::CSlice ClientJson::receive(double timeout) {
 }
 
 td::CSlice ClientJson::execute(td::Slice request) {
-  auto r_request = to_request(request);
-  if (r_request.is_error()) {
-    LOG(ERROR) << "Failed to parse " << tag("request", td::format::escaped(request)) << " " << r_request.error();
-    return {};
-  }
+  try {
+    auto r_request = to_request(request);
+    if (r_request.is_error()) {
+      LOG(ERROR) << "Failed to parse " << tag("request", td::format::escaped(request)) << " " << r_request.error();
+      return {};
+    }
 
-  return store_string(from_response(*Client::execute(Client::Request{0, std::move(r_request.ok_ref().first)}).object,
-                                    r_request.ok().second));
+    auto parsed_request = r_request.move_as_ok();
+    auto response = Client::execute(Client::Request{0, std::move(parsed_request.first)});
+    if (!response.object) {
+      return store_error_response(500, "Request returned empty response");
+    }
+    return store_string(from_response(*response.object, parsed_request.second));
+  } catch (const std::exception &error) {
+    LOG(ERROR) << "Unhandled exception while executing JSON request: " << error.what();
+    return store_error_response(500, PSLICE() << "Unhandled exception: " << error.what());
+  } catch (...) {
+    LOG(ERROR) << "Unhandled unknown exception while executing JSON request";
+    return store_error_response(500, "Unhandled unknown exception");
+  }
 }
 
 void ClientJson::cancel_requests() {
