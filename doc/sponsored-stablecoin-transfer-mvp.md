@@ -1,5 +1,13 @@
 # Sponsored Stablecoin Transfer MVP
 
+> **Status: Reserved / On Hold**
+>
+> Preserve this design as a post-mainnet engineering target. Implementation must not
+> begin on the current mainline before the TOS mainnet launch. After mainnet is live,
+> create a dedicated development branch for this MVP and review the design against the
+> production network's observed fee behavior, validator economics and security limits
+> before writing consensus-adjacent or contract code.
+
 ## Product Definition
 
 > Gasless Stablecoin Payments for AI Agents, backed by protocol-enforced spending policies and issuer-funded gas credits.
