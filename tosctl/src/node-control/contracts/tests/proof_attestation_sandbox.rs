@@ -34,15 +34,22 @@ struct Fixture {
 
 impl Fixture {
     fn new(funding: u64) -> Self {
+        Self::with_subject_hash(funding, SigningKey::from_bytes(&[0x42; 32]), [0x11; 32])
+    }
+
+    /// `subject_hash` doubles as a deploy-data salt: two fixtures with the
+    /// same `signing_key` but different `subject_hash` deploy to distinct
+    /// addresses, which is what makes the cross-instance replay test below
+    /// meaningful (`calculate_address` hashes the full `StateInit`).
+    fn with_subject_hash(funding: u64, signing_key: SigningKey, subject_hash: [u8; 32]) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         bc.set_workchain(-1);
         let owner = bc.treasury("owner", 1_000 * TOS).expect("owner");
         let outsider = bc.treasury("outsider", 1_000 * TOS).expect("outsider");
-        let signing_key = SigningKey::from_bytes(&[0x42; 32]);
         let init = ProofAttestationInit {
             owner: owner.address().clone(),
             public_key: signing_key.verifying_key().to_bytes(),
-            subject_hash: [0x11; 32],
+            subject_hash,
         };
         let attestation = ProofAttestationContract::calculate_address(-1, &init).expect("address");
         let state_init = ProofAttestationContract::build_state_init(&init).expect("state init");
@@ -120,7 +127,9 @@ fn deploy_records_initial_state() {
 fn valid_signature_from_the_registered_key_is_accepted() {
     let mut f = Fixture::new(TOS / 10);
     let attested_hash = [0xAA; 32];
-    let signature = f.signing_key.sign(&attested_hash).to_bytes();
+    let hash_to_sign =
+        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &attested_hash).unwrap();
+    let signature = f.signing_key.sign(&hash_to_sign).to_bytes();
     let outsider = f.outsider.address().clone();
 
     f.send_from(&outsider, ProofAttestationContract::attest(1, attested_hash, &signature).unwrap())
@@ -135,8 +144,10 @@ fn valid_signature_from_the_registered_key_is_accepted() {
 fn signature_from_a_different_key_is_rejected() {
     let mut f = Fixture::new(TOS / 10);
     let attested_hash = [0xBB; 32];
+    let hash_to_sign =
+        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &attested_hash).unwrap();
     let wrong_key = SigningKey::from_bytes(&[0x99; 32]);
-    let bad_signature = wrong_key.sign(&attested_hash).to_bytes();
+    let bad_signature = wrong_key.sign(&hash_to_sign).to_bytes();
     let outsider = f.outsider.address().clone();
 
     f.send_from(
@@ -152,7 +163,9 @@ fn signature_from_a_different_key_is_rejected() {
 fn tampered_hash_invalidates_an_otherwise_valid_signature() {
     let mut f = Fixture::new(TOS / 10);
     let signed_hash = [0xCC; 32];
-    let signature = f.signing_key.sign(&signed_hash).to_bytes();
+    let hash_to_sign =
+        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &signed_hash).unwrap();
+    let signature = f.signing_key.sign(&hash_to_sign).to_bytes();
     let tampered_hash = [0xDD; 32];
     let outsider = f.outsider.address().clone();
 
@@ -172,7 +185,9 @@ fn attest_is_permissionless_any_sender_may_relay_a_valid_signature() {
     // `owner`), asserted explicitly here for clarity.
     let mut f = Fixture::new(TOS / 10);
     let attested_hash = [0xEE; 32];
-    let signature = f.signing_key.sign(&attested_hash).to_bytes();
+    let hash_to_sign =
+        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &attested_hash).unwrap();
+    let signature = f.signing_key.sign(&hash_to_sign).to_bytes();
     let outsider = f.outsider.address().clone();
     assert_ne!(outsider, f.owner.address().clone());
     f.send_from(&outsider, ProofAttestationContract::attest(1, attested_hash, &signature).unwrap())
@@ -184,7 +199,9 @@ fn attest_is_permissionless_any_sender_may_relay_a_valid_signature() {
 fn owner_can_rotate_key_resetting_attestation_others_rejected() {
     let mut f = Fixture::new(TOS / 10);
     let attested_hash = [0x01; 32];
-    let signature = f.signing_key.sign(&attested_hash).to_bytes();
+    let hash_to_sign =
+        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &attested_hash).unwrap();
+    let signature = f.signing_key.sign(&hash_to_sign).to_bytes();
     let outsider = f.outsider.address().clone();
     f.send_from(&outsider, ProofAttestationContract::attest(1, attested_hash, &signature).unwrap())
         .expect_success();
@@ -214,7 +231,7 @@ fn owner_can_rotate_key_resetting_attestation_others_rejected() {
         .expect_exit_code(ERR_BAD_SIGNATURE);
 
     // A fresh signature from the new key is accepted.
-    let new_signature = new_key.sign(&attested_hash).to_bytes();
+    let new_signature = new_key.sign(&hash_to_sign).to_bytes();
     f.send_from(
         &outsider,
         ProofAttestationContract::attest(5, attested_hash, &new_signature).unwrap(),
@@ -236,10 +253,59 @@ fn owner_can_revoke_blocking_further_attestations_others_rejected() {
     assert!(f.data().revoked);
 
     let attested_hash = [0x02; 32];
-    let signature = f.signing_key.sign(&attested_hash).to_bytes();
+    let hash_to_sign =
+        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &attested_hash).unwrap();
+    let signature = f.signing_key.sign(&hash_to_sign).to_bytes();
     f.send_from(&outsider, ProofAttestationContract::attest(3, attested_hash, &signature).unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_REVOKED);
+}
+
+#[test]
+fn attest_signature_is_bound_to_the_attestation_address_and_rejected_across_instances() {
+    // Two Proof Attestation instances sharing the same attestor key but
+    // deployed against different subject_hash values -- and therefore
+    // different addresses -- must not accept each other's signatures, even
+    // for the exact same attested_hash.
+    let mut a = Fixture::new(TOS / 10);
+    let mut b = Fixture::with_subject_hash(TOS / 10, a.signing_key.clone(), [0x99; 32]);
+    assert_ne!(a.attestation, b.attestation);
+
+    let attested_hash = [0x77; 32];
+    let outsider_a = a.outsider.address().clone();
+    let outsider_b = b.outsider.address().clone();
+
+    let hash_for_a =
+        ProofAttestationContract::attest_hash_to_sign(&a.attestation, &attested_hash).unwrap();
+    let signature_for_a = a.signing_key.sign(&hash_for_a).to_bytes();
+
+    // Valid against instance a...
+    a.send_from(
+        &outsider_a,
+        ProofAttestationContract::attest(1, attested_hash, &signature_for_a).unwrap(),
+    )
+    .expect_success();
+
+    // ...but rejected when replayed against instance b, despite the same key
+    // and the same attested_hash.
+    b.send_from(
+        &outsider_b,
+        ProofAttestationContract::attest(1, attested_hash, &signature_for_a).unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_BAD_SIGNATURE);
+    assert!(!b.data().has_attestation);
+
+    // A freshly-signed message for instance b succeeds.
+    let hash_for_b =
+        ProofAttestationContract::attest_hash_to_sign(&b.attestation, &attested_hash).unwrap();
+    let signature_for_b = b.signing_key.sign(&hash_for_b).to_bytes();
+    b.send_from(
+        &outsider_b,
+        ProofAttestationContract::attest(2, attested_hash, &signature_for_b).unwrap(),
+    )
+    .expect_success();
+    assert_eq!(b.data().attested_hash, attested_hash);
 }
 
 #[test]

@@ -176,6 +176,38 @@ Examples:
   test on top of, so that remains open rather than claimed. `doc/security-audit-native-2026-06.md`
   still explicitly excludes all AI-actor primitives from its scope; this pass closes concrete
   bugs found along the way but is not a substitute for that dedicated review.
+- Extended the same testnet-readiness security pass across the rest of the native AI-actor
+  contracts (Task Escrow, Dispute, Service Actor, Capability Registry, Proof Attestation),
+  closing two further findings. First, Proof Attestation's `attest` op verified
+  `check_signature(attested_hash, ...)` directly with no binding to which Proof Attestation
+  instance the signature was submitted against -- unlike every sibling contract's attestor
+  check (Task Escrow/Dispute/Service Actor/Agent Account), which had already been domain-bound
+  to the contract's own address earlier in this effort. Since `attest` is deliberately
+  permissionless and security rests entirely on the signature, an attestor key reused across
+  multiple Proof Attestation instances (plausible: one attestor service typically attests many
+  subjects) could have a signature valid on one instance replayed against another sharing the
+  same key and attested hash. Fixed with the same `cell_hash(workchain || address || hash)`
+  domain-binding pattern via `ProofAttestationContract::attest_hash_to_sign`, reusing the
+  existing `contracts::domain_bound_hash` helper; updated the CLI's vault-key signing path to
+  sign the domain-bound hash instead of the bare hash, and added a cross-instance replay test
+  alongside the existing signature tests. Second, Task Escrow, Dispute, Service Actor and
+  Capability Registry were all missing `in_msg.end_parse()` in several op branches (`stake`,
+  `deactivate`, `reactivate`, `rotate_attestor_key`, `revoke_attestor`, and -- in Task Escrow's
+  case -- every single branch including `settle`'s attestor-signature path), meaning trailing
+  bits appended after an otherwise well-formed message body were silently ignored rather than
+  rejected, unlike each contract's other branches which already enforced it. Not independently
+  exploitable against a `tosctl`-built message (the CLI never appends trailing bits), but an
+  inconsistency worth closing for defense in depth before external tooling or hand-built
+  messages start reaching these contracts. Added a new Task Escrow sandbox test proving
+  trailing garbage is now rejected (previously would have been silently accepted). Both classes
+  of fix were verified via updated/new sandbox tests in each contract's own test file and via a
+  full real-localnet re-run of every affected contract's existing end-to-end script
+  ([`scripts/proof-attestation-e2e.py`](scripts/proof-attestation-e2e.py),
+  [`scripts/dispute-e2e.py`](scripts/dispute-e2e.py),
+  [`scripts/service-actor-e2e.py`](scripts/service-actor-e2e.py),
+  [`scripts/capability-registry-e2e.py`](scripts/capability-registry-e2e.py),
+  [`scripts/agent-task-escrow-e2e.py`](scripts/agent-task-escrow-e2e.py)), all passing after the
+  fix with no observed regressions.
 
 ### Phase 3: Agent Registry and Service Marketplace
 

@@ -212,6 +212,25 @@ fn cancel_refunds_creator() {
 }
 
 #[test]
+fn trailing_bits_after_a_well_formed_op_are_rejected() {
+    // `cancel`'s body is just op+query_id; any extra bits appended after
+    // that must now be rejected by `in_msg.end_parse()` rather than
+    // silently ignored (defense in depth against malformed/extended
+    // messages, matching every sibling AI-actor contract's convention).
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 10);
+    let creator_addr = f.creator.address().clone();
+    let mut body = chain_block::BuilderData::new();
+    chain_block::IBitstring::append_u32(&mut body, contracts::task_escrow::TASK_CANCEL_OPCODE)
+        .unwrap();
+    chain_block::IBitstring::append_u64(&mut body, 1).unwrap();
+    chain_block::IBitstring::append_u32(&mut body, 0xDEAD_BEEF).unwrap();
+    f.send_from(&creator_addr, body.into_cell().unwrap())
+        .expect_aborted()
+        .expect_exit_code(9);
+    assert_eq!(f.status(), STATUS_OPEN, "the malformed cancel must not have taken effect");
+}
+
+#[test]
 fn assigned_agent_can_reject_and_refund_creator() {
     let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 10);
     let creator_addr = f.creator.address().clone();

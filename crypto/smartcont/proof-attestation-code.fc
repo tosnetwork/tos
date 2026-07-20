@@ -91,7 +91,16 @@ const int err::unknown_op = 2103;
     int new_attested_hash = in_msg~load_uint(256);
     slice signature = in_msg~load_bits(512);
     in_msg.end_parse();
-    throw_unless(err::bad_signature, check_signature(new_attested_hash, signature, public_key));
+    ;; Domain-bind the signed hash to this contract's own address so a
+    ;; signature cannot be replayed against a different Proof Attestation
+    ;; instance that happens to share the same attestor public key and the
+    ;; same attested_hash value -- the bare hash used previously had no such
+    ;; binding. Same pattern as Task Escrow/Dispute/Service Actor attestation
+    ;; and Agent Account's controller signature.
+    (int wc, int addr) = my_address().parse_std_addr();
+    int domain_hash = cell_hash(begin_cell()
+      .store_int(wc, 8).store_uint(addr, 256).store_uint(new_attested_hash, 256).end_cell());
+    throw_unless(err::bad_signature, check_signature(domain_hash, signature, public_key));
     save_state(owner, public_key, revoked, 1, now(), subject_hash, new_attested_hash);
     return ();
   }

@@ -219,6 +219,7 @@ const int err::bad_response_signature = 1909;
   if (op == op::deactivate) {
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     throw_unless(err::inactive, active == 1);
+    in_msg.end_parse();
     send_value(owner, 0, 128);
     save_state(owner, has_authorized_caller, authorized_caller, open_access, 0, price_per_call,
       rate_limit_per_day, call_day, calls_today, 0, metadata_hash, proof_scheme_hash,
@@ -229,6 +230,7 @@ const int err::bad_response_signature = 1909;
   if (op == op::reactivate) {
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     throw_unless(err::already_active, active == 0);
+    in_msg.end_parse();
     save_state(owner, has_authorized_caller, authorized_caller, open_access, 1, price_per_call,
       rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash, proof_scheme_hash,
       last_request_hash, last_response_hash, has_attestor, attestor_pubkey);
@@ -240,6 +242,7 @@ const int err::bad_response_signature = 1909;
     ;; Purely local state -- no cross-contract messaging.
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     attestor_pubkey = in_msg~load_uint(256);
+    in_msg.end_parse();
     has_attestor = 1;
     save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
       price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
@@ -251,6 +254,7 @@ const int err::bad_response_signature = 1909;
     ;; Owner-only: permanently (until rotated again) drop the attestation
     ;; requirement -- respond reverts to sender-authorization-only.
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    in_msg.end_parse();
     has_attestor = 0;
     save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
       price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,

@@ -100,6 +100,7 @@ const int status::disputed = 7;
   if (op == op::claim) {
     throw_unless(115, status == status::open);
     throw_unless(116, has_agent == 0);
+    in_msg.end_parse();
     agent = sender;
     has_agent = 1;
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
@@ -110,6 +111,7 @@ const int status::disputed = 7;
   if (op == op::accept) {
     throw_unless(100, status == status::open);
     throw_unless(101, has_agent & equal_slice_bits(sender, agent));
+    in_msg.end_parse();
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status::accepted, result_hash, evidence_hash, policy_hash, review_period,
       review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
@@ -121,6 +123,7 @@ const int status::disputed = 7;
     throw_unless(117, now() <= deadline);
     result_hash = in_msg~load_uint(256);
     evidence_hash = in_msg~load_uint(256);
+    in_msg.end_parse();
     review_deadline = now() + review_period;
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status::result_submitted, result_hash, evidence_hash, policy_hash, review_period,
@@ -149,6 +152,7 @@ const int status::disputed = 7;
         .store_int(wc, 8).store_uint(addr, 256).store_uint(result_hash, 256).end_cell());
       throw_unless(127, check_signature(domain_hash, signature, attestor_pubkey));
     }
+    in_msg.end_parse();
     if (payout > 0) {
       send_value(agent, payout, 1);
     }
@@ -161,6 +165,7 @@ const int status::disputed = 7;
   if (op == op::cancel) {
     throw_unless(107, status == status::open);
     throw_unless(108, equal_slice_bits(sender, creator));
+    in_msg.end_parse();
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::cancelled, result_hash, evidence_hash, policy_hash, review_period,
@@ -170,6 +175,7 @@ const int status::disputed = 7;
   if (op == op::reject) {
     throw_unless(113, status == status::open);
     throw_unless(114, has_agent & equal_slice_bits(sender, agent));
+    in_msg.end_parse();
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::rejected, result_hash, evidence_hash, policy_hash, review_period,
@@ -184,6 +190,7 @@ const int status::disputed = 7;
     } else {
       throw_unless(109, deadline <= now());
     }
+    in_msg.end_parse();
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::expired, result_hash, evidence_hash, policy_hash, review_period,
@@ -196,6 +203,7 @@ const int status::disputed = 7;
     throw_unless(121, has_verifier);
     throw_unless(122, now() <= review_deadline);
     dispute_hash = in_msg~load_uint(256);
+    in_msg.end_parse();
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status::disputed, result_hash, evidence_hash, policy_hash, review_period,
       review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
@@ -205,6 +213,7 @@ const int status::disputed = 7;
     throw_unless(123, status == status::disputed);
     throw_unless(124, has_verifier & equal_slice_bits(sender, verifier));
     var payout = in_msg~load_tomis();
+    in_msg.end_parse();
     throw_unless(125, payout <= budget);
     throw_unless(126, payout <= get_balance().pair_first());
     if (payout > 0) {
@@ -221,6 +230,7 @@ const int status::disputed = 7;
     ;; Purely local state -- no cross-contract messaging.
     throw_unless(128, equal_slice_bits(sender, creator));
     attestor_pubkey = in_msg~load_uint(256);
+    in_msg.end_parse();
     has_attestor = 1;
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status, result_hash, evidence_hash, policy_hash, review_period,
@@ -231,6 +241,7 @@ const int status::disputed = 7;
     ;; Creator-only: permanently (until rotated again) drop the attestation
     ;; requirement -- settle reverts to sender-authorization-only.
     throw_unless(129, equal_slice_bits(sender, creator));
+    in_msg.end_parse();
     has_attestor = 0;
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status, result_hash, evidence_hash, policy_hash, review_period,

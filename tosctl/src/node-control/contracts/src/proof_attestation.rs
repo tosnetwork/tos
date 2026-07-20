@@ -9,7 +9,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const PROOF_ATTESTATION_CODE_B64: &str = "te6cckECBQEAAS0AART/APSkE/S88sgLAQIBYgIDAfbQMiHHAJFb4AHTH9M/MQLQdNch+kAw7UTQ+kDT/9MA0wDTP9QB0NP/0//RAtEBKIIQQVRUAbqOQRNfAzQ0gQg0JMAA8vQE0/+DCNcY0SGBCDVRJ/kQ8vQUE3FAE/gjAgHIy//L/8nIUAbPFhTL/xLLAMsAyz/Mye1U4CgEADWgGG/aiaH0gaf/pgGmAaZ/qAOhp/+n/6IFogMA/IIQQVRUArqONhNfAzI0gQg2UTLHBRPy9APT/9FwUwAQNRA0QTAByMv/y//JyFAGzxYUy/8SywDLAMs/zMntVOA0B4IQQVRUA7qOK4EINlFlxwUW8vQG0UVAcUREAcjL/8v/ychQBs8WFMv/EssAywDLP8zJ7VTgXwiBCDfy8Ng8IJk=";
+pub const PROOF_ATTESTATION_CODE_B64: &str = "te6ccgECBgEAAT8AART/APSkE/S88sgLAQIBYgIDAvbQMiHHAJFb4AHTH9M/MQLQdNch+kAw7UTQ+kDT/9MA0wDTP9QB0NP/0//RAtEBKIIQQVRUAbrjAiiCEEFUVAK6jjYTXwMyNIEINlEyxwUT8vQD0//RcFMAEDUQNEEwAcjL/8v/ychQBs8WFMv/EssAywDLP8zJ7VTgNAcEBQA1oBhv2omh9IGn/6YBpgGmf6gDoaf/p/+iBaIDAKITXwM0NIEINCTAAPL0BNP/gwjXGNH4KPpEAcjKB8v/UiDL/8n5AIEINVEn+RDy9BQTcUAT+CMCAcjL/8v/ychQBs8WFMv/EssAywDLP8zJ7VQAeIIQQVRUA7qOK4EINlFlxwUW8vQG0UVAcUREAcjL/8v/ychQBs8WFMv/EssAywDLP8zJ7VTgXwiBCDfy8A==";
 pub const ATT_ATTEST_OPCODE: u32 = 0x4154_5401;
 pub const ATT_ROTATE_KEY_OPCODE: u32 = 0x4154_5402;
 pub const ATT_REVOKE_OPCODE: u32 = 0x4154_5403;
@@ -86,9 +86,11 @@ impl ProofAttestationContract {
         })
     }
 
-    /// `signature` must be a valid 64-byte ed25519 signature over the raw
-    /// 32 bytes of `attested_hash` (matching TVM's `CHKSIGNU`, the same
-    /// convention `AgentAccountContract`'s controller-signed actions use).
+    /// `signature` must be a valid 64-byte ed25519 signature over
+    /// [`attest_hash_to_sign`]'s output for the target attestation address --
+    /// not over the bare `attested_hash` -- so it cannot be replayed against
+    /// a different Proof Attestation instance sharing the same public key
+    /// and the same attested hash.
     pub fn attest(
         query_id: u64,
         attested_hash: [u8; 32],
@@ -97,6 +99,17 @@ impl ProofAttestationContract {
         message(ATT_ATTEST_OPCODE, query_id, |b| {
             b.append_u256(&attested_hash)?.append_raw(signature, 512).map(|_| ())
         })
+    }
+
+    /// The domain-bound hash the attestor key must sign for `attest`,
+    /// binding the signature to `attestation_address` so it cannot be
+    /// replayed against another Proof Attestation instance that happens to
+    /// share the same attestor key and `attested_hash`.
+    pub fn attest_hash_to_sign(
+        attestation_address: &MsgAddressInt,
+        attested_hash: &[u8; 32],
+    ) -> anyhow::Result<[u8; 32]> {
+        crate::domain_bound_hash(attestation_address, attested_hash)
     }
 
     pub fn rotate_key(query_id: u64, new_public_key: [u8; 32]) -> anyhow::Result<chain_block::Cell> {

@@ -194,18 +194,21 @@ async fn resolve_public_key(
     }
 }
 
-/// Sign the 32-byte `attested_hash` directly with the named vault key,
-/// matching `CHKSIGNU`'s convention (the same one `AgentAccountContract`'s
-/// controller-signed actions already use: sign the raw hash, not a
-/// re-hashed or length-prefixed encoding of it).
+/// Sign the domain-bound hash for `attestation_address` with the named
+/// vault key -- not the bare `attested_hash` -- so the resulting signature
+/// cannot be replayed against a different Proof Attestation instance
+/// sharing the same attestor key and attested hash.
 async fn sign_with_vault_key(
     name: &str,
+    attestation_address: &MsgAddressInt,
     attested_hash: &[u8; 32],
     vault: Arc<SecretVault>,
 ) -> anyhow::Result<[u8; 64]> {
     let secret = KeyConfig::VaultKey { name: name.to_owned() }.read_secret(Some(vault)).await?;
     let keypair = secret.as_keypair()?;
-    let raw = keypair.sign(attested_hash).await?;
+    let hash_to_sign =
+        ProofAttestationContract::attest_hash_to_sign(attestation_address, attested_hash)?;
+    let raw = keypair.sign(&hash_to_sign).await?;
     raw.try_into().map_err(|_| anyhow::anyhow!("signature must be 64 bytes"))
 }
 
@@ -435,7 +438,8 @@ impl ProofAttestationSendCmd {
                 let signature = match (&self.signature, &self.signer_vault_key) {
                     (Some(hex), None) => parse_signature(hex)?,
                     (None, Some(name)) => {
-                        sign_with_vault_key(name, &attested_hash, vault.clone()).await?
+                        sign_with_vault_key(name, &destination, &attested_hash, vault.clone())
+                            .await?
                     }
                     _ => anyhow::bail!("provide exactly one of --signature or --signer-vault-key"),
                 };
