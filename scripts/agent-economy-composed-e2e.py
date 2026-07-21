@@ -287,14 +287,22 @@ async def run_checks(faucet) -> None:
     check("capability registry deployed and active", await poll_predicate(
         lambda: rpc_call("getAddressState", address=registry_address).get("result") == "active"))
 
+    # storage_fee/cleanup_bounty/response_sla/refund_claim_window match the
+    # protocol minimums enforced in crypto/smartcont/service-actor-code.fc
+    # (MINIMUM_STORAGE_FEE=MINIMUM_CLEANUP_BOUNTY=0.1 TOS,
+    # MIN_RESPONSE_SLA=MIN_REFUND_CLAIM_WINDOW=3600s); amount covers the
+    # protocol's MINIMUM_OPERATING_RESERVE (1 TOS) plus headroom for the two
+    # mid-workflow calls this script makes against this same instance.
     service_deploy = await tosctl_json(
         "agent", "service", "deploy", "--name", "model-provider-service",
         "--owner", model_provider, "--open-access",
-        "--price-per-call", "0.05", "--rate-limit-per-day", "1000",
+        "--price-per-call", "0.05", "--storage-fee", "0.2", "--cleanup-bounty", "0.1",
+        "--response-sla", "3600", "--refund-claim-window", "3600",
+        "--rate-limit-per-day", "1000",
         "--metadata-hash", SERVICE_METADATA_HASH,
         "--proof-scheme-hash", SERVICE_PROOF_SCHEME_HASH,
         "--signer-vault-key", "service-attestor-key",
-        "--from", "model-provider", "--amount", "0.3", "-w", "0", "--yes",
+        "--from", "model-provider", "--amount", "2", "-w", "0", "--yes",
     )
     service_address = service_deploy["address"]
     check("service actor deployed and active", await poll_predicate(
@@ -302,17 +310,26 @@ async def run_checks(faucet) -> None:
     service_data = await tosctl_json("agent", "service", "show", "--name", "model-provider-service")
     check("service actor is attested", bool(service_data.get("attestor_pubkey")), str(service_data))
 
-    async def worker_calls_and_gets_response(response_hash: str) -> None:
+    async def worker_calls_and_gets_response(response_hash: str) -> int:
+        # request_id is contract-assigned; predicting it as next_request_id
+        # is only valid because this script never has two callers racing
+        # this same service instance (each call is awaited to completion
+        # here before the next one is submitted).
+        pre_call = await tosctl_json("agent", "service", "show", "--name", "model-provider-service")
+        request_id = pre_call["next_request_id"]
         await tosctl(
             "agent", "service", "send", "--operation", "call", "--name", "model-provider-service",
-            "--from", "worker-owner", "--request-hash", REQUEST_HASH, "--amount", "0.05", "--yes",
+            "--from", "worker-owner", "--request-hash", REQUEST_HASH,
+            "--amount", "0.3", "--yes",  # 0.05 price + 0.2 storage_fee + real-fee headroom
         )
         await tosctl(
             "agent", "service", "send", "--operation", "respond", "--name",
             "model-provider-service", "--from", "model-provider",
+            "--request-id", str(request_id),
             "--response-hash", response_hash, "--signer-vault-key", "service-attestor-key",
             "--yes",
         )
+        return request_id
 
     # ---------------- HAPPY PATH ----------------
     print("\n=== happy path: attested Task Escrow through Agent Account + Service Actor ===")
@@ -341,14 +358,21 @@ async def run_checks(faucet) -> None:
 
     revenue_before = float(
         (await tosctl_json("agent", "service", "show", "--name", "model-provider-service"))
-        ["total_revenue"])
-    await worker_calls_and_gets_response(RESPONSE_HASH)
+        ["withdrawable_revenue"])
+    happy_request_id = await worker_calls_and_gets_response(RESPONSE_HASH)
     service_after_call = await tosctl_json(
         "agent", "service", "show", "--name", "model-provider-service")
     check("service actor accrued revenue for the mid-task call",
-          float(service_after_call["total_revenue"]) > revenue_before, str(service_after_call))
-    check("service actor recorded the attested response",
-          service_after_call["last_response_hash"] == RESPONSE_HASH, str(service_after_call))
+          float(service_after_call["withdrawable_revenue"]) > revenue_before, str(service_after_call))
+    # There is no terminal per-request record once a request resolves (see
+    # doc/service-actor-concurrent-escrow-upgrade.md's Persistent State
+    # section) -- the attested response having been accepted is observed by
+    # the request no longer being pending, not by a stored response hash.
+    happy_request_after = await tosctl_json(
+        "agent", "service", "request-show", "--name", "model-provider-service",
+        "--request-id", str(happy_request_id))
+    check("service actor recorded the attested response (request resolved)",
+          not happy_request_after["found"], str(happy_request_after))
 
     await tosctl(
         "agent", "task", "send", "--operation", "result", "--name", "workflow-happy",
