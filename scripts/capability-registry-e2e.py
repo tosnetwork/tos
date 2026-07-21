@@ -12,7 +12,7 @@ the real `tosctl agent registry` CLI against the running validator:
   deploy (bond 2, task/pricing/metadata/verification hashes, a verifier)
     -> local record persisted -> on-chain state matches
   send update-metadata (owner) -> new hashes recorded on-chain
-  send stake (anyone) -> bond increases
+  send stake (owner only; non-owner rejected) -> bond increases
   send update-reputation (verifier) -> reputation score changes;
     rejected from a non-verifier
   send withdraw-bond (owner) -> bond decreases, owner balance increases;
@@ -263,11 +263,18 @@ async def run_checks(faucet) -> None:
     check("task_categories_hash updated", data["task_categories_hash"] == NEW_TASK_CATEGORIES_HASH, str(data))
     check("pricing_hash updated", data["pricing_hash"] == NEW_PRICING_HASH, str(data))
 
-    print("\n=== stake (permissionless) ===")
+    print("\n=== stake (owner only) ===")
+    # Previously permissionless, but only the owner can ever withdraw the
+    # bond (withdraw-bond/deactivate) -- a non-owner staker had no way to
+    # reclaim their own contribution, so stake is owner-gated now.
     bond_before = float((await registry_show("svc-1"))["bond"])
-    await send_op("stake", "svc-1", "outsider", "--amount", "1")
+    await send_op("stake", "svc-1", "outsider", "--amount", "1", may_fail=True)
     data = await registry_show("svc-1")
-    check("bond increased after stake", float(data["bond"]) > bond_before + 0.9, str(data))
+    check("non-owner stake rejected, bond unchanged", float(data["bond"]) == bond_before, str(data))
+
+    await send_op("stake", "svc-1", "owner", "--amount", "1")
+    data = await registry_show("svc-1")
+    check("bond increased after owner stake", float(data["bond"]) > bond_before + 0.9, str(data))
 
     print("\n=== update-reputation (verifier only) ===")
     await send_op("update-reputation", "svc-1", "outsider", "--delta", "10", may_fail=True)

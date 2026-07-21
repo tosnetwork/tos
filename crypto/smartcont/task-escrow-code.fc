@@ -15,6 +15,9 @@ const int op::resolve = 0x54415309;
 const int op::rotate_attestor_key = 0x5441530a;
 const int op::revoke_attestor = 0x5441530b;
 
+const int err::attestor_frozen = 130;
+const int err::bad_resolve_signature = 131;
+
 const int status::open = 0;
 const int status::accepted = 1;
 const int status::result_submitted = 2;
@@ -142,15 +145,21 @@ const int status::disputed = 7;
     throw_unless(112, payout <= get_balance().pair_first());
     if (has_attestor) {
       ;; Additional, independent check: the configured attestor key must have
-      ;; signed the submitted result_hash, domain-bound to this contract's own
-      ;; address so the signature can't be replayed against another instance
-      ;; sharing the same attestor key and result_hash. This never replaces
-      ;; the sender authorization above -- it is an extra requirement layered
-      ;; on top.
+      ;; signed this exact (result_hash, payout) pair, domain-bound to this
+      ;; contract's own address so the signature can't be replayed against
+      ;; another instance sharing the same attestor key and result_hash --
+      ;; and, critically, can't be reused to authorize a *different* payout
+      ;; than the one the attestor actually approved. Binding only
+      ;; result_hash (as an earlier version of this check did) would let a
+      ;; single attestor signature over a result cover any payout amount up
+      ;; to `budget`, since the signature check never depended on `payout`.
+      ;; This never replaces the sender authorization above -- it is an
+      ;; extra requirement layered on top.
       slice signature = in_msg~load_bits(512);
       (int wc, int addr) = my_address().parse_std_addr();
       int domain_hash = cell_hash(begin_cell()
-        .store_int(wc, 8).store_uint(addr, 256).store_uint(result_hash, 256).end_cell());
+        .store_int(wc, 8).store_uint(addr, 256).store_uint(result_hash, 256)
+        .store_tomis(payout).end_cell());
       throw_unless(127, check_signature(domain_hash, signature, attestor_pubkey));
     }
     in_msg.end_parse();
@@ -192,6 +201,21 @@ const int status::disputed = 7;
       throw_unless(109, deadline <= now());
     }
     in_msg.end_parse();
+    ;; Without a verifier there is no dispute path. Once the creator's review
+    ;; window expires, a submitted result therefore defaults to payment rather
+    ;; than letting the creator obtain completed work and reclaim the budget
+    ;; by simply refusing to settle.
+    if ((status == status::result_submitted) & (has_verifier == 0)) {
+      throw_unless(126, budget <= get_balance().pair_first());
+      if (budget > 0) {
+        send_value(agent, budget, 1);
+      }
+      send_value(creator, 0, 128);
+      save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
+        status::settled, result_hash, evidence_hash, policy_hash, review_period,
+        review_deadline, permission_hash, dispute_hash, has_attestor, attestor_pubkey);
+      return ();
+    }
     send_value(creator, 0, 128);
     save_state(creator, agent, has_agent, verifier, has_verifier, 0, deadline,
       status::expired, result_hash, evidence_hash, policy_hash, review_period,
@@ -214,6 +238,21 @@ const int status::disputed = 7;
     throw_unless(123, status == status::disputed);
     throw_unless(124, has_verifier & equal_slice_bits(sender, verifier));
     var payout = in_msg~load_tomis();
+    if (has_attestor) {
+      ;; Same independent attestor check settle() enforces -- resolve() is
+      ;; also a payout-authorizing path (reached via dispute -> resolve) and
+      ;; must not be a silent way to bypass the attestor requirement a
+      ;; creator configured. Domain-binds result_hash, dispute_hash AND
+      ;; payout: the ruling this payout is meant to implement is only
+      ;; meaningful together with the dispute it resolves and the amount it
+      ;; actually pays.
+      slice signature = in_msg~load_bits(512);
+      (int wc, int addr) = my_address().parse_std_addr();
+      int domain_hash = cell_hash(begin_cell()
+        .store_int(wc, 8).store_uint(addr, 256).store_uint(result_hash, 256)
+        .store_uint(dispute_hash, 256).store_tomis(payout).end_cell());
+      throw_unless(err::bad_resolve_signature, check_signature(domain_hash, signature, attestor_pubkey));
+    }
     in_msg.end_parse();
     throw_unless(125, payout <= budget);
     throw_unless(126, payout <= get_balance().pair_first());
@@ -228,8 +267,19 @@ const int status::disputed = 7;
   }
   if (op == op::rotate_attestor_key) {
     ;; Creator-only: set or replace the attestor_pubkey settle checks against.
-    ;; Purely local state -- no cross-contract messaging.
+    ;; Purely local state -- no cross-contract messaging. A configured key is
+    ;; frozen until terminal status: allowing the creator
+    ;; to swap in a key they control right before settle/resolve would let
+    ;; them forge the "independent verification" an agent may have relied
+    ;; on when it saw an attestor configured and decided to accept the task.
     throw_unless(128, equal_slice_bits(sender, creator));
+    ;; Once configured, the attestor is immutable until the task reaches a
+    ;; terminal state. Freezing only after accept leaves a check/accept race:
+    ;; the creator can revoke after the agent inspected the open task but
+    ;; before the accept message is ordered on-chain.
+    throw_unless(err::attestor_frozen, (has_attestor == 0) |
+      (status == status::settled) | (status == status::cancelled) |
+      (status == status::rejected) | (status == status::expired));
     attestor_pubkey = in_msg~load_uint(256);
     in_msg.end_parse();
     has_attestor = 1;
@@ -240,8 +290,14 @@ const int status::disputed = 7;
   }
   if (op == op::revoke_attestor) {
     ;; Creator-only: permanently (until rotated again) drop the attestation
-    ;; requirement -- settle reverts to sender-authorization-only.
+    ;; requirement -- settle reverts to sender-authorization-only. A configured
+    ;; key is frozen until terminal status, for the same reason: dropping
+    ;; the requirement right before settle/resolve is equivalent to forging
+    ;; it away.
     throw_unless(129, equal_slice_bits(sender, creator));
+    throw_unless(err::attestor_frozen, (has_attestor == 0) |
+      (status == status::settled) | (status == status::cancelled) |
+      (status == status::rejected) | (status == status::expired));
     in_msg.end_parse();
     has_attestor = 0;
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,

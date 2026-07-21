@@ -243,14 +243,19 @@ async def create_task(name: str, creator: str, agent: str | None, budget: float,
 
 
 async def create_task_with_attestor(name: str, creator: str, agent: str, budget: float,
-                                    deadline: int, amount: float, signer_vault_key: str) -> str:
-    out = json.loads(await tosctl(
+                                    deadline: int, amount: float, signer_vault_key: str,
+                                    verifier: str | None = None) -> str:
+    args = [
         "agent", "task", "create", "--name", name, "--creator", creator,
         "--agent", agent, "--budget", str(budget), "--deadline", str(deadline),
         "--review-period", str(REVIEW_PERIOD), "--policy-hash", POLICY_HASH,
         "--permission-id", PERMISSION_ID,
         "--signer-vault-key", signer_vault_key, "--from", "creator",
-        "--amount", str(amount), "-w", "0", "--yes", "--format", "json"))
+        "--amount", str(amount), "-w", "0", "--yes",
+    ]
+    if verifier is not None:
+        args += ["--verifier", verifier]
+    out = json.loads(await tosctl(*args, "--format", "json"))
     return out["address"]
 
 
@@ -429,6 +434,24 @@ async def run_checks(faucet) -> None:
     data = await task_show("e2e-rotate")
     check("creator rotate sets attestor pubkey", bool(data.get("attestor_pubkey")), str(data))
 
+    # Once configured, the attestor is immutable even while open. This avoids
+    # a check/accept race where the creator revokes after the agent inspected
+    # the task but before its accept message is ordered.
+    await send_op("revoke-attestor", "e2e-rotate", "agent")
+    data = await task_show("e2e-rotate")
+    check("revoke by non-creator rejected", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("revoke-attestor", "e2e-rotate", "creator")
+    data = await task_show("e2e-rotate")
+    check("creator cannot revoke configured attestor while open",
+          bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("rotate-attestor-key", "e2e-rotate", "creator",
+                  "--signer-vault-key", "rotated-attestor-key")
+    data = await task_show("e2e-rotate")
+    check("creator cannot replace configured attestor while open",
+          bool(data.get("attestor_pubkey")), str(data))
+
     await send_op("accept", "e2e-rotate", "agent")
     await send_op("result", "e2e-rotate", "agent",
                   "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH)
@@ -439,17 +462,35 @@ async def run_checks(faucet) -> None:
     await assert_status_stays(
         "e2e-rotate", "result_submitted", "settle after rotate still requires attestation")
 
-    await send_op("revoke-attestor", "e2e-rotate", "agent")
+    # Once accepted, rotate/revoke are frozen: the creator cannot swap in a
+    # key they control or drop the requirement right before settling.
+    await send_op("rotate-attestor-key", "e2e-rotate", "creator",
+                  "--new-attestor-pubkey", "bb" * 32)
+    await assert_status_stays(
+        "e2e-rotate", "result_submitted", "rotate frozen once accepted (status unaffected)")
     data = await task_show("e2e-rotate")
-    check("revoke by non-creator rejected", bool(data.get("attestor_pubkey")), str(data))
+    check("rotate-while-frozen did not change attestor pubkey",
+          bool(data.get("attestor_pubkey")), str(data))
 
     await send_op("revoke-attestor", "e2e-rotate", "creator")
+    await assert_status_stays(
+        "e2e-rotate", "result_submitted", "revoke frozen once accepted (status unaffected)")
     data = await task_show("e2e-rotate")
-    check("creator revoke clears attestor", not data.get("attestor_pubkey"), str(data))
+    check("revoke-while-frozen did not clear attestor", bool(data.get("attestor_pubkey")), str(data))
 
-    await send_op("settle", "e2e-rotate", "creator", "--payout", "1")
-    check("settle after revoke succeeds unattested",
+    # A valid attestor signature is still required to settle; only a signed
+    # settle actually completes the task.
+    await send_op("settle", "e2e-rotate", "creator", "--payout", "1",
+                  "--signer-vault-key", "rotated-attestor-key")
+    check("settle with correct attestor signature succeeds",
           await wait_status("e2e-rotate", "settled") == "settled")
+
+    # Terminal status unfreezes rotate/revoke again (no further payout is
+    # reachable from settled, so there is nothing left to protect).
+    await send_op("revoke-attestor", "e2e-rotate", "creator")
+    data = await task_show("e2e-rotate")
+    check("creator revoke succeeds once settled (unfrozen)",
+          not data.get("attestor_pubkey"), str(data))
 
     # ---------------- CONTROLLER PATH ----------------
     print("\n=== controller path: Agent Account -> Task Escrow ===")
@@ -524,6 +565,45 @@ async def run_checks(faucet) -> None:
     check("verifier resolved dispute",
           await wait_status("e2e-dispute", "settled") == "settled")
 
+    # ---------------- DISPUTE PATH, ATTESTOR-GATED RESOLVE ----------------
+    # resolve() is a separate payout-authorizing path from settle() (reached
+    # via dispute -> resolve) and must enforce the same attestor requirement
+    # -- otherwise a creator + verifier could bypass a configured attestor
+    # entirely by disputing and resolving instead of settling.
+    print("\n=== dispute path: resolve on an attestor-configured task ===")
+    dispute_attestor_deadline = dispute_deadline + 4
+    dispute_attestor_escrow = await create_task_with_attestor(
+        "e2e-dispute-attestor", creator, agent, 2.5, dispute_attestor_deadline, 2.7,
+        "attestor-key", verifier)
+    print(f"  escrow: {dispute_attestor_escrow}")
+    check("dispute-attestor task open",
+          await wait_status("e2e-dispute-attestor", "open") == "open")
+    await send_op("accept", "e2e-dispute-attestor", "agent")
+    await send_op("result", "e2e-dispute-attestor", "agent",
+                  "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH)
+    await send_op("dispute", "e2e-dispute-attestor", "creator", "--dispute-hash", DISPUTE_HASH)
+    check("dispute-attestor task disputed",
+          await wait_status("e2e-dispute-attestor", "disputed") == "disputed")
+
+    await send_op("resolve", "e2e-dispute-attestor", "verifier", "--payout", "1.5")
+    await assert_status_stays(
+        "e2e-dispute-attestor", "disputed", "resolve without attestation rejected")
+
+    await send_op("resolve", "e2e-dispute-attestor", "verifier", "--payout", "1.5",
+                  "--signer-vault-key", "wrong-attestor-key")
+    await assert_status_stays(
+        "e2e-dispute-attestor", "disputed", "resolve with wrong attestor key rejected")
+
+    await send_op("resolve", "e2e-dispute-attestor", "agent", "--payout", "1.5",
+                  "--signer-vault-key", "attestor-key")
+    await assert_status_stays(
+        "e2e-dispute-attestor", "disputed", "resolve by non-verifier rejected even when signed")
+
+    await send_op("resolve", "e2e-dispute-attestor", "verifier", "--payout", "1.5",
+                  "--signer-vault-key", "attestor-key")
+    check("verifier resolved attestor-gated dispute",
+          await wait_status("e2e-dispute-attestor", "settled") == "settled")
+
     # ---------------- REJECT PATH ----------------
     print("\n=== reject path: Agent Account -> Task Escrow ===")
     reject_deadline = controller_deadline + 1
@@ -589,8 +669,8 @@ async def run_checks(faucet) -> None:
     records = {r["name"]: r for r in await tosctl_json("agent", "task", "ls")}
     expected_records = {
         "e2e-main", "e2e-controller", "e2e-claim", "e2e-reject", "e2e-cancel",
-        "e2e-dispute", "e2e-timeout", "e2e-attestor", "e2e-rotate"}
-    check("nine records tracked", set(records) == expected_records,
+        "e2e-dispute", "e2e-dispute-attestor", "e2e-timeout", "e2e-attestor", "e2e-rotate"}
+    check("ten records tracked", set(records) == expected_records,
           str(sorted(records)))
     main_rec = records.get("e2e-main", {})
     check("record creator", same_addr(main_rec.get("creator"), creator))
@@ -618,6 +698,7 @@ async def run_checks(faucet) -> None:
         "e2e-controller": "settled",
         "e2e-claim": "settled",
         "e2e-dispute": "settled",
+        "e2e-dispute-attestor": "settled",
         "e2e-reject": "rejected",
         "e2e-cancel": "cancelled",
         "e2e-timeout": "expired",
@@ -633,8 +714,8 @@ async def run_checks(faucet) -> None:
         "agent", "task", "ls", "--on-chain", "--status", "settled")
     check("status filter returns settled tasks",
           {record["name"] for record in settled_records} == {
-              "e2e-main", "e2e-controller", "e2e-claim", "e2e-dispute", "e2e-attestor",
-              "e2e-rotate"},
+              "e2e-main", "e2e-controller", "e2e-claim", "e2e-dispute", "e2e-dispute-attestor",
+              "e2e-attestor", "e2e-rotate"},
           str(settled_records))
     account_records = await tosctl_json(
         "agent", "task", "ls", "--on-chain", "--agent", agent_account)
@@ -647,7 +728,7 @@ async def run_checks(faucet) -> None:
           str(unassigned_records))
     creator_records = await tosctl_json(
         "agent", "task", "ls", "--creator", creator)
-    check("creator filter returns all owned tasks", len(creator_records) == 9,
+    check("creator filter returns all owned tasks", len(creator_records) == 10,
           str(creator_records))
 
 

@@ -286,6 +286,24 @@ async def run_checks(faucet) -> None:
     data = await service_show("svc-1")
     check("outsider can now call under open access", data["calls_today"] == 3, str(data))
 
+    print("\n=== call: overpayment is refunded, not absorbed as revenue ===")
+    revenue_before_overpay = float(data["total_revenue"])
+    outsider_before_overpay = balance(outsider)
+    await send_op("call", "svc-1", "outsider", "--request-hash", "03" * 32, "--amount", "0.2")
+    data = await service_show("svc-1")
+    check(
+        "only the quoted price (0.02) is credited as revenue, not the full 0.2 sent",
+        abs(float(data["total_revenue"]) - (revenue_before_overpay + 0.02)) < 1e-9,
+        str(data),
+    )
+    outsider_delta = outsider_before_overpay - balance(outsider)
+    check(
+        "caller received most of the 0.18 overpayment back as a refund"
+        " (net spend close to the 0.02 price, not the full 0.2 sent)",
+        outsider_delta < int(0.05 * 1e9),
+        f"net spend={outsider_delta} nanotons",
+    )
+
     print("\n=== withdraw-revenue (owner only, bounded) ===")
     await send_op("withdraw-revenue", "svc-1", "outsider", "--withdraw-amount", "0.01", may_fail=True)
     data = await service_show("svc-1")
@@ -383,13 +401,14 @@ async def run_checks(faucet) -> None:
     data = await service_show("svc-3")
     check("non-owner revoke rejected", bool(data.get("attestor_pubkey")), str(data))
 
-    await send_op("revoke-attestor", "svc-3", "owner")
+    await send_op("revoke-attestor", "svc-3", "owner", may_fail=True)
     data = await service_show("svc-3")
-    check("owner revoke clears attestor", not data.get("attestor_pubkey"), str(data))
+    check("owner cannot revoke configured attestor", bool(data.get("attestor_pubkey")), str(data))
 
-    await send_op("respond", "svc-3", "owner", "--response-hash", "ee" * 32)
+    await send_op("respond", "svc-3", "owner", "--response-hash", "ee" * 32,
+                  "--signer-vault-key", "rotated-service-attestor-key")
     data = await service_show("svc-3")
-    check("respond after revoke succeeds unattested", data["last_response_hash"] == "ee" * 32,
+    check("respond still requires configured attestor", data["last_response_hash"] == "ee" * 32,
           str(data))
 
     print("\n=== persisted local record ===")

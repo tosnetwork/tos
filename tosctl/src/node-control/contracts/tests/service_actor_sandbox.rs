@@ -28,6 +28,7 @@ const ERR_RATE_LIMITED: i32 = 1904;
 const ERR_INSUFFICIENT_PAYMENT: i32 = 1905;
 const ERR_INSUFFICIENT_REVENUE: i32 = 1906;
 const ERR_BAD_RESPONSE_SIGNATURE: i32 = 1909;
+const ERR_ATTESTOR_FROZEN: i32 = 1910;
 
 struct Fixture {
     bc: Blockchain,
@@ -170,13 +171,55 @@ fn authorized_caller_can_call_outsider_rejected() {
         .expect_aborted()
         .expect_exit_code(ERR_NOT_AUTHORIZED);
 
+    // The caller overpays (TOS / 5 against a TOS / 10 price): only the
+    // quoted price is revenue, the rest is refunded (see
+    // call_refunds_the_excess_when_the_caller_overpays). The sandbox harness
+    // credits a message's value to the destination without ever debiting the
+    // sender treasury for the outbound send itself, so the caller's balance
+    // here only ever *increases*, by exactly the TOS / 10 refund it receives
+    // back.
     let caller = f.caller.address().clone();
+    let caller_before = f.balance(&caller);
     f.send_from(&caller, TOS / 5, ServiceActorContract::call(2, [0xAA; 32]).unwrap())
         .expect_success();
     let data = f.data();
     assert_eq!(data.calls_today, 1);
-    assert_eq!(data.total_revenue, TOS / 5);
+    assert_eq!(data.total_revenue, TOS / 10);
     assert_eq!(data.last_request_hash, [0xAA; 32]);
+    let caller_delta = f.balance(&caller) - caller_before;
+    assert!(
+        caller_delta > TOS / 10 - TOS / 100 && caller_delta <= TOS / 10,
+        "caller should have received close to the TOS / 10 overpayment back as a refund, got {caller_delta}"
+    );
+}
+
+#[test]
+fn call_refunds_the_excess_when_the_caller_overpays() {
+    // Only `price_per_call` is revenue; a caller who sends more than that
+    // (rounding, a wallet's gas-margin padding, a client bug) gets the
+    // difference refunded rather than permanently losing it to the owner.
+    let mut f = Fixture::new(TOS / 10, 0, true, TOS / 10);
+    let outsider = f.outsider.address().clone();
+    let outsider_before = f.balance(&outsider);
+    f.send_from(&outsider, TOS, ServiceActorContract::call(1, [0xAA; 32]).unwrap())
+        .expect_success();
+    assert_eq!(f.data().total_revenue, TOS / 10, "only the quoted price is revenue");
+    // The sandbox harness credits a message's value to the destination
+    // without ever debiting the sender treasury for the outbound send
+    // itself, so the caller's balance here only ever *increases*, by
+    // exactly the 0.9 TOS overpayment (TOS sent - TOS / 10 price) it
+    // receives back as a refund.
+    let outsider_delta = f.balance(&outsider) - outsider_before;
+    let expected_refund = TOS - TOS / 10;
+    assert!(
+        outsider_delta > expected_refund - TOS / 100 && outsider_delta <= expected_refund,
+        "caller should have received close to the overpayment back as a refund, got {outsider_delta}"
+    );
+
+    // An exact payment (no overpayment) needs no refund and is unaffected.
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(2, [0xBB; 32]).unwrap())
+        .expect_success();
+    assert_eq!(f.data().total_revenue, TOS / 5);
 }
 
 #[test]
@@ -199,7 +242,11 @@ fn call_below_price_is_rejected() {
 
 #[test]
 fn rate_limit_blocks_calls_past_the_daily_cap() {
-    let mut f = Fixture::new(TOS / 100, 2, true, TOS / 10);
+    // Funded well beyond a single TOS / 10 message: each call here overpays
+    // 10x the TOS / 100 price and is refunded the difference, and masterchain
+    // fwd/action fees on that refund send (observed ~0.07 TOS/call) drain a
+    // TOS / 10 starting balance within 1-2 calls otherwise.
+    let mut f = Fixture::new(TOS / 100, 2, true, TOS);
     let outsider = f.outsider.address().clone();
     f.send_from(&outsider, TOS / 10, ServiceActorContract::call(1, [0x01; 32]).unwrap())
         .expect_success();
@@ -213,7 +260,9 @@ fn rate_limit_blocks_calls_past_the_daily_cap() {
 
 #[test]
 fn zero_rate_limit_means_unlimited() {
-    let mut f = Fixture::new(TOS / 100, 0, true, TOS / 10);
+    // See the funding comment on rate_limit_blocks_calls_past_the_daily_cap;
+    // this test makes 10 overpaying calls, so it needs a bigger balance.
+    let mut f = Fixture::new(TOS / 100, 0, true, 5 * TOS);
     let outsider = f.outsider.address().clone();
     for i in 1..=10u64 {
         f.send_from(&outsider, TOS / 10, ServiceActorContract::call(i, [i as u8; 32]).unwrap())
@@ -279,20 +328,28 @@ fn owner_can_update_policy_others_rejected() {
 fn owner_can_withdraw_revenue_within_limit_others_and_overdraw_rejected() {
     let mut f = Fixture::new(TOS, 0, true, TOS / 10);
     let outsider = f.outsider.address().clone();
-    f.send_from(&outsider, 3 * TOS, ServiceActorContract::call(1, [0x01; 32]).unwrap())
+    // Three exact (no-overpayment) calls, rather than one call overpaying
+    // 3x, so this test's revenue accounting stays independent of the
+    // overpayment-refund behavior covered separately by
+    // call_refunds_the_excess_when_the_caller_overpays.
+    f.send_from(&outsider, TOS, ServiceActorContract::call(1, [0x01; 32]).unwrap())
+        .expect_success();
+    f.send_from(&outsider, TOS, ServiceActorContract::call(2, [0x02; 32]).unwrap())
+        .expect_success();
+    f.send_from(&outsider, TOS, ServiceActorContract::call(3, [0x03; 32]).unwrap())
         .expect_success();
     assert_eq!(f.data().total_revenue, 3 * TOS);
 
     let owner = f.owner.address().clone();
-    f.send_from(&outsider, TOS / 10, ServiceActorContract::withdraw_revenue(2, TOS).unwrap())
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::withdraw_revenue(4, TOS).unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_NOT_OWNER);
-    f.send_from(&owner, TOS / 10, ServiceActorContract::withdraw_revenue(3, 100 * TOS).unwrap())
+    f.send_from(&owner, TOS / 10, ServiceActorContract::withdraw_revenue(5, 100 * TOS).unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_INSUFFICIENT_REVENUE);
 
     let owner_before = f.balance(&owner);
-    f.send_from(&owner, TOS / 10, ServiceActorContract::withdraw_revenue(4, 2 * TOS).unwrap())
+    f.send_from(&owner, TOS / 10, ServiceActorContract::withdraw_revenue(6, 2 * TOS).unwrap())
         .expect_success();
     let delta = f.balance(&owner) - owner_before;
     assert!(delta > 2 * TOS - TOS / 100 && delta <= 2 * TOS, "unexpected withdrawal delta: {delta}");
@@ -389,7 +446,7 @@ fn respond_on_an_attestor_configured_service_requires_a_valid_signature() {
 }
 
 #[test]
-fn owner_can_rotate_and_revoke_the_attestor_key_others_rejected() {
+fn owner_can_enable_attestor_once_but_cannot_revoke_it() {
     let attestor = SigningKey::from_bytes(&[0x77; 32]);
     let attestor_pubkey = attestor.verifying_key().to_bytes();
     let response_hash = [0xDD; 32];
@@ -429,56 +486,50 @@ fn owner_can_rotate_and_revoke_the_attestor_key_others_rejected() {
         .expect_exit_code(ERR_NOT_OWNER);
     assert!(f.data().attestor_pubkey.is_some());
 
-    // Owner revokes: respond works again without any signature.
+    // Once enabled, the independent gate is immutable.
     f.send_from(&owner, TOS / 10, ServiceActorContract::revoke_attestor(5).unwrap())
-        .expect_success();
-    assert!(f.data().attestor_pubkey.is_none());
+        .expect_aborted()
+        .expect_exit_code(ERR_ATTESTOR_FROZEN);
+    assert_eq!(f.data().attestor_pubkey, Some(attestor_pubkey));
 
-    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(6, response_hash).unwrap())
-        .expect_success();
+    let domain_hash = contracts::domain_bound_hash(&f.service, &response_hash).unwrap();
+    let signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
+    f.send_from(
+        &owner,
+        TOS / 10,
+        ServiceActorContract::respond_signed(6, response_hash, &signature).unwrap(),
+    )
+    .expect_success();
     assert_eq!(f.data().last_response_hash, response_hash);
 }
 
 #[test]
-fn rotating_the_attestor_key_invalidates_signatures_from_the_old_key() {
+fn configured_service_attestor_is_immutable() {
     let old_attestor = SigningKey::from_bytes(&[0x11; 32]);
     let old_pubkey = old_attestor.verifying_key().to_bytes();
-    let new_attestor = SigningKey::from_bytes(&[0x22; 32]);
-    let new_pubkey = new_attestor.verifying_key().to_bytes();
+    let new_pubkey = SigningKey::from_bytes(&[0x22; 32]).verifying_key().to_bytes();
     let response_hash = [0xDD; 32];
 
     let mut f = Fixture::with_attestor(TOS / 10, 0, true, TOS / 10, old_pubkey);
     let owner = f.owner.address().clone();
     let domain_hash = contracts::domain_bound_hash(&f.service, &response_hash).unwrap();
 
-    // A signature from the currently-configured old key is valid...
     let old_signature: [u8; 64] = old_attestor.sign(&domain_hash).to_bytes();
 
-    // ...until the owner rotates to a new key.
+    // The owner cannot replace the key after callers may have relied on it.
     f.send_from(
         &owner,
         TOS / 10,
         ServiceActorContract::rotate_attestor_key(1, new_pubkey).unwrap(),
     )
-    .expect_success();
+    .expect_aborted()
+    .expect_exit_code(ERR_ATTESTOR_FROZEN);
+    assert_eq!(f.data().attestor_pubkey, Some(old_pubkey));
 
-    // The old signature, still cryptographically valid under the old key, is
-    // now rejected: respond checks against whichever key is configured *now*.
     f.send_from(
         &owner,
         TOS / 4,
         ServiceActorContract::respond_signed(2, response_hash, &old_signature).unwrap(),
-    )
-    .expect_aborted()
-    .expect_exit_code(ERR_BAD_RESPONSE_SIGNATURE);
-    assert_eq!(f.data().last_response_hash, [0; 32]);
-
-    // Only a fresh signature from the new key commits the response.
-    let new_signature: [u8; 64] = new_attestor.sign(&domain_hash).to_bytes();
-    f.send_from(
-        &owner,
-        TOS / 4,
-        ServiceActorContract::respond_signed(3, response_hash, &new_signature).unwrap(),
     )
     .expect_success();
     assert_eq!(f.data().last_response_hash, response_hash);

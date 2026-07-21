@@ -9,8 +9,8 @@
 //! These execute the compiled contract embedded in
 //! `CapabilityRegistryContract` against the in-process executor: deployment
 //! and get-method inspection, owner-authorized metadata/verifier updates,
-//! permissionless staking, owner-authorized bond withdrawal, verifier-gated
-//! reputation updates, and the deactivate/reactivate lifecycle -- plus the
+//! owner-authorized staking and bond withdrawal, verifier-gated reputation
+//! updates, and the deactivate/reactivate lifecycle -- plus the
 //! unauthorized/illegal-transition rejections for each.
 
 use chain_block::{Cell, IBitstring, MsgAddressInt};
@@ -198,14 +198,28 @@ fn owner_can_rotate_verifier_and_new_verifier_takes_effect() {
 }
 
 #[test]
-fn anyone_can_stake_increasing_recorded_bond() {
+fn only_owner_can_stake_increasing_recorded_bond() {
+    // stake was previously permissionless, but only the owner can ever
+    // withdraw the bond (withdraw_bond/deactivate) -- a non-owner staker had
+    // no way to reclaim their own contribution, so stake is owner-only now.
     let mut f = Fixture::new(TOS, TOS + TOS / 10, true);
     let outsider = f.outsider.address().clone();
     let stake_amount = 3 * TOS;
-    let msg = tos_sandbox::MessageBuilder::internal(&outsider, &f.registry, stake_amount)
+    let outsider_msg = tos_sandbox::MessageBuilder::internal(&outsider, &f.registry, stake_amount)
         .body(CapabilityRegistryContract::stake(1).unwrap())
         .build();
-    f.bc.send_message(msg).expect("send").expect_success();
+    f.bc
+        .send_message(outsider_msg)
+        .expect("send")
+        .expect_aborted()
+        .expect_exit_code(ERR_NOT_OWNER);
+    assert_eq!(f.data().bond, TOS, "a rejected non-owner stake must not affect the recorded bond");
+
+    let owner = f.owner.address().clone();
+    let owner_msg = tos_sandbox::MessageBuilder::internal(&owner, &f.registry, stake_amount)
+        .body(CapabilityRegistryContract::stake(2).unwrap())
+        .build();
+    f.bc.send_message(owner_msg).expect("send").expect_success();
     // The recorded bond grows by (roughly) the sent value; sandbox forward
     // fees are deducted from the credited value, so allow a small margin.
     let bond = f.data().bond;

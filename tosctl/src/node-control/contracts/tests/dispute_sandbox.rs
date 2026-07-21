@@ -29,6 +29,7 @@ const ERR_INVALID_RULING: i32 = 2003;
 const ERR_INVALID_SPLIT_BPS: i32 = 2004;
 const ERR_UNKNOWN_OP: i32 = 2005;
 const ERR_BAD_RULING_SIGNATURE: i32 = 2006;
+const ERR_ATTESTOR_FROZEN: i32 = 2007;
 
 struct Fixture {
     bc: Blockchain,
@@ -307,7 +308,7 @@ fn rule_on_an_attestor_configured_dispute_requires_a_valid_signature() {
 }
 
 #[test]
-fn reviewer_can_rotate_and_revoke_the_attestor_key_others_rejected() {
+fn reviewer_can_enable_attestor_once_but_cannot_revoke_it() {
     let attestor = SigningKey::from_bytes(&[0x77; 32]);
     let attestor_pubkey = attestor.verifying_key().to_bytes();
     let ruling_hash = [0xBB; 32];
@@ -339,52 +340,102 @@ fn reviewer_can_rotate_and_revoke_the_attestor_key_others_rejected() {
         .expect_exit_code(ERR_NOT_REVIEWER);
     assert!(f.data().attestor_pubkey.is_some());
 
-    // Reviewer revokes: rule works again without any signature.
-    f.send_from(&reviewer, DisputeContract::revoke_attestor(5).unwrap()).expect_success();
-    assert!(f.data().attestor_pubkey.is_none());
+    f.send_from(&reviewer, DisputeContract::revoke_attestor(5).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_ATTESTOR_FROZEN);
+    assert_eq!(f.data().attestor_pubkey, Some(attestor_pubkey));
 
-    f.send_from(&reviewer, DisputeContract::rule(6, RULING_CLAIMANT, 0, ruling_hash).unwrap())
-        .expect_success();
+    let domain_hash = contracts::domain_bound_hash(&f.dispute, &ruling_hash).unwrap();
+    let signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
+    f.send_from_with_value(
+        &reviewer,
+        DisputeContract::rule_signed(6, RULING_CLAIMANT, 0, ruling_hash, &signature).unwrap(),
+        TOS / 4,
+    )
+    .expect_success();
     assert_eq!(f.data().status, DISPUTE_STATUS_RESOLVED);
 }
 
 #[test]
-fn rotating_the_attestor_key_invalidates_signatures_from_the_old_key() {
+fn configured_attestor_is_immutable_while_dispute_is_open() {
     let old_attestor = SigningKey::from_bytes(&[0x11; 32]);
     let old_pubkey = old_attestor.verifying_key().to_bytes();
-    let new_attestor = SigningKey::from_bytes(&[0x22; 32]);
-    let new_pubkey = new_attestor.verifying_key().to_bytes();
+    let new_pubkey = SigningKey::from_bytes(&[0x22; 32]).verifying_key().to_bytes();
     let ruling_hash = [0xBB; 32];
 
     let mut f = Fixture::with_attestor(TOS / 10, old_pubkey);
     let reviewer = f.reviewer.address().clone();
     let domain_hash = contracts::domain_bound_hash(&f.dispute, &ruling_hash).unwrap();
 
-    // A signature from the currently-configured old key is valid...
     let old_signature: [u8; 64] = old_attestor.sign(&domain_hash).to_bytes();
 
-    // ...until the reviewer rotates to a new key.
     f.send_from(&reviewer, DisputeContract::rotate_attestor_key(1, new_pubkey).unwrap())
-        .expect_success();
+        .expect_aborted()
+        .expect_exit_code(ERR_ATTESTOR_FROZEN);
+    assert_eq!(f.data().attestor_pubkey, Some(old_pubkey));
 
-    // The old signature, still cryptographically valid under the old key, is
-    // now rejected: rule checks against whichever key is configured *now*.
     f.send_from_with_value(
         &reviewer,
         DisputeContract::rule_signed(2, RULING_CLAIMANT, 0, ruling_hash, &old_signature).unwrap(),
         TOS / 4,
     )
-    .expect_aborted()
-    .expect_exit_code(ERR_BAD_RULING_SIGNATURE);
-    assert_eq!(f.data().status, DISPUTE_STATUS_OPEN);
+    .expect_success();
+    assert_eq!(f.data().status, DISPUTE_STATUS_RESOLVED);
+}
 
-    // Only a fresh signature from the new key resolves the dispute.
-    let new_signature: [u8; 64] = new_attestor.sign(&domain_hash).to_bytes();
+#[test]
+fn attestor_rotate_and_revoke_are_frozen_from_deployment_until_resolution() {
+    // Once the respondent has submitted evidence relying on a configured
+    // attestor, the reviewer must not be able to swap in a key they control
+    // (or drop the requirement entirely) right before ruling -- that would
+    // let them forge the independent check the respondent relied on.
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let attestor_pubkey = attestor.verifying_key().to_bytes();
+    let other_pubkey = SigningKey::from_bytes(&[0x99; 32]).verifying_key().to_bytes();
+    let mut f = Fixture::with_attestor(TOS / 10, attestor_pubkey);
+    let reviewer = f.reviewer.address().clone();
+    let respondent = f.respondent.address().clone();
+
+    // claimant evidence is committed at deployment, so the key is already
+    // frozen while open; this closes the reviewer front-running window.
+    f.send_from(&reviewer, DisputeContract::rotate_attestor_key(1, other_pubkey).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_ATTESTOR_FROZEN);
+    f.send_from(&reviewer, DisputeContract::revoke_attestor(2).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_ATTESTOR_FROZEN);
+    assert_eq!(f.data().attestor_pubkey, Some(attestor_pubkey));
+
+    f.send_from(&respondent, DisputeContract::submit_respondent_evidence(3, [0xAA; 32]).unwrap())
+        .expect_success();
+    assert_eq!(f.data().status, DISPUTE_STATUS_EVIDENCE_SUBMITTED);
+
+    f.send_from(&reviewer, DisputeContract::rotate_attestor_key(4, other_pubkey).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_ATTESTOR_FROZEN);
+    f.send_from(&reviewer, DisputeContract::revoke_attestor(5).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_ATTESTOR_FROZEN);
+    assert_eq!(f.data().attestor_pubkey, Some(attestor_pubkey));
+
+    // A non-reviewer sender still fails the sender check first, not the
+    // freeze check -- the freeze does not relax authorization.
+    let outsider = f.outsider.address().clone();
+    f.send_from(&outsider, DisputeContract::rotate_attestor_key(6, other_pubkey).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_NOT_REVIEWER);
+
+    // Ruling reaches the terminal resolved status -- rotate/revoke unfrozen.
+    let ruling_hash = [0xBB; 32];
+    let domain_hash = contracts::domain_bound_hash(&f.dispute, &ruling_hash).unwrap();
+    let signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
     f.send_from_with_value(
         &reviewer,
-        DisputeContract::rule_signed(3, RULING_CLAIMANT, 0, ruling_hash, &new_signature).unwrap(),
+        DisputeContract::rule_signed(7, RULING_CLAIMANT, 0, ruling_hash, &signature).unwrap(),
         TOS / 4,
     )
     .expect_success();
     assert_eq!(f.data().status, DISPUTE_STATUS_RESOLVED);
+    f.send_from(&reviewer, DisputeContract::revoke_attestor(8).unwrap()).expect_success();
+    assert!(f.data().attestor_pubkey.is_none());
 }

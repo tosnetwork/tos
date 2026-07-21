@@ -42,7 +42,7 @@ pub mod wallet;
 pub use agent_account::{
     AgentAccountContract, AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate,
 };
-pub use attestation::domain_bound_hash;
+pub use attestation::{domain_bound_hash, resolve_domain_hash, settle_domain_hash};
 pub use capability_registry::{
     CapabilityRegistryContract, CapabilityRegistryData, CapabilityRegistryInit,
 };

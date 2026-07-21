@@ -356,13 +356,54 @@ async def run_checks(faucet) -> None:
     data = await dispute_show("case-4")
     check("non-reviewer revoke rejected", bool(data.get("attestor_pubkey")), str(data))
 
-    await send_op("revoke-attestor", "case-4", "reviewer")
+    await send_op("revoke-attestor", "case-4", "reviewer", may_fail=True)
     data = await dispute_show("case-4")
-    check("reviewer revoke clears attestor", not data.get("attestor_pubkey"), str(data))
+    check("reviewer cannot revoke configured attestor while open",
+          bool(data.get("attestor_pubkey")), str(data))
 
-    await send_op("rule", "case-4", "reviewer", "--ruling", "claimant", "--ruling-hash", RULING_HASH)
+    await send_op("rule", "case-4", "reviewer", "--ruling", "claimant",
+                  "--ruling-hash", RULING_HASH,
+                  "--signer-vault-key", "rotated-dispute-attestor-key")
     data = await dispute_show("case-4")
-    check("rule after revoke succeeds unattested", data["status"] == "resolved", str(data))
+    check("rule still requires configured attestor", data["status"] == "resolved", str(data))
+
+    print("\n=== rotate/revoke frozen from deployment ===")
+    # Once the respondent has submitted evidence relying on a configured
+    # attestor, the reviewer must not be able to swap in a key they control
+    # (or drop the requirement entirely) right before ruling -- that would
+    # let them forge the independent check the respondent relied on.
+    deploy5 = await tosctl_json(
+        "agent", "dispute", "deploy", "--name", "case-5",
+        "--claimant", claimant, "--respondent", respondent, "--reviewer", reviewer,
+        "--deadline", str(deadline + 40),
+        "--subject-hash", SUBJECT_HASH, "--claimant-evidence-hash", CLAIMANT_EVIDENCE_HASH,
+        "--attestor-pubkey", "cc" * 32,
+        "--from", "claimant", "--amount", "0.1", "-w", "0", "--yes",
+    )
+    address5 = deploy5["address"]
+    check("frozen-attestor dispute deployed and active", await poll_predicate(
+        lambda: rpc_call("getAddressState", address=address5).get("result") == "active"))
+    data = await dispute_show("case-5")
+    check("attestor configured at deploy", bool(data.get("attestor_pubkey")), str(data))
+
+    await send_op("rotate-attestor-key", "case-5", "reviewer",
+                  "--new-attestor-pubkey", "dd" * 32, may_fail=True)
+    data = await dispute_show("case-5")
+    check("rotate already frozen while open", data["attestor_pubkey"] == "cc" * 32, str(data))
+
+    await send_op("submit-respondent-evidence", "case-5", "respondent",
+                  "--respondent-evidence-hash", RESPONDENT_EVIDENCE_HASH)
+    data = await dispute_show("case-5")
+    check("case-5 evidence submitted", data["status"] == "evidence_submitted", str(data))
+
+    await send_op("rotate-attestor-key", "case-5", "reviewer",
+                  "--new-attestor-pubkey", "dd" * 32, may_fail=True)
+    data = await dispute_show("case-5")
+    check("rotate frozen once evidence submitted", data["attestor_pubkey"] == "cc" * 32, str(data))
+
+    await send_op("revoke-attestor", "case-5", "reviewer", may_fail=True)
+    data = await dispute_show("case-5")
+    check("revoke frozen once evidence submitted", data["attestor_pubkey"] == "cc" * 32, str(data))
 
     print("\n=== persisted local records ===")
     records = {r["name"]: r for r in await tosctl_json("agent", "dispute", "ls")}

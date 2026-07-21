@@ -85,12 +85,18 @@ fn main() -> anyhow::Result<()> {
     print_cell("result message body", &TaskEscrowContract::result(2, result_hash, [0x66; 32])?)?;
 
     // Because this task was deployed with an attestor_pubkey, settle requires
-    // a signature over result_hash under that key -- the attestor is
-    // independent of the creator/verifier who authorizes the settle call.
-    let attestation: [u8; 64] = attestor.sign(&result_hash).to_bytes();
+    // a signature over contracts::settle_domain_hash(task_address, result_hash,
+    // payout) under that key -- not the bare result_hash, and not just
+    // result_hash alone: the payout is part of what the attestor signs off
+    // on too, so one signature can't be replayed to authorize a different
+    // payout. The attestor is independent of the creator/verifier who
+    // authorizes the settle call.
+    let payout = task_init.budget;
+    let domain_hash = contracts::settle_domain_hash(&task_address, &result_hash, payout)?;
+    let attestation: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
     print_cell(
         "settle message body (attested)",
-        &TaskEscrowContract::settle_signed(3, task_init.budget, &attestation)?,
+        &TaskEscrowContract::settle_signed(3, payout, &attestation)?,
     )?;
 
     println!(

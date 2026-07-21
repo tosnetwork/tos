@@ -116,8 +116,14 @@ const int err::unknown_op = 1807;
    int task_categories_hash, int pricing_hash, int metadata_hash) = load_state();
 
   if (op == op::stake) {
-    ;; Anyone may top up the bond; the incoming value is already credited to
-    ;; the contract balance, this just records it against the tracked `bond`.
+    ;; Owner-only: the incoming value is already credited to the contract
+    ;; balance, this just records it against the tracked `bond`. Previously
+    ;; anyone could top up the bond, but only the owner can ever withdraw it
+    ;; (withdraw_bond/deactivate) -- a non-owner who staked had no way to
+    ;; reclaim their own contribution. If a third-party-funded bond is ever
+    ;; needed, it should track per-staker contributions with a
+    ;; staker-initiated withdrawal path instead of widening this back.
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     in_msg.end_parse();
     bond += msg_value;
     save_state(owner, has_verifier, verifier, active, registered_at, bond,

@@ -31,3 +31,5 @@ AI actor review should use:
 - [ai-actor-message-catalog.md](ai-actor-message-catalog.md)
 - [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md)
 - [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md)
+
+The dedicated AI-actor review is [security-audit-ai-actor-2026-07.md](security-audit-ai-actor-2026-07.md) (2026-07-21). Its follow-up closes both High-severity attestor gaps and all three Medium-severity fund-handling findings, including verifier-less Task Escrow timeout economics.

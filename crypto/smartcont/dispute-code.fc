@@ -49,6 +49,7 @@ const int err::invalid_ruling = 2003;
 const int err::invalid_split_bps = 2004;
 const int err::unknown_op = 2005;
 const int err::bad_ruling_signature = 2006;
+const int err::attestor_frozen = 2007;
 
 (slice, slice, slice, int, int, int, int, int, int, int, int, int, int) load_state() inline {
   slice ds = get_data().begin_parse();
@@ -159,8 +160,16 @@ const int err::bad_ruling_signature = 2006;
 
   if (op == op::rotate_attestor_key) {
     ;; Reviewer-only: set or replace the attestor_pubkey rule checks against.
-    ;; Purely local state -- no cross-contract messaging.
+    ;; Purely local state -- no cross-contract messaging. A configured key is
+    ;; frozen until resolution: allowing the reviewer to swap
+    ;; in a key they control right before ruling would let them forge the
+    ;; independent check the respondent relied on when submitting evidence.
     throw_unless(err::not_reviewer, equal_slice_bits(sender, reviewer));
+    ;; claimant_evidence_hash is committed at deployment, so waiting until
+    ;; respondent evidence arrives is too late: the reviewer could rotate or
+    ;; revoke first and rule directly from the open state. A configured
+    ;; attestor is immutable until the dispute is resolved.
+    throw_unless(err::attestor_frozen, (has_attestor == 0) | (status == status::resolved));
     attestor_pubkey = in_msg~load_uint(256);
     in_msg.end_parse();
     has_attestor = 1;
@@ -172,8 +181,10 @@ const int err::bad_ruling_signature = 2006;
 
   if (op == op::revoke_attestor) {
     ;; Reviewer-only: permanently (until rotated again) drop the attestation
-    ;; requirement -- rule reverts to sender-authorization-only.
+    ;; requirement -- rule reverts to sender-authorization-only. A configured
+    ;; key is frozen until resolution, for the same reason.
     throw_unless(err::not_reviewer, equal_slice_bits(sender, reviewer));
+    throw_unless(err::attestor_frozen, (has_attestor == 0) | (status == status::resolved));
     in_msg.end_parse();
     has_attestor = 0;
     save_state(claimant, respondent, reviewer, status, ruling, split_bps, deadline,

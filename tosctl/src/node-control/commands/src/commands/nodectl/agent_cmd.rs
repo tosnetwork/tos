@@ -148,7 +148,7 @@ pub struct AgentTaskSendCmd {
     #[arg(
         long,
         conflicts_with = "signer_vault_key",
-        help = "64-byte ed25519 signature over result_hash, for settle on a task deployed with --attestor-pubkey"
+        help = "64-byte ed25519 signature over the settle/resolve domain hash, for settle or resolve on a task deployed with --attestor-pubkey"
     )]
     attestation_signature: Option<String>,
     #[arg(
@@ -305,7 +305,7 @@ pub struct AgentTaskEncodeCmd {
     payout: Option<f64>,
     #[arg(
         long,
-        help = "64-byte ed25519 signature over result_hash, for settle on a task deployed with --attestor-pubkey"
+        help = "64-byte ed25519 signature over the settle/resolve domain hash, for settle or resolve on a task deployed with --attestor-pubkey"
     )]
     attestation_signature: Option<String>,
     #[arg(
@@ -1039,10 +1039,23 @@ impl AgentTaskSendCmd {
                 self.query_id,
                 parse_required_hash("dispute-hash", &self.dispute_hash)?,
             )?),
-            AgentTaskOperation::Resolve => Some(TaskEscrowContract::resolve(
-                self.query_id,
-                tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
-            )?),
+            AgentTaskOperation::Resolve => {
+                let payout = tos_to_nanotos(
+                    self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
+                );
+                match parse_optional_signature(
+                    "attestation-signature",
+                    &self.attestation_signature,
+                )? {
+                    Some(signature) => {
+                        Some(TaskEscrowContract::resolve_signed(self.query_id, payout, &signature)?)
+                    }
+                    // Resolved once chain state (result_hash, dispute_hash) and the vault
+                    // are available, below.
+                    None if self.signer_vault_key.is_some() => None,
+                    None => Some(TaskEscrowContract::resolve(self.query_id, payout)?),
+                }
+            }
             AgentTaskOperation::Settle => {
                 let payout = tos_to_nanotos(
                     self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
@@ -1092,12 +1105,35 @@ impl AgentTaskSendCmd {
                         .get_method(destination.to_string(), "get_task_data", vec![])
                         .await?;
                     let chain_task = TaskEscrowContract::decode_data(&stack)?;
-                    let domain_hash =
-                        contracts::domain_bound_hash(&destination, &chain_task.result_hash)?;
+                    let domain_hash = contracts::settle_domain_hash(
+                        &destination,
+                        &chain_task.result_hash,
+                        payout,
+                    )?;
                     let signature =
                         sign_hash_with_vault_key(vault_key, &domain_hash, vault.clone()).await?;
                     body =
                         Some(TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?);
+                }
+                AgentTaskOperation::Resolve => {
+                    let payout = tos_to_nanotos(
+                        self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
+                    );
+                    let provider = contracts::contract_provider!(rpc_client.clone());
+                    let stack = provider
+                        .get_method(destination.to_string(), "get_task_data", vec![])
+                        .await?;
+                    let chain_task = TaskEscrowContract::decode_data(&stack)?;
+                    let domain_hash = contracts::resolve_domain_hash(
+                        &destination,
+                        &chain_task.result_hash,
+                        &chain_task.dispute_hash,
+                        payout,
+                    )?;
+                    let signature =
+                        sign_hash_with_vault_key(vault_key, &domain_hash, vault.clone()).await?;
+                    body =
+                        Some(TaskEscrowContract::resolve_signed(self.query_id, payout, &signature)?);
                 }
                 AgentTaskOperation::RotateAttestorKey => {
                     let pubkey = resolve_attestor_pubkey(
@@ -1110,7 +1146,9 @@ impl AgentTaskSendCmd {
                     body =
                         Some(TaskEscrowContract::rotate_attestor_key(self.query_id, pubkey)?);
                 }
-                _ => unreachable!("only settle and rotate-attestor-key defer body resolution"),
+                _ => unreachable!(
+                    "only settle, resolve and rotate-attestor-key defer body resolution"
+                ),
             }
         }
         let body = body.expect("body resolved for every operation");
@@ -1581,10 +1619,20 @@ impl AgentTaskEncodeCmd {
                 self.query_id,
                 parse_required_hash("dispute-hash", &self.dispute_hash)?,
             )?,
-            AgentTaskOperation::Resolve => TaskEscrowContract::resolve(
-                self.query_id,
-                tos_to_nanotos(self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?),
-            )?,
+            AgentTaskOperation::Resolve => {
+                let payout = tos_to_nanotos(
+                    self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
+                );
+                match parse_optional_signature(
+                    "attestation-signature",
+                    &self.attestation_signature,
+                )? {
+                    Some(signature) => {
+                        TaskEscrowContract::resolve_signed(self.query_id, payout, &signature)?
+                    }
+                    None => TaskEscrowContract::resolve(self.query_id, payout)?,
+                }
+            }
             AgentTaskOperation::Settle => {
                 let payout = tos_to_nanotos(
                     self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
