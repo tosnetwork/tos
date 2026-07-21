@@ -29,7 +29,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 1;
+const CURRENT_SCHEMA_VERSION: i64 = 2;
 
 /// `MIGRATIONS[i]` transforms a database at schema version `i + 1` into
 /// version `i + 2` (e.g. `MIGRATIONS[0]` migrates v1 -> v2). Empty today:
@@ -39,7 +39,20 @@ const CURRENT_SCHEMA_VERSION: i64 = 1;
 /// bumping [`CURRENT_SCHEMA_VERSION`] is the intended way to evolve the
 /// schema, rather than editing `init_schema`'s `CREATE TABLE` in place
 /// (which `IF NOT EXISTS` would silently no-op against an existing file).
-const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[];
+const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[|conn| {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS service_request_lifecycle (
+            service_address TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            dto_json TEXT NOT NULL,
+            PRIMARY KEY(service_address, request_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_service_request_status
+            ON service_request_lifecycle(service_address, status);",
+    )
+}];
 
 /// One indexed account: either a recognized contract (`kind` is one of
 /// `task_escrow`/`dispute`/`service_actor`/`capability_registry`) or
@@ -53,6 +66,15 @@ pub struct IndexedRecord {
     pub status: Option<String>,
     pub deadline: Option<u64>,
     pub last_seqno: u32,
+    pub updated_at: u64,
+    pub dto_json: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceRequestRecord {
+    pub service_address: String,
+    pub request_id: u64,
+    pub status: String,
     pub updated_at: u64,
     pub dto_json: String,
 }
@@ -105,7 +127,17 @@ impl IndexerStore {
                 dto_json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_indexed_contracts_kind
-                ON indexed_contracts(kind);",
+                ON indexed_contracts(kind);
+            CREATE TABLE IF NOT EXISTS service_request_lifecycle (
+                service_address TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                dto_json TEXT NOT NULL,
+                PRIMARY KEY(service_address, request_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_service_request_status
+                ON service_request_lifecycle(service_address, status);",
         )?;
         Ok(())
     }
@@ -132,11 +164,9 @@ impl IndexerStore {
         migrations: &[fn(&Connection) -> rusqlite::Result<()>],
     ) -> anyhow::Result<()> {
         let existing: Option<String> = conn
-            .query_row(
-                "SELECT value FROM indexer_meta WHERE key = 'schema_version'",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |row| {
+                row.get(0)
+            })
             .optional()?;
         let mut version = match existing.as_deref().map(str::parse::<i64>) {
             None => {
@@ -242,7 +272,11 @@ impl IndexerStore {
         .map_err(Into::into)
     }
 
-    pub fn set_checkpoint_block_hash(&self, shard_key: &str, block_hash: &str) -> anyhow::Result<()> {
+    pub fn set_checkpoint_block_hash(
+        &self,
+        shard_key: &str,
+        block_hash: &str,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         conn.execute(
             "INSERT INTO indexer_meta (key, value) VALUES (?1, ?2)
@@ -375,6 +409,95 @@ impl IndexerStore {
             .collect::<Result<Vec<_>, _>>()?;
         Ok((rows, total))
     }
+
+    pub fn upsert_service_request(&self, record: &ServiceRequestRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        conn.execute(
+            "INSERT INTO service_request_lifecycle
+                (service_address, request_id, status, updated_at, dto_json)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(service_address, request_id) DO UPDATE SET
+                status = excluded.status, updated_at = excluded.updated_at,
+                dto_json = excluded.dto_json",
+            params![
+                record.service_address,
+                record.request_id.to_string(),
+                record.status,
+                record.updated_at as i64,
+                record.dto_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn service_request(
+        &self,
+        service_address: &str,
+        request_id: u64,
+    ) -> anyhow::Result<Option<ServiceRequestRecord>> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        conn.query_row(
+            "SELECT service_address, request_id, status, updated_at, dto_json
+             FROM service_request_lifecycle WHERE service_address = ?1 AND request_id = ?2",
+            params![service_address, request_id.to_string()],
+            |row| {
+                Ok(ServiceRequestRecord {
+                    service_address: row.get(0)?,
+                    request_id: row.get::<_, String>(1)?.parse().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+                    status: row.get(2)?,
+                    updated_at: row.get::<_, i64>(3)? as u64,
+                    dto_json: row.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// Returns the highest ID ever indexed plus only non-terminal rows that
+    /// still need an on-chain refresh. IDs are TEXT to preserve all uint64
+    /// values, so compute the maximum after lossless Rust parsing.
+    pub fn service_requests_for_refresh(
+        &self,
+        service_address: &str,
+    ) -> anyhow::Result<(Option<u64>, Vec<ServiceRequestRecord>)> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT service_address, request_id, status, updated_at, dto_json
+             FROM service_request_lifecycle WHERE service_address = ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![service_address], |row| {
+                let raw: String = row.get(1)?;
+                let request_id = raw.parse().map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+                Ok(ServiceRequestRecord {
+                    service_address: row.get(0)?,
+                    request_id,
+                    status: row.get(2)?,
+                    updated_at: row.get::<_, i64>(3)? as u64,
+                    dto_json: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let max_id = rows.iter().map(|r| r.request_id).max();
+        let active = rows
+            .into_iter()
+            .filter(|r| matches!(r.status.as_str(), "pending" | "refundable"))
+            .collect();
+        Ok((max_id, active))
+    }
 }
 
 fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedRecord> {
@@ -395,7 +518,13 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedRecord> {
 mod tests {
     use super::*;
 
-    fn record(address: &str, kind: &str, creator: &str, status: &str, deadline: u64) -> IndexedRecord {
+    fn record(
+        address: &str,
+        kind: &str,
+        creator: &str,
+        status: &str,
+        deadline: u64,
+    ) -> IndexedRecord {
         IndexedRecord {
             address: address.to_owned(),
             kind: kind.to_owned(),
@@ -430,7 +559,11 @@ mod tests {
             )
             .unwrap();
         }
-        assert_eq!(store.checkpoint("0:1").unwrap(), 0, "corrupt data must trigger a safe rescan, not a panic/error");
+        assert_eq!(
+            store.checkpoint("0:1").unwrap(),
+            0,
+            "corrupt data must trigger a safe rescan, not a panic/error"
+        );
     }
 
     #[test]
@@ -463,7 +596,9 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let conn = store.conn.lock().unwrap();
         let version: String = conn
-            .query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| r.get(0))
+            .query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(version, CURRENT_SCHEMA_VERSION.to_string());
     }
@@ -485,11 +620,8 @@ mod tests {
     fn reopening_a_database_with_an_invalid_schema_version_fails_loudly() {
         let conn = Connection::open_in_memory().unwrap();
         IndexerStore::init_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO indexer_meta (key, value) VALUES ('schema_version', '0')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO indexer_meta (key, value) VALUES ('schema_version', '0')", [])
+            .unwrap();
         let err = IndexerStore::ensure_schema_version(&conn).unwrap_err();
         assert!(err.to_string().contains("invalid schema_version"), "{err}");
     }
@@ -513,11 +645,8 @@ mod tests {
         IndexerStore::init_schema(&conn).unwrap();
         conn.execute("INSERT INTO indexer_meta (key, value) VALUES ('schema_version', '1')", [])
             .unwrap();
-        conn.execute(
-            "INSERT INTO indexer_meta (key, value) VALUES ('migration_log', '')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO indexer_meta (key, value) VALUES ('migration_log', '')", [])
+            .unwrap();
 
         fn append_log(conn: &Connection, step: &str) {
             conn.execute(
@@ -539,11 +668,15 @@ mod tests {
             .unwrap();
 
         let version: String = conn
-            .query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| r.get(0))
+            .query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(version, "3");
         let log: String = conn
-            .query_row("SELECT value FROM indexer_meta WHERE key = 'migration_log'", [], |r| r.get(0))
+            .query_row("SELECT value FROM indexer_meta WHERE key = 'migration_log'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(log, "1->2;2->3;", "migrations must run in order, once each");
     }
@@ -562,11 +695,14 @@ mod tests {
             Err(rusqlite::Error::SqliteSingleThreadedMode)
         }
 
-        let result = IndexerStore::ensure_schema_version_against(&conn, 3, &[migrate_ok, migrate_fails]);
+        let result =
+            IndexerStore::ensure_schema_version_against(&conn, 3, &[migrate_ok, migrate_fails]);
         assert!(result.is_err());
 
         let version: String = conn
-            .query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| r.get(0))
+            .query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(version, "2", "the successful first step must be durably recorded");
     }
@@ -598,6 +734,25 @@ mod tests {
     }
 
     #[test]
+    fn service_request_lifecycle_round_trips_full_u64_ids_and_transitions() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let mut rec = ServiceRequestRecord {
+            service_address: "-1:service".into(),
+            request_id: u64::MAX,
+            status: "pending".into(),
+            updated_at: 10,
+            dto_json: r#"{"status":"pending"}"#.into(),
+        };
+        store.upsert_service_request(&rec).unwrap();
+        assert_eq!(store.service_request("-1:service", u64::MAX).unwrap(), Some(rec.clone()));
+        rec.status = "responded".into();
+        rec.updated_at = 11;
+        rec.dto_json = r#"{"status":"responded"}"#.into();
+        store.upsert_service_request(&rec).unwrap();
+        assert_eq!(store.service_request("-1:service", u64::MAX).unwrap(), Some(rec));
+    }
+
+    #[test]
     fn list_filters_by_kind_creator_status_and_deadline_range() {
         let store = IndexerStore::open_in_memory().unwrap();
         store.upsert(&record("0:a", "task_escrow", "0:creator1", "open", 100)).unwrap();
@@ -618,7 +773,11 @@ mod tests {
         let (rows, _) = store.list("task_escrow", &filters, 0, 10).unwrap();
         assert_eq!(rows.iter().map(|r| r.address.as_str()).collect::<Vec<_>>(), vec!["0:a", "0:c"]);
 
-        let filters = ListFilters { deadline_after: Some(150), deadline_before: Some(350), ..Default::default() };
+        let filters = ListFilters {
+            deadline_after: Some(150),
+            deadline_before: Some(350),
+            ..Default::default()
+        };
         let (rows, _) = store.list("task_escrow", &filters, 0, 10).unwrap();
         assert_eq!(rows.iter().map(|r| r.address.as_str()).collect::<Vec<_>>(), vec!["0:b", "0:c"]);
     }

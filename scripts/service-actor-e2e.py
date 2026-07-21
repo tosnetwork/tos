@@ -58,6 +58,7 @@ Run from the repository root: uv run python scripts/service-actor-e2e.py
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -249,6 +250,13 @@ async def next_request_id(name: str) -> int:
     return (await service_show(name))["next_request_id"]
 
 
+def assigned_request_id(output: str) -> int:
+    match = re.search(r"Assigned request ID: (\d+)", output)
+    if not match or "best-effort" in output:
+        raise RuntimeError(f"call did not emit an authoritative request ID:\n{output}")
+    return int(match.group(1))
+
+
 async def deploy_service(
     name: str, owner: str, *, price_per_call: float = 0.05, rate_limit_per_day: int = 0,
     authorized_caller: str | None = None, open_access: bool = False,
@@ -339,15 +347,21 @@ async def run_checks(faucet) -> None:
     # This is the headline feature the upgrade adds: unlike the single-slot
     # V1 contract, a second call is accepted while the first is still
     # unanswered, and each resolves on its own schedule and in any order.
-    request_a = await next_request_id("svc-1")
-    await send_op("call", "svc-1", "caller", "--request-hash", "cc" * 32, "--amount", str(call_amount))
+    predicted_a = await next_request_id("svc-1")
+    call_a_output = await send_op(
+        "call", "svc-1", "caller", "--request-hash", "cc" * 32, "--amount", str(call_amount))
+    request_a = assigned_request_id(call_a_output)
+    check("CLI reports the exact assigned request ID", request_a == predicted_a, call_a_output)
     data = await service_show("svc-1")
     check("first concurrent call accepted", data["calls_today"] == 1, str(data))
     check("one pending request after first call", data["pending_count"] == 1, str(data))
 
-    request_b = await next_request_id("svc-1")
+    predicted_b = await next_request_id("svc-1")
+    call_b_output = await send_op(
+        "call", "svc-1", "caller", "--request-hash", "dd" * 32, "--amount", str(call_amount))
+    request_b = assigned_request_id(call_b_output)
     check("second request gets a distinct ID", request_b != request_a, f"a={request_a} b={request_b}")
-    await send_op("call", "svc-1", "caller", "--request-hash", "dd" * 32, "--amount", str(call_amount))
+    check("second CLI request ID matches chain allocation", request_b == predicted_b, call_b_output)
     data = await service_show("svc-1")
     check("second concurrent call accepted while the first is still pending",
           data["calls_today"] == 2, str(data))

@@ -433,6 +433,22 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
 
   if (op == op::call) {
     throw_unless(err::inactive, active == 1);
+    ;; Deploy StateInit is caller-supplied and never passes through
+    ;; update_policy's bounds checks, so an owner could otherwise launch a
+    ;; live service whose policy violates the protocol constants the design
+    ;; doc promises are unconditionally enforced (e.g. cleanup_bounty == 0,
+    ;; leaving no incentive to ever sweep an expired request). Re-checking
+    ;; here, on the one operation that actually puts caller funds at risk
+    ;; under that policy, closes the gap regardless of how the policy was
+    ;; set -- deploy or otherwise.
+    throw_unless(err::invalid_response_sla,
+      (response_sla >= MIN_RESPONSE_SLA) & (response_sla <= MAX_RESPONSE_SLA));
+    throw_unless(err::invalid_refund_claim_window,
+      (refund_claim_window >= MIN_REFUND_CLAIM_WINDOW) &
+      (refund_claim_window <= MAX_REFUND_CLAIM_WINDOW));
+    throw_unless(err::invalid_cleanup_bounty,
+      (cleanup_bounty >= MINIMUM_CLEANUP_BOUNTY) & (cleanup_bounty <= MAXIMUM_CLEANUP_BOUNTY));
+    throw_unless(err::insufficient_storage_fee, storage_fee >= MINIMUM_STORAGE_FEE + cleanup_bounty);
     ;; Ported unchanged from the single-slot Service Actor: open access, or
     ;; the single authorized caller.
     throw_unless(err::not_authorized,

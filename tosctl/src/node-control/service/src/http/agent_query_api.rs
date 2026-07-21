@@ -20,7 +20,7 @@ use crate::runtime_config::RuntimeConfig;
 use axum::extract::{Path, Query, State};
 use chain_block::MsgAddressInt;
 use common::tvm_stack_parser::TvmStackParser;
-use contracts::{AgentAccountContract, TaskEscrowContract};
+use contracts::{AgentAccountContract, ServiceActorContract, TaskEscrowContract};
 use std::{str::FromStr, sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
@@ -556,8 +556,10 @@ pub async fn get_dispute(
         .map_err(|e| AppError::internal(format!("{e:#}")))?
         .filter(|r| r.kind == "dispute")
         .ok_or_else(|| AppError::not_found("no dispute indexed at this address"))?;
-    let result = indexed_dto::<DisputeDto>(&rec.dto_json, &rec.address, false)
-        .ok_or_else(|| AppError::invalid_contract_state("indexed dispute record could not be decoded"))?;
+    let result =
+        indexed_dto::<DisputeDto>(&rec.dto_json, &rec.address, false).ok_or_else(|| {
+            AppError::invalid_contract_state("indexed dispute record could not be decoded")
+        })?;
     Ok(axum::Json(DisputeResponse { ok: true, result }))
 }
 
@@ -598,6 +600,28 @@ pub struct ServiceActorListResponse {
     pub result: Vec<ServiceActorDto>,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ServiceRequestLifecycleDto {
+    pub service_address: String,
+    pub request_id: u64,
+    pub status: String,
+    pub caller: Option<String>,
+    pub price: Option<u64>,
+    pub storage_fee: Option<u64>,
+    pub cleanup_bounty: Option<u64>,
+    pub response_deadline: Option<u64>,
+    pub refund_claim_deadline: Option<u64>,
+    pub policy_version: Option<u32>,
+    pub request_hash: Option<String>,
+    pub terms_hash: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ServiceRequestLifecycleResponse {
+    pub ok: bool,
+    pub result: ServiceRequestLifecycleDto,
+}
+
 #[utoipa::path(get, path = "/services", params(IndexedListQuery), responses(
     (status = 200, body = ServiceActorListResponse), (status = 400, body = ApiErrorResponse)
 ), security(("bearerAuth" = [])))]
@@ -634,10 +658,107 @@ pub async fn get_service(
         .map_err(|e| AppError::internal(format!("{e:#}")))?
         .filter(|r| r.kind == "service_actor")
         .ok_or_else(|| AppError::not_found("no service actor indexed at this address"))?;
-    let result = indexed_dto::<ServiceActorDto>(&rec.dto_json, &rec.address, false).ok_or_else(|| {
-        AppError::invalid_contract_state("indexed service actor record could not be decoded")
-    })?;
+    let result =
+        indexed_dto::<ServiceActorDto>(&rec.dto_json, &rec.address, false).ok_or_else(|| {
+            AppError::invalid_contract_state("indexed service actor record could not be decoded")
+        })?;
     Ok(axum::Json(ServiceActorResponse { ok: true, result }))
+}
+
+/// Reads the authoritative live request/refund state. Terminal entries are
+/// deliberately absent from contract storage, so `resolved_or_unknown`
+/// means callers should consult the lifecycle index for its final outcome.
+#[utoipa::path(
+    get,
+    path = "/services/{address}/requests/{request_id}",
+    params(
+        ("address" = String, Path, description = "Service Actor address"),
+        ("request_id" = u64, Path, description = "Contract-assigned request ID")
+    ),
+    responses((status = 200, body = ServiceRequestLifecycleResponse),
+        (status = 400, body = ApiErrorResponse)),
+    security(("bearerAuth" = []))
+)]
+pub async fn get_service_request(
+    State(state): State<AppState>,
+    Path((raw, request_id)): Path<(String, u64)>,
+) -> Result<axum::Json<ServiceRequestLifecycleResponse>, AppError> {
+    let address = parse_address(&raw)?;
+    if let Some(record) = state
+        .indexer_store
+        .service_request(&address.to_string(), request_id)
+        .map_err(|e| AppError::internal(format!("{e:#}")))?
+        .filter(|r| matches!(r.status.as_str(), "responded" | "refunded" | "swept"))
+    {
+        let result = serde_json::from_str(&record.dto_json)
+            .map_err(|e| AppError::invalid_contract_state(format!("{e:#}")))?;
+        return Ok(axum::Json(ServiceRequestLifecycleResponse { ok: true, result }));
+    }
+    let provider = state.runtime_cfg.chain_provider();
+    let arg = vec![contracts::stack_utils::u64_to_stack_entry(request_id)];
+    let request = ServiceActorContract::decode_request(
+        &provider
+            .run_get_method(address.to_string(), "get_request", arg.clone())
+            .await
+            .map_err(|e| AppError::internal(format!("{e:#}")))?,
+    )
+    .map_err(|e| AppError::invalid_contract_state(format!("{e:#}")))?;
+    let refund = if request.is_none() {
+        ServiceActorContract::decode_refund(
+            &provider
+                .run_get_method(address.to_string(), "get_refund", arg)
+                .await
+                .map_err(|e| AppError::internal(format!("{e:#}")))?,
+        )
+        .map_err(|e| AppError::invalid_contract_state(format!("{e:#}")))?
+    } else {
+        None
+    };
+    let result = match (request, refund) {
+        (Some(r), _) => ServiceRequestLifecycleDto {
+            service_address: address.to_string(),
+            request_id,
+            status: "pending".into(),
+            caller: Some(r.caller.to_string()),
+            price: Some(r.price),
+            storage_fee: Some(r.storage_fee),
+            cleanup_bounty: Some(r.cleanup_bounty),
+            response_deadline: Some(r.response_deadline),
+            refund_claim_deadline: Some(r.refund_claim_deadline),
+            policy_version: Some(r.policy_version),
+            request_hash: Some(hex::encode(r.request_hash)),
+            terms_hash: Some(hex::encode(r.terms_hash)),
+        },
+        (_, Some(r)) => ServiceRequestLifecycleDto {
+            service_address: address.to_string(),
+            request_id,
+            status: "refundable".into(),
+            caller: Some(r.caller.to_string()),
+            price: Some(r.price),
+            storage_fee: Some(r.storage_fee),
+            cleanup_bounty: Some(r.cleanup_bounty),
+            response_deadline: None,
+            refund_claim_deadline: Some(r.refund_claim_deadline),
+            policy_version: None,
+            request_hash: None,
+            terms_hash: None,
+        },
+        _ => ServiceRequestLifecycleDto {
+            service_address: address.to_string(),
+            request_id,
+            status: "resolved_or_unknown".into(),
+            caller: None,
+            price: None,
+            storage_fee: None,
+            cleanup_bounty: None,
+            response_deadline: None,
+            refund_claim_deadline: None,
+            policy_version: None,
+            request_hash: None,
+            terms_hash: None,
+        },
+    };
+    Ok(axum::Json(ServiceRequestLifecycleResponse { ok: true, result }))
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
@@ -701,10 +822,15 @@ pub async fn get_registry(
         .get(&address.to_string())
         .map_err(|e| AppError::internal(format!("{e:#}")))?
         .filter(|r| r.kind == "capability_registry")
-        .ok_or_else(|| AppError::not_found("no capability registry entry indexed at this address"))?;
-    let result = indexed_dto::<RegistryDto>(&rec.dto_json, &rec.address, false).ok_or_else(|| {
-        AppError::invalid_contract_state("indexed capability registry record could not be decoded")
-    })?;
+        .ok_or_else(|| {
+            AppError::not_found("no capability registry entry indexed at this address")
+        })?;
+    let result =
+        indexed_dto::<RegistryDto>(&rec.dto_json, &rec.address, false).ok_or_else(|| {
+            AppError::invalid_contract_state(
+                "indexed capability registry record could not be decoded",
+            )
+        })?;
     Ok(axum::Json(RegistryResponse { ok: true, result }))
 }
 
@@ -727,7 +853,8 @@ mod tests {
         task_cancellation::CancellationCtx,
     };
     use contracts::{
-        AgentAccountContract, AgentAccountInit, ChainProvider, TaskEscrowContract, TaskEscrowInit,
+        AgentAccountContract, AgentAccountInit, ChainProvider, ServiceActorInit,
+        TaskEscrowContract, TaskEscrowInit,
     };
     use std::sync::Mutex as StdMutex;
     use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
@@ -823,12 +950,25 @@ mod tests {
             &self,
             address: String,
             method: &str,
-            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+            stack: Vec<tl_api::tos::tvm::StackEntry>,
         ) -> anyhow::Result<TvmStackParser> {
             let addr = MsgAddressInt::from_str(&address)?;
+            let vm_stack = stack
+                .into_iter()
+                .map(|entry| match entry {
+                    tl_api::tos::tvm::StackEntry::Tvm_StackEntryNumber(n) => {
+                        let tl_api::tos::tvm::Number::Tvm_NumberDecimal(v) = n.number;
+                        v.number
+                            .parse::<u64>()
+                            .map(tos_vm::stack::StackItem::int)
+                            .map_err(Into::into)
+                    }
+                    _ => anyhow::bail!("unsupported sandbox input stack entry"),
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
             let result = {
                 let bc = self.bc.lock().expect("sandbox lock poisoned");
-                bc.run_get_method(&addr, method, vec![])
+                bc.run_get_method(&addr, method, vm_stack)
                     .map_err(|e| anyhow::anyhow!("get-method {method} error: {e}"))?
             };
             if result.exit_code != 0 {
@@ -881,7 +1021,10 @@ mod tests {
             anyhow::bail!("not supported by SandboxChainProvider")
         }
 
-        async fn get_shards(&self, _seqno: u32) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+        async fn get_shards(
+            &self,
+            _seqno: u32,
+        ) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
             anyhow::bail!("not supported by SandboxChainProvider")
         }
 
@@ -985,6 +1128,36 @@ mod tests {
             address
         }
 
+        fn deploy_service_with_request(&self) -> MsgAddressInt {
+            let init = ServiceActorInit {
+                owner: self.creator.address().clone(),
+                authorized_caller: None,
+                open_access: true,
+                price_per_call: 100_000_000,
+                storage_fee: 200_000_000,
+                cleanup_bounty: 100_000_000,
+                rate_limit_per_day: 0,
+                response_sla: 3_600,
+                refund_claim_window: 3_600,
+                metadata_hash: [0x11; 32],
+                proof_scheme_hash: [0x22; 32],
+                attestor_pubkey: None,
+            };
+            let address = ServiceActorContract::calculate_address(-1, &init).unwrap();
+            let deploy = MessageBuilder::internal(self.creator.address(), &address, 2_000_000_000)
+                .bounce(false)
+                .state_init(ServiceActorContract::build_state_init(&init).unwrap())
+                .body(Cell::default())
+                .build();
+            let mut bc = self.provider.bc.lock().expect("lock");
+            bc.send_message(deploy).unwrap().expect_success();
+            let call = MessageBuilder::internal(self.agent.address(), &address, 500_000_000)
+                .body(ServiceActorContract::call(7, [0xAB; 32]).unwrap())
+                .build();
+            bc.send_message(call).unwrap().expect_success();
+            address
+        }
+
         /// Sends `accept` from `self.agent`, transitioning the task from
         /// `open` to `accepted`. Deploying with `assigned: true` only fixes
         /// who *may* accept -- it does not itself change status.
@@ -1042,6 +1215,22 @@ mod tests {
         assert_eq!(v["result"]["budget"], 5_000_000_000u64);
         assert_eq!(v["result"]["creator"], f.creator.address().to_string());
         assert_eq!(v["result"]["assigned_agent"], f.agent.address().to_string());
+    }
+
+    #[tokio::test]
+    async fn get_service_request_returns_authoritative_pending_state() {
+        let fixture = Fixture::new();
+        let service = fixture.deploy_service_with_request();
+        let state = test_state_with_provider(test_app_config(), fixture.provider.clone()).await;
+        let response = routes(false, state)
+            .oneshot(get(format!("/services/{service}/requests/0")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["result"]["status"], "pending");
+        assert_eq!(body["result"]["request_id"], 0);
+        assert_eq!(body["result"]["request_hash"], "ab".repeat(32));
     }
 
     #[tokio::test]
@@ -1282,7 +1471,10 @@ mod tests {
             anyhow::bail!("not supported by FakeChainProvider")
         }
 
-        async fn get_shards(&self, _seqno: u32) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+        async fn get_shards(
+            &self,
+            _seqno: u32,
+        ) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
             anyhow::bail!("not supported by FakeChainProvider")
         }
 

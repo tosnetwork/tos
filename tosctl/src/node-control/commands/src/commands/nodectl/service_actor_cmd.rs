@@ -25,7 +25,9 @@ use common::{
     chain_utils::{display_tos, tos_to_nanotos},
     time_format,
 };
-use contracts::{PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit};
+use contracts::{
+    PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit,
+};
 use futures_util::{StreamExt, stream};
 use std::{path::Path, str::FromStr};
 
@@ -258,11 +260,7 @@ pub struct ServiceActorSendCmd {
     active: Option<bool>,
     #[arg(long, help = "New rate limit per day for update-policy; 0 means unlimited")]
     rate_limit_per_day: Option<u32>,
-    #[arg(
-        long,
-        conflicts_with = "authorized_caller",
-        help = "Set open access for update-policy"
-    )]
+    #[arg(long, conflicts_with = "authorized_caller", help = "Set open access for update-policy")]
     open_access: bool,
     #[arg(
         long,
@@ -605,7 +603,10 @@ impl ServiceActorShowCmd {
             println!("Cleanup bounty: {} TOS", view.cleanup_bounty);
             println!("Response SLA: {}s", view.response_sla);
             println!("Refund claim window: {}s", view.refund_claim_window);
-            println!("Rate limit/day: {}  (calls today: {})", view.rate_limit_per_day, view.calls_today);
+            println!(
+                "Rate limit/day: {}  (calls today: {})",
+                view.rate_limit_per_day, view.calls_today
+            );
             println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
             println!(
                 "Requests: next_id={} pending={} live={}",
@@ -692,7 +693,7 @@ impl ServiceActorRequestShowCmd {
             .get_method(
                 address.to_string(),
                 "get_request",
-                vec![contracts::stack_utils::i64_to_stack_entry(self.request_id as i64)],
+                vec![contracts::stack_utils::u64_to_stack_entry(self.request_id)],
             )
             .await?;
         let data = ServiceActorContract::decode_request(&stack)?;
@@ -700,7 +701,10 @@ impl ServiceActorRequestShowCmd {
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::to_string_pretty(&view)?);
         } else if !view.found {
-            println!("Request {} not found (never existed, already resolved, or swept)", self.request_id);
+            println!(
+                "Request {} not found (never existed, already resolved, or swept)",
+                self.request_id
+            );
         } else {
             println!("Request: {}", view.request_id);
             println!("Caller: {}", view.caller.unwrap());
@@ -767,7 +771,7 @@ impl ServiceActorRefundShowCmd {
             .get_method(
                 address.to_string(),
                 "get_refund",
-                vec![contracts::stack_utils::i64_to_stack_entry(self.request_id as i64)],
+                vec![contracts::stack_utils::u64_to_stack_entry(self.request_id)],
             )
             .await?;
         let data = ServiceActorContract::decode_refund(&stack)?;
@@ -879,7 +883,8 @@ impl ServiceActorLsCmd {
                 match result {
                     Ok(data) => {
                         record.chain_active = Some(data.active);
-                        record.chain_withdrawable_revenue = Some(display_tos(data.withdrawable_revenue));
+                        record.chain_withdrawable_revenue =
+                            Some(display_tos(data.withdrawable_revenue));
                         record.chain_calls_today = Some(data.calls_today);
                         record.chain_live_count = Some(data.live_count);
                     }
@@ -904,7 +909,10 @@ impl ServiceActorLsCmd {
                 if record.open_access {
                     "open".to_string()
                 } else {
-                    format!("restricted to {}", record.authorized_caller.as_deref().unwrap_or("none"))
+                    format!(
+                        "restricted to {}",
+                        record.authorized_caller.as_deref().unwrap_or("none")
+                    )
                 },
                 record.price_per_call,
             );
@@ -946,10 +954,31 @@ impl ServiceActorSendCmd {
             self.request_id.ok_or_else(|| anyhow::anyhow!("--request-id is required"))
         };
 
+        // A call ID is allocated by the contract. Capture the allocation
+        // frontier and the exact request hash before submitting so we can
+        // identify this call after it lands without assuming that it was the
+        // last call processed (other callers may race us).
+        let call_request_hash = matches!(self.operation, ServiceActorOperation::Call)
+            .then(|| parse_required_hash("request-hash", &self.request_hash))
+            .transpose()?;
+        let call_frontier = if call_request_hash.is_some() {
+            let provider = contracts::contract_provider!(rpc_client.clone());
+            Some(
+                ServiceActorContract::decode_data(
+                    &provider
+                        .get_method(destination_service.to_string(), "get_service_data", vec![])
+                        .await?,
+                )?
+                .next_request_id,
+            )
+        } else {
+            None
+        };
+
         let body = match self.operation {
             ServiceActorOperation::Call => ServiceActorContract::call(
                 self.query_id,
-                parse_required_hash("request-hash", &self.request_hash)?,
+                call_request_hash.expect("call hash parsed above"),
             )?,
             ServiceActorOperation::Respond => {
                 let id = request_id()?;
@@ -970,7 +999,7 @@ impl ServiceActorSendCmd {
                                 .get_method(
                                     destination_service.to_string(),
                                     "get_request",
-                                    vec![contracts::stack_utils::i64_to_stack_entry(id as i64)],
+                                    vec![contracts::stack_utils::u64_to_stack_entry(id)],
                                 )
                                 .await?;
                             let request = ServiceActorContract::decode_request(&stack)?
@@ -1095,7 +1124,8 @@ impl ServiceActorSendCmd {
         if !self.yes && !confirm("Confirm Service Actor message?")? {
             return Ok(());
         }
-        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        let wallet =
+            make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
         send_wallet_message(
             &wallet,
             rpc_client.clone(),
@@ -1114,25 +1144,50 @@ impl ServiceActorSendCmd {
             destination_service
         );
 
-        // A `call`'s request_id is contract-assigned and unknowable before
-        // the message lands, so surface it here rather than making the
-        // caller run a separate lookup. Best-effort: `next_request_id - 1`
-        // is only guaranteed to be *our* assigned ID if no other caller's
-        // `call` landed on this service between our send confirming and this
-        // read; verify with `agent service request-show` if that matters.
-        if matches!(self.operation, ServiceActorOperation::Call) {
+        if let (Some(first_id), Some(request_hash)) = (call_frontier, call_request_hash) {
             let provider = contracts::contract_provider!(rpc_client);
-            match provider.get_method(destination_service.to_string(), "get_service_data", vec![]).await {
-                Ok(stack) => match ServiceActorContract::decode_data(&stack) {
-                    Ok(data) if data.next_request_id > 0 => {
-                        println!(
-                            "  Assigned request ID (best-effort): {}",
-                            data.next_request_id - 1
-                        );
+            let data = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+                loop {
+                    let data = ServiceActorContract::decode_data(
+                        &provider
+                            .get_method(destination_service.to_string(), "get_service_data", vec![])
+                            .await?,
+                    )?;
+                    if data.next_request_id > first_id {
+                        return Ok::<_, anyhow::Error>(data);
                     }
-                    _ => {}
-                },
-                Err(_) => {}
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            })
+            .await
+            .context("timed out waiting for the Service Actor call to land")??;
+            let mut matches = Vec::new();
+            for id in first_id..data.next_request_id {
+                let stack = provider
+                    .get_method(
+                        destination_service.to_string(),
+                        "get_request",
+                        vec![contracts::stack_utils::u64_to_stack_entry(id)],
+                    )
+                    .await?;
+                if let Some(request) = ServiceActorContract::decode_request(&stack)? {
+                    if request.caller == owner_address && request.request_hash == request_hash {
+                        matches.push(id);
+                    }
+                }
+            }
+            match matches.as_slice() {
+                [id] => println!("  Assigned request ID: {id}"),
+                [] => anyhow::bail!(
+                    "call was submitted, but its assigned request ID could not be correlated; \
+                     query the transaction/indexer using caller {} and request hash {}",
+                    owner_address,
+                    hex::encode(request_hash)
+                ),
+                _ => anyhow::bail!(
+                    "call was submitted, but request ID correlation is ambiguous ({matches:?}); \
+                     do not guess an ID"
+                ),
             }
         }
         Ok(())

@@ -33,7 +33,7 @@ use contracts::{
     TaskEscrowContract,
 };
 
-use crate::indexer::store::{IndexedRecord, IndexerStore};
+use crate::indexer::store::{IndexedRecord, IndexerStore, ServiceRequestRecord};
 use crate::runtime_config::RuntimeConfig;
 
 /// Upper bound on how many masterchain blocks a single tick will scan, so a
@@ -150,7 +150,8 @@ async fn scan_shard(
                         seqno = last_scanned,
                         "reorg detected (block hash changed since last scan), rewinding",
                     );
-                    next = last_scanned.saturating_sub(REORG_REWIND_BLOCKS).saturating_add(1).max(1);
+                    next =
+                        last_scanned.saturating_sub(REORG_REWIND_BLOCKS).saturating_add(1).max(1);
                 }
             }
         }
@@ -162,7 +163,8 @@ async fn scan_shard(
     let end = next.saturating_add(MAX_BLOCKS_PER_TICK - 1).min(target_seqno);
 
     while next <= end {
-        let block_hash = scan_one_seqno(chain_provider, store, known, workchain, shard, next).await?;
+        let block_hash =
+            scan_one_seqno(chain_provider, store, known, workchain, shard, next).await?;
         store.set_checkpoint(&shard_key, next)?;
         if let Some(hash) = block_hash {
             store.set_checkpoint_block_hash(&shard_key, &hash)?;
@@ -181,7 +183,8 @@ async fn fetch_block_hash(
     shard: i64,
     seqno: u32,
 ) -> anyhow::Result<Option<String>> {
-    let page = chain_provider.get_block_transactions_page(workchain, shard, seqno, None, None, 1).await?;
+    let page =
+        chain_provider.get_block_transactions_page(workchain, shard, seqno, None, None, 1).await?;
     Ok(page.id.map(|id| hex::encode(&id.root_hash)))
 }
 
@@ -308,7 +311,8 @@ async fn decode_and_store(
     let now = time_format::now();
     match kind {
         "task_escrow" => {
-            let stack = chain_provider.run_get_method(address.to_owned(), "get_task_data", vec![]).await?;
+            let stack =
+                chain_provider.run_get_method(address.to_owned(), "get_task_data", vec![]).await?;
             let data = TaskEscrowContract::decode_data(&stack)?;
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
@@ -323,7 +327,9 @@ async fn decode_and_store(
             })
         }
         "dispute" => {
-            let stack = chain_provider.run_get_method(address.to_owned(), "get_dispute_data", vec![]).await?;
+            let stack = chain_provider
+                .run_get_method(address.to_owned(), "get_dispute_data", vec![])
+                .await?;
             let data = DisputeContract::decode_data(&stack)?;
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
@@ -338,9 +344,11 @@ async fn decode_and_store(
             })
         }
         "service_actor" => {
-            let stack =
-                chain_provider.run_get_method(address.to_owned(), "get_service_data", vec![]).await?;
+            let stack = chain_provider
+                .run_get_method(address.to_owned(), "get_service_data", vec![])
+                .await?;
             let data = ServiceActorContract::decode_data(&stack)?;
+            refresh_service_request_lifecycle(chain_provider, store, address, &data, now).await?;
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
                 kind: kind.to_owned(),
@@ -372,6 +380,114 @@ async fn decode_and_store(
         }
         other => anyhow::bail!("unknown indexed contract kind: {other}"),
     }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct ServiceRequestLifecycleRecordDto {
+    service_address: String,
+    request_id: u64,
+    status: String,
+    caller: Option<String>,
+    price: Option<u64>,
+    storage_fee: Option<u64>,
+    cleanup_bounty: Option<u64>,
+    response_deadline: Option<u64>,
+    refund_claim_deadline: Option<u64>,
+    policy_version: Option<u32>,
+    request_hash: Option<String>,
+    terms_hash: Option<String>,
+}
+
+async fn refresh_service_request_lifecycle(
+    provider: &Arc<dyn ChainProvider>,
+    store: &IndexerStore,
+    address: &str,
+    data: &contracts::ServiceActorData,
+    now: u64,
+) -> anyhow::Result<()> {
+    let (max_indexed, active) = store.service_requests_for_refresh(address)?;
+    let mut ids: HashSet<u64> = active.into_iter().map(|r| r.request_id).collect();
+    let first_new = max_indexed.and_then(|id| id.checked_add(1)).unwrap_or(0);
+    ids.extend(first_new..data.next_request_id);
+    for request_id in ids {
+        let old = store.service_request(address, request_id)?;
+        let arg = vec![contracts::stack_utils::u64_to_stack_entry(request_id)];
+        let pending = ServiceActorContract::decode_request(
+            &provider.run_get_method(address.to_owned(), "get_request", arg.clone()).await?,
+        )?;
+        let refund = if pending.is_none() {
+            ServiceActorContract::decode_refund(
+                &provider.run_get_method(address.to_owned(), "get_refund", arg).await?,
+            )?
+        } else {
+            None
+        };
+        let dto = if let Some(r) = pending {
+            ServiceRequestLifecycleRecordDto {
+                service_address: address.to_owned(),
+                request_id,
+                status: "pending".into(),
+                caller: Some(r.caller.to_string()),
+                price: Some(r.price),
+                storage_fee: Some(r.storage_fee),
+                cleanup_bounty: Some(r.cleanup_bounty),
+                response_deadline: Some(r.response_deadline),
+                refund_claim_deadline: Some(r.refund_claim_deadline),
+                policy_version: Some(r.policy_version),
+                request_hash: Some(hex::encode(r.request_hash)),
+                terms_hash: Some(hex::encode(r.terms_hash)),
+            }
+        } else if let Some(r) = refund {
+            ServiceRequestLifecycleRecordDto {
+                service_address: address.to_owned(),
+                request_id,
+                status: "refundable".into(),
+                caller: Some(r.caller.to_string()),
+                price: Some(r.price),
+                storage_fee: Some(r.storage_fee),
+                cleanup_bounty: Some(r.cleanup_bounty),
+                response_deadline: None,
+                refund_claim_deadline: Some(r.refund_claim_deadline),
+                policy_version: None,
+                request_hash: None,
+                terms_hash: None,
+            }
+        } else if let Some(old) = old {
+            let mut prior: ServiceRequestLifecycleRecordDto = serde_json::from_str(&old.dto_json)?;
+            let deadline = prior.refund_claim_deadline.unwrap_or(u64::MAX);
+            prior.status = match old.status.as_str() {
+                "pending" if now < deadline => "responded",
+                "refundable" if now < deadline => "refunded",
+                "pending" | "refundable" => "swept",
+                _ => "resolved_unknown",
+            }
+            .into();
+            prior
+        } else {
+            ServiceRequestLifecycleRecordDto {
+                service_address: address.to_owned(),
+                request_id,
+                status: "resolved_unknown".into(),
+                caller: None,
+                price: None,
+                storage_fee: None,
+                cleanup_bounty: None,
+                response_deadline: None,
+                refund_claim_deadline: None,
+                policy_version: None,
+                request_hash: None,
+                terms_hash: None,
+            }
+        };
+        store.upsert_service_request(&ServiceRequestRecord {
+            service_address: address.to_owned(),
+            request_id,
+            status: dto.status.clone(),
+            updated_at: now,
+            dto_json: serde_json::to_string(&dto)?,
+        })?;
+    }
+    Ok(())
 }
 
 fn task_status_name(status: u8) -> &'static str {
@@ -615,8 +731,12 @@ mod tests {
             calls_today: 0,
         };
         let json = serde_json::to_string(&ServiceActorRecordDto::from(&data)).unwrap();
-        let dto = crate::http::agent_query_api::indexed_dto::<ServiceActorDto>(&json, "0:aa", false);
-        assert!(dto.is_some(), "ServiceActorRecordDto JSON must decode into ServiceActorDto: {json}");
+        let dto =
+            crate::http::agent_query_api::indexed_dto::<ServiceActorDto>(&json, "0:aa", false);
+        assert!(
+            dto.is_some(),
+            "ServiceActorRecordDto JSON must decode into ServiceActorDto: {json}"
+        );
     }
 
     #[test]
@@ -635,7 +755,10 @@ mod tests {
         };
         let json = serde_json::to_string(&CapabilityRegistryRecordDto::from(&data)).unwrap();
         let dto = crate::http::agent_query_api::indexed_dto::<RegistryDto>(&json, "0:aa", false);
-        assert!(dto.is_some(), "CapabilityRegistryRecordDto JSON must decode into RegistryDto: {json}");
+        assert!(
+            dto.is_some(),
+            "CapabilityRegistryRecordDto JSON must decode into RegistryDto: {json}"
+        );
     }
 
     // ─── Reorg detection ───────────────────────────────────────────────────
@@ -652,7 +775,10 @@ mod tests {
         // keyed by seqno alone would silently hand one shard's block to
         // another shard's query whenever their seqnos happened to collide.
         by_seqno: std::sync::Mutex<
-            std::collections::HashMap<(i32, i64, u32), contracts::chain_provider::BlockTransactionsPage>,
+            std::collections::HashMap<
+                (i32, i64, u32),
+                contracts::chain_provider::BlockTransactionsPage,
+            >,
         >,
         /// Total `get_block_transactions_page` calls made so far, and (if
         /// set) the call count after which every subsequent call fails --
@@ -722,19 +848,20 @@ mod tests {
         }
 
         fn set_masterchain_info(&self, seqno: u32, shard: i64) {
-            *self.masterchain_info.lock().unwrap() = Some(contracts::chain_provider::MasterchainInfo {
-                r#type: None,
-                last: chain_rpc_client::v2::data_models::BlockIdExt {
-                    r#type: "tos.blockIdExt".to_owned(),
-                    workchain: -1,
-                    shard,
-                    seqno,
-                    root_hash: vec![0; 32],
-                    file_hash: vec![0; 32],
-                },
-                state_root_hash: String::new(),
-                init: None,
-            });
+            *self.masterchain_info.lock().unwrap() =
+                Some(contracts::chain_provider::MasterchainInfo {
+                    r#type: None,
+                    last: chain_rpc_client::v2::data_models::BlockIdExt {
+                        r#type: "tos.blockIdExt".to_owned(),
+                        workchain: -1,
+                        shard,
+                        seqno,
+                        root_hash: vec![0; 32],
+                        file_hash: vec![0; 32],
+                    },
+                    state_root_hash: String::new(),
+                    init: None,
+                });
         }
 
         fn set_shards(&self, entries: &[(i32, i64, u32)]) {
@@ -742,13 +869,15 @@ mod tests {
                 r#type: None,
                 shards: entries
                     .iter()
-                    .map(|&(workchain, shard, seqno)| chain_rpc_client::v2::data_models::BlockIdExt {
-                        r#type: "tos.blockIdExt".to_owned(),
-                        workchain,
-                        shard,
-                        seqno,
-                        root_hash: vec![0; 32],
-                        file_hash: vec![0; 32],
+                    .map(|&(workchain, shard, seqno)| {
+                        chain_rpc_client::v2::data_models::BlockIdExt {
+                            r#type: "tos.blockIdExt".to_owned(),
+                            workchain,
+                            shard,
+                            seqno,
+                            root_hash: vec![0; 32],
+                            file_hash: vec![0; 32],
+                        }
                     })
                     .collect(),
             });
@@ -771,7 +900,10 @@ mod tests {
         async fn send_boc(&self, _boc: &[u8]) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn get_config_param(&self, _param_id: u32) -> anyhow::Result<chain_block::ConfigParamEnum> {
+        async fn get_config_param(
+            &self,
+            _param_id: u32,
+        ) -> anyhow::Result<chain_block::ConfigParamEnum> {
             unimplemented!()
         }
         async fn get_address_info(
@@ -792,14 +924,19 @@ mod tests {
         ) -> anyhow::Result<contracts::chain_provider::WalletInfo> {
             unimplemented!()
         }
-        async fn get_masterchain_info(&self) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
+        async fn get_masterchain_info(
+            &self,
+        ) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
             self.masterchain_info
                 .lock()
                 .unwrap()
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("no scripted masterchain info"))
         }
-        async fn get_shards(&self, _seqno: u32) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+        async fn get_shards(
+            &self,
+            _seqno: u32,
+        ) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
             self.shards.lock().unwrap().clone().ok_or_else(|| anyhow::anyhow!("no scripted shards"))
         }
         async fn get_block_transactions_page(
@@ -820,12 +957,9 @@ mod tests {
                     }
                 }
             }
-            self.by_seqno
-                .lock()
-                .unwrap()
-                .get(&(workchain, shard, seqno))
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("no scripted block for ({workchain}, {shard}, {seqno})"))
+            self.by_seqno.lock().unwrap().get(&(workchain, shard, seqno)).cloned().ok_or_else(
+                || anyhow::anyhow!("no scripted block for ({workchain}, {shard}, {seqno})"),
+            )
         }
     }
 

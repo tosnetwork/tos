@@ -155,6 +155,10 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
         .route("/disputes/{address}", axum::routing::get(agent_query_api::get_dispute))
         .route("/services", axum::routing::get(agent_query_api::list_services))
         .route("/services/{address}", axum::routing::get(agent_query_api::get_service))
+        .route(
+            "/services/{address}/requests/{request_id}",
+            axum::routing::get(agent_query_api::get_service_request),
+        )
         .route("/registry", axum::routing::get(agent_query_api::list_registry))
         .route("/registry/{address}", axum::routing::get(agent_query_api::get_registry))
         .route("/auth/me", axum::routing::get(me_handler))
@@ -253,7 +257,11 @@ impl AppError {
     /// The get-method call succeeded but the returned TVM stack did not
     /// decode into the expected contract data shape.
     pub(crate) fn invalid_contract_state(message: impl Into<String>) -> Self {
-        Self::with_kind(axum::http::StatusCode::UNPROCESSABLE_ENTITY, "invalid_contract_state", message)
+        Self::with_kind(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_contract_state",
+            message,
+        )
     }
 
     /// A chain query exceeded its per-request timeout budget.
@@ -913,6 +921,7 @@ impl utoipa::Modify for BearerAuthAddon {
         ,agent_query_api::get_dispute
         ,agent_query_api::list_services
         ,agent_query_api::get_service
+        ,agent_query_api::get_service_request
         ,agent_query_api::list_registry
         ,agent_query_api::get_registry
     ),
@@ -952,6 +961,8 @@ impl utoipa::Modify for BearerAuthAddon {
         agent_query_api::ServiceActorDto,
         agent_query_api::ServiceActorResponse,
         agent_query_api::ServiceActorListResponse,
+        agent_query_api::ServiceRequestLifecycleDto,
+        agent_query_api::ServiceRequestLifecycleResponse,
         agent_query_api::RegistryDto,
         agent_query_api::RegistryResponse,
         agent_query_api::RegistryListResponse,

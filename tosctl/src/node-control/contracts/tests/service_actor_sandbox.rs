@@ -25,7 +25,10 @@
 //!    underfunded fixtures cause spurious `aborted` failures that look like
 //!    contract bugs but are just insufficient treasury/contract funding.
 
-use chain_block::{Cell, MsgAddressInt};
+use chain_block::{
+    BuilderData, Cell, Deserializable, IBitstring, MsgAddressInt, Serializable, SliceData,
+    StateInit,
+};
 use contracts::{ServiceActorContract, ServiceActorData, ServiceActorInit};
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
@@ -45,6 +48,7 @@ const ERR_INVALID_RESPONSE_SLA: i32 = 1903;
 const ERR_INVALID_REFUND_CLAIM_WINDOW: i32 = 1904;
 const ERR_INVALID_CLEANUP_BOUNTY: i32 = 1905;
 const ERR_INSUFFICIENT_STORAGE_FEE: i32 = 1906;
+const ERR_CAPACITY_EXCEEDED_GLOBAL: i32 = 1907;
 const ERR_CAPACITY_EXCEEDED_CALLER: i32 = 1908;
 const ERR_BAD_RESPONSE_SIGNATURE: i32 = 1911;
 const ERR_RESPONSE_WINDOW_CLOSED: i32 = 1912;
@@ -212,7 +216,11 @@ impl Fixture {
 
     fn call(&mut self, from: &MsgAddressInt, query_id: u64, request_hash: [u8; 32]) -> SendResult {
         let value = self.init.price_per_call + self.init.storage_fee + TOS / 2;
-        self.send_from_with_value(from, ServiceActorContract::call(query_id, request_hash).unwrap(), value)
+        self.send_from_with_value(
+            from,
+            ServiceActorContract::call(query_id, request_hash).unwrap(),
+            value,
+        )
     }
 
     fn respond(&mut self, query_id: u64, request_id: u64, response_hash: [u8; 32]) -> SendResult {
@@ -234,7 +242,8 @@ impl Fixture {
         let owner = self.owner.address().clone();
         self.send_from_with_value(
             &owner,
-            ServiceActorContract::respond_signed(query_id, request_id, response_hash, signature).unwrap(),
+            ServiceActorContract::respond_signed(query_id, request_id, response_hash, signature)
+                .unwrap(),
             TOS,
         )
     }
@@ -250,11 +259,17 @@ impl Fixture {
         request_id: u64,
         destination: &MsgAddressInt,
     ) -> SendResult {
-        self.send_from(from, ServiceActorContract::claim_refund(query_id, request_id, destination).unwrap())
+        self.send_from(
+            from,
+            ServiceActorContract::claim_refund(query_id, request_id, destination).unwrap(),
+        )
     }
 
     fn sweep(&mut self, from: &MsgAddressInt, query_id: u64, request_id: u64) -> SendResult {
-        self.send_from(from, ServiceActorContract::sweep_expired_request(query_id, request_id).unwrap())
+        self.send_from(
+            from,
+            ServiceActorContract::sweep_expired_request(query_id, request_id).unwrap(),
+        )
     }
 }
 
@@ -264,9 +279,75 @@ fn address_slice(addr: &MsgAddressInt) -> chain_block::SliceData {
     chain_block::SliceData::load_cell(cell).unwrap()
 }
 
+/// Rebuild only the scalar prefix of Service Actor data while preserving all
+/// policy/accounting/dictionary references. This lets boundary tests exercise
+/// otherwise impractical uint64/global-cap states against the shipped BOC.
+fn data_with_runtime_counters(
+    init: &ServiceActorInit,
+    next_request_id: u64,
+    pending_count: u32,
+    live_count: u32,
+) -> Cell {
+    let original = ServiceActorContract::build_data(init).expect("build data");
+    let mut slice = SliceData::load_cell(original).expect("data slice");
+    let owner = MsgAddressInt::construct_from(&mut slice).expect("owner");
+    let active = slice.get_next_bit().expect("active");
+    let _old_next = slice.get_next_u64().expect("next_request_id");
+    let _old_pending = slice.get_next_u32().expect("pending_count");
+    let _old_live = slice.get_next_u32().expect("live_count");
+    let policy = slice.checked_drain_reference().expect("policy");
+    let accounting = slice.checked_drain_reference().expect("accounting");
+    let dicts = slice.checked_drain_reference().expect("dicts");
+
+    let mut data = BuilderData::new();
+    owner.write_to(&mut data).expect("owner write");
+    if active {
+        data.append_bit_one().unwrap()
+    } else {
+        data.append_bit_zero().unwrap()
+    };
+    data.append_u64(next_request_id).unwrap();
+    data.append_u32(pending_count).unwrap();
+    data.append_u32(live_count).unwrap();
+    data.checked_append_reference(policy).unwrap();
+    data.checked_append_reference(accounting).unwrap();
+    data.checked_append_reference(dicts).unwrap();
+    data.into_cell().expect("patched data")
+}
+
+fn deploy_with_runtime_counters(
+    bc: &mut Blockchain,
+    owner: &Treasury,
+    init: &ServiceActorInit,
+    next_request_id: u64,
+    pending_count: u32,
+    live_count: u32,
+) -> MsgAddressInt {
+    let state_init = StateInit::with_code_and_data(
+        ServiceActorContract::code().expect("code"),
+        data_with_runtime_counters(init, next_request_id, pending_count, live_count),
+    );
+    let hash = state_init
+        .write_to_new_cell()
+        .expect("state init builder")
+        .into_cell()
+        .expect("state init cell")
+        .hash(0);
+    let address = MsgAddressInt::with_params(-1, hash).expect("address");
+    let deploy = MessageBuilder::internal(owner.address(), &address, 20 * TOS)
+        .bounce(false)
+        .state_init(state_init)
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+    address
+}
+
 fn stack_to_entries(stack: &[tos_vm::stack::StackItem]) -> Vec<tl_api::tos::tvm::StackEntry> {
     use tl_api::tos::tvm::{
-        Number, StackEntry, numberdecimal::NumberDecimal, slice,
+        Number, StackEntry,
+        numberdecimal::NumberDecimal,
+        slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
     };
     stack
@@ -361,13 +442,20 @@ fn overpayment_above_price_plus_storage_fee_is_refunded_at_call_time() {
     let outsider_before = f.balance(&outsider);
     let owed = f.init.price_per_call + f.init.storage_fee;
     // Overpay by 1 TOS beyond what's owed.
-    f.send_from_with_value(&outsider, ServiceActorContract::call(1, [0xAA; 32]).unwrap(), owed + TOS)
-        .expect_success();
+    f.send_from_with_value(
+        &outsider,
+        ServiceActorContract::call(1, [0xAA; 32]).unwrap(),
+        owed + TOS,
+    )
+    .expect_success();
     let data = f.data();
     assert_eq!(data.pending_liability, f.init.price_per_call, "only the quoted price is owed");
     assert_eq!(data.locked_storage_fees, f.init.storage_fee, "only the quoted storage fee is owed");
     let delta = f.balance(&outsider) - outsider_before;
-    assert!(delta > TOS - TOS / 100 && delta <= TOS, "expected close to the 1 TOS overpayment refunded, got {delta}");
+    assert!(
+        delta > TOS - TOS / 100 && delta <= TOS,
+        "expected close to the 1 TOS overpayment refunded, got {delta}"
+    );
 }
 
 #[test]
@@ -389,9 +477,19 @@ fn call_on_inactive_service_is_rejected() {
     f.send_from(
         &owner,
         ServiceActorContract::update_policy(
-            1, init.price_per_call, init.storage_fee, init.cleanup_bounty, init.response_sla,
-            init.refund_claim_window, false, init.open_access, init.authorized_caller.as_ref(),
-            &owner, init.rate_limit_per_day, init.metadata_hash, init.proof_scheme_hash,
+            1,
+            init.price_per_call,
+            init.storage_fee,
+            init.cleanup_bounty,
+            init.response_sla,
+            init.refund_claim_window,
+            false,
+            init.open_access,
+            init.authorized_caller.as_ref(),
+            &owner,
+            init.rate_limit_per_day,
+            init.metadata_hash,
+            init.proof_scheme_hash,
         )
         .unwrap(),
     )
@@ -400,6 +498,142 @@ fn call_on_inactive_service_is_rejected() {
 
     let caller = f.caller.address().clone();
     f.call(&caller, 2, [0xAA; 32]).expect_aborted().expect_exit_code(ERR_INACTIVE);
+}
+
+#[test]
+fn deploy_with_out_of_bounds_policy_is_rejected_at_call_time() {
+    // The protocol constants (MIN/MAX_RESPONSE_SLA, MIN/MAX_REFUND_CLAIM_WINDOW,
+    // MIN/MAX_CLEANUP_BOUNTY, storage_fee >= MINIMUM_STORAGE_FEE + cleanup_bounty)
+    // are only checked by update_policy -- the StateInit an owner supplies at
+    // deploy time never passes through it. Deploy directly with an
+    // out-of-bounds cleanup_bounty (bypassing any client-side validation the
+    // Rust SDK/CLI might separately add) and confirm the chain itself, not
+    // just the tooling, rejects the first call rather than silently admitting
+    // requests under a policy with e.g. zero incentive to ever sweep an
+    // expired entry.
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(-1);
+    let owner = bc.treasury("bad-deploy-owner", 100 * TOS).unwrap();
+    let caller = bc.treasury("bad-deploy-caller", 100 * TOS).unwrap();
+
+    let bad_init = ServiceActorInit {
+        owner: owner.address().clone(),
+        authorized_caller: None,
+        open_access: true,
+        price_per_call: TOS / 10,
+        storage_fee: MIN_STORAGE_FEE,
+        cleanup_bounty: 0, // below MINIMUM_CLEANUP_BOUNTY
+        rate_limit_per_day: 0,
+        response_sla: MIN_RESPONSE_SLA,
+        refund_claim_window: MIN_REFUND_CLAIM_WINDOW,
+        metadata_hash: [0x11; 32],
+        proof_scheme_hash: [0x22; 32],
+        attestor_pubkey: None,
+    };
+    let service = ServiceActorContract::calculate_address(-1, &bad_init).expect("address");
+    let state_init = ServiceActorContract::build_state_init(&bad_init).expect("state init");
+    let deploy = MessageBuilder::internal(owner.address(), &service, 20 * TOS)
+        .bounce(false)
+        .state_init(state_init)
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+
+    let msg = MessageBuilder::internal(caller.address(), &service, TOS)
+        .body(ServiceActorContract::call(1, [0xAA; 32]).unwrap())
+        .build();
+    bc.send_message(msg).unwrap().expect_aborted().expect_exit_code(ERR_INVALID_CLEANUP_BOUNTY);
+
+    let stack = bc
+        .run_get_method(&service, "get_service_data", vec![])
+        .unwrap()
+        .expect_success()
+        .stack
+        .clone();
+    let data = ServiceActorContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(
+        stack_to_entries(&stack),
+    ))
+    .unwrap();
+    assert_eq!(data.pending_count, 0);
+    assert_eq!(data.live_count, 0);
+}
+
+#[test]
+fn request_id_overflow_is_rejected_without_mutating_state() {
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(-1);
+    let owner = bc.treasury("overflow-owner", 100 * TOS).unwrap();
+    let caller = bc.treasury("overflow-caller", 100 * TOS).unwrap();
+    let init = ServiceActorInit {
+        owner: owner.address().clone(),
+        authorized_caller: None,
+        open_access: true,
+        price_per_call: TOS / 10,
+        storage_fee: MIN_STORAGE_FEE + MIN_CLEANUP_BOUNTY,
+        cleanup_bounty: MIN_CLEANUP_BOUNTY,
+        rate_limit_per_day: 0,
+        response_sla: MIN_RESPONSE_SLA,
+        refund_claim_window: MIN_REFUND_CLAIM_WINDOW,
+        metadata_hash: [0x11; 32],
+        proof_scheme_hash: [0x22; 32],
+        attestor_pubkey: None,
+    };
+    let service = deploy_with_runtime_counters(&mut bc, &owner, &init, u64::MAX, 0, 0);
+    let msg = MessageBuilder::internal(caller.address(), &service, TOS)
+        .body(ServiceActorContract::call(1, [0xAA; 32]).unwrap())
+        .build();
+    bc.send_message(msg).unwrap().expect_aborted().expect_exit_code(1909);
+    let stack = bc
+        .run_get_method(&service, "get_service_data", vec![])
+        .unwrap()
+        .expect_success()
+        .stack
+        .clone();
+    let data = ServiceActorContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(
+        stack_to_entries(&stack),
+    ))
+    .unwrap();
+    assert_eq!(data.next_request_id, u64::MAX);
+    assert_eq!(data.live_count, 0);
+}
+
+#[test]
+fn global_live_capacity_is_enforced_by_the_shipped_bytecode() {
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(-1);
+    let owner = bc.treasury("global-cap-owner", 100 * TOS).unwrap();
+    let caller = bc.treasury("global-cap-caller", 100 * TOS).unwrap();
+    let init = ServiceActorInit {
+        owner: owner.address().clone(),
+        authorized_caller: None,
+        open_access: true,
+        price_per_call: TOS / 10,
+        storage_fee: MIN_STORAGE_FEE + MIN_CLEANUP_BOUNTY,
+        cleanup_bounty: MIN_CLEANUP_BOUNTY,
+        rate_limit_per_day: 0,
+        response_sla: MIN_RESPONSE_SLA,
+        refund_claim_window: MIN_REFUND_CLAIM_WINDOW,
+        metadata_hash: [0x11; 32],
+        proof_scheme_hash: [0x22; 32],
+        attestor_pubkey: None,
+    };
+    let service = deploy_with_runtime_counters(&mut bc, &owner, &init, 7, 0, 100_000);
+    let msg = MessageBuilder::internal(caller.address(), &service, TOS)
+        .body(ServiceActorContract::call(1, [0xBB; 32]).unwrap())
+        .build();
+    bc.send_message(msg).unwrap().expect_aborted().expect_exit_code(ERR_CAPACITY_EXCEEDED_GLOBAL);
+    let stack = bc
+        .run_get_method(&service, "get_service_data", vec![])
+        .unwrap()
+        .expect_success()
+        .stack
+        .clone();
+    let data = ServiceActorContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(
+        stack_to_entries(&stack),
+    ))
+    .unwrap();
+    assert_eq!(data.next_request_id, 7);
+    assert_eq!(data.live_count, 100_000);
 }
 
 // ---------------------------------------------------------------------------
@@ -486,9 +720,7 @@ fn respond_boundary_is_exact() {
     // policy and issued one block later at the same `now()`).
     let response_deadline_1 = f.request(1).unwrap().response_deadline;
     f.bc.set_now(response_deadline_1 as u32);
-    f.respond(4, 1, [0xDD; 32])
-        .expect_aborted()
-        .expect_exit_code(ERR_RESPONSE_WINDOW_CLOSED);
+    f.respond(4, 1, [0xDD; 32]).expect_aborted().expect_exit_code(ERR_RESPONSE_WINDOW_CLOSED);
 }
 
 #[test]
@@ -693,8 +925,14 @@ fn attestor_signature_cannot_be_replayed_across_requests() {
     let request0 = f.request(0).unwrap();
     let response_hash = [0xCC; 32];
     let domain_0 = contracts::service_respond_domain_hash(
-        &f.service, &request0.caller, 0, &request0.request_hash, &response_hash,
-        &request0.terms_hash, request0.price, request0.response_deadline,
+        &f.service,
+        &request0.caller,
+        0,
+        &request0.request_hash,
+        &response_hash,
+        &request0.terms_hash,
+        request0.price,
+        request0.response_deadline,
         request0.refund_claim_deadline,
     )
     .unwrap();
@@ -720,8 +958,14 @@ fn attestor_signature_cannot_be_replayed_across_requests() {
     // A freshly computed signature bound to request 1 succeeds.
     let request1 = f.request(1).unwrap();
     let domain_1 = contracts::service_respond_domain_hash(
-        &f.service, &request1.caller, 1, &request1.request_hash, &response_hash,
-        &request1.terms_hash, request1.price, request1.response_deadline,
+        &f.service,
+        &request1.caller,
+        1,
+        &request1.request_hash,
+        &response_hash,
+        &request1.terms_hash,
+        request1.price,
+        request1.response_deadline,
         request1.refund_claim_deadline,
     )
     .unwrap();
@@ -745,8 +989,14 @@ fn attestor_signed_respond_matches_the_compiled_bytecode() {
     assert_eq!(request.attestor_pubkey, Some(attestor_pubkey));
     let response_hash = [0xBB; 32];
     let domain_hash = contracts::service_respond_domain_hash(
-        &f.service, &request.caller, 0, &request.request_hash, &response_hash,
-        &request.terms_hash, request.price, request.response_deadline,
+        &f.service,
+        &request.caller,
+        0,
+        &request.request_hash,
+        &response_hash,
+        &request.terms_hash,
+        request.price,
+        request.response_deadline,
         request.refund_claim_deadline,
     )
     .unwrap();
@@ -783,17 +1033,29 @@ fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests(
     f.send_from(
         &owner,
         ServiceActorContract::update_policy(
-            3, new_init.price_per_call, new_init.storage_fee, new_init.cleanup_bounty,
-            new_init.response_sla, new_init.refund_claim_window, true, new_init.open_access,
-            new_init.authorized_caller.as_ref(), &owner, new_init.rate_limit_per_day,
-            new_init.metadata_hash, new_init.proof_scheme_hash,
+            3,
+            new_init.price_per_call,
+            new_init.storage_fee,
+            new_init.cleanup_bounty,
+            new_init.response_sla,
+            new_init.refund_claim_window,
+            true,
+            new_init.open_access,
+            new_init.authorized_caller.as_ref(),
+            &owner,
+            new_init.rate_limit_per_day,
+            new_init.metadata_hash,
+            new_init.proof_scheme_hash,
         )
         .unwrap(),
     )
     .expect_success();
 
     let request0_after = f.request(0).unwrap();
-    assert_eq!(request0_after, request0_before, "already-snapshotted request must be byte-identical");
+    assert_eq!(
+        request0_after, request0_before,
+        "already-snapshotted request must be byte-identical"
+    );
 
     // A new request accepted after the change snapshots the new terms.
     f.call(&caller, 4, [0xBB; 32]).expect_success(); // request 1
@@ -805,8 +1067,14 @@ fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests(
     // request 0 still requires the OLD attestor's signature, not the new one.
     let response_hash = [0xCC; 32];
     let domain_0 = contracts::service_respond_domain_hash(
-        &f.service, &request0_after.caller, 0, &request0_after.request_hash, &response_hash,
-        &request0_after.terms_hash, request0_after.price, request0_after.response_deadline,
+        &f.service,
+        &request0_after.caller,
+        0,
+        &request0_after.request_hash,
+        &response_hash,
+        &request0_after.terms_hash,
+        request0_after.price,
+        request0_after.response_deadline,
         request0_after.refund_claim_deadline,
     )
     .unwrap();
@@ -820,8 +1088,14 @@ fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests(
     // request 1 requires the NEW attestor's signature.
     let request1_after = f.request(1).unwrap();
     let domain_1 = contracts::service_respond_domain_hash(
-        &f.service, &request1_after.caller, 1, &request1_after.request_hash, &response_hash,
-        &request1_after.terms_hash, request1_after.price, request1_after.response_deadline,
+        &f.service,
+        &request1_after.caller,
+        1,
+        &request1_after.request_hash,
+        &response_hash,
+        &request1_after.terms_hash,
+        request1_after.price,
+        request1_after.response_deadline,
         request1_after.refund_claim_deadline,
     )
     .unwrap();
@@ -910,9 +1184,9 @@ fn claim_refund_is_rejected_atomically_when_the_contract_cannot_afford_it() {
         .expect_success()
         .stack
         .clone();
-    let request = ServiceActorContract::decode_request(&common::tvm_stack_parser::TvmStackParser::new(
-        stack_to_entries(&stack),
-    ))
+    let request = ServiceActorContract::decode_request(
+        &common::tvm_stack_parser::TvmStackParser::new(stack_to_entries(&stack)),
+    )
     .expect("decode_request")
     .expect("request 0 must exist");
 
@@ -927,11 +1201,14 @@ fn claim_refund_is_rejected_atomically_when_the_contract_cannot_afford_it() {
     // account once so lazily-accrued storage rent is actually collected
     // before we read the balance and attempt the claim.
     bc.set_now(refund_claim_deadline as u32 - 1);
-    let poke_msg = MessageBuilder::internal(caller.address(), &service, 1).body(Cell::default()).build();
+    let poke_msg =
+        MessageBuilder::internal(caller.address(), &service, 1).body(Cell::default()).build();
     let _ = bc.send_message(poke_msg);
 
-    let balance_before_claim =
-        bc.get_account(&service).and_then(|a| a.balance().and_then(|c| c.coins.as_u64())).unwrap_or(0);
+    let balance_before_claim = bc
+        .get_account(&service)
+        .and_then(|a| a.balance().and_then(|c| c.coins.as_u64()))
+        .unwrap_or(0);
     assert!(
         balance_before_claim < init.price_per_call,
         "test setup must actually erode the balance below `price` via elapsed storage rent, \
@@ -952,11 +1229,34 @@ fn claim_refund_is_rejected_atomically_when_the_contract_cannot_afford_it() {
         .expect_success()
         .stack
         .clone();
-    let refund = ServiceActorContract::decode_refund(&common::tvm_stack_parser::TvmStackParser::new(
-        stack_to_entries(&stack),
-    ))
+    let refund = ServiceActorContract::decode_refund(
+        &common::tvm_stack_parser::TvmStackParser::new(stack_to_entries(&stack)),
+    )
     .expect("decode_refund");
     assert!(refund.is_some(), "the refund entry must survive a failed claim attempt untouched");
+}
+
+#[test]
+fn claim_to_nonexistent_destination_does_not_restore_or_double_count_liability() {
+    let mut f = Fixture::new();
+    let caller = f.caller.address().clone();
+    f.call(&caller, 1, [0xAB; 32]).expect_success();
+    let deadline = f.request(0).unwrap().response_deadline;
+    f.bc.set_now(deadline as u32);
+    f.expire(&caller, 2, 0).expect_success();
+
+    let missing = MsgAddressInt::with_params(-1, [0xFE; 32]).expect("missing address");
+    f.claim_refund(&caller, 3, 0, &missing).expect_success();
+
+    // The destination cannot process the transfer. Any protocol bounce is
+    // ordinary contract balance and, by design, cannot authenticate a
+    // restoration. The request remains final with no duplicate liability.
+    assert!(f.refund(0).is_none());
+    let data = f.data();
+    assert_eq!(data.refundable_liability, 0);
+    assert_eq!(data.pending_liability, 0);
+    assert_eq!(data.live_count, 0);
+    assert!(f.balance(&f.service) >= TOS, "operating reserve must remain backed");
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,12 +1307,17 @@ fn withdraw_revenue_is_capped_by_real_balance_not_only_the_counter() {
     // exact value -- the point is the real-balance cap, not the counter.
     f.send_from(&owner, ServiceActorContract::withdraw_revenue(3, 1_000 * TOS).unwrap())
         .expect_aborted();
-    assert_eq!(f.data().withdrawable_revenue, earned, "a rejected withdrawal must not touch the counter");
+    assert_eq!(
+        f.data().withdrawable_revenue,
+        earned,
+        "a rejected withdrawal must not touch the counter"
+    );
 
     let owner_before = f.balance(&owner);
     // A modest, clearly-affordable withdrawal must succeed.
     let modest = earned / 2;
-    f.send_from(&owner, ServiceActorContract::withdraw_revenue(4, modest).unwrap()).expect_success();
+    f.send_from(&owner, ServiceActorContract::withdraw_revenue(4, modest).unwrap())
+        .expect_success();
     let delta = f.balance(&owner) - owner_before;
     assert!(delta > modest - TOS / 100 && delta <= modest);
     assert_eq!(f.data().withdrawable_revenue, earned - modest);
@@ -1048,7 +1353,8 @@ fn expiring_a_request_does_not_release_live_capacity() {
     assert_eq!(f.pending_count(), 1, "pending_count must drop when a request is expired");
     assert_eq!(f.live_count(), 2, "live_count must NOT drop: expiring does not release capacity");
     assert_eq!(
-        f.caller_live_count(&caller), 2,
+        f.caller_live_count(&caller),
+        2,
         "the caller's live count must NOT drop either, for the same reason"
     );
 
@@ -1076,7 +1382,8 @@ fn call_beyond_the_per_caller_capacity_limit_is_rejected() {
         .expect_aborted()
         .expect_exit_code(ERR_CAPACITY_EXCEEDED_CALLER);
     assert_eq!(
-        f.caller_live_count(&caller), MAX_LIVE_PER_CALLER as u64,
+        f.caller_live_count(&caller),
+        MAX_LIVE_PER_CALLER as u64,
         "the rejected call must not have incremented the counter"
     );
 }
@@ -1121,7 +1428,10 @@ fn restricted_access_and_daily_rate_limit_match_the_compiled_bytecode() {
     let outsider_call = MessageBuilder::internal(outsider.address(), &service, owed)
         .body(ServiceActorContract::call(1, [0xAA; 32]).unwrap())
         .build();
-    bc.send_message(outsider_call).expect("outsider call").expect_aborted().expect_exit_code(ERR_NOT_AUTHORIZED);
+    bc.send_message(outsider_call)
+        .expect("outsider call")
+        .expect_aborted()
+        .expect_exit_code(ERR_NOT_AUTHORIZED);
 
     // The authorized caller succeeds twice, up to rate_limit_per_day. Both
     // stay concurrently pending -- this design allows that.
@@ -1142,7 +1452,10 @@ fn restricted_access_and_daily_rate_limit_match_the_compiled_bytecode() {
         stack_to_entries(&stack),
     ))
     .expect("decode_data");
-    assert_eq!(data.calls_today, 2, "calls_today must be read back correctly from Accounting state");
+    assert_eq!(
+        data.calls_today, 2,
+        "calls_today must be read back correctly from Accounting state"
+    );
     assert_eq!(data.pending_count, 2);
 
     // A third call, same day, is rejected -- and must not mutate state.
@@ -1179,9 +1492,19 @@ fn update_policy_enforces_response_sla_and_refund_claim_window_bounds() {
     f.send_from(
         &owner,
         ServiceActorContract::update_policy(
-            1, init.price_per_call, init.storage_fee, init.cleanup_bounty, too_short_sla,
-            init.refund_claim_window, true, init.open_access, init.authorized_caller.as_ref(),
-            &owner, init.rate_limit_per_day, init.metadata_hash, init.proof_scheme_hash,
+            1,
+            init.price_per_call,
+            init.storage_fee,
+            init.cleanup_bounty,
+            too_short_sla,
+            init.refund_claim_window,
+            true,
+            init.open_access,
+            init.authorized_caller.as_ref(),
+            &owner,
+            init.rate_limit_per_day,
+            init.metadata_hash,
+            init.proof_scheme_hash,
         )
         .unwrap(),
     )
@@ -1192,16 +1515,30 @@ fn update_policy_enforces_response_sla_and_refund_claim_window_bounds() {
     f.send_from(
         &owner,
         ServiceActorContract::update_policy(
-            2, init.price_per_call, init.storage_fee, init.cleanup_bounty, init.response_sla,
-            too_short_window, true, init.open_access, init.authorized_caller.as_ref(), &owner,
-            init.rate_limit_per_day, init.metadata_hash, init.proof_scheme_hash,
+            2,
+            init.price_per_call,
+            init.storage_fee,
+            init.cleanup_bounty,
+            init.response_sla,
+            too_short_window,
+            true,
+            init.open_access,
+            init.authorized_caller.as_ref(),
+            &owner,
+            init.rate_limit_per_day,
+            init.metadata_hash,
+            init.proof_scheme_hash,
         )
         .unwrap(),
     )
     .expect_aborted()
     .expect_exit_code(ERR_INVALID_REFUND_CLAIM_WINDOW);
 
-    assert_eq!(f.data().policy_version, 0, "no rejected update_policy call may bump policy_version");
+    assert_eq!(
+        f.data().policy_version,
+        0,
+        "no rejected update_policy call may bump policy_version"
+    );
 }
 
 #[test]
@@ -1214,9 +1551,19 @@ fn update_policy_enforces_cleanup_bounty_and_storage_fee_bounds() {
     f.send_from(
         &owner,
         ServiceActorContract::update_policy(
-            1, init.price_per_call, init.storage_fee, MIN_CLEANUP_BOUNTY - 1, init.response_sla,
-            init.refund_claim_window, true, init.open_access, init.authorized_caller.as_ref(),
-            &owner, init.rate_limit_per_day, init.metadata_hash, init.proof_scheme_hash,
+            1,
+            init.price_per_call,
+            init.storage_fee,
+            MIN_CLEANUP_BOUNTY - 1,
+            init.response_sla,
+            init.refund_claim_window,
+            true,
+            init.open_access,
+            init.authorized_caller.as_ref(),
+            &owner,
+            init.rate_limit_per_day,
+            init.metadata_hash,
+            init.proof_scheme_hash,
         )
         .unwrap(),
     )
@@ -1227,9 +1574,18 @@ fn update_policy_enforces_cleanup_bounty_and_storage_fee_bounds() {
     f.send_from(
         &owner,
         ServiceActorContract::update_policy(
-            2, init.price_per_call, MAX_CLEANUP_BOUNTY + MIN_STORAGE_FEE, MAX_CLEANUP_BOUNTY + 1,
-            init.response_sla, init.refund_claim_window, true, init.open_access,
-            init.authorized_caller.as_ref(), &owner, init.rate_limit_per_day, init.metadata_hash,
+            2,
+            init.price_per_call,
+            MAX_CLEANUP_BOUNTY + MIN_STORAGE_FEE,
+            MAX_CLEANUP_BOUNTY + 1,
+            init.response_sla,
+            init.refund_claim_window,
+            true,
+            init.open_access,
+            init.authorized_caller.as_ref(),
+            &owner,
+            init.rate_limit_per_day,
+            init.metadata_hash,
             init.proof_scheme_hash,
         )
         .unwrap(),
@@ -1241,9 +1597,18 @@ fn update_policy_enforces_cleanup_bounty_and_storage_fee_bounds() {
     f.send_from(
         &owner,
         ServiceActorContract::update_policy(
-            3, init.price_per_call, MIN_STORAGE_FEE + MIN_CLEANUP_BOUNTY - 1, MIN_CLEANUP_BOUNTY,
-            init.response_sla, init.refund_claim_window, true, init.open_access,
-            init.authorized_caller.as_ref(), &owner, init.rate_limit_per_day, init.metadata_hash,
+            3,
+            init.price_per_call,
+            MIN_STORAGE_FEE + MIN_CLEANUP_BOUNTY - 1,
+            MIN_CLEANUP_BOUNTY,
+            init.response_sla,
+            init.refund_claim_window,
+            true,
+            init.open_access,
+            init.authorized_caller.as_ref(),
+            &owner,
+            init.rate_limit_per_day,
+            init.metadata_hash,
             init.proof_scheme_hash,
         )
         .unwrap(),
@@ -1257,9 +1622,18 @@ fn update_policy_enforces_cleanup_bounty_and_storage_fee_bounds() {
     f.send_from(
         &owner,
         ServiceActorContract::update_policy(
-            4, init.price_per_call, MIN_STORAGE_FEE + MIN_CLEANUP_BOUNTY, MIN_CLEANUP_BOUNTY,
-            init.response_sla, init.refund_claim_window, true, init.open_access,
-            init.authorized_caller.as_ref(), &owner, init.rate_limit_per_day, init.metadata_hash,
+            4,
+            init.price_per_call,
+            MIN_STORAGE_FEE + MIN_CLEANUP_BOUNTY,
+            MIN_CLEANUP_BOUNTY,
+            init.response_sla,
+            init.refund_claim_window,
+            true,
+            init.open_access,
+            init.authorized_caller.as_ref(),
+            &owner,
+            init.rate_limit_per_day,
+            init.metadata_hash,
             init.proof_scheme_hash,
         )
         .unwrap(),
@@ -1277,9 +1651,19 @@ fn only_owner_can_call_owner_only_operations() {
     f.send_from(
         &outsider,
         ServiceActorContract::update_policy(
-            1, init.price_per_call, init.storage_fee, init.cleanup_bounty, init.response_sla,
-            init.refund_claim_window, true, init.open_access, init.authorized_caller.as_ref(),
-            &outsider, init.rate_limit_per_day, init.metadata_hash, init.proof_scheme_hash,
+            1,
+            init.price_per_call,
+            init.storage_fee,
+            init.cleanup_bounty,
+            init.response_sla,
+            init.refund_claim_window,
+            true,
+            init.open_access,
+            init.authorized_caller.as_ref(),
+            &outsider,
+            init.rate_limit_per_day,
+            init.metadata_hash,
+            init.proof_scheme_hash,
         )
         .unwrap(),
     )

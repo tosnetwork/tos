@@ -28,3 +28,13 @@ pub fn i64_to_stack_entry(value: i64) -> StackEntry {
         number: tl_api::tos::tvm::Number::Tvm_NumberDecimal(n),
     })
 }
+
+/// Unsigned counterpart used by Service Actor's full-width `uint64`
+/// request IDs. Casting these IDs through `i64` corrupts values above
+/// `i64::MAX`, precisely where overflow-boundary diagnostics matter.
+pub fn u64_to_stack_entry(value: u64) -> StackEntry {
+    let n = tl_api::tos::tvm::numberdecimal::NumberDecimal { number: value.to_string() };
+    StackEntry::Tvm_StackEntryNumber(tl_api::tos::tvm::stackentry::StackEntryNumber {
+        number: tl_api::tos::tvm::Number::Tvm_NumberDecimal(n),
+    })
+}
