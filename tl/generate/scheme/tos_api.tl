@@ -475,6 +475,8 @@ tosNode.dataFullCompressed id:tosNode.blockIdExt flags:# compressed:bytes is_lin
 tosNode.dataFullCompressedV2 id:tosNode.blockIdExt flags:# proof:bytes block_compressed:bytes is_link:Bool = tosNode.DataFull;
 tosNode.dataFullEmpty = tosNode.DataFull;
 
+tosNode.nextBlocksFull blocks:(vector tosNode.DataFull) = tosNode.NextBlocksFull;
+
 tosNode.capabilities#f5bf60c0 version_major:int version_minor:int flags:# = tosNode.Capabilities;
 
 tosNode.success = tosNode.Success;
@@ -504,6 +506,7 @@ tosNode.prepareBlocks blocks:(vector tosNode.blockIdExt) = tosNode.Prepared;
 tosNode.prepareZeroState block:tosNode.blockIdExt = tosNode.PreparedState;
 tosNode.getNextKeyBlockIds block:tosNode.blockIdExt max_size:int = tosNode.KeyBlocks;
 tosNode.downloadNextBlockFull prev_block:tosNode.blockIdExt = tosNode.DataFull;
+tosNode.downloadNextBlocksFull prev_block:tosNode.blockIdExt max_blocks:int = tosNode.NextBlocksFull;
 tosNode.downloadBlockFull block:tosNode.blockIdExt = tosNode.DataFull;
 tosNode.downloadBlock block:tosNode.blockIdExt = tosNode.Data;
 tosNode.downloadZeroState block:tosNode.blockIdExt = tosNode.Data;

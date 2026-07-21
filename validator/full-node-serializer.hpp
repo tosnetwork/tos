@@ -36,6 +36,9 @@ td::Result<std::vector<BlockIdExt>> extract_prev_blocks_from_proof(td::Slice pro
 td::Result<bool> need_state_for_decompression(tos_api::tosNode_Broadcast& broadcast);
 td::Result<bool> need_state_for_decompression(tos_api::tosNode_DataFull& data_full);
 
+td::Result<tl_object_ptr<tos_api::tosNode_DataFull>> serialize_block_full_obj(const BlockIdExt& id, td::Slice proof,
+                                                                              td::Slice data, bool is_proof_link,
+                                                                              bool compression_enabled);
 td::Result<td::BufferSlice> serialize_block_full(const BlockIdExt& id, td::Slice proof, td::Slice data,
                                                  bool is_proof_link, bool compression_enabled);
 td::Status deserialize_block_full(tos_api::tosNode_DataFull& obj, BlockIdExt& id, td::BufferSlice& proof,

@@ -63,6 +63,8 @@ class FullNodeMasterImpl : public FullNodeMaster {
                      td::Promise<td::BufferSlice> promise);
   void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadNextBlockFull &query,
                      td::Promise<td::BufferSlice> promise);
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadNextBlocksFull &query,
+                     td::Promise<td::BufferSlice> promise);
   void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_prepareZeroState &query,
                      td::Promise<td::BufferSlice> promise);
   void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_preparePersistentState &query,

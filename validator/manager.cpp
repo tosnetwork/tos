@@ -227,7 +227,7 @@ void ValidatorManagerImpl::validate_block(ReceivedBlock block, td::Promise<Block
 
 void ValidatorManagerImpl::new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked,
                                                td::Promise<td::Unit> promise) {
-  if (!started_) {
+  if (last_masterchain_state_.is_null() || !last_masterchain_block_handle_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "node not started"));
     return;
   }
@@ -253,7 +253,7 @@ void ValidatorManagerImpl::new_block_broadcast(BlockBroadcast broadcast, bool si
 
 void ValidatorManagerImpl::validate_block_broadcast_signatures(BlockBroadcast broadcast,
                                                                td::Promise<td::Unit> promise) {
-  if (!started_) {
+  if (last_masterchain_state_.is_null() || !last_masterchain_block_handle_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "node not started"));
     return;
   }
@@ -519,7 +519,7 @@ void ValidatorManagerImpl::new_shard_block_description_broadcast(BlockIdExt bloc
 
 td::actor::Task<> ValidatorManagerImpl::new_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
                                                                       td::BufferSlice data) {
-  if (!last_masterchain_block_handle_ || !started_) {
+  if (!last_masterchain_block_handle_) {
     VLOG(VALIDATOR_DEBUG) << "dropping top shard block broadcast: not inited";
     co_return td::Unit{};
   }
@@ -2318,8 +2318,7 @@ void ValidatorManagerImpl::new_masterchain_block() {
   update_shard_blocks();
 
   if (!shard_client_.empty()) {
-    td::actor::send_closure(shard_client_, &ShardClient::new_masterchain_block_notification,
-                            last_masterchain_block_handle_, last_masterchain_state_);
+    td::actor::send_closure(shard_client_, &ShardClient::new_masterchain_block_notification);
   }
 
   for (const auto &[_, validator_group] : validator_groups_) {

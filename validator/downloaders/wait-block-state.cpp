@@ -98,7 +98,9 @@ void WaitBlockState::start() {
       }
     });
     td::actor::send_closure(manager_, &ValidatorManager::get_shard_state_from_db, handle_, std::move(P));
-  } else if (handle_->id().id.seqno == 0 && next_static_file_attempt_.is_in_past()) {
+    return;
+  }
+  if (handle_->id().id.seqno == 0 && next_static_file_attempt_.is_in_past()) {
     next_static_file_attempt_ = td::Timestamp::in(60.0);
     // id.file_hash contains correct file hash of zero state
     // => if file with this sha256 is found it is guaranteed to be correct
@@ -116,7 +118,9 @@ void WaitBlockState::start() {
       }
     });
     td::actor::send_closure(manager_, &ValidatorManager::try_get_static_file, handle_->id().file_hash, std::move(P));
-  } else if (handle_->id().id.seqno == 0) {
+    return;
+  }
+  if (handle_->id().id.seqno == 0) {
     auto P = td::PromiseCreator::lambda(
         [SelfId = actor_id(this)](td::Result<fullnode::DownloadedPersistentState> R) {
           if (R.is_error()) {
@@ -128,7 +132,9 @@ void WaitBlockState::start() {
         });
     td::actor::send_closure(manager_, &ValidatorManager::send_get_zero_state_request, handle_->id(), priority_,
                             std::move(P));
-  } else if (check_persistent_state_desc() && !handle_->received_state() && allow_download) {
+    return;
+  }
+  if (check_persistent_state_desc() && !handle_->received_state() && allow_download) {
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
       if (R.is_error()) {
         LOG(WARNING) << "failed to get persistent state: " << R.move_as_error();
@@ -157,7 +163,26 @@ void WaitBlockState::start() {
                                                   priority_, manager_, timeout_, std::move(P))
           .release();
     }
-  } else if (!handle_->inited_prev() || (!handle_->inited_proof() && !handle_->inited_proof_link())) {
+    return;
+  }
+  if (block_.is_null()) {
+    if (!allow_download && !handle_->received()) {
+      abort_query(td::Status::Error(PSTRING() << "not monitoring shard " << handle_->id().shard_full()));
+      return;
+    }
+    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<BlockData>> R) {
+      if (R.is_error()) {
+        td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_block_data,
+                                R.move_as_error_prefix("block wait error: "));
+      } else {
+        td::actor::send_closure(SelfId, &WaitBlockState::got_block_data, R.move_as_ok());
+      }
+    });
+
+    td::actor::send_closure(manager_, &ValidatorManager::wait_block_data, handle_, priority_, timeout_, std::move(P));
+    return;
+  }
+  if (!handle_->inited_prev() || (!handle_->inited_proof() && !handle_->inited_proof_link())) {
     if (!allow_download) {
       abort_query(td::Status::Error(PSTRING() << "not monitoring shard " << handle_->id().shard_full()));
       return;
@@ -174,9 +199,11 @@ void WaitBlockState::start() {
     waiting_proof_link_ = true;
     td::actor::send_closure(manager_, &ValidatorManager::send_get_block_proof_link_request, handle_->id(), priority_,
                             std::move(P));
-  } else if (prev_state_.is_null()) {
+    return;
+  }
+  if (prev_state_.is_null()) {
     // Internal invariant: this branch is reached only after the
-    // surrounding `else if` chain has confirmed proof/proof-link is
+    // preceding checks have confirmed proof/proof-link is
     // initialized; the flags are mutated locally on the actor strand
     // and are not sourced from peer input.
     CHECK(handle_->inited_proof() || handle_->inited_proof_link());
@@ -191,7 +218,9 @@ void WaitBlockState::start() {
 
     td::actor::send_closure(manager_, &ValidatorManager::wait_prev_block_state, handle_, priority_, timeout_,
                             std::move(P));
-  } else if (handle_->id().is_masterchain() && !handle_->inited_proof()) {
+    return;
+  }
+  if (handle_->id().is_masterchain() && !handle_->inited_proof()) {
     if (!allow_download) {
       abort_query(td::Status::Error(PSTRING() << "not monitoring shard " << handle_->id().shard_full()));
       return;
@@ -208,24 +237,9 @@ void WaitBlockState::start() {
     waiting_proof_ = true;
     td::actor::send_closure(manager_, &ValidatorManager::send_get_block_proof_request, handle_->id(), priority_,
                             std::move(P));
-  } else if (block_.is_null()) {
-    if (!allow_download && !handle_->received()) {
-      abort_query(td::Status::Error(PSTRING() << "not monitoring shard " << handle_->id().shard_full()));
-      return;
-    }
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<BlockData>> R) {
-      if (R.is_error()) {
-        td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_block_data,
-                                R.move_as_error_prefix("block wait error: "));
-      } else {
-        td::actor::send_closure(SelfId, &WaitBlockState::got_block_data, R.move_as_ok());
-      }
-    });
-
-    td::actor::send_closure(manager_, &ValidatorManager::wait_block_data, handle_, priority_, timeout_, std::move(P));
-  } else {
-    apply();
+    return;
   }
+  apply();
 }
 
 void WaitBlockState::failed_to_get_prev_state(td::Status reason) {

@@ -152,6 +152,8 @@ set(FULL_NODE_SOURCE
 
   net/download-block-new.hpp
   net/download-block-new.cpp
+  net/download-next-blocks.hpp
+  net/download-next-blocks.cpp
   net/download-archive-slice.hpp
   net/download-archive-slice.cpp
   net/download-state.hpp

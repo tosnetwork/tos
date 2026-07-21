@@ -249,6 +249,14 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
       .release();
 }
 
+void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadNextBlocksFull &query,
+                                       td::Promise<td::BufferSlice> promise) {
+  BlockIdExt block_id = tos::create_block_id(query.prev_block_);
+  td::actor::create_actor<NextBlocksFullSender>("sender.nexts", block_id, query.max_blocks_, validator_manager_,
+                                                std::move(promise))
+      .release();
+}
+
 void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_prepareBlockProof &query,
                                        td::Promise<td::BufferSlice> promise) {
   if (query.block_->seqno_ == 0) {

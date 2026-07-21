@@ -432,6 +432,19 @@ struct [[nodiscard]] StartedTask {
                                                   .start_immediate()
                                                   .detach_silent();
   }
+  void detach_ensure(std::string description = "UnknownTask") && {
+    if (!h) {
+      return;
+    }
+    [](auto self, std::string description) -> Task<> {
+      co_await become_lightweight();
+      auto r = co_await std::move(self).wrap();
+      LOG_IF(FATAL, r.is_error()) << "Detached task <" << description << "> failed: " << r.error();
+      co_return {};
+    }(std::move(*this), std::move(description))
+                                                  .start_immediate()
+                                                  .detach_silent();
+  }
   void detach_silent() {
     if (!h) {
       return;
