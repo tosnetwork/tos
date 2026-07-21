@@ -281,7 +281,7 @@ async fn visit_address(
         }
     };
 
-    decode_and_store(chain_provider, store, address, &kind, seqno).await
+    decode_and_store(chain_provider, store, address, &kind, seqno, time_format::now()).await
 }
 
 async fn classify_address(
@@ -307,8 +307,8 @@ async fn decode_and_store(
     address: &str,
     kind: &str,
     seqno: u32,
+    now: u64,
 ) -> anyhow::Result<()> {
-    let now = time_format::now();
     match kind {
         "task_escrow" => {
             let stack =
@@ -453,22 +453,45 @@ async fn refresh_service_request_lifecycle(
                 terms_hash: None,
             }
         } else if let Some(old) = old {
-            // This is a snapshot diff, not an event log: an entry that has
-            // vanished from live storage looks identical whether it was
-            // resolved (respond/claim_refund) or reclaimed (sweep) once
-            // `now >= deadline`. If the indexer's last observation of this ID
-            // predates a gap longer than its refund_claim_deadline window
-            // (e.g. the indexer was down), a genuinely `responded`/`refunded`
-            // entry is indistinguishable here from a `swept` one and gets the
-            // `swept` label. This only affects this off-chain audit label,
-            // never on-chain funds -- disambiguating it for real would need
-            // per-transaction event indexing, not periodic full-state scans.
+            // This is a snapshot diff, not an event log: `run_get_method`
+            // always answers with *current* chain state, so an observation
+            // gap of even one missed tick can hide an entire intermediate
+            // transition (e.g. pending -> expire -> refundable -> claim_refund,
+            // collapsed into a single "it's gone now" if the indexer never
+            // caught the refundable state in between). The only sound
+            // conclusions are the ones an unbroken observation window
+            // actually supports:
+            //  - a `pending` entry can only disappear via `respond` while
+            //    `now() < response_deadline` on chain (expire requires
+            //    `now() >= response_deadline`) -- so if *our* observation is
+            //    still strictly before `response_deadline`, no expire could
+            //    have happened yet and disappearing here can only be
+            //    `respond`.
+            //  - a `refundable` entry can only disappear via `claim_refund`
+            //    while `now() < refund_claim_deadline` (sweep requires
+            //    `now() >= refund_claim_deadline`) -- so if our observation is
+            //    still strictly before that deadline, disappearing here can
+            //    only be `claim_refund`.
+            //  - past either respective deadline, or when the entry's last
+            //    known status could have already transitioned again before we
+            //    looked (e.g. `pending` observed, but `response_deadline` has
+            //    since passed -- it may have quietly gone
+            //    pending->expire->refundable->claim_refund entirely between
+            //    ticks), the disappearance is ambiguous *unless* the last
+            //    observation (`old.updated_at`) was already at or past
+            //    `refund_claim_deadline`, which proves the entry survived to
+            //    become sweepable and only `sweep_expired_request` remains.
+            //  - otherwise: report `resolved_unknown` rather than guess.
+            //    Disambiguating this for real needs per-transaction event
+            //    indexing, not periodic full-state scans.
             let mut prior: ServiceRequestLifecycleRecordDto = serde_json::from_str(&old.dto_json)?;
-            let deadline = prior.refund_claim_deadline.unwrap_or(u64::MAX);
+            let claim_deadline = prior.refund_claim_deadline.unwrap_or(u64::MAX);
+            let response_deadline = prior.response_deadline.unwrap_or(0);
             prior.status = match old.status.as_str() {
-                "pending" if now < deadline => "responded",
-                "refundable" if now < deadline => "refunded",
-                "pending" | "refundable" => "swept",
+                "pending" if now < response_deadline => "responded",
+                "refundable" if now < claim_deadline => "refunded",
+                "pending" | "refundable" if old.updated_at >= claim_deadline => "swept",
+                "pending" | "refundable" => "resolved_unknown",
                 _ => "resolved_unknown",
             }
             .into();
@@ -1148,5 +1171,375 @@ mod tests {
         assert_eq!(store.checkpoint(&format!("0:{shard_a}")).unwrap(), 1);
         // The masterchain itself keeps advancing normally throughout.
         assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 2);
+    }
+
+    // ─── Service Actor request-lifecycle classification (real sandbox contract) ───
+    //
+    // These drive `refresh_service_request_lifecycle` (via `decode_and_store`)
+    // against a genuine, compiled Service Actor contract executing in
+    // `tos_sandbox`, not a hand-crafted stack fixture -- the classification
+    // logic only matters if it agrees with what the real contract's
+    // get-methods actually return once a request has left `pending`/
+    // `refundable`. `decode_and_store` takes `now` as an explicit parameter
+    // (threaded through from `time_format::now()` in production) precisely so
+    // these tests can supply a `now` that is consistent with the sandbox's
+    // own virtual clock (`Blockchain::set_now`), instead of racing real wall
+    // time against a deadline computed from the sandbox's fixed default
+    // clock (1.7bn, i.e. already in the past relative to real time).
+
+    use common::tvm_stack_parser::TvmStackParser;
+    use contracts::ServiceActorInit;
+    use std::sync::Mutex as StdMutex;
+    use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
+
+    struct SandboxChainProvider {
+        bc: StdMutex<Blockchain>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChainProvider for SandboxChainProvider {
+        async fn run_get_method(
+            &self,
+            address: String,
+            method: &str,
+            stack: Vec<tl_api::tos::tvm::StackEntry>,
+        ) -> anyhow::Result<TvmStackParser> {
+            let addr = MsgAddressInt::from_str(&address)?;
+            let vm_stack = stack
+                .into_iter()
+                .map(|entry| match entry {
+                    tl_api::tos::tvm::StackEntry::Tvm_StackEntryNumber(n) => {
+                        let tl_api::tos::tvm::Number::Tvm_NumberDecimal(v) = n.number;
+                        v.number
+                            .parse::<u64>()
+                            .map(tos_vm::stack::StackItem::int)
+                            .map_err(Into::into)
+                    }
+                    _ => anyhow::bail!("unsupported sandbox input stack entry"),
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let result = {
+                let bc = self.bc.lock().expect("sandbox lock poisoned");
+                bc.run_get_method(&addr, method, vm_stack)
+                    .map_err(|e| anyhow::anyhow!("get-method {method} error: {e}"))?
+            };
+            if result.exit_code != 0 {
+                anyhow::bail!("get-method {method} error: exit_code={}", result.exit_code);
+            }
+            let entries =
+                result.stack.iter().map(lifecycle_stack_item_to_entry).collect::<anyhow::Result<Vec<_>>>()?;
+            Ok(TvmStackParser::new(entries))
+        }
+
+        async fn get_balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn send_boc(&self, _boc: &[u8]) -> anyhow::Result<()> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn get_config_param(
+            &self,
+            _param_id: u32,
+        ) -> anyhow::Result<chain_block::ConfigParamEnum> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn get_address_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::AddressInfo> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn get_extended_address_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::ExtendedAddressInfo> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn get_wallet_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::WalletInfo> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn get_masterchain_info(
+            &self,
+        ) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn get_shards(
+            &self,
+            _seqno: u32,
+        ) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+
+        async fn get_block_transactions_page(
+            &self,
+            _workchain: i32,
+            _shard: i64,
+            _seqno: u32,
+            _after_lt: Option<u64>,
+            _after_hash: Option<&str>,
+            _count: u32,
+        ) -> anyhow::Result<contracts::chain_provider::BlockTransactionsPage> {
+            anyhow::bail!("not supported by SandboxChainProvider")
+        }
+    }
+
+    fn lifecycle_stack_item_to_entry(
+        item: &tos_vm::stack::StackItem,
+    ) -> anyhow::Result<tl_api::tos::tvm::StackEntry> {
+        use tl_api::tos::tvm::{
+            Number, StackEntry, numberdecimal::NumberDecimal, slice,
+            stackentry::{StackEntryNumber, StackEntrySlice},
+        };
+        if matches!(item, tos_vm::stack::StackItem::None) {
+            // The "not found" branch of get_request/get_refund returns
+            // null() for the caller slice; its value is never read
+            // (decode_request/decode_refund check the `found` flag first),
+            // but TvmStackParser still needs *some* entry here.
+            return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+                slice: slice::Slice { bytes: vec![] },
+            }));
+        }
+        if let Ok(int) = item.as_integer() {
+            return Ok(StackEntry::Tvm_StackEntryNumber(StackEntryNumber {
+                number: Number::Tvm_NumberDecimal(NumberDecimal { number: int.to_string() }),
+            }));
+        }
+        if let Ok(slice) = item.as_slice() {
+            let bytes = slice.clone().get_bytestring(0);
+            return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+                slice: slice::Slice { bytes },
+            }));
+        }
+        if let Ok(cell) = item.as_cell() {
+            let bytes = chain_block::SliceData::load_cell(cell.clone())?.get_bytestring(0);
+            return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+                slice: slice::Slice { bytes },
+            }));
+        }
+        anyhow::bail!("unsupported sandbox stack item for lifecycle tests")
+    }
+
+    struct LifecycleFixture {
+        provider: Arc<SandboxChainProvider>,
+        provider_dyn: Arc<dyn ChainProvider>,
+        owner: Treasury,
+        caller: Treasury,
+        service: MsgAddressInt,
+        base_now: u64,
+        response_sla: u32,
+        refund_claim_window: u32,
+    }
+
+    impl LifecycleFixture {
+        fn new() -> Self {
+            let base_now = time_format::now();
+            let mut bc = Blockchain::new().expect("blockchain");
+            bc.set_workchain(-1);
+            bc.set_now(base_now as u32);
+            let owner = bc.treasury("lifecycle-owner", 100_000_000_000).expect("owner");
+            let caller = bc.treasury("lifecycle-caller", 100_000_000_000).expect("caller");
+            let response_sla = 3_600;
+            let refund_claim_window = 3_600;
+            let init = ServiceActorInit {
+                owner: owner.address().clone(),
+                authorized_caller: None,
+                open_access: true,
+                price_per_call: 100_000_000,
+                storage_fee: 200_000_000,
+                cleanup_bounty: 100_000_000,
+                rate_limit_per_day: 0,
+                response_sla,
+                refund_claim_window,
+                metadata_hash: [0x11; 32],
+                proof_scheme_hash: [0x22; 32],
+                attestor_pubkey: None,
+            };
+            let service = ServiceActorContract::calculate_address(-1, &init).expect("address");
+            let deploy = MessageBuilder::internal(owner.address(), &service, 20_000_000_000)
+                .bounce(false)
+                .state_init(ServiceActorContract::build_state_init(&init).expect("state init"))
+                .body(Cell::default())
+                .build();
+            bc.send_message(deploy).expect("deploy").expect_success();
+            let provider = Arc::new(SandboxChainProvider { bc: StdMutex::new(bc) });
+            Self {
+                provider_dyn: provider.clone(),
+                provider,
+                owner,
+                caller,
+                service,
+                base_now,
+                response_sla,
+                refund_claim_window,
+            }
+        }
+
+        fn send(&self, from: &MsgAddressInt, body: chain_block::Cell) {
+            let msg = MessageBuilder::internal(from, &self.service, 500_000_000).body(body).build();
+            self.provider.bc.lock().unwrap().send_message(msg).unwrap().expect_success();
+        }
+
+        fn set_now(&self, t: u64) {
+            self.provider.bc.lock().unwrap().set_now(t as u32);
+        }
+
+        async fn refresh(&self, store: &IndexerStore, now: u64) {
+            decode_and_store(&self.provider_dyn, store, &self.service.to_string(), "service_actor", 1, now)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn indexer_classifies_a_responded_request_after_respond() {
+        let f = LifecycleFixture::new();
+        let store = IndexerStore::open_in_memory().unwrap();
+        let caller = f.caller.address().clone();
+
+        f.send(&caller, ServiceActorContract::call(1, [0xAA; 32]).unwrap());
+        f.refresh(&store, f.base_now).await;
+        let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
+        assert_eq!(record.status, "pending");
+
+        let owner = f.owner.address().clone();
+        f.send(&owner, ServiceActorContract::respond(2, 0, [0xBB; 32]).unwrap());
+        f.refresh(&store, f.base_now).await;
+        let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
+        assert_eq!(record.status, "responded", "a request answered before its deadline must be classified responded, not swept");
+    }
+
+    #[tokio::test]
+    async fn indexer_classifies_a_refunded_request_after_expire_and_claim() {
+        let f = LifecycleFixture::new();
+        let store = IndexerStore::open_in_memory().unwrap();
+        let caller = f.caller.address().clone();
+
+        f.send(&caller, ServiceActorContract::call(1, [0xCC; 32]).unwrap());
+        f.refresh(&store, f.base_now).await;
+
+        let past_response_deadline = f.base_now + f.response_sla as u64 + 1;
+        f.set_now(past_response_deadline);
+        f.send(&caller, ServiceActorContract::expire(2, 0).unwrap());
+        f.refresh(&store, past_response_deadline).await;
+        let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
+        assert_eq!(record.status, "refundable");
+
+        f.send(&caller, ServiceActorContract::claim_refund(3, 0, &caller).unwrap());
+        f.refresh(&store, past_response_deadline).await;
+        let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
+        assert_eq!(record.status, "refunded", "a refund claimed before its claim window closes must be classified refunded, not swept");
+    }
+
+    #[tokio::test]
+    async fn indexer_reports_resolved_unknown_when_it_misses_the_refundable_transition() {
+        // `run_get_method` always answers with *current* chain state, so an
+        // indexer that is merely running one tick behind (not necessarily
+        // down for a long outage) can miss the entire pending->refundable
+        // window if expire and claim_refund land close together in real
+        // time. The last stored status would then still be "pending" even
+        // though the request was genuinely refunded, not responded to.
+        let f = LifecycleFixture::new();
+        let store = IndexerStore::open_in_memory().unwrap();
+        let caller = f.caller.address().clone();
+
+        f.send(&caller, ServiceActorContract::call(1, [0x12; 32]).unwrap());
+        f.refresh(&store, f.base_now).await;
+        let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
+        assert_eq!(record.status, "pending");
+
+        let past_response_deadline = f.base_now + f.response_sla as u64 + 1;
+        f.set_now(past_response_deadline);
+        f.send(&caller, ServiceActorContract::expire(2, 0).unwrap());
+        f.send(&caller, ServiceActorContract::claim_refund(3, 0, &caller).unwrap());
+        // No refresh between expire and claim_refund -- the indexer's stored
+        // record for this id is still "pending" from the very first refresh.
+        f.refresh(&store, past_response_deadline).await;
+        let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
+        assert_eq!(
+            record.status, "resolved_unknown",
+            "a genuinely refunded request must not be mislabeled responded just because the \
+             indexer's only prior observation of it predates response_deadline and never saw \
+             the intermediate refundable state"
+        );
+    }
+
+    #[tokio::test]
+    async fn indexer_classifies_a_swept_request() {
+        let f = LifecycleFixture::new();
+        let store = IndexerStore::open_in_memory().unwrap();
+        let caller = f.caller.address().clone();
+
+        f.send(&caller, ServiceActorContract::call(1, [0xDD; 32]).unwrap());
+        f.refresh(&store, f.base_now).await;
+
+        let past_claim_deadline =
+            f.base_now + f.response_sla as u64 + f.refund_claim_window as u64 + 1;
+        f.set_now(past_claim_deadline);
+        // The indexer must observe the entry *still live at or past the
+        // deadline* before the sweep -- only then is a subsequent
+        // disappearance provably a sweep (see the classification comment
+        // above `refresh_service_request_lifecycle`'s match arms). Without
+        // this intermediate refresh, the indexer's last observation would
+        // predate the deadline and the correct label would be
+        // `resolved_unknown`, not `swept` -- exercised separately below.
+        f.refresh(&store, past_claim_deadline).await;
+        let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
+        assert_eq!(record.status, "pending", "still live and unswept just past the deadline");
+
+        // A third party (not the caller, not the owner) sweeps -- permissionless.
+        let sweeper = {
+            let mut bc = f.provider.bc.lock().unwrap();
+            bc.treasury("lifecycle-sweeper", 10_000_000_000).unwrap()
+        };
+        f.send(&sweeper.address().clone(), ServiceActorContract::sweep_expired_request(4, 0).unwrap());
+        f.refresh(&store, past_claim_deadline).await;
+        let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
+        assert_eq!(
+            record.status, "swept",
+            "a request only reclaimed via sweep_expired_request after its claim window closed must be classified swept"
+        );
+    }
+
+    #[tokio::test]
+    async fn indexer_reports_resolved_unknown_when_it_missed_the_deadline_crossing() {
+        // If the indexer's last observation of a still-pending/refundable
+        // entry predates the deadline, and the *next* observation is already
+        // past the deadline with the entry gone, a periodic snapshot cannot
+        // tell whether it resolved (respond/claim_refund, in the gap before
+        // the deadline) or was swept (in the gap after it). It must not guess
+        // either way.
+        let f = LifecycleFixture::new();
+        let store = IndexerStore::open_in_memory().unwrap();
+        let caller = f.caller.address().clone();
+
+        f.send(&caller, ServiceActorContract::call(1, [0xEE; 32]).unwrap());
+        f.refresh(&store, f.base_now).await;
+        let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
+        assert_eq!(record.status, "pending");
+
+        // Actually respond (a real, legitimate resolution before the
+        // deadline) -- but the indexer's *next* observation only happens
+        // after the deadline has passed, simulating a missed tick/outage.
+        let owner = f.owner.address().clone();
+        f.send(&owner, ServiceActorContract::respond(2, 0, [0xFF; 32]).unwrap());
+        let past_claim_deadline =
+            f.base_now + f.response_sla as u64 + f.refund_claim_window as u64 + 1;
+        f.refresh(&store, past_claim_deadline).await;
+        let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
+        assert_eq!(
+            record.status, "resolved_unknown",
+            "a genuinely responded request must not be mislabeled swept just because the only \
+             observation after it disappeared happened past the deadline"
+        );
     }
 }

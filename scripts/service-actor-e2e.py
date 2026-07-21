@@ -53,6 +53,23 @@ What this script proves instead is that the real CLI commands, RPC
 round-trip, and wallet/vault signing flow for all nine operations work
 end to end, including the "too early" rejection side of every deadline.
 
+HTTP query API + indexer (real `tosctld` daemon, real background indexer
+tick, not the Rust sandbox suite): started once svc-1 is deployed, exercised
+against the concurrent-requests section's real state transitions --
+GET /services, GET /services/{address}, and GET
+/services/{address}/requests/{request_id} are checked live for both the
+`pending` and `responded` states (respond needs no deadline wait, so this is
+fully live). The `refundable`/`refunded`/`swept` labels are NOT exercised
+here for the same reason the CLI boundary checks above aren't: reaching them
+for real requires actually waiting out response_sla + refund_claim_window
+(a real 2+ hours). That transition logic is proven against genuine compiled
+bytecode by the sandbox-backed indexer tests in
+`tosctl/src/node-control/service/src/indexer/indexer_task.rs`
+(`indexer_classifies_a_refunded_request_after_expire_and_claim`,
+`indexer_classifies_a_swept_request`), which drive the same
+`refresh_service_request_lifecycle` function this live daemon calls, just
+against `tos_sandbox`'s virtual clock instead of a real one.
+
 Run from the repository root: uv run python scripts/service-actor-e2e.py
 """
 import asyncio
@@ -62,16 +79,19 @@ import re
 import shutil
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
+from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 from tostester.install import Install
 from tostester.network import Network, StartOptions
-from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 
 REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:18846"
+HTTP = "127.0.0.1:18847"
 WORKDIR = REPO / "test/integration/.service-actor-e2e"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000004"
@@ -214,7 +234,53 @@ def prepare_config():
     cfg = json.loads(CONFIG.read_text())
     cfg["chain_rpc"] = {"urls": [f"http://{RPC}/"], "api_key": None}
     cfg["elections"] = None
+    cfg["http"] = {"bind": HTTP, "enable_swagger": False, "auth": None}
+    cfg["tick_interval"] = 2
     CONFIG.write_text(json.dumps(cfg, indent=2))
+
+
+def http_get(path: str) -> tuple[int, dict]:
+    req = urllib.request.Request(f"http://{HTTP}{path}", method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read()
+            status = resp.status
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        status = e.code
+    try:
+        return status, json.loads(raw.decode())
+    except json.JSONDecodeError:
+        print(f"  DEBUG non-JSON response: status={status} raw={raw!r}")
+        return status, {}
+
+
+async def wait_http_ready(timeout: float = 30.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            status, _ = http_get("/health")
+            if status == 200:
+                return True
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    return False
+
+
+async def poll_http_predicate(path: str, predicate, timeout: float = 60.0) -> tuple[bool, dict]:
+    """Polls GET `path` until `predicate(body)` is true or `timeout` elapses
+    -- the indexer catches up asynchronously on its own tick interval, so a
+    just-submitted transaction is not expected to be reflected instantly."""
+    deadline = time.time() + timeout
+    last_body: dict = {}
+    while time.time() < deadline:
+        status, body = http_get(path)
+        last_body = body
+        if status == 200 and predicate(body):
+            return True, body
+        await asyncio.sleep(1)
+    return False, last_body
 
 
 async def service_show(name: str):
@@ -332,70 +398,146 @@ async def run_checks(faucet) -> None:
 
     call_amount = 0.05 + STORAGE_FEE + 0.05  # price + storage_fee + real-fee headroom
 
-    print("\n=== call: access and payment gating ===")
-    await send_op("call", "svc-1", "outsider", "--request-hash", "aa" * 32,
-                  "--amount", str(call_amount), may_fail=True)
-    data = await service_show("svc-1")
-    check("outsider call rejected (not authorized)", data["calls_today"] == 0, str(data))
+    print("\n=== start tosctld HTTP daemon (real query API + indexer, not the sandbox suite) ===")
+    env = dict(os.environ)
+    env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
+    # Redirected to a file, not asyncio.subprocess.PIPE: nothing in this
+    # script ever reads a PIPE for this long-lived daemon, and the indexer's
+    # own tick logging (tick_interval=2s, for the rest of this section) is
+    # enough output to eventually fill the OS pipe buffer and deadlock the
+    # daemon on a blocked write -- which would surface here as a misleading
+    # HTTP/indexer polling timeout, not an obvious "daemon hung" error.
+    service_log_path = WORKDIR / "tosctld-service.log"
+    service_log = open(service_log_path, "wb")
+    service_proc = await asyncio.create_subprocess_exec(
+        TOSCTL, "service", "-c", str(CONFIG),
+        stdout=service_log, stderr=asyncio.subprocess.STDOUT, env=env,
+    )
+    try:
+        check("tosctld health endpoint ready", await wait_http_ready())
 
-    await send_op("call", "svc-1", "caller", "--request-hash", "bb" * 32, "--amount", "0.01",
-                  may_fail=True)
-    data = await service_show("svc-1")
-    check("underpaid call rejected", data["calls_today"] == 0, str(data))
+        found, body = await poll_http_predicate(
+            "/services", lambda b: any(same_addr(item.get("address", ""), address)
+                                        for item in b.get("result", [])))
+        check("GET /services lists svc-1 (indexer discovery)", found, str(body)[:1000])
 
-    print("\n=== concurrent requests: two outstanding calls, resolved independently ===")
-    # This is the headline feature the upgrade adds: unlike the single-slot
-    # V1 contract, a second call is accepted while the first is still
-    # unanswered, and each resolves on its own schedule and in any order.
-    predicted_a = await next_request_id("svc-1")
-    call_a_output = await send_op(
-        "call", "svc-1", "caller", "--request-hash", "cc" * 32, "--amount", str(call_amount))
-    request_a = assigned_request_id(call_a_output)
-    check("CLI reports the exact assigned request ID", request_a == predicted_a, call_a_output)
-    data = await service_show("svc-1")
-    check("first concurrent call accepted", data["calls_today"] == 1, str(data))
-    check("one pending request after first call", data["pending_count"] == 1, str(data))
+        status, body = http_get(f"/services/{address}")
+        result = body.get("result", {})
+        check("GET /services/{address} status 200", status == 200, f"status={status} body={body}")
+        check("GET /services/{address} owner matches", same_addr(result.get("owner"), owner), str(result))
+        check("GET /services/{address} price matches (nanotos)",
+              result.get("price_per_call") == int(0.05 * NANO), str(result))
+        check("GET /services/{address} status is active", result.get("status") == "active", str(result))
 
-    predicted_b = await next_request_id("svc-1")
-    call_b_output = await send_op(
-        "call", "svc-1", "caller", "--request-hash", "dd" * 32, "--amount", str(call_amount))
-    request_b = assigned_request_id(call_b_output)
-    check("second request gets a distinct ID", request_b != request_a, f"a={request_a} b={request_b}")
-    check("second CLI request ID matches chain allocation", request_b == predicted_b, call_b_output)
-    data = await service_show("svc-1")
-    check("second concurrent call accepted while the first is still pending",
-          data["calls_today"] == 2, str(data))
-    check("two pending requests outstanding simultaneously", data["pending_count"] == 2, str(data))
+        print("\n=== call: access and payment gating ===")
+        await send_op("call", "svc-1", "outsider", "--request-hash", "aa" * 32,
+                      "--amount", str(call_amount), may_fail=True)
+        data = await service_show("svc-1")
+        check("outsider call rejected (not authorized)", data["calls_today"] == 0, str(data))
 
-    req_a_data = await request_show("svc-1", request_a)
-    req_b_data = await request_show("svc-1", request_b)
-    check("request A is independently visible", req_a_data["found"] and req_a_data["request_hash"] == "cc" * 32,
-          str(req_a_data))
-    check("request B is independently visible", req_b_data["found"] and req_b_data["request_hash"] == "dd" * 32,
-          str(req_b_data))
+        await send_op("call", "svc-1", "caller", "--request-hash", "bb" * 32, "--amount", "0.01",
+                      may_fail=True)
+        data = await service_show("svc-1")
+        check("underpaid call rejected", data["calls_today"] == 0, str(data))
 
-    # Respond out of order: B before A. Responding to one must not affect
-    # the other's state.
-    await send_op("respond", "svc-1", "owner", "--request-id", str(request_b),
-                  "--response-hash", "22" * 32)
-    data = await service_show("svc-1")
-    check("responding to B leaves A still pending", data["pending_count"] == 1, str(data))
-    req_a_data = await request_show("svc-1", request_a)
-    check("request A untouched by B's response", req_a_data["found"], str(req_a_data))
-    req_b_data = await request_show("svc-1", request_b)
-    check("request B resolved and no longer pending", not req_b_data["found"], str(req_b_data))
+        print("\n=== concurrent requests: two outstanding calls, resolved independently ===")
+        # This is the headline feature the upgrade adds: unlike the single-slot
+        # V1 contract, a second call is accepted while the first is still
+        # unanswered, and each resolves on its own schedule and in any order.
+        predicted_a = await next_request_id("svc-1")
+        call_a_output = await send_op(
+            "call", "svc-1", "caller", "--request-hash", "cc" * 32, "--amount", str(call_amount))
+        request_a = assigned_request_id(call_a_output)
+        check("CLI reports the exact assigned request ID", request_a == predicted_a, call_a_output)
+        data = await service_show("svc-1")
+        check("first concurrent call accepted", data["calls_today"] == 1, str(data))
+        check("one pending request after first call", data["pending_count"] == 1, str(data))
 
-    await send_op("respond", "svc-1", "owner", "--request-id", str(request_a),
-                  "--response-hash", "11" * 32)
-    data = await service_show("svc-1")
-    check("both concurrent requests now resolved", data["pending_count"] == 0, str(data))
-    # respond credits price + storage_fee to withdrawable_revenue (the
-    # storage fee is non-refundable once the entry resolves -- see
-    # doc/service-actor-concurrent-escrow-upgrade.md's Financial Accounting
-    # transition table), not price alone.
-    expected_revenue = 2 * (0.05 + STORAGE_FEE)
-    check("revenue accrued for both calls (price + storage_fee each)",
-          abs(float(data["withdrawable_revenue"]) - expected_revenue) < 1e-6, str(data))
+        predicted_b = await next_request_id("svc-1")
+        call_b_output = await send_op(
+            "call", "svc-1", "caller", "--request-hash", "dd" * 32, "--amount", str(call_amount))
+        request_b = assigned_request_id(call_b_output)
+        check("second request gets a distinct ID", request_b != request_a, f"a={request_a} b={request_b}")
+        check("second CLI request ID matches chain allocation", request_b == predicted_b, call_b_output)
+        data = await service_show("svc-1")
+        check("second concurrent call accepted while the first is still pending",
+              data["calls_today"] == 2, str(data))
+        check("two pending requests outstanding simultaneously", data["pending_count"] == 2, str(data))
+
+        req_a_data = await request_show("svc-1", request_a)
+        req_b_data = await request_show("svc-1", request_b)
+        check("request A is independently visible", req_a_data["found"] and req_a_data["request_hash"] == "cc" * 32,
+              str(req_a_data))
+        check("request B is independently visible", req_b_data["found"] and req_b_data["request_hash"] == "dd" * 32,
+              str(req_b_data))
+
+        print("\n=== GET /services/{address}/requests/{id}: pending (real indexer tick) ===")
+        found, body = await poll_http_predicate(
+            f"/services/{address}/requests/{request_a}",
+            lambda b: b.get("result", {}).get("status") == "pending")
+        check("indexer/HTTP shows request A pending", found, str(body)[:1000])
+        found, body = await poll_http_predicate(
+            f"/services/{address}/requests/{request_b}",
+            lambda b: b.get("result", {}).get("status") == "pending")
+        check("indexer/HTTP shows request B pending", found, str(body)[:1000])
+
+        # Respond out of order: B before A. Responding to one must not affect
+        # the other's state.
+        await send_op("respond", "svc-1", "owner", "--request-id", str(request_b),
+                      "--response-hash", "22" * 32)
+        data = await service_show("svc-1")
+        check("responding to B leaves A still pending", data["pending_count"] == 1, str(data))
+        req_a_data = await request_show("svc-1", request_a)
+        check("request A untouched by B's response", req_a_data["found"], str(req_a_data))
+        req_b_data = await request_show("svc-1", request_b)
+        check("request B resolved and no longer pending", not req_b_data["found"], str(req_b_data))
+
+        found, body = await poll_http_predicate(
+            f"/services/{address}/requests/{request_b}",
+            lambda b: b.get("result", {}).get("status") == "responded")
+        check("indexer/HTTP classifies request B responded", found, str(body)[:1000])
+        status, body = http_get(f"/services/{address}/requests/{request_a}")
+        check("request A still pending via HTTP while B is responded",
+              body.get("result", {}).get("status") == "pending", str(body))
+
+        await send_op("respond", "svc-1", "owner", "--request-id", str(request_a),
+                      "--response-hash", "11" * 32)
+        data = await service_show("svc-1")
+        check("both concurrent requests now resolved", data["pending_count"] == 0, str(data))
+        # respond credits price + storage_fee to withdrawable_revenue (the
+        # storage fee is non-refundable once the entry resolves -- see
+        # doc/service-actor-concurrent-escrow-upgrade.md's Financial Accounting
+        # transition table), not price alone.
+        expected_revenue = 2 * (0.05 + STORAGE_FEE)
+        check("revenue accrued for both calls (price + storage_fee each)",
+              abs(float(data["withdrawable_revenue"]) - expected_revenue) < 1e-6, str(data))
+
+        found, body = await poll_http_predicate(
+            f"/services/{address}/requests/{request_a}",
+            lambda b: b.get("result", {}).get("status") == "responded")
+        check("indexer/HTTP classifies request A responded", found, str(body)[:1000])
+
+        print("\n=== GET /services/{address}/requests/{id}: never-allocated ID ===")
+        status, body = http_get(f"/services/{address}/requests/999999")
+        check("never-allocated request ID resolves via HTTP (chain fallback, not a 500)",
+              status == 200 and body.get("result", {}).get("status") == "resolved_or_unknown",
+              f"status={status} body={body}")
+    finally:
+        # An already-crashed daemon has a returncode set the moment it exits
+        # (no polling needed -- asyncio updates it via a SIGCHLD handler);
+        # terminate()ing it again would raise ProcessLookupError and mask
+        # whatever check() failure already reported the real problem.
+        if service_proc.returncode is None:
+            service_proc.terminate()
+            try:
+                await asyncio.wait_for(service_proc.wait(), timeout=10)
+            except TimeoutError:
+                service_proc.kill()
+                await service_proc.wait()
+        service_log.close()
+        if service_proc.returncode not in (0, -15):  # -15 = SIGTERM, our own normal shutdown
+            print(f"  DEBUG tosctld exited with {service_proc.returncode}; "
+                  f"log tail:\n{service_log_path.read_text()[-4000:]}")
 
     print("\n=== rate limiting: daily cap enforced ===")
     await send_op("call", "svc-1", "caller", "--request-hash", "ee" * 32, "--amount", str(call_amount),

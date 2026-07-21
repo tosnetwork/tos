@@ -171,8 +171,19 @@ async fn run_get_method(
     address: &MsgAddressInt,
     method: &'static str,
 ) -> Result<TvmStackParser, AppError> {
+    run_get_method_with_args(state, address, method, vec![]).await
+}
+
+/// As [`run_get_method`], but for a get-method that takes stack arguments
+/// (e.g. `get_request(request_id)`) rather than none.
+async fn run_get_method_with_args(
+    state: &AppState,
+    address: &MsgAddressInt,
+    method: &'static str,
+    args: Vec<tl_api::tos::tvm::StackEntry>,
+) -> Result<TvmStackParser, AppError> {
     let provider = state.runtime_cfg.chain_provider();
-    let call = provider.run_get_method(address.to_string(), method, vec![]);
+    let call = provider.run_get_method(address.to_string(), method, args);
     match tokio::time::timeout(CHAIN_QUERY_TIMEOUT, call).await {
         Ok(Ok(stack)) => Ok(stack),
         Ok(Err(e)) => {
@@ -694,21 +705,14 @@ pub async fn get_service_request(
             .map_err(|e| AppError::invalid_contract_state(format!("{e:#}")))?;
         return Ok(axum::Json(ServiceRequestLifecycleResponse { ok: true, result }));
     }
-    let provider = state.runtime_cfg.chain_provider();
     let arg = vec![contracts::stack_utils::u64_to_stack_entry(request_id)];
     let request = ServiceActorContract::decode_request(
-        &provider
-            .run_get_method(address.to_string(), "get_request", arg.clone())
-            .await
-            .map_err(|e| AppError::internal(format!("{e:#}")))?,
+        &run_get_method_with_args(&state, &address, "get_request", arg.clone()).await?,
     )
     .map_err(|e| AppError::invalid_contract_state(format!("{e:#}")))?;
     let refund = if request.is_none() {
         ServiceActorContract::decode_refund(
-            &provider
-                .run_get_method(address.to_string(), "get_refund", arg)
-                .await
-                .map_err(|e| AppError::internal(format!("{e:#}")))?,
+            &run_get_method_with_args(&state, &address, "get_refund", arg).await?,
         )
         .map_err(|e| AppError::invalid_contract_state(format!("{e:#}")))?
     } else {

@@ -30,6 +30,7 @@ axum = "0.8"
 jsonwebtoken = "9"
 base64 = "0.22"
 rusqlite = { version = "0.31", features = ["bundled"] }
+tl_api = { path = "../../tl/api" }
 
 [dev-dependencies]
 argon2 = "0.5"
@@ -38,5 +39,4 @@ http-body-util = "0.1"
 tempfile = "3"
 tos_sandbox = { path = "../../sandbox" }
 tos_vm = { path = "../../vm" }
-tl_api = { path = "../../tl/api" }
 tokio = { version = "1.40", features = ["test-util"] }
