@@ -453,6 +453,16 @@ async fn refresh_service_request_lifecycle(
                 terms_hash: None,
             }
         } else if let Some(old) = old {
+            // This is a snapshot diff, not an event log: an entry that has
+            // vanished from live storage looks identical whether it was
+            // resolved (respond/claim_refund) or reclaimed (sweep) once
+            // `now >= deadline`. If the indexer's last observation of this ID
+            // predates a gap longer than its refund_claim_deadline window
+            // (e.g. the indexer was down), a genuinely `responded`/`refunded`
+            // entry is indistinguishable here from a `swept` one and gets the
+            // `swept` label. This only affects this off-chain audit label,
+            // never on-chain funds -- disambiguating it for real would need
+            // per-transaction event indexing, not periodic full-state scans.
             let mut prior: ServiceRequestLifecycleRecordDto = serde_json::from_str(&old.dto_json)?;
             let deadline = prior.refund_claim_deadline.unwrap_or(u64::MAX);
             prior.status = match old.status.as_str() {
