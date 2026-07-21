@@ -637,6 +637,18 @@ int run_vm_code(Ref<CellSlice> code, Stack& stack, int flags, Ref<Cell>* data_pt
 
 // may throw a dictionary exception; returns nullptr if library is not found in context
 Ref<Cell> VmState::load_library(td::ConstBitPtr hash) {
+  if (max_library_loads) {
+    CellHash lib_hash = CellHash::from_slice(td::Bits256{hash}.as_slice());
+    if (max_library_loads.value() == loaded_libraries.size()) {
+      if (!loaded_libraries.contains(lib_hash)) {
+        VM_LOG(this) << "Cannot load library " << lib_hash.to_hex() << " : max library loads exceeded ("
+                     << max_library_loads.value() << ")";
+        return {};
+      }
+    } else {
+      loaded_libraries.emplace(lib_hash);
+    }
+  }
   std::unique_ptr<VmStateInterface> tmp_ctx;
   // install temporary dummy vm state interface to prevent charging for cell load operations during library lookup
   VmStateInterface::Guard guard{global_version >= 4 ? tmp_ctx.get() : VmStateInterface::get()};
@@ -715,6 +727,8 @@ void VmState::run_child_vm(VmState&& new_state, bool return_data, bool return_ac
     new_state.log = std::move(log);
     new_state.libraries = std::move(libraries);
   }
+  new_state.loaded_libraries = std::move(loaded_libraries);
+  new_state.max_library_loads = max_library_loads;
   new_state.stack_trace = stack_trace;
   new_state.max_data_depth = max_data_depth;
   if (!isolate_gas) {
@@ -755,6 +769,7 @@ void VmState::restore_parent_vm(int res) {
   *this = std::move(parent->state);
   log = std::move(child_state.log);
   libraries = std::move(child_state.libraries);
+  loaded_libraries = std::move(child_state.loaded_libraries);
   steps += child_state.steps;
   if (!parent->isolate_gas) {
     loaded_cells = std::move(child_state.loaded_cells);

@@ -97,6 +97,8 @@ class VmState final : public VmStateInterface {
   VmLog log;
   GasLimits gas;
   std::vector<Ref<Cell>> libraries;
+  td::HashSet<CellHash> loaded_libraries;
+  td::optional<td::uint32> max_library_loads;
   td::HashSet<CellHash> loaded_cells;
   int stack_trace{0}, debug_off{0};
   bool chksig_always_succeed{false};
@@ -424,6 +426,9 @@ class VmState final : public VmStateInterface {
   }
   void set_max_data_depth(td::uint16 depth) {
     max_data_depth = depth;
+  }
+  void set_max_library_loads(td::uint32 value) {
+    max_library_loads = value;
   }
   void run_child_vm(VmState&& new_state, bool return_data, bool return_actions, bool return_gas, bool isolate_gas,
                     int ret_vals);

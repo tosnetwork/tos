@@ -877,7 +877,10 @@ add_executable(test-emulator
         emulator/test/tos-report-bond-oracle-fixture.cpp
         # TVM v14/v15 transaction-layer version-gate boundary tests (upstream
         # ton ships v14/v15 with no dedicated regression tests to port).
-        emulator/test/tvm-v14-v15-transaction-fixture.cpp)
+        emulator/test/tvm-v14-v15-transaction-fixture.cpp
+        # VmState::max_library_loads enforcement (ConfigParam 43's
+        # max_transaction_library_loads was parsed but never wired to the VM).
+        emulator/test/vm-library-loads-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
 add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract)
 target_compile_definitions(test-emulator PRIVATE

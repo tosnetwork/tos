@@ -56,6 +56,8 @@ unsigned SmartContract::Answer::output_actions_count(td::Ref<vm::Cell> list) try
 }
 namespace {
 
+constexpr td::uint32 max_smc_library_loads = 8;
+
 SmartContract::Answer make_error_answer(const SmartContract::State& state, td::int32 code, td::Slice message) {
   SmartContract::Answer res;
   res.new_state = state;
@@ -362,12 +364,18 @@ SmartContract::Answer run_smartcont(SmartContract::State state, td::Ref<vm::Stac
   if (!libraries.is_null()) {
     vm.register_library_collection(libraries);
   }
+  td::uint32 max_library_loads = max_smc_library_loads;
   if (config) {
     auto r_limits = config->get_size_limits_config();
     if (r_limits.is_ok()) {
       vm.set_max_data_depth(r_limits.ok().max_vm_data_depth);
+      if (r_limits.ok().max_transaction_library_loads &&
+          r_limits.ok().max_transaction_library_loads.value() < max_library_loads) {
+        max_library_loads = r_limits.ok().max_transaction_library_loads.value();
+      }
     }
   }
+  vm.set_max_library_loads(max_library_loads);
   bool unhandled_exception = false;
   auto set_unhandled_exception = [&](int exit_code, const char* message) {
     unhandled_exception = true;
