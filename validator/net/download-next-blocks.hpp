@@ -30,6 +30,13 @@ namespace validator {
 
 namespace fullnode {
 
+// Rejects a nextBlocksFull response that exceeds max_blocks (a peer could
+// otherwise pack many small DataFull entries into one response within the
+// byte-size cap, amplifying TL-deserialization/allocation cost) or that
+// contains an empty block placeholder mixed in with real ones.
+td::Status validate_next_blocks_full(const std::vector<tl_object_ptr<tos_api::tosNode_DataFull>>& blocks,
+                                     td::uint32 max_blocks);
+
 class DownloadNextBlocks : public td::actor::Actor {
  public:
   DownloadNextBlocks(adnl::AdnlNodeIdShort local_id, overlay::OverlayIdShort overlay_id, BlockHandle handle,

@@ -32,6 +32,19 @@ namespace validator {
 
 namespace fullnode {
 
+td::Status validate_next_blocks_full(const std::vector<tl_object_ptr<tos_api::tosNode_DataFull>>& blocks,
+                                     td::uint32 max_blocks) {
+  if (blocks.size() > max_blocks) {
+    return td::Status::Error(ErrorCode::protoviolation, "got too many blocks");
+  }
+  for (auto& obj : blocks) {
+    if (obj->get_id() == tos_api::tosNode_dataFullEmpty::ID) {
+      return td::Status::Error(ErrorCode::protoviolation, "got empty block in nextBlocksFull");
+    }
+  }
+  return td::Status::OK();
+}
+
 DownloadNextBlocks::DownloadNextBlocks(adnl::AdnlNodeIdShort local_id, overlay::OverlayIdShort overlay_id,
                                        BlockHandle handle, adnl::AdnlNodeIdShort download_from, td::uint32 priority,
                                        bool allow_many, td::actor::ActorId<ValidatorManagerInterface> validator_manager,
@@ -140,14 +153,7 @@ td::actor::Task<> DownloadNextBlocks::run() {
   std::vector<tl_object_ptr<tos_api::tosNode_DataFull>> response_vec;
   if (allow_many_) {
     auto f = CO_TRY(fetch_tl_object<tos_api::tosNode_nextBlocksFull>(std::move(response), true));
-    if (f->blocks_.size() > MAX_BLOCKS) {
-      co_return td::Status::Error(ErrorCode::protoviolation, "got too many blocks");
-    }
-    for (auto &obj : f->blocks_) {
-      if (obj->get_id() == tos_api::tosNode_dataFullEmpty::ID) {
-        co_return td::Status::Error(ErrorCode::protoviolation, "got empty block in nextBlocksFull");
-      }
-    }
+    CO_TRY(validate_next_blocks_full(f->blocks_, MAX_BLOCKS));
     response_vec = std::move(f->blocks_);
   } else {
     auto f = CO_TRY(fetch_tl_object<tos_api::tosNode_DataFull>(std::move(response), true));

@@ -724,6 +724,12 @@ add_executable(test-download-state-budget test/test-download-state-budget.cpp)
 # swap with valid BoC envelope).
 target_link_libraries(test-download-state-budget PRIVATE validator-common full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+# Codex review follow-up (2026-07-21): DownloadNextBlocks::validate_next_blocks_full
+# batch-shape regression -- pins the MAX_BLOCKS size cap and the empty-block
+# rejection for the b8c0acaf parallel-block-download port.
+add_executable(test-download-next-blocks-validation test/test-download-next-blocks-validation.cpp)
+target_link_libraries(test-download-next-blocks-validation PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
+
 # Phase B Step 8 — five invariant regression tests for the true
 # CellDb-backed streaming importer (replacement-hash equality, no
 # full-DAG residency, crash/abort no partial state, lazy load, hash
@@ -880,7 +886,12 @@ add_executable(test-emulator
         emulator/test/tvm-v14-v15-transaction-fixture.cpp
         # VmState::max_library_loads enforcement (ConfigParam 43's
         # max_transaction_library_loads was parsed but never wired to the VM).
-        emulator/test/vm-library-loads-fixture.cpp)
+        emulator/test/vm-library-loads-fixture.cpp
+        # ConfigParam 43 end-to-end through a real block::transaction::Transaction
+        # (Codex review follow-up, 2026-07-21): closes the gap between the
+        # VmState-level test above and the TL-B parse test in
+        # tvm-v14-v15-transaction-fixture.cpp.
+        emulator/test/config-param-43-transaction-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
 add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract)
 target_compile_definitions(test-emulator PRIVATE
@@ -1001,6 +1012,7 @@ tos_test(test-rldp)
 tos_test(test-rldp2)
 tos_test(test-validator-session-state)
 tos_test(test-download-state-budget)
+tos_test(test-download-next-blocks-validation)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)
 tos_test(test-quorum)
