@@ -570,7 +570,17 @@ pub struct ServiceActorDto {
     pub status: String,
     pub price_per_call: u64,
     pub rate_limit_per_day: u32,
-    pub total_revenue: u64,
+    /// Nominal earned-revenue counter (see the concurrent-escrow design doc's
+    /// Financial Accounting section) -- the closest single-number analog to
+    /// the single-slot contract's old `total_revenue`. The actual amount the
+    /// owner can withdraw right now may be lower; this is a summary/
+    /// monitoring signal, not a live balance query.
+    pub withdrawable_revenue: u64,
+    /// Outstanding, unanswered requests.
+    pub pending_count: u32,
+    /// Pending + refundable-but-unclaimed requests combined -- the quantity
+    /// this contract's capacity limits actually cap.
+    pub live_count: u32,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]

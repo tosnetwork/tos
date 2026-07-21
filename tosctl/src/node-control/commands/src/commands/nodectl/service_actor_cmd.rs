@@ -25,7 +25,7 @@ use common::{
     chain_utils::{display_tos, tos_to_nanotos},
     time_format,
 };
-use contracts::{ServiceActorContract, ServiceActorData, ServiceActorInit};
+use contracts::{PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit};
 use futures_util::{StreamExt, stream};
 use std::{path::Path, str::FromStr};
 
@@ -46,8 +46,12 @@ pub enum ServiceActorAction {
     Deploy(ServiceActorDeployCmd),
     /// List locally tracked Service Actor records
     Ls(ServiceActorLsCmd),
-    /// Show Service Actor state by address or local record name
+    /// Show Service Actor policy/accounting state by address or local record name
     Show(ServiceActorShowCmd),
+    /// Show a single request by ID (`get_request`)
+    RequestShow(ServiceActorRequestShowCmd),
+    /// Show a single unclaimed refund by request ID (`get_refund`)
+    RefundShow(ServiceActorRefundShowCmd),
     /// Send a Service Actor lifecycle message
     Send(ServiceActorSendCmd),
     /// Build deterministic Service Actor StateInit
@@ -60,6 +64,8 @@ impl ServiceActorCmd {
             ServiceActorAction::Deploy(cmd) => cmd.run(config_path).await,
             ServiceActorAction::Ls(cmd) => cmd.run(config_path).await,
             ServiceActorAction::Show(cmd) => cmd.run(config_path).await,
+            ServiceActorAction::RequestShow(cmd) => cmd.run(config_path).await,
+            ServiceActorAction::RefundShow(cmd) => cmd.run(config_path).await,
             ServiceActorAction::Send(cmd) => cmd.run(config_path).await,
             ServiceActorAction::BuildState(cmd) => cmd.run(),
         }
@@ -83,8 +89,27 @@ pub struct ServiceActorDeployCmd {
     open_access: bool,
     #[arg(long, help = "Price per call, in TOS")]
     price_per_call: f64,
+    #[arg(
+        long,
+        help = "Fixed, non-refundable fee collected alongside price-per-call at call time, in TOS \
+                (must cover the protocol's MINIMUM_STORAGE_FEE plus cleanup-bounty)"
+    )]
+    storage_fee: f64,
+    #[arg(
+        long,
+        help = "Paid to whoever calls sweep-expired-request once a request's rights window \
+                lapses, in TOS (bounded by the protocol's MINIMUM/MAXIMUM_CLEANUP_BOUNTY)"
+    )]
+    cleanup_bounty: f64,
     #[arg(long, default_value_t = 0, help = "Max calls accepted per day; 0 means unlimited")]
     rate_limit_per_day: u32,
+    #[arg(long, help = "Seconds a submitted call has to be responded to")]
+    response_sla: u32,
+    #[arg(
+        long,
+        help = "Seconds after response_deadline an expired request's refund stays claimable"
+    )]
+    refund_claim_window: u32,
     #[arg(long, help = "32-byte hash of general service metadata")]
     metadata_hash: String,
     #[arg(long, help = "32-byte hash identifying the supported proof/attestation scheme")]
@@ -92,7 +117,8 @@ pub struct ServiceActorDeployCmd {
     #[arg(
         long,
         conflicts_with = "signer_vault_key",
-        help = "Optional 32-byte ed25519 public key; when set, respond also requires a signature over response_hash"
+        help = "Optional 32-byte ed25519 public key; when set, respond also requires a signature \
+                over the request-bound attestation domain"
     )]
     attestor_pubkey: Option<String>,
     #[arg(
@@ -116,7 +142,7 @@ pub struct ServiceActorDeployCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "List locally tracked Service Actor records")]
 pub struct ServiceActorLsCmd {
-    #[arg(long, help = "Read current active/revenue/call-count state from each service")]
+    #[arg(long, help = "Read current policy/accounting state from each service")]
     on_chain: bool,
     #[arg(long, help = "Filter by owner address")]
     owner: Option<String>,
@@ -125,7 +151,7 @@ pub struct ServiceActorLsCmd {
 }
 
 #[derive(clap::Args, Clone)]
-#[command(about = "Show Service Actor state by address or local record name")]
+#[command(about = "Show Service Actor policy/accounting state by address or local record name")]
 pub struct ServiceActorShowCmd {
     #[arg(long, conflicts_with = "name", help = "Service Actor address")]
     address: Option<String>,
@@ -135,14 +161,41 @@ pub struct ServiceActorShowCmd {
     format: OutputFormat,
 }
 
+#[derive(clap::Args, Clone)]
+#[command(about = "Show a single request by ID")]
+pub struct ServiceActorRequestShowCmd {
+    #[arg(long, conflicts_with = "name", help = "Service Actor address")]
+    address: Option<String>,
+    #[arg(long, help = "Local service record name from `agent service ls`")]
+    name: Option<String>,
+    #[arg(long, help = "Request ID assigned by `call`")]
+    request_id: u64,
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Show a single unclaimed refund by request ID")]
+pub struct ServiceActorRefundShowCmd {
+    #[arg(long, conflicts_with = "name", help = "Service Actor address")]
+    address: Option<String>,
+    #[arg(long, help = "Local service record name from `agent service ls`")]
+    name: Option<String>,
+    #[arg(long, help = "Request ID the refund was created for (see `agent service request-show`)")]
+    request_id: u64,
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
 #[derive(Clone, clap::ValueEnum)]
 enum ServiceActorOperation {
     Call,
     Respond,
+    Expire,
+    ClaimRefund,
+    SweepExpiredRequest,
     UpdatePolicy,
     WithdrawRevenue,
-    Deactivate,
-    Reactivate,
     RotateAttestorKey,
     RevokeAttestor,
 }
@@ -162,24 +215,47 @@ pub struct ServiceActorSendCmd {
     query_id: u64,
     #[arg(long, help = "Request hash for call")]
     request_hash: Option<String>,
+    #[arg(
+        long,
+        help = "Request ID for respond, expire, claim-refund, sweep-expired-request (see \
+                `agent service request-show`/`refund-show`, or the ID printed by `call`)"
+    )]
+    request_id: Option<u64>,
     #[arg(long, help = "Response hash for respond")]
     response_hash: Option<String>,
     #[arg(
         long,
         conflicts_with = "signer_vault_key",
-        help = "64-byte ed25519 signature over the (request_hash, response_hash) domain hash, \
-                for respond on a service deployed with --attestor-pubkey"
+        help = "64-byte ed25519 signature over the request-bound attestation domain hash, for \
+                respond on a service deployed with --attestor-pubkey"
     )]
     attestation_signature: Option<String>,
     #[arg(
         long,
         conflicts_with = "attestation_signature",
-        help = "Sign the (request_hash, response_hash) domain hash with this vault key instead \
-                of passing --attestation-signature directly"
+        help = "Sign the request-bound attestation domain hash with this vault key instead of \
+                passing --attestation-signature directly (fetches the request's on-chain terms \
+                first, since the domain binds them)"
     )]
     signer_vault_key: Option<String>,
+    #[arg(long, help = "Refund destination address for claim-refund")]
+    destination: Option<String>,
     #[arg(long, help = "New price per call, in TOS, for update-policy")]
     price_per_call: Option<f64>,
+    #[arg(long, help = "New storage fee, in TOS, for update-policy")]
+    storage_fee: Option<f64>,
+    #[arg(long, help = "New cleanup bounty, in TOS, for update-policy")]
+    cleanup_bounty: Option<f64>,
+    #[arg(long, help = "New response SLA, in seconds, for update-policy")]
+    response_sla: Option<u32>,
+    #[arg(long, help = "New refund claim window, in seconds, for update-policy")]
+    refund_claim_window: Option<u32>,
+    #[arg(
+        long,
+        help = "New active flag for update-policy (there is no separate deactivate/reactivate op \
+                any more -- toggle it here alongside the rest of the policy)"
+    )]
+    active: Option<bool>,
     #[arg(long, help = "New rate limit per day for update-policy; 0 means unlimited")]
     rate_limit_per_day: Option<u32>,
     #[arg(
@@ -209,7 +285,8 @@ pub struct ServiceActorSendCmd {
     #[arg(
         long,
         default_value_t = 0.01,
-        help = "Message value in TOS; for call this is the payment (must cover price_per_call)"
+        help = "Message value in TOS; for call this is the payment (must cover price_per_call + \
+                storage_fee)"
     )]
     amount: f64,
     #[arg(long)]
@@ -227,15 +304,24 @@ pub struct ServiceActorBuildStateCmd {
     open_access: bool,
     #[arg(long, help = "Price per call, in TOS")]
     price_per_call: f64,
+    #[arg(long, help = "Fixed, non-refundable fee collected at call time, in TOS")]
+    storage_fee: f64,
+    #[arg(long, help = "Paid to whoever calls sweep-expired-request, in TOS")]
+    cleanup_bounty: f64,
     #[arg(long, default_value_t = 0, help = "Max calls accepted per day; 0 means unlimited")]
     rate_limit_per_day: u32,
+    #[arg(long, help = "Seconds a submitted call has to be responded to")]
+    response_sla: u32,
+    #[arg(long, help = "Seconds after response_deadline a refund stays claimable")]
+    refund_claim_window: u32,
     #[arg(long, help = "32-byte hash of general service metadata")]
     metadata_hash: String,
     #[arg(long, help = "32-byte hash identifying the supported proof/attestation scheme")]
     proof_scheme_hash: String,
     #[arg(
         long,
-        help = "Optional 32-byte ed25519 public key; when set, respond also requires a signature over response_hash"
+        help = "Optional 32-byte ed25519 public key; when set, respond also requires a signature \
+                over the request-bound attestation domain"
     )]
     attestor_pubkey: Option<String>,
     #[arg(short = 'w', long = "workchain", default_value = "-1")]
@@ -271,12 +357,18 @@ fn build_init(
     authorized_caller: Option<MsgAddressInt>,
     open_access: bool,
     price_per_call: f64,
+    storage_fee: f64,
+    cleanup_bounty: f64,
     rate_limit_per_day: u32,
+    response_sla: u32,
+    refund_claim_window: u32,
     metadata_hash: &str,
     proof_scheme_hash: &str,
     attestor_pubkey: Option<[u8; 32]>,
 ) -> anyhow::Result<ServiceActorInit> {
     validate_tos_amount("price-per-call", price_per_call)?;
+    validate_tos_amount("storage-fee", storage_fee)?;
+    validate_tos_amount("cleanup-bounty", cleanup_bounty)?;
     if !open_access && authorized_caller.is_none() {
         anyhow::bail!("provide --authorized-caller or --open-access");
     }
@@ -285,7 +377,11 @@ fn build_init(
         authorized_caller,
         open_access,
         price_per_call: tos_to_nanotos(price_per_call),
+        storage_fee: tos_to_nanotos(storage_fee),
+        cleanup_bounty: tos_to_nanotos(cleanup_bounty),
         rate_limit_per_day,
+        response_sla,
+        refund_claim_window,
         metadata_hash: parse_required_hash("metadata-hash", &Some(metadata_hash.to_owned()))?,
         proof_scheme_hash: parse_required_hash(
             "proof-scheme-hash",
@@ -315,7 +411,11 @@ impl ServiceActorDeployCmd {
             authorized_caller,
             self.open_access,
             self.price_per_call,
+            self.storage_fee,
+            self.cleanup_bounty,
             self.rate_limit_per_day,
+            self.response_sla,
+            self.refund_claim_window,
             &self.metadata_hash,
             &self.proof_scheme_hash,
             attestor_pubkey,
@@ -387,6 +487,10 @@ impl ServiceActorDeployCmd {
                 authorized_caller: init.authorized_caller.as_ref().map(|v| v.to_string()),
                 open_access: init.open_access,
                 price_per_call: init.price_per_call,
+                storage_fee: init.storage_fee,
+                cleanup_bounty: init.cleanup_bounty,
+                response_sla: init.response_sla,
+                refund_claim_window: init.refund_claim_window,
                 rate_limit_per_day: init.rate_limit_per_day,
                 metadata_hash: hex::encode(init.metadata_hash),
                 proof_scheme_hash: hex::encode(init.proof_scheme_hash),
@@ -421,39 +525,55 @@ impl ServiceActorDeployCmd {
 struct ServiceActorDataView {
     address: String,
     owner: String,
+    active: bool,
+    policy_version: u32,
     authorized_caller: Option<String>,
     open_access: bool,
-    active: bool,
     price_per_call: String,
+    storage_fee: String,
+    cleanup_bounty: String,
+    response_sla: u32,
+    refund_claim_window: u32,
     rate_limit_per_day: u32,
     calls_today: u32,
-    total_revenue: String,
     metadata_hash: String,
     proof_scheme_hash: String,
-    last_request_hash: String,
-    last_response_hash: String,
-    has_pending_response: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     attestor_pubkey: Option<String>,
+    next_request_id: u64,
+    pending_count: u32,
+    live_count: u32,
+    withdrawable_revenue: String,
+    locked_storage_fees: String,
+    pending_liability: String,
+    refundable_liability: String,
 }
 
 fn data_view(address: &MsgAddressInt, data: ServiceActorData) -> ServiceActorDataView {
     ServiceActorDataView {
         address: address.to_string(),
         owner: data.owner.to_string(),
+        active: data.active,
+        policy_version: data.policy_version,
         authorized_caller: data.authorized_caller.map(|v| v.to_string()),
         open_access: data.open_access,
-        active: data.active,
         price_per_call: display_tos(data.price_per_call),
+        storage_fee: display_tos(data.storage_fee),
+        cleanup_bounty: display_tos(data.cleanup_bounty),
+        response_sla: data.response_sla,
+        refund_claim_window: data.refund_claim_window,
         rate_limit_per_day: data.rate_limit_per_day,
         calls_today: data.calls_today,
-        total_revenue: display_tos(data.total_revenue),
         metadata_hash: hex::encode(data.metadata_hash),
         proof_scheme_hash: hex::encode(data.proof_scheme_hash),
-        last_request_hash: hex::encode(data.last_request_hash),
-        last_response_hash: hex::encode(data.last_response_hash),
-        has_pending_response: data.has_pending_response,
         attestor_pubkey: data.attestor_pubkey.map(hex::encode),
+        next_request_id: data.next_request_id,
+        pending_count: data.pending_count,
+        live_count: data.live_count,
+        withdrawable_revenue: display_tos(data.withdrawable_revenue),
+        locked_storage_fees: display_tos(data.locked_storage_fees),
+        pending_liability: display_tos(data.pending_liability),
+        refundable_liability: display_tos(data.refundable_liability),
     }
 }
 
@@ -463,7 +583,7 @@ impl ServiceActorShowCmd {
         let address = resolve_service_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let provider = contracts::contract_provider!(rpc_client);
-        let stack = provider.get_method(address.to_string(), "get_service_actor_data", vec![]).await?;
+        let stack = provider.get_method(address.to_string(), "get_service_data", vec![]).await?;
         let data = ServiceActorContract::decode_data(&stack)?;
         let view = data_view(&address, data);
         if self.format == OutputFormat::Json {
@@ -471,6 +591,7 @@ impl ServiceActorShowCmd {
         } else {
             println!("Service Actor: {}", view.address);
             println!("Owner: {}", view.owner);
+            println!("Active: {}  (policy version {})", view.active, view.policy_version);
             println!(
                 "Access: {}",
                 if view.open_access {
@@ -479,13 +600,192 @@ impl ServiceActorShowCmd {
                     format!("restricted to {}", view.authorized_caller.as_deref().unwrap_or("none"))
                 }
             );
-            println!("Active: {}", view.active);
             println!("Price per call: {} TOS", view.price_per_call);
-            println!("Rate limit/day: {}", view.rate_limit_per_day);
-            println!("Calls today: {}", view.calls_today);
-            println!("Total revenue: {} TOS", view.total_revenue);
-            println!("Pending response: {}", view.has_pending_response);
+            println!("Storage fee: {} TOS", view.storage_fee);
+            println!("Cleanup bounty: {} TOS", view.cleanup_bounty);
+            println!("Response SLA: {}s", view.response_sla);
+            println!("Refund claim window: {}s", view.refund_claim_window);
+            println!("Rate limit/day: {}  (calls today: {})", view.rate_limit_per_day, view.calls_today);
             println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
+            println!(
+                "Requests: next_id={} pending={} live={}",
+                view.next_request_id, view.pending_count, view.live_count
+            );
+            println!(
+                "Accounting: withdrawable={} TOS  locked_storage_fees={} TOS  pending_liability={} TOS  refundable_liability={} TOS",
+                view.withdrawable_revenue,
+                view.locked_storage_fees,
+                view.pending_liability,
+                view.refundable_liability,
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RequestView {
+    request_id: u64,
+    found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    caller: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    price: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage_fee: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cleanup_bounty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_deadline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refund_claim_deadline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    policy_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terms_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attestor_pubkey: Option<String>,
+}
+
+fn request_view(request_id: u64, data: Option<PendingRequestData>) -> RequestView {
+    match data {
+        None => RequestView {
+            request_id,
+            found: false,
+            caller: None,
+            price: None,
+            storage_fee: None,
+            cleanup_bounty: None,
+            response_deadline: None,
+            refund_claim_deadline: None,
+            policy_version: None,
+            request_hash: None,
+            terms_hash: None,
+            attestor_pubkey: None,
+        },
+        Some(data) => RequestView {
+            request_id,
+            found: true,
+            caller: Some(data.caller.to_string()),
+            price: Some(display_tos(data.price)),
+            storage_fee: Some(display_tos(data.storage_fee)),
+            cleanup_bounty: Some(display_tos(data.cleanup_bounty)),
+            response_deadline: Some(time_format::format_ts(data.response_deadline)),
+            refund_claim_deadline: Some(time_format::format_ts(data.refund_claim_deadline)),
+            policy_version: Some(data.policy_version),
+            request_hash: Some(hex::encode(data.request_hash)),
+            terms_hash: Some(hex::encode(data.terms_hash)),
+            attestor_pubkey: data.attestor_pubkey.map(hex::encode),
+        },
+    }
+}
+
+impl ServiceActorRequestShowCmd {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = common::app_config::AppConfig::load(Path::new(config_path))?;
+        let address = resolve_service_address(&config, &self.address, &self.name)?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let provider = contracts::contract_provider!(rpc_client);
+        let stack = provider
+            .get_method(
+                address.to_string(),
+                "get_request",
+                vec![contracts::stack_utils::i64_to_stack_entry(self.request_id as i64)],
+            )
+            .await?;
+        let data = ServiceActorContract::decode_request(&stack)?;
+        let view = request_view(self.request_id, data);
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&view)?);
+        } else if !view.found {
+            println!("Request {} not found (never existed, already resolved, or swept)", self.request_id);
+        } else {
+            println!("Request: {}", view.request_id);
+            println!("Caller: {}", view.caller.unwrap());
+            println!("Price: {} TOS", view.price.unwrap());
+            println!("Storage fee: {} TOS", view.storage_fee.unwrap());
+            println!("Cleanup bounty: {} TOS", view.cleanup_bounty.unwrap());
+            println!("Response deadline: {}", view.response_deadline.unwrap());
+            println!("Refund claim deadline: {}", view.refund_claim_deadline.unwrap());
+            println!("Policy version: {}", view.policy_version.unwrap());
+            println!("Request hash: {}", view.request_hash.unwrap());
+            println!("Terms hash: {}", view.terms_hash.unwrap());
+            println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RefundView {
+    request_id: u64,
+    found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    caller: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    price: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage_fee: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cleanup_bounty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refund_claim_deadline: Option<String>,
+}
+
+fn refund_view(request_id: u64, data: Option<RefundData>) -> RefundView {
+    match data {
+        None => RefundView {
+            request_id,
+            found: false,
+            caller: None,
+            price: None,
+            storage_fee: None,
+            cleanup_bounty: None,
+            refund_claim_deadline: None,
+        },
+        Some(data) => RefundView {
+            request_id,
+            found: true,
+            caller: Some(data.caller.to_string()),
+            price: Some(display_tos(data.price)),
+            storage_fee: Some(display_tos(data.storage_fee)),
+            cleanup_bounty: Some(display_tos(data.cleanup_bounty)),
+            refund_claim_deadline: Some(time_format::format_ts(data.refund_claim_deadline)),
+        },
+    }
+}
+
+impl ServiceActorRefundShowCmd {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = common::app_config::AppConfig::load(Path::new(config_path))?;
+        let address = resolve_service_address(&config, &self.address, &self.name)?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let provider = contracts::contract_provider!(rpc_client);
+        let stack = provider
+            .get_method(
+                address.to_string(),
+                "get_refund",
+                vec![contracts::stack_utils::i64_to_stack_entry(self.request_id as i64)],
+            )
+            .await?;
+        let data = ServiceActorContract::decode_refund(&stack)?;
+        let view = refund_view(self.request_id, data);
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&view)?);
+        } else if !view.found {
+            println!(
+                "Refund for request {} not found (never expired, already claimed, or swept)",
+                self.request_id
+            );
+        } else {
+            println!("Refund for request: {}", view.request_id);
+            println!("Caller: {}", view.caller.unwrap());
+            println!("Price: {} TOS", view.price.unwrap());
+            println!("Storage fee (locked): {} TOS", view.storage_fee.unwrap());
+            println!("Cleanup bounty: {} TOS", view.cleanup_bounty.unwrap());
+            println!("Refund claim deadline: {}", view.refund_claim_deadline.unwrap());
         }
         Ok(())
     }
@@ -504,9 +804,11 @@ struct ServiceActorRecordView {
     #[serde(skip_serializing_if = "Option::is_none")]
     chain_active: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    chain_total_revenue: Option<String>,
+    chain_withdrawable_revenue: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     chain_calls_today: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain_live_count: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     chain_error: Option<String>,
 }
@@ -538,8 +840,9 @@ impl ServiceActorLsCmd {
                 rate_limit_per_day: entry.rate_limit_per_day,
                 created_at: entry.created_at,
                 chain_active: None,
-                chain_total_revenue: None,
+                chain_withdrawable_revenue: None,
                 chain_calls_today: None,
+                chain_live_count: None,
                 chain_error: None,
             })
             .collect();
@@ -560,7 +863,7 @@ impl ServiceActorLsCmd {
                             .parse::<MsgAddressInt>()
                             .context("invalid persisted Service Actor address")?;
                         let stack = provider
-                            .get_method(address.to_string(), "get_service_actor_data", vec![])
+                            .get_method(address.to_string(), "get_service_data", vec![])
                             .await?;
                         ServiceActorContract::decode_data(&stack)
                     }
@@ -576,8 +879,9 @@ impl ServiceActorLsCmd {
                 match result {
                     Ok(data) => {
                         record.chain_active = Some(data.active);
-                        record.chain_total_revenue = Some(display_tos(data.total_revenue));
+                        record.chain_withdrawable_revenue = Some(display_tos(data.withdrawable_revenue));
                         record.chain_calls_today = Some(data.calls_today);
+                        record.chain_live_count = Some(data.live_count);
                     }
                     Err(error) => record.chain_error = Some(format!("{error:#}")),
                 }
@@ -607,11 +911,14 @@ impl ServiceActorLsCmd {
             if let Some(active) = record.chain_active {
                 println!("  Chain active:  {}", active);
             }
-            if let Some(revenue) = &record.chain_total_revenue {
-                println!("  Chain revenue: {} TOS", revenue);
+            if let Some(revenue) = &record.chain_withdrawable_revenue {
+                println!("  Chain withdrawable revenue: {} TOS", revenue);
             }
             if let Some(calls) = record.chain_calls_today {
                 println!("  Chain calls today: {}", calls);
+            }
+            if let Some(live) = record.chain_live_count {
+                println!("  Chain live requests: {}", live);
             }
             if let Some(error) = &record.chain_error {
                 println!("  Chain error:   {}", error);
@@ -626,7 +933,7 @@ impl ServiceActorSendCmd {
         validate_tos_amount("amount", self.amount)?;
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
-        let destination = resolve_service_address(&config, &self.address, &self.name)?;
+        let destination_service = resolve_service_address(&config, &self.address, &self.name)?;
         let wallet_config =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (owner_address, owner_info, owner_secret) =
@@ -635,12 +942,17 @@ impl ServiceActorSendCmd {
             anyhow::bail!("signing wallet is not active");
         }
 
+        let request_id = || -> anyhow::Result<u64> {
+            self.request_id.ok_or_else(|| anyhow::anyhow!("--request-id is required"))
+        };
+
         let body = match self.operation {
             ServiceActorOperation::Call => ServiceActorContract::call(
                 self.query_id,
                 parse_required_hash("request-hash", &self.request_hash)?,
             )?,
             ServiceActorOperation::Respond => {
+                let id = request_id()?;
                 let response_hash = parse_required_hash("response-hash", &self.response_hash)?;
                 let signature = match parse_optional_signature(
                     "attestation-signature",
@@ -649,23 +961,32 @@ impl ServiceActorSendCmd {
                     Some(signature) => Some(signature),
                     None => match &self.signer_vault_key {
                         Some(name) => {
-                            // The signature must bind the specific request
-                            // this response answers, so fetch the
-                            // currently-outstanding request_hash on chain
-                            // rather than signing response_hash alone.
+                            // The signature must bind the exact request this
+                            // response answers, under the terms it was
+                            // accepted with -- fetch it on chain rather than
+                            // signing response_hash alone.
                             let provider = contracts::contract_provider!(rpc_client.clone());
                             let stack = provider
                                 .get_method(
-                                    destination.to_string(),
-                                    "get_service_actor_data",
-                                    vec![],
+                                    destination_service.to_string(),
+                                    "get_request",
+                                    vec![contracts::stack_utils::i64_to_stack_entry(id as i64)],
                                 )
                                 .await?;
-                            let chain_data = ServiceActorContract::decode_data(&stack)?;
+                            let request = ServiceActorContract::decode_request(&stack)?
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("request {id} is not pending on chain")
+                                })?;
                             let domain_hash = contracts::service_respond_domain_hash(
-                                &destination,
-                                &chain_data.last_request_hash,
+                                &destination_service,
+                                &request.caller,
+                                id,
+                                &request.request_hash,
                                 &response_hash,
+                                &request.terms_hash,
+                                request.price,
+                                request.response_deadline,
+                                request.refund_claim_deadline,
                             )?;
                             Some(sign_hash_with_vault_key(name, &domain_hash, vault.clone()).await?)
                         }
@@ -675,11 +996,28 @@ impl ServiceActorSendCmd {
                 match signature {
                     Some(signature) => ServiceActorContract::respond_signed(
                         self.query_id,
+                        id,
                         response_hash,
                         &signature,
                     )?,
-                    None => ServiceActorContract::respond(self.query_id, response_hash)?,
+                    None => ServiceActorContract::respond(self.query_id, id, response_hash)?,
                 }
+            }
+            ServiceActorOperation::Expire => {
+                ServiceActorContract::expire(self.query_id, request_id()?)?
+            }
+            ServiceActorOperation::ClaimRefund => {
+                let raw_destination = self
+                    .destination
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("--destination is required"))?;
+                let destination = raw_destination
+                    .parse::<MsgAddressInt>()
+                    .context("invalid claim-refund destination address")?;
+                ServiceActorContract::claim_refund(self.query_id, request_id()?, &destination)?
+            }
+            ServiceActorOperation::SweepExpiredRequest => {
+                ServiceActorContract::sweep_expired_request(self.query_id, request_id()?)?
             }
             ServiceActorOperation::UpdatePolicy => {
                 let authorized_caller = self
@@ -691,20 +1029,35 @@ impl ServiceActorSendCmd {
                 if !self.open_access && authorized_caller.is_none() {
                     anyhow::bail!("provide --authorized-caller or --open-access");
                 }
+                let price_per_call = self
+                    .price_per_call
+                    .ok_or_else(|| anyhow::anyhow!("--price-per-call is required"))?;
+                let storage_fee =
+                    self.storage_fee.ok_or_else(|| anyhow::anyhow!("--storage-fee is required"))?;
+                let cleanup_bounty = self
+                    .cleanup_bounty
+                    .ok_or_else(|| anyhow::anyhow!("--cleanup-bounty is required"))?;
+                validate_tos_amount("price-per-call", price_per_call)?;
+                validate_tos_amount("storage-fee", storage_fee)?;
+                validate_tos_amount("cleanup-bounty", cleanup_bounty)?;
                 ServiceActorContract::update_policy(
                     self.query_id,
-                    tos_to_nanotos(
-                        self.price_per_call
-                            .ok_or_else(|| anyhow::anyhow!("--price-per-call is required"))?,
-                    ),
-                    self.rate_limit_per_day
-                        .ok_or_else(|| anyhow::anyhow!("--rate-limit-per-day is required"))?,
+                    tos_to_nanotos(price_per_call),
+                    tos_to_nanotos(storage_fee),
+                    tos_to_nanotos(cleanup_bounty),
+                    self.response_sla
+                        .ok_or_else(|| anyhow::anyhow!("--response-sla is required"))?,
+                    self.refund_claim_window
+                        .ok_or_else(|| anyhow::anyhow!("--refund-claim-window is required"))?,
+                    self.active.ok_or_else(|| anyhow::anyhow!("--active is required"))?,
                     self.open_access,
                     authorized_caller.as_ref(),
                     // Only read on-chain when clearing the authorized caller,
                     // in which case the signing (owner) wallet's own address
                     // is exactly the right filler.
                     &owner_address,
+                    self.rate_limit_per_day
+                        .ok_or_else(|| anyhow::anyhow!("--rate-limit-per-day is required"))?,
                     parse_required_hash("metadata-hash", &self.metadata_hash)?,
                     parse_required_hash("proof-scheme-hash", &self.proof_scheme_hash)?,
                 )?
@@ -716,8 +1069,6 @@ impl ServiceActorSendCmd {
                         .ok_or_else(|| anyhow::anyhow!("--withdraw-amount is required"))?,
                 ),
             )?,
-            ServiceActorOperation::Deactivate => ServiceActorContract::deactivate(self.query_id)?,
-            ServiceActorOperation::Reactivate => ServiceActorContract::reactivate(self.query_id)?,
             ServiceActorOperation::RotateAttestorKey => {
                 let pubkey = resolve_attestor_pubkey(
                     &self.new_attestor_pubkey,
@@ -747,8 +1098,8 @@ impl ServiceActorSendCmd {
         let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
         send_wallet_message(
             &wallet,
-            rpc_client,
-            destination.clone(),
+            rpc_client.clone(),
+            destination_service.clone(),
             amount_nanotos,
             body,
             true,
@@ -760,8 +1111,30 @@ impl ServiceActorSendCmd {
             "{} Service Actor {} message submitted to {}",
             "OK".green().bold(),
             self.operation.to_possible_value().unwrap().get_name(),
-            destination
+            destination_service
         );
+
+        // A `call`'s request_id is contract-assigned and unknowable before
+        // the message lands, so surface it here rather than making the
+        // caller run a separate lookup. Best-effort: `next_request_id - 1`
+        // is only guaranteed to be *our* assigned ID if no other caller's
+        // `call` landed on this service between our send confirming and this
+        // read; verify with `agent service request-show` if that matters.
+        if matches!(self.operation, ServiceActorOperation::Call) {
+            let provider = contracts::contract_provider!(rpc_client);
+            match provider.get_method(destination_service.to_string(), "get_service_data", vec![]).await {
+                Ok(stack) => match ServiceActorContract::decode_data(&stack) {
+                    Ok(data) if data.next_request_id > 0 => {
+                        println!(
+                            "  Assigned request ID (best-effort): {}",
+                            data.next_request_id - 1
+                        );
+                    }
+                    _ => {}
+                },
+                Err(_) => {}
+            }
+        }
         Ok(())
     }
 }
@@ -780,7 +1153,11 @@ impl ServiceActorBuildStateCmd {
             authorized_caller,
             self.open_access,
             self.price_per_call,
+            self.storage_fee,
+            self.cleanup_bounty,
             self.rate_limit_per_day,
+            self.response_sla,
+            self.refund_claim_window,
             &self.metadata_hash,
             &self.proof_scheme_hash,
             parse_optional_hash("attestor-pubkey", &self.attestor_pubkey)?,

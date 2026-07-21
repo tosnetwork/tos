@@ -3,27 +3,60 @@
  *
  * Licensed under the GNU General Public License v3.0.
  */
+//! Rust SDK for the concurrent-escrow Service Actor -- see
+//! `doc/service-actor-concurrent-escrow-upgrade.md` for the full design.
+//! This is a direct, incompatible replacement of the single-pending-slot
+//! Service Actor: every request is identified by a contract-assigned
+//! `request_id` and snapshots the policy/attestor key in force at `call`
+//! time, so it resolves independently of every other outstanding request.
 use chain_block::{
     base64_decode, read_single_root_boc, BuilderData, Coins, Deserializable, IBitstring,
     MsgAddressInt, Serializable, StateInit,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const SERVICE_ACTOR_CODE_B64: &str = "te6ccgECDwEABL8AART/APSkE/S88sgLAQIBYgIDBPjQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kDTAPpA0wDTAPoA0x/TH9Mf+gDUAdDT/9P/0QLUAdDT/9P/0wDTANP/0QXREFZVA1YSghBTVkMBuuMCVxRWEYIQU1ZDArrjAlYRghBTVkMDuuMCVhGCEFNWQwS6BAUGBwBtoDpT2omh9IGmAfSBpgGmAfQBpj+mP6Y/9AGoA6Gn/6f/ogWoA6Gn/6f/pgGmAaf/oguiIKyqBwH+NFcRKsAB8uduK8ABVhIuxwVS8LCx8udtVhIqvvLnccAA8ud3+COCAVGAqQRTB72TN3A2kTDiJ8AAU2i5sfLncAWkEREooVFIoA7T/9EkwgCOGgEREAEEcXCAEMjLBVAEzxZY+gISy2rJAfsAkjQ/4hC/EK4QnRCMEHsQahBZBAgBpDJXEBEQLccF8udsDsAB8ud4DNP/L44igwjXGPgo+kQByMoHy/9WEAHL/1Iwy//J+QBYVhL5EPLndd7REL8QrhCdEIwQexBqEFkQSBA3QFYTcAIJAZQ0NDc3ODg4OlGnxwXy52wiwAHy524kwADy53cH+gDTH9MA0wD6QNQB0NP/0//RAtEMERAMED8QLhBNEIwQaxBaEDlIFgcEUDNFFQkE9I7YVxERES7HBfLnbA76ANFTBLvy53L4J28QUhC78udzIMIAjhdT0HFwgBDIywVQBM8WWPoCEstqyQH7AN4UoQwREAwQvxCuEJ0QjBB7EGoQWRBIRxdQZgUDBOBWEYIQU1ZDBbrjAlYRghBTVkMGuuMCVhGCEFNWQwe6CQoLDAB8CENWcVkEyMv/E8v/ywDLAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQAcgTIy/8Ty//LAMsAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVAD6NlcQERAtxwXy52wIwAHy524M0SpwgwZwgBDIywVQBM8WWPoCEstqyQH7AHAgDBEQDBC/EK4QnRwQexBqEFkQSEYXUDMEyMv/E8v/ywDLAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQAyFcREREuxwXy52wJwADy528N0RC/EK4QnRCMcQwQexBqEFkQSBA3RlAUQzAEyMv/E8v/ywDLAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQC+o5rVxFXEhEQLccF8udsDsAAVhDAALHy53YM0//REL8QrhCdEIwQexBqEFkQSBA3RlATcQEEyMv/E8v/ywDLAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VTgERGCEFNWQwi64wJfD18EDQ4AzBERLscF8udsD8AAVhDAALHy53YN0RC/EK4QnRCMEHsQahBZEEgQN0YURVNwAQTIy/8Ty//LAMsAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVAAG8sd0";
+pub const SERVICE_ACTOR_CODE_B64: &str = "te6ccgECKwEACv0AART/APSkE/S88sgLAQIBYgIDBH7QAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x2zxWHYIQU1ZDAbrjAlcfVhyCEFNWQwK64wJWHIIQU1ZDA7opBAUGAgEgHyAB/FcdVhnAAfLnbS/AAVYeL8cFVhABsLHy54NWFFYUoFYfAb7y525WFoIBhqC58udzVhxWHvkBAYMH9A5voZPTHzCSMHDigQPoufLndFYYhD+58ud1+COCAVGAqQRTBL2TNHAzkTDiLMAAUz25sfLnhAKkERvT/9FWGPgjVhOgIAcCtFccERxWGccF8udsERnTPyFWHYBA9A9vofLnedD6QPoA+gD6ANM/0z/TH9QB0AHR0//T/9MA0//RNDb4IyW58ud4CdP/BpNfBTTjDQPRER4TgED0WzABER4BAgoLAv6O/FccVxwRGdM/0SBWHIBA9A9vofLnedD6QPoA+gD6ANM/0z/TH9QB0AHR0//T/9MA0//RXwUB+CO78ud6+CMhufLne1JQESGAQPRbMCMQRVUgESHIUAXPFlAD+gIB+gIB+gLLP8lZERyAQPQXERWlA1YaoREaEqARFxEbERfgDQ4B/lYToFYYVhhWGFYYVhhWGFYUVhRWFFYUIZIwcN8DyMv/Esv/ywDL/8kGyMsfUAX6AlAD+gIB+gLLH8sfzMn5AFYhBFYZBFYZBFYZQTRWHUCZVhJWEgPIy/8Sy//LAMv/ychQCM8WUAb6AlAE+gJY+gLLP8s/yx/MyQKAQPQXERsIAfxWHFz5AQGDB/QOb6GT0x8wkjBw4qTIyx8B+QFYgwf0QxEdVhOhVhKhIMIAjhkBERwBcXCAEMjLBVAEzxZY+gISy2rJAfsAkzBXG+IRFaQRFKQRE6QDVhCgAlYRoBEXERsRFxEWERoRFhEUERkRFBETERgREwMRFwMREhEWERIJAWQREREVEREREBEUERAPERMPDhESDg0REQ0MERAMEL8QrhCdEIwQexBqEFkQSEdmBUQUAx4AegWDCNcYKVFcUVoQSRA9UIL4KPpEyFAKzxYVy/9QA/oCyz/LP8kByMoHFcv/E8s/y//L/8zJ+QBZ+RDy53cB+Fz5AQGDB/QOb6GT0x8wkjBw4iDBApkw+QEBgwf0WzCcpcjLHwH5AViDB/RD4hEWpREVpQZWHKBWHaARHRWhERsToREXERsRFxEWERoRFhEVERkRFRETERgREwQRFwQREhEWERIREREVEREREBEUERAPERMPDhESDg0REQ0MATIMERAMEL8QrhCdEIwQexBqEFkQSAZEV0MTHgGeERYRGhEWERURGREVAhEYAhETERcRExESERYREhERERUREREQERQREA8REw8OERIODRERDQwREAwQvxCuEJ0QjBB7EGoQWRBIEDcFRhZQQx4EVFYcghBTVkMEuuMCVhyCEFNWQwW64wJWHIIQU1ZDBrrjAlYcghBTVkMHug8QERID/lccERrTP/pA0SFWHYBA9A9vofLnfdD6QPoA+gD6ANM/0TERISPHBfLnfvgjAREhufLnfPgnbxBSELvy54ERHhOAQPRbMAERHwECXPkBAYMH9A5voZPTHzCSMHDiIMECmTD5AQGDB/RbMJylyMsfAfkBWIMH9EPiVhzCAOMPERUTFBUC/lccERrTP9EgVhuAQPQPb6EiVh6AQPQPb6FSILHy54BwAo4jW9D6QPoA+gD6ANM/0z/TH9QB0AHR0//T/9MA0//REFZfBnGOEGwS0PpA+gD6APoA0z/RVQTi+CNYvvLnf/gnbxBSILvy54GeER4UgED0WzARGaVRcaHjDgERIAEWFwH4bKo6PlcQERAtxwXy52wN+gD6APoA0x/TH9MA0wDTAPpA0x/UAdDT/9P/0QLRKIEOEL4pgggnjQC7sPLnbyeBDhC+KIIIJ40Au7Dy53ApghAF9eEAviqCEDuaygC7sPLncYIQBfXhACqgUrC+8udyERKkERcRGxEXBhEaBhkE/o7kODhXGhEaVhfHBfLnbBEX0//RERYRGhEWERURGREVERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4NERENDBEQDBC/EK4QnRCMEHsQanFQmhBIEDdGFFBVA+BWHIIQU1ZDCLrjAhEcghBTVkMJuuMCXw8eGhscADIRHlYccXCAEMjLBVAEzxZY+gISy2rJAfsAAARXHgG8pQZWHKARHBWhERoSoREXERsRFxEWERoRFhEVERkRFREUERgRFAQRFwQREhEWERIREREVEREREBEUERAPERMPDhESDg0REQ0MERAMEL8QrhCdEIwQexBqXjUQV0ZVBB4AJhEfFIBA9FswUWGhBhEeER0RGQcB+AJc+QEBgwf0Dm+hk9MfMJIwcOIgwQKZMPkBAYMH9FswnKXIyx8B+QFYgwf0Q+IRHxigIaBWG6FQZqFWGsIAjhsBERwBERpxcIAQyMsFUATPFlj6AhLLaskB+wCUVxpXG+IRE6URFxEbERcRFhEaERYRFREZERUCERgCERcYAXQREhEWERIREREVEREREBEUERAPERMPDhESDg0REQ0MERAMEL8QrhCdEIwQexBqEFkQOBAnEEZeMRAjHgGAERURGREVERQRGBEUERMRFxETERYLERULChEUCgkREwkIERIIBxERBwUREAUQTxA+EC0QjBsQWhBJEDhAdwMGBB4BwDlXGxEbVhjHBfLnbBEY0REWERoRFhEVERkRFREUERgRFBETERcRExESERYREhERERUREREQERQREA8REw8OERIODRERDQwREAwQvxCuEJ0QjBB7EGpwChBZEEgQN0ZTEh4B/hEcVhnHBfLnbBEZ+gDR+CdvECShI6GCEDuaygChUmC2CFIQu/LngiDCAI4YVhghcXCAEMjLBVAEzxZY+gISy2rJAfsA3hWhERcRGxEXERYRGhEWERURGREVERQRGBEUERMRFxETERIRFhESERERFRERERARFBEQDxETDw4REg4dAApfD/LHdgE2DRERDQwREAwQvxCuEJ0QjBB7EGoQWQgQN0ZTHgDiDMjL/xvL/xnLABfL/8kRE8jLHwEREvoCAREQ+gJQDvoCHMsfGssfGMsAFssAUATPFhLLHxrMychQBfoCUAX6AlAF+gJQBfoCFcsfE8sfyQHI9AAS9AAT9ADJyFAIzxYWywAUyz8Syx/LHxLMzMzJ7VQCASAhIgIBICcoARW6692zxfDxCcXwyCkCASAjJAE5tna7Z4riC+HtliA/ICAwYP6BzfQyemPmEkYOHFApAgFiJSYBdKqr2zxfAxETERYRExESERUREhERERQREREQERMREA8REg8OEREODREQDRDPEL4QrRCcEIsQel4mEGcpARSoPts8Xw8QjF8MKQFRu6+Ns8H18PbMGAQPQPb6GzlzBwbVRxESDg0PpA+gD6APoA0z/RcVVAgpAYG4kZ2zwQL18PbMGAQPQPb6GznTBwbVRxEVRwAFRwACDg0PpA+gD6APoA0z/TP9Mf1AHQAdHT/9P/0wDT/9FxVaCCkB9O1E0PpA0wDTP9Mf0x/UAdDTH/oA+gD6ANMf0x/TANMA+kDTH9QB0AHR0//T/9MA0//RDtQB0PoA+gD6APoA0x/TH9EG1AHQAdH0BPQE9ATRERURFhEVERQRFREUERMRFBETERIRExESEREREhERERAREREQDxEQDxDvKgAoEN4QzRC8EKsQmhB4EGcQVhBFEDQ=";
+
 pub const SVC_CALL_OPCODE: u32 = 0x5356_4301;
 pub const SVC_RESPOND_OPCODE: u32 = 0x5356_4302;
-pub const SVC_UPDATE_POLICY_OPCODE: u32 = 0x5356_4303;
-pub const SVC_WITHDRAW_REVENUE_OPCODE: u32 = 0x5356_4304;
-pub const SVC_DEACTIVATE_OPCODE: u32 = 0x5356_4305;
-pub const SVC_REACTIVATE_OPCODE: u32 = 0x5356_4306;
+pub const SVC_EXPIRE_OPCODE: u32 = 0x5356_4303;
+pub const SVC_CLAIM_REFUND_OPCODE: u32 = 0x5356_4304;
+pub const SVC_SWEEP_EXPIRED_REQUEST_OPCODE: u32 = 0x5356_4305;
+pub const SVC_UPDATE_POLICY_OPCODE: u32 = 0x5356_4306;
 pub const SVC_ROTATE_ATTESTOR_KEY_OPCODE: u32 = 0x5356_4307;
 pub const SVC_REVOKE_ATTESTOR_OPCODE: u32 = 0x5356_4308;
+pub const SVC_WITHDRAW_REVENUE_OPCODE: u32 = 0x5356_4309;
+
+/// Protocol constants the contract enforces itself -- not owner-configurable
+/// policy fields, and not (re)validated here beyond `build_data`'s own
+/// client-side sanity checks. Must match the `const int` values in
+/// `crypto/smartcont/service-actor-code.fc` exactly; see that file's own
+/// comments for the masterchain-fee grounding behind each number.
+pub mod protocol_constants {
+    pub const MINIMUM_CLEANUP_BOUNTY: u64 = 100_000_000; // 0.1 TOS
+    pub const MAXIMUM_CLEANUP_BOUNTY: u64 = 1_000_000_000; // 1 TOS
+    pub const MINIMUM_STORAGE_FEE: u64 = 100_000_000; // 0.1 TOS
+    pub const MINIMUM_OPERATING_RESERVE: u64 = 1_000_000_000; // 1 TOS
+    pub const MIN_RESPONSE_SLA_SECS: u32 = 3_600; // 1 hour
+    pub const MAX_RESPONSE_SLA_SECS: u32 = 2_592_000; // 30 days
+    pub const MIN_REFUND_CLAIM_WINDOW_SECS: u32 = 3_600; // 1 hour
+    pub const MAX_REFUND_CLAIM_WINDOW_SECS: u32 = 2_592_000; // 30 days
+    pub const MAX_LIVE_GLOBAL: u32 = 100_000;
+    pub const MAX_LIVE_PER_CALLER: u32 = 1_000;
+}
 
 /// Deployment parameters for a Service Actor.
 ///
 /// One instance is deployed per registered service (model, data, or tool
 /// provider) -- the same per-actor pattern as `AgentAccountContract` /
 /// `TaskEscrowContract` / `CapabilityRegistryContract`.
+///
+/// `open_access`/`authorized_caller`/`rate_limit_per_day` are carried
+/// forward from the current single-slot Service Actor unchanged (ported,
+/// not redesigned): they gate admission to `call` only and are excluded
+/// from `terms_hash` and the attestation response domain, since they don't
+/// change what a valid response to an already-accepted request has to
+/// satisfy. See the header comment in `service-actor-code.fc`.
 #[derive(Clone, Debug)]
 pub struct ServiceActorInit {
     pub owner: MsgAddressInt,
@@ -33,13 +66,29 @@ pub struct ServiceActorInit {
     /// `authorized_caller` may.
     pub open_access: bool,
     pub price_per_call: u64,
+    /// Fixed, non-refundable fee collected alongside `price_per_call` at
+    /// `call` time; must satisfy
+    /// `storage_fee >= MINIMUM_STORAGE_FEE + cleanup_bounty` on chain.
+    pub storage_fee: u64,
+    /// Paid to whoever calls `sweep_expired_request` once an entry's rights
+    /// window has fully lapsed; must be within
+    /// `[MINIMUM_CLEANUP_BOUNTY, MAXIMUM_CLEANUP_BOUNTY]` on chain.
+    pub cleanup_bounty: u64,
     /// Maximum `call`s accepted per UTC day; `0` means unlimited.
     pub rate_limit_per_day: u32,
+    /// Seconds a submitted call has to be `respond`ed to; must be within
+    /// `[MIN_RESPONSE_SLA_SECS, MAX_RESPONSE_SLA_SECS]` on chain.
+    pub response_sla: u32,
+    /// Seconds after `response_deadline` an expired request's refund stays
+    /// claimable; must be within
+    /// `[MIN_REFUND_CLAIM_WINDOW_SECS, MAX_REFUND_CLAIM_WINDOW_SECS]`.
+    pub refund_claim_window: u32,
     pub metadata_hash: [u8; 32],
     pub proof_scheme_hash: [u8; 32],
     /// Optional ed25519 public key. When set, `respond` additionally
-    /// requires a signature over the new `response_hash` under this key --
-    /// on top of, never instead of, the existing owner sender authorization.
+    /// requires a signature over the full request-bound domain under this
+    /// key -- on top of, never instead of, the existing owner sender
+    /// authorization.
     pub attestor_pubkey: Option<[u8; 32]>,
 }
 
@@ -48,24 +97,56 @@ pub struct ServiceActorContract;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServiceActorData {
     pub owner: MsgAddressInt,
-    pub authorized_caller: Option<MsgAddressInt>,
-    pub open_access: bool,
     pub active: bool,
+    pub policy_version: u32,
     pub price_per_call: u64,
+    pub storage_fee: u64,
+    pub cleanup_bounty: u64,
+    pub response_sla: u32,
+    pub refund_claim_window: u32,
+    pub open_access: bool,
+    pub authorized_caller: Option<MsgAddressInt>,
     pub rate_limit_per_day: u32,
-    pub call_day: u32,
-    pub calls_today: u32,
-    pub total_revenue: u64,
     pub metadata_hash: [u8; 32],
     pub proof_scheme_hash: [u8; 32],
-    pub last_request_hash: [u8; 32],
-    pub last_response_hash: [u8; 32],
-    /// `true` when the last `call` has not yet been answered by `respond`.
-    /// `rotate_attestor_key`/`revoke_attestor` are rejected while this is
-    /// set, so a caller who paid can trust the independent check it saw
-    /// configured won't be swapped out before the response it paid for.
-    pub has_pending_response: bool,
     pub attestor_pubkey: Option<[u8; 32]>,
+    pub next_request_id: u64,
+    pub pending_count: u32,
+    /// Pending + refundable entries combined -- the quantity
+    /// `max_live_global`/`max_live_per_caller` actually cap.
+    pub live_count: u32,
+    pub withdrawable_revenue: u64,
+    pub locked_storage_fees: u64,
+    pub pending_liability: u64,
+    pub refundable_liability: u64,
+    /// UTC day (`now() / 86400`) `calls_today` was last reset for.
+    pub call_day: u32,
+    pub calls_today: u32,
+}
+
+/// Decoded `get_request` result: a still-outstanding, unanswered call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingRequestData {
+    pub caller: MsgAddressInt,
+    pub price: u64,
+    pub storage_fee: u64,
+    pub cleanup_bounty: u64,
+    pub response_deadline: u64,
+    pub refund_claim_deadline: u64,
+    pub policy_version: u32,
+    pub request_hash: [u8; 32],
+    pub terms_hash: [u8; 32],
+    pub attestor_pubkey: Option<[u8; 32]>,
+}
+
+/// Decoded `get_refund` result: an expired, not-yet-claimed-or-swept request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefundData {
+    pub caller: MsgAddressInt,
+    pub price: u64,
+    pub storage_fee: u64,
+    pub cleanup_bounty: u64,
+    pub refund_claim_deadline: u64,
 }
 
 impl ServiceActorContract {
@@ -74,41 +155,67 @@ impl ServiceActorContract {
     }
 
     pub fn build_data(init: &ServiceActorInit) -> anyhow::Result<chain_block::Cell> {
+        let has_attestor = init.attestor_pubkey.is_some();
+        let attestor_pubkey = init.attestor_pubkey.unwrap_or([0u8; 32]);
+        // Mirrors ServiceActorInit's V1 convention: authorized_caller always
+        // carries a concrete address on chain, defaulting to the owner when
+        // none is explicitly given (meaningful only while has_authorized_caller
+        // is set, i.e. open_access is false).
         let authorized_caller = init.authorized_caller.as_ref().unwrap_or(&init.owner);
+
+        let mut commitments = BuilderData::new();
+        commitments.append_u256(&init.metadata_hash)?;
+        commitments.append_u256(&init.proof_scheme_hash)?;
+        if has_attestor {
+            commitments.append_bit_one()?;
+        } else {
+            commitments.append_bit_zero()?;
+        }
+        commitments.append_raw(&attestor_pubkey, 256)?;
+
+        let mut policy = BuilderData::new();
+        policy.append_u32(0)?; // policy_version = 0 at deploy
+        Coins::new(init.price_per_call).write_to(&mut policy)?;
+        Coins::new(init.storage_fee).write_to(&mut policy)?;
+        Coins::new(init.cleanup_bounty).write_to(&mut policy)?;
+        policy.append_u32(init.response_sla)?;
+        policy.append_u32(init.refund_claim_window)?;
+        if init.open_access {
+            policy.append_bit_one()?;
+        } else {
+            policy.append_bit_zero()?;
+        }
+        if init.authorized_caller.is_some() {
+            policy.append_bit_one()?;
+        } else {
+            policy.append_bit_zero()?;
+        }
+        authorized_caller.write_to(&mut policy)?;
+        policy.append_u32(init.rate_limit_per_day)?;
+        policy.checked_append_reference(commitments.into_cell()?)?;
+
+        let mut accounting = BuilderData::new();
+        Coins::new(0).write_to(&mut accounting)?; // withdrawable_revenue
+        Coins::new(0).write_to(&mut accounting)?; // locked_storage_fees
+        Coins::new(0).write_to(&mut accounting)?; // pending_liability
+        Coins::new(0).write_to(&mut accounting)?; // refundable_liability
+        accounting.append_u32(0)?; // call_day
+        accounting.append_u32(0)?; // calls_today
+
+        let mut dicts = BuilderData::new();
+        dicts.append_bit_zero()?; // pending_requests: empty HashmapE
+        dicts.append_bit_zero()?; // refunds: empty HashmapE
+        dicts.append_bit_zero()?; // caller_live_counts: empty HashmapE
+
         let mut data = BuilderData::new();
         init.owner.write_to(&mut data)?;
-        if init.authorized_caller.is_some() {
-            data.append_bit_one()?;
-        } else {
-            data.append_bit_zero()?;
-        }
-        authorized_caller.write_to(&mut data)?;
-        if init.open_access {
-            data.append_bit_one()?;
-        } else {
-            data.append_bit_zero()?;
-        }
         data.append_bit_one()?; // active = 1 at deploy
-        Coins::new(init.price_per_call).write_to(&mut data)?;
-        data.append_u32(init.rate_limit_per_day)?;
-        data.append_u32(0)?; // call_day
-        data.append_u32(0)?; // calls_today
-        Coins::new(0).write_to(&mut data)?; // total_revenue
-        let mut meta = BuilderData::new();
-        meta.append_u256(&init.metadata_hash)?.append_u256(&init.proof_scheme_hash)?;
-        data.checked_append_reference(meta.into_cell()?)?;
-        let mut last = BuilderData::new();
-        last.append_u256(&[0; 32])?.append_u256(&[0; 32])?;
-        last.append_bit_zero()?; // has_pending_response = 0 at deploy
-        match init.attestor_pubkey {
-            Some(pubkey) => {
-                last.append_bit_one()?.append_raw(&pubkey, 256)?;
-            }
-            None => {
-                last.append_bit_zero()?.append_raw(&[0; 32], 256)?;
-            }
-        }
-        data.checked_append_reference(last.into_cell()?)?;
+        data.append_u64(0)?; // next_request_id
+        data.append_u32(0)?; // pending_count
+        data.append_u32(0)?; // live_count
+        data.checked_append_reference(policy.into_cell()?)?;
+        data.checked_append_reference(accounting.into_cell()?)?;
+        data.checked_append_reference(dicts.into_cell()?)?;
         Ok(data.into_cell()?)
     }
 
@@ -121,58 +228,151 @@ impl ServiceActorContract {
         Ok(MsgAddressInt::with_params(wc, cell.hash(0))?)
     }
 
-    /// Decode the result of `get_service_actor_data`; transport and RPC
-    /// concerns stay outside this module.
+    /// Decode the result of `get_service_data`; transport and RPC concerns
+    /// stay outside this module.
     pub fn decode_data(stack: &TvmStackParser) -> anyhow::Result<ServiceActorData> {
         let mut owner_slice = stack.slice(0)?;
         let owner = MsgAddressInt::construct_from(&mut owner_slice)?;
-        let mut caller_slice = stack.slice(2)?;
-        let authorized_caller = if stack.u64(1)? == 0 {
-            None
-        } else {
+        let has_authorized_caller = stack.bool(9)?;
+        let authorized_caller = if has_authorized_caller {
+            let mut caller_slice = stack.slice(10)?;
             Some(MsgAddressInt::construct_from(&mut caller_slice)?)
+        } else {
+            None
         };
         Ok(ServiceActorData {
             owner,
+            active: stack.bool(1)?,
+            policy_version: stack.u64(2)? as u32,
+            price_per_call: stack.u64(3)?,
+            storage_fee: stack.u64(4)?,
+            cleanup_bounty: stack.u64(5)?,
+            response_sla: stack.u64(6)? as u32,
+            refund_claim_window: stack.u64(7)? as u32,
+            open_access: stack.bool(8)?,
             authorized_caller,
-            open_access: stack.u64(3)? != 0,
-            active: stack.u64(4)? != 0,
-            price_per_call: stack.u64(5)?,
-            rate_limit_per_day: stack.u64(6)? as u32,
-            call_day: stack.u64(7)? as u32,
-            calls_today: stack.u64(8)? as u32,
-            total_revenue: stack.u64(9)?,
-            metadata_hash: parse_hash(stack, 10)?,
-            proof_scheme_hash: parse_hash(stack, 11)?,
-            last_request_hash: parse_hash(stack, 12)?,
-            last_response_hash: parse_hash(stack, 13)?,
-            has_pending_response: stack.u64(14)? != 0,
-            attestor_pubkey: if stack.u64(15)? == 0 { None } else { Some(parse_hash(stack, 16)?) },
+            rate_limit_per_day: stack.u64(11)? as u32,
+            metadata_hash: parse_hash(stack, 12)?,
+            proof_scheme_hash: parse_hash(stack, 13)?,
+            attestor_pubkey: if stack.bool(14)? { Some(parse_hash(stack, 15)?) } else { None },
+            next_request_id: stack.u64(16)?,
+            pending_count: stack.u64(17)? as u32,
+            live_count: stack.u64(18)? as u32,
+            withdrawable_revenue: stack.u64(19)?,
+            locked_storage_fees: stack.u64(20)?,
+            pending_liability: stack.u64(21)?,
+            refundable_liability: stack.u64(22)?,
+            call_day: stack.u64(23)? as u32,
+            calls_today: stack.u64(24)? as u32,
         })
+    }
+
+    /// Decode the result of `get_request(request_id)`; `None` when the
+    /// request is not (or no longer) pending.
+    pub fn decode_request(stack: &TvmStackParser) -> anyhow::Result<Option<PendingRequestData>> {
+        if !stack.bool(0)? {
+            return Ok(None);
+        }
+        let mut caller_slice = stack.slice(1)?;
+        let caller = MsgAddressInt::construct_from(&mut caller_slice)?;
+        Ok(Some(PendingRequestData {
+            caller,
+            price: stack.u64(2)?,
+            storage_fee: stack.u64(3)?,
+            cleanup_bounty: stack.u64(4)?,
+            response_deadline: stack.u64(5)?,
+            refund_claim_deadline: stack.u64(6)?,
+            policy_version: stack.u64(7)? as u32,
+            request_hash: parse_hash(stack, 8)?,
+            terms_hash: parse_hash(stack, 9)?,
+            attestor_pubkey: if stack.bool(10)? { Some(parse_hash(stack, 11)?) } else { None },
+        }))
+    }
+
+    /// Decode the result of `get_refund(request_id)`; `None` when the
+    /// request is not an outstanding, unclaimed refund.
+    pub fn decode_refund(stack: &TvmStackParser) -> anyhow::Result<Option<RefundData>> {
+        if !stack.bool(0)? {
+            return Ok(None);
+        }
+        let mut caller_slice = stack.slice(1)?;
+        let caller = MsgAddressInt::construct_from(&mut caller_slice)?;
+        Ok(Some(RefundData {
+            caller,
+            price: stack.u64(2)?,
+            storage_fee: stack.u64(3)?,
+            cleanup_bounty: stack.u64(4)?,
+            refund_claim_deadline: stack.u64(5)?,
+        }))
     }
 
     pub fn call(query_id: u64, request_hash: [u8; 32]) -> anyhow::Result<chain_block::Cell> {
         message(SVC_CALL_OPCODE, query_id, |b| b.append_u256(&request_hash).map(|_| ()))
     }
 
-    pub fn respond(query_id: u64, response_hash: [u8; 32]) -> anyhow::Result<chain_block::Cell> {
-        message(SVC_RESPOND_OPCODE, query_id, |b| b.append_u256(&response_hash).map(|_| ()))
+    pub fn respond(
+        query_id: u64,
+        request_id: u64,
+        response_hash: [u8; 32],
+    ) -> anyhow::Result<chain_block::Cell> {
+        message(SVC_RESPOND_OPCODE, query_id, |b| {
+            b.append_u64(request_id)?;
+            b.append_u256(&response_hash).map(|_| ())
+        })
     }
 
-    /// Respond on a Service Actor deployed with an `attestor_pubkey`:
-    /// `signature` must be a valid ed25519 signature over `response_hash`
-    /// under that key, or the contract rejects the message.
+    /// Respond on a request whose snapshotted attestor requires a
+    /// signature: `signature` must be valid over
+    /// `contracts::service_respond_domain_hash(..)` under that key, or the
+    /// contract rejects the message.
     pub fn respond_signed(
         query_id: u64,
+        request_id: u64,
         response_hash: [u8; 32],
         signature: &[u8; 64],
     ) -> anyhow::Result<chain_block::Cell> {
         message(SVC_RESPOND_OPCODE, query_id, |b| {
+            b.append_u64(request_id)?;
             b.append_u256(&response_hash)?;
             b.append_raw(signature, 512).map(|_| ())
         })
     }
 
+    /// Permissionless: moves a `response_deadline`-passed pending request
+    /// into the refundable set. Both deadlines were fixed at `call` time and
+    /// never move regardless of when `expire` is actually called.
+    pub fn expire(query_id: u64, request_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message(SVC_EXPIRE_OPCODE, query_id, |b| b.append_u64(request_id).map(|_| ()))
+    }
+
+    /// Caller-only: claims `price` (not the locked `storage_fee`) to a
+    /// chosen destination before `refund_claim_deadline`.
+    pub fn claim_refund(
+        query_id: u64,
+        request_id: u64,
+        destination: &MsgAddressInt,
+    ) -> anyhow::Result<chain_block::Cell> {
+        message(SVC_CLAIM_REFUND_OPCODE, query_id, |b| {
+            b.append_u64(request_id)?;
+            destination.write_to(b).map(|_| ())
+        })
+    }
+
+    /// Permissionless once `refund_claim_deadline` has passed: deletes a
+    /// still-pending or still-refundable entry and pays `cleanup_bounty` to
+    /// the sender, so cleanup does not depend on owner or caller
+    /// cooperation. Accepts a `request_id` found in either dictionary.
+    pub fn sweep_expired_request(
+        query_id: u64,
+        request_id: u64,
+    ) -> anyhow::Result<chain_block::Cell> {
+        message(SVC_SWEEP_EXPIRED_REQUEST_OPCODE, query_id, |b| b.append_u64(request_id).map(|_| ()))
+    }
+
+    /// Owner-only. Affects only requests accepted after this call --
+    /// already-outstanding requests keep the policy (and attestor key) they
+    /// snapshotted at `call` time, so this never needs to freeze while
+    /// requests are pending.
     /// `filler` is written in the authorized-caller slot when
     /// `authorized_caller` is `None` (mirroring how `ServiceActorInit`
     /// always carries a concrete address).
@@ -180,16 +380,29 @@ impl ServiceActorContract {
     pub fn update_policy(
         query_id: u64,
         price_per_call: u64,
-        rate_limit_per_day: u32,
+        storage_fee: u64,
+        cleanup_bounty: u64,
+        response_sla: u32,
+        refund_claim_window: u32,
+        active: bool,
         open_access: bool,
         authorized_caller: Option<&MsgAddressInt>,
         filler: &MsgAddressInt,
+        rate_limit_per_day: u32,
         metadata_hash: [u8; 32],
         proof_scheme_hash: [u8; 32],
     ) -> anyhow::Result<chain_block::Cell> {
         message(SVC_UPDATE_POLICY_OPCODE, query_id, |b| {
             Coins::new(price_per_call).write_to(b)?;
-            b.append_u32(rate_limit_per_day)?;
+            Coins::new(storage_fee).write_to(b)?;
+            Coins::new(cleanup_bounty).write_to(b)?;
+            b.append_u32(response_sla)?;
+            b.append_u32(refund_claim_window)?;
+            if active {
+                b.append_bit_one()?;
+            } else {
+                b.append_bit_zero()?;
+            }
             if open_access {
                 b.append_bit_one()?;
             } else {
@@ -201,6 +414,7 @@ impl ServiceActorContract {
                 b.append_bit_zero()?;
             }
             authorized_caller.unwrap_or(filler).write_to(b)?;
+            b.append_u32(rate_limit_per_day)?;
             let mut meta = BuilderData::new();
             meta.append_u256(&metadata_hash)?.append_u256(&proof_scheme_hash)?;
             b.checked_append_reference(meta.into_cell()?)?;
@@ -212,16 +426,11 @@ impl ServiceActorContract {
         message(SVC_WITHDRAW_REVENUE_OPCODE, query_id, |b| Coins::new(amount).write_to(b))
     }
 
-    pub fn deactivate(query_id: u64) -> anyhow::Result<chain_block::Cell> {
-        message(SVC_DEACTIVATE_OPCODE, query_id, |_| Ok(()))
-    }
-
-    pub fn reactivate(query_id: u64) -> anyhow::Result<chain_block::Cell> {
-        message(SVC_REACTIVATE_OPCODE, query_id, |_| Ok(()))
-    }
-
-    /// Owner-only: set or replace the `attestor_pubkey` `respond` checks
-    /// against. Purely local state -- no cross-contract messaging.
+    /// Owner-only: set or replace the attestor key `respond` checks against
+    /// for requests accepted from now on. Purely local state -- no
+    /// cross-contract messaging, and (unlike the single-slot predecessor)
+    /// never frozen, since already-outstanding requests keep their own
+    /// snapshot regardless of later rotation.
     pub fn rotate_attestor_key(
         query_id: u64,
         new_attestor_pubkey: [u8; 32],
@@ -231,8 +440,9 @@ impl ServiceActorContract {
         })
     }
 
-    /// Owner-only: drop the attestation requirement -- `respond` reverts to
-    /// sender-authorization-only until `rotate_attestor_key` is called again.
+    /// Owner-only: drop the attestation requirement for requests accepted
+    /// from now on -- `respond` reverts to sender-authorization-only until
+    /// `rotate_attestor_key` is called again.
     pub fn revoke_attestor(query_id: u64) -> anyhow::Result<chain_block::Cell> {
         message(SVC_REVOKE_ATTESTOR_OPCODE, query_id, |_| Ok(()))
     }
@@ -289,7 +499,11 @@ mod tests {
             authorized_caller: Some(MsgAddressInt::with_standart(None, -1, [0x22; 32].into()).unwrap()),
             open_access: false,
             price_per_call: 100_000_000,
+            storage_fee: 150_000_000,
+            cleanup_bounty: 100_000_000,
             rate_limit_per_day: 1_000,
+            response_sla: 3_600,
+            refund_claim_window: 3_600,
             metadata_hash: [0x33; 32],
             proof_scheme_hash: [0x44; 32],
             attestor_pubkey: None,
@@ -315,19 +529,60 @@ mod tests {
     }
 
     #[test]
-    fn encodes_call_and_respond_messages() {
+    fn encodes_call_message() {
         let call = ServiceActorContract::call(1, [0xAA; 32]).unwrap();
         let mut slice = SliceData::load_cell(call).unwrap();
         assert_eq!(slice.get_next_u32().unwrap(), SVC_CALL_OPCODE);
         assert_eq!(slice.get_next_u64().unwrap(), 1);
         assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0xAA; 32]);
         assert_eq!(slice.remaining_bits(), 0);
+    }
 
-        let respond = ServiceActorContract::respond(2, [0xBB; 32]).unwrap();
+    #[test]
+    fn encodes_respond_and_respond_signed_messages() {
+        let respond = ServiceActorContract::respond(2, 7, [0xBB; 32]).unwrap();
         let mut slice = SliceData::load_cell(respond).unwrap();
         assert_eq!(slice.get_next_u32().unwrap(), SVC_RESPOND_OPCODE);
         assert_eq!(slice.get_next_u64().unwrap(), 2);
+        assert_eq!(slice.get_next_u64().unwrap(), 7);
         assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0xBB; 32]);
+        assert_eq!(slice.remaining_bits(), 0);
+
+        let signature = [0x5Au8; 64];
+        let respond_signed =
+            ServiceActorContract::respond_signed(3, 7, [0xCC; 32], &signature).unwrap();
+        let mut slice = SliceData::load_cell(respond_signed).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), SVC_RESPOND_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 3);
+        assert_eq!(slice.get_next_u64().unwrap(), 7);
+        assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0xCC; 32]);
+        assert_eq!(slice.get_next_bytes(64).unwrap(), signature.to_vec());
+        assert_eq!(slice.remaining_bits(), 0);
+    }
+
+    #[test]
+    fn encodes_expire_claim_refund_and_sweep_messages() {
+        let expire = ServiceActorContract::expire(4, 9).unwrap();
+        let mut slice = SliceData::load_cell(expire).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), SVC_EXPIRE_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 4);
+        assert_eq!(slice.get_next_u64().unwrap(), 9);
+        assert_eq!(slice.remaining_bits(), 0);
+
+        let destination = MsgAddressInt::with_standart(None, -1, [0x77; 32].into()).unwrap();
+        let claim = ServiceActorContract::claim_refund(5, 9, &destination).unwrap();
+        let mut slice = SliceData::load_cell(claim).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), SVC_CLAIM_REFUND_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 5);
+        assert_eq!(slice.get_next_u64().unwrap(), 9);
+        assert_eq!(MsgAddressInt::construct_from(&mut slice).unwrap(), destination);
+        assert_eq!(slice.remaining_bits(), 0);
+
+        let sweep = ServiceActorContract::sweep_expired_request(6, 9).unwrap();
+        let mut slice = SliceData::load_cell(sweep).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), SVC_SWEEP_EXPIRED_REQUEST_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 6);
+        assert_eq!(slice.get_next_u64().unwrap(), 9);
         assert_eq!(slice.remaining_bits(), 0);
     }
 
@@ -335,24 +590,34 @@ mod tests {
     fn encodes_update_policy_message() {
         let svc = init();
         let body = ServiceActorContract::update_policy(
-            3,
+            7,
             200_000_000,
-            50,
+            150_000_000,
+            120_000_000,
+            7_200,
+            7_200,
+            true,
             true,
             svc.authorized_caller.as_ref(),
             &svc.owner,
+            50,
             [0xCC; 32],
             [0xDD; 32],
         )
         .unwrap();
         let mut slice = SliceData::load_cell(body).unwrap();
         assert_eq!(slice.get_next_u32().unwrap(), SVC_UPDATE_POLICY_OPCODE);
-        assert_eq!(slice.get_next_u64().unwrap(), 3);
+        assert_eq!(slice.get_next_u64().unwrap(), 7);
         assert_eq!(Coins::construct_from(&mut slice).unwrap().as_u128(), 200_000_000);
-        assert_eq!(slice.get_next_u32().unwrap(), 50);
-        assert_eq!(slice.get_next_bit().unwrap(), true);
-        assert_eq!(slice.get_next_bit().unwrap(), true);
+        assert_eq!(Coins::construct_from(&mut slice).unwrap().as_u128(), 150_000_000);
+        assert_eq!(Coins::construct_from(&mut slice).unwrap().as_u128(), 120_000_000);
+        assert_eq!(slice.get_next_u32().unwrap(), 7_200);
+        assert_eq!(slice.get_next_u32().unwrap(), 7_200);
+        assert_eq!(slice.get_next_bit().unwrap(), true); // active
+        assert_eq!(slice.get_next_bit().unwrap(), true); // open_access
+        assert_eq!(slice.get_next_bit().unwrap(), true); // has_authorized_caller
         assert_eq!(MsgAddressInt::construct_from(&mut slice).unwrap(), svc.authorized_caller.unwrap());
+        assert_eq!(slice.get_next_u32().unwrap(), 50);
         assert_eq!(slice.remaining_bits(), 0);
         assert_eq!(slice.remaining_references(), 1);
         let mut meta_slice = SliceData::load_cell(slice.reference(0).unwrap()).unwrap();
@@ -361,92 +626,171 @@ mod tests {
     }
 
     #[test]
-    fn encodes_withdraw_and_lifecycle_messages() {
-        let withdraw = ServiceActorContract::withdraw_revenue(4, 500_000_000).unwrap();
+    fn encodes_withdraw_and_attestor_lifecycle_messages() {
+        let withdraw = ServiceActorContract::withdraw_revenue(8, 500_000_000).unwrap();
         let mut slice = SliceData::load_cell(withdraw).unwrap();
         assert_eq!(slice.get_next_u32().unwrap(), SVC_WITHDRAW_REVENUE_OPCODE);
-        assert_eq!(slice.get_next_u64().unwrap(), 4);
+        assert_eq!(slice.get_next_u64().unwrap(), 8);
         assert_eq!(Coins::construct_from(&mut slice).unwrap().as_u128(), 500_000_000);
         assert_eq!(slice.remaining_bits(), 0);
 
-        let deactivate = ServiceActorContract::deactivate(5).unwrap();
-        let mut slice = SliceData::load_cell(deactivate).unwrap();
-        assert_eq!(slice.get_next_u32().unwrap(), SVC_DEACTIVATE_OPCODE);
-        assert_eq!(slice.get_next_u64().unwrap(), 5);
+        let rotate = ServiceActorContract::rotate_attestor_key(9, [0xEE; 32]).unwrap();
+        let mut slice = SliceData::load_cell(rotate).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), SVC_ROTATE_ATTESTOR_KEY_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 9);
+        assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0xEE; 32]);
 
-        let reactivate = ServiceActorContract::reactivate(6).unwrap();
-        let mut slice = SliceData::load_cell(reactivate).unwrap();
-        assert_eq!(slice.get_next_u32().unwrap(), SVC_REACTIVATE_OPCODE);
-        assert_eq!(slice.get_next_u64().unwrap(), 6);
+        let revoke = ServiceActorContract::revoke_attestor(10).unwrap();
+        let mut slice = SliceData::load_cell(revoke).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), SVC_REVOKE_ATTESTOR_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 10);
     }
 
     #[test]
-    fn decodes_service_actor_data_stack() {
+    fn decodes_service_data_stack() {
         let svc = init();
         let stack = TvmStackParser::new(vec![
             address_slice_entry(&svc.owner),
             number("1"),
-            address_slice_entry(svc.authorized_caller.as_ref().unwrap()),
+            number("3"),
+            number(svc.price_per_call.to_string()),
+            number(svc.storage_fee.to_string()),
+            number(svc.cleanup_bounty.to_string()),
+            number(svc.response_sla.to_string()),
+            number(svc.refund_claim_window.to_string()),
             number("0"),
             number("1"),
-            number(svc.price_per_call.to_string()),
+            address_slice_entry(svc.authorized_caller.as_ref().unwrap()),
             number(svc.rate_limit_per_day.to_string()),
-            number("19700"),
-            number("3"),
-            number("1500000000"),
             hash_number(svc.metadata_hash),
             hash_number(svc.proof_scheme_hash),
-            hash_number([0xEE; 32]),
-            hash_number([0xFF; 32]),
-            number("1"),
             number("1"),
             hash_number([0x99; 32]),
+            number("42"),
+            number("2"),
+            number("5"),
+            number("1500000000"),
+            number("450000000"),
+            number("300000000"),
+            number("700000000"),
+            number("19700"),
+            number("3"),
         ]);
         let data = ServiceActorContract::decode_data(&stack).unwrap();
         assert_eq!(data.owner, svc.owner);
-        assert_eq!(data.authorized_caller, svc.authorized_caller);
-        assert!(!data.open_access);
         assert!(data.active);
+        assert_eq!(data.policy_version, 3);
         assert_eq!(data.price_per_call, svc.price_per_call);
+        assert_eq!(data.storage_fee, svc.storage_fee);
+        assert_eq!(data.cleanup_bounty, svc.cleanup_bounty);
+        assert_eq!(data.response_sla, svc.response_sla);
+        assert_eq!(data.refund_claim_window, svc.refund_claim_window);
+        assert!(!data.open_access);
+        assert_eq!(data.authorized_caller, svc.authorized_caller);
         assert_eq!(data.rate_limit_per_day, svc.rate_limit_per_day);
-        assert_eq!(data.call_day, 19700);
-        assert_eq!(data.calls_today, 3);
-        assert_eq!(data.total_revenue, 1_500_000_000);
         assert_eq!(data.metadata_hash, svc.metadata_hash);
         assert_eq!(data.proof_scheme_hash, svc.proof_scheme_hash);
-        assert_eq!(data.last_request_hash, [0xEE; 32]);
-        assert_eq!(data.last_response_hash, [0xFF; 32]);
-        assert!(data.has_pending_response);
+        assert_eq!(data.attestor_pubkey, Some([0x99; 32]));
+        assert_eq!(data.next_request_id, 42);
+        assert_eq!(data.pending_count, 2);
+        assert_eq!(data.live_count, 5);
+        assert_eq!(data.withdrawable_revenue, 1_500_000_000);
+        assert_eq!(data.locked_storage_fees, 450_000_000);
+        assert_eq!(data.pending_liability, 300_000_000);
+        assert_eq!(data.refundable_liability, 700_000_000);
+        assert_eq!(data.call_day, 19700);
+        assert_eq!(data.calls_today, 3);
+    }
+
+    #[test]
+    fn decodes_service_data_without_authorized_caller() {
+        let svc = init();
+        let stack = TvmStackParser::new(vec![
+            address_slice_entry(&svc.owner),
+            number("1"),
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+            number(svc.response_sla.to_string()),
+            number(svc.refund_claim_window.to_string()),
+            number("1"), // open_access
+            number("0"), // has_authorized_caller
+            address_slice_entry(&svc.owner), // filler, unused when has_authorized_caller = 0
+            number("0"),
+            hash_number([0; 32]),
+            hash_number([0; 32]),
+            number("0"),
+            hash_number([0; 32]),
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+        ]);
+        let data = ServiceActorContract::decode_data(&stack).unwrap();
+        assert!(data.open_access);
+        assert_eq!(data.authorized_caller, None);
+        assert_eq!(data.attestor_pubkey, None);
+    }
+
+    #[test]
+    fn decodes_request_and_refund_not_found() {
+        let not_found = TvmStackParser::new(vec![number("0")]);
+        assert_eq!(ServiceActorContract::decode_request(&not_found).unwrap(), None);
+        assert_eq!(ServiceActorContract::decode_refund(&not_found).unwrap(), None);
+    }
+
+    #[test]
+    fn decodes_pending_request_stack() {
+        let caller = MsgAddressInt::with_standart(None, -1, [0x22; 32].into()).unwrap();
+        let stack = TvmStackParser::new(vec![
+            number("1"),
+            address_slice_entry(&caller),
+            number("100000000"),
+            number("150000000"),
+            number("100000000"),
+            number("1700000000"),
+            number("1703600000"),
+            number("3"),
+            hash_number([0xAA; 32]),
+            hash_number([0xBB; 32]),
+            number("1"),
+            hash_number([0x99; 32]),
+        ]);
+        let data = ServiceActorContract::decode_request(&stack).unwrap().unwrap();
+        assert_eq!(data.caller, caller);
+        assert_eq!(data.price, 100_000_000);
+        assert_eq!(data.storage_fee, 150_000_000);
+        assert_eq!(data.cleanup_bounty, 100_000_000);
+        assert_eq!(data.response_deadline, 1_700_000_000);
+        assert_eq!(data.refund_claim_deadline, 1_703_600_000);
+        assert_eq!(data.policy_version, 3);
+        assert_eq!(data.request_hash, [0xAA; 32]);
+        assert_eq!(data.terms_hash, [0xBB; 32]);
         assert_eq!(data.attestor_pubkey, Some([0x99; 32]));
     }
 
     #[test]
-    fn decodes_service_actor_data_without_authorized_caller() {
-        let svc = init();
+    fn decodes_refund_stack() {
+        let caller = MsgAddressInt::with_standart(None, -1, [0x22; 32].into()).unwrap();
         let stack = TvmStackParser::new(vec![
-            address_slice_entry(&svc.owner),
-            number("0"),
-            address_slice_entry(&svc.owner),
             number("1"),
-            number("0"),
-            number("0"),
-            number("0"),
-            number("0"),
-            number("0"),
-            number("0"),
-            hash_number([0; 32]),
-            hash_number([0; 32]),
-            hash_number([0; 32]),
-            hash_number([0; 32]),
-            number("0"),
-            number("0"),
-            hash_number([0; 32]),
+            address_slice_entry(&caller),
+            number("100000000"),
+            number("150000000"),
+            number("100000000"),
+            number("1703600000"),
         ]);
-        let data = ServiceActorContract::decode_data(&stack).unwrap();
-        assert_eq!(data.authorized_caller, None);
-        assert!(data.open_access);
-        assert!(!data.active);
-        assert!(!data.has_pending_response);
-        assert_eq!(data.attestor_pubkey, None);
+        let data = ServiceActorContract::decode_refund(&stack).unwrap().unwrap();
+        assert_eq!(data.caller, caller);
+        assert_eq!(data.price, 100_000_000);
+        assert_eq!(data.storage_fee, 150_000_000);
+        assert_eq!(data.cleanup_bounty, 100_000_000);
+        assert_eq!(data.refund_claim_deadline, 1_703_600_000);
     }
 }

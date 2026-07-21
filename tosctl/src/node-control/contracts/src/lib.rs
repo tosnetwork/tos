@@ -36,14 +36,15 @@ pub mod provider;
 pub mod service_actor;
 pub mod smart_contract;
 pub mod task_escrow;
-mod stack_utils;
+pub mod stack_utils;
 pub mod wallet;
 
 pub use agent_account::{
     AgentAccountContract, AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate,
 };
 pub use attestation::{
-    domain_bound_hash, resolve_domain_hash, service_respond_domain_hash, settle_domain_hash,
+    domain_bound_hash, resolve_domain_hash, service_actor_terms_hash, service_respond_domain_hash,
+    settle_domain_hash,
 };
 pub use capability_registry::{
     CapabilityRegistryContract, CapabilityRegistryData, CapabilityRegistryInit,
@@ -63,7 +64,9 @@ pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapper
 pub use nominator_pool::{NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl};
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;
-pub use service_actor::{ServiceActorContract, ServiceActorData, ServiceActorInit};
+pub use service_actor::{
+    PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit,
+};
 pub use smart_contract::SmartContract;
 pub use task_escrow::{TaskEscrowContract, TaskEscrowData, TaskEscrowInit};
 pub use wallet::{Wallet, WalletContract};

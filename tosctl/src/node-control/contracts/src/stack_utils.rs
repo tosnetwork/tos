@@ -9,7 +9,7 @@
 use tl_api::tos::tvm::StackEntry;
 
 /// Helper to create a number stack entry from bytes (big-endian 256-bit)
-pub(crate) fn bytes_to_stack_entry(bytes: &[u8; 32]) -> StackEntry {
+pub fn bytes_to_stack_entry(bytes: &[u8; 32]) -> StackEntry {
     let n = tl_api::tos::tvm::numberdecimal::NumberDecimal {
         number: "0x".to_owned() + &hex::encode_upper(bytes),
     };
@@ -18,8 +18,11 @@ pub(crate) fn bytes_to_stack_entry(bytes: &[u8; 32]) -> StackEntry {
     })
 }
 
-/// Helper to create a number stack entry from i64
-pub(crate) fn i64_to_stack_entry(value: i64) -> StackEntry {
+/// Helper to create a number stack entry from i64 -- e.g. the `request_id`
+/// argument `get_request`/`get_refund` (Service Actor) take as a get-method
+/// parameter. Callers outside this crate don't otherwise need to depend on
+/// `tl_api` directly just to build one integer stack argument.
+pub fn i64_to_stack_entry(value: i64) -> StackEntry {
     let n = tl_api::tos::tvm::numberdecimal::NumberDecimal { number: value.to_string() };
     StackEntry::Tvm_StackEntryNumber(tl_api::tos::tvm::stackentry::StackEntryNumber {
         number: tl_api::tos::tvm::Number::Tvm_NumberDecimal(n),

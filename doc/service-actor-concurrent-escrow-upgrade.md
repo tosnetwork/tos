@@ -55,6 +55,9 @@ The active policy contains:
 - `cleanup_bounty:Coins`
 - `response_sla:uint32`
 - `refund_claim_window:uint32`
+- `open_access:uint1`
+- `has_authorized_caller:uint1 authorized_caller:MsgAddress`
+- `rate_limit_per_day:uint32` (`0` = unlimited)
 - `metadata_hash:bits256`
 - `proof_scheme_hash:bits256`
 - `has_attestor:uint1`
@@ -66,6 +69,19 @@ implicit all-zero `attestor_pubkey`, matching the `has_attestor`/`attestor_pubke
 pair already used by Task Escrow, Dispute, and the current Service Actor
 implementation -- a `Maybe` constructor would be equally correct but would be
 the only place in this contract family using that convention instead.
+
+`open_access`/`authorized_caller`/`rate_limit_per_day` are carried forward
+from the current single-slot Service Actor unchanged -- they were omitted
+from the original version of this field list by oversight (every earlier
+review round focused on concurrency, escrow accounting, and attestation),
+not by design; dropping them would have been a real functional regression
+for any deployment relying on restricted access or a call-cadence cap. They
+gate admission to `call` only, so they live in top-level Policy state next
+to `rate_limit_per_day`'s own `call_day`/`calls_today` counters in
+Accounting state -- never in `PendingRequest`/`Refund` -- and are
+deliberately excluded from both `terms_hash` and the attestation response
+domain: they determine whether a request is ever accepted, not what a valid
+response to an already-accepted request has to satisfy.
 
 The owner declares one response SLA and one refund-claim window. A caller
 either accepts the active policy or does not submit a call; callers cannot

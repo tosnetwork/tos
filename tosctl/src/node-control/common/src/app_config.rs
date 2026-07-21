@@ -461,6 +461,21 @@ pub struct ServiceActorConfig {
     pub open_access: bool,
     /// Price per call, in nano-TOS.
     pub price_per_call: u64,
+    /// Fixed, non-refundable fee collected alongside `price_per_call` at
+    /// `call` time, in nano-TOS. See `doc/service-actor-concurrent-escrow-upgrade.md`.
+    #[serde(default)]
+    pub storage_fee: u64,
+    /// Paid to whoever calls `sweep_expired_request` once a request's rights
+    /// window has fully lapsed, in nano-TOS.
+    #[serde(default)]
+    pub cleanup_bounty: u64,
+    /// Seconds a submitted call has to be `respond`ed to.
+    #[serde(default)]
+    pub response_sla: u32,
+    /// Seconds after `response_deadline` an expired request's refund stays
+    /// claimable.
+    #[serde(default)]
+    pub refund_claim_window: u32,
     /// Maximum calls accepted per day; `0` means unlimited.
     pub rate_limit_per_day: u32,
     /// Hex-encoded 32-byte hash of general service metadata.

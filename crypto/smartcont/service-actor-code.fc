@@ -1,119 +1,143 @@
 ;; Copyright (C) 2025-2026  TOS Network.
-;; Minimal Service Actor: represents a model, data, or tool provider that
-;; sells per-call access on-chain.
+;; Service Actor: represents a model, data, or tool provider that sells
+;; per-call access on-chain, with concurrent outstanding requests.
 ;;
-;; One instance per registered service, discoverable at a deterministic
-;; address (same actor-per-address pattern as Agent Account, Task Escrow and
-;; Capability Registry). Callers pay `price_per_call` (or more) per `call`
-;; message; the owner later commits a response hash via `respond` and can
-;; withdraw accumulated revenue.
+;; This is a direct, incompatible replacement of the single-pending-slot
+;; Service Actor. See doc/service-actor-concurrent-escrow-upgrade.md for the
+;; full design: every request is identified by a contract-assigned
+;; `request_id`, snapshots the policy and attestor key in force at `call`
+;; time, and resolves independently of every other outstanding request via
+;; `respond`, `expire` + `claim_refund`, or a permissionless
+;; `sweep_expired_request` once its bounded rights window has fully lapsed.
 ;;
-;; Persistent data layout:
-;;   owner:MsgAddress
-;;   has_authorized_caller:uint1 authorized_caller:MsgAddress
-;;   open_access:uint1
-;;   active:uint1
-;;   price_per_call:coins
-;;   rate_limit_per_day:uint32  (0 = unlimited)
-;;   call_day:uint32
-;;   calls_today:uint32
-;;   total_revenue:coins
-;;   ^[metadata_hash:uint256 proof_scheme_hash:uint256]
-;;   ^[last_request_hash:uint256 last_response_hash:uint256
-;;     has_pending_response:uint1 has_attestor:uint1 attestor_pubkey:uint256]
+;; Persistent data layout (see load_state/save_state below):
+;;   owner:MsgAddress active:uint1 next_request_id:uint64 pending_count:uint32
+;;   live_count:uint32
+;;   ^[policy_version:uint32 price_per_call:Coins storage_fee:Coins
+;;     cleanup_bounty:Coins response_sla:uint32 refund_claim_window:uint32
+;;     open_access:uint1 has_authorized_caller:uint1
+;;     authorized_caller:MsgAddress rate_limit_per_day:uint32
+;;     ^[metadata_hash:uint256 proof_scheme_hash:uint256 has_attestor:uint1
+;;       attestor_pubkey:uint256]]
+;;   ^[withdrawable_revenue:Coins locked_storage_fees:Coins
+;;     pending_liability:Coins refundable_liability:Coins call_day:uint32
+;;     calls_today:uint32]
+;;   ^[pending_requests:(HashmapE 64 ^PendingRequest)
+;;     refunds:(HashmapE 64 ^Refund)
+;;     caller_live_counts:(HashmapE 256 uint32)]
+;;
+;; `open_access`/`authorized_caller`/`rate_limit_per_day` (and the
+;; `call_day`/`calls_today` counters it drives) are carried forward from the
+;; current single-slot Service Actor implementation unchanged -- ported
+;; here, not redesigned. They gate admission to `call` only; they are
+;; service-level configuration, not part of any individual request, so they
+;; live in Policy/Accounting state, not in `PendingRequest`/`Refund`, and are
+;; deliberately excluded from `terms_hash` and the attestation response
+;; domain (see compute_terms_hash/compute_response_domain_hash below): they
+;; govern whether a request was ever accepted, not what a valid response to
+;; an already-accepted request has to satisfy.
+;;
+;; PendingRequest (see doc for the bit-budget rationale of this split):
+;;   caller:MsgAddressInt price:Coins storage_fee:Coins cleanup_bounty:Coins
+;;   response_deadline:uint64 refund_claim_deadline:uint64 policy_version:uint32
+;;   ^[request_hash:uint256 terms_hash:uint256 has_attestor:uint1
+;;     attestor_pubkey:uint256]
+;;
+;; Refund:
+;;   caller:MsgAddressInt price:Coins storage_fee:Coins cleanup_bounty:Coins
+;;   refund_claim_deadline:uint64
 ;;
 ;; Internal messages:
 ;;   call#53564301 query_id:uint64 request_hash:uint256 = InternalMsgBody;
-;;   respond#53564302 query_id:uint64 response_hash:uint256 = InternalMsgBody;
-;;   update_policy#53564303 query_id:uint64 price_per_call:coins
-;;                rate_limit_per_day:uint32 open_access:uint1
-;;                has_authorized_caller:uint1 authorized_caller:MsgAddress
+;;   respond#53564302 query_id:uint64 request_id:uint64 response_hash:uint256
+;;                    signature:(## 512, present iff has_attestor) = InternalMsgBody;
+;;   expire#53564303 query_id:uint64 request_id:uint64 = InternalMsgBody;
+;;   claim_refund#53564304 query_id:uint64 request_id:uint64
+;;                destination:MsgAddressInt = InternalMsgBody;
+;;   sweep_expired_request#53564305 query_id:uint64 request_id:uint64 = InternalMsgBody;
+;;   update_policy#53564306 query_id:uint64 price_per_call:Coins storage_fee:Coins
+;;                cleanup_bounty:Coins response_sla:uint32 refund_claim_window:uint32
+;;                active:uint1 open_access:uint1 has_authorized_caller:uint1
+;;                authorized_caller:MsgAddress rate_limit_per_day:uint32
 ;;                ^[metadata_hash:uint256 proof_scheme_hash:uint256] = InternalMsgBody;
-;;   withdraw_revenue#53564304 query_id:uint64 amount:coins = InternalMsgBody;
-;;   deactivate#53564305 query_id:uint64 = InternalMsgBody;
-;;   reactivate#53564306 query_id:uint64 = InternalMsgBody;
+;;   rotate_attestor_key#53564307 query_id:uint64 new_attestor_pubkey:uint256 = InternalMsgBody;
+;;   revoke_attestor#53564308 query_id:uint64 = InternalMsgBody;
+;;   withdraw_revenue#53564309 query_id:uint64 amount:Coins = InternalMsgBody;
 
 const int op::call = 0x53564301;
 const int op::respond = 0x53564302;
-const int op::update_policy = 0x53564303;
-const int op::withdraw_revenue = 0x53564304;
-const int op::deactivate = 0x53564305;
-const int op::reactivate = 0x53564306;
+const int op::expire = 0x53564303;
+const int op::claim_refund = 0x53564304;
+const int op::sweep_expired_request = 0x53564305;
+const int op::update_policy = 0x53564306;
 const int op::rotate_attestor_key = 0x53564307;
 const int op::revoke_attestor = 0x53564308;
+const int op::withdraw_revenue = 0x53564309;
 
 const int err::not_owner = 1900;
-const int err::not_authorized = 1901;
-const int err::inactive = 1902;
-const int err::already_active = 1903;
-const int err::rate_limited = 1904;
-const int err::insufficient_payment = 1905;
-const int err::insufficient_revenue = 1906;
-const int err::insufficient_balance = 1907;
-const int err::unknown_op = 1908;
-const int err::bad_response_signature = 1909;
-const int err::attestor_frozen = 1910;
-const int err::response_pending = 1911;
-const int err::no_pending_response = 1912;
+const int err::inactive = 1901;
+const int err::insufficient_payment = 1902;
+const int err::invalid_response_sla = 1903;
+const int err::invalid_refund_claim_window = 1904;
+const int err::invalid_cleanup_bounty = 1905;
+const int err::insufficient_storage_fee = 1906;
+const int err::capacity_exceeded_global = 1907;
+const int err::capacity_exceeded_caller = 1908;
+const int err::request_id_overflow = 1909;
+const int err::unknown_op = 1910;
+const int err::bad_response_signature = 1911;
+const int err::response_window_closed = 1912;
+const int err::request_not_pending = 1913;
+const int err::expire_too_early = 1914;
+const int err::expire_too_late = 1915;
+const int err::refund_claim_expired = 1916;
+const int err::refund_not_found = 1917;
+const int err::not_refund_caller = 1918;
+const int err::sweep_too_early = 1919;
+const int err::request_not_live = 1920;
+const int err::insufficient_balance = 1921;
+const int err::insufficient_revenue = 1922;
+const int err::not_authorized = 1923;
+const int err::rate_limited = 1924;
 
-(slice, int, slice, int, int, int, int, int, int, int, int, int, int, int, int, int, int) load_state() inline {
-  slice ds = get_data().begin_parse();
-  slice owner = ds~load_msg_addr();
-  int has_authorized_caller = ds~load_uint(1);
-  slice authorized_caller = ds~load_msg_addr();
-  int open_access = ds~load_uint(1);
-  int active = ds~load_uint(1);
-  int price_per_call = ds~load_tomis();
-  int rate_limit_per_day = ds~load_uint(32);
-  int call_day = ds~load_uint(32);
-  int calls_today = ds~load_uint(32);
-  int total_revenue = ds~load_tomis();
-  slice meta = ds~load_ref().begin_parse();
-  int metadata_hash = meta~load_uint(256);
-  int proof_scheme_hash = meta~load_uint(256);
-  meta.end_parse();
-  slice last = ds~load_ref().begin_parse();
-  int last_request_hash = last~load_uint(256);
-  int last_response_hash = last~load_uint(256);
-  int has_pending_response = last~load_uint(1);
-  int has_attestor = last~load_uint(1);
-  int attestor_pubkey = last~load_uint(256);
-  last.end_parse();
-  ds.end_parse();
-  return (owner, has_authorized_caller, authorized_caller, open_access, active, price_per_call,
-    rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash, proof_scheme_hash,
-    last_request_hash, last_response_hash, has_pending_response, has_attestor, attestor_pubkey);
-}
+;; ---- Protocol constants -------------------------------------------------
+;; Not owner-configurable policy fields (see doc's Service Policy section):
+;; a Service Actor owner cannot lower or bypass any of these. Every value
+;; below is sized against the ~0.07 TOS/call masterchain forward+action fee
+;; measured empirically for a comparable Service Actor send in
+;; tosctl/src/node-control/contracts/tests/service_actor_sandbox.rs
+;; (rate_limit_blocks_calls_past_the_daily_cap's funding comment), not
+;; guessed -- see the implementation report for the full reasoning.
 
-() save_state(slice owner, int has_authorized_caller, slice authorized_caller, int open_access,
-             int active, int price_per_call, int rate_limit_per_day, int call_day,
-             int calls_today, int total_revenue, int metadata_hash, int proof_scheme_hash,
-             int last_request_hash, int last_response_hash, int has_pending_response,
-             int has_attestor, int attestor_pubkey) impure inline {
-  set_data(begin_cell()
-    .store_slice(owner)
-    .store_uint(has_authorized_caller, 1)
-    .store_slice(authorized_caller)
-    .store_uint(open_access, 1)
-    .store_uint(active, 1)
-    .store_tomis(price_per_call)
-    .store_uint(rate_limit_per_day, 32)
-    .store_uint(call_day, 32)
-    .store_uint(calls_today, 32)
-    .store_tomis(total_revenue)
-    .store_ref(begin_cell()
-      .store_uint(metadata_hash, 256)
-      .store_uint(proof_scheme_hash, 256)
-    .end_cell())
-    .store_ref(begin_cell()
-      .store_uint(last_request_hash, 256)
-      .store_uint(last_response_hash, 256)
-      .store_uint(has_pending_response, 1)
-      .store_uint(has_attestor, 1)
-      .store_uint(attestor_pubkey, 256)
-    .end_cell())
-  .end_cell());
-}
+;; A sweeper's own transaction has fwd+action+gas costs comparable to the
+;; measured ~0.07 TOS refund send; the bounty must clear that with real
+;; margin or nobody has an economic reason to call sweep_expired_request.
+const int MINIMUM_CLEANUP_BOUNTY = 100000000; ;; 0.1 TOS
+const int MAXIMUM_CLEANUP_BOUNTY = 1000000000; ;; 1 TOS, 10x the floor
+
+;; Base storage/execution cost for one live entry over its bounded lifetime,
+;; on top of which cleanup_bounty is added (storage_fee >= this + bounty).
+const int MINIMUM_STORAGE_FEE = 100000000; ;; 0.1 TOS
+
+;; Standing balance floor below which no value-moving operation may push the
+;; contract's own get_balance(); a generous multiple of a single send's cost
+;; so ordinary passive storage-fee accrual cannot strand the contract.
+const int MINIMUM_OPERATING_RESERVE = 1000000000; ;; 1 TOS
+
+;; response_sla / refund_claim_window bounds. The lower bounds mirror
+;; min_review_period in task-escrow-code.fc (same "genuine reaction time"
+;; rationale: an optimistic, unattended-inaction default is only fair if the
+;; window it is measured against cannot be squeezed to nothing). The upper
+;; bounds cap how long a single request can occupy a live-entry slot.
+const int MIN_RESPONSE_SLA = 3600; ;; 1 hour
+const int MAX_RESPONSE_SLA = 2592000; ;; 30 days
+const int MIN_REFUND_CLAIM_WINDOW = 3600; ;; 1 hour
+const int MAX_REFUND_CLAIM_WINDOW = 2592000; ;; 30 days
+
+;; Capacity/DoS controls: total live (pending + refundable) entries, and per
+;; caller, are hard-capped so no dictionary can be filled without bound.
+const int MAX_LIVE_GLOBAL = 100000;
+const int MAX_LIVE_PER_CALLER = 1000;
 
 ;; mode 1: send exactly `amount`, fees paid from the contract balance.
 ;; mode 128: `amount` is ignored and the whole remaining balance is carried.
@@ -126,35 +150,303 @@ const int err::no_pending_response = 1912;
   .end_cell(), mode);
 }
 
+;; ---- terms_hash / attestation domain ------------------------------------
+;; Neither of these binds open_access/authorized_caller/rate_limit_per_day:
+;; those gate admission to call() only. Once a request has been accepted and
+;; snapshotted, what a valid response has to satisfy (terms_hash) and what
+;; the attestor is vouching for (the response domain) are unaffected by
+;; whether the service is later opened up, restricted, or rate-limited
+;; differently -- see the header comment above.
+
+;; Split across a root + one ref cell: fixed+variable fields at the root
+;; alone would exceed 1023 bits (32 + 3*124 + 32 + 32 = up to 468, fine, but
+;; adding the 769-bit commitment fields directly would overflow). Must match
+;; `contracts::service_actor_terms_hash` in the Rust SDK byte-for-byte.
+int compute_terms_hash(int policy_version, int price_per_call, int storage_fee,
+                        int cleanup_bounty, int response_sla, int refund_claim_window,
+                        int metadata_hash, int proof_scheme_hash, int has_attestor,
+                        int attestor_pubkey) inline {
+  ;; Canonicalize the unused pubkey to zero so semantically-identical
+  ;; no-attestor policies always hash the same, regardless of leftover bits
+  ;; from a since-revoked key.
+  int canonical_attestor_pubkey = has_attestor ? attestor_pubkey : 0;
+  cell tail = begin_cell()
+    .store_uint(metadata_hash, 256)
+    .store_uint(proof_scheme_hash, 256)
+    .store_uint(has_attestor, 1)
+    .store_uint(canonical_attestor_pubkey, 256)
+  .end_cell();
+  return cell_hash(begin_cell()
+    .store_uint(policy_version, 32)
+    .store_tomis(price_per_call)
+    .store_tomis(storage_fee)
+    .store_tomis(cleanup_bounty)
+    .store_uint(response_sla, 32)
+    .store_uint(refund_claim_window, 32)
+    .store_ref(tail)
+  .end_cell());
+}
+
+;; Split across a root + one ref cell for the same 1023-bit reason. Must
+;; match `contracts::service_respond_domain_hash` in the Rust SDK
+;; byte-for-byte. Binds every security-relevant field of the request this
+;; response answers: contract address (replay-across-instances), request_id
+;; and caller_address (replay-across-requests-on-this-instance), the raw
+;; request/response hashes, terms_hash (the full policy snapshot), the exact
+;; price, and both deadlines -- a signature for one request, caller, policy,
+;; amount, or deadline cannot authorize any other request.
+int compute_response_domain_hash(slice caller, int request_id, int request_hash,
+                                  int response_hash, int terms_hash, int price,
+                                  int response_deadline, int refund_claim_deadline) inline {
+  (int wc, int addr) = my_address().parse_std_addr();
+  cell tail = begin_cell()
+    .store_slice(caller)
+    .store_uint(terms_hash, 256)
+    .store_tomis(price)
+    .store_uint(response_deadline, 64)
+    .store_uint(refund_claim_deadline, 64)
+  .end_cell();
+  return cell_hash(begin_cell()
+    .store_int(wc, 8).store_uint(addr, 256)
+    .store_uint(request_id, 64)
+    .store_uint(request_hash, 256)
+    .store_uint(response_hash, 256)
+    .store_ref(tail)
+  .end_cell());
+}
+
+;; ---- persistent state -----------------------------------------------------
+
+(slice, int, int, int, int, int, int, int, int, int, int, int, int, slice, int, int, int, int, int, int, int, int, int, int, int, cell, cell, cell) load_state() inline {
+  slice ds = get_data().begin_parse();
+  slice owner = ds~load_msg_addr();
+  int active = ds~load_uint(1);
+  int next_request_id = ds~load_uint(64);
+  int pending_count = ds~load_uint(32);
+  int live_count = ds~load_uint(32);
+  slice ps = ds~load_ref().begin_parse();
+  int policy_version = ps~load_uint(32);
+  int price_per_call = ps~load_tomis();
+  int storage_fee = ps~load_tomis();
+  int cleanup_bounty = ps~load_tomis();
+  int response_sla = ps~load_uint(32);
+  int refund_claim_window = ps~load_uint(32);
+  int open_access = ps~load_uint(1);
+  int has_authorized_caller = ps~load_uint(1);
+  slice authorized_caller = ps~load_msg_addr();
+  int rate_limit_per_day = ps~load_uint(32);
+  slice cs = ps~load_ref().begin_parse();
+  ps.end_parse();
+  int metadata_hash = cs~load_uint(256);
+  int proof_scheme_hash = cs~load_uint(256);
+  int has_attestor = cs~load_uint(1);
+  int attestor_pubkey = cs~load_uint(256);
+  cs.end_parse();
+  slice as_ = ds~load_ref().begin_parse();
+  int withdrawable_revenue = as_~load_tomis();
+  int locked_storage_fees = as_~load_tomis();
+  int pending_liability = as_~load_tomis();
+  int refundable_liability = as_~load_tomis();
+  int call_day = as_~load_uint(32);
+  int calls_today = as_~load_uint(32);
+  as_.end_parse();
+  slice dicts = ds~load_ref().begin_parse();
+  ds.end_parse();
+  cell pending_requests = dicts~load_dict();
+  cell refunds = dicts~load_dict();
+  cell caller_live_counts = dicts~load_dict();
+  dicts.end_parse();
+  return (owner, active, next_request_id, pending_count, live_count, policy_version,
+    price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
+    has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash, proof_scheme_hash,
+    has_attestor, attestor_pubkey, withdrawable_revenue, locked_storage_fees, pending_liability,
+    refundable_liability, call_day, calls_today, pending_requests, refunds, caller_live_counts);
+}
+
+() save_state(slice owner, int active, int next_request_id, int pending_count, int live_count,
+             int policy_version, int price_per_call, int storage_fee, int cleanup_bounty,
+             int response_sla, int refund_claim_window, int open_access, int has_authorized_caller,
+             slice authorized_caller, int rate_limit_per_day, int metadata_hash,
+             int proof_scheme_hash, int has_attestor, int attestor_pubkey, int withdrawable_revenue,
+             int locked_storage_fees, int pending_liability, int refundable_liability, int call_day,
+             int calls_today, cell pending_requests, cell refunds, cell caller_live_counts)
+             impure inline {
+  cell commitments = begin_cell()
+    .store_uint(metadata_hash, 256)
+    .store_uint(proof_scheme_hash, 256)
+    .store_uint(has_attestor, 1)
+    .store_uint(attestor_pubkey, 256)
+  .end_cell();
+  cell policy = begin_cell()
+    .store_uint(policy_version, 32)
+    .store_tomis(price_per_call)
+    .store_tomis(storage_fee)
+    .store_tomis(cleanup_bounty)
+    .store_uint(response_sla, 32)
+    .store_uint(refund_claim_window, 32)
+    .store_uint(open_access, 1)
+    .store_uint(has_authorized_caller, 1)
+    .store_slice(authorized_caller)
+    .store_uint(rate_limit_per_day, 32)
+    .store_ref(commitments)
+  .end_cell();
+  cell accounting = begin_cell()
+    .store_tomis(withdrawable_revenue)
+    .store_tomis(locked_storage_fees)
+    .store_tomis(pending_liability)
+    .store_tomis(refundable_liability)
+    .store_uint(call_day, 32)
+    .store_uint(calls_today, 32)
+  .end_cell();
+  cell dicts = begin_cell()
+    .store_dict(pending_requests)
+    .store_dict(refunds)
+    .store_dict(caller_live_counts)
+  .end_cell();
+  set_data(begin_cell()
+    .store_slice(owner)
+    .store_uint(active, 1)
+    .store_uint(next_request_id, 64)
+    .store_uint(pending_count, 32)
+    .store_uint(live_count, 32)
+    .store_ref(policy)
+    .store_ref(accounting)
+    .store_ref(dicts)
+  .end_cell());
+}
+
+;; ---- PendingRequest / Refund cell helpers --------------------------------
+
+cell pack_pending_request(slice caller, int price, int storage_fee, int cleanup_bounty,
+                           int response_deadline, int refund_claim_deadline, int policy_version,
+                           int request_hash, int terms_hash, int has_attestor,
+                           int attestor_pubkey) inline {
+  cell commitments = begin_cell()
+    .store_uint(request_hash, 256)
+    .store_uint(terms_hash, 256)
+    .store_uint(has_attestor, 1)
+    .store_uint(attestor_pubkey, 256)
+  .end_cell();
+  return begin_cell()
+    .store_slice(caller)
+    .store_tomis(price)
+    .store_tomis(storage_fee)
+    .store_tomis(cleanup_bounty)
+    .store_uint(response_deadline, 64)
+    .store_uint(refund_claim_deadline, 64)
+    .store_uint(policy_version, 32)
+    .store_ref(commitments)
+  .end_cell();
+}
+
+(slice, int, int, int, int, int, int, int, int, int, int) unpack_pending_request(cell c) inline {
+  slice ps = c.begin_parse();
+  slice caller = ps~load_msg_addr();
+  int price = ps~load_tomis();
+  int storage_fee = ps~load_tomis();
+  int cleanup_bounty = ps~load_tomis();
+  int response_deadline = ps~load_uint(64);
+  int refund_claim_deadline = ps~load_uint(64);
+  int policy_version = ps~load_uint(32);
+  slice cs = ps~load_ref().begin_parse();
+  ps.end_parse();
+  int request_hash = cs~load_uint(256);
+  int terms_hash = cs~load_uint(256);
+  int has_attestor = cs~load_uint(1);
+  int attestor_pubkey = cs~load_uint(256);
+  cs.end_parse();
+  return (caller, price, storage_fee, cleanup_bounty, response_deadline, refund_claim_deadline,
+    policy_version, request_hash, terms_hash, has_attestor, attestor_pubkey);
+}
+
+cell pack_refund(slice caller, int price, int storage_fee, int cleanup_bounty,
+                  int refund_claim_deadline) inline {
+  return begin_cell()
+    .store_slice(caller)
+    .store_tomis(price)
+    .store_tomis(storage_fee)
+    .store_tomis(cleanup_bounty)
+    .store_uint(refund_claim_deadline, 64)
+  .end_cell();
+}
+
+(slice, int, int, int, int) unpack_refund(cell c) inline {
+  slice rs = c.begin_parse();
+  slice caller = rs~load_msg_addr();
+  int price = rs~load_tomis();
+  int storage_fee = rs~load_tomis();
+  int cleanup_bounty = rs~load_tomis();
+  int refund_claim_deadline = rs~load_uint(64);
+  rs.end_parse();
+  return (caller, price, storage_fee, cleanup_bounty, refund_claim_deadline);
+}
+
+;; ---- per-caller live-entry counters --------------------------------------
+;; Keyed by slice_hash(caller) (a 256-bit hash of the full MsgAddressInt
+;; slice) rather than a hand-built (workchain, address) integer key, so
+;; there is no sign-extension ambiguity to get wrong for negative (e.g.
+;; masterchain -1) workchain IDs.
+
+int caller_live_count(cell caller_live_counts, slice caller) inline {
+  (slice val, int found) = caller_live_counts.udict_get?(256, slice_hash(caller));
+  return found ? val~load_uint(32) : 0;
+}
+
+cell caller_live_incr(cell caller_live_counts, slice caller) inline {
+  int count = caller_live_count(caller_live_counts, caller);
+  return caller_live_counts.udict_set_builder(256, slice_hash(caller),
+    begin_cell().store_uint(count + 1, 32));
+}
+
+cell caller_live_decr(cell caller_live_counts, slice caller) inline {
+  int count = caller_live_count(caller_live_counts, caller);
+  if (count <= 1) {
+    (cell d, _) = caller_live_counts.udict_delete?(256, slice_hash(caller));
+    return d;
+  }
+  return caller_live_counts.udict_set_builder(256, slice_hash(caller),
+    begin_cell().store_uint(count - 1, 32));
+}
+
+;; ---- recv_internal ---------------------------------------------------------
+
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
   var full_msg = in_msg_full.begin_parse();
   int flags = full_msg~load_uint(4);
-  if (flags & 1) { return (); }  ;; ignore bounced messages
+  if (flags & 1) { return (); } ;; ignore bounced messages (see design doc:
+                                 ;; the `bounced` flag is not a trustworthy
+                                 ;; restoration signal, so there is no
+                                 ;; special-case handling of it at all)
   slice sender = full_msg~load_msg_addr();
   if (in_msg.slice_empty?()) { return (); }
   int op = in_msg~load_uint(32);
   int query_id = in_msg~load_uint(64);
   query_id~impure_touch();
 
-  (slice owner, int has_authorized_caller, slice authorized_caller, int open_access, int active,
-   int price_per_call, int rate_limit_per_day, int call_day, int calls_today, int total_revenue,
-   int metadata_hash, int proof_scheme_hash, int last_request_hash, int last_response_hash,
-   int has_pending_response, int has_attestor, int attestor_pubkey) = load_state();
+  (slice owner, int active, int next_request_id, int pending_count, int live_count,
+   int policy_version, int price_per_call, int storage_fee, int cleanup_bounty, int response_sla,
+   int refund_claim_window, int open_access, int has_authorized_caller, slice authorized_caller,
+   int rate_limit_per_day, int metadata_hash, int proof_scheme_hash, int has_attestor,
+   int attestor_pubkey, int withdrawable_revenue, int locked_storage_fees, int pending_liability,
+   int refundable_liability, int call_day, int calls_today, cell pending_requests, cell refunds,
+   cell caller_live_counts) = load_state();
 
   if (op == op::call) {
     throw_unless(err::inactive, active == 1);
+    ;; Ported unchanged from the single-slot Service Actor: open access, or
+    ;; the single authorized caller.
     throw_unless(err::not_authorized,
       (open_access == 1) | (has_authorized_caller & equal_slice_bits(sender, authorized_caller)));
-    throw_unless(err::insufficient_payment, msg_value >= price_per_call);
-    ;; This contract tracks only the single latest request/response pair, not
-    ;; a per-caller queue: a second call() while the first is still
-    ;; unanswered would silently overwrite last_request_hash, so respond()
-    ;; could clear has_pending_response (and unfreeze the attestor) having
-    ;; only ever answered the second caller -- the first caller's paid-for
-    ;; response, and the attestor guarantee it relied on, would be lost with
-    ;; no on-chain trace. Calls must therefore be strictly serialized: only
-    ;; one may be outstanding at a time.
-    throw_unless(err::response_pending, has_pending_response == 0);
+    throw_unless(err::insufficient_payment, msg_value >= price_per_call + storage_fee);
+    throw_unless(err::capacity_exceeded_global, live_count < MAX_LIVE_GLOBAL);
+    throw_unless(err::capacity_exceeded_caller,
+      caller_live_count(caller_live_counts, sender) < MAX_LIVE_PER_CALLER);
+    throw_unless(err::request_id_overflow, next_request_id < (1 << 64) - 1);
+
+    ;; Also ported unchanged: a UTC-day counter reset on rollover, rejected
+    ;; once the daily cap is hit (0 = unlimited). This is a property of the
+    ;; service's call cadence, not of any individual request, so it lives
+    ;; here in top-level state rather than being snapshotted per request.
     int today = now() / 86400;
     if (today != call_day) {
       call_day = today;
@@ -162,81 +454,271 @@ const int err::no_pending_response = 1912;
     }
     throw_unless(err::rate_limited, (rate_limit_per_day == 0) | (calls_today < rate_limit_per_day));
     calls_today += 1;
-    ;; Only the quoted price is revenue; refund the excess so a caller who
-    ;; overpays (rounding, a wallet's gas-margin padding, a client bug) does
-    ;; not permanently lose the difference to the owner.
-    int overpayment = msg_value - price_per_call;
-    total_revenue += price_per_call;
+
     int request_hash = in_msg~load_uint(256);
     in_msg.end_parse();
+
+    int request_id = next_request_id;
+    int response_deadline = now() + response_sla;
+    int refund_claim_deadline = response_deadline + refund_claim_window;
+    int terms_hash = compute_terms_hash(policy_version, price_per_call, storage_fee,
+      cleanup_bounty, response_sla, refund_claim_window, metadata_hash, proof_scheme_hash,
+      has_attestor, attestor_pubkey);
+
+    pending_requests~udict_set_ref(64, request_id,
+      pack_pending_request(sender, price_per_call, storage_fee, cleanup_bounty, response_deadline,
+        refund_claim_deadline, policy_version, request_hash, terms_hash, has_attestor,
+        attestor_pubkey));
+    caller_live_counts = caller_live_incr(caller_live_counts, sender);
+
+    ;; Only price_per_call + storage_fee is ever owed; refund the excess so a
+    ;; caller who overpays (rounding, a wallet's gas-margin padding, a client
+    ;; bug) does not permanently lose the difference.
+    int overpayment = msg_value - price_per_call - storage_fee;
     if (overpayment > 0) {
       send_value(sender, overpayment, 1);
     }
-    save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
-      price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
-      proof_scheme_hash, request_hash, last_response_hash, 1, has_attestor, attestor_pubkey);
+
+    save_state(owner, active, next_request_id + 1, pending_count + 1, live_count + 1,
+      policy_version, price_per_call, storage_fee, cleanup_bounty, response_sla,
+      refund_claim_window, open_access, has_authorized_caller, authorized_caller,
+      rate_limit_per_day, metadata_hash, proof_scheme_hash, has_attestor, attestor_pubkey,
+      withdrawable_revenue, locked_storage_fees + storage_fee, pending_liability + price_per_call,
+      refundable_liability, call_day, calls_today, pending_requests, refunds, caller_live_counts);
     return ();
   }
 
   if (op == op::respond) {
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
-    ;; A response must answer an outstanding call -- otherwise it proves
-    ;; nothing about any specific paid request, and (before this check)
-    ;; could be used purely to clear has_pending_response and unfreeze the
-    ;; attestor without ever having answered anyone.
-    throw_unless(err::no_pending_response, has_pending_response == 1);
+    int request_id = in_msg~load_uint(64);
+    (cell entry, int found) = pending_requests.udict_get_ref?(64, request_id);
+    throw_unless(err::request_not_pending, found);
+    (slice caller, int price, int req_storage_fee, int req_cleanup_bounty, int response_deadline,
+     int refund_claim_deadline, int req_policy_version, int request_hash, int terms_hash,
+     int req_has_attestor, int req_attestor_pubkey) = unpack_pending_request(entry);
+    throw_unless(err::response_window_closed, now() < response_deadline);
+
     int response_hash = in_msg~load_uint(256);
-    if (has_attestor) {
-      ;; Additional, independent check: the configured attestor key must have
-      ;; signed this exact (last_request_hash, response_hash) pair,
-      ;; domain-bound to this contract's own address so the signature can't
-      ;; be replayed against another instance sharing the same attestor key
-      ;; -- and, critically, can't be replayed against a *different* request
-      ;; on this same instance. Binding only response_hash (as an earlier
-      ;; version of this check did) would let a signature the attestor gave
-      ;; for one request's response be replayed to "answer" a later,
-      ;; unrelated request whenever the owner happens to reuse the same
-      ;; response content, with no on-chain trace that the attestor never
-      ;; actually saw that later request. This never replaces the owner
-      ;; sender check above -- it is an extra requirement layered on top.
+    if (req_has_attestor) {
+      ;; Independent check on top of (never instead of) the owner sender
+      ;; check above: the attestor key snapshotted at call() time must have
+      ;; signed this exact request/response/terms/price/deadline tuple. See
+      ;; compute_response_domain_hash for what that binds and why.
       slice signature = in_msg~load_bits(512);
-      (int wc, int addr) = my_address().parse_std_addr();
-      int domain_hash = cell_hash(begin_cell()
-        .store_int(wc, 8).store_uint(addr, 256)
-        .store_uint(last_request_hash, 256).store_uint(response_hash, 256).end_cell());
+      int domain_hash = compute_response_domain_hash(caller, request_id, request_hash,
+        response_hash, terms_hash, price, response_deadline, refund_claim_deadline);
       throw_unless(err::bad_response_signature,
-        check_signature(domain_hash, signature, attestor_pubkey));
+        check_signature(domain_hash, signature, req_attestor_pubkey));
     }
     in_msg.end_parse();
-    save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
-      price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
-      proof_scheme_hash, last_request_hash, response_hash, 0, has_attestor, attestor_pubkey);
+
+    (pending_requests, _) = pending_requests.udict_delete?(64, request_id);
+    caller_live_counts = caller_live_decr(caller_live_counts, caller);
+
+    save_state(owner, active, next_request_id, pending_count - 1, live_count - 1, policy_version,
+      price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
+      has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
+      proof_scheme_hash, has_attestor, attestor_pubkey, withdrawable_revenue + price +
+      req_storage_fee, locked_storage_fees - req_storage_fee, pending_liability - price,
+      refundable_liability, call_day, calls_today, pending_requests, refunds, caller_live_counts);
+    return ();
+  }
+
+  if (op == op::expire) {
+    int request_id = in_msg~load_uint(64);
+    in_msg.end_parse();
+    (cell entry, int found) = pending_requests.udict_get_ref?(64, request_id);
+    throw_unless(err::request_not_pending, found);
+    (slice caller, int price, int req_storage_fee, int req_cleanup_bounty, int response_deadline,
+     int refund_claim_deadline, int req_policy_version, int request_hash, int terms_hash,
+     int req_has_attestor, int req_attestor_pubkey) = unpack_pending_request(entry);
+    ;; Permissionless. Both deadlines were fixed at call() time and never
+    ;; move, regardless of how late expire() is actually called -- see the
+    ;; design doc's Request Lifecycle section.
+    throw_unless(err::expire_too_early, response_deadline <= now());
+    throw_unless(err::expire_too_late, now() < refund_claim_deadline);
+
+    (pending_requests, _) = pending_requests.udict_delete?(64, request_id);
+    refunds~udict_set_ref(64, request_id,
+      pack_refund(caller, price, req_storage_fee, req_cleanup_bounty, refund_claim_deadline));
+    ;; live_count/caller_live_count are unchanged: moving pending -> refundable
+    ;; does not release capacity (see design doc's DoS-controls rationale).
+
+    save_state(owner, active, next_request_id, pending_count - 1, live_count, policy_version,
+      price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
+      has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
+      proof_scheme_hash, has_attestor, attestor_pubkey, withdrawable_revenue, locked_storage_fees,
+      pending_liability - price, refundable_liability + price, call_day, calls_today,
+      pending_requests, refunds, caller_live_counts);
+    return ();
+  }
+
+  if (op == op::claim_refund) {
+    int request_id = in_msg~load_uint(64);
+    slice destination = in_msg~load_msg_addr();
+    in_msg.end_parse();
+    (cell entry, int found) = refunds.udict_get_ref?(64, request_id);
+    throw_unless(err::refund_not_found, found);
+    (slice caller, int price, int req_storage_fee, int req_cleanup_bounty,
+     int refund_claim_deadline) = unpack_refund(entry);
+    throw_unless(err::not_refund_caller, equal_slice_bits(sender, caller));
+    throw_unless(err::refund_claim_expired, now() < refund_claim_deadline);
+    ;; The only failure mode this design claims to handle atomically: the
+    ;; contract cannot afford to send `price`. Checked, and the entry left
+    ;; untouched on failure, before any state mutation below. Destination-side
+    ;; failure after this point is out of scope -- see the design doc.
+    throw_unless(err::insufficient_balance, price <= get_balance().pair_first());
+
+    (refunds, _) = refunds.udict_delete?(64, request_id);
+    caller_live_counts = caller_live_decr(caller_live_counts, caller);
+    if (price > 0) {
+      send_value(destination, price, 1);
+    }
+
+    save_state(owner, active, next_request_id, pending_count, live_count - 1, policy_version,
+      price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
+      has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
+      proof_scheme_hash, has_attestor, attestor_pubkey, withdrawable_revenue + req_storage_fee,
+      locked_storage_fees - req_storage_fee, pending_liability, refundable_liability - price,
+      call_day, calls_today, pending_requests, refunds, caller_live_counts);
+    return ();
+  }
+
+  if (op == op::sweep_expired_request) {
+    ;; Permissionless. Accepts a request_id found in EITHER dictionary: a
+    ;; missing or late expire() call must not block cleanup once the full
+    ;; rights window has lapsed -- see the design doc's Request Lifecycle.
+    int request_id = in_msg~load_uint(64);
+    in_msg.end_parse();
+
+    (cell pending_entry, int in_pending) = pending_requests.udict_get_ref?(64, request_id);
+    (cell refund_entry, int in_refunds) = refunds.udict_get_ref?(64, request_id);
+    throw_unless(err::request_not_live, in_pending | in_refunds);
+
+    slice caller = null();
+    int price = 0;
+    int req_storage_fee = 0;
+    int req_cleanup_bounty = 0;
+    int refund_claim_deadline = 0;
+    int came_from_pending = 0;
+    if (in_pending) {
+      (slice p_caller, int p_price, int p_storage_fee, int p_cleanup_bounty,
+       int p_response_deadline, int p_refund_claim_deadline, int p_policy_version,
+       int p_request_hash, int p_terms_hash, int p_has_attestor, int p_attestor_pubkey)
+        = unpack_pending_request(pending_entry);
+      caller = p_caller;
+      price = p_price;
+      req_storage_fee = p_storage_fee;
+      req_cleanup_bounty = p_cleanup_bounty;
+      refund_claim_deadline = p_refund_claim_deadline;
+      came_from_pending = 1;
+    } else {
+      (slice r_caller, int r_price, int r_storage_fee, int r_cleanup_bounty,
+       int r_refund_claim_deadline) = unpack_refund(refund_entry);
+      caller = r_caller;
+      price = r_price;
+      req_storage_fee = r_storage_fee;
+      req_cleanup_bounty = r_cleanup_bounty;
+      refund_claim_deadline = r_refund_claim_deadline;
+    }
+    throw_unless(err::sweep_too_early, now() >= refund_claim_deadline);
+    ;; Same atomic-failure-only guarantee as claim_refund, applied to the
+    ;; bounty send: abort before mutating state if the contract cannot
+    ;; afford it. A later destination-side failure does not reopen the
+    ;; deleted entry -- sweepers should call from an address that can
+    ;; receive value reliably.
+    throw_unless(err::insufficient_balance, req_cleanup_bounty <= get_balance().pair_first());
+
+    if (came_from_pending) {
+      (pending_requests, _) = pending_requests.udict_delete?(64, request_id);
+      pending_count -= 1;
+      pending_liability -= price;
+    } else {
+      (refunds, _) = refunds.udict_delete?(64, request_id);
+      refundable_liability -= price;
+    }
+    caller_live_counts = caller_live_decr(caller_live_counts, caller);
+    withdrawable_revenue = withdrawable_revenue + price + req_storage_fee - req_cleanup_bounty;
+    locked_storage_fees -= req_storage_fee;
+    if (req_cleanup_bounty > 0) {
+      send_value(sender, req_cleanup_bounty, 1);
+    }
+
+    save_state(owner, active, next_request_id, pending_count, live_count - 1, policy_version,
+      price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
+      has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
+      proof_scheme_hash, has_attestor, attestor_pubkey, withdrawable_revenue, locked_storage_fees,
+      pending_liability, refundable_liability, call_day, calls_today, pending_requests, refunds,
+      caller_live_counts);
     return ();
   }
 
   if (op == op::update_policy) {
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
-    throw_unless(err::inactive, active == 1);
-    ;; A caller who paid for the outstanding request relied on the policy
-    ;; (price, access rule, and especially proof_scheme_hash/metadata_hash --
-    ;; what the response is supposed to be verifiable against) in force at
-    ;; call time. Letting the owner change any of that before answering would
-    ;; let it retroactively redefine what the response has to satisfy.
-    throw_unless(err::response_pending, has_pending_response == 0);
     int new_price_per_call = in_msg~load_tomis();
-    int new_rate_limit_per_day = in_msg~load_uint(32);
+    int new_storage_fee = in_msg~load_tomis();
+    int new_cleanup_bounty = in_msg~load_tomis();
+    int new_response_sla = in_msg~load_uint(32);
+    int new_refund_claim_window = in_msg~load_uint(32);
+    int new_active = in_msg~load_uint(1);
     int new_open_access = in_msg~load_uint(1);
     int new_has_authorized_caller = in_msg~load_uint(1);
     slice new_authorized_caller = in_msg~load_msg_addr();
+    int new_rate_limit_per_day = in_msg~load_uint(32);
     slice meta = in_msg~load_ref().begin_parse();
     int new_metadata_hash = meta~load_uint(256);
     int new_proof_scheme_hash = meta~load_uint(256);
     meta.end_parse();
     in_msg.end_parse();
-    save_state(owner, new_has_authorized_caller, new_authorized_caller, new_open_access, active,
-      new_price_per_call, new_rate_limit_per_day, call_day, calls_today, total_revenue,
-      new_metadata_hash, new_proof_scheme_hash, last_request_hash, last_response_hash,
-      has_pending_response, has_attestor, attestor_pubkey);
+
+    throw_unless(err::invalid_response_sla,
+      (new_response_sla >= MIN_RESPONSE_SLA) & (new_response_sla <= MAX_RESPONSE_SLA));
+    throw_unless(err::invalid_refund_claim_window,
+      (new_refund_claim_window >= MIN_REFUND_CLAIM_WINDOW) &
+      (new_refund_claim_window <= MAX_REFUND_CLAIM_WINDOW));
+    throw_unless(err::invalid_cleanup_bounty,
+      (new_cleanup_bounty >= MINIMUM_CLEANUP_BOUNTY) &
+      (new_cleanup_bounty <= MAXIMUM_CLEANUP_BOUNTY));
+    throw_unless(err::insufficient_storage_fee,
+      new_storage_fee >= MINIMUM_STORAGE_FEE + new_cleanup_bounty);
+
+    ;; Per-request policy/attestor snapshots (see call()/compute_terms_hash)
+    ;; mean already-outstanding requests are entirely unaffected by this --
+    ;; unlike the single-slot predecessor, update_policy never needs to
+    ;; freeze while requests are pending. (open_access/authorized_caller/
+    ;; rate_limit_per_day are admission-time gates, not snapshotted at all,
+    ;; so a change here takes effect on the very next call().)
+    save_state(owner, new_active, next_request_id, pending_count, live_count,
+      policy_version + 1, new_price_per_call, new_storage_fee, new_cleanup_bounty,
+      new_response_sla, new_refund_claim_window, new_open_access, new_has_authorized_caller,
+      new_authorized_caller, new_rate_limit_per_day, new_metadata_hash, new_proof_scheme_hash,
+      has_attestor, attestor_pubkey, withdrawable_revenue, locked_storage_fees, pending_liability,
+      refundable_liability, call_day, calls_today, pending_requests, refunds, caller_live_counts);
+    return ();
+  }
+
+  if (op == op::rotate_attestor_key) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    int new_attestor_pubkey = in_msg~load_uint(256);
+    in_msg.end_parse();
+    save_state(owner, active, next_request_id, pending_count, live_count, policy_version,
+      price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
+      has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
+      proof_scheme_hash, 1, new_attestor_pubkey, withdrawable_revenue, locked_storage_fees,
+      pending_liability, refundable_liability, call_day, calls_today, pending_requests, refunds,
+      caller_live_counts);
+    return ();
+  }
+
+  if (op == op::revoke_attestor) {
+    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    in_msg.end_parse();
+    save_state(owner, active, next_request_id, pending_count, live_count, policy_version,
+      price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
+      has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
+      proof_scheme_hash, 0, attestor_pubkey, withdrawable_revenue, locked_storage_fees,
+      pending_liability, refundable_liability, call_day, calls_today, pending_requests, refunds,
+      caller_live_counts);
     return ();
   }
 
@@ -244,81 +726,83 @@ const int err::no_pending_response = 1912;
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     int amount = in_msg~load_tomis();
     in_msg.end_parse();
-    throw_unless(err::insufficient_revenue, amount <= total_revenue);
-    throw_unless(err::insufficient_balance, amount <= get_balance().pair_first());
+    int withdrawable_now = min(withdrawable_revenue,
+      get_balance().pair_first() - pending_liability - refundable_liability
+        - MINIMUM_OPERATING_RESERVE);
+    throw_unless(err::insufficient_revenue, amount <= withdrawable_now);
     if (amount > 0) {
       send_value(owner, amount, 1);
     }
-    save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
-      price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue - amount,
-      metadata_hash, proof_scheme_hash, last_request_hash, last_response_hash,
-      has_pending_response, has_attestor, attestor_pubkey);
-    return ();
-  }
-
-  if (op == op::deactivate) {
-    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
-    throw_unless(err::inactive, active == 1);
-    in_msg.end_parse();
-    send_value(owner, 0, 128);
-    save_state(owner, has_authorized_caller, authorized_caller, open_access, 0, price_per_call,
-      rate_limit_per_day, call_day, calls_today, 0, metadata_hash, proof_scheme_hash,
-      last_request_hash, last_response_hash, has_pending_response, has_attestor, attestor_pubkey);
-    return ();
-  }
-
-  if (op == op::reactivate) {
-    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
-    throw_unless(err::already_active, active == 0);
-    in_msg.end_parse();
-    save_state(owner, has_authorized_caller, authorized_caller, open_access, 1, price_per_call,
-      rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash, proof_scheme_hash,
-      last_request_hash, last_response_hash, has_pending_response, has_attestor, attestor_pubkey);
-    return ();
-  }
-
-  if (op == op::rotate_attestor_key) {
-    ;; Owner-only: set or replace the attestor_pubkey respond checks against.
-    ;; Purely local state -- no cross-contract messaging.
-    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
-    ;; A configured attestor is frozen while a call is awaiting its respond():
-    ;; swapping in a key the owner controls right before answering would let
-    ;; them forge the independent check a caller relied on when it paid.
-    ;; Outside a pending window (including before the first call, or any time
-    ;; after the last call has been answered) rotation is unrestricted -- a
-    ;; long-lived actor must be able to recover from a lost or compromised
-    ;; attestor key, unlike a single-use task/dispute that always reaches a
-    ;; terminal state.
-    throw_unless(err::attestor_frozen, (has_attestor == 0) | (has_pending_response == 0));
-    attestor_pubkey = in_msg~load_uint(256);
-    in_msg.end_parse();
-    has_attestor = 1;
-    save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
-      price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
-      proof_scheme_hash, last_request_hash, last_response_hash, has_pending_response,
-      has_attestor, attestor_pubkey);
-    return ();
-  }
-
-  if (op == op::revoke_attestor) {
-    ;; Owner-only: drop the attestation requirement -- respond reverts to
-    ;; owner-sender-authorization-only. Frozen under the same pending-response
-    ;; condition as rotation, for the same reason.
-    throw_unless(err::not_owner, equal_slice_bits(sender, owner));
-    throw_unless(err::attestor_frozen, (has_attestor == 0) | (has_pending_response == 0));
-    in_msg.end_parse();
-    has_attestor = 0;
-    save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
-      price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
-      proof_scheme_hash, last_request_hash, last_response_hash, has_pending_response,
-      has_attestor, attestor_pubkey);
+    save_state(owner, active, next_request_id, pending_count, live_count, policy_version,
+      price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
+      has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,
+      proof_scheme_hash, has_attestor, attestor_pubkey, withdrawable_revenue - amount,
+      locked_storage_fees, pending_liability, refundable_liability, call_day, calls_today,
+      pending_requests, refunds, caller_live_counts);
     return ();
   }
 
   throw(err::unknown_op);
 }
 
-(slice, int, slice, int, int, int, int, int, int, int, int, int, int, int, int, int, int)
-get_service_actor_data() method_id {
-  return load_state();
+;; ---- getters ---------------------------------------------------------------
+
+(slice, int, int, int, int, int, int, int, int, int, slice, int, int, int, int, int, int, int, int,
+ int, int, int, int, int, int) get_service_data() method_id {
+  (slice owner, int active, int next_request_id, int pending_count, int live_count,
+   int policy_version, int price_per_call, int storage_fee, int cleanup_bounty, int response_sla,
+   int refund_claim_window, int open_access, int has_authorized_caller, slice authorized_caller,
+   int rate_limit_per_day, int metadata_hash, int proof_scheme_hash, int has_attestor,
+   int attestor_pubkey, int withdrawable_revenue, int locked_storage_fees, int pending_liability,
+   int refundable_liability, int call_day, int calls_today, cell pending_requests, cell refunds,
+   cell caller_live_counts) = load_state();
+  return (owner, active, policy_version, price_per_call, storage_fee, cleanup_bounty,
+    response_sla, refund_claim_window, open_access, has_authorized_caller, authorized_caller,
+    rate_limit_per_day, metadata_hash, proof_scheme_hash, has_attestor, attestor_pubkey,
+    next_request_id, pending_count, live_count, withdrawable_revenue, locked_storage_fees,
+    pending_liability, refundable_liability, call_day, calls_today);
+}
+
+(int, slice, int, int, int, int, int, int, int, int, int, int) get_request(int request_id) method_id {
+  (_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, cell pending_requests,
+   _, _) = load_state();
+  (cell entry, int found) = pending_requests.udict_get_ref?(64, request_id);
+  if (~ found) {
+    return (0, null(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  }
+  (slice caller, int price, int storage_fee, int cleanup_bounty, int response_deadline,
+   int refund_claim_deadline, int policy_version, int request_hash, int terms_hash,
+   int has_attestor, int attestor_pubkey) = unpack_pending_request(entry);
+  return (1, caller, price, storage_fee, cleanup_bounty, response_deadline, refund_claim_deadline,
+    policy_version, request_hash, terms_hash, has_attestor, attestor_pubkey);
+}
+
+(int, slice, int, int, int, int) get_refund(int request_id) method_id {
+  (_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, cell refunds, _)
+    = load_state();
+  (cell entry, int found) = refunds.udict_get_ref?(64, request_id);
+  if (~ found) {
+    return (0, null(), 0, 0, 0, 0);
+  }
+  (slice caller, int price, int storage_fee, int cleanup_bounty, int refund_claim_deadline)
+    = unpack_refund(entry);
+  return (1, caller, price, storage_fee, cleanup_bounty, refund_claim_deadline);
+}
+
+int get_pending_count() method_id {
+  (_, _, _, int pending_count, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
+   _) = load_state();
+  return pending_count;
+}
+
+int get_live_count() method_id {
+  (_, _, _, _, int live_count, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)
+    = load_state();
+  return live_count;
+}
+
+int get_caller_live_count(slice caller) method_id {
+  (_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
+   cell caller_live_counts) = load_state();
+  return caller_live_count(caller_live_counts, caller);
 }

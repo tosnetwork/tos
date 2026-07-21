@@ -339,7 +339,7 @@ async fn decode_and_store(
         }
         "service_actor" => {
             let stack =
-                chain_provider.run_get_method(address.to_owned(), "get_service_actor_data", vec![]).await?;
+                chain_provider.run_get_method(address.to_owned(), "get_service_data", vec![]).await?;
             let data = ServiceActorContract::decode_data(&stack)?;
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
@@ -478,7 +478,9 @@ struct ServiceActorRecordDto {
     status: String,
     price_per_call: u64,
     rate_limit_per_day: u32,
-    total_revenue: u64,
+    withdrawable_revenue: u64,
+    pending_count: u32,
+    live_count: u32,
 }
 
 impl From<&contracts::ServiceActorData> for ServiceActorRecordDto {
@@ -490,7 +492,9 @@ impl From<&contracts::ServiceActorData> for ServiceActorRecordDto {
             status: if data.active { "active" } else { "inactive" }.to_owned(),
             price_per_call: data.price_per_call,
             rate_limit_per_day: data.rate_limit_per_day,
-            total_revenue: data.total_revenue,
+            withdrawable_revenue: data.withdrawable_revenue,
+            pending_count: data.pending_count,
+            live_count: data.live_count,
         }
     }
 }
@@ -587,20 +591,28 @@ mod tests {
     fn service_actor_record_dto_deserializes_into_the_http_service_actor_dto() {
         let data = contracts::ServiceActorData {
             owner: addr(1),
-            authorized_caller: Some(addr(2)),
-            open_access: false,
             active: true,
+            policy_version: 0,
             price_per_call: 10,
+            storage_fee: 100_000_000,
+            cleanup_bounty: 100_000_000,
+            response_sla: 3_600,
+            refund_claim_window: 3_600,
+            open_access: false,
+            authorized_caller: Some(addr(2)),
             rate_limit_per_day: 100,
-            call_day: 0,
-            calls_today: 0,
-            total_revenue: 0,
             metadata_hash: [0; 32],
             proof_scheme_hash: [0; 32],
-            last_request_hash: [0; 32],
-            last_response_hash: [0; 32],
-            has_pending_response: false,
             attestor_pubkey: None,
+            next_request_id: 0,
+            pending_count: 0,
+            live_count: 0,
+            withdrawable_revenue: 0,
+            locked_storage_fees: 0,
+            pending_liability: 0,
+            refundable_liability: 0,
+            call_day: 0,
+            calls_today: 0,
         };
         let json = serde_json::to_string(&ServiceActorRecordDto::from(&data)).unwrap();
         let dto = crate::http::agent_query_api::indexed_dto::<ServiceActorDto>(&json, "0:aa", false);
