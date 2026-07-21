@@ -51,6 +51,8 @@ The active policy contains:
 
 - `policy_version:uint32`
 - `price_per_call:Coins`
+- `storage_fee:Coins`
+- `cleanup_bounty:Coins`
 - `response_sla:uint32`
 - `refund_claim_window:uint32`
 - `metadata_hash:bits256`
@@ -72,13 +74,31 @@ both. For each request:
 
 ```text
 response_deadline = now() + response_sla
-terms_hash = hash(policy_version || price_per_call || response_sla ||
-                  refund_claim_window || metadata_hash || proof_scheme_hash)
+refund_claim_deadline = response_deadline + refund_claim_window
+terms_hash = hash(policy_version || price_per_call || storage_fee ||
+                  cleanup_bounty || response_sla || refund_claim_window ||
+                  metadata_hash || proof_scheme_hash || has_attestor ||
+                  current_attestor_pubkey)
 ```
 
 The terms and attestor key are snapshotted when the request is accepted. Policy
 and key changes affect only later requests and do not require a global freeze
-while requests are pending.
+while requests are pending. When `has_attestor = 0`, the canonical
+`current_attestor_pubkey` value is zero; this prevents semantically equivalent
+no-attestor policies from producing different `terms_hash` values.
+
+The following protocol constants are not owner-configurable policy fields:
+
+- `MINIMUM_OPERATING_RESERVE:Coins`, the balance that must remain after every
+  value-moving operation
+- `MINIMUM_STORAGE_FEE:Coins`, the minimum fixed fee for one live entry
+- `MINIMUM_CLEANUP_BOUNTY:Coins`, a strictly positive lower bound for sweeper
+  compensation
+- `MAXIMUM_CLEANUP_BOUNTY:Coins`, an upper bound preventing abusive policies
+
+They are network parameters shared by FunC, Rust builders, CLI validation, and
+tests. Changing them requires the normal protocol configuration process; a
+Service Actor owner cannot lower or bypass them.
 
 ## Persistent State
 
@@ -90,8 +110,10 @@ pending_requests:(HashmapE 64 ^PendingRequest)
 pending_request$_
   caller:MsgAddressInt
   price:Coins
-  storage_deposit:Coins
+  storage_fee:Coins
+  cleanup_bounty:Coins
   response_deadline:uint64
+  refund_claim_deadline:uint64
   policy_version:uint32
   commitments:^PendingCommitments
 = PendingRequest;
@@ -105,9 +127,9 @@ pending_commitments$_
 ```
 
 The split is intentional because a TVM cell is limited to 1023 bits. The root
-request cell is approximately 363 fixed bits (`MsgAddressInt` + two `uint`
-fields) plus two variable-length `Coins` fields (`price`, `storage_deposit`,
-each up to 124 bits), comfortably under the limit even at their maximum
+request cell is approximately 427 fixed bits (`MsgAddressInt` + three `uint`
+fields) plus three variable-length `Coins` fields (`price`, `storage_fee`, and
+`cleanup_bounty`, each up to 124 bits), comfortably under the limit even at their maximum
 encoded size. The commitment cell is 769 bits. Presence in `pending_requests`
 is the pending status, so no status field is stored. Creation time is
 available from chain history and is not duplicated in contract state.
@@ -120,41 +142,46 @@ refunds:(HashmapE 64 ^Refund)
 
 refund$_
   caller:MsgAddressInt
-  amount:Coins
-  storage_deposit:Coins
+  price:Coins
+  storage_fee:Coins
+  cleanup_bounty:Coins
   refund_claim_deadline:uint64
 = Refund;
 ```
 
-`storage_deposit` moves with the entry: it is collected at `call` time as part
-of `msg_value`, carried into the `Refund` record by `expire` (the refund entry
-needs storage until it is claimed or swept, exactly like the pending entry
-did), and returned to whichever party's action finally deletes the entry --
-see Financial Accounting. Completed (`responded`/`refunded`/swept) history
-belongs in the chain indexer rather than permanent contract storage; this
-contract never stores a terminal-state record for a resolved request.
+`storage_fee` moves with the entry. It is a fixed, non-refundable service fee
+collected at `call` time to fund storage, cleanup, and execution. It remains
+locked while the entry is live and becomes owner revenue only when the entry
+is deleted. It is carried into the `Refund` record by `expire`; only `price`,
+not `storage_fee`, is refundable. Completed (`responded`/`refunded`/swept)
+history belongs in the chain indexer rather than permanent contract storage;
+this contract never stores a terminal-state record for a resolved request.
 
 ## Request Lifecycle
 
 ```text
 Pending --respond--------------------------------> Responded
 Pending --expire--> Refundable --claim_refund-----> Refunded
-                                --refund_claim_deadline passed--> Swept
+Pending/Refundable --refund_claim_deadline reached--> Swept
 ```
 
 - `call` rejects an inactive service, invalid payment, invalid policy, capacity
   excess, or malformed body. It allocates an ID and stores the request snapshot.
-- `respond` verifies that the request exists, is before its deadline, and has a
+- `respond` verifies that the request exists, `now() < response_deadline`, and has a
   valid request-bound attestation when an attestor is configured. It removes
   the pending entry and recognizes the request price as owner revenue.
-- `expire` is permissionless after the deadline. It removes the pending entry
-  and creates a caller-owned refund credit with
-  `refund_claim_deadline = now() + refund_claim_window` (the window snapshotted
-  from the policy in force when the request was accepted).
-- `claim_refund` is initiated by the caller before `refund_claim_deadline` and
-  sends the credit to a caller-chosen destination.
-- `sweep_unclaimed_refund` is permissionless after `refund_claim_deadline`. It
-  moves an unclaimed refund into `withdrawable_revenue` -- the same
+- `expire` is permissionless when `response_deadline <= now() <
+  refund_claim_deadline`. It removes the pending entry and creates a
+  caller-owned refund credit. Both deadlines were fixed when `call` was
+  accepted; calling `expire` later never extends either one.
+- `claim_refund` is initiated by the caller while `now() <
+  refund_claim_deadline` and sends `price` to a caller-chosen destination.
+- `sweep_expired_request` is permissionless when `now() >=
+  refund_claim_deadline`. It accepts a `request_id` found in either
+  `pending_requests` or `refunds`, deletes that entry, and moves the unclaimed
+  price and the locked storage fee, less `cleanup_bounty`, into
+  `withdrawable_revenue`. Supporting both dictionaries prevents a missing or
+  late `expire` call from blocking cleanup. This is the same
   finality-by-inaction pattern already used by Task Escrow's no-verifier
   `timeout()`: a bounded window to act is given, and unclaimed value defaults
   to the other party rather than staying stuck indefinitely.
@@ -193,7 +220,7 @@ succeeds. Two distinct failure modes need different handling:
    `call` time narrows *who* can exploit this but does not close it, since the
    caller and a malicious destination can be the same party.
 
-   `claim_refund` therefore sends once, at the caller's chosen destination and
+   `claim_refund` therefore sends `price` once, at the caller's chosen destination and
    risk. If delivery genuinely fails, any value the protocol does bounce back
    arrives as ordinary balance on this contract -- it is not lost -- but it is
    not automatically re-attributed to that specific request. Recovering it
@@ -204,9 +231,8 @@ succeeds. Two distinct failure modes need different handling:
    wallet address, not an arbitrary contract).
 
 Pull-based refunds keep expiration permissionless without allowing an
-untrusted cleaner to choose the refund destination. A bounded cleanup bounty
-may be added later if operational testing shows that expiration or sweeping
-needs one.
+untrusted cleaner to choose the refund destination. The bounded cleanup bounty
+is mandatory because time alone cannot execute a TVM contract.
 
 ## Financial Accounting
 
@@ -214,60 +240,88 @@ The contract tracks these disjoint balances:
 
 - `pending_liability`: prices held for unanswered requests.
 - `refundable_liability`: expired prices waiting to be claimed.
-- `withdrawable_revenue`: prices (and swept storage deposits) earned or
+- `withdrawable_revenue`: prices and unlocked storage fees earned or
   reclaimed by the owner.
-- `storage_reserve`: the sum of every live entry's `storage_deposit`.
+- `locked_storage_fees`: fixed, non-refundable storage fees that cannot become
+  owner-withdrawable revenue while their entries remain live.
 
 At every committed state transition:
 
 ```text
 contract_balance >= pending_liability
                   + refundable_liability
-                  + withdrawable_revenue
-                  + storage_reserve
+                  + MINIMUM_OPERATING_RESERVE
 ```
 
-`storage_deposit` is collected once, at `call` time, and travels with its
-entry through `pending_requests` into `refunds` if the request expires. It is
-never re-derived or re-estimated later; it settles exactly once, in the same
-transition that deletes the entry it was backing:
+`withdrawable_revenue` is a nominal earned-revenue counter, not an additional
+liability. Storage and execution fees naturally consume owner revenue. The
+amount available to withdraw at any instant is therefore:
+
+```text
+withdrawable_now = min(withdrawable_revenue,
+                       contract_balance - pending_liability
+                                        - refundable_liability
+                                        - MINIMUM_OPERATING_RESERVE)
+```
+
+`storage_fee` is collected once and travels with its entry through
+`pending_requests` into `refunds` if the request expires. It is not a debt owed
+back to the caller. While the entry is live, the corresponding amount is
+tracked in `locked_storage_fees` and cannot be withdrawn. When the entry is
+deleted, the nominal fee is unlocked into `withdrawable_revenue`. Actual TVM
+storage fees reduce the contract's real balance independently of these nominal
+counters, so every withdrawal remains capped by `get_balance()` and the
+liabilities plus `MINIMUM_OPERATING_RESERVE` invariant:
 
 ```text
 call:                    pending_liability    += price
-                         storage_reserve      += storage_deposit
-                         (msg_value must cover price + storage_deposit + gas)
+                         locked_storage_fees  += storage_fee
+                         (msg_value must cover price + storage_fee + gas)
 
 respond:                 pending_liability    -= price
-                         withdrawable_revenue += price
-                         storage_reserve      -= storage_deposit
-                         (storage_deposit is returned to the caller: the
-                          storage obligation it covered has ended)
+                         locked_storage_fees  -= storage_fee
+                         withdrawable_revenue += price + storage_fee
 
 expire:                  pending_liability    -= price
                          refundable_liability += price
-                         (storage_reserve unchanged: the entry still exists,
+                         (locked_storage_fees unchanged: the entry still exists,
                           now inside `refunds` instead of `pending_requests`)
 
 claim_refund:            refundable_liability -= price
-                         storage_reserve      -= storage_deposit
-                         (price + storage_deposit both sent to the caller's
-                          chosen destination in one message)
+                         locked_storage_fees  -= storage_fee
+                         withdrawable_revenue += storage_fee
+                         (only price is sent to the chosen destination)
 
-sweep_unclaimed_refund:  refundable_liability -= price
-                         storage_reserve      -= storage_deposit
-                         withdrawable_revenue += price + storage_deposit
-                         (no outbound message -- see below)
+sweep refundable entry:  refundable_liability -= price
+                         locked_storage_fees  -= storage_fee
+                         withdrawable_revenue += price + storage_fee
+                                                 - cleanup_bounty
+                         (cleanup_bounty is sent to the sweeper)
+
+sweep pending request:   pending_liability    -= price
+                         locked_storage_fees  -= storage_fee
+                         withdrawable_revenue += price + storage_fee
+                                                 - cleanup_bounty
+                         (valid only at or after refund_claim_deadline)
 
 withdraw:                withdrawable_revenue -= amount
 ```
 
-`sweep_unclaimed_refund` deliberately does not attempt to return the deposit
-to the non-claiming caller: doing so would be another push-based send with
-the exact cross-transaction delivery problem described in Request Lifecycle,
-reintroduced for a case the design is specifically trying to close out
-cleanly. Once `refund_claim_deadline` has passed without a claim, both the
-price and the now-unneeded storage deposit fold into `withdrawable_revenue`
-as a pure accounting move with no outbound action.
+`cleanup_bounty` is policy-snapshotted, chain-bounded, and included within
+`storage_fee`, not an additional liability. The chain enforces all of:
+
+```text
+MINIMUM_CLEANUP_BOUNTY <= cleanup_bounty <= MAXIMUM_CLEANUP_BOUNTY
+storage_fee >= MINIMUM_STORAGE_FEE + cleanup_bounty
+MINIMUM_CLEANUP_BOUNTY > 0
+```
+
+A successful sweep pays the bounty to `msg_sender`; the remainder of the fee
+and the unclaimed price become owner revenue. The sweep
+uses action-failure semantics that abort the transaction if the contract
+cannot create the bounty send. As with refund delivery, later destination-side
+failure does not reopen the deleted entry; sweepers should call from an address
+that can receive value reliably.
 
 Only `withdrawable_revenue` can be withdrawn by the owner. A payment above the
 request price is returned to the caller at `call` time and never classified
@@ -278,17 +332,18 @@ not only against the internal `withdrawable_revenue` counter: passive TVM
 storage-fee accrual reduces the real balance over time independently of any
 message, so a withdrawal that the counter alone would allow could still leave
 `get_balance()` below what `pending_liability + refundable_liability +
-storage_reserve` requires. Every value-moving operation must check the
+MINIMUM_OPERATING_RESERVE` requires. Every value-moving operation must check the
 invariant against the real balance, matching the existing `get_balance()`
 pre-payout discipline already used elsewhere in this contract family.
 
-`pending_liability` has a bounded lifetime per entry (`response_sla`, then
-`expire` moves it to `refundable_liability`), and `refundable_liability` is
-now also bounded (`refund_claim_window`, then `sweep_unclaimed_refund` closes
-it out). No entry can accumulate storage-rent exposure indefinitely: every
-entry's maximum lifetime is `response_sla + refund_claim_window`, and
-`storage_deposit` must be sized against that fixed, finite duration rather
-than an open-ended one.
+The caller's response and refund rights have a fixed maximum window of
+`response_sla + refund_claim_window`. Time alone does not execute a TVM
+contract, however, so this is a bounded rights window rather than a guarantee
+that storage is physically deleted by that time. A permissionless sweep can
+delete either pending or refundable entries after the fixed deadline. The
+initial `storage_fee` must include a bounded cleanup bounty paid to the sweep
+caller, so cleanup does not depend on owner or caller cooperation. The owner
+must also operate a sweeper as part of normal service operations.
 
 ## Attestation Domain
 
@@ -296,8 +351,15 @@ An attestor response signature commits to all security-relevant request data:
 
 ```text
 service_address || request_id || caller_address || request_hash ||
-response_hash || terms_hash || price || response_deadline
+response_hash || terms_hash || price || response_deadline ||
+refund_claim_deadline
 ```
+
+`refund_claim_deadline` can be derived from `response_deadline` and the
+snapshotted claim window inside `terms_hash`, just as `price` is also committed
+both directly and through `terms_hash`. Both are intentionally repeated so the
+signed domain is self-contained for verifiers and does not rely on reconstructing
+security-critical values from a nested commitment.
 
 The implementation must define one canonical cell serialization for this
 domain and use it identically in FunC, Rust helpers, `tosctl`, tests, and
@@ -321,18 +383,21 @@ migration would defeat the snapshot guarantee.
 
 The policy and contract configuration enforce:
 
-- `max_pending_global`
-- `max_pending_per_caller`
+- `max_live_global`, counting pending and refundable entries
+- `max_live_per_caller`, counting pending and refundable entries
 - minimum and maximum `response_sla`
 - minimum and maximum `refund_claim_window`
-- a storage deposit sized against the fixed worst-case entry lifetime
+- a non-refundable storage fee priced against the fixed rights window
   (`response_sla + refund_claim_window`), sufficient for both request and
-  refund entries
+  refund entries and including a bounded cleanup bounty
 - bounded dictionary and message parsing
 
-Per-caller counters are updated atomically with request insertion and removal.
-Storage deposits are accounted separately from service revenue and any unused
-remainder is returned when state is cleaned up. Limits must be enforced on
+Live-entry counters are updated atomically with request insertion and final
+deletion. Moving an entry from pending to refundable does not release capacity;
+otherwise callers could repeatedly expire requests and fill the refund
+dictionary while remaining below a pending-only limit.
+Storage fees are locked separately from withdrawable service revenue while an
+entry is live, then unlocked when it is deleted. Limits must be enforced on
 chain even when `tosctl` performs the same validation client-side.
 
 ## Contract Interface
@@ -344,7 +409,7 @@ call(query_id, request_hash)
 respond(query_id, request_id, response_hash, attestation_signature)
 expire(query_id, request_id)
 claim_refund(query_id, request_id, destination)
-sweep_unclaimed_refund(query_id, request_id)
+sweep_expired_request(query_id, request_id)
 update_policy(...)
 rotate_attestor_key(...)
 revoke_attestor(...)
@@ -367,7 +432,8 @@ Required getters include:
 - `get_request(request_id)`
 - `get_refund(request_id)`
 - `get_pending_count`
-- `get_caller_pending_count(caller)`
+- `get_live_count`
+- `get_caller_live_count(caller)`
 
 The CLI, HTTP query API, SDK helpers, and indexer must expose request IDs and
 the complete lifecycle without depending on the removed single-slot fields.
@@ -399,9 +465,12 @@ The upgrade is complete only when automated tests demonstrate:
 - responding to one request cannot alter another request
 - signatures cannot be replayed across requests or changed terms
 - policy and attestor rotation affect new requests but not snapshots
-- early expiration is rejected and post-deadline expiration succeeds
+- boundary behavior is exact: `respond` requires `now() < response_deadline`,
+  `expire` requires `response_deadline <= now() < refund_claim_deadline`,
+  `claim_refund` requires `now() < refund_claim_deadline`, and sweep requires
+  `now() >= refund_claim_deadline`
 - `claim_refund` is rejected atomically, with the refund entry untouched, when
-  the contract cannot itself afford `price + storage_deposit` plus forward
+  the contract cannot itself afford `price` plus forward
   fees -- this is the one failure mode this design claims to handle atomically
 - a `claim_refund` sent toward an address that does not exist or whose
   processing throws still leaves the contract's own accounting internally
@@ -413,20 +482,22 @@ The upgrade is complete only when automated tests demonstrate:
   crafted-to-look-like-a-bounce message must be indistinguishable in effect
   from any other unhandled message
 - `refund_claim_deadline` is enforced: `claim_refund` fails once it has
-  passed, `sweep_unclaimed_refund` fails before it, and both are rejected once
+  passed, `sweep_expired_request` fails before it, and both are rejected once
   the entry no longer exists
 - duplicate respond, expire, claim, and sweep operations are rejected
 - owner withdrawals are rejected once they would take the contract's actual
-  `get_balance()` below the sum of pending, refundable, and reserve balances,
+  `get_balance()` below pending and refundable liabilities plus the minimum
+  operating reserve,
   not only checked against the internal revenue counter
 - overpayments are returned and accounting invariants hold after every path,
-  including the `sweep_unclaimed_refund` path
-- global/per-caller limits and storage deposits resist state-filling attacks
+  including the `sweep_expired_request` path
+- global/per-caller live-entry limits, storage fees, and cleanup bounties resist
+  state-filling attacks; sweep works directly against pending and refund entries
 - generated bytecode matches the embedded Rust constant
 - sandbox and local-chain end-to-end tests cover CLI, query API, and indexer
-- storage deposits and SLA/refund-claim windows are validated against
+- storage fees and SLA/refund-claim windows are validated against
   measured masterchain gas/storage/forward fees on the real sandbox fee
-  config, not only reasoned about abstractly -- the V1 overpayment-refund
+  config, not only reasoned about abstractly -- the previous overpayment-refund
   feature shipped with insufficient fixture funding that only surfaced under
   real masterchain pricing, not in review
 
