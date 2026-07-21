@@ -2372,10 +2372,18 @@ void ValidatorEngine::started_adnl() {
 }
 
 void ValidatorEngine::add_dht(tos::PublicKeyHash id) {
-  auto D = tos::dht::Dht::create(tos::adnl::AdnlNodeIdShort{id}, db_root_, dht_config_, keyring_.get(), adnl_.get());
-  D.ensure();
+  if (dht_server_) {
+    dht_nodes_[id] =
+        tos::dht::Dht::create(tos::adnl::AdnlNodeIdShort{id}, db_root_, dht_config_, keyring_.get(), adnl_.get())
+            .ensure()
+            .move_as_ok();
+  } else {
+    dht_nodes_[id] = tos::dht::Dht::create_client(tos::adnl::AdnlNodeIdShort{id}, db_root_, dht_config_,
+                                                  keyring_.get(), adnl_.get())
+                         .ensure()
+                         .move_as_ok();
+  }
 
-  dht_nodes_[id] = D.move_as_ok();
   if (default_dht_node_.is_zero()) {
     default_dht_node_ = id;
   }
@@ -6565,6 +6573,8 @@ int main(int argc, char *argv[]) {
                          cfg.spool_reservation_ratio_percent = v;
                          return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
+  p.add_option('\0', "dht-server", "run DHT server (default: DHT in client mode)",
+               [&]() { acts.push_back([&] { td::actor::send_closure(x, &ValidatorEngine::set_dht_server, true); }); });
   auto S = p.run(argc, argv);
   if (S.is_error()) {
     LOG(ERROR) << "failed to parse options: " << S.move_as_error();

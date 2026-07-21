@@ -274,7 +274,8 @@ td::actor::Task<> ValidatorManagerImpl::validated_accepted_block_broadcast(Block
       td::actor::send_closure(collator_node.actor, &CollatorNode::new_shard_block_accepted, block_id, cc_seqno);
     }
   }
-  if (opts_->nonfinal_ls_queries_enabled()) {
+  if (!block_id.is_masterchain() && opts_->nonfinal_ls_queries_enabled() && shard_client_handle_ &&
+      shard_client_handle_->unix_time() > (UnixTime)td::Clocks::system() - 60) {
     co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state_short, block_id, 0,
                             td::Timestamp::in(60.0), true);
   }
@@ -529,7 +530,8 @@ td::actor::Task<> ValidatorManagerImpl::new_block_candidate_broadcast(BlockIdExt
   }
   add_cached_block_data(block_id, data.clone());
 
-  if (opts_->nonfinal_ls_queries_enabled()) {
+  if (opts_->nonfinal_ls_queries_enabled() && shard_client_handle_ &&
+      shard_client_handle_->unix_time() > (UnixTime)td::Clocks::system() - 60) {
     auto handle = co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::get_block_handle, block_id, true);
     Ref<BlockData> block = co_await create_block(block_id, std::move(data));
     co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::set_block_data, handle, std::move(block));
@@ -589,6 +591,9 @@ void ValidatorManagerImpl::add_shard_block_description(td::Ref<ShardTopBlockDesc
   }
   shard_blocks_[ShardTopBlockDescriptionId{desc->block_id().shard_full(), desc->catchain_seqno()}].latest_desc = desc;
   VLOG(VALIDATOR_DEBUG) << "new shard block descr for " << desc->block_id().to_str();
+  if (!shard_client_handle_ || shard_client_handle_->unix_time() <= (UnixTime)td::Clocks::system() - 60) {
+    return;
+  }
   if (need_monitor(desc->block_id().shard_full())) {
     ShardIdFull shard = desc->shard();
     shard.shard |= 1;
@@ -2136,10 +2141,10 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
 
 void ValidatorManagerImpl::got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions) {
   destroyed_validator_sessions_.insert(sessions.begin(), sessions.end());
-  finish_start_up();
+  finish_start_up().start().detach_ensure();
 }
 
-void ValidatorManagerImpl::finish_start_up() {
+td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
   new_masterchain_block();
 
   serializer_ =
@@ -2167,15 +2172,38 @@ void ValidatorManagerImpl::finish_start_up() {
         run_hardfork_accept_block_query(b, dataR.move_as_ok(), SelfId, std::move(P));
       });
       td::actor::send_closure(db_, &Db::try_get_static_file, b.file_hash, std::move(P));
-      return;
+      co_return {};
     }
   }
 
+  auto S = co_await start_up_advance_mc().wrap();
+  if (S.is_error()) {
+    LOG(ERROR) << "Initial advancing of masterchain: " << S.move_as_error();
+  }
   if (!out_of_sync()) {
     completed_prestart_sync();
   } else {
     prestart_sync();
   }
+  co_return {};
+}
+
+td::actor::Task<> ValidatorManagerImpl::start_up_advance_mc() {
+  while (last_masterchain_block_handle_->inited_next()) {
+    auto next_handle = co_await td::actor::ask(actor_id(this), &ValidatorManager::get_block_handle,
+                                               last_masterchain_block_handle_->one_next(true), true);
+    if (!next_handle->is_applied()) {
+      break;
+    }
+    auto data = co_await td::actor::ask(actor_id(this), &ValidatorManager::get_block_data, next_handle);
+    auto block = CO_TRY(create_block(next_handle->id(), std::move(data)));
+    auto [task, promise] = td::actor::StartedTask<>::make_bridge();
+    run_apply_block_query(next_handle->id(), block, next_handle->id(), actor_id(this), td::Timestamp::in(10.0),
+                          std::move(promise));
+    co_await std::move(task);
+    VLOG(VALIDATOR_INFO) << "Initial advancing mc to seqno " << next_handle->id().seqno();
+  }
+  co_return {};
 }
 
 void ValidatorManagerImpl::applied_hardfork() {

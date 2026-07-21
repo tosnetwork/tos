@@ -537,7 +537,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   void init_last_masterchain_state(td::Ref<MasterchainState> state) override;
   void started(ValidatorManagerInitResult result);
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
-  void finish_start_up();
+  td::actor::Task<> finish_start_up();
+  td::actor::Task<> start_up_advance_mc();
 
   bool is_validator();
   bool validating_masterchain();

@@ -268,6 +268,7 @@ class ValidatorEngine : public td::actor::Actor {
   bool read_config_ = false;
   bool started_keyring_ = false;
   bool started_ = false;
+  bool dht_server_ = false;
   tos::BlockSeqno truncate_seqno_{0};
   std::string session_logs_file_;
   std::string validator_telemetry_filename_;
@@ -309,6 +310,9 @@ class ValidatorEngine : public td::actor::Actor {
     fift_dir_ = str;
   }
   void set_db_root(std::string db_root);
+  void set_dht_server(bool value) {
+    dht_server_ = value;
+  }
   void set_state_ttl(double t) {
     state_ttl_ = t;
   }
