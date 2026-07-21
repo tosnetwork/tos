@@ -952,7 +952,7 @@ mod tests {
                 verifier: None,
                 budget,
                 deadline,
-                review_period: 600,
+                review_period: 3_600,
                 settlement_policy_hash: [0x33; 32],
                 permission_hash: [0x77; 32],
                 attestor_pubkey: None,

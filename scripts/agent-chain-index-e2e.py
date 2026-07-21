@@ -269,7 +269,7 @@ async def run_checks(faucet) -> None:
     task_out = await tosctl_json(
         CONFIG_A, "agent", "task", "create", "--name", "idx-task",
         "--creator", creator, "--budget", "1.0", "--deadline", str(deadline),
-        "--review-period", "120", "--policy-hash", POLICY_HASH,
+        "--review-period", "3600", "--policy-hash", POLICY_HASH,
         "--from", "creator", "--amount", "1.2", "-w", "0", "--yes",
     )
     task_address = norm_addr(task_out["address"])

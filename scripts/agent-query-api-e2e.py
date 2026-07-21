@@ -132,7 +132,7 @@ async def create_task(name: str, creator: str, agent: str | None, budget: float,
                       deadline: int, amount: float) -> str:
     args = ["agent", "task", "create", "--name", name, "--creator", creator,
             "--budget", str(budget), "--deadline", str(deadline),
-            "--review-period", "120", "--policy-hash", POLICY_HASH,
+            "--review-period", "3600", "--policy-hash", POLICY_HASH,
             "--from", "creator", "--amount", str(amount), "-w", "0", "--yes"]
     if agent is not None:
         args += ["--agent", agent]

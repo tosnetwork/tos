@@ -1,4 +1,4 @@
-// automatically generated from `smartcont/stdlib.fc` `smartcont/task-escrow-code.fc`
+// automatically generated from `smartcont/stdlib.fc` `smartcont/task-escrow-code.fc` 
 PROGRAM{
   DECLPROC send_value
   DECLPROC save_state
@@ -74,18 +74,18 @@ PROGRAM{
     1 PUSHINT	//  in_msg full_msg flags _9=1
     AND	//  in_msg full_msg _10
     IFJMP:<{	//  in_msg full_msg
-      2DROP	//
+      2DROP	// 
     }>	//  in_msg full_msg
-    LDMSGADDR	//  in_msg _430 _429
+    LDMSGADDR	//  in_msg _442 _441
     DROP	//  in_msg sender
     OVER	//  in_msg sender in_msg
     SEMPTY	//  in_msg sender _14
     IFJMP:<{	//  in_msg sender
-      2DROP	//
+      2DROP	// 
     }>	//  in_msg sender
     SWAP	//  sender in_msg
     32 LDU	//  sender op in_msg
-    64 LDU	//  sender op _434 _433
+    64 LDU	//  sender op _446 _445
     NIP	//  sender op in_msg
     c4 PUSH	//  sender op in_msg _24
     CTOS	//  sender op in_msg ds
@@ -109,14 +109,14 @@ PROGRAM{
     SWAP	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline hashes _79
     CTOS	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline hashes permission_slice
     256 LDU	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline hashes permission_hash permission_slice
-    256 LDU	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline hashes permission_hash _468 _467
+    256 LDU	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline hashes permission_hash _480 _479
     DROP	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline hashes permission_hash dispute_hash
     s0 s2 XCHG	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash hashes
-    LDREF	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash _470 _469
+    LDREF	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash _482 _481
     DROP	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash _91
     CTOS	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash attestor_slice
     1 LDU	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor attestor_slice
-    256 LDU	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _474 _473
+    256 LDU	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _486 _485
     DROP	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status ds result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor attestor_pubkey
     s0 s9 XCHG	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor ds
     ENDS
@@ -132,10 +132,14 @@ PROGRAM{
       s0 s12 XCHG	//  sender permission_hash in_msg creator review_deadline has_attestor has_verifier verifier budget deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period has_agent
       0 EQINT	//  sender permission_hash in_msg creator review_deadline has_attestor has_verifier verifier budget deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _111
       116 THROWIFNOT
+      DUP
+      3600 PUSHINT	//  sender permission_hash in_msg creator review_deadline has_attestor has_verifier verifier budget deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_period _114=3600
+      GEQ	//  sender permission_hash in_msg creator review_deadline has_attestor has_verifier verifier budget deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _115
+      132 THROWIFNOT
       s0 s13 XCHG	//  sender permission_hash review_period creator review_deadline has_attestor has_verifier verifier budget deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash in_msg
       ENDS	//  agent permission_hash review_period creator review_deadline has_attestor has_verifier verifier budget deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash
       1 PUSHINT	//  agent permission_hash review_period creator review_deadline has_attestor has_verifier verifier budget deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash has_agent=1
-      DUP	//  agent permission_hash review_period creator review_deadline has_attestor has_verifier verifier budget deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash has_agent=1 _115=1
+      DUP	//  agent permission_hash review_period creator review_deadline has_attestor has_verifier verifier budget deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash has_agent=1 _119=1
       s13 16 s() XCHG
       s13 s15 XCHG
       s1 s14 XCHG
@@ -147,23 +151,27 @@ PROGRAM{
       s3 s7 XCHG
       s6 s1 s3 XCHG3
       s4 s4 XCHG2
-      s0 s5 XCHG	//  creator agent has_agent=1 verifier has_verifier budget deadline _115=1 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
+      s0 s5 XCHG	//  creator agent has_agent=1 verifier has_verifier budget deadline _119=1 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
       save_state INLINECALLDICT
     }>	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
     18 s() PUSH
-    1413567233 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _117=1413567233
-    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _118
+    1413567233 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _121=1413567233
+    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _122
     IFJMP:<{	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
       18 s() POP	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash
       s0 s8 XCHG	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash status
-      0 EQINT	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _121
+      0 EQINT	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _125
       100 THROWIFNOT
       s0 17 s() XCHG
       s12 PUSH	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline sender agent
-      SDEQ	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _124
-      s13 s(-1) PUXC	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline has_agent _124
-      AND	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _125
+      SDEQ	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _128
+      s13 s(-1) PUXC	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline has_agent _128
+      AND	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _129
       101 THROWIFNOT
+      OVER
+      3600 PUSHINT	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline review_period _132=3600
+      GEQ	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _133
+      132 THROWIFNOT
       s0 s14 XCHG	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period in_msg
       ENDS
       s12 s15 XCHG
@@ -177,35 +185,39 @@ PROGRAM{
       s3 s7 XCHG
       s6 s5 s0 XCHG3
       s3 s4 XCHG
-      s0 s3 s3 XCHG3	//  creator agent has_agent verifier has_verifier budget deadline _128=1 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
+      s0 s3 s3 XCHG3	//  creator agent has_agent verifier has_verifier budget deadline _136=1 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
       save_state INLINECALLDICT
     }>	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
     18 s() PUSH
-    1413567234 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _130=1413567234
-    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _131
+    1413567234 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _138=1413567234
+    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _139
     IFJMP:<{	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
       s3 POP
       s5 POP
       s5 POP
       s15 POP	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey dispute_hash permission_hash policy_hash review_period
       s0 s5 XCHG	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash policy_hash status
-      1 EQINT	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash policy_hash _134
+      1 EQINT	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash policy_hash _142
       102 THROWIFNOT
       s14 s9 XCPU	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash sender agent
-      SDEQ	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _137
-      s10 s(-1) PUXC	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash has_agent _137
-      AND	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _138
+      SDEQ	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _145
+      s10 s(-1) PUXC	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash has_agent _145
+      AND	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _146
       103 THROWIFNOT
-      NOW	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _141
-      s5 PUSH	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _141 deadline
-      LEQ	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _142
+      NOW	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _149
+      s5 PUSH	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _149 deadline
+      LEQ	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _150
       117 THROWIFNOT
+      s3 PUSH
+      3600 PUSHINT	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash review_period _153=3600
+      GEQ	//  policy_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash permission_hash _154
+      132 THROWIFNOT
       s0 s11 XCHG	//  policy_hash has_attestor permission_hash creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash in_msg
       256 LDU	//  policy_hash has_attestor permission_hash creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash result_hash in_msg
       256 LDU	//  policy_hash has_attestor permission_hash creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash result_hash evidence_hash in_msg
       ENDS
-      NOW	//  policy_hash has_attestor permission_hash creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash result_hash evidence_hash _151
-      s5 PUSH	//  policy_hash has_attestor permission_hash creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash result_hash evidence_hash _151 review_period
+      NOW	//  policy_hash has_attestor permission_hash creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash result_hash evidence_hash _163
+      s5 PUSH	//  policy_hash has_attestor permission_hash creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash result_hash evidence_hash _163 review_period
       ADD	//  policy_hash has_attestor permission_hash creator has_agent agent has_verifier verifier budget deadline review_period attestor_pubkey dispute_hash result_hash evidence_hash review_deadline
       s12 s15 XCHG
       5 10 REVERSE
@@ -217,78 +229,78 @@ PROGRAM{
       s3 s8 XCHG
       s7 s1 s6 XCHG3
       s4 s4 s5 XCHG3
-      s1 s3 XCHG	//  creator agent has_agent verifier has_verifier budget deadline _153=2 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
+      s1 s3 XCHG	//  creator agent has_agent verifier has_verifier budget deadline _165=2 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
       save_state INLINECALLDICT
     }>	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
     18 s() PUSH
-    1413567235 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _155=1413567235
-    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _156
+    1413567235 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _167=1413567235
+    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _168
     IFJMP:<{	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
       18 s() POP	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash
       s0 s8 XCHG	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash status
-      2 EQINT	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _159
+      2 EQINT	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _171
       104 THROWIFNOT
       17 s() PUSH
       s15 PUSH	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash sender creator
-      SDEQ	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _162
+      SDEQ	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _174
       s0 18 s() XCHG
-      s11 PUSH	//  _162 has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash sender verifier
-      SDEQ	//  _162 has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _163
-      s12 s(-1) PUXC	//  _162 has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash has_verifier _163
-      AND	//  _162 has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _164
-      s1 18 s() XCHG	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _162 _164
-      OR	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _165
+      s11 PUSH	//  _174 has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash sender verifier
+      SDEQ	//  _174 has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _175
+      s12 s(-1) PUXC	//  _174 has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash has_verifier _175
+      AND	//  _174 has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _176
+      s1 18 s() XCHG	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _174 _176
+      OR	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _177
       105 THROWIFNOT
-      NOW	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _168
-      OVER	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _168 review_deadline
-      LEQ	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _169
+      NOW	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _180
+      OVER	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _180 review_deadline
+      LEQ	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _181
       118 THROWIFNOT
       s0 s14 XCHG	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period in_msg
       LDTOMIS	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout in_msg
       s1 s9 PUXC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout payout budget
-      LEQ	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout _175
+      LEQ	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout _187
       106 THROWIFNOT
-      BALANCE	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout _178
-      FIRST	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout _179
-      s1 s(-1) PUXC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout payout _179
-      LEQ	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout _180
+      BALANCE	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout _190
+      FIRST	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout _191
+      s1 s(-1) PUXC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout payout _191
+      LEQ	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout _192
       112 THROWIFNOT
       s15 PUSH	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout has_attestor
       IF:<{	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout
         s0 s8 XCHG
-        9 PUSHPOW2	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period in_msg _184=512
+        9 PUSHPOW2	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period in_msg _196=512
         LDSLICEX	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg
-        MYADDR	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _188
+        MYADDR	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _200
         REWRITESTDADDR	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg wc addr
         SWAP
-        NEWC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg addr wc _191
-        8 STI	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg addr _193
-        256 STU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _195
-        s6 s(-1) PUXC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg result_hash _195
-        256 STU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _197
-        s10 PUSH	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _197 payout
-        STTOMIS	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _198
-        ENDC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _199
+        NEWC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg addr wc _203
+        8 STI	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg addr _205
+        256 STU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _207
+        s6 s(-1) PUXC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg result_hash _207
+        256 STU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _209
+        s10 PUSH	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _209 payout
+        STTOMIS	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _210
+        ENDC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg _211
         HASHCU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period signature in_msg domain_hash
         s0 s2 s7 XC2PU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period in_msg domain_hash signature attestor_pubkey
-        CHKSIGNU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period in_msg _202
+        CHKSIGNU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period in_msg _214
         127 THROWIFNOT
         s0 s8 XCHG	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout
       }>	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier in_msg deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout
       s0 s8 XCHG	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period in_msg
       ENDS
       s7 PUSH	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout
-      0 GTINT	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _206
+      0 GTINT	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _218
       IF:<{	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period
         s10 s7 PUXC
-        1 PUSHINT	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier review_period deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash agent payout _207=1
+        1 PUSHINT	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier review_period deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash agent payout _219=1
         send_value INLINECALLDICT
       }>ELSE<{
         s7 POP	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier review_period deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash
       }>
       s11 PUSH
       0 PUSHINT
-      7 PUSHPOW2	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier review_period deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash creator _209=0 _210=128
+      7 PUSHPOW2	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier review_period deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash creator _221=0 _222=128
       send_value INLINECALLDICT
       s11 s14 XCHG
       5 9 REVERSE
@@ -303,27 +315,27 @@ PROGRAM{
       s2 s6 XCHG
       s4 s5 XCHG
       s3 s4 XCHG
-      s0 s1 s3 XCHG3	//  creator agent has_agent verifier has_verifier _212=0 deadline _213=3 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
+      s0 s1 s3 XCHG3	//  creator agent has_agent verifier has_verifier _224=0 deadline _225=3 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
       save_state INLINECALLDICT
     }>	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
     18 s() PUSH
-    1413567236 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _215=1413567236
-    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _216
+    1413567236 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _227=1413567236
+    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _228
     IFJMP:<{	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
       s11 POP
       17 s() POP	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash
       s0 s7 XCHG	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline status
-      0 EQINT	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _219
+      0 EQINT	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _231
       107 THROWIFNOT
       s0 16 s() XCHG
       s13 PUSH	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period sender creator
-      SDEQ	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _222
+      SDEQ	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _234
       108 THROWIFNOT
       s0 s13 XCHG	//  review_deadline permission_hash review_period creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash in_msg
       ENDS
       s11 PUSH
       0 PUSHINT
-      7 PUSHPOW2	//  review_deadline permission_hash review_period creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash creator _225=0 _226=128
+      7 PUSHPOW2	//  review_deadline permission_hash review_period creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash creator _237=0 _238=128
       send_value INLINECALLDICT
       s11 s14 XCHG
       5 9 REVERSE
@@ -337,29 +349,29 @@ PROGRAM{
       s3 s7 XCHG
       5 2 REVERSE
       s4 s4 XCHG2
-      s0 s3 XCHG	//  creator agent has_agent verifier has_verifier _228=0 deadline _229=4 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
+      s0 s3 XCHG	//  creator agent has_agent verifier has_verifier _240=0 deadline _241=4 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
       save_state INLINECALLDICT
     }>	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
     18 s() PUSH
-    1413567238 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _231=1413567238
-    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _232
+    1413567238 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _243=1413567238
+    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _244
     IFJMP:<{	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
       s11 POP
       17 s() POP	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash
       s0 s7 XCHG	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline status
-      0 EQINT	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _235
+      0 EQINT	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _247
       113 THROWIFNOT
       s0 16 s() XCHG
       s11 PUSH	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period sender agent
-      SDEQ	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _238
-      s12 s(-1) PUXC	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period has_agent _238
-      AND	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _239
+      SDEQ	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _250
+      s12 s(-1) PUXC	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period has_agent _250
+      AND	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _251
       114 THROWIFNOT
       s0 s13 XCHG	//  review_deadline permission_hash review_period creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash in_msg
       ENDS
       s11 PUSH
       0 PUSHINT
-      7 PUSHPOW2	//  review_deadline permission_hash review_period creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash creator _242=0 _243=128
+      7 PUSHPOW2	//  review_deadline permission_hash review_period creator has_agent agent has_verifier verifier has_attestor deadline dispute_hash attestor_pubkey result_hash evidence_hash policy_hash creator _254=0 _255=128
       send_value INLINECALLDICT
       s11 s14 XCHG
       5 9 REVERSE
@@ -373,62 +385,62 @@ PROGRAM{
       s3 s7 XCHG
       5 2 REVERSE
       s4 s4 XCHG2
-      s0 s3 XCHG	//  creator agent has_agent verifier has_verifier _245=0 deadline _246=6 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
+      s0 s3 XCHG	//  creator agent has_agent verifier has_verifier _257=0 deadline _258=6 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
       save_state INLINECALLDICT
     }>	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
     18 s() PUSH
-    1413567237 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _248=1413567237
-    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _249
+    1413567237 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _260=1413567237
+    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _261
     IFJMP:<{	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
       18 s() POP
       18 s() POP	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash
       s7 PUSH	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash status
-      0 EQINT	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _252
-      s8 PUSH	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _252 status
-      1 EQINT	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _252 _254
-      OR	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _255
-      s8 PUSH	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _255 status
-      2 EQINT	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _255 _257
-      OR	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _258
+      0 EQINT	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _264
+      s8 PUSH	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _264 status
+      1 EQINT	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _264 _266
+      OR	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _267
+      s8 PUSH	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _267 status
+      2 EQINT	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _267 _269
+      OR	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _270
       110 THROWIFNOT
       s7 PUSH	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash status
-      2 EQINT	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _261
+      2 EQINT	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _273
       IF:<{	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash
         OVER
-        NOW	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash review_deadline _263
-        LEQ	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _264
+        NOW	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash review_deadline _275
+        LEQ	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _276
         109 THROWIFNOT
       }>ELSE<{	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash
         s8 PUSH
-        NOW	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash deadline _267
-        LEQ	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _268
+        NOW	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash deadline _279
+        LEQ	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _280
         109 THROWIFNOT
       }>
       s0 s15 XCHG	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline in_msg
       ENDS
       s0 s6 XCHG	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period status
-      2 EQINT	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _272
-      s10 PUSH	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _272 has_verifier
-      0 EQINT	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _272 _274
-      AND	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _275
+      2 EQINT	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _284
+      s10 PUSH	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _284 has_verifier
+      0 EQINT	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _284 _286
+      AND	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _287
       IFJMP:<{	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period
-        BALANCE	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _277
-        FIRST	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _278
-        s8 s(-1) PUXC	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period budget _278
-        LEQ	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _279
+        BALANCE	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _289
+        FIRST	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _290
+        s8 s(-1) PUXC	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period budget _290
+        LEQ	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _291
         126 THROWIFNOT
         s7 PUSH	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period budget
-        0 GTINT	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _282
+        0 GTINT	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period _294
         IF:<{	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period
           s10 s7 PUXC
-          1 PUSHINT	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier review_period deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash agent budget _283=1
+          1 PUSHINT	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier review_period deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash agent budget _295=1
           send_value INLINECALLDICT
         }>ELSE<{
           s7 POP	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier review_period deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash
         }>
         s11 PUSH
         0 PUSHINT
-        7 PUSHPOW2	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier review_period deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash creator _285=0 _286=128
+        7 PUSHPOW2	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier review_period deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash creator _297=0 _298=128
         send_value INLINECALLDICT
         s11 s14 XCHG
         5 9 REVERSE
@@ -443,13 +455,13 @@ PROGRAM{
         s2 s6 XCHG
         s4 s5 XCHG
         s4 s1 s3 XCHG3
-        s0 s2 XCHG	//  creator agent has_agent verifier has_verifier _288=0 deadline _289=3 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
+        s0 s2 XCHG	//  creator agent has_agent verifier has_verifier _300=0 deadline _301=3 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
         save_state INLINECALLDICT
       }>	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier budget deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash review_period
       s7 POP	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier review_period deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash
       s11 PUSH
       0 PUSHINT
-      7 PUSHPOW2	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier review_period deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash creator _291=0 _292=128
+      7 PUSHPOW2	//  permission_hash has_attestor dispute_hash creator has_agent agent has_verifier verifier review_period deadline review_deadline attestor_pubkey result_hash evidence_hash policy_hash creator _303=0 _304=128
       send_value INLINECALLDICT
       s11 s14 XCHG
       5 9 REVERSE
@@ -464,27 +476,27 @@ PROGRAM{
       s2 s6 XCHG
       s4 s5 XCHG
       s4 s1 s3 XCHG3
-      s0 s2 XCHG	//  creator agent has_agent verifier has_verifier _294=0 deadline _295=5 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
+      s0 s2 XCHG	//  creator agent has_agent verifier has_verifier _306=0 deadline _307=5 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
       save_state INLINECALLDICT
     }>	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
     18 s() PUSH
-    1413567240 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _297=1413567240
-    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _298
+    1413567240 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _309=1413567240
+    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _310
     IFJMP:<{	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
       s2 POP
       17 s() POP	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline has_attestor
       s0 s7 XCHG	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline status
-      2 EQINT	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _301
+      2 EQINT	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _313
       119 THROWIFNOT
       s0 16 s() XCHG
       s13 PUSH	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period sender creator
-      SDEQ	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period _304
+      SDEQ	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period _316
       120 THROWIFNOT
       s9 PUSH	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period has_verifier
       121 THROWIFNOT
-      NOW	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period _309
-      16 s() PUSH	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period _309 review_deadline
-      LEQ	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period _310
+      NOW	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period _321
+      16 s() PUSH	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period _321 review_deadline
+      LEQ	//  review_deadline permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash review_period _322
       122 THROWIFNOT
       s0 s13 XCHG	//  review_deadline permission_hash review_period creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash in_msg
       256 LDU	//  review_deadline permission_hash review_period creator has_agent agent has_verifier verifier budget deadline has_attestor attestor_pubkey result_hash evidence_hash policy_hash dispute_hash in_msg
@@ -500,69 +512,69 @@ PROGRAM{
       s3 s7 XCHG
       5 2 REVERSE
       s0 s4 XCHG
-      s2 s3 XCHG2	//  creator agent has_agent verifier has_verifier budget deadline _316=7 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
+      s2 s3 XCHG2	//  creator agent has_agent verifier has_verifier budget deadline _328=7 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
       save_state INLINECALLDICT
     }>	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
     18 s() PUSH
-    1413567241 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _318=1413567241
-    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _319
+    1413567241 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _330=1413567241
+    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _331
     IFJMP:<{	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
       18 s() POP	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash
       s0 s8 XCHG	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash status
-      7 EQINT	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _322
+      7 EQINT	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _334
       123 THROWIFNOT
       s0 17 s() XCHG
       s10 PUSH	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline sender verifier
-      SDEQ	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _325
-      s11 s(-1) PUXC	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline has_verifier _325
-      AND	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _326
+      SDEQ	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _337
+      s11 s(-1) PUXC	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline has_verifier _337
+      AND	//  dispute_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _338
       124 THROWIFNOT
       s0 s14 XCHG	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period in_msg
       LDTOMIS	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout in_msg
       16 s() PUSH	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout in_msg has_attestor
       IF:<{	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout in_msg
-        9 PUSHPOW2	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout in_msg _333=512
+        9 PUSHPOW2	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout in_msg _345=512
         LDSLICEX	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg
-        MYADDR	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _337
+        MYADDR	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _349
         REWRITESTDADDR	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg wc addr
         SWAP
-        NEWC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg addr wc _340
-        8 STI	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg addr _342
-        256 STU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _344
-        s7 s(-1) PUXC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg result_hash _344
-        256 STU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _346
+        NEWC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg addr wc _352
+        8 STI	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg addr _354
+        256 STU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _356
+        s7 s(-1) PUXC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg result_hash _356
+        256 STU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _358
         19 s() PUSH
-        SWAP	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg dispute_hash _346
-        256 STU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _348
-        s3 PUSH	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _348 payout
-        STTOMIS	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _349
-        ENDC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _350
+        SWAP	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg dispute_hash _358
+        256 STU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _360
+        s3 PUSH	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _360 payout
+        STTOMIS	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _361
+        ENDC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg _362
         HASHCU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout signature in_msg domain_hash
         s0 s2 s8 XC2PU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout in_msg domain_hash signature attestor_pubkey
-        CHKSIGNU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout in_msg _353
+        CHKSIGNU	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout in_msg _365
         131 THROWIFNOT
       }>	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier budget deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout in_msg
       ENDS
       s0 s8 PUXC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout budget
-      LEQ	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _357
+      LEQ	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _369
       125 THROWIFNOT
-      BALANCE	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _360
-      FIRST	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _361
-      s8 s(-1) PUXC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout _361
-      LEQ	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _362
+      BALANCE	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _372
+      FIRST	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _373
+      s8 s(-1) PUXC	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout _373
+      LEQ	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _374
       126 THROWIFNOT
       s7 PUSH	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period payout
-      0 GTINT	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _365
+      0 GTINT	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period _377
       IF:<{	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier payout deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash review_period
         s10 s7 PUXC
-        1 PUSHINT	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier review_period deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash agent payout _366=1
+        1 PUSHINT	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier review_period deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash agent payout _378=1
         send_value INLINECALLDICT
       }>ELSE<{
         s7 POP	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier review_period deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash
       }>
       s11 PUSH
       0 PUSHINT
-      7 PUSHPOW2	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier review_period deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash creator _368=0 _369=128
+      7 PUSHPOW2	//  dispute_hash has_attestor review_deadline creator has_agent agent has_verifier verifier review_period deadline permission_hash attestor_pubkey result_hash evidence_hash policy_hash creator _380=0 _381=128
       send_value INLINECALLDICT
       s11 s14 XCHG
       5 9 REVERSE
@@ -577,33 +589,33 @@ PROGRAM{
       s2 s6 XCHG
       s4 s5 XCHG
       s3 s4 XCHG
-      s0 s1 s3 XCHG3	//  creator agent has_agent verifier has_verifier _371=0 deadline _372=3 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
+      s0 s1 s3 XCHG3	//  creator agent has_agent verifier has_verifier _383=0 deadline _384=3 result_hash evidence_hash policy_hash review_period review_deadline permission_hash dispute_hash has_attestor attestor_pubkey
       save_state INLINECALLDICT
     }>	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
     18 s() PUSH
-    1413567242 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _374=1413567242
-    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _375
+    1413567242 PUSHINT	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor op _386=1413567242
+    EQUAL	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor _387
     IFJMP:<{	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
       s8 POP
       17 s() POP	//  sender permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status has_attestor result_hash evidence_hash policy_hash review_period review_deadline dispute_hash
       s0 17 s() XCHG
       s14 PUSH	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status has_attestor result_hash evidence_hash policy_hash review_period review_deadline sender creator
-      SDEQ	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status has_attestor result_hash evidence_hash policy_hash review_period review_deadline _377
+      SDEQ	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status has_attestor result_hash evidence_hash policy_hash review_period review_deadline _389
       128 THROWIFNOT
       s0 s5 XCHG	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period has_attestor
-      0 EQINT	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _381
-      s6 PUSH	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _381 status
-      3 EQINT	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _381 _383
-      OR	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _384
-      s6 PUSH	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _384 status
-      4 EQINT	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _384 _386
-      OR	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _387
-      s6 PUSH	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _387 status
-      6 EQINT	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _387 _389
-      OR	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _390
-      s6 PUSH	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _390 status
-      5 EQINT	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _390 _392
-      OR	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _393
+      0 EQINT	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _393
+      s6 PUSH	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _393 status
+      3 EQINT	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _393 _395
+      OR	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _396
+      s6 PUSH	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _396 status
+      4 EQINT	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _396 _398
+      OR	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _399
+      s6 PUSH	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _399 status
+      6 EQINT	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _399 _401
+      OR	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _402
+      s6 PUSH	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _402 status
+      5 EQINT	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _402 _404
+      OR	//  dispute_hash permission_hash in_msg creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash review_period _405
       130 THROWIFNOT
       s0 s13 XCHG	//  dispute_hash permission_hash review_period creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash in_msg
       256 LDU	//  dispute_hash permission_hash review_period creator has_agent agent has_verifier verifier budget deadline status review_deadline result_hash evidence_hash policy_hash attestor_pubkey in_msg
@@ -623,27 +635,27 @@ PROGRAM{
       save_state INLINECALLDICT
     }>	//  sender op in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash has_attestor
     s0 18 s() XCHG
-    1413567243 PUSHINT	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash op _401=1413567243
-    EQUAL	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash _402
+    1413567243 PUSHINT	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash op _413=1413567243
+    EQUAL	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash _414
     IFJMP:<{	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash
       s0 18 s() XCHG
       s15 PUSH	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash sender creator
-      SDEQ	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _404
+      SDEQ	//  permission_hash has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash _416
       129 THROWIFNOT
       s0 16 s() XCHG	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline has_attestor
-      0 EQINT	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _408
-      s7 PUSH	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _408 status
-      3 EQINT	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _408 _410
-      OR	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _411
-      s7 PUSH	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _411 status
-      4 EQINT	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _411 _413
-      OR	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _414
-      s7 PUSH	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _414 status
-      6 EQINT	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _414 _416
-      OR	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _417
-      s7 PUSH	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _417 status
-      5 EQINT	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _417 _419
-      OR	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _420
+      0 EQINT	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _420
+      s7 PUSH	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _420 status
+      3 EQINT	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _420 _422
+      OR	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _423
+      s7 PUSH	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _423 status
+      4 EQINT	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _423 _425
+      OR	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _426
+      s7 PUSH	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _426 status
+      6 EQINT	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _426 _428
+      OR	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _429
+      s7 PUSH	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _429 status
+      5 EQINT	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _429 _431
+      OR	//  permission_hash dispute_hash in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline _432
       130 THROWIFNOT
       s0 s14 XCHG	//  permission_hash dispute_hash review_deadline creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period in_msg
       ENDS
@@ -660,11 +672,11 @@ PROGRAM{
       save_state INLINECALLDICT
     }>	//  sender has_attestor in_msg creator has_agent agent has_verifier verifier budget deadline status attestor_pubkey result_hash evidence_hash policy_hash review_period review_deadline dispute_hash permission_hash
     15 BLKDROP
-    4 BLKDROP	//
+    4 BLKDROP	// 
     111 THROW
   }>
   get_task_data PROC:<{
-    //
+    // 
     c4 PUSH	//  _1
     CTOS	//  ds
     LDMSGADDR	//  creator ds

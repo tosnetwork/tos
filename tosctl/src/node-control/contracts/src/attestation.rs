@@ -6,13 +6,14 @@
 //! Domain separation for the inline ed25519 attestation scheme shared by
 //! Task Escrow, Dispute and Service Actor.
 //!
-//! Each contract's `settle`/`rule`/`respond` verifies a signature over
-//! `domain_bound_hash(contract_address, original_hash)` rather than the bare
-//! `original_hash` -- binding the signature to one specific contract
-//! instance so it cannot be replayed against another instance that happens
-//! to share the same attestor key and the same original hash value. This
-//! must match each contract's own FunC computation byte-for-byte:
-//! `cell_hash(begin_cell().store_int(wc, 8).store_uint(addr, 256).store_uint(original_hash, 256).end_cell())`.
+//! Every variant here binds a signature to one specific contract instance
+//! (via `contract_address`) so it cannot be replayed against another
+//! instance sharing the same attestor key, plus whatever additional state
+//! that particular check needs to be meaningful: `settle`/`resolve` also
+//! bind the exact payout, `respond` also binds which request it answers.
+//! `domain_bound_hash` is the plain two-field form (contract + one hash)
+//! used where nothing else needs binding. Each variant must match its
+//! contract's own FunC computation byte-for-byte.
 
 use chain_block::{BuilderData, Coins, IBitstring, MsgAddressInt, Serializable};
 
@@ -29,11 +30,11 @@ fn wc_and_addr(contract_address: &MsgAddressInt) -> anyhow::Result<(i8, [u8; 32]
 
 /// Compute the domain-bound hash that the attestor key must sign for
 /// `contract_address`, given the contract's on-chain `original_hash`
-/// (`ruling_hash` / `response_hash` / `attested_hash`). Used by Dispute's
-/// `rule`, Service Actor's `respond`, Proof Attestation's `attest`, and
-/// Agent Account's controller signature (over its own payload hash, not a
-/// contract-recorded one) -- none of which carry a payout the signature
-/// needs to bind.
+/// (`ruling_hash` / `attested_hash`). Used by Dispute's `rule`, Proof
+/// Attestation's `attest`, and Agent Account's controller signature (over
+/// its own payload hash, not a contract-recorded one) -- none of which
+/// carry a payout, or a second piece of state like a request, the signature
+/// needs to additionally bind.
 pub fn domain_bound_hash(
     contract_address: &MsgAddressInt,
     original_hash: &[u8; 32],
@@ -91,6 +92,30 @@ pub fn resolve_domain_hash(
     b.append_u256(result_hash)?;
     b.append_u256(dispute_hash)?;
     Coins::new(payout).write_to(&mut b)?;
+    let cell = b.into_cell()?;
+    Ok(*cell.repr_hash().as_array())
+}
+
+/// Compute the domain-bound hash Service Actor's `respond` attestor
+/// signature must cover: contract address, the `request_hash` of the call
+/// being answered, and the `response_hash`. Binding only `response_hash`
+/// (as an earlier version of this scheme did) would let a signature the
+/// attestor gave for one request's response be replayed by the owner to
+/// "answer" a later, unrelated request whenever the response content is
+/// reused -- with nothing on chain to show the attestor ever saw that later
+/// request. Must match `crypto/smartcont/service-actor-code.fc`'s `respond`
+/// computation byte-for-byte.
+pub fn service_respond_domain_hash(
+    contract_address: &MsgAddressInt,
+    request_hash: &[u8; 32],
+    response_hash: &[u8; 32],
+) -> anyhow::Result<[u8; 32]> {
+    let (wc, addr) = wc_and_addr(contract_address)?;
+    let mut b = BuilderData::new();
+    b.append_i8(wc)?;
+    b.append_u256(&addr)?;
+    b.append_u256(request_hash)?;
+    b.append_u256(response_hash)?;
     let cell = b.into_cell()?;
     Ok(*cell.repr_hash().as_array())
 }

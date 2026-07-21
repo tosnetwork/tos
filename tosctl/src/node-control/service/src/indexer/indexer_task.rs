@@ -599,6 +599,7 @@ mod tests {
             proof_scheme_hash: [0; 32],
             last_request_hash: [0; 32],
             last_response_hash: [0; 32],
+            has_pending_response: false,
             attestor_pubkey: None,
         };
         let json = serde_json::to_string(&ServiceActorRecordDto::from(&data)).unwrap();

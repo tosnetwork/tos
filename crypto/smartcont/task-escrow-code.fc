@@ -17,6 +17,16 @@ const int op::revoke_attestor = 0x5441530b;
 
 const int err::attestor_frozen = 130;
 const int err::bad_resolve_signature = 131;
+const int err::review_period_too_short = 132;
+
+;; Floor on the creator's review window once a result is submitted. timeout()
+;; defaults an unattended, no-verifier result to full payment (see op::timeout
+;; below) -- that default judgment is only fair if the creator is guaranteed
+;; a real chance to react, not whatever `review_period` a deploy tool happened
+;; to pass. 1 hour is enforced on-chain rather than left to client-side
+;; validation, since the guarantee has to hold regardless of who crafts the
+;; deploy message.
+const int min_review_period = 3600;
 
 const int status::open = 0;
 const int status::accepted = 1;
@@ -104,6 +114,12 @@ const int status::disputed = 7;
   if (op == op::claim) {
     throw_unless(115, status == status::open);
     throw_unless(116, has_agent == 0);
+    ;; Reject before the agent commits to the task, not after it has already
+    ;; done the work: checking only in result() would let a malicious or
+    ;; misconfigured creator (bypassing the client-side deploy validation by
+    ;; hand-building StateInit) have an agent do free work that can never be
+    ;; submitted, then reclaim the full budget via timeout().
+    throw_unless(err::review_period_too_short, review_period >= min_review_period);
     in_msg.end_parse();
     agent = sender;
     has_agent = 1;
@@ -115,6 +131,8 @@ const int status::disputed = 7;
   if (op == op::accept) {
     throw_unless(100, status == status::open);
     throw_unless(101, has_agent & equal_slice_bits(sender, agent));
+    ;; Same rationale as claim() above.
+    throw_unless(err::review_period_too_short, review_period >= min_review_period);
     in_msg.end_parse();
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status::accepted, result_hash, evidence_hash, policy_hash, review_period,
@@ -125,6 +143,12 @@ const int status::disputed = 7;
     throw_unless(102, status == status::accepted);
     throw_unless(103, has_agent & equal_slice_bits(sender, agent));
     throw_unless(117, now() <= deadline);
+    ;; Defensive duplicate of the check in claim()/accept(): status can only
+    ;; reach `accepted` through one of those two ops, so this can never
+    ;; actually fire in practice, but it keeps the guarantee co-located with
+    ;; the review window it protects rather than relying solely on an
+    ;; earlier state transition.
+    throw_unless(err::review_period_too_short, review_period >= min_review_period);
     result_hash = in_msg~load_uint(256);
     evidence_hash = in_msg~load_uint(256);
     in_msg.end_parse();

@@ -29,6 +29,8 @@ const ERR_INSUFFICIENT_PAYMENT: i32 = 1905;
 const ERR_INSUFFICIENT_REVENUE: i32 = 1906;
 const ERR_BAD_RESPONSE_SIGNATURE: i32 = 1909;
 const ERR_ATTESTOR_FROZEN: i32 = 1910;
+const ERR_RESPONSE_PENDING: i32 = 1911;
+const ERR_NO_PENDING_RESPONSE: i32 = 1912;
 
 struct Fixture {
     bc: Blockchain,
@@ -199,6 +201,7 @@ fn call_refunds_the_excess_when_the_caller_overpays() {
     // (rounding, a wallet's gas-margin padding, a client bug) gets the
     // difference refunded rather than permanently losing it to the owner.
     let mut f = Fixture::new(TOS / 10, 0, true, TOS / 10);
+    let owner = f.owner.address().clone();
     let outsider = f.outsider.address().clone();
     let outsider_before = f.balance(&outsider);
     f.send_from(&outsider, TOS, ServiceActorContract::call(1, [0xAA; 32]).unwrap())
@@ -216,10 +219,60 @@ fn call_refunds_the_excess_when_the_caller_overpays() {
         "caller should have received close to the overpayment back as a refund, got {outsider_delta}"
     );
 
+    // Calls are serialized on the single outstanding response slot: the
+    // first call must be answered before a second one is accepted.
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(2, [0xEE; 32]).unwrap())
+        .expect_success();
+
     // An exact payment (no overpayment) needs no refund and is unaffected.
-    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(2, [0xBB; 32]).unwrap())
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(3, [0xBB; 32]).unwrap())
         .expect_success();
     assert_eq!(f.data().total_revenue, TOS / 5);
+}
+
+#[test]
+fn calls_are_serialized_on_the_single_outstanding_response_slot() {
+    let mut f = Fixture::new(TOS / 10, 0, true, TOS / 10);
+    let owner = f.owner.address().clone();
+    let outsider = f.outsider.address().clone();
+
+    // First call opens a pending response.
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(1, [0xAA; 32]).unwrap())
+        .expect_success();
+    assert!(f.data().has_pending_response);
+
+    // A second call while the first is still unanswered would silently
+    // overwrite last_request_hash: respond() would then clear
+    // has_pending_response (and unfreeze the attestor) having only ever
+    // answered the second caller, losing the first caller's paid-for
+    // request -- and the attestor guarantee it relied on -- with no
+    // on-chain trace. This must be rejected outright.
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(2, [0xBB; 32]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_RESPONSE_PENDING);
+    assert_eq!(f.data().last_request_hash, [0xAA; 32], "the first request must not be overwritten");
+
+    // Answering the first call frees the slot for the next one.
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(3, [0xEE; 32]).unwrap())
+        .expect_success();
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(4, [0xBB; 32]).unwrap())
+        .expect_success();
+    assert_eq!(f.data().last_request_hash, [0xBB; 32]);
+}
+
+#[test]
+fn respond_without_an_outstanding_call_is_rejected() {
+    let mut f = Fixture::new(TOS / 10, 0, true, TOS / 10);
+    let owner = f.owner.address().clone();
+
+    // Nothing has been paid for yet -- a response here would prove nothing
+    // about any specific call, and could otherwise be used purely to clear
+    // has_pending_response (and unfreeze the attestor) without ever having
+    // answered anyone.
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(1, [0xDD; 32]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_NO_PENDING_RESPONSE);
+    assert_eq!(f.data().last_response_hash, [0; 32]);
 }
 
 #[test]
@@ -247,12 +300,20 @@ fn rate_limit_blocks_calls_past_the_daily_cap() {
     // fwd/action fees on that refund send (observed ~0.07 TOS/call) drain a
     // TOS / 10 starting balance within 1-2 calls otherwise.
     let mut f = Fixture::new(TOS / 100, 2, true, TOS);
+    let owner = f.owner.address().clone();
     let outsider = f.outsider.address().clone();
     f.send_from(&outsider, TOS / 10, ServiceActorContract::call(1, [0x01; 32]).unwrap())
         .expect_success();
-    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(2, [0x02; 32]).unwrap())
+    // Calls are serialized: answer the first before the second is accepted.
+    // This does not affect the rate limit itself -- calls_today is bumped on
+    // call(), not on respond().
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(2, [0xEE; 32]).unwrap())
         .expect_success();
-    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(3, [0x03; 32]).unwrap())
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(3, [0x02; 32]).unwrap())
+        .expect_success();
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(4, [0xEE; 32]).unwrap())
+        .expect_success();
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(5, [0x03; 32]).unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_RATE_LIMITED);
     assert_eq!(f.data().calls_today, 2);
@@ -263,9 +324,14 @@ fn zero_rate_limit_means_unlimited() {
     // See the funding comment on rate_limit_blocks_calls_past_the_daily_cap;
     // this test makes 10 overpaying calls, so it needs a bigger balance.
     let mut f = Fixture::new(TOS / 100, 0, true, 5 * TOS);
+    let owner = f.owner.address().clone();
     let outsider = f.outsider.address().clone();
     for i in 1..=10u64 {
-        f.send_from(&outsider, TOS / 10, ServiceActorContract::call(i, [i as u8; 32]).unwrap())
+        // Calls are serialized on the single outstanding response slot, so
+        // each call must be answered before the next is accepted.
+        f.send_from(&outsider, TOS / 10, ServiceActorContract::call(2 * i - 1, [i as u8; 32]).unwrap())
+            .expect_success();
+        f.send_from(&owner, TOS / 10, ServiceActorContract::respond(2 * i, [0xEE; 32]).unwrap())
             .expect_success();
     }
     assert_eq!(f.data().calls_today, 10);
@@ -280,7 +346,10 @@ fn owner_can_respond_others_rejected() {
         .expect_exit_code(ERR_NOT_OWNER);
 
     let owner = f.owner.address().clone();
-    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(2, [0xDD; 32]).unwrap())
+    // A response must answer an outstanding call.
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(2, [0xAA; 32]).unwrap())
+        .expect_success();
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(3, [0xDD; 32]).unwrap())
         .expect_success();
     assert_eq!(f.data().last_response_hash, [0xDD; 32]);
 }
@@ -325,22 +394,69 @@ fn owner_can_update_policy_others_rejected() {
 }
 
 #[test]
+fn update_policy_is_frozen_while_a_response_is_pending() {
+    let mut f = Fixture::new(TOS / 10, 0, true, TOS / 10);
+    let owner = f.owner.address().clone();
+    let outsider = f.outsider.address().clone();
+
+    // A caller pays under the current metadata_hash/proof_scheme_hash --
+    // the response it's waiting for is supposed to be verifiable against
+    // that commitment, not whatever the owner might change it to later.
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(1, [0xAA; 32]).unwrap())
+        .expect_success();
+
+    f.send_from(
+        &owner,
+        TOS / 10,
+        ServiceActorContract::update_policy(
+            2, TOS / 5, 10, true, None, &owner, [0xEE; 32], [0xFF; 32],
+        )
+        .unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_RESPONSE_PENDING);
+    let data = f.data();
+    assert_eq!(data.price_per_call, TOS / 10, "price must be unchanged while pending");
+    assert_eq!(data.metadata_hash, [0x11; 32], "metadata must be unchanged while pending");
+    assert_eq!(data.proof_scheme_hash, [0x22; 32], "proof scheme must be unchanged while pending");
+
+    // Answering the call frees update_policy() again.
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(3, [0xBB; 32]).unwrap())
+        .expect_success();
+    f.send_from(
+        &owner,
+        TOS / 10,
+        ServiceActorContract::update_policy(
+            4, TOS / 5, 10, true, None, &owner, [0xEE; 32], [0xFF; 32],
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    assert_eq!(f.data().price_per_call, TOS / 5);
+}
+
+#[test]
 fn owner_can_withdraw_revenue_within_limit_others_and_overdraw_rejected() {
     let mut f = Fixture::new(TOS, 0, true, TOS / 10);
+    let owner = f.owner.address().clone();
     let outsider = f.outsider.address().clone();
     // Three exact (no-overpayment) calls, rather than one call overpaying
     // 3x, so this test's revenue accounting stays independent of the
     // overpayment-refund behavior covered separately by
-    // call_refunds_the_excess_when_the_caller_overpays.
+    // call_refunds_the_excess_when_the_caller_overpays. Calls are serialized
+    // on the single outstanding response slot, so each is answered before
+    // the next lands.
     f.send_from(&outsider, TOS, ServiceActorContract::call(1, [0x01; 32]).unwrap())
         .expect_success();
-    f.send_from(&outsider, TOS, ServiceActorContract::call(2, [0x02; 32]).unwrap())
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(2, [0xEE; 32]).unwrap())
         .expect_success();
-    f.send_from(&outsider, TOS, ServiceActorContract::call(3, [0x03; 32]).unwrap())
+    f.send_from(&outsider, TOS, ServiceActorContract::call(3, [0x02; 32]).unwrap())
+        .expect_success();
+    f.send_from(&owner, TOS / 10, ServiceActorContract::respond(4, [0xEE; 32]).unwrap())
+        .expect_success();
+    f.send_from(&outsider, TOS, ServiceActorContract::call(5, [0x03; 32]).unwrap())
         .expect_success();
     assert_eq!(f.data().total_revenue, 3 * TOS);
-
-    let owner = f.owner.address().clone();
     f.send_from(&outsider, TOS / 10, ServiceActorContract::withdraw_revenue(4, TOS).unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_NOT_OWNER);
@@ -401,13 +517,20 @@ fn respond_on_an_attestor_configured_service_requires_a_valid_signature() {
     let response_hash = [0xDD; 32];
     let mut f = Fixture::with_attestor(TOS / 10, 0, true, TOS / 10, attestor_pubkey);
     let owner = f.owner.address().clone();
+    let outsider = f.outsider.address().clone();
 
-    // Plain `respond` (no signature) is rejected by the trailing signature load.
+    // Plain `respond` (no signature) is rejected -- there is no outstanding
+    // call to answer yet, let alone one with a valid signature.
     f.send_from(&owner, TOS / 10, ServiceActorContract::respond(1, response_hash).unwrap())
         .expect_aborted();
     assert_eq!(f.data().last_response_hash, [0; 32]);
 
-    let domain_hash = contracts::domain_bound_hash(&f.service, &response_hash).unwrap();
+    // A response must answer an outstanding call.
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(10, [0xAA; 32]).unwrap())
+        .expect_success();
+
+    let domain_hash =
+        contracts::service_respond_domain_hash(&f.service, &[0xAA; 32], &response_hash).unwrap();
 
     // A signature from the wrong key is rejected. (Domain-bound hashing runs
     // before the signature is judged invalid, so this needs the higher
@@ -446,7 +569,59 @@ fn respond_on_an_attestor_configured_service_requires_a_valid_signature() {
 }
 
 #[test]
-fn owner_can_enable_attestor_once_but_cannot_revoke_it() {
+fn attestor_signature_for_one_request_cannot_answer_a_different_request() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let attestor_pubkey = attestor.verifying_key().to_bytes();
+    let response_hash = [0xDD; 32];
+    let mut f = Fixture::with_attestor(TOS / 10, 0, true, TOS / 10, attestor_pubkey);
+    let owner = f.owner.address().clone();
+    let outsider = f.outsider.address().clone();
+
+    // Request A gets a signature over (request_a, response_hash) and is
+    // answered with it.
+    let request_a = [0xAA; 32];
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(1, request_a).unwrap())
+        .expect_success();
+    let domain_a =
+        contracts::service_respond_domain_hash(&f.service, &request_a, &response_hash).unwrap();
+    let signature_a: [u8; 64] = attestor.sign(&domain_a).to_bytes();
+    f.send_from(
+        &owner,
+        TOS / 10,
+        ServiceActorContract::respond_signed(2, response_hash, &signature_a).unwrap(),
+    )
+    .expect_success();
+    assert_eq!(f.data().last_response_hash, response_hash);
+
+    // Request B lands with the same response content the owner intends to
+    // send again. Replaying A's signature must not authorize it -- the
+    // attestor never saw request B.
+    let request_b = [0xBB; 32];
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(3, request_b).unwrap())
+        .expect_success();
+    f.send_from(
+        &owner,
+        TOS / 10,
+        ServiceActorContract::respond_signed(4, response_hash, &signature_a).unwrap(),
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_BAD_RESPONSE_SIGNATURE);
+
+    // A signature freshly bound to request B succeeds.
+    let domain_b =
+        contracts::service_respond_domain_hash(&f.service, &request_b, &response_hash).unwrap();
+    let signature_b: [u8; 64] = attestor.sign(&domain_b).to_bytes();
+    f.send_from(
+        &owner,
+        TOS / 10,
+        ServiceActorContract::respond_signed(5, response_hash, &signature_b).unwrap(),
+    )
+    .expect_success();
+    assert_eq!(f.data().last_response_hash, response_hash);
+}
+
+#[test]
+fn owner_can_rotate_and_revoke_the_attestor_key_while_idle_but_not_while_a_response_is_pending() {
     let attestor = SigningKey::from_bytes(&[0x77; 32]);
     let attestor_pubkey = attestor.verifying_key().to_bytes();
     let response_hash = [0xDD; 32];
@@ -467,7 +642,8 @@ fn owner_can_enable_attestor_once_but_cannot_revoke_it() {
     .expect_exit_code(ERR_NOT_OWNER);
     assert!(f.data().attestor_pubkey.is_none());
 
-    // Owner rotates in an attestor key: respond now requires a signature.
+    // Owner rotates in an attestor key while idle (no call outstanding):
+    // respond now requires a signature.
     f.send_from(
         &owner,
         TOS / 10,
@@ -486,25 +662,38 @@ fn owner_can_enable_attestor_once_but_cannot_revoke_it() {
         .expect_exit_code(ERR_NOT_OWNER);
     assert!(f.data().attestor_pubkey.is_some());
 
-    // Once enabled, the independent gate is immutable.
-    f.send_from(&owner, TOS / 10, ServiceActorContract::revoke_attestor(5).unwrap())
+    // A caller pays: the response to this call is now outstanding, so the
+    // owner can no longer swap out or drop the independent check the caller
+    // relied on when it paid.
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(5, [0xAA; 32]).unwrap())
+        .expect_success();
+    assert!(f.data().has_pending_response);
+    f.send_from(&owner, TOS / 10, ServiceActorContract::revoke_attestor(6).unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_ATTESTOR_FROZEN);
     assert_eq!(f.data().attestor_pubkey, Some(attestor_pubkey));
 
-    let domain_hash = contracts::domain_bound_hash(&f.service, &response_hash).unwrap();
+    let domain_hash =
+        contracts::service_respond_domain_hash(&f.service, &[0xAA; 32], &response_hash).unwrap();
     let signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
     f.send_from(
         &owner,
         TOS / 10,
-        ServiceActorContract::respond_signed(6, response_hash, &signature).unwrap(),
+        ServiceActorContract::respond_signed(7, response_hash, &signature).unwrap(),
     )
     .expect_success();
     assert_eq!(f.data().last_response_hash, response_hash);
+    assert!(!f.data().has_pending_response);
+
+    // The pending response has been answered: the owner can now recover
+    // from a key it no longer wants to trust (e.g. suspected compromise).
+    f.send_from(&owner, TOS / 10, ServiceActorContract::revoke_attestor(8).unwrap())
+        .expect_success();
+    assert!(f.data().attestor_pubkey.is_none());
 }
 
 #[test]
-fn configured_service_attestor_is_immutable() {
+fn attestor_rotation_is_frozen_only_while_a_response_is_pending() {
     let old_attestor = SigningKey::from_bytes(&[0x11; 32]);
     let old_pubkey = old_attestor.verifying_key().to_bytes();
     let new_pubkey = SigningKey::from_bytes(&[0x22; 32]).verifying_key().to_bytes();
@@ -512,25 +701,42 @@ fn configured_service_attestor_is_immutable() {
 
     let mut f = Fixture::with_attestor(TOS / 10, 0, true, TOS / 10, old_pubkey);
     let owner = f.owner.address().clone();
-    let domain_hash = contracts::domain_bound_hash(&f.service, &response_hash).unwrap();
+    let outsider = f.outsider.address().clone();
 
-    let old_signature: [u8; 64] = old_attestor.sign(&domain_hash).to_bytes();
+    // No call has landed yet: rotation is unrestricted even though an
+    // attestor is already configured -- there is nothing pending to bypass.
+    f.send_from(&owner, TOS / 10, ServiceActorContract::rotate_attestor_key(1, new_pubkey).unwrap())
+        .expect_success();
+    assert_eq!(f.data().attestor_pubkey, Some(new_pubkey));
+    f.send_from(&owner, TOS / 10, ServiceActorContract::rotate_attestor_key(2, old_pubkey).unwrap())
+        .expect_success();
 
-    // The owner cannot replace the key after callers may have relied on it.
-    f.send_from(
-        &owner,
-        TOS / 10,
-        ServiceActorContract::rotate_attestor_key(1, new_pubkey).unwrap(),
-    )
-    .expect_aborted()
-    .expect_exit_code(ERR_ATTESTOR_FROZEN);
+    // A caller pays for a call: the response is now outstanding.
+    f.send_from(&outsider, TOS / 10, ServiceActorContract::call(3, [0xAA; 32]).unwrap())
+        .expect_success();
+
+    // The owner cannot swap out the key while that response is outstanding
+    // -- doing so would let it forge the independent check the caller paid
+    // for.
+    f.send_from(&owner, TOS / 10, ServiceActorContract::rotate_attestor_key(4, new_pubkey).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_ATTESTOR_FROZEN);
     assert_eq!(f.data().attestor_pubkey, Some(old_pubkey));
 
+    let domain_hash =
+        contracts::service_respond_domain_hash(&f.service, &[0xAA; 32], &response_hash).unwrap();
+    let old_signature: [u8; 64] = old_attestor.sign(&domain_hash).to_bytes();
     f.send_from(
         &owner,
         TOS / 4,
-        ServiceActorContract::respond_signed(2, response_hash, &old_signature).unwrap(),
+        ServiceActorContract::respond_signed(5, response_hash, &old_signature).unwrap(),
     )
     .expect_success();
     assert_eq!(f.data().last_response_hash, response_hash);
+
+    // The pending response has been answered: rotation is unrestricted
+    // again.
+    f.send_from(&owner, TOS / 10, ServiceActorContract::rotate_attestor_key(6, new_pubkey).unwrap())
+        .expect_success();
+    assert_eq!(f.data().attestor_pubkey, Some(new_pubkey));
 }

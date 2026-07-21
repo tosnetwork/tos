@@ -167,13 +167,15 @@ pub struct ServiceActorSendCmd {
     #[arg(
         long,
         conflicts_with = "signer_vault_key",
-        help = "64-byte ed25519 signature over response_hash, for respond on a service deployed with --attestor-pubkey"
+        help = "64-byte ed25519 signature over the (request_hash, response_hash) domain hash, \
+                for respond on a service deployed with --attestor-pubkey"
     )]
     attestation_signature: Option<String>,
     #[arg(
         long,
         conflicts_with = "attestation_signature",
-        help = "Sign response_hash with this vault key instead of passing --attestation-signature directly"
+        help = "Sign the (request_hash, response_hash) domain hash with this vault key instead \
+                of passing --attestation-signature directly"
     )]
     signer_vault_key: Option<String>,
     #[arg(long, help = "New price per call, in TOS, for update-policy")]
@@ -430,6 +432,7 @@ struct ServiceActorDataView {
     proof_scheme_hash: String,
     last_request_hash: String,
     last_response_hash: String,
+    has_pending_response: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     attestor_pubkey: Option<String>,
 }
@@ -449,6 +452,7 @@ fn data_view(address: &MsgAddressInt, data: ServiceActorData) -> ServiceActorDat
         proof_scheme_hash: hex::encode(data.proof_scheme_hash),
         last_request_hash: hex::encode(data.last_request_hash),
         last_response_hash: hex::encode(data.last_response_hash),
+        has_pending_response: data.has_pending_response,
         attestor_pubkey: data.attestor_pubkey.map(hex::encode),
     }
 }
@@ -480,6 +484,7 @@ impl ServiceActorShowCmd {
             println!("Rate limit/day: {}", view.rate_limit_per_day);
             println!("Calls today: {}", view.calls_today);
             println!("Total revenue: {} TOS", view.total_revenue);
+            println!("Pending response: {}", view.has_pending_response);
             println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
         }
         Ok(())
@@ -644,8 +649,24 @@ impl ServiceActorSendCmd {
                     Some(signature) => Some(signature),
                     None => match &self.signer_vault_key {
                         Some(name) => {
-                            let domain_hash =
-                                contracts::domain_bound_hash(&destination, &response_hash)?;
+                            // The signature must bind the specific request
+                            // this response answers, so fetch the
+                            // currently-outstanding request_hash on chain
+                            // rather than signing response_hash alone.
+                            let provider = contracts::contract_provider!(rpc_client.clone());
+                            let stack = provider
+                                .get_method(
+                                    destination.to_string(),
+                                    "get_service_actor_data",
+                                    vec![],
+                                )
+                                .await?;
+                            let chain_data = ServiceActorContract::decode_data(&stack)?;
+                            let domain_hash = contracts::service_respond_domain_hash(
+                                &destination,
+                                &chain_data.last_request_hash,
+                                &response_hash,
+                            )?;
                             Some(sign_hash_with_vault_key(name, &domain_hash, vault.clone()).await?)
                         }
                         None => None,

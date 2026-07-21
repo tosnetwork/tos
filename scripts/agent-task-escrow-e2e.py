@@ -73,7 +73,7 @@ RESULT_HASH = "aa" * 32
 EVIDENCE_HASH = "bb" * 32
 DISPUTE_HASH = "cc" * 32
 PERMISSION_ID = "e2e-agent:bounded-task:1"
-REVIEW_PERIOD = 120
+REVIEW_PERIOD = 3600
 NANO = 1_000_000_000
 
 failures: list[str] = []

@@ -253,23 +253,31 @@ async def run_checks(faucet) -> None:
     check("first call accepted", data["calls_today"] == 1, str(data))
     check("revenue accrued", abs(float(data["total_revenue"]) - 0.05) < 1e-9, str(data))
 
+    print("\n=== respond (owner only) ===")
+    # Calls are serialized on the single outstanding response slot: the first
+    # call must be answered before a second one is accepted.
+    await send_op("respond", "svc-1", "outsider", "--response-hash", "11" * 32, may_fail=True)
+    data = await service_show("svc-1")
+    check("non-owner respond rejected", int(data["last_response_hash"], 16) == 0, str(data))
+
+    await send_op("respond", "svc-1", "owner", "--response-hash", "11" * 32)
+    data = await service_show("svc-1")
+    check("owner respond recorded (first call)", data["last_response_hash"] == "11" * 32, str(data))
+
     await send_op("call", "svc-1", "caller", "--request-hash", "dd" * 32, "--amount", "0.05")
     data = await service_show("svc-1")
     check("second call accepted", data["calls_today"] == 2, str(data))
 
+    await send_op("respond", "svc-1", "owner", "--response-hash", "ff" * 32)
+    data = await service_show("svc-1")
+    check("owner respond recorded", data["last_response_hash"] == "ff" * 32, str(data))
+
+    # calls_today is already at the rate limit and the second call has been
+    # answered, so this attempt is rejected purely on the daily cap.
     await send_op("call", "svc-1", "caller", "--request-hash", "ee" * 32, "--amount", "0.05",
                   may_fail=True)
     data = await service_show("svc-1")
     check("third call rate-limited", data["calls_today"] == 2, str(data))
-
-    print("\n=== respond (owner only) ===")
-    await send_op("respond", "svc-1", "outsider", "--response-hash", "ff" * 32, may_fail=True)
-    data = await service_show("svc-1")
-    check("non-owner respond rejected", int(data["last_response_hash"], 16) == 0, str(data))
-
-    await send_op("respond", "svc-1", "owner", "--response-hash", "ff" * 32)
-    data = await service_show("svc-1")
-    check("owner respond recorded", data["last_response_hash"] == "ff" * 32, str(data))
 
     print("\n=== update-policy: open access ===")
     await send_op(
@@ -285,6 +293,9 @@ async def run_checks(faucet) -> None:
     await send_op("call", "svc-1", "outsider", "--request-hash", "01" * 32, "--amount", "0.02")
     data = await service_show("svc-1")
     check("outsider can now call under open access", data["calls_today"] == 3, str(data))
+
+    # Answer this call before the next one lands (calls are serialized).
+    await send_op("respond", "svc-1", "owner", "--response-hash", "22" * 32)
 
     print("\n=== call: overpayment is refunded, not absorbed as revenue ===")
     revenue_before_overpay = float(data["total_revenue"])
@@ -353,6 +364,9 @@ async def run_checks(faucet) -> None:
     data = await service_show("svc-2")
     check("attestor pubkey recorded on-chain", bool(data.get("attestor_pubkey")), str(data))
 
+    # A response must answer an outstanding call.
+    await send_op("call", "svc-2", "outsider", "--request-hash", "cc" * 32, "--amount", "0.01")
+
     await send_op("respond", "svc-2", "owner", "--response-hash", "dd" * 32, may_fail=True)
     data = await service_show("svc-2")
     check("respond without attestation rejected", int(data["last_response_hash"], 16) == 0, str(data))
@@ -401,15 +415,88 @@ async def run_checks(faucet) -> None:
     data = await service_show("svc-3")
     check("non-owner revoke rejected", bool(data.get("attestor_pubkey")), str(data))
 
+    # No call is outstanding yet, so the owner is free to revoke/rotate --
+    # there is nothing pending an attestor swap could bypass.
+    check("no response pending yet", data.get("has_pending_response") is False, str(data))
+    await send_op("revoke-attestor", "svc-3", "owner")
+    data = await service_show("svc-3")
+    check("owner can revoke while idle", not data.get("attestor_pubkey"), str(data))
+
+    # A response must answer an outstanding call.
+    await send_op("call", "svc-3", "outsider", "--request-hash", "02" * 32, "--amount", "0.01")
+    await send_op("respond", "svc-3", "owner", "--response-hash", "ee" * 32)
+    data = await service_show("svc-3")
+    check("respond succeeds once attestor is gone", data["last_response_hash"] == "ee" * 32,
+          str(data))
+
+    # Re-configure an attestor, then let a call land: the response to that
+    # call is now outstanding, so rotate/revoke must be rejected until it is
+    # answered -- otherwise the owner could bypass the check the caller paid
+    # for.
+    await send_op("rotate-attestor-key", "svc-3", "owner",
+                  "--signer-vault-key", "rotated-service-attestor-key")
+    await send_op("call", "svc-3", "outsider", "--request-hash", "03" * 32, "--amount", "0.01")
+    data = await service_show("svc-3")
+    check("response now pending", data.get("has_pending_response") is True, str(data))
+
     await send_op("revoke-attestor", "svc-3", "owner", may_fail=True)
     data = await service_show("svc-3")
-    check("owner cannot revoke configured attestor", bool(data.get("attestor_pubkey")), str(data))
+    check("revoke frozen while a response is pending", bool(data.get("attestor_pubkey")), str(data))
+    await send_op("rotate-attestor-key", "svc-3", "owner",
+                  "--new-attestor-pubkey", "aa" * 32, may_fail=True)
+    data = await service_show("svc-3")
+    check("rotate frozen while a response is pending",
+          data.get("attestor_pubkey") != "aa" * 32, str(data))
 
-    await send_op("respond", "svc-3", "owner", "--response-hash", "ee" * 32,
+    await send_op("respond", "svc-3", "owner", "--response-hash", "ff" * 32,
                   "--signer-vault-key", "rotated-service-attestor-key")
     data = await service_show("svc-3")
-    check("respond still requires configured attestor", data["last_response_hash"] == "ee" * 32,
-          str(data))
+    check("attestor-signed respond clears the pending response",
+          data.get("has_pending_response") is False, str(data))
+
+    await send_op("revoke-attestor", "svc-3", "owner")
+    data = await service_show("svc-3")
+    check("owner can revoke again once the pending response is answered",
+          not data.get("attestor_pubkey"), str(data))
+
+    print("\n=== update-policy: frozen while a response is pending ===")
+    svc4_metadata_hash = "44" * 32
+    svc4_proof_scheme_hash = "55" * 32
+    deploy4 = await tosctl_json(
+        "agent", "service", "deploy", "--name", "svc-4", "--owner", owner,
+        "--open-access", "--price-per-call", "0.01", "--rate-limit-per-day", "0",
+        "--metadata-hash", svc4_metadata_hash, "--proof-scheme-hash", svc4_proof_scheme_hash,
+        "--from", "owner", "--amount", "0.2", "-w", "0", "--yes",
+    )
+    address4 = deploy4["address"]
+    check("policy-freeze service deployed and active", await poll_predicate(
+        lambda: rpc_call("getAddressState", address=address4).get("result") == "active"))
+
+    # A caller pays under the current price/metadata/proof scheme -- the
+    # owner must not be able to change what the outstanding response has to
+    # satisfy before answering it.
+    await send_op("call", "svc-4", "outsider", "--request-hash", "05" * 32, "--amount", "0.01")
+    await send_op(
+        "update-policy", "svc-4", "owner",
+        "--price-per-call", "0.05", "--rate-limit-per-day", "0", "--open-access",
+        "--metadata-hash", NEW_METADATA_HASH, "--proof-scheme-hash", NEW_PROOF_SCHEME_HASH,
+        may_fail=True,
+    )
+    data = await service_show("svc-4")
+    check("update-policy rejected while a response is pending",
+          abs(float(data["price_per_call"]) - 0.01) < 1e-9, str(data))
+    check("proof scheme unchanged while pending",
+          data["proof_scheme_hash"] == svc4_proof_scheme_hash, str(data))
+
+    await send_op("respond", "svc-4", "owner", "--response-hash", "06" * 32)
+    await send_op(
+        "update-policy", "svc-4", "owner",
+        "--price-per-call", "0.05", "--rate-limit-per-day", "0", "--open-access",
+        "--metadata-hash", NEW_METADATA_HASH, "--proof-scheme-hash", NEW_PROOF_SCHEME_HASH,
+    )
+    data = await service_show("svc-4")
+    check("update-policy succeeds once idle again",
+          abs(float(data["price_per_call"]) - 0.05) < 1e-9, str(data))
 
     print("\n=== persisted local record ===")
     records = {r["name"]: r for r in await tosctl_json("agent", "service", "ls")}

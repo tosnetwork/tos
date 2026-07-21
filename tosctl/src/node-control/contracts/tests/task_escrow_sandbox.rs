@@ -11,7 +11,7 @@
 //! accept -> result -> settle flow, the cancel and timeout flows, and the
 //! unauthorized/illegal-transition rejections.
 
-use chain_block::{Cell, MsgAddressInt};
+use chain_block::{BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, StateInit};
 use contracts::{TaskEscrowContract, TaskEscrowInit};
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
@@ -79,7 +79,7 @@ impl Fixture {
             verifier: has_verifier.then(|| verifier.address().clone()),
             budget,
             deadline,
-            review_period: 600,
+            review_period: 3_600,
             settlement_policy_hash: [0x11; 32],
             permission_hash: [0x22; 32],
             attestor_pubkey,
@@ -150,6 +150,114 @@ impl Fixture {
             .int_at(15)
             != 0
     }
+}
+
+/// Mirrors `TaskEscrowContract::build_data` byte-for-byte, minus the
+/// client-side `review_period` floor check -- this simulates an attacker (or
+/// a careless custom deploy tool) that hand-builds `StateInit` directly
+/// instead of going through `tosctl`/`TaskEscrowContract::build_data`, which
+/// is exactly the bypass the on-chain `err::review_period_too_short` check
+/// in `claim()`/`accept()`/`result()` has to hold up against on its own.
+fn build_state_init_bypassing_client_side_review_period_check(init: &TaskEscrowInit) -> StateInit {
+    let agent = init.assigned_agent.as_ref().unwrap_or(&init.creator);
+    let verifier = init.verifier.as_ref().unwrap_or(&init.creator);
+    let mut data = BuilderData::new();
+    init.creator.write_to(&mut data).unwrap();
+    if init.assigned_agent.is_some() {
+        data.append_bit_one().unwrap();
+    } else {
+        data.append_bit_zero().unwrap();
+    }
+    agent.write_to(&mut data).unwrap();
+    if init.verifier.is_some() {
+        data.append_bit_one().unwrap();
+    } else {
+        data.append_bit_zero().unwrap();
+    }
+    verifier.write_to(&mut data).unwrap();
+    Coins::new(init.budget).write_to(&mut data).unwrap();
+    data.append_u64(init.deadline).unwrap().append_u8(0).unwrap();
+    let mut hashes = BuilderData::new();
+    let mut permission = BuilderData::new();
+    permission.append_u256(&init.permission_hash).unwrap().append_u256(&[0; 32]).unwrap();
+    hashes
+        .append_u256(&[0; 32])
+        .unwrap()
+        .append_u256(&[0; 32])
+        .unwrap()
+        .append_u256(&init.settlement_policy_hash)
+        .unwrap()
+        .append_u32(init.review_period)
+        .unwrap()
+        .append_u64(0)
+        .unwrap()
+        .checked_append_reference(permission.into_cell().unwrap())
+        .unwrap();
+    let mut attestor = BuilderData::new();
+    attestor.append_bit_zero().unwrap().append_raw(&[0; 32], 256).unwrap();
+    hashes.checked_append_reference(attestor.into_cell().unwrap()).unwrap();
+    data.checked_append_reference(hashes.into_cell().unwrap()).unwrap();
+    StateInit::with_code_and_data(TaskEscrowContract::code().unwrap(), data.into_cell().unwrap())
+}
+
+#[test]
+fn claim_and_accept_reject_a_too_short_review_period_before_the_agent_does_any_work() {
+    const ERR_REVIEW_PERIOD_TOO_SHORT: i32 = 132;
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(-1);
+    let creator = bc.treasury("creator", 1_000 * TOS).expect("creator");
+    let agent = bc.treasury("agent", 1_000 * TOS).expect("agent");
+    let init = TaskEscrowInit {
+        creator: creator.address().clone(),
+        assigned_agent: None,
+        verifier: None,
+        budget: 2 * TOS,
+        deadline: u64::from(bc.now()) + 3_600,
+        review_period: 1, // far below the on-chain 3600s floor
+        settlement_policy_hash: [0x11; 32],
+        permission_hash: [0x22; 32],
+        attestor_pubkey: None,
+    };
+    let state_init = build_state_init_bypassing_client_side_review_period_check(&init);
+    let escrow_cell = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let escrow = MsgAddressInt::with_params(-1, escrow_cell.hash(0)).expect("address");
+    let deploy = MessageBuilder::internal(creator.address(), &escrow, 2 * TOS + TOS / 10)
+        .bounce(false)
+        .state_init(state_init)
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+
+    // claim() must reject before the agent has done anything at all --
+    // unlike a check only in result(), this can't be bypassed by an agent
+    // that already invested effort into a task it could never get paid for.
+    let agent_addr = agent.address().clone();
+    let claim_msg = MessageBuilder::internal(&agent_addr, &escrow, TOS / 10)
+        .body(TaskEscrowContract::claim(1).unwrap())
+        .build();
+    bc.send_message(claim_msg)
+        .expect("claim")
+        .expect_aborted()
+        .expect_exit_code(ERR_REVIEW_PERIOD_TOO_SHORT);
+
+    // accept() on a pre-assigned task must reject the same way.
+    let init2 = TaskEscrowInit { assigned_agent: Some(agent_addr.clone()), ..init };
+    let state_init2 = build_state_init_bypassing_client_side_review_period_check(&init2);
+    let escrow_cell2 = state_init2.write_to_new_cell().unwrap().into_cell().unwrap();
+    let escrow2 = MsgAddressInt::with_params(-1, escrow_cell2.hash(0)).expect("address");
+    let deploy2 = MessageBuilder::internal(creator.address(), &escrow2, 2 * TOS + TOS / 10)
+        .bounce(false)
+        .state_init(state_init2)
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy2).expect("deploy2").expect_success();
+    let accept_msg = MessageBuilder::internal(&agent_addr, &escrow2, TOS / 10)
+        .body(TaskEscrowContract::accept(1).unwrap())
+        .build();
+    bc.send_message(accept_msg)
+        .expect("accept")
+        .expect_aborted()
+        .expect_exit_code(ERR_REVIEW_PERIOD_TOO_SHORT);
 }
 
 #[test]
@@ -309,7 +417,7 @@ fn submitted_result_uses_review_deadline_for_settlement_and_timeout() {
     f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
         .expect_success();
     let review_deadline = f.review_deadline();
-    assert_eq!(review_deadline, u64::from(f.bc.now()) + 600);
+    assert_eq!(review_deadline, u64::from(f.bc.now()) + 3_600);
 
     let outsider_addr = f.outsider.address().clone();
     f.send_from(&outsider_addr, TaskEscrowContract::timeout(3).unwrap())

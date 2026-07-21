@@ -9,7 +9,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const SERVICE_ACTOR_CODE_B64: &str = "te6cckECDQEABKcAART/APSkE/S88sgLAQIBYgIDBPTQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kDTAPpA0wDTAPoA0x/TH9Mf+gDUAdDT/9P/0QLUAdDT/9P/0wDT/9EE0RBFVQJWEYIQU1ZDAbrjAlcTVhCCEFNWQwK64wJWEIIQU1ZDA7rjAlYQghBTVkMEugQFBgcAaaA6U9qJofSBpgH0gaYBpgH0AaY/pj+mP/QBqAOhp/+n/6IFqAOhp/+n/6YBp/+iCaIgiqoFAfozVxApwAHy524qwAFWES3HBVLgsLHy521WESm+8udx+COCAVGAqQRTB72TN3A2kTDiJ8AAU2i5sfLncAWkEREooVFIoA7T/9EkwgCOGgEREAEEcXCAEMjLBVAEzxZY+gISy2rJAfsAkjQ/4hC/EK4QnRCMEHsQahBZBAhDVggA9jE/UfzHBfLnbAzT/y6OHYMI1xj4KPpEAcjKB8v/UjDL/8n5AFhWEvkQ8ud13tEQvxCuEJ0QjBB7EGoQWRBIEDdAFlBTA8jL/xLL/8sAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVADsMzM2Njc3NzlRlscF8udsIcAB8uduBvoA0x/TANMA+kDUAdDT/9P/0QLREL8QPhAtEEwQexBqEFkQKBBnBVBGA8jL/xLL/8sAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVATsjtRXEBEQLccF8udsDfoA0VMDu/LncvgnbxBSELvy53MgwgCOF1PAcXCAEMjLBVAEzxZY+gISy2rJAfsA3hOhEL8QrhCdEIwQexBqEFkQSBA3RhYEUFPgVhCCEFNWQwW64wJWEIIQU1ZDBrrjAlYQghBTVkMHuggJCgsAbgPIy/8Sy//LAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQA8jU/UfzHBfLnbAfAAfLnbgvRKXCDBnCAEMjLBVAEzxZY+gISy2rJAfsAcCAQvxCuEJ0QjBsQahBZEEgQNwYQRQNERAPIy/8Sy//LAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQAulcQERAtxwXy52wIwADy528M0RCuEJ0QjBB7cQsQahBZEEgQN0ZQA8jL/xLL/8sAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVAHwjmNXEFcRUfzHBfLnbA3AAPLndgvT/9EQrhCdEIwQexBqEFkQSBA3RlAQNBJxAQPIy/8Sy//LAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VTgERCCEFNWQwi64wJfD18D8sd0DAC6ERAtxwXy52wOwADy53YM0RCuEJ0QjBB7EGoQWRBIEDdGFFBScAEDyMv/Esv/ywDL/8kCyMv/y//JyFAMzxYaywBQCM8WFssAFMsAWPoCyx/LH8sfAfoCEszMye1UaIWTTg==";
+pub const SERVICE_ACTOR_CODE_B64: &str = "te6ccgECDwEABL8AART/APSkE/S88sgLAQIBYgIDBPjQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kDTAPpA0wDTAPoA0x/TH9Mf+gDUAdDT/9P/0QLUAdDT/9P/0wDTANP/0QXREFZVA1YSghBTVkMBuuMCVxRWEYIQU1ZDArrjAlYRghBTVkMDuuMCVhGCEFNWQwS6BAUGBwBtoDpT2omh9IGmAfSBpgGmAfQBpj+mP6Y/9AGoA6Gn/6f/ogWoA6Gn/6f/pgGmAaf/oguiIKyqBwH+NFcRKsAB8uduK8ABVhIuxwVS8LCx8udtVhIqvvLnccAA8ud3+COCAVGAqQRTB72TN3A2kTDiJ8AAU2i5sfLncAWkEREooVFIoA7T/9EkwgCOGgEREAEEcXCAEMjLBVAEzxZY+gISy2rJAfsAkjQ/4hC/EK4QnRCMEHsQahBZBAgBpDJXEBEQLccF8udsDsAB8ud4DNP/L44igwjXGPgo+kQByMoHy/9WEAHL/1Iwy//J+QBYVhL5EPLndd7REL8QrhCdEIwQexBqEFkQSBA3QFYTcAIJAZQ0NDc3ODg4OlGnxwXy52wiwAHy524kwADy53cH+gDTH9MA0wD6QNQB0NP/0//RAtEMERAMED8QLhBNEIwQaxBaEDlIFgcEUDNFFQkE9I7YVxERES7HBfLnbA76ANFTBLvy53L4J28QUhC78udzIMIAjhdT0HFwgBDIywVQBM8WWPoCEstqyQH7AN4UoQwREAwQvxCuEJ0QjBB7EGoQWRBIRxdQZgUDBOBWEYIQU1ZDBbrjAlYRghBTVkMGuuMCVhGCEFNWQwe6CQoLDAB8CENWcVkEyMv/E8v/ywDLAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQAcgTIy/8Ty//LAMsAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVAD6NlcQERAtxwXy52wIwAHy524M0SpwgwZwgBDIywVQBM8WWPoCEstqyQH7AHAgDBEQDBC/EK4QnRwQexBqEFkQSEYXUDMEyMv/E8v/ywDLAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQAyFcREREuxwXy52wJwADy528N0RC/EK4QnRCMcQwQexBqEFkQSBA3RlAUQzAEyMv/E8v/ywDLAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VQC+o5rVxFXEhEQLccF8udsDsAAVhDAALHy53YM0//REL8QrhCdEIwQexBqEFkQSBA3RlATcQEEyMv/E8v/ywDLAMv/yQLIy//L/8nIUAzPFhrLAFAIzxYWywAUywBY+gLLH8sfyx8B+gISzMzJ7VTgERGCEFNWQwi64wJfD18EDQ4AzBERLscF8udsD8AAVhDAALHy53YN0RC/EK4QnRCMEHsQahBZEEgQN0YURVNwAQTIy/8Ty//LAMsAy//JAsjL/8v/ychQDM8WGssAUAjPFhbLABTLAFj6Assfyx/LHwH6AhLMzMntVAAG8sd0";
 pub const SVC_CALL_OPCODE: u32 = 0x5356_4301;
 pub const SVC_RESPOND_OPCODE: u32 = 0x5356_4302;
 pub const SVC_UPDATE_POLICY_OPCODE: u32 = 0x5356_4303;
@@ -60,6 +60,11 @@ pub struct ServiceActorData {
     pub proof_scheme_hash: [u8; 32],
     pub last_request_hash: [u8; 32],
     pub last_response_hash: [u8; 32],
+    /// `true` when the last `call` has not yet been answered by `respond`.
+    /// `rotate_attestor_key`/`revoke_attestor` are rejected while this is
+    /// set, so a caller who paid can trust the independent check it saw
+    /// configured won't be swapped out before the response it paid for.
+    pub has_pending_response: bool,
     pub attestor_pubkey: Option<[u8; 32]>,
 }
 
@@ -94,6 +99,7 @@ impl ServiceActorContract {
         data.checked_append_reference(meta.into_cell()?)?;
         let mut last = BuilderData::new();
         last.append_u256(&[0; 32])?.append_u256(&[0; 32])?;
+        last.append_bit_zero()?; // has_pending_response = 0 at deploy
         match init.attestor_pubkey {
             Some(pubkey) => {
                 last.append_bit_one()?.append_raw(&pubkey, 256)?;
@@ -140,7 +146,8 @@ impl ServiceActorContract {
             proof_scheme_hash: parse_hash(stack, 11)?,
             last_request_hash: parse_hash(stack, 12)?,
             last_response_hash: parse_hash(stack, 13)?,
-            attestor_pubkey: if stack.u64(14)? == 0 { None } else { Some(parse_hash(stack, 15)?) },
+            has_pending_response: stack.u64(14)? != 0,
+            attestor_pubkey: if stack.u64(15)? == 0 { None } else { Some(parse_hash(stack, 16)?) },
         })
     }
 
@@ -392,6 +399,7 @@ mod tests {
             hash_number([0xEE; 32]),
             hash_number([0xFF; 32]),
             number("1"),
+            number("1"),
             hash_number([0x99; 32]),
         ]);
         let data = ServiceActorContract::decode_data(&stack).unwrap();
@@ -408,6 +416,7 @@ mod tests {
         assert_eq!(data.proof_scheme_hash, svc.proof_scheme_hash);
         assert_eq!(data.last_request_hash, [0xEE; 32]);
         assert_eq!(data.last_response_hash, [0xFF; 32]);
+        assert!(data.has_pending_response);
         assert_eq!(data.attestor_pubkey, Some([0x99; 32]));
     }
 
@@ -430,12 +439,14 @@ mod tests {
             hash_number([0; 32]),
             hash_number([0; 32]),
             number("0"),
+            number("0"),
             hash_number([0; 32]),
         ]);
         let data = ServiceActorContract::decode_data(&stack).unwrap();
         assert_eq!(data.authorized_caller, None);
         assert!(data.open_access);
         assert!(!data.active);
+        assert!(!data.has_pending_response);
         assert_eq!(data.attestor_pubkey, None);
     }
 }

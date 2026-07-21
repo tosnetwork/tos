@@ -19,7 +19,8 @@
 ;;   calls_today:uint32
 ;;   total_revenue:coins
 ;;   ^[metadata_hash:uint256 proof_scheme_hash:uint256]
-;;   ^[last_request_hash:uint256 last_response_hash:uint256]
+;;   ^[last_request_hash:uint256 last_response_hash:uint256
+;;     has_pending_response:uint1 has_attestor:uint1 attestor_pubkey:uint256]
 ;;
 ;; Internal messages:
 ;;   call#53564301 query_id:uint64 request_hash:uint256 = InternalMsgBody;
@@ -52,8 +53,10 @@ const int err::insufficient_balance = 1907;
 const int err::unknown_op = 1908;
 const int err::bad_response_signature = 1909;
 const int err::attestor_frozen = 1910;
+const int err::response_pending = 1911;
+const int err::no_pending_response = 1912;
 
-(slice, int, slice, int, int, int, int, int, int, int, int, int, int, int, int, int) load_state() inline {
+(slice, int, slice, int, int, int, int, int, int, int, int, int, int, int, int, int, int) load_state() inline {
   slice ds = get_data().begin_parse();
   slice owner = ds~load_msg_addr();
   int has_authorized_caller = ds~load_uint(1);
@@ -72,20 +75,21 @@ const int err::attestor_frozen = 1910;
   slice last = ds~load_ref().begin_parse();
   int last_request_hash = last~load_uint(256);
   int last_response_hash = last~load_uint(256);
+  int has_pending_response = last~load_uint(1);
   int has_attestor = last~load_uint(1);
   int attestor_pubkey = last~load_uint(256);
   last.end_parse();
   ds.end_parse();
   return (owner, has_authorized_caller, authorized_caller, open_access, active, price_per_call,
     rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash, proof_scheme_hash,
-    last_request_hash, last_response_hash, has_attestor, attestor_pubkey);
+    last_request_hash, last_response_hash, has_pending_response, has_attestor, attestor_pubkey);
 }
 
 () save_state(slice owner, int has_authorized_caller, slice authorized_caller, int open_access,
              int active, int price_per_call, int rate_limit_per_day, int call_day,
              int calls_today, int total_revenue, int metadata_hash, int proof_scheme_hash,
-             int last_request_hash, int last_response_hash, int has_attestor,
-             int attestor_pubkey) impure inline {
+             int last_request_hash, int last_response_hash, int has_pending_response,
+             int has_attestor, int attestor_pubkey) impure inline {
   set_data(begin_cell()
     .store_slice(owner)
     .store_uint(has_authorized_caller, 1)
@@ -104,6 +108,7 @@ const int err::attestor_frozen = 1910;
     .store_ref(begin_cell()
       .store_uint(last_request_hash, 256)
       .store_uint(last_response_hash, 256)
+      .store_uint(has_pending_response, 1)
       .store_uint(has_attestor, 1)
       .store_uint(attestor_pubkey, 256)
     .end_cell())
@@ -134,13 +139,22 @@ const int err::attestor_frozen = 1910;
   (slice owner, int has_authorized_caller, slice authorized_caller, int open_access, int active,
    int price_per_call, int rate_limit_per_day, int call_day, int calls_today, int total_revenue,
    int metadata_hash, int proof_scheme_hash, int last_request_hash, int last_response_hash,
-   int has_attestor, int attestor_pubkey) = load_state();
+   int has_pending_response, int has_attestor, int attestor_pubkey) = load_state();
 
   if (op == op::call) {
     throw_unless(err::inactive, active == 1);
     throw_unless(err::not_authorized,
       (open_access == 1) | (has_authorized_caller & equal_slice_bits(sender, authorized_caller)));
     throw_unless(err::insufficient_payment, msg_value >= price_per_call);
+    ;; This contract tracks only the single latest request/response pair, not
+    ;; a per-caller queue: a second call() while the first is still
+    ;; unanswered would silently overwrite last_request_hash, so respond()
+    ;; could clear has_pending_response (and unfreeze the attestor) having
+    ;; only ever answered the second caller -- the first caller's paid-for
+    ;; response, and the attestor guarantee it relied on, would be lost with
+    ;; no on-chain trace. Calls must therefore be strictly serialized: only
+    ;; one may be outstanding at a time.
+    throw_unless(err::response_pending, has_pending_response == 0);
     int today = now() / 86400;
     if (today != call_day) {
       call_day = today;
@@ -160,37 +174,55 @@ const int err::attestor_frozen = 1910;
     }
     save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
       price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
-      proof_scheme_hash, request_hash, last_response_hash, has_attestor, attestor_pubkey);
+      proof_scheme_hash, request_hash, last_response_hash, 1, has_attestor, attestor_pubkey);
     return ();
   }
 
   if (op == op::respond) {
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
+    ;; A response must answer an outstanding call -- otherwise it proves
+    ;; nothing about any specific paid request, and (before this check)
+    ;; could be used purely to clear has_pending_response and unfreeze the
+    ;; attestor without ever having answered anyone.
+    throw_unless(err::no_pending_response, has_pending_response == 1);
     int response_hash = in_msg~load_uint(256);
     if (has_attestor) {
       ;; Additional, independent check: the configured attestor key must have
-      ;; signed the new response_hash, domain-bound to this contract's own
-      ;; address so the signature can't be replayed against another instance
-      ;; sharing the same attestor key and response_hash. This never replaces
-      ;; the owner sender check above -- it is an extra requirement layered
-      ;; on top.
+      ;; signed this exact (last_request_hash, response_hash) pair,
+      ;; domain-bound to this contract's own address so the signature can't
+      ;; be replayed against another instance sharing the same attestor key
+      ;; -- and, critically, can't be replayed against a *different* request
+      ;; on this same instance. Binding only response_hash (as an earlier
+      ;; version of this check did) would let a signature the attestor gave
+      ;; for one request's response be replayed to "answer" a later,
+      ;; unrelated request whenever the owner happens to reuse the same
+      ;; response content, with no on-chain trace that the attestor never
+      ;; actually saw that later request. This never replaces the owner
+      ;; sender check above -- it is an extra requirement layered on top.
       slice signature = in_msg~load_bits(512);
       (int wc, int addr) = my_address().parse_std_addr();
       int domain_hash = cell_hash(begin_cell()
-        .store_int(wc, 8).store_uint(addr, 256).store_uint(response_hash, 256).end_cell());
+        .store_int(wc, 8).store_uint(addr, 256)
+        .store_uint(last_request_hash, 256).store_uint(response_hash, 256).end_cell());
       throw_unless(err::bad_response_signature,
         check_signature(domain_hash, signature, attestor_pubkey));
     }
     in_msg.end_parse();
     save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
       price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
-      proof_scheme_hash, last_request_hash, response_hash, has_attestor, attestor_pubkey);
+      proof_scheme_hash, last_request_hash, response_hash, 0, has_attestor, attestor_pubkey);
     return ();
   }
 
   if (op == op::update_policy) {
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     throw_unless(err::inactive, active == 1);
+    ;; A caller who paid for the outstanding request relied on the policy
+    ;; (price, access rule, and especially proof_scheme_hash/metadata_hash --
+    ;; what the response is supposed to be verifiable against) in force at
+    ;; call time. Letting the owner change any of that before answering would
+    ;; let it retroactively redefine what the response has to satisfy.
+    throw_unless(err::response_pending, has_pending_response == 0);
     int new_price_per_call = in_msg~load_tomis();
     int new_rate_limit_per_day = in_msg~load_uint(32);
     int new_open_access = in_msg~load_uint(1);
@@ -204,7 +236,7 @@ const int err::attestor_frozen = 1910;
     save_state(owner, new_has_authorized_caller, new_authorized_caller, new_open_access, active,
       new_price_per_call, new_rate_limit_per_day, call_day, calls_today, total_revenue,
       new_metadata_hash, new_proof_scheme_hash, last_request_hash, last_response_hash,
-      has_attestor, attestor_pubkey);
+      has_pending_response, has_attestor, attestor_pubkey);
     return ();
   }
 
@@ -219,8 +251,8 @@ const int err::attestor_frozen = 1910;
     }
     save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
       price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue - amount,
-      metadata_hash, proof_scheme_hash, last_request_hash, last_response_hash, has_attestor,
-      attestor_pubkey);
+      metadata_hash, proof_scheme_hash, last_request_hash, last_response_hash,
+      has_pending_response, has_attestor, attestor_pubkey);
     return ();
   }
 
@@ -231,7 +263,7 @@ const int err::attestor_frozen = 1910;
     send_value(owner, 0, 128);
     save_state(owner, has_authorized_caller, authorized_caller, open_access, 0, price_per_call,
       rate_limit_per_day, call_day, calls_today, 0, metadata_hash, proof_scheme_hash,
-      last_request_hash, last_response_hash, has_attestor, attestor_pubkey);
+      last_request_hash, last_response_hash, has_pending_response, has_attestor, attestor_pubkey);
     return ();
   }
 
@@ -241,45 +273,52 @@ const int err::attestor_frozen = 1910;
     in_msg.end_parse();
     save_state(owner, has_authorized_caller, authorized_caller, open_access, 1, price_per_call,
       rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash, proof_scheme_hash,
-      last_request_hash, last_response_hash, has_attestor, attestor_pubkey);
+      last_request_hash, last_response_hash, has_pending_response, has_attestor, attestor_pubkey);
     return ();
   }
 
   if (op == op::rotate_attestor_key) {
-    ;; Owner-only: configure the attestor_pubkey respond checks against once.
+    ;; Owner-only: set or replace the attestor_pubkey respond checks against.
     ;; Purely local state -- no cross-contract messaging.
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
-    ;; A Service Actor has no terminal lifecycle state and call() does not
-    ;; retain a queue that can prove no response is outstanding. Therefore a
-    ;; configured attestor is immutable: allowing replacement after a caller
-    ;; paid would let the owner bypass the independent response check.
-    throw_unless(err::attestor_frozen, has_attestor == 0);
+    ;; A configured attestor is frozen while a call is awaiting its respond():
+    ;; swapping in a key the owner controls right before answering would let
+    ;; them forge the independent check a caller relied on when it paid.
+    ;; Outside a pending window (including before the first call, or any time
+    ;; after the last call has been answered) rotation is unrestricted -- a
+    ;; long-lived actor must be able to recover from a lost or compromised
+    ;; attestor key, unlike a single-use task/dispute that always reaches a
+    ;; terminal state.
+    throw_unless(err::attestor_frozen, (has_attestor == 0) | (has_pending_response == 0));
     attestor_pubkey = in_msg~load_uint(256);
     in_msg.end_parse();
     has_attestor = 1;
     save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
       price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
-      proof_scheme_hash, last_request_hash, last_response_hash, has_attestor, attestor_pubkey);
+      proof_scheme_hash, last_request_hash, last_response_hash, has_pending_response,
+      has_attestor, attestor_pubkey);
     return ();
   }
 
   if (op == op::revoke_attestor) {
-    ;; Retained for message compatibility, but a configured attestor cannot be
-    ;; revoked because this contract has no terminal no-pending-response state.
+    ;; Owner-only: drop the attestation requirement -- respond reverts to
+    ;; owner-sender-authorization-only. Frozen under the same pending-response
+    ;; condition as rotation, for the same reason.
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
-    throw_unless(err::attestor_frozen, has_attestor == 0);
+    throw_unless(err::attestor_frozen, (has_attestor == 0) | (has_pending_response == 0));
     in_msg.end_parse();
     has_attestor = 0;
     save_state(owner, has_authorized_caller, authorized_caller, open_access, active,
       price_per_call, rate_limit_per_day, call_day, calls_today, total_revenue, metadata_hash,
-      proof_scheme_hash, last_request_hash, last_response_hash, has_attestor, attestor_pubkey);
+      proof_scheme_hash, last_request_hash, last_response_hash, has_pending_response,
+      has_attestor, attestor_pubkey);
     return ();
   }
 
   throw(err::unknown_op);
 }
 
-(slice, int, slice, int, int, int, int, int, int, int, int, int, int, int, int, int)
+(slice, int, slice, int, int, int, int, int, int, int, int, int, int, int, int, int, int)
 get_service_actor_data() method_id {
   return load_state();
 }
