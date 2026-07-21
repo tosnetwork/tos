@@ -21,6 +21,7 @@ Start with:
 - [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md) - contract design guidance for agent accounts, task escrow, service actors, and verifier actors
 - [agent-wallet-mvp.md](agent-wallet-mvp.md) - first `tosctl agent wallet` implementation slice for profiles, funding, activation, policy updates, runtime binding, controller rotation, policy export and removal
 - [ai-actor-threat-model.md](ai-actor-threat-model.md) - baseline threat model
+- [service-actor-concurrent-escrow-upgrade.md](service-actor-concurrent-escrow-upgrade.md) - pre-testnet in-place upgrade for concurrent paid requests, settlement, and refunds
 - [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md) - required test coverage
 - [ai-actor-operations-runbook.md](ai-actor-operations-runbook.md) - operational guidance for agent and service infrastructure
 - [actor.md](actor.md) - actor-model first principles for TOS
