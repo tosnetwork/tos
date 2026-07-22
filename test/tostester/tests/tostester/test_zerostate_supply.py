@@ -4,6 +4,7 @@ canonical figure the mainnet template targets). A prior version of this
 template accidentally minted an extra 1 TOS split across smc3/elector/config
 reserves, on top of the 5 B pre-mined to the main wallet.
 """
+
 import os
 from pathlib import Path
 
@@ -15,7 +16,11 @@ from tostester.network import NetworkConfig
 from tostester.zerostate import SimplexConsensusConfig, create_zerostate
 
 REPO = Path(__file__).resolve().parents[4]
-BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
+# Matches test/integration/test_basic.py's convention: CI's build step
+# (assembly/native/build-ubuntu-shared.sh) always builds into `build`, not
+# `build-remove-workchains-full` (a local-dev-only directory name used by
+# some scripts/*.py e2e scripts). TOS_BUILD_DIR still overrides for local use.
+BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 NANOTOS_PER_TOS = 1_000_000_000
 EXPECTED_TOTAL_SUPPLY_TOS = 5_000_000_000
 EXPECTED_SIMPLEX_PARAMS = (2400, 4, 1000, 250)
