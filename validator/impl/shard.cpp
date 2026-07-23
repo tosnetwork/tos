@@ -455,6 +455,30 @@ Ref<block::ValidatorSet> MasterchainStateQ::get_validator_set(ShardIdFull shard,
   return Ref<block::ValidatorSet>{true, cc_seqno, shard, std::move(nodes)};
 }
 
+Ref<block::ValidatorSet> MasterchainStateQ::get_validator_set(ShardIdFull shard, CatchainSeqno cc_seqno) const {
+  if (!config_ || !cur_validators_) {
+    LOG(ERROR) << "MasterchainStateQ::get_validator_set() : no config or no cur_validators";
+    return {};
+  }
+  auto nodes = config_->compute_validator_set(shard, *cur_validators_, config_->utime, cc_seqno);
+  if (nodes.empty()) {
+    return {};
+  }
+  return Ref<block::ValidatorSet>{true, cc_seqno, shard, std::move(nodes)};
+}
+
+Ref<block::ValidatorSet> MasterchainStateQ::get_next_validator_set(ShardIdFull shard,
+                                                                   CatchainSeqno cc_seqno) const {
+  if (!config_ || !next_validators_) {
+    return {};
+  }
+  auto nodes = config_->compute_validator_set(shard, *next_validators_, config_->utime, cc_seqno);
+  if (nodes.empty()) {
+    return {};
+  }
+  return Ref<block::ValidatorSet>{true, cc_seqno, shard, std::move(nodes)};
+}
+
 // next = -1 -> prev, next = 0 -> cur
 Ref<block::ValidatorSet> MasterchainStateQ::get_total_validator_set(int next) const {
   if (!config_) {

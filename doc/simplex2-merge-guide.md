@@ -39,9 +39,9 @@ on-chain behavior.
 ### 1.2 Merge implementation status
 
 Progress snapshot: 2026-07-23. The implementation is based on TOS commit
-`38d50d663dcaaa8ad911d5d219fc9a7e9ad29e89` plus the uncommitted Plumtree
-overlay work described below. The pinned TON comparison reference remains
-`bbc3bc6d52abbe3a7f852b22050708166fdaafbc`.
+`251e86bd000b3b597d669df46e259ba3905f5bb5` plus the uncommitted Plumtree
+simulator and proof-generation work described below. The pinned TON comparison
+reference remains `bbc3bc6d52abbe3a7f852b22050708166fdaafbc`.
 
 Status definitions:
 
@@ -58,7 +58,7 @@ Status definitions:
 | 2. Candidate codec | Partial | Existing combined BOC/LZ4/improved codec verified; negative-size and integer/size bounds hardened | Add boundary vectors, corruption/compression-bomb corpus, fuzzing, and peak-memory measurements |
 | 3. Block-sync overlay | Partial | Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Add recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth tests |
 | 4. Observer and relay | Partial | Protocol-v2 candidate relay actor and existing manager/full-node broadcast API adaptation | Port non-validator group reconciliation, optional validator identity, observer cache/retention, authorization, eviction, and relay-loop tests |
-| 5. Plumtree | Partial | Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, and public plus fast-sync candidate paths compile in TOS | Port finality/downloader paths; add simulation, churn, loss, latency, duplicate-byte, and security tests |
+| 5. Plumtree | Pending validation | Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, the upstream graph simulator, and fault-injected Simplex consensus tests are adapted to TOS | Add transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, packet-loss, partition, churn, and selective-forwarding tests |
 | 6. Structural refactoring | Not started | TOS session-specific database paths were reviewed at a high level | Perform semantic DB-name comparison only if required after protocol features stabilize |
 | Activation | Not started | Protocol v2 is parsed but validator startup rejects it explicitly | Complete phases 1–5 exit criteria, define proposal/rollback procedure, and run mixed-version plus 72-hour multi-region soak |
 
@@ -82,25 +82,67 @@ Implemented work to date:
   overlay library.
 - Public shard and fast-sync overlays derive the Plumtree candidate setting
   from ConfigParam30, create QUIC-backed Plumtree overlays, and send candidate
-  FEC payloads through Plumtree when enabled. Finality/downloader integration
-  and observer group creation remain unported.
+  FEC payloads through Plumtree when enabled.
+- Finality broadcasts have a dedicated TL type and deterministic broadcast ID.
+  Public and fast-sync overlays send them through Plumtree; custom overlays use
+  their existing authorized FEC path. The manager retains candidates and
+  finality sets in bounded LRU caches, reconciles either arrival order, builds
+  a proof or proof link, and then reuses the existing `ValidateBroadcast` path.
+  Before caching, the manager verifies final or approve signatures against the
+  current or next validator set selected for the advertised catchain sequence.
+  Invalid signatures cannot occupy the pending-finality cache, and a final
+  signature set can upgrade a cached approve set while duplicates and
+  downgrades are ignored. The implementation is still startup-gated with
+  protocol version 2.
+- The upstream Plumtree graph simulator is adapted to TOS. It exercises the
+  real overlay actor, Plumtree implementation, TL messages, signatures, repair
+  query transport, deterministic graph topology, geographic latency/jitter,
+  bandwidth limits, sequential broadcasts, delivery latency, traffic, and duplicate
+  accounting. Its current transport model does not inject packet loss,
+  partitions, churn, or Byzantine behavior.
+- The downloader can construct a masterchain `BlockProof` from a final
+  signature set and the matching masterchain state. The shared proof-root
+  builder validates the block root hash, header identity and shard flags,
+  Merkle update shape, and key-block configuration before serializing either a
+  full proof or proof link. Candidate/finality reconciliation now consumes
+  this helper before invoking the existing broadcast validator.
 - Protocol version 2 remains deliberately unsupported at validator startup.
-  Its observer and finality/downloader integration dependencies have not been
-  fully ported and tested.
+  Observer support and transport-specific finality security/runtime tests are
+  incomplete.
 
 This is a staged implementation, not completion of all phases in this guide.
 
 Validation completed for the current working tree:
 
 - The `overlay` target builds with the Plumtree core.
+- The `plumtree-graph-sim` target builds.
+- The `validator` target builds with the masterchain-proof generation helper.
+- The complete `validator-engine` executable links with the candidate/finality
+  transport and manager reconciliation paths.
+- The validator state exposes current and next validator-set selection by
+  catchain sequence for early finality signature validation.
+- Finalized signatures are round-tripped through the new finality TL envelope
+  during the consensus simulation, including block ID, finality flag, catchain
+  sequence number, validator-set hash, cryptographic signature verification,
+  and rejection against a tampered block ID.
+- The CTest FEC and simple-mode Plumtree smoke simulations pass on a 12-node,
+  four-validator topology.
+- A 20-broadcast stress run in both FEC and simple modes, using 256 KiB
+  payloads, 0.5 relative latency jitter, and a 1 MB/s per-message bandwidth
+  model, delivered every broadcast to all 12 expected nodes.
 - The complete `test-consensus` target builds.
 - A ten-second multi-node consensus simulation at a 100 ms test target
   completes successfully.
+- CTest runs short five-node Simplex liveness scenarios with 15 percent
+  protocol-message loss, repeated process restarts, and repeated temporary
+  single-node network isolation. Each scenario enforces a minimum finalized
+  height, so lack of progress is a test failure.
 - `git diff --check` passes.
 
-This validation does not satisfy the network impairment, adversarial,
-performance, fuzzing, mixed-version, or soak requirements listed later in this
-guide.
+These fault-injected tests exercise the Simplex consensus simulator, not the
+full-node Plumtree transport or manager reconciliation. They therefore do not
+satisfy the transport-specific impairment, adversarial, performance, fuzzing,
+mixed-version, or soak requirements listed later in this guide.
 
 ## 2. Current Architectural Differences
 
@@ -164,9 +206,11 @@ this layout. A parser change alone is not sufficient.
   the protocol-version-2 feature gate. Its downstream public-shard and
   fast-sync candidate paths now use Plumtree when selected by ConfigParam30.
 - Protocol-version-gated Plumtree overlay support and its TL messages are now
-  present. Public and fast-sync candidate propagation is integrated. The
-  reference finality/downloader and observer integrations remain unported, so
-  Plumtree is not yet an activatable TOS protocol feature.
+  present. Public and fast-sync candidate propagation plus public, fast-sync,
+  and custom-overlay finality propagation are integrated. Observer support and
+  the required focused security, impairment, mixed-version, and soak tests
+  remain incomplete, so Plumtree is not yet an activatable TOS protocol
+  feature.
 - TOS already uses session-specific consensus database paths. Reference v2
   database naming must be compared semantically before any further DB-path
   change.
@@ -387,11 +431,17 @@ overlay traffic. Trust must be re-established at every boundary.
 
 ### Phase 5: Plumtree broadcast
 
-**Current status: Partial.** The overlay protocol core and TL schema are
+**Current status: Pending validation.** The overlay protocol core and TL schema are
 implemented and build successfully. Public-overlay and fast-sync candidate
-paths are integrated and the complete validator engine links. Finality and
-downloader paths plus the required network simulation and performance evidence
-remain open.
+paths are integrated and the complete validator engine links. The graph
+simulator and its FEC/simple smoke tests are ported. Finality and downloader
+transport, bounded manager reconciliation, proof construction, and existing
+broadcast validation integration are ported. Short fault-injected Simplex
+consensus tests cover protocol-message loss, process restart, and temporary
+single-node isolation with explicit liveness thresholds. Transport-specific
+runtime coverage for arrival ordering, invalid signatures, authorization,
+eviction, relay loops, packet loss, partition, churn, and selective forwarding
+remains open, as do security and release-grade performance evidence.
 
 Integrate Plumtree as an independently gated feature. Test it against the
 existing TOS certificate and candidate propagation mechanisms.

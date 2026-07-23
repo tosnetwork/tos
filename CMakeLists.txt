@@ -709,6 +709,17 @@ add_test(
 
 add_executable(test-overlay test/test-overlay.cpp)
 target_link_libraries(test-overlay overlay tdutils tdactor adnl adnltest tl_api dht )
+add_executable(plumtree-graph-sim
+  test/plumtree/plumtree-graph-sim.cpp
+  test/plumtree/graph.cpp
+  test/plumtree/scheduler.cpp
+  test/plumtree/transport.cpp
+  test/plumtree/util.cpp
+)
+target_link_libraries(plumtree-graph-sim overlay tdutils tdactor adnl adnltest tl_api dht )
+add_test(NAME plumtree-graph-sim-smoke COMMAND plumtree-graph-sim --smoke)
+add_test(NAME plumtree-graph-sim-simple-smoke COMMAND plumtree-graph-sim --smoke --broadcast-mode simple)
+add_dependencies(all-tests plumtree-graph-sim)
 add_executable(test-catchain test/test-catchain.cpp)
 target_link_libraries(test-catchain overlay tdutils tdactor adnl adnltest rldp tl_api dht
   catchain )

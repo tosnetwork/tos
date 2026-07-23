@@ -92,6 +92,7 @@ size_t N_DOUBLE_NODES = 0;
 double DURATION = 60.0;
 td::uint32 TARGET_RATE_MS = 1000;
 td::uint32 SLOTS_PER_LEADER_WINDOW = 4;
+BlockSeqno MIN_FINALIZED_BLOCKS = 0;
 
 std::pair<double, double> GREMLIN_PERIOD = {-1.0, -1.0};
 std::pair<double, double> GREMLIN_DOWNTIME = {1.0, 1.0};
@@ -430,8 +431,8 @@ class TestManagerFacade : public ManagerFacade {
   }
 
   td::actor::Task<> accept_block(BlockIdExt id, td::Ref<BlockData> data, size_t creator_idx,
-                                 td::Ref<block::BlockSignatureSet> signatures, int send_broadcast_mode,
-                                 bool apply) override;
+                                 td::Ref<block::BlockSignatureSet> signatures, int block_broadcast_mode,
+                                 int finality_broadcast_mode, bool apply) override;
 
   td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout) override;
   td::actor::Task<td::Ref<BlockData>> wait_block_data(BlockIdExt block_id, td::Timestamp timeout) override;
@@ -831,6 +832,11 @@ class TestConsensus : public td::actor::Actor {
                      << inst.last_accepted_block;
       }
     }
+    if (last_accepted_block_.seqno() < MIN_FINALIZED_BLOCKS) {
+      co_return td::Status::Error(
+          PSTRING() << "finalized only " << last_accepted_block_.seqno() << " blocks, expected at least "
+                    << MIN_FINALIZED_BLOCKS);
+    }
     co_return td::Unit{};
   }
 
@@ -871,12 +877,29 @@ class TestConsensus : public td::actor::Actor {
 };
 
 td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockData> data, size_t creator_idx,
-                                                  td::Ref<block::BlockSignatureSet> signatures, int send_broadcast_mode,
-                                                  bool apply) {
+                                                  td::Ref<block::BlockSignatureSet> signatures,
+                                                  int block_broadcast_mode, int finality_broadcast_mode, bool apply) {
   CHECK(id.shard_full() == SHARD);
   LOG(WARNING) << "Accept block #" << id.seqno() << " (" << (signatures->is_final() ? "final" : "notarize")
                << " signatures), creator_idx=" << creator_idx;
   CHECK(id == data->block_id());
+  if (signatures->is_final()) {
+    auto encoded = create_serialize_tl_object<tos_api::tosNode_blockFinalityBroadcast>(
+        create_tl_block_id(id), signatures->tl());
+    auto decoded = fetch_tl_object<tos_api::tosNode_Broadcast>(std::move(encoded), true).move_as_ok();
+    CHECK(decoded->get_id() == tos_api::tosNode_blockFinalityBroadcast::ID);
+    auto finality = move_tl_object_as<tos_api::tosNode_blockFinalityBroadcast>(decoded);
+    CHECK(create_block_id(finality->id_) == id);
+    auto decoded_signatures = block::BlockSignatureSet::fetch(finality->signature_set_);
+    CHECK(decoded_signatures.not_null());
+    CHECK(decoded_signatures->is_final());
+    CHECK(decoded_signatures->get_catchain_seqno() == signatures->get_catchain_seqno());
+    CHECK(decoded_signatures->get_validator_set_hash() == signatures->get_validator_set_hash());
+    decoded_signatures->check_signatures(validator_set_, id).ensure();
+    auto tampered_id = id;
+    tampered_id.id.seqno++;
+    CHECK(decoded_signatures->check_signatures(validator_set_, tampered_id).is_error());
+  }
   td::actor::ask(test_consensus_, &TestConsensus::on_block_accepted, node_idx_, instance_idx_, data, creator_idx,
                  signatures)
       .detach();
@@ -997,6 +1020,11 @@ int main(int argc, char *argv[]) {
     TRY_RESULT_ASSIGN(SLOTS_PER_LEADER_WINDOW, td::to_integer_safe<td::uint32>(arg));
     return td::Status::OK();
   });
+  p.add_checked_option('\0', "min-finalized-blocks", "minimum finalized height required for success (default: 0)",
+                       [&](td::Slice arg) {
+                         TRY_RESULT_ASSIGN(MIN_FINALIZED_BLOCKS, td::to_integer_safe<BlockSeqno>(arg));
+                         return td::Status::OK();
+                       });
   p.add_checked_option('\0', "net-ping", "network ping (range, default: 0.05:0.1)", [&](td::Slice arg) {
     TRY_RESULT_ASSIGN(NET_PING, parse_range(arg));
     if (NET_PING.first < 0.0) {

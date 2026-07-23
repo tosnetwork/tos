@@ -156,6 +156,7 @@ class FullNodeShardImpl : public FullNodeShard {
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcast &query);
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressed &query);
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query);
   void process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query);
   void obtain_state_for_decompression(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query);
   void process_block_broadcast_with_state(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query,
@@ -187,6 +188,7 @@ class FullNodeShardImpl : public FullNodeShard {
   void send_block_candidate(BlockIdExt block_id, CatchainSeqno cc_seqno, td::uint32 validator_set_hash,
                             td::BufferSlice data) override;
   void send_broadcast(BlockBroadcast broadcast) override;
+  void send_block_finality_broadcast(BlockFinalityBroadcast finality) override;
 
   void download_block(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,
                       td::Promise<ReceivedBlock> promise) override;

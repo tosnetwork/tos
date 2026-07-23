@@ -863,6 +863,14 @@ void FullNodeShardImpl::process_broadcast(PublicKeyHash src, tos_api::tosNode_bl
   process_block_broadcast(src, query);
 }
 
+void FullNodeShardImpl::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query) {
+  auto block_id = create_block_id(query.id_);
+  BlockFinalityBroadcast finality{block_id, block::BlockSignatureSet::fetch(query.signature_set_)};
+  VLOG(FULL_NODE_DEBUG) << "Received blockFinalityBroadcast in public overlay from " << src << ": "
+                        << block_id.to_str();
+  td::actor::send_closure(full_node_, &FullNode::process_block_finality_broadcast, std::move(finality));
+}
+
 void FullNodeShardImpl::process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query) {
   auto B = deserialize_block_broadcast(query, overlay::Overlays::max_fec_broadcast_size(), k_called_from_public);
   if (B.is_error()) {
@@ -1035,6 +1043,25 @@ void FullNodeShardImpl::send_broadcast(BlockBroadcast broadcast) {
   auto source = choose_outbound_source(static_cast<td::uint32>(payload.size()), true);
   td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_fec_ex, adnl_id_, overlay_id_, source,
                           overlay::Overlays::BroadcastFlagAnySender(), std::move(payload));
+}
+
+void FullNodeShardImpl::send_block_finality_broadcast(BlockFinalityBroadcast finality) {
+  if (!client_.empty()) {
+    UNREACHABLE();
+    return;
+  }
+  if (!enable_plumtree_broadcast_) {
+    return;
+  }
+  VLOG(FULL_NODE_DEBUG) << "Sending Plumtree blockFinalityBroadcast in public overlay: "
+                        << finality.block_id.to_str();
+  auto broadcast_id = get_tl_object_sha_bits256(
+      create_tl_object<tos_api::tosNode_finalityBroadcastId>(create_tl_block_id(finality.block_id)));
+  auto payload = create_serialize_tl_object<tos_api::tosNode_blockFinalityBroadcast>(
+      create_tl_block_id(finality.block_id), finality.sig_set->tl());
+  auto source = choose_outbound_source(static_cast<td::uint32>(payload.size()), true);
+  td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_plumtree, adnl_id_, overlay_id_, source,
+                          overlay::Overlays::BroadcastFlagAnySender(), broadcast_id, std::move(payload));
 }
 
 void FullNodeShardImpl::download_block(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,

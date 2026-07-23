@@ -457,6 +457,8 @@ tosNode.blockBroadcast id:tosNode.blockIdExt catchain_seqno:int validator_set_ha
 tosNode.blockBroadcastCompressed id:tosNode.blockIdExt catchain_seqno:int validator_set_hash:int
               flags:# compressed:bytes = tosNode.Broadcast;
 tosNode.blockBroadcastCompressedV2 id:tosNode.blockIdExt signature_set:tosNode.SignatureSet flags:# proof:bytes data_compressed:bytes = tosNode.Broadcast;
+tosNode.finalityBroadcastId id:tosNode.blockIdExt = tosNode.FinalityBroadcastId;
+tosNode.blockFinalityBroadcast id:tosNode.blockIdExt signature_set:tosNode.SignatureSet = tosNode.Broadcast;
 tosNode.ihrMessageBroadcast message:tosNode.ihrMessage = tosNode.Broadcast;
 tosNode.externalMessageBroadcast message:tosNode.externalMessage = tosNode.Broadcast;
 tosNode.newShardBlockBroadcast block:tosNode.newShardBlock = tosNode.Broadcast;

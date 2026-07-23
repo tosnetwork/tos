@@ -11,3 +11,21 @@ target_link_libraries(test-consensus PRIVATE
     tos_validator
     validator
 )
+
+add_test(
+    NAME test-consensus-simplex2-loss
+    COMMAND test-consensus --duration 4 --n-nodes 5 --target-rate-ms 100
+            --net-ping 0.005:0.02 --net-loss 0.15 --min-finalized-blocks 5
+)
+add_test(
+    NAME test-consensus-simplex2-restart
+    COMMAND test-consensus --duration 5 --n-nodes 5 --target-rate-ms 100
+            --net-ping 0.005:0.02 --gremlin-period 0.5:0.8
+            --gremlin-downtime 0.1:0.2 --gremlin-times 4 --min-finalized-blocks 5
+)
+add_test(
+    NAME test-consensus-simplex2-partition
+    COMMAND test-consensus --duration 5 --n-nodes 5 --target-rate-ms 100
+            --net-ping 0.005:0.02 --net-gremlin-period 0.5:0.8
+            --net-gremlin-downtime 0.1:0.2 --net-gremlin-times 4 --min-finalized-blocks 5
+)

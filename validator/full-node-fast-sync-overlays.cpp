@@ -68,6 +68,10 @@ void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosN
   process_block_broadcast(src, query);
 }
 
+void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query) {
+  process_block_finality_broadcast(src, query);
+}
+
 void FullNodeFastSyncOverlay::process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query) {
   auto B = deserialize_block_broadcast(query, overlay::Overlays::max_fec_broadcast_size(), k_called_from_fast_sync);
   if (B.is_error()) {
@@ -77,6 +81,15 @@ void FullNodeFastSyncOverlay::process_block_broadcast(PublicKeyHash src, tos_api
   VLOG(FULL_NODE_DEBUG) << "Received block broadcast " << (B.ok().sig_set->is_final() ? "" : "(approve signatures) ")
                         << "in fast sync overlay from " << src << ": " << B.ok().block_id.to_str();
   td::actor::send_closure(full_node_, &FullNode::process_block_broadcast, B.move_as_ok(), false);
+}
+
+void FullNodeFastSyncOverlay::process_block_finality_broadcast(
+    PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query) {
+  auto block_id = create_block_id(query.id_);
+  BlockFinalityBroadcast finality{block_id, block::BlockSignatureSet::fetch(query.signature_set_)};
+  VLOG(FULL_NODE_DEBUG) << "Received blockFinalityBroadcast in fast sync overlay from " << src << ": "
+                        << block_id.to_str();
+  td::actor::send_closure(full_node_, &FullNode::process_block_finality_broadcast, std::move(finality));
 }
 
 void FullNodeFastSyncOverlay::obtain_state_for_decompression(PublicKeyHash src,
@@ -266,6 +279,21 @@ void FullNodeFastSyncOverlay::send_broadcast(BlockBroadcast broadcast) {
   }
   td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_fec_ex, local_id_, overlay_id_,
                           local_id_.pubkey_hash(), overlay::Overlays::BroadcastFlagAnySender(), B.move_as_ok());
+}
+
+void FullNodeFastSyncOverlay::send_block_finality_broadcast(BlockFinalityBroadcast finality) {
+  if (!inited_ || !enable_plumtree_broadcast_) {
+    return;
+  }
+  VLOG(FULL_NODE_DEBUG) << "Sending Plumtree blockFinalityBroadcast in fast sync overlay: "
+                        << finality.block_id.to_str();
+  auto broadcast_id = get_tl_object_sha_bits256(
+      create_tl_object<tos_api::tosNode_finalityBroadcastId>(create_tl_block_id(finality.block_id)));
+  auto B = create_serialize_tl_object<tos_api::tosNode_blockFinalityBroadcast>(
+      create_tl_block_id(finality.block_id), finality.sig_set->tl());
+  td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_plumtree, local_id_, overlay_id_,
+                          local_id_.pubkey_hash(), overlay::Overlays::BroadcastFlagAnySender(), broadcast_id,
+                          std::move(B));
 }
 
 void FullNodeFastSyncOverlay::send_block_candidate(BlockIdExt block_id, CatchainSeqno cc_seqno,
