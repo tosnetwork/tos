@@ -18,7 +18,7 @@ def _shard_json_repr(shard: int):
 
 @dataclass
 class SimplexConsensusConfig:
-    target_block_rate_ms: int = 2400
+    target_block_rate_ms: int = 400
     slots_per_leader_window: int = 4
     first_block_timeout_ms: int = 1000
     max_leader_window_desync: int = 250

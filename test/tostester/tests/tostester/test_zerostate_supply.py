@@ -23,10 +23,10 @@ REPO = Path(__file__).resolve().parents[4]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 NANOTOS_PER_TOS = 1_000_000_000
 EXPECTED_TOTAL_SUPPLY_TOS = 5_000_000_000
-EXPECTED_SIMPLEX_PARAMS = (2400, 4, 1000, 250)
+EXPECTED_SIMPLEX_PARAMS = (400, 4, 1000, 250)
 
 
-def test_genesis_simplex_parameters_match_node_defaults():
+def test_genesis_simplex_parameters_match_ton_mainnet_pacing():
     simplex = SimplexConsensusConfig()
     actual = (
         simplex.target_block_rate_ms,
