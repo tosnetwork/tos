@@ -100,6 +100,7 @@ set(VALIDATOR_SOURCE
   consensus/simplex/bus.cpp
   consensus/simplex/candidate-resolver.cpp
   consensus/simplex/certificate.cpp
+  consensus/simplex/collator-schedule.cpp
   consensus/simplex/consensus.cpp
   consensus/simplex/db.cpp
   consensus/simplex/metric-collector.cpp
@@ -115,6 +116,7 @@ set(VALIDATOR_SOURCE
   consensus/bus.cpp
   consensus/chain-state.cpp
   consensus/misbehavior-reporter.cpp
+  consensus/payload.cpp
   consensus/private-overlay.cpp
   consensus/trace-collector.cpp
   consensus/stats.cpp
