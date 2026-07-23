@@ -279,9 +279,17 @@ void FullNodeFastSyncOverlay::send_block_candidate(BlockIdExt block_id, Catchain
     VLOG(FULL_NODE_WARNING) << "failed to serialize block candidate broadcast: " << B.move_as_error();
     return;
   }
-  VLOG(FULL_NODE_DEBUG) << "Sending newBlockCandidate in fast sync overlay (with compression): " << block_id.to_str();
-  td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_fec_ex, local_id_, overlay_id_,
-                          local_id_.pubkey_hash(), overlay::Overlays::BroadcastFlagAnySender(), B.move_as_ok());
+  if (enable_plumtree_broadcast_) {
+    VLOG(FULL_NODE_DEBUG) << "Sending Plumtree newBlockCandidate in fast sync overlay (with compression): "
+                          << block_id.to_str();
+    td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_plumtree_fec, local_id_, overlay_id_,
+                            local_id_.pubkey_hash(), overlay::Overlays::BroadcastFlagAnySender(), B.move_as_ok());
+  } else {
+    VLOG(FULL_NODE_DEBUG) << "Sending newBlockCandidate in fast sync overlay (with compression): "
+                          << block_id.to_str();
+    td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_fec_ex, local_id_, overlay_id_,
+                            local_id_.pubkey_hash(), overlay::Overlays::BroadcastFlagAnySender(), B.move_as_ok());
+  }
 }
 
 void FullNodeFastSyncOverlay::send_validator_telemetry(tl_object_ptr<tos_api::validator_telemetry> telemetry) {
@@ -390,9 +398,11 @@ void FullNodeFastSyncOverlay::init() {
   overlay::OverlayPrivacyRules rules{0, 0, std::move(authorized_keys)};
   std::string scope = PSTRING() << R"({ "type": "fast-sync", "shard_id": )" << shard_.shard
                                 << ", \"workchain_id\": " << shard_.workchain << " }";
+  auto local_validator_it = std::find(current_validators_adnl_.begin(), current_validators_adnl_.end(), local_id_);
+  bool is_original_sender = local_validator_it != current_validators_adnl_.end();
   overlay::OverlayOptions options;
   options.name_ = "fast-sync" + shard_.to_str();
-  if (!shard_.is_masterchain()) {
+  if (enable_plumtree_broadcast_ || !shard_.is_masterchain()) {
     options.default_permanent_members_flags_ = overlay::OverlayMemberFlags::DoNotReceiveBroadcasts;
   }
   options.local_overlay_member_flags_ = receive_broadcasts_ ? 0 : overlay::OverlayMemberFlags::DoNotReceiveBroadcasts;
@@ -400,6 +410,10 @@ void FullNodeFastSyncOverlay::init() {
   options.broadcast_speed_multiplier_ = broadcast_speed_multiplier_;
   options.twostep_broadcast_sender_ = adnl_sender_;
   options.send_twostep_broadcast_ = send_twostep_broadcasts_;
+  options.enable_plumtree_broadcast_ = enable_plumtree_broadcast_;
+  options.is_original_sender_ = is_original_sender;
+  options.plumtree_broadcast_sender_ = enable_plumtree_broadcast_ ? td::actor::ActorId<adnl::AdnlSenderEx>{quic_}
+                                                                  : td::actor::ActorId<adnl::AdnlSenderEx>{};
   td::actor::send_closure(overlays_, &overlay::Overlays::create_semiprivate_overlay, local_id_,
                           overlay_id_full_.clone(), current_validators_adnl_, root_public_keys_, member_certificate_,
                           std::make_unique<Callback>(actor_id(this)), rules, std::move(scope), options);
@@ -447,13 +461,15 @@ void FullNodeFastSyncOverlay::set_member_certificate(overlay::OverlayMemberCerti
 }
 
 void FullNodeFastSyncOverlay::set_params(bool receive_broadcasts, bool send_twostep_broadcasts,
+                                         bool enable_plumtree_broadcast,
                                          td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender) {
   if (receive_broadcasts == receive_broadcasts_ && send_twostep_broadcasts == send_twostep_broadcasts_ &&
-      adnl_sender == adnl_sender_) {
+      enable_plumtree_broadcast == enable_plumtree_broadcast_ && adnl_sender == adnl_sender_) {
     return;
   }
   receive_broadcasts_ = receive_broadcasts;
   send_twostep_broadcasts_ = send_twostep_broadcasts;
+  enable_plumtree_broadcast_ = enable_plumtree_broadcast;
   adnl_sender_ = adnl_sender;
   if (inited_) {
     td::actor::send_closure(overlays_, &overlay::Overlays::delete_overlay, local_id_, overlay_id_);
@@ -633,19 +649,24 @@ void FullNodeFastSyncOverlays::update_overlays(
 
     // Update shard overlays
     for (ShardIdFull shard : all_shards) {
-      bool receive_broadcasts = monitoring_shards.contains(shard);
       // Enable twostep broadcasts by ConfigParam 30
       auto new_consensus_config = state->get_new_consensus_config(shard.workchain);
       bool send_twostep_broadcasts = (bool)new_consensus_config;
+      bool enable_plumtree_broadcast =
+          new_consensus_config && new_consensus_config.value().enable_plumtree_broadcast();
+      bool receive_broadcasts =
+          enable_plumtree_broadcast ? !overlays_info.is_validator_ && monitoring_shards.contains(shard)
+                                    : monitoring_shards.contains(shard);
       auto &overlay = overlays_info.overlays_[shard];
       if (overlay.empty()) {
         overlay = td::actor::create_actor<FullNodeFastSyncOverlay>(
             PSTRING() << "FastSyncOv" << shard.to_str(), local_id, shard, zero_state_file_hash, root_public_keys_,
             current_validators_adnl_, overlays_info.current_certificate_, receive_broadcasts, send_twostep_broadcasts,
-            broadcast_speed_multiplier, keyring, adnl, quic, quic, overlays, validator_manager, full_node);
+            enable_plumtree_broadcast, broadcast_speed_multiplier, keyring, adnl, quic, quic, overlays,
+            validator_manager, full_node);
       } else {
         td::actor::send_closure(overlay, &FullNodeFastSyncOverlay::set_params, receive_broadcasts,
-                                send_twostep_broadcasts, quic);
+                                send_twostep_broadcasts, enable_plumtree_broadcast, quic);
         if (changed_certificate) {
           td::actor::send_closure(overlay, &FullNodeFastSyncOverlay::set_member_certificate,
                                   overlays_info.current_certificate_);

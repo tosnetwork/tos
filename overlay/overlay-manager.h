@@ -90,6 +90,13 @@ class OverlayManager : public Overlays {
                              td::uint32 flags, td::BufferSlice object) override;
   void send_broadcast_fec_with_extra(adnl::AdnlNodeIdShort src, OverlayIdShort overlay_id, PublicKeyHash send_as,
                                      td::uint32 flags, td::BufferSlice object, td::BufferSlice extra) override;
+  void send_broadcast_plumtree_fec(adnl::AdnlNodeIdShort src, OverlayIdShort overlay_id, PublicKeyHash send_as,
+                                   td::uint32 flags, td::BufferSlice object) override;
+  void send_broadcast_plumtree(adnl::AdnlNodeIdShort src, OverlayIdShort overlay_id, PublicKeyHash send_as,
+                               td::uint32 flags, td::Bits256 broadcast_id, td::BufferSlice object) override;
+  void get_plumtree_stats_records(
+      adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id,
+      td::Promise<std::vector<tl_object_ptr<tos_api::overlay_plumtreeStatsRecord>>> promise) override;
 
   void set_privacy_rules(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id, OverlayPrivacyRules rules) override;
   void update_certificate(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id, PublicKeyHash key,
@@ -99,6 +106,8 @@ class OverlayManager : public Overlays {
   void update_root_member_list(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id,
                                std::vector<adnl::AdnlNodeIdShort> nodes, std::vector<PublicKeyHash> root_public_keys,
                                OverlayMemberCertificate certificate) override;
+  void set_test_plumtree_neighbours(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id,
+                                    std::vector<adnl::AdnlNodeIdShort> neighbours);
 
   void get_overlay_random_peers(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay, td::uint32 max_peers,
                                 td::Promise<std::vector<adnl::AdnlNodeIdShort>> promise) override;

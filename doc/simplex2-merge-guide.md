@@ -38,7 +38,31 @@ on-chain behavior.
 
 ### 1.2 Merge implementation status
 
-The first merge tranche has now been implemented in TOS:
+Progress snapshot: 2026-07-23. The implementation is based on TOS commit
+`38d50d663dcaaa8ad911d5d219fc9a7e9ad29e89` plus the uncommitted Plumtree
+overlay work described below. The pinned TON comparison reference remains
+`bbc3bc6d52abbe3a7f852b22050708166fdaafbc`.
+
+Status definitions:
+
+- **Completed**: implemented and covered by the validation stated here.
+- **Partial**: useful code is implemented, but phase exit criteria are not met.
+- **Not started**: no production implementation has been merged.
+- **Pending validation**: implementation exists, but the required adversarial,
+  performance, soak, or mixed-version evidence is incomplete.
+
+| Phase | Status | Implemented | Remaining work |
+|---|---|---|---|
+| 0. Baseline | Partial | Immutable source commits and static feature comparison are recorded | Archive golden ConfigParam cells and record CPU, memory, bandwidth, finality, and database-growth baselines |
+| 1. ConfigParam30 | Partial | TON `#22` bit layout, protocol parsing, supported-version gate, and `#21` round-trip test | Resolve historical old-`#22` ambiguity; add golden, truncated, invalid, and mixed-version activation tests |
+| 2. Candidate codec | Partial | Existing combined BOC/LZ4/improved codec verified; negative-size and integer/size bounds hardened | Add boundary vectors, corruption/compression-bomb corpus, fuzzing, and peak-memory measurements |
+| 3. Block-sync overlay | Partial | Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Add recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth tests |
+| 4. Observer and relay | Partial | Protocol-v2 candidate relay actor and existing manager/full-node broadcast API adaptation | Port non-validator group reconciliation, optional validator identity, observer cache/retention, authorization, eviction, and relay-loop tests |
+| 5. Plumtree | Partial | Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, and public plus fast-sync candidate paths compile in TOS | Port finality/downloader paths; add simulation, churn, loss, latency, duplicate-byte, and security tests |
+| 6. Structural refactoring | Not started | TOS session-specific database paths were reviewed at a high level | Perform semantic DB-name comparison only if required after protocol features stabilize |
+| Activation | Not started | Protocol v2 is parsed but validator startup rejects it explicitly | Complete phases 1–5 exit criteria, define proposal/rollback procedure, and run mixed-version plus 72-hour multi-region soak |
+
+Implemented work to date:
 
 - `simplex_config_v2#22` uses the reference five-bit flags, two-bit
   `protocol_version`, and `use_quic` layout.
@@ -48,10 +72,35 @@ The first merge tranche has now been implemented in TOS:
 - The pre-existing TOS candidate codec in
   `validator-session/candidate-serializer.cpp` has additional negative-size,
   integer-width, compressed-input, and decompression-bound checks.
+- The protocol-version-2 candidate relay actor has been adapted to the
+  existing TOS manager and full-node broadcast APIs. It remains unreachable
+  while protocol version 2 is startup-gated and must not be treated as
+  Plumtree support.
+- The TON Plumtree overlay core, including eager/lazy peer management, FEC
+  trees, repair queries, source authorization, AnySender restrictions, and
+  statistics exchange, has been adapted to TOS and builds as part of the
+  overlay library.
+- Public shard and fast-sync overlays derive the Plumtree candidate setting
+  from ConfigParam30, create QUIC-backed Plumtree overlays, and send candidate
+  FEC payloads through Plumtree when enabled. Finality/downloader integration
+  and observer group creation remain unported.
 - Protocol version 2 remains deliberately unsupported at validator startup.
-  Its observer and Plumtree dependencies have not been ported.
+  Its observer and finality/downloader integration dependencies have not been
+  fully ported and tested.
 
 This is a staged implementation, not completion of all phases in this guide.
+
+Validation completed for the current working tree:
+
+- The `overlay` target builds with the Plumtree core.
+- The complete `test-consensus` target builds.
+- A ten-second multi-node consensus simulation at a 100 ms test target
+  completes successfully.
+- `git diff --check` passes.
+
+This validation does not satisfy the network impairment, adversarial,
+performance, fuzzing, mixed-version, or soak requirements listed later in this
+guide.
 
 ## 2. Current Architectural Differences
 
@@ -111,11 +160,13 @@ this layout. A parser change alone is not sufficient.
   non-validator `BlockSyncObserver` when protocol version 1 is active remains
   unported because current TOS consensus groups require a validator identity.
 - Candidate relay through `ManagerFacade::send_block_candidate_broadcast`
-  with custom, fast-sync, and public broadcast mode bits when Plumtree is
-  enabled remains unported.
-- Protocol-version-gated Plumtree broadcast remains unported. The reference
-  implementation spans the overlay, full-node, manager, downloader, TL, and
-  consensus layers; it must not be represented as enabled by a relay-only port.
+  with custom, fast-sync, and public broadcast mode bits is now present behind
+  the protocol-version-2 feature gate. Its downstream public-shard and
+  fast-sync candidate paths now use Plumtree when selected by ConfigParam30.
+- Protocol-version-gated Plumtree overlay support and its TL messages are now
+  present. Public and fast-sync candidate propagation is integrated. The
+  reference finality/downloader and observer integrations remain unported, so
+  Plumtree is not yet an activatable TOS protocol feature.
 - TOS already uses session-specific consensus database paths. Reference v2
   database naming must be compared semantically before any further DB-path
   change.
@@ -177,6 +228,10 @@ TOS.
 
 ### Phase 0: Freeze the baseline
 
+**Current status: Partial.** Source revisions and the static comparison are
+recorded. Performance baselines and archived configuration fixtures are still
+missing.
+
 - Record the TOS and upstream TON commit hashes.
 - Produce a file-level and symbol-level consensus diff.
 - List all TOS-only safety changes and assign an owner to each one.
@@ -191,6 +246,10 @@ TOS.
 - A fresh local network sustains the configured block interval.
 
 ### Phase 1: ConfigParam30 compatibility and protocol versioning
+
+**Current status: Partial.** Schema parsing and runtime version rejection are
+implemented, but historical `#22` ambiguity, golden vectors, malformed-cell
+coverage, and mixed-version activation tests remain open.
 
 Design the ConfigParam30 migration before changing the TL-B schema. The design
 must answer:
@@ -224,6 +283,10 @@ Do not enable block sync or Plumtree in this phase.
 - A mixed-binary network behaves identically before activation.
 
 ### Phase 2: Candidate payload codec
+
+**Current status: Partial.** The codec and additional resource-bound checks are
+implemented. The required boundary corpus, fuzzing, compression-abuse, and
+peak-memory evidence is not complete.
 
 Port the reference combined candidate payload design:
 
@@ -260,6 +323,10 @@ to QUIC, overlay, relay, and test inputs.
 
 ### Phase 3: Block-sync overlay
 
+**Current status: Partial.** The protocol-v1 overlay and its primary
+authorization and collator checks are implemented. Recovery, impairment,
+restart, saturation, and resource-pressure exit tests remain open.
+
 Port the block-sync overlay behind a disabled protocol-version gate.
 
 The implementation must:
@@ -294,6 +361,10 @@ interfaces, keeping integration changes small.
 
 ### Phase 4: Observer cache and candidate relay
 
+**Current status: Partial.** Candidate relay is implemented behind the v2
+gate. Observer creation, optional validator identity, bounded cache retention,
+and observer security tests are not implemented.
+
 Add non-voting observers only after the block-sync overlay is stable.
 
 Observers must:
@@ -316,6 +387,12 @@ overlay traffic. Trust must be re-established at every boundary.
 
 ### Phase 5: Plumtree broadcast
 
+**Current status: Partial.** The overlay protocol core and TL schema are
+implemented and build successfully. Public-overlay and fast-sync candidate
+paths are integrated and the complete validator engine links. Finality and
+downloader paths plus the required network simulation and performance evidence
+remain open.
+
 Integrate Plumtree as an independently gated feature. Test it against the
 existing TOS certificate and candidate propagation mechanisms.
 
@@ -331,6 +408,9 @@ Activation should require evidence that finality and propagation tails are not
 worse than the existing mechanism under the test matrix.
 
 ### Phase 6: Optional structural refactoring
+
+**Current status: Not started.** No structural refactor is required for the
+currently completed tranches.
 
 Only after the feature ports are stable should TOS consider upstream structural
 changes such as network-state management, database naming, or collator-schedule

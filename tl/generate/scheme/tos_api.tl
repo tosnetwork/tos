@@ -286,6 +286,7 @@ overlay.query overlay:int256 = True;
 overlay.queryWithExtra overlay:int256 extra:overlay.messageExtra = True;
 overlay.getBroadcast hash:int256 = overlay.Broadcast;
 overlay.getBroadcastList list:overlay.broadcastList = overlay.BroadcastList;
+overlay.repairPlumtreePart broadcast_id:int256 timestamp:double part_index:int tree_index:int = overlay.Broadcast;
 
 ---types---
 
@@ -411,8 +412,20 @@ tosNode.signatureSet.simplex final:Bool cc_seqno:int validator_set_hash:int sign
 
 tosNode.blockId workchain:int shard:long seqno:int = tosNode.BlockId;
 tosNode.blockIdExt workchain:int shard:long seqno:int root_hash:int256 file_hash:int256 = tosNode.BlockIdExt;
+overlay.broadcastPlumtreeSimple flags:int timestamp:double src:PublicKey certificate:overlay.Certificate broadcast_id:int256 tree_index:int data:bytes signature:bytes = overlay.Broadcast;
+overlay.broadcastPlumtreeFec flags:int timestamp:double src:PublicKey certificate:overlay.Certificate full_data_hash:int256 full_data_size:int part_index:int tree_index:int data:bytes signature:bytes = overlay.Broadcast;
+overlay.broadcastPlumtreeIHave broadcast_id:int256 timestamp:double part_index:int tree_index:int src:PublicKey certificate:overlay.Certificate payload_timestamp:double data_size:int data_hash:int256 signature:bytes = overlay.Broadcast;
+overlay.broadcastPlumtreePrune broadcast_id:int256 timestamp:double part_index:int tree_index:int = overlay.Broadcast;
+overlay.broadcastPlumtreeUseful broadcast_id:int256 timestamp:double part_index:int tree_index:int = overlay.Broadcast;
+overlay.broadcastPlumtreeFec.id flags:int full_data_hash:int256 full_data_size:int part_size:int = overlay.broadcastPlumtreeFec.Id;
+overlay.broadcastPlumtreeSimple.toSign id:int256 timestamp:double tree_index:int data_size:int data_hash:int256 = overlay.broadcastPlumtreeSimple.ToSign;
+overlay.broadcastPlumtreeFec.toSign id:int256 timestamp:double part_index:int tree_index:int data_size:int data_hash:int256 = overlay.broadcastPlumtreeFec.ToSign;
 tosNode.zeroStateIdExt workchain:int root_hash:int256 file_hash:int256 = tosNode.ZeroStateIdExt;
 tosNode.shardId workchain:int shard:long = tosNode.ShardId;
+overlay.plumtreeStatsRecord src:int256 epoch:int tree_index:int eager_0:(vector long) eager_index:(vector long) delivered_bcsts:int parts_in_p99_bcsts:int useful_avg_ms:int useful_max_ms:int useful_p99_ms:int = overlay.PlumtreeStatsRecord;
+overlay.plumtreeStatsPush record:overlay.plumtreeStatsRecord = overlay.Broadcast;
+overlay.plumtreeStatsExchange overlay:int256 overlay_type:string shard:tosNode.shardId records:(vector overlay.plumtreeStatsRecord) = overlay.PlumtreeStatsExchange;
+overlay.plumtreeStatsDump overlay:int256 overlay_type:string shard:tosNode.shardId received_from:int256 received_at:double records:(vector overlay.plumtreeStatsRecord) = overlay.PlumtreeStatsDump;
 
 tosNode.blockDescriptionEmpty = tosNode.BlockDescription;
 tosNode.blockDescription id:tosNode.blockIdExt = tosNode.BlockDescription;

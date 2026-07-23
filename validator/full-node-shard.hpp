@@ -92,6 +92,7 @@ class FullNodeShardImpl : public FullNodeShard {
   void create_overlay();
   void update_adnl_id(adnl::AdnlNodeIdShort adnl_id, td::Promise<td::Unit> promise) override;
   void set_active(bool active) override;
+  void set_params(bool active, bool enable_plumtree_broadcast) override;
 
   void set_config(FullNodeConfig config) override {
     opts_.config_ = config;
@@ -251,11 +252,11 @@ class FullNodeShardImpl : public FullNodeShard {
   FullNodeShardImpl(ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id,
                     FileHash zero_state_file_hash, FullNodeOptions opts, std::shared_ptr<RateLimiter<>> limiter,
                     td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
-                    td::actor::ActorId<rldp2::Rldp> rldp2,
+                    td::actor::ActorId<rldp2::Rldp> rldp2, td::actor::ActorId<quic::QuicSender> quic,
                     td::actor::ActorId<overlay::Overlays> overlays,
                     td::actor::ActorId<ValidatorManagerInterface> validator_manager,
                     td::actor::ActorId<adnl::AdnlExtClient> client, td::actor::ActorId<FullNode> full_node,
-                    bool active);
+                    bool active, bool enable_plumtree_broadcast);
 
  private:
   bool use_new_download() const {
@@ -273,6 +274,7 @@ class FullNodeShardImpl : public FullNodeShard {
   td::actor::ActorId<keyring::Keyring> keyring_;
   td::actor::ActorId<adnl::Adnl> adnl_;
   td::actor::ActorId<rldp2::Rldp> rldp2_;
+  td::actor::ActorId<quic::QuicSender> quic_;
   td::actor::ActorId<overlay::Overlays> overlays_;
   td::actor::ActorId<ValidatorManagerInterface> validator_manager_;
   td::actor::ActorId<adnl::AdnlExtClient> client_;
@@ -294,6 +296,8 @@ class FullNodeShardImpl : public FullNodeShard {
   adnl::AdnlNodeIdShort last_pinged_neighbour_ = adnl::AdnlNodeIdShort::zero();
 
   bool active_;
+  bool enable_plumtree_broadcast_;
+  bool is_original_sender_ = false;
 
   FullNodeOptions opts_;
 

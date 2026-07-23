@@ -272,7 +272,8 @@ void BroadcastsTwostep::signed_fec(OverlayImpl *overlay, BroadcastTwostepDataFec
 static td::Result<BroadcastCheckResult> check_source(OverlayImpl *overlay, const PublicKeyHash &src_keyhash,
                                                      const Certificate *certificate, td::uint32 data_size,
                                                      adnl::AdnlNodeIdShort message_from) {
-  auto r = overlay->check_source_eligible(src_keyhash, certificate, data_size, true, message_from);
+  auto r = overlay->check_source_eligible(src_keyhash, certificate, data_size, /* is_fec = */ true,
+                                          /* is_any_sender = */ false, message_from);
   if (r == BroadcastCheckResult::Forbidden) {
     return td::Status::Error(ErrorCode::error, "broadcast is forbidden");
   }
