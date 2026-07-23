@@ -934,6 +934,63 @@ td::actor::Task<td::Ref<BlockData>> TestManagerFacade::wait_block_data(BlockIdEx
   co_return co_await td::actor::ask(test_consensus_, &TestConsensus::wait_block_data, block_id);
 }
 
+td::BufferSlice make_large_candidate_boc(td::uint32 leaf_count, td::uint32 salt, bool multi_root,
+                                         td::Bits256 &root_hash) {
+  std::vector<td::Ref<vm::Cell>> level;
+  level.reserve(leaf_count);
+  for (td::uint32 i = 0; i < leaf_count; ++i) {
+    level.push_back(vm::CellBuilder().store_long(i ^ salt, 32).store_zeroes(900).finalize());
+  }
+  while (level.size() > 1) {
+    std::vector<td::Ref<vm::Cell>> next;
+    next.reserve((level.size() + 3) / 4);
+    for (size_t i = 0; i < level.size(); i += 4) {
+      vm::CellBuilder parent;
+      for (size_t j = i; j < std::min(i + 4, level.size()); ++j) {
+        CHECK(parent.store_ref_bool(level[j]));
+      }
+      next.push_back(parent.finalize());
+    }
+    level = std::move(next);
+  }
+  root_hash = td::Bits256{level.front()->get_hash().bits()};
+  if (multi_root) {
+    return vm::std_boc_serialize_multi({level.front()}, 2).move_as_ok();
+  }
+  return vm::std_boc_serialize(level.front(), 31).move_as_ok();
+}
+
+void test_configured_maximum_candidate() {
+  constexpr size_t max_part_size = 4U * 1024U * 1024U;
+  constexpr int max_envelope_size = 8U * 1024U * 1024U + 1024U;
+  constexpr size_t max_slack = 384U * 1024U;
+
+  td::Bits256 block_root_hash;
+  td::Bits256 collated_root_hash;
+  auto block_data = make_large_candidate_boc(32000, 0x13579bdf, false, block_root_hash);
+  auto collated_data = make_large_candidate_boc(32000, 0x2468ace0, true, collated_root_hash);
+  CHECK(block_data.size() <= max_part_size);
+  CHECK(collated_data.size() <= max_part_size);
+  CHECK(max_part_size - block_data.size() < max_slack);
+  CHECK(max_part_size - collated_data.size() < max_slack);
+
+  size_t decompressed_size = 0;
+  auto compressed = validatorsession::compress_candidate_data(block_data, collated_data, decompressed_size,
+                                                               "configured-maximum-test", block_root_hash)
+                        .move_as_ok();
+  CHECK(decompressed_size <= static_cast<size_t>(max_envelope_size));
+
+  auto src = from_hex("3333333333333333333333333333333333333333333333333333333333333333");
+  auto envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+      0, src, 10, block_root_hash, static_cast<int>(decompressed_size), compressed.clone());
+  auto decoded =
+      validatorsession::deserialize_candidate(envelope, true, max_envelope_size).move_as_ok();
+  CHECK(decoded->data_.as_slice() == block_data.as_slice());
+  CHECK(decoded->collated_data_.as_slice() == collated_data.as_slice());
+  CHECK(validatorsession::deserialize_candidate(envelope, true, static_cast<int>(decompressed_size) - 1)
+            .is_error());
+}
+
 }  // namespace
 
 int main(int argc, char *argv[]) {
@@ -1207,6 +1264,23 @@ int main(int argc, char *argv[]) {
     CHECK(legacy_decoded->collated_data_.as_slice() == collated_data.as_slice());
     CHECK(validatorsession::deserialize_candidate(compressed_envelope, true, static_cast<int>(decompressed_size) - 1)
               .is_error());
+    CHECK(validatorsession::deserialize_candidate(compressed_envelope, false, legacy_limit).is_error());
+
+    auto maximal_declaration = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+        0, src, 7, root_hash, std::numeric_limits<int>::max(), compressed.clone());
+    CHECK(validatorsession::deserialize_candidate(maximal_declaration, true, legacy_limit).is_error());
+
+    td::BufferSlice overlong_compressed(17);
+    std::memset(overlong_compressed.data(), 0, overlong_compressed.size());
+    auto overlong_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+        0, src, 7, root_hash, 1, std::move(overlong_compressed));
+    CHECK(validatorsession::deserialize_candidate(overlong_envelope, true, 16).is_error());
+
+    td::BufferSlice invalid_lz4(8);
+    std::memset(invalid_lz4.data(), 0xff, invalid_lz4.size());
+    auto invalid_lz4_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+        0, src, 7, root_hash, 1024, std::move(invalid_lz4));
+    CHECK(validatorsession::deserialize_candidate(invalid_lz4_envelope, true, 1024).is_error());
 
     auto wrong_size = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
         0, src, 7, root_hash, static_cast<int>(decompressed_size) - 1, compressed.clone());
@@ -1242,6 +1316,34 @@ int main(int argc, char *argv[]) {
     auto corrupt_improved_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
         0, src, 7, root_hash, std::move(corrupt_improved));
     CHECK(validatorsession::deserialize_candidate(corrupt_improved_envelope, true, 1 << 20).is_error());
+
+    auto baseline =
+        vm::boc_compress({block_root, collated_root}, vm::CompressionAlgorithm::BaselineLZ4).move_as_ok();
+    auto baseline_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
+        0, src, 7, root_hash, std::move(baseline));
+    auto baseline_decoded =
+        validatorsession::deserialize_candidate(baseline_envelope, true, 1 << 20).move_as_ok();
+    CHECK(baseline_decoded->data_.as_slice() == block_data.as_slice());
+    CHECK(baseline_decoded->collated_data_.as_slice() == collated_data.as_slice());
+
+    td::BufferSlice empty_improved;
+    auto empty_improved_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
+        0, src, 7, root_hash, std::move(empty_improved));
+    CHECK(validatorsession::deserialize_candidate(empty_improved_envelope, true, 1 << 20).is_error());
+
+    td::BufferSlice unknown_algorithm(1);
+    unknown_algorithm.data()[0] = static_cast<char>(0x7f);
+    auto unknown_algorithm_envelope =
+        create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
+            0, src, 7, root_hash, std::move(unknown_algorithm));
+    CHECK(validatorsession::deserialize_candidate(unknown_algorithm_envelope, true, 1 << 20).is_error());
+
+    auto stateful = vm::boc_compress({block_root}, vm::CompressionAlgorithm::ImprovedStructureLZ4WithState,
+                                     block_root)
+                        .move_as_ok();
+    auto stateful_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
+        0, src, 7, root_hash, std::move(stateful));
+    CHECK(validatorsession::deserialize_candidate(stateful_envelope, true, 1 << 20).is_error());
   }
 
   {
@@ -1301,6 +1403,7 @@ int main(int argc, char *argv[]) {
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   td::set_default_failure_signal_handler().ensure();
 
+  bool run_configured_maximum_candidate_test = false;
   td::OptionParser p;
   p.set_description("test consensus");
   p.add_option('h', "help", "prints_help", [&]() {
@@ -1311,6 +1414,9 @@ int main(int argc, char *argv[]) {
     int v = VERBOSITY_NAME(FATAL) + (td::to_integer<int>(arg));
     SET_VERBOSITY_LEVEL(v);
   });
+  p.add_option('\0', "configured-maximum-candidate-test",
+               "test a compressed candidate near the configured block and collated-data limits",
+               [&]() { run_configured_maximum_candidate_test = true; });
   p.add_checked_option('d', "duration", "test duration in seconds (default: 60)", [&](td::Slice arg) {
     DURATION = td::to_double(arg);
     if (DURATION < 0.0) {
@@ -1443,6 +1549,10 @@ int main(int argc, char *argv[]) {
                        });
 
   p.run(argc, argv).ensure();
+  if (run_configured_maximum_candidate_test) {
+    test_configured_maximum_candidate();
+    return 0;
+  }
   CHECK(N_DOUBLE_NODES <= N_NODES);
 
   td::actor::Scheduler scheduler({7});

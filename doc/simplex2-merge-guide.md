@@ -55,7 +55,7 @@ Status definitions:
 |---|---|---|---|
 | 0. Baseline | Partial | Immutable source commits and static feature comparison are recorded | Archive golden ConfigParam cells and record CPU, memory, bandwidth, finality, and database-growth baselines |
 | 1. ConfigParam30 | Pending validation | TON `#22` bit layout, protocol parsing, reserved-flag rejection, supported-version gate, all four ConfigParam29 constructors, current `#21` round-trip coverage, and `#22` golden/truncated/invalid/future-version tests | Switch the first-testnet zerostate fixture to `#22` when the v2 release gates are met |
-| 2. Candidate codec | Partial | Existing combined BOC/LZ4/improved codec verified; negative-size and integer/size bounds hardened; raw, legacy LZ4, improved compression, exact-limit, truncation, trailing-byte, corruption, mode-mismatch, and 0.5 MiB high-compression-ratio tests added | Add configured-maximum candidate vectors, broader compression-bomb corpus, fuzzing, and peak-memory measurements |
+| 2. Candidate codec | Partial | Existing combined BOC/LZ4/improved codec verified; negative-size and integer/size bounds hardened; raw, legacy LZ4, improved compression, exact-limit, malformed-input, mode-mismatch, high-compression-ratio, and configured-maximum tests added | Expand the compression-abuse corpus, add fuzzing, and collect repeatable peak-memory measurements |
 | 3. Block-sync overlay | Partial | Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Add recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth tests |
 | 4. Observer and relay | Pending validation | Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Add authorization, eviction, removal/liveness, query-abuse, and relay-loop tests |
 | 5. Plumtree | Pending validation | Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, the upstream graph simulator, and fault-injected Simplex consensus tests are adapted to TOS | Add transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, packet-loss, partition, churn, and selective-forwarding tests |
@@ -178,6 +178,14 @@ Validation completed for the current working tree:
 - A 0.5 MiB multi-cell BOC with greater than 8:1 compression verifies that the
   exact configured limit succeeds, a one-byte-smaller limit fails, and an
   oversized declared output is rejected before decompression.
+- A separate codec-boundary test uses valid block and collated-data BOCs within
+  384 KiB of their respective 4 MiB production limits. Their combined
+  7.66 MiB decompressed envelope succeeds under the production
+  `8 MiB + 1024 bytes` budget and fails when that budget is one byte too small.
+- Deterministic abuse cases reject a maximal declared legacy size, compressed
+  input larger than its configured budget, invalid LZ4, empty and unknown V2
+  codecs, and the stateful V2 codec when no state is supplied. The V2 baseline
+  LZ4 algorithm is also covered by a successful round trip.
 - `git diff --check` passes.
 
 These fault-injected tests exercise the Simplex consensus simulator, not the
@@ -348,9 +356,12 @@ Do not enable block sync or Plumtree in this phase.
 implemented. Deterministic tests cover raw, legacy LZ4, improved-structure
 compression, exact configured limits, wrong declared size, truncation,
 trailing bytes, corruption, compression-mode mismatch, and a valid 0.5 MiB
-high-compression-ratio candidate. Configured-maximum candidate vectors,
-fuzzing, a broader compression-abuse corpus, and peak-memory evidence are not
-complete.
+high-compression-ratio candidate. A dedicated CTest also covers valid block and
+collated-data BOCs close to their respective configured 4 MiB maxima under the
+combined production decompression budget. An initial deterministic abuse corpus
+covers extreme size declarations and malformed legacy and V2 codec inputs.
+Coverage-guided fuzzing, further corpus expansion, and repeatable peak-memory
+evidence are not complete.
 
 Port the reference combined candidate payload design:
 

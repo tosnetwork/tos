@@ -29,3 +29,7 @@ add_test(
             --net-ping 0.005:0.02 --net-gremlin-period 0.5:0.8
             --net-gremlin-downtime 0.1:0.2 --net-gremlin-times 4 --min-finalized-blocks 5
 )
+add_test(
+    NAME test-consensus-simplex2-codec-boundary
+    COMMAND test-consensus --configured-maximum-candidate-test
+)
