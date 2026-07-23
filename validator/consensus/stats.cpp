@@ -10,27 +10,29 @@
 
 namespace tos::validator::consensus::stats {
 
-std::unique_ptr<Id> Id::create(ShardIdFull shard, td::uint32 cc_seqno, size_t idx, size_t total_validators,
-                               ValidatorWeight weight, ValidatorWeight total_weight,
+std::unique_ptr<Id> Id::create(ShardIdFull shard, td::uint32 cc_seqno, std::optional<size_t> idx,
+                               size_t total_validators, ValidatorWeight weight, ValidatorWeight total_weight,
                                td::uint32 slots_per_leader_window) {
   return std::unique_ptr<Id>(new Id(shard.workchain, shard.shard, cc_seqno, idx, total_validators, weight, total_weight,
                                     slots_per_leader_window));
 }
 
 tl::EventRef Id::to_tl() const {
-  return create_tl_object<tl::id>(workchain_, shard_, cc_seqno_, static_cast<int>(idx_),
+  auto idx = idx_.has_value() ? static_cast<int>(*idx_) : -1;
+  return create_tl_object<tl::id>(workchain_, shard_, cc_seqno_, idx,
                                   static_cast<int>(total_validators_), weight_, total_weight_,
                                   slots_per_leader_window_);
 }
 
 std::string Id::to_string() const {
   return PSTRING() << "Id{workchain=" << workchain_ << ", shard=" << shard_ << ", cc_seqno=" << cc_seqno_
-                   << ", idx=" << idx_ << ", total_validators=" << total_validators_ << ", weight=" << weight_
+                   << ", idx=" << (idx_ ? std::to_string(*idx_) : "observer")
+                   << ", total_validators=" << total_validators_ << ", weight=" << weight_
                    << ", total_weight=" << total_weight_ << ", slots_per_leader_window=" << slots_per_leader_window_
                    << "}";
 }
 
-Id::Id(WorkchainId workchain, ShardId shard, td::uint32 cc_seqno, size_t idx, size_t total_validators,
+Id::Id(WorkchainId workchain, ShardId shard, td::uint32 cc_seqno, std::optional<size_t> idx, size_t total_validators,
        ValidatorWeight weight, ValidatorWeight total_weight, td::uint32 slots_per_leader_window)
     : workchain_(workchain)
     , shard_(shard)

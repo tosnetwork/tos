@@ -180,12 +180,12 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
 
   void start_up() override {
     instance_idx_ = dynamic_cast<const TestSimplexBus &>(*owning_bus()).instance_idx;
-    td::actor::send_closure(test_overlay, &TestOverlay::register_node, owning_bus()->local_id.idx.value(),
+    td::actor::send_closure(test_overlay, &TestOverlay::register_node, owning_bus()->local_id->idx.value(),
                             instance_idx_, actor_id(this));
   }
 
   void tear_down() override {
-    td::actor::send_closure(test_overlay, &TestOverlay::unregister_node, owning_bus()->local_id.idx.value(),
+    td::actor::send_closure(test_overlay, &TestOverlay::unregister_node, owning_bus()->local_id->idx.value(),
                             instance_idx_);
     for (auto &[_, query] : active_queries_) {
       td::actor::send_closure(query, &Query::set_result, td::Status::Error(ErrorCode::cancelled, "cancelled"));
@@ -200,8 +200,8 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
   template <>
   void handle(BusHandle bus, std::shared_ptr<const OutgoingProtocolMessage> message) {
     for (size_t i = 0; i < bus->validator_set.size(); ++i) {
-      if (bus->local_id.idx.value() != i) {
-        td::actor::ask(test_overlay, &TestOverlay::send_message, bus->local_id, instance_idx_, i,
+      if (bus->local_id->idx.value() != i) {
+        td::actor::ask(test_overlay, &TestOverlay::send_message, *bus->local_id, instance_idx_, i,
                        message->message.data.clone())
             .detach_silent();
       }
@@ -211,8 +211,8 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
   template <>
   void handle(BusHandle bus, std::shared_ptr<const CandidateGenerated> event) {
     for (size_t i = 0; i < bus->validator_set.size(); ++i) {
-      if (bus->local_id.idx.value() != i) {
-        td::actor::ask(test_overlay, &TestOverlay::send_candidate, bus->local_id, instance_idx_, i, event->candidate)
+      if (bus->local_id->idx.value() != i) {
+        td::actor::ask(test_overlay, &TestOverlay::send_candidate, *bus->local_id, instance_idx_, i, event->candidate)
             .detach_silent();
       }
     }
@@ -220,12 +220,28 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
 
   template <>
   td::actor::Task<ProtocolMessage> process(BusHandle bus, std::shared_ptr<OutgoingOverlayRequest> message) {
+    size_t destination;
+    if (message->destination) {
+      destination = SIZE_MAX;
+      for (const auto& peer : bus->validator_set) {
+        if (peer.adnl_id == *message->destination) {
+          destination = peer.idx.value();
+          break;
+        }
+      }
+      CHECK(destination != SIZE_MAX);
+    } else {
+      destination = td::Random::fast(0, static_cast<int>(bus->validator_set.size()) - 2);
+      if (destination >= bus->local_id->idx.value()) {
+        ++destination;
+      }
+    }
     auto [task, promise] = td::actor::StartedTask<ProtocolMessage>::make_bridge();
     auto query = td::actor::create_actor<Query>("q", std::move(promise), message->timeout).release();
     size_t idx = next_query_idx_++;
     active_queries_[idx] = query;
-    td::actor::send_closure(test_overlay, &TestOverlay::send_query, bus->local_id, instance_idx_,
-                            message->destination.value(), message->request.data.clone(),
+    td::actor::send_closure(test_overlay, &TestOverlay::send_query, *bus->local_id, instance_idx_,
+                            destination, message->request.data.clone(),
                             td::PromiseCreator::lambda([query](td::Result<td::BufferSlice> R) {
                               if (R.is_ok()) {
                                 td::actor::send_closure(query, &Query::set_result, ProtocolMessage{R.move_as_ok()});
@@ -237,7 +253,7 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
   }
 
   void receive_message(PeerValidator src, td::BufferSlice data) {
-    owning_bus().publish<IncomingProtocolMessage>(src.idx, std::move(data));
+    owning_bus().publish<IncomingProtocolMessage>(src.idx, src.adnl_id, std::move(data));
   }
 
   void receive_candidate(CandidateRef candidate) {
@@ -245,7 +261,7 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
   }
 
   td::actor::Task<td::BufferSlice> receive_query(PeerValidator src, td::BufferSlice query) {
-    auto request = std::make_shared<IncomingOverlayRequest>(src.idx, std::move(query));
+    auto request = std::make_shared<IncomingOverlayRequest>(src.idx, src.adnl_id, std::move(query));
     auto response = co_await owning_bus().publish(std::move(request)).wrap();
     if (response.is_ok()) {
       co_return std::move(response.move_as_ok().data);

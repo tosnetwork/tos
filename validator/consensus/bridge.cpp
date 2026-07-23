@@ -11,6 +11,7 @@
 #include "validator/consensus/simplex/bus.h"
 #include "validator/fabric.h"
 #include "validator/full-node.h"
+#include "validator/interfaces/validator-full-id.h"
 #include "validator/validator-group.hpp"
 
 namespace tos::validator {
@@ -167,6 +168,34 @@ class DbImpl : public Db {
   std::unique_ptr<td::KeyValueReader> reader_;
 };
 
+class BlockSyncObserver : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<Bus> {
+ public:
+  TOS_RUNTIME_DEFINE_EVENT_HANDLER();
+
+  static bool should_be_spawned(const Bus& bus) {
+    return !bus.is_validator() && bus.config.enable_block_sync();
+  }
+
+  template <>
+  void handle(BusHandle, std::shared_ptr<const StopRequested>) {
+    stop();
+  }
+
+  template <>
+  td::actor::Task<> process(BusHandle, std::shared_ptr<PrecheckCandidateBroadcast>) {
+    co_return td::Unit{};
+  }
+
+  template <>
+  void handle(BusHandle bus, std::shared_ptr<const CandidateReceived> event) {
+    if (event->candidate->is_empty()) {
+      return;
+    }
+    const auto& candidate = std::get<BlockCandidate>(event->candidate->block);
+    td::actor::send_closure(bus->manager, &ManagerFacade::cache_block_candidate, candidate.clone());
+  }
+};
+
 class CandidateBroadcastRelayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<Bus> {
  public:
   TOS_RUNTIME_DEFINE_EVENT_HANDLER();
@@ -204,7 +233,10 @@ struct BridgeCreationParams {
   td::Ref<ValidatorManagerOptions> validator_opts;
 
   td::Ref<block::ValidatorSet> validator_set;
-  PublicKeyHash local_id;
+  std::vector<adnl::AdnlNodeIdShort> all_validators;
+  std::optional<PublicKeyHash> local_id;
+  adnl::AdnlNodeIdShort local_adnl_id;
+  std::string db_suffix;
 
   td::actor::ActorId<CollationManager> collation_manager;
   NewConsensusConfig config;
@@ -278,6 +310,7 @@ class BridgeImpl final : public IValidatorGroup {
     bus->manager = manager_facade_.get();
     bus->keyring = params_.keyring;
     bus->validator_opts = params_.validator_opts;
+    bus->all_validators = params_.all_validators;
 
     bool found = false;
     size_t idx = 0;
@@ -294,9 +327,10 @@ class BridgeImpl final : public IValidatorGroup {
           .weight = el.weight,
       });
 
-      if (short_id == params_.local_id) {
+      if (params_.local_id && short_id == *params_.local_id) {
         found = true;
         bus->local_id = bus->validator_set.back();
+        CHECK(bus->validator_set.back().adnl_id == params_.local_adnl_id);
       }
 
       // Audit #8 (2026-04-26): defence-in-depth checked accumulation,
@@ -307,7 +341,8 @@ class BridgeImpl final : public IValidatorGroup {
     bus->total_weight = total_weight;
     bus->cc_seqno = params_.validator_set->get_catchain_seqno();
     bus->validator_set_hash = params_.validator_set->get_validator_set_hash();
-    CHECK(found);
+    CHECK(!params_.local_id || found);
+    bus->local_adnl_id = params_.local_adnl_id;
 
     bus->config = params_.config;
     bus->config.noncritical_params =
@@ -329,6 +364,7 @@ class BridgeImpl final : public IValidatorGroup {
     td::actor::Runtime runtime;
     BlockAccepter::register_in(runtime);
     BlockProducer::register_in(runtime);
+    runtime.register_actor<BlockSyncObserver>("BlockSyncObserver");
     BlockSyncOverlay::register_in(runtime);
     CandidateBroadcastRelay::register_in(runtime);
     BlockValidator::register_in(runtime);
@@ -478,7 +514,7 @@ class BridgeImpl final : public IValidatorGroup {
   std::string db_path() const {
     return PSTRING() << params_.db_root << "/consensus/consensus." << params_.shard.workchain << "."
                      << params_.shard.shard << "." << params_.validator_set->get_catchain_seqno() << "."
-                     << params_.session_id.to_hex() << "/";
+                     << params_.session_id.to_hex() << params_.db_suffix << "/";
   }
 };
 
@@ -495,7 +531,8 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
     td::Ref<block::ValidatorSet> validator_set, BlockSeqno last_key_block_seqno, NewConsensusConfig config,
     td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
     td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender, td::actor::ActorId<overlay::Overlays> overlays,
-    std::string db_root, td::actor::ActorId<ValidatorManager> validator_manager,
+    std::vector<adnl::AdnlNodeIdShort> all_validators, std::string db_root,
+    td::actor::ActorId<ValidatorManager> validator_manager,
     td::actor::ActorId<CollationManager> collation_manager, bool create_session, bool allow_unsafe_self_blocks_resync,
     td::Ref<ValidatorManagerOptions> opts, bool monitoring_shard) {
   LOG_CHECK(config.protocol_version_supported())
@@ -503,6 +540,10 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
       << NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION << ")";
   auto name_with_seqno =
       std::string(name.begin(), name.end()) + "." + std::to_string(validator_set->get_catchain_seqno());
+  auto descr = validator_set->get_validator(local_id.bits256_value());
+  CHECK(descr);
+  auto local_adnl_id = adnl::AdnlNodeIdShort{
+      descr->addr.is_zero() ? ValidatorFullId{descr->key}.compute_short_id().bits256_value() : descr->addr};
   consensus::BridgeCreationParams params{
       .name = name_with_seqno,
       .is_create_session_called = create_session,
@@ -511,8 +552,48 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
       .keyring = keyring,
       .validator_opts = opts,
       .validator_set = std::move(validator_set),
+      .all_validators = std::move(all_validators),
       .local_id = std::move(local_id),
+      .local_adnl_id = local_adnl_id,
+      .db_suffix = "",
       .collation_manager = collation_manager,
+      .config = std::move(config),
+      .session_id = std::move(session_id),
+      .overlays = overlays,
+      .adnl_sender = adnl_sender,
+      .db_root = db_root,
+  };
+  return td::actor::create_actor<consensus::BridgeImpl>(name_with_seqno, std::move(params));
+}
+
+td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge_observer(
+    td::Slice name, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id, ValidatorSessionId session_id,
+    td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config,
+    td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
+    td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender, td::actor::ActorId<overlay::Overlays> overlays,
+    std::vector<adnl::AdnlNodeIdShort> all_validators, std::string db_root,
+    td::actor::ActorId<ValidatorManager> validator_manager,
+    td::Ref<ValidatorManagerOptions> opts, bool monitoring_shard) {
+  LOG_CHECK(config.protocol_version_supported())
+      << "Unsupported Simplex protocol version " << config.protocol_version << " (maximum supported is "
+      << NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION << ")";
+  LOG_CHECK(config.enable_block_sync() || config.observers_in_private_overlay())
+      << "Observer group requested for protocol version without observer transport";
+  auto name_with_seqno =
+      std::string(name.begin(), name.end()) + ".observer." + std::to_string(validator_set->get_catchain_seqno());
+  consensus::BridgeCreationParams params{
+      .name = name_with_seqno,
+      .is_create_session_called = true,
+      .shard = shard,
+      .manager = validator_manager,
+      .keyring = keyring,
+      .validator_opts = opts,
+      .validator_set = std::move(validator_set),
+      .all_validators = std::move(all_validators),
+      .local_id = std::nullopt,
+      .local_adnl_id = local_adnl_id,
+      .db_suffix = PSTRING() << ".observer." << local_adnl_id.pubkey_hash(),
+      .collation_manager = {},
       .config = std::move(config),
       .session_id = std::move(session_id),
       .overlays = overlays,

@@ -637,10 +637,13 @@ void FullNodeImpl::new_key_block(BlockHandle handle) {
   }
 }
 
-void FullNodeImpl::process_block_broadcast(BlockBroadcast broadcast, bool signatures_checked) {
-  send_block_broadcast_to_custom_overlays(broadcast);
+void FullNodeImpl::process_block_broadcast(BlockBroadcast broadcast, bool signatures_checked, BroadcastSource source,
+                                           bool send_to_custom) {
+  if (send_to_custom) {
+    send_block_broadcast_to_custom_overlays(broadcast);
+  }
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::new_block_broadcast, std::move(broadcast),
-                          signatures_checked, [](td::Result<td::Unit> R) {
+                          signatures_checked, source, [](td::Result<td::Unit> R) {
                             if (R.is_error()) {
                               if (R.error().code() == ErrorCode::notready) {
                                 LOG(DEBUG) << "dropped broadcast: " << R.move_as_error();
@@ -651,21 +654,28 @@ void FullNodeImpl::process_block_broadcast(BlockBroadcast broadcast, bool signat
                           });
 }
 
-void FullNodeImpl::process_block_finality_broadcast(BlockFinalityBroadcast finality) {
+void FullNodeImpl::process_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source,
+                                                    bool send_to_custom) {
   if (finality.sig_set.is_null()) {
     VLOG(FULL_NODE_WARNING) << "dropping block finality broadcast without signatures";
     return;
   }
-  send_block_finality_broadcast_to_custom_overlays(finality);
-  td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_block_finality_broadcast, std::move(finality))
+  if (send_to_custom) {
+    send_block_finality_broadcast_to_custom_overlays(finality);
+  }
+  td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_block_finality_broadcast, std::move(finality),
+                 source)
       .detach();
 }
 
 void FullNodeImpl::process_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
-                                                     td::uint32 validator_set_hash, td::BufferSlice data) {
-  send_block_candidate_broadcast_to_custom_overlays(block_id, cc_seqno, validator_set_hash, data);
+                                                     td::uint32 validator_set_hash, td::BufferSlice data,
+                                                     BroadcastSource source, bool send_to_custom) {
+  if (send_to_custom) {
+    send_block_candidate_broadcast_to_custom_overlays(block_id, cc_seqno, validator_set_hash, data);
+  }
   td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_block_candidate_broadcast, block_id, cc_seqno,
-                 std::move(data))
+                 std::move(data), source)
       .detach();
 }
 

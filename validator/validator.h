@@ -310,7 +310,7 @@ class ValidatorManagerInterface : public td::actor::Actor {
   virtual void validate_block_proof_rel(BlockIdExt block_id, BlockIdExt rel_block_id, td::BufferSlice proof,
                                         td::Promise<td::Unit> promise) = 0;
   virtual void validate_block(ReceivedBlock block, td::Promise<BlockHandle> promise) = 0;
-  virtual void new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked,
+  virtual void new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked, BroadcastSource source,
                                    td::Promise<td::Unit> promise) = 0;
   virtual void validate_block_broadcast_signatures(BlockBroadcast broadcast, td::Promise<td::Unit> promise) = 0;
 
@@ -358,10 +358,10 @@ class ValidatorManagerInterface : public td::actor::Actor {
   virtual void new_shard_block_description_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
                                                      td::BufferSlice data) = 0;
   virtual td::actor::Task<> new_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
-                                                          td::BufferSlice data) {
+                                                          td::BufferSlice data, BroadcastSource source) {
     co_return td::Unit{};
   }
-  virtual td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality) {
+  virtual td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source) {
     co_return td::Unit{};
   }
 

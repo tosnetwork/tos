@@ -80,7 +80,8 @@ void FullNodeFastSyncOverlay::process_block_broadcast(PublicKeyHash src, tos_api
   }
   VLOG(FULL_NODE_DEBUG) << "Received block broadcast " << (B.ok().sig_set->is_final() ? "" : "(approve signatures) ")
                         << "in fast sync overlay from " << src << ": " << B.ok().block_id.to_str();
-  td::actor::send_closure(full_node_, &FullNode::process_block_broadcast, B.move_as_ok(), false);
+  td::actor::send_closure(full_node_, &FullNode::process_block_broadcast, B.move_as_ok(), false,
+                          BroadcastSource::fast_sync_overlay, true);
 }
 
 void FullNodeFastSyncOverlay::process_block_finality_broadcast(
@@ -89,7 +90,8 @@ void FullNodeFastSyncOverlay::process_block_finality_broadcast(
   BlockFinalityBroadcast finality{block_id, block::BlockSignatureSet::fetch(query.signature_set_)};
   VLOG(FULL_NODE_DEBUG) << "Received blockFinalityBroadcast in fast sync overlay from " << src << ": "
                         << block_id.to_str();
-  td::actor::send_closure(full_node_, &FullNode::process_block_finality_broadcast, std::move(finality));
+  td::actor::send_closure(full_node_, &FullNode::process_block_finality_broadcast, std::move(finality),
+                          BroadcastSource::fast_sync_overlay, true);
 }
 
 void FullNodeFastSyncOverlay::obtain_state_for_decompression(PublicKeyHash src,
@@ -126,7 +128,8 @@ void FullNodeFastSyncOverlay::process_block_broadcast_with_state(PublicKeyHash s
 
   VLOG(FULL_NODE_DEBUG) << "Received V2 block broadcast in fast sync overlay from " << src << ": "
                         << B.ok().block_id.to_str();
-  td::actor::send_closure(full_node_, &FullNode::process_block_broadcast, B.move_as_ok(), true);
+  td::actor::send_closure(full_node_, &FullNode::process_block_broadcast, B.move_as_ok(), true,
+                          BroadcastSource::fast_sync_overlay, true);
 }
 
 void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_outMsgQueueProofBroadcast &query) {
@@ -204,7 +207,7 @@ void FullNodeFastSyncOverlay::process_block_candidate_broadcast(PublicKeyHash sr
   }
   VLOG(FULL_NODE_DEBUG) << "Received newBlockCandidate in fast sync overlay from " << src << ": " << block_id.to_str();
   td::actor::send_closure(full_node_, &FullNode::process_block_candidate_broadcast, block_id, cc_seqno,
-                          validator_set_hash, std::move(data));
+                          validator_set_hash, std::move(data), BroadcastSource::fast_sync_overlay, true);
 }
 
 void FullNodeFastSyncOverlay::process_telemetry_broadcast(

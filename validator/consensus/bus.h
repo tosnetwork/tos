@@ -79,7 +79,8 @@ struct ValidationRequest {
 struct IncomingProtocolMessage {
   using LogToDebug = std::true_type;
 
-  PeerValidatorId source;
+  std::optional<PeerValidatorId> source_validator;
+  adnl::AdnlNodeIdShort source;
   ProtocolMessage message;
 
   std::string contents_to_string() const;
@@ -89,11 +90,12 @@ struct OutgoingProtocolMessage {
   using LogToDebug = std::true_type;
 
   struct BroadcastToAll {};
+  struct BroadcastToValidators {};
   struct BroadcastToRandom {
     size_t count;
   };
 
-  using Recipient = std::variant<BroadcastToAll, BroadcastToRandom>;
+  using Recipient = std::variant<BroadcastToAll, BroadcastToValidators, BroadcastToRandom>;
 
   Recipient recipient;
   ProtocolMessage message;
@@ -105,7 +107,8 @@ struct IncomingOverlayRequest {
   using LogToDebug = std::true_type;
   using ReturnType = ProtocolMessage;
 
-  PeerValidatorId source;
+  std::optional<PeerValidatorId> source_validator;
+  adnl::AdnlNodeIdShort source;
   ProtocolMessage request;
 
   std::string contents_to_string() const;
@@ -116,10 +119,9 @@ struct OutgoingOverlayRequest {
   using LogToDebug = std::true_type;
   using ReturnType = ProtocolMessage;
 
-  PeerValidatorId destination;
+  std::optional<adnl::AdnlNodeIdShort> destination;
   td::Timestamp timeout;
   ProtocolMessage request;
-  td::uint32 max_response_size;
 
   std::string contents_to_string() const;
   static std::string response_to_string(const ReturnType&);
@@ -187,6 +189,10 @@ class Bus : public td::actor::Bus {
 
   virtual void populate_collator_schedule() = 0;
 
+  bool is_validator() const {
+    return local_id.has_value();
+  }
+
   ValidatorSessionId session_id;
 
   ShardIdFull shard;
@@ -198,7 +204,9 @@ class Bus : public td::actor::Bus {
   ValidatorWeight total_weight;
   tos::CatchainSeqno cc_seqno;
   td::uint32 validator_set_hash;
-  PeerValidator local_id;
+  std::optional<PeerValidator> local_id;
+  adnl::AdnlNodeIdShort local_adnl_id;
+  std::vector<adnl::AdnlNodeIdShort> all_validators;
 
   NewConsensusConfig config;
 

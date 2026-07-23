@@ -39,10 +39,9 @@ class BlockSyncOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor
   void start_up() override {
     auto& bus = *owning_bus();
     overlays_ = bus.overlays;
-    local_adnl_id_ = bus.local_id.adnl_id;
+    local_adnl_id_ = bus.local_adnl_id;
     adnl_sender_ = bus.adnl_sender;
 
-    std::vector<adnl::AdnlNodeIdShort> overlay_nodes;
     std::map<PublicKeyHash, td::uint32> authorized_keys;
     const td::uint64 max_broadcast_size_wide = static_cast<td::uint64>(bus.config.max_block_size) +
                                                bus.config.max_collated_data_size + (1U << 20);
@@ -50,7 +49,6 @@ class BlockSyncOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor
         << "Configured block-sync broadcast limit overflows uint32";
     const td::uint32 max_broadcast_size = static_cast<td::uint32>(max_broadcast_size_wide);
     for (const auto& peer : bus.validator_set) {
-      overlay_nodes.push_back(peer.adnl_id);
       adnl_pubkey_to_peer_.emplace(peer.adnl_id.pubkey_hash(), peer);
       authorized_keys.emplace(peer.adnl_id.pubkey_hash(), max_broadcast_size);
     }
@@ -69,7 +67,7 @@ class BlockSyncOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor
     options.allow_old_broadcasts_ = false;
 
     td::actor::send_closure(overlays_, &overlay::Overlays::create_private_overlay_ex, local_adnl_id_,
-                            std::move(overlay_full_id), std::move(overlay_nodes), make_callback(),
+                            std::move(overlay_full_id), bus.all_validators, make_callback(),
                             overlay::OverlayPrivacyRules{0, 0, std::move(authorized_keys)},
                             PSTRING() << R"({ "type": "blocksync", "shard": ")" << bus.shard.to_str()
                                       << R"(", "cc_seqno": )" << bus.cc_seqno << R"( })",

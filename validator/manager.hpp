@@ -62,6 +62,7 @@ class AppliedExtMessageCleanupActor;
 
 struct PendingBlockFinality {
   td::Ref<block::BlockSignatureSet> sig_set;
+  BroadcastSource source;
 };
 
 class BlockHandleLru : public td::ListNode {
@@ -226,6 +227,11 @@ class ValidatorManagerImpl : public ValidatorManager {
                                                               BlockSeqno key_seqno,
                                                               validatorsession::ValidatorSessionOptions opts,
                                                               bool create_catchain);
+  td::actor::ActorOwn<IValidatorGroup> create_observer_group(
+      ValidatorSessionId session_id, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id,
+      td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config);
+  std::set<adnl::AdnlNodeIdShort> get_observer_adnl_ids(td::Ref<block::ValidatorSet> validator_set) const;
+  std::vector<adnl::AdnlNodeIdShort> get_all_validator_adnl_ids() const;
   td::actor::ActorId<CollationManager> get_collation_manager(adnl::AdnlNodeIdShort adnl_id);
 
   struct ValidatorGroupEntry {
@@ -240,6 +246,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   };
   std::map<ValidatorSessionId, ValidatorGroupEntry> validator_groups_;
   std::map<ValidatorSessionId, ValidatorGroupEntry> next_validator_groups_;
+  using ObserverGroupId = std::pair<ValidatorSessionId, adnl::AdnlNodeIdShort>;
+  std::map<ObserverGroupId, ValidatorGroupEntry> observer_groups_;
   std::map<adnl::AdnlNodeIdShort, td::actor::ActorOwn<CollationManager>> collation_managers_;
   std::set<ValidatorSessionId> destroyed_validator_sessions_;
 
@@ -323,8 +331,9 @@ class ValidatorManagerImpl : public ValidatorManager {
   void validate_block_proof_rel(BlockIdExt block_id, BlockIdExt rel_block_id, td::BufferSlice proof,
                                 td::Promise<td::Unit> promise) override;
   void validate_block(ReceivedBlock block, td::Promise<BlockHandle> promise) override;
-  void new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked, td::Promise<td::Unit> promise) override;
-  td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality) override;
+  void new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked, BroadcastSource source,
+                           td::Promise<td::Unit> promise) override;
+  td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source) override;
   void validate_block_broadcast_signatures(BlockBroadcast broadcast, td::Promise<td::Unit> promise) override;
   td::actor::Task<> validated_accepted_block_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno);
 
@@ -361,7 +370,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void new_shard_block_description_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
                                              td::BufferSlice data) override;
   td::actor::Task<> new_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
-                                                  td::BufferSlice data) override;
+                                                  td::BufferSlice data, BroadcastSource source) override;
 
   void add_ext_server_id(adnl::AdnlNodeIdShort id) override;
   void add_ext_server_port(td::uint16 port) override;

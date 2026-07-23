@@ -227,6 +227,7 @@ void ValidatorManagerImpl::validate_block(ReceivedBlock block, td::Promise<Block
 }
 
 void ValidatorManagerImpl::new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked,
+                                               BroadcastSource source,
                                                td::Promise<td::Unit> promise) {
   if (last_masterchain_state_.is_null() || !last_masterchain_block_handle_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "node not started"));
@@ -520,7 +521,7 @@ void ValidatorManagerImpl::new_shard_block_description_broadcast(BlockIdExt bloc
 }
 
 td::actor::Task<> ValidatorManagerImpl::new_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
-                                                                      td::BufferSlice data) {
+                                                                      td::BufferSlice data, BroadcastSource source) {
   if (!last_masterchain_block_handle_) {
     VLOG(VALIDATOR_DEBUG) << "dropping top shard block broadcast: not inited";
     co_return td::Unit{};
@@ -582,7 +583,8 @@ static td::actor::Task<> check_finality_signatures(BlockIdExt block_id, Ref<bloc
   co_return td::Unit{};
 }
 
-td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinalityBroadcast finality) {
+td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinalityBroadcast finality,
+                                                                     BroadcastSource source) {
   if (!last_masterchain_block_handle_ || last_masterchain_state_.is_null()) {
     VLOG(VALIDATOR_DEBUG) << "dropping block finality broadcast: not inited";
     co_return td::Unit{};
@@ -614,7 +616,7 @@ td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinali
     co_return td::Unit{};
   }
 
-  pending_block_finality_.put(finality.block_id, PendingBlockFinality{std::move(finality.sig_set)});
+  pending_block_finality_.put(finality.block_id, PendingBlockFinality{std::move(finality.sig_set), source});
   try_process_pending_block_finality(finality.block_id);
   co_return td::Unit{};
 }
@@ -843,13 +845,14 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
   }
 
   auto sig_set = finality->sig_set;
+  auto finality_source = finality->source;
   if (block_id.is_masterchain()) {
     cached_masterchain_block_candidates_.erase(block_id);
   }
   pending_block_finality_.erase(block_id);
   BlockBroadcast broadcast{block_id, std::move(sig_set), std::move(data), proof.move_as_ok()};
   new_block_broadcast(
-      std::move(broadcast), false,
+      std::move(broadcast), false, finality_source,
       [block_id](td::Result<td::Unit> R) mutable {
         if (R.is_error()) {
           auto error = R.move_as_error();
@@ -2022,6 +2025,7 @@ void ValidatorManagerImpl::send_block_broadcast(BlockBroadcast broadcast, int mo
 }
 
 void ValidatorManagerImpl::send_block_finality_broadcast(BlockFinalityBroadcast finality, int mode) {
+  new_block_finality_broadcast(finality.clone(), BroadcastSource::consensus_overlay).start().detach();
   callback_->send_block_finality_broadcast(std::move(finality), mode);
 }
 
@@ -2490,6 +2494,13 @@ void ValidatorManagerImpl::new_masterchain_block() {
                               shard_config->top_block_id());
     }
   }
+  for (const auto &[_, observer_group] : observer_groups_) {
+    auto shard_config = last_masterchain_state_->get_shard_from_config(observer_group.shard);
+    if (!shard_config.is_null()) {
+      td::actor::send_closure(observer_group.actor, &IValidatorGroup::notify_mc_finalized,
+                              shard_config->top_block_id());
+    }
+  }
 
   if (validating_masterchain() || !collator_nodes_.empty()) {
     std::set<ShardIdFull> collating_shards;
@@ -2735,6 +2746,55 @@ void ValidatorManagerImpl::update_shards() {
     }
   }
 
+  std::map<ObserverGroupId, ValidatorGroupEntry> new_observer_groups;
+  if (allow_validate_) {
+    for (const auto& [shard, prev] : new_shards) {
+      auto maybe_config = last_masterchain_state_->get_new_consensus_config(shard.workchain);
+      if (!maybe_config) {
+        continue;
+      }
+      auto config = maybe_config.value();
+      if (!config.enable_block_sync() && !config.observers_in_private_overlay()) {
+        continue;
+      }
+      auto val_set = last_masterchain_state_->get_validator_set(shard);
+      if (val_set.is_null()) {
+        continue;
+      }
+      auto session_id = get_validator_set_id(shard, val_set, opts_hash, key_seqno, opts);
+      for (auto local_adnl_id : get_observer_adnl_ids(val_set)) {
+        ObserverGroupId observer_id{session_id, local_adnl_id};
+        ValidatorGroupEntry entry;
+        if (auto it = observer_groups_.find(observer_id); it != observer_groups_.end()) {
+          entry = std::move(it->second);
+          observer_groups_.erase(it);
+        } else {
+          entry = ValidatorGroupEntry{
+              .actor = create_observer_group(session_id, shard, local_adnl_id, val_set, config),
+              .shard = shard,
+              .started = false,
+              .cc_seqno = val_set->get_catchain_seqno(),
+          };
+          LOG(INFO) << "Created observer group " << shard.to_str() << "." << entry.cc_seqno << " at "
+                    << local_adnl_id;
+        }
+        if (!entry.started) {
+          LOG(INFO) << "Started observer group " << shard.to_str() << "." << entry.cc_seqno << " at "
+                    << local_adnl_id;
+          td::actor::send_closure(entry.actor, &IValidatorGroup::start, prev, last_masterchain_block_id_);
+          entry.started = true;
+        }
+        new_observer_groups.emplace(observer_id, std::move(entry));
+      }
+    }
+  }
+  for (auto& [observer_id, entry] : observer_groups_) {
+    LOG(INFO) << "Destroying observer group " << entry.shard.to_str() << "." << entry.cc_seqno << " at "
+              << observer_id.second;
+    td::actor::send_closure(entry.actor.release(), &IValidatorGroup::destroy);
+  }
+  observer_groups_ = std::move(new_observer_groups);
+
   std::vector<td::actor::ActorId<IValidatorGroup>> to_destroy;
 
   for (auto &[id, group] : validator_groups_) {
@@ -2903,7 +2963,7 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
     auto config = new_consensus_config.value();
     return IValidatorGroup::create_bridge(
         PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id, validator_set, key_seqno, config,
-        keyring_, adnl_, quic_, overlays_, db_root_,
+        keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_,
         actor_id(this), get_collation_manager(adnl_id), init_session,
         opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
         opts_->need_monitor(shard, last_masterchain_state_));
@@ -2914,6 +2974,54 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
       actor_id(this), get_collation_manager(adnl_id), init_session,
       opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
       opts_->need_monitor(shard, last_masterchain_state_));
+}
+
+td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_observer_group(
+    ValidatorSessionId session_id, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id,
+    td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config) {
+  return IValidatorGroup::create_bridge_observer(
+      PSTRING() << "valgroup" << shard.to_str(), shard, local_adnl_id, session_id, std::move(validator_set),
+      std::move(config), keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_, actor_id(this), opts_,
+      opts_->need_monitor(shard, last_masterchain_state_));
+}
+
+std::set<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_observer_adnl_ids(
+    td::Ref<block::ValidatorSet> validator_set) const {
+  std::set<adnl::AdnlNodeIdShort> result;
+  for (const auto& key : temp_keys_) {
+    if (validator_set->is_validator(key.bits256_value())) {
+      continue;
+    }
+    for (int offset = -1; offset <= 1; ++offset) {
+      auto total_set = last_masterchain_state_->get_total_validator_set(offset);
+      if (total_set.is_null()) {
+        continue;
+      }
+      auto descr = total_set->get_validator(key.bits256_value());
+      if (!descr) {
+        continue;
+      }
+      result.emplace(descr->addr.is_zero() ? key.bits256_value() : descr->addr);
+    }
+  }
+  return result;
+}
+
+std::vector<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_all_validator_adnl_ids() const {
+  std::vector<adnl::AdnlNodeIdShort> result;
+  for (int offset = -1; offset <= 1; ++offset) {
+    auto total_set = last_masterchain_state_->get_total_validator_set(offset);
+    if (total_set.is_null()) {
+      continue;
+    }
+    for (const auto& descr : total_set->export_vector()) {
+      auto key_hash = ValidatorFullId{descr.key}.compute_short_id();
+      result.emplace_back(descr.addr.is_zero() ? key_hash.bits256_value() : descr.addr);
+    }
+  }
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
 }
 
 td::actor::ActorId<CollationManager> ValidatorManagerImpl::get_collation_manager(adnl::AdnlNodeIdShort adnl_id) {
@@ -3379,6 +3487,7 @@ void ValidatorManagerImpl::prepare_stats(td::Promise<std::vector<std::pair<std::
     vec.emplace_back("active_validator_groups", PSTRING() << "master:" << active_validator_groups_master_
                                                           << " shard:" << active_validator_groups_shard_);
   }
+  vec.emplace_back("active_observer_groups", td::to_string(observer_groups_.size()));
 
   bool serializer_enabled = opts_->get_state_serializer_enabled();
   if (is_validator() && last_masterchain_state_.not_null() && last_masterchain_state_->get_global_id() == 1) {
@@ -3724,6 +3833,10 @@ void ValidatorManagerImpl::update_options(td::Ref<ValidatorManagerOptions> opts)
                             opts->need_monitor(group.second.shard, last_masterchain_state_));
   }
   for (auto &group : next_validator_groups_) {
+    td::actor::send_closure(group.second.actor, &IValidatorGroup::update_options, opts,
+                            opts->need_monitor(group.second.shard, last_masterchain_state_));
+  }
+  for (auto &group : observer_groups_) {
     td::actor::send_closure(group.second.actor, &IValidatorGroup::update_options, opts,
                             opts->need_monitor(group.second.shard, last_masterchain_state_));
   }

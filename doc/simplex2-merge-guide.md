@@ -57,7 +57,7 @@ Status definitions:
 | 1. ConfigParam30 | Partial | TON `#22` bit layout, protocol parsing, supported-version gate, and `#21` round-trip test | Resolve historical old-`#22` ambiguity; add golden, truncated, invalid, and mixed-version activation tests |
 | 2. Candidate codec | Partial | Existing combined BOC/LZ4/improved codec verified; negative-size and integer/size bounds hardened | Add boundary vectors, corruption/compression-bomb corpus, fuzzing, and peak-memory measurements |
 | 3. Block-sync overlay | Partial | Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Add recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth tests |
-| 4. Observer and relay | Partial | Protocol-v2 candidate relay actor and existing manager/full-node broadcast API adaptation | Port non-validator group reconciliation, optional validator identity, observer cache/retention, authorization, eviction, and relay-loop tests |
+| 4. Observer and relay | Pending validation | Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Add authorization, eviction, removal/liveness, query-abuse, and relay-loop tests |
 | 5. Plumtree | Pending validation | Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, the upstream graph simulator, and fault-injected Simplex consensus tests are adapted to TOS | Add transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, packet-loss, partition, churn, and selective-forwarding tests |
 | 6. Structural refactoring | Not started | TOS session-specific database paths were reviewed at a high level | Perform semantic DB-name comparison only if required after protocol features stabilize |
 | Activation | Not started | Protocol v2 is parsed but validator startup rejects it explicitly | Complete phases 1–5 exit criteria, define proposal/rollback procedure, and run mixed-version plus 72-hour multi-region soak |
@@ -76,6 +76,23 @@ Implemented work to date:
   existing TOS manager and full-node broadcast APIs. It remains unreachable
   while protocol version 2 is startup-gated and must not be treated as
   Plumtree support.
+- The consensus bus now represents the local validator identity as optional,
+  and validator-authority actors have explicit validator-only spawn gates.
+  A non-voting `BlockSyncObserver` actor can cache candidates delivered by the
+  authenticated protocol-v1 block-sync overlay. The manager derives local
+  observer ADNL identities from the previous, current, and next total
+  validator sets and reconciles observer groups independently by session and
+  ADNL identity. Observer databases have identity-specific suffixes, and the
+  block-sync and protocol-v2 private-overlay memberships use the deduplicated
+  total-validator ADNL set. Private-overlay candidate-broadcast authorization
+  remains restricted to the session validator set. Protocol messages carry
+  both an ADNL source and an optional validator identity: observer votes are
+  rejected, while certificates still require their validator quorum
+  signatures and may be relayed by observers. Member queries are rate-limited
+  by ADNL identity, and CandidateResolver may query an arbitrary non-local
+  member. Authenticated non-empty candidates are cached through the manager's
+  128-entry in-memory LRU and may enter the separately gated candidate-relay
+  path.
 - The TON Plumtree overlay core, including eager/lazy peer management, FEC
   trees, repair queries, source authorization, AnySender restrictions, and
   statistics exchange, has been adapted to TOS and builds as part of the
@@ -94,6 +111,14 @@ Implemented work to date:
   signature set can upgrade a cached approve set while duplicates and
   downgrades are ignored. The implementation is still startup-gated with
   protocol version 2.
+- Candidate, finality, and complete-block network ingress now preserves
+  whether a message came from the public, fast-sync, or custom overlay.
+  Locally emitted finality is tagged as consensus-overlay ingress before it is
+  sent. Public-overlay ingress is not reflected into custom overlays;
+  fast-sync ingress may bridge into them; custom-overlay ingress is bridged
+  only when the local identity is not configured as a block sender for that
+  overlay. The existing per-block relay caches remain the final duplicate-loop
+  guard.
 - The upstream Plumtree graph simulator is adapted to TOS. It exercises the
   real overlay actor, Plumtree implementation, TL messages, signatures, repair
   query transport, deterministic graph topology, geographic latency/jitter,
@@ -405,9 +430,12 @@ interfaces, keeping integration changes small.
 
 ### Phase 4: Observer cache and candidate relay
 
-**Current status: Partial.** Candidate relay is implemented behind the v2
-gate. Observer creation, optional validator identity, bounded cache retention,
-and observer security tests are not implemented.
+**Current status: Pending validation.** Candidate relay, observer creation,
+optional validator identity, private-overlay membership, read-only Pool and
+CandidateResolver operation, arbitrary-member candidate queries, and bounded
+in-memory candidate retention are implemented behind their protocol gates.
+Authorization, eviction, removal/liveness, query-abuse, and relay-loop tests
+remain open.
 
 Add non-voting observers only after the block-sync overlay is stable.
 
@@ -651,8 +679,8 @@ the pinned commits. Line numbers are navigation aids and may move after edits.
 | Protocol-version feature gates | N/A | `ton/ton-types.h:504` |
 | Payload codec and size checks | `validator-session/candidate-serializer.cpp:32` | `validator/consensus/payload.cpp:25` |
 | Block-sync private overlay and precheck | `validator/consensus/block-sync-overlay.cpp:28` | `validator/consensus/block-sync-overlay.cpp:29` |
-| Observer caching and candidate relay | No matching actors | `validator/consensus/bridge.cpp:155` |
-| Database-name and observer identity gates | N/A | `validator/validator-group.cpp:90` |
+| Observer caching and candidate relay | `validator/consensus/bridge.cpp`, `validator/consensus/private-overlay.cpp` | `validator/consensus/bridge.cpp:155` |
+| Database-name and observer identity gates | `validator/manager.cpp`, `validator/consensus/bridge.cpp` | `validator/validator-group.cpp:90` |
 | Too-new certificate rejection | `validator/consensus/simplex/pool.cpp:438` | Comparison target: `validator/consensus/simplex/pool.cpp:459` |
 | Vote/certificate DB hash binding | `validator/consensus/simplex/db.cpp:129` | Comparison target: `validator/consensus/simplex/db.cpp:131` |
 | Candidate-resolver DB hardening | `validator/consensus/simplex/candidate-resolver.cpp:255` | Comparison target: `validator/consensus/simplex/candidate-resolver.cpp:259` |

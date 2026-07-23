@@ -17,6 +17,10 @@ class BlockAccepterImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
  public:
   TOS_RUNTIME_DEFINE_EVENT_HANDLER();
 
+  static bool should_be_spawned(const Bus& bus) {
+    return bus.is_validator() || bus.config.observers_in_private_overlay();
+  }
+
   template <>
   void handle(BusHandle, std::shared_ptr<const StopRequested>) {
     stop();
@@ -27,7 +31,7 @@ class BlockAccepterImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     const auto& block = std::get<BlockCandidate>(event->candidate->block);
     auto block_data = create_block(block.id, block.data.clone()).move_as_ok();
 
-    bool is_leader = event->candidate->leader == owning_bus()->local_id.idx;
+    bool is_leader = owning_bus()->is_validator() && event->candidate->leader == owning_bus()->local_id->idx;
 
     int block_broadcast_mode = fullnode::FullNode::broadcast_mode_custom;
     int finality_broadcast_mode = 0;

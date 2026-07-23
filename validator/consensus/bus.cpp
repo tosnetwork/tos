@@ -59,11 +59,14 @@ std::string block_signature_set_to_string(const td::Ref<block::BlockSignatureSet
 
 static td::StringBuilder& operator<<(td::StringBuilder& sb, const OutgoingProtocolMessage::Recipient& recipient) {
   auto broadcast_to_all_fn = [&](const OutgoingProtocolMessage::BroadcastToAll&) { sb << "BroadcastToAll{}"; };
+  auto broadcast_to_validators_fn = [&](const OutgoingProtocolMessage::BroadcastToValidators&) {
+    sb << "BroadcastToValidators{}";
+  };
   auto broadcast_to_random_fn = [&](const OutgoingProtocolMessage::BroadcastToRandom& r) {
     sb << "BroadcastToRandom{count=" << r.count << "}";
   };
 
-  std::visit(td::overloaded(broadcast_to_all_fn, broadcast_to_random_fn), recipient);
+  std::visit(td::overloaded(broadcast_to_all_fn, broadcast_to_validators_fn, broadcast_to_random_fn), recipient);
   return sb;
 }
 
@@ -105,7 +108,8 @@ std::string ValidationRequest::response_to_string(const ReturnType& result) {
 }
 
 std::string IncomingProtocolMessage::contents_to_string() const {
-  return PSTRING() << "{source=" << source << ", message=" << message_to_string(message) << "}";
+  return PSTRING() << "{source_validator=" << (source_validator ? (PSTRING() << *source_validator) : "none")
+                   << ", source=" << source << ", message=" << message_to_string(message) << "}";
 }
 
 std::string OutgoingProtocolMessage::contents_to_string() const {
@@ -121,7 +125,8 @@ std::string IncomingOverlayRequest::response_to_string(const ReturnType& respons
 }
 
 std::string OutgoingOverlayRequest::contents_to_string() const {
-  return PSTRING() << "{destination=" << destination << ", timeout=" << timeout.in()
+  return PSTRING() << "{destination=" << (destination ? (PSTRING() << *destination) : "random")
+                   << ", timeout=" << timeout.in()
                    << " remaining, request=" << message_to_string(request) << "}";
 }
 

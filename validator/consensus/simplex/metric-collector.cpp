@@ -24,11 +24,15 @@ class MetricCollectorImpl : public td::actor::SpawnsWith<Bus>, public td::actor:
  public:
   TOS_RUNTIME_DEFINE_EVENT_HANDLER();
 
+  static bool should_be_spawned(const Bus& bus) {
+    return bus.is_validator();
+  }
+
   void start_up() override {
     auto& bus = *owning_bus();
     collector.emplace(stats::MetricCollector{
         bus.session_id,
-        bus.local_id.short_id,
+        bus.local_id->short_id,
         tos::stats::recorder_for(fake_catchain_stats),
     });
   }

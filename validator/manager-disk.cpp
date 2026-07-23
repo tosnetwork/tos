@@ -67,6 +67,7 @@ void ValidatorManagerImpl::validate_block(ReceivedBlock block, td::Promise<Block
 }
 
 void ValidatorManagerImpl::new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked,
+                                               BroadcastSource source,
                                                td::Promise<td::Unit> promise) {
   UNREACHABLE();
 }
